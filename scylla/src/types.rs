@@ -1,0 +1,174 @@
+//! CQL binary protocol in-wire types.
+
+use anyhow::Result;
+use byteorder::{BigEndian, ReadBytesExt};
+use bytes::{Buf, BufMut, BytesMut};
+use std::collections::HashMap;
+use std::str;
+
+pub fn read_int(buf: &mut &[u8]) -> Result<i32> {
+    let v = buf.read_i32::<BigEndian>()?;
+    Ok(v)
+}
+
+pub fn write_int(v: i32, buf: &mut BytesMut) {
+    buf.put_i32(v);
+}
+
+#[test]
+fn type_int() {
+    let vals = vec![i32::MIN, -1, 0, 1, i32::MAX];
+    for val in vals.iter() {
+        let mut buf = BytesMut::new();
+        write_int(*val, &mut buf);
+        assert_eq!(read_int(&mut &buf[..]).unwrap(), *val);
+    }
+}
+
+pub fn read_long(buf: &mut &[u8]) -> Result<i64> {
+    let v = buf.read_i64::<BigEndian>()?;
+    Ok(v)
+}
+
+pub fn write_long(v: i64, buf: &mut BytesMut) {
+    buf.put_i64(v);
+}
+
+#[test]
+fn type_long() {
+    let vals = vec![i64::MIN, -1, 0, 1, i64::MAX];
+    for val in vals.iter() {
+        let mut buf = BytesMut::new();
+        write_long(*val, &mut buf);
+        assert_eq!(read_long(&mut &buf[..]).unwrap(), *val);
+    }
+}
+
+pub fn read_short(buf: &mut &[u8]) -> Result<i16> {
+    let v = buf.read_i16::<BigEndian>()?;
+    Ok(v)
+}
+
+pub fn write_short(v: i16, buf: &mut BytesMut) {
+    buf.put_i16(v);
+}
+
+#[test]
+fn type_short() {
+    let vals = vec![i16::MIN, -1, 0, 1, i16::MAX];
+    for val in vals.iter() {
+        let mut buf = BytesMut::new();
+        write_short(*val, &mut buf);
+        assert_eq!(read_short(&mut &buf[..]).unwrap(), *val);
+    }
+}
+
+pub fn read_string<'a>(buf: &mut &'a [u8]) -> Result<&'a str> {
+    let len = read_short(buf)? as usize;
+    if buf.len() < len {
+        return Err(anyhow!(
+            "Not enough bytes in buffer: expected {}, was {}",
+            len,
+            buf.len()
+        ));
+    }
+    let raw = &buf[0..len];
+    let v = str::from_utf8(raw)?;
+    buf.advance(len as usize);
+    Ok(v)
+}
+
+pub fn write_string(v: &str, buf: &mut BytesMut) -> Result<()> {
+    let raw = v.as_bytes();
+    let len = raw.len();
+    if len > i16::MAX as usize {
+        return Err(anyhow!("String is too long for 16-bits: {} bytes", len));
+    }
+    write_short(len as i16, buf);
+    buf.extend_from_slice(&raw[0..len]);
+    Ok(())
+}
+
+#[test]
+fn type_string() {
+    let vals = vec![String::from(""), String::from("hello, world!")];
+    for val in vals.iter() {
+        let mut buf = BytesMut::new();
+        write_string(val, &mut buf).unwrap();
+        assert_eq!(read_string(&mut &buf[..]).unwrap(), *val);
+    }
+}
+
+pub fn read_long_string<'a>(buf: &mut &'a [u8]) -> Result<&'a str> {
+    let len = read_int(buf)? as usize;
+    if buf.len() < len {
+        return Err(anyhow!(
+            "Not enough bytes in buffer: expected {}, was {}",
+            len,
+            buf.len()
+        ));
+    }
+    let raw = &buf[0..len];
+    let v = str::from_utf8(raw)?;
+    buf.advance(len as usize);
+    Ok(v)
+}
+
+pub fn write_long_string(v: &str, buf: &mut BytesMut) -> Result<()> {
+    let raw = v.as_bytes();
+    let len = raw.len();
+    if len > i32::MAX as usize {
+        return Err(anyhow!("String is too long for 32-bits: {} bytes", len));
+    }
+    write_int(len as i32, buf);
+    buf.extend_from_slice(&raw[0..len]);
+    Ok(())
+}
+
+#[test]
+fn type_long_string() {
+    let vals = vec![String::from(""), String::from("hello, world!")];
+    for val in vals.iter() {
+        let mut buf = BytesMut::new();
+        write_long_string(val, &mut buf).unwrap();
+        assert_eq!(read_long_string(&mut &buf[..]).unwrap(), *val);
+    }
+}
+
+pub fn read_string_map(buf: &mut &[u8]) -> Result<HashMap<String, String>> {
+    let mut v = HashMap::new();
+    let len = read_short(buf)?;
+    for _ in 0..len {
+        let key = read_string(buf)?.to_owned();
+        let val = read_string(buf)?.to_owned();
+        v.insert(key, val);
+    }
+    Ok(v)
+}
+
+pub fn write_string_map(v: &HashMap<String, String>, buf: &mut BytesMut) -> Result<()> {
+    let len = v.len();
+    if v.len() > i16::MAX as usize {
+        return Err(anyhow!(
+            "String map has too many entries for 16-bits: {}",
+            len
+        ));
+    }
+    write_short(len as i16, buf);
+    for (key, val) in v.iter() {
+        write_string(key, buf)?;
+        write_string(val, buf)?;
+    }
+    Ok(())
+}
+
+#[test]
+fn type_string_map() {
+    let mut val = HashMap::new();
+    val.insert(String::from(""), String::from(""));
+    val.insert(String::from("CQL_VERSION"), String::from("3.0.0"));
+    val.insert(String::from("THROW_ON_OVERLOAD"), String::from(""));
+    let mut buf = BytesMut::new();
+    write_string_map(&val, &mut buf).unwrap();
+    assert_eq!(read_string_map(&mut &buf[..]).unwrap(), val);
+}
