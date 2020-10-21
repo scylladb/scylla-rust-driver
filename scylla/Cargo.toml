@@ -1,0 +1,9 @@
+[package]
+name = "scylla"
+version = "0.0.1"
+edition = "2018"
+description = "Async CQL driver for Rust, optimized for Scylla."
+repository = "https://github.com/psarna/scylla-rust-driver"
+readme = "../README.md"
+keywords = ["database", "scylla", "cql"]
+categories = ["database"]
