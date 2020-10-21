@@ -3,4 +3,7 @@
 #[macro_use]
 extern crate anyhow;
 
+pub mod frame;
+pub mod query;
+pub mod transport;
 pub mod types;
