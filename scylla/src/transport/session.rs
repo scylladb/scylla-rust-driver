@@ -3,6 +3,7 @@ use tokio::net::ToSocketAddrs;
 use std::collections::HashMap;
 
 use crate::frame::response::Response;
+use crate::frame::response::result;
 use crate::query::Query;
 use crate::prepared_statement::PreparedStatement;
 use crate::transport::connection::Connection;
@@ -30,16 +31,23 @@ impl Session {
     }
 
     // TODO: Should return an iterator over results
-    pub async fn query(&self, query: impl Into<Query>) -> Result<()> {
+    // actually, if we consider "INSERT" a query, then no.
+    // But maybe "INSERT" and "SELECT" should go through different methods,
+    // so we expect "SELECT" to always return Vec<result::Row>?
+    pub async fn query(&self, query: impl Into<Query>) -> Result<Option<Vec<result::Row>>> {
         let result = self.connection.query(&query.into()).await?;
         match result {
             Response::Error(err) => {
-                return Err(err.into());
+                Err(err.into())
             }
-            Response::Result(_) => {}
-            _ => return Err(anyhow!("Unexpected frame received")),
+            Response::Result(result::Result::Rows(rs)) => {
+                Ok(Some(rs.rows))
+            }
+            Response::Result(_) => {
+                Ok(None)
+            }
+            _ => Err(anyhow!("Unexpected frame received")),
         }
-        Ok(())
     }
 
     pub async fn prepare(&self, query: String) -> Result<PreparedStatement> {

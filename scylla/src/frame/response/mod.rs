@@ -33,7 +33,7 @@ impl Response {
             ResponseOpcode::Ready => Response::Ready,
             ResponseOpcode::Authenticate => unimplemented!(),
             ResponseOpcode::Supported => unimplemented!(),
-            ResponseOpcode::Result => Response::Result(Result::deserialize(buf)?),
+            ResponseOpcode::Result => Response::Result(result::deserialize(buf)?),
             ResponseOpcode::Event => unimplemented!(),
             ResponseOpcode::AuthChallenge => unimplemented!(),
             ResponseOpcode::AuthSuccess => unimplemented!(),
