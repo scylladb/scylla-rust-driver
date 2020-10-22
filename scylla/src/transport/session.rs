@@ -33,14 +33,14 @@ impl Session {
     }
 
     pub async fn prepare(&self, query: String) -> Result<PreparedStatement> {
-        let result = self.connection.prepare(query).await?;
+        let result = self.connection.prepare(query.clone()).await?;
         match result {
             Response::Error(err) => {
                 Err(err.into())
             }
             Response::Result(_) => {
                 //FIXME: actually read the id
-                Ok(PreparedStatement::new("stub_id".into()))
+                Ok(PreparedStatement::new("stub_id".into(), query))
             }
             _ => return Err(anyhow!("Unexpected frame received")),
         }
