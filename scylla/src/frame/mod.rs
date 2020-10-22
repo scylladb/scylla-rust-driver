@@ -2,16 +2,8 @@ pub mod request;
 
 use anyhow::Result;
 use bytes::{BufMut, Bytes};
-use num_enum::TryFromPrimitive;
 
 use request::Request;
-
-#[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord, TryFromPrimitive)]
-#[repr(u8)]
-pub enum Opcode {
-    Startup = 0x01,
-    Query = 0x07,
-}
 
 // Parts of the frame header which are not determined by the request/response type.
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]

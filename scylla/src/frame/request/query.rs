@@ -2,7 +2,7 @@ use anyhow::Result;
 use bytes::BufMut;
 
 use crate::{
-    frame::{request::Request, Opcode},
+    frame::request::{Request, RequestOpcode},
     types,
 };
 
@@ -12,7 +12,7 @@ pub struct Query {
 }
 
 impl Request for Query {
-    const OPCODE: Opcode = Opcode::Query;
+    const OPCODE: RequestOpcode = RequestOpcode::Query;
 
     fn serialize(&self, buf: &mut impl BufMut) -> Result<()> {
         types::write_long_string(&self.contents, buf)?;
