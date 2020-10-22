@@ -1,7 +1,7 @@
 use criterion::{criterion_group, criterion_main, Criterion};
 
 use bytes::BytesMut;
-use scylla::types;
+use scylla::frame::types;
 
 fn types_benchmark(c: &mut Criterion) {
     let mut buf = BytesMut::with_capacity(64);
