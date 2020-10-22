@@ -1,31 +1,39 @@
 use anyhow::Result as AResult;
 use std::str;
 use byteorder::{BigEndian, ReadBytesExt};
+use bytes::{Buf,Bytes};
 
 use crate::frame::types;
 
+#[derive(Debug)]
 pub struct SetKeyspace {
     // TODO
 }
 
+#[derive(Debug)]
 pub struct Prepared {
-    // TODO
+    pub id: Bytes,
+    prepared_metadata: PreparedMetadata,
+    metadata: ResultMetadata,
 }
 
+#[derive(Debug)]
 pub struct SchemaChange {
     // TODO
 }
 
-#[derive(Clone)]
+#[derive(Clone,Debug)]
 struct TableSpec {
     ks_name: String,
     table_name: String,
 }
 
+#[derive(Debug)]
 struct PagingState {
     // TODO
 }
 
+#[derive(Debug)]
 enum ColumnType {
     Ascii,
     Int,
@@ -34,6 +42,7 @@ enum ColumnType {
     // TODO
 }
 
+#[derive(Debug)]
 pub enum CQLValue {
     Ascii(String),
     Int(i32),
@@ -74,28 +83,40 @@ impl CQLValue {
     // TODO
 }
 
+#[derive(Debug)]
 struct ColumnSpec {
     table_spec: TableSpec,
     name: String,
     typ: ColumnType,
 }
 
-struct Metadata {
+#[derive(Debug)]
+struct ResultMetadata {
     col_count: usize,
     paging_state: Option<PagingState>,
     col_specs: Vec<ColumnSpec>
 }
 
+#[derive(Debug)]
+struct PreparedMetadata {
+    col_count: usize,
+    pk_indexes: Vec<u16>,
+    col_specs: Vec<ColumnSpec>
+}
+
+#[derive(Debug)]
 pub struct Row {
     pub columns: Vec<Option<CQLValue>>,
 }
 
+#[derive(Debug)]
 pub struct Rows {
-    metadata: Metadata,
+    metadata: ResultMetadata,
     rows_count: usize,
     pub rows: Vec<Row>,
 }
 
+#[derive(Debug)]
 pub enum Result {
     Void,
     Rows(Rows),
@@ -125,7 +146,18 @@ fn deser_type(buf: &mut &[u8]) -> AResult<ColumnType> {
     })
 }
 
-fn deser_metadata(buf: &mut &[u8]) -> AResult<Metadata> {
+fn deser_col_specs(buf: &mut &[u8], global_table_spec: &Option<TableSpec>, col_count: usize) -> AResult<Vec<ColumnSpec>> {
+    let mut col_specs = Vec::with_capacity(col_count);
+    for _ in 0..col_count {
+        let table_spec = if let Some(spec) = global_table_spec { spec.clone() } else { deser_table_spec(buf)? };
+        let name = types::read_string(buf)?.to_owned();
+        let typ = deser_type(buf)?;
+        col_specs.push(ColumnSpec{ table_spec, name, typ });
+    }
+    Ok(col_specs)
+}
+
+fn deser_result_metadata(buf: &mut &[u8]) -> AResult<ResultMetadata> {
     let flags = types::read_int(buf)?;
     let global_tables_spec = flags & 0x0001 != 0;
     let has_more_pages = flags & 0x0002 != 0;
@@ -141,20 +173,42 @@ fn deser_metadata(buf: &mut &[u8]) -> AResult<Metadata> {
     let paging_state = None;
 
     if no_metadata {
-        return Ok(Metadata{col_count, paging_state, col_specs: vec![]});
+        return Ok(ResultMetadata{col_count, paging_state, col_specs: vec![]});
     }
 
     let global_table_spec = if global_tables_spec { Some(deser_table_spec(buf)?) } else { None };
 
-    let mut col_specs = Vec::with_capacity(col_count);
-    for _ in 0..col_count {
-        let table_spec = if let Some(spec) = global_table_spec.as_ref() { spec.clone() } else { deser_table_spec(buf)? };
-        let name = types::read_string(buf)?.to_owned();
-        let typ = deser_type(buf)?;
-        col_specs.push(ColumnSpec{ table_spec, name, typ });
+    let col_specs = deser_col_specs(buf, &global_table_spec, col_count)?;
+
+    Ok(ResultMetadata{col_count, paging_state, col_specs})
+}
+
+fn deser_prepared_metadata(buf: &mut &[u8]) -> AResult<PreparedMetadata> {
+    let flags = types::read_int(buf)?;
+    let global_tables_spec = flags & 0x0001 != 0;
+
+    let col_count = types::read_int(buf)?;
+    if col_count < 0 {
+        return Err(anyhow!("Invalid negative column count: {}", col_count));
+    }
+    let col_count = col_count as usize;
+
+    let pk_count = types::read_int(buf)?;
+    if pk_count < 0 {
+        return Err(anyhow!("Invalid negative pk count: {}", col_count));
+    }
+    let pk_count = pk_count as usize;
+
+    let mut pk_indexes = Vec::with_capacity(pk_count);
+    for _ in 0..pk_count {
+        pk_indexes.push(types::read_short(buf)? as u16);
     }
 
-    Ok(Metadata{col_count, paging_state, col_specs})
+    let global_table_spec = if global_tables_spec { Some(deser_table_spec(buf)?) } else { None };
+
+    let col_specs = deser_col_specs(buf, &global_table_spec, col_count)?;
+
+    Ok(PreparedMetadata{col_count, pk_indexes, col_specs})
 }
 
 fn deser_cql_value(typ: &ColumnType, buf: &mut &[u8]) -> AResult<CQLValue> {
@@ -192,7 +246,7 @@ fn deser_cql_value(typ: &ColumnType, buf: &mut &[u8]) -> AResult<CQLValue> {
 }
 
 fn deser_rows(buf: &mut &[u8]) -> AResult<Rows> {
-    let metadata = deser_metadata(buf)?;
+    let metadata = deser_result_metadata(buf)?;
 
     // TODO: the protocol allows an optimization (which must be explicitly requested on query by
     // the driver) where the column metadata is not sent with the result.
@@ -224,8 +278,13 @@ fn deser_set_keyspace(_buf: &mut &[u8]) -> AResult<SetKeyspace> {
     Ok(SetKeyspace{}) // TODO
 }
 
-fn deser_prepared(_buf: &mut &[u8]) -> AResult<Prepared> {
-    Ok(Prepared{}) // TODO
+fn deser_prepared(buf: &mut &[u8]) -> AResult<Prepared> {
+    let id_len = types::read_short(buf)? as usize;
+    let id: Bytes = buf[0..id_len].to_owned().into();
+    buf.advance(id_len);
+    let prepared_metadata = deser_prepared_metadata(buf)?;
+    let metadata = deser_result_metadata(buf)?;
+    Ok(Prepared{ id, prepared_metadata, metadata })
 }
 
 fn deser_schema_change(_buf: &mut &[u8]) -> AResult<SchemaChange> {
