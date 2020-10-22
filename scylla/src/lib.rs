@@ -8,3 +8,4 @@ pub mod transport;
 pub mod statement;
 
 pub use statement::query;
+pub use statement::prepared_statement;

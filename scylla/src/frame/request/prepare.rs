@@ -3,7 +3,7 @@ use bytes::BufMut;
 
 use crate::{
     frame::request::{Request, RequestOpcode},
-    types,
+    frame::types,
 };
 
 pub struct Prepare {

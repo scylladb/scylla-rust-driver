@@ -3,6 +3,7 @@ use tokio::net::ToSocketAddrs;
 
 use crate::frame::response::Response;
 use crate::query::Query;
+use crate::prepared_statement::PreparedStatement;
 use crate::transport::connection::Connection;
 
 pub struct Session {
@@ -29,5 +30,19 @@ impl Session {
             _ => return Err(anyhow!("Unexpected frame received")),
         }
         Ok(())
+    }
+
+    pub async fn prepare(&self, query: String) -> Result<PreparedStatement> {
+        let result = self.connection.prepare(query).await?;
+        match result {
+            Response::Error(err) => {
+                Err(err.into())
+            }
+            Response::Result(_) => {
+                //FIXME: actually read the id
+                Ok(PreparedStatement::new("stub_id".into()))
+            }
+            _ => return Err(anyhow!("Unexpected frame received")),
+        }
     }
 }
