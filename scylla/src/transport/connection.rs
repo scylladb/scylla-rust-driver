@@ -8,6 +8,7 @@ use std::collections::HashMap;
 use crate::frame::{
     self,
     request::{self, Request},
+    response::Response,
 };
 use crate::query::Query;
 
@@ -23,24 +24,24 @@ impl Connection {
         })
     }
 
-    pub async fn startup(&self, options: HashMap<String, String>) -> Result<()> {
-        self.send_request(&request::Startup { options }).await?;
-        Ok(())
+    pub async fn startup(&self, options: HashMap<String, String>) -> Result<Response> {
+        self.send_request(&request::Startup { options }).await
     }
 
-    pub async fn query(&self, query: &Query) -> Result<()> {
+    pub async fn query(&self, query: &Query) -> Result<Response> {
         self.send_request(&request::Query {
             contents: query.get_contents().to_owned(),
         })
-        .await?;
-        Ok(())
+        .await
     }
 
     // TODO: Return the response associated with that frame
-    async fn send_request(&self, request: &impl Request) -> Result<()> {
+    async fn send_request(&self, request: &impl Request) -> Result<Response> {
         let raw_request = frame::serialize_request(Default::default(), request)?;
         let mut locked_stream = self.stream.lock().await;
         locked_stream.write_all(&raw_request).await?;
-        Ok(())
+
+        let (_, response) = frame::read_response(&mut *locked_stream).await?;
+        Ok(response)
     }
 }

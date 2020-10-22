@@ -1,6 +1,7 @@
 use anyhow::Result;
 use tokio::net::ToSocketAddrs;
 
+use crate::frame::response::Response;
 use crate::query::Query;
 use crate::transport::connection::Connection;
 
@@ -19,7 +20,14 @@ impl Session {
 
     // TODO: Should return an iterator over results
     pub async fn query(&self, query: impl Into<Query>) -> Result<()> {
-        self.connection.query(&query.into()).await?;
+        let result = self.connection.query(&query.into()).await?;
+        match result {
+            Response::Error(err) => {
+                return Err(err.into());
+            }
+            Response::Result(_) => {}
+            _ => return Err(anyhow!("Unexpected frame received")),
+        }
         Ok(())
     }
 }
