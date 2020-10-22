@@ -13,6 +13,7 @@ anyhow = "1.0.33"
 byteorder = "1.3.4"
 bytes = "0.6.0"
 num_enum = "0.5"
+lz4-compression = "0.7.0"
 tokio = { version = "0.3.0", features = ["net", "time", "io-util", "sync", "rt", "macros"] }
 
 [dev-dependencies]

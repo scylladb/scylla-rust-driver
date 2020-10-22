@@ -4,7 +4,7 @@ use crate::transport::session::Session;
 #[tokio::test]
 #[ignore]
 async fn test_connecting() {
-    let session = Session::connect("localhost:9042").await.unwrap();
+    let session = Session::connect("localhost:9042", None).await.unwrap();
 
     session.query("CREATE KEYSPACE IF NOT EXISTS ks WITH REPLICATION = {'class' : 'SimpleStrategy', 'replication_factor' : 1}").await.unwrap();
     session
