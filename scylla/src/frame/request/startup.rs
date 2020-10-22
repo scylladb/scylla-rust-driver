@@ -5,7 +5,7 @@ use std::collections::HashMap;
 
 use crate::{
     frame::request::{Request, RequestOpcode},
-    types,
+    frame::types,
 };
 
 pub struct Startup {
