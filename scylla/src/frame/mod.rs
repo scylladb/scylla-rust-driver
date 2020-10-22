@@ -19,7 +19,7 @@ use response::{Response, ResponseOpcode};
 pub struct FrameParams {
     pub version: u8,
     pub flags: u8,
-    pub stream: u16,
+    pub stream: i16,
 }
 
 impl Default for FrameParams {
@@ -41,7 +41,7 @@ pub fn serialize_request<R: Request>(
     v.put_u8(params.version);
     let compression_flag = if compression.is_some() { 0x01 } else { 0x00 };
     v.put_u8(params.flags | compression_flag);
-    v.put_u16(params.stream);
+    v.put_i16(params.stream);
     v.put_u8(R::OPCODE as u8);
 
     // Leave some place for the frame size
@@ -92,7 +92,7 @@ pub async fn read_response(
     }
 
     let flags = buf.get_u8();
-    let stream = buf.get_u16();
+    let stream = buf.get_i16();
 
     let frame_params = FrameParams {
         version,
