@@ -5,9 +5,11 @@ pub mod types;
 use anyhow::Result;
 use bytes::{Buf, BufMut, Bytes};
 use tokio::io::{AsyncRead, AsyncReadExt};
+use crate::transport::Compression;
 
 use std::convert::TryFrom;
 
+use lz4_compression::{compress, decompress};
 use request::Request;
 use response::{Response, ResponseOpcode};
 
@@ -29,10 +31,11 @@ impl Default for FrameParams {
     }
 }
 
-pub fn serialize_request<R: Request>(params: FrameParams, request: &R) -> Result<Bytes> {
+pub fn serialize_request<R: Request>(params: FrameParams, request: &R, compression: Option<Compression>) -> Result<Bytes> {
     let mut v = Vec::new();
     v.put_u8(params.version);
-    v.put_u8(params.flags);
+    let compression_flag = if compression.is_some() { 0x01 } else { 0x00 };
+    v.put_u8(params.flags | compression_flag);
     v.put_u16(params.stream);
     v.put_u8(R::OPCODE as u8);
 
@@ -40,7 +43,16 @@ pub fn serialize_request<R: Request>(params: FrameParams, request: &R) -> Result
     let frame_len_pos = v.len();
     v.put_u32(0);
 
-    request.serialize(&mut v)?;
+    if let Some(compression) = compression {
+        // Serialize body
+        let mut uncomp_body = Vec::new();
+        request.serialize(&mut uncomp_body)?;
+        // Compress body
+        let mut comp_body = compress(&uncomp_body, compression);
+        v.append(&mut comp_body);
+    } else {
+        request.serialize(&mut v)?;
+    }
 
     // Write the request length
     let frame_len_size = std::mem::size_of::<u32>();
@@ -55,6 +67,7 @@ pub fn serialize_request<R: Request>(params: FrameParams, request: &R) -> Result
 
 pub async fn read_response(
     reader: &mut (impl AsyncRead + Unpin),
+    compression: Option<Compression>,
 ) -> Result<(FrameParams, Response)> {
     let mut raw_header = [0u8; 9];
     reader.read_exact(&mut raw_header[..]).await?;
@@ -74,8 +87,6 @@ pub async fn read_response(
     }
 
     let flags = buf.get_u8();
-    assert_eq!(flags, 0);
-
     let stream = buf.get_u16();
 
     let frame_params = FrameParams {
@@ -89,11 +100,54 @@ pub async fn read_response(
     // TODO: Guard from frames that are too large
     let length = buf.get_u32();
 
-    // TODO: Figure out how to skip zeroing out the buffer
-    let mut raw_body = vec![0u8; length as usize];
-    reader.read_exact(&mut raw_body[..]).await?;
+    let body_compressed = flags & 0x01 == 0x01;
+
+    let raw_body = read_body(reader, length as usize, compression, body_compressed).await?;
 
     let response = Response::deserialize(opcode, &mut &raw_body[..])?;
 
     Ok((frame_params, response))
+}
+
+async fn read_body(
+    reader: &mut (impl AsyncRead + Unpin),
+    length: usize,
+    compression: Option<Compression>,
+    body_compressed: bool,
+) -> Result<Vec<u8>> {
+    // TODO: Figure out how to skip zeroing out the buffer
+    let mut raw_body = vec![0u8; length];
+    reader.read_exact(&mut raw_body[..]).await?;
+    if body_compressed {
+        if let Some(compression) = compression {
+            decompress(&raw_body, compression)
+        } else {
+            Err(anyhow!("Frame is compressed, but no compression negotiated for connection."))
+        }
+    } else {
+        Ok(raw_body)
+    }
+}
+
+fn compress(uncomp_body: &[u8], compression: Compression) -> Vec<u8> {
+    match compression {
+        Compression::LZ4 => {
+            let mut comp_body = Vec::new();
+            comp_body.put_u32((uncomp_body.len() as u32).to_be());
+            compress::compress_into(uncomp_body, &mut comp_body);
+            comp_body
+        }
+    }
+}
+
+fn decompress(comp_body: &[u8], compression: Compression) -> Result<Vec<u8>> {
+    match compression {
+        Compression::LZ4 => {
+            match decompress::decompress(&comp_body[4..]) {
+                Ok(uncomp_body) => Ok(uncomp_body),
+                Err(e) => Err(anyhow!("Frame decompression failed: {:?}", e)),
+            }
+        
+        }
+    }
 }
