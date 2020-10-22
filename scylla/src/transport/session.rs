@@ -56,9 +56,8 @@ impl Session {
             Response::Error(err) => {
                 Err(err.into())
             }
-            Response::Result(_) => {
-                //FIXME: actually read the id
-                Ok(PreparedStatement::new("stub_id".into(), query))
+            Response::Result(result::Result::Prepared(p)) => {
+                Ok(PreparedStatement::new(p.id, query))
             }
             _ => return Err(anyhow!("Unexpected frame received")),
         }
