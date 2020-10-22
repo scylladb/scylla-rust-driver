@@ -12,7 +12,12 @@ pub use result::Result;
 pub enum ResponseOpcode {
     Error = 0x00,
     Ready = 0x02,
+    Authenticate = 0x03,
+    Supported = 0x06,
     Result = 0x08,
+    Event = 0x0C,
+    AuthChallenge = 0x0E,
+    AuthSuccess = 0x10,
 }
 
 pub enum Response {
@@ -26,7 +31,12 @@ impl Response {
         let response = match opcode {
             ResponseOpcode::Error => Response::Error(Error::deserialize(buf)?),
             ResponseOpcode::Ready => Response::Ready,
+            ResponseOpcode::Authenticate => unimplemented!(),
+            ResponseOpcode::Supported => unimplemented!(),
             ResponseOpcode::Result => Response::Result(Result::deserialize(buf)?),
+            ResponseOpcode::Event => unimplemented!(),
+            ResponseOpcode::AuthChallenge => unimplemented!(),
+            ResponseOpcode::AuthSuccess => unimplemented!(),
         };
 
         Ok(response)

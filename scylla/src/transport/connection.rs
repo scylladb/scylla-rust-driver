@@ -28,6 +28,11 @@ impl Connection {
         self.send_request(&request::Startup { options }).await
     }
 
+    pub async fn prepare(&self, query: String) -> Result<Response> {
+        self.send_request(&request::Prepare { query })
+        .await
+    }
+
     pub async fn query(&self, query: &Query) -> Result<Response> {
         self.send_request(&request::Query::from(query)).await
     }

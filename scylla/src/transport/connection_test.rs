@@ -15,4 +15,9 @@ async fn test_connecting() {
         .query("INSERT INTO ks.t (a, b, c) VALUES (1, 2, 'abc')")
         .await
         .unwrap();
+    let prepared_statement = session
+        .prepare("INSERT INTO ks.t (a, b, c) VALUES (?, ?, ?)".to_owned())
+        .await
+        .unwrap();
+    println!("Prepared statement: {:?}", prepared_statement);
 }
