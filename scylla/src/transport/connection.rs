@@ -29,10 +29,7 @@ impl Connection {
     }
 
     pub async fn query(&self, query: &Query) -> Result<Response> {
-        self.send_request(&request::Query {
-            contents: query.get_contents().to_owned(),
-        })
-        .await
+        self.send_request(&request::Query::from(query)).await
     }
 
     // TODO: Return the response associated with that frame
