@@ -8,7 +8,12 @@ edition = "2018"
 anyhow = "1.0.33"
 scylla = { path = "../scylla" }
 tokio = { version = "0.3.0", features = ["full"] }
+rustyline = "6.3.0"
 
 [[example]]
 name = "example"
 path = "example.rs"
+
+[[example]]
+name = "cqlsh-rs"
+path = "cqlsh-rs.rs"
