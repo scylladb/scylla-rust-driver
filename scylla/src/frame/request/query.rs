@@ -4,6 +4,7 @@ use bytes::BufMut;
 use crate::{
     frame::request::{Request, RequestOpcode},
     frame::types,
+    query,
 };
 
 pub struct Query {
@@ -19,5 +20,11 @@ impl Request for Query {
         types::write_short(0, buf); // Dummy consistency
         buf.put_u8(0); // Flags
         Ok(())
+    }
+}
+
+impl From<&query::Query> for Query {
+    fn from(q: &query::Query) -> Query {
+        Query { contents: q.get_contents().to_string() }
     }
 }
