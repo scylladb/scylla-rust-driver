@@ -4,5 +4,7 @@
 extern crate anyhow;
 
 pub mod frame;
-pub mod query;
 pub mod transport;
+pub mod statement;
+
+pub use statement::query;
