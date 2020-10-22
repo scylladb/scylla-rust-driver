@@ -12,7 +12,13 @@ pub use startup::Startup;
 #[repr(u8)]
 pub enum RequestOpcode {
     Startup = 0x01,
+    Options = 0x05,
     Query = 0x07,
+    Prepare = 0x09,
+    Execute = 0x0A,
+    Register = 0x0B,
+    Batch = 0x0D,
+    AuthResponse = 0x0F,
 }
 
 pub trait Request {
