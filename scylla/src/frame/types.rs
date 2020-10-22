@@ -63,6 +63,33 @@ fn type_short() {
     }
 }
 
+// https://github.com/apache/cassandra/blob/trunk/doc/native_protocol_v4.spec#L208
+pub fn read_bytes_opt<'a>(buf: &mut &'a [u8]) -> Result<Option<&'a [u8]>> {
+    let len = read_int(buf)?;
+    if len < 0 {
+        return Ok(None);
+    }
+    let len = len as usize;
+    let v = Some(&buf[0..len]);
+    buf.advance(len);
+    Ok(v)
+}
+
+// Same as read_bytes, but we assume the value won't be `null`
+pub fn read_bytes<'a>(buf: &mut &'a [u8]) -> Result<&'a [u8]> {
+    let len = read_int(buf)?;
+    if len < 0 {
+        return Err(anyhow!(
+            "unexpected length when deserializing `bytes` value: {}",
+            len
+        ));
+    }
+    let len = len as usize;
+    let v = &buf[0..len];
+    buf.advance(len);
+    Ok(v)
+}
+
 pub fn read_string<'a>(buf: &mut &'a [u8]) -> Result<&'a str> {
     let len = read_short(buf)? as usize;
     if buf.len() < len {

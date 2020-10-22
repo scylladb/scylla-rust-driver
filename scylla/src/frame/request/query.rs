@@ -17,7 +17,7 @@ impl Request for Query {
 
     fn serialize(&self, buf: &mut impl BufMut) -> Result<()> {
         types::write_long_string(&self.contents, buf)?;
-        types::write_short(0, buf); // Dummy consistency
+        types::write_short(1, buf); // consistency ONE
         buf.put_u8(0); // Flags
         Ok(())
     }
