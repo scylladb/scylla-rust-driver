@@ -1,5 +1,4 @@
 use anyhow::Result;
-use tokio::io::AsyncWriteExt;
 use tokio::net::{TcpStream, ToSocketAddrs};
 use tokio::sync::Mutex;
 
@@ -57,16 +56,26 @@ impl Connection {
     }
 
     // TODO: Return the response associated with that frame
-    async fn send_request(
+    async fn send_request<R: Request>(
         &self,
-        request: &impl Request,
+        request: &R,
         compression: Option<Compression>,
     ) -> Result<Response> {
-        let raw_request = frame::serialize_request(Default::default(), request, compression)?;
+        let raw_body = request.to_bytes()?;
         let mut locked_stream = self.stream.lock().await;
-        locked_stream.write_all(&raw_request).await?;
+        frame::write_request(
+            &mut *locked_stream,
+            Default::default(),
+            R::OPCODE,
+            raw_body,
+            compression,
+        )
+        .await?;
 
-        let (_, response) = frame::read_response(&mut *locked_stream, self.compression).await?;
+        let (_, opcode, raw_response) =
+            frame::read_response(&mut *locked_stream, self.compression).await?;
+        let response = Response::deserialize(opcode, &mut &*raw_response)?;
+
         Ok(response)
     }
 }

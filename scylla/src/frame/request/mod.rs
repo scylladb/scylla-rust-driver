@@ -4,7 +4,7 @@ pub mod query;
 pub mod startup;
 
 use anyhow::Result;
-use bytes::BufMut;
+use bytes::{BufMut, Bytes};
 use num_enum::TryFromPrimitive;
 
 pub use prepare::Prepare;
@@ -28,4 +28,10 @@ pub trait Request {
     const OPCODE: RequestOpcode;
 
     fn serialize(&self, buf: &mut impl BufMut) -> Result<()>;
+
+    fn to_bytes(&self) -> Result<Bytes> {
+        let mut v = Vec::new();
+        self.serialize(&mut v)?;
+        Ok(v.into())
+    }
 }
