@@ -1,6 +1,6 @@
 use anyhow::Result;
 
-use crate::types;
+use crate::frame::types;
 
 pub struct Error {
     pub code: i32,
