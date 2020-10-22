@@ -1,0 +1,14 @@
+[package]
+name = "examples"
+version = "0.0.0"
+publish = false
+edition = "2018"
+
+[dev-dependencies]
+anyhow = "1.0.33"
+scylla = { path = "../scylla" }
+tokio = { version = "0.3.0", features = ["full"] }
+
+[[example]]
+name = "example"
+path = "example.rs"
