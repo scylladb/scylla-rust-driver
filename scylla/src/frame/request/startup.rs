@@ -4,7 +4,7 @@ use bytes::BufMut;
 use std::collections::HashMap;
 
 use crate::{
-    frame::{request::Request, Opcode},
+    frame::request::{Request, RequestOpcode},
     types,
 };
 
@@ -13,7 +13,7 @@ pub struct Startup {
 }
 
 impl Request for Startup {
-    const OPCODE: Opcode = Opcode::Startup;
+    const OPCODE: RequestOpcode = RequestOpcode::Startup;
 
     fn serialize(&self, buf: &mut impl BufMut) -> Result<()> {
         types::write_string_map(&self.options, buf)?;
