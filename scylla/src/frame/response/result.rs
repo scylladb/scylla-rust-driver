@@ -13,8 +13,8 @@ pub struct SetKeyspace {
 #[derive(Debug)]
 pub struct Prepared {
     pub id: Bytes,
-    prepared_metadata: PreparedMetadata,
-    metadata: ResultMetadata,
+    pub prepared_metadata: PreparedMetadata,
+    result_metadata: ResultMetadata,
 }
 
 #[derive(Debug)]
@@ -84,24 +84,24 @@ impl CQLValue {
 }
 
 #[derive(Debug)]
-struct ColumnSpec {
+pub struct ColumnSpec {
     table_spec: TableSpec,
     name: String,
     typ: ColumnType,
 }
 
 #[derive(Debug)]
-struct ResultMetadata {
+pub struct ResultMetadata {
     col_count: usize,
     paging_state: Option<PagingState>,
     col_specs: Vec<ColumnSpec>,
 }
 
 #[derive(Debug)]
-struct PreparedMetadata {
-    col_count: usize,
-    pk_indexes: Vec<u16>,
-    col_specs: Vec<ColumnSpec>,
+pub struct PreparedMetadata {
+    pub col_count: usize,
+    pub pk_indexes: Vec<u16>,
+    pub col_specs: Vec<ColumnSpec>,
 }
 
 #[derive(Debug)]
@@ -325,11 +325,11 @@ fn deser_prepared(buf: &mut &[u8]) -> AResult<Prepared> {
     let id: Bytes = buf[0..id_len].to_owned().into();
     buf.advance(id_len);
     let prepared_metadata = deser_prepared_metadata(buf)?;
-    let metadata = deser_result_metadata(buf)?;
+    let result_metadata = deser_result_metadata(buf)?;
     Ok(Prepared {
         id,
         prepared_metadata,
-        metadata,
+        result_metadata,
     })
 }
 
