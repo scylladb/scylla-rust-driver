@@ -15,10 +15,6 @@ impl PreparedStatement {
         &self.id
     }
 
-    pub fn update_id(&mut self, id: Bytes) {
-        self.id = id
-    }
-
     pub fn get_statement(&self) -> &str {
         &self.statement
     }

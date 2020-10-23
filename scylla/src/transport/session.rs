@@ -89,7 +89,7 @@ impl Session {
 
     pub async fn execute<'a>(
         &self,
-        prepared: &mut PreparedStatement,
+        prepared: &PreparedStatement,
         values: &'a [Value],
     ) -> Result<Option<Vec<result::Row>>> {
         // FIXME: Prepared statement ids are local to a node, so we must make sure
@@ -102,7 +102,9 @@ impl Session {
                     9472 => {
                         // Repreparation of a statement is needed
                         let reprepared = self.prepare(prepared.get_statement()).await?;
-                        prepared.update_id(reprepared.get_id().to_owned());
+                        // Reprepared statement should keep its id - it's the md5 sum
+                        // of statement contents
+                        assert!(reprepared.get_id() == prepared.get_id());
                         let result = connection.execute(prepared, values).await?;
                         match result {
                             Response::Error(err) => Err(err.into()),
