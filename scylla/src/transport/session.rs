@@ -63,16 +63,16 @@ impl Session {
         }
     }
 
-    pub async fn prepare(&self, query: String) -> Result<PreparedStatement> {
+    pub async fn prepare(&self, query: &str) -> Result<PreparedStatement> {
         // FIXME: Prepared statement ids are local to a node, so we must make sure
         // that prepare() sends to all nodes and keeps all ids.
-        let result = self.any_connection().prepare(query.clone()).await?;
+        let result = self.any_connection().prepare(query.to_owned()).await?;
         match result {
             Response::Error(err) => {
                 Err(err.into())
             }
             Response::Result(result::Result::Prepared(p)) => {
-                Ok(PreparedStatement::new(p.id, query))
+                Ok(PreparedStatement::new(p.id, query.to_owned()))
             }
             _ => return Err(anyhow!("Unexpected frame received")),
         }
