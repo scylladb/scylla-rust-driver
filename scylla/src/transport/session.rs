@@ -80,9 +80,11 @@ impl Session {
         let result = self.any_connection().prepare(query.to_owned()).await?;
         match result {
             Response::Error(err) => Err(err.into()),
-            Response::Result(result::Result::Prepared(p)) => {
-                Ok(PreparedStatement::new(p.id, query.to_owned()))
-            }
+            Response::Result(result::Result::Prepared(p)) => Ok(PreparedStatement::new(
+                p.id,
+                p.prepared_metadata,
+                query.to_owned(),
+            )),
             _ => return Err(anyhow!("Unexpected frame received")),
         }
     }
