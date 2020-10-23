@@ -1,97 +1,72 @@
 use anyhow::Result;
+use futures::{future::RemoteHandle, FutureExt};
 use std::collections::HashMap;
-use std::convert::TryFrom;
 use std::net::SocketAddr;
-use std::sync::Arc;
-use tokio::net::{lookup_host, ToSocketAddrs};
+use std::sync::{Arc, RwLock};
 
 use crate::frame::response::result;
 use crate::frame::response::Response;
 use crate::frame::value::Value;
 use crate::prepared_statement::PreparedStatement;
 use crate::query::Query;
-use crate::routing::ShardInfo;
-use crate::transport::connection::Connection;
+use crate::routing::{murmur3_token, Node, Token};
+use crate::transport::connection::{open_connection, Connection};
 use crate::transport::iterator::RowIterator;
+use crate::transport::topology::{Topology, TopologyReader};
 use crate::transport::Compression;
 
-#[derive(PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
-pub struct Node {
-    // TODO: a potentially node may have multiple addresses, remember them?
-    // but we need an Ord instance on Node
-    addr: SocketAddr,
-}
+const POOL_LOCK_POISONED: &str =
+    "Connection pool lock is poisoned, this session is no longer usable. \
+                                  Drop it and create a new one.";
 
 pub struct Session {
     // invariant: nonempty
-    pool: HashMap<Node, Arc<Connection>>,
+    // PLEASE DO NOT EXPOSE IT TO THE USER OR PEOPLE WILL DIE
+    pool: Arc<RwLock<HashMap<Node, Arc<Connection>>>>,
+
+    // compression options passed to the session when it was created
+    compression: Option<Compression>,
+
+    topology: Topology,
+    _topology_reader_handle: RemoteHandle<()>,
 }
 
 /// Represents a CQL session, which can be used to communicate
 /// with the database
 impl Session {
+    // FIXME: Use ToSocketAddrs instead of SocketAddr in public interfaces
+    // because it's more convenient
     /// Estabilishes a CQL session with the database
     /// # Arguments
     ///
     /// * `addr` - address of the server
     /// * `compression` - optional compression settings
-    pub async fn connect(
-        addr: impl ToSocketAddrs + Clone,
-        compression: Option<Compression>,
-    ) -> Result<Self> {
-        let resolved = lookup_host(addr.clone())
-            .await?
-            .next()
-            .map_or(Err(anyhow!("no addresses found")), |a| Ok(a))?;
-        let mut connection = Connection::new(addr, compression).await?;
+    pub async fn connect(addr: SocketAddr, compression: Option<Compression>) -> Result<Self> {
+        let connection = open_connection(addr, compression).await?;
+        let node = Node { addr };
 
-        let options_result = connection.get_options().await?;
+        let (topology_reader, topology) = TopologyReader::new(node).await?;
+        let (fut, _topology_reader_handle) = topology_reader.run().remote_handle();
+        tokio::task::spawn(fut);
 
-        let (shard_info, supported_compression) = match options_result {
-            Response::Supported(mut supported) => {
-                let shard_info = ShardInfo::try_from(&supported.options).ok();
-                let supported_compression = supported
-                    .options
-                    .remove("COMPRESSION")
-                    .unwrap_or_else(Vec::new);
-                (shard_info, supported_compression)
-            }
-            _ => (None, Vec::new()),
-        };
-        connection.set_shard_info(shard_info);
+        let pool = Arc::new(RwLock::new(
+            vec![(node, Arc::new(connection))].into_iter().collect(),
+        ));
 
-        let mut options = HashMap::new();
-        options.insert("CQL_VERSION".to_string(), "4.0.0".to_string()); // FIXME: hardcoded values
-        if let Some(compression) = &compression {
-            let compression_str = compression.to_string();
-            if supported_compression.iter().any(|c| c == &compression_str) {
-                // Compression is reported to be supported by the server,
-                // request it from the server
-                options.insert("COMPRESSION".to_string(), compression.to_string());
-            } else {
-                // Fall back to no compression
-                connection.set_compression(None);
-            }
-        }
-        let result = connection.startup(options).await?;
-        match result {
-            Response::Ready => {}
-            Response::Authenticate => unimplemented!("Authentication is not yet implemented"),
-            _ => return Err(anyhow!("Unexpected frame received")),
-        }
-
-        let pool = vec![(Node { addr: resolved }, Arc::new(connection))]
-            .into_iter()
-            .collect();
-
-        Ok(Session { pool })
+        Ok(Session {
+            pool,
+            compression,
+            topology,
+            _topology_reader_handle,
+        })
     }
 
     // TODO: Should return an iterator over results
     // actually, if we consider "INSERT" a query, then no.
     // But maybe "INSERT" and "SELECT" should go through different methods,
     // so we expect "SELECT" to always return Vec<result::Row>?
-    /// Sends a query to the database and receives a response
+    /// Sends a query to the database and receives a response.
+    /// If `query` has paging enabled, this will return only the first page.
     /// # Arguments
     ///
     /// * `query` - query to be performed
@@ -101,20 +76,17 @@ impl Session {
         query: impl Into<Query>,
         values: &'a [Value],
     ) -> Result<Option<Vec<result::Row>>> {
-        let result = self
-            .any_connection()
-            .query(&query.into(), values, None)
-            .await?;
-        match result {
-            Response::Error(err) => Err(err.into()),
-            Response::Result(result::Result::Rows(rs)) => Ok(Some(rs.rows)),
-            Response::Result(_) => Ok(None),
-            _ => Err(anyhow!("Unexpected frame received")),
-        }
+        self.any_connection()?
+            .query_single_page(query, values)
+            .await
     }
 
-    pub fn query_iter(&self, query: impl Into<Query>, values: &[Value]) -> RowIterator {
-        RowIterator::new_for_query(self.any_connection(), query.into(), values.to_owned())
+    pub fn query_iter(&self, query: impl Into<Query>, values: &[Value]) -> Result<RowIterator> {
+        Ok(RowIterator::new_for_query(
+            self.any_connection()?,
+            query.into(),
+            values.to_owned(),
+        ))
     }
 
     /// Prepares a statement on the server side and returns a prepared statement,
@@ -124,7 +96,7 @@ impl Session {
     pub async fn prepare(&self, query: &str) -> Result<PreparedStatement> {
         // FIXME: Prepared statement ids are local to a node, so we must make sure
         // that prepare() sends to all nodes and keeps all ids.
-        let result = self.any_connection().prepare(query.to_owned()).await?;
+        let result = self.any_connection()?.prepare(query.to_owned()).await?;
         match result {
             Response::Error(err) => Err(err.into()),
             Response::Result(result::Result::Prepared(p)) => Ok(PreparedStatement::new(
@@ -148,7 +120,8 @@ impl Session {
     ) -> Result<Option<Vec<result::Row>>> {
         // FIXME: Prepared statement ids are local to a node, so we must make sure
         // that prepare() sends to all nodes and keeps all ids.
-        let connection = self.any_connection();
+        let token = calculate_token(prepared, values);
+        let connection = self.pick_connection(token).await?;
         let result = connection.execute(prepared, values, None).await?;
         match result {
             Response::Error(err) => {
@@ -192,20 +165,74 @@ impl Session {
         &self,
         prepared: impl Into<PreparedStatement>,
         values: &[Value],
-    ) -> RowIterator {
-        RowIterator::new_for_prepared_statement(
-            self.any_connection(),
+    ) -> Result<RowIterator> {
+        Ok(RowIterator::new_for_prepared_statement(
+            self.any_connection()?,
             prepared.into(),
             values.to_owned(),
-        )
+        ))
     }
 
-    fn any_connection(&self) -> Arc<Connection> {
-        self.pool.values().next().unwrap().clone()
+    /// Returns all connections that the session has currently opened.
+    pub fn get_connections(&self) -> Result<Vec<(Node, Arc<Connection>)>> {
+        Ok(self
+            .pool
+            .read()
+            .map_err(|_| anyhow!(POOL_LOCK_POISONED))?
+            .iter()
+            .map(|(&node, conn)| (node, conn.to_owned()))
+            .collect())
     }
 
-    /// Returns the connection pool used by this session
-    pub fn get_pool(&self) -> &HashMap<Node, Arc<Connection>> {
-        &self.pool
+    pub async fn refresh_topology(&self) -> Result<()> {
+        self.topology.refresh().await
     }
+
+    async fn pick_connection(&self, t: Token) -> Result<Arc<Connection>> {
+        // TODO: we try only the owner of the range (vnode) that the token lies in
+        // we should calculate the *set* of replicas for this token, using the replication strategy
+        // of the table being queried.
+        let owner = self.topology.read_ring()?.owner(t);
+        if let Some(c) = self
+            .pool
+            .read()
+            .map_err(|_| anyhow!(POOL_LOCK_POISONED))?
+            .get(&owner)
+        {
+            return Ok(c.clone());
+        }
+
+        // We don't have a connection for this node yet, create it.
+        // TODO: don't do this on the query path, but concurrently in some other fiber?
+        // Take any_connection() if there is no connection for this node (yet)?
+        let new_conn = open_connection(owner.addr, self.compression).await?;
+
+        Ok(self
+            .pool
+            .write()
+            .map_err(|_| anyhow!(POOL_LOCK_POISONED))?
+            .entry(owner)
+            // If someone opened a connection to this node faster while we were creating our own
+            // and inserted it into the pool, drop our connection and take the existing one.
+            .or_insert_with(|| Arc::new(new_conn))
+            .to_owned())
+    }
+
+    fn any_connection(&self) -> Result<Arc<Connection>> {
+        Ok(self
+            .pool
+            .read()
+            // TODO: better error message?
+            .map_err(|_| anyhow!(POOL_LOCK_POISONED))?
+            .values()
+            .next()
+            .ok_or_else(|| anyhow!("fatal error, broken invariant: no connections available"))?
+            .to_owned())
+    }
+}
+
+fn calculate_token<'a>(stmt: &PreparedStatement, values: &'a [Value]) -> Token {
+    // TODO: take the partitioner of the table that is being queried and calculate the token using
+    // that partitioner. The below logic gives correct token only for murmur3partitioner
+    murmur3_token(stmt.compute_partition_key(values))
 }

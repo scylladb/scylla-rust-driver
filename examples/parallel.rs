@@ -7,11 +7,11 @@ use tokio::sync::Semaphore;
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    let uri = env::var("SCYLLA_URI").unwrap_or("localhost:9042".to_string());
+    let uri = env::var("SCYLLA_URI").unwrap_or("127.0.0.1:9042".to_string());
 
     println!("Connecting to {} ...", uri);
 
-    let session = Arc::new(Session::connect(uri, None).await?);
+    let session = Arc::new(Session::connect(uri.parse()?, None).await?);
 
     session.query("CREATE KEYSPACE IF NOT EXISTS ks WITH REPLICATION = {'class' : 'SimpleStrategy', 'replication_factor' : 1}", &[]).await?;
 
