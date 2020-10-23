@@ -90,6 +90,16 @@ pub fn read_bytes<'a>(buf: &mut &'a [u8]) -> Result<&'a [u8]> {
     Ok(v)
 }
 
+pub fn write_bytes<'a>(v: &[u8], buf: &mut impl BufMut) -> Result<()> {
+    let len = v.len();
+    if len > i32::MAX as usize {
+        return Err(anyhow!("Byte slice is too long for 32-bits: {} bytes", len));
+    }
+    write_int(len as i32, buf);
+    buf.put_slice(v);
+    Ok(())
+}
+
 pub fn write_short_bytes<'a>(v: &[u8], buf: &mut impl BufMut) -> Result<()> {
     let len = v.len();
     if len > i16::MAX as usize {
