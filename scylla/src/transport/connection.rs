@@ -84,8 +84,8 @@ impl Connection {
         let query_frame = query::Query {
             contents: query.get_contents().to_owned(),
             parameters: query::QueryParameters {
-                consistency: 1, // ONE
                 values,
+                ..Default::default()
             },
         };
 
@@ -100,8 +100,8 @@ impl Connection {
         let execute_frame = execute::Execute {
             id: prepared_statement.get_id().to_owned(),
             parameters: query::QueryParameters {
-                consistency: 1, // ONE
                 values,
+                ..Default::default()
             },
         };
 

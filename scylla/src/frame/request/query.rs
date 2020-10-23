@@ -27,6 +27,15 @@ pub struct QueryParameters<'a> {
     pub values: &'a [Value],
 }
 
+impl Default for QueryParameters<'_> {
+    fn default() -> Self {
+        Self {
+            consistency: 1,
+            values: &[],
+        }
+    }
+}
+
 impl QueryParameters<'_> {
     pub fn serialize(&self, buf: &mut impl BufMut) -> Result<()> {
         types::write_short(self.consistency, buf);
