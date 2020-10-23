@@ -16,8 +16,12 @@ async fn test_connecting() {
         .await
         .unwrap();
     let prepared_statement = session
-        .prepare("INSERT INTO ks.t (a, b, c) VALUES (?, ?, ?)".to_owned())
+        .prepare("INSERT INTO ks.t (a, b, c) VALUES (?, ?, ?)")
         .await
         .unwrap();
     println!("Prepared statement: {:?}", prepared_statement);
+    session
+        .execute(&prepared_statement, values!(17_i32, 16_i32, "I'm prepared!!!"))
+        .await
+        .unwrap();
 }

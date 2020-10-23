@@ -3,6 +3,9 @@
 #[macro_use]
 extern crate anyhow;
 
+#[macro_use]
+pub mod macros;
+
 pub mod frame;
 pub mod transport;
 pub mod statement;

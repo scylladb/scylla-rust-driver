@@ -1,6 +1,7 @@
 pub mod query;
 pub mod startup;
 pub mod prepare;
+pub mod execute;
 
 use anyhow::Result;
 use bytes::BufMut;

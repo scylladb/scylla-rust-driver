@@ -7,11 +7,13 @@ use std::collections::HashMap;
 
 use crate::frame::{
     self,
-    request::{self, Request},
+    value::Value,
+    request::{self, Request, execute},
     response::Response,
 };
 use crate::transport::Compression;
 use crate::query::Query;
+use crate::statement::prepared_statement::PreparedStatement;
 
 pub struct Connection {
     stream: Mutex<TcpStream>,
@@ -38,6 +40,12 @@ impl Connection {
 
     pub async fn query(&self, query: &Query) -> Result<Response> {
         self.send_request(&request::Query::from(query), self.compression).await
+    }
+
+    pub async fn execute(&self, prepared_statement: &PreparedStatement, values: Vec<Value>) -> Result<Response> {
+        let execute_frame = execute::Execute{ id: prepared_statement.get_id().to_owned(), values };
+        //TODO: reprepare if execution failed because the statement was evicted from the server
+        self.send_request(&execute_frame, self.compression).await
     }
 
     // TODO: Return the response associated with that frame
