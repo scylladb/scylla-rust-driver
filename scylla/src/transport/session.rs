@@ -60,8 +60,12 @@ impl Session {
     // actually, if we consider "INSERT" a query, then no.
     // But maybe "INSERT" and "SELECT" should go through different methods,
     // so we expect "SELECT" to always return Vec<result::Row>?
-    pub async fn query(&self, query: impl Into<Query>) -> Result<Option<Vec<result::Row>>> {
-        let result = self.any_connection().query(&query.into()).await?;
+    pub async fn query<'a>(
+        &self,
+        query: impl Into<Query>,
+        values: &'a [Value],
+    ) -> Result<Option<Vec<result::Row>>> {
+        let result = self.any_connection().query(&query.into(), values).await?;
         match result {
             Response::Error(err) => Err(err.into()),
             Response::Result(result::Result::Rows(rs)) => Ok(Some(rs.rows)),

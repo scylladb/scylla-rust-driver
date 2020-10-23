@@ -19,7 +19,7 @@ async fn main() -> Result<()> {
         match readline {
             Ok(line) => {
                 rl.add_history_entry(line.as_str());
-                session.query(line).await.unwrap();
+                session.query(line, &[]).await.unwrap();
             }
             Err(ReadlineError::Interrupted) => break,
             Err(ReadlineError::Eof) => break,
