@@ -11,8 +11,8 @@ tokio = { version = "0.3.0", features = ["full"] }
 rustyline = "6.3.0"
 
 [[example]]
-name = "example"
-path = "example.rs"
+name = "basic"
+path = "basic.rs"
 
 [[example]]
 name = "cqlsh-rs"
