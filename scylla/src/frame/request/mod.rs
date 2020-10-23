@@ -1,15 +1,15 @@
+pub mod execute;
+pub mod prepare;
 pub mod query;
 pub mod startup;
-pub mod prepare;
-pub mod execute;
 
 use anyhow::Result;
 use bytes::BufMut;
 use num_enum::TryFromPrimitive;
 
+pub use prepare::Prepare;
 pub use query::Query;
 pub use startup::Startup;
-pub use prepare::Prepare;
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord, TryFromPrimitive)]
 #[repr(u8)]

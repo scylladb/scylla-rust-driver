@@ -1,2 +1,2 @@
-pub mod query;
 pub mod prepared_statement;
+pub mod query;

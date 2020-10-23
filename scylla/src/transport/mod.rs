@@ -5,7 +5,7 @@ pub mod session;
 #[derive(Copy, Clone)]
 pub enum Compression {
     /// LZ4 compression algorithm.
-    LZ4
+    LZ4,
 }
 
 #[cfg(test)]
