@@ -19,14 +19,9 @@ impl ShardInfo {
     }
 
     pub fn shard_of(&self, token: Token) -> Shard {
-        let nr_shards = self.nr_shards as u64;
-        let z = ((token.value.wrapping_add(i64::MIN)) as u64) << self.msb_ignore;
-        let lo = z & 0xffffffff;
-        let hi = (z >> 32) & 0xffffffff;
-        let mul1 = lo * nr_shards;
-        let mul2 = hi * nr_shards;
-        let sum = (mul1 >> 32) + mul2;
-        (sum >> 32) as Shard
+        let mut biased_token = (token.value as u64).wrapping_add(1u64 << 63);
+        biased_token <<= self.msb_ignore;
+        return (((biased_token as u128) * (self.nr_shards as u128)) >> 64) as Shard;
     }
 }
 
