@@ -10,14 +10,24 @@ async fn main() -> Result<()> {
 
     let session = Session::connect(uri, None).await?;
 
-    session.query("CREATE KEYSPACE IF NOT EXISTS ks WITH REPLICATION = {'class' : 'SimpleStrategy', 'replication_factor' : 1}").await?;
+    session.query("CREATE KEYSPACE IF NOT EXISTS ks WITH REPLICATION = {'class' : 'SimpleStrategy', 'replication_factor' : 1}", &[]).await?;
 
     session
-        .query("CREATE TABLE IF NOT EXISTS ks.t (a int, b int, c text, primary key (a, b))")
+        .query(
+            "CREATE TABLE IF NOT EXISTS ks.t (a int, b int, c text, primary key (a, b))",
+            &[],
+        )
         .await?;
 
     session
-        .query("INSERT INTO ks.t (a, b, c) VALUES (1, 2, 'abc')")
+        .query(
+            "INSERT INTO ks.t (a, b, c) VALUES (?, ?, ?)",
+            &scylla::values!(3, 4, "def"),
+        )
+        .await?;
+
+    session
+        .query("INSERT INTO ks.t (a, b, c) VALUES (1, 2, 'abc')", &[])
         .await?;
 
     let mut prepared = session
@@ -27,7 +37,7 @@ async fn main() -> Result<()> {
         .execute(&mut prepared, &scylla::values!(42_i32, "I'm prepared!"))
         .await?;
 
-    if let Some(rs) = session.query("SELECT a, b, c FROM ks.t").await? {
+    if let Some(rs) = session.query("SELECT a, b, c FROM ks.t", &[]).await? {
         for r in rs {
             let a = r.columns[0].as_ref().unwrap().as_int().unwrap();
             let b = r.columns[1].as_ref().unwrap().as_int().unwrap();

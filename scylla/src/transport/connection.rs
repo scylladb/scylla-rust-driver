@@ -10,7 +10,7 @@ use std::sync::Mutex as StdMutex;
 
 use crate::frame::{
     self,
-    request::{self, execute, Request, RequestOpcode},
+    request::{self, execute, query, Request, RequestOpcode},
     response::{Response, ResponseOpcode},
     value::Value,
     FrameParams,
@@ -73,8 +73,16 @@ impl Connection {
         self.send_request(&request::Prepare { query }, true).await
     }
 
-    pub async fn query(&self, query: &Query) -> Result<Response> {
-        self.send_request(&request::Query::from(query), true).await
+    pub async fn query<'a>(&self, query: &Query, values: &'a [Value]) -> Result<Response> {
+        let query_frame = query::Query {
+            contents: query.get_contents().to_owned(),
+            parameters: query::QueryParameters {
+                consistency: 1, // ONE
+                values,
+            },
+        };
+
+        self.send_request(&query_frame, true).await
     }
 
     pub async fn execute<'a>(
@@ -84,7 +92,10 @@ impl Connection {
     ) -> Result<Response> {
         let execute_frame = execute::Execute {
             id: prepared_statement.get_id().to_owned(),
-            values,
+            parameters: query::QueryParameters {
+                consistency: 1, // ONE
+                values,
+            },
         };
 
         self.send_request(&execute_frame, true).await

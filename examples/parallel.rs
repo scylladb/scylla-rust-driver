@@ -13,10 +13,13 @@ async fn main() -> Result<()> {
 
     let session = Arc::new(Session::connect(uri, None).await?);
 
-    session.query("CREATE KEYSPACE IF NOT EXISTS ks WITH REPLICATION = {'class' : 'SimpleStrategy', 'replication_factor' : 1}").await?;
+    session.query("CREATE KEYSPACE IF NOT EXISTS ks WITH REPLICATION = {'class' : 'SimpleStrategy', 'replication_factor' : 1}", &[]).await?;
 
     session
-        .query("CREATE TABLE IF NOT EXISTS ks.t2 (a int, b int, c text, primary key (a, b))")
+        .query(
+            "CREATE TABLE IF NOT EXISTS ks.t2 (a int, b int, c text, primary key (a, b))",
+            &[],
+        )
         .await?;
 
     let sem = Arc::new(Semaphore::new(256));
@@ -30,11 +33,14 @@ async fn main() -> Result<()> {
         tokio::task::spawn(async move {
             let i = i;
             session
-                .query(format!(
-                    "INSERT INTO ks.t2 (a, b, c) VALUES ({}, {}, 'abc')",
-                    i,
-                    2 * i
-                ))
+                .query(
+                    format!(
+                        "INSERT INTO ks.t2 (a, b, c) VALUES ({}, {}, 'abc')",
+                        i,
+                        2 * i
+                    ),
+                    &[],
+                )
                 .await
                 .unwrap();
 

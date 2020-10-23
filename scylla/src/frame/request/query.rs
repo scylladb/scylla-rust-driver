@@ -4,29 +4,55 @@ use bytes::BufMut;
 use crate::{
     frame::request::{Request, RequestOpcode},
     frame::types,
-    query,
+    frame::value::Value,
 };
 
-pub struct Query {
+pub struct Query<'a> {
     pub contents: String,
-    // TODO: All remaining parameters
+    pub parameters: QueryParameters<'a>,
 }
 
-impl Request for Query {
+impl Request for Query<'_> {
     const OPCODE: RequestOpcode = RequestOpcode::Query;
 
     fn serialize(&self, buf: &mut impl BufMut) -> Result<()> {
         types::write_long_string(&self.contents, buf)?;
-        types::write_short(1, buf); // consistency ONE
-        buf.put_u8(0); // Flags
+        self.parameters.serialize(buf)?;
         Ok(())
     }
 }
 
-impl From<&query::Query> for Query {
-    fn from(q: &query::Query) -> Query {
-        Query {
-            contents: q.get_contents().to_string(),
+pub struct QueryParameters<'a> {
+    pub consistency: i16,
+    pub values: &'a [Value],
+}
+
+impl QueryParameters<'_> {
+    pub fn serialize(&self, buf: &mut impl BufMut) -> Result<()> {
+        types::write_short(self.consistency, buf);
+
+        let mut flags = 0;
+        if !self.values.is_empty() {
+            flags |= 1 << 0;
         }
+
+        buf.put_u8(flags);
+
+        if !self.values.is_empty() {
+            buf.put_i16(self.values.len() as i16);
+
+            for value in self.values {
+                match value {
+                    Value::Val(v) => {
+                        types::write_int(v.len() as i32, buf);
+                        buf.put_slice(&v[..]);
+                    }
+                    Value::Null => types::write_int(-1, buf),
+                    Value::NotSet => types::write_int(-2, buf),
+                }
+            }
+        }
+
+        Ok(())
     }
 }
