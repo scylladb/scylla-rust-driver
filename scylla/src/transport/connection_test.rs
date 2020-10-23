@@ -18,14 +18,14 @@ async fn test_connecting() {
         .query("INSERT INTO ks.t (a, b, c) VALUES (1, 2, 'abc')", &[])
         .await
         .unwrap();
-    let mut prepared_statement = session
+    let prepared_statement = session
         .prepare("INSERT INTO ks.t (a, b, c) VALUES (?, ?, ?)")
         .await
         .unwrap();
     println!("Prepared statement: {:?}", prepared_statement);
     session
         .execute(
-            &mut prepared_statement,
+            &prepared_statement,
             &values!(17_i32, 16_i32, "I'm prepared!!!"),
         )
         .await
