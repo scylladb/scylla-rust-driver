@@ -77,16 +77,16 @@ impl Connection {
         self.send_request(&request::Query::from(query), true).await
     }
 
-    pub async fn execute(
+    pub async fn execute<'a>(
         &self,
         prepared_statement: &PreparedStatement,
-        values: Vec<Value>,
+        values: &'a [Value],
     ) -> Result<Response> {
         let execute_frame = execute::Execute {
             id: prepared_statement.get_id().to_owned(),
             values,
         };
-        //TODO: reprepare if execution failed because the statement was evicted from the server
+
         self.send_request(&execute_frame, true).await
     }
 

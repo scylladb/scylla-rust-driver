@@ -83,19 +83,33 @@ impl Session {
         }
     }
 
-    pub async fn execute(
+    pub async fn execute<'a>(
         &self,
-        prepared_statement: &PreparedStatement,
-        values: Vec<Value>,
+        prepared: &mut PreparedStatement,
+        values: &'a [Value],
     ) -> Result<Option<Vec<result::Row>>> {
         // FIXME: Prepared statement ids are local to a node, so we must make sure
         // that prepare() sends to all nodes and keeps all ids.
-        let result = self
-            .any_connection()
-            .execute(prepared_statement, values)
-            .await?;
+        let connection = self.any_connection();
+        let result = connection.execute(prepared, values).await?;
         match result {
-            Response::Error(err) => Err(err.into()),
+            Response::Error(err) => {
+                match err.code {
+                    9472 => {
+                        // Repreparation of a statement is needed
+                        let reprepared = self.prepare(prepared.get_statement()).await?;
+                        prepared.update_id(reprepared.get_id().to_owned());
+                        let result = connection.execute(prepared, values).await?;
+                        match result {
+                            Response::Error(err) => Err(err.into()),
+                            Response::Result(result::Result::Rows(rs)) => Ok(Some(rs.rows)),
+                            Response::Result(_) => Ok(None),
+                            _ => Err(anyhow!("Unexpected frame received")),
+                        }
+                    }
+                    _ => Err(err.into()),
+                }
+            }
             Response::Result(result::Result::Rows(rs)) => Ok(Some(rs.rows)),
             Response::Result(_) => Ok(None),
             _ => Err(anyhow!("Unexpected frame received")),

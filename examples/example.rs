@@ -20,11 +20,11 @@ async fn main() -> Result<()> {
         .query("INSERT INTO ks.t (a, b, c) VALUES (1, 2, 'abc')")
         .await?;
 
-    let prepared = session
+    let mut prepared = session
         .prepare("INSERT INTO ks.t (a, b, c) VALUES (?, 7, ?)")
         .await?;
     session
-        .execute(&prepared, scylla::values!(42_i32, "I'm prepared!"))
+        .execute(&mut prepared, &scylla::values!(42_i32, "I'm prepared!"))
         .await?;
 
     if let Some(rs) = session.query("SELECT a, b, c FROM ks.t").await? {

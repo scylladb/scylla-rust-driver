@@ -7,12 +7,12 @@ use crate::{
     frame::value::Value,
 };
 
-pub struct Execute {
+pub struct Execute<'a> {
     pub id: Bytes,
-    pub values: Vec<Value>,
+    pub values: &'a [Value],
 }
 
-impl Request for Execute {
+impl Request for Execute<'_> {
     const OPCODE: RequestOpcode = RequestOpcode::Execute;
 
     fn serialize(&self, buf: &mut impl BufMut) -> Result<()> {
@@ -25,7 +25,7 @@ impl Request for Execute {
         if !self.values.is_empty() {
             buf.put_i16(self.values.len() as i16);
         }
-        for value in &self.values {
+        for value in self.values {
             match value {
                 Value::Val(v) => {
                     types::write_int(v.len() as i32, buf);
