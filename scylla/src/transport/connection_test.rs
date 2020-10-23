@@ -21,7 +21,10 @@ async fn test_connecting() {
         .unwrap();
     println!("Prepared statement: {:?}", prepared_statement);
     session
-        .execute(&prepared_statement, values!(17_i32, 16_i32, "I'm prepared!!!"))
+        .execute(
+            &prepared_statement,
+            values!(17_i32, 16_i32, "I'm prepared!!!"),
+        )
         .await
         .unwrap();
 }

@@ -25,6 +25,8 @@ impl Request for Query {
 
 impl From<&query::Query> for Query {
     fn from(q: &query::Query) -> Query {
-        Query { contents: q.get_contents().to_string() }
+        Query {
+            contents: q.get_contents().to_string(),
+        }
     }
 }

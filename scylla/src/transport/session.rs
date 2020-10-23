@@ -1,13 +1,13 @@
 use anyhow::Result;
-use tokio::net::{lookup_host, ToSocketAddrs};
-use std::net::SocketAddr;
 use std::collections::{BTreeMap, HashMap};
+use std::net::SocketAddr;
+use tokio::net::{lookup_host, ToSocketAddrs};
 
-use crate::frame::response::Response;
 use crate::frame::response::result;
+use crate::frame::response::Response;
 use crate::frame::value::Value;
-use crate::query::Query;
 use crate::prepared_statement::PreparedStatement;
+use crate::query::Query;
 use crate::transport::connection::Connection;
 use crate::transport::Compression;
 
@@ -24,7 +24,10 @@ pub struct Session {
 }
 
 impl Session {
-    pub async fn connect(addr: impl ToSocketAddrs + Clone, compression: Option<Compression>) -> Result<Self> {
+    pub async fn connect(
+        addr: impl ToSocketAddrs + Clone,
+        compression: Option<Compression>,
+    ) -> Result<Self> {
         let mut options = HashMap::new();
         if let Some(compression) = &compression {
             let val = match compression {
@@ -33,12 +36,16 @@ impl Session {
             options.insert("COMPRESSION".to_string(), val.to_string());
         }
 
-        let resolved = lookup_host(addr.clone()).await?.next().map_or(
-            Err(anyhow!("no addresses found")), |a| Ok(a))?;
+        let resolved = lookup_host(addr.clone())
+            .await?
+            .next()
+            .map_or(Err(anyhow!("no addresses found")), |a| Ok(a))?;
         let connection = Connection::new(addr, compression).await?;
         connection.startup(options).await?;
 
-        let pool = vec![(Node{ addr: resolved }, connection)].into_iter().collect();
+        let pool = vec![(Node { addr: resolved }, connection)]
+            .into_iter()
+            .collect();
 
         Ok(Session { pool })
     }
@@ -50,15 +57,9 @@ impl Session {
     pub async fn query(&self, query: impl Into<Query>) -> Result<Option<Vec<result::Row>>> {
         let result = self.any_connection().query(&query.into()).await?;
         match result {
-            Response::Error(err) => {
-                Err(err.into())
-            }
-            Response::Result(result::Result::Rows(rs)) => {
-                Ok(Some(rs.rows))
-            }
-            Response::Result(_) => {
-                Ok(None)
-            }
+            Response::Error(err) => Err(err.into()),
+            Response::Result(result::Result::Rows(rs)) => Ok(Some(rs.rows)),
+            Response::Result(_) => Ok(None),
             _ => Err(anyhow!("Unexpected frame received")),
         }
     }
@@ -68,9 +69,7 @@ impl Session {
         // that prepare() sends to all nodes and keeps all ids.
         let result = self.any_connection().prepare(query.to_owned()).await?;
         match result {
-            Response::Error(err) => {
-                Err(err.into())
-            }
+            Response::Error(err) => Err(err.into()),
             Response::Result(result::Result::Prepared(p)) => {
                 Ok(PreparedStatement::new(p.id, query.to_owned()))
             }
@@ -78,20 +77,21 @@ impl Session {
         }
     }
 
-    pub async fn execute(&self, prepared_statement: &PreparedStatement, values: Vec<Value>) -> Result<Option<Vec<result::Row>>> {
+    pub async fn execute(
+        &self,
+        prepared_statement: &PreparedStatement,
+        values: Vec<Value>,
+    ) -> Result<Option<Vec<result::Row>>> {
         // FIXME: Prepared statement ids are local to a node, so we must make sure
         // that prepare() sends to all nodes and keeps all ids.
-        let result = self.any_connection().execute(prepared_statement, values).await?;
+        let result = self
+            .any_connection()
+            .execute(prepared_statement, values)
+            .await?;
         match result {
-            Response::Error(err) => {
-                Err(err.into())
-            }
-            Response::Result(result::Result::Rows(rs)) => {
-                Ok(Some(rs.rows))
-            }
-            Response::Result(_) => {
-                Ok(None)
-            }
+            Response::Error(err) => Err(err.into()),
+            Response::Result(result::Result::Rows(rs)) => Ok(Some(rs.rows)),
+            Response::Result(_) => Ok(None),
             _ => Err(anyhow!("Unexpected frame received")),
         }
     }

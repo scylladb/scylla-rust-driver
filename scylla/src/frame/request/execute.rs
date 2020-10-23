@@ -1,5 +1,5 @@
 use anyhow::Result;
-use bytes::{Bytes,BufMut};
+use bytes::{BufMut, Bytes};
 
 use crate::{
     frame::request::{Request, RequestOpcode},
@@ -30,9 +30,9 @@ impl Request for Execute {
                 Value::Val(v) => {
                     types::write_int(v.len() as i32, buf);
                     buf.put_slice(&v[..]);
-                },
+                }
                 Value::Null => types::write_int(-1, buf),
-                Value::NotSet => types::write_int(-2, buf)
+                Value::NotSet => types::write_int(-2, buf),
             }
         }
         println!("Buf {:?}", self.values);

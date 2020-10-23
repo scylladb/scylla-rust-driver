@@ -3,10 +3,10 @@ pub mod response;
 pub mod types;
 pub mod value;
 
+use crate::transport::Compression;
 use anyhow::Result;
 use bytes::{Buf, BufMut, Bytes};
 use tokio::io::{AsyncRead, AsyncReadExt};
-use crate::transport::Compression;
 
 use std::convert::TryFrom;
 
@@ -32,7 +32,11 @@ impl Default for FrameParams {
     }
 }
 
-pub fn serialize_request<R: Request>(params: FrameParams, request: &R, compression: Option<Compression>) -> Result<Bytes> {
+pub fn serialize_request<R: Request>(
+    params: FrameParams,
+    request: &R,
+    compression: Option<Compression>,
+) -> Result<Bytes> {
     let mut v = Vec::new();
     v.put_u8(params.version);
     let compression_flag = if compression.is_some() { 0x01 } else { 0x00 };
@@ -123,7 +127,9 @@ async fn read_body(
         if let Some(compression) = compression {
             decompress(&raw_body, compression)
         } else {
-            Err(anyhow!("Frame is compressed, but no compression negotiated for connection."))
+            Err(anyhow!(
+                "Frame is compressed, but no compression negotiated for connection."
+            ))
         }
     } else {
         Ok(raw_body)
@@ -143,12 +149,9 @@ fn compress(uncomp_body: &[u8], compression: Compression) -> Vec<u8> {
 
 fn decompress(comp_body: &[u8], compression: Compression) -> Result<Vec<u8>> {
     match compression {
-        Compression::LZ4 => {
-            match decompress::decompress(&comp_body[4..]) {
-                Ok(uncomp_body) => Ok(uncomp_body),
-                Err(e) => Err(anyhow!("Frame decompression failed: {:?}", e)),
-            }
-        
-        }
+        Compression::LZ4 => match decompress::decompress(&comp_body[4..]) {
+            Ok(uncomp_body) => Ok(uncomp_body),
+            Err(e) => Err(anyhow!("Frame decompression failed: {:?}", e)),
+        },
     }
 }

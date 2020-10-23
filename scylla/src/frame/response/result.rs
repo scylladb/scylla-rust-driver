@@ -1,7 +1,7 @@
 use anyhow::Result as AResult;
-use std::str;
 use byteorder::{BigEndian, ReadBytesExt};
-use bytes::{Buf,Bytes};
+use bytes::{Buf, Bytes};
+use std::str;
 
 use crate::frame::types;
 
@@ -22,7 +22,7 @@ pub struct SchemaChange {
     // TODO
 }
 
-#[derive(Clone,Debug)]
+#[derive(Clone, Debug)]
 struct TableSpec {
     ks_name: String,
     table_name: String,
@@ -55,28 +55,28 @@ impl CQLValue {
     pub fn as_ascii(&self) -> Option<&String> {
         match self {
             Self::Ascii(s) => Some(&s),
-            _ => None
+            _ => None,
         }
     }
 
     pub fn as_int(&self) -> Option<i32> {
         match self {
             Self::Int(i) => Some(*i),
-            _ => None
+            _ => None,
         }
     }
 
     pub fn as_text(&self) -> Option<&String> {
         match self {
             Self::Text(s) => Some(&s),
-            _ => None
+            _ => None,
         }
     }
 
     pub fn as_set(&self) -> Option<&Vec<CQLValue>> {
         match self {
             Self::Set(s) => Some(&s),
-            _ => None
+            _ => None,
         }
     }
 
@@ -94,14 +94,14 @@ struct ColumnSpec {
 struct ResultMetadata {
     col_count: usize,
     paging_state: Option<PagingState>,
-    col_specs: Vec<ColumnSpec>
+    col_specs: Vec<ColumnSpec>,
 }
 
 #[derive(Debug)]
 struct PreparedMetadata {
     col_count: usize,
     pk_indexes: Vec<u16>,
-    col_specs: Vec<ColumnSpec>
+    col_specs: Vec<ColumnSpec>,
 }
 
 #[derive(Debug)]
@@ -128,7 +128,10 @@ pub enum Result {
 fn deser_table_spec(buf: &mut &[u8]) -> AResult<TableSpec> {
     let ks_name = types::read_string(buf)?.to_owned();
     let table_name = types::read_string(buf)?.to_owned();
-    Ok(TableSpec{ ks_name, table_name })
+    Ok(TableSpec {
+        ks_name,
+        table_name,
+    })
 }
 
 fn deser_type(buf: &mut &[u8]) -> AResult<ColumnType> {
@@ -146,13 +149,25 @@ fn deser_type(buf: &mut &[u8]) -> AResult<ColumnType> {
     })
 }
 
-fn deser_col_specs(buf: &mut &[u8], global_table_spec: &Option<TableSpec>, col_count: usize) -> AResult<Vec<ColumnSpec>> {
+fn deser_col_specs(
+    buf: &mut &[u8],
+    global_table_spec: &Option<TableSpec>,
+    col_count: usize,
+) -> AResult<Vec<ColumnSpec>> {
     let mut col_specs = Vec::with_capacity(col_count);
     for _ in 0..col_count {
-        let table_spec = if let Some(spec) = global_table_spec { spec.clone() } else { deser_table_spec(buf)? };
+        let table_spec = if let Some(spec) = global_table_spec {
+            spec.clone()
+        } else {
+            deser_table_spec(buf)?
+        };
         let name = types::read_string(buf)?.to_owned();
         let typ = deser_type(buf)?;
-        col_specs.push(ColumnSpec{ table_spec, name, typ });
+        col_specs.push(ColumnSpec {
+            table_spec,
+            name,
+            typ,
+        });
     }
     Ok(col_specs)
 }
@@ -173,14 +188,26 @@ fn deser_result_metadata(buf: &mut &[u8]) -> AResult<ResultMetadata> {
     let paging_state = None;
 
     if no_metadata {
-        return Ok(ResultMetadata{col_count, paging_state, col_specs: vec![]});
+        return Ok(ResultMetadata {
+            col_count,
+            paging_state,
+            col_specs: vec![],
+        });
     }
 
-    let global_table_spec = if global_tables_spec { Some(deser_table_spec(buf)?) } else { None };
+    let global_table_spec = if global_tables_spec {
+        Some(deser_table_spec(buf)?)
+    } else {
+        None
+    };
 
     let col_specs = deser_col_specs(buf, &global_table_spec, col_count)?;
 
-    Ok(ResultMetadata{col_count, paging_state, col_specs})
+    Ok(ResultMetadata {
+        col_count,
+        paging_state,
+        col_specs,
+    })
 }
 
 fn deser_prepared_metadata(buf: &mut &[u8]) -> AResult<PreparedMetadata> {
@@ -204,11 +231,19 @@ fn deser_prepared_metadata(buf: &mut &[u8]) -> AResult<PreparedMetadata> {
         pk_indexes.push(types::read_short(buf)? as u16);
     }
 
-    let global_table_spec = if global_tables_spec { Some(deser_table_spec(buf)?) } else { None };
+    let global_table_spec = if global_tables_spec {
+        Some(deser_table_spec(buf)?)
+    } else {
+        None
+    };
 
     let col_specs = deser_col_specs(buf, &global_table_spec, col_count)?;
 
-    Ok(PreparedMetadata{col_count, pk_indexes, col_specs})
+    Ok(PreparedMetadata {
+        col_count,
+        pk_indexes,
+        col_specs,
+    })
 }
 
 fn deser_cql_value(typ: &ColumnType, buf: &mut &[u8]) -> AResult<CQLValue> {
@@ -219,16 +254,17 @@ fn deser_cql_value(typ: &ColumnType, buf: &mut &[u8]) -> AResult<CQLValue> {
                 return Err(anyhow!("Not an ascii string: {:?}", buf));
             }
             CQLValue::Ascii(str::from_utf8(buf)?.to_owned())
-        },
+        }
         Int => {
             if buf.len() != 4 {
-                return Err(anyhow!("Expected buffer length of 4 bytes, got: {}", buf.len()));
+                return Err(anyhow!(
+                    "Expected buffer length of 4 bytes, got: {}",
+                    buf.len()
+                ));
             }
             CQLValue::Int(buf.read_i32::<BigEndian>()?)
-        },
-        Text => {
-            CQLValue::Text(str::from_utf8(buf)?.to_owned())
-        },
+        }
+        Text => CQLValue::Text(str::from_utf8(buf)?.to_owned()),
         Set(typ) => {
             let len = types::read_int(buf)?;
             if len < 0 {
@@ -266,16 +302,22 @@ fn deser_rows(buf: &mut &[u8]) -> AResult<Rows> {
         for i in 0..metadata.col_count {
             let v = if let Some(mut b) = types::read_bytes_opt(buf)? {
                 Some(deser_cql_value(&metadata.col_specs[i].typ, &mut b)?)
-            } else { None };
+            } else {
+                None
+            };
             columns.push(v);
         }
-        rows.push(Row{columns: columns});
+        rows.push(Row { columns: columns });
     }
-    Ok(Rows{metadata, rows_count, rows})
+    Ok(Rows {
+        metadata,
+        rows_count,
+        rows,
+    })
 }
 
 fn deser_set_keyspace(_buf: &mut &[u8]) -> AResult<SetKeyspace> {
-    Ok(SetKeyspace{}) // TODO
+    Ok(SetKeyspace {}) // TODO
 }
 
 fn deser_prepared(buf: &mut &[u8]) -> AResult<Prepared> {
@@ -284,11 +326,15 @@ fn deser_prepared(buf: &mut &[u8]) -> AResult<Prepared> {
     buf.advance(id_len);
     let prepared_metadata = deser_prepared_metadata(buf)?;
     let metadata = deser_result_metadata(buf)?;
-    Ok(Prepared{ id, prepared_metadata, metadata })
+    Ok(Prepared {
+        id,
+        prepared_metadata,
+        metadata,
+    })
 }
 
 fn deser_schema_change(_buf: &mut &[u8]) -> AResult<SchemaChange> {
-    Ok(SchemaChange{}) // TODO
+    Ok(SchemaChange {}) // TODO
 }
 
 pub fn deserialize(buf: &mut &[u8]) -> AResult<Result> {
@@ -299,6 +345,6 @@ pub fn deserialize(buf: &mut &[u8]) -> AResult<Result> {
         0x0003 => SetKeyspace(deser_set_keyspace(buf)?),
         0x0004 => Prepared(deser_prepared(buf)?),
         0x0005 => SchemaChange(deser_schema_change(buf)?),
-        k => return Err(anyhow!("Unknown query result kind: {}", k))
+        k => return Err(anyhow!("Unknown query result kind: {}", k)),
     })
 }
