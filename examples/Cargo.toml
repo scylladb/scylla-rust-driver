@@ -17,3 +17,7 @@ path = "example.rs"
 [[example]]
 name = "cqlsh-rs"
 path = "cqlsh-rs.rs"
+
+[[example]]
+name = "parallel"
+path = "parallel.rs"

@@ -50,6 +50,12 @@ impl Session {
         Ok(Session { pool })
     }
 
+    pub async fn close(self) {
+        for (_, conn) in self.pool.into_iter() {
+            conn.close().await;
+        }
+    }
+
     // TODO: Should return an iterator over results
     // actually, if we consider "INSERT" a query, then no.
     // But maybe "INSERT" and "SELECT" should go through different methods,
