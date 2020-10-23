@@ -5,6 +5,7 @@ use std::collections::{BTreeMap, HashMap};
 
 use crate::frame::response::Response;
 use crate::frame::response::result;
+use crate::frame::value::Value;
 use crate::query::Query;
 use crate::prepared_statement::PreparedStatement;
 use crate::transport::connection::Connection;
@@ -63,6 +64,8 @@ impl Session {
     }
 
     pub async fn prepare(&self, query: String) -> Result<PreparedStatement> {
+        // FIXME: Prepared statement ids are local to a node, so we must make sure
+        // that prepare() sends to all nodes and keeps all ids.
         let result = self.any_connection().prepare(query.clone()).await?;
         match result {
             Response::Error(err) => {
@@ -72,6 +75,24 @@ impl Session {
                 Ok(PreparedStatement::new(p.id, query))
             }
             _ => return Err(anyhow!("Unexpected frame received")),
+        }
+    }
+
+    pub async fn execute(&self, prepared_statement: &PreparedStatement, values: Vec<Value>) -> Result<Option<Vec<result::Row>>> {
+        // FIXME: Prepared statement ids are local to a node, so we must make sure
+        // that prepare() sends to all nodes and keeps all ids.
+        let result = self.any_connection().execute(prepared_statement, values).await?;
+        match result {
+            Response::Error(err) => {
+                Err(err.into())
+            }
+            Response::Result(result::Result::Rows(rs)) => {
+                Ok(Some(rs.rows))
+            }
+            Response::Result(_) => {
+                Ok(None)
+            }
+            _ => Err(anyhow!("Unexpected frame received")),
         }
     }
 

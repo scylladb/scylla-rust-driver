@@ -1,6 +1,7 @@
 pub mod request;
 pub mod response;
 pub mod types;
+pub mod value;
 
 use anyhow::Result;
 use bytes::{Buf, BufMut, Bytes};
