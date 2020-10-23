@@ -7,6 +7,7 @@ extern crate anyhow;
 pub mod macros;
 
 pub mod frame;
+pub mod routing;
 pub mod statement;
 pub mod transport;
 
