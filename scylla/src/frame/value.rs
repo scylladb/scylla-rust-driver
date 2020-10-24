@@ -1,6 +1,6 @@
 use bytes::Bytes;
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum Value {
     Val(Bytes),
     Null,

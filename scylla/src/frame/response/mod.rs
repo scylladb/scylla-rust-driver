@@ -22,6 +22,7 @@ pub enum ResponseOpcode {
     AuthSuccess = 0x10,
 }
 
+#[derive(Debug)]
 pub enum Response {
     Error(Error),
     Ready,
