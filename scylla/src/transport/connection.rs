@@ -1,7 +1,7 @@
 use anyhow::Result;
 use bytes::Bytes;
 use tokio::net::{tcp, TcpStream, ToSocketAddrs};
-use tokio::sync::{mpsc, oneshot};
+use tokio::sync::{mpsc, oneshot, Mutex, RwLock};
 use tokio::task::JoinHandle;
 
 use std::cmp::Ordering;
@@ -21,8 +21,8 @@ use crate::statement::prepared_statement::PreparedStatement;
 use crate::transport::Compression;
 
 pub struct Connection {
-    submit_channel: mpsc::Sender<Task>,
-    worker_handle: JoinHandle<()>,
+    submit_channel: RwLock<Option<mpsc::Sender<Task>>>,
+    worker_handle: Mutex<Option<JoinHandle<()>>>,
     shard_info: Option<ShardInfo>,
 }
 
@@ -50,8 +50,8 @@ impl Connection {
         let handle = tokio::task::spawn(Self::router(stream, receiver, compression));
 
         Ok(Self {
-            submit_channel: sender,
-            worker_handle: handle,
+            submit_channel: RwLock::new(Some(sender)),
+            worker_handle: Mutex::new(Some(handle)),
             shard_info: None,
         })
     }
@@ -59,12 +59,18 @@ impl Connection {
     // It's not required for the worker to stop - it will also stop
     // if connection is dropped without closing - but it allows
     // to wait until the worker is finished.
-    pub async fn close(self) {
+    pub async fn close(&self) -> Result<()> {
+        // Drop the submit channel
         // This will cause the worker to eventually stop
-        std::mem::drop(self.submit_channel);
+        self.submit_channel.write().await.take();
 
         // Wait for the worker to stop
-        self.worker_handle.await.unwrap();
+        if let Some(worker_handle) = self.worker_handle.lock().await.take() {
+            worker_handle.await.unwrap();
+            Ok(())
+        } else {
+            Err(anyhow!("Connection was already closed"))
+        }
     }
 
     pub async fn startup(&self, options: HashMap<String, String>) -> Result<Response> {
@@ -112,7 +118,14 @@ impl Connection {
     async fn send_request<R: Request>(&self, request: &R, compress: bool) -> Result<Response> {
         let raw_request = request.to_bytes()?;
         let (sender, receiver) = oneshot::channel();
-        self.submit_channel
+        let submit_channel = self
+            .submit_channel
+            .read()
+            .await
+            .clone()
+            .ok_or_else(|| anyhow!("Connection closed"))?;
+
+        submit_channel
             .send(Task {
                 request_opcode: R::OPCODE,
                 request_body: raw_request,
