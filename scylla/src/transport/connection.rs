@@ -290,6 +290,10 @@ impl Connection {
     pub fn set_shard_info(&mut self, shard_info: Option<ShardInfo>) {
         self.shard_info = shard_info
     }
+
+    pub fn set_compression(&mut self, compression: Option<Compression>) {
+        self.compression = compression;
+    }
 }
 
 struct ResponseHandlerMap {
