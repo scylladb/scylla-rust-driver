@@ -1,4 +1,5 @@
 pub mod execute;
+pub mod options;
 pub mod prepare;
 pub mod query;
 pub mod startup;
@@ -7,6 +8,7 @@ use anyhow::Result;
 use bytes::{BufMut, Bytes};
 use num_enum::TryFromPrimitive;
 
+pub use options::Options;
 pub use prepare::Prepare;
 pub use query::Query;
 pub use startup::Startup;

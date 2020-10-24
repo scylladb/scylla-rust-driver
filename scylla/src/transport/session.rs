@@ -1,5 +1,6 @@
 use anyhow::Result;
 use std::collections::HashMap;
+use std::convert::TryFrom;
 use std::net::SocketAddr;
 use tokio::net::{lookup_host, ToSocketAddrs};
 
@@ -8,11 +9,12 @@ use crate::frame::response::Response;
 use crate::frame::value::Value;
 use crate::prepared_statement::PreparedStatement;
 use crate::query::Query;
+use crate::routing::ShardInfo;
 use crate::transport::connection::Connection;
 use crate::transport::Compression;
 
-#[derive(PartialEq, Eq, PartialOrd, Ord, Hash)]
-struct Node {
+#[derive(PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
+pub struct Node {
     // TODO: a potentially node may have multiple addresses, remember them?
     // but we need an Ord instance on Node
     addr: SocketAddr,
@@ -40,7 +42,15 @@ impl Session {
             .await?
             .next()
             .map_or(Err(anyhow!("no addresses found")), |a| Ok(a))?;
-        let connection = Connection::new(addr, compression).await?;
+        let mut connection = Connection::new(addr, compression).await?;
+
+        let options_result = connection.get_options().await?;
+        let shard_info = match options_result {
+            Response::Supported(supported) => ShardInfo::try_from(&supported.options).ok(),
+            _ => None,
+        };
+        connection.set_shard_info(shard_info);
+
         let result = connection.startup(options).await?;
         match result {
             Response::Ready => {}
@@ -131,5 +141,9 @@ impl Session {
 
     fn any_connection(&self) -> &Connection {
         self.pool.values().next().unwrap()
+    }
+
+    pub fn get_pool(&self) -> &HashMap<Node, Connection> {
+        &self.pool
     }
 }

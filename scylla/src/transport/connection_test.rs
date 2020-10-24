@@ -6,6 +6,13 @@ use fasthash::murmur3;
 #[ignore]
 async fn test_connecting() {
     let session = Session::connect("localhost:9042", None).await.unwrap();
+    for (node, connection) in session.get_pool() {
+        println!(
+            "ShardInfo for {:?}: {:?}",
+            node,
+            connection.get_shard_info()
+        );
+    }
 
     session.query("CREATE KEYSPACE IF NOT EXISTS ks WITH REPLICATION = {'class' : 'SimpleStrategy', 'replication_factor' : 1}", &[]).await.unwrap();
     session
