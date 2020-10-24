@@ -1,4 +1,5 @@
 use anyhow::Result;
+use scylla::statement::builder::Builder;
 use scylla::transport::session::Session;
 use std::env;
 
@@ -26,13 +27,21 @@ async fn main() -> Result<()> {
         )
         .await?;
 
-    session
-        .query("INSERT INTO ks.t (a, b, c) VALUES (1, 2, 'abc')", &[])
+    let builder = Builder::new();
+
+    let query = builder
+        .build()
+        .with_no_paging()
+        .query("INSERT INTO ks.t (a, b, c) VALUES (1, 2, 'abc')");
+
+    session.query(query, &[]).await?;
+
+    let prepared = builder
+        .build()
+        .with_no_paging()
+        .prepared(&session, "INSERT INTO ks.t (a, b, c) VALUES (?, 7, ?)")
         .await?;
 
-    let prepared = session
-        .prepare("INSERT INTO ks.t (a, b, c) VALUES (?, 7, ?)")
-        .await?;
     session
         .execute(&prepared, &scylla::values!(42_i32, "I'm prepared!"))
         .await?;

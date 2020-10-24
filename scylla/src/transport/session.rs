@@ -11,6 +11,7 @@ use crate::frame::value::Value;
 use crate::prepared_statement::PreparedStatement;
 use crate::query::Query;
 use crate::routing::ShardInfo;
+use crate::statement::QueryParameters;
 use crate::transport::connection::Connection;
 use crate::transport::iterator::RowIterator;
 use crate::transport::Compression;
@@ -133,6 +134,14 @@ impl Session {
     /// # Arguments
     ///#
     pub async fn prepare(&self, query: &str) -> Result<PreparedStatement> {
+        self.prepare_with_params(query, Default::default()).await
+    }
+
+    pub(crate) async fn prepare_with_params(
+        &self,
+        query: &str,
+        params: QueryParameters,
+    ) -> Result<PreparedStatement> {
         // FIXME: Prepared statement ids are local to a node, so we must make sure
         // that prepare() sends to all nodes and keeps all ids.
         let result = self.any_connection().prepare(query.to_owned()).await?;
@@ -142,6 +151,7 @@ impl Session {
                 p.id,
                 p.prepared_metadata,
                 query.to_owned(),
+                params,
             )),
             _ => return Err(anyhow!("Unexpected frame received")),
         }
@@ -166,7 +176,12 @@ impl Session {
                 match err.code {
                     9472 => {
                         // Repreparation of a statement is needed
-                        let reprepared = self.prepare(prepared.get_statement()).await?;
+                        let reprepared = self
+                            .prepare_with_params(
+                                prepared.get_statement(),
+                                prepared.get_params().clone(),
+                            )
+                            .await?;
                         // Reprepared statement should keep its id - it's the md5 sum
                         // of statement contents
                         assert!(reprepared.get_id() == prepared.get_id());

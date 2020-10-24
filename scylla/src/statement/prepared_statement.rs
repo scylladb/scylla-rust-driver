@@ -14,12 +14,17 @@ pub struct PreparedStatement {
 }
 
 impl PreparedStatement {
-    pub fn new(id: Bytes, metadata: PreparedMetadata, statement: String) -> Self {
+    pub(crate) fn new(
+        id: Bytes,
+        metadata: PreparedMetadata,
+        statement: String,
+        params: QueryParameters,
+    ) -> Self {
         Self {
             id,
             metadata,
             statement,
-            params: Default::default(),
+            params,
         }
     }
 

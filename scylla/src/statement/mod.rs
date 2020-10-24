@@ -1,3 +1,4 @@
+pub mod builder;
 pub mod prepared_statement;
 pub mod query;
 

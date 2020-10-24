@@ -11,11 +11,8 @@ pub struct Query {
 
 impl Query {
     /// Creates a new `Query` from a CQL query string.
-    pub fn new(contents: String) -> Self {
-        Self {
-            contents,
-            params: Default::default(),
-        }
+    pub(crate) fn new(contents: String, params: QueryParameters) -> Self {
+        Self { contents, params }
     }
 
     /// Returns the string representation of the CQL query.
@@ -46,12 +43,12 @@ impl Query {
 
 impl From<String> for Query {
     fn from(s: String) -> Query {
-        Query::new(s)
+        Query::new(s, Default::default())
     }
 }
 
 impl<'a> From<&'a str> for Query {
     fn from(s: &'a str) -> Query {
-        Query::new(s.to_owned())
+        Query::new(s.to_owned(), Default::default())
     }
 }
