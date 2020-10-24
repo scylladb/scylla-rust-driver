@@ -1,3 +1,4 @@
+/// Prepares query values to be used with queries and prepared statements
 #[macro_export]
 macro_rules! values {
     ($($value:expr),*) => {
