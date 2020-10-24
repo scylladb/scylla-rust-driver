@@ -9,6 +9,13 @@ You can run the [example](examples/basic.rs) program as follows:
 SCYLLA_URI="localhost:9042" cargo run --example basic
 ```
 
+## Features
+
+* Asynchronous API
+* Prepared statements
+* Paging
+* Compression (LZ4 and Snappy)
+
 ## License
 
 This project is licensed under either of
