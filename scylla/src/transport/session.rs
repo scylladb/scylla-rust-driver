@@ -1,5 +1,6 @@
 use anyhow::Result;
 use std::collections::HashMap;
+use std::convert::TryFrom;
 use std::net::SocketAddr;
 use tokio::net::{lookup_host, ToSocketAddrs};
 
@@ -8,6 +9,7 @@ use crate::frame::response::Response;
 use crate::frame::value::Value;
 use crate::prepared_statement::PreparedStatement;
 use crate::query::Query;
+use crate::routing::ShardInfo;
 use crate::transport::connection::Connection;
 use crate::transport::Compression;
 
@@ -41,6 +43,13 @@ impl Session {
             .next()
             .map_or(Err(anyhow!("no addresses found")), |a| Ok(a))?;
         let connection = Connection::new(addr, compression).await?;
+
+        let options_result = connection.get_options().await?;
+        let _shard_info = match options_result {
+            Response::Supported(supported) => ShardInfo::try_from(&supported.options).ok(),
+            _ => None,
+        };
+
         let result = connection.startup(options).await?;
         match result {
             Response::Ready => {}

@@ -69,6 +69,10 @@ impl Connection {
             .await
     }
 
+    pub async fn get_options(&self) -> Result<Response> {
+        self.send_request(&request::Options {}, false).await
+    }
+
     pub async fn prepare(&self, query: String) -> Result<Response> {
         self.send_request(&request::Prepare { query }, true).await
     }

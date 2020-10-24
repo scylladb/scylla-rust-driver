@@ -1,11 +1,13 @@
 pub mod error;
 pub mod result;
+pub mod supported;
 
 use anyhow::Result as AResult;
 use num_enum::TryFromPrimitive;
 
 pub use error::Error;
 pub use result::Result;
+pub use supported::Supported;
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord, TryFromPrimitive)]
 #[repr(u8)]
@@ -25,6 +27,7 @@ pub enum Response {
     Ready,
     Result(Result),
     Authenticate,
+    Supported(Supported),
 }
 
 impl Response {
@@ -33,7 +36,7 @@ impl Response {
             ResponseOpcode::Error => Response::Error(Error::deserialize(buf)?),
             ResponseOpcode::Ready => Response::Ready,
             ResponseOpcode::Authenticate => unimplemented!(),
-            ResponseOpcode::Supported => unimplemented!(),
+            ResponseOpcode::Supported => Response::Supported(Supported::deserialize(buf)?),
             ResponseOpcode::Result => Response::Result(result::deserialize(buf)?),
             ResponseOpcode::Event => unimplemented!(),
             ResponseOpcode::AuthChallenge => unimplemented!(),

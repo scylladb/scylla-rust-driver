@@ -1,3 +1,7 @@
+use anyhow;
+use std::collections::HashMap;
+use std::convert::TryFrom;
+
 #[derive(PartialEq, Eq, PartialOrd, Ord, Debug)]
 pub struct Token {
     pub value: i64,
@@ -23,6 +27,23 @@ impl ShardInfo {
         let mut biased_token = (token.value as u64).wrapping_add(1u64 << 63);
         biased_token <<= self.msb_ignore;
         return (((biased_token as u128) * (self.nr_shards as u128)) >> 64) as Shard;
+    }
+}
+
+impl<'a> TryFrom<&'a HashMap<String, Vec<String>>> for ShardInfo {
+    type Error = anyhow::Error;
+    fn try_from(options: &'a HashMap<String, Vec<String>>) -> Result<Self, Self::Error> {
+        let nr_shards_entry = options.get("SCYLLA_NR_SHARDS");
+        let msb_ignore_entry = options.get("SCYLLA_SHARDING_IGNORE_MSB");
+        if nr_shards_entry.is_none() || msb_ignore_entry.is_none() {
+            return Err(anyhow!("ShardInfo parameters missing"));
+        }
+        if nr_shards_entry.unwrap().is_empty() || msb_ignore_entry.unwrap().is_empty() {
+            return Err(anyhow!("ShardInfo parameters missing"));
+        }
+        let nr_shards = nr_shards_entry.unwrap().first().unwrap().parse::<u16>()?;
+        let msb_ignore = msb_ignore_entry.unwrap().first().unwrap().parse::<u8>()?;
+        Ok(ShardInfo::new(nr_shards, msb_ignore))
     }
 }
 
