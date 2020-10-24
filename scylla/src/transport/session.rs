@@ -25,7 +25,14 @@ pub struct Session {
     pool: HashMap<Node, Connection>,
 }
 
+/// Represents a CQL session, which can be used to communicate
+/// with the database
 impl Session {
+    /// Estabilishes a CQL session with the database
+    /// # Arguments
+    ///
+    /// * `addr` - address of the server
+    /// * `compression` - optional compression settings
     pub async fn connect(
         addr: impl ToSocketAddrs + Clone,
         compression: Option<Compression>,
@@ -65,6 +72,7 @@ impl Session {
         Ok(Session { pool })
     }
 
+    /// Closes a CQL session
     pub async fn close(self) {
         for (_, conn) in self.pool.into_iter() {
             conn.close().await;
@@ -75,6 +83,11 @@ impl Session {
     // actually, if we consider "INSERT" a query, then no.
     // But maybe "INSERT" and "SELECT" should go through different methods,
     // so we expect "SELECT" to always return Vec<result::Row>?
+    /// Sends a query to the database and receives a response
+    /// # Arguments
+    ///
+    /// * `query` - query to be performed
+    /// * `values` - values bound to the query
     pub async fn query<'a>(
         &self,
         query: impl Into<Query>,
@@ -89,6 +102,11 @@ impl Session {
         }
     }
 
+    /// Prepares a statement on the server side and returns a prepared statement,
+    /// which can later be used to perform more efficient queries
+    /// # Arguments
+    ///
+    /// * `query` - query to be prepared
     pub async fn prepare(&self, query: &str) -> Result<PreparedStatement> {
         // FIXME: Prepared statement ids are local to a node, so we must make sure
         // that prepare() sends to all nodes and keeps all ids.
@@ -104,6 +122,11 @@ impl Session {
         }
     }
 
+    /// Executes a previously prepared statement
+    /// # Arguments
+    ///
+    /// * `prepared` - a statement prepared with [prepare](crate::transport::session::prepare)
+    /// * `values` - values bound to the query
     pub async fn execute<'a>(
         &self,
         prepared: &PreparedStatement,
@@ -143,6 +166,7 @@ impl Session {
         self.pool.values().next().unwrap()
     }
 
+    /// Returns the connection pool used by this session
     pub fn get_pool(&self) -> &HashMap<Node, Connection> {
         &self.pool
     }

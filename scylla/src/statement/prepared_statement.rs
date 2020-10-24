@@ -2,6 +2,7 @@ use crate::frame::response::result::PreparedMetadata;
 use crate::frame::value::Value;
 use bytes::{BufMut, Bytes, BytesMut};
 
+/// Represents a statement prepared on the server.
 #[derive(Debug)]
 pub struct PreparedStatement {
     id: Bytes,
@@ -26,8 +27,9 @@ impl PreparedStatement {
         &self.statement
     }
 
-    // Partition keys have a specific serialization rules.
-    // Ref: https://github.com/scylladb/scylla/blob/40adf38915b6d8f5314c621a94d694d172360833/compound_compat.hh#L33-L47
+    /// Computes the partition key of the target table from given values
+    /// Partition keys have a specific serialization rules.
+    /// Ref: https://github.com/scylladb/scylla/blob/40adf38915b6d8f5314c621a94d694d172360833/compound_compat.hh#L33-L47
     pub fn compute_partition_key(&self, bound_values: &[Value]) -> Bytes {
         let mut buf = BytesMut::new();
         if self.metadata.pk_indexes.len() == 1 {
