@@ -41,7 +41,12 @@ impl Session {
             .next()
             .map_or(Err(anyhow!("no addresses found")), |a| Ok(a))?;
         let connection = Connection::new(addr, compression).await?;
-        connection.startup(options).await?;
+        let result = connection.startup(options).await?;
+        match result {
+            Response::Ready => {}
+            Response::Authenticate => unimplemented!("Authentication is not yet implemented"),
+            _ => return Err(anyhow!("Unexpected frame received")),
+        }
 
         let pool = vec![(Node { addr: resolved }, connection)]
             .into_iter()
