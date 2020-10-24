@@ -2,6 +2,7 @@ use anyhow::Result;
 
 use crate::frame::types;
 
+#[derive(Debug)]
 pub struct Error {
     pub code: i32,
     pub reason: String,

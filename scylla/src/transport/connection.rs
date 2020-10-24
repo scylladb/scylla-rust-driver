@@ -86,11 +86,18 @@ impl Connection {
         self.send_request(&request::Prepare { query }, true).await
     }
 
-    pub async fn query<'a>(&self, query: &Query, values: &'a [Value]) -> Result<Response> {
+    pub async fn query<'a>(
+        &self,
+        query: &Query,
+        values: &'a [Value],
+        paging_state: Option<Bytes>,
+    ) -> Result<Response> {
         let query_frame = query::Query {
             contents: query.get_contents().to_owned(),
             parameters: query::QueryParameters {
                 values,
+                page_size: query.get_page_size(),
+                paging_state,
                 ..Default::default()
             },
         };
@@ -102,11 +109,14 @@ impl Connection {
         &self,
         prepared_statement: &PreparedStatement,
         values: &'a [Value],
+        paging_state: Option<Bytes>,
     ) -> Result<Response> {
         let execute_frame = execute::Execute {
             id: prepared_statement.get_id().to_owned(),
             parameters: query::QueryParameters {
                 values,
+                page_size: prepared_statement.get_page_size(),
+                paging_state,
                 ..Default::default()
             },
         };

@@ -28,12 +28,7 @@ struct TableSpec {
     table_name: String,
 }
 
-#[derive(Debug)]
-struct PagingState {
-    // TODO
-}
-
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 enum ColumnType {
     Ascii,
     Int,
@@ -83,35 +78,35 @@ impl CQLValue {
     // TODO
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct ColumnSpec {
     table_spec: TableSpec,
     name: String,
     typ: ColumnType,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub struct ResultMetadata {
     col_count: usize,
-    paging_state: Option<PagingState>,
+    pub paging_state: Option<Bytes>,
     col_specs: Vec<ColumnSpec>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct PreparedMetadata {
     pub col_count: usize,
     pub pk_indexes: Vec<u16>,
     pub col_specs: Vec<ColumnSpec>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub struct Row {
     pub columns: Vec<Option<CQLValue>>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub struct Rows {
-    metadata: ResultMetadata,
+    pub metadata: ResultMetadata,
     rows_count: usize,
     pub rows: Vec<Row>,
 }
@@ -184,8 +179,11 @@ fn deser_result_metadata(buf: &mut &[u8]) -> AResult<ResultMetadata> {
     }
     let col_count = col_count as usize;
 
-    assert!(!has_more_pages); // TODO handle paging
-    let paging_state = None;
+    let paging_state = if has_more_pages {
+        Some(types::read_bytes(buf)?.to_owned().into())
+    } else {
+        None
+    };
 
     if no_metadata {
         return Ok(ResultMetadata {

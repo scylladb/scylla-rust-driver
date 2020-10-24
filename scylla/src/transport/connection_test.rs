@@ -69,5 +69,5 @@ async fn test_connecting() {
         .unwrap();
 
     // Not required, but it's a nice habit to do that
-    session.close().await;
+    session.close().await.unwrap();
 }

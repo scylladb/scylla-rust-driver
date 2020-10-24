@@ -1,4 +1,5 @@
 pub mod connection;
+pub mod iterator;
 pub mod session;
 
 /// The wire protocol compression algorithm.
