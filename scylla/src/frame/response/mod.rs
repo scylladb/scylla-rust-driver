@@ -24,6 +24,7 @@ pub enum Response {
     Error(Error),
     Ready,
     Result(Result),
+    Authenticate,
 }
 
 impl Response {
