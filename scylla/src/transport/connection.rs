@@ -16,12 +16,14 @@ use crate::frame::{
     FrameParams,
 };
 use crate::query::Query;
+use crate::routing::ShardInfo;
 use crate::statement::prepared_statement::PreparedStatement;
 use crate::transport::Compression;
 
 pub struct Connection {
     submit_channel: mpsc::Sender<Task>,
     worker_handle: JoinHandle<()>,
+    shard_info: Option<ShardInfo>,
 }
 
 type ResponseHandler = oneshot::Sender<TaskResponse>;
@@ -50,6 +52,7 @@ impl Connection {
         Ok(Self {
             submit_channel: sender,
             worker_handle: handle,
+            shard_info: None,
         })
     }
 
@@ -235,6 +238,14 @@ impl Connection {
         }
 
         Err(anyhow!("Task queue closed"))
+    }
+
+    pub fn get_shard_info(&self) -> &Option<ShardInfo> {
+        &self.shard_info
+    }
+
+    pub fn set_shard_info(&mut self, shard_info: Option<ShardInfo>) {
+        self.shard_info = shard_info
     }
 }
 
