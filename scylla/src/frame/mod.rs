@@ -46,18 +46,19 @@ pub async fn write_request(
     v.put_i16(params.stream);
     v.put_u8(opcode as u8);
 
+    let body = if let Some(compression) = compression {
+        // Compress body
+        compress(&body, compression).into()
+    } else {
+        body
+    };
+
     // TODO: Return an error if the frame is too big?
     v.put_u32(body.len() as u32);
 
     writer.write_all(&v).await?;
+    writer.write_all(&body).await?;
 
-    if let Some(compression) = compression {
-        // Compress body
-        let comp_body = compress(&body, compression);
-        writer.write_all(&comp_body).await?;
-    } else {
-        writer.write_all(&body).await?;
-    }
     Ok(())
 }
 
@@ -129,7 +130,7 @@ fn compress(uncomp_body: &[u8], compression: Compression) -> Vec<u8> {
     match compression {
         Compression::LZ4 => {
             let mut comp_body = Vec::new();
-            comp_body.put_u32((uncomp_body.len() as u32).to_be());
+            comp_body.put_u32(uncomp_body.len() as u32);
             compress::compress_into(uncomp_body, &mut comp_body);
             comp_body
         }
