@@ -15,6 +15,12 @@ use compress::lz4;
 use request::RequestOpcode;
 use response::ResponseOpcode;
 
+// Frame flags
+pub const FLAG_COMPRESSION: u8 = 0x01;
+pub const FLAG_TRACING: u8 = 0x02;
+pub const FLAG_CUSTOM_PAYLOAD: u8 = 0x04;
+pub const FLAG_WARNING: u8 = 0x08;
+
 // Parts of the frame header which are not determined by the request/response type.
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub struct FrameParams {
@@ -38,21 +44,12 @@ pub async fn write_request(
     params: FrameParams,
     opcode: RequestOpcode,
     body: Bytes,
-    compression: Option<Compression>,
 ) -> Result<()> {
     let mut v = Vec::new();
     v.put_u8(params.version);
-    let compression_flag = if compression.is_some() { 0x01 } else { 0x00 };
-    v.put_u8(params.flags | compression_flag);
+    v.put_u8(params.flags);
     v.put_i16(params.stream);
     v.put_u8(opcode as u8);
-
-    let body = if let Some(compression) = compression {
-        // Compress body
-        compress(&body, compression).into()
-    } else {
-        body
-    };
 
     // TODO: Return an error if the frame is too big?
     v.put_u32(body.len() as u32);
@@ -65,7 +62,6 @@ pub async fn write_request(
 
 pub async fn read_response(
     reader: &mut (impl AsyncRead + Unpin),
-    compression: Option<Compression>,
 ) -> Result<(FrameParams, ResponseOpcode, Bytes)> {
     let mut raw_header = [0u8; 9];
     reader.read_exact(&mut raw_header[..]).await?;
@@ -98,36 +94,14 @@ pub async fn read_response(
     // TODO: Guard from frames that are too large
     let length = buf.get_u32();
 
-    let body_compressed = flags & 0x01 == 0x01;
-
-    let raw_body = read_body(reader, length as usize, compression, body_compressed).await?;
+    // TODO: Figure out how to skip zeroing out the buffer
+    let mut raw_body = vec![0u8; length as usize];
+    reader.read_exact(&mut raw_body[..]).await?;
 
     Ok((frame_params, opcode, raw_body.into()))
 }
 
-async fn read_body(
-    reader: &mut (impl AsyncRead + Unpin),
-    length: usize,
-    compression: Option<Compression>,
-    body_compressed: bool,
-) -> Result<Vec<u8>> {
-    // TODO: Figure out how to skip zeroing out the buffer
-    let mut raw_body = vec![0u8; length];
-    reader.read_exact(&mut raw_body[..]).await?;
-    if body_compressed {
-        if let Some(compression) = compression {
-            decompress(&raw_body, compression)
-        } else {
-            Err(anyhow!(
-                "Frame is compressed, but no compression negotiated for connection."
-            ))
-        }
-    } else {
-        Ok(raw_body)
-    }
-}
-
-fn compress(uncomp_body: &[u8], compression: Compression) -> Vec<u8> {
+pub fn compress(uncomp_body: &[u8], compression: Compression) -> Vec<u8> {
     match compression {
         Compression::LZ4 => {
             let mut comp_body = Vec::new();
@@ -141,7 +115,7 @@ fn compress(uncomp_body: &[u8], compression: Compression) -> Vec<u8> {
     }
 }
 
-fn decompress(mut comp_body: &[u8], compression: Compression) -> Result<Vec<u8>> {
+pub fn decompress(mut comp_body: &[u8], compression: Compression) -> Result<Vec<u8>> {
     match compression {
         Compression::LZ4 => {
             let uncomp_len: i32 = comp_body.get_i32().into();
