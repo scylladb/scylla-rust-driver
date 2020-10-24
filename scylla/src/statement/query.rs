@@ -1,10 +1,12 @@
+use super::QueryParameters;
+
 /// CQL query statement.
 ///
 /// This represents a CQL query that can be executed on a server.
 #[derive(Clone)]
 pub struct Query {
     contents: String,
-    page_size: Option<i32>,
+    params: QueryParameters,
 }
 
 impl Query {
@@ -12,7 +14,7 @@ impl Query {
     pub fn new(contents: String) -> Self {
         Self {
             contents,
-            page_size: None,
+            params: Default::default(),
         }
     }
 
@@ -24,17 +26,21 @@ impl Query {
     /// Sets the page size for this CQL query.
     pub fn set_page_size(&mut self, page_size: i32) {
         assert!(page_size > 0, "page size must be larger than 0");
-        self.page_size = Some(page_size);
+        self.params.page_size = Some(page_size);
     }
 
     /// Disables paging for this CQL query.
     pub fn disable_paging(&mut self) {
-        self.page_size = None;
+        self.params.page_size = None;
     }
 
     /// Returns the page size for this CQL query.
     pub fn get_page_size(&self) -> Option<i32> {
-        self.page_size
+        self.params.page_size
+    }
+
+    pub(crate) fn get_params(&self) -> &QueryParameters {
+        &self.params
     }
 }
 

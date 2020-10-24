@@ -92,14 +92,11 @@ impl Connection {
         values: &'a [Value],
         paging_state: Option<Bytes>,
     ) -> Result<Response> {
+        let params = query.get_params();
+
         let query_frame = query::Query {
             contents: query.get_contents().to_owned(),
-            parameters: query::QueryParameters {
-                values,
-                page_size: query.get_page_size(),
-                paging_state,
-                ..Default::default()
-            },
+            parameters: query::QueryParameters::new(&params, paging_state, values),
         };
 
         self.send_request(&query_frame, true).await
@@ -111,14 +108,11 @@ impl Connection {
         values: &'a [Value],
         paging_state: Option<Bytes>,
     ) -> Result<Response> {
+        let params = prepared_statement.get_params();
+
         let execute_frame = execute::Execute {
             id: prepared_statement.get_id().to_owned(),
-            parameters: query::QueryParameters {
-                values,
-                page_size: prepared_statement.get_page_size(),
-                paging_state,
-                ..Default::default()
-            },
+            parameters: query::QueryParameters::new(&params, paging_state, values),
         };
 
         self.send_request(&execute_frame, true).await

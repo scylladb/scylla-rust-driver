@@ -5,6 +5,7 @@ use crate::{
     frame::request::{Request, RequestOpcode},
     frame::types,
     frame::value::Value,
+    statement,
 };
 
 // Query flags
@@ -51,6 +52,19 @@ impl Default for QueryParameters<'_> {
 }
 
 impl QueryParameters<'_> {
+    pub(crate) fn new<'a>(
+        params: &statement::QueryParameters,
+        paging_state: Option<Bytes>,
+        values: &'a [Value],
+    ) -> QueryParameters<'a> {
+        QueryParameters {
+            consistency: params.consistency as i16,
+            page_size: params.page_size,
+            paging_state,
+            values,
+        }
+    }
+
     pub fn serialize(&self, buf: &mut impl BufMut) -> Result<()> {
         types::write_short(self.consistency, buf);
 

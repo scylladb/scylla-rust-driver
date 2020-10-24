@@ -2,13 +2,15 @@ use crate::frame::response::result::PreparedMetadata;
 use crate::frame::value::Value;
 use bytes::{BufMut, Bytes, BytesMut};
 
+use super::QueryParameters;
+
 /// Represents a statement prepared on the server.
 #[derive(Debug, Clone)]
 pub struct PreparedStatement {
     id: Bytes,
     metadata: PreparedMetadata,
     statement: String,
-    page_size: Option<i32>,
+    params: QueryParameters,
 }
 
 impl PreparedStatement {
@@ -17,7 +19,7 @@ impl PreparedStatement {
             id,
             metadata,
             statement,
-            page_size: None,
+            params: Default::default(),
         }
     }
 
@@ -32,17 +34,17 @@ impl PreparedStatement {
     /// Sets the page size for this CQL query.
     pub fn set_page_size(&mut self, page_size: i32) {
         assert!(page_size > 0, "page size must be larger than 0");
-        self.page_size = Some(page_size);
+        self.params.page_size = Some(page_size);
     }
 
     /// Disables paging for this CQL query.
     pub fn disable_paging(&mut self) {
-        self.page_size = None;
+        self.params.page_size = None;
     }
 
     /// Returns the page size for this CQL query.
     pub fn get_page_size(&self) -> Option<i32> {
-        self.page_size
+        self.params.page_size
     }
 
     /// Computes the partition key of the target table from given values
@@ -67,5 +69,9 @@ impl PreparedStatement {
             }
         }
         buf.into()
+    }
+
+    pub(crate) fn get_params(&self) -> &QueryParameters {
+        &self.params
     }
 }
