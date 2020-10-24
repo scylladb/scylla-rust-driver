@@ -1,10 +1,11 @@
-#[derive(PartialEq, Eq, PartialOrd, Ord)]
+#[derive(PartialEq, Eq, PartialOrd, Ord, Debug)]
 pub struct Token {
     pub value: i64,
 }
 
 pub type Shard = u32;
 
+#[derive(Debug)]
 pub struct ShardInfo {
     nr_shards: u16,
     msb_ignore: u8,
