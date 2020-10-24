@@ -14,7 +14,7 @@ byteorder = "1.3.4"
 bytes = "0.6.0"
 futures = "0.3.6"
 num_enum = "0.5"
-lz4-compression = "0.7.0"
+compress = "0.2.1"
 tokio = { version = "0.3.0", features = ["net", "time", "io-util", "sync", "rt", "macros"] }
 fasthash = "0.4.0"
 snappy = "0.4.0"

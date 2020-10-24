@@ -11,7 +11,7 @@ use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 
 use std::convert::TryFrom;
 
-use lz4_compression::{compress, decompress};
+use compress::lz4;
 use request::RequestOpcode;
 use response::ResponseOpcode;
 
@@ -132,19 +132,36 @@ fn compress(uncomp_body: &[u8], compression: Compression) -> Vec<u8> {
         Compression::LZ4 => {
             let mut comp_body = Vec::new();
             comp_body.put_u32(uncomp_body.len() as u32);
-            compress::compress_into(uncomp_body, &mut comp_body);
+            let mut tmp = Vec::new();
+            lz4::encode_block(&uncomp_body[..], &mut tmp);
+            comp_body.extend_from_slice(&tmp[..]);
             comp_body
         }
         Compression::Snappy => snappy::compress(uncomp_body),
     }
 }
 
-fn decompress(comp_body: &[u8], compression: Compression) -> Result<Vec<u8>> {
+fn decompress(mut comp_body: &[u8], compression: Compression) -> Result<Vec<u8>> {
     match compression {
-        Compression::LZ4 => match decompress::decompress(&comp_body[4..]) {
-            Ok(uncomp_body) => Ok(uncomp_body),
-            Err(e) => Err(anyhow!("Frame decompression failed: {:?}", e)),
-        },
+        Compression::LZ4 => {
+            let uncomp_len: i32 = comp_body.get_i32().into();
+            if uncomp_len < 0 {
+                return Err(anyhow!(
+                    "Uncompressed LZ4 length is negative: {}",
+                    uncomp_len
+                ));
+            }
+            let uncomp_len = uncomp_len as usize;
+            let mut uncomp_body = Vec::with_capacity(uncomp_len);
+            if uncomp_len == 0 {
+                return Ok(uncomp_body);
+            }
+            if lz4::decode_block(&comp_body[..], &mut uncomp_body) > 0 {
+                Ok(uncomp_body)
+            } else {
+                Err(anyhow!("LZ4 body decompression failed"))
+            }
+        }
         Compression::Snappy => match snappy::uncompress(comp_body) {
             Ok(uncomp_body) => Ok(uncomp_body),
             Err(e) => Err(anyhow!("Frame decompression failed: {:?}", e)),
