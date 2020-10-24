@@ -3,10 +3,10 @@ Async CQL driver for Rust, optimized for Scylla!
 
 ## Getting Started
 
-You can run the [example](examples/example.rs) program as follows:
+You can run the [example](examples/basic.rs) program as follows:
 
-```
-$ SCYLLA_URI="localhost:9042" cargo run --example example
+```sh
+SCYLLA_URI="localhost:9042" cargo run --example basic
 ```
 
 ## License
