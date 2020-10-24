@@ -6,6 +6,7 @@ pub mod value;
 use crate::transport::Compression;
 use anyhow::Result;
 use bytes::{Buf, BufMut, Bytes};
+use snappy;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 
 use std::convert::TryFrom;
@@ -134,12 +135,17 @@ fn compress(uncomp_body: &[u8], compression: Compression) -> Vec<u8> {
             compress::compress_into(uncomp_body, &mut comp_body);
             comp_body
         }
+        Compression::Snappy => snappy::compress(uncomp_body),
     }
 }
 
 fn decompress(comp_body: &[u8], compression: Compression) -> Result<Vec<u8>> {
     match compression {
         Compression::LZ4 => match decompress::decompress(&comp_body[4..]) {
+            Ok(uncomp_body) => Ok(uncomp_body),
+            Err(e) => Err(anyhow!("Frame decompression failed: {:?}", e)),
+        },
+        Compression::Snappy => match snappy::uncompress(comp_body) {
             Ok(uncomp_body) => Ok(uncomp_body),
             Err(e) => Err(anyhow!("Frame decompression failed: {:?}", e)),
         },

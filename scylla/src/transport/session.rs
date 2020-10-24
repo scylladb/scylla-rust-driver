@@ -41,6 +41,7 @@ impl Session {
         if let Some(compression) = &compression {
             let val = match compression {
                 Compression::LZ4 => "lz4",
+                Compression::Snappy => "snappy",
             };
             options.insert("COMPRESSION".to_string(), val.to_string());
         }

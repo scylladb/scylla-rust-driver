@@ -6,6 +6,8 @@ pub mod session;
 pub enum Compression {
     /// LZ4 compression algorithm.
     LZ4,
+    /// Snappy compression algorithm.
+    Snappy,
 }
 
 #[cfg(test)]
