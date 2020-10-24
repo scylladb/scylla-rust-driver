@@ -209,3 +209,38 @@ fn type_string_map() {
     write_string_map(&val, &mut buf).unwrap();
     assert_eq!(read_string_map(&mut &buf[..]).unwrap(), val);
 }
+
+pub fn read_string_list(buf: &mut &[u8]) -> Result<Vec<String>> {
+    let mut v = Vec::new();
+    let len = read_short(buf)?;
+    for _ in 0..len {
+        v.push(read_string(buf)?.to_owned());
+    }
+    Ok(v)
+}
+
+pub fn write_string_list(v: &[String], buf: &mut impl BufMut) -> Result<()> {
+    let len = v.len();
+    if v.len() > i16::MAX as usize {
+        return Err(anyhow!(
+            "String list has too many entries for 16-bits: {}",
+            len
+        ));
+    }
+    write_short(len as i16, buf);
+    for v in v.iter() {
+        write_string(v, buf)?;
+    }
+    Ok(())
+}
+
+#[test]
+fn type_string_list() {
+    let mut val = Vec::new();
+    val.push("".to_owned());
+    val.push("CQL_VERSION".to_owned());
+    val.push("THROW_ON_OVERLOAD".to_owned());
+    let mut buf = Vec::new();
+    write_string_list(&val, &mut buf).unwrap();
+    assert_eq!(read_string_list(&mut &buf[..]).unwrap(), val);
+}
