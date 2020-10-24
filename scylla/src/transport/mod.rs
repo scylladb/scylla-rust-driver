@@ -11,5 +11,14 @@ pub enum Compression {
     Snappy,
 }
 
+impl ToString for Compression {
+    fn to_string(&self) -> String {
+        match self {
+            Compression::LZ4 => "lz4".to_owned(),
+            Compression::Snappy => "snappy".to_owned(),
+        }
+    }
+}
+
 #[cfg(test)]
 mod connection_test;
