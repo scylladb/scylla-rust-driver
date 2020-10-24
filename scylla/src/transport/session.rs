@@ -39,15 +39,6 @@ impl Session {
         addr: impl ToSocketAddrs + Clone,
         compression: Option<Compression>,
     ) -> Result<Self> {
-        let mut options = HashMap::new();
-        if let Some(compression) = &compression {
-            let val = match compression {
-                Compression::LZ4 => "lz4",
-                Compression::Snappy => "snappy",
-            };
-            options.insert("COMPRESSION".to_string(), val.to_string());
-        }
-
         let resolved = lookup_host(addr.clone())
             .await?
             .next()
@@ -61,6 +52,14 @@ impl Session {
         };
         connection.set_shard_info(shard_info);
 
+        let mut options = HashMap::new();
+        if let Some(compression) = &compression {
+            let val = match compression {
+                Compression::LZ4 => "lz4",
+                Compression::Snappy => "snappy",
+            };
+            options.insert("COMPRESSION".to_string(), val.to_string());
+        }
         let result = connection.startup(options).await?;
         match result {
             Response::Ready => {}
