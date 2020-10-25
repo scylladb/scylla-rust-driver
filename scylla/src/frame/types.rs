@@ -90,7 +90,7 @@ pub fn read_bytes<'a>(buf: &mut &'a [u8]) -> Result<&'a [u8]> {
     Ok(v)
 }
 
-pub fn write_bytes<'a>(v: &[u8], buf: &mut impl BufMut) -> Result<()> {
+pub fn write_bytes(v: &[u8], buf: &mut impl BufMut) -> Result<()> {
     let len = v.len();
     if len > i32::MAX as usize {
         return Err(anyhow!("Byte slice is too long for 32-bits: {} bytes", len));
@@ -100,7 +100,7 @@ pub fn write_bytes<'a>(v: &[u8], buf: &mut impl BufMut) -> Result<()> {
     Ok(())
 }
 
-pub fn write_short_bytes<'a>(v: &[u8], buf: &mut impl BufMut) -> Result<()> {
+pub fn write_short_bytes(v: &[u8], buf: &mut impl BufMut) -> Result<()> {
     let len = v.len();
     if len > i16::MAX as usize {
         return Err(anyhow!("Byte slice is too long for 16-bits: {} bytes", len));
