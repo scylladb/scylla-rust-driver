@@ -188,8 +188,8 @@ fn type_long_string() {
 }
 
 pub fn read_string_map(buf: &mut &[u8]) -> Result<HashMap<String, String>> {
-    let mut v = HashMap::new();
     let len = read_short_length(buf)?;
+    let mut v = HashMap::with_capacity(len);
     for _ in 0..len {
         let key = read_string(buf)?.to_owned();
         let val = read_string(buf)?.to_owned();
@@ -220,8 +220,8 @@ fn type_string_map() {
 }
 
 pub fn read_string_list(buf: &mut &[u8]) -> Result<Vec<String>> {
-    let mut v = Vec::new();
     let len = read_short_length(buf)?;
+    let mut v = Vec::with_capacity(len);
     for _ in 0..len {
         v.push(read_string(buf)?.to_owned());
     }
@@ -249,8 +249,8 @@ fn type_string_list() {
 }
 
 pub fn read_string_multimap(buf: &mut &[u8]) -> Result<HashMap<String, Vec<String>>> {
-    let mut v = HashMap::new();
     let len = read_short_length(buf)?;
+    let mut v = HashMap::with_capacity(len);
     for _ in 0..len {
         let key = read_string(buf)?.to_owned();
         let val = read_string_list(buf)?;
