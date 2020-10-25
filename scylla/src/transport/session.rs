@@ -39,15 +39,6 @@ impl Session {
         addr: impl ToSocketAddrs + Clone,
         compression: Option<Compression>,
     ) -> Result<Self> {
-        let mut options = HashMap::new();
-        if let Some(compression) = &compression {
-            let val = match compression {
-                Compression::LZ4 => "lz4",
-                Compression::Snappy => "snappy",
-            };
-            options.insert("COMPRESSION".to_string(), val.to_string());
-        }
-
         let resolved = lookup_host(addr.clone())
             .await?
             .next()
@@ -55,12 +46,31 @@ impl Session {
         let mut connection = Connection::new(addr, compression).await?;
 
         let options_result = connection.get_options().await?;
-        let shard_info = match options_result {
-            Response::Supported(supported) => ShardInfo::try_from(&supported.options).ok(),
-            _ => None,
+        let (shard_info, supported_compression) = match options_result {
+            Response::Supported(mut supported) => {
+                let shard_info = ShardInfo::try_from(&supported.options).ok();
+                let supported_compression = supported
+                    .options
+                    .remove("COMPRESSION")
+                    .unwrap_or_else(Vec::new);
+                (shard_info, supported_compression)
+            }
+            _ => (None, Vec::new()),
         };
         connection.set_shard_info(shard_info);
 
+        let mut options = HashMap::new();
+        if let Some(compression) = &compression {
+            let compression_str = compression.to_string();
+            if supported_compression.iter().any(|c| c == &compression_str) {
+                // Compression is reported to be supported by the server,
+                // request it from the server
+                options.insert("COMPRESSION".to_string(), compression.to_string());
+            } else {
+                // Fall back to no compression
+                connection.set_compression(None);
+            }
+        }
         let result = connection.startup(options).await?;
         match result {
             Response::Ready => {}
