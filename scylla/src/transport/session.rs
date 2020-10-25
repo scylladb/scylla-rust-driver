@@ -46,6 +46,7 @@ impl Session {
         let mut connection = Connection::new(addr, compression).await?;
 
         let options_result = connection.get_options().await?;
+
         let (shard_info, supported_compression) = match options_result {
             Response::Supported(mut supported) => {
                 let shard_info = ShardInfo::try_from(&supported.options).ok();
@@ -60,6 +61,7 @@ impl Session {
         connection.set_shard_info(shard_info);
 
         let mut options = HashMap::new();
+        options.insert("CQL_VERSION".to_string(), "4.0.0".to_string()); // FIXME: hardcoded values
         if let Some(compression) = &compression {
             let compression_str = compression.to_string();
             if supported_compression.iter().any(|c| c == &compression_str) {
