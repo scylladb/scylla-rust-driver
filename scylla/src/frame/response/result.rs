@@ -32,6 +32,7 @@ struct TableSpec {
 enum ColumnType {
     Ascii,
     Int,
+    BigInt,
     Text,
     Set(Box<ColumnType>),
     // TODO
@@ -41,6 +42,7 @@ enum ColumnType {
 pub enum CQLValue {
     Ascii(String),
     Int(i32),
+    BigInt(i64),
     Text(String),
     Set(Vec<CQLValue>),
     // TODO
@@ -57,6 +59,13 @@ impl CQLValue {
     pub fn as_int(&self) -> Option<i32> {
         match self {
             Self::Int(i) => Some(*i),
+            _ => None,
+        }
+    }
+
+    pub fn as_bigint(&self) -> Option<i64> {
+        match self {
+            Self::BigInt(i) => Some(*i),
             _ => None,
         }
     }
@@ -134,6 +143,7 @@ fn deser_type(buf: &mut &[u8]) -> AResult<ColumnType> {
     let id = types::read_short(buf)?;
     Ok(match id {
         0x0001 => Ascii,
+        0x0002 => BigInt,
         0x0009 => Int,
         0x000D => Text,
         0x0022 => Set(Box::new(deser_type(buf)?)),
@@ -261,6 +271,15 @@ fn deser_cql_value(typ: &ColumnType, buf: &mut &[u8]) -> AResult<CQLValue> {
                 ));
             }
             CQLValue::Int(buf.read_i32::<BigEndian>()?)
+        }
+        BigInt => {
+            if buf.len() != 8 {
+                return Err(anyhow!(
+                    "Expected buffer length of 8 bytes, got: {}",
+                    buf.len()
+                ));
+            }
+            CQLValue::BigInt(buf.read_i64::<BigEndian>()?)
         }
         Text => CQLValue::Text(str::from_utf8(buf)?.to_owned()),
         Set(typ) => {
