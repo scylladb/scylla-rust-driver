@@ -45,7 +45,8 @@ pub async fn write_request(
     opcode: RequestOpcode,
     body: Bytes,
 ) -> Result<()> {
-    let mut v = Vec::new();
+    let mut header = [0u8; 9];
+    let mut v = &mut header[..];
     v.put_u8(params.version);
     v.put_u8(params.flags);
     v.put_i16(params.stream);
@@ -54,7 +55,7 @@ pub async fn write_request(
     // TODO: Return an error if the frame is too big?
     v.put_u32(body.len() as u32);
 
-    writer.write_all(&v).await?;
+    writer.write_all(&header).await?;
     writer.write_all(&body).await?;
 
     Ok(())
