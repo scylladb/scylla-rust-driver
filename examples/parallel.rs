@@ -22,7 +22,8 @@ async fn main() -> Result<()> {
         )
         .await?;
 
-    let sem = Arc::new(Semaphore::new(256));
+    let parallelism = 256;
+    let sem = Arc::new(Semaphore::new(parallelism));
 
     for i in 0..100_000usize {
         if i % 1000 == 0 {
@@ -46,6 +47,11 @@ async fn main() -> Result<()> {
 
             let _permit = permit;
         });
+    }
+
+    // Wait for all in-flight requests to finish
+    for _ in 0..parallelism {
+        sem.acquire().await.forget();
     }
 
     println!("Ok.");
