@@ -45,7 +45,8 @@ pub async fn write_request(
     opcode: RequestOpcode,
     body: Bytes,
 ) -> Result<()> {
-    let mut v = Vec::new();
+    let mut header = [0u8; 9];
+    let mut v = &mut header[..];
     v.put_u8(params.version);
     v.put_u8(params.flags);
     v.put_i16(params.stream);
@@ -54,7 +55,7 @@ pub async fn write_request(
     // TODO: Return an error if the frame is too big?
     v.put_u32(body.len() as u32);
 
-    writer.write_all(&v).await?;
+    writer.write_all(&header).await?;
     writer.write_all(&body).await?;
 
     Ok(())
@@ -104,10 +105,13 @@ pub async fn read_response(
 pub fn compress(uncomp_body: &[u8], compression: Compression) -> Vec<u8> {
     match compression {
         Compression::LZ4 => {
-            let mut comp_body = Vec::new();
-            comp_body.put_u32(uncomp_body.len() as u32);
-            let mut tmp = Vec::new();
+            let uncomp_len = uncomp_body.len() as u32;
+            let mut tmp =
+                Vec::with_capacity(lz4::compression_bound(uncomp_len).unwrap_or(0) as usize);
             lz4::encode_block(&uncomp_body[..], &mut tmp);
+
+            let mut comp_body = Vec::with_capacity(std::mem::size_of::<u32>() + tmp.len());
+            comp_body.put_u32(uncomp_len);
             comp_body.extend_from_slice(&tmp[..]);
             comp_body
         }
@@ -118,14 +122,7 @@ pub fn compress(uncomp_body: &[u8], compression: Compression) -> Vec<u8> {
 pub fn decompress(mut comp_body: &[u8], compression: Compression) -> Result<Vec<u8>> {
     match compression {
         Compression::LZ4 => {
-            let uncomp_len: i32 = comp_body.get_i32().into();
-            if uncomp_len < 0 {
-                return Err(anyhow!(
-                    "Uncompressed LZ4 length is negative: {}",
-                    uncomp_len
-                ));
-            }
-            let uncomp_len = uncomp_len as usize;
+            let uncomp_len = comp_body.get_u32() as usize;
             let mut uncomp_body = Vec::with_capacity(uncomp_len);
             if uncomp_len == 0 {
                 return Ok(uncomp_body);
