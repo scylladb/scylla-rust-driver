@@ -2,9 +2,22 @@
 
 use anyhow::Result;
 use byteorder::{BigEndian, ReadBytesExt};
-use bytes::{Buf, BufMut};
+use bytes::BufMut;
 use std::collections::HashMap;
 use std::str;
+
+fn read_raw_bytes<'a>(count: usize, buf: &mut &'a [u8]) -> Result<&'a [u8]> {
+    if buf.len() < count {
+        return Err(anyhow!(
+            "not enough bytes in buffer: expected {}, was {}",
+            count,
+            buf.len()
+        ));
+    }
+    let (ret, rest) = buf.split_at(count);
+    *buf = rest;
+    Ok(ret)
+}
 
 pub fn read_int(buf: &mut &[u8]) -> Result<i32> {
     let v = buf.read_i32::<BigEndian>()?;
@@ -13,6 +26,22 @@ pub fn read_int(buf: &mut &[u8]) -> Result<i32> {
 
 pub fn write_int(v: i32, buf: &mut impl BufMut) {
     buf.put_i32(v);
+}
+
+fn read_int_length(buf: &mut &[u8]) -> Result<usize> {
+    let v = read_int(buf)?;
+    if v < 0 {
+        return Err(anyhow!("invalid length of type `int`: {}", v));
+    }
+    Ok(v as usize)
+}
+
+fn write_int_length(v: usize, buf: &mut impl BufMut) -> Result<()> {
+    if v > i32::MAX as usize {
+        return Err(anyhow!("length too big to be encoded as `int`: {}", v));
+    }
+    write_int(v as i32, buf);
+    Ok(())
 }
 
 #[test]
@@ -53,6 +82,22 @@ pub fn write_short(v: i16, buf: &mut impl BufMut) {
     buf.put_i16(v);
 }
 
+fn read_short_length(buf: &mut &[u8]) -> Result<usize> {
+    let v = read_short(buf)?;
+    if v < 0 {
+        return Err(anyhow!("invalid length of type `short`: {}", v));
+    }
+    Ok(v as usize)
+}
+
+fn write_short_length(v: usize, buf: &mut impl BufMut) -> Result<()> {
+    if v > i16::MAX as usize {
+        return Err(anyhow!("length too big to be encoded as `short`: {}", v));
+    }
+    write_short(v as i16, buf);
+    Ok(())
+}
+
 #[test]
 fn type_short() {
     let vals = vec![i16::MIN, -1, 0, 1, i16::MAX];
@@ -70,69 +115,40 @@ pub fn read_bytes_opt<'a>(buf: &mut &'a [u8]) -> Result<Option<&'a [u8]>> {
         return Ok(None);
     }
     let len = len as usize;
-    let v = Some(&buf[0..len]);
-    buf.advance(len);
+    let v = Some(read_raw_bytes(len, buf)?);
     Ok(v)
 }
 
 // Same as read_bytes, but we assume the value won't be `null`
 pub fn read_bytes<'a>(buf: &mut &'a [u8]) -> Result<&'a [u8]> {
-    let len = read_int(buf)?;
-    if len < 0 {
-        return Err(anyhow!(
-            "unexpected length when deserializing `bytes` value: {}",
-            len
-        ));
-    }
-    let len = len as usize;
-    let v = &buf[0..len];
-    buf.advance(len);
+    let len = read_int_length(buf)?;
+    let v = read_raw_bytes(len, buf)?;
     Ok(v)
 }
 
 pub fn write_bytes(v: &[u8], buf: &mut impl BufMut) -> Result<()> {
-    let len = v.len();
-    if len > i32::MAX as usize {
-        return Err(anyhow!("Byte slice is too long for 32-bits: {} bytes", len));
-    }
-    write_int(len as i32, buf);
+    write_int_length(v.len(), buf)?;
     buf.put_slice(v);
     Ok(())
 }
 
 pub fn write_short_bytes(v: &[u8], buf: &mut impl BufMut) -> Result<()> {
-    let len = v.len();
-    if len > i16::MAX as usize {
-        return Err(anyhow!("Byte slice is too long for 16-bits: {} bytes", len));
-    }
-    write_short(len as i16, buf);
+    write_short_length(v.len(), buf)?;
     buf.put_slice(v);
     Ok(())
 }
 
 pub fn read_string<'a>(buf: &mut &'a [u8]) -> Result<&'a str> {
-    let len = read_short(buf)? as usize;
-    if buf.len() < len {
-        return Err(anyhow!(
-            "Not enough bytes in buffer: expected {}, was {}",
-            len,
-            buf.len()
-        ));
-    }
-    let raw = &buf[0..len];
+    let len = read_short_length(buf)?;
+    let raw = read_raw_bytes(len, buf)?;
     let v = str::from_utf8(raw)?;
-    buf.advance(len as usize);
     Ok(v)
 }
 
 pub fn write_string(v: &str, buf: &mut impl BufMut) -> Result<()> {
     let raw = v.as_bytes();
-    let len = raw.len();
-    if len > i16::MAX as usize {
-        return Err(anyhow!("String is too long for 16-bits: {} bytes", len));
-    }
-    write_short(len as i16, buf);
-    buf.put_slice(&raw[0..len]);
+    write_short_length(v.len(), buf)?;
+    buf.put_slice(raw);
     Ok(())
 }
 
@@ -147,28 +163,17 @@ fn type_string() {
 }
 
 pub fn read_long_string<'a>(buf: &mut &'a [u8]) -> Result<&'a str> {
-    let len = read_int(buf)? as usize;
-    if buf.len() < len {
-        return Err(anyhow!(
-            "Not enough bytes in buffer: expected {}, was {}",
-            len,
-            buf.len()
-        ));
-    }
-    let raw = &buf[0..len];
+    let len = read_int_length(buf)?;
+    let raw = read_raw_bytes(len, buf)?;
     let v = str::from_utf8(raw)?;
-    buf.advance(len as usize);
     Ok(v)
 }
 
 pub fn write_long_string(v: &str, buf: &mut impl BufMut) -> Result<()> {
     let raw = v.as_bytes();
     let len = raw.len();
-    if len > i32::MAX as usize {
-        return Err(anyhow!("String is too long for 32-bits: {} bytes", len));
-    }
-    write_int(len as i32, buf);
-    buf.put_slice(&raw[0..len]);
+    write_int_length(len, buf)?;
+    buf.put_slice(raw);
     Ok(())
 }
 
@@ -184,7 +189,7 @@ fn type_long_string() {
 
 pub fn read_string_map(buf: &mut &[u8]) -> Result<HashMap<String, String>> {
     let mut v = HashMap::new();
-    let len = read_short(buf)?;
+    let len = read_short_length(buf)?;
     for _ in 0..len {
         let key = read_string(buf)?.to_owned();
         let val = read_string(buf)?.to_owned();
@@ -195,13 +200,7 @@ pub fn read_string_map(buf: &mut &[u8]) -> Result<HashMap<String, String>> {
 
 pub fn write_string_map(v: &HashMap<String, String>, buf: &mut impl BufMut) -> Result<()> {
     let len = v.len();
-    if v.len() > i16::MAX as usize {
-        return Err(anyhow!(
-            "String map has too many entries for 16-bits: {}",
-            len
-        ));
-    }
-    write_short(len as i16, buf);
+    write_short_length(len, buf)?;
     for (key, val) in v.iter() {
         write_string(key, buf)?;
         write_string(val, buf)?;
@@ -222,7 +221,7 @@ fn type_string_map() {
 
 pub fn read_string_list(buf: &mut &[u8]) -> Result<Vec<String>> {
     let mut v = Vec::new();
-    let len = read_short(buf)?;
+    let len = read_short_length(buf)?;
     for _ in 0..len {
         v.push(read_string(buf)?.to_owned());
     }
@@ -231,13 +230,7 @@ pub fn read_string_list(buf: &mut &[u8]) -> Result<Vec<String>> {
 
 pub fn write_string_list(v: &[String], buf: &mut impl BufMut) -> Result<()> {
     let len = v.len();
-    if v.len() > i16::MAX as usize {
-        return Err(anyhow!(
-            "String list has too many entries for 16-bits: {}",
-            len
-        ));
-    }
-    write_short(len as i16, buf);
+    write_short_length(len, buf)?;
     for v in v.iter() {
         write_string(v, buf)?;
     }
@@ -257,7 +250,7 @@ fn type_string_list() {
 
 pub fn read_string_multimap(buf: &mut &[u8]) -> Result<HashMap<String, Vec<String>>> {
     let mut v = HashMap::new();
-    let len = read_short(buf)?;
+    let len = read_short_length(buf)?;
     for _ in 0..len {
         let key = read_string(buf)?.to_owned();
         let val = read_string_list(buf)?;
@@ -271,13 +264,7 @@ pub fn write_string_multimap(
     buf: &mut impl BufMut,
 ) -> Result<()> {
     let len = v.len();
-    if v.len() > i16::MAX as usize {
-        return Err(anyhow!(
-            "String map has too many entries for 16-bits: {}",
-            len
-        ));
-    }
-    write_short(len as i16, buf);
+    write_short_length(len, buf)?;
     for (key, val) in v.iter() {
         write_string(key, buf)?;
         write_string_list(val, buf)?;
