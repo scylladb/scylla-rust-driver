@@ -24,6 +24,7 @@ pub struct Connection {
     submit_channel: RwLock<Option<mpsc::Sender<Task>>>,
     worker_handle: Mutex<Option<JoinHandle<()>>>,
     shard_info: Option<ShardInfo>,
+    compression: Option<Compression>,
 }
 
 type ResponseHandler = oneshot::Sender<TaskResponse>;
@@ -36,6 +37,7 @@ struct Task {
 }
 
 struct TaskResponse {
+    params: FrameParams,
     opcode: ResponseOpcode,
     body: Bytes,
 }
@@ -47,12 +49,13 @@ impl Connection {
         // TODO: What should be the size of the channel?
         let (sender, receiver) = mpsc::channel(128);
 
-        let handle = tokio::task::spawn(Self::router(stream, receiver, compression));
+        let handle = tokio::task::spawn(Self::router(stream, receiver));
 
         Ok(Self {
             submit_channel: RwLock::new(Some(sender)),
             worker_handle: Mutex::new(Some(handle)),
             shard_info: None,
+            compression,
         })
     }
 
@@ -126,7 +129,17 @@ impl Connection {
 
     // TODO: Return the response associated with that frame
     async fn send_request<R: Request>(&self, request: &R, compress: bool) -> Result<Response> {
-        let raw_request = request.to_bytes()?;
+        let mut raw_request = request.to_bytes()?;
+
+        let mut request_is_compressed = false;
+
+        if compress {
+            if let Some(compression) = self.compression {
+                raw_request = frame::compress(&raw_request, compression).into();
+                request_is_compressed = true;
+            }
+        }
+
         let (sender, receiver) = oneshot::channel();
         let submit_channel = self
             .submit_channel
@@ -139,23 +152,28 @@ impl Connection {
             .send(Task {
                 request_opcode: R::OPCODE,
                 request_body: raw_request,
-                compress,
+                compress: request_is_compressed,
                 response_handler: sender,
             })
             .await
             .map_err(|_| anyhow!("Request dropped"))?;
 
         let task_response = receiver.await?;
-        let response = Response::deserialize(task_response.opcode, &mut &*task_response.body)?;
+        let mut raw_response = task_response.body;
+
+        let response_is_compressed = task_response.params.flags & frame::FLAG_COMPRESSION != 0;
+        if response_is_compressed {
+            if let Some(compression) = self.compression {
+                raw_response = frame::decompress(&raw_response, compression)?.into()
+            }
+        }
+
+        let response = Response::deserialize(task_response.opcode, &mut &*raw_response)?;
 
         Ok(response)
     }
 
-    async fn router(
-        mut stream: TcpStream,
-        receiver: mpsc::Receiver<Task>,
-        compression: Option<Compression>,
-    ) {
+    async fn router(mut stream: TcpStream, receiver: mpsc::Receiver<Task>) {
         let (read_half, write_half) = stream.split();
 
         // Why are using a mutex here?
@@ -172,8 +190,8 @@ impl Connection {
         // across .await points. Therefore, it should not be too expensive.
         let handler_map = StdMutex::new(ResponseHandlerMap::new());
 
-        let r = Self::reader(read_half, &handler_map, compression);
-        let w = Self::writer(write_half, &handler_map, receiver, compression);
+        let r = Self::reader(read_half, &handler_map);
+        let w = Self::writer(write_half, &handler_map, receiver);
 
         // TODO: What to do with this error?
         let _ = futures::try_join!(r, w);
@@ -182,10 +200,9 @@ impl Connection {
     async fn reader<'a>(
         mut read_half: tcp::ReadHalf<'a>,
         handler_map: &StdMutex<ResponseHandlerMap>,
-        compression: Option<Compression>,
     ) -> Result<()> {
         loop {
-            let (params, opcode, body) = frame::read_response(&mut read_half, compression).await?;
+            let (params, opcode, body) = frame::read_response(&mut read_half).await?;
 
             match params.stream.cmp(&-1) {
                 Ordering::Less => {
@@ -212,7 +229,11 @@ impl Connection {
                 // Don't care if sending of the response fails. This must
                 // mean that the receiver side was impatient and is not
                 // waiting for the result anymore.
-                let _ = handler.send(TaskResponse { opcode, body });
+                let _ = handler.send(TaskResponse {
+                    params,
+                    opcode,
+                    body,
+                });
             } else {
                 // Unsolicited frame. This should not happen and indicates
                 // a bug either in the driver, or in the database
@@ -225,7 +246,6 @@ impl Connection {
         mut write_half: tcp::WriteHalf<'a>,
         handler_map: &StdMutex<ResponseHandlerMap>,
         mut task_receiver: mpsc::Receiver<Task>,
-        compression: Option<Compression>,
     ) -> Result<()> {
         // When the Connection object is dropped, the sender half
         // of the channel will be dropped, this task will return an error
@@ -247,15 +267,15 @@ impl Connection {
 
             let mut params = FrameParams::default();
             params.stream = stream_id;
-
-            let compression = if task.compress { compression } else { None };
+            if task.compress {
+                params.flags |= frame::FLAG_COMPRESSION;
+            }
 
             frame::write_request(
                 &mut write_half,
                 params,
                 task.request_opcode,
                 task.request_body,
-                compression,
             )
             .await?;
         }
