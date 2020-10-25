@@ -1,4 +1,5 @@
 use anyhow::Result;
+use futures::future::join_all;
 use scylla::transport::session::Session;
 use std::env;
 use std::sync::Arc;
@@ -24,13 +25,15 @@ async fn main() -> Result<()> {
 
     let sem = Arc::new(Semaphore::new(256));
 
-    for i in 0..100_000usize {
+    let no_tasks = 100_000usize;
+    let mut futs = Vec::with_capacity(no_tasks);
+    for i in 0..no_tasks {
         if i % 1000 == 0 {
             println!("{}", i);
         }
         let session = session.clone();
         let permit = sem.clone().acquire_owned().await;
-        tokio::task::spawn(async move {
+        futs.push(tokio::task::spawn(async move {
             let i = i;
             session
                 .query(
@@ -45,8 +48,10 @@ async fn main() -> Result<()> {
                 .unwrap();
 
             let _permit = permit;
-        });
+        }));
     }
+
+    join_all(futs).await;
 
     println!("Ok.");
 

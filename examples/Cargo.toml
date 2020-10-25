@@ -7,6 +7,7 @@ edition = "2018"
 [dev-dependencies]
 anyhow = "1.0.33"
 scylla = { path = "../scylla" }
+futures = "0.3.6"
 tokio = { version = "0.3.0", features = ["full"] }
 rustyline = "6.3.0"
 
