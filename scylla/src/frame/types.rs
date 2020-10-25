@@ -5,6 +5,7 @@ use byteorder::{BigEndian, ReadBytesExt};
 use bytes::BufMut;
 use std::collections::HashMap;
 use std::str;
+use uuid::Uuid;
 
 fn read_raw_bytes<'a>(count: usize, buf: &mut &'a [u8]) -> Result<&'a [u8]> {
     if buf.len() < count {
@@ -136,6 +137,41 @@ pub fn write_short_bytes(v: &[u8], buf: &mut impl BufMut) -> Result<()> {
     write_short_length(v.len(), buf)?;
     buf.put_slice(v);
     Ok(())
+}
+
+pub fn read_bytes_map(buf: &mut &[u8]) -> Result<HashMap<String, Vec<u8>>> {
+    let len = read_short_length(buf)?;
+    let mut v = HashMap::with_capacity(len);
+    for _ in 0..len {
+        let key = read_string(buf)?.to_owned();
+        let val = read_bytes(buf)?.to_owned();
+        v.insert(key, val);
+    }
+    Ok(v)
+}
+
+pub fn write_bytes_map<B>(v: &HashMap<String, B>, buf: &mut impl BufMut) -> Result<()>
+where
+    B: AsRef<[u8]>,
+{
+    let len = v.len();
+    write_short_length(len, buf)?;
+    for (key, val) in v.iter() {
+        write_string(key, buf)?;
+        write_bytes(val.as_ref(), buf)?;
+    }
+    Ok(())
+}
+
+#[test]
+fn type_bytes_map() {
+    let mut val = HashMap::new();
+    val.insert("".to_owned(), vec![]);
+    val.insert("EXTENSION1".to_owned(), vec![1, 2, 3]);
+    val.insert("EXTENSION2".to_owned(), vec![4, 5, 6]);
+    let mut buf = Vec::new();
+    write_bytes_map(&val, &mut buf).unwrap();
+    assert_eq!(read_bytes_map(&mut &*buf).unwrap(), val);
 }
 
 pub fn read_string<'a>(buf: &mut &'a [u8]) -> Result<&'a str> {
@@ -284,4 +320,25 @@ fn type_string_multimap() {
     let mut buf = Vec::new();
     write_string_multimap(&val, &mut buf).unwrap();
     assert_eq!(read_string_multimap(&mut &buf[..]).unwrap(), val);
+}
+
+pub fn read_uuid(buf: &mut &[u8]) -> Result<Uuid> {
+    let raw = read_raw_bytes(16, buf)?;
+
+    // It's safe to unwrap here because Uuid::from_slice only fails
+    // if the argument slice's length is not 16.
+    Ok(Uuid::from_slice(raw).unwrap())
+}
+
+pub fn write_uuid(uuid: &Uuid, buf: &mut impl BufMut) {
+    buf.put_slice(&uuid.as_bytes()[..]);
+}
+
+#[test]
+fn type_uuid() {
+    let u = Uuid::parse_str("f3b4958c-52a1-11e7-802a-010203040506").unwrap();
+    let mut buf = Vec::new();
+    write_uuid(&u, &mut buf);
+    let u2 = read_uuid(&mut &*buf).unwrap();
+    assert_eq!(u, u2);
 }

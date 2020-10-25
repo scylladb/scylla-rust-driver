@@ -8,6 +8,7 @@ use anyhow::Result;
 use bytes::{Buf, BufMut, Bytes};
 use snappy;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
+use uuid::Uuid;
 
 use std::convert::TryFrom;
 
@@ -39,7 +40,7 @@ impl Default for FrameParams {
     }
 }
 
-pub async fn write_request(
+pub async fn write_request_frame(
     writer: &mut (impl AsyncWrite + Unpin),
     params: FrameParams,
     opcode: RequestOpcode,
@@ -61,7 +62,7 @@ pub async fn write_request(
     Ok(())
 }
 
-pub async fn read_response(
+pub async fn read_response_frame(
     reader: &mut (impl AsyncRead + Unpin),
 ) -> Result<(FrameParams, ResponseOpcode, Bytes)> {
     let mut raw_header = [0u8; 9];
@@ -100,6 +101,83 @@ pub async fn read_response(
     reader.read_exact(&mut raw_body[..]).await?;
 
     Ok((frame_params, opcode, raw_body.into()))
+}
+
+pub struct RequestBodyWithExtensions {
+    pub body: Bytes,
+}
+
+pub fn prepare_request_body_with_extensions(
+    body_with_ext: RequestBodyWithExtensions,
+    compression: Option<Compression>,
+) -> (u8, Bytes) {
+    let mut flags = 0;
+
+    let mut body = body_with_ext.body;
+    if let Some(compression) = compression {
+        flags |= FLAG_COMPRESSION;
+        body = compress(&body, compression).into();
+    }
+
+    (flags, body)
+}
+
+pub struct ResponseBodyWithExtensions {
+    pub trace_id: Option<Uuid>,
+    pub warnings: Vec<String>,
+    pub body: Bytes,
+}
+
+pub fn parse_response_body_extensions(
+    flags: u8,
+    compression: Option<Compression>,
+    mut body: Bytes,
+) -> Result<ResponseBodyWithExtensions> {
+    if flags & FLAG_COMPRESSION != 0 {
+        if let Some(compression) = compression {
+            body = decompress(&body, compression)?.into();
+        } else {
+            return Err(anyhow!(
+                "Frame is compressed, but no compression negotiated for connection."
+            ));
+        }
+    }
+
+    let trace_id = if flags & FLAG_TRACING != 0 {
+        let buf = &mut &*body;
+        let trace_id = types::read_uuid(buf)?;
+        body.advance(16);
+        Some(trace_id)
+    } else {
+        None
+    };
+
+    let warnings = if flags & FLAG_WARNING != 0 {
+        let body_len = body.len();
+        let buf = &mut &*body;
+        let warnings = types::read_string_list(buf)?;
+        let buf_len = buf.len();
+        body.advance(body_len - buf_len);
+        warnings
+    } else {
+        Vec::new()
+    };
+
+    if flags & FLAG_CUSTOM_PAYLOAD != 0 {
+        // TODO: Do something useful with the custom payload map
+        // For now, just skip it
+        let body_len = body.len();
+        let buf = &mut &*body;
+        types::read_bytes_map(buf)?;
+        let buf_len = buf.len();
+        body.advance(body_len - buf_len);
+    }
+
+    Ok(ResponseBodyWithExtensions {
+        trace_id,
+        warnings,
+        body,
+    })
 }
 
 pub fn compress(uncomp_body: &[u8], compression: Compression) -> Vec<u8> {

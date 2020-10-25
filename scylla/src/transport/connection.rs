@@ -13,7 +13,7 @@ use crate::frame::{
     request::{self, execute, query, Request, RequestOpcode},
     response::{Response, ResponseOpcode},
     value::Value,
-    FrameParams,
+    FrameParams, RequestBodyWithExtensions,
 };
 use crate::query::Query;
 use crate::routing::ShardInfo;
@@ -30,9 +30,9 @@ pub struct Connection {
 type ResponseHandler = oneshot::Sender<TaskResponse>;
 
 struct Task {
+    request_flags: u8,
     request_opcode: RequestOpcode,
     request_body: Bytes,
-    compress: bool,
     response_handler: ResponseHandler,
 }
 
@@ -129,16 +129,12 @@ impl Connection {
 
     // TODO: Return the response associated with that frame
     async fn send_request<R: Request>(&self, request: &R, compress: bool) -> Result<Response> {
-        let mut raw_request = request.to_bytes()?;
+        let body = request.to_bytes()?;
+        let compression = if compress { self.compression } else { None };
+        let body_with_ext = RequestBodyWithExtensions { body };
 
-        let mut request_is_compressed = false;
-
-        if compress {
-            if let Some(compression) = self.compression {
-                raw_request = frame::compress(&raw_request, compression).into();
-                request_is_compressed = true;
-            }
-        }
+        let (flags, raw_request) =
+            frame::prepare_request_body_with_extensions(body_with_ext, compression);
 
         let (sender, receiver) = oneshot::channel();
         let submit_channel = self
@@ -150,25 +146,28 @@ impl Connection {
 
         submit_channel
             .send(Task {
+                request_flags: flags,
                 request_opcode: R::OPCODE,
                 request_body: raw_request,
-                compress: request_is_compressed,
                 response_handler: sender,
             })
             .await
             .map_err(|_| anyhow!("Request dropped"))?;
 
         let task_response = receiver.await?;
-        let mut raw_response = task_response.body;
+        let body_with_ext = frame::parse_response_body_extensions(
+            task_response.params.flags,
+            self.compression,
+            task_response.body,
+        )?;
 
-        let response_is_compressed = task_response.params.flags & frame::FLAG_COMPRESSION != 0;
-        if response_is_compressed {
-            if let Some(compression) = self.compression {
-                raw_response = frame::decompress(&raw_response, compression)?.into()
-            }
+        // TODO: Do something more sensible with warnings
+        // For now, just print them to stderr
+        for warning in body_with_ext.warnings {
+            eprintln!("Warning: {}", warning);
         }
 
-        let response = Response::deserialize(task_response.opcode, &mut &*raw_response)?;
+        let response = Response::deserialize(task_response.opcode, &mut &*body_with_ext.body)?;
 
         Ok(response)
     }
@@ -202,7 +201,7 @@ impl Connection {
         handler_map: &StdMutex<ResponseHandlerMap>,
     ) -> Result<()> {
         loop {
-            let (params, opcode, body) = frame::read_response(&mut read_half).await?;
+            let (params, opcode, body) = frame::read_response_frame(&mut read_half).await?;
 
             match params.stream.cmp(&-1) {
                 Ordering::Less => {
@@ -267,11 +266,9 @@ impl Connection {
 
             let mut params = FrameParams::default();
             params.stream = stream_id;
-            if task.compress {
-                params.flags |= frame::FLAG_COMPRESSION;
-            }
+            params.flags = task.request_flags;
 
-            frame::write_request(
+            frame::write_request_frame(
                 &mut write_half,
                 params,
                 task.request_opcode,
