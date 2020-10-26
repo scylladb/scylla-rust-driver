@@ -5,9 +5,7 @@ use fasthash::murmur3;
 #[tokio::test]
 #[ignore]
 async fn test_unprepared_statement() {
-    let session = Session::connect("127.0.0.1:9042".parse().unwrap(), None)
-        .await
-        .unwrap();
+    let session = Session::connect("localhost:9042", None).await.unwrap();
 
     session.query("CREATE KEYSPACE IF NOT EXISTS ks WITH REPLICATION = {'class' : 'SimpleStrategy', 'replication_factor' : 1}", &[]).await.unwrap();
     session
@@ -65,9 +63,7 @@ async fn test_unprepared_statement() {
 #[tokio::test]
 #[ignore]
 async fn test_prepared_statement() {
-    let session = Session::connect("127.0.0.1:9042".parse().unwrap(), None)
-        .await
-        .unwrap();
+    let session = Session::connect("localhost:9042", None).await.unwrap();
 
     session.query("CREATE KEYSPACE IF NOT EXISTS ks WITH REPLICATION = {'class' : 'SimpleStrategy', 'replication_factor' : 1}", &[]).await.unwrap();
     session

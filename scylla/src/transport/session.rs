@@ -1,8 +1,8 @@
 use anyhow::Result;
 use futures::{future::RemoteHandle, FutureExt};
 use std::collections::HashMap;
-use std::net::SocketAddr;
 use std::sync::{Arc, RwLock};
+use tokio::net::ToSocketAddrs;
 
 use crate::frame::response::result;
 use crate::frame::response::Response;
@@ -34,16 +34,19 @@ pub struct Session {
 /// Represents a CQL session, which can be used to communicate
 /// with the database
 impl Session {
-    // FIXME: Use ToSocketAddrs instead of SocketAddr in public interfaces
     // because it's more convenient
     /// Estabilishes a CQL session with the database
     /// # Arguments
     ///
-    /// * `addr` - address of the server
+    /// * `addrs` - address/addresses of the server
     /// * `compression` - optional compression settings
-    pub async fn connect(addr: SocketAddr, compression: Option<Compression>) -> Result<Self> {
-        let connection = open_connection(addr, compression).await?;
-        let node = Node { addr };
+    pub async fn connect(
+        addrs: impl ToSocketAddrs + Clone,
+        compression: Option<Compression>,
+    ) -> Result<Self> {
+        let connection = open_connection(addrs, compression).await?;
+        let addr = connection.get_addr();
+        let node = Node { addr: addr.clone() };
 
         let (topology_reader, topology) = TopologyReader::new(node).await?;
         let (fut, _topology_reader_handle) = topology_reader.run().remote_handle();

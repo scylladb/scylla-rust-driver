@@ -27,6 +27,7 @@ pub struct Connection {
     _worker_handle: RemoteHandle<()>,
     shard_info: Option<ShardInfo>,
     compression: Option<Compression>,
+    addr: SocketAddr,
 }
 
 type ResponseHandler = oneshot::Sender<TaskResponse>;
@@ -47,6 +48,7 @@ struct TaskResponse {
 impl Connection {
     pub async fn new(addr: impl ToSocketAddrs, compression: Option<Compression>) -> Result<Self> {
         let stream = TcpStream::connect(addr).await?;
+        let addr = stream.peer_addr()?;
 
         // TODO: What should be the size of the channel?
         let (sender, receiver) = mpsc::channel(128);
@@ -59,6 +61,7 @@ impl Connection {
             _worker_handle,
             shard_info: None,
             compression,
+            addr,
         })
     }
 
@@ -285,14 +288,18 @@ impl Connection {
     pub fn set_compression(&mut self, compression: Option<Compression>) {
         self.compression = compression;
     }
+
+    pub fn get_addr(&self) -> &SocketAddr {
+        &self.addr
+    }
 }
 
 pub async fn open_connection(
-    addr: SocketAddr,
+    addrs: impl ToSocketAddrs + Clone,
     compression: Option<Compression>,
 ) -> Result<Connection> {
     // TODO: shouldn't all this logic be in Connection::new?
-    let mut connection = Connection::new(addr, compression).await?;
+    let mut connection = Connection::new(addrs, compression).await?;
 
     let options_result = connection.get_options().await?;
 
