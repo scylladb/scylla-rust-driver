@@ -1,5 +1,5 @@
+use crate::routing::hash3_x64_128;
 use crate::transport::session::Session;
-use fasthash::murmur3;
 
 // TODO: Requires a running local Scylla instance
 #[tokio::test]
@@ -117,7 +117,7 @@ async fn test_prepared_statement() {
             .as_bigint()
             .unwrap();
         let expected_token =
-            murmur3::hash128(&prepared_statement.compute_partition_key(&values)) as i64;
+            hash3_x64_128(&prepared_statement.compute_partition_key(&values)) as i64;
         assert_eq!(token, expected_token)
     }
     {
@@ -132,7 +132,7 @@ async fn test_prepared_statement() {
             .as_bigint()
             .unwrap();
         let expected_token =
-            murmur3::hash128(&prepared_complex_pk_statement.compute_partition_key(&values)) as i64;
+            hash3_x64_128(&prepared_complex_pk_statement.compute_partition_key(&values)) as i64;
         assert_eq!(token, expected_token)
     }
 
@@ -163,5 +163,52 @@ async fn test_prepared_statement() {
         let e = r.columns[4].as_ref();
         assert!(e.is_none());
         assert_eq!((a, b, c, d), (17, 16, &String::from("I'm prepared!!!"), 7))
+    }
+}
+
+#[tokio::test]
+#[ignore]
+async fn test_token_calculation() {
+    let session = Session::connect("127.0.0.1:9042", None).await.unwrap();
+
+    session.query("CREATE KEYSPACE IF NOT EXISTS ks WITH REPLICATION = {'class' : 'SimpleStrategy', 'replication_factor' : 1}", &[]).await.unwrap();
+    session
+        .query("DROP TABLE IF EXISTS ks.t3;", &[])
+        .await
+        .unwrap();
+    session
+        .query("CREATE TABLE IF NOT EXISTS ks.t3 (a text primary key)", &[])
+        .await
+        .unwrap();
+    // Wait for schema agreement
+    std::thread::sleep(std::time::Duration::from_millis(300));
+    let prepared_statement = session
+        .prepare("INSERT INTO ks.t3 (a) VALUES (?)")
+        .await
+        .unwrap();
+
+    // Try calculating tokens for different sizes of the key
+    for i in 1..50usize {
+        eprintln!("Trying key size {}", i);
+        let mut s = String::new();
+        for _ in 0..i {
+            s.push('a');
+        }
+        let values = values!(s.as_ref());
+        session.execute(&prepared_statement, &values).await.unwrap();
+
+        let rs = session
+            .query("SELECT token(a) FROM ks.t3 WHERE a = ?", &values)
+            .await
+            .unwrap()
+            .unwrap();
+        let token: i64 = rs.first().unwrap().columns[0]
+            .as_ref()
+            .unwrap()
+            .as_bigint()
+            .unwrap();
+        let expected_token =
+            hash3_x64_128(&prepared_statement.compute_partition_key(&values)) as i64;
+        assert_eq!(token, expected_token)
     }
 }

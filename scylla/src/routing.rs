@@ -1,11 +1,11 @@
 use anyhow;
 use anyhow::Result;
-use bytes::Bytes;
-use fasthash::murmur3;
+use bytes::{Buf, Bytes};
 use std::collections::BTreeMap;
 use std::collections::HashMap;
 use std::convert::TryFrom;
 use std::net::SocketAddr;
+use std::num::Wrapping;
 use std::ops::Bound::{Included, Unbounded};
 
 #[derive(PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Copy)]
@@ -43,7 +43,7 @@ impl Token {
 
 pub fn murmur3_token(pk: Bytes) -> Token {
     Token {
-        value: murmur3::hash128(pk) as i64,
+        value: hash3_x64_128(&pk) as i64,
     }
 }
 
@@ -110,4 +110,97 @@ fn test_shard_of() {
         }),
         3
     );
+}
+
+// An implementation of MurmurHash3 ported from Scylla. Please note that this
+// is not a "correct" implementation of MurmurHash3 - it replicates the same
+// bugs made in the original Cassandra implementation in order to be compatible.
+pub fn hash3_x64_128(mut data: &[u8]) -> i128 {
+    let length = data.len();
+
+    let c1: Wrapping<i64> = Wrapping(0x87c3_7b91_1142_53d5_u64 as i64);
+    let c2: Wrapping<i64> = Wrapping(0x4cf5_ad43_2745_937f_u64 as i64);
+
+    let mut h1 = Wrapping(0_i64);
+    let mut h2 = Wrapping(0_i64);
+
+    while data.len() >= 16 {
+        let mut k1 = Wrapping(data.get_i64_le());
+        let mut k2 = Wrapping(data.get_i64_le());
+
+        k1 *= c1;
+        k1 = rotl64(k1, 31);
+        k1 *= c2;
+        h1 ^= k1;
+
+        h1 = rotl64(h1, 27);
+        h1 += h2;
+        h1 = h1 * Wrapping(5) + Wrapping(0x52dce729);
+
+        k2 *= c2;
+        k2 = rotl64(k2, 33);
+        k2 *= c1;
+        h2 ^= k2;
+
+        h2 = rotl64(h2, 31);
+        h2 += h1;
+        h2 = h2 * Wrapping(5) + Wrapping(0x38495ab5);
+    }
+
+    let mut k1 = Wrapping(0_i64);
+    let mut k2 = Wrapping(0_i64);
+
+    debug_assert!(data.len() < 16);
+
+    if data.len() > 8 {
+        for i in (8..data.len()).rev() {
+            k2 ^= Wrapping(data[i] as i8 as i64) << ((i - 8) * 8);
+        }
+
+        k2 *= c2;
+        k2 = rotl64(k2, 33);
+        k2 *= c1;
+        h2 ^= k2;
+    }
+
+    if data.len() > 0 {
+        for i in (0..std::cmp::min(8, data.len())).rev() {
+            k1 ^= Wrapping(data[i] as i8 as i64) << (i * 8);
+        }
+
+        k1 *= c1;
+        k1 = rotl64(k1, 31);
+        k1 *= c2;
+        h1 ^= k1;
+    }
+
+    h1 ^= Wrapping(length as i64);
+    h2 ^= Wrapping(length as i64);
+
+    h1 += h2;
+    h2 += h1;
+
+    h1 = fmix(h1);
+    h2 = fmix(h2);
+
+    h1 += h2;
+    h2 += h1;
+
+    ((h2.0 as i128) << 64) | h1.0 as i128
+}
+
+#[inline]
+fn rotl64(v: Wrapping<i64>, n: u32) -> Wrapping<i64> {
+    Wrapping((v.0 << n) | (v.0 as u64 >> (64 - n)) as i64)
+}
+
+#[inline]
+fn fmix(mut k: Wrapping<i64>) -> Wrapping<i64> {
+    k ^= Wrapping((k.0 as u64 >> 33) as i64);
+    k *= Wrapping(0xff51afd7ed558ccd_u64 as i64);
+    k ^= Wrapping((k.0 as u64 >> 33) as i64);
+    k *= Wrapping(0xc4ceb9fe1a85ec53_u64 as i64);
+    k ^= Wrapping((k.0 as u64 >> 33) as i64);
+
+    k
 }
