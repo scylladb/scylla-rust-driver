@@ -155,10 +155,22 @@ impl Session {
                 match err.code {
                     9472 => {
                         // Repreparation of a statement is needed
-                        let reprepared = self.prepare(prepared.get_statement()).await?;
+                        let reprepared_result = connection
+                            .prepare(prepared.get_statement().to_owned())
+                            .await?;
                         // Reprepared statement should keep its id - it's the md5 sum
                         // of statement contents
-                        assert!(reprepared.get_id() == prepared.get_id());
+                        match reprepared_result {
+                            Response::Error(err) => return Err(err.into()),
+                            Response::Result(result::Result::Prepared(reprepared)) => {
+                                if reprepared.id != prepared.get_id() {
+                                    return Err(anyhow!(
+                                        "Reprepared statement unexpectedly changed its id"
+                                    ));
+                                }
+                            }
+                            _ => return Err(anyhow!("Unexpected frame received")),
+                        }
                         let result = connection.execute(prepared, values, None).await?;
                         match result {
                             Response::Error(err) => Err(err.into()),

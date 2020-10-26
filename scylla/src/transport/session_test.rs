@@ -19,6 +19,8 @@ async fn test_unprepared_statement() {
         )
         .await
         .unwrap();
+    // Wait for schema agreement
+    std::thread::sleep(std::time::Duration::from_millis(300));
     session
         .query("INSERT INTO ks.t (a, b, c) VALUES (1, 2, 'abc')", &[])
         .await
@@ -83,6 +85,8 @@ async fn test_prepared_statement() {
         .query("CREATE TABLE IF NOT EXISTS ks.complex_pk (a int, b int, c text, d int, e int, primary key ((a,b,c),d))", &[])
         .await
         .unwrap();
+    // Wait for schema agreement
+    std::thread::sleep(std::time::Duration::from_millis(300));
     let prepared_statement = session
         .prepare("INSERT INTO ks.t2 (a, b, c) VALUES (?, ?, ?)")
         .await
