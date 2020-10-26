@@ -1,13 +1,13 @@
 use anyhow::Result;
 use bytes::Bytes;
 use futures::{future::RemoteHandle, FutureExt};
-use tokio::net::{tcp, TcpStream};
+use tokio::net::{tcp, TcpSocket, TcpStream};
 use tokio::sync::{mpsc, oneshot};
 
 use std::cmp::Ordering;
 use std::collections::HashMap;
 use std::convert::TryFrom;
-use std::net::SocketAddr;
+use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::sync::Mutex as StdMutex;
 
 use crate::frame::{
@@ -25,8 +25,10 @@ use crate::transport::Compression;
 pub struct Connection {
     submit_channel: mpsc::Sender<Task>,
     _worker_handle: RemoteHandle<()>,
+    source_port: u16,
     shard_info: Option<ShardInfo>,
     compression: Option<Compression>,
+    is_shard_aware: bool,
 }
 
 type ResponseHandler = oneshot::Sender<TaskResponse>;
@@ -45,8 +47,16 @@ struct TaskResponse {
 }
 
 impl Connection {
-    pub async fn new(addr: SocketAddr, compression: Option<Compression>) -> Result<Self> {
-        let stream = TcpStream::connect(addr).await?;
+    pub async fn new(
+        addr: SocketAddr,
+        source_port: Option<u16>,
+        compression: Option<Compression>,
+    ) -> Result<Self> {
+        let stream = match source_port {
+            Some(p) => connect_with_source_port(addr, p).await?,
+            None => TcpStream::connect(addr).await?,
+        };
+        let source_port = stream.local_addr()?.port();
 
         // TODO: What should be the size of the channel?
         let (sender, receiver) = mpsc::channel(128);
@@ -57,8 +67,10 @@ impl Connection {
         Ok(Self {
             submit_channel: sender,
             _worker_handle,
+            source_port,
             shard_info: None,
             compression,
+            is_shard_aware: false,
         })
     }
 
@@ -278,36 +290,59 @@ impl Connection {
         &self.shard_info
     }
 
-    pub fn set_shard_info(&mut self, shard_info: Option<ShardInfo>) {
+    /// Are we connected to Scylla's shard aware port?
+    // TODO: couple this with shard_info?
+    pub fn get_is_shard_aware(&self) -> bool {
+        self.is_shard_aware
+    }
+
+    pub fn get_source_port(&self) -> u16 {
+        self.source_port
+    }
+
+    fn set_shard_info(&mut self, shard_info: Option<ShardInfo>) {
         self.shard_info = shard_info
     }
 
-    pub fn set_compression(&mut self, compression: Option<Compression>) {
+    fn set_compression(&mut self, compression: Option<Compression>) {
         self.compression = compression;
+    }
+
+    fn set_is_shard_aware(&mut self, is_shard_aware: bool) {
+        self.is_shard_aware = is_shard_aware;
     }
 }
 
 pub async fn open_connection(
     addr: SocketAddr,
+    source_port: Option<u16>,
     compression: Option<Compression>,
 ) -> Result<Connection> {
     // TODO: shouldn't all this logic be in Connection::new?
-    let mut connection = Connection::new(addr, compression).await?;
+    let mut connection = Connection::new(addr, source_port, compression).await?;
 
     let options_result = connection.get_options().await?;
 
-    let (shard_info, supported_compression) = match options_result {
+    let (shard_info, supported_compression, shard_aware_port) = match options_result {
         Response::Supported(mut supported) => {
             let shard_info = ShardInfo::try_from(&supported.options).ok();
             let supported_compression = supported
                 .options
                 .remove("COMPRESSION")
                 .unwrap_or_else(Vec::new);
-            (shard_info, supported_compression)
+            let shard_aware_port = supported
+                .options
+                .remove("SCYLLA_SHARD_AWARE_PORT")
+                .unwrap_or_else(Vec::new)
+                .into_iter()
+                .next()
+                .and_then(|p| p.parse::<u16>().ok());
+            (shard_info, supported_compression, shard_aware_port)
         }
-        _ => (None, Vec::new()),
+        _ => (None, Vec::new(), None),
     };
     connection.set_shard_info(shard_info);
+    connection.set_is_shard_aware(Some(addr.port()) == shard_aware_port);
 
     let mut options = HashMap::new();
     options.insert("CQL_VERSION".to_string(), "4.0.0".to_string()); // FIXME: hardcoded values
@@ -330,6 +365,16 @@ pub async fn open_connection(
     }
 
     Ok(connection)
+}
+
+// TODO: if we use the same source port twice in a row, we'll get an "address already in use" error.
+// We should try with multiple source ports in a loop.
+async fn connect_with_source_port(addr: SocketAddr, source_port: u16) -> Result<TcpStream> {
+    // TODO: handle ipv6?
+    let socket = TcpSocket::new_v4()?;
+    let source_addr = IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0));
+    socket.bind(SocketAddr::new(source_addr, source_port))?;
+    Ok(socket.connect(addr).await?)
 }
 
 struct ResponseHandlerMap {

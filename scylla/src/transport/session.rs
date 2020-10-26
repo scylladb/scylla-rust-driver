@@ -1,5 +1,6 @@
 use anyhow::Result;
 use futures::{future::RemoteHandle, FutureExt};
+use std::collections::hash_map::Entry;
 use std::collections::HashMap;
 use std::fmt::Display;
 use std::net::SocketAddr;
@@ -11,7 +12,7 @@ use crate::frame::response::Response;
 use crate::frame::value::Value;
 use crate::prepared_statement::PreparedStatement;
 use crate::query::Query;
-use crate::routing::{murmur3_token, Node, Token};
+use crate::routing::{murmur3_token, Node, Shard, ShardInfo, Token};
 use crate::transport::connection::{open_connection, Connection};
 use crate::transport::iterator::RowIterator;
 use crate::transport::topology::{Topology, TopologyReader};
@@ -24,13 +25,24 @@ const POOL_LOCK_POISONED: &str =
 pub struct Session {
     // invariant: nonempty
     // PLEASE DO NOT EXPOSE IT TO THE USER OR PEOPLE WILL DIE
-    pool: Arc<RwLock<HashMap<Node, Arc<Connection>>>>,
+    pool: Arc<RwLock<HashMap<Node, NodePool>>>,
 
     // compression options passed to the session when it was created
     compression: Option<Compression>,
 
     topology: Topology,
     _topology_reader_handle: RemoteHandle<()>,
+}
+
+// Pool of connections for a single node.
+// Also stores the sharding info for this node if we have one.
+// If we're connecting using a non-shard-aware port, or connecting to Cassandra,
+// the pool will always have a single connection under shard 0
+// and the sharding info will be empty.
+struct NodePool {
+    // invariant: nonempty
+    connections: HashMap<Shard, Arc<Connection>>,
+    shard_info: Option<ShardInfo>,
 }
 
 /// Represents a CQL session, which can be used to communicate
@@ -48,7 +60,7 @@ impl Session {
         compression: Option<Compression>,
     ) -> Result<Self> {
         let addr = resolve(addr).await?;
-        let connection = open_connection(addr, compression).await?;
+        let connection = open_connection(addr, None, compression).await?;
         let node = Node { addr };
 
         let (topology_reader, topology) = TopologyReader::new(node).await?;
@@ -56,7 +68,9 @@ impl Session {
         tokio::task::spawn(fut);
 
         let pool = Arc::new(RwLock::new(
-            vec![(node, Arc::new(connection))].into_iter().collect(),
+            vec![(node, NodePool::new(Arc::new(connection)))]
+                .into_iter()
+                .collect(),
         ));
 
         Ok(Session {
@@ -180,13 +194,13 @@ impl Session {
     }
 
     /// Returns all connections that the session has currently opened.
-    pub fn get_connections(&self) -> Result<Vec<(Node, Arc<Connection>)>> {
+    pub fn get_connections(&self) -> Result<Vec<(Node, Vec<Arc<Connection>>)>> {
         Ok(self
             .pool
             .read()
             .map_err(|_| anyhow!(POOL_LOCK_POISONED))?
             .iter()
-            .map(|(&node, conn)| (node, conn.to_owned()))
+            .map(|(&node, node_pool)| (node, node_pool.get_connections()))
             .collect())
     }
 
@@ -199,29 +213,87 @@ impl Session {
         // we should calculate the *set* of replicas for this token, using the replication strategy
         // of the table being queried.
         let owner = self.topology.read_ring()?.owner(t);
-        if let Some(c) = self
+
+        let mut found_pool = false;
+        let mut shard_info = None;
+        if let Some(node_pool) = self
             .pool
             .read()
             .map_err(|_| anyhow!(POOL_LOCK_POISONED))?
             .get(&owner)
         {
-            return Ok(c.clone());
-        }
+            // We have a pool for this node. Check if we have a connection for the token.
+            if let Some(c) = node_pool.connection_for_token(t) {
+                return Ok(c);
+            }
 
-        // We don't have a connection for this node yet, create it.
+            found_pool = true;
+            shard_info = node_pool.get_shard_info().cloned();
+        };
+
+        // We can't put this block in `else` for the previous if statement, because the block
+        // prolongs the lifetime of the read guard from `self.pool.read()`.
+        if !found_pool {
+            // We don't even have a pool for this node; in particular, we don't know its
+            // sharding info. We will just connect to a random shard this time so we don't do
+            // too much work on the query path (and we might still get lucky).
+            // The next request using this node's pool will pick the right connection, creating
+            // it if necessary.
+            let new_conn = open_connection(owner.addr, None, self.compression).await?;
+            let new_node_pool = NodePool::new(Arc::new(new_conn));
+
+            return Ok(self
+                .pool
+                .write()
+                .map_err(|_| anyhow!(POOL_LOCK_POISONED))?
+                .entry(owner)
+                // If someone created a node pool for this node faster while we were creating
+                // our own and inserted it into the session pool, drop our new pool and use the
+                // existing one.
+                // From this existing pool we will take any connection if there is no
+                // connection for this token yet.
+                .or_insert(new_node_pool)
+                .connection_for_token_or_any(t)?);
+        };
+
+        // We had a pool for this node, but there was no connection for this token in that pool.
+        // Let's create one.
         // TODO: don't do this on the query path, but concurrently in some other fiber?
-        // Take any_connection() if there is no connection for this node (yet)?
-        let new_conn = open_connection(owner.addr, self.compression).await?;
+        // Take any connection if there is no good connection for this node yet?
+        // TODO: opening this connection may actually fail because the port is already in
+        // use. We should try binding to a couple of ports before we fail. For that we need
+        // open_connection to return a well-typed error so we can check if it was an AddrInUse
+        // error. Or refactor this whole thing.
+        let new_conn_source_port = shard_info
+            .as_ref()
+            .map(|info| info.draw_source_port_for_token(t));
+        let new_conn =
+            Arc::new(open_connection(owner.addr, new_conn_source_port, self.compression).await?);
 
-        Ok(self
-            .pool
-            .write()
-            .map_err(|_| anyhow!(POOL_LOCK_POISONED))?
-            .entry(owner)
-            // If someone opened a connection to this node faster while we were creating our own
-            // and inserted it into the pool, drop our connection and take the existing one.
-            .or_insert_with(|| Arc::new(new_conn))
-            .to_owned())
+        Ok(
+            match self
+                .pool
+                .write()
+                .map_err(|_| anyhow!(POOL_LOCK_POISONED))?
+                .entry(owner)
+            {
+                Entry::Vacant(entry) => {
+                    entry.insert(NodePool::new(new_conn.clone()));
+                    new_conn
+                }
+                Entry::Occupied(mut entry) => {
+                    let node_pool = entry.get_mut();
+                    if shard_info.as_ref() != node_pool.get_shard_info() {
+                        // The node has resharded while we were creating the connection.
+                        // Take any connection.
+                        return node_pool.connection_for_token_or_any(t);
+                    }
+
+                    let shard = node_pool.shard_for_token(t);
+                    node_pool.or_insert(shard, new_conn)
+                }
+            },
+        )
     }
 
     fn any_connection(&self) -> Result<Arc<Connection>> {
@@ -233,7 +305,64 @@ impl Session {
             .values()
             .next()
             .ok_or_else(|| anyhow!("fatal error, broken invariant: no connections available"))?
+            .any_connection()?)
+    }
+}
+
+impl NodePool {
+    pub fn new(connection: Arc<Connection>) -> Self {
+        let (shard, shard_info) =
+            match (connection.get_shard_info(), connection.get_is_shard_aware()) {
+                (Some(info), true) => (
+                    info.shard_of_source_port(connection.get_source_port()),
+                    Some(info.to_owned()),
+                ),
+                _ => (0, None),
+            };
+
+        Self {
+            connections: vec![(shard, connection)].into_iter().collect(),
+            shard_info,
+        }
+    }
+
+    /// Returns all connections that the session has currently opened.
+    pub fn get_connections(&self) -> Vec<Arc<Connection>> {
+        self.connections
+            .values()
+            .map(|conn| conn.to_owned())
+            .collect()
+    }
+
+    pub fn get_shard_info(&self) -> Option<&ShardInfo> {
+        self.shard_info.as_ref()
+    }
+
+    pub fn shard_for_token(&self, t: Token) -> Shard {
+        self.shard_info.as_ref().map_or(0, |info| info.shard_of(t))
+    }
+
+    pub fn connection_for_token(&self, t: Token) -> Option<Arc<Connection>> {
+        let shard = self.shard_for_token(t);
+        self.connections.get(&shard).map(|c| c.to_owned())
+    }
+
+    pub fn connection_for_token_or_any(&self, t: Token) -> Result<Arc<Connection>> {
+        self.connection_for_token(t)
+            .map_or_else(|| self.any_connection(), Ok)
+    }
+
+    pub fn any_connection(&self) -> Result<Arc<Connection>> {
+        Ok(self
+            .connections
+            .values()
+            .next()
+            .ok_or_else(|| anyhow!("fatal error, broken invariant: no connections available"))?
             .to_owned())
+    }
+
+    pub fn or_insert(&mut self, shard: Shard, conn: Arc<Connection>) -> Arc<Connection> {
+        self.connections.entry(shard).or_insert(conn).to_owned()
     }
 }
 
