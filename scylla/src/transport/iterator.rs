@@ -63,13 +63,15 @@ impl RowIterator {
         query: Query,
         values: Vec<Value>,
     ) -> RowIterator {
-        Self::new_for_page_fetcher(move |paging_state| {
-            // TODO: We should avoid copying here, but making it
-            // working without copying is really hard
-            let conn = conn.clone();
-            let query = query.clone();
-            let values = values.clone();
-            async move { conn.query(&query, &values, paging_state).await }
+        Self::new_with_worker(|mut helper| async move {
+            let mut paging_state = None;
+            loop {
+                let rows = conn.query(&query, &values, paging_state).await;
+                paging_state = helper.handle_response(rows).await;
+                if paging_state.is_none() {
+                    break;
+                }
+            }
         })
     }
 
@@ -78,28 +80,30 @@ impl RowIterator {
         prepared_statement: PreparedStatement,
         values: Vec<Value>,
     ) -> RowIterator {
-        Self::new_for_page_fetcher(move |paging_state| {
-            // TODO: We should avoid copying here, but making it
-            // working without copying is really hard
-            let conn = conn.clone();
-            let prepared_statement = prepared_statement.clone();
-            let values = values.clone();
-            async move {
-                conn.execute(&prepared_statement, &values, paging_state)
-                    .await
+        Self::new_with_worker(|mut helper| async move {
+            let mut paging_state = None;
+            loop {
+                let rows = conn
+                    .execute(&prepared_statement, &values, paging_state)
+                    .await;
+                paging_state = helper.handle_response(rows).await;
+                if paging_state.is_none() {
+                    break;
+                }
             }
         })
     }
 
-    fn new_for_page_fetcher<F, G>(page_fetcher: F) -> RowIterator
+    fn new_with_worker<F, G>(worker: F) -> RowIterator
     where
-        F: Fn(Option<Bytes>) -> G + Send + Sync + 'static,
-        G: Future<Output = AResult<Response>> + Send + 'static,
+        F: FnOnce(WorkerHelper) -> G,
+        G: Future<Output = ()> + Send + 'static,
     {
         // TODO: How many pages in flight do we allow?
         let (sender, receiver) = mpsc::channel(1);
+        let helper = WorkerHelper::new(sender);
 
-        tokio::task::spawn(Self::worker(sender, page_fetcher));
+        tokio::task::spawn(worker(helper));
 
         RowIterator {
             current_row_idx: 0,
@@ -108,44 +112,46 @@ impl RowIterator {
         }
     }
 
-    async fn worker<F, G>(page_sender: mpsc::Sender<AResult<Rows>>, page_fetcher: F)
-    where
-        F: Fn(Option<Bytes>) -> G + Send + Sync,
-        G: Future<Output = AResult<Response>> + Send,
-    {
-        let mut last_response = page_fetcher(None).await;
-        loop {
-            match last_response {
-                Ok(Response::Result(Result::Rows(rows))) => {
-                    let paging_state = rows.metadata.paging_state.clone();
-                    if page_sender.send(Ok(rows)).await.is_err() {
-                        // TODO: Log error
-                        return;
-                    }
-
-                    if let Some(paging_state) = paging_state {
-                        last_response = page_fetcher(Some(paging_state)).await;
-                    } else {
-                        return;
-                    }
-                }
-                Ok(Response::Error(err)) => {
-                    let _ = page_sender.send(Err(err.into()));
-                    return;
-                }
-                Ok(resp) => {
-                    let _ = page_sender.send(Err(anyhow!("Unexpected response: {:?}", resp)));
-                    return;
-                }
-                Err(err) => {
-                    let _ = page_sender.send(Err(err));
-                    return;
-                }
-            }
-        }
-    }
-
     fn is_current_page_exhausted(&self) -> bool {
         self.current_row_idx >= self.current_page.rows.len()
+    }
+}
+
+struct WorkerHelper {
+    sender: mpsc::Sender<AResult<Rows>>,
+}
+
+impl WorkerHelper {
+    fn new(sender: mpsc::Sender<AResult<Rows>>) -> Self {
+        Self { sender }
+    }
+
+    async fn handle_response(&mut self, response: AResult<Response>) -> Option<Bytes> {
+        match response {
+            Ok(Response::Result(Result::Rows(rows))) => {
+                let paging_state = rows.metadata.paging_state.clone();
+                if self.sender.send(Ok(rows)).await.is_err() {
+                    // TODO: Log error
+                    None
+                } else {
+                    paging_state
+                }
+            }
+            Ok(Response::Error(err)) => {
+                let _ = self.sender.send(Err(err.into())).await;
+                None
+            }
+            Ok(resp) => {
+                let _ = self
+                    .sender
+                    .send(Err(anyhow!("Unexpected response: {:?}", resp)))
+                    .await;
+                None
+            }
+            Err(err) => {
+                let _ = self.sender.send(Err(err)).await;
+                None
+            }
+        }
     }
 }
