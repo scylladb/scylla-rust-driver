@@ -93,13 +93,22 @@ pub async fn read_response(
     let opcode = ResponseOpcode::try_from(buf.get_u8())?;
 
     // TODO: Guard from frames that are too large
-    let length = buf.get_u32();
+    let length = buf.get_u32() as usize;
 
-    // TODO: Figure out how to skip zeroing out the buffer
-    let mut raw_body = vec![0u8; length as usize];
-    reader.read_exact(&mut raw_body[..]).await?;
+    let mut raw_body = Vec::with_capacity(length).limit(length);
+    while raw_body.has_remaining_mut() {
+        let n = reader.read_buf(&mut raw_body).await?;
+        if n == 0 {
+            // EOF, too early
+            return Err(anyhow!(
+                "Connection was closed before body was read: missing {} out of {}",
+                raw_body.remaining_mut(),
+                length
+            ));
+        }
+    }
 
-    Ok((frame_params, opcode, raw_body.into()))
+    Ok((frame_params, opcode, raw_body.into_inner().into()))
 }
 
 pub fn compress(uncomp_body: &[u8], compression: Compression) -> Vec<u8> {
