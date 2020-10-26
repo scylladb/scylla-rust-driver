@@ -296,13 +296,13 @@ fn deser_cql_value(typ: &ColumnType, buf: &mut &[u8]) -> AResult<CQLValue> {
         Text => CQLValue::Text(str::from_utf8(buf)?.to_owned()),
         Inet => CQLValue::Inet(match buf.len() {
             4 => {
-                let raw = types::read_raw_bytes(4, buf)?;
-                let ret = IpAddr::from(<[u8; 4]>::try_from(raw).unwrap());
+                let ret = IpAddr::from(<[u8; 4]>::try_from(&buf[0..4])?);
+                buf.advance(4);
                 ret
             }
             16 => {
-                let raw = types::read_raw_bytes(16, buf)?;
-                let ret = IpAddr::from(<[u8; 16]>::try_from(raw).unwrap());
+                let ret = IpAddr::from(<[u8; 16]>::try_from(&buf[0..16])?);
+                buf.advance(16);
                 ret
             }
             v => {
