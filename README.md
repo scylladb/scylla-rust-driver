@@ -1,3 +1,5 @@
+<img src="assets/monster+rust.png" height="150" align="right">
+
 # ScyllaDB Rust Driver
 
 This is a client-side driver for [ScyllaDB] written in pure Rust with a fully async API using [Tokio].
