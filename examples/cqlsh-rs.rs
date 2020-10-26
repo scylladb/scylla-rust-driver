@@ -11,7 +11,7 @@ async fn main() -> Result<()> {
 
     println!("Connecting to {} ...", uri);
 
-    let session = Session::connect(uri.parse()?, Some(Compression::LZ4)).await?;
+    let session = Session::connect(uri, Some(Compression::LZ4)).await?;
 
     let mut rl = Editor::<()>::new();
     loop {
