@@ -25,3 +25,7 @@ path = "parallel.rs"
 [[example]]
 name = "parallel-prep"
 path = "parallel-prepared.rs"
+
+[[example]]
+name = "compare-tokens"
+path = "compare-tokens.rs"
