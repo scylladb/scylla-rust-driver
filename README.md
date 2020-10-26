@@ -1,20 +1,66 @@
-# scylla-rust-driver
-Async CQL driver for Rust, optimized for Scylla!
+# ScyllaDB Rust Driver
+
+This is a client-side driver for [ScyllaDB] written in pure Rust with a fully async API using [Tokio].
+Although optimized for ScyllaDB, the driver is also compatible with [Apache Cassandra®].
+
+**Note: this driver is still in early development and is not for production nor officially supported.**
 
 ## Getting Started
 
-You can run the [example](examples/basic.rs) program as follows:
+```rust
+let uri = "127.0.0.1:9042";
+
+let session = Session::connect(uri, None).await?;
+
+if let Some(rs) = session.query("SELECT a, b, c FROM ks.t", &[]).await? {
+    for r in rs {
+        let a = r.columns[0].as_ref().unwrap().as_int().unwrap();
+        let b = r.columns[1].as_ref().unwrap().as_int().unwrap();
+        let c = r.columns[2].as_ref().unwrap().as_text().unwrap();
+        println!("a, b, c: {}, {}, {}", a, b, c);
+    }
+}
+```
+
+Please see the full [example](examples/basic.rs) program for more information.
+You can also run the example as follows if you have a Scylla server running:
 
 ```sh
 SCYLLA_URI="127.0.0.1:9042" cargo run --example basic
 ```
 
-## Features
+## Features and Roadmap
+
+The driver supports the following:
 
 * Asynchronous API
+* Token-aware routing
 * Prepared statements
-* Paging
-* Compression (LZ4 and Snappy)
+* Query paging
+* Compression (LZ4 and Snappy algorithms)
+* CQL binary protocol version 4
+
+We are planning to implement the following:
+
+* Shard-aware routing (specific to ScyllaDB)
+* Driver-side metrics
+* Authentication support
+* Batch statements
+* TLS support
+* CQL tracing
+
+## Getting Help
+
+Please join the `#rust-driver` channel on [ScyllaDB Slack] to discuss any issues or questions you might have.
+
+## Reference Documentation
+
+* [CQL binary protocol] specification version 4
+
+## Other Drivers
+
+* [CDRS]: Apache Cassandra driver written in pure Rust.
+* [cassandra-rs]: Rust wrappers for the [DataStax C++ driver] for Apache Cassandra.
 
 ## License
 
@@ -24,3 +70,12 @@ This project is licensed under either of
 - MIT license ([LICENSE-MIT](LICENSE-MIT) or [http://opensource.org/licenses/MIT](http://opensource.org/licenses/MIT))
 
 at your option.
+
+[ScyllaDB Slack]: http://slack.scylladb.com/
+[Apache Cassandra®]: https://cassandra.apache.org/
+[CDRS]: https://github.com/AlexPikalov/cdrs
+[CQL binary protocol]: https://github.com/apache/cassandra/blob/trunk/doc/native_protocol_v4.spec
+[DataStax C++ driver]: https://github.com/datastax/cpp-driver/
+[ScyllaDB]: https://www.scylladb.com/
+[Tokio]: https://crates.io/crates/tokio
+[cassandra-rs]: https://github.com/Metaswitch/cassandra-rs
