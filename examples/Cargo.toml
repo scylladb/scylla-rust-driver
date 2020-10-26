@@ -21,3 +21,7 @@ path = "cqlsh-rs.rs"
 [[example]]
 name = "parallel"
 path = "parallel.rs"
+
+[[example]]
+name = "parallel-prep"
+path = "parallel-prepared.rs"
