@@ -56,8 +56,6 @@ async fn test_unprepared_statement() {
             (7, 11, &String::from(""))
         ]
     );
-
-    session.close().await.unwrap();
 }
 
 #[tokio::test]
@@ -162,5 +160,4 @@ async fn test_prepared_statement() {
         assert!(e.is_none());
         assert_eq!((a, b, c, d), (17, 16, &String::from("I'm prepared!!!"), 7))
     }
-    session.close().await.unwrap();
 }

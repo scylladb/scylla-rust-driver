@@ -87,29 +87,6 @@ impl Session {
         Ok(Session { pool })
     }
 
-    /// Closes a CQL session
-    pub async fn close(self) -> Result<()> {
-        let mut result = Ok(());
-        for (_, conn) in self.pool.into_iter() {
-            let close_result = conn.close().await;
-
-            // Attempt to close all connections, but report the error
-            // from the first one only
-            if let Err(err) = close_result {
-                // TODO: Proper logging
-                eprintln!(
-                    "session: error occured while closing a connection: {:?}",
-                    result
-                );
-                if result.is_ok() {
-                    result = Err(err);
-                }
-            }
-        }
-
-        result
-    }
-
     // TODO: Should return an iterator over results
     // actually, if we consider "INSERT" a query, then no.
     // But maybe "INSERT" and "SELECT" should go through different methods,
