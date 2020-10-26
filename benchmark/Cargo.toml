@@ -1,0 +1,13 @@
+[package]
+name = "benchmark"
+version = "0.1.0"
+edition = "2018"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+anyhow = "1.0.33"
+futures = "0.3.6"
+getopts = "0.2.21"
+tokio = { version = "0.3.0", features = ["full", "rt-multi-thread"] }
+scylla = { path = "../scylla" }

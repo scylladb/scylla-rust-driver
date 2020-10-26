@@ -41,7 +41,7 @@ enum ColumnType {
     // TODO
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq, Eq)]
 pub enum CQLValue {
     Ascii(String),
     Int(i32),
