@@ -1,8 +1,10 @@
 use anyhow::Result;
 use futures::{future::RemoteHandle, FutureExt};
 use std::collections::HashMap;
+use std::fmt::Display;
 use std::net::SocketAddr;
 use std::sync::{Arc, RwLock};
+use tokio::net::{lookup_host, ToSocketAddrs};
 
 use crate::frame::response::result;
 use crate::frame::response::Response;
@@ -41,7 +43,11 @@ impl Session {
     ///
     /// * `addr` - address of the server
     /// * `compression` - optional compression settings
-    pub async fn connect(addr: SocketAddr, compression: Option<Compression>) -> Result<Self> {
+    pub async fn connect(
+        addr: impl ToSocketAddrs + Display,
+        compression: Option<Compression>,
+    ) -> Result<Self> {
+        let addr = resolve(addr).await?;
         let connection = open_connection(addr, compression).await?;
         let node = Node { addr };
 
@@ -235,4 +241,22 @@ fn calculate_token<'a>(stmt: &PreparedStatement, values: &'a [Value]) -> Token {
     // TODO: take the partitioner of the table that is being queried and calculate the token using
     // that partitioner. The below logic gives correct token only for murmur3partitioner
     murmur3_token(stmt.compute_partition_key(values))
+}
+
+// Resolve the given `ToSocketAddrs` using a DNS lookup if necessary.
+// The resolution may return multiple IPs and the function returns one of them.
+// It prefers to return IPv4s first, and only if there are none, IPv6s.
+async fn resolve(addr: impl ToSocketAddrs + Display) -> Result<SocketAddr> {
+    let failed_err = anyhow!("failed to resolve {}", addr);
+    let mut ret = None;
+    for a in lookup_host(addr).await? {
+        match a {
+            SocketAddr::V4(_) => return Ok(a),
+            _ => {
+                ret = Some(a);
+            }
+        }
+    }
+
+    ret.ok_or(failed_err)
 }

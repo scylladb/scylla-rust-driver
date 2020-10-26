@@ -1,7 +1,7 @@
 use anyhow::Result;
 use bytes::Bytes;
 use futures::{future::RemoteHandle, FutureExt};
-use tokio::net::{tcp, TcpStream, ToSocketAddrs};
+use tokio::net::{tcp, TcpStream};
 use tokio::sync::{mpsc, oneshot};
 
 use std::cmp::Ordering;
@@ -45,7 +45,7 @@ struct TaskResponse {
 }
 
 impl Connection {
-    pub async fn new(addr: impl ToSocketAddrs, compression: Option<Compression>) -> Result<Self> {
+    pub async fn new(addr: SocketAddr, compression: Option<Compression>) -> Result<Self> {
         let stream = TcpStream::connect(addr).await?;
 
         // TODO: What should be the size of the channel?

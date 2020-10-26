@@ -11,7 +11,7 @@ async fn main() -> Result<()> {
 
     println!("Connecting to {} ...", uri);
 
-    let session = Arc::new(Session::connect(uri.parse()?, None).await?);
+    let session = Arc::new(Session::connect(uri, None).await?);
 
     session.query("CREATE KEYSPACE IF NOT EXISTS ks WITH REPLICATION = {'class' : 'SimpleStrategy', 'replication_factor' : 1}", &[]).await?;
 
