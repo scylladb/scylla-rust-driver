@@ -7,7 +7,7 @@ use std::collections::HashMap;
 use std::str;
 use uuid::Uuid;
 
-fn read_raw_bytes<'a>(count: usize, buf: &mut &'a [u8]) -> Result<&'a [u8]> {
+pub fn read_raw_bytes<'a>(count: usize, buf: &mut &'a [u8]) -> Result<&'a [u8]> {
     if buf.len() < count {
         return Err(anyhow!(
             "not enough bytes in buffer: expected {}, was {}",

@@ -4,11 +4,12 @@ use std::env;
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    let uri = env::var("SCYLLA_URI").unwrap_or("localhost:9042".to_string());
+    let uri = env::var("SCYLLA_URI").unwrap_or("127.0.0.1:9042".to_string());
 
     println!("Connecting to {} ...", uri);
 
-    let session = Session::connect(uri, None).await?;
+    let session = Session::connect(uri.parse()?, None).await?;
+    session.refresh_topology().await?;
 
     session.query("CREATE KEYSPACE IF NOT EXISTS ks WITH REPLICATION = {'class' : 'SimpleStrategy', 'replication_factor' : 1}", &[]).await?;
 
@@ -35,6 +36,12 @@ async fn main() -> Result<()> {
         .await?;
     session
         .execute(&prepared, &scylla::values!(42_i32, "I'm prepared!"))
+        .await?;
+    session
+        .execute(&prepared, &scylla::values!(43_i32, "I'm prepared 2!"))
+        .await?;
+    session
+        .execute(&prepared, &scylla::values!(44_i32, "I'm prepared 3!"))
         .await?;
 
     if let Some(rs) = session.query("SELECT a, b, c FROM ks.t", &[]).await? {

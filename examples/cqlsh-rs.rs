@@ -7,11 +7,11 @@ use std::env;
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    let uri = env::var("SCYLLA_URI").unwrap_or("localhost:9042".to_string());
+    let uri = env::var("SCYLLA_URI").unwrap_or("127.0.0.1:9042".to_string());
 
     println!("Connecting to {} ...", uri);
 
-    let session = Session::connect(uri, Some(Compression::LZ4)).await?;
+    let session = Session::connect(uri.parse()?, Some(Compression::LZ4)).await?;
 
     let mut rl = Editor::<()>::new();
     loop {

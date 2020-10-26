@@ -1,6 +1,8 @@
 use anyhow::Result as AResult;
 use byteorder::{BigEndian, ReadBytesExt};
 use bytes::{Buf, Bytes};
+use std::convert::TryFrom;
+use std::net::IpAddr;
 use std::str;
 
 use crate::frame::types;
@@ -34,6 +36,7 @@ enum ColumnType {
     Int,
     BigInt,
     Text,
+    Inet,
     Set(Box<ColumnType>),
     // TODO
 }
@@ -44,6 +47,7 @@ pub enum CQLValue {
     Int(i32),
     BigInt(i64),
     Text(String),
+    Inet(IpAddr),
     Set(Vec<CQLValue>),
     // TODO
 }
@@ -73,6 +77,13 @@ impl CQLValue {
     pub fn as_text(&self) -> Option<&String> {
         match self {
             Self::Text(s) => Some(&s),
+            _ => None,
+        }
+    }
+
+    pub fn as_inet(&self) -> Option<IpAddr> {
+        match self {
+            Self::Inet(a) => Some(*a),
             _ => None,
         }
     }
@@ -146,6 +157,7 @@ fn deser_type(buf: &mut &[u8]) -> AResult<ColumnType> {
         0x0002 => BigInt,
         0x0009 => Int,
         0x000D => Text,
+        0x0010 => Inet,
         0x0022 => Set(Box::new(deser_type(buf)?)),
         id => {
             // TODO implement other types
@@ -282,6 +294,24 @@ fn deser_cql_value(typ: &ColumnType, buf: &mut &[u8]) -> AResult<CQLValue> {
             CQLValue::BigInt(buf.read_i64::<BigEndian>()?)
         }
         Text => CQLValue::Text(str::from_utf8(buf)?.to_owned()),
+        Inet => CQLValue::Inet(match buf.len() {
+            4 => {
+                let raw = types::read_raw_bytes(4, buf)?;
+                let ret = IpAddr::from(<[u8; 4]>::try_from(raw).unwrap());
+                ret
+            }
+            16 => {
+                let raw = types::read_raw_bytes(16, buf)?;
+                let ret = IpAddr::from(<[u8; 16]>::try_from(raw).unwrap());
+                ret
+            }
+            v => {
+                return Err(anyhow!(
+                    "Invalid number of bytes for inet value: {}. Expecting 4 or 16",
+                    v
+                ));
+            }
+        }),
         Set(typ) => {
             let len = types::read_int(buf)?;
             if len < 0 {

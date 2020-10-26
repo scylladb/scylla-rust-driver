@@ -6,12 +6,14 @@ use tokio::sync::{mpsc, oneshot};
 
 use std::cmp::Ordering;
 use std::collections::HashMap;
+use std::convert::TryFrom;
+use std::net::SocketAddr;
 use std::sync::Mutex as StdMutex;
 
 use crate::frame::{
     self,
     request::{self, execute, query, Request, RequestOpcode},
-    response::{Response, ResponseOpcode},
+    response::{result, Response, ResponseOpcode},
     value::Value,
     FrameParams, RequestBodyWithExtensions,
 };
@@ -71,6 +73,20 @@ impl Connection {
 
     pub async fn prepare(&self, query: String) -> Result<Response> {
         self.send_request(&request::Prepare { query }, true).await
+    }
+
+    pub async fn query_single_page<'a>(
+        &self,
+        query: impl Into<Query>,
+        values: &'a [Value],
+    ) -> Result<Option<Vec<result::Row>>> {
+        let result = self.query(&query.into(), values, None).await?;
+        match result {
+            Response::Error(err) => Err(err.into()),
+            Response::Result(result::Result::Rows(rs)) => Ok(Some(rs.rows)),
+            Response::Result(_) => Ok(None),
+            _ => Err(anyhow!("Unexpected frame received")),
+        }
     }
 
     pub async fn query<'a>(
@@ -269,6 +285,51 @@ impl Connection {
     pub fn set_compression(&mut self, compression: Option<Compression>) {
         self.compression = compression;
     }
+}
+
+pub async fn open_connection(
+    addr: SocketAddr,
+    compression: Option<Compression>,
+) -> Result<Connection> {
+    // TODO: shouldn't all this logic be in Connection::new?
+    let mut connection = Connection::new(addr, compression).await?;
+
+    let options_result = connection.get_options().await?;
+
+    let (shard_info, supported_compression) = match options_result {
+        Response::Supported(mut supported) => {
+            let shard_info = ShardInfo::try_from(&supported.options).ok();
+            let supported_compression = supported
+                .options
+                .remove("COMPRESSION")
+                .unwrap_or_else(Vec::new);
+            (shard_info, supported_compression)
+        }
+        _ => (None, Vec::new()),
+    };
+    connection.set_shard_info(shard_info);
+
+    let mut options = HashMap::new();
+    options.insert("CQL_VERSION".to_string(), "4.0.0".to_string()); // FIXME: hardcoded values
+    if let Some(compression) = &compression {
+        let compression_str = compression.to_string();
+        if supported_compression.iter().any(|c| c == &compression_str) {
+            // Compression is reported to be supported by the server,
+            // request it from the server
+            options.insert("COMPRESSION".to_string(), compression.to_string());
+        } else {
+            // Fall back to no compression
+            connection.set_compression(None);
+        }
+    }
+    let result = connection.startup(options).await?;
+    match result {
+        Response::Ready => {}
+        Response::Authenticate => unimplemented!("Authentication is not yet implemented"),
+        _ => return Err(anyhow!("Unexpected frame received")),
+    }
+
+    Ok(connection)
 }
 
 struct ResponseHandlerMap {
