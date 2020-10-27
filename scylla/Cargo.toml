@@ -16,7 +16,6 @@ futures = "0.3.6"
 num_enum = "0.5"
 compress = "0.2.1"
 tokio = { version = "0.3.0", features = ["net", "time", "io-util", "sync", "rt", "macros"] }
-fasthash = "0.4.0"
 snappy = "0.4.0"
 uuid = "0.8.1"
 

@@ -23,7 +23,7 @@ async fn main() -> Result<()> {
 
     let prepared = session.prepare("INSERT INTO ks.t (pk) VALUES (?)").await?;
 
-    for pk in 0..100_i64 {
+    for pk in (0..100_i64).chain(99840..99936_i64) {
         session
             .query("INSERT INTO ks.t (pk) VALUES (?)", &scylla::values!(pk))
             .await?;
