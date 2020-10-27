@@ -37,6 +37,7 @@ The driver supports the following:
 
 * Asynchronous API
 * Token-aware routing
+* Shard-aware routing (specific to ScyllaDB)
 * Prepared statements
 * Query paging
 * Compression (LZ4 and Snappy algorithms)
@@ -44,7 +45,9 @@ The driver supports the following:
 
 We are planning to implement the following:
 
-* Shard-aware routing (specific to ScyllaDB)
+* Restarting nodes :)
+* Configurable load balancing policies
+* Configurable retry policies
 * Driver-side metrics
 * Authentication support
 * Batch statements
