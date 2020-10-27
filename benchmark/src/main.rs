@@ -143,7 +143,10 @@ async fn run_bench(
         .prepare("INSERT INTO ks_rust_scylla_bench.t (pk, v1, v2) VALUES (?, ?, ?)")
         .await?;
 
-    for i in 0..tasks {
+    let mut i = 0;
+    let batch_size = 256;
+
+    while i < tasks {
         let curr_percent = (100 * i) / tasks;
         if prev_percent < curr_percent as i32 {
             prev_percent = curr_percent as i32;
@@ -155,36 +158,44 @@ async fn run_bench(
         let stmt_read = stmt_read.clone();
         let stmt_write = stmt_write.clone();
         tokio::task::spawn(async move {
-            let i = i;
+            let begin = i;
+            let end = std::cmp::min(begin + batch_size, tasks);
 
-            if workload == Workload::Writes || workload == Workload::ReadsAndWrites {
-                session
-                    .execute(&stmt_write, &scylla::values!(i, 2 * i, 3 * i))
-                    .await
-                    .unwrap();
-            }
+            for i in begin..end {
+                if workload == Workload::Writes || workload == Workload::ReadsAndWrites {
+                    let result = session
+                        .execute(&stmt_write, &scylla::values!(i, 2 * i, 3 * i))
+                        .await;
+                    if result.is_err() {
+                        eprintln!("Error: {:?}", result.unwrap_err());
+                        continue; // The row may not be available for reading, so skip
+                    }
+                }
 
-            if workload == Workload::Reads || workload == Workload::ReadsAndWrites {
-                let row = session
-                    .execute(&stmt_read, &scylla::values!(i))
-                    .await
-                    .unwrap()
-                    .unwrap()
-                    .into_iter()
-                    .next()
-                    .unwrap();
-
-                assert_eq!(
-                    row.columns,
-                    vec![
-                        Some(CQLValue::BigInt(2 * i as i64)),
-                        Some(CQLValue::BigInt(3 * i as i64))
-                    ]
-                )
+                if workload == Workload::Reads || workload == Workload::ReadsAndWrites {
+                    let result = session.execute(&stmt_read, &scylla::values!(i)).await;
+                    match result {
+                        Ok(result) => {
+                            let row = result.unwrap().into_iter().next().unwrap();
+                            assert_eq!(
+                                row.columns,
+                                vec![
+                                    Some(CQLValue::BigInt(2 * i as i64)),
+                                    Some(CQLValue::BigInt(3 * i as i64))
+                                ]
+                            )
+                        }
+                        Err(err) => {
+                            eprintln!("Error: {:?}", err);
+                        }
+                    }
+                }
             }
 
             let _permit = permit;
         });
+
+        i += batch_size;
     }
 
     // Wait for all in-flight requests to finish
