@@ -1,6 +1,7 @@
 use anyhow;
 use anyhow::Result;
 use bytes::{Buf, Bytes};
+use rand::Rng;
 use std::collections::BTreeMap;
 use std::collections::HashMap;
 use std::convert::TryFrom;
@@ -28,7 +29,7 @@ pub struct Ring {
 
 pub type Shard = u32;
 
-#[derive(Debug)]
+#[derive(PartialEq, Eq, Clone, Debug)]
 pub struct ShardInfo {
     shard: u16,
     nr_shards: u16,
@@ -58,6 +59,7 @@ impl Ring {
 
 impl ShardInfo {
     pub fn new(shard: u16, nr_shards: u16, msb_ignore: u8) -> Self {
+        assert!(nr_shards > 0);
         ShardInfo {
             shard,
             nr_shards,
@@ -69,6 +71,22 @@ impl ShardInfo {
         let mut biased_token = (token.value as u64).wrapping_add(1u64 << 63);
         biased_token <<= self.msb_ignore;
         return (((biased_token as u128) * (self.nr_shards as u128)) >> 64) as Shard;
+    }
+
+    /// If we connect to Scylla using Scylla's shard aware port, then Scylla assigns a shard to the
+    /// connection based on the source port. This calculates the assigned shard.
+    pub fn shard_of_source_port(&self, source_port: u16) -> Shard {
+        (source_port % self.nr_shards) as Shard
+    }
+
+    /// Randomly choose a source port `p` such that `shard_of(t) == shard_of_source_port(p)`.
+    pub fn draw_source_port_for_token(&self, t: Token) -> u16 {
+        let shard = self.shard_of(t) as u16;
+        assert!(shard < self.nr_shards);
+        rand::thread_rng().gen_range(49152 + self.nr_shards - 1, 65535 - self.nr_shards + 1)
+            / self.nr_shards
+            * self.nr_shards
+            + shard
     }
 }
 

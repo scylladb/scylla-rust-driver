@@ -77,7 +77,7 @@ impl TopologyReader {
     pub async fn new(n: Node) -> Result<(Self, Topology)> {
         // TODO: use compression? maybe not necessarily, since the communicated objects are
         // small and the communication doesn't happen often?
-        let conn = open_connection(n.addr, None).await?;
+        let conn = open_connection(n.addr, None, None).await?;
 
         // TODO: When querying system.local of `n` or system.peers of other nodes, we might find
         // that the address of `n` is different than `n.addr` (`n` might have multiple addresses).
@@ -223,26 +223,30 @@ impl TopologyReader {
         for &node in self.tokens.keys() {
             if let Entry::Vacant(entry) = self.pool.entry(node) {
                 // TODO: use compression?
-                let conn =
-                    match timeout(Duration::from_secs(5), open_connection(node.addr, None)).await {
-                        Err(_) => {
-                            // TODO: logging
-                            eprintln!(
-                                "TopologyReader: timeout when trying to open connection to {}",
-                                node.addr
-                            );
-                            continue;
-                        }
-                        Ok(Err(e)) => {
-                            // TODO: logging
-                            eprintln!(
-                                "TopologyReader: failed to open connection to {}: {}",
-                                node.addr, e
-                            );
-                            continue;
-                        }
-                        Ok(Ok(conn)) => conn,
-                    };
+                let conn = match timeout(
+                    Duration::from_secs(5),
+                    open_connection(node.addr, None, None),
+                )
+                .await
+                {
+                    Err(_) => {
+                        // TODO: logging
+                        eprintln!(
+                            "TopologyReader: timeout when trying to open connection to {}",
+                            node.addr
+                        );
+                        continue;
+                    }
+                    Ok(Err(e)) => {
+                        // TODO: logging
+                        eprintln!(
+                            "TopologyReader: failed to open connection to {}: {}",
+                            node.addr, e
+                        );
+                        continue;
+                    }
+                    Ok(Ok(conn)) => conn,
+                };
                 eprintln!("TopologyReader: opened new connection to {}", node.addr);
                 entry.insert(conn);
                 any_new = true;
