@@ -49,21 +49,34 @@ struct NodePool {
 // Trait used to implement Vec<result::Row>::into_typed<RowT>(self)
 // This is the only way to add custom method to Vec
 pub trait IntoTypedRows {
-    fn into_typed<RowT: FromRow>(self) -> TypedRowIter<Result<RowT, FromRowError>>;
+    fn into_typed<RowT: FromRow>(self) -> TypedRowIter<RowT>;
 }
 
 // Adds method Vec<result::Row>::into_typed<RowT>(self)
 // It transforms the Vec into iterator mapping to custom row type
 impl IntoTypedRows for Vec<result::Row> {
-    fn into_typed<RowT: FromRow>(self) -> TypedRowIter<Result<RowT, FromRowError>> {
-        self.into_iter().map(RowT::from_row)
+    fn into_typed<RowT: FromRow>(self) -> TypedRowIter<RowT> {
+        TypedRowIter {
+            row_iter: self.into_iter(),
+            phantom_data: Default::default(),
+        }
     }
 }
 
 // Iterator that maps a Vec<result::Row> into custom RowType used by IntoTypedRows::into_typed
 // impl Trait doesn't compile so we have to be explicit
-pub type TypedRowIter<RowT> =
-    std::iter::Map<std::vec::IntoIter<result::Row>, fn(result::Row) -> RowT>;
+pub struct TypedRowIter<RowT: FromRow> {
+    row_iter: std::vec::IntoIter<result::Row>,
+    phantom_data: std::marker::PhantomData<RowT>,
+}
+
+impl<RowT: FromRow> Iterator for TypedRowIter<RowT> {
+    type Item = Result<RowT, FromRowError>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        self.row_iter.next().map(RowT::from_row)
+    }
+}
 
 /// Represents a CQL session, which can be used to communicate
 /// with the database
