@@ -22,9 +22,9 @@ pub fn from_row_derive(tokens_input: TokenStream) -> TokenStream {
                         quote_spanned! {field.span() =>
                             #field_name: <#field_type as FromCQLVal<Option<CQLValue>>>::from_cql(
                                 vals_iter
-                                .next().unwrap_or_else(
-                                || panic!("Row too short to convert to {}!", stringify!(#struct_name)))
-                            ),
+                                .next()
+                                .ok_or(FromRowError::RowTooShort) ?
+                            ) ?,
                         }
                     })
                 },
@@ -35,16 +35,17 @@ pub fn from_row_derive(tokens_input: TokenStream) -> TokenStream {
     };
 
     let generated = quote! {
-        impl From<scylla::frame::response::result::Row> for #struct_name {
-            fn from(row: scylla::frame::response::result::Row) -> Self {
+        impl FromRow for #struct_name {
+            fn from_row(row: scylla::frame::response::result::Row)
+            -> Result<Self, scylla::cql_to_rust::FromRowError> {
+                use scylla::frame::response::result::CQLValue;
+                use scylla::cql_to_rust::{FromCQLVal, FromRow, FromRowError};
+
                 let mut vals_iter = row.columns.into_iter();
 
-                use scylla::frame::response::result::CQLValue;
-                use scylla::frame::response::cql_to_rust::FromCQLVal;
-
-                #struct_name {
+                Ok(#struct_name {
                     #(#set_fields)*
-                }
+                })
             }
         }
     };

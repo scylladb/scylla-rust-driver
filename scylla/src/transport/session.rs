@@ -7,6 +7,7 @@ use std::net::SocketAddr;
 use std::sync::{Arc, RwLock};
 use tokio::net::{lookup_host, ToSocketAddrs};
 
+use crate::cql_to_rust::{FromRow, FromRowError};
 use crate::frame::response::result;
 use crate::frame::response::Response;
 use crate::frame::value::Value;
@@ -48,14 +49,14 @@ struct NodePool {
 // Trait used to implement Vec<result::Row>::into_typed<RowT>(self)
 // This is the only way to add custom method to Vec
 pub trait IntoTypedRows {
-    fn into_typed<RowT: From<result::Row>>(self) -> TypedRowIter<RowT>;
+    fn into_typed<RowT: FromRow>(self) -> TypedRowIter<Result<RowT, FromRowError>>;
 }
 
 // Adds method Vec<result::Row>::into_typed<RowT>(self)
 // It transforms the Vec into iterator mapping to custom row type
 impl IntoTypedRows for Vec<result::Row> {
-    fn into_typed<RowT: From<result::Row>>(self) -> TypedRowIter<RowT> {
-        self.into_iter().map(RowT::from)
+    fn into_typed<RowT: FromRow>(self) -> TypedRowIter<Result<RowT, FromRowError>> {
+        self.into_iter().map(RowT::from_row)
     }
 }
 
