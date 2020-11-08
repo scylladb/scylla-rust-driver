@@ -99,6 +99,8 @@ impl_tuple_from_row!(T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, T12, T13, T14
 #[cfg(test)]
 mod tests {
     use super::{CQLValue, FromCQLVal, Row};
+    use crate as scylla;
+    use crate::macros::FromRow;
     use std::net::{IpAddr, Ipv4Addr};
 
     #[test]
@@ -168,5 +170,29 @@ mod tests {
     #[should_panic]
     fn from_cql_wrong_type_panic() {
         let _ = i32::from_cql(CQLValue::BigInt(1234));
+    }
+
+    #[test]
+    fn struct_from_row() {
+        #[derive(FromRow)]
+        struct MyRow {
+            a: i32,
+            b: Option<String>,
+            c: Option<Vec<i32>>,
+        }
+
+        let row = Row {
+            columns: vec![
+                Some(CQLValue::Int(16)),
+                None,
+                Some(CQLValue::Set(vec![CQLValue::Int(1), CQLValue::Int(2)])),
+            ],
+        };
+
+        let my_row: MyRow = MyRow::from(row);
+
+        assert_eq!(my_row.a, 16);
+        assert_eq!(my_row.b, None);
+        assert_eq!(my_row.c, Some(vec![1, 2]));
     }
 }

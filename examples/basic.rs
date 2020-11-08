@@ -1,4 +1,5 @@
 use anyhow::Result;
+use scylla::macros::FromRow;
 use scylla::transport::session::{IntoTypedRows, Session};
 use std::env;
 
@@ -48,6 +49,20 @@ async fn main() -> Result<()> {
     if let Some(rows) = session.query("SELECT a, b, c FROM ks.t", &[]).await? {
         for (a, b, c) in rows.into_typed::<(i32, i32, String)>() {
             println!("a, b, c: {}, {}, {}", a, b, c);
+        }
+    }
+
+    // Or as custom structs that derive FromRow
+    #[derive(Debug, FromRow)]
+    struct RowData {
+        a: i32,
+        b: Option<i32>,
+        c: String,
+    }
+
+    if let Some(rows) = session.query("SELECT a, b, c FROM ks.t", &[]).await? {
+        for row_data in rows.into_typed::<RowData>() {
+            println!("row_data: {:?}", row_data);
         }
     }
 
