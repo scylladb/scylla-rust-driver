@@ -29,3 +29,7 @@ path = "parallel-prepared.rs"
 [[example]]
 name = "compare-tokens"
 path = "compare-tokens.rs"
+
+[[example]]
+name = "select-paging"
+path = "select-paging.rs"
