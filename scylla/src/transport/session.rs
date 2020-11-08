@@ -7,6 +7,7 @@ use std::net::SocketAddr;
 use std::sync::{Arc, RwLock};
 use tokio::net::{lookup_host, ToSocketAddrs};
 
+use crate::batch::Batch;
 use crate::cql_to_rust::{FromRow, FromRowError};
 use crate::frame::response::result;
 use crate::frame::response::Response;
@@ -224,6 +225,21 @@ impl Session {
             prepared.into(),
             values.to_owned(),
         ))
+    }
+
+    pub async fn batch<V: AsRef<[Value]>>(
+        &self,
+        batch: impl Into<Batch>,
+        values: &[V],
+    ) -> Result<()> {
+        // FIXME: Prepared statement ids are local to a node
+        // this method does not handle this
+        let response = self.any_connection()?.batch(&batch.into(), values).await?;
+        match response {
+            Response::Error(err) => Err(err.into()),
+            Response::Result(_) => Ok(()),
+            _ => Err(anyhow!("Unexpected frame received")),
+        }
     }
 
     /// Returns all connections that the session has currently opened.

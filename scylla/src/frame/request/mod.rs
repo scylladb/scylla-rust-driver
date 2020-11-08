@@ -1,3 +1,4 @@
+pub mod batch;
 pub mod execute;
 pub mod options;
 pub mod prepare;

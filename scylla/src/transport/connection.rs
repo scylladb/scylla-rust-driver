@@ -10,6 +10,7 @@ use std::convert::TryFrom;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::sync::Mutex as StdMutex;
 
+use crate::batch::Batch;
 use crate::frame::{
     self,
     request::{self, execute, query, Request, RequestOpcode},
@@ -137,6 +138,23 @@ impl Connection {
         };
 
         self.send_request(&execute_frame, true).await
+    }
+
+    pub async fn batch<V: AsRef<[Value]>>(&self, batch: &Batch, values: &[V]) -> Result<Response> {
+        /*
+        let batch_frame = query::Query {
+            contents: query.get_contents().to_owned(),
+            parameters: query::QueryParameters {
+                values,
+                page_size: query.get_page_size(),
+                paging_state,
+                ..Default::default()
+            },
+        };
+
+        self.send_request(&query_frame, true).await
+        */
+        Ok(Response::Ready)
     }
 
     // TODO: Return the response associated with that frame

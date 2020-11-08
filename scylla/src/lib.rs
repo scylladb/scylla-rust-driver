@@ -12,6 +12,7 @@ pub mod statement;
 pub mod transport;
 
 pub use macros::*;
+pub use statement::batch;
 pub use statement::prepared_statement;
 pub use statement::query;
 
