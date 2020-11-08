@@ -8,19 +8,15 @@ pub struct Batch {
 }
 
 impl Batch {
-    pub fn new<E: Into<BatchStatement> + Clone>(statements: &[E], batch_type: BatchType) -> Self {
+    pub fn new(batch_type: BatchType) -> Self {
         Self {
-            statements: statements.iter().map(|e| e.clone().into()).collect(),
             batch_type,
+            ..Default::default()
         }
     }
 
     pub fn append_statement(&mut self, statement: impl Into<BatchStatement>) {
         self.statements.push(statement.into());
-    }
-
-    pub fn clear_statements(&mut self) {
-        self.statements.clear();
     }
 
     pub fn get_type(&self) -> BatchType {
@@ -45,6 +41,12 @@ impl Default for Batch {
 pub enum BatchStatement {
     Query(Query),
     PreparedStatement(PreparedStatement),
+}
+
+impl From<&str> for BatchStatement {
+    fn from(s: &str) -> Self {
+        BatchStatement::Query(Query::from(s))
+    }
 }
 
 impl From<Query> for BatchStatement {

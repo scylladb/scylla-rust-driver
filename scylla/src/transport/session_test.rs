@@ -188,17 +188,11 @@ async fn test_batch() {
     std::thread::sleep(std::time::Duration::from_millis(300));
 
     use crate::batch::Batch;
-    use crate::batch::BatchType;
-    use crate::query::Query;
 
-    let batch = Batch::new::<Query>(
-        &[
-            "INSERT INTO ks.t (a, b, c) VALUES (1, 2, 'abc')".into(),
-            "INSERT INTO ks.t (a, b, c) VALUES (7, 11, '')".into(),
-            "INSERT INTO ks.t (a, b, c) VALUES (1, 4, 'hello')".into(),
-        ],
-        BatchType::Logged,
-    );
+    let mut batch: Batch = Default::default();
+    batch.append_statement("INSERT INTO ks.t (a, b, c) VALUES (1, 2, 'abc')");
+    batch.append_statement("INSERT INTO ks.t (a, b, c) VALUES (7, 11, '')");
+    batch.append_statement("INSERT INTO ks.t (a, b, c) VALUES (1, 4, 'hello')");
 
     let mut v = Vec::<Vec<crate::frame::value::Value>>::new();
     v.resize(batch.get_statements().len(), Default::default());
