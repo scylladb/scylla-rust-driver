@@ -11,9 +11,10 @@ use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::sync::Mutex as StdMutex;
 
 use crate::batch::Batch;
+use crate::batch::BatchStatement;
 use crate::frame::{
     self,
-    request::{self, execute, query, Request, RequestOpcode},
+    request::{self, batch, execute, query, Request, RequestOpcode},
     response::{result, Response, ResponseOpcode},
     value::Value,
     FrameParams, RequestBodyWithExtensions,
@@ -141,20 +142,36 @@ impl Connection {
     }
 
     pub async fn batch<V: AsRef<[Value]>>(&self, batch: &Batch, values: &[V]) -> Result<Response> {
-        /*
-        let batch_frame = query::Query {
-            contents: query.get_contents().to_owned(),
-            parameters: query::QueryParameters {
-                values,
-                page_size: query.get_page_size(),
-                paging_state,
-                ..Default::default()
-            },
+        if batch.get_statements().len() != values.len() {
+            return Err(anyhow!(
+                "Length of provided values must be equal to number of batch statements"
+            ));
+        }
+
+        let statements = batch
+            .get_statements()
+            .iter()
+            .zip(values.iter())
+            .map(|(e, v)| batch::BatchStatementWithValues {
+                statement: match e {
+                    BatchStatement::Query(q) => {
+                        batch::BatchStatement::QueryContents(q.get_contents().into())
+                    }
+                    BatchStatement::PreparedStatement(s) => {
+                        batch::BatchStatement::PreparedStatementID(s.get_id().clone())
+                    }
+                },
+                values: v.as_ref(),
+            })
+            .collect();
+
+        let batch_frame = batch::Batch {
+            statements,
+            batch_type: batch.get_type(),
+            ..Default::default()
         };
 
-        self.send_request(&query_frame, true).await
-        */
-        Ok(Response::Ready)
+        self.send_request(&batch_frame, true).await
     }
 
     // TODO: Return the response associated with that frame

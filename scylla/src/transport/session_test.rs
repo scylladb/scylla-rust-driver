@@ -168,6 +168,71 @@ async fn test_prepared_statement() {
 
 #[tokio::test]
 #[ignore]
+async fn test_batch() {
+    let session = Session::connect("127.0.0.1:9042", None).await.unwrap();
+
+    session.query("CREATE KEYSPACE IF NOT EXISTS ks WITH REPLICATION = {'class' : 'SimpleStrategy', 'replication_factor' : 1}", &[]).await.unwrap();
+    session
+        .query("DROP TABLE IF EXISTS ks.t;", &[])
+        .await
+        .unwrap();
+    session
+        .query(
+            "CREATE TABLE IF NOT EXISTS ks.t (a int, b int, c text, primary key (a, b))",
+            &[],
+        )
+        .await
+        .unwrap();
+
+    // Wait for schema agreement
+    std::thread::sleep(std::time::Duration::from_millis(300));
+
+    use crate::batch::Batch;
+    use crate::batch::BatchType;
+    use crate::query::Query;
+
+    let batch = Batch::new::<Query>(
+        &[
+            "INSERT INTO ks.t (a, b, c) VALUES (1, 2, 'abc')".into(),
+            "INSERT INTO ks.t (a, b, c) VALUES (7, 11, '')".into(),
+            "INSERT INTO ks.t (a, b, c) VALUES (1, 4, 'hello')".into(),
+        ],
+        BatchType::Logged,
+    );
+
+    let mut v = Vec::<Vec<crate::frame::value::Value>>::new();
+    v.resize(batch.get_statements().len(), Default::default());
+
+    session.batch(batch, &v).await.unwrap();
+
+    let rs = session
+        .query("SELECT a, b, c FROM ks.t", &[])
+        .await
+        .unwrap()
+        .unwrap();
+
+    let mut results: Vec<(i32, i32, &String)> = rs
+        .iter()
+        .map(|r| {
+            let a = r.columns[0].as_ref().unwrap().as_int().unwrap();
+            let b = r.columns[1].as_ref().unwrap().as_int().unwrap();
+            let c = r.columns[2].as_ref().unwrap().as_text().unwrap();
+            (a, b, c)
+        })
+        .collect();
+    results.sort();
+    assert_eq!(
+        results,
+        vec![
+            (1, 2, &String::from("abc")),
+            (1, 4, &String::from("hello")),
+            (7, 11, &String::from(""))
+        ]
+    );
+}
+
+#[tokio::test]
+#[ignore]
 async fn test_token_calculation() {
     let session = Session::connect("127.0.0.1:9042", None).await.unwrap();
 
