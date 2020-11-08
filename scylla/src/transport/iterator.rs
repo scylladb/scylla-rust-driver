@@ -1,4 +1,3 @@
-use std::cell::RefCell;
 use std::future::Future;
 use std::mem;
 use std::pin::Pin;
@@ -62,7 +61,7 @@ impl Stream for RowIterator {
 impl RowIterator {
     pub fn into_typed<RowT: FromRow>(self) -> TypedRowIterator<RowT> {
         TypedRowIterator {
-            row_iterator: RefCell::new(self),
+            row_iterator: self,
             phantom_data: Default::default(),
         }
     }
@@ -166,15 +165,15 @@ impl WorkerHelper {
 }
 
 pub struct TypedRowIterator<RowT> {
-    row_iterator: RefCell<RowIterator>,
+    row_iterator: RowIterator,
     phantom_data: std::marker::PhantomData<RowT>,
 }
 
 impl<RowT: FromRow> Stream for TypedRowIterator<RowT> {
     type Item = AResult<RowT>;
 
-    fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
-        let my_row_iterator: &mut RowIterator = &mut *self.row_iterator.borrow_mut();
+    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+        let my_row_iterator: &mut RowIterator = &mut self.as_mut().row_iterator;
 
         let next_elem: Option<AResult<Row>> = match Pin::new(my_row_iterator).poll_next(cx) {
             Poll::Ready(next_elem) => next_elem,
@@ -190,3 +189,6 @@ impl<RowT: FromRow> Stream for TypedRowIterator<RowT> {
         return Poll::Ready(next_ready);
     }
 }
+
+// TypedRowIterator can be moved freely for any RowT so it's Unpin
+impl<RowT> Unpin for TypedRowIterator<RowT> {}
