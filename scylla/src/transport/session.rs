@@ -45,6 +45,25 @@ struct NodePool {
     shard_info: Option<ShardInfo>,
 }
 
+// Trait used to implement Vec<result::Row>::into_typed<RowT>(self)
+// This is the only way to add custom method to Vec
+pub trait IntoTypedRows {
+    fn into_typed<RowT: From<result::Row>>(self) -> TypedRowIter<RowT>;
+}
+
+// Adds method Vec<result::Row>::into_typed<RowT>(self)
+// It transforms the Vec into iterator mapping to custom row type
+impl IntoTypedRows for Vec<result::Row> {
+    fn into_typed<RowT: From<result::Row>>(self) -> TypedRowIter<RowT> {
+        self.into_iter().map(RowT::from)
+    }
+}
+
+// Iterator that maps a Vec<result::Row> into custom RowType used by IntoTypedRows::into_typed
+// impl Trait doesn't compile so we have to be explicit
+pub type TypedRowIter<RowT> =
+    std::iter::Map<std::vec::IntoIter<result::Row>, fn(result::Row) -> RowT>;
+
 /// Represents a CQL session, which can be used to communicate
 /// with the database
 impl Session {

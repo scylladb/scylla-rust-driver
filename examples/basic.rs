@@ -1,5 +1,5 @@
 use anyhow::Result;
-use scylla::transport::session::Session;
+use scylla::transport::session::{IntoTypedRows, Session};
 use std::env;
 
 #[tokio::main]
@@ -44,8 +44,16 @@ async fn main() -> Result<()> {
         .execute(&prepared, &scylla::values!(44_i32, "I'm prepared 3!"))
         .await?;
 
-    if let Some(rs) = session.query("SELECT a, b, c FROM ks.t", &[]).await? {
-        for r in rs {
+    // Rows can be parsed as tuples
+    if let Some(rows) = session.query("SELECT a, b, c FROM ks.t", &[]).await? {
+        for (a, b, c) in rows.into_typed::<(i32, i32, String)>() {
+            println!("a, b, c: {}, {}, {}", a, b, c);
+        }
+    }
+
+    // Or simply as untyped rows
+    if let Some(rows) = session.query("SELECT a, b, c FROM ks.t", &[]).await? {
+        for r in rows {
             let a = r.columns[0].as_ref().unwrap().as_int().unwrap();
             let b = r.columns[1].as_ref().unwrap().as_int().unwrap();
             let c = r.columns[2].as_ref().unwrap().as_text().unwrap();

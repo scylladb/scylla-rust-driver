@@ -81,6 +81,14 @@ impl CQLValue {
         }
     }
 
+    pub fn into_string(self) -> Option<String> {
+        match self {
+            Self::Ascii(s) => Some(s),
+            Self::Text(s) => Some(s),
+            _ => None,
+        }
+    }
+
     pub fn as_inet(&self) -> Option<IpAddr> {
         match self {
             Self::Inet(a) => Some(*a),
@@ -91,6 +99,13 @@ impl CQLValue {
     pub fn as_set(&self) -> Option<&Vec<CQLValue>> {
         match self {
             Self::Set(s) => Some(&s),
+            _ => None,
+        }
+    }
+
+    pub fn into_vec(self) -> Option<Vec<CQLValue>> {
+        match self {
+            Self::Set(s) => Some(s),
             _ => None,
         }
     }
