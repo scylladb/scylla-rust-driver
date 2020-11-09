@@ -1,8 +1,10 @@
+use crate::cql_to_rust::{FromRow, FromRowError};
 use anyhow::Result as AResult;
 use byteorder::{BigEndian, ReadBytesExt};
 use bytes::{Buf, Bytes};
 use std::convert::TryFrom;
 use std::net::IpAddr;
+use std::result::Result as StdResult;
 use std::str;
 
 use crate::frame::types;
@@ -81,6 +83,14 @@ impl CQLValue {
         }
     }
 
+    pub fn into_string(self) -> Option<String> {
+        match self {
+            Self::Ascii(s) => Some(s),
+            Self::Text(s) => Some(s),
+            _ => None,
+        }
+    }
+
     pub fn as_inet(&self) -> Option<IpAddr> {
         match self {
             Self::Inet(a) => Some(*a),
@@ -91,6 +101,13 @@ impl CQLValue {
     pub fn as_set(&self) -> Option<&Vec<CQLValue>> {
         match self {
             Self::Set(s) => Some(&s),
+            _ => None,
+        }
+    }
+
+    pub fn into_vec(self) -> Option<Vec<CQLValue>> {
+        match self {
+            Self::Set(s) => Some(s),
             _ => None,
         }
     }
@@ -122,6 +139,13 @@ pub struct PreparedMetadata {
 #[derive(Debug, Default)]
 pub struct Row {
     pub columns: Vec<Option<CQLValue>>,
+}
+
+impl Row {
+    /// Allows converting Row into tuple of rust types or custom struct deriving FromRow
+    pub fn into_typed<RowT: FromRow>(self) -> StdResult<RowT, FromRowError> {
+        RowT::from_row(self)
+    }
 }
 
 #[derive(Debug, Default)]

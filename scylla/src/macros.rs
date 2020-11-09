@@ -13,3 +13,7 @@ macro_rules! values {
         }
     };
 }
+
+/// #[derive(FromRow)] derives FromRow for struct
+/// Works only on simple structs without generics etc
+pub use scylla_macros::FromRow;

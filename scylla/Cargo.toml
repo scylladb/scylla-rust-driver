@@ -9,6 +9,7 @@ keywords = ["database", "scylla", "cql"]
 categories = ["database"]
 
 [dependencies]
+scylla-macros = { version = "0.1.0", path = "../scylla-macros"}
 anyhow = "1.0.33"
 byteorder = "1.3.4"
 bytes = "0.6.0"
