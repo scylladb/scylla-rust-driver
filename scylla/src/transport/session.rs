@@ -227,10 +227,15 @@ impl Session {
         ))
     }
 
-    pub async fn batch<V: AsRef<[Value]>>(
+    /// Sends a batch to the database.
+    /// # Arguments
+    ///
+    /// * `batch` - batch to be performed
+    /// * `values` - values bound to the query
+    pub async fn batch(
         &self,
         batch: impl Into<Batch>,
-        values: &[V],
+        values: &[impl AsRef<[Value]>],
     ) -> Result<()> {
         // FIXME: Prepared statement ids are local to a node
         // this method does not handle this

@@ -141,7 +141,7 @@ impl Connection {
         self.send_request(&execute_frame, true).await
     }
 
-    pub async fn batch<V: AsRef<[Value]>>(&self, batch: &Batch, values: &[V]) -> Result<Response> {
+    pub async fn batch(&self, batch: &Batch, values: &[impl AsRef<[Value]>]) -> Result<Response> {
         if batch.get_statements().len() != values.len() {
             return Err(anyhow!(
                 "Length of provided values must be equal to number of batch statements"

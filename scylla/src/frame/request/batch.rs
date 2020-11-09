@@ -1,10 +1,10 @@
 use anyhow::Result;
 use bytes::{BufMut, Bytes};
 
-use crate::{
-    frame::request::{Request, RequestOpcode},
-    frame::types,
-    frame::value::Value,
+use crate::frame::{
+    request::{Request, RequestOpcode},
+    types,
+    value::Value,
 };
 
 pub struct Batch<'a> {
@@ -23,6 +23,7 @@ pub enum BatchStatement {
     PreparedStatementID(Bytes),
 }
 
+/// The type of a batch.
 #[derive(Clone, Copy)]
 pub enum BatchType {
     Logged = 0,
@@ -83,9 +84,11 @@ impl BatchStatement {
 
 impl BatchStatementWithValues<'_> {
     fn serialize(&self, buf: &mut impl BufMut) -> Result<()> {
+        // Serializing statement
         self.statement.serialize(buf)?;
-        types::write_short(self.values.len() as i16, buf);
 
+        // Serializing values bound to statement
+        types::write_short(self.values.len() as i16, buf);
         for value in self.values {
             match value {
                 Value::Val(v) => {
