@@ -10,29 +10,29 @@ pub fn from_row_derive(tokens_input: TokenStream) -> TokenStream {
 
     let struct_name = &input.ident;
 
-    // Generates tokens for field_name: field_type::from(vals_iter.next().unwrap_or(...)), ...
-    let set_fields = match &input.data {
-        Data::Struct(ref data) => {
+    let struct_fields = match &input.data {
+        Data::Struct(data) => {
             match &data.fields {
-                Fields::Named(fields) => {
-                    fields.named.iter().map(|field| {
-                        let field_name = &field.ident;
-                        let field_type = &field.ty;
-
-                        quote_spanned! {field.span() =>
-                            #field_name: <#field_type as FromCQLVal<Option<CQLValue>>>::from_cql(
-                                vals_iter
-                                .next()
-                                .ok_or(FromRowError::RowTooShort) ?
-                            ) ?,
-                        }
-                    })
-                },
-                _ => panic!("derive(FromRow) works only for structs with named fields. Tuples don't need derive.")
+                Fields::Named(named_fields) => named_fields,
+                _ => panic!("derive(FromRow) works only for structs with named fields. Tuples don't need derive."),
             }
         },
         _ => panic!("derive(FromRow) works only on structs!")
     };
+
+    // Generates tokens for field_name: field_type::from(vals_iter.next().unwrap_or(...)), ...
+    let set_fields_code = struct_fields.named.iter().map(|field| {
+        let field_name = &field.ident;
+        let field_type = &field.ty;
+
+        quote_spanned! {field.span() =>
+            #field_name: <#field_type as FromCQLVal<Option<CQLValue>>>::from_cql(
+                vals_iter
+                .next()
+                .ok_or(FromRowError::RowTooShort) ?
+            ) ?,
+        }
+    });
 
     let generated = quote! {
         impl FromRow for #struct_name {
@@ -44,7 +44,7 @@ pub fn from_row_derive(tokens_input: TokenStream) -> TokenStream {
                 let mut vals_iter = row.columns.into_iter();
 
                 Ok(#struct_name {
-                    #(#set_fields)*
+                    #(#set_fields_code)*
                 })
             }
         }
