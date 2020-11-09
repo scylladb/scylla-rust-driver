@@ -1,4 +1,3 @@
-use anyhow;
 use anyhow::Result;
 use bytes::{Buf, Bytes};
 use rand::Rng;
@@ -36,8 +35,10 @@ pub struct ShardInfo {
     msb_ignore: u8,
 }
 
-impl Token {
-    pub fn from_str(s: &str) -> Result<Token> {
+impl std::str::FromStr for Token {
+    type Err = anyhow::Error;
+
+    fn from_str(s: &str) -> Result<Token> {
         Ok(Token { value: s.parse()? })
     }
 }
@@ -70,7 +71,7 @@ impl ShardInfo {
     pub fn shard_of(&self, token: Token) -> Shard {
         let mut biased_token = (token.value as u64).wrapping_add(1u64 << 63);
         biased_token <<= self.msb_ignore;
-        return (((biased_token as u128) * (self.nr_shards as u128)) >> 64) as Shard;
+        (((biased_token as u128) * (self.nr_shards as u128)) >> 64) as Shard
     }
 
     /// If we connect to Scylla using Scylla's shard aware port, then Scylla assigns a shard to the
@@ -181,7 +182,7 @@ pub fn hash3_x64_128(mut data: &[u8]) -> i128 {
         h2 ^= k2;
     }
 
-    if data.len() > 0 {
+    if !data.is_empty() {
         for i in (0..std::cmp::min(8, data.len())).rev() {
             k1 ^= Wrapping(data[i] as i8 as i64) << (i * 8);
         }

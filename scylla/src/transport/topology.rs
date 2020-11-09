@@ -3,6 +3,7 @@ use anyhow::Result;
 use std::collections::hash_map::Entry;
 use std::collections::{BTreeMap, HashMap};
 use std::net::SocketAddr;
+use std::str::FromStr;
 use std::sync::{Arc, RwLock, RwLockReadGuard};
 
 use tokio::sync::{mpsc, oneshot};
