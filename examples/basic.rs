@@ -1,7 +1,7 @@
 use anyhow::Result;
 use scylla::cql_to_rust::FromRow;
 use scylla::macros::FromRow;
-use scylla::transport::session::Session;
+use scylla::transport::session::{IntoTypedRows, Session};
 use std::env;
 
 #[tokio::main]
@@ -48,8 +48,8 @@ async fn main() -> Result<()> {
 
     // Rows can be parsed as tuples
     if let Some(rows) = session.query("SELECT a, b, c FROM ks.t", &[]).await? {
-        for row in rows {
-            let (a, b, c) = row.into_typed::<(i32, i32, String)>()?;
+        for row in rows.into_typed::<(i32, i32, String)>() {
+            let (a, b, c) = row?;
             println!("a, b, c: {}, {}, {}", a, b, c);
         }
     }
@@ -63,19 +63,22 @@ async fn main() -> Result<()> {
     }
 
     if let Some(rows) = session.query("SELECT a, b, c FROM ks.t", &[]).await? {
-        for row_data in rows {
-            let row_data = row_data.into_typed::<RowData>()?;
+        for row_data in rows.into_typed::<RowData>() {
+            let row_data = row_data?;
             println!("row_data: {:?}", row_data);
         }
     }
 
     // Or simply as untyped rows
     if let Some(rows) = session.query("SELECT a, b, c FROM ks.t", &[]).await? {
-        for r in rows {
-            let a = r.columns[0].as_ref().unwrap().as_int().unwrap();
-            let b = r.columns[1].as_ref().unwrap().as_int().unwrap();
-            let c = r.columns[2].as_ref().unwrap().as_text().unwrap();
+        for row in rows {
+            let a = row.columns[0].as_ref().unwrap().as_int().unwrap();
+            let b = row.columns[1].as_ref().unwrap().as_int().unwrap();
+            let c = row.columns[2].as_ref().unwrap().as_text().unwrap();
             println!("a, b, c: {}, {}, {}", a, b, c);
+
+            // Alternatively each row can be parsed individually
+            // let (a2, b2, c2) = row.into_typed::<(i32, i32, String)>() ?;
         }
     }
 
