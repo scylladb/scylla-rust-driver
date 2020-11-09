@@ -7,7 +7,6 @@ use std::net::SocketAddr;
 use std::sync::{Arc, RwLock};
 use tokio::net::{lookup_host, ToSocketAddrs};
 
-use crate::cql_to_rust::{FromRow, FromRowError};
 use crate::frame::response::result;
 use crate::frame::response::Response;
 use crate::frame::value::Value;
@@ -44,38 +43,6 @@ struct NodePool {
     // invariant: nonempty
     connections: HashMap<Shard, Arc<Connection>>,
     shard_info: Option<ShardInfo>,
-}
-
-// Trait used to implement Vec<result::Row>::into_typed<RowT>(self)
-// This is the only way to add custom method to Vec
-pub trait IntoTypedRows {
-    fn into_typed<RowT: FromRow>(self) -> TypedRowIter<RowT>;
-}
-
-// Adds method Vec<result::Row>::into_typed<RowT>(self)
-// It transforms the Vec into iterator mapping to custom row type
-impl IntoTypedRows for Vec<result::Row> {
-    fn into_typed<RowT: FromRow>(self) -> TypedRowIter<RowT> {
-        TypedRowIter {
-            row_iter: self.into_iter(),
-            phantom_data: Default::default(),
-        }
-    }
-}
-
-// Iterator that maps a Vec<result::Row> into custom RowType used by IntoTypedRows::into_typed
-// impl Trait doesn't compile so we have to be explicit
-pub struct TypedRowIter<RowT: FromRow> {
-    row_iter: std::vec::IntoIter<result::Row>,
-    phantom_data: std::marker::PhantomData<RowT>,
-}
-
-impl<RowT: FromRow> Iterator for TypedRowIter<RowT> {
-    type Item = Result<RowT, FromRowError>;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        self.row_iter.next().map(RowT::from_row)
-    }
 }
 
 /// Represents a CQL session, which can be used to communicate

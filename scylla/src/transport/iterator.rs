@@ -9,7 +9,6 @@ use bytes::Bytes;
 use futures::Stream;
 use tokio::sync::mpsc;
 
-use crate::cql_to_rust::FromRow;
 use crate::frame::{
     response::{
         result::{Result, Row, Rows},
@@ -59,13 +58,6 @@ impl Stream for RowIterator {
 }
 
 impl RowIterator {
-    pub fn into_typed<RowT: FromRow>(self) -> TypedRowIterator<RowT> {
-        TypedRowIterator {
-            row_iterator: self,
-            phantom_data: Default::default(),
-        }
-    }
-
     pub(crate) fn new_for_query(
         conn: Arc<Connection>,
         query: Query,
@@ -163,32 +155,3 @@ impl WorkerHelper {
         }
     }
 }
-
-pub struct TypedRowIterator<RowT> {
-    row_iterator: RowIterator,
-    phantom_data: std::marker::PhantomData<RowT>,
-}
-
-impl<RowT: FromRow> Stream for TypedRowIterator<RowT> {
-    type Item = AResult<RowT>;
-
-    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
-        let my_row_iterator: &mut RowIterator = &mut self.as_mut().row_iterator;
-
-        let next_elem: Option<AResult<Row>> = match Pin::new(my_row_iterator).poll_next(cx) {
-            Poll::Ready(next_elem) => next_elem,
-            Poll::Pending => return Poll::Pending,
-        };
-
-        let next_ready: Option<Self::Item> = match next_elem {
-            Some(Ok(next_row)) => Some(RowT::from_row(next_row).map_err(anyhow::Error::from)),
-            Some(Err(e)) => Some(Err(e)),
-            None => None,
-        };
-
-        return Poll::Ready(next_ready);
-    }
-}
-
-// TypedRowIterator can be moved freely for any RowT so it's Unpin
-impl<RowT> Unpin for TypedRowIterator<RowT> {}

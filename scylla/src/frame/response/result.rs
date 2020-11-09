@@ -1,8 +1,10 @@
+use crate::cql_to_rust::{FromRow, FromRowError};
 use anyhow::Result as AResult;
 use byteorder::{BigEndian, ReadBytesExt};
 use bytes::{Buf, Bytes};
 use std::convert::TryFrom;
 use std::net::IpAddr;
+use std::result::Result as StdResult;
 use std::str;
 
 use crate::frame::types;
@@ -137,6 +139,13 @@ pub struct PreparedMetadata {
 #[derive(Debug, Default)]
 pub struct Row {
     pub columns: Vec<Option<CQLValue>>,
+}
+
+impl Row {
+    /// Allows converting Row into tuple of rust types or custom struct deriving FromRow
+    pub fn into_typed<RowT: FromRow>(self) -> StdResult<RowT, FromRowError> {
+        RowT::from_row(self)
+    }
 }
 
 #[derive(Debug, Default)]

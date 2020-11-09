@@ -1,7 +1,7 @@
 use anyhow::Result;
 use scylla::cql_to_rust::FromRow;
 use scylla::macros::FromRow;
-use scylla::transport::session::{IntoTypedRows, Session};
+use scylla::transport::session::Session;
 use std::env;
 
 #[tokio::main]
@@ -48,7 +48,8 @@ async fn main() -> Result<()> {
 
     // Rows can be parsed as tuples
     if let Some(rows) = session.query("SELECT a, b, c FROM ks.t", &[]).await? {
-        for (a, b, c) in rows.into_typed::<(i32, i32, String)>().map(|r| r.unwrap()) {
+        for row in rows {
+            let (a, b, c) = row.into_typed::<(i32, i32, String)>()?;
             println!("a, b, c: {}, {}, {}", a, b, c);
         }
     }
@@ -62,8 +63,8 @@ async fn main() -> Result<()> {
     }
 
     if let Some(rows) = session.query("SELECT a, b, c FROM ks.t", &[]).await? {
-        for row_data in rows.into_typed::<RowData>() {
-            let row_data = row_data.expect("Parsing typed row failed!");
+        for row_data in rows {
+            let row_data = row_data.into_typed::<RowData>()?;
             println!("row_data: {:?}", row_data);
         }
     }
