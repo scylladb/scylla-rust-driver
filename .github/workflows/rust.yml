@@ -18,6 +18,8 @@ jobs:
     - uses: actions/checkout@v2
     - name: Format check
       run: cargo fmt --verbose --all -- --check
+    - name: Clippy check
+      run: cargo clippy --verbose -- -D warnings
     - name: Build
       run: cargo build --verbose
     - name: Run tests

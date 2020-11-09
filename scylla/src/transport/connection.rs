@@ -87,10 +87,10 @@ impl Connection {
         self.send_request(&request::Prepare { query }, true).await
     }
 
-    pub async fn query_single_page<'a>(
+    pub async fn query_single_page(
         &self,
         query: impl Into<Query>,
-        values: &'a [Value],
+        values: &[Value],
     ) -> Result<Option<Vec<result::Row>>> {
         let result = self.query(&query.into(), values, None).await?;
         match result {
@@ -101,10 +101,10 @@ impl Connection {
         }
     }
 
-    pub async fn query<'a>(
+    pub async fn query(
         &self,
         query: &Query,
-        values: &'a [Value],
+        values: &[Value],
         paging_state: Option<Bytes>,
     ) -> Result<Response> {
         let query_frame = query::Query {
@@ -120,10 +120,10 @@ impl Connection {
         self.send_request(&query_frame, true).await
     }
 
-    pub async fn execute<'a>(
+    pub async fn execute(
         &self,
         prepared_statement: &PreparedStatement,
-        values: &'a [Value],
+        values: &[Value],
         paging_state: Option<Bytes>,
     ) -> Result<Response> {
         let execute_frame = execute::Execute {

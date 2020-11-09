@@ -91,10 +91,10 @@ impl Session {
     ///
     /// * `query` - query to be performed
     /// * `values` - values bound to the query
-    pub async fn query<'a>(
+    pub async fn query(
         &self,
         query: impl Into<Query>,
-        values: &'a [Value],
+        values: &[Value],
     ) -> Result<Option<Vec<result::Row>>> {
         self.any_connection()?
             .query_single_page(query, values)
@@ -124,7 +124,7 @@ impl Session {
                 p.prepared_metadata,
                 query.to_owned(),
             )),
-            _ => return Err(anyhow!("Unexpected frame received")),
+            _ => Err(anyhow!("Unexpected frame received")),
         }
     }
 
@@ -133,10 +133,10 @@ impl Session {
     ///
     /// * `prepared` - a statement prepared with [prepare](crate::transport::session::prepare)
     /// * `values` - values bound to the query
-    pub async fn execute<'a>(
+    pub async fn execute(
         &self,
         prepared: &PreparedStatement,
-        values: &'a [Value],
+        values: &[Value],
     ) -> Result<Option<Vec<result::Row>>> {
         // FIXME: Prepared statement ids are local to a node, so we must make sure
         // that prepare() sends to all nodes and keeps all ids.

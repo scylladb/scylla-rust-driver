@@ -6,7 +6,6 @@ pub mod value;
 use crate::transport::Compression;
 use anyhow::Result;
 use bytes::{Buf, BufMut, Bytes};
-use snappy;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use uuid::Uuid;
 

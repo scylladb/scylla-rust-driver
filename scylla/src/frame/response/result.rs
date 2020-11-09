@@ -354,7 +354,7 @@ fn deser_rows(buf: &mut &[u8]) -> AResult<Rows> {
             };
             columns.push(v);
         }
-        rows.push(Row { columns: columns });
+        rows.push(Row { columns });
     }
     Ok(Rows {
         metadata,
