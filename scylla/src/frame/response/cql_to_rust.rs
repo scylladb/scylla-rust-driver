@@ -93,7 +93,7 @@ impl<T: FromCQLVal<CQLValue>> FromCQLVal<CQLValue> for Vec<T> {
     }
 }
 
-// This macro implements TreFrom<Row> for tuple of types that have FromCQLVal
+// This macro implements FromRow for tuple of types that have FromCQLVal
 macro_rules! impl_tuple_from_row {
     ( $($Ti:tt),+ ) => {
         impl<$($Ti),+> FromRow for ($($Ti,)+)
@@ -116,7 +116,7 @@ macro_rules! impl_tuple_from_row {
     }
 }
 
-// Implement From<Row> for tuples of size up to 16
+// Implement FromRow for tuples of size up to 16
 impl_tuple_from_row!(T1);
 impl_tuple_from_row!(T1, T2);
 impl_tuple_from_row!(T1, T2, T3);

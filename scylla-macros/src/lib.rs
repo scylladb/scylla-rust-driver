@@ -2,7 +2,7 @@ use proc_macro::TokenStream;
 use quote::{quote, quote_spanned};
 use syn::{parse_macro_input, spanned::Spanned, Data, DeriveInput, Fields};
 
-/// #[derive(FromRow)] derives From<Row> for struct
+/// #[derive(FromRow)] derives FromRow for struct
 /// Works only on simple structs without generics etc
 #[proc_macro_derive(FromRow)]
 pub fn from_row_derive(tokens_input: TokenStream) -> TokenStream {
@@ -20,7 +20,7 @@ pub fn from_row_derive(tokens_input: TokenStream) -> TokenStream {
         _ => panic!("derive(FromRow) works only on structs!")
     };
 
-    // Generates tokens for field_name: field_type::from(vals_iter.next().unwrap_or(...)), ...
+    // Generates tokens for field_name: field_type::from_cql(vals_iter.next().ok_or(...)?), ...
     let set_fields_code = struct_fields.named.iter().map(|field| {
         let field_name = &field.ident;
         let field_type = &field.ty;
