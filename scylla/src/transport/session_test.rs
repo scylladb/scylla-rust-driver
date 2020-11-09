@@ -187,17 +187,24 @@ async fn test_batch() {
     // Wait for schema agreement
     std::thread::sleep(std::time::Duration::from_millis(300));
 
+    let prepared_statement = session
+        .prepare("INSERT INTO ks.t (a, b, c) VALUES (?, ?, ?)")
+        .await
+        .unwrap();
+
     use crate::batch::Batch;
-
     let mut batch: Batch = Default::default();
-    batch.append_statement("INSERT INTO ks.t (a, b, c) VALUES (1, 2, 'abc')");
+    batch.append_statement("INSERT INTO ks.t (a, b, c) VALUES (?, ?, ?)");
     batch.append_statement("INSERT INTO ks.t (a, b, c) VALUES (7, 11, '')");
-    batch.append_statement("INSERT INTO ks.t (a, b, c) VALUES (1, 4, 'hello')");
+    batch.append_statement(prepared_statement);
 
-    let mut v = Vec::<Vec<crate::frame::value::Value>>::new();
-    v.resize(batch.get_statements().len(), Default::default());
+    let values = [
+        values!(1_i32, 2_i32, "abc"),
+        Vec::new(),
+        values!(1_i32, 4_i32, "hello"),
+    ];
 
-    session.batch(batch, &v).await.unwrap();
+    session.batch(&batch, &values).await.unwrap();
 
     let rs = session
         .query("SELECT a, b, c FROM ks.t", &[])

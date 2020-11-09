@@ -232,14 +232,10 @@ impl Session {
     ///
     /// * `batch` - batch to be performed
     /// * `values` - values bound to the query
-    pub async fn batch(
-        &self,
-        batch: impl Into<Batch>,
-        values: &[impl AsRef<[Value]>],
-    ) -> Result<()> {
+    pub async fn batch(&self, batch: &Batch, values: &[impl AsRef<[Value]>]) -> Result<()> {
         // FIXME: Prepared statement ids are local to a node
         // this method does not handle this
-        let response = self.any_connection()?.batch(&batch.into(), values).await?;
+        let response = self.any_connection()?.batch(&batch, values).await?;
         match response {
             Response::Error(err) => Err(err.into()),
             Response::Result(_) => Ok(()),

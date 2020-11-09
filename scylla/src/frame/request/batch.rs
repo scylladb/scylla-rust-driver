@@ -7,20 +7,21 @@ use crate::frame::{
     value::Value,
 };
 
-pub struct Batch<'a> {
-    pub statements: Vec<BatchStatementWithValues<'a>>,
+pub struct Batch<'a, 'b, I: Iterator<Item = BatchStatementWithValues<'a, 'b>> + Clone> {
+    pub statements: I,
+    pub num_of_statements: usize,
     pub batch_type: BatchType,
     pub consistency: i16,
 }
 
-pub struct BatchStatementWithValues<'a> {
-    pub statement: BatchStatement,
+pub struct BatchStatementWithValues<'a, 'b> {
+    pub statement: BatchStatement<'b>,
     pub values: &'a [Value],
 }
 
-pub enum BatchStatement {
-    QueryContents(String),
-    PreparedStatementID(Bytes),
+pub enum BatchStatement<'a> {
+    QueryContents(&'a str),
+    PreparedStatementID(&'a Bytes),
 }
 
 /// The type of a batch.
@@ -31,7 +32,9 @@ pub enum BatchType {
     Counter = 2,
 }
 
-impl Request for Batch<'_> {
+impl<'a, 'b, I: Iterator<Item = BatchStatementWithValues<'a, 'b>> + Clone> Request
+    for Batch<'a, 'b, I>
+{
     const OPCODE: RequestOpcode = RequestOpcode::Batch;
 
     fn serialize(&self, buf: &mut impl BufMut) -> Result<()> {
@@ -39,8 +42,8 @@ impl Request for Batch<'_> {
         buf.put_u8(self.batch_type as u8);
 
         // Serializing queries
-        types::write_short(self.statements.len() as i16, buf);
-        for statement in &self.statements {
+        types::write_short(self.num_of_statements as i16, buf);
+        for statement in self.statements.clone() {
             statement.serialize(buf)?;
         }
 
@@ -55,17 +58,7 @@ impl Request for Batch<'_> {
     }
 }
 
-impl Default for Batch<'_> {
-    fn default() -> Self {
-        Self {
-            statements: Vec::new(),
-            batch_type: BatchType::Logged,
-            consistency: 1,
-        }
-    }
-}
-
-impl BatchStatement {
+impl BatchStatement<'_> {
     fn serialize(&self, buf: &mut impl BufMut) -> Result<()> {
         match self {
             BatchStatement::QueryContents(s) => {
@@ -82,7 +75,7 @@ impl BatchStatement {
     }
 }
 
-impl BatchStatementWithValues<'_> {
+impl BatchStatementWithValues<'_, '_> {
     fn serialize(&self, buf: &mut impl BufMut) -> Result<()> {
         // Serializing statement
         self.statement.serialize(buf)?;
