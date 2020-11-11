@@ -142,10 +142,12 @@ impl Connection {
     }
 
     pub async fn batch(&self, batch: &Batch, values: &[impl AsRef<[Value]>]) -> Result<Response> {
-        let num_of_statements = batch.get_statements().len();
-        if num_of_statements != values.len() {
+        let statements_count = batch.get_statements().len();
+        if statements_count != values.len() {
             return Err(anyhow!(
-                "Length of provided values must be equal to number of batch statements"
+                "Length of provided values ({}) must be equal to number of batch statements ({})",
+                values.len(),
+                statements_count
             ));
         }
 
@@ -167,7 +169,7 @@ impl Connection {
 
         let batch_frame = batch::Batch {
             statements,
-            num_of_statements,
+            statements_count,
             batch_type: batch.get_type(),
             consistency: 1, // TODO something else than hardcoded value
         };

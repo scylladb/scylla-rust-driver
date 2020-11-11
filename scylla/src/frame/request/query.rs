@@ -70,18 +70,7 @@ impl QueryParameters<'_> {
         buf.put_u8(flags);
 
         if !self.values.is_empty() {
-            buf.put_i16(self.values.len() as i16);
-
-            for value in self.values {
-                match value {
-                    Value::Val(v) => {
-                        types::write_int(v.len() as i32, buf);
-                        buf.put_slice(&v[..]);
-                    }
-                    Value::Null => types::write_int(-1, buf),
-                    Value::NotSet => types::write_int(-2, buf),
-                }
-            }
+            types::write_values(&self.values, buf);
         }
 
         if let Some(page_size) = self.page_size {

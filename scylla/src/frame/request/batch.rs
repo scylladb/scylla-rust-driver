@@ -7,15 +7,15 @@ use crate::frame::{
     value::Value,
 };
 
-pub struct Batch<'a, 'b, I: Iterator<Item = BatchStatementWithValues<'a, 'b>> + Clone> {
+pub struct Batch<'a, I: Iterator<Item = BatchStatementWithValues<'a>> + Clone> {
     pub statements: I,
-    pub num_of_statements: usize,
+    pub statements_count: usize,
     pub batch_type: BatchType,
     pub consistency: i16,
 }
 
-pub struct BatchStatementWithValues<'a, 'b> {
-    pub statement: BatchStatement<'b>,
+pub struct BatchStatementWithValues<'a> {
+    pub statement: BatchStatement<'a>,
     pub values: &'a [Value],
 }
 
@@ -32,9 +32,7 @@ pub enum BatchType {
     Counter = 2,
 }
 
-impl<'a, 'b, I: Iterator<Item = BatchStatementWithValues<'a, 'b>> + Clone> Request
-    for Batch<'a, 'b, I>
-{
+impl<'a, I: Iterator<Item = BatchStatementWithValues<'a>> + Clone> Request for Batch<'a, I> {
     const OPCODE: RequestOpcode = RequestOpcode::Batch;
 
     fn serialize(&self, buf: &mut impl BufMut) -> Result<()> {
@@ -42,7 +40,7 @@ impl<'a, 'b, I: Iterator<Item = BatchStatementWithValues<'a, 'b>> + Clone> Reque
         buf.put_u8(self.batch_type as u8);
 
         // Serializing queries
-        types::write_short(self.num_of_statements as i16, buf);
+        types::write_short(self.statements_count as i16, buf);
         for statement in self.statements.clone() {
             statement.serialize(buf)?;
         }
@@ -75,23 +73,13 @@ impl BatchStatement<'_> {
     }
 }
 
-impl BatchStatementWithValues<'_, '_> {
+impl BatchStatementWithValues<'_> {
     fn serialize(&self, buf: &mut impl BufMut) -> Result<()> {
         // Serializing statement
         self.statement.serialize(buf)?;
 
         // Serializing values bound to statement
-        types::write_short(self.values.len() as i16, buf);
-        for value in self.values {
-            match value {
-                Value::Val(v) => {
-                    types::write_int(v.len() as i32, buf);
-                    buf.put_slice(&v[..]);
-                }
-                Value::Null => types::write_int(-1, buf),
-                Value::NotSet => types::write_int(-2, buf),
-            }
-        }
+        types::write_values(&self.values, buf);
 
         Ok(())
     }
