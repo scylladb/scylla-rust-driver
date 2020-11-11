@@ -192,6 +192,8 @@ async fn test_batch() {
         .await
         .unwrap();
 
+    // TODO: Add API, that supports binding values to statements in batch creation process,
+    // to avoid problem of statements/values count mismatch
     use crate::batch::Batch;
     let mut batch: Batch = Default::default();
     batch.append_statement("INSERT INTO ks.t (a, b, c) VALUES (?, ?, ?)");
