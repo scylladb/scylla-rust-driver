@@ -1,3 +1,4 @@
+pub mod batch;
 pub mod execute;
 pub mod options;
 pub mod prepare;
@@ -8,6 +9,7 @@ use anyhow::Result;
 use bytes::{BufMut, Bytes};
 use num_enum::TryFromPrimitive;
 
+pub use batch::Batch;
 pub use options::Options;
 pub use prepare::Prepare;
 pub use query::Query;

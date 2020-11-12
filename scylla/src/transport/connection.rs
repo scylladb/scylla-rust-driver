@@ -10,9 +10,11 @@ use std::convert::TryFrom;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::sync::Mutex as StdMutex;
 
+use crate::batch::Batch;
+use crate::batch::BatchStatement;
 use crate::frame::{
     self,
-    request::{self, execute, query, Request, RequestOpcode},
+    request::{self, batch, execute, query, Request, RequestOpcode},
     response::{result, Response, ResponseOpcode},
     value::Value,
     FrameParams, RequestBodyWithExtensions,
@@ -137,6 +139,42 @@ impl Connection {
         };
 
         self.send_request(&execute_frame, true).await
+    }
+
+    pub async fn batch(&self, batch: &Batch, values: &[impl AsRef<[Value]>]) -> Result<Response> {
+        let statements_count = batch.get_statements().len();
+        if statements_count != values.len() {
+            return Err(anyhow!(
+                "Length of provided values ({}) must be equal to number of batch statements ({})",
+                values.len(),
+                statements_count
+            ));
+        }
+
+        let statements = batch
+            .get_statements()
+            .iter()
+            .zip(values.iter())
+            .map(|(e, v)| batch::BatchStatementWithValues {
+                statement: match e {
+                    BatchStatement::Query(q) => {
+                        batch::BatchStatement::QueryContents(q.get_contents())
+                    }
+                    BatchStatement::PreparedStatement(s) => {
+                        batch::BatchStatement::PreparedStatementID(s.get_id())
+                    }
+                },
+                values: v.as_ref(),
+            });
+
+        let batch_frame = batch::Batch {
+            statements,
+            statements_count,
+            batch_type: batch.get_type(),
+            consistency: 1, // TODO something else than hardcoded value
+        };
+
+        self.send_request(&batch_frame, true).await
     }
 
     // TODO: Return the response associated with that frame
