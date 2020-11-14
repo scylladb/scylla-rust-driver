@@ -14,11 +14,9 @@ let uri = "127.0.0.1:9042";
 
 let session = Session::connect(uri, None).await?;
 
-if let Some(rs) = session.query("SELECT a, b, c FROM ks.t", &[]).await? {
-    for r in rs {
-        let a = r.columns[0].as_ref().unwrap().as_int().unwrap();
-        let b = r.columns[1].as_ref().unwrap().as_int().unwrap();
-        let c = r.columns[2].as_ref().unwrap().as_text().unwrap();
+if let Some(rows) = session.query("SELECT a, b, c FROM ks.t", &[]).await? {
+    for row in rows.into_typed::<(i32, i32, String)>() {
+        let (a, b, c) = row?;
         println!("a, b, c: {}, {}, {}", a, b, c);
     }
 }
