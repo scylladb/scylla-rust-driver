@@ -33,3 +33,7 @@ path = "compare-tokens.rs"
 [[example]]
 name = "select-paging"
 path = "select-paging.rs"
+
+[[example]]
+name = "user-defined-type"
+path = "user-defined-type.rs"

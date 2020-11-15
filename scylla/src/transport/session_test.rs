@@ -200,13 +200,13 @@ async fn test_batch() {
     batch.append_statement("INSERT INTO ks.t (a, b, c) VALUES (7, 11, '')");
     batch.append_statement(prepared_statement);
 
-    let values = [
-        values!(1_i32, 2_i32, "abc"),
-        Vec::new(),
-        values!(1_i32, 4_i32, "hello"),
+    let values: &[&[_]] = &[
+        &values!(1_i32, 2_i32, "abc"),
+        &[],
+        &values!(1_i32, 4_i32, "hello"),
     ];
 
-    session.batch(&batch, &values).await.unwrap();
+    session.batch(&batch, values).await.unwrap();
 
     let rs = session
         .query("SELECT a, b, c FROM ks.t", &[])
