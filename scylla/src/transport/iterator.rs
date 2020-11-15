@@ -4,12 +4,14 @@ use std::pin::Pin;
 use std::sync::Arc;
 use std::task::{Context, Poll};
 
-use anyhow::Result as AResult;
 use bytes::Bytes;
 use futures::Stream;
+use std::result::Result as StdResult;
 use tokio::sync::mpsc;
 
+use super::transport_errors::ConnectionError;
 use crate::cql_to_rust::FromRow;
+
 use crate::frame::{
     response::{
         result::{Result, Row, Rows},
@@ -23,11 +25,11 @@ use crate::transport::connection::Connection;
 pub struct RowIterator {
     current_row_idx: usize,
     current_page: Rows,
-    page_receiver: mpsc::Receiver<AResult<Rows>>,
+    page_receiver: mpsc::Receiver<StdResult<Rows, ConnectionError>>,
 }
 
 impl Stream for RowIterator {
-    type Item = AResult<Row>;
+    type Item = StdResult<Row, ConnectionError>;
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         let mut s = self.as_mut();
@@ -126,15 +128,18 @@ impl RowIterator {
 }
 
 struct WorkerHelper {
-    sender: mpsc::Sender<AResult<Rows>>,
+    sender: mpsc::Sender<StdResult<Rows, ConnectionError>>,
 }
 
 impl WorkerHelper {
-    fn new(sender: mpsc::Sender<AResult<Rows>>) -> Self {
+    fn new(sender: mpsc::Sender<StdResult<Rows, ConnectionError>>) -> Self {
         Self { sender }
     }
 
-    async fn handle_response(&mut self, response: AResult<Response>) -> Option<Bytes> {
+    async fn handle_response(
+        &mut self,
+        response: StdResult<Response, ConnectionError>,
+    ) -> Option<Bytes> {
         match response {
             Ok(Response::Result(Result::Rows(rows))) => {
                 let paging_state = rows.metadata.paging_state.clone();
@@ -149,10 +154,10 @@ impl WorkerHelper {
                 let _ = self.sender.send(Err(err.into())).await;
                 None
             }
-            Ok(resp) => {
+            Ok(_resp) => {
                 let _ = self
                     .sender
-                    .send(Err(anyhow!("Unexpected response: {:?}", resp)))
+                    .send(Err(ConnectionError::UnexpectedResponse))
                     .await;
                 None
             }
@@ -170,18 +175,19 @@ pub struct TypedRowIterator<RowT> {
 }
 
 impl<RowT: FromRow> Stream for TypedRowIterator<RowT> {
-    type Item = AResult<RowT>;
+    type Item = StdResult<RowT, ConnectionError>;
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         let mut s = self.as_mut();
 
-        let next_elem: Option<AResult<Row>> = match Pin::new(&mut s.row_iterator).poll_next(cx) {
-            Poll::Ready(next_elem) => next_elem,
-            Poll::Pending => return Poll::Pending,
-        };
+        let next_elem: Option<StdResult<Row, ConnectionError>> =
+            match Pin::new(&mut s.row_iterator).poll_next(cx) {
+                Poll::Ready(next_elem) => next_elem,
+                Poll::Pending => return Poll::Pending,
+            };
 
         let next_ready: Option<Self::Item> = match next_elem {
-            Some(Ok(next_row)) => Some(RowT::from_row(next_row).map_err(anyhow::Error::from)),
+            Some(Ok(next_row)) => Some(RowT::from_row(next_row).map_err(ConnectionError::from)),
             Some(Err(e)) => Some(Err(e)),
             None => None,
         };

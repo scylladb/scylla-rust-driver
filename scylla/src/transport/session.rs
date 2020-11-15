@@ -1,4 +1,3 @@
-use anyhow::Result;
 use futures::{future::RemoteHandle, FutureExt};
 use std::collections::hash_map::Entry;
 use std::collections::HashMap;
@@ -7,8 +6,10 @@ use std::net::SocketAddr;
 use std::sync::{Arc, RwLock};
 use tokio::net::{lookup_host, ToSocketAddrs};
 
+use super::transport_errors::ConnectionError;
 use crate::batch::Batch;
-use crate::cql_to_rust::{FromRow, FromRowError};
+use crate::cql_to_rust::FromRow;
+use crate::frame::response::cql_to_rust::FromRowError;
 use crate::frame::response::result;
 use crate::frame::response::Response;
 use crate::frame::value::Value;
@@ -19,6 +20,8 @@ use crate::transport::connection::{open_connection, Connection};
 use crate::transport::iterator::RowIterator;
 use crate::transport::topology::{Topology, TopologyReader};
 use crate::transport::Compression;
+
+type Connections = Vec<(Node, Vec<Arc<Connection>>)>;
 
 const POOL_LOCK_POISONED: &str =
     "Connection pool lock is poisoned, this session is no longer usable. \
@@ -92,7 +95,7 @@ impl Session {
     pub async fn connect(
         addr: impl ToSocketAddrs + Display,
         compression: Option<Compression>,
-    ) -> Result<Self> {
+    ) -> Result<Self, ConnectionError> {
         let addr = resolve(addr).await?;
         let connection = open_connection(addr, None, compression).await?;
         let node = Node { addr };
@@ -129,13 +132,17 @@ impl Session {
         &self,
         query: impl Into<Query>,
         values: &[Value],
-    ) -> Result<Option<Vec<result::Row>>> {
+    ) -> Result<Option<Vec<result::Row>>, ConnectionError> {
         self.any_connection()?
             .query_single_page(query, values)
             .await
     }
 
-    pub fn query_iter(&self, query: impl Into<Query>, values: &[Value]) -> Result<RowIterator> {
+    pub fn query_iter(
+        &self,
+        query: impl Into<Query>,
+        values: &[Value],
+    ) -> Result<RowIterator, ConnectionError> {
         Ok(RowIterator::new_for_query(
             self.any_connection()?,
             query.into(),
@@ -147,7 +154,7 @@ impl Session {
     /// which can later be used to perform more efficient queries
     /// # Arguments
     ///#
-    pub async fn prepare(&self, query: &str) -> Result<PreparedStatement> {
+    pub async fn prepare(&self, query: &str) -> Result<PreparedStatement, ConnectionError> {
         // FIXME: Prepared statement ids are local to a node, so we must make sure
         // that prepare() sends to all nodes and keeps all ids.
         let result = self.any_connection()?.prepare(query.to_owned()).await?;
@@ -158,7 +165,7 @@ impl Session {
                 p.prepared_metadata,
                 query.to_owned(),
             )),
-            _ => Err(anyhow!("Unexpected frame received")),
+            _ => Err(ConnectionError::UnexpectedFrame),
         }
     }
 
@@ -171,7 +178,7 @@ impl Session {
         &self,
         prepared: &PreparedStatement,
         values: &[Value],
-    ) -> Result<Option<Vec<result::Row>>> {
+    ) -> Result<Option<Vec<result::Row>>, ConnectionError> {
         // FIXME: Prepared statement ids are local to a node, so we must make sure
         // that prepare() sends to all nodes and keeps all ids.
         let token = calculate_token(prepared, values);
@@ -191,19 +198,17 @@ impl Session {
                             Response::Error(err) => return Err(err.into()),
                             Response::Result(result::Result::Prepared(reprepared)) => {
                                 if reprepared.id != prepared.get_id() {
-                                    return Err(anyhow!(
-                                        "Reprepared statement unexpectedly changed its id"
-                                    ));
+                                    return Err(ConnectionError::RepreparedStatmentIDChanged);
                                 }
                             }
-                            _ => return Err(anyhow!("Unexpected frame received")),
+                            _ => return Err(ConnectionError::UnexpectedFrame),
                         }
                         let result = connection.execute(prepared, values, None).await?;
                         match result {
                             Response::Error(err) => Err(err.into()),
                             Response::Result(result::Result::Rows(rs)) => Ok(Some(rs.rows)),
                             Response::Result(_) => Ok(None),
-                            _ => Err(anyhow!("Unexpected frame received")),
+                            _ => Err(ConnectionError::UnexpectedFrame),
                         }
                     }
                     _ => Err(err.into()),
@@ -211,7 +216,7 @@ impl Session {
             }
             Response::Result(result::Result::Rows(rs)) => Ok(Some(rs.rows)),
             Response::Result(_) => Ok(None),
-            _ => Err(anyhow!("Unexpected frame received")),
+            _ => Err(ConnectionError::UnexpectedFrame),
         }
     }
 
@@ -219,7 +224,7 @@ impl Session {
         &self,
         prepared: impl Into<PreparedStatement>,
         values: &[Value],
-    ) -> Result<RowIterator> {
+    ) -> Result<RowIterator, ConnectionError> {
         Ok(RowIterator::new_for_prepared_statement(
             self.any_connection()?,
             prepared.into(),
@@ -232,33 +237,37 @@ impl Session {
     ///
     /// * `batch` - batch to be performed
     /// * `values` - values bound to the query
-    pub async fn batch(&self, batch: &Batch, values: &[impl AsRef<[Value]>]) -> Result<()> {
+    pub async fn batch(
+        &self,
+        batch: &Batch,
+        values: &[impl AsRef<[Value]>],
+    ) -> Result<(), ConnectionError> {
         // FIXME: Prepared statement ids are local to a node
         // this method does not handle this
         let response = self.any_connection()?.batch(&batch, values).await?;
         match response {
             Response::Error(err) => Err(err.into()),
             Response::Result(_) => Ok(()),
-            _ => Err(anyhow!("Unexpected frame received")),
+            _ => Err(ConnectionError::UnexpectedFrame),
         }
     }
 
     /// Returns all connections that the session has currently opened.
-    pub fn get_connections(&self) -> Result<Vec<(Node, Vec<Arc<Connection>>)>> {
+    pub fn get_connections(&self) -> Result<Connections, ConnectionError> {
         Ok(self
             .pool
             .read()
-            .map_err(|_| anyhow!(POOL_LOCK_POISONED))?
+            .map_err(|_| ConnectionError::PoolLockPoisoned(POOL_LOCK_POISONED.to_string()))?
             .iter()
             .map(|(&node, node_pool)| (node, node_pool.get_connections()))
             .collect())
     }
 
-    pub async fn refresh_topology(&self) -> Result<()> {
+    pub async fn refresh_topology(&self) -> Result<(), ConnectionError> {
         self.topology.refresh().await
     }
 
-    async fn pick_connection(&self, t: Token) -> Result<Arc<Connection>> {
+    async fn pick_connection(&self, t: Token) -> Result<Arc<Connection>, ConnectionError> {
         // TODO: we try only the owner of the range (vnode) that the token lies in
         // we should calculate the *set* of replicas for this token, using the replication strategy
         // of the table being queried.
@@ -269,7 +278,7 @@ impl Session {
         if let Some(node_pool) = self
             .pool
             .read()
-            .map_err(|_| anyhow!(POOL_LOCK_POISONED))?
+            .map_err(|_| ConnectionError::PoolLockPoisoned(POOL_LOCK_POISONED.to_string()))?
             .get(&owner)
         {
             // We have a pool for this node. Check if we have a connection for the token.
@@ -295,7 +304,7 @@ impl Session {
             return Ok(self
                 .pool
                 .write()
-                .map_err(|_| anyhow!(POOL_LOCK_POISONED))?
+                .map_err(|_| ConnectionError::PoolLockPoisoned(POOL_LOCK_POISONED.to_string()))?
                 .entry(owner)
                 // If someone created a node pool for this node faster while we were creating
                 // our own and inserted it into the session pool, drop our new pool and use the
@@ -324,7 +333,7 @@ impl Session {
             match self
                 .pool
                 .write()
-                .map_err(|_| anyhow!(POOL_LOCK_POISONED))?
+                .map_err(|_| ConnectionError::PoolLockPoisoned(POOL_LOCK_POISONED.to_string()))?
                 .entry(owner)
             {
                 Entry::Vacant(entry) => {
@@ -346,15 +355,15 @@ impl Session {
         )
     }
 
-    fn any_connection(&self) -> Result<Arc<Connection>> {
+    fn any_connection(&self) -> Result<Arc<Connection>, ConnectionError> {
         Ok(self
             .pool
             .read()
             // TODO: better error message?
-            .map_err(|_| anyhow!(POOL_LOCK_POISONED))?
+            .map_err(|_| ConnectionError::PoolLockPoisoned(POOL_LOCK_POISONED.to_string()))?
             .values()
             .next()
-            .ok_or_else(|| anyhow!("fatal error, broken invariant: no connections available"))?
+            .ok_or_else(|| ConnectionError::FatalConnectionError)?
             .any_connection()?)
     }
 }
@@ -397,17 +406,20 @@ impl NodePool {
         self.connections.get(&shard).map(|c| c.to_owned())
     }
 
-    pub fn connection_for_token_or_any(&self, t: Token) -> Result<Arc<Connection>> {
+    pub fn connection_for_token_or_any(
+        &self,
+        t: Token,
+    ) -> Result<Arc<Connection>, ConnectionError> {
         self.connection_for_token(t)
             .map_or_else(|| self.any_connection(), Ok)
     }
 
-    pub fn any_connection(&self) -> Result<Arc<Connection>> {
+    pub fn any_connection(&self) -> Result<Arc<Connection>, ConnectionError> {
         Ok(self
             .connections
             .values()
             .next()
-            .ok_or_else(|| anyhow!("fatal error, broken invariant: no connections available"))?
+            .ok_or_else(|| ConnectionError::FatalConnectionError)?
             .to_owned())
     }
 
@@ -425,8 +437,8 @@ fn calculate_token<'a>(stmt: &PreparedStatement, values: &'a [Value]) -> Token {
 // Resolve the given `ToSocketAddrs` using a DNS lookup if necessary.
 // The resolution may return multiple IPs and the function returns one of them.
 // It prefers to return IPv4s first, and only if there are none, IPv6s.
-async fn resolve(addr: impl ToSocketAddrs + Display) -> Result<SocketAddr> {
-    let failed_err = anyhow!("failed to resolve {}", addr);
+async fn resolve(addr: impl ToSocketAddrs + Display) -> Result<SocketAddr, ConnectionError> {
+    let failed_err = ConnectionError::FailedToResolveAddress(addr.to_string());
     let mut ret = None;
     for a in lookup_host(addr).await? {
         match a {

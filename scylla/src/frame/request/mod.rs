@@ -5,7 +5,7 @@ pub mod prepare;
 pub mod query;
 pub mod startup;
 
-use anyhow::Result;
+use crate::frame::frame_errors::ParseError;
 use bytes::{BufMut, Bytes};
 use num_enum::TryFromPrimitive;
 
@@ -31,9 +31,9 @@ pub enum RequestOpcode {
 pub trait Request {
     const OPCODE: RequestOpcode;
 
-    fn serialize(&self, buf: &mut impl BufMut) -> Result<()>;
+    fn serialize(&self, buf: &mut impl BufMut) -> Result<(), ParseError>;
 
-    fn to_bytes(&self) -> Result<Bytes> {
+    fn to_bytes(&self) -> Result<Bytes, ParseError> {
         let mut v = Vec::new();
         self.serialize(&mut v)?;
         Ok(v.into())

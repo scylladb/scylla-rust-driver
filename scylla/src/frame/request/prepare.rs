@@ -1,4 +1,4 @@
-use anyhow::Result;
+use crate::frame::frame_errors::ParseError;
 use bytes::BufMut;
 
 use crate::{
@@ -13,7 +13,7 @@ pub struct Prepare {
 impl Request for Prepare {
     const OPCODE: RequestOpcode = RequestOpcode::Prepare;
 
-    fn serialize(&self, buf: &mut impl BufMut) -> Result<()> {
+    fn serialize(&self, buf: &mut impl BufMut) -> Result<(), ParseError> {
         types::write_long_string(&self.query, buf)?;
         Ok(())
     }

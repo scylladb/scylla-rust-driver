@@ -1,4 +1,3 @@
-use anyhow::Result;
 use bytes::{Buf, Bytes};
 use rand::Rng;
 use std::collections::BTreeMap;
@@ -7,6 +6,7 @@ use std::convert::TryFrom;
 use std::net::SocketAddr;
 use std::num::Wrapping;
 use std::ops::Bound::{Included, Unbounded};
+use thiserror::Error;
 
 #[derive(PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Copy)]
 pub struct Node {
@@ -36,9 +36,8 @@ pub struct ShardInfo {
 }
 
 impl std::str::FromStr for Token {
-    type Err = anyhow::Error;
-
-    fn from_str(s: &str) -> Result<Token> {
+    type Err = std::num::ParseIntError;
+    fn from_str(s: &str) -> Result<Token, std::num::ParseIntError> {
         Ok(Token { value: s.parse()? })
     }
 }
@@ -91,20 +90,30 @@ impl ShardInfo {
     }
 }
 
+#[derive(Error, Debug)]
+pub enum ShardingError {
+    #[error("ShardInfo parameters missing")]
+    MissingShardInfoParameter,
+    #[error("ShardInfo parameters missing after unwraping")]
+    MissingUnwrapedShardInfoParameter,
+    #[error("ParseIntError encountered while getting ShardInfo")]
+    ParseIntError(#[from] std::num::ParseIntError),
+}
+
 impl<'a> TryFrom<&'a HashMap<String, Vec<String>>> for ShardInfo {
-    type Error = anyhow::Error;
+    type Error = ShardingError;
     fn try_from(options: &'a HashMap<String, Vec<String>>) -> Result<Self, Self::Error> {
         let shard_entry = options.get("SCYLLA_SHARD");
         let nr_shards_entry = options.get("SCYLLA_NR_SHARDS");
         let msb_ignore_entry = options.get("SCYLLA_SHARDING_IGNORE_MSB");
         if shard_entry.is_none() || nr_shards_entry.is_none() || msb_ignore_entry.is_none() {
-            return Err(anyhow!("ShardInfo parameters missing"));
+            return Err(ShardingError::MissingShardInfoParameter);
         }
         if shard_entry.unwrap().is_empty()
             || nr_shards_entry.unwrap().is_empty()
             || msb_ignore_entry.unwrap().is_empty()
         {
-            return Err(anyhow!("ShardInfo parameters missing"));
+            return Err(ShardingError::MissingUnwrapedShardInfoParameter);
         }
         let shard = shard_entry.unwrap().first().unwrap().parse::<u16>()?;
         let nr_shards = nr_shards_entry.unwrap().first().unwrap().parse::<u16>()?;

@@ -2,6 +2,7 @@ pub mod connection;
 pub mod iterator;
 pub mod session;
 mod topology;
+pub mod transport_errors;
 
 /// The wire protocol compression algorithm.
 #[derive(Copy, Clone)]

@@ -1,28 +1,47 @@
 //! CQL binary protocol in-wire types.
 
-use anyhow::Result;
+use super::frame_errors::ParseError;
 use byteorder::{BigEndian, ReadBytesExt};
 use bytes::BufMut;
 use std::collections::HashMap;
+use std::convert::TryInto;
 use std::str;
 use uuid::Uuid;
 
 use crate::frame::value::Value;
 
-fn read_raw_bytes<'a>(count: usize, buf: &mut &'a [u8]) -> Result<&'a [u8]> {
+impl From<std::num::TryFromIntError> for ParseError {
+    fn from(_err: std::num::TryFromIntError) -> Self {
+        ParseError::BadData("Integer conversion out of range".to_string())
+    }
+}
+
+impl From<std::str::Utf8Error> for ParseError {
+    fn from(_err: std::str::Utf8Error) -> Self {
+        ParseError::BadData("UTF8 serialization failed".to_string())
+    }
+}
+
+impl From<std::array::TryFromSliceError> for ParseError {
+    fn from(_err: std::array::TryFromSliceError) -> Self {
+        ParseError::BadData("array try from slice failed".to_string())
+    }
+}
+
+fn read_raw_bytes<'a>(count: usize, buf: &mut &'a [u8]) -> Result<&'a [u8], ParseError> {
     if buf.len() < count {
-        return Err(anyhow!(
-            "not enough bytes in buffer: expected {}, was {}",
+        return Err(ParseError::BadData(format!(
+            "Not enough bytes! expected: {} received: {}",
             count,
-            buf.len()
-        ));
+            buf.len(),
+        )));
     }
     let (ret, rest) = buf.split_at(count);
     *buf = rest;
     Ok(ret)
 }
 
-pub fn read_int(buf: &mut &[u8]) -> Result<i32> {
+pub fn read_int(buf: &mut &[u8]) -> Result<i32, ParseError> {
     let v = buf.read_i32::<BigEndian>()?;
     Ok(v)
 }
@@ -31,19 +50,17 @@ pub fn write_int(v: i32, buf: &mut impl BufMut) {
     buf.put_i32(v);
 }
 
-fn read_int_length(buf: &mut &[u8]) -> Result<usize> {
+fn read_int_length(buf: &mut &[u8]) -> Result<usize, ParseError> {
     let v = read_int(buf)?;
-    if v < 0 {
-        return Err(anyhow!("invalid length of type `int`: {}", v));
-    }
-    Ok(v as usize)
+    let v: usize = v.try_into()?;
+
+    Ok(v)
 }
 
-fn write_int_length(v: usize, buf: &mut impl BufMut) -> Result<()> {
-    if v > i32::MAX as usize {
-        return Err(anyhow!("length too big to be encoded as `int`: {}", v));
-    }
-    write_int(v as i32, buf);
+fn write_int_length(v: usize, buf: &mut impl BufMut) -> Result<(), ParseError> {
+    let v: i32 = v.try_into()?;
+
+    write_int(v, buf);
     Ok(())
 }
 
@@ -57,7 +74,7 @@ fn type_int() {
     }
 }
 
-pub fn read_long(buf: &mut &[u8]) -> Result<i64> {
+pub fn read_long(buf: &mut &[u8]) -> Result<i64, ParseError> {
     let v = buf.read_i64::<BigEndian>()?;
     Ok(v)
 }
@@ -76,7 +93,7 @@ fn type_long() {
     }
 }
 
-pub fn read_short(buf: &mut &[u8]) -> Result<i16> {
+pub fn read_short(buf: &mut &[u8]) -> Result<i16, ParseError> {
     let v = buf.read_i16::<BigEndian>()?;
     Ok(v)
 }
@@ -85,18 +102,14 @@ pub fn write_short(v: i16, buf: &mut impl BufMut) {
     buf.put_i16(v);
 }
 
-fn read_short_length(buf: &mut &[u8]) -> Result<usize> {
+fn read_short_length(buf: &mut &[u8]) -> Result<usize, ParseError> {
     let v = read_short(buf)?;
-    if v < 0 {
-        return Err(anyhow!("invalid length of type `short`: {}", v));
-    }
-    Ok(v as usize)
+    let v: usize = v.try_into()?;
+    Ok(v)
 }
 
-fn write_short_length(v: usize, buf: &mut impl BufMut) -> Result<()> {
-    if v > i16::MAX as usize {
-        return Err(anyhow!("length too big to be encoded as `short`: {}", v));
-    }
+fn write_short_length(v: usize, buf: &mut impl BufMut) -> Result<(), ParseError> {
+    let v: i16 = v.try_into()?;
     write_short(v as i16, buf);
     Ok(())
 }
@@ -112,7 +125,7 @@ fn type_short() {
 }
 
 // https://github.com/apache/cassandra/blob/trunk/doc/native_protocol_v4.spec#L208
-pub fn read_bytes_opt<'a>(buf: &mut &'a [u8]) -> Result<Option<&'a [u8]>> {
+pub fn read_bytes_opt<'a>(buf: &mut &'a [u8]) -> Result<Option<&'a [u8]>, ParseError> {
     let len = read_int(buf)?;
     if len < 0 {
         return Ok(None);
@@ -123,25 +136,25 @@ pub fn read_bytes_opt<'a>(buf: &mut &'a [u8]) -> Result<Option<&'a [u8]>> {
 }
 
 // Same as read_bytes, but we assume the value won't be `null`
-pub fn read_bytes<'a>(buf: &mut &'a [u8]) -> Result<&'a [u8]> {
+pub fn read_bytes<'a>(buf: &mut &'a [u8]) -> Result<&'a [u8], ParseError> {
     let len = read_int_length(buf)?;
     let v = read_raw_bytes(len, buf)?;
     Ok(v)
 }
 
-pub fn write_bytes(v: &[u8], buf: &mut impl BufMut) -> Result<()> {
+pub fn write_bytes(v: &[u8], buf: &mut impl BufMut) -> Result<(), ParseError> {
     write_int_length(v.len(), buf)?;
     buf.put_slice(v);
     Ok(())
 }
 
-pub fn write_short_bytes(v: &[u8], buf: &mut impl BufMut) -> Result<()> {
+pub fn write_short_bytes(v: &[u8], buf: &mut impl BufMut) -> Result<(), ParseError> {
     write_short_length(v.len(), buf)?;
     buf.put_slice(v);
     Ok(())
 }
 
-pub fn read_bytes_map(buf: &mut &[u8]) -> Result<HashMap<String, Vec<u8>>> {
+pub fn read_bytes_map(buf: &mut &[u8]) -> Result<HashMap<String, Vec<u8>>, ParseError> {
     let len = read_short_length(buf)?;
     let mut v = HashMap::with_capacity(len);
     for _ in 0..len {
@@ -152,7 +165,7 @@ pub fn read_bytes_map(buf: &mut &[u8]) -> Result<HashMap<String, Vec<u8>>> {
     Ok(v)
 }
 
-pub fn write_bytes_map<B>(v: &HashMap<String, B>, buf: &mut impl BufMut) -> Result<()>
+pub fn write_bytes_map<B>(v: &HashMap<String, B>, buf: &mut impl BufMut) -> Result<(), ParseError>
 where
     B: AsRef<[u8]>,
 {
@@ -176,14 +189,14 @@ fn type_bytes_map() {
     assert_eq!(read_bytes_map(&mut &*buf).unwrap(), val);
 }
 
-pub fn read_string<'a>(buf: &mut &'a [u8]) -> Result<&'a str> {
+pub fn read_string<'a>(buf: &mut &'a [u8]) -> Result<&'a str, ParseError> {
     let len = read_short_length(buf)?;
     let raw = read_raw_bytes(len, buf)?;
     let v = str::from_utf8(raw)?;
     Ok(v)
 }
 
-pub fn write_string(v: &str, buf: &mut impl BufMut) -> Result<()> {
+pub fn write_string(v: &str, buf: &mut impl BufMut) -> Result<(), ParseError> {
     let raw = v.as_bytes();
     write_short_length(v.len(), buf)?;
     buf.put_slice(raw);
@@ -200,14 +213,14 @@ fn type_string() {
     }
 }
 
-pub fn read_long_string<'a>(buf: &mut &'a [u8]) -> Result<&'a str> {
+pub fn read_long_string<'a>(buf: &mut &'a [u8]) -> Result<&'a str, ParseError> {
     let len = read_int_length(buf)?;
     let raw = read_raw_bytes(len, buf)?;
     let v = str::from_utf8(raw)?;
     Ok(v)
 }
 
-pub fn write_long_string(v: &str, buf: &mut impl BufMut) -> Result<()> {
+pub fn write_long_string(v: &str, buf: &mut impl BufMut) -> Result<(), ParseError> {
     let raw = v.as_bytes();
     let len = raw.len();
     write_int_length(len, buf)?;
@@ -225,7 +238,7 @@ fn type_long_string() {
     }
 }
 
-pub fn read_string_map(buf: &mut &[u8]) -> Result<HashMap<String, String>> {
+pub fn read_string_map(buf: &mut &[u8]) -> Result<HashMap<String, String>, ParseError> {
     let len = read_short_length(buf)?;
     let mut v = HashMap::with_capacity(len);
     for _ in 0..len {
@@ -236,7 +249,10 @@ pub fn read_string_map(buf: &mut &[u8]) -> Result<HashMap<String, String>> {
     Ok(v)
 }
 
-pub fn write_string_map(v: &HashMap<String, String>, buf: &mut impl BufMut) -> Result<()> {
+pub fn write_string_map(
+    v: &HashMap<String, String>,
+    buf: &mut impl BufMut,
+) -> Result<(), ParseError> {
     let len = v.len();
     write_short_length(len, buf)?;
     for (key, val) in v.iter() {
@@ -257,7 +273,7 @@ fn type_string_map() {
     assert_eq!(read_string_map(&mut &buf[..]).unwrap(), val);
 }
 
-pub fn read_string_list(buf: &mut &[u8]) -> Result<Vec<String>> {
+pub fn read_string_list(buf: &mut &[u8]) -> Result<Vec<String>, ParseError> {
     let len = read_short_length(buf)?;
     let mut v = Vec::with_capacity(len);
     for _ in 0..len {
@@ -266,7 +282,7 @@ pub fn read_string_list(buf: &mut &[u8]) -> Result<Vec<String>> {
     Ok(v)
 }
 
-pub fn write_string_list(v: &[String], buf: &mut impl BufMut) -> Result<()> {
+pub fn write_string_list(v: &[String], buf: &mut impl BufMut) -> Result<(), ParseError> {
     let len = v.len();
     write_short_length(len, buf)?;
     for v in v.iter() {
@@ -286,7 +302,7 @@ fn type_string_list() {
     assert_eq!(read_string_list(&mut &buf[..]).unwrap(), val);
 }
 
-pub fn read_string_multimap(buf: &mut &[u8]) -> Result<HashMap<String, Vec<String>>> {
+pub fn read_string_multimap(buf: &mut &[u8]) -> Result<HashMap<String, Vec<String>>, ParseError> {
     let len = read_short_length(buf)?;
     let mut v = HashMap::with_capacity(len);
     for _ in 0..len {
@@ -300,7 +316,7 @@ pub fn read_string_multimap(buf: &mut &[u8]) -> Result<HashMap<String, Vec<Strin
 pub fn write_string_multimap(
     v: &HashMap<String, Vec<String>>,
     buf: &mut impl BufMut,
-) -> Result<()> {
+) -> Result<(), ParseError> {
     let len = v.len();
     write_short_length(len, buf)?;
     for (key, val) in v.iter() {
@@ -324,7 +340,7 @@ fn type_string_multimap() {
     assert_eq!(read_string_multimap(&mut &buf[..]).unwrap(), val);
 }
 
-pub fn read_uuid(buf: &mut &[u8]) -> Result<Uuid> {
+pub fn read_uuid(buf: &mut &[u8]) -> Result<Uuid, ParseError> {
     let raw = read_raw_bytes(16, buf)?;
 
     // It's safe to unwrap here because Uuid::from_slice only fails

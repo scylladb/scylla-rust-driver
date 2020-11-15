@@ -1,4 +1,4 @@
-use anyhow::Result;
+use crate::frame::frame_errors::ParseError;
 use bytes::{BufMut, Bytes};
 
 use crate::{
@@ -25,7 +25,7 @@ pub struct Query<'a> {
 impl Request for Query<'_> {
     const OPCODE: RequestOpcode = RequestOpcode::Query;
 
-    fn serialize(&self, buf: &mut impl BufMut) -> Result<()> {
+    fn serialize(&self, buf: &mut impl BufMut) -> Result<(), ParseError> {
         types::write_long_string(&self.contents, buf)?;
         self.parameters.serialize(buf)?;
         Ok(())
@@ -51,7 +51,7 @@ impl Default for QueryParameters<'_> {
 }
 
 impl QueryParameters<'_> {
-    pub fn serialize(&self, buf: &mut impl BufMut) -> Result<()> {
+    pub fn serialize(&self, buf: &mut impl BufMut) -> Result<(), ParseError> {
         types::write_short(self.consistency, buf);
 
         let mut flags = 0;

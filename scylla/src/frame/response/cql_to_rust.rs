@@ -1,5 +1,14 @@
 use super::result::{CQLValue, Row};
 use std::net::IpAddr;
+use thiserror::Error;
+
+#[derive(Error, Debug, PartialEq, Eq)]
+pub enum FromRowError {
+    #[error("Bad CQL value")]
+    BadCQLVal(#[from] FromCQLValError),
+    #[error("Row too short")]
+    RowTooShort,
+}
 
 /// This trait defines a way to convert CQLValue or Option<CQLValue> into some rust type  
 // We can't use From trait because impl From<Option<CQLValue>> for String {...}
@@ -8,43 +17,17 @@ pub trait FromCQLVal<T>: Sized {
     fn from_cql(cql_val: T) -> Result<Self, FromCQLValError>;
 }
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq, Error)]
 pub enum FromCQLValError {
+    #[error("Bad CQL type")]
     BadCQLType,
+    #[error("Value is null")]
     ValIsNull,
 }
 
 /// This trait defines a way to convert CQL Row into some rust type
 pub trait FromRow: Sized {
     fn from_row(row: Row) -> Result<Self, FromRowError>;
-}
-
-#[derive(Debug, PartialEq, Eq)]
-pub enum FromRowError {
-    BadCQLVal(FromCQLValError),
-    RowTooShort,
-}
-
-// TODO - replace with some error crate
-impl std::fmt::Display for FromCQLValError {
-    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-        write!(f, "{:?}", self)
-    }
-}
-
-impl std::fmt::Display for FromRowError {
-    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-        write!(f, "{:?}", self)
-    }
-}
-
-impl std::error::Error for FromCQLValError {}
-impl std::error::Error for FromRowError {}
-
-impl From<FromCQLValError> for FromRowError {
-    fn from(from_cql_err: FromCQLValError) -> FromRowError {
-        FromRowError::BadCQLVal(from_cql_err)
-    }
 }
 
 // Implement from_cql<Option<CQLValue>> for every type that has from_cql<CQLValue>
