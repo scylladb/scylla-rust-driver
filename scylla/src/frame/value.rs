@@ -12,7 +12,7 @@ pub trait TryIntoValue {
     fn try_into_value(self) -> Result<Value, ValueTooBig>;
 }
 
-pub struct ValueTooBig {}
+pub struct ValueTooBig;
 
 impl std::fmt::Debug for ValueTooBig {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -45,7 +45,7 @@ impl TryInto<Bytes> for Value {
             Value::Val(bytes) => {
                 let bytes_len_int: i32 = match bytes.len().try_into() {
                     Ok(int_len) => int_len,
-                    Err(_) => return Err(ValueTooBig {}),
+                    Err(_) => return Err(ValueTooBig),
                 };
 
                 let mut result = BytesMut::with_capacity(4 + bytes.len());
