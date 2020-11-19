@@ -77,6 +77,8 @@ pub enum TransportError {
     RepreparedStatmentIDChanged,
     #[error("Length of provided values ({0}) must be equal to number of batch statements ({1})")]
     ValueLenMismatch(usize, usize),
+    #[error("No connections available")]
+    NoConnectionsAvailable,
 
     #[error("Internal Driver Error")]
     InternalDriverError(#[from] InternalDriverError),

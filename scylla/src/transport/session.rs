@@ -180,9 +180,34 @@ impl Session {
     /// # Arguments
     ///#
     pub async fn prepare(&self, query: &str) -> Result<PreparedStatement, TransportError> {
-        // FIXME: Prepared statement ids are local to a node, so we must make sure
-        // that prepare() sends to all nodes and keeps all ids.
-        let result = self.any_connection()?.prepare(query.to_owned()).await?;
+        let connections = self.get_connections()?;
+        let mut flat_connections = connections.iter().map(|(_, v)| v).flatten();
+
+        let first_connection = match flat_connections.next() {
+            Some(c) => c,
+            None => return Err(TransportError::NoConnectionsAvailable),
+        };
+
+        let first_result = self.prepare_using(query, first_connection).await?;
+
+        for connection in flat_connections {
+            let result = self.prepare_using(query, connection).await?;
+            // Assuming, that statements id will be equal across nodes
+            if result.get_id() != first_result.get_id() {
+                return Err(TransportError::RepreparedStatmentIDChanged);
+            }
+        }
+
+        Ok(first_result)
+    }
+
+    // Prepares a statement using specified connection
+    async fn prepare_using(
+        &self,
+        query: &str,
+        connection: &Connection,
+    ) -> Result<PreparedStatement, TransportError> {
+        let result = connection.prepare(query.to_owned()).await?;
         match result {
             Response::Error(err) => Err(err.into()),
             Response::Result(result::Result::Prepared(p)) => Ok(PreparedStatement::new(
