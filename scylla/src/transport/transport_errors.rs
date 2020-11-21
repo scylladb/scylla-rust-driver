@@ -75,6 +75,8 @@ pub enum TransportError {
     FailedToResolveAddress(String),
     #[error("Reprepared statement unexpectedly changed its id")]
     RepreparedStatmentIDChanged,
+    #[error("IDs of statements prepared using different connections do not match")]
+    PreparedStatementsIDsNotMatch,
     #[error("Length of provided values ({0}) must be equal to number of batch statements ({1})")]
     ValueLenMismatch(usize, usize),
     #[error("No connections available")]

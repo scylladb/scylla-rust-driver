@@ -1,4 +1,7 @@
-use futures::{future::RemoteHandle, FutureExt};
+use futures::{
+    future::{try_join_all, RemoteHandle},
+    FutureExt,
+};
 use std::collections::hash_map::Entry;
 use std::collections::HashMap;
 use std::fmt::Display;
@@ -7,7 +10,7 @@ use std::sync::{Arc, RwLock};
 use std::time::Instant;
 use tokio::net::{lookup_host, ToSocketAddrs};
 
-use super::transport_errors::{InternalDriverError, PrepareError, TransportError};
+use super::transport_errors::{InternalDriverError, TransportError};
 use crate::batch::Batch;
 use crate::cql_to_rust::FromRow;
 use crate::frame::response::cql_to_rust::FromRowError;
@@ -181,43 +184,22 @@ impl Session {
     ///#
     pub async fn prepare(&self, query: &str) -> Result<PreparedStatement, TransportError> {
         let connections = self.get_connections()?;
-        let mut flat_connections = connections.iter().map(|(_, v)| v).flatten();
+        let all_connections = connections.iter().map(|(_, v)| v).flatten();
 
-        let first_connection = match flat_connections.next() {
-            Some(c) => c,
-            None => return Err(TransportError::NoConnectionsAvailable),
-        };
+        // Prepare statements on all connections concurrently
+        let handles = all_connections.map(|c| c.prepare(query));
+        let mut results = try_join_all(handles).await?;
 
-        let first_result = self.prepare_using(query, first_connection).await?;
-
-        for connection in flat_connections {
-            let result = self.prepare_using(query, connection).await?;
-            // Assuming, that statements id will be equal across nodes
-            if result.get_id() != first_result.get_id() {
-                return Err(TransportError::RepreparedStatmentIDChanged);
+        // Check if every received statement has the same ID
+        for p in results.windows(2) {
+            if p[0].get_id() != p[1].get_id() {
+                return Err(TransportError::PreparedStatementsIDsNotMatch);
             }
         }
 
-        Ok(first_result)
-    }
-
-    // Prepares a statement using specified connection
-    async fn prepare_using(
-        &self,
-        query: &str,
-        connection: &Connection,
-    ) -> Result<PreparedStatement, TransportError> {
-        let result = connection.prepare(query.to_owned()).await?;
-        match result {
-            Response::Error(err) => Err(err.into()),
-            Response::Result(result::Result::Prepared(p)) => Ok(PreparedStatement::new(
-                p.id,
-                p.prepared_metadata,
-                query.to_owned(),
-            )),
-            _ => Err(TransportError::PrepareError(
-                PrepareError::InternalDriverError(InternalDriverError::UnexpectedResponse),
-            )),
+        match results.pop() {
+            Some(result) => Ok(result),
+            None => Err(TransportError::NoConnectionsAvailable),
         }
     }
 
@@ -260,24 +242,13 @@ impl Session {
                 match err.code {
                     9472 => {
                         // Repreparation of a statement is needed
-                        let reprepared_result = connection
-                            .prepare(prepared.get_statement().to_owned())
-                            .await?;
+                        let reprepared = connection.prepare(prepared.get_statement()).await?;
                         // Reprepared statement should keep its id - it's the md5 sum
                         // of statement contents
-                        match reprepared_result {
-                            Response::Error(err) => return Err(err.into()),
-                            Response::Result(result::Result::Prepared(reprepared)) => {
-                                if reprepared.id != prepared.get_id() {
-                                    return Err(TransportError::RepreparedStatmentIDChanged);
-                                }
-                            }
-                            _ => {
-                                return Err(TransportError::InternalDriverError(
-                                    InternalDriverError::UnexpectedResponse,
-                                ))
-                            }
+                        if reprepared.get_id() != prepared.get_id() {
+                            return Err(TransportError::RepreparedStatmentIDChanged);
                         }
+
                         let result = connection
                             .execute(prepared, &serialized_values, None)
                             .await?;

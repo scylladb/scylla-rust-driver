@@ -6,15 +6,15 @@ use crate::{
     frame::types,
 };
 
-pub struct Prepare {
-    pub query: String,
+pub struct Prepare<'a> {
+    pub query: &'a str,
 }
 
-impl Request for Prepare {
+impl<'a> Request for Prepare<'a> {
     const OPCODE: RequestOpcode = RequestOpcode::Prepare;
 
     fn serialize(&self, buf: &mut impl BufMut) -> Result<(), ParseError> {
-        types::write_long_string(&self.query, buf)?;
+        types::write_long_string(self.query, buf)?;
         Ok(())
     }
 }

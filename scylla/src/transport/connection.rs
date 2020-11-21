@@ -88,8 +88,19 @@ impl Connection {
         self.send_request(&request::Options {}, false).await
     }
 
-    pub async fn prepare(&self, query: String) -> Result<Response, TransportError> {
-        self.send_request(&request::Prepare { query }, true).await
+    pub async fn prepare(&self, query: &str) -> Result<PreparedStatement, TransportError> {
+        let result = self.send_request(&request::Prepare { query }, true).await?;
+        match result {
+            Response::Error(err) => Err(err.into()),
+            Response::Result(result::Result::Prepared(p)) => Ok(PreparedStatement::new(
+                p.id,
+                p.prepared_metadata,
+                query.to_owned(),
+            )),
+            _ => Err(TransportError::PrepareError(
+                PrepareError::InternalDriverError(InternalDriverError::UnexpectedResponse),
+            )),
+        }
     }
 
     pub async fn query_single_page(
