@@ -2,7 +2,6 @@ use anyhow::Result;
 use scylla::cql_to_rust::FromCQLVal;
 use scylla::macros::{FromUserType, IntoUserType};
 use scylla::transport::session::{IntoTypedRows, Session};
-use scylla::try_values;
 use std::env;
 
 #[tokio::main]
@@ -14,19 +13,19 @@ async fn main() -> Result<()> {
     let session = Session::connect(uri, None).await?;
     session.refresh_topology().await?;
 
-    session.query("CREATE KEYSPACE IF NOT EXISTS ks WITH REPLICATION = {'class' : 'SimpleStrategy', 'replication_factor' : 1}", &[]).await?;
+    session.query("CREATE KEYSPACE IF NOT EXISTS ks WITH REPLICATION = {'class' : 'SimpleStrategy', 'replication_factor' : 1}", &scylla::values!()).await?;
 
     session
         .query(
             "CREATE TYPE IF NOT EXISTS ks.my_type (int_val int, text_val text)",
-            &[],
+            &scylla::values!(),
         )
         .await?;
 
     session
         .query(
             "CREATE TABLE IF NOT EXISTS ks.udt_tab (k int, my my_type, primary key (k))",
-            &[],
+            &scylla::values!(),
         )
         .await?;
 
@@ -47,12 +46,15 @@ async fn main() -> Result<()> {
     session
         .query(
             "INSERT INTO ks.udt_tab (k, my) VALUES (5, ?)",
-            &(try_values!(to_insert)?),
+            &scylla::values!(to_insert),
         )
         .await?;
 
     // And read like any normal value
-    if let Some(rows) = session.query("SELECT my FROM ks.udt_tab", &[]).await? {
+    if let Some(rows) = session
+        .query("SELECT my FROM ks.udt_tab", &scylla::values!())
+        .await?
+    {
         for row in rows.into_typed::<(MyType,)>() {
             let (my_val,) = row?;
             println!("{:?}", my_val)

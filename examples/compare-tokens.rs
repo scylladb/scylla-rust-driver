@@ -12,12 +12,12 @@ async fn main() -> Result<()> {
     let session = Session::connect(uri, None).await?;
     session.refresh_topology().await?;
 
-    session.query("CREATE KEYSPACE IF NOT EXISTS ks WITH REPLICATION = {'class' : 'SimpleStrategy', 'replication_factor' : 1}", &[]).await?;
+    session.query("CREATE KEYSPACE IF NOT EXISTS ks WITH REPLICATION = {'class' : 'SimpleStrategy', 'replication_factor' : 1}", &scylla::values!()).await?;
 
     session
         .query(
             "CREATE TABLE IF NOT EXISTS ks.t (pk bigint primary key)",
-            &[],
+            &scylla::values!(),
         )
         .await?;
 
@@ -28,10 +28,13 @@ async fn main() -> Result<()> {
             .query("INSERT INTO ks.t (pk) VALUES (?)", &scylla::values!(pk))
             .await?;
 
-        let t = murmur3_token(prepared.compute_partition_key(&scylla::values!(pk))).value;
+        let t = murmur3_token(prepared.compute_partition_key(&scylla::values!(pk)?)?).value;
 
         let qt = session
-            .query(format!("SELECT token(pk) FROM ks.t where pk = {}", pk), &[])
+            .query(
+                format!("SELECT token(pk) FROM ks.t where pk = {}", pk),
+                &scylla::values!(),
+            )
             .await?
             .unwrap()
             .iter()

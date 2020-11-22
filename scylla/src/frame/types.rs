@@ -8,8 +8,6 @@ use std::convert::TryInto;
 use std::str;
 use uuid::Uuid;
 
-use crate::frame::value::Value;
-
 impl From<std::num::TryFromIntError> for ParseError {
     fn from(_err: std::num::TryFromIntError) -> Self {
         ParseError::BadData("Integer conversion out of range".to_string())
@@ -359,21 +357,4 @@ fn type_uuid() {
     write_uuid(&u, &mut buf);
     let u2 = read_uuid(&mut &*buf).unwrap();
     assert_eq!(u, u2);
-}
-
-pub fn write_values(values: &[Value], buf: &mut impl BufMut) -> Result<(), ParseError> {
-    buf.put_i16(values.len().try_into()?);
-
-    for value in values {
-        match value {
-            Value::Val(v) => {
-                write_int(v.len().try_into()?, buf);
-                buf.put_slice(&v[..]);
-            }
-            Value::Null => write_int(-1, buf),
-            Value::NotSet => write_int(-2, buf),
-        }
-    }
-
-    Ok(())
 }

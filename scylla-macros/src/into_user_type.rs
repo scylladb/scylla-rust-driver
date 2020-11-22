@@ -19,42 +19,36 @@ pub fn into_user_type_derive(tokens_input: TokenStream) -> TokenStream {
         _ => panic!("derive(IntoUserType) works only on structs!")
     };
 
-    let convert_code = struct_fields.named.iter().map(|field| {
-        let field_name = &field.ident;
-        let field_type = &field.ty;
-
-        quote_spanned! {field.span() =>
-            // Convert field to scylla Value
-            let #field_name: Value = <#field_type as TryIntoValue>::try_into_value(self.#field_name) ?;
-            // Convert scylla Value to Bytes
-            let #field_name: Bytes = <Value as ::std::convert::TryInto<Bytes>>::try_into(#field_name) ?;
-            result_size += #field_name.len();
-        }
-    });
-
-    let set_result_code = struct_fields.named.iter().map(|field| {
+    let serialize_code = struct_fields.named.iter().map(|field| {
         let field_name = &field.ident;
 
         quote_spanned! {field.span() =>
-            result_bytes.put(#field_name);
+            total_size += <_ as SerializeAsValue>::serialize(&self.#field_name, buf) ?;
         }
     });
 
     let generated = quote! {
-        impl scylla::frame::value::TryIntoValue for #struct_name {
-            fn try_into_value(self) -> Result<scylla::frame::value::Value, scylla::frame::value::ValueTooBig> {
-                use scylla::frame::value::{Value, ValueTooBig, TryIntoValue};
-                use scylla::macros::{Bytes, BytesMut, BufMut};
+        impl scylla::frame::value::SerializeAsValue for #struct_name {
+            fn serialize(&self, buf: &mut scylla::macros::BytesMut) -> std::result::Result<usize, scylla::frame::value::ValueTooBig> {
+                use scylla::frame::value::{SerializeAsValue, ValueTooBig};
+                use scylla::macros::{BytesMut, BufMut};
+                use ::std::convert::TryInto;
 
-                let mut result_size: usize = 0;
+                let mut total_size: usize = 0;
 
-                #(#convert_code)*
+                // Reserve space to put serialized size in
+                let total_size_index: usize = buf.len();
+                buf.put_i32(0);
 
-                let mut result_bytes = BytesMut::with_capacity(result_size);
+                // Serialize fields
+                #(#serialize_code)*
 
-                #(#set_result_code)*
+                // Put serialized size in it's place
+                let total_size_i32: i32 = total_size.try_into().map_err(|_| ValueTooBig) ?;
+                buf[total_size_index..(total_size_index+4)].copy_from_slice(&total_size_i32.to_be_bytes()[..]);
 
-                Ok(Value::Val(result_bytes.into()))
+                // Return total written size
+                Ok(total_size + 4)
             }
         }
     };

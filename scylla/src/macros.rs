@@ -1,24 +1,27 @@
 /// Prepares query values to be used with queries and prepared statements
 #[macro_export]
 macro_rules! values {
-    ($($value:expr),*) => {
-        {
-            use $crate::frame::value::Value;
-            [$(<_ as ::std::convert::Into<Value>>::into($value)),*]
-        }
+    () => {
+        Ok($crate::frame::value::SerializedValues::new())
     };
-}
-
-#[macro_export]
-macro_rules! try_values {
     ($($value:expr),*) => {
         {
-            use $crate::frame::value::{Value, ValueTooBig, TryIntoValue};
-            let lambda = || -> Result<_, ValueTooBig> {
-                Ok([$(<_ as TryIntoValue>::try_into_value($value) ?),*])
+            use $crate::frame::value::{SerializedValues, AddValueError};
+
+            let result: std::result::Result<SerializedValues, AddValueError> = {
+                let mut serialized_values = SerializedValues::new();
+
+                $(
+                if let Err(e) = serialized_values.add_value(&$value) {
+                    Err(e)
+                } else
+                )*
+                {
+                    Ok(serialized_values)
+                }
             };
 
-            lambda()
+            result
         }
     };
 }

@@ -12,12 +12,12 @@ async fn main() -> Result<()> {
     let session = Session::connect(uri, None).await?;
     session.refresh_topology().await?;
 
-    session.query("CREATE KEYSPACE IF NOT EXISTS ks WITH REPLICATION = {'class' : 'SimpleStrategy', 'replication_factor' : 1}", &[]).await?;
+    session.query("CREATE KEYSPACE IF NOT EXISTS ks WITH REPLICATION = {'class' : 'SimpleStrategy', 'replication_factor' : 1}", &scylla::values!()).await?;
 
     session
         .query(
             "CREATE TABLE IF NOT EXISTS ks.t (a int, b int, c text, primary key (a, b))",
-            &[],
+            &scylla::values!(),
         )
         .await?;
 
@@ -32,7 +32,7 @@ async fn main() -> Result<()> {
 
     // Iterate through select result with paging
     let mut rows_stream = session
-        .query_iter("SELECT a, b, c FROM ks.t", &[])?
+        .query_iter("SELECT a, b, c FROM ks.t", &scylla::values!())?
         .into_typed::<(i32, i32, String)>();
 
     while let Some(next_row_res) = rows_stream.next().await {

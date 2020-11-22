@@ -13,12 +13,12 @@ async fn main() -> Result<()> {
 
     let session = Arc::new(Session::connect(uri, None).await?);
 
-    session.query("CREATE KEYSPACE IF NOT EXISTS ks WITH REPLICATION = {'class' : 'SimpleStrategy', 'replication_factor' : 1}", &[]).await?;
+    session.query("CREATE KEYSPACE IF NOT EXISTS ks WITH REPLICATION = {'class' : 'SimpleStrategy', 'replication_factor' : 1}", &scylla::values!()).await?;
 
     session
         .query(
             "CREATE TABLE IF NOT EXISTS ks.t2 (a int, b int, c text, primary key (a, b))",
-            &[],
+            &scylla::values!(),
         )
         .await?;
 
@@ -40,7 +40,7 @@ async fn main() -> Result<()> {
                         i,
                         2 * i
                     ),
-                    &[],
+                    &scylla::values!(),
                 )
                 .await
                 .unwrap();

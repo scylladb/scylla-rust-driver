@@ -7,35 +7,41 @@ use crate::transport::session::Session;
 async fn test_unprepared_statement() {
     let session = Session::connect("127.0.0.1:9042", None).await.unwrap();
 
-    session.query("CREATE KEYSPACE IF NOT EXISTS ks WITH REPLICATION = {'class' : 'SimpleStrategy', 'replication_factor' : 1}", &[]).await.unwrap();
+    session.query("CREATE KEYSPACE IF NOT EXISTS ks WITH REPLICATION = {'class' : 'SimpleStrategy', 'replication_factor' : 1}", &values!()).await.unwrap();
     session
-        .query("DROP TABLE IF EXISTS ks.t;", &[])
+        .query("DROP TABLE IF EXISTS ks.t;", &values!())
         .await
         .unwrap();
     session
         .query(
             "CREATE TABLE IF NOT EXISTS ks.t (a int, b int, c text, primary key (a, b))",
-            &[],
+            &values!(),
         )
         .await
         .unwrap();
     // Wait for schema agreement
     std::thread::sleep(std::time::Duration::from_millis(300));
     session
-        .query("INSERT INTO ks.t (a, b, c) VALUES (1, 2, 'abc')", &[])
+        .query(
+            "INSERT INTO ks.t (a, b, c) VALUES (1, 2, 'abc')",
+            &values!(),
+        )
         .await
         .unwrap();
     session
-        .query("INSERT INTO ks.t (a, b, c) VALUES (7, 11, '')", &[])
+        .query("INSERT INTO ks.t (a, b, c) VALUES (7, 11, '')", &values!())
         .await
         .unwrap();
     session
-        .query("INSERT INTO ks.t (a, b, c) VALUES (1, 4, 'hello')", &[])
+        .query(
+            "INSERT INTO ks.t (a, b, c) VALUES (1, 4, 'hello')",
+            &values!(),
+        )
         .await
         .unwrap();
 
     let rs = session
-        .query("SELECT a, b, c FROM ks.t", &[])
+        .query("SELECT a, b, c FROM ks.t", &values!())
         .await
         .unwrap()
         .unwrap();
@@ -65,24 +71,24 @@ async fn test_unprepared_statement() {
 async fn test_prepared_statement() {
     let session = Session::connect("127.0.0.1:9042", None).await.unwrap();
 
-    session.query("CREATE KEYSPACE IF NOT EXISTS ks WITH REPLICATION = {'class' : 'SimpleStrategy', 'replication_factor' : 1}", &[]).await.unwrap();
+    session.query("CREATE KEYSPACE IF NOT EXISTS ks WITH REPLICATION = {'class' : 'SimpleStrategy', 'replication_factor' : 1}", &values!()).await.unwrap();
     session
-        .query("DROP TABLE IF EXISTS ks.t2;", &[])
+        .query("DROP TABLE IF EXISTS ks.t2;", &values!())
         .await
         .unwrap();
     session
-        .query("DROP TABLE IF EXISTS ks.complex_pk;", &[])
+        .query("DROP TABLE IF EXISTS ks.complex_pk;", &values!())
         .await
         .unwrap();
     session
         .query(
             "CREATE TABLE IF NOT EXISTS ks.t2 (a int, b int, c text, primary key (a, b))",
-            &[],
+            &values!(),
         )
         .await
         .unwrap();
     session
-        .query("CREATE TABLE IF NOT EXISTS ks.complex_pk (a int, b int, c text, d int, e int, primary key ((a,b,c),d))", &[])
+        .query("CREATE TABLE IF NOT EXISTS ks.complex_pk (a int, b int, c text, d int, e int, primary key ((a,b,c),d))", &values!())
         .await
         .unwrap();
     // Wait for schema agreement
@@ -97,6 +103,7 @@ async fn test_prepared_statement() {
         .unwrap();
 
     let values = values!(17_i32, 16_i32, "I'm prepared!!!");
+    let unwrapped_values = values.as_ref().unwrap();
 
     session.execute(&prepared_statement, &values).await.unwrap();
     session
@@ -107,7 +114,7 @@ async fn test_prepared_statement() {
     // Verify that token calculation is compatible with Scylla
     {
         let rs = session
-            .query("SELECT token(a) FROM ks.t2", &[])
+            .query("SELECT token(a) FROM ks.t2", &values!())
             .await
             .unwrap()
             .unwrap();
@@ -116,13 +123,17 @@ async fn test_prepared_statement() {
             .unwrap()
             .as_bigint()
             .unwrap();
-        let expected_token =
-            hash3_x64_128(&prepared_statement.compute_partition_key(&values)) as i64;
+        let expected_token = hash3_x64_128(
+            &prepared_statement
+                .compute_partition_key(unwrapped_values)
+                .unwrap(),
+        ) as i64;
+
         assert_eq!(token, expected_token)
     }
     {
         let rs = session
-            .query("SELECT token(a,b,c) FROM ks.complex_pk", &[])
+            .query("SELECT token(a,b,c) FROM ks.complex_pk", &values!())
             .await
             .unwrap()
             .unwrap();
@@ -131,15 +142,19 @@ async fn test_prepared_statement() {
             .unwrap()
             .as_bigint()
             .unwrap();
-        let expected_token =
-            hash3_x64_128(&prepared_complex_pk_statement.compute_partition_key(&values)) as i64;
+        let expected_token = hash3_x64_128(
+            &prepared_complex_pk_statement
+                .compute_partition_key(unwrapped_values)
+                .unwrap(),
+        ) as i64;
+
         assert_eq!(token, expected_token)
     }
 
     // Verify that correct data was insertd
     {
         let rs = session
-            .query("SELECT a,b,c FROM ks.t2", &[])
+            .query("SELECT a,b,c FROM ks.t2", &values!())
             .await
             .unwrap()
             .unwrap();
@@ -151,7 +166,7 @@ async fn test_prepared_statement() {
     }
     {
         let rs = session
-            .query("SELECT a,b,c,d,e FROM ks.complex_pk", &[])
+            .query("SELECT a,b,c,d,e FROM ks.complex_pk", &values!())
             .await
             .unwrap()
             .unwrap();
@@ -171,15 +186,15 @@ async fn test_prepared_statement() {
 async fn test_batch() {
     let session = Session::connect("127.0.0.1:9042", None).await.unwrap();
 
-    session.query("CREATE KEYSPACE IF NOT EXISTS ks WITH REPLICATION = {'class' : 'SimpleStrategy', 'replication_factor' : 1}", &[]).await.unwrap();
+    session.query("CREATE KEYSPACE IF NOT EXISTS ks WITH REPLICATION = {'class' : 'SimpleStrategy', 'replication_factor' : 1}", &values!()).await.unwrap();
     session
-        .query("DROP TABLE IF EXISTS ks.t;", &[])
+        .query("DROP TABLE IF EXISTS ks.t;", &values!())
         .await
         .unwrap();
     session
         .query(
             "CREATE TABLE IF NOT EXISTS ks.t (a int, b int, c text, primary key (a, b))",
-            &[],
+            &values!(),
         )
         .await
         .unwrap();
@@ -200,16 +215,16 @@ async fn test_batch() {
     batch.append_statement("INSERT INTO ks.t (a, b, c) VALUES (7, 11, '')");
     batch.append_statement(prepared_statement);
 
-    let values: &[&[_]] = &[
-        &values!(1_i32, 2_i32, "abc"),
-        &[],
-        &values!(1_i32, 4_i32, "hello"),
+    let values = &[
+        values!(1_i32, 2_i32, "abc"),
+        values!(),
+        values!(1_i32, 4_i32, "hello"),
     ];
 
     session.batch(&batch, values).await.unwrap();
 
     let rs = session
-        .query("SELECT a, b, c FROM ks.t", &[])
+        .query("SELECT a, b, c FROM ks.t", &values!())
         .await
         .unwrap()
         .unwrap();
@@ -239,13 +254,16 @@ async fn test_batch() {
 async fn test_token_calculation() {
     let session = Session::connect("127.0.0.1:9042", None).await.unwrap();
 
-    session.query("CREATE KEYSPACE IF NOT EXISTS ks WITH REPLICATION = {'class' : 'SimpleStrategy', 'replication_factor' : 1}", &[]).await.unwrap();
+    session.query("CREATE KEYSPACE IF NOT EXISTS ks WITH REPLICATION = {'class' : 'SimpleStrategy', 'replication_factor' : 1}", &values!()).await.unwrap();
     session
-        .query("DROP TABLE IF EXISTS ks.t3;", &[])
+        .query("DROP TABLE IF EXISTS ks.t3;", &values!())
         .await
         .unwrap();
     session
-        .query("CREATE TABLE IF NOT EXISTS ks.t3 (a text primary key)", &[])
+        .query(
+            "CREATE TABLE IF NOT EXISTS ks.t3 (a text primary key)",
+            &values!(),
+        )
         .await
         .unwrap();
     // Wait for schema agreement
@@ -275,8 +293,11 @@ async fn test_token_calculation() {
             .unwrap()
             .as_bigint()
             .unwrap();
-        let expected_token =
-            hash3_x64_128(&prepared_statement.compute_partition_key(&values)) as i64;
+        let expected_token = hash3_x64_128(
+            &prepared_statement
+                .compute_partition_key(&values.unwrap())
+                .unwrap(),
+        ) as i64;
         assert_eq!(token, expected_token)
     }
 }

@@ -4,7 +4,7 @@ use bytes::{BufMut, Bytes};
 use crate::{
     frame::request::{Request, RequestOpcode},
     frame::types,
-    frame::value::Value,
+    frame::value::SerializedValues,
 };
 
 // Query flags
@@ -36,7 +36,7 @@ pub struct QueryParameters<'a> {
     pub consistency: i16,
     pub page_size: Option<i32>,
     pub paging_state: Option<Bytes>,
-    pub values: &'a [Value],
+    pub values: Option<&'a SerializedValues>,
 }
 
 impl Default for QueryParameters<'_> {
@@ -45,7 +45,7 @@ impl Default for QueryParameters<'_> {
             consistency: 1,
             page_size: None,
             paging_state: None,
-            values: &[],
+            values: None,
         }
     }
 }
@@ -55,8 +55,10 @@ impl QueryParameters<'_> {
         types::write_short(self.consistency, buf);
 
         let mut flags = 0;
-        if !self.values.is_empty() {
-            flags |= FLAG_VALUES;
+        if let Some(values) = self.values {
+            if !values.is_empty() {
+                flags |= FLAG_VALUES;
+            }
         }
 
         if self.page_size.is_some() {
@@ -69,8 +71,10 @@ impl QueryParameters<'_> {
 
         buf.put_u8(flags);
 
-        if !self.values.is_empty() {
-            types::write_values(&self.values, buf)?;
+        if let Some(values) = self.values {
+            if !values.is_empty() {
+                values.write_to_request(buf);
+            }
         }
 
         if let Some(page_size) = self.page_size {

@@ -4,7 +4,7 @@ use bytes::{BufMut, Bytes};
 use crate::frame::{
     request::{Request, RequestOpcode},
     types,
-    value::Value,
+    value::SerializedValues,
 };
 
 pub struct Batch<'a, I: Iterator<Item = BatchStatementWithValues<'a>> + Clone> {
@@ -16,7 +16,7 @@ pub struct Batch<'a, I: Iterator<Item = BatchStatementWithValues<'a>> + Clone> {
 
 pub struct BatchStatementWithValues<'a> {
     pub statement: BatchStatement<'a>,
-    pub values: &'a [Value],
+    pub values: &'a SerializedValues,
 }
 
 pub enum BatchStatement<'a> {
@@ -79,7 +79,7 @@ impl BatchStatementWithValues<'_> {
         self.statement.serialize(buf)?;
 
         // Serializing values bound to statement
-        types::write_values(&self.values, buf)?;
+        self.values.write_to_request(buf);
 
         Ok(())
     }

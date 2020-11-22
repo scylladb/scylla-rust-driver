@@ -13,8 +13,8 @@ use crate::cql_to_rust::FromRow;
 use crate::frame::response::cql_to_rust::FromRowError;
 use crate::frame::response::result;
 use crate::frame::response::Response;
-use crate::frame::value::Value;
-use crate::prepared_statement::PreparedStatement;
+use crate::frame::value::{AddValueError, SerializedValues};
+use crate::prepared_statement::{PartitionKeyError, PreparedStatement};
 use crate::query::Query;
 use crate::routing::{murmur3_token, Node, Shard, ShardInfo, Token};
 use crate::transport::connection::{open_connection, Connection};
@@ -138,7 +138,7 @@ impl Session {
     pub async fn query(
         &self,
         query: impl Into<Query>,
-        values: &[Value],
+        values: &Result<SerializedValues, AddValueError>,
     ) -> Result<Option<Vec<result::Row>>, TransportError> {
         let now = Instant::now();
         self.metrics.inc_total_nonpaged_queries();
@@ -153,8 +153,10 @@ impl Session {
     async fn query_no_metrics(
         &self,
         query: impl Into<Query>,
-        values: &[Value],
+        values: &Result<SerializedValues, AddValueError>,
     ) -> Result<Option<Vec<result::Row>>, TransportError> {
+        let values: &SerializedValues = values.as_ref().map_err(|e| *e)?;
+
         self.any_connection()?
             .query_single_page(query, values)
             .await
@@ -163,8 +165,10 @@ impl Session {
     pub fn query_iter(
         &self,
         query: impl Into<Query>,
-        values: &[Value],
+        values: &Result<SerializedValues, AddValueError>,
     ) -> Result<RowIterator, TransportError> {
+        let values: &SerializedValues = values.as_ref().map_err(|e| *e)?;
+
         Ok(RowIterator::new_for_query(
             self.any_connection()?,
             query.into(),
@@ -202,7 +206,7 @@ impl Session {
     pub async fn execute(
         &self,
         prepared: &PreparedStatement,
-        values: &[Value],
+        values: &Result<SerializedValues, AddValueError>,
     ) -> Result<Option<Vec<result::Row>>, TransportError> {
         let now = Instant::now();
         self.metrics.inc_total_nonpaged_queries();
@@ -217,11 +221,13 @@ impl Session {
     async fn execute_no_metrics(
         &self,
         prepared: &PreparedStatement,
-        values: &[Value],
+        values: &Result<SerializedValues, AddValueError>,
     ) -> Result<Option<Vec<result::Row>>, TransportError> {
+        let values: &SerializedValues = values.as_ref().map_err(|e| *e)?;
+
         // FIXME: Prepared statement ids are local to a node, so we must make sure
         // that prepare() sends to all nodes and keeps all ids.
-        let token = calculate_token(prepared, values);
+        let token = calculate_token(prepared, values)?;
         let connection = self.pick_connection(token).await?;
         let result = connection.execute(prepared, values, None).await?;
         match result {
@@ -271,12 +277,14 @@ impl Session {
     pub fn execute_iter(
         &self,
         prepared: impl Into<PreparedStatement>,
-        values: &[Value],
+        values: &Result<SerializedValues, AddValueError>,
     ) -> Result<RowIterator, TransportError> {
+        let values: &SerializedValues = values.as_ref().map_err(|e| *e)?;
+
         Ok(RowIterator::new_for_prepared_statement(
             self.any_connection()?,
             prepared.into(),
-            values.to_owned(),
+            values.clone(),
             self.metrics.clone(),
         ))
     }
@@ -289,7 +297,7 @@ impl Session {
     pub async fn batch(
         &self,
         batch: &Batch,
-        values: &[impl AsRef<[Value]>],
+        values: &[Result<SerializedValues, AddValueError>],
     ) -> Result<(), TransportError> {
         // FIXME: Prepared statement ids are local to a node
         // this method does not handle this
@@ -510,10 +518,13 @@ impl NodePool {
     }
 }
 
-fn calculate_token<'a>(stmt: &PreparedStatement, values: &'a [Value]) -> Token {
+fn calculate_token(
+    stmt: &PreparedStatement,
+    values: &SerializedValues,
+) -> Result<Token, PartitionKeyError> {
     // TODO: take the partitioner of the table that is being queried and calculate the token using
     // that partitioner. The below logic gives correct token only for murmur3partitioner
-    murmur3_token(stmt.compute_partition_key(values))
+    Ok(murmur3_token(stmt.compute_partition_key(values)?))
 }
 
 // Resolve the given `ToSocketAddrs` using a DNS lookup if necessary.
