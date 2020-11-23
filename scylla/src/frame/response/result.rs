@@ -2,7 +2,9 @@ use crate::cql_to_rust::{FromRow, FromRowError};
 use anyhow::Result as AResult;
 use byteorder::{BigEndian, ReadBytesExt};
 use bytes::{Buf, Bytes};
+use std::collections::HashMap;
 use std::convert::TryFrom;
+use std::convert::TryInto;
 use std::net::IpAddr;
 use std::result::Result as StdResult;
 use std::str;
@@ -40,6 +42,11 @@ enum ColumnType {
     Text,
     Inet,
     Set(Box<ColumnType>),
+    UserDefinedType {
+        type_name: String,
+        keyspace: String,
+        field_types: Vec<(String, ColumnType)>,
+    },
     // TODO
 }
 
@@ -51,7 +58,11 @@ pub enum CQLValue {
     Text(String),
     Inet(IpAddr),
     Set(Vec<CQLValue>),
-    // TODO
+    UserDefinedType {
+        keyspace: String,
+        type_name: String,
+        fields: HashMap<String, Option<CQLValue>>,
+    }, // TODO
 }
 
 impl CQLValue {
@@ -183,6 +194,26 @@ fn deser_type(buf: &mut &[u8]) -> AResult<ColumnType> {
         0x000D => Text,
         0x0010 => Inet,
         0x0022 => Set(Box::new(deser_type(buf)?)),
+        0x0030 => {
+            let keyspace_name: String = types::read_string(buf)?.to_string();
+            let type_name: String = types::read_string(buf)?.to_string();
+            let fields_size: usize = types::read_short(buf)?.try_into()?;
+
+            let mut field_types: Vec<(String, ColumnType)> = Vec::with_capacity(fields_size);
+
+            for _ in 0..fields_size {
+                let field_name: String = types::read_string(buf)?.to_string();
+                let field_type: ColumnType = deser_type(buf)?;
+
+                field_types.push((field_name, field_type));
+            }
+
+            UserDefinedType {
+                type_name,
+                keyspace: keyspace_name,
+                field_types,
+            }
+        }
         id => {
             // TODO implement other types
             return Err(anyhow!("Type not yet implemented, id: {}", id));
@@ -348,6 +379,29 @@ fn deser_cql_value(typ: &ColumnType, buf: &mut &[u8]) -> AResult<CQLValue> {
                 res.push(deser_cql_value(typ, &mut b)?);
             }
             CQLValue::Set(res)
+        }
+        UserDefinedType {
+            type_name,
+            keyspace,
+            field_types,
+        } => {
+            let mut fields: HashMap<String, Option<CQLValue>> =
+                HashMap::with_capacity(field_types.len());
+
+            for (field_name, field_type) in field_types {
+                let mut field_value: Option<CQLValue> = None;
+                if let Some(mut field_val_bytes) = types::read_bytes_opt(buf)? {
+                    field_value = Some(deser_cql_value(&field_type, &mut field_val_bytes)?);
+                }
+
+                fields.insert(field_name.clone(), field_value);
+            }
+
+            CQLValue::UserDefinedType {
+                keyspace: keyspace.clone(),
+                type_name: type_name.clone(),
+                fields,
+            }
         }
     })
 }

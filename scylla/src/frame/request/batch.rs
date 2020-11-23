@@ -79,7 +79,7 @@ impl BatchStatementWithValues<'_> {
         self.statement.serialize(buf)?;
 
         // Serializing values bound to statement
-        types::write_values(&self.values, buf);
+        types::write_values(&self.values, buf)?;
 
         Ok(())
     }
