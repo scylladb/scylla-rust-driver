@@ -184,23 +184,23 @@ impl Session {
     ///#
     pub async fn prepare(&self, query: &str) -> Result<PreparedStatement, TransportError> {
         let connections = self.get_connections()?;
-        let all_connections = connections.iter().map(|(_, v)| v).flatten();
+        let all_connections = connections.iter().flat_map(|(_, v)| v);
 
         // Prepare statements on all connections concurrently
         let handles = all_connections.map(|c| c.prepare(query));
         let mut results = try_join_all(handles).await?;
 
-        // Check if every received statement has the same ID
-        for p in results.windows(2) {
-            if p[0].get_id() != p[1].get_id() {
-                return Err(TransportError::PreparedStatementsIDsNotMatch);
-            }
+        if !Self::validate_prepared_ids_equality(&results) {
+            return Err(TransportError::PreparedStatementsIDsNotMatch);
         }
 
-        match results.pop() {
-            Some(result) => Ok(result),
-            None => Err(TransportError::NoConnectionsAvailable),
-        }
+        results.pop().ok_or(TransportError::NoConnectionsAvailable)
+    }
+
+    fn validate_prepared_ids_equality(statements: &[PreparedStatement]) -> bool {
+        statements
+            .windows(2)
+            .all(|p| p[0].get_id() == p[1].get_id())
     }
 
     /// Executes a previously prepared statement
