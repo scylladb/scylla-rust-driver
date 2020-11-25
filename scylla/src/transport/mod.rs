@@ -1,5 +1,6 @@
 pub mod connection;
 pub mod iterator;
+mod metrics;
 pub mod session;
 mod topology;
 
