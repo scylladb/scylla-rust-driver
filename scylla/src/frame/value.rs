@@ -183,38 +183,6 @@ impl Value for i64 {
     }
 }
 
-impl Value for u8 {
-    fn serialize(&self, buf: &mut Vec<u8>) -> Result<(), ValueTooBig> {
-        buf.put_u32(1);
-        buf.put_u8(*self);
-        Ok(())
-    }
-}
-
-impl Value for u16 {
-    fn serialize(&self, buf: &mut Vec<u8>) -> Result<(), ValueTooBig> {
-        buf.put_u32(2);
-        buf.put_u16(*self);
-        Ok(())
-    }
-}
-
-impl Value for u32 {
-    fn serialize(&self, buf: &mut Vec<u8>) -> Result<(), ValueTooBig> {
-        buf.put_u32(4);
-        buf.put_u32(*self);
-        Ok(())
-    }
-}
-
-impl Value for u64 {
-    fn serialize(&self, buf: &mut Vec<u8>) -> Result<(), ValueTooBig> {
-        buf.put_u32(8);
-        buf.put_u64(*self);
-        Ok(())
-    }
-}
-
 impl Value for &str {
     fn serialize(&self, buf: &mut Vec<u8>) -> Result<(), ValueTooBig> {
         let str_bytes: &[u8] = self.as_bytes();
