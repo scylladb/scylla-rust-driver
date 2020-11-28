@@ -1,4 +1,5 @@
 use super::response;
+use crate::frame::value::SerializeValuesError;
 use thiserror::Error;
 
 #[derive(Error, Debug)]
@@ -31,4 +32,6 @@ pub enum ParseError {
     IoError(#[from] std::io::Error),
     #[error("type not yet implemented, id: {0}")]
     TypeNotImplemented(i16),
+    #[error(transparent)]
+    SerializeValuesError(#[from] SerializeValuesError),
 }

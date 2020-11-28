@@ -1,7 +1,7 @@
 use crate::frame::frame_errors;
 use crate::frame::frame_errors::ParseError;
 use crate::frame::response::cql_to_rust::FromRowError;
-use crate::frame::value::AddValueError;
+use crate::frame::value::SerializeValuesError;
 use crate::prepared_statement::PartitionKeyError;
 use thiserror::Error;
 
@@ -100,7 +100,7 @@ pub enum TransportError {
     #[error(transparent)]
     FromRowError(#[from] FromRowError),
     #[error(transparent)]
-    AddValueError(#[from] AddValueError),
+    SerializeValuesError(#[from] SerializeValuesError),
     #[error(transparent)]
     PartitionKeyError(#[from] PartitionKeyError),
 }

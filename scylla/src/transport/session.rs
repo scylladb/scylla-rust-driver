@@ -13,7 +13,7 @@ use crate::cql_to_rust::FromRow;
 use crate::frame::response::cql_to_rust::FromRowError;
 use crate::frame::response::result;
 use crate::frame::response::Response;
-use crate::frame::value::{AddValueError, SerializedValues};
+use crate::frame::value::{BatchValues, SerializedValues, ValueList};
 use crate::prepared_statement::{PartitionKeyError, PreparedStatement};
 use crate::query::Query;
 use crate::routing::{murmur3_token, Node, Shard, ShardInfo, Token};
@@ -138,7 +138,7 @@ impl Session {
     pub async fn query(
         &self,
         query: impl Into<Query>,
-        values: &Result<SerializedValues, AddValueError>,
+        values: impl ValueList,
     ) -> Result<Option<Vec<result::Row>>, TransportError> {
         let now = Instant::now();
         self.metrics.inc_total_nonpaged_queries();
@@ -153,10 +153,8 @@ impl Session {
     async fn query_no_metrics(
         &self,
         query: impl Into<Query>,
-        values: &Result<SerializedValues, AddValueError>,
+        values: impl ValueList,
     ) -> Result<Option<Vec<result::Row>>, TransportError> {
-        let values: &SerializedValues = values.as_ref().map_err(|e| *e)?;
-
         self.any_connection()?
             .query_single_page(query, values)
             .await
@@ -165,14 +163,14 @@ impl Session {
     pub fn query_iter(
         &self,
         query: impl Into<Query>,
-        values: &Result<SerializedValues, AddValueError>,
+        values: impl ValueList,
     ) -> Result<RowIterator, TransportError> {
-        let values: &SerializedValues = values.as_ref().map_err(|e| *e)?;
+        let serialized_values = values.serialized()?;
 
         Ok(RowIterator::new_for_query(
             self.any_connection()?,
             query.into(),
-            values.to_owned(),
+            serialized_values.into_owned(),
             self.metrics.clone(),
         ))
     }
@@ -206,7 +204,7 @@ impl Session {
     pub async fn execute(
         &self,
         prepared: &PreparedStatement,
-        values: &Result<SerializedValues, AddValueError>,
+        values: impl ValueList,
     ) -> Result<Option<Vec<result::Row>>, TransportError> {
         let now = Instant::now();
         self.metrics.inc_total_nonpaged_queries();
@@ -221,15 +219,17 @@ impl Session {
     async fn execute_no_metrics(
         &self,
         prepared: &PreparedStatement,
-        values: &Result<SerializedValues, AddValueError>,
+        values: impl ValueList,
     ) -> Result<Option<Vec<result::Row>>, TransportError> {
-        let values: &SerializedValues = values.as_ref().map_err(|e| *e)?;
-
         // FIXME: Prepared statement ids are local to a node, so we must make sure
         // that prepare() sends to all nodes and keeps all ids.
-        let token = calculate_token(prepared, values)?;
+        let serialized_values = values.serialized()?;
+
+        let token = calculate_token(prepared, &serialized_values)?;
         let connection = self.pick_connection(token).await?;
-        let result = connection.execute(prepared, values, None).await?;
+        let result = connection
+            .execute(prepared, &serialized_values, None)
+            .await?;
         match result {
             Response::Error(err) => {
                 match err.code {
@@ -253,7 +253,9 @@ impl Session {
                                 ))
                             }
                         }
-                        let result = connection.execute(prepared, values, None).await?;
+                        let result = connection
+                            .execute(prepared, &serialized_values, None)
+                            .await?;
                         match result {
                             Response::Error(err) => Err(err.into()),
                             Response::Result(result::Result::Rows(rs)) => Ok(Some(rs.rows)),
@@ -277,14 +279,14 @@ impl Session {
     pub fn execute_iter(
         &self,
         prepared: impl Into<PreparedStatement>,
-        values: &Result<SerializedValues, AddValueError>,
+        values: impl ValueList,
     ) -> Result<RowIterator, TransportError> {
-        let values: &SerializedValues = values.as_ref().map_err(|e| *e)?;
+        let serialized_values = values.serialized()?;
 
         Ok(RowIterator::new_for_prepared_statement(
             self.any_connection()?,
             prepared.into(),
-            values.clone(),
+            serialized_values.into_owned(),
             self.metrics.clone(),
         ))
     }
@@ -297,7 +299,7 @@ impl Session {
     pub async fn batch(
         &self,
         batch: &Batch,
-        values: &[Result<SerializedValues, AddValueError>],
+        values: impl BatchValues,
     ) -> Result<(), TransportError> {
         // FIXME: Prepared statement ids are local to a node
         // this method does not handle this

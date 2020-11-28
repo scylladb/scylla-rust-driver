@@ -13,47 +13,38 @@ async fn main() -> Result<()> {
     let session = Session::connect(uri, None).await?;
     session.refresh_topology().await?;
 
-    session.query("CREATE KEYSPACE IF NOT EXISTS ks WITH REPLICATION = {'class' : 'SimpleStrategy', 'replication_factor' : 1}", &scylla::values!()).await?;
+    session.query("CREATE KEYSPACE IF NOT EXISTS ks WITH REPLICATION = {'class' : 'SimpleStrategy', 'replication_factor' : 1}", &[]).await?;
 
     session
         .query(
             "CREATE TABLE IF NOT EXISTS ks.t (a int, b int, c text, primary key (a, b))",
-            &scylla::values!(),
+            &[],
         )
         .await?;
 
     session
-        .query(
-            "INSERT INTO ks.t (a, b, c) VALUES (?, ?, ?)",
-            &scylla::values!(3, 4, "def"),
-        )
+        .query("INSERT INTO ks.t (a, b, c) VALUES (?, ?, ?)", (3, 4, "def"))
         .await?;
 
     session
-        .query(
-            "INSERT INTO ks.t (a, b, c) VALUES (1, 2, 'abc')",
-            &scylla::values!(),
-        )
+        .query("INSERT INTO ks.t (a, b, c) VALUES (1, 2, 'abc')", &[])
         .await?;
 
     let prepared = session
         .prepare("INSERT INTO ks.t (a, b, c) VALUES (?, 7, ?)")
         .await?;
     session
-        .execute(&prepared, &scylla::values!(42_i32, "I'm prepared!"))
+        .execute(&prepared, (42_i32, "I'm prepared!"))
         .await?;
     session
-        .execute(&prepared, &scylla::values!(43_i32, "I'm prepared 2!"))
+        .execute(&prepared, (43_i32, "I'm prepared 2!"))
         .await?;
     session
-        .execute(&prepared, &scylla::values!(44_i32, "I'm prepared 3!"))
+        .execute(&prepared, (44_i32, "I'm prepared 3!"))
         .await?;
 
     // Rows can be parsed as tuples
-    if let Some(rows) = session
-        .query("SELECT a, b, c FROM ks.t", &scylla::values!())
-        .await?
-    {
+    if let Some(rows) = session.query("SELECT a, b, c FROM ks.t", &[]).await? {
         for row in rows.into_typed::<(i32, i32, String)>() {
             let (a, b, c) = row?;
             println!("a, b, c: {}, {}, {}", a, b, c);
@@ -68,10 +59,7 @@ async fn main() -> Result<()> {
         c: String,
     }
 
-    if let Some(rows) = session
-        .query("SELECT a, b, c FROM ks.t", &scylla::values!())
-        .await?
-    {
+    if let Some(rows) = session.query("SELECT a, b, c FROM ks.t", &[]).await? {
         for row_data in rows.into_typed::<RowData>() {
             let row_data = row_data?;
             println!("row_data: {:?}", row_data);
@@ -79,10 +67,7 @@ async fn main() -> Result<()> {
     }
 
     // Or simply as untyped rows
-    if let Some(rows) = session
-        .query("SELECT a, b, c FROM ks.t", &scylla::values!())
-        .await?
-    {
+    if let Some(rows) = session.query("SELECT a, b, c FROM ks.t", &[]).await? {
         for row in rows {
             let a = row.columns[0].as_ref().unwrap().as_int().unwrap();
             let b = row.columns[1].as_ref().unwrap().as_int().unwrap();

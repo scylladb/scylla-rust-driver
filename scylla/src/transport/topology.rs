@@ -289,9 +289,8 @@ impl TopologyReader {
 }
 
 async fn query_local_tokens(c: &Connection) -> Result<Vec<Token>, TransportError> {
-    use crate::frame::value::SerializedValues;
     unwrap_tokens(
-        c.query_single_page("SELECT tokens FROM system.local", &SerializedValues::new())
+        c.query_single_page("SELECT tokens FROM system.local", &[])
             .await?
             .ok_or(TopologyError::LocalExpectedRowResults)?
             .into_iter()
@@ -309,7 +308,6 @@ async fn query_peers(
     get_tokens: bool,
     port: u16,
 ) -> Result<(Vec<SocketAddr>, Vec<Vec<Token>>), TransportError> {
-    use crate::frame::value::SerializedValues;
     // TODO: do we want `peer`, `preferred_ip`, or `rpc_address`? Which one is `external`?
     let rows = c
         .query_single_page(
@@ -317,7 +315,7 @@ async fn query_peers(
                 "SELECT {} FROM system.peers",
                 if get_tokens { "peer, tokens" } else { "peer" }
             ),
-            &SerializedValues::new(),
+            &[],
         )
         .await?
         .ok_or(TopologyError::PeersRowError)?;

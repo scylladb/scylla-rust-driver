@@ -75,7 +75,7 @@ impl PreparedStatement {
         // where all three parameters form a partition key. The middle one is not available
         // in bound values.
 
-        // TODO: Optimize - maybe we could check if pk_indexes are sorted and do an allocation-free algorithm then?
+        // TODO: Optimize - maybe we could check if pk_indexes are sorted and do an allocation-free two-pointer sweep algorithm then?
         // We can't just sort them because the hash will break:
         // https://github.com/apache/cassandra/blob/caeecf6456b87886a79f47a2954788e6c856697c/doc/native_protocol_v4.spec#L673
 
@@ -98,6 +98,7 @@ impl PreparedStatement {
                 buf.put_u8(0);
             }
         }
+
         Ok(buf.into())
     }
 }

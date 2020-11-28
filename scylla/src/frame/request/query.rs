@@ -36,16 +36,18 @@ pub struct QueryParameters<'a> {
     pub consistency: i16,
     pub page_size: Option<i32>,
     pub paging_state: Option<Bytes>,
-    pub values: Option<&'a SerializedValues>,
+    pub values: &'a SerializedValues,
 }
 
 impl Default for QueryParameters<'_> {
     fn default() -> Self {
+        static DEFAULT_VALS: SerializedValues = SerializedValues::new();
+
         Self {
             consistency: 1,
             page_size: None,
             paging_state: None,
-            values: None,
+            values: &DEFAULT_VALS,
         }
     }
 }
@@ -55,10 +57,8 @@ impl QueryParameters<'_> {
         types::write_short(self.consistency, buf);
 
         let mut flags = 0;
-        if let Some(values) = self.values {
-            if !values.is_empty() {
-                flags |= FLAG_VALUES;
-            }
+        if !self.values.is_empty() {
+            flags |= FLAG_VALUES;
         }
 
         if self.page_size.is_some() {
@@ -71,10 +71,8 @@ impl QueryParameters<'_> {
 
         buf.put_u8(flags);
 
-        if let Some(values) = self.values {
-            if !values.is_empty() {
-                values.write_to_request(buf);
-            }
+        if !self.values.is_empty() {
+            self.values.write_to_request(buf);
         }
 
         if let Some(page_size) = self.page_size {
