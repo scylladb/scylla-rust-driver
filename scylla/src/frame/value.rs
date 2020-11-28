@@ -317,13 +317,16 @@ impl ValueList for SerializedValues {
 
 impl<'b> ValueList for Cow<'b, SerializedValues> {
     fn serialized(&self) -> SerializedResult<'_> {
-        Ok(self.clone())
+        Ok(Cow::Borrowed(self.as_ref()))
     }
 }
 
 impl<'b> ValueList for SerializedResult<'b> {
     fn serialized(&self) -> SerializedResult<'_> {
-        self.clone()
+        match self {
+            Ok(ser_values_cow) => Ok(Cow::Borrowed(ser_values_cow.as_ref())),
+            Err(e) => Err(*e),
+        }
     }
 }
 
