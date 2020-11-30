@@ -3,6 +3,7 @@ use std::mem;
 use std::pin::Pin;
 use std::sync::Arc;
 use std::task::{Context, Poll};
+use std::time::Instant;
 
 use bytes::Bytes;
 use futures::Stream;
@@ -21,6 +22,7 @@ use crate::frame::{
 };
 use crate::statement::{prepared_statement::PreparedStatement, query::Query};
 use crate::transport::connection::Connection;
+use crate::transport::metrics::Metrics;
 
 pub struct RowIterator {
     current_row_idx: usize,
@@ -72,46 +74,62 @@ impl RowIterator {
         conn: Arc<Connection>,
         query: Query,
         values: Vec<Value>,
+        metrics: Arc<Metrics>,
     ) -> RowIterator {
-        Self::new_with_worker(|mut helper| async move {
-            let mut paging_state = None;
-            loop {
-                let rows = conn.query(&query, &values, paging_state).await;
-                paging_state = helper.handle_response(rows).await;
-                if paging_state.is_none() {
-                    break;
+        let metrics_copy = metrics.clone();
+        Self::new_with_worker(
+            |mut helper| async move {
+                let mut paging_state = None;
+                loop {
+                    let now = Instant::now();
+                    metrics_copy.inc_total_paged_queries();
+                    let rows = conn.query(&query, &values, paging_state).await;
+                    let _ = metrics_copy.log_query_latency(now.elapsed().as_millis() as u64);
+                    paging_state = helper.handle_response(rows).await;
+                    if paging_state.is_none() {
+                        break;
+                    }
                 }
-            }
-        })
+            },
+            metrics,
+        )
     }
 
     pub(crate) fn new_for_prepared_statement(
         conn: Arc<Connection>,
         prepared_statement: PreparedStatement,
         values: Vec<Value>,
+        metrics: Arc<Metrics>,
     ) -> RowIterator {
-        Self::new_with_worker(|mut helper| async move {
-            let mut paging_state = None;
-            loop {
-                let rows = conn
-                    .execute(&prepared_statement, &values, paging_state)
-                    .await;
-                paging_state = helper.handle_response(rows).await;
-                if paging_state.is_none() {
-                    break;
+        let metrics_copy = metrics.clone();
+        Self::new_with_worker(
+            |mut helper| async move {
+                let mut paging_state = None;
+                loop {
+                    let now = Instant::now();
+                    metrics_copy.inc_total_paged_queries();
+                    let rows = conn
+                        .execute(&prepared_statement, &values, paging_state)
+                        .await;
+                    let _ = metrics_copy.log_query_latency(now.elapsed().as_millis() as u64);
+                    paging_state = helper.handle_response(rows).await;
+                    if paging_state.is_none() {
+                        break;
+                    }
                 }
-            }
-        })
+            },
+            metrics,
+        )
     }
 
-    fn new_with_worker<F, G>(worker: F) -> RowIterator
+    fn new_with_worker<F, G>(worker: F, metrics: Arc<Metrics>) -> RowIterator
     where
         F: FnOnce(WorkerHelper) -> G,
         G: Future<Output = ()> + Send + 'static,
     {
         // TODO: How many pages in flight do we allow?
         let (sender, receiver) = mpsc::channel(1);
-        let helper = WorkerHelper::new(sender);
+        let helper = WorkerHelper::new(sender, metrics);
 
         tokio::task::spawn(worker(helper));
 
@@ -126,14 +144,14 @@ impl RowIterator {
         self.current_row_idx >= self.current_page.rows.len()
     }
 }
-
 struct WorkerHelper {
     sender: mpsc::Sender<StdResult<Rows, TransportError>>,
+    metrics: Arc<Metrics>,
 }
 
 impl WorkerHelper {
-    fn new(sender: mpsc::Sender<StdResult<Rows, TransportError>>) -> Self {
-        Self { sender }
+    fn new(sender: mpsc::Sender<StdResult<Rows, TransportError>>, metrics: Arc<Metrics>) -> Self {
+        Self { sender, metrics }
     }
 
     async fn handle_response(
@@ -151,10 +169,12 @@ impl WorkerHelper {
                 }
             }
             Ok(Response::Error(err)) => {
+                self.metrics.inc_failed_paged_queries();
                 let _ = self.sender.send(Err(err.into())).await;
                 None
             }
-            Ok(_resp) => {
+            Ok(_) => {
+                self.metrics.inc_failed_paged_queries();
                 let _ = self
                     .sender
                     .send(Err(TransportError::InternalDriverError(
@@ -164,6 +184,7 @@ impl WorkerHelper {
                 None
             }
             Err(err) => {
+                self.metrics.inc_failed_paged_queries();
                 let _ = self.sender.send(Err(err)).await;
                 None
             }

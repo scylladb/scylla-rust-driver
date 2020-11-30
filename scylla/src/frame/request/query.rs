@@ -70,7 +70,7 @@ impl QueryParameters<'_> {
         buf.put_u8(flags);
 
         if !self.values.is_empty() {
-            types::write_values(&self.values, buf);
+            types::write_values(&self.values, buf)?;
         }
 
         if let Some(page_size) = self.page_size {

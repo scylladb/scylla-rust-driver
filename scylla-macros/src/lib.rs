@@ -1,54 +1,26 @@
 use proc_macro::TokenStream;
-use quote::{quote, quote_spanned};
-use syn::{parse_macro_input, spanned::Spanned, Data, DeriveInput, Fields};
+
+mod from_row;
+mod from_user_type;
+mod into_user_type;
 
 /// #[derive(FromRow)] derives FromRow for struct
 /// Works only on simple structs without generics etc
 #[proc_macro_derive(FromRow)]
 pub fn from_row_derive(tokens_input: TokenStream) -> TokenStream {
-    let input = parse_macro_input!(tokens_input as DeriveInput);
+    from_row::from_row_derive(tokens_input)
+}
 
-    let struct_name = &input.ident;
+/// #[derive(FromUserType)] allows to parse a struct as User Defined Type
+/// Works only on simple structs without generics etc
+#[proc_macro_derive(FromUserType)]
+pub fn from_user_type_derive(tokens_input: TokenStream) -> TokenStream {
+    from_user_type::from_user_type_derive(tokens_input)
+}
 
-    let struct_fields = match &input.data {
-        Data::Struct(data) => {
-            match &data.fields {
-                Fields::Named(named_fields) => named_fields,
-                _ => panic!("derive(FromRow) works only for structs with named fields. Tuples don't need derive."),
-            }
-        },
-        _ => panic!("derive(FromRow) works only on structs!")
-    };
-
-    // Generates tokens for field_name: field_type::from_cql(vals_iter.next().ok_or(...)?), ...
-    let set_fields_code = struct_fields.named.iter().map(|field| {
-        let field_name = &field.ident;
-        let field_type = &field.ty;
-
-        quote_spanned! {field.span() =>
-            #field_name: <#field_type as FromCQLVal<Option<CQLValue>>>::from_cql(
-                vals_iter
-                .next()
-                .ok_or(FromRowError::RowTooShort) ?
-            ) ?,
-        }
-    });
-
-    let generated = quote! {
-        impl FromRow for #struct_name {
-            fn from_row(row: scylla::frame::response::result::Row)
-            -> Result<Self, scylla::cql_to_rust::FromRowError> {
-                use scylla::frame::response::result::CQLValue;
-                use scylla::cql_to_rust::{FromCQLVal, FromRow, FromRowError};
-
-                let mut vals_iter = row.columns.into_iter();
-
-                Ok(#struct_name {
-                    #(#set_fields_code)*
-                })
-            }
-        }
-    };
-
-    TokenStream::from(generated)
+/// #[derive(IntoUserType)] allows to parse a struct as User Defined Type
+/// Works only on simple structs without generics etc
+#[proc_macro_derive(IntoUserType)]
+pub fn into_user_type_derive(tokens_input: TokenStream) -> TokenStream {
+    into_user_type::into_user_type_derive(tokens_input)
 }

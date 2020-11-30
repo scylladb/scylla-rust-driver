@@ -13,6 +13,7 @@ scylla-macros = { version = "0.1.0", path = "../scylla-macros"}
 byteorder = "1.3.4"
 bytes = "0.6.0"
 futures = "0.3.6"
+histogram = "0.6.9"
 num_enum = "0.5"
 compress = "0.2.1"
 tokio = { version = "0.3.0", features = ["net", "time", "io-util", "sync", "rt", "macros"] }

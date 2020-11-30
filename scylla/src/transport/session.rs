@@ -4,6 +4,7 @@ use std::collections::HashMap;
 use std::fmt::Display;
 use std::net::SocketAddr;
 use std::sync::{Arc, RwLock};
+use std::time::Instant;
 use tokio::net::{lookup_host, ToSocketAddrs};
 
 use super::transport_errors::{InternalDriverError, PrepareError, TransportError};
@@ -18,6 +19,7 @@ use crate::query::Query;
 use crate::routing::{murmur3_token, Node, Shard, ShardInfo, Token};
 use crate::transport::connection::{open_connection, Connection};
 use crate::transport::iterator::RowIterator;
+use crate::transport::metrics::{Metrics, MetricsView};
 use crate::transport::topology::{Topology, TopologyReader};
 use crate::transport::Compression;
 
@@ -37,6 +39,8 @@ pub struct Session {
 
     topology: Topology,
     _topology_reader_handle: RemoteHandle<()>,
+
+    metrics: Arc<Metrics>,
 }
 
 // Pool of connections for a single node.
@@ -110,11 +114,14 @@ impl Session {
                 .collect(),
         ));
 
+        let metrics = Arc::new(Metrics::new());
+
         Ok(Session {
             pool,
             compression,
             topology,
             _topology_reader_handle,
+            metrics,
         })
     }
 
@@ -133,6 +140,21 @@ impl Session {
         query: impl Into<Query>,
         values: &[Value],
     ) -> Result<Option<Vec<result::Row>>, TransportError> {
+        let now = Instant::now();
+        self.metrics.inc_total_nonpaged_queries();
+        let result = self.query_no_metrics(query, values).await;
+        match &result {
+            Ok(_) => self.log_latency(now.elapsed().as_millis() as u64),
+            Err(_) => self.metrics.inc_failed_nonpaged_queries(),
+        };
+        result
+    }
+
+    async fn query_no_metrics(
+        &self,
+        query: impl Into<Query>,
+        values: &[Value],
+    ) -> Result<Option<Vec<result::Row>>, TransportError> {
         self.any_connection()?
             .query_single_page(query, values)
             .await
@@ -147,6 +169,7 @@ impl Session {
             self.any_connection()?,
             query.into(),
             values.to_owned(),
+            self.metrics.clone(),
         ))
     }
 
@@ -177,6 +200,21 @@ impl Session {
     /// * `prepared` - a statement prepared with [prepare](crate::transport::session::prepare)
     /// * `values` - values bound to the query
     pub async fn execute(
+        &self,
+        prepared: &PreparedStatement,
+        values: &[Value],
+    ) -> Result<Option<Vec<result::Row>>, TransportError> {
+        let now = Instant::now();
+        self.metrics.inc_total_nonpaged_queries();
+        let result = self.execute_no_metrics(prepared, values).await;
+        match &result {
+            Ok(_) => self.log_latency(now.elapsed().as_millis() as u64),
+            Err(_) => self.metrics.inc_failed_nonpaged_queries(),
+        };
+        result
+    }
+
+    async fn execute_no_metrics(
         &self,
         prepared: &PreparedStatement,
         values: &[Value],
@@ -239,6 +277,7 @@ impl Session {
             self.any_connection()?,
             prepared.into(),
             values.to_owned(),
+            self.metrics.clone(),
         ))
     }
 
@@ -399,6 +438,16 @@ impl Session {
                 TransportError::InternalDriverError(InternalDriverError::FatalConnectionError)
             })?
             .any_connection()?)
+    }
+
+    pub fn get_metrics(&self) -> MetricsView {
+        MetricsView::new(self.metrics.clone())
+    }
+
+    fn log_latency(&self, latency: u64) {
+        let _ = self // silent fail if mutex is poisoned
+            .metrics
+            .log_query_latency(latency);
     }
 }
 
