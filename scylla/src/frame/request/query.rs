@@ -41,13 +41,11 @@ pub struct QueryParameters<'a> {
 
 impl Default for QueryParameters<'_> {
     fn default() -> Self {
-        static DEFAULT_VALS: SerializedValues = SerializedValues::new();
-
         Self {
             consistency: 1,
             page_size: None,
             paging_state: None,
-            values: &DEFAULT_VALS,
+            values: SerializedValues::EMPTY,
         }
     }
 }

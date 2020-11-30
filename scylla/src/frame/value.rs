@@ -70,6 +70,9 @@ impl SerializedValues {
         }
     }
 
+    /// A const empty instance, useful for taking references
+    pub const EMPTY: &'static SerializedValues = &SerializedValues::new();
+
     /// Serializes value and appends it to the list
     pub fn add_value(&mut self, val: &impl Value) -> Result<(), SerializeValuesError> {
         if self.values_num == i16::max_value() {
@@ -232,6 +235,7 @@ impl ValueList for () {
     }
 }
 
+// Implement ValueList for &[] - u8 because otherwise rust can't infer type
 impl ValueList for [u8; 0] {
     fn serialized(&self) -> SerializedResult<'_> {
         Ok(Cow::Owned(SerializedValues::new()))
@@ -364,7 +368,7 @@ impl<T0: ValueList> BatchValues for (T0,) {
     ) -> Result<(), SerializeValuesError> {
         match n {
             0 => self.0.write_to_request(buf)?,
-            _ => panic!("Tried to serialize ValueList with an out of range index!"),
+            _ => panic!("Tried to serialize ValueList with an out of range index! index: {}, ValueList len: {}", n, 1),
         };
 
         Ok(())
@@ -386,7 +390,7 @@ macro_rules! impl_batch_values_for_tuple {
                     $(
                         $FieldI => self.$FieldI.write_to_request(buf) ?,
                     )*
-                    _ => panic!("Tried to serialize ValueList with an out of range index!"),
+                    _ => panic!("Tried to serialize ValueList with an out of range index! index: {}, ValueList len: {}", n, $TupleSize),
                 }
 
                 Ok(())

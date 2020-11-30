@@ -53,6 +53,7 @@ fn empty_serialized_values() {
 #[test]
 fn serialized_values() {
     let mut values = SerializedValues::new();
+    assert_eq!(values.is_empty(), true);
 
     // Add first value
     values.add_value(&8_i8).unwrap();
