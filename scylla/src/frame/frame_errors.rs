@@ -19,7 +19,7 @@ pub enum FrameError {
     FrameDecompression,
     #[error("std io error encountered while processing")]
     StdIOError(#[from] std::io::Error),
-    #[error("Try from primitive error encountered")]
+    #[error("Unrecognized opcode{0}")]
     TryFromPrimitiveError(#[from] num_enum::TryFromPrimitiveError<response::ResponseOpcode>),
 }
 
@@ -27,7 +27,7 @@ pub enum FrameError {
 pub enum ParseError {
     #[error("Bad data - couldn't serialize. Error msg: {0}")]
     BadData(String),
-    #[error("std io error encountered while processing")]
+    #[error(transparent)]
     IoError(#[from] std::io::Error),
     #[error("type not yet implemented, id: {0}")]
     TypeNotImplemented(i16),

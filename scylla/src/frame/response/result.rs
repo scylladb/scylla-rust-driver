@@ -255,11 +255,7 @@ fn deser_prepared_metadata(buf: &mut &[u8]) -> StdResult<PreparedMetadata, Parse
     let flags = types::read_int(buf)?;
     let global_tables_spec = flags & 0x0001 != 0;
 
-    let col_count = types::read_int(buf)?;
-    if col_count < 0 {
-        return Err(ParseError::BadData(format!("")));
-    }
-    let col_count = col_count as usize;
+    let col_count = types::read_int_length(buf)? as usize;
 
     let pk_count: usize = types::read_int(buf)?.try_into()?;
 

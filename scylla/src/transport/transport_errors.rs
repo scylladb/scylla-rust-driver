@@ -33,46 +33,59 @@ pub enum TopologyError {
 }
 
 #[derive(Error, Debug)]
-pub enum ConnectionError {
-    #[error("Task queue closed")]
-    TaskQueueClosed,
-    #[error("Request dropped!")]
-    DroppedRequest,
-    #[error("Unexpected frame!")]
-    UnexpectedFrame,
+pub enum InternalDriverError {
     #[error("Unexpected response!")]
     UnexpectedResponse,
     #[error("refreshing failed on every connection, {0}")]
     RefreshingFailedOnEveryConnections(String),
-    #[error("failed to resolve {0}")]
-    FailedToResolveAddress(String),
     #[error("system.local tokens empty on the node")]
     LocalTokensEmptyOnNodes,
-    #[error("Reprepared statement unexpectedly changed its id")]
-    RepreparedStatmentIDChanged,
     #[error("Pool Lock Poisoned: {0}")]
     PoolLockPoisoned(String),
-    #[error("Upadter Crashed: {0}")]
+    #[error("Updater Crashed: {0}")]
     UpdaterError(String),
     #[error("fatal error, broken invariant: no connections available")]
     FatalConnectionError,
+}
+
+#[derive(Error, Debug)]
+pub enum PrepareError {
+    #[error("Internal Driver Error")]
+    InternalDriverError(#[from] InternalDriverError),
+}
+
+#[derive(Error, Debug)]
+pub enum TransportError {
+    #[error("Task queue closed")]
+    TaskQueueClosed,
+    #[error("Request dropped!")]
+    DroppedRequest,
+    #[error("failed to resolve {0}")]
+    FailedToResolveAddress(String),
+    #[error("Reprepared statement unexpectedly changed its id")]
+    RepreparedStatmentIDChanged,
     #[error("Length of provided values ({0}) must be equal to number of batch statements ({1})")]
     ValueLenMismatch(usize, usize),
     #[error("Response is an error message: code: {0} message: {1}")]
     ErrorMsg(i32, String),
 
-    #[error("Request error")]
+    #[error("Internal Driver Error")]
+    InternalDriverError(#[from] InternalDriverError),
+
+    #[error(transparent)]
+    PrepareError(#[from] PrepareError),
+    #[error(transparent)]
     ParseError(#[from] ParseError),
-    #[error("Topology error")]
+    #[error(transparent)]
     ToplogyError(#[from] TopologyError),
-    #[error("Token error")]
+    #[error(transparent)]
     TokenError(#[from] TokenError),
-    #[error("std io error encountered while connecting")]
+    #[error(transparent)]
     StdIOError(#[from] std::io::Error),
-    #[error("Frame mod error encountered while connecting")]
+    #[error(transparent)]
     FrameError(#[from] frame_errors::FrameError),
-    #[error("Tokio sync oneshot error recieved")]
+    #[error(transparent)]
     TokioSyncOneshotError(#[from] tokio::sync::oneshot::error::RecvError),
-    #[error("From Row Error")]
+    #[error(transparent)]
     FromRowError(#[from] FromRowError),
 }

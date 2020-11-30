@@ -1,6 +1,6 @@
 use crate::frame::frame_errors::ParseError;
 use crate::frame::types;
-use crate::transport::transport_errors::ConnectionError;
+use crate::transport::transport_errors::TransportError;
 
 #[derive(Debug)]
 pub struct Error {
@@ -17,8 +17,8 @@ impl Error {
     }
 }
 
-impl Into<ConnectionError> for Error {
-    fn into(self) -> ConnectionError {
-        ConnectionError::ErrorMsg(self.code, self.reason)
+impl Into<TransportError> for Error {
+    fn into(self) -> TransportError {
+        TransportError::ErrorMsg(self.code, self.reason)
     }
 }

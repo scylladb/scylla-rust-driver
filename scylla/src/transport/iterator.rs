@@ -9,7 +9,7 @@ use futures::Stream;
 use std::result::Result as StdResult;
 use tokio::sync::mpsc;
 
-use super::transport_errors::ConnectionError;
+use super::transport_errors::{InternalDriverError, TransportError};
 use crate::cql_to_rust::FromRow;
 
 use crate::frame::{
@@ -25,11 +25,11 @@ use crate::transport::connection::Connection;
 pub struct RowIterator {
     current_row_idx: usize,
     current_page: Rows,
-    page_receiver: mpsc::Receiver<StdResult<Rows, ConnectionError>>,
+    page_receiver: mpsc::Receiver<StdResult<Rows, TransportError>>,
 }
 
 impl Stream for RowIterator {
-    type Item = StdResult<Row, ConnectionError>;
+    type Item = StdResult<Row, TransportError>;
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         let mut s = self.as_mut();
@@ -128,17 +128,17 @@ impl RowIterator {
 }
 
 struct WorkerHelper {
-    sender: mpsc::Sender<StdResult<Rows, ConnectionError>>,
+    sender: mpsc::Sender<StdResult<Rows, TransportError>>,
 }
 
 impl WorkerHelper {
-    fn new(sender: mpsc::Sender<StdResult<Rows, ConnectionError>>) -> Self {
+    fn new(sender: mpsc::Sender<StdResult<Rows, TransportError>>) -> Self {
         Self { sender }
     }
 
     async fn handle_response(
         &mut self,
-        response: StdResult<Response, ConnectionError>,
+        response: StdResult<Response, TransportError>,
     ) -> Option<Bytes> {
         match response {
             Ok(Response::Result(Result::Rows(rows))) => {
@@ -157,7 +157,9 @@ impl WorkerHelper {
             Ok(_resp) => {
                 let _ = self
                     .sender
-                    .send(Err(ConnectionError::UnexpectedResponse))
+                    .send(Err(TransportError::InternalDriverError(
+                        InternalDriverError::UnexpectedResponse,
+                    )))
                     .await;
                 None
             }
@@ -175,19 +177,19 @@ pub struct TypedRowIterator<RowT> {
 }
 
 impl<RowT: FromRow> Stream for TypedRowIterator<RowT> {
-    type Item = StdResult<RowT, ConnectionError>;
+    type Item = StdResult<RowT, TransportError>;
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         let mut s = self.as_mut();
 
-        let next_elem: Option<StdResult<Row, ConnectionError>> =
+        let next_elem: Option<StdResult<Row, TransportError>> =
             match Pin::new(&mut s.row_iterator).poll_next(cx) {
                 Poll::Ready(next_elem) => next_elem,
                 Poll::Pending => return Poll::Pending,
             };
 
         let next_ready: Option<Self::Item> = match next_elem {
-            Some(Ok(next_row)) => Some(RowT::from_row(next_row).map_err(ConnectionError::from)),
+            Some(Ok(next_row)) => Some(RowT::from_row(next_row).map_err(TransportError::from)),
             Some(Err(e)) => Some(Err(e)),
             None => None,
         };

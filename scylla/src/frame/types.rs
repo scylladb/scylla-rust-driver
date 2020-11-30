@@ -50,7 +50,7 @@ pub fn write_int(v: i32, buf: &mut impl BufMut) {
     buf.put_i32(v);
 }
 
-fn read_int_length(buf: &mut &[u8]) -> Result<usize, ParseError> {
+pub fn read_int_length(buf: &mut &[u8]) -> Result<usize, ParseError> {
     let v = read_int(buf)?;
     let v: usize = v.try_into()?;
 

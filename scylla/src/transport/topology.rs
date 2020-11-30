@@ -1,4 +1,4 @@
-use super::transport_errors::{ConnectionError, TokenError, TopologyError};
+use super::transport_errors::{InternalDriverError, TokenError, TopologyError, TransportError};
 
 use std::collections::hash_map::Entry;
 use std::collections::{BTreeMap, HashMap};
@@ -27,7 +27,7 @@ pub struct Topology {
 }
 
 struct RefreshRequest {
-    ack_tx: oneshot::Sender<Result<(), ConnectionError>>,
+    ack_tx: oneshot::Sender<Result<(), TransportError>>,
 }
 
 // Responsible for periodically updating a Topology.
@@ -57,29 +57,37 @@ pub struct TopologyReader {
 }
 
 impl Topology {
-    pub fn read_ring(&self) -> Result<RwLockReadGuard<'_, Ring>, ConnectionError> {
-        self.ring
-            .read()
-            .map_err(|_| ConnectionError::UpdaterError(UPDATER_CRASHED.to_string()))
+    pub fn read_ring(&self) -> Result<RwLockReadGuard<'_, Ring>, TransportError> {
+        self.ring.read().map_err(|_| {
+            TransportError::InternalDriverError(InternalDriverError::UpdaterError(
+                UPDATER_CRASHED.to_string(),
+            ))
+        })
     }
 
     // Performs a synchronous refresh of the topology information.
     // After the returned future is awaited, stored topology is not older
     // than the cluster's topology at the moment `refresh` was called.
-    pub async fn refresh(&self) -> Result<(), ConnectionError> {
+    pub async fn refresh(&self) -> Result<(), TransportError> {
         let (ack_tx, ack_rx) = oneshot::channel();
         self.refresh_tx
             .send(RefreshRequest { ack_tx })
             .await
-            .map_err(|_| ConnectionError::UpdaterError(UPDATER_CRASHED.to_string()))?;
-        ack_rx
-            .await
-            .map_err(|_| ConnectionError::UpdaterError(UPDATER_CRASHED.to_string()))?
+            .map_err(|_| {
+                TransportError::InternalDriverError(InternalDriverError::UpdaterError(
+                    UPDATER_CRASHED.to_string(),
+                ))
+            })?;
+        ack_rx.await.map_err(|_| {
+            TransportError::InternalDriverError(InternalDriverError::UpdaterError(
+                UPDATER_CRASHED.to_string(),
+            ))
+        })?
     }
 }
 
 impl TopologyReader {
-    pub async fn new(n: Node) -> Result<(Self, Topology), ConnectionError> {
+    pub async fn new(n: Node) -> Result<(Self, Topology), TransportError> {
         // TODO: use compression? maybe not necessarily, since the communicated objects are
         // small and the communication doesn't happen often?
         let conn = open_connection(n.addr, None, None).await?;
@@ -92,7 +100,9 @@ impl TopologyReader {
 
         let toks = query_local_tokens(&conn).await?;
         if toks.is_empty() {
-            return Err(ConnectionError::LocalTokensEmptyOnNodes);
+            return Err(TransportError::InternalDriverError(
+                InternalDriverError::LocalTokensEmptyOnNodes,
+            ));
         }
 
         let mut owners = BTreeMap::new();
@@ -143,7 +153,7 @@ impl TopologyReader {
         }
     }
 
-    async fn refresh(&mut self) -> Result<(), ConnectionError> {
+    async fn refresh(&mut self) -> Result<(), TransportError> {
         use time::{timeout, Duration};
 
         let mut broken_connections = vec![];
@@ -263,18 +273,22 @@ impl TopologyReader {
         }
 
         if any_new {
-            return Err(ConnectionError::RefreshingFailedOnEveryConnections(
-                "new connections have been opened".to_string(),
+            return Err(TransportError::InternalDriverError(
+                InternalDriverError::RefreshingFailedOnEveryConnections(
+                    "new connections have been opened".to_string(),
+                ),
             ));
         }
 
-        Err(ConnectionError::RefreshingFailedOnEveryConnections(
-            "no new connections could be opened".to_string(),
+        Err(TransportError::InternalDriverError(
+            InternalDriverError::RefreshingFailedOnEveryConnections(
+                "no new connections could be opened".to_string(),
+            ),
         ))
     }
 }
 
-async fn query_local_tokens(c: &Connection) -> Result<Vec<Token>, ConnectionError> {
+async fn query_local_tokens(c: &Connection) -> Result<Vec<Token>, TransportError> {
     unwrap_tokens(
         c.query_single_page("SELECT tokens FROM system.local", &[])
             .await?
@@ -293,7 +307,7 @@ async fn query_peers(
     c: &Connection,
     get_tokens: bool,
     port: u16,
-) -> Result<(Vec<SocketAddr>, Vec<Vec<Token>>), ConnectionError> {
+) -> Result<(Vec<SocketAddr>, Vec<Vec<Token>>), TransportError> {
     // TODO: do we want `peer`, `preferred_ip`, or `rpc_address`? Which one is `external`?
     let rows = c
         .query_single_page(
@@ -331,7 +345,7 @@ async fn query_peers(
     Ok((addrs, tokens))
 }
 
-fn unwrap_tokens(tokens_val_opt: Option<result::CQLValue>) -> Result<Vec<Token>, ConnectionError> {
+fn unwrap_tokens(tokens_val_opt: Option<result::CQLValue>) -> Result<Vec<Token>, TransportError> {
     let tokens_val = tokens_val_opt.ok_or_else(|| TokenError::NullTokens)?;
     let tokens = tokens_val.as_set().ok_or_else(|| TokenError::SetValue)?;
 
