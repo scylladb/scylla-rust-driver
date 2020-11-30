@@ -150,6 +150,23 @@ fn slice_value_list() {
 }
 
 #[test]
+fn vec_value_list() {
+    let values: Vec<i32> = vec![1, 2, 3];
+    let serialized: SerializedValues = <Vec<i32> as ValueList>::serialized(&values)
+        .unwrap()
+        .into_owned();
+
+    assert_eq!(
+        serialized.iter().collect::<Vec<_>>(),
+        vec![
+            Some([0, 0, 0, 1].as_ref()),
+            Some([0, 0, 0, 2].as_ref()),
+            Some([0, 0, 0, 3].as_ref())
+        ]
+    );
+}
+
+#[test]
 fn tuple_value_list() {
     fn check_i8_tuple(tuple: impl ValueList, expected: core::ops::Range<u8>) {
         let serialized: SerializedValues = tuple.serialized().unwrap().into_owned();
@@ -275,6 +292,34 @@ fn slice_batch_values() {
     let batch_values: &[&[i8]] = &[&[1, 2], &[2, 3, 4, 5], &[6]];
 
     assert_eq!(<&[&[i8]] as BatchValues>::len(&batch_values), 3);
+
+    {
+        let mut request: Vec<u8> = Vec::new();
+        batch_values.write_nth_to_request(0, &mut request).unwrap();
+        assert_eq!(request, vec![0, 2, 0, 0, 0, 1, 1, 0, 0, 0, 1, 2]);
+    }
+
+    {
+        let mut request: Vec<u8> = Vec::new();
+        batch_values.write_nth_to_request(1, &mut request).unwrap();
+        assert_eq!(
+            request,
+            vec![0, 4, 0, 0, 0, 1, 2, 0, 0, 0, 1, 3, 0, 0, 0, 1, 4, 0, 0, 0, 1, 5]
+        );
+    }
+
+    {
+        let mut request: Vec<u8> = Vec::new();
+        batch_values.write_nth_to_request(2, &mut request).unwrap();
+        assert_eq!(request, vec![0, 1, 0, 0, 0, 1, 6]);
+    }
+}
+
+#[test]
+fn vec_batch_values() {
+    let batch_values: Vec<Vec<i8>> = vec![vec![1, 2], vec![2, 3, 4, 5], vec![6]];
+
+    assert_eq!(<Vec<Vec<i8>> as BatchValues>::len(&batch_values), 3);
 
     {
         let mut request: Vec<u8> = Vec::new();

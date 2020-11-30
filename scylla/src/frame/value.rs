@@ -254,6 +254,18 @@ impl<T: Value> ValueList for &[T] {
     }
 }
 
+// Implement ValueList for Vec<Value>
+impl<T: Value> ValueList for Vec<T> {
+    fn serialized(&self) -> SerializedResult<'_> {
+        let mut result = SerializedValues::new();
+        for val in self {
+            result.add_value(val)?;
+        }
+
+        Ok(Cow::Owned(result))
+    }
+}
+
 // Implement ValueList for tuples of Values of size up to 16
 
 // Here is an example implemetation for (T0, )
@@ -338,10 +350,26 @@ impl<'b> ValueList for SerializedResult<'b> {
 // BatchValues impls
 //
 
-// Implement BatchValues for arrays of ValueList types
+// Implement BatchValues for slices of ValueList types
 impl<T: ValueList> BatchValues for &[T] {
     fn len(&self) -> usize {
         <[T]>::len(*self)
+    }
+
+    fn write_nth_to_request(
+        &self,
+        n: usize,
+        buf: &mut impl BufMut,
+    ) -> Result<(), SerializeValuesError> {
+        self[n].write_to_request(buf)?;
+        Ok(())
+    }
+}
+
+// Implement BatchValues for Vec<ValueList>
+impl<T: ValueList> BatchValues for Vec<T> {
+    fn len(&self) -> usize {
+        Vec::<T>::len(self)
     }
 
     fn write_nth_to_request(
