@@ -9,10 +9,9 @@ use std::convert::TryFrom;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::sync::Mutex as StdMutex;
 
-use crate::batch::Batch;
-
 use super::transport_errors::{InternalDriverError, PrepareError, TransportError};
 
+use crate::batch::{Batch, BatchStatement};
 use crate::frame::{
     self,
     request::{self, batch, execute, query, Request, RequestOpcode},
@@ -164,8 +163,18 @@ impl Connection {
             ));
         }
 
+        let statements_iter = batch.get_statements().iter().map(|s| match s {
+            BatchStatement::Query(q) => batch::BatchStatement::Query {
+                text: q.get_contents(),
+            },
+            BatchStatement::PreparedStatement(s) => {
+                batch::BatchStatement::Prepared { id: s.get_id() }
+            }
+        });
+
         let batch_frame = batch::Batch {
-            statements: batch.get_statements(),
+            statements: statements_iter,
+            statements_count,
             values,
             batch_type: batch.get_type(),
             consistency: 1, // TODO something else than hardcoded value

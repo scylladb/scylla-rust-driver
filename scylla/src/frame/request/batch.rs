@@ -8,13 +8,16 @@ use crate::frame::{
     value::BatchValues,
 };
 
-use crate::statement::batch::BatchStatement;
-
-pub struct Batch<'a, Values: BatchValues> {
-    pub statements: &'a [BatchStatement],
-    pub values: Values,
+pub struct Batch<'a, StatementsIter, Values>
+where
+    StatementsIter: Iterator<Item = BatchStatement<'a>> + Clone,
+    Values: BatchValues,
+{
+    pub statements: StatementsIter,
+    pub statements_count: usize,
     pub batch_type: BatchType,
     pub consistency: i16,
+    pub values: Values,
 }
 
 /// The type of a batch.
@@ -25,7 +28,17 @@ pub enum BatchType {
     Counter = 2,
 }
 
-impl<'a, Values: BatchValues> Request for Batch<'a, Values> {
+#[derive(Debug, Clone, Copy, Eq, PartialEq, PartialOrd, Ord)]
+pub enum BatchStatement<'a> {
+    Query { text: &'a str },
+    Prepared { id: &'a Bytes },
+}
+
+impl<'a, StatementsIter, Values> Request for Batch<'a, StatementsIter, Values>
+where
+    StatementsIter: Iterator<Item = BatchStatement<'a>> + Clone,
+    Values: BatchValues,
+{
     const OPCODE: RequestOpcode = RequestOpcode::Batch;
 
     fn serialize(&self, buf: &mut impl BufMut) -> Result<(), ParseError> {
@@ -33,22 +46,10 @@ impl<'a, Values: BatchValues> Request for Batch<'a, Values> {
         buf.put_u8(self.batch_type as u8);
 
         // Serializing queries
-        types::write_short(self.statements.len().try_into()?, buf);
+        types::write_short(self.statements_count.try_into()?, buf);
 
-        for (statement_num, statement) in self.statements.iter().enumerate() {
-            match statement {
-                BatchStatement::Query(q) => {
-                    let query_text: &str = q.get_contents();
-                    buf.put_u8(0);
-                    types::write_long_string(query_text, buf)?;
-                }
-                BatchStatement::PreparedStatement(s) => {
-                    let id: &Bytes = s.get_id();
-                    buf.put_u8(1);
-                    types::write_short_bytes(&id[..], buf)?;
-                }
-            }
-
+        for (statement_num, statement) in self.statements.clone().enumerate() {
+            statement.serialize(buf)?;
             self.values.write_nth_to_request(statement_num, buf)?;
         }
 
@@ -58,6 +59,23 @@ impl<'a, Values: BatchValues> Request for Batch<'a, Values> {
         // Serializing flags
         // FIXME: consider other flag values than 0
         buf.put_u8(0);
+
+        Ok(())
+    }
+}
+
+impl BatchStatement<'_> {
+    fn serialize(&self, buf: &mut impl BufMut) -> Result<(), ParseError> {
+        match self {
+            BatchStatement::Query { text } => {
+                buf.put_u8(0);
+                types::write_long_string(text, buf)?;
+            }
+            BatchStatement::Prepared { id } => {
+                buf.put_u8(1);
+                types::write_short_bytes(&id[..], buf)?;
+            }
+        }
 
         Ok(())
     }
