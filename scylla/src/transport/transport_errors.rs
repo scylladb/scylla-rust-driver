@@ -37,7 +37,7 @@ pub enum InternalDriverError {
     #[error("Unexpected response!")]
     UnexpectedResponse,
     #[error("refreshing failed on every connection, {0}")]
-    RefreshingFailedOnEveryConnections(String),
+    RefreshingFailedOnEveryConnection(String),
     #[error("system.local tokens empty on the node")]
     LocalTokensEmptyOnNodes,
     #[error("Pool Lock Poisoned: {0}")]
@@ -55,6 +55,15 @@ pub enum PrepareError {
 }
 
 #[derive(Error, Debug)]
+pub enum DBError {
+    // TODO develop this while implementing retry policies
+    // to react differently to each error.
+    // Make it fit what we encounter.
+    #[error("Response is an error message: code: {0} message: {1}")]
+    ErrorMsg(i32, String),
+}
+
+#[derive(Error, Debug)]
 pub enum TransportError {
     #[error("Task queue closed")]
     TaskQueueClosed,
@@ -66,12 +75,12 @@ pub enum TransportError {
     RepreparedStatmentIDChanged,
     #[error("Length of provided values ({0}) must be equal to number of batch statements ({1})")]
     ValueLenMismatch(usize, usize),
-    #[error("Response is an error message: code: {0} message: {1}")]
-    ErrorMsg(i32, String),
 
     #[error("Internal Driver Error")]
     InternalDriverError(#[from] InternalDriverError),
 
+    #[error(transparent)]
+    DBError(#[from] DBError),
     #[error(transparent)]
     PrepareError(#[from] PrepareError),
     #[error(transparent)]

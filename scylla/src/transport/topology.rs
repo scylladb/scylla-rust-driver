@@ -274,14 +274,14 @@ impl TopologyReader {
 
         if any_new {
             return Err(TransportError::InternalDriverError(
-                InternalDriverError::RefreshingFailedOnEveryConnections(
+                InternalDriverError::RefreshingFailedOnEveryConnection(
                     "new connections have been opened".to_string(),
                 ),
             ));
         }
 
         Err(TransportError::InternalDriverError(
-            InternalDriverError::RefreshingFailedOnEveryConnections(
+            InternalDriverError::RefreshingFailedOnEveryConnection(
                 "no new connections could be opened".to_string(),
             ),
         ))
