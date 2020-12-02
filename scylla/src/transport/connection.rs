@@ -1,4 +1,3 @@
-use anyhow::Result;
 use bytes::Bytes;
 use futures::{future::RemoteHandle, FutureExt};
 use tokio::net::{tcp, TcpSocket, TcpStream};
@@ -12,6 +11,9 @@ use std::sync::Mutex as StdMutex;
 
 use crate::batch::Batch;
 use crate::batch::BatchStatement;
+
+use super::transport_errors::{InternalDriverError, PrepareError, TransportError};
+
 use crate::frame::{
     self,
     request::{self, batch, execute, query, Request, RequestOpcode},
@@ -53,7 +55,7 @@ impl Connection {
         addr: SocketAddr,
         source_port: Option<u16>,
         compression: Option<Compression>,
-    ) -> Result<Self> {
+    ) -> Result<Self, TransportError> {
         let stream = match source_port {
             Some(p) => connect_with_source_port(addr, p).await?,
             None => TcpStream::connect(addr).await?,
@@ -76,16 +78,19 @@ impl Connection {
         })
     }
 
-    pub async fn startup(&self, options: HashMap<String, String>) -> Result<Response> {
+    pub async fn startup(
+        &self,
+        options: HashMap<String, String>,
+    ) -> Result<Response, TransportError> {
         self.send_request(&request::Startup { options }, false)
             .await
     }
 
-    pub async fn get_options(&self) -> Result<Response> {
+    pub async fn get_options(&self) -> Result<Response, TransportError> {
         self.send_request(&request::Options {}, false).await
     }
 
-    pub async fn prepare(&self, query: String) -> Result<Response> {
+    pub async fn prepare(&self, query: String) -> Result<Response, TransportError> {
         self.send_request(&request::Prepare { query }, true).await
     }
 
@@ -93,13 +98,15 @@ impl Connection {
         &self,
         query: impl Into<Query>,
         values: &[Value],
-    ) -> Result<Option<Vec<result::Row>>> {
+    ) -> Result<Option<Vec<result::Row>>, TransportError> {
         let result = self.query(&query.into(), values, None).await?;
         match result {
             Response::Error(err) => Err(err.into()),
             Response::Result(result::Result::Rows(rs)) => Ok(Some(rs.rows)),
             Response::Result(_) => Ok(None),
-            _ => Err(anyhow!("Unexpected frame received")),
+            _ => Err(TransportError::PrepareError(
+                PrepareError::InternalDriverError(InternalDriverError::UnexpectedResponse),
+            )),
         }
     }
 
@@ -108,7 +115,7 @@ impl Connection {
         query: &Query,
         values: &[Value],
         paging_state: Option<Bytes>,
-    ) -> Result<Response> {
+    ) -> Result<Response, TransportError> {
         let query_frame = query::Query {
             contents: query.get_contents().to_owned(),
             parameters: query::QueryParameters {
@@ -127,7 +134,7 @@ impl Connection {
         prepared_statement: &PreparedStatement,
         values: &[Value],
         paging_state: Option<Bytes>,
-    ) -> Result<Response> {
+    ) -> Result<Response, TransportError> {
         let execute_frame = execute::Execute {
             id: prepared_statement.get_id().to_owned(),
             parameters: query::QueryParameters {
@@ -141,13 +148,16 @@ impl Connection {
         self.send_request(&execute_frame, true).await
     }
 
-    pub async fn batch(&self, batch: &Batch, values: &[impl AsRef<[Value]>]) -> Result<Response> {
+    pub async fn batch(
+        &self,
+        batch: &Batch,
+        values: &[impl AsRef<[Value]>],
+    ) -> Result<Response, TransportError> {
         let statements_count = batch.get_statements().len();
         if statements_count != values.len() {
-            return Err(anyhow!(
-                "Length of provided values ({}) must be equal to number of batch statements ({})",
+            return Err(TransportError::ValueLenMismatch(
                 values.len(),
-                statements_count
+                statements_count,
             ));
         }
 
@@ -178,7 +188,11 @@ impl Connection {
     }
 
     // TODO: Return the response associated with that frame
-    async fn send_request<R: Request>(&self, request: &R, compress: bool) -> Result<Response> {
+    async fn send_request<R: Request>(
+        &self,
+        request: &R,
+        compress: bool,
+    ) -> Result<Response, TransportError> {
         let body = request.to_bytes()?;
         let compression = if compress { self.compression } else { None };
         let body_with_ext = RequestBodyWithExtensions { body };
@@ -196,7 +210,7 @@ impl Connection {
                 response_handler: sender,
             })
             .await
-            .map_err(|_| anyhow!("Request dropped"))?;
+            .map_err(|_| TransportError::DroppedRequest)?;
 
         let task_response = receiver.await?;
         let body_with_ext = frame::parse_response_body_extensions(
@@ -243,7 +257,7 @@ impl Connection {
     async fn reader<'a>(
         mut read_half: tcp::ReadHalf<'a>,
         handler_map: &StdMutex<ResponseHandlerMap>,
-    ) -> Result<()> {
+    ) -> Result<(), TransportError> {
         loop {
             let (params, opcode, body) = frame::read_response_frame(&mut read_half).await?;
 
@@ -289,7 +303,7 @@ impl Connection {
         mut write_half: tcp::WriteHalf<'a>,
         handler_map: &StdMutex<ResponseHandlerMap>,
         mut task_receiver: mpsc::Receiver<Task>,
-    ) -> Result<()> {
+    ) -> Result<(), TransportError> {
         // When the Connection object is dropped, the sender half
         // of the channel will be dropped, this task will return an error
         // and the whole worker will be stopped
@@ -321,7 +335,7 @@ impl Connection {
             .await?;
         }
 
-        Err(anyhow!("Task queue closed"))
+        Err(TransportError::TaskQueueClosed)
     }
 
     pub fn get_shard_info(&self) -> &Option<ShardInfo> {
@@ -355,7 +369,7 @@ pub async fn open_connection(
     addr: SocketAddr,
     source_port: Option<u16>,
     compression: Option<Compression>,
-) -> Result<Connection> {
+) -> Result<Connection, TransportError> {
     // TODO: shouldn't all this logic be in Connection::new?
     let mut connection = Connection::new(addr, source_port, compression).await?;
 
@@ -399,7 +413,11 @@ pub async fn open_connection(
     match result {
         Response::Ready => {}
         Response::Authenticate => unimplemented!("Authentication is not yet implemented"),
-        _ => return Err(anyhow!("Unexpected frame received")),
+        _ => {
+            return Err(TransportError::InternalDriverError(
+                InternalDriverError::UnexpectedResponse,
+            ))
+        }
     }
 
     Ok(connection)
@@ -407,7 +425,10 @@ pub async fn open_connection(
 
 // TODO: if we use the same source port twice in a row, we'll get an "address already in use" error.
 // We should try with multiple source ports in a loop.
-async fn connect_with_source_port(addr: SocketAddr, source_port: u16) -> Result<TcpStream> {
+async fn connect_with_source_port(
+    addr: SocketAddr,
+    source_port: u16,
+) -> Result<TcpStream, TransportError> {
     // TODO: handle ipv6?
     let socket = TcpSocket::new_v4()?;
     let source_addr = IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0));

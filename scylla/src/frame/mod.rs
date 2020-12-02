@@ -1,10 +1,11 @@
+pub mod frame_errors;
 pub mod request;
 pub mod response;
 pub mod types;
 pub mod value;
 
+use crate::frame::frame_errors::FrameError;
 use crate::transport::Compression;
-use anyhow::Result;
 use bytes::{Buf, BufMut, Bytes};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use uuid::Uuid;
@@ -44,7 +45,7 @@ pub async fn write_request_frame(
     params: FrameParams,
     opcode: RequestOpcode,
     body: Bytes,
-) -> Result<()> {
+) -> Result<(), std::io::Error> {
     let mut header = [0u8; 9];
     let mut v = &mut header[..];
     v.put_u8(params.version);
@@ -63,7 +64,7 @@ pub async fn write_request_frame(
 
 pub async fn read_response_frame(
     reader: &mut (impl AsyncRead + Unpin),
-) -> Result<(FrameParams, ResponseOpcode, Bytes)> {
+) -> Result<(FrameParams, ResponseOpcode, Bytes), FrameError> {
     let mut raw_header = [0u8; 9];
     reader.read_exact(&mut raw_header[..]).await?;
 
@@ -72,13 +73,10 @@ pub async fn read_response_frame(
     // TODO: Validate version
     let version = buf.get_u8();
     if version & 0x80 != 0x80 {
-        return Err(anyhow!("Received frame marked as coming from a client"));
+        return Err(FrameError::FrameFromClient);
     }
     if version & 0x7F != 0x04 {
-        return Err(anyhow!(
-            "Received a frame from version {}, but only 4 is supported",
-            version & 0x7f
-        ));
+        return Err(FrameError::VersionNotSupported(version & 0x7f));
     }
 
     let flags = buf.get_u8();
@@ -100,10 +98,9 @@ pub async fn read_response_frame(
         let n = reader.read_buf(&mut raw_body).await?;
         if n == 0 {
             // EOF, too early
-            return Err(anyhow!(
-                "Connection was closed before body was read: missing {} out of {}",
+            return Err(FrameError::ConnectionClosed(
                 raw_body.remaining_mut(),
-                length
+                length,
             ));
         }
     }
@@ -140,14 +137,12 @@ pub fn parse_response_body_extensions(
     flags: u8,
     compression: Option<Compression>,
     mut body: Bytes,
-) -> Result<ResponseBodyWithExtensions> {
+) -> Result<ResponseBodyWithExtensions, FrameError> {
     if flags & FLAG_COMPRESSION != 0 {
         if let Some(compression) = compression {
             body = decompress(&body, compression)?.into();
         } else {
-            return Err(anyhow!(
-                "Frame is compressed, but no compression negotiated for connection."
-            ));
+            return Err(FrameError::NoCompressionNegotiated);
         }
     }
 
@@ -205,7 +200,7 @@ pub fn compress(uncomp_body: &[u8], compression: Compression) -> Vec<u8> {
     }
 }
 
-pub fn decompress(mut comp_body: &[u8], compression: Compression) -> Result<Vec<u8>> {
+pub fn decompress(mut comp_body: &[u8], compression: Compression) -> Result<Vec<u8>, FrameError> {
     match compression {
         Compression::LZ4 => {
             let uncomp_len = comp_body.get_u32() as usize;
@@ -216,12 +211,12 @@ pub fn decompress(mut comp_body: &[u8], compression: Compression) -> Result<Vec<
             if lz4::decode_block(&comp_body[..], &mut uncomp_body) > 0 {
                 Ok(uncomp_body)
             } else {
-                Err(anyhow!("LZ4 body decompression failed"))
+                Err(FrameError::LZ4BodyDecompression)
             }
         }
         Compression::Snappy => match snappy::uncompress(comp_body) {
             Ok(uncomp_body) => Ok(uncomp_body),
-            Err(e) => Err(anyhow!("Frame decompression failed: {:?}", e)),
+            Err(_) => Err(FrameError::FrameDecompression),
         },
     }
 }

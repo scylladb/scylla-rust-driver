@@ -1,5 +1,7 @@
-use crate::cql_to_rust::{FromRow, FromRowError};
-use anyhow::Result as AResult;
+use super::cql_to_rust::FromRowError;
+use crate::cql_to_rust::FromRow;
+use crate::frame::frame_errors::ParseError;
+use crate::frame::types;
 use byteorder::{BigEndian, ReadBytesExt};
 use bytes::{Buf, Bytes};
 use std::collections::HashMap;
@@ -8,8 +10,6 @@ use std::convert::TryInto;
 use std::net::IpAddr;
 use std::result::Result as StdResult;
 use std::str;
-
-use crate::frame::types;
 
 #[derive(Debug)]
 pub struct SetKeyspace {
@@ -175,7 +175,7 @@ pub enum Result {
     SchemaChange(SchemaChange),
 }
 
-fn deser_table_spec(buf: &mut &[u8]) -> AResult<TableSpec> {
+fn deser_table_spec(buf: &mut &[u8]) -> StdResult<TableSpec, ParseError> {
     let ks_name = types::read_string(buf)?.to_owned();
     let table_name = types::read_string(buf)?.to_owned();
     Ok(TableSpec {
@@ -184,7 +184,7 @@ fn deser_table_spec(buf: &mut &[u8]) -> AResult<TableSpec> {
     })
 }
 
-fn deser_type(buf: &mut &[u8]) -> AResult<ColumnType> {
+fn deser_type(buf: &mut &[u8]) -> StdResult<ColumnType, ParseError> {
     use ColumnType::*;
     let id = types::read_short(buf)?;
     Ok(match id {
@@ -216,7 +216,7 @@ fn deser_type(buf: &mut &[u8]) -> AResult<ColumnType> {
         }
         id => {
             // TODO implement other types
-            return Err(anyhow!("Type not yet implemented, id: {}", id));
+            return Err(ParseError::TypeNotImplemented(id));
         }
     })
 }
@@ -225,7 +225,7 @@ fn deser_col_specs(
     buf: &mut &[u8],
     global_table_spec: &Option<TableSpec>,
     col_count: usize,
-) -> AResult<Vec<ColumnSpec>> {
+) -> StdResult<Vec<ColumnSpec>, ParseError> {
     let mut col_specs = Vec::with_capacity(col_count);
     for _ in 0..col_count {
         let table_spec = if let Some(spec) = global_table_spec {
@@ -244,17 +244,13 @@ fn deser_col_specs(
     Ok(col_specs)
 }
 
-fn deser_result_metadata(buf: &mut &[u8]) -> AResult<ResultMetadata> {
+fn deser_result_metadata(buf: &mut &[u8]) -> StdResult<ResultMetadata, ParseError> {
     let flags = types::read_int(buf)?;
     let global_tables_spec = flags & 0x0001 != 0;
     let has_more_pages = flags & 0x0002 != 0;
     let no_metadata = flags & 0x0004 != 0;
 
-    let col_count = types::read_int(buf)?;
-    if col_count < 0 {
-        return Err(anyhow!("Invalid negative column count: {}", col_count));
-    }
-    let col_count = col_count as usize;
+    let col_count: usize = types::read_int(buf)?.try_into()?;
 
     let paging_state = if has_more_pages {
         Some(types::read_bytes(buf)?.to_owned().into())
@@ -285,21 +281,13 @@ fn deser_result_metadata(buf: &mut &[u8]) -> AResult<ResultMetadata> {
     })
 }
 
-fn deser_prepared_metadata(buf: &mut &[u8]) -> AResult<PreparedMetadata> {
+fn deser_prepared_metadata(buf: &mut &[u8]) -> StdResult<PreparedMetadata, ParseError> {
     let flags = types::read_int(buf)?;
     let global_tables_spec = flags & 0x0001 != 0;
 
-    let col_count = types::read_int(buf)?;
-    if col_count < 0 {
-        return Err(anyhow!("Invalid negative column count: {}", col_count));
-    }
-    let col_count = col_count as usize;
+    let col_count = types::read_int_length(buf)? as usize;
 
-    let pk_count = types::read_int(buf)?;
-    if pk_count < 0 {
-        return Err(anyhow!("Invalid negative pk count: {}", col_count));
-    }
-    let pk_count = pk_count as usize;
+    let pk_count: usize = types::read_int(buf)?.try_into()?;
 
     let mut pk_indexes = Vec::with_capacity(pk_count);
     for _ in 0..pk_count {
@@ -321,30 +309,30 @@ fn deser_prepared_metadata(buf: &mut &[u8]) -> AResult<PreparedMetadata> {
     })
 }
 
-fn deser_cql_value(typ: &ColumnType, buf: &mut &[u8]) -> AResult<CQLValue> {
+fn deser_cql_value(typ: &ColumnType, buf: &mut &[u8]) -> StdResult<CQLValue, ParseError> {
     use ColumnType::*;
     Ok(match typ {
         Ascii => {
             if !buf.is_ascii() {
-                return Err(anyhow!("Not an ascii string: {:?}", buf));
+                return Err(ParseError::BadData("String is not ascii!".to_string()));
             }
             CQLValue::Ascii(str::from_utf8(buf)?.to_owned())
         }
         Int => {
             if buf.len() != 4 {
-                return Err(anyhow!(
-                    "Expected buffer length of 4 bytes, got: {}",
+                return Err(ParseError::BadData(format!(
+                    "Buffer length should be 4 not {}",
                     buf.len()
-                ));
+                )));
             }
             CQLValue::Int(buf.read_i32::<BigEndian>()?)
         }
         BigInt => {
             if buf.len() != 8 {
-                return Err(anyhow!(
-                    "Expected buffer length of 8 bytes, got: {}",
+                return Err(ParseError::BadData(format!(
+                    "Buffer length should be 8 not {}",
                     buf.len()
-                ));
+                )));
             }
             CQLValue::BigInt(buf.read_i64::<BigEndian>()?)
         }
@@ -361,18 +349,16 @@ fn deser_cql_value(typ: &ColumnType, buf: &mut &[u8]) -> AResult<CQLValue> {
                 ret
             }
             v => {
-                return Err(anyhow!(
-                    "Invalid number of bytes for inet value: {}. Expecting 4 or 16",
+                return Err(ParseError::BadData(format!(
+                    "Invalid inet bytes length: {}",
                     v
-                ));
+                )));
             }
         }),
         Set(typ) => {
-            let len = types::read_int(buf)?;
-            if len < 0 {
-                return Err(anyhow!("Invalid number of set elements: {}", len));
-            }
-            let mut res = Vec::with_capacity(len as usize);
+            let len: usize = types::read_int(buf)?.try_into()?;
+
+            let mut res = Vec::with_capacity(len);
             for _ in 0..len {
                 // TODO: is `null` allowed as set element? Should we use read_bytes_opt?
                 let mut b = types::read_bytes(buf)?;
@@ -406,7 +392,7 @@ fn deser_cql_value(typ: &ColumnType, buf: &mut &[u8]) -> AResult<CQLValue> {
     })
 }
 
-fn deser_rows(buf: &mut &[u8]) -> AResult<Rows> {
+fn deser_rows(buf: &mut &[u8]) -> StdResult<Rows, ParseError> {
     let metadata = deser_result_metadata(buf)?;
 
     // TODO: the protocol allows an optimization (which must be explicitly requested on query by
@@ -415,11 +401,7 @@ fn deser_rows(buf: &mut &[u8]) -> AResult<Rows> {
     // Beware of races; our column types may be outdated.
     assert!(metadata.col_count == metadata.col_specs.len());
 
-    let rows_count = types::read_int(buf)?;
-    if rows_count < 0 {
-        return Err(anyhow!("Invalid negative number of rows: {}", rows_count));
-    }
-    let rows_count = rows_count as usize;
+    let rows_count: usize = types::read_int(buf)?.try_into()?;
 
     let mut rows = Vec::with_capacity(rows_count);
     for _ in 0..rows_count {
@@ -441,11 +423,11 @@ fn deser_rows(buf: &mut &[u8]) -> AResult<Rows> {
     })
 }
 
-fn deser_set_keyspace(_buf: &mut &[u8]) -> AResult<SetKeyspace> {
+fn deser_set_keyspace(_buf: &mut &[u8]) -> StdResult<SetKeyspace, ParseError> {
     Ok(SetKeyspace {}) // TODO
 }
 
-fn deser_prepared(buf: &mut &[u8]) -> AResult<Prepared> {
+fn deser_prepared(buf: &mut &[u8]) -> StdResult<Prepared, ParseError> {
     let id_len = types::read_short(buf)? as usize;
     let id: Bytes = buf[0..id_len].to_owned().into();
     buf.advance(id_len);
@@ -458,11 +440,11 @@ fn deser_prepared(buf: &mut &[u8]) -> AResult<Prepared> {
     })
 }
 
-fn deser_schema_change(_buf: &mut &[u8]) -> AResult<SchemaChange> {
+fn deser_schema_change(_buf: &mut &[u8]) -> StdResult<SchemaChange, ParseError> {
     Ok(SchemaChange {}) // TODO
 }
 
-pub fn deserialize(buf: &mut &[u8]) -> AResult<Result> {
+pub fn deserialize(buf: &mut &[u8]) -> StdResult<Result, ParseError> {
     use self::Result::*;
     Ok(match types::read_int(buf)? {
         0x0001 => Void,
@@ -470,6 +452,11 @@ pub fn deserialize(buf: &mut &[u8]) -> AResult<Result> {
         0x0003 => SetKeyspace(deser_set_keyspace(buf)?),
         0x0004 => Prepared(deser_prepared(buf)?),
         0x0005 => SchemaChange(deser_schema_change(buf)?),
-        k => return Err(anyhow!("Unknown query result kind: {}", k)),
+        k => {
+            return Err(ParseError::BadData(format!(
+                "Unknown query result id: {}",
+                k
+            )))
+        }
     })
 }

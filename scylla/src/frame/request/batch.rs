@@ -1,4 +1,4 @@
-use anyhow::Result;
+use crate::frame::frame_errors::ParseError;
 use bytes::{BufMut, Bytes};
 
 use crate::frame::{
@@ -35,7 +35,7 @@ pub enum BatchType {
 impl<'a, I: Iterator<Item = BatchStatementWithValues<'a>> + Clone> Request for Batch<'a, I> {
     const OPCODE: RequestOpcode = RequestOpcode::Batch;
 
-    fn serialize(&self, buf: &mut impl BufMut) -> Result<()> {
+    fn serialize(&self, buf: &mut impl BufMut) -> Result<(), ParseError> {
         // Serializing type of batch
         buf.put_u8(self.batch_type as u8);
 
@@ -57,7 +57,7 @@ impl<'a, I: Iterator<Item = BatchStatementWithValues<'a>> + Clone> Request for B
 }
 
 impl BatchStatement<'_> {
-    fn serialize(&self, buf: &mut impl BufMut) -> Result<()> {
+    fn serialize(&self, buf: &mut impl BufMut) -> Result<(), ParseError> {
         match self {
             BatchStatement::QueryContents(s) => {
                 buf.put_u8(0);
@@ -74,7 +74,7 @@ impl BatchStatement<'_> {
 }
 
 impl BatchStatementWithValues<'_> {
-    fn serialize(&self, buf: &mut impl BufMut) -> Result<()> {
+    fn serialize(&self, buf: &mut impl BufMut) -> Result<(), ParseError> {
         // Serializing statement
         self.statement.serialize(buf)?;
 

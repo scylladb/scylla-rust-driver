@@ -1,6 +1,6 @@
-use anyhow::Result;
-
+use crate::frame::frame_errors::ParseError;
 use crate::frame::types;
+use crate::transport::transport_errors::{DBError, TransportError};
 
 #[derive(Debug)]
 pub struct Error {
@@ -9,7 +9,7 @@ pub struct Error {
 }
 
 impl Error {
-    pub fn deserialize(buf: &mut &[u8]) -> Result<Self> {
+    pub fn deserialize(buf: &mut &[u8]) -> Result<Self, ParseError> {
         let code = types::read_int(buf)?;
         let reason = types::read_string(buf)?.to_owned();
 
@@ -17,8 +17,8 @@ impl Error {
     }
 }
 
-impl Into<anyhow::Error> for Error {
-    fn into(self) -> anyhow::Error {
-        anyhow!("Error (code {}): {}", self.code, self.reason)
+impl Into<TransportError> for Error {
+    fn into(self) -> TransportError {
+        TransportError::DBError(DBError::ErrorMsg(self.code, self.reason))
     }
 }

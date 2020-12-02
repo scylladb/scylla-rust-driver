@@ -3,11 +3,10 @@ pub mod error;
 pub mod result;
 pub mod supported;
 
-use anyhow::Result as AResult;
+use crate::frame::frame_errors::ParseError;
 use num_enum::TryFromPrimitive;
 
 pub use error::Error;
-pub use result::Result;
 pub use supported::Supported;
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord, TryFromPrimitive)]
@@ -27,13 +26,13 @@ pub enum ResponseOpcode {
 pub enum Response {
     Error(Error),
     Ready,
-    Result(Result),
+    Result(result::Result),
     Authenticate,
     Supported(Supported),
 }
 
 impl Response {
-    pub fn deserialize(opcode: ResponseOpcode, buf: &mut &[u8]) -> AResult<Response> {
+    pub fn deserialize(opcode: ResponseOpcode, buf: &mut &[u8]) -> Result<Response, ParseError> {
         let response = match opcode {
             ResponseOpcode::Error => Response::Error(Error::deserialize(buf)?),
             ResponseOpcode::Ready => Response::Ready,
