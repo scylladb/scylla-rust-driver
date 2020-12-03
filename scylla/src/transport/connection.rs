@@ -370,6 +370,21 @@ pub async fn open_connection(
     source_port: Option<u16>,
     compression: Option<Compression>,
 ) -> Result<Connection, TransportError> {
+    open_named_connection(
+        addr,
+        source_port,
+        compression,
+        Some("scylla-rust-driver".to_string()),
+    )
+    .await
+}
+
+pub async fn open_named_connection(
+    addr: SocketAddr,
+    source_port: Option<u16>,
+    compression: Option<Compression>,
+    driver_name: Option<String>,
+) -> Result<Connection, TransportError> {
     // TODO: shouldn't all this logic be in Connection::new?
     let mut connection = Connection::new(addr, source_port, compression).await?;
 
@@ -398,6 +413,9 @@ pub async fn open_connection(
 
     let mut options = HashMap::new();
     options.insert("CQL_VERSION".to_string(), "4.0.0".to_string()); // FIXME: hardcoded values
+    if let Some(name) = driver_name {
+        options.insert("DRIVER_NAME".to_string(), name);
+    }
     if let Some(compression) = &compression {
         let compression_str = compression.to_string();
         if supported_compression.iter().any(|c| c == &compression_str) {
