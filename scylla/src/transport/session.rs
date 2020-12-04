@@ -1,4 +1,7 @@
-use futures::{future::RemoteHandle, FutureExt};
+use futures::{
+    future::{try_join_all, RemoteHandle},
+    FutureExt,
+};
 use std::collections::hash_map::Entry;
 use std::collections::HashMap;
 use std::fmt::Display;
@@ -7,7 +10,7 @@ use std::sync::{Arc, RwLock};
 use std::time::Instant;
 use tokio::net::{lookup_host, ToSocketAddrs};
 
-use super::transport_errors::{InternalDriverError, PrepareError, TransportError};
+use super::transport_errors::{InternalDriverError, TransportError};
 use crate::batch::Batch;
 use crate::cql_to_rust::FromRow;
 use crate::frame::response::cql_to_rust::FromRowError;
@@ -180,20 +183,24 @@ impl Session {
     /// # Arguments
     ///#
     pub async fn prepare(&self, query: &str) -> Result<PreparedStatement, TransportError> {
-        // FIXME: Prepared statement ids are local to a node, so we must make sure
-        // that prepare() sends to all nodes and keeps all ids.
-        let result = self.any_connection()?.prepare(query.to_owned()).await?;
-        match result {
-            Response::Error(err) => Err(err.into()),
-            Response::Result(result::Result::Prepared(p)) => Ok(PreparedStatement::new(
-                p.id,
-                p.prepared_metadata,
-                query.to_owned(),
-            )),
-            _ => Err(TransportError::PrepareError(
-                PrepareError::InternalDriverError(InternalDriverError::UnexpectedResponse),
-            )),
+        let connections = self.get_connections()?;
+        let all_connections = connections.iter().flat_map(|(_, v)| v);
+
+        // Prepare statements on all connections concurrently
+        let handles = all_connections.map(|c| c.prepare(query));
+        let mut results = try_join_all(handles).await?;
+
+        if !Self::validate_prepared_ids_equality(&results) {
+            return Err(TransportError::PreparedStatementsIDsNotMatch);
         }
+
+        results.pop().ok_or(TransportError::NoConnectionsAvailable)
+    }
+
+    fn validate_prepared_ids_equality(statements: &[PreparedStatement]) -> bool {
+        statements
+            .windows(2)
+            .all(|p| p[0].get_id() == p[1].get_id())
     }
 
     /// Executes a previously prepared statement
@@ -235,24 +242,13 @@ impl Session {
                 match err.code {
                     9472 => {
                         // Repreparation of a statement is needed
-                        let reprepared_result = connection
-                            .prepare(prepared.get_statement().to_owned())
-                            .await?;
+                        let reprepared = connection.prepare(prepared.get_statement()).await?;
                         // Reprepared statement should keep its id - it's the md5 sum
                         // of statement contents
-                        match reprepared_result {
-                            Response::Error(err) => return Err(err.into()),
-                            Response::Result(result::Result::Prepared(reprepared)) => {
-                                if reprepared.id != prepared.get_id() {
-                                    return Err(TransportError::RepreparedStatmentIDChanged);
-                                }
-                            }
-                            _ => {
-                                return Err(TransportError::InternalDriverError(
-                                    InternalDriverError::UnexpectedResponse,
-                                ))
-                            }
+                        if reprepared.get_id() != prepared.get_id() {
+                            return Err(TransportError::RepreparedStatmentIDChanged);
                         }
+
                         let result = connection
                             .execute(prepared, &serialized_values, None)
                             .await?;
