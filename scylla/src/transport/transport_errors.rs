@@ -1,6 +1,8 @@
 use crate::frame::frame_errors;
 use crate::frame::frame_errors::ParseError;
 use crate::frame::response::cql_to_rust::FromRowError;
+use crate::frame::value::SerializeValuesError;
+use crate::prepared_statement::PartitionKeyError;
 use thiserror::Error;
 
 #[derive(Error, Debug)]
@@ -97,4 +99,8 @@ pub enum TransportError {
     TokioSyncOneshotError(#[from] tokio::sync::oneshot::error::RecvError),
     #[error(transparent)]
     FromRowError(#[from] FromRowError),
+    #[error(transparent)]
+    SerializeValuesError(#[from] SerializeValuesError),
+    #[error(transparent)]
+    PartitionKeyError(#[from] PartitionKeyError),
 }

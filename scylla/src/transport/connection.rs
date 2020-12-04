@@ -9,16 +9,14 @@ use std::convert::TryFrom;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::sync::Mutex as StdMutex;
 
-use crate::batch::Batch;
-use crate::batch::BatchStatement;
-
 use super::transport_errors::{InternalDriverError, PrepareError, TransportError};
 
+use crate::batch::{Batch, BatchStatement};
 use crate::frame::{
     self,
     request::{self, batch, execute, query, Request, RequestOpcode},
     response::{result, Response, ResponseOpcode},
-    value::Value,
+    value::{BatchValues, ValueList},
     FrameParams, RequestBodyWithExtensions,
 };
 use crate::query::Query;
@@ -97,7 +95,7 @@ impl Connection {
     pub async fn query_single_page(
         &self,
         query: impl Into<Query>,
-        values: &[Value],
+        values: impl ValueList,
     ) -> Result<Option<Vec<result::Row>>, TransportError> {
         let result = self.query(&query.into(), values, None).await?;
         match result {
@@ -113,13 +111,15 @@ impl Connection {
     pub async fn query(
         &self,
         query: &Query,
-        values: &[Value],
+        values: impl ValueList,
         paging_state: Option<Bytes>,
     ) -> Result<Response, TransportError> {
+        let serialized_values = values.serialized()?;
+
         let query_frame = query::Query {
             contents: query.get_contents().to_owned(),
             parameters: query::QueryParameters {
-                values,
+                values: &serialized_values,
                 page_size: query.get_page_size(),
                 paging_state,
                 ..Default::default()
@@ -132,13 +132,15 @@ impl Connection {
     pub async fn execute(
         &self,
         prepared_statement: &PreparedStatement,
-        values: &[Value],
+        values: impl ValueList,
         paging_state: Option<Bytes>,
     ) -> Result<Response, TransportError> {
+        let serialized_values = values.serialized()?;
+
         let execute_frame = execute::Execute {
             id: prepared_statement.get_id().to_owned(),
             parameters: query::QueryParameters {
-                values,
+                values: &serialized_values,
                 page_size: prepared_statement.get_page_size(),
                 paging_state,
                 ..Default::default()
@@ -151,7 +153,7 @@ impl Connection {
     pub async fn batch(
         &self,
         batch: &Batch,
-        values: &[impl AsRef<[Value]>],
+        values: impl BatchValues,
     ) -> Result<Response, TransportError> {
         let statements_count = batch.get_statements().len();
         if statements_count != values.len() {
@@ -161,25 +163,19 @@ impl Connection {
             ));
         }
 
-        let statements = batch
-            .get_statements()
-            .iter()
-            .zip(values.iter())
-            .map(|(e, v)| batch::BatchStatementWithValues {
-                statement: match e {
-                    BatchStatement::Query(q) => {
-                        batch::BatchStatement::QueryContents(q.get_contents())
-                    }
-                    BatchStatement::PreparedStatement(s) => {
-                        batch::BatchStatement::PreparedStatementID(s.get_id())
-                    }
-                },
-                values: v.as_ref(),
-            });
+        let statements_iter = batch.get_statements().iter().map(|s| match s {
+            BatchStatement::Query(q) => batch::BatchStatement::Query {
+                text: q.get_contents(),
+            },
+            BatchStatement::PreparedStatement(s) => {
+                batch::BatchStatement::Prepared { id: s.get_id() }
+            }
+        });
 
         let batch_frame = batch::Batch {
-            statements,
+            statements: statements_iter,
             statements_count,
+            values,
             batch_type: batch.get_type(),
             consistency: 1, // TODO something else than hardcoded value
         };

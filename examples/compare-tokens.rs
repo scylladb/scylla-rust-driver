@@ -1,4 +1,5 @@
 use anyhow::Result;
+use scylla::frame::value::ValueList;
 use scylla::routing::murmur3_token;
 use scylla::transport::session::Session;
 use std::env;
@@ -25,10 +26,11 @@ async fn main() -> Result<()> {
 
     for pk in (0..100_i64).chain(99840..99936_i64) {
         session
-            .query("INSERT INTO ks.t (pk) VALUES (?)", &scylla::values!(pk))
+            .query("INSERT INTO ks.t (pk) VALUES (?)", (pk,))
             .await?;
 
-        let t = murmur3_token(prepared.compute_partition_key(&scylla::values!(pk))).value;
+        let serialized_pk = (pk,).serialized()?.into_owned();
+        let t = murmur3_token(prepared.compute_partition_key(&serialized_pk)?).value;
 
         let qt = session
             .query(format!("SELECT token(pk) FROM ks.t where pk = {}", pk), &[])

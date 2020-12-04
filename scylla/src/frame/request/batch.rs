@@ -1,27 +1,23 @@
 use crate::frame::frame_errors::ParseError;
 use bytes::{BufMut, Bytes};
+use std::convert::TryInto;
 
 use crate::frame::{
     request::{Request, RequestOpcode},
     types,
-    value::Value,
+    value::BatchValues,
 };
 
-pub struct Batch<'a, I: Iterator<Item = BatchStatementWithValues<'a>> + Clone> {
-    pub statements: I,
+pub struct Batch<'a, StatementsIter, Values>
+where
+    StatementsIter: Iterator<Item = BatchStatement<'a>> + Clone,
+    Values: BatchValues,
+{
+    pub statements: StatementsIter,
     pub statements_count: usize,
     pub batch_type: BatchType,
     pub consistency: i16,
-}
-
-pub struct BatchStatementWithValues<'a> {
-    pub statement: BatchStatement<'a>,
-    pub values: &'a [Value],
-}
-
-pub enum BatchStatement<'a> {
-    QueryContents(&'a str),
-    PreparedStatementID(&'a Bytes),
+    pub values: Values,
 }
 
 /// The type of a batch.
@@ -32,7 +28,17 @@ pub enum BatchType {
     Counter = 2,
 }
 
-impl<'a, I: Iterator<Item = BatchStatementWithValues<'a>> + Clone> Request for Batch<'a, I> {
+#[derive(Debug, Clone, Copy, Eq, PartialEq, PartialOrd, Ord)]
+pub enum BatchStatement<'a> {
+    Query { text: &'a str },
+    Prepared { id: &'a Bytes },
+}
+
+impl<'a, StatementsIter, Values> Request for Batch<'a, StatementsIter, Values>
+where
+    StatementsIter: Iterator<Item = BatchStatement<'a>> + Clone,
+    Values: BatchValues,
+{
     const OPCODE: RequestOpcode = RequestOpcode::Batch;
 
     fn serialize(&self, buf: &mut impl BufMut) -> Result<(), ParseError> {
@@ -40,9 +46,11 @@ impl<'a, I: Iterator<Item = BatchStatementWithValues<'a>> + Clone> Request for B
         buf.put_u8(self.batch_type as u8);
 
         // Serializing queries
-        types::write_short(self.statements_count as i16, buf);
-        for statement in self.statements.clone() {
+        types::write_short(self.statements_count.try_into()?, buf);
+
+        for (statement_num, statement) in self.statements.clone().enumerate() {
             statement.serialize(buf)?;
+            self.values.write_nth_to_request(statement_num, buf)?;
         }
 
         // Serializing consistency
@@ -59,27 +67,15 @@ impl<'a, I: Iterator<Item = BatchStatementWithValues<'a>> + Clone> Request for B
 impl BatchStatement<'_> {
     fn serialize(&self, buf: &mut impl BufMut) -> Result<(), ParseError> {
         match self {
-            BatchStatement::QueryContents(s) => {
+            BatchStatement::Query { text } => {
                 buf.put_u8(0);
-                types::write_long_string(s, buf)?;
+                types::write_long_string(text, buf)?;
             }
-            BatchStatement::PreparedStatementID(id) => {
+            BatchStatement::Prepared { id } => {
                 buf.put_u8(1);
                 types::write_short_bytes(&id[..], buf)?;
             }
         }
-
-        Ok(())
-    }
-}
-
-impl BatchStatementWithValues<'_> {
-    fn serialize(&self, buf: &mut impl BufMut) -> Result<(), ParseError> {
-        // Serializing statement
-        self.statement.serialize(buf)?;
-
-        // Serializing values bound to statement
-        types::write_values(&self.values, buf)?;
 
         Ok(())
     }

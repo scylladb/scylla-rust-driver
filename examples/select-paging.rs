@@ -25,7 +25,7 @@ async fn main() -> Result<()> {
         session
             .query(
                 "INSERT INTO ks.t (a, b, c) VALUES (?, ?, 'abc')",
-                &scylla::values!(i, 2 * i),
+                (i, 2 * i),
             )
             .await?;
     }

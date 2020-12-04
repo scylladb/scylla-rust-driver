@@ -23,10 +23,7 @@ async fn main() -> Result<()> {
         .await?;
 
     session
-        .query(
-            "INSERT INTO ks.t (a, b, c) VALUES (?, ?, ?)",
-            &scylla::values!(3, 4, "def"),
-        )
+        .query("INSERT INTO ks.t (a, b, c) VALUES (?, ?, ?)", (3, 4, "def"))
         .await?;
 
     session
@@ -37,13 +34,13 @@ async fn main() -> Result<()> {
         .prepare("INSERT INTO ks.t (a, b, c) VALUES (?, 7, ?)")
         .await?;
     session
-        .execute(&prepared, &scylla::values!(42_i32, "I'm prepared!"))
+        .execute(&prepared, (42_i32, "I'm prepared!"))
         .await?;
     session
-        .execute(&prepared, &scylla::values!(43_i32, "I'm prepared 2!"))
+        .execute(&prepared, (43_i32, "I'm prepared 2!"))
         .await?;
     session
-        .execute(&prepared, &scylla::values!(44_i32, "I'm prepared 3!"))
+        .execute(&prepared, (44_i32, "I'm prepared 3!"))
         .await?;
 
     // Rows can be parsed as tuples

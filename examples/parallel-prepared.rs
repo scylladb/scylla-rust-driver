@@ -41,7 +41,7 @@ async fn main() -> Result<()> {
         tokio::task::spawn(async move {
             let i = i;
             session
-                .execute(&prepared, &scylla::values!(i as i32, 2 * i as i32))
+                .execute(&prepared, (i as i32, 2 * i as i32))
                 .await
                 .unwrap();
 

@@ -2,7 +2,6 @@ use anyhow::Result;
 use scylla::cql_to_rust::FromCQLVal;
 use scylla::macros::{FromUserType, IntoUserType};
 use scylla::transport::session::{IntoTypedRows, Session};
-use scylla::try_values;
 use std::env;
 
 #[tokio::main]
@@ -45,10 +44,7 @@ async fn main() -> Result<()> {
 
     // It can be inserted like a normal value
     session
-        .query(
-            "INSERT INTO ks.udt_tab (k, my) VALUES (5, ?)",
-            &(try_values!(to_insert)?),
-        )
+        .query("INSERT INTO ks.udt_tab (k, my) VALUES (5, ?)", (to_insert,))
         .await?;
 
     // And read like any normal value

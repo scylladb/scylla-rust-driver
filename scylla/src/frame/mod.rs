@@ -4,6 +4,9 @@ pub mod response;
 pub mod types;
 pub mod value;
 
+#[cfg(test)]
+mod value_tests;
+
 use crate::frame::frame_errors::FrameError;
 use crate::transport::Compression;
 use bytes::{Buf, BufMut, Bytes};

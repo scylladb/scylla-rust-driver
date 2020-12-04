@@ -1,3 +1,4 @@
+use crate::frame::value::ValueList;
 use crate::routing::hash3_x64_128;
 use crate::transport::session::Session;
 
@@ -96,7 +97,8 @@ async fn test_prepared_statement() {
         .await
         .unwrap();
 
-    let values = values!(17_i32, 16_i32, "I'm prepared!!!");
+    let values = (17_i32, 16_i32, "I'm prepared!!!");
+    let serialized_values = values.serialized().unwrap().into_owned();
 
     session.execute(&prepared_statement, &values).await.unwrap();
     session
@@ -116,8 +118,12 @@ async fn test_prepared_statement() {
             .unwrap()
             .as_bigint()
             .unwrap();
-        let expected_token =
-            hash3_x64_128(&prepared_statement.compute_partition_key(&values)) as i64;
+        let expected_token = hash3_x64_128(
+            &prepared_statement
+                .compute_partition_key(&serialized_values)
+                .unwrap(),
+        ) as i64;
+
         assert_eq!(token, expected_token)
     }
     {
@@ -131,8 +137,12 @@ async fn test_prepared_statement() {
             .unwrap()
             .as_bigint()
             .unwrap();
-        let expected_token =
-            hash3_x64_128(&prepared_complex_pk_statement.compute_partition_key(&values)) as i64;
+        let expected_token = hash3_x64_128(
+            &prepared_complex_pk_statement
+                .compute_partition_key(&serialized_values)
+                .unwrap(),
+        ) as i64;
+
         assert_eq!(token, expected_token)
     }
 
@@ -200,11 +210,7 @@ async fn test_batch() {
     batch.append_statement("INSERT INTO ks.t (a, b, c) VALUES (7, 11, '')");
     batch.append_statement(prepared_statement);
 
-    let values: &[&[_]] = &[
-        &values!(1_i32, 2_i32, "abc"),
-        &[],
-        &values!(1_i32, 4_i32, "hello"),
-    ];
+    let values = ((1_i32, 2_i32, "abc"), (), (1_i32, 4_i32, "hello"));
 
     session.batch(&batch, values).await.unwrap();
 
@@ -262,7 +268,8 @@ async fn test_token_calculation() {
         for _ in 0..i {
             s.push('a');
         }
-        let values = values!(s.as_ref());
+        let values = (&s,);
+        let serialized_values = values.serialized().unwrap().into_owned();
         session.execute(&prepared_statement, &values).await.unwrap();
 
         let rs = session
@@ -275,8 +282,11 @@ async fn test_token_calculation() {
             .unwrap()
             .as_bigint()
             .unwrap();
-        let expected_token =
-            hash3_x64_128(&prepared_statement.compute_partition_key(&values)) as i64;
+        let expected_token = hash3_x64_128(
+            &prepared_statement
+                .compute_partition_key(&serialized_values)
+                .unwrap(),
+        ) as i64;
         assert_eq!(token, expected_token)
     }
 }
