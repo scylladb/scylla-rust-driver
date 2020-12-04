@@ -11,7 +11,7 @@ use tokio::time;
 
 use crate::frame::response::result;
 use crate::routing::*;
-use crate::transport::connection::{open_connection, Connection};
+use crate::transport::connection::{open_connection, open_named_connection, Connection};
 
 const UPDATER_CRASHED: &str = "the topology updater thread has crashed. Need to restart it.";
 
@@ -90,7 +90,13 @@ impl TopologyReader {
     pub async fn new(n: Node) -> Result<(Self, Topology), TransportError> {
         // TODO: use compression? maybe not necessarily, since the communicated objects are
         // small and the communication doesn't happen often?
-        let conn = open_connection(n.addr, None, None).await?;
+        let conn = open_named_connection(
+            n.addr,
+            None,
+            None,
+            Some("scylla-rust-driver:control-connection".to_string()),
+        )
+        .await?;
 
         // TODO: When querying system.local of `n` or system.peers of other nodes, we might find
         // that the address of `n` is different than `n.addr` (`n` might have multiple addresses).
