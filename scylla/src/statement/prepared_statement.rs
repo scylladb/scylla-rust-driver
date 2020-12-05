@@ -1,3 +1,4 @@
+use super::Consistency;
 use crate::frame::response::result::PreparedMetadata;
 use crate::frame::value::SerializedValues;
 use bytes::{BufMut, Bytes, BytesMut};
@@ -11,6 +12,7 @@ pub struct PreparedStatement {
     metadata: PreparedMetadata,
     statement: String,
     page_size: Option<i32>,
+    consistency: Consistency,
 }
 
 impl PreparedStatement {
@@ -20,6 +22,7 @@ impl PreparedStatement {
             metadata,
             statement,
             page_size: None,
+            consistency: Default::default(),
         }
     }
 
@@ -45,6 +48,16 @@ impl PreparedStatement {
     /// Returns the page size for this CQL query.
     pub fn get_page_size(&self) -> Option<i32> {
         self.page_size
+    }
+
+    /// Sets the consistency to be used when executing this statement.
+    pub fn set_consistency(&mut self, c: Consistency) {
+        self.consistency = c;
+    }
+
+    /// Gets the consistency to be used when executing this statement.
+    pub fn get_consistency(&self) -> Consistency {
+        self.consistency
     }
 
     /// Computes the partition key of the target table from given values

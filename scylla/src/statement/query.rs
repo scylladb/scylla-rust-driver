@@ -1,3 +1,5 @@
+use super::Consistency;
+
 /// CQL query statement.
 ///
 /// This represents a CQL query that can be executed on a server.
@@ -5,6 +7,7 @@
 pub struct Query {
     contents: String,
     page_size: Option<i32>,
+    consistency: Consistency,
 }
 
 impl Query {
@@ -13,6 +16,7 @@ impl Query {
         Self {
             contents,
             page_size: None,
+            consistency: Default::default(),
         }
     }
 
@@ -35,6 +39,16 @@ impl Query {
     /// Returns the page size for this CQL query.
     pub fn get_page_size(&self) -> Option<i32> {
         self.page_size
+    }
+
+    /// Sets the consistency to be used when executing this query.
+    pub fn set_consistency(&mut self, c: Consistency) {
+        self.consistency = c;
+    }
+
+    /// Gets the consistency to be used when executing this query.
+    pub fn get_consistency(&self) -> Consistency {
+        self.consistency
     }
 }
 

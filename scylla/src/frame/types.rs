@@ -3,10 +3,34 @@
 use super::frame_errors::ParseError;
 use byteorder::{BigEndian, ReadBytesExt};
 use bytes::BufMut;
+use num_enum::TryFromPrimitive;
 use std::collections::HashMap;
+use std::convert::TryFrom;
 use std::convert::TryInto;
 use std::str;
 use uuid::Uuid;
+
+#[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord, TryFromPrimitive)]
+#[repr(i16)]
+pub enum Consistency {
+    Any = 0x0000,
+    One = 0x0001,
+    Two = 0x0002,
+    Three = 0x0003,
+    Quorum = 0x0004,
+    All = 0x0005,
+    LocalQuorum = 0x0006,
+    EachQuorum = 0x0007,
+    Serial = 0x0008,
+    LocalSerial = 0x0009,
+    LocalOne = 0x000A,
+}
+
+impl Default for Consistency {
+    fn default() -> Self {
+        Consistency::Quorum
+    }
+}
 
 impl From<std::num::TryFromIntError> for ParseError {
     fn from(_err: std::num::TryFromIntError) -> Self {
@@ -357,4 +381,34 @@ fn type_uuid() {
     write_uuid(&u, &mut buf);
     let u2 = read_uuid(&mut &*buf).unwrap();
     assert_eq!(u, u2);
+}
+
+pub fn read_consistency(buf: &mut &[u8]) -> Result<Consistency, ParseError> {
+    let raw = read_short(buf)?;
+    let parsed = Consistency::try_from(raw)
+        .map_err(|_| ParseError::BadData(format!("unknown consistency: {}", raw)))?;
+    Ok(parsed)
+}
+
+pub fn write_consistency(c: Consistency, buf: &mut impl BufMut) {
+    write_short(c as i16, buf);
+}
+
+#[test]
+fn type_consistency() {
+    let c = Consistency::Quorum;
+    let mut buf = Vec::new();
+    write_consistency(c, &mut buf);
+    let c2 = read_consistency(&mut &*buf).unwrap();
+    assert_eq!(c, c2);
+
+    let c = 0x1234 as i16;
+    buf.clear();
+    buf.put_i16(c);
+    let c_result = read_consistency(&mut &*buf);
+    assert!(c_result.is_err());
+
+    // Check that the error message contains information about the invalid value
+    let err_str = format!("{}", c_result.unwrap_err());
+    assert!(err_str.contains(&format!("{}", c)));
 }
