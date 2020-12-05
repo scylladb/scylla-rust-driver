@@ -16,7 +16,7 @@ where
     pub statements: StatementsIter,
     pub statements_count: usize,
     pub batch_type: BatchType,
-    pub consistency: i16,
+    pub consistency: types::Consistency,
     pub values: Values,
 }
 
@@ -54,7 +54,7 @@ where
         }
 
         // Serializing consistency
-        types::write_short(self.consistency, buf);
+        types::write_consistency(self.consistency, buf);
 
         // Serializing flags
         // FIXME: consider other flag values than 0

@@ -33,7 +33,7 @@ impl Request for Query<'_> {
 }
 
 pub struct QueryParameters<'a> {
-    pub consistency: i16,
+    pub consistency: types::Consistency,
     pub page_size: Option<i32>,
     pub paging_state: Option<Bytes>,
     pub values: &'a SerializedValues,
@@ -42,7 +42,7 @@ pub struct QueryParameters<'a> {
 impl Default for QueryParameters<'_> {
     fn default() -> Self {
         Self {
-            consistency: 1,
+            consistency: Default::default(),
             page_size: None,
             paging_state: None,
             values: SerializedValues::EMPTY,
@@ -52,7 +52,7 @@ impl Default for QueryParameters<'_> {
 
 impl QueryParameters<'_> {
     pub fn serialize(&self, buf: &mut impl BufMut) -> Result<(), ParseError> {
-        types::write_short(self.consistency, buf);
+        types::write_consistency(self.consistency, buf);
 
         let mut flags = 0;
         if !self.values.is_empty() {

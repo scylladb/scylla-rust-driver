@@ -1,5 +1,6 @@
 use crate::statement::{prepared_statement::PreparedStatement, query::Query};
 
+pub use super::Consistency;
 pub use crate::frame::request::batch::BatchType;
 
 /// CQL batch statement.
@@ -9,6 +10,7 @@ pub use crate::frame::request::batch::BatchType;
 pub struct Batch {
     statements: Vec<BatchStatement>,
     batch_type: BatchType,
+    consistency: Consistency,
 }
 
 impl Batch {
@@ -34,6 +36,16 @@ impl Batch {
     pub fn get_statements(&self) -> &[BatchStatement] {
         self.statements.as_ref()
     }
+
+    /// Sets the consistency to be used when executing this batch.
+    pub fn set_consistency(&mut self, c: Consistency) {
+        self.consistency = c;
+    }
+
+    /// Gets the consistency to be used when executing this batch.
+    pub fn get_consistency(&self) -> Consistency {
+        self.consistency
+    }
 }
 
 impl Default for Batch {
@@ -41,6 +53,7 @@ impl Default for Batch {
         Self {
             statements: Vec::new(),
             batch_type: BatchType::Logged,
+            consistency: Default::default(),
         }
     }
 }

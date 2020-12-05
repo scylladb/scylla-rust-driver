@@ -130,10 +130,10 @@ impl Connection {
         let query_frame = query::Query {
             contents: query.get_contents().to_owned(),
             parameters: query::QueryParameters {
+                consistency: query.get_consistency(),
                 values: &serialized_values,
                 page_size: query.get_page_size(),
                 paging_state,
-                ..Default::default()
             },
         };
 
@@ -151,10 +151,10 @@ impl Connection {
         let execute_frame = execute::Execute {
             id: prepared_statement.get_id().to_owned(),
             parameters: query::QueryParameters {
+                consistency: prepared_statement.get_consistency(),
                 values: &serialized_values,
                 page_size: prepared_statement.get_page_size(),
                 paging_state,
-                ..Default::default()
             },
         };
 
@@ -188,7 +188,7 @@ impl Connection {
             statements_count,
             values,
             batch_type: batch.get_type(),
-            consistency: 1, // TODO something else than hardcoded value
+            consistency: batch.get_consistency(),
         };
 
         self.send_request(&batch_frame, true).await
