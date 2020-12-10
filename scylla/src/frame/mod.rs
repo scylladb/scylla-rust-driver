@@ -118,16 +118,16 @@ pub struct RequestBodyWithExtensions {
 pub fn prepare_request_body_with_extensions(
     body_with_ext: RequestBodyWithExtensions,
     compression: Option<Compression>,
-) -> (u8, Bytes) {
+) -> Result<(u8, Bytes), FrameError> {
     let mut flags = 0;
 
     let mut body = body_with_ext.body;
     if let Some(compression) = compression {
         flags |= FLAG_COMPRESSION;
-        body = compress(&body, compression).into();
+        body = compress(&body, compression)?.into();
     }
 
-    (flags, body)
+    Ok((flags, body))
 }
 
 pub struct ResponseBodyWithExtensions {
@@ -186,7 +186,7 @@ pub fn parse_response_body_extensions(
     })
 }
 
-pub fn compress(uncomp_body: &[u8], compression: Compression) -> Vec<u8> {
+pub fn compress(uncomp_body: &[u8], compression: Compression) -> Result<Vec<u8>, FrameError> {
     match compression {
         Compression::LZ4 => {
             let uncomp_len = uncomp_body.len() as u32;
@@ -197,9 +197,11 @@ pub fn compress(uncomp_body: &[u8], compression: Compression) -> Vec<u8> {
             let mut comp_body = Vec::with_capacity(std::mem::size_of::<u32>() + tmp.len());
             comp_body.put_u32(uncomp_len);
             comp_body.extend_from_slice(&tmp[..]);
-            comp_body
+            Ok(comp_body)
         }
-        Compression::Snappy => snappy::compress(uncomp_body),
+        Compression::Snappy => snap::raw::Encoder::new()
+            .compress_vec(uncomp_body)
+            .map_err(|_| FrameError::FrameCompression),
     }
 }
 
@@ -217,9 +219,8 @@ pub fn decompress(mut comp_body: &[u8], compression: Compression) -> Result<Vec<
                 Err(FrameError::LZ4BodyDecompression)
             }
         }
-        Compression::Snappy => match snappy::uncompress(comp_body) {
-            Ok(uncomp_body) => Ok(uncomp_body),
-            Err(_) => Err(FrameError::FrameDecompression),
-        },
+        Compression::Snappy => snap::raw::Decoder::new()
+            .decompress_vec(comp_body)
+            .map_err(|_| FrameError::FrameDecompression),
     }
 }

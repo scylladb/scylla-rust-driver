@@ -205,7 +205,7 @@ impl Connection {
         let body_with_ext = RequestBodyWithExtensions { body };
 
         let (flags, raw_request) =
-            frame::prepare_request_body_with_extensions(body_with_ext, compression);
+            frame::prepare_request_body_with_extensions(body_with_ext, compression)?;
 
         let (sender, receiver) = oneshot::channel();
 
