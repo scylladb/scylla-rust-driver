@@ -17,7 +17,7 @@ histogram = "0.6.9"
 num_enum = "0.5"
 compress = "0.2.1"
 tokio = { version = "0.3.0", features = ["net", "time", "io-util", "sync", "rt", "macros"] }
-snappy = "0.4.0"
+snap = "1.0"
 uuid = "0.8.1"
 rand = "0.7.3"
 thiserror = "1.0"

@@ -18,6 +18,8 @@ pub enum FrameError {
     ConnectionClosed(usize, usize),
     #[error("Frame decompression failed.")]
     FrameDecompression,
+    #[error("Frame compression failed.")]
+    FrameCompression,
     #[error("std io error encountered while processing")]
     StdIOError(#[from] std::io::Error),
     #[error("Unrecognized opcode{0}")]
