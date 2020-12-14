@@ -1,5 +1,6 @@
 use bytes::BufMut;
 use std::borrow::Cow;
+use std::collections::HashMap;
 use std::convert::TryInto;
 use thiserror::Error;
 
@@ -223,6 +224,68 @@ impl<T: Value> Value for &T {
         <T as Value>::serialize(*self, buf)
     }
 }
+
+impl<K: Value, V: Value> Value for HashMap<K, V> {
+    fn serialize(&self, buf: &mut Vec<u8>) -> Result<(), ValueTooBig> {
+        buf.put_i32(self.len().try_into().map_err(|_| ValueTooBig)?);
+        for (key, value) in self {
+            <K as Value>::serialize(key, buf)?;
+            <V as Value>::serialize(value, buf)?;
+        }
+        Ok(())
+    }
+}
+
+impl<T: Value> Value for Vec<T> {
+    fn serialize(&self, buf: &mut Vec<u8>) -> Result<(), ValueTooBig> {
+        buf.put_i32(self.len().try_into().map_err(|_| ValueTooBig)?);
+        for value in self {
+            <T as Value>::serialize(value, buf)?;
+        }
+        Ok(())
+    }
+}
+
+macro_rules! impl_value_for_tuple {
+    ( $($Ti:ident),* ; $($FieldI:tt),* ) => {
+    impl<$($Ti),+> Value for ($($Ti,)+)
+        where
+            $($Ti: Value),+
+        {
+            fn serialize(&self, buf: &mut Vec<u8>) -> Result<(), ValueTooBig> {
+                $(
+                    <$Ti as Value>::serialize(&self.$FieldI, buf)?;
+                )*
+
+                Ok(())
+            }
+        }
+    }
+}
+
+impl_value_for_tuple!(T0; 0);
+impl_value_for_tuple!(T0, T1; 0, 1);
+impl_value_for_tuple!(T0, T1, T2; 0, 1, 2);
+impl_value_for_tuple!(T0, T1, T2, T3; 0, 1, 2, 3);
+impl_value_for_tuple!(T0, T1, T2, T3, T4; 0, 1, 2, 3, 4);
+impl_value_for_tuple!(T0, T1, T2, T3, T4, T5; 0, 1, 2, 3, 4, 5);
+impl_value_for_tuple!(T0, T1, T2, T3, T4, T5, T6; 0, 1, 2, 3, 4, 5, 6);
+impl_value_for_tuple!(T0, T1, T2, T3, T4, T5, T6, T7; 0, 1, 2, 3, 4, 5, 6, 7);
+impl_value_for_tuple!(T0, T1, T2, T3, T4, T5, T6, T7, T8; 0, 1, 2, 3, 4, 5, 6, 7, 8);
+impl_value_for_tuple!(T0, T1, T2, T3, T4, T5, T6, T7, T8, T9; 
+                           0, 1, 2, 3, 4, 5, 6, 7, 8, 9);
+impl_value_for_tuple!(T0, T1, T2, T3, T4, T5, T6, T7, T8, T9, T10; 
+                           0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10);
+impl_value_for_tuple!(T0, T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11;
+                           0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11);
+impl_value_for_tuple!(T0, T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, T12;
+                           0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12);
+impl_value_for_tuple!(T0, T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, T12, T13;
+                           0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13);
+impl_value_for_tuple!(T0, T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, T12, T13, T14;
+                           0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14);
+impl_value_for_tuple!(T0, T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, T12, T13, T14, T15;
+                           0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15);
 
 //
 //  ValueList impls

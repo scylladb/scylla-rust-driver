@@ -36,12 +36,12 @@ pub fn from_user_type_derive(tokens_input: TokenStream) -> TokenStream {
         impl FromCQLVal<scylla::frame::response::result::CQLValue> for #struct_name {
             fn from_cql(cql_val: scylla::frame::response::result::CQLValue)
             -> Result<Self, scylla::cql_to_rust::FromCQLValError> {
-                use std::collections::HashMap;
+                use std::collections::BTreeMap;
                 use scylla::cql_to_rust::{FromCQLVal, FromCQLValError};
                 use scylla::frame::response::result::CQLValue;
 
                 // Interpret CQLValue as CQlValue::UserDefinedType
-                let mut fields: HashMap<String, Option<CQLValue>> = match cql_val {
+                let mut fields: BTreeMap<String, Option<CQLValue>> = match cql_val {
                     CQLValue::UserDefinedType{fields, ..} => fields,
                     _ => return Err(FromCQLValError::BadCQLType),
                 };

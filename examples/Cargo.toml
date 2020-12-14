@@ -37,3 +37,7 @@ path = "select-paging.rs"
 [[example]]
 name = "user-defined-type"
 path = "user-defined-type.rs"
+
+[[example]]
+name = "cql_collections"
+path = "cql_collections.rs"
