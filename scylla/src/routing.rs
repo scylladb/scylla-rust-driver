@@ -49,10 +49,7 @@ pub enum Strategy {
         // Replication factors of datacenters with given names
         datacenter_repfactors: HashMap<String, usize>,
     },
-    LocalStrategy {
-        // TODO - is LocalStrategy required to have a replication_factor?
-        replication_factor: Option<usize>,
-    },
+    LocalStrategy, // replication_factor == 1
     Other {
         name: String,
         data: HashMap<String, String>,

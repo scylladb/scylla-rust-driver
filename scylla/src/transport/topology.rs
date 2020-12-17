@@ -539,33 +539,23 @@ fn strategy_from_string_map(
         TopologyError::BadKeyspacesQuery("No 'class' in keyspace data!".to_string())
     })?;
 
-    let mut get_replication_factor = || -> Result<Option<usize>, TopologyError> {
-        strategy_map
-            .remove("replication_factor")
-            .map(|rep_factor_str| usize::from_str(&rep_factor_str)) // Parse rep_factor_str as usize
-            .transpose() // Change Option<Result> to Result<Option>
-            .map_err(|e| {
+    let strategy: Strategy = match strategy_name.as_str() {
+        "org.apache.cassandra.locator.SimpleStrategy" => {
+            let rep_factor_str: String =
+                strategy_map.remove("replication_factor").ok_or_else(|| {
+                    TopologyError::BadKeyspacesQuery(
+                        "No replication_factor in SimpleStrategy data!".to_string(),
+                    )
+                })?;
+
+            let replication_factor: usize = usize::from_str(&rep_factor_str).map_err(|e| {
                 TopologyError::BadKeyspacesQuery(format!(
                     "Couldn't parse replication_factor string as usize! Error: {}",
                     e
                 ))
-            })
-    };
-
-    let strategy: Strategy = match strategy_name.as_str() {
-        "org.apache.cassandra.locator.SimpleStrategy" => {
-            let replication_factor: usize = get_replication_factor()?.ok_or_else(|| {
-                TopologyError::BadKeyspacesQuery(
-                    "No replication_factor in SimpleStrategy data!".to_string(),
-                )
             })?;
 
             Strategy::SimpleStrategy { replication_factor }
-        }
-        "org.apache.cassandra.locator.LocalStrategy" => {
-            let replication_factor: Option<usize> = get_replication_factor()?;
-
-            Strategy::LocalStrategy { replication_factor }
         }
         "org.apache.cassandra.locator.NetworkTopologyStrategy" => {
             let mut datacenter_repfactors: HashMap<String, usize> =
@@ -584,6 +574,7 @@ fn strategy_from_string_map(
                 datacenter_repfactors,
             }
         }
+        "org.apache.cassandra.locator.LocalStrategy" => Strategy::LocalStrategy,
         _ => Strategy::Other {
             name: strategy_name,
             data: strategy_map,

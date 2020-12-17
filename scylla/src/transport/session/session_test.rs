@@ -305,8 +305,8 @@ async fn test_keyspaces() {
     session.refresh_topology().await.unwrap();
 
     // Creates keyspaces for Topology_test_keyspace_1, 2, 3 ...
-    session.query("CREATE KEYSPACE IF NOT EXISTS top_test_ks1 WITH REPLICATION = {'class' : 'SimpleStrategy', 'replication_factor' : 1}", &[]).await.unwrap();
-    session.query("CREATE KEYSPACE IF NOT EXISTS top_test_ks2 WITH REPLICATION = {'class' : 'LocalStrategy', 'replication_factor' : 3}", &[]).await.unwrap();
+    session.query("CREATE KEYSPACE IF NOT EXISTS top_test_ks1 WITH REPLICATION = {'class' : 'SimpleStrategy', 'replication_factor' : 3}", &[]).await.unwrap();
+    session.query("CREATE KEYSPACE IF NOT EXISTS top_test_ks2 WITH REPLICATION = {'class' : 'LocalStrategy', 'replication_factor' : 1}", &[]).await.unwrap();
     session.query("CREATE KEYSPACE IF NOT EXISTS top_test_ks3 WITH REPLICATION = {'class' : 'NetworkTopologyStrategy', 'DC1': 2, 'dc2': 3}", &[]).await.unwrap();
 
     session.refresh_topology().await.unwrap();
@@ -320,7 +320,7 @@ async fn test_keyspaces() {
             .unwrap(),
         Keyspace {
             strategy: Strategy::SimpleStrategy {
-                replication_factor: 1,
+                replication_factor: 3,
             },
         }
     );
@@ -333,9 +333,7 @@ async fn test_keyspaces() {
             .get("top_test_ks2")
             .unwrap(),
         Keyspace {
-            strategy: Strategy::LocalStrategy {
-                replication_factor: Some(3),
-            },
+            strategy: Strategy::LocalStrategy
         }
     );
 
