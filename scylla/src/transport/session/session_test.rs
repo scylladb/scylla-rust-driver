@@ -290,3 +290,45 @@ async fn test_token_calculation() {
         assert_eq!(token, expected_token)
     }
 }
+
+#[tokio::test]
+#[ignore]
+async fn test_keyspaces() {
+    use crate::routing::{Keyspace, Strategy};
+
+    let uri = std::env::var("SCYLLA_URI").unwrap_or_else(|_| "127.0.0.1:9042".to_string());
+
+    println!("Connecting to {} ...", uri);
+
+    let session = Session::connect(uri, None).await.unwrap();
+    session.refresh_topology().await.unwrap();
+
+    session.query("CREATE KEYSPACE IF NOT EXISTS top_test_ks1 WITH REPLICATION = {'class' : 'SimpleStrategy', 'replication_factor' : 1}", &[]).await.unwrap();
+    session.query("CREATE KEYSPACE IF NOT EXISTS top_test_ks2 WITH REPLICATION = {'class' : 'LocalStrategy', 'replication_factor' : 3}", &[]).await.unwrap();
+
+    session.refresh_topology().await.unwrap();
+
+    assert_eq!(
+        session
+            .topology
+            .get_keyspace("top_test_ks1")
+            .unwrap()
+            .unwrap(),
+        Keyspace {
+            replication_factor: Some(1),
+            strategy_class: Some(Strategy::SimpleStrategy),
+        }
+    );
+
+    assert_eq!(
+        session
+            .topology
+            .get_keyspace("top_test_ks2")
+            .unwrap()
+            .unwrap(),
+        Keyspace {
+            replication_factor: Some(3),
+            strategy_class: Some(Strategy::LocalStrategy),
+        }
+    );
+}

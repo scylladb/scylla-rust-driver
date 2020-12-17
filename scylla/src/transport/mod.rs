@@ -22,6 +22,3 @@ impl ToString for Compression {
         }
     }
 }
-
-#[cfg(test)]
-mod session_test;

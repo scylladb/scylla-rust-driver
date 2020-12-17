@@ -1,3 +1,6 @@
+#[cfg(test)]
+mod session_test;
+
 use futures::{
     future::{try_join_all, RemoteHandle},
     FutureExt,
