@@ -491,45 +491,21 @@ async fn query_keyspaces(conn: &Connection) -> Result<Vec<(String, Keyspace)>, T
             TopologyError::BadKeyspacesQuery(format!("Returned columns have wrong types: {}", e))
         })?;
 
-        use serde_json::Value;
-        let mut keyspace_json: Value = serde_json::from_str(&keyspace_json_text).map_err(|e| {
-            TopologyError::BadKeyspacesQuery(format!(
-                "Couldn't parse received keyspace data as json: {}",
-                e
-            ))
-        })?;
+        let mut strategy_map: HashMap<String, String> = json_to_string_map(&keyspace_json_text)?;
 
-        let replication_factor: Option<usize> = match &keyspace_json["replication_factor"] {
-            Value::String(rep_factor_str) => {
-                let rep_factor: usize = usize::from_str(&rep_factor_str).map_err(|e| {
-                    TopologyError::BadKeyspacesQuery(format!(
-                        "Couldn't parse replication_factor string as usize! Error: {}",
-                        e
-                    ))
-                })?;
+        let strategy_class: Option<Strategy> =
+            strategy_map.remove("class").map(Strategy::from_string);
 
-                Some(rep_factor)
-            }
-            Value::Null => None,
-            _ => {
-                return Err(TopologyError::BadKeyspacesQuery(
-                    "Unexpected type of 'replication_factor' in keyspace json! Expected string"
-                        .to_string(),
-                )
-                .into())
-            }
-        };
-
-        let strategy_class: Option<Strategy> = match keyspace_json["class"].take() {
-            Value::String(strat_class) => Some(Strategy::from_string(strat_class)),
-            Value::Null => None,
-            _ => {
-                return Err(TopologyError::BadKeyspacesQuery(
-                    "Unexpected type of 'class' in keyspace json! Expected string".to_string(),
-                )
-                .into())
-            }
-        };
+        let replication_factor: Option<usize> = strategy_map
+            .remove("replication_factor")
+            .map(|rep_factor_str| usize::from_str(&rep_factor_str)) // Parse rep_factor_str as usize
+            .transpose() // Change Option<Result> to Result<Option>
+            .map_err(|e| {
+                TopologyError::BadKeyspacesQuery(format!(
+                    "Couldn't parse replication_factor string as usize! Error: {}",
+                    e
+                ))
+            })?;
 
         result.push((
             keyspace_name,
@@ -538,6 +514,42 @@ async fn query_keyspaces(conn: &Connection) -> Result<Vec<(String, Keyspace)>, T
                 strategy_class,
             },
         ));
+    }
+
+    Ok(result)
+}
+
+fn json_to_string_map(json_text: &str) -> Result<HashMap<String, String>, TopologyError> {
+    use serde_json::Value;
+
+    let json: Value = serde_json::from_str(json_text).map_err(|e| {
+        TopologyError::BadKeyspacesQuery(format!(
+            "Couldn't parse received keyspace data as json: {}",
+            e
+        ))
+    })?;
+
+    let object_map = match json {
+        Value::Object(map) => map,
+        _ => {
+            return Err(TopologyError::BadKeyspacesQuery(
+                "Couldn't convert json to map<string,string> - value is not an object".to_string(),
+            ))
+        }
+    };
+
+    let mut result = HashMap::with_capacity(object_map.len());
+
+    for (key, val) in object_map.into_iter() {
+        match val {
+            Value::String(string) => result.insert(key, string),
+            _ => {
+                return Err(TopologyError::BadKeyspacesQuery(
+                    "Couldn't convert json to map<string,string> - value is not a string"
+                        .to_string(),
+                ))
+            }
+        };
     }
 
     Ok(result)
