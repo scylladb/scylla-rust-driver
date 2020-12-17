@@ -303,8 +303,10 @@ async fn test_keyspaces() {
     let session = Session::connect(uri, None).await.unwrap();
     session.refresh_topology().await.unwrap();
 
+    // Creates keyspaces for Topology_test_keyspace_1, 2, 3 ...
     session.query("CREATE KEYSPACE IF NOT EXISTS top_test_ks1 WITH REPLICATION = {'class' : 'SimpleStrategy', 'replication_factor' : 1}", &[]).await.unwrap();
     session.query("CREATE KEYSPACE IF NOT EXISTS top_test_ks2 WITH REPLICATION = {'class' : 'LocalStrategy', 'replication_factor' : 3}", &[]).await.unwrap();
+    session.query("CREATE KEYSPACE IF NOT EXISTS top_test_ks3 WITH REPLICATION = {'class' : 'NetworkTopologyStrategy'}", &[]).await.unwrap();
 
     session.refresh_topology().await.unwrap();
 
@@ -329,6 +331,18 @@ async fn test_keyspaces() {
         Keyspace {
             replication_factor: Some(3),
             strategy_class: Some(Strategy::LocalStrategy),
+        }
+    );
+
+    assert_eq!(
+        session
+            .topology
+            .get_keyspace("top_test_ks3")
+            .unwrap()
+            .unwrap(),
+        Keyspace {
+            replication_factor: None,
+            strategy_class: Some(Strategy::NetworkTopologyStrategy),
         }
     );
 }

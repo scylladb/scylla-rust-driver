@@ -37,8 +37,9 @@ pub struct ShardInfo {
 
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub struct Keyspace {
-    // TODO - are those required for each keyspace? Maybe Option is not needed
+    // replication_factor might be None ex. with NetworkTopologyStrategy
     pub replication_factor: Option<usize>,
+    // TODO - is strategy_class required for each keyspace to exist? Maybe Option is not needed
     pub strategy_class: Option<Strategy>,
 }
 
@@ -46,6 +47,7 @@ pub struct Keyspace {
 pub enum Strategy {
     SimpleStrategy,
     LocalStrategy,
+    NetworkTopologyStrategy,
     // TODO - add more strategies
     WithName(String),
 }
@@ -55,6 +57,9 @@ impl Strategy {
         match strategy_string.as_str() {
             "org.apache.cassandra.locator.SimpleStrategy" => Strategy::SimpleStrategy,
             "org.apache.cassandra.locator.LocalStrategy" => Strategy::LocalStrategy,
+            "org.apache.cassandra.locator.NetworkTopologyStrategy" => {
+                Strategy::NetworkTopologyStrategy
+            }
             _ => Strategy::WithName(strategy_string),
         }
     }
