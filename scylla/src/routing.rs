@@ -8,7 +8,7 @@ use std::num::Wrapping;
 use std::ops::Bound::{Included, Unbounded};
 use thiserror::Error;
 
-#[derive(PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Copy)]
+#[derive(PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Copy, Debug)]
 pub struct Node {
     // TODO: potentially a node may have multiple addresses, remember them?
     // but we need an Ord instance on Node
@@ -33,6 +33,31 @@ pub struct ShardInfo {
     shard: u16,
     nr_shards: u16,
     msb_ignore: u8,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub struct Keyspace {
+    // TODO - are those required for each keyspace? Maybe Option is not needed
+    pub replication_factor: Option<usize>,
+    pub strategy_class: Option<Strategy>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub enum Strategy {
+    SimpleStrategy,
+    LocalStrategy,
+    // TODO - add more strategies
+    WithName(String),
+}
+
+impl Strategy {
+    pub fn from_string(strategy_string: String) -> Strategy {
+        match strategy_string.as_str() {
+            "org.apache.cassandra.locator.SimpleStrategy" => Strategy::SimpleStrategy,
+            "org.apache.cassandra.locator.LocalStrategy" => Strategy::LocalStrategy,
+            _ => Strategy::WithName(strategy_string),
+        }
+    }
 }
 
 impl std::str::FromStr for Token {

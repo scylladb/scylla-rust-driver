@@ -12,6 +12,9 @@ use tokio::time;
 use crate::frame::response::result;
 use crate::routing::*;
 use crate::transport::connection::{open_connection, open_named_connection, Connection};
+use crate::transport::session::IntoTypedRows;
+
+use thiserror::Error;
 
 const UPDATER_CRASHED: &str = "the topology updater thread has crashed. Need to restart it.";
 
@@ -22,6 +25,7 @@ pub struct Topology {
     // the ring should probably be cached, and the cache refreshed periodically using the Arc
     // calling refresh() would refresh it synchronously
     ring: Arc<RwLock<Ring>>,
+    keyspaces: Arc<RwLock<HashMap<String, Keyspace>>>,
 
     refresh_tx: mpsc::Sender<RefreshRequest>,
 }
@@ -49,11 +53,20 @@ pub struct TopologyReader {
     // separate set.
     tokens: HashMap<Node, Vec<Token>>,
     ring: Arc<RwLock<Ring>>,
+    keyspaces: Arc<RwLock<HashMap<String, Keyspace>>>,
 
     refresh_rx: mpsc::Receiver<RefreshRequest>,
 
     // Global port for the cluster. Assumes every node listens on this
     port: u16,
+}
+
+#[derive(Error, Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub enum SingleRefreshError {
+    #[error("Refresh timed out")]
+    Timeout,
+    #[error("Connection to node {0:?} broken")]
+    BrokenConnection(Node),
 }
 
 impl Topology {
@@ -63,6 +76,20 @@ impl Topology {
                 UPDATER_CRASHED.to_string(),
             ))
         })
+    }
+
+    /// Get keyspace data like replication factor, strategy
+    #[allow(dead_code)] // For internal use - once used in load balancing the warning will disappear
+    pub fn get_keyspace(
+        &self,
+        keyspace_name: &str,
+    ) -> Result<Option<Keyspace>, InternalDriverError> {
+        let keyspaces_map = self
+            .keyspaces
+            .read()
+            .map_err(|_| InternalDriverError::UpdaterError(UPDATER_CRASHED.to_string()))?;
+
+        Ok(keyspaces_map.get(keyspace_name).map(Keyspace::clone))
     }
 
     // Performs a synchronous refresh of the topology information.
@@ -117,6 +144,7 @@ impl TopologyReader {
         }
 
         let ring = Arc::new(RwLock::new(Ring { owners }));
+        let keyspaces = Arc::new(RwLock::new(HashMap::new()));
         let tokens = vec![(n, toks)].into_iter().collect();
         let pool = vec![(n, conn)].into_iter().collect();
         let (refresh_tx, refresh_rx) = mpsc::channel(32);
@@ -126,10 +154,15 @@ impl TopologyReader {
                 pool,
                 tokens,
                 ring: ring.clone(),
+                keyspaces: keyspaces.clone(),
                 refresh_rx,
                 port: n.addr.port(),
             },
-            Topology { ring, refresh_tx },
+            Topology {
+                ring,
+                keyspaces,
+                refresh_tx,
+            },
         ))
     }
 
@@ -162,78 +195,41 @@ impl TopologyReader {
     async fn refresh(&mut self) -> Result<(), TransportError> {
         use time::{timeout, Duration};
 
-        let mut broken_connections = vec![];
+        let mut broken_connections: Vec<Node> = vec![];
         let mut refreshed = false;
+
+        // We have to move self.tokens out of self for the update
+        // We want to borrow &self in 3 places at once:
+        // self.pool.iter(), refresh_peers, refresh_keyspaces
+        // And borrow &mut self.tokens in refresh_peers
+        // so moving out self.tokens seems resonable
+        let mut self_tokens: HashMap<Node, Vec<Token>> = HashMap::new();
+        std::mem::swap(&mut self.tokens, &mut self_tokens);
+
         for (&node, conn) in self.pool.iter() {
             // TODO: handle broken connections
             // TODO: after short timeout, attempt to refresh on another connection *in parallel*
             // while continuing waiting on the previous connection
-            let (peer_addrs, _) =
-                match timeout(Duration::from_secs(5), query_peers(conn, false, self.port)).await {
-                    Err(_) => {
-                        // A timeout doesn't necessarily mean that the connection is useless.
-                        // It may be a temporary network partition between us and the server.
-                        continue;
-                    }
-                    Ok(Ok(ret)) => ret,
-                    Ok(Err(e)) => {
-                        eprintln!("Error when querying system.peers of {}: {}", node.addr, e);
-                        // TODO distinguish between different error types and react accordingly
-                        // for now, we just drop the connection on every error.
-                        broken_connections.push(node);
-                        continue;
-                    }
-                };
+            let peers_fut = self.refresh_peers(&mut self_tokens, node, conn);
+            let keys_fut = self.refresh_keyspaces(node, conn);
 
-            // We assume that tokens of existing peers don't change.
-            // TODO: in the future this assumption might become false
-            let need_new_tokens = peer_addrs
-                .iter()
-                .any(|addr| !self.tokens.contains_key(&Node { addr: *addr }));
+            let (peers_res, keys_res) = tokio::join!(peers_fut, keys_fut);
 
-            if need_new_tokens {
-                let (peer_addrs, peer_toks) =
-                    match timeout(Duration::from_secs(5), query_peers(conn, true, self.port)).await
-                    {
-                        Err(_) => continue,
-                        Ok(Ok(ret)) => ret,
-                        Ok(Err(e)) => {
-                            eprintln!("Error when querying system.peers of {}: {}", node.addr, e);
-                            // TODO get rid of copy-pasta
-                            broken_connections.push(node);
-                            continue;
-                        }
-                    };
-                assert_eq!(peer_addrs.len(), peer_toks.len());
-                for (addr, toks) in peer_addrs.into_iter().zip(peer_toks.into_iter()) {
-                    let n = Node { addr };
-                    let new_ring = {
-                        let mut ring = self
-                            .ring
-                            .read()
-                            .unwrap_or_else(|_| panic!("poisoned ring lock")) // TODO: handle this better?
-                            .clone();
-                        for &t in &toks {
-                            ring.owners.insert(t, n);
-                        }
-                        ring
-                    };
-
-                    let mut ring_ref = self
-                        .ring
-                        .write()
-                        .unwrap_or_else(|_| panic!("poisoned ring lock")); // TODO same as above?
-                    *ring_ref = new_ring;
-
-                    self.tokens.insert(n, toks);
-                }
+            if let Err(SingleRefreshError::BrokenConnection(node)) = peers_res {
+                broken_connections.push(node);
+            } else if let Err(SingleRefreshError::BrokenConnection(node)) = keys_res {
+                broken_connections.push(node);
             }
 
             // TODO: Remove nodes that are not in peers anymore
             // (from pool, tokens, and ring)
-
-            refreshed = true;
+            if peers_res.is_ok() && keys_res.is_ok() {
+                refreshed = true;
+            }
         }
+
+        // Put self.tokens back in the struct
+        std::mem::swap(&mut self.tokens, &mut self_tokens);
 
         for node in broken_connections {
             self.pool.remove(&node);
@@ -291,6 +287,114 @@ impl TopologyReader {
                 "no new connections could be opened".to_string(),
             ),
         ))
+    }
+
+    async fn refresh_peers(
+        &self,
+        self_tokens: &mut HashMap<Node, Vec<Token>>,
+        node: Node,
+        conn: &Connection,
+    ) -> Result<(), SingleRefreshError> {
+        use time::{timeout, Duration};
+
+        let (peer_addrs, _) =
+            match timeout(Duration::from_secs(5), query_peers(conn, false, self.port)).await {
+                Err(_) => {
+                    // A timeout doesn't necessarily mean that the connection is useless.
+                    // It may be a temporary network partition between us and the server.
+                    return Err(SingleRefreshError::Timeout);
+                }
+                Ok(Ok(ret)) => ret,
+                Ok(Err(e)) => {
+                    eprintln!("Error when querying system.peers of {}: {}", node.addr, e);
+                    // TODO distinguish between different error types and react accordingly
+                    // for now, we just drop the connection on every error.
+                    return Err(SingleRefreshError::BrokenConnection(node));
+                }
+            };
+
+        // We assume that tokens of existing peers don't change.
+        // TODO: in the future this assumption might become false
+        let need_new_tokens = peer_addrs
+            .iter()
+            .any(|addr| !self_tokens.contains_key(&Node { addr: *addr }));
+
+        if need_new_tokens {
+            let (peer_addrs, peer_toks) =
+                match timeout(Duration::from_secs(5), query_peers(conn, true, self.port)).await {
+                    Err(_) => return Err(SingleRefreshError::Timeout),
+                    Ok(Ok(ret)) => ret,
+                    Ok(Err(e)) => {
+                        eprintln!("Error when querying system.peers of {}: {}", node.addr, e);
+                        // TODO get rid of copy-pasta
+                        return Err(SingleRefreshError::BrokenConnection(node));
+                    }
+                };
+            assert_eq!(peer_addrs.len(), peer_toks.len());
+            for (addr, toks) in peer_addrs.into_iter().zip(peer_toks.into_iter()) {
+                let n = Node { addr };
+                let new_ring = {
+                    let mut ring = self
+                        .ring
+                        .read()
+                        .unwrap_or_else(|_| panic!("poisoned ring lock")) // TODO: handle this better?
+                        .clone();
+                    for &t in &toks {
+                        ring.owners.insert(t, n);
+                    }
+                    ring
+                };
+
+                let mut ring_ref = self
+                    .ring
+                    .write()
+                    .unwrap_or_else(|_| panic!("poisoned ring lock")); // TODO same as above?
+                *ring_ref = new_ring;
+
+                self_tokens.insert(n, toks);
+            }
+        }
+        Ok(())
+    }
+
+    async fn refresh_keyspaces(
+        &self,
+        node: Node,
+        conn: &Connection,
+    ) -> Result<(), SingleRefreshError> {
+        use tokio::time::{timeout, Duration};
+
+        // Read keyspace information from system_schema.keyspaces
+        let received_keyspaces: Vec<(String, Keyspace)> =
+            match timeout(Duration::from_secs(5), query_keyspaces(conn)).await {
+                Err(_) => {
+                    // A timeout doesn't necessarily mean that the connection is useless.
+                    // It may be a temporary network partition between us and the server.
+                    return Err(SingleRefreshError::Timeout);
+                }
+                Ok(Ok(ret)) => ret,
+                Ok(Err(e)) => {
+                    eprintln!(
+                        "Error when querying system_schema.keyspaces of {}: {}",
+                        node.addr, e
+                    );
+                    // TODO distinguish between different error types and react accordingly
+                    // for now, we just drop the connection on every error.
+                    return Err(SingleRefreshError::BrokenConnection(node));
+                }
+            };
+
+        // Add received keyspaces to self.keyspaces
+        let locked_keyspaces: &mut HashMap<String, Keyspace> = &mut self
+            .keyspaces
+            .write()
+            .unwrap_or_else(|_| panic!("poisoned keyspaces lock")); // TODO: handle this better?;
+
+        for (keyspace_name, keyspace) in received_keyspaces {
+            locked_keyspaces.insert(keyspace_name, keyspace);
+        }
+
+        Ok(())
     }
 }
 
@@ -361,4 +465,80 @@ fn unwrap_tokens(tokens_val_opt: Option<result::CQLValue>) -> Result<Vec<Token>,
         ret.push(Token::from_str(tok).map_err(|_| TokenError::ParseFailure(tok.to_string()))?);
     }
     Ok(ret)
+}
+
+async fn query_keyspaces(conn: &Connection) -> Result<Vec<(String, Keyspace)>, TransportError> {
+    let rows = match conn
+        .query_single_page(
+            "select keyspace_name, toJson(replication) from system_schema.keyspaces",
+            &[],
+        )
+        .await?
+    {
+        Some(rows) => rows,
+        None => {
+            return Err(TopologyError::BadKeyspacesQuery(
+                "No rows returned!, server response should be Rows".to_string(),
+            )
+            .into());
+        }
+    };
+
+    let mut result = Vec::with_capacity(rows.len());
+
+    for row in rows.into_typed::<(String, String)>() {
+        let (keyspace_name, keyspace_json_text) = row.map_err(|e| {
+            TopologyError::BadKeyspacesQuery(format!("Returned columns have wrong types: {}", e))
+        })?;
+
+        use serde_json::Value;
+        let mut keyspace_json: Value = serde_json::from_str(&keyspace_json_text).map_err(|e| {
+            TopologyError::BadKeyspacesQuery(format!(
+                "Couldn't parse received keyspace data as json: {}",
+                e
+            ))
+        })?;
+
+        let replication_factor: Option<usize> = match &keyspace_json["replication_factor"] {
+            Value::String(rep_factor_str) => {
+                let rep_factor: usize = usize::from_str(&rep_factor_str).map_err(|e| {
+                    TopologyError::BadKeyspacesQuery(format!(
+                        "Couldn't parse replication_factor string as usize! Error: {}",
+                        e
+                    ))
+                })?;
+
+                Some(rep_factor)
+            }
+            Value::Null => None,
+            _ => {
+                return Err(TopologyError::BadKeyspacesQuery(
+                    "Unexpected type of 'replication_factor' in keyspace json! Expected string"
+                        .to_string(),
+                )
+                .into())
+            }
+        };
+
+        let strategy_class: Option<Strategy> = match keyspace_json["class"].take() {
+            Value::String(strat_class) => Some(Strategy::from_string(strat_class)),
+            Value::Null => None,
+            _ => {
+                return Err(TopologyError::BadKeyspacesQuery(
+                    "Unexpected type of 'class' in keyspace json! Expected string".to_string(),
+                )
+                .into())
+            }
+        };
+
+        result.push((
+            keyspace_name,
+            Keyspace {
+                replication_factor,
+                strategy_class,
+            },
+        ));
+    }
+
+    Ok(result)
 }

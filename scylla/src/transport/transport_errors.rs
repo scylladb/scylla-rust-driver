@@ -26,6 +26,9 @@ pub enum TopologyError {
     #[error("Expected rows result when querying system.peers")]
     PeersRowError,
 
+    #[error("Bad query result when querying system_schema.keyspaces: {0}")]
+    BadKeyspacesQuery(String),
+
     #[error("Expected rows result when querying system.local")]
     LocalExpectedRowResults,
     #[error("system.local query result empty")]
