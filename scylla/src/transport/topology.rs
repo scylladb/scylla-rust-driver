@@ -78,18 +78,13 @@ impl Topology {
         })
     }
 
-    /// Get keyspace data like replication factor, strategy
     #[allow(dead_code)] // For internal use - once used in load balancing the warning will disappear
-    pub fn get_keyspace(
+    pub fn read_keyspaces(
         &self,
-        keyspace_name: &str,
-    ) -> Result<Option<Keyspace>, InternalDriverError> {
-        let keyspaces_map = self
-            .keyspaces
+    ) -> Result<RwLockReadGuard<'_, HashMap<String, Keyspace>>, InternalDriverError> {
+        self.keyspaces
             .read()
-            .map_err(|_| InternalDriverError::UpdaterError(UPDATER_CRASHED.to_string()))?;
-
-        Ok(keyspaces_map.get(keyspace_name).map(Keyspace::clone))
+            .map_err(|_| InternalDriverError::UpdaterError(UPDATER_CRASHED.to_string()))
     }
 
     // Performs a synchronous refresh of the topology information.
@@ -491,29 +486,11 @@ async fn query_keyspaces(conn: &Connection) -> Result<Vec<(String, Keyspace)>, T
             TopologyError::BadKeyspacesQuery(format!("Returned columns have wrong types: {}", e))
         })?;
 
-        let mut strategy_map: HashMap<String, String> = json_to_string_map(&keyspace_json_text)?;
+        let strategy_map: HashMap<String, String> = json_to_string_map(&keyspace_json_text)?;
 
-        let strategy_class: Option<Strategy> =
-            strategy_map.remove("class").map(Strategy::from_string);
+        let strategy: Strategy = strategy_from_string_map(strategy_map)?;
 
-        let replication_factor: Option<usize> = strategy_map
-            .remove("replication_factor")
-            .map(|rep_factor_str| usize::from_str(&rep_factor_str)) // Parse rep_factor_str as usize
-            .transpose() // Change Option<Result> to Result<Option>
-            .map_err(|e| {
-                TopologyError::BadKeyspacesQuery(format!(
-                    "Couldn't parse replication_factor string as usize! Error: {}",
-                    e
-                ))
-            })?;
-
-        result.push((
-            keyspace_name,
-            Keyspace {
-                replication_factor,
-                strategy_class,
-            },
-        ));
+        result.push((keyspace_name, Keyspace { strategy }));
     }
 
     Ok(result)
@@ -553,4 +530,65 @@ fn json_to_string_map(json_text: &str) -> Result<HashMap<String, String>, Topolo
     }
 
     Ok(result)
+}
+
+fn strategy_from_string_map(
+    mut strategy_map: HashMap<String, String>,
+) -> Result<Strategy, TopologyError> {
+    let strategy_name: String = strategy_map.remove("class").ok_or_else(|| {
+        TopologyError::BadKeyspacesQuery("No 'class' in keyspace data!".to_string())
+    })?;
+
+    let mut get_replication_factor = || -> Result<Option<usize>, TopologyError> {
+        strategy_map
+            .remove("replication_factor")
+            .map(|rep_factor_str| usize::from_str(&rep_factor_str)) // Parse rep_factor_str as usize
+            .transpose() // Change Option<Result> to Result<Option>
+            .map_err(|e| {
+                TopologyError::BadKeyspacesQuery(format!(
+                    "Couldn't parse replication_factor string as usize! Error: {}",
+                    e
+                ))
+            })
+    };
+
+    let strategy: Strategy = match strategy_name.as_str() {
+        "org.apache.cassandra.locator.SimpleStrategy" => {
+            let replication_factor: usize = get_replication_factor()?.ok_or_else(|| {
+                TopologyError::BadKeyspacesQuery(
+                    "No replication_factor in SimpleStrategy data!".to_string(),
+                )
+            })?;
+
+            Strategy::SimpleStrategy { replication_factor }
+        }
+        "org.apache.cassandra.locator.LocalStrategy" => {
+            let replication_factor: Option<usize> = get_replication_factor()?;
+
+            Strategy::LocalStrategy { replication_factor }
+        }
+        "org.apache.cassandra.locator.NetworkTopologyStrategy" => {
+            let mut datacenter_repfactors: HashMap<String, usize> =
+                HashMap::with_capacity(strategy_map.len());
+
+            for (datacenter, rep_factor_str) in strategy_map.drain() {
+                let rep_factor: usize = match usize::from_str(&rep_factor_str) {
+                    Ok(number) => number,
+                    Err(_) => continue, // There might be other things in the map, we care only about rep_factors
+                };
+
+                datacenter_repfactors.insert(datacenter, rep_factor);
+            }
+
+            Strategy::NetworkTopologyStrategy {
+                datacenter_repfactors,
+            }
+        }
+        _ => Strategy::Other {
+            name: strategy_name,
+            data: strategy_map,
+        },
+    };
+
+    Ok(strategy)
 }

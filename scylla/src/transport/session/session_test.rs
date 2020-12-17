@@ -1,6 +1,7 @@
 use crate::frame::value::ValueList;
 use crate::routing::hash3_x64_128;
 use crate::transport::session::Session;
+use std::collections::HashMap;
 
 // TODO: Requires a running local Scylla instance
 #[tokio::test]
@@ -306,43 +307,53 @@ async fn test_keyspaces() {
     // Creates keyspaces for Topology_test_keyspace_1, 2, 3 ...
     session.query("CREATE KEYSPACE IF NOT EXISTS top_test_ks1 WITH REPLICATION = {'class' : 'SimpleStrategy', 'replication_factor' : 1}", &[]).await.unwrap();
     session.query("CREATE KEYSPACE IF NOT EXISTS top_test_ks2 WITH REPLICATION = {'class' : 'LocalStrategy', 'replication_factor' : 3}", &[]).await.unwrap();
-    session.query("CREATE KEYSPACE IF NOT EXISTS top_test_ks3 WITH REPLICATION = {'class' : 'NetworkTopologyStrategy'}", &[]).await.unwrap();
+    session.query("CREATE KEYSPACE IF NOT EXISTS top_test_ks3 WITH REPLICATION = {'class' : 'NetworkTopologyStrategy', 'DC1': 2, 'dc2': 3}", &[]).await.unwrap();
 
     session.refresh_topology().await.unwrap();
 
     assert_eq!(
-        session
+        *session
             .topology
-            .get_keyspace("top_test_ks1")
+            .read_keyspaces()
             .unwrap()
+            .get("top_test_ks1")
             .unwrap(),
         Keyspace {
-            replication_factor: Some(1),
-            strategy_class: Some(Strategy::SimpleStrategy),
+            strategy: Strategy::SimpleStrategy {
+                replication_factor: 1,
+            },
         }
     );
 
     assert_eq!(
-        session
+        *session
             .topology
-            .get_keyspace("top_test_ks2")
+            .read_keyspaces()
             .unwrap()
+            .get("top_test_ks2")
             .unwrap(),
         Keyspace {
-            replication_factor: Some(3),
-            strategy_class: Some(Strategy::LocalStrategy),
+            strategy: Strategy::LocalStrategy {
+                replication_factor: Some(3),
+            },
         }
     );
 
+    let mut expected_repfactors: HashMap<String, usize> = HashMap::new();
+    expected_repfactors.insert("DC1".into(), 2);
+    expected_repfactors.insert("dc2".into(), 3);
+
     assert_eq!(
-        session
+        *session
             .topology
-            .get_keyspace("top_test_ks3")
+            .read_keyspaces()
             .unwrap()
+            .get("top_test_ks3")
             .unwrap(),
         Keyspace {
-            replication_factor: None,
-            strategy_class: Some(Strategy::NetworkTopologyStrategy),
+            strategy: Strategy::NetworkTopologyStrategy {
+                datacenter_repfactors: expected_repfactors
+            }
         }
     );
 }

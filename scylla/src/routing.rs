@@ -35,34 +35,28 @@ pub struct ShardInfo {
     msb_ignore: u8,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Keyspace {
-    // replication_factor might be None ex. with NetworkTopologyStrategy
-    pub replication_factor: Option<usize>,
-    // TODO - is strategy_class required for each keyspace to exist? Maybe Option is not needed
-    pub strategy_class: Option<Strategy>,
+    pub strategy: Strategy,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Strategy {
-    SimpleStrategy,
-    LocalStrategy,
-    NetworkTopologyStrategy,
-    // TODO - add more strategies
-    WithName(String),
-}
-
-impl Strategy {
-    pub fn from_string(strategy_string: String) -> Strategy {
-        match strategy_string.as_str() {
-            "org.apache.cassandra.locator.SimpleStrategy" => Strategy::SimpleStrategy,
-            "org.apache.cassandra.locator.LocalStrategy" => Strategy::LocalStrategy,
-            "org.apache.cassandra.locator.NetworkTopologyStrategy" => {
-                Strategy::NetworkTopologyStrategy
-            }
-            _ => Strategy::WithName(strategy_string),
-        }
-    }
+    SimpleStrategy {
+        replication_factor: usize,
+    },
+    NetworkTopologyStrategy {
+        // Replication factors of datacenters with given names
+        datacenter_repfactors: HashMap<String, usize>,
+    },
+    LocalStrategy {
+        // TODO - is LocalStrategy required to have a replication_factor?
+        replication_factor: Option<usize>,
+    },
+    Other {
+        name: String,
+        data: HashMap<String, String>,
+    },
 }
 
 impl std::str::FromStr for Token {
