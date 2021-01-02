@@ -10,7 +10,7 @@ use std::sync::{Arc, RwLock};
 use std::time::Instant;
 use tokio::net::{lookup_host, ToSocketAddrs};
 
-use super::transport_errors::{InternalDriverError, TransportError};
+use super::transport_errors::{BadKeyspaceName, InternalDriverError, TransportError};
 use crate::batch::Batch;
 use crate::cql_to_rust::FromRow;
 use crate::frame::response::cql_to_rust::FromRowError;
@@ -25,6 +25,7 @@ use crate::transport::iterator::RowIterator;
 use crate::transport::metrics::{Metrics, MetricsView};
 use crate::transport::topology::{Topology, TopologyReader};
 use crate::transport::Compression;
+use tokio::sync::RwLock as AsyncRwLock;
 
 type Connections = Vec<(Node, Vec<Arc<Connection>>)>;
 
@@ -42,6 +43,9 @@ pub struct Session {
 
     topology: Topology,
     _topology_reader_handle: RemoteHandle<()>,
+
+    // Always lock current_keyspace BEFORE locking pool or deadlocks will occur
+    current_keyspace: AsyncRwLock<Option<String>>,
 
     metrics: Arc<Metrics>,
 }
@@ -117,6 +121,8 @@ impl Session {
                 .collect(),
         ));
 
+        let current_keyspace = AsyncRwLock::new(None);
+
         let metrics = Arc::new(Metrics::new());
 
         Ok(Session {
@@ -124,6 +130,7 @@ impl Session {
             compression,
             topology,
             _topology_reader_handle,
+            current_keyspace,
             metrics,
         })
     }
@@ -309,6 +316,47 @@ impl Session {
         }
     }
 
+    pub async fn use_keyspace(
+        &self,
+        keyspace_name: impl Into<String>,
+    ) -> Result<(), TransportError> {
+        let new_keyspace: String = keyspace_name.into();
+
+        // Trying to pass keyspace as bound value in "USE ?" doesn't work
+        // So we have to create a string for query: "USE " + new_keyspace
+        // To avoid any possible CQL injections it's good to verify that the name is valid
+        verify_keyspace_name_is_valid(&new_keyspace)?;
+
+        // Wait until we have exclusive access to the keyspace
+        let mut current_keyspace_lock = self.current_keyspace.write().await;
+
+        // Then send "USE <keyspace_name>" on all connections concurrently
+
+        // It's OK to keep pool.read() lock for a long time here
+        // because the only place where pool.write() can happen is in
+        // pick_connection after locking current_keyspace which we have exclusive lock for
+        let pool_lock = self.pool.read().map_err(|_| {
+            TransportError::InternalDriverError(InternalDriverError::PoolLockPoisoned(
+                POOL_LOCK_POISONED.to_string(),
+            ))
+        })?;
+
+        // Iterator over all connections in the pool
+        let connections_iter = pool_lock
+            .values()
+            .flat_map(|node_pool| node_pool.connections.values());
+
+        // Iterator over futures created from connection.use_keyspace(new_keyspace)
+        let use_keyspace_iter =
+            connections_iter.map(|conn| conn.use_keyspace(new_keyspace.as_str()));
+
+        try_join_all(use_keyspace_iter).await?;
+
+        *current_keyspace_lock = Some(new_keyspace);
+
+        Ok(())
+    }
+
     /// Returns all connections that the session has currently opened.
     pub fn get_connections(&self) -> Result<Connections, TransportError> {
         Ok(self
@@ -364,6 +412,14 @@ impl Session {
             // The next request using this node's pool will pick the right connection, creating
             // it if necessary.
             let new_conn = open_connection(owner.addr, None, self.compression).await?;
+
+            // current_keyspace must be locked until we finish adding new connection to the pool
+            let current_keyspace_lock = self.current_keyspace.read().await;
+
+            if let Some(keyspace_name) = &*current_keyspace_lock {
+                new_conn.use_keyspace(&keyspace_name).await?;
+            }
+
             let new_node_pool = NodePool::new(Arc::new(new_conn));
 
             return Ok(self
@@ -397,6 +453,13 @@ impl Session {
             .map(|info| info.draw_source_port_for_token(t));
         let new_conn =
             Arc::new(open_connection(owner.addr, new_conn_source_port, self.compression).await?);
+
+        // current_keyspace must be locked until we finish adding new connection to the pool
+        let current_keyspace_lock = self.current_keyspace.read().await;
+
+        if let Some(keyspace_name) = &*current_keyspace_lock {
+            new_conn.use_keyspace(&keyspace_name).await?;
+        }
 
         Ok(
             match self
@@ -432,7 +495,6 @@ impl Session {
         Ok(self
             .pool
             .read()
-            // TODO: better error message?
             .map_err(|_| {
                 TransportError::InternalDriverError(InternalDriverError::PoolLockPoisoned(
                     POOL_LOCK_POISONED.to_string(),
@@ -541,4 +603,40 @@ async fn resolve(addr: impl ToSocketAddrs + Display) -> Result<SocketAddr, Trans
     }
 
     ret.ok_or(failed_err)
+}
+
+// "Keyspace names can have up to 48 alpha-numeric characters and contain underscores;
+// only letters and numbers are supported as the first character."
+// https://docs.datastax.com/en/cql-oss/3.3/cql/cql_reference/cqlCreateKeyspace.html
+// Despite that cassandra accepts undesrcore as first character so we do too
+// https://github.com/scylladb/scylla/blob/62551b3bd382c7c47371eb3fc38173bd0cfed44d/test/cql-pytest/test_keyspace.py#L58
+// https://github.com/scylladb/scylla/blob/fd1dd0eac7a303ceaa9f3ff643c4848506b0c85c/thrift/thrift_validation.cc#L76
+fn verify_keyspace_name_is_valid(keyspace_name: &str) -> Result<(), BadKeyspaceName> {
+    if keyspace_name.is_empty() {
+        return Err(BadKeyspaceName::Empty);
+    }
+
+    // Verify that length <= 48
+    let keyspace_name_len: usize = keyspace_name.chars().count(); // Only ascii allowed so it's equal to .len()
+    if keyspace_name_len > 48 {
+        return Err(BadKeyspaceName::TooLong(
+            keyspace_name.to_string(),
+            keyspace_name_len,
+        ));
+    }
+
+    // Verify all chars are alpha-numeric or underscore
+    for character in keyspace_name.chars() {
+        match character {
+            'a'..='z' | 'A'..='Z' | '0'..='9' | '_' => {}
+            _ => {
+                return Err(BadKeyspaceName::IllegalCharacter(
+                    keyspace_name.to_string(),
+                    character,
+                ))
+            }
+        };
+    }
+
+    Ok(())
 }

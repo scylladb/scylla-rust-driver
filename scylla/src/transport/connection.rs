@@ -194,6 +194,30 @@ impl Connection {
         self.send_request(&batch_frame, true).await
     }
 
+    // Please ensure keyspace_name is valid before calling this method
+    pub async fn use_keyspace(&self, keyspace_name: &str) -> Result<(), TransportError> {
+        // Trying to pass keyspace_name as bound value doesn't work
+        // We have to send "USE " + keyspace_name
+        let query: Query = format!("USE \"{}\"", keyspace_name).into();
+        let query_response = self.query(&query, (), None).await?;
+
+        match query_response {
+            Response::Result(result::Result::SetKeyspace(set_keyspace)) => {
+                if set_keyspace.keyspace_name != keyspace_name {
+                    return Err(TransportError::InternalDriverError(
+                        InternalDriverError::UnexpectedResponse,
+                    ));
+                }
+
+                Ok(())
+            }
+            Response::Error(err) => Err(err.into()),
+            _ => Err(TransportError::InternalDriverError(
+                InternalDriverError::UnexpectedResponse,
+            )),
+        }
+    }
+
     // TODO: Return the response associated with that frame
     async fn send_request<R: Request>(
         &self,

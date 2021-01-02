@@ -65,6 +65,16 @@ pub enum DBError {
     ErrorMsg(i32, String),
 }
 
+#[derive(Debug, Error)]
+pub enum BadKeyspaceName {
+    #[error("Keyspace name is empty")]
+    Empty,
+    #[error("Keyspace name too long, must be up to 48 characters, found {1} characters. Bad keyspace name: '{0}'")]
+    TooLong(String, usize),
+    #[error("Illegal character found: '{1}', only alpha-numeric and underscores allowed. Bad keyspace name: '{0}'")]
+    IllegalCharacter(String, char),
+}
+
 #[derive(Error, Debug)]
 pub enum TransportError {
     #[error("Task queue closed")]
@@ -107,4 +117,6 @@ pub enum TransportError {
     SerializeValuesError(#[from] SerializeValuesError),
     #[error(transparent)]
     PartitionKeyError(#[from] PartitionKeyError),
+    #[error(transparent)]
+    BadKeyspaceName(#[from] BadKeyspaceName),
 }

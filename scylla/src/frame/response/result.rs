@@ -13,7 +13,7 @@ use std::str;
 
 #[derive(Debug)]
 pub struct SetKeyspace {
-    // TODO
+    pub keyspace_name: String,
 }
 
 #[derive(Debug)]
@@ -423,8 +423,10 @@ fn deser_rows(buf: &mut &[u8]) -> StdResult<Rows, ParseError> {
     })
 }
 
-fn deser_set_keyspace(_buf: &mut &[u8]) -> StdResult<SetKeyspace, ParseError> {
-    Ok(SetKeyspace {}) // TODO
+fn deser_set_keyspace(buf: &mut &[u8]) -> StdResult<SetKeyspace, ParseError> {
+    let keyspace_name: String = types::read_string(buf)?.to_string();
+
+    Ok(SetKeyspace { keyspace_name })
 }
 
 fn deser_prepared(buf: &mut &[u8]) -> StdResult<Prepared, ParseError> {

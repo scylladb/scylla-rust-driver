@@ -1,6 +1,6 @@
 use crate::frame::value::ValueList;
 use crate::routing::hash3_x64_128;
-use crate::transport::session::Session;
+use crate::transport::session::{IntoTypedRows, Session};
 
 // TODO: Requires a running local Scylla instance
 #[tokio::test]
@@ -289,4 +289,69 @@ async fn test_token_calculation() {
         ) as i64;
         assert_eq!(token, expected_token)
     }
+}
+
+#[tokio::test]
+#[ignore]
+async fn test_use_keyspace() {
+    use super::transport_errors::{BadKeyspaceName, TransportError};
+
+    let uri = std::env::var("SCYLLA_URI").unwrap_or_else(|_| "127.0.0.1:9042".to_string());
+
+    println!("Connecting to {} ...", uri);
+
+    let session = Session::connect(uri, None).await.unwrap();
+    session.refresh_topology().await.unwrap();
+
+    session.query("CREATE KEYSPACE IF NOT EXISTS use_ks_test WITH REPLICATION = {'class' : 'SimpleStrategy', 'replication_factor' : 1}", &[]).await.unwrap();
+
+    session
+        .query(
+            "CREATE TABLE IF NOT EXISTS use_ks_test.tab (a text primary key)",
+            &[],
+        )
+        .await
+        .unwrap();
+
+    session
+        .query("INSERT INTO use_ks_test.tab (a) VALUES ('test1')", &[])
+        .await
+        .unwrap();
+
+    session.use_keyspace("use_ks_test").await.unwrap();
+
+    session
+        .query("INSERT INTO tab (a) VALUES ('test2')", &[])
+        .await
+        .unwrap();
+
+    let mut rows: Vec<String> = session
+        .query("SELECT * FROM tab", &[])
+        .await
+        .unwrap()
+        .unwrap()
+        .into_typed::<(String,)>()
+        .map(|res| res.unwrap().0)
+        .collect();
+
+    rows.sort();
+
+    assert_eq!(rows, vec!["test1".to_string(), "test2".to_string()]);
+
+    // Test that invalid keyspaces get rejected
+    assert!(matches!(
+        session.use_keyspace("").await,
+        Err(TransportError::BadKeyspaceName(BadKeyspaceName::Empty))
+    ));
+
+    let long_name: String = vec!['a'; 49].iter().collect();
+    assert!(matches!(
+        session.use_keyspace(long_name).await,
+        Err(TransportError::BadKeyspaceName(BadKeyspaceName::TooLong(_, _)))
+    ));
+
+    assert!(matches!(
+        session.use_keyspace("abcd;dfdsf").await,
+        Err(TransportError::BadKeyspaceName(BadKeyspaceName::IllegalCharacter(_, ';')))
+    ));
 }
