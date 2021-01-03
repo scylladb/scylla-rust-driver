@@ -261,8 +261,8 @@ impl Connection {
         let _ = futures::try_join!(r, w);
     }
 
-    async fn reader<'a>(
-        mut read_half: tcp::ReadHalf<'a>,
+    async fn reader(
+        mut read_half: tcp::ReadHalf<'_>,
         handler_map: &StdMutex<ResponseHandlerMap>,
     ) -> Result<(), TransportError> {
         loop {
@@ -306,8 +306,8 @@ impl Connection {
         }
     }
 
-    async fn writer<'a>(
-        mut write_half: tcp::WriteHalf<'a>,
+    async fn writer(
+        mut write_half: tcp::WriteHalf<'_>,
         handler_map: &StdMutex<ResponseHandlerMap>,
         mut task_receiver: mpsc::Receiver<Task>,
     ) -> Result<(), TransportError> {
@@ -329,9 +329,11 @@ impl Connection {
                 }
             };
 
-            let mut params = FrameParams::default();
-            params.stream = stream_id;
-            params.flags = task.request_flags;
+            let params = frame::FrameParams {
+                stream: stream_id,
+                flags: task.request_flags,
+                ..Default::default()
+            };
 
             frame::write_request_frame(
                 &mut write_half,
