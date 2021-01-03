@@ -6,7 +6,8 @@ use crate::transport::session::Session;
 #[tokio::test]
 #[ignore]
 async fn test_unprepared_statement() {
-    let session = Session::connect("127.0.0.1:9042", None).await.unwrap();
+    let uri = std::env::var("SCYLLA_URI").unwrap_or_else(|_| "127.0.0.1:9042".to_string());
+    let session = Session::connect(uri, None).await.unwrap();
 
     session.query("CREATE KEYSPACE IF NOT EXISTS ks WITH REPLICATION = {'class' : 'SimpleStrategy', 'replication_factor' : 1}", &[]).await.unwrap();
     session
@@ -64,7 +65,8 @@ async fn test_unprepared_statement() {
 #[tokio::test]
 #[ignore]
 async fn test_prepared_statement() {
-    let session = Session::connect("127.0.0.1:9042", None).await.unwrap();
+    let uri = std::env::var("SCYLLA_URI").unwrap_or_else(|_| "127.0.0.1:9042".to_string());
+    let session = Session::connect(uri, None).await.unwrap();
 
     session.query("CREATE KEYSPACE IF NOT EXISTS ks WITH REPLICATION = {'class' : 'SimpleStrategy', 'replication_factor' : 1}", &[]).await.unwrap();
     session
@@ -179,7 +181,8 @@ async fn test_prepared_statement() {
 #[tokio::test]
 #[ignore]
 async fn test_batch() {
-    let session = Session::connect("127.0.0.1:9042", None).await.unwrap();
+    let uri = std::env::var("SCYLLA_URI").unwrap_or_else(|_| "127.0.0.1:9042".to_string());
+    let session = Session::connect(uri, None).await.unwrap();
 
     session.query("CREATE KEYSPACE IF NOT EXISTS ks WITH REPLICATION = {'class' : 'SimpleStrategy', 'replication_factor' : 1}", &[]).await.unwrap();
     session
@@ -243,7 +246,8 @@ async fn test_batch() {
 #[tokio::test]
 #[ignore]
 async fn test_token_calculation() {
-    let session = Session::connect("127.0.0.1:9042", None).await.unwrap();
+    let uri = std::env::var("SCYLLA_URI").unwrap_or_else(|_| "127.0.0.1:9042".to_string());
+    let session = Session::connect(uri, None).await.unwrap();
 
     session.query("CREATE KEYSPACE IF NOT EXISTS ks WITH REPLICATION = {'class' : 'SimpleStrategy', 'replication_factor' : 1}", &[]).await.unwrap();
     session
