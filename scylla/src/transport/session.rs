@@ -10,7 +10,7 @@ use std::sync::{Arc, RwLock};
 use std::time::Instant;
 use tokio::net::{lookup_host, ToSocketAddrs};
 
-use super::transport_errors::{BadKeyspaceName, InternalDriverError, TransportError};
+use super::transport_errors::{InternalDriverError, TransportError};
 use crate::batch::Batch;
 use crate::cql_to_rust::FromRow;
 use crate::frame::response::cql_to_rust::FromRowError;
@@ -20,7 +20,7 @@ use crate::frame::value::{BatchValues, SerializedValues, ValueList};
 use crate::prepared_statement::{PartitionKeyError, PreparedStatement};
 use crate::query::Query;
 use crate::routing::{murmur3_token, Node, Shard, ShardInfo, Token};
-use crate::transport::connection::{open_connection, Connection};
+use crate::transport::connection::{open_connection, Connection, VerifiedKeyspaceName};
 use crate::transport::iterator::RowIterator;
 use crate::transport::metrics::{Metrics, MetricsView};
 use crate::transport::topology::{Topology, TopologyReader};
@@ -45,7 +45,7 @@ pub struct Session {
     _topology_reader_handle: RemoteHandle<()>,
 
     // Always lock current_keyspace BEFORE locking pool or deadlocks will occur
-    current_keyspace: AsyncRwLock<Option<String>>,
+    current_keyspace: AsyncRwLock<Option<VerifiedKeyspaceName>>,
 
     metrics: Arc<Metrics>,
 }
@@ -320,12 +320,10 @@ impl Session {
         &self,
         keyspace_name: impl Into<String>,
     ) -> Result<(), TransportError> {
-        let new_keyspace: String = keyspace_name.into();
-
         // Trying to pass keyspace as bound value in "USE ?" doesn't work
         // So we have to create a string for query: "USE " + new_keyspace
         // To avoid any possible CQL injections it's good to verify that the name is valid
-        verify_keyspace_name_is_valid(&new_keyspace)?;
+        let verified_ks_name = VerifiedKeyspaceName::new(keyspace_name.into())?;
 
         // Wait until we have exclusive access to the keyspace
         let mut current_keyspace_lock = self.current_keyspace.write().await;
@@ -347,12 +345,11 @@ impl Session {
             .flat_map(|node_pool| node_pool.connections.values());
 
         // Iterator over futures created from connection.use_keyspace(new_keyspace)
-        let use_keyspace_iter =
-            connections_iter.map(|conn| conn.use_keyspace(new_keyspace.as_str()));
+        let use_keyspace_iter = connections_iter.map(|conn| conn.use_keyspace(&verified_ks_name));
 
         try_join_all(use_keyspace_iter).await?;
 
-        *current_keyspace_lock = Some(new_keyspace);
+        *current_keyspace_lock = Some(verified_ks_name);
 
         Ok(())
     }
@@ -417,7 +414,7 @@ impl Session {
             let current_keyspace_lock = self.current_keyspace.read().await;
 
             if let Some(keyspace_name) = &*current_keyspace_lock {
-                new_conn.use_keyspace(&keyspace_name).await?;
+                new_conn.use_keyspace(keyspace_name).await?;
             }
 
             let new_node_pool = NodePool::new(Arc::new(new_conn));
@@ -458,7 +455,7 @@ impl Session {
         let current_keyspace_lock = self.current_keyspace.read().await;
 
         if let Some(keyspace_name) = &*current_keyspace_lock {
-            new_conn.use_keyspace(&keyspace_name).await?;
+            new_conn.use_keyspace(keyspace_name).await?;
         }
 
         Ok(
@@ -603,40 +600,4 @@ async fn resolve(addr: impl ToSocketAddrs + Display) -> Result<SocketAddr, Trans
     }
 
     ret.ok_or(failed_err)
-}
-
-// "Keyspace names can have up to 48 alpha-numeric characters and contain underscores;
-// only letters and numbers are supported as the first character."
-// https://docs.datastax.com/en/cql-oss/3.3/cql/cql_reference/cqlCreateKeyspace.html
-// Despite that cassandra accepts undesrcore as first character so we do too
-// https://github.com/scylladb/scylla/blob/62551b3bd382c7c47371eb3fc38173bd0cfed44d/test/cql-pytest/test_keyspace.py#L58
-// https://github.com/scylladb/scylla/blob/fd1dd0eac7a303ceaa9f3ff643c4848506b0c85c/thrift/thrift_validation.cc#L76
-fn verify_keyspace_name_is_valid(keyspace_name: &str) -> Result<(), BadKeyspaceName> {
-    if keyspace_name.is_empty() {
-        return Err(BadKeyspaceName::Empty);
-    }
-
-    // Verify that length <= 48
-    let keyspace_name_len: usize = keyspace_name.chars().count(); // Only ascii allowed so it's equal to .len()
-    if keyspace_name_len > 48 {
-        return Err(BadKeyspaceName::TooLong(
-            keyspace_name.to_string(),
-            keyspace_name_len,
-        ));
-    }
-
-    // Verify all chars are alpha-numeric or underscore
-    for character in keyspace_name.chars() {
-        match character {
-            'a'..='z' | 'A'..='Z' | '0'..='9' | '_' => {}
-            _ => {
-                return Err(BadKeyspaceName::IllegalCharacter(
-                    keyspace_name.to_string(),
-                    character,
-                ))
-            }
-        };
-    }
-
-    Ok(())
 }

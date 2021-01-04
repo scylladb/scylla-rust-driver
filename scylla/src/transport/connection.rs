@@ -9,7 +9,7 @@ use std::convert::TryFrom;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::sync::Mutex as StdMutex;
 
-use super::transport_errors::{InternalDriverError, PrepareError, TransportError};
+use super::transport_errors::{BadKeyspaceName, InternalDriverError, PrepareError, TransportError};
 
 use crate::batch::{Batch, BatchStatement};
 use crate::frame::{
@@ -195,15 +195,18 @@ impl Connection {
     }
 
     // Please ensure keyspace_name is valid before calling this method
-    pub async fn use_keyspace(&self, keyspace_name: &str) -> Result<(), TransportError> {
+    pub async fn use_keyspace(
+        &self,
+        keyspace_name: &VerifiedKeyspaceName,
+    ) -> Result<(), TransportError> {
         // Trying to pass keyspace_name as bound value doesn't work
         // We have to send "USE " + keyspace_name
-        let query: Query = format!("USE \"{}\"", keyspace_name).into();
+        let query: Query = format!("USE \"{}\"", keyspace_name.as_str()).into();
         let query_response = self.query(&query, (), None).await?;
 
         match query_response {
             Response::Result(result::Result::SetKeyspace(set_keyspace)) => {
-                if set_keyspace.keyspace_name != keyspace_name {
+                if set_keyspace.keyspace_name != keyspace_name.as_str() {
                     return Err(TransportError::InternalDriverError(
                         InternalDriverError::UnexpectedResponse,
                     ));
@@ -539,5 +542,57 @@ impl StreamIDSet {
         let block_id = stream_id as usize / 64;
         let off = stream_id as usize % 64;
         self.used_bitmap[block_id] &= !(1 << off);
+    }
+}
+
+/// This type can only hold a valid keyspace name
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub struct VerifiedKeyspaceName(String);
+
+impl VerifiedKeyspaceName {
+    pub fn new(keyspace_name: String) -> Result<Self, BadKeyspaceName> {
+        Self::verify_keyspace_name_is_valid(&keyspace_name)?;
+
+        Ok(VerifiedKeyspaceName(keyspace_name))
+    }
+
+    pub fn as_str(&self) -> &str {
+        self.0.as_str()
+    }
+
+    // "Keyspace names can have up to 48 alpha-numeric characters and contain underscores;
+    // only letters and numbers are supported as the first character."
+    // https://docs.datastax.com/en/cql-oss/3.3/cql/cql_reference/cqlCreateKeyspace.html
+    // Despite that cassandra accepts undesrcore as first character so we do too
+    // https://github.com/scylladb/scylla/blob/62551b3bd382c7c47371eb3fc38173bd0cfed44d/test/cql-pytest/test_keyspace.py#L58
+    // https://github.com/scylladb/scylla/blob/fd1dd0eac7a303ceaa9f3ff643c4848506b0c85c/thrift/thrift_validation.cc#L76
+    fn verify_keyspace_name_is_valid(keyspace_name: &str) -> Result<(), BadKeyspaceName> {
+        if keyspace_name.is_empty() {
+            return Err(BadKeyspaceName::Empty);
+        }
+
+        // Verify that length <= 48
+        let keyspace_name_len: usize = keyspace_name.chars().count(); // Only ascii allowed so it's equal to .len()
+        if keyspace_name_len > 48 {
+            return Err(BadKeyspaceName::TooLong(
+                keyspace_name.to_string(),
+                keyspace_name_len,
+            ));
+        }
+
+        // Verify all chars are alpha-numeric or underscore
+        for character in keyspace_name.chars() {
+            match character {
+                'a'..='z' | 'A'..='Z' | '0'..='9' | '_' => {}
+                _ => {
+                    return Err(BadKeyspaceName::IllegalCharacter(
+                        keyspace_name.to_string(),
+                        character,
+                    ))
+                }
+            };
+        }
+
+        Ok(())
     }
 }

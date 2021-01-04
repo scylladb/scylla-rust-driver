@@ -424,7 +424,7 @@ fn deser_rows(buf: &mut &[u8]) -> StdResult<Rows, ParseError> {
 }
 
 fn deser_set_keyspace(buf: &mut &[u8]) -> StdResult<SetKeyspace, ParseError> {
-    let keyspace_name: String = types::read_string(buf)?.to_string();
+    let keyspace_name = types::read_string(buf)?.to_string();
 
     Ok(SetKeyspace { keyspace_name })
 }
