@@ -5,7 +5,7 @@ use syn::spanned::Spanned;
 /// #[derive(FromUserType)] allows to parse a struct as User Defined Type
 /// Works only on simple structs without generics etc
 pub fn from_user_type_derive(tokens_input: TokenStream) -> TokenStream {
-    let (struct_name, struct_fields) = crate::parser::parse(tokens_input, "FromUserType");
+    let (struct_name, struct_fields) = crate::parser::parse_struct_with_named_fields(tokens_input, "FromUserType");
 
     // Generates tokens for field_name: field_type::from_cql(fields.remove(stringify!(#field_name)).unwrap_or(None)) ?, ...
     let set_fields_code = struct_fields.named.iter().map(|field| {
