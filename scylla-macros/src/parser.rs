@@ -4,7 +4,7 @@ use syn::{parse, Data, DeriveInput, Fields, FieldsNamed, Ident};
 /// Parsers the tokens_input to a DeriveInput and returns the struct name from which it derives and
 /// the named fields
 pub(crate) fn parse_struct_with_named_fields(tokens_input: TokenStream, current_derive: &str) -> (Ident, FieldsNamed) {
-    let input = parse::<DeriveInput>(tokens_input.into()).expect("No DeriveInput");
+    let input = parse::<DeriveInput>(tokens_input).expect("No DeriveInput");
     let struct_name = input.ident;
     let struct_fields = match input.data {
         Data::Struct(data) => match data.fields {
