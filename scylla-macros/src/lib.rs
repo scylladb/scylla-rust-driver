@@ -3,6 +3,7 @@ use proc_macro::TokenStream;
 mod from_row;
 mod from_user_type;
 mod into_user_type;
+mod parser;
 
 /// #[derive(FromRow)] derives FromRow for struct
 /// Works only on simple structs without generics etc

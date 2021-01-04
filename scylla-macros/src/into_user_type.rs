@@ -1,23 +1,11 @@
 use proc_macro::TokenStream;
 use quote::{quote, quote_spanned};
-use syn::{parse_macro_input, spanned::Spanned, Data, DeriveInput, Fields};
+use syn::spanned::Spanned;
 
 /// #[derive(IntoUserType)] allows to parse a struct as User Defined Type
 /// Works only on simple structs without generics etc
 pub fn into_user_type_derive(tokens_input: TokenStream) -> TokenStream {
-    let input = parse_macro_input!(tokens_input as DeriveInput);
-
-    let struct_name = &input.ident;
-
-    let struct_fields = match &input.data {
-        Data::Struct(data) => {
-            match &data.fields {
-                Fields::Named(named_fields) => named_fields,
-                _ => panic!("derive(IntoUserType) works only for structs with named fields. Tuples don't need derive."),
-            }
-        },
-        _ => panic!("derive(IntoUserType) works only on structs!")
-    };
+    let (struct_name, struct_fields) = crate::parser::parse_struct_with_named_fields(tokens_input, "IntoUserType");
 
     let serialize_code = struct_fields.named.iter().map(|field| {
         let field_name = &field.ident;
