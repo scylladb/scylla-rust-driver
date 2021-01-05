@@ -8,10 +8,11 @@ use std::time::Instant;
 use bytes::Bytes;
 use futures::Stream;
 use std::result::Result as StdResult;
+use thiserror::Error;
 use tokio::sync::mpsc;
 
-use super::transport_errors::{InternalDriverError, TransportError};
-use crate::cql_to_rust::FromRow;
+use super::errors::QueryError;
+use crate::cql_to_rust::{FromRow, FromRowError};
 
 use crate::frame::{
     response::{
@@ -27,11 +28,11 @@ use crate::transport::metrics::Metrics;
 pub struct RowIterator {
     current_row_idx: usize,
     current_page: Rows,
-    page_receiver: mpsc::Receiver<StdResult<Rows, TransportError>>,
+    page_receiver: mpsc::Receiver<StdResult<Rows, QueryError>>,
 }
 
 impl Stream for RowIterator {
-    type Item = StdResult<Row, TransportError>;
+    type Item = StdResult<Row, QueryError>;
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         let mut s = self.as_mut();
@@ -145,18 +146,18 @@ impl RowIterator {
     }
 }
 struct WorkerHelper {
-    sender: mpsc::Sender<StdResult<Rows, TransportError>>,
+    sender: mpsc::Sender<StdResult<Rows, QueryError>>,
     metrics: Arc<Metrics>,
 }
 
 impl WorkerHelper {
-    fn new(sender: mpsc::Sender<StdResult<Rows, TransportError>>, metrics: Arc<Metrics>) -> Self {
+    fn new(sender: mpsc::Sender<StdResult<Rows, QueryError>>, metrics: Arc<Metrics>) -> Self {
         Self { sender, metrics }
     }
 
     async fn handle_response(
         &mut self,
-        response: StdResult<Response, TransportError>,
+        response: StdResult<Response, QueryError>,
     ) -> Option<Bytes> {
         match response {
             Ok(Response::Result(Result::Rows(rows))) => {
@@ -175,12 +176,7 @@ impl WorkerHelper {
             }
             Ok(_) => {
                 self.metrics.inc_failed_paged_queries();
-                let _ = self
-                    .sender
-                    .send(Err(TransportError::InternalDriverError(
-                        InternalDriverError::UnexpectedResponse,
-                    )))
-                    .await;
+                let _ = self.sender.send(Err(QueryError::ProtocolError)).await;
                 None
             }
             Err(err) => {
@@ -197,21 +193,33 @@ pub struct TypedRowIterator<RowT> {
     phantom_data: std::marker::PhantomData<RowT>,
 }
 
+/// Couldn't get next typed row from the iterator
+#[derive(Error, Debug, Clone)]
+pub enum NextRowError {
+    /// Query to fetch next page has failed
+    #[error(transparent)]
+    QueryError(#[from] QueryError),
+
+    /// Parsing values in row as given types failed
+    #[error(transparent)]
+    FromRowError(#[from] FromRowError),
+}
+
 impl<RowT: FromRow> Stream for TypedRowIterator<RowT> {
-    type Item = StdResult<RowT, TransportError>;
+    type Item = StdResult<RowT, NextRowError>;
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         let mut s = self.as_mut();
 
-        let next_elem: Option<StdResult<Row, TransportError>> =
+        let next_elem: Option<StdResult<Row, QueryError>> =
             match Pin::new(&mut s.row_iterator).poll_next(cx) {
                 Poll::Ready(next_elem) => next_elem,
                 Poll::Pending => return Poll::Pending,
             };
 
         let next_ready: Option<Self::Item> = match next_elem {
-            Some(Ok(next_row)) => Some(RowT::from_row(next_row).map_err(TransportError::from)),
-            Some(Err(e)) => Some(Err(e)),
+            Some(Ok(next_row)) => Some(RowT::from_row(next_row).map_err(|e| e.into())),
+            Some(Err(e)) => Some(Err(e.into())),
             None => None,
         };
 

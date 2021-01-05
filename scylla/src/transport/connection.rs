@@ -6,10 +6,12 @@ use tokio::sync::{mpsc, oneshot};
 use std::cmp::Ordering;
 use std::collections::HashMap;
 use std::convert::TryFrom;
+use std::io::ErrorKind;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
+use std::sync::Arc;
 use std::sync::Mutex as StdMutex;
 
-use super::transport_errors::{InternalDriverError, PrepareError, TransportError};
+use super::errors::{BadQuery, QueryError};
 
 use crate::batch::{Batch, BatchStatement};
 use crate::frame::{
@@ -53,7 +55,7 @@ impl Connection {
         addr: SocketAddr,
         source_port: Option<u16>,
         compression: Option<Compression>,
-    ) -> Result<Self, TransportError> {
+    ) -> Result<Self, std::io::Error> {
         let stream = match source_port {
             Some(p) => connect_with_source_port(addr, p).await?,
             None => TcpStream::connect(addr).await?,
@@ -76,19 +78,16 @@ impl Connection {
         })
     }
 
-    pub async fn startup(
-        &self,
-        options: HashMap<String, String>,
-    ) -> Result<Response, TransportError> {
+    pub async fn startup(&self, options: HashMap<String, String>) -> Result<Response, QueryError> {
         self.send_request(&request::Startup { options }, false)
             .await
     }
 
-    pub async fn get_options(&self) -> Result<Response, TransportError> {
+    pub async fn get_options(&self) -> Result<Response, QueryError> {
         self.send_request(&request::Options {}, false).await
     }
 
-    pub async fn prepare(&self, query: &str) -> Result<PreparedStatement, TransportError> {
+    pub async fn prepare(&self, query: &str) -> Result<PreparedStatement, QueryError> {
         let result = self.send_request(&request::Prepare { query }, true).await?;
         match result {
             Response::Error(err) => Err(err.into()),
@@ -97,9 +96,7 @@ impl Connection {
                 p.prepared_metadata,
                 query.to_owned(),
             )),
-            _ => Err(TransportError::PrepareError(
-                PrepareError::InternalDriverError(InternalDriverError::UnexpectedResponse),
-            )),
+            _ => Err(QueryError::ProtocolError),
         }
     }
 
@@ -107,15 +104,13 @@ impl Connection {
         &self,
         query: impl Into<Query>,
         values: impl ValueList,
-    ) -> Result<Option<Vec<result::Row>>, TransportError> {
+    ) -> Result<Option<Vec<result::Row>>, QueryError> {
         let result = self.query(&query.into(), values, None).await?;
         match result {
             Response::Error(err) => Err(err.into()),
             Response::Result(result::Result::Rows(rs)) => Ok(Some(rs.rows)),
             Response::Result(_) => Ok(None),
-            _ => Err(TransportError::PrepareError(
-                PrepareError::InternalDriverError(InternalDriverError::UnexpectedResponse),
-            )),
+            _ => Err(QueryError::ProtocolError),
         }
     }
 
@@ -124,7 +119,7 @@ impl Connection {
         query: &Query,
         values: impl ValueList,
         paging_state: Option<Bytes>,
-    ) -> Result<Response, TransportError> {
+    ) -> Result<Response, QueryError> {
         let serialized_values = values.serialized()?;
 
         let query_frame = query::Query {
@@ -145,7 +140,7 @@ impl Connection {
         prepared_statement: &PreparedStatement,
         values: impl ValueList,
         paging_state: Option<Bytes>,
-    ) -> Result<Response, TransportError> {
+    ) -> Result<Response, QueryError> {
         let serialized_values = values.serialized()?;
 
         let execute_frame = execute::Execute {
@@ -165,13 +160,13 @@ impl Connection {
         &self,
         batch: &Batch,
         values: impl BatchValues,
-    ) -> Result<Response, TransportError> {
+    ) -> Result<Response, QueryError> {
         let statements_count = batch.get_statements().len();
         if statements_count != values.len() {
-            return Err(TransportError::ValueLenMismatch(
+            return Err(QueryError::BadQuery(BadQuery::ValueLenMismatch(
                 values.len(),
                 statements_count,
-            ));
+            )));
         }
 
         let statements_iter = batch.get_statements().iter().map(|s| match s {
@@ -199,7 +194,7 @@ impl Connection {
         &self,
         request: &R,
         compress: bool,
-    ) -> Result<Response, TransportError> {
+    ) -> Result<Response, QueryError> {
         let body = request.to_bytes()?;
         let compression = if compress { self.compression } else { None };
         let body_with_ext = RequestBodyWithExtensions { body };
@@ -217,9 +212,19 @@ impl Connection {
                 response_handler: sender,
             })
             .await
-            .map_err(|_| TransportError::DroppedRequest)?;
+            .map_err(|_| {
+                QueryError::IOError(Arc::new(std::io::Error::new(
+                    ErrorKind::Other,
+                    "Connection broken",
+                )))
+            })?;
 
-        let task_response = receiver.await?;
+        let task_response = receiver.await.map_err(|_| {
+            QueryError::IOError(Arc::new(std::io::Error::new(
+                ErrorKind::Other,
+                "Connection broken",
+            )))
+        })?;
         let body_with_ext = frame::parse_response_body_extensions(
             task_response.params.flags,
             self.compression,
@@ -264,7 +269,7 @@ impl Connection {
     async fn reader(
         mut read_half: tcp::ReadHalf<'_>,
         handler_map: &StdMutex<ResponseHandlerMap>,
-    ) -> Result<(), TransportError> {
+    ) -> Result<(), QueryError> {
         loop {
             let (params, opcode, body) = frame::read_response_frame(&mut read_half).await?;
 
@@ -301,7 +306,7 @@ impl Connection {
             } else {
                 // Unsolicited frame. This should not happen and indicates
                 // a bug either in the driver, or in the database
-                panic!(format!("Unsolicited frame on stream {}", params.stream));
+                return Err(QueryError::ProtocolError);
             }
         }
     }
@@ -310,7 +315,7 @@ impl Connection {
         mut write_half: tcp::WriteHalf<'_>,
         handler_map: &StdMutex<ResponseHandlerMap>,
         mut task_receiver: mpsc::Receiver<Task>,
-    ) -> Result<(), TransportError> {
+    ) -> Result<(), QueryError> {
         // When the Connection object is dropped, the sender half
         // of the channel will be dropped, this task will return an error
         // and the whole worker will be stopped
@@ -344,7 +349,7 @@ impl Connection {
             .await?;
         }
 
-        Err(TransportError::TaskQueueClosed)
+        Err(std::io::Error::new(ErrorKind::Other, "connection broken").into())
     }
 
     pub fn get_shard_info(&self) -> &Option<ShardInfo> {
@@ -378,7 +383,7 @@ pub async fn open_connection(
     addr: SocketAddr,
     source_port: Option<u16>,
     compression: Option<Compression>,
-) -> Result<Connection, TransportError> {
+) -> Result<Connection, QueryError> {
     open_named_connection(
         addr,
         source_port,
@@ -393,7 +398,7 @@ pub async fn open_named_connection(
     source_port: Option<u16>,
     compression: Option<Compression>,
     driver_name: Option<String>,
-) -> Result<Connection, TransportError> {
+) -> Result<Connection, QueryError> {
     // TODO: shouldn't all this logic be in Connection::new?
     let mut connection = Connection::new(addr, source_port, compression).await?;
 
@@ -440,22 +445,16 @@ pub async fn open_named_connection(
     match result {
         Response::Ready => {}
         Response::Authenticate => unimplemented!("Authentication is not yet implemented"),
-        _ => {
-            return Err(TransportError::InternalDriverError(
-                InternalDriverError::UnexpectedResponse,
-            ))
-        }
+        _ => return Err(QueryError::ProtocolError),
     }
 
     Ok(connection)
 }
 
-// TODO: if we use the same source port twice in a row, we'll get an "address already in use" error.
-// We should try with multiple source ports in a loop.
 async fn connect_with_source_port(
     addr: SocketAddr,
     source_port: u16,
-) -> Result<TcpStream, TransportError> {
+) -> Result<TcpStream, std::io::Error> {
     // TODO: handle ipv6?
     let socket = TcpSocket::new_v4()?;
     let source_addr = IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0));

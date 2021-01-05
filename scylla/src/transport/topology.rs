@@ -1,364 +1,284 @@
-use super::transport_errors::{InternalDriverError, TokenError, TopologyError, TransportError};
+use crate::routing::Token;
+use crate::transport::connection::Connection;
+use crate::transport::connection_keeper::ConnectionKeeper;
+use crate::transport::errors::QueryError;
+use crate::transport::session::IntoTypedRows;
+use crate::transport::Compression;
 
-use std::collections::hash_map::Entry;
-use std::collections::{BTreeMap, HashMap};
-use std::net::SocketAddr;
+use std::collections::HashMap;
+use std::net::{IpAddr, SocketAddr};
 use std::str::FromStr;
-use std::sync::{Arc, RwLock, RwLockReadGuard};
 
-use tokio::sync::{mpsc, oneshot};
-use tokio::time;
-
-use crate::frame::response::result;
-use crate::routing::*;
-use crate::transport::connection::{open_connection, open_named_connection, Connection};
-
-const UPDATER_CRASHED: &str = "the topology updater thread has crashed. Need to restart it.";
-
-// Represents a view of the cluster's topology, including the shape of the token ring.
-// Assiociated with a TopologyReader which may send update messages.
-pub struct Topology {
-    // TODO accessing the ring through Arc<RwLock<...>> on each read is not the best for efficiency
-    // the ring should probably be cached, and the cache refreshed periodically using the Arc
-    // calling refresh() would refresh it synchronously
-    ring: Arc<RwLock<Ring>>,
-
-    refresh_tx: mpsc::Sender<RefreshRequest>,
-}
-
-struct RefreshRequest {
-    ack_tx: oneshot::Sender<Result<(), TransportError>>,
-}
-
-// Responsible for periodically updating a Topology.
+/// Allows to read current topology info from the cluster
 pub struct TopologyReader {
-    // invariant: nonempty
-    pool: HashMap<Node, Connection>,
-
-    // invariant:
-    //  1. for every key `n` in `tokens`,
-    //     for every `t` in tokens[`n`],
-    //     `ring.owners` has a `(t, n)` entry
-    //  2. for every `(t, n)` entry in `ring.owners`,
-    //     `tokens` has an entry with key `n`,
-    //     and `tokens[n]` contains `t`.
-    //
-    // `tokens` also serves as a container for cluster members that we know (using the keys of the map).
-    // We assume that every ``normal'' member of the cluster (so not a joining or leaving one) has
-    // tokens in the ring. TODO: this might change in the future; in this case we'll need a
-    // separate set.
-    tokens: HashMap<Node, Vec<Token>>,
-    ring: Arc<RwLock<Ring>>,
-
-    refresh_rx: mpsc::Receiver<RefreshRequest>,
-
-    // Global port for the cluster. Assumes every node listens on this
-    port: u16,
+    control_connections: HashMap<SocketAddr, ConnectionKeeper>,
+    connect_port: u16,
+    compression: Option<Compression>,
 }
 
-impl Topology {
-    pub fn read_ring(&self) -> Result<RwLockReadGuard<'_, Ring>, TransportError> {
-        self.ring.read().map_err(|_| {
-            TransportError::InternalDriverError(InternalDriverError::UpdaterError(
-                UPDATER_CRASHED.to_string(),
-            ))
-        })
-    }
+/// Describes all topology information retrieved from the cluster
+pub struct TopologyInfo {
+    pub peers: Vec<Peer>,
+    pub keyspaces: HashMap<String, Keyspace>,
+}
 
-    // Performs a synchronous refresh of the topology information.
-    // After the returned future is awaited, stored topology is not older
-    // than the cluster's topology at the moment `refresh` was called.
-    pub async fn refresh(&self) -> Result<(), TransportError> {
-        let (ack_tx, ack_rx) = oneshot::channel();
-        self.refresh_tx
-            .send(RefreshRequest { ack_tx })
-            .await
-            .map_err(|_| {
-                TransportError::InternalDriverError(InternalDriverError::UpdaterError(
-                    UPDATER_CRASHED.to_string(),
-                ))
-            })?;
-        ack_rx.await.map_err(|_| {
-            TransportError::InternalDriverError(InternalDriverError::UpdaterError(
-                UPDATER_CRASHED.to_string(),
-            ))
-        })?
-    }
+pub struct Peer {
+    pub address: SocketAddr,
+    pub tokens: Vec<Token>,
+    pub datacenter: Option<String>,
+    pub rack: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Keyspace {
+    pub strategy: Strategy,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Strategy {
+    SimpleStrategy {
+        replication_factor: usize,
+    },
+    NetworkTopologyStrategy {
+        // Replication factors of datacenters with given names
+        datacenter_repfactors: HashMap<String, usize>,
+    },
+    LocalStrategy, // replication_factor == 1
+    Other {
+        name: String,
+        data: HashMap<String, String>,
+    },
 }
 
 impl TopologyReader {
-    pub async fn new(n: Node) -> Result<(Self, Topology), TransportError> {
-        // TODO: use compression? maybe not necessarily, since the communicated objects are
-        // small and the communication doesn't happen often?
-        let conn = open_named_connection(
-            n.addr,
-            None,
-            None,
-            Some("scylla-rust-driver:control-connection".to_string()),
-        )
-        .await?;
+    /// Creates new TopologyReader, which connects to known_peers in the background
+    pub fn new(known_peers: &[SocketAddr], compression: Option<Compression>) -> Self {
+        let connect_port: u16 = known_peers
+            .first()
+            .expect("Tried to initialize TopologyReader with empty known_peers list!")
+            .port();
 
-        // TODO: When querying system.local of `n` or system.peers of other nodes, we might find
-        // that the address of `n` is different than `n.addr` (`n` might have multiple addresses).
-        // We need to deal with that. Since the data structures are filled using data obtained from
-        // `system.peers` and `system.local`, we probably need to query `system.local` for the
-        // address that `n` itself prefers.
+        let mut control_connections: HashMap<SocketAddr, ConnectionKeeper> =
+            HashMap::with_capacity(known_peers.len());
 
-        let toks = query_local_tokens(&conn).await?;
-        if toks.is_empty() {
-            return Err(TransportError::InternalDriverError(
-                InternalDriverError::LocalTokensEmptyOnNodes,
-            ));
+        for address in known_peers {
+            control_connections.insert(
+                *address,
+                ConnectionKeeper::new(*address, compression, None, None),
+            );
         }
 
-        let mut owners = BTreeMap::new();
-        for &t in &toks {
-            owners.insert(t, n);
-        }
-
-        let ring = Arc::new(RwLock::new(Ring { owners }));
-        let tokens = vec![(n, toks)].into_iter().collect();
-        let pool = vec![(n, conn)].into_iter().collect();
-        let (refresh_tx, refresh_rx) = mpsc::channel(32);
-
-        Ok((
-            TopologyReader {
-                pool,
-                tokens,
-                ring: ring.clone(),
-                refresh_rx,
-                port: n.addr.port(),
-            },
-            Topology { ring, refresh_tx },
-        ))
-    }
-
-    pub async fn run(mut self) {
-        use time::Duration;
-
-        let mut sleep_dur = Duration::from_secs(0);
-        loop {
-            tokio::select! {
-                _ = time::sleep(sleep_dur) => {
-                    sleep_dur = match self.refresh().await {
-                        Ok(()) => Duration::from_secs(10),
-                        Err(e) => {
-                            // TODO: use appropriate logging mechanism
-                            eprintln!("TopologyReader: error on periodic topology refresh: {}. Will retry", e);
-                            Duration::from_secs(2)
-                        }
-                    };
-                },
-                Some(request) = self.refresh_rx.recv() => {
-                    let _ = request.ack_tx.send(self.refresh().await);
-                    // If there was a send error, the other end must have closed the channel, i.e.
-                    // it wasn't interested in the result anymore. We don't need to do anything.
-                    sleep_dur = Duration::from_secs(10)
-                }
-            }
+        TopologyReader {
+            control_connections,
+            connect_port,
+            compression,
         }
     }
 
-    async fn refresh(&mut self) -> Result<(), TransportError> {
-        use time::{timeout, Duration};
+    /// Fetches current topology info from the cluster
+    pub async fn read_topology_info(&mut self) -> Result<TopologyInfo, QueryError> {
+        let result = self.fetch_topology_info().await;
 
-        let mut broken_connections = vec![];
-        let mut refreshed = false;
-        for (&node, conn) in self.pool.iter() {
-            // TODO: handle broken connections
-            // TODO: after short timeout, attempt to refresh on another connection *in parallel*
-            // while continuing waiting on the previous connection
-            let (peer_addrs, _) =
-                match timeout(Duration::from_secs(5), query_peers(conn, false, self.port)).await {
-                    Err(_) => {
-                        // A timeout doesn't necessarily mean that the connection is useless.
-                        // It may be a temporary network partition between us and the server.
-                        continue;
-                    }
-                    Ok(Ok(ret)) => ret,
-                    Ok(Err(e)) => {
-                        eprintln!("Error when querying system.peers of {}: {}", node.addr, e);
-                        // TODO distinguish between different error types and react accordingly
-                        // for now, we just drop the connection on every error.
-                        broken_connections.push(node);
-                        continue;
-                    }
-                };
-
-            // We assume that tokens of existing peers don't change.
-            // TODO: in the future this assumption might become false
-            let need_new_tokens = peer_addrs
-                .iter()
-                .any(|addr| !self.tokens.contains_key(&Node { addr: *addr }));
-
-            if need_new_tokens {
-                let (peer_addrs, peer_toks) =
-                    match timeout(Duration::from_secs(5), query_peers(conn, true, self.port)).await
-                    {
-                        Err(_) => continue,
-                        Ok(Ok(ret)) => ret,
-                        Ok(Err(e)) => {
-                            eprintln!("Error when querying system.peers of {}: {}", node.addr, e);
-                            // TODO get rid of copy-pasta
-                            broken_connections.push(node);
-                            continue;
-                        }
-                    };
-                assert_eq!(peer_addrs.len(), peer_toks.len());
-                for (addr, toks) in peer_addrs.into_iter().zip(peer_toks.into_iter()) {
-                    let n = Node { addr };
-                    let new_ring = {
-                        let mut ring = self
-                            .ring
-                            .read()
-                            .unwrap_or_else(|_| panic!("poisoned ring lock")) // TODO: handle this better?
-                            .clone();
-                        for &t in &toks {
-                            ring.owners.insert(t, n);
-                        }
-                        ring
-                    };
-
-                    let mut ring_ref = self
-                        .ring
-                        .write()
-                        .unwrap_or_else(|_| panic!("poisoned ring lock")); // TODO same as above?
-                    *ring_ref = new_ring;
-
-                    self.tokens.insert(n, toks);
-                }
-            }
-
-            // TODO: Remove nodes that are not in peers anymore
-            // (from pool, tokens, and ring)
-
-            refreshed = true;
+        if let Ok(topology_info) = &result {
+            self.update_control_connections(topology_info);
         }
 
-        for node in broken_connections {
-            self.pool.remove(&node);
+        return result;
+    }
+
+    async fn fetch_topology_info(&self) -> Result<TopologyInfo, QueryError> {
+        // TODO: Timeouts? New attempts in parallel?
+
+        let mut last_error: QueryError = QueryError::ProtocolError;
+
+        for conn in self.control_connections.values() {
+            match query_topology_info(conn, self.connect_port).await {
+                Ok(info) => return Ok(info),
+                Err(e) => last_error = e,
+            };
         }
 
-        // Try opening new connections
-        let mut any_new = false;
-        for &node in self.tokens.keys() {
-            if let Entry::Vacant(entry) = self.pool.entry(node) {
-                // TODO: use compression?
-                let conn = match timeout(
-                    Duration::from_secs(5),
-                    open_connection(node.addr, None, None),
-                )
-                .await
-                {
-                    Err(_) => {
-                        // TODO: logging
-                        eprintln!(
-                            "TopologyReader: timeout when trying to open connection to {}",
-                            node.addr
-                        );
-                        continue;
-                    }
-                    Ok(Err(e)) => {
-                        // TODO: logging
-                        eprintln!(
-                            "TopologyReader: failed to open connection to {}: {}",
-                            node.addr, e
-                        );
-                        continue;
-                    }
-                    Ok(Ok(conn)) => conn,
-                };
-                eprintln!("TopologyReader: opened new connection to {}", node.addr);
-                entry.insert(conn);
-                any_new = true;
-            }
+        Err(last_error)
+    }
+
+    fn update_control_connections(&mut self, topology_info: &TopologyInfo) {
+        let mut new_control_connections: HashMap<SocketAddr, ConnectionKeeper> =
+            HashMap::with_capacity(topology_info.peers.len());
+
+        for peer in &topology_info.peers {
+            let cur_connection = self
+                .control_connections
+                .remove(&peer.address)
+                .unwrap_or_else(|| {
+                    ConnectionKeeper::new(peer.address, self.compression, None, None)
+                });
+
+            new_control_connections.insert(peer.address, cur_connection);
         }
 
-        if refreshed {
-            return Ok(());
-        }
-
-        if any_new {
-            return Err(TransportError::InternalDriverError(
-                InternalDriverError::RefreshingFailedOnEveryConnection(
-                    "new connections have been opened".to_string(),
-                ),
-            ));
-        }
-
-        Err(TransportError::InternalDriverError(
-            InternalDriverError::RefreshingFailedOnEveryConnection(
-                "no new connections could be opened".to_string(),
-            ),
-        ))
+        self.control_connections = new_control_connections;
     }
 }
 
-async fn query_local_tokens(c: &Connection) -> Result<Vec<Token>, TransportError> {
-    unwrap_tokens(
-        c.query_single_page("SELECT tokens FROM system.local", &[])
-            .await?
-            .ok_or(TopologyError::LocalExpectedRowResults)?
-            .into_iter()
-            .next()
-            .ok_or(TopologyError::LocalQueryResultEmpty)?
-            .columns
-            .into_iter()
-            .next()
-            .ok_or(TopologyError::LocalTokensNoColumnsReturned)?,
-    )
+async fn query_topology_info(
+    conn_keeper: &ConnectionKeeper,
+    connect_port: u16,
+) -> Result<TopologyInfo, QueryError> {
+    let conn: &Connection = &*conn_keeper.get_connection().await?;
+
+    let peers_query = query_peers(conn, connect_port);
+    let keyspaces_query = query_keyspaces(conn);
+
+    let (peers, keyspaces) = tokio::try_join!(peers_query, keyspaces_query)?;
+
+    // There must be at least one peer
+    if peers.is_empty() {
+        return Err(QueryError::ProtocolError);
+    }
+
+    // At least one peer has to have some tokens
+    if peers.iter().all(|peer| peer.tokens.is_empty()) {
+        return Err(QueryError::ProtocolError);
+    }
+
+    Ok(TopologyInfo { peers, keyspaces })
 }
 
-async fn query_peers(
-    c: &Connection,
-    get_tokens: bool,
-    port: u16,
-) -> Result<(Vec<SocketAddr>, Vec<Vec<Token>>), TransportError> {
-    // TODO: do we want `peer`, `preferred_ip`, or `rpc_address`? Which one is `external`?
-    let rows = c
+async fn query_peers(conn: &Connection, connect_port: u16) -> Result<Vec<Peer>, QueryError> {
+    // There shouldn't be more peers than a single page capacity
+    let peers_query = conn.query_single_page(
+        "select peer, data_center, rack, tokens from system.peers",
+        &[],
+    );
+    let local_query = conn.query_single_page(
+        "select listen_address, data_center, rack, tokens from system.local",
+        &[],
+    );
+
+    let (peers_res, local_res) = tokio::try_join!(peers_query, local_query)?;
+
+    let peers_rows = peers_res.ok_or(QueryError::ProtocolError)?;
+    let local_rows = local_res.ok_or(QueryError::ProtocolError)?;
+
+    let mut result: Vec<Peer> = Vec::with_capacity(peers_rows.len() + 1);
+
+    let typed_peers_rows =
+        peers_rows.into_typed::<(IpAddr, Option<String>, Option<String>, Option<Vec<String>>)>();
+    let typed_local_rows =
+        local_rows.into_typed::<(IpAddr, Option<String>, Option<String>, Option<Vec<String>>)>();
+
+    for row in typed_peers_rows.chain(typed_local_rows) {
+        let (ip_address, datacenter, rack, tokens) = row.map_err(|_| QueryError::ProtocolError)?;
+
+        let tokens_str: Vec<String> = tokens.ok_or(QueryError::ProtocolError)?;
+
+        let address = SocketAddr::new(ip_address, connect_port);
+
+        // Parse string representation of tokens as integer values
+        let tokens: Vec<Token> = tokens_str
+            .iter()
+            .map(|s| Token::from_str(&s))
+            .collect::<Result<Vec<Token>, _>>()
+            .map_err(|_| QueryError::ProtocolError)?;
+
+        result.push(Peer {
+            address,
+            datacenter,
+            rack,
+            tokens,
+        });
+    }
+
+    Ok(result)
+}
+
+async fn query_keyspaces(conn: &Connection) -> Result<HashMap<String, Keyspace>, QueryError> {
+    let rows = conn
         .query_single_page(
-            format!(
-                "SELECT {} FROM system.peers",
-                if get_tokens { "peer, tokens" } else { "peer" }
-            ),
+            "select keyspace_name, toJson(replication) from system_schema.keyspaces",
             &[],
         )
         .await?
-        .ok_or(TopologyError::PeersRowError)?;
+        .ok_or(QueryError::ProtocolError)?;
 
-    let mut addrs = Vec::with_capacity(rows.len());
-    let mut tokens = if get_tokens {
-        vec![]
-    } else {
-        Vec::with_capacity(rows.len())
-    };
-    for row in rows {
-        let mut col_iter = row.columns.into_iter();
+    let mut result = HashMap::with_capacity(rows.len());
 
-        let peer = col_iter
-            .next()
-            .ok_or(TopologyError::PeersColumnError)?
-            .ok_or(TopologyError::PeersValueTypeError)?
-            .as_inet()
-            .ok_or(TopologyError::PeersValueTypeError)?;
-        addrs.push(SocketAddr::new(peer, port));
+    for row in rows.into_typed::<(String, String)>() {
+        let (keyspace_name, keyspace_json_text) = row.map_err(|_| QueryError::ProtocolError)?;
 
-        if get_tokens {
-            let toks = unwrap_tokens(col_iter.next().ok_or(TopologyError::PeersColumnError)?)?;
-            tokens.push(toks);
-        }
+        let strategy_map: HashMap<String, String> = json_to_string_map(&keyspace_json_text)?;
+
+        let strategy: Strategy = strategy_from_string_map(strategy_map)?;
+
+        result.insert(keyspace_name, Keyspace { strategy });
     }
-    Ok((addrs, tokens))
+
+    Ok(result)
 }
 
-fn unwrap_tokens(tokens_val_opt: Option<result::CQLValue>) -> Result<Vec<Token>, TransportError> {
-    let tokens_val = tokens_val_opt.ok_or(TokenError::NullTokens)?;
-    let tokens = tokens_val.as_set().ok_or(TokenError::SetValue)?;
+fn json_to_string_map(json_text: &str) -> Result<HashMap<String, String>, QueryError> {
+    use serde_json::Value;
 
-    let mut ret = Vec::with_capacity(tokens.len());
-    for tok_val in tokens {
-        let tok = tok_val.as_text().ok_or(TokenError::NonTextValue)?;
-        ret.push(Token::from_str(tok).map_err(|_| TokenError::ParseFailure(tok.to_string()))?);
+    let json: Value = serde_json::from_str(json_text).map_err(|_| QueryError::ProtocolError)?;
+
+    let object_map = match json {
+        Value::Object(map) => map,
+        _ => return Err(QueryError::ProtocolError),
+    };
+
+    let mut result = HashMap::with_capacity(object_map.len());
+
+    for (key, val) in object_map.into_iter() {
+        match val {
+            Value::String(string) => result.insert(key, string),
+            _ => return Err(QueryError::ProtocolError),
+        };
     }
-    Ok(ret)
+
+    Ok(result)
+}
+
+fn strategy_from_string_map(
+    mut strategy_map: HashMap<String, String>,
+) -> Result<Strategy, QueryError> {
+    let strategy_name: String = strategy_map
+        .remove("class")
+        .ok_or(QueryError::ProtocolError)?;
+
+    let strategy: Strategy = match strategy_name.as_str() {
+        "org.apache.cassandra.locator.SimpleStrategy" => {
+            let rep_factor_str: String = strategy_map
+                .remove("replication_factor")
+                .ok_or(QueryError::ProtocolError)?;
+
+            let replication_factor: usize =
+                usize::from_str(&rep_factor_str).map_err(|_| QueryError::ProtocolError)?;
+
+            Strategy::SimpleStrategy { replication_factor }
+        }
+        "org.apache.cassandra.locator.NetworkTopologyStrategy" => {
+            let mut datacenter_repfactors: HashMap<String, usize> =
+                HashMap::with_capacity(strategy_map.len());
+
+            for (datacenter, rep_factor_str) in strategy_map.drain() {
+                let rep_factor: usize = match usize::from_str(&rep_factor_str) {
+                    Ok(number) => number,
+                    Err(_) => continue, // There might be other things in the map, we care only about rep_factors
+                };
+
+                datacenter_repfactors.insert(datacenter, rep_factor);
+            }
+
+            Strategy::NetworkTopologyStrategy {
+                datacenter_repfactors,
+            }
+        }
+        "org.apache.cassandra.locator.LocalStrategy" => Strategy::LocalStrategy,
+        _ => Strategy::Other {
+            name: strategy_name,
+            data: strategy_map,
+        },
+    };
+
+    Ok(strategy)
 }
