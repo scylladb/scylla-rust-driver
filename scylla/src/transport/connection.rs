@@ -194,7 +194,6 @@ impl Connection {
         self.send_request(&batch_frame, true).await
     }
 
-    // Please ensure keyspace_name is valid before calling this method
     pub async fn use_keyspace(
         &self,
         keyspace_name: &VerifiedKeyspaceName,
