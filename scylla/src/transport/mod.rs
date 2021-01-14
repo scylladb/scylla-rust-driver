@@ -1,6 +1,7 @@
 mod cluster;
 pub mod connection;
 mod connection_keeper;
+pub mod load_balancing;
 mod node;
 pub mod session;
 pub mod session_builder;

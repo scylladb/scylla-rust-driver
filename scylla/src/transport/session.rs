@@ -16,32 +16,39 @@ use crate::frame::value::{BatchValues, SerializedValues, ValueList};
 use crate::prepared_statement::{PartitionKeyError, PreparedStatement};
 use crate::query::Query;
 use crate::routing::{murmur3_token, Token};
-use crate::transport::cluster::{Cluster, ClusterData};
-use crate::transport::connection::{Connection, ConnectionConfig};
-use crate::transport::iterator::RowIterator;
-use crate::transport::metrics::{Metrics, MetricsView};
-use crate::transport::node::Node;
-use crate::transport::Compression;
+use crate::transport::{
+    cluster::{Cluster, ClusterData},
+    connection::{Connection, ConnectionConfig},
+    iterator::RowIterator,
+    load_balancing::{LoadBalancingPolicy, RoundRobin, Statement, TokenAware},
+    metrics::{Metrics, MetricsView},
+    node::Node,
+    Compression,
+};
 
 pub struct Session {
     cluster: Cluster,
+    load_balancer: Box<dyn LoadBalancingPolicy>,
 
     metrics: Arc<Metrics>,
 }
 
-/// Configuration options for [`Session`].  
+/// Configuration options for [`Session`].
 /// Can be created manually, but usually it's easier to use
 /// [SessionBuilder](super::session_builder::SessionBuilder)
 pub struct SessionConfig {
-    /// List of database servers known on Session startup.  
-    /// Session will connect to these nodes to retrieve information about other nodes in the cluster.  
-    /// Each node can be represented as a hostname or an IP address.  
+    /// List of database servers known on Session startup.
+    /// Session will connect to these nodes to retrieve information about other nodes in the cluster.
+    /// Each node can be represented as a hostname or an IP address.
     pub known_nodes: Vec<KnownNode>,
 
-    /// Preferred compression algorithm to use on connections.  
-    /// If it's not supported by database server Session will fall back to no compression.  
+    /// Preferred compression algorithm to use on connections.
+    /// If it's not supported by database server Session will fall back to no compression.
     pub compression: Option<Compression>,
     pub tcp_nodelay: bool,
+
+    /// Load balancing policy used by Session
+    pub load_balancing: Box<dyn LoadBalancingPolicy>,
     /*
     These configuration options will be added in the future:
 
@@ -53,7 +60,6 @@ pub struct SessionConfig {
 
     pub tcp_keepalive: bool,
 
-    pub load_balancing: Option<String>,
     pub retry_policy: Option<String>,
 
     pub default_consistency: Option<String>,
@@ -71,6 +77,7 @@ impl SessionConfig {
     /// Creates a [`SessionConfig`] with default configuration
     /// # Default configuration
     /// * Compression: None
+    /// * Load balancing policy: Token-aware Round-robin
     ///
     /// # Example
     /// ```
@@ -82,6 +89,7 @@ impl SessionConfig {
             known_nodes: Vec::new(),
             compression: None,
             tcp_nodelay: false,
+            load_balancing: Box::new(TokenAware::new(Box::new(RoundRobin::new()))),
         }
     }
 
@@ -224,7 +232,11 @@ impl Session {
         let cluster = Cluster::new(&node_addresses, config.get_connection_config()).await?;
         let metrics = Arc::new(Metrics::new());
 
-        Ok(Session { cluster, metrics })
+        Ok(Session {
+            cluster,
+            load_balancer: config.load_balancing,
+            metrics,
+        })
     }
 
     // TODO: Should return an iterator over results
@@ -350,7 +362,22 @@ impl Session {
         let serialized_values = values.serialized()?;
 
         let token = calculate_token(prepared, &serialized_values)?;
-        let connection = self.pick_connection(token).await?;
+
+        let plan = {
+            let statemet_info = Statement {
+                token: Some(token),
+                keyspace: None, // TODO retrieve info about keyspace
+            };
+
+            let cluster_info = self.cluster.get_data();
+            let mut iter = self.load_balancer.plan(&statemet_info, &cluster_info);
+
+            iter.next()
+        };
+
+        let node = plan.unwrap(); // TODO add error handling?
+
+        let connection = node.connection_for_token(token).await?;
         let result = connection
             .execute(prepared, &serialized_values, None)
             .await?;
