@@ -2,8 +2,13 @@ use super::{cluster::ClusterData, node::Node};
 use crate::routing::Token;
 
 use core::ops::Bound::{Included, Unbounded};
-use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::Arc;
+use std::{
+    collections::VecDeque,
+    sync::{
+        atomic::{AtomicUsize, Ordering},
+        Arc,
+    },
+};
 
 const ORDER_TYPE: Ordering = Ordering::Relaxed;
 
@@ -21,10 +26,10 @@ pub trait LoadBalancingPolicy: Send + Sync {
 }
 
 pub trait InternalLoadBalancingPolicy: LoadBalancingPolicy {
-    fn apply_for_plan<'a>(
+    fn apply_policy_for_plan(
         &self,
-        plan: Box<dyn Iterator<Item = Arc<Node>> + 'a>,
-    ) -> Box<dyn Iterator<Item = Arc<Node>> + 'a>;
+        plan: &mut dyn Iterator<Item = Arc<Node>>,
+    ) -> Box<dyn Iterator<Item = Arc<Node>>>;
 }
 
 pub struct RoundRobin {
@@ -62,26 +67,18 @@ impl LoadBalancingPolicy for RoundRobin {
 }
 
 impl InternalLoadBalancingPolicy for RoundRobin {
-    fn apply_for_plan<'a>(
+    fn apply_policy_for_plan(
         &self,
-        plan: Box<dyn Iterator<Item = Arc<Node>> + 'a>,
-    ) -> Box<dyn Iterator<Item = Arc<Node>> + 'a> {
+        plan: &mut dyn Iterator<Item = Arc<Node>>,
+    ) -> Box<dyn Iterator<Item = Arc<Node>>> {
         let index = self.index.fetch_add(1, ORDER_TYPE);
 
         // `plan` iterator is not cloneable, because of this we can't
-        // simply call plan.cycle()
-        // collecting into vector is a sort of workaround
-        // in future this could be speed up by using smallvec crate
-        let vec: Vec<Arc<Node>> = plan.collect();
-        let number_of_nodes = vec.len();
+        // call plan.cycle(), and do a cyclic shift
+        let mut vec: VecDeque<Arc<Node>> = plan.collect();
+        vec.rotate_right(index % vec.len());
 
-        let iter = vec
-            .into_iter()
-            .cycle()
-            .skip(index % number_of_nodes)
-            .take(number_of_nodes);
-
-        Box::new(iter)
+        Box::new(vec.into_iter())
     }
 }
 
@@ -104,7 +101,7 @@ impl LoadBalancingPolicy for TokenAware {
         match statement.token {
             Some(token) => {
                 // FIXME add replica calculation
-                let owner = cluster
+                let mut owner = cluster
                     .ring
                     .range((Included(token), Unbounded))
                     .map(|(_token, node)| node.clone())
@@ -112,7 +109,7 @@ impl LoadBalancingPolicy for TokenAware {
                     .chain(cluster.ring.values().cloned())
                     .take(1);
 
-                self.internal_policy.apply_for_plan(Box::new(owner))
+                self.internal_policy.apply_policy_for_plan(&mut owner)
             }
             // fallback to internal policy
             None => Box::new(self.internal_policy.plan(statement, cluster)),
