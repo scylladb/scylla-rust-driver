@@ -20,7 +20,7 @@ use crate::transport::{
     cluster::{Cluster, ClusterData},
     connection::{Connection, ConnectionConfig},
     iterator::RowIterator,
-    load_balancing::{LoadBalancingPolicy, RoundRobin, Statement, TokenAware},
+    load_balancing::{LoadBalancingPolicy, RoundRobinPolicy, Statement, TokenAwarePolicy},
     metrics::{Metrics, MetricsView},
     node::Node,
     Compression,
@@ -89,7 +89,7 @@ impl SessionConfig {
             known_nodes: Vec::new(),
             compression: None,
             tcp_nodelay: false,
-            load_balancing: Box::new(TokenAware::new(Box::new(RoundRobin::new()))),
+            load_balancing: Box::new(TokenAwarePolicy::new(Box::new(RoundRobinPolicy::new()))),
         }
     }
 
