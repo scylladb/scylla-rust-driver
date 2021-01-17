@@ -6,7 +6,7 @@ use std::env;
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    let uri = env::var("SCYLLA_URI").unwrap_or("127.0.0.1:9042".to_string());
+    let uri = env::var("SCYLLA_URI").unwrap_or_else(|_| "127.0.0.1:9042".to_string());
 
     println!("Connecting to {} ...", uri);
 
@@ -36,8 +36,7 @@ async fn main() -> Result<()> {
             .query(format!("SELECT token(pk) FROM ks.t where pk = {}", pk), &[])
             .await?
             .unwrap()
-            .iter()
-            .next()
+            .get(0)
             .expect("token query no rows!")
             .columns[0]
             .as_ref()

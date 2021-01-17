@@ -183,12 +183,12 @@ async fn test_batch() {
 
     session.query("CREATE KEYSPACE IF NOT EXISTS ks WITH REPLICATION = {'class' : 'SimpleStrategy', 'replication_factor' : 1}", &[]).await.unwrap();
     session
-        .query("DROP TABLE IF EXISTS ks.t;", &[])
+        .query("DROP TABLE IF EXISTS ks.t_batch;", &[])
         .await
         .unwrap();
     session
         .query(
-            "CREATE TABLE IF NOT EXISTS ks.t (a int, b int, c text, primary key (a, b))",
+            "CREATE TABLE IF NOT EXISTS ks.t_batch (a int, b int, c text, primary key (a, b))",
             &[],
         )
         .await
@@ -198,7 +198,7 @@ async fn test_batch() {
     std::thread::sleep(std::time::Duration::from_millis(300));
 
     let prepared_statement = session
-        .prepare("INSERT INTO ks.t (a, b, c) VALUES (?, ?, ?)")
+        .prepare("INSERT INTO ks.t_batch (a, b, c) VALUES (?, ?, ?)")
         .await
         .unwrap();
 
@@ -206,8 +206,8 @@ async fn test_batch() {
     // to avoid problem of statements/values count mismatch
     use crate::batch::Batch;
     let mut batch: Batch = Default::default();
-    batch.append_statement("INSERT INTO ks.t (a, b, c) VALUES (?, ?, ?)");
-    batch.append_statement("INSERT INTO ks.t (a, b, c) VALUES (7, 11, '')");
+    batch.append_statement("INSERT INTO ks.t_batch (a, b, c) VALUES (?, ?, ?)");
+    batch.append_statement("INSERT INTO ks.t_batch (a, b, c) VALUES (7, 11, '')");
     batch.append_statement(prepared_statement);
 
     let values = ((1_i32, 2_i32, "abc"), (), (1_i32, 4_i32, "hello"));
@@ -215,7 +215,7 @@ async fn test_batch() {
     session.batch(&batch, values).await.unwrap();
 
     let rs = session
-        .query("SELECT a, b, c FROM ks.t", &[])
+        .query("SELECT a, b, c FROM ks.t_batch", &[])
         .await
         .unwrap()
         .unwrap();

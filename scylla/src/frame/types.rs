@@ -402,7 +402,7 @@ fn type_consistency() {
     let c2 = read_consistency(&mut &*buf).unwrap();
     assert_eq!(c, c2);
 
-    let c = 0x1234 as i16;
+    let c: i16 = 0x1234;
     buf.clear();
     buf.put_i16(c);
     let c_result = read_consistency(&mut &*buf);
