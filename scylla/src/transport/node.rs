@@ -5,6 +5,7 @@ use crate::transport::connection_keeper::{ConnectionKeeper, ShardInfoSender};
 use crate::transport::errors::QueryError;
 
 use futures::{future::RemoteHandle, FutureExt};
+use rand::Rng;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio::sync::RwLock as AsyncRwLock;
@@ -99,6 +100,24 @@ impl Node {
                 shard_conns,
             } => {
                 let shard: Shard = shard_info.shard_of(token);
+                // It's guaranteed by NodeWorker that for each shard < shard_info.nr_shards
+                // there is an entry for this shard in connections map
+                shard_conns[shard as usize].get_connection().await
+            }
+        }
+    }
+
+    /// Get random connection
+    pub async fn random_connection(&self) -> Result<Arc<Connection>, QueryError> {
+        let connections = &*self.connections.read().await;
+
+        match connections {
+            NodeConnections::Single(conn_keeper) => conn_keeper.get_connection().await,
+            NodeConnections::Sharded {
+                shard_info,
+                shard_conns,
+            } => {
+                let shard = rand::thread_rng().gen_range(0..shard_info.nr_shards as u32);
                 // It's guaranteed by NodeWorker that shard_conns.len() == shard_info.nr_shards
                 shard_conns[shard as usize].get_connection().await
             }

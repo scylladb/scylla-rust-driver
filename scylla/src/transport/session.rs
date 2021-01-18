@@ -1,6 +1,4 @@
-use core::ops::Bound::{Included, Unbounded};
 use futures::future::join_all;
-use rand::Rng;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Instant;
@@ -17,8 +15,8 @@ use crate::prepared_statement::{PartitionKeyError, PreparedStatement};
 use crate::query::Query;
 use crate::routing::{murmur3_token, Token};
 use crate::transport::{
-    cluster::{Cluster, ClusterData},
-    connection::{Connection, ConnectionConfig},
+    cluster::Cluster,
+    connection::ConnectionConfig,
     iterator::RowIterator,
     load_balancing::{LoadBalancingPolicy, RoundRobinPolicy, Statement, TokenAwarePolicy},
     metrics::{Metrics, MetricsView},
@@ -269,7 +267,13 @@ impl Session {
         query: impl Into<Query>,
         values: impl ValueList,
     ) -> Result<Option<Vec<result::Row>>, QueryError> {
-        self.any_connection()
+        let statement_info = Statement {
+            token: None,
+            keyspace: None,
+        };
+        let node = self.load_balancing_plan(statement_info);
+
+        node.random_connection()
             .await?
             .query_single_page(query, values)
             .await
@@ -282,8 +286,14 @@ impl Session {
     ) -> Result<RowIterator, QueryError> {
         let serialized_values = values.serialized()?;
 
+        let statement_info = Statement {
+            token: None,
+            keyspace: None,
+        };
+        let node = self.load_balancing_plan(statement_info);
+
         Ok(RowIterator::new_for_query(
-            self.any_connection().await?,
+            node.random_connection().await?,
             query.into(),
             serialized_values.into_owned(),
             self.metrics.clone(),
@@ -363,19 +373,11 @@ impl Session {
 
         let token = calculate_token(prepared, &serialized_values)?;
 
-        let plan = {
-            let statemet_info = Statement {
-                token: Some(token),
-                keyspace: None, // TODO retrieve info about keyspace
-            };
-
-            let cluster_info = self.cluster.get_data();
-            let mut iter = self.load_balancer.plan(&statemet_info, &cluster_info);
-
-            iter.next()
+        let statement_info = Statement {
+            token: Some(token),
+            keyspace: None,
         };
-
-        let node = plan.unwrap(); // TODO add error handling?
+        let node = self.load_balancing_plan(statement_info);
 
         let connection = node.connection_for_token(token).await?;
         let result = connection
@@ -425,8 +427,14 @@ impl Session {
     ) -> Result<RowIterator, QueryError> {
         let serialized_values = values.serialized()?;
 
+        let statement_info = Statement {
+            token: None,
+            keyspace: None,
+        };
+        let node = self.load_balancing_plan(statement_info);
+
         Ok(RowIterator::new_for_prepared_statement(
-            self.any_connection().await?,
+            node.random_connection().await?,
             prepared.into(),
             serialized_values.into_owned(),
             self.metrics.clone(),
@@ -441,7 +449,17 @@ impl Session {
     pub async fn batch(&self, batch: &Batch, values: impl BatchValues) -> Result<(), QueryError> {
         // FIXME: Prepared statement ids are local to a node
         // this method does not handle this
-        let response = self.any_connection().await?.batch(&batch, values).await?;
+        let statement_info = Statement {
+            token: None,
+            keyspace: None,
+        };
+        let node = self.load_balancing_plan(statement_info);
+
+        let response = node
+            .random_connection()
+            .await?
+            .batch(&batch, values)
+            .await?;
         match response {
             Response::Error(err) => Err(err.into()),
             Response::Result(_) => Ok(()),
@@ -455,32 +473,6 @@ impl Session {
         self.cluster.refresh_topology().await
     }
 
-    async fn pick_connection(&self, t: Token) -> Result<Arc<Connection>, QueryError> {
-        // TODO: we try only the owner of the range (vnode) that the token lies in
-        // we should calculate the *set* of replicas for this token, using the replication strategy
-        // of the table being queried.
-        let cluster_data: Arc<ClusterData> = self.cluster.get_data();
-
-        let first_node: Arc<Node> = cluster_data.ring.values().next().unwrap().clone();
-
-        let owner: Arc<Node> = cluster_data
-            .ring
-            .range((Included(t), Unbounded))
-            .next()
-            .map(|(_token, node)| node.clone())
-            .unwrap_or(first_node);
-
-        owner.connection_for_token(t).await
-    }
-
-    async fn any_connection(&self) -> Result<Arc<Connection>, QueryError> {
-        let random_token: Token = Token {
-            value: rand::thread_rng().gen(),
-        };
-
-        self.pick_connection(random_token).await
-    }
-
     pub fn get_metrics(&self) -> MetricsView {
         MetricsView::new(self.metrics.clone())
     }
@@ -489,6 +481,13 @@ impl Session {
         let _ = self // silent fail if mutex is poisoned
             .metrics
             .log_query_latency(latency);
+    }
+
+    fn load_balancing_plan(&self, statement_info: Statement) -> Arc<Node> {
+        let cluster_info = self.cluster.get_data();
+        let mut plan = self.load_balancer.plan(&statement_info, &cluster_info);
+
+        plan.next().unwrap() // TODO add error handling?
     }
 }
 

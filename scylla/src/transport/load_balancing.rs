@@ -102,7 +102,9 @@ impl LoadBalancingPolicy for TokenAwarePolicy {
     ) -> Box<dyn Iterator<Item = Arc<Node>> + 'a> {
         match statement.token {
             Some(token) => {
-                // FIXME add replica calculation
+                // TODO: we try only the owner of the range (vnode) that the token lies in
+                // we should calculate the *set* of replicas for this token, using the replication strategy
+                // of the table being queried.
                 let mut owner = cluster
                     .ring
                     .range((Included(token), Unbounded))
