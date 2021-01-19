@@ -487,7 +487,7 @@ impl Session {
         let cluster_info = self.cluster.get_data();
         let mut plan = self.load_balancer.plan(&statement_info, &cluster_info);
 
-        plan.next().unwrap() // TODO add error handling?
+        plan.next().unwrap() // Plan returned by load balancing policies should never be empty
     }
 }
 

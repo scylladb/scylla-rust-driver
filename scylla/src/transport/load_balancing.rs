@@ -49,6 +49,12 @@ impl RoundRobinPolicy {
     }
 }
 
+impl Default for RoundRobinPolicy {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 const ORDER_TYPE: Ordering = Ordering::Relaxed;
 
 impl LoadBalancingPolicy for RoundRobinPolicy {
@@ -135,7 +141,7 @@ impl DCAwareRoundRobinPolicy {
         }
     }
 
-    fn is_local_node(node: &Node, local_dc: &String) -> bool {
+    fn is_local_node(node: &Node, local_dc: &str) -> bool {
         match &node.datacenter {
             Some(dc) => (dc == local_dc),
             None => false,
@@ -241,6 +247,10 @@ fn slice_rotated_left<'a, T>(slice: &'a [T], mid: usize) -> impl Iterator<Item =
 
 #[cfg(test)]
 mod tests {
+    use crate::transport::connection::ConnectionConfig;
+    use std::collections::{BTreeMap, HashMap};
+    use std::net::SocketAddr;
+
     use super::*;
 
     #[test]
@@ -258,5 +268,135 @@ mod tests {
         let a_rotated = iter_rotated_left(a_iter, 2).collect::<Vec<i32>>();
 
         assert_eq!(vec![3, 4, 5, 1, 2], a_rotated);
+    }
+
+    fn create_node_with_failing_connection(id: u16, datacenter: Option<String>) -> Arc<Node> {
+        let node = Node::new(
+            SocketAddr::from(([255, 255, 255, 255], id)),
+            ConnectionConfig {
+                compression: None,
+                tcp_nodelay: false,
+            },
+            datacenter,
+            None,
+        );
+
+        Arc::new(node)
+    }
+
+    fn mock_cluster_data(nodes_recipe: &[(&str, u16)]) -> ClusterData {
+        let all_nodes = nodes_recipe
+            .iter()
+            .map(|(dc, id)| create_node_with_failing_connection(*id, Some(dc.to_string())))
+            .collect::<Vec<_>>();
+
+        let known_peers = all_nodes
+            .iter()
+            .cloned()
+            .map(|node| (node.address, node))
+            .collect::<HashMap<_, _>>();
+
+        let mut datacenters: HashMap<String, Vec<Arc<Node>>> = HashMap::new();
+
+        for node in &all_nodes {
+            if let Some(dc) = &node.datacenter {
+                match datacenters.get_mut(dc) {
+                    Some(v) => v.push(node.clone()),
+                    None => {
+                        let v = vec![node.clone()];
+                        datacenters.insert(dc.clone(), v);
+                    }
+                }
+            }
+        }
+
+        ClusterData {
+            known_peers,
+            ring: BTreeMap::new(),
+            keyspaces: HashMap::new(),
+            all_nodes,
+            datacenters,
+        }
+    }
+
+    const EMPTY_STATEMENT: Statement = Statement {
+        token: None,
+        keyspace: None,
+    };
+
+    fn get_plan_and_collect_node_identifiers<L: LoadBalancingPolicy>(
+        policy: &L,
+        statement: &Statement,
+        cluster: &ClusterData,
+    ) -> Vec<u16> {
+        let plan = policy.plan(statement, &cluster);
+        plan.map(|node| node.address.port()).collect::<Vec<_>>()
+    }
+
+    // ConnectionKeeper (which lives in Node) requires context of Tokio runtime
+    #[tokio::test]
+    async fn test_round_robin_policy() {
+        let nodes_recipe = [("eu", 1), ("eu", 2), ("us", 3), ("us", 4)];
+
+        let cluster = mock_cluster_data(&nodes_recipe);
+        let policy = RoundRobinPolicy::new();
+
+        let plans = (0..5)
+            .map(|_| get_plan_and_collect_node_identifiers(&policy, &EMPTY_STATEMENT, &cluster))
+            .collect::<Vec<_>>();
+
+        let expected_plans = vec![
+            vec![1, 2, 3, 4],
+            vec![2, 3, 4, 1],
+            vec![3, 4, 1, 2],
+            vec![4, 1, 2, 3],
+            vec![1, 2, 3, 4],
+        ];
+
+        assert_eq!(plans, expected_plans);
+    }
+
+    #[tokio::test]
+    async fn test_dc_aware_round_robin_policy() {
+        let nodes_recipe = [("eu", 1), ("eu", 2), ("eu", 3), ("us", 4), ("us", 5)];
+
+        let cluster = mock_cluster_data(&nodes_recipe);
+        let local_dc = "eu".to_string();
+        let policy = DCAwareRoundRobinPolicy::new(local_dc);
+
+        let plans = (0..4)
+            .map(|_| get_plan_and_collect_node_identifiers(&policy, &EMPTY_STATEMENT, &cluster))
+            .collect::<Vec<_>>();
+
+        let expected_plans = vec![
+            vec![1, 2, 3, 4, 5],
+            vec![2, 3, 1, 5, 4],
+            vec![3, 1, 2, 4, 5],
+            vec![1, 2, 3, 5, 4],
+        ];
+
+        assert_eq!(plans, expected_plans);
+    }
+
+    #[tokio::test]
+    async fn test_token_aware_fallback_policy() {
+        let nodes_recipe = [("eu", 1), ("eu", 2), ("eu", 3), ("us", 4), ("us", 5)];
+
+        let cluster = mock_cluster_data(&nodes_recipe);
+        let local_dc = "eu".to_string();
+        let policy = TokenAwarePolicy::new(Box::new(DCAwareRoundRobinPolicy::new(local_dc)));
+
+        let plans = (0..4)
+            .map(|_| get_plan_and_collect_node_identifiers(&policy, &EMPTY_STATEMENT, &cluster))
+            .collect::<Vec<_>>();
+
+        let expected_plans = vec![
+            vec![1, 2, 3, 4, 5],
+            vec![2, 3, 1, 5, 4],
+            vec![3, 1, 2, 4, 5],
+            vec![1, 2, 3, 5, 4],
+        ];
+
+        assert_eq!(plans, expected_plans);
     }
 }
