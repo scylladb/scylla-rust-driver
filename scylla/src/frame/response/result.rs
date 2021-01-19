@@ -517,3 +517,59 @@ pub fn deserialize(buf: &mut &[u8]) -> StdResult<Result, ParseError> {
         }
     })
 }
+
+#[cfg(test)]
+mod tests {
+    use crate as scylla;
+    use scylla::frame::response::result::CQLValue;
+
+    #[test]
+    fn test_list_from_cql() {
+        let mut my_vec: Vec<CQLValue> = Vec::new();
+
+        my_vec.push(CQLValue::Int(20));
+        my_vec.push(CQLValue::Int(2));
+        my_vec.push(CQLValue::Int(13));
+
+        let cql: CQLValue = CQLValue::List(my_vec);
+        let decoded = cql.into_vec().unwrap();
+
+        assert_eq!(decoded[0], CQLValue::Int(20));
+        assert_eq!(decoded[1], CQLValue::Int(2));
+        assert_eq!(decoded[2], CQLValue::Int(13));
+    }
+
+    #[test]
+    fn test_set_from_cql() {
+        let mut my_vec: Vec<CQLValue> = Vec::new();
+
+        my_vec.push(CQLValue::Int(20));
+        my_vec.push(CQLValue::Int(2));
+        my_vec.push(CQLValue::Int(13));
+
+        let cql: CQLValue = CQLValue::Set(my_vec);
+        let decoded = cql.as_set().unwrap();
+
+        assert_eq!(decoded[0], CQLValue::Int(20));
+        assert_eq!(decoded[1], CQLValue::Int(2));
+        assert_eq!(decoded[2], CQLValue::Int(13));
+    }
+
+    #[test]
+    fn test_map_from_cql() {
+        let mut my_vec: Vec<(CQLValue, CQLValue)> = Vec::new();
+
+        my_vec.push((CQLValue::Int(20), CQLValue::Int(21)));
+        my_vec.push((CQLValue::Int(2), CQLValue::Int(3)));
+
+        let cql: CQLValue = CQLValue::Map(my_vec);
+
+        let decoded = cql.into_pair_vec().unwrap();
+
+        assert_eq!(CQLValue::Int(20), decoded[0].0);
+        assert_eq!(CQLValue::Int(21), decoded[0].1);
+
+        assert_eq!(CQLValue::Int(2), decoded[1].0);
+        assert_eq!(CQLValue::Int(3), decoded[1].1);
+    }
+}
