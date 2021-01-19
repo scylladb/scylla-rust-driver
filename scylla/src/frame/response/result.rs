@@ -388,7 +388,6 @@ fn deser_cql_value(typ: &ColumnType, buf: &mut &[u8]) -> StdResult<CQLValue, Par
             let len: usize = types::read_int(buf)?.try_into()?;
             let mut res = Vec::with_capacity(len);
             for _ in 0..len {
-                // TODO: is `null` allowed as list element? Should we use read_bytes_opt?
                 let mut b = types::read_bytes(buf)?;
                 res.push(deser_cql_value(type_name, &mut b)?);
             }

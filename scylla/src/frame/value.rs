@@ -79,9 +79,9 @@ impl SerializedValues {
         if self.values_num == i16::max_value() {
             return Err(SerializeValuesError::TooManyValues);
         }
-        
+
         let len_before_serialize: usize = self.serialized_values.len();
-        
+
         if let Err(e) = val.serialize(&mut self.serialized_values) {
             self.serialized_values.resize(len_before_serialize, 0);
             return Err(SerializeValuesError::from(e));
@@ -237,8 +237,8 @@ impl<K: Value, V: Value> Value for HashMap<K, V> {
         }
 
         let written_bytes: usize = buf.len() - bytes_num_pos - 4;
-        let written_bytes_i32: i32 = written_bytes.try_into().map_err(|_| ValueTooBig) ?;
-        buf[bytes_num_pos..(bytes_num_pos+4)].copy_from_slice(&written_bytes_i32.to_be_bytes());
+        let written_bytes_i32: i32 = written_bytes.try_into().map_err(|_| ValueTooBig)?;
+        buf[bytes_num_pos..(bytes_num_pos + 4)].copy_from_slice(&written_bytes_i32.to_be_bytes());
 
         Ok(())
     }
@@ -255,8 +255,8 @@ impl<T: Value> Value for Vec<T> {
         }
 
         let written_bytes: usize = buf.len() - bytes_num_pos - 4;
-        let written_bytes_i32: i32 = written_bytes.try_into().map_err(|_| ValueTooBig) ?;
-        buf[bytes_num_pos..(bytes_num_pos+4)].copy_from_slice(&written_bytes_i32.to_be_bytes());
+        let written_bytes_i32: i32 = written_bytes.try_into().map_err(|_| ValueTooBig)?;
+        buf[bytes_num_pos..(bytes_num_pos + 4)].copy_from_slice(&written_bytes_i32.to_be_bytes());
 
         Ok(())
     }
