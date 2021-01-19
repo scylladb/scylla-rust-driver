@@ -1,4 +1,5 @@
 use super::response;
+use crate::cql_to_rust::CQLTypeError;
 use crate::frame::value::SerializeValuesError;
 use thiserror::Error;
 
@@ -36,4 +37,6 @@ pub enum ParseError {
     TypeNotImplemented(i16),
     #[error(transparent)]
     SerializeValuesError(#[from] SerializeValuesError),
+    #[error(transparent)]
+    CQLTypeError(#[from] CQLTypeError),
 }
