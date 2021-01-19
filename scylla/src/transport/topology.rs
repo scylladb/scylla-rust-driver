@@ -89,7 +89,9 @@ impl TopologyReader {
     async fn fetch_topology_info(&self) -> Result<TopologyInfo, QueryError> {
         // TODO: Timeouts? New attempts in parallel?
 
-        let mut last_error: QueryError = QueryError::ProtocolError;
+        let mut last_error: QueryError = QueryError::ProtocolError(
+            "Invariant broken - TopologyReader control_connections not empty",
+        );
 
         for conn in self.control_connections.values() {
             match query_topology_info(conn, self.connect_port).await {
@@ -133,12 +135,16 @@ async fn query_topology_info(
 
     // There must be at least one peer
     if peers.is_empty() {
-        return Err(QueryError::ProtocolError);
+        return Err(QueryError::ProtocolError(
+            "Bad TopologyInfo: peers list is empty",
+        ));
     }
 
     // At least one peer has to have some tokens
     if peers.iter().all(|peer| peer.tokens.is_empty()) {
-        return Err(QueryError::ProtocolError);
+        return Err(QueryError::ProtocolError(
+            "Bad TopoologyInfo: All peers have empty token list",
+        ));
     }
 
     Ok(TopologyInfo { peers, keyspaces })
@@ -157,8 +163,13 @@ async fn query_peers(conn: &Connection, connect_port: u16) -> Result<Vec<Peer>, 
 
     let (peers_res, local_res) = tokio::try_join!(peers_query, local_query)?;
 
-    let peers_rows = peers_res.ok_or(QueryError::ProtocolError)?;
-    let local_rows = local_res.ok_or(QueryError::ProtocolError)?;
+    let peers_rows = peers_res.ok_or(QueryError::ProtocolError(
+        "system.peers query response was not Rows",
+    ))?;
+
+    let local_rows = local_res.ok_or(QueryError::ProtocolError(
+        "system.local query response was not Rows",
+    ))?;
 
     let mut result: Vec<Peer> = Vec::with_capacity(peers_rows.len() + 1);
 
@@ -168,9 +179,11 @@ async fn query_peers(conn: &Connection, connect_port: u16) -> Result<Vec<Peer>, 
         local_rows.into_typed::<(IpAddr, Option<String>, Option<String>, Option<Vec<String>>)>();
 
     for row in typed_peers_rows.chain(typed_local_rows) {
-        let (ip_address, datacenter, rack, tokens) = row.map_err(|_| QueryError::ProtocolError)?;
+        let (ip_address, datacenter, rack, tokens) = row.map_err(|_| {
+            QueryError::ProtocolError("system.peers or system.local has invalid column type")
+        })?;
 
-        let tokens_str: Vec<String> = tokens.ok_or(QueryError::ProtocolError)?;
+        let tokens_str: Vec<String> = tokens.unwrap_or_default();
 
         let address = SocketAddr::new(ip_address, connect_port);
 
@@ -179,7 +192,7 @@ async fn query_peers(conn: &Connection, connect_port: u16) -> Result<Vec<Peer>, 
             .iter()
             .map(|s| Token::from_str(&s))
             .collect::<Result<Vec<Token>, _>>()
-            .map_err(|_| QueryError::ProtocolError)?;
+            .map_err(|_| QueryError::ProtocolError("Couldn't parse tokens as integer values"))?;
 
         result.push(Peer {
             address,
@@ -199,12 +212,16 @@ async fn query_keyspaces(conn: &Connection) -> Result<HashMap<String, Keyspace>,
             &[],
         )
         .await?
-        .ok_or(QueryError::ProtocolError)?;
+        .ok_or(QueryError::ProtocolError(
+            "system_schema.keyspaces query response was not Rows",
+        ))?;
 
     let mut result = HashMap::with_capacity(rows.len());
 
     for row in rows.into_typed::<(String, String)>() {
-        let (keyspace_name, keyspace_json_text) = row.map_err(|_| QueryError::ProtocolError)?;
+        let (keyspace_name, keyspace_json_text) = row.map_err(|_| {
+            QueryError::ProtocolError("system_schema.keyspaces has invalid column type")
+        })?;
 
         let strategy_map: HashMap<String, String> = json_to_string_map(&keyspace_json_text)?;
 
@@ -219,11 +236,16 @@ async fn query_keyspaces(conn: &Connection) -> Result<HashMap<String, Keyspace>,
 fn json_to_string_map(json_text: &str) -> Result<HashMap<String, String>, QueryError> {
     use serde_json::Value;
 
-    let json: Value = serde_json::from_str(json_text).map_err(|_| QueryError::ProtocolError)?;
+    let json: Value = serde_json::from_str(json_text)
+        .map_err(|_| QueryError::ProtocolError("Couldn't parse keyspaces as json"))?;
 
     let object_map = match json {
         Value::Object(map) => map,
-        _ => return Err(QueryError::ProtocolError),
+        _ => {
+            return Err(QueryError::ProtocolError(
+                "keyspaces map json is not a json object",
+            ))
+        }
     };
 
     let mut result = HashMap::with_capacity(object_map.len());
@@ -231,7 +253,11 @@ fn json_to_string_map(json_text: &str) -> Result<HashMap<String, String>, QueryE
     for (key, val) in object_map.into_iter() {
         match val {
             Value::String(string) => result.insert(key, string),
-            _ => return Err(QueryError::ProtocolError),
+            _ => {
+                return Err(QueryError::ProtocolError(
+                    "json keyspaces map does not contain strings",
+                ))
+            }
         };
     }
 
@@ -243,16 +269,22 @@ fn strategy_from_string_map(
 ) -> Result<Strategy, QueryError> {
     let strategy_name: String = strategy_map
         .remove("class")
-        .ok_or(QueryError::ProtocolError)?;
+        .ok_or(QueryError::ProtocolError(
+            "strategy map should have a 'class' field",
+        ))?;
 
     let strategy: Strategy = match strategy_name.as_str() {
         "org.apache.cassandra.locator.SimpleStrategy" => {
-            let rep_factor_str: String = strategy_map
-                .remove("replication_factor")
-                .ok_or(QueryError::ProtocolError)?;
+            let rep_factor_str: String =
+                strategy_map
+                    .remove("replication_factor")
+                    .ok_or(QueryError::ProtocolError(
+                        "SimpleStrategy in strategy map does not have a replication factor",
+                    ))?;
 
-            let replication_factor: usize =
-                usize::from_str(&rep_factor_str).map_err(|_| QueryError::ProtocolError)?;
+            let replication_factor: usize = usize::from_str(&rep_factor_str).map_err(|_| {
+                QueryError::ProtocolError("Could not parse replication factor as an integer")
+            })?;
 
             Strategy::SimpleStrategy { replication_factor }
         }

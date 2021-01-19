@@ -19,8 +19,8 @@ pub enum QueryError {
     IOError(Arc<std::io::Error>),
 
     /// Unexpected or invalid message received
-    #[error("Invalid protocol message")]
-    ProtocolError, // TODO: Add error message
+    #[error("Protocol Error: {0}")]
+    ProtocolError(&'static str),
 }
 
 /// An error sent from database in response to a query
@@ -71,8 +71,8 @@ pub enum NewSessionError {
     IOError(Arc<std::io::Error>),
 
     /// Unexpected or invalid message received
-    #[error("Invalid protocol message")]
-    ProtocolError, // TODO: Add error message
+    #[error("Protocol Error: {0}")]
+    ProtocolError(&'static str),
 }
 
 impl From<std::io::Error> for QueryError {
@@ -89,13 +89,13 @@ impl From<SerializeValuesError> for QueryError {
 
 impl From<ParseError> for QueryError {
     fn from(_parse_error: ParseError) -> QueryError {
-        QueryError::ProtocolError
+        QueryError::ProtocolError("Error parsing message")
     }
 }
 
 impl From<FrameError> for QueryError {
     fn from(_frame_error: FrameError) -> QueryError {
-        QueryError::ProtocolError
+        QueryError::ProtocolError("Error parsing message frame")
     }
 }
 
@@ -111,7 +111,7 @@ impl From<QueryError> for NewSessionError {
             QueryError::DBError(e) => NewSessionError::DBError(e),
             QueryError::BadQuery(e) => NewSessionError::BadQuery(e),
             QueryError::IOError(e) => NewSessionError::IOError(e),
-            QueryError::ProtocolError => NewSessionError::ProtocolError,
+            QueryError::ProtocolError(m) => NewSessionError::ProtocolError(m),
         }
     }
 }

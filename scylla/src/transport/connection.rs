@@ -96,7 +96,9 @@ impl Connection {
                 p.prepared_metadata,
                 query.to_owned(),
             )),
-            _ => Err(QueryError::ProtocolError),
+            _ => Err(QueryError::ProtocolError(
+                "PREPARE: Unexpected server response",
+            )),
         }
     }
 
@@ -110,7 +112,9 @@ impl Connection {
             Response::Error(err) => Err(err.into()),
             Response::Result(result::Result::Rows(rs)) => Ok(Some(rs.rows)),
             Response::Result(_) => Ok(None),
-            _ => Err(QueryError::ProtocolError),
+            _ => Err(QueryError::ProtocolError(
+                "QUERY: Unexpected server response",
+            )),
         }
     }
 
@@ -306,7 +310,9 @@ impl Connection {
             } else {
                 // Unsolicited frame. This should not happen and indicates
                 // a bug either in the driver, or in the database
-                return Err(QueryError::ProtocolError);
+                return Err(QueryError::ProtocolError(
+                    "Received reponse with unexpected StreamId",
+                ));
             }
         }
     }
@@ -445,7 +451,11 @@ pub async fn open_named_connection(
     match result {
         Response::Ready => {}
         Response::Authenticate => unimplemented!("Authentication is not yet implemented"),
-        _ => return Err(QueryError::ProtocolError),
+        _ => {
+            return Err(QueryError::ProtocolError(
+                "Unexpected response to STARTUP message",
+            ))
+        }
     }
 
     Ok(connection)

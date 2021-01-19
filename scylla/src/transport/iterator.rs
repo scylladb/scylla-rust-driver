@@ -176,7 +176,12 @@ impl WorkerHelper {
             }
             Ok(_) => {
                 self.metrics.inc_failed_paged_queries();
-                let _ = self.sender.send(Err(QueryError::ProtocolError)).await;
+                let _ = self
+                    .sender
+                    .send(Err(QueryError::ProtocolError(
+                        "Unexpected response to next page query",
+                    )))
+                    .await;
                 None
             }
             Err(err) => {

@@ -167,7 +167,9 @@ impl Session {
         for res in results {
             if let Ok(statement) = res {
                 if prepared.get_id() != statement.get_id() {
-                    return Err(QueryError::ProtocolError);
+                    return Err(QueryError::ProtocolError(
+                        "Prepared statement Ids differ, all should be equal",
+                    ));
                 }
             }
         }
@@ -218,7 +220,9 @@ impl Session {
                         // Reprepared statement should keep its id - it's the md5 sum
                         // of statement contents
                         if reprepared.get_id() != prepared.get_id() {
-                            return Err(QueryError::ProtocolError);
+                            return Err(QueryError::ProtocolError(
+                                "Prepared statement Id changed, md5 sum should stay the same",
+                            ));
                         }
 
                         let result = connection
@@ -228,7 +232,9 @@ impl Session {
                             Response::Error(err) => Err(err.into()),
                             Response::Result(result::Result::Rows(rs)) => Ok(Some(rs.rows)),
                             Response::Result(_) => Ok(None),
-                            _ => Err(QueryError::ProtocolError),
+                            _ => Err(QueryError::ProtocolError(
+                                "EXECUTE: Unexpected server response",
+                            )),
                         }
                     }
                     _ => Err(err.into()),
@@ -236,7 +242,9 @@ impl Session {
             }
             Response::Result(result::Result::Rows(rs)) => Ok(Some(rs.rows)),
             Response::Result(_) => Ok(None),
-            _ => Err(QueryError::ProtocolError),
+            _ => Err(QueryError::ProtocolError(
+                "EXECUTE: Unexpected server response",
+            )),
         }
     }
 
@@ -267,7 +275,9 @@ impl Session {
         match response {
             Response::Error(err) => Err(err.into()),
             Response::Result(_) => Ok(()),
-            _ => Err(QueryError::ProtocolError),
+            _ => Err(QueryError::ProtocolError(
+                "BATCH: Unexpected server response",
+            )),
         }
     }
 
@@ -320,7 +330,11 @@ fn calculate_token(
     // that partitioner. The below logic gives correct token only for murmur3partitioner
     let partition_key = match stmt.compute_partition_key(values) {
         Ok(key) => key,
-        Err(PartitionKeyError::NoPkIndexValue(_, _)) => return Err(QueryError::ProtocolError),
+        Err(PartitionKeyError::NoPkIndexValue(_, _)) => {
+            return Err(QueryError::ProtocolError(
+                "No pk indexes - can't calculate token",
+            ))
+        }
         Err(PartitionKeyError::ValueTooLong(values_len)) => {
             return Err(QueryError::BadQuery(BadQuery::ValuesTooLongForKey(
                 values_len,
