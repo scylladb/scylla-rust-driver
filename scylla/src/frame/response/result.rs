@@ -4,12 +4,13 @@ use crate::frame::frame_errors::ParseError;
 use crate::frame::types;
 use byteorder::{BigEndian, ReadBytesExt};
 use bytes::{Buf, Bytes};
-use std::collections::HashMap;
-use std::convert::TryFrom;
-use std::convert::TryInto;
-use std::net::IpAddr;
-use std::result::Result as StdResult;
-use std::str;
+use std::{
+    collections::BTreeMap,
+    convert::{TryFrom, TryInto},
+    net::IpAddr,
+    result::Result as StdResult,
+    str,
+};
 
 #[derive(Debug)]
 pub struct SetKeyspace {
@@ -50,7 +51,7 @@ enum ColumnType {
     // TODO
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq, Eq, Hash)]
 pub enum CQLValue {
     Ascii(String),
     Int(i32),
@@ -61,7 +62,7 @@ pub enum CQLValue {
     UserDefinedType {
         keyspace: String,
         type_name: String,
-        fields: HashMap<String, Option<CQLValue>>,
+        fields: BTreeMap<String, Option<CQLValue>>,
     }, // TODO
 }
 
@@ -371,8 +372,7 @@ fn deser_cql_value(typ: &ColumnType, buf: &mut &[u8]) -> StdResult<CQLValue, Par
             keyspace,
             field_types,
         } => {
-            let mut fields: HashMap<String, Option<CQLValue>> =
-                HashMap::with_capacity(field_types.len());
+            let mut fields: BTreeMap<String, Option<CQLValue>> = BTreeMap::new();
 
             for (field_name, field_type) in field_types {
                 let mut field_value: Option<CQLValue> = None;
