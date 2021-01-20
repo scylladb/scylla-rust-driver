@@ -79,9 +79,9 @@ impl SerializedValues {
         if self.values_num == i16::max_value() {
             return Err(SerializeValuesError::TooManyValues);
         }
-
+        
         let len_before_serialize: usize = self.serialized_values.len();
-
+        
         if let Err(e) = val.serialize(&mut self.serialized_values) {
             self.serialized_values.resize(len_before_serialize, 0);
             return Err(SerializeValuesError::from(e));
@@ -227,21 +227,37 @@ impl<T: Value> Value for &T {
 
 impl<K: Value, V: Value> Value for HashMap<K, V> {
     fn serialize(&self, buf: &mut Vec<u8>) -> Result<(), ValueTooBig> {
+        let bytes_num_pos: usize = buf.len();
+        buf.put_i32(0);
+
         buf.put_i32(self.len().try_into().map_err(|_| ValueTooBig)?);
         for (key, value) in self {
             <K as Value>::serialize(key, buf)?;
             <V as Value>::serialize(value, buf)?;
         }
+
+        let written_bytes: usize = buf.len() - bytes_num_pos - 4;
+        let written_bytes_i32: i32 = written_bytes.try_into().map_err(|_| ValueTooBig) ?;
+        buf[bytes_num_pos..(bytes_num_pos+4)].copy_from_slice(&written_bytes_i32.to_be_bytes());
+
         Ok(())
     }
 }
 
 impl<T: Value> Value for Vec<T> {
     fn serialize(&self, buf: &mut Vec<u8>) -> Result<(), ValueTooBig> {
+        let bytes_num_pos: usize = buf.len();
+        buf.put_i32(0);
+
         buf.put_i32(self.len().try_into().map_err(|_| ValueTooBig)?);
         for value in self {
             <T as Value>::serialize(value, buf)?;
         }
+
+        let written_bytes: usize = buf.len() - bytes_num_pos - 4;
+        let written_bytes_i32: i32 = written_bytes.try_into().map_err(|_| ValueTooBig) ?;
+        buf[bytes_num_pos..(bytes_num_pos+4)].copy_from_slice(&written_bytes_i32.to_be_bytes());
+
         Ok(())
     }
 }
@@ -253,9 +269,15 @@ macro_rules! impl_value_for_tuple {
             $($Ti: Value),+
         {
             fn serialize(&self, buf: &mut Vec<u8>) -> Result<(), ValueTooBig> {
+                let bytes_num_pos: usize = buf.len();
+                buf.put_i32(0);
                 $(
                     <$Ti as Value>::serialize(&self.$FieldI, buf)?;
                 )*
+
+                let written_bytes: usize = buf.len() - bytes_num_pos - 4;
+                let written_bytes_i32: i32 = written_bytes.try_into().map_err(|_| ValueTooBig) ?;
+                buf[bytes_num_pos..(bytes_num_pos+4)].copy_from_slice(&written_bytes_i32.to_be_bytes());
 
                 Ok(())
             }
