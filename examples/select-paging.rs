@@ -32,7 +32,8 @@ async fn main() -> Result<()> {
 
     // Iterate through select result with paging
     let mut rows_stream = session
-        .query_iter("SELECT a, b, c FROM ks.t", &[])?
+        .query_iter("SELECT a, b, c FROM ks.t", &[])
+        .await?
         .into_typed::<(i32, i32, String)>();
 
     while let Some(next_row_res) = rows_stream.next().await {

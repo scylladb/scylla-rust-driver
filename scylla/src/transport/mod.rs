@@ -1,9 +1,16 @@
+mod cluster;
 pub mod connection;
-pub mod iterator;
-mod metrics;
+mod connection_keeper;
+mod node;
 pub mod session;
 mod topology;
-pub mod transport_errors;
+
+pub mod errors;
+pub mod iterator;
+mod metrics;
+
+#[cfg(test)]
+mod session_test;
 
 /// The wire protocol compression algorithm.
 #[derive(Copy, Clone)]
@@ -22,6 +29,3 @@ impl ToString for Compression {
         }
     }
 }
-
-#[cfg(test)]
-mod session_test;

@@ -2,7 +2,7 @@ use super::result::{CQLValue, Row};
 use std::net::IpAddr;
 use thiserror::Error;
 
-#[derive(Error, Debug, PartialEq, Eq)]
+#[derive(Error, Debug, Clone, PartialEq, Eq)]
 pub enum FromRowError {
     #[error("Bad CQL value")]
     BadCQLVal(#[from] FromCQLValError),
@@ -17,7 +17,7 @@ pub trait FromCQLVal<T>: Sized {
     fn from_cql(cql_val: T) -> Result<Self, FromCQLValError>;
 }
 
-#[derive(Debug, PartialEq, Eq, Error)]
+#[derive(Error, Debug, Clone, PartialEq, Eq)]
 pub enum FromCQLValError {
     #[error("Bad CQL type")]
     BadCQLType,

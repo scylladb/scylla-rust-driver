@@ -1,11 +1,9 @@
 use bytes::{Buf, Bytes};
 use rand::Rng;
-use std::collections::BTreeMap;
 use std::collections::HashMap;
 use std::convert::TryFrom;
 use std::net::SocketAddr;
 use std::num::Wrapping;
-use std::ops::Bound::{Included, Unbounded};
 use thiserror::Error;
 
 #[derive(PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Copy)]
@@ -20,19 +18,13 @@ pub struct Token {
     pub value: i64,
 }
 
-#[derive(Clone)]
-pub struct Ring {
-    // invariant: nonempty
-    pub owners: BTreeMap<Token, Node>,
-}
-
 pub type Shard = u32;
 
 #[derive(PartialEq, Eq, Clone, Debug)]
 pub struct ShardInfo {
-    shard: u16,
-    nr_shards: u16,
-    msb_ignore: u8,
+    pub shard: u16,
+    pub nr_shards: u16,
+    pub msb_ignore: u8,
 }
 
 impl std::str::FromStr for Token {
@@ -45,15 +37,6 @@ impl std::str::FromStr for Token {
 pub fn murmur3_token(pk: Bytes) -> Token {
     Token {
         value: hash3_x64_128(&pk) as i64,
-    }
-}
-
-impl Ring {
-    pub fn owner(&self, t: Token) -> Node {
-        if let Some((_, &n)) = self.owners.range((Included(t), Unbounded)).next() {
-            return n;
-        }
-        *self.owners.iter().next().unwrap().1 // safe by invariant
     }
 }
 
@@ -79,14 +62,17 @@ impl ShardInfo {
         (source_port % self.nr_shards) as Shard
     }
 
-    /// Randomly choose a source port `p` such that `shard_of(t) == shard_of_source_port(p)`.
-    pub fn draw_source_port_for_token(&self, t: Token) -> u16 {
-        let shard = self.shard_of(t) as u16;
-        assert!(shard < self.nr_shards);
+    /// Randomly choose a source port `p` such that `shard == shard_of_source_port(p)`.
+    pub fn draw_source_port_for_shard(&self, shard: Shard) -> u16 {
+        assert!(shard < self.nr_shards as u32);
         rand::thread_rng().gen_range(49152 + self.nr_shards - 1, 65535 - self.nr_shards + 1)
             / self.nr_shards
             * self.nr_shards
-            + shard
+            + shard as u16
+    }
+
+    pub fn get_nr_shards(&self) -> u16 {
+        self.nr_shards
     }
 }
 
