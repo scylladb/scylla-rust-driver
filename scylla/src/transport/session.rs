@@ -29,8 +29,17 @@ pub struct Session {
     metrics: Arc<Metrics>,
 }
 
+/// Configuration options for [`Session`].  
+/// Can be created manually, but usually it's easier to use
+/// [SessionBuilder](super::session_builder::SessionBuilder)
 pub struct SessionConfig {
+    /// List of database servers known on Session startup.  
+    /// Session will connect to these nodes to retrieve information about other nodes in the cluster.  
+    /// Each node can be represented as a hostname or an IP address.  
     pub known_nodes: Vec<KnownNode>,
+
+    /// Preferred compression algorithm to use on connections.  
+    /// If it's not supported by database server Session will fall back to no compression.  
     pub compression: Option<Compression>,
     /*
     These configuration options will be added in the future:
@@ -51,12 +60,22 @@ pub struct SessionConfig {
     */
 }
 
+/// Describes database server known on Session startup.
 pub enum KnownNode {
     Hostname(String),
     Address(SocketAddr),
 }
 
 impl SessionConfig {
+    /// Creates a [`SessionConfig`] with default configuration
+    /// # Default configuration
+    /// * Compression: None
+    ///
+    /// # Example
+    /// ```
+    /// # use scylla::SessionConfig;
+    /// let config = SessionConfig::new();
+    /// ```
     pub fn new() -> Self {
         SessionConfig {
             known_nodes: Vec::new(),
@@ -64,27 +83,63 @@ impl SessionConfig {
         }
     }
 
+    /// Adds a known database server with a hostname
+    /// # Example
+    /// ```
+    /// # use scylla::SessionConfig;
+    /// let mut config = SessionConfig::new();
+    /// config.add_known_node("127.0.0.1:9042");
+    /// config.add_known_node("db1.example.com:9042");
+    /// ```
     pub fn add_known_node(&mut self, hostname: impl AsRef<str>) {
         self.known_nodes
             .push(KnownNode::Hostname(hostname.as_ref().to_string()));
     }
 
+    /// Adds a known database server with an IP address
+    /// # Example
+    /// ```
+    /// # use scylla::SessionConfig;
+    /// # use std::net::{SocketAddr, IpAddr, Ipv4Addr};
+    /// let mut config = SessionConfig::new();
+    /// config.add_known_node_addr(SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), 9042));
+    /// ```
     pub fn add_known_node_addr(&mut self, node_addr: SocketAddr) {
         self.known_nodes.push(KnownNode::Address(node_addr));
     }
 
+    /// Adds a list of known database server with hostnames
+    /// # Example
+    /// ```
+    /// # use scylla::SessionConfig;
+    /// # use std::net::{SocketAddr, IpAddr, Ipv4Addr};
+    /// let mut config = SessionConfig::new();
+    /// config.add_known_nodes(&["127.0.0.1:9042", "db1.example.com"]);
+    /// ```
     pub fn add_known_nodes(&mut self, hostnames: &[impl AsRef<str>]) {
         for hostname in hostnames {
             self.add_known_node(hostname);
         }
     }
 
+    /// Adds a list of known database servers with IP addresses
+    /// # Example
+    /// ```
+    /// # use scylla::SessionConfig;
+    /// # use std::net::{SocketAddr, IpAddr, Ipv4Addr};
+    /// let addr1 = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(172, 17, 0, 3)), 9042);
+    /// let addr2 = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(172, 17, 0, 4)), 9042);
+    ///
+    /// let mut config = SessionConfig::new();
+    /// config.add_known_nodes_addr(&[addr1, addr2]);
+    /// ```
     pub fn add_known_nodes_addr(&mut self, node_addrs: &[SocketAddr]) {
         for address in node_addrs {
             self.add_known_node_addr(*address);
         }
     }
 
+    /// Makes a config that should be used in Connection
     fn get_connection_config(&self) -> ConnectionConfig {
         ConnectionConfig {
             compression: self.compression,
@@ -92,6 +147,7 @@ impl SessionConfig {
     }
 }
 
+/// Creates default [`SessionConfig`], same as [`SessionConfig::new`]
 impl Default for SessionConfig {
     fn default() -> Self {
         Self::new()
