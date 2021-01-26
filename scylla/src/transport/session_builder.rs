@@ -159,3 +159,119 @@ impl Default for SessionBuilder {
         SessionBuilder::new()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::SessionBuilder;
+    use crate::transport::session::KnownNode;
+    use crate::transport::Compression;
+    use std::net::{IpAddr, Ipv4Addr, SocketAddr};
+
+    #[test]
+    fn default_session_builder() {
+        let builder = SessionBuilder::new();
+
+        assert!(builder.config.known_nodes.is_empty());
+        assert_eq!(builder.config.compression, None);
+    }
+
+    #[test]
+    fn add_known_node() {
+        let mut builder = SessionBuilder::new();
+
+        builder = builder.known_node("test_hostname");
+
+        assert_eq!(
+            builder.config.known_nodes,
+            vec![KnownNode::Hostname("test_hostname".into())]
+        );
+        assert_eq!(builder.config.compression, None);
+    }
+
+    #[test]
+    fn add_known_node_addr() {
+        let mut builder = SessionBuilder::new();
+
+        let addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(172, 17, 0, 3)), 1357);
+        builder = builder.known_node_addr(addr);
+
+        assert_eq!(builder.config.known_nodes, vec![KnownNode::Address(addr)]);
+        assert_eq!(builder.config.compression, None);
+    }
+
+    #[test]
+    fn add_known_nodes() {
+        let mut builder = SessionBuilder::new();
+
+        builder = builder.known_nodes(&["test_hostname1", "test_hostname2"]);
+
+        assert_eq!(
+            builder.config.known_nodes,
+            vec![
+                KnownNode::Hostname("test_hostname1".into()),
+                KnownNode::Hostname("test_hostname2".into())
+            ]
+        );
+        assert_eq!(builder.config.compression, None);
+    }
+
+    #[test]
+    fn add_known_nodes_addr() {
+        let mut builder = SessionBuilder::new();
+
+        let addr1 = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(172, 17, 0, 3)), 1357);
+        let addr2 = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(172, 17, 0, 4)), 9090);
+
+        builder = builder.known_nodes_addr(&[addr1, addr2]);
+
+        assert_eq!(
+            builder.config.known_nodes,
+            vec![KnownNode::Address(addr1), KnownNode::Address(addr2)]
+        );
+        assert_eq!(builder.config.compression, None);
+    }
+
+    #[test]
+    fn compression() {
+        let mut builder = SessionBuilder::new();
+        assert_eq!(builder.config.compression, None);
+
+        builder = builder.compression(Some(Compression::LZ4));
+        assert_eq!(builder.config.compression, Some(Compression::LZ4));
+
+        builder = builder.compression(Some(Compression::Snappy));
+        assert_eq!(builder.config.compression, Some(Compression::Snappy));
+
+        builder = builder.compression(None);
+        assert_eq!(builder.config.compression, None);
+    }
+
+    #[test]
+    fn all_features() {
+        let mut builder = SessionBuilder::new();
+
+        let addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(172, 17, 0, 3)), 8465);
+        let addr1 = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(172, 17, 0, 3)), 1357);
+        let addr2 = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(172, 17, 0, 4)), 9090);
+
+        builder = builder.known_node("hostname_test");
+        builder = builder.known_node_addr(addr);
+        builder = builder.known_nodes(&["hostname_test1", "hostname_test2"]);
+        builder = builder.known_nodes_addr(&[addr1, addr2]);
+        builder = builder.compression(Some(Compression::Snappy));
+
+        assert_eq!(
+            builder.config.known_nodes,
+            vec![
+                KnownNode::Hostname("hostname_test".into()),
+                KnownNode::Address(addr),
+                KnownNode::Hostname("hostname_test1".into()),
+                KnownNode::Hostname("hostname_test2".into()),
+                KnownNode::Address(addr1),
+                KnownNode::Address(addr2),
+            ]
+        );
+
+        assert_eq!(builder.config.compression, Some(Compression::Snappy));
+    }
+}

@@ -61,6 +61,7 @@ pub struct SessionConfig {
 }
 
 /// Describes database server known on Session startup.
+#[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Debug)]
 pub enum KnownNode {
     Hostname(String),
     Address(SocketAddr),
