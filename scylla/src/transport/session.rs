@@ -72,14 +72,13 @@ impl Session {
     ///
     /// * `addr` - address of the server
     /// * `compression` - optional compression settings
-    pub async fn connect(
+    async fn connect(
         addr: impl ToSocketAddrs + Display,
         compression: Option<Compression>,
     ) -> Result<Self, NewSessionError> {
         let addr = resolve(addr).await?;
 
         let cluster = Cluster::new(&[addr], compression).await?;
-
         let metrics = Arc::new(Metrics::new());
 
         Ok(Session { cluster, metrics })

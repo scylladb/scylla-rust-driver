@@ -2,6 +2,7 @@ use anyhow::Result;
 use scylla::cql_to_rust::FromRow;
 use scylla::macros::FromRow;
 use scylla::transport::session::{IntoTypedRows, Session};
+use scylla::SessionBuilder;
 use std::env;
 
 #[tokio::main]
@@ -10,7 +11,7 @@ async fn main() -> Result<()> {
 
     println!("Connecting to {} ...", uri);
 
-    let session = Session::connect(uri, None).await?;
+    let session: Session = SessionBuilder::new().known_node(uri).build().await?;
 
     session.query("CREATE KEYSPACE IF NOT EXISTS ks WITH REPLICATION = {'class' : 'SimpleStrategy', 'replication_factor' : 1}", &[]).await?;
 

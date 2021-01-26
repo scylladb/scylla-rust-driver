@@ -12,7 +12,7 @@ Although optimized for ScyllaDB, the driver is also compatible with [Apache Cass
 ```rust
 let uri = "127.0.0.1:9042";
 
-let session = Session::connect(uri, None).await?;
+let session: Session = SessionBuilder::new().known_node(uri).build().await?;
 
 if let Some(rows) = session.query("SELECT a, b, c FROM ks.t", &[]).await? {
     for row in rows.into_typed::<(i32, i32, String)>() {
