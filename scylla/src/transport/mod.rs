@@ -4,6 +4,7 @@ pub mod connection;
 mod connection_keeper;
 mod node;
 pub mod session;
+pub mod session_builder;
 mod topology;
 
 pub mod errors;

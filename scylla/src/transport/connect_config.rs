@@ -38,6 +38,27 @@ impl ConnectConfig {
             compression: None,
         }
     }
+
+    pub fn add_known_node(&mut self, hostname: impl AsRef<str>) {
+        self.known_nodes
+            .push(KnownNode::Hostname(hostname.as_ref().to_string()));
+    }
+
+    pub fn add_known_node_addr(&mut self, node_addr: SocketAddr) {
+        self.known_nodes.push(KnownNode::Address(node_addr));
+    }
+
+    pub fn add_known_nodes(&mut self, hostnames: &[impl AsRef<str>]) {
+        for hostname in hostnames {
+            self.add_known_node(hostname);
+        }
+    }
+
+    pub fn add_known_nodes_addr(&mut self, node_addrs: &[SocketAddr]) {
+        for address in node_addrs {
+            self.add_known_node_addr(*address);
+        }
+    }
 }
 
 impl Default for ConnectConfig {
