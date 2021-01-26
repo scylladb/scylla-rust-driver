@@ -41,7 +41,7 @@ impl SessionBuilder {
     }
 
     pub async fn build(self) -> Result<Session, NewSessionError> {
-        Session::connect_with_config(self.config).await
+        Session::connect(self.config).await
     }
 }
 

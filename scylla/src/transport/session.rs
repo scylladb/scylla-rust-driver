@@ -1,11 +1,10 @@
 use core::ops::Bound::{Included, Unbounded};
 use futures::future::join_all;
 use rand::Rng;
-use std::fmt::Display;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Instant;
-use tokio::net::{lookup_host, ToSocketAddrs};
+use tokio::net::lookup_host;
 
 use super::errors::{BadQuery, NewSessionError, QueryError};
 use crate::batch::Batch;
@@ -23,7 +22,6 @@ use crate::transport::connection::Connection;
 use crate::transport::iterator::RowIterator;
 use crate::transport::metrics::{Metrics, MetricsView};
 use crate::transport::node::Node;
-use crate::transport::Compression;
 
 pub struct Session {
     cluster: Cluster,
@@ -70,30 +68,35 @@ impl Session {
     /// Estabilishes a CQL session with the database
     /// # Arguments
     ///
-    /// * `addr` - address of the server
-    /// * `compression` - optional compression settings
-    async fn connect(
-        addr: impl ToSocketAddrs + Display,
-        compression: Option<Compression>,
-    ) -> Result<Self, NewSessionError> {
-        let addr = resolve(addr).await?;
+    /// * `config` - Connectiong configuration - known nodes, Compression, etc.
+    pub async fn connect(config: ConnectConfig) -> Result<Self, NewSessionError> {
+        // Ensure there is at least one known node
+        if config.known_nodes.is_empty() {
+            return Err(NewSessionError::EmptyKnownNodesList);
+        }
 
-        let cluster = Cluster::new(&[addr], compression).await?;
+        // Find IP addresses of all known nodes passed in the config
+        let mut node_addresses: Vec<SocketAddr> = Vec::with_capacity(config.known_nodes.len());
+
+        let mut to_resolve: Vec<&str> = Vec::new();
+
+        for node in &config.known_nodes {
+            match node {
+                KnownNode::Hostname(hostname) => to_resolve.push(&hostname),
+                KnownNode::Address(address) => node_addresses.push(*address),
+            };
+        }
+
+        let resolve_futures = to_resolve.into_iter().map(resolve_hostname);
+        let resolved: Vec<SocketAddr> = futures::future::try_join_all(resolve_futures).await?;
+
+        node_addresses.extend(resolved);
+
+        // Start the session
+        let cluster = Cluster::new(&node_addresses, config.compression).await?;
         let metrics = Arc::new(Metrics::new());
 
         Ok(Session { cluster, metrics })
-    }
-
-    pub async fn connect_with_config(config: ConnectConfig) -> Result<Self, NewSessionError> {
-        let first_known: &KnownNode = config
-            .known_nodes
-            .first()
-            .ok_or(NewSessionError::EmptyKnownNodesList)?;
-
-        match first_known {
-            KnownNode::Hostname(hostname) => Self::connect(hostname, config.compression).await,
-            KnownNode::Address(address) => Self::connect(address, config.compression).await,
-        }
     }
 
     // TODO: Should return an iterator over results
@@ -358,13 +361,13 @@ fn calculate_token(
     Ok(murmur3_token(partition_key))
 }
 
-// Resolve the given `ToSocketAddrs` using a DNS lookup if necessary.
+// Resolve the given hostname using a DNS lookup if necessary.
 // The resolution may return multiple IPs and the function returns one of them.
 // It prefers to return IPv4s first, and only if there are none, IPv6s.
-async fn resolve(addr: impl ToSocketAddrs + Display) -> Result<SocketAddr, NewSessionError> {
-    let failed_err = NewSessionError::FailedToResolveAddress(addr.to_string());
+async fn resolve_hostname(hostname: &str) -> Result<SocketAddr, NewSessionError> {
+    let failed_err = NewSessionError::FailedToResolveAddress(hostname.to_string());
     let mut ret = None;
-    for a in lookup_host(addr).await? {
+    for a in lookup_host(hostname).await? {
         match a {
             SocketAddr::V4(_) => return Ok(a),
             _ => {
