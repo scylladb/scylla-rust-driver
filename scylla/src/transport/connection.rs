@@ -31,7 +31,7 @@ pub struct Connection {
     _worker_handle: RemoteHandle<()>,
     source_port: u16,
     shard_info: Option<ShardInfo>,
-    compression: Option<Compression>,
+    config: ConnectionConfig,
     is_shard_aware: bool,
 }
 
@@ -76,7 +76,7 @@ impl Connection {
     pub async fn new(
         addr: SocketAddr,
         source_port: Option<u16>,
-        compression: Option<Compression>,
+        config: ConnectionConfig,
     ) -> Result<Self, std::io::Error> {
         let stream = match source_port {
             Some(p) => connect_with_source_port(addr, p).await?,
@@ -95,7 +95,7 @@ impl Connection {
             _worker_handle,
             source_port,
             shard_info: None,
-            compression,
+            config,
             is_shard_aware: false,
         })
     }
@@ -222,7 +222,11 @@ impl Connection {
         compress: bool,
     ) -> Result<Response, QueryError> {
         let body = request.to_bytes()?;
-        let compression = if compress { self.compression } else { None };
+        let compression = if compress {
+            self.config.compression
+        } else {
+            None
+        };
         let body_with_ext = RequestBodyWithExtensions { body };
 
         let (flags, raw_request) =
@@ -253,7 +257,7 @@ impl Connection {
         })?;
         let body_with_ext = frame::parse_response_body_extensions(
             task_response.params.flags,
-            self.compression,
+            self.config.compression,
             task_response.body,
         )?;
 
@@ -398,10 +402,6 @@ impl Connection {
         self.shard_info = shard_info
     }
 
-    fn set_compression(&mut self, compression: Option<Compression>) {
-        self.compression = compression;
-    }
-
     fn set_is_shard_aware(&mut self, is_shard_aware: bool) {
         self.is_shard_aware = is_shard_aware;
     }
@@ -415,7 +415,7 @@ pub async fn open_connection(
     open_named_connection(
         addr,
         source_port,
-        config.compression,
+        config,
         Some("scylla-rust-driver".to_string()),
     )
     .await
@@ -424,11 +424,11 @@ pub async fn open_connection(
 pub async fn open_named_connection(
     addr: SocketAddr,
     source_port: Option<u16>,
-    compression: Option<Compression>,
+    config: ConnectionConfig,
     driver_name: Option<String>,
 ) -> Result<Connection, QueryError> {
     // TODO: shouldn't all this logic be in Connection::new?
-    let mut connection = Connection::new(addr, source_port, compression).await?;
+    let mut connection = Connection::new(addr, source_port, config.clone()).await?;
 
     let options_result = connection.get_options().await?;
 
@@ -458,7 +458,7 @@ pub async fn open_named_connection(
     if let Some(name) = driver_name {
         options.insert("DRIVER_NAME".to_string(), name);
     }
-    if let Some(compression) = &compression {
+    if let Some(compression) = &config.compression {
         let compression_str = compression.to_string();
         if supported_compression.iter().any(|c| c == &compression_str) {
             // Compression is reported to be supported by the server,
@@ -466,7 +466,7 @@ pub async fn open_named_connection(
             options.insert("COMPRESSION".to_string(), compression.to_string());
         } else {
             // Fall back to no compression
-            connection.set_compression(None);
+            connection.config.compression = None;
         }
     }
     let result = connection.startup(options).await?;
