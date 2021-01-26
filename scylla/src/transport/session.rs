@@ -18,6 +18,7 @@ use crate::prepared_statement::{PartitionKeyError, PreparedStatement};
 use crate::query::Query;
 use crate::routing::{murmur3_token, Token};
 use crate::transport::cluster::{Cluster, ClusterData};
+use crate::transport::connect_config::{ConnectConfig, KnownNode};
 use crate::transport::connection::Connection;
 use crate::transport::iterator::RowIterator;
 use crate::transport::metrics::{Metrics, MetricsView};
@@ -82,6 +83,18 @@ impl Session {
         let metrics = Arc::new(Metrics::new());
 
         Ok(Session { cluster, metrics })
+    }
+
+    pub async fn connect_with_config(config: ConnectConfig) -> Result<Self, NewSessionError> {
+        let first_known: &KnownNode = config
+            .known_nodes
+            .first()
+            .ok_or(NewSessionError::EmptyKnownNodesList)?;
+
+        match first_known {
+            KnownNode::Hostname(hostname) => Self::connect(hostname, config.compression).await,
+            KnownNode::Address(address) => Self::connect(address, config.compression).await,
+        }
     }
 
     // TODO: Should return an iterator over results
