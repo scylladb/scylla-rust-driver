@@ -1,8 +1,10 @@
 /// ConnectionKeeper keeps a Connection to some address and works to keep it open
 use crate::routing::ShardInfo;
 use crate::transport::errors::QueryError;
-use crate::transport::Compression;
-use crate::transport::{connection, connection::Connection};
+use crate::transport::{
+    connection,
+    connection::{Connection, ConnectionConfig},
+};
 
 use futures::{future::RemoteHandle, FutureExt};
 use std::net::SocketAddr;
@@ -24,7 +26,7 @@ pub enum ConnectionState {
 /// Works in the background to keep the connection open
 struct ConnectionKeeperWorker {
     address: SocketAddr,
-    compression: Option<Compression>,
+    config: ConnectionConfig,
     shard_info: Option<ShardInfo>,
 
     shard_info_sender: Option<ShardInfoSender>,
@@ -43,7 +45,7 @@ impl ConnectionKeeper {
     /// * `shard_info_sender` - channel to send new ShardInfo after each connection creation
     pub fn new(
         address: SocketAddr,
-        compression: Option<Compression>,
+        config: ConnectionConfig,
         shard_info: Option<ShardInfo>,
         shard_info_sender: Option<ShardInfoSender>,
     ) -> Self {
@@ -52,7 +54,7 @@ impl ConnectionKeeper {
 
         let worker = ConnectionKeeperWorker {
             address,
-            compression,
+            config,
             shard_info,
             shard_info_sender,
             conn_state_sender,
@@ -141,7 +143,7 @@ impl ConnectionKeeperWorker {
         }
 
         let new_conn =
-            connection::open_connection(self.address, source_port, self.compression).await?;
+            connection::open_connection(self.address, source_port, self.config.clone()).await?;
 
         Ok(Arc::new(new_conn))
     }

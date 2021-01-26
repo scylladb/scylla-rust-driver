@@ -50,6 +50,28 @@ struct TaskResponse {
     body: Bytes,
 }
 
+#[derive(Clone)]
+pub struct ConnectionConfig {
+    pub compression: Option<Compression>,
+    /*
+    These configuration options will be added in the future:
+
+    pub auth_username: Option<String>,
+    pub auth_password: Option<String>,
+
+    pub use_tls: bool,
+    pub tls_certificate_path: Option<String>,
+
+    pub tcp_nodelay: bool,
+    pub tcp_keepalive: bool,
+
+    pub load_balancing: Option<String>,
+    pub retry_policy: Option<String>,
+
+    pub default_consistency: Option<String>,
+    */
+}
+
 impl Connection {
     pub async fn new(
         addr: SocketAddr,
@@ -388,12 +410,12 @@ impl Connection {
 pub async fn open_connection(
     addr: SocketAddr,
     source_port: Option<u16>,
-    compression: Option<Compression>,
+    config: ConnectionConfig,
 ) -> Result<Connection, QueryError> {
     open_named_connection(
         addr,
         source_port,
-        compression,
+        config.compression,
         Some("scylla-rust-driver".to_string()),
     )
     .await

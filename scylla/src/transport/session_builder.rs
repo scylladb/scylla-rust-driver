@@ -1,17 +1,16 @@
-use super::connect_config::ConnectConfig;
 use super::errors::NewSessionError;
-use super::session::Session;
+use super::session::{Session, SessionConfig};
 use super::Compression;
 use std::net::SocketAddr;
 
 pub struct SessionBuilder {
-    pub config: ConnectConfig,
+    pub config: SessionConfig,
 }
 
 impl SessionBuilder {
     pub fn new() -> Self {
         SessionBuilder {
-            config: ConnectConfig::new(),
+            config: SessionConfig::new(),
         }
     }
 

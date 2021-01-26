@@ -17,16 +17,85 @@ use crate::prepared_statement::{PartitionKeyError, PreparedStatement};
 use crate::query::Query;
 use crate::routing::{murmur3_token, Token};
 use crate::transport::cluster::{Cluster, ClusterData};
-use crate::transport::connect_config::{ConnectConfig, KnownNode};
-use crate::transport::connection::Connection;
+use crate::transport::connection::{Connection, ConnectionConfig};
 use crate::transport::iterator::RowIterator;
 use crate::transport::metrics::{Metrics, MetricsView};
 use crate::transport::node::Node;
+use crate::transport::Compression;
 
 pub struct Session {
     cluster: Cluster,
 
     metrics: Arc<Metrics>,
+}
+
+pub struct SessionConfig {
+    pub known_nodes: Vec<KnownNode>,
+    pub compression: Option<Compression>,
+    /*
+    These configuration options will be added in the future:
+
+    pub auth_username: Option<String>,
+    pub auth_password: Option<String>,
+
+    pub use_tls: bool,
+    pub tls_certificate_path: Option<String>,
+
+    pub tcp_nodelay: bool,
+    pub tcp_keepalive: bool,
+
+    pub load_balancing: Option<String>,
+    pub retry_policy: Option<String>,
+
+    pub default_consistency: Option<String>,
+    */
+}
+
+pub enum KnownNode {
+    Hostname(String),
+    Address(SocketAddr),
+}
+
+impl SessionConfig {
+    pub fn new() -> Self {
+        SessionConfig {
+            known_nodes: Vec::new(),
+            compression: None,
+        }
+    }
+
+    pub fn add_known_node(&mut self, hostname: impl AsRef<str>) {
+        self.known_nodes
+            .push(KnownNode::Hostname(hostname.as_ref().to_string()));
+    }
+
+    pub fn add_known_node_addr(&mut self, node_addr: SocketAddr) {
+        self.known_nodes.push(KnownNode::Address(node_addr));
+    }
+
+    pub fn add_known_nodes(&mut self, hostnames: &[impl AsRef<str>]) {
+        for hostname in hostnames {
+            self.add_known_node(hostname);
+        }
+    }
+
+    pub fn add_known_nodes_addr(&mut self, node_addrs: &[SocketAddr]) {
+        for address in node_addrs {
+            self.add_known_node_addr(*address);
+        }
+    }
+
+    fn get_connection_config(&self) -> ConnectionConfig {
+        ConnectionConfig {
+            compression: self.compression,
+        }
+    }
+}
+
+impl Default for SessionConfig {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 // Trait used to implement Vec<result::Row>::into_typed<RowT>(self)
@@ -69,7 +138,7 @@ impl Session {
     /// # Arguments
     ///
     /// * `config` - Connectiong configuration - known nodes, Compression, etc.
-    pub async fn connect(config: ConnectConfig) -> Result<Self, NewSessionError> {
+    pub async fn connect(config: SessionConfig) -> Result<Self, NewSessionError> {
         // Ensure there is at least one known node
         if config.known_nodes.is_empty() {
             return Err(NewSessionError::EmptyKnownNodesList);
@@ -93,7 +162,7 @@ impl Session {
         node_addresses.extend(resolved);
 
         // Start the session
-        let cluster = Cluster::new(&node_addresses, config.compression).await?;
+        let cluster = Cluster::new(&node_addresses, config.get_connection_config()).await?;
         let metrics = Arc::new(Metrics::new());
 
         Ok(Session { cluster, metrics })

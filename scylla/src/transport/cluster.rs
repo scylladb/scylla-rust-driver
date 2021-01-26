@@ -1,10 +1,9 @@
 /// Cluster manages up to date information and connections to database nodes
 use crate::routing::Token;
-use crate::transport::connection::Connection;
+use crate::transport::connection::{Connection, ConnectionConfig};
 use crate::transport::errors::QueryError;
 use crate::transport::node::{Node, NodeConnections};
 use crate::transport::topology::{Keyspace, TopologyReader};
-use crate::transport::Compression;
 
 use futures::{future::RemoteHandle, FutureExt};
 use std::collections::{BTreeMap, HashMap};
@@ -33,7 +32,7 @@ struct ClusterWorker {
 
     // Cluster connections
     topology_reader: TopologyReader,
-    compression: Option<Compression>,
+    connection_config: ConnectionConfig,
 
     // To listen for refresh requests
     refresh_channel: tokio::sync::mpsc::Receiver<RefreshRequest>,
@@ -47,7 +46,7 @@ struct RefreshRequest {
 impl Cluster {
     pub async fn new(
         initial_peers: &[SocketAddr],
-        compression: Option<Compression>,
+        connection_config: ConnectionConfig,
     ) -> Result<Cluster, QueryError> {
         let cluster_data = Arc::new(RwLock::new(Arc::new(ClusterData {
             known_peers: HashMap::new(),
@@ -60,8 +59,8 @@ impl Cluster {
         let worker = ClusterWorker {
             cluster_data: cluster_data.clone(),
 
-            topology_reader: TopologyReader::new(initial_peers, compression),
-            compression,
+            topology_reader: TopologyReader::new(initial_peers, connection_config.clone()),
+            connection_config,
 
             refresh_channel: refresh_receiver,
         };
@@ -200,7 +199,7 @@ impl ClusterWorker {
                 }
                 _ => Arc::new(Node::new(
                     peer.address,
-                    self.compression,
+                    self.connection_config.clone(),
                     peer.datacenter,
                     peer.rack,
                 )),

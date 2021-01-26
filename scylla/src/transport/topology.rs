@@ -1,9 +1,8 @@
 use crate::routing::Token;
-use crate::transport::connection::Connection;
+use crate::transport::connection::{Connection, ConnectionConfig};
 use crate::transport::connection_keeper::ConnectionKeeper;
 use crate::transport::errors::QueryError;
 use crate::transport::session::IntoTypedRows;
-use crate::transport::Compression;
 
 use std::collections::HashMap;
 use std::net::{IpAddr, SocketAddr};
@@ -13,7 +12,7 @@ use std::str::FromStr;
 pub struct TopologyReader {
     control_connections: HashMap<SocketAddr, ConnectionKeeper>,
     connect_port: u16,
-    compression: Option<Compression>,
+    connection_config: ConnectionConfig,
 }
 
 /// Describes all topology information retrieved from the cluster
@@ -52,7 +51,7 @@ pub enum Strategy {
 
 impl TopologyReader {
     /// Creates new TopologyReader, which connects to known_peers in the background
-    pub fn new(known_peers: &[SocketAddr], compression: Option<Compression>) -> Self {
+    pub fn new(known_peers: &[SocketAddr], connection_config: ConnectionConfig) -> Self {
         let connect_port: u16 = known_peers
             .first()
             .expect("Tried to initialize TopologyReader with empty known_peers list!")
@@ -64,14 +63,14 @@ impl TopologyReader {
         for address in known_peers {
             control_connections.insert(
                 *address,
-                ConnectionKeeper::new(*address, compression, None, None),
+                ConnectionKeeper::new(*address, connection_config.clone(), None, None),
             );
         }
 
         TopologyReader {
             control_connections,
             connect_port,
-            compression,
+            connection_config,
         }
     }
 
@@ -112,7 +111,7 @@ impl TopologyReader {
                 .control_connections
                 .remove(&peer.address)
                 .unwrap_or_else(|| {
-                    ConnectionKeeper::new(peer.address, self.compression, None, None)
+                    ConnectionKeeper::new(peer.address, self.connection_config.clone(), None, None)
                 });
 
             new_control_connections.insert(peer.address, cur_connection);

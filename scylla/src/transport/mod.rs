@@ -1,5 +1,4 @@
 mod cluster;
-pub mod connect_config;
 pub mod connection;
 mod connection_keeper;
 mod node;
