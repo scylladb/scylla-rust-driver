@@ -6,7 +6,7 @@ use std::task::{Context, Poll};
 use std::time::Instant;
 
 use bytes::Bytes;
-use futures::{Stream};
+use futures::Stream;
 use std::result::Result as StdResult;
 use thiserror::Error;
 use tokio::sync::mpsc;
