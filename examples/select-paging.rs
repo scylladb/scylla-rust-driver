@@ -10,7 +10,6 @@ async fn main() -> Result<()> {
     println!("Connecting to {} ...", uri);
 
     let session = Session::connect(uri, None).await?;
-    session.refresh_topology().await?;
 
     session.query("CREATE KEYSPACE IF NOT EXISTS ks WITH REPLICATION = {'class' : 'SimpleStrategy', 'replication_factor' : 1}", &[]).await?;
 
