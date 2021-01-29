@@ -7,6 +7,9 @@ pub mod value;
 #[cfg(test)]
 mod value_tests;
 
+#[cfg(test)]
+mod cql_collections_test;
+
 use crate::frame::frame_errors::FrameError;
 use crate::transport::Compression;
 use bytes::{Buf, BufMut, Bytes};

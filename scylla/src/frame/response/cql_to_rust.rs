@@ -1,4 +1,6 @@
 use super::result::{CQLValue, Row};
+use std::collections::HashMap;
+use std::hash::Hash;
 use std::net::IpAddr;
 use thiserror::Error;
 
@@ -8,6 +10,12 @@ pub enum FromRowError {
     BadCQLVal(#[from] FromCQLValError),
     #[error("Row too short")]
     RowTooShort,
+}
+
+#[derive(Error, Debug, PartialEq, Eq)]
+pub enum CQLTypeError {
+    #[error("Invalid number of set elements: {0}")]
+    InvalidNumberOfElements(i32),
 }
 
 /// This trait defines a way to convert CQLValue or Option<CQLValue> into some rust type  
@@ -76,6 +84,19 @@ impl<T: FromCQLVal<CQLValue>> FromCQLVal<CQLValue> for Vec<T> {
     }
 }
 
+impl<T1: FromCQLVal<CQLValue> + Eq + Hash, T2: FromCQLVal<CQLValue>> FromCQLVal<CQLValue>
+    for HashMap<T1, T2>
+{
+    fn from_cql(cql_val: CQLValue) -> Result<Self, FromCQLValError> {
+        let vec = cql_val.into_pair_vec().ok_or(FromCQLValError::BadCQLType)?;
+        let mut res = HashMap::with_capacity(vec.len());
+        for (key, value) in vec {
+            res.insert(T1::from_cql(key)?, T2::from_cql(value)?);
+        }
+        Ok(res)
+    }
+}
+
 // This macro implements FromRow for tuple of types that have FromCQLVal
 macro_rules! impl_tuple_from_row {
     ( $($Ti:tt),+ ) => {
@@ -116,6 +137,47 @@ impl_tuple_from_row!(T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, T12, T13);
 impl_tuple_from_row!(T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, T12, T13, T14);
 impl_tuple_from_row!(T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, T12, T13, T14, T15);
 impl_tuple_from_row!(T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, T12, T13, T14, T15, T16);
+
+macro_rules! impl_tuple_from_cql {
+    ( $($Ti:tt),+ ) => {
+        impl<$($Ti),+> FromCQLVal<CQLValue> for ($($Ti,)+)
+        where
+            $($Ti: FromCQLVal<CQLValue>),+
+        {
+            fn from_cql(cql_val: CQLValue) -> Result<Self, FromCQLValError> {
+                let tuple_fields = match cql_val {
+                    CQLValue::Tuple(fields) => fields,
+                    _ => return Err(FromCQLValError::BadCQLType)
+                };
+
+                let mut tuple_fields_iter = tuple_fields.into_iter();
+
+                Ok((
+                    $(
+                        $Ti::from_cql(tuple_fields_iter.next().ok_or(FromCQLValError::BadCQLType) ?) ?
+                    ,)+
+                ))
+            }
+        }
+    }
+}
+
+impl_tuple_from_cql!(T1);
+impl_tuple_from_cql!(T1, T2);
+impl_tuple_from_cql!(T1, T2, T3);
+impl_tuple_from_cql!(T1, T2, T3, T4);
+impl_tuple_from_cql!(T1, T2, T3, T4, T5);
+impl_tuple_from_cql!(T1, T2, T3, T4, T5, T6);
+impl_tuple_from_cql!(T1, T2, T3, T4, T5, T6, T7);
+impl_tuple_from_cql!(T1, T2, T3, T4, T5, T6, T7, T8);
+impl_tuple_from_cql!(T1, T2, T3, T4, T5, T6, T7, T8, T9);
+impl_tuple_from_cql!(T1, T2, T3, T4, T5, T6, T7, T8, T9, T10);
+impl_tuple_from_cql!(T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11);
+impl_tuple_from_cql!(T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, T12);
+impl_tuple_from_cql!(T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, T12, T13);
+impl_tuple_from_cql!(T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, T12, T13, T14);
+impl_tuple_from_cql!(T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, T12, T13, T14, T15);
+impl_tuple_from_cql!(T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, T12, T13, T14, T15, T16);
 
 #[cfg(test)]
 mod tests {

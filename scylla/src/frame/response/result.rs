@@ -1,15 +1,14 @@
-use super::cql_to_rust::FromRowError;
-use crate::cql_to_rust::FromRow;
-use crate::frame::frame_errors::ParseError;
-use crate::frame::types;
+use crate::cql_to_rust::{FromRow, FromRowError};
+use crate::frame::{frame_errors::ParseError, types};
 use byteorder::{BigEndian, ReadBytesExt};
 use bytes::{Buf, Bytes};
-use std::collections::HashMap;
-use std::convert::TryFrom;
-use std::convert::TryInto;
-use std::net::IpAddr;
-use std::result::Result as StdResult;
-use std::str;
+use std::{
+    collections::BTreeMap,
+    convert::{TryFrom, TryInto},
+    net::IpAddr,
+    result::Result as StdResult,
+    str,
+};
 
 #[derive(Debug)]
 pub struct SetKeyspace {
@@ -41,28 +40,33 @@ enum ColumnType {
     BigInt,
     Text,
     Inet,
+    List(Box<ColumnType>),
+    Map(Box<ColumnType>, Box<ColumnType>),
     Set(Box<ColumnType>),
     UserDefinedType {
         type_name: String,
         keyspace: String,
         field_types: Vec<(String, ColumnType)>,
     },
-    // TODO
+    Tuple(Vec<ColumnType>),
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq, Eq, Hash)]
 pub enum CQLValue {
     Ascii(String),
     Int(i32),
     BigInt(i64),
     Text(String),
     Inet(IpAddr),
+    List(Vec<CQLValue>),
+    Map(Vec<(CQLValue, CQLValue)>),
     Set(Vec<CQLValue>),
     UserDefinedType {
         keyspace: String,
         type_name: String,
-        fields: HashMap<String, Option<CQLValue>>,
-    }, // TODO
+        fields: BTreeMap<String, Option<CQLValue>>,
+    },
+    Tuple(Vec<CQLValue>),
 }
 
 impl CQLValue {
@@ -109,6 +113,13 @@ impl CQLValue {
         }
     }
 
+    pub fn as_list(&self) -> Option<&Vec<CQLValue>> {
+        match self {
+            Self::List(s) => Some(&s),
+            _ => None,
+        }
+    }
+
     pub fn as_set(&self) -> Option<&Vec<CQLValue>> {
         match self {
             Self::Set(s) => Some(&s),
@@ -118,7 +129,15 @@ impl CQLValue {
 
     pub fn into_vec(self) -> Option<Vec<CQLValue>> {
         match self {
+            Self::List(s) => Some(s),
             Self::Set(s) => Some(s),
+            _ => None,
+        }
+    }
+
+    pub fn into_pair_vec(self) -> Option<Vec<(CQLValue, CQLValue)>> {
+        match self {
+            Self::Map(s) => Some(s),
             _ => None,
         }
     }
@@ -193,6 +212,8 @@ fn deser_type(buf: &mut &[u8]) -> StdResult<ColumnType, ParseError> {
         0x0009 => Int,
         0x000D => Text,
         0x0010 => Inet,
+        0x0020 => List(Box::new(deser_type(buf)?)),
+        0x0021 => Map(Box::new(deser_type(buf)?), Box::new(deser_type(buf)?)),
         0x0022 => Set(Box::new(deser_type(buf)?)),
         0x0030 => {
             let keyspace_name: String = types::read_string(buf)?.to_string();
@@ -213,6 +234,14 @@ fn deser_type(buf: &mut &[u8]) -> StdResult<ColumnType, ParseError> {
                 keyspace: keyspace_name,
                 field_types,
             }
+        }
+        0x0031 => {
+            let len: usize = types::read_short(buf)?.try_into()?;
+            let mut types = Vec::with_capacity(len as usize);
+            for _ in 0..len {
+                types.push(deser_type(buf)?);
+            }
+            Tuple(types)
         }
         id => {
             // TODO implement other types
@@ -355,14 +384,34 @@ fn deser_cql_value(typ: &ColumnType, buf: &mut &[u8]) -> StdResult<CQLValue, Par
                 )));
             }
         }),
-        Set(typ) => {
+        List(type_name) => {
             let len: usize = types::read_int(buf)?.try_into()?;
-
+            let mut res = Vec::with_capacity(len);
+            for _ in 0..len {
+                let mut b = types::read_bytes(buf)?;
+                res.push(deser_cql_value(type_name, &mut b)?);
+            }
+            CQLValue::List(res)
+        }
+        Map(key_type, value_type) => {
+            let len: usize = types::read_int(buf)?.try_into()?;
+            let mut res = Vec::with_capacity(len);
+            for _ in 0..len {
+                let mut b = types::read_bytes(buf)?;
+                let key = deser_cql_value(key_type, &mut b)?;
+                b = types::read_bytes(buf)?;
+                let val = deser_cql_value(value_type, &mut b)?;
+                res.push((key, val));
+            }
+            CQLValue::Map(res)
+        }
+        Set(type_name) => {
+            let len: usize = types::read_int(buf)?.try_into()?;
             let mut res = Vec::with_capacity(len);
             for _ in 0..len {
                 // TODO: is `null` allowed as set element? Should we use read_bytes_opt?
                 let mut b = types::read_bytes(buf)?;
-                res.push(deser_cql_value(typ, &mut b)?);
+                res.push(deser_cql_value(type_name, &mut b)?);
             }
             CQLValue::Set(res)
         }
@@ -371,8 +420,7 @@ fn deser_cql_value(typ: &ColumnType, buf: &mut &[u8]) -> StdResult<CQLValue, Par
             keyspace,
             field_types,
         } => {
-            let mut fields: HashMap<String, Option<CQLValue>> =
-                HashMap::with_capacity(field_types.len());
+            let mut fields: BTreeMap<String, Option<CQLValue>> = BTreeMap::new();
 
             for (field_name, field_type) in field_types {
                 let mut field_value: Option<CQLValue> = None;
@@ -388,6 +436,14 @@ fn deser_cql_value(typ: &ColumnType, buf: &mut &[u8]) -> StdResult<CQLValue, Par
                 type_name: type_name.clone(),
                 fields,
             }
+        }
+        Tuple(type_names) => {
+            let mut res = Vec::with_capacity(type_names.len());
+            for type_name in type_names {
+                let mut b = types::read_bytes(buf)?;
+                res.push(deser_cql_value(type_name, &mut b)?);
+            }
+            CQLValue::Tuple(res)
         }
     })
 }
@@ -459,4 +515,60 @@ pub fn deserialize(buf: &mut &[u8]) -> StdResult<Result, ParseError> {
             )))
         }
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use crate as scylla;
+    use scylla::frame::response::result::CQLValue;
+
+    #[test]
+    fn test_list_from_cql() {
+        let mut my_vec: Vec<CQLValue> = Vec::new();
+
+        my_vec.push(CQLValue::Int(20));
+        my_vec.push(CQLValue::Int(2));
+        my_vec.push(CQLValue::Int(13));
+
+        let cql: CQLValue = CQLValue::List(my_vec);
+        let decoded = cql.into_vec().unwrap();
+
+        assert_eq!(decoded[0], CQLValue::Int(20));
+        assert_eq!(decoded[1], CQLValue::Int(2));
+        assert_eq!(decoded[2], CQLValue::Int(13));
+    }
+
+    #[test]
+    fn test_set_from_cql() {
+        let mut my_vec: Vec<CQLValue> = Vec::new();
+
+        my_vec.push(CQLValue::Int(20));
+        my_vec.push(CQLValue::Int(2));
+        my_vec.push(CQLValue::Int(13));
+
+        let cql: CQLValue = CQLValue::Set(my_vec);
+        let decoded = cql.as_set().unwrap();
+
+        assert_eq!(decoded[0], CQLValue::Int(20));
+        assert_eq!(decoded[1], CQLValue::Int(2));
+        assert_eq!(decoded[2], CQLValue::Int(13));
+    }
+
+    #[test]
+    fn test_map_from_cql() {
+        let mut my_vec: Vec<(CQLValue, CQLValue)> = Vec::new();
+
+        my_vec.push((CQLValue::Int(20), CQLValue::Int(21)));
+        my_vec.push((CQLValue::Int(2), CQLValue::Int(3)));
+
+        let cql: CQLValue = CQLValue::Map(my_vec);
+
+        let decoded = cql.into_pair_vec().unwrap();
+
+        assert_eq!(CQLValue::Int(20), decoded[0].0);
+        assert_eq!(CQLValue::Int(21), decoded[0].1);
+
+        assert_eq!(CQLValue::Int(2), decoded[1].0);
+        assert_eq!(CQLValue::Int(3), decoded[1].1);
+    }
 }
