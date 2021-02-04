@@ -9,6 +9,7 @@ mod value_tests;
 
 #[cfg(test)]
 mod cql_collections_test;
+mod cql_types_test;
 
 use crate::frame::frame_errors::FrameError;
 use crate::transport::Compression;

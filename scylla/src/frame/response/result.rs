@@ -36,6 +36,8 @@ struct TableSpec {
 #[derive(Debug, Clone)]
 enum ColumnType {
     Ascii,
+    Boolean,
+    Date,
     Int,
     BigInt,
     Text,
@@ -54,6 +56,8 @@ enum ColumnType {
 #[derive(Debug, PartialEq, Eq, Hash)]
 pub enum CQLValue {
     Ascii(String),
+    Boolean(bool),
+    Date(u32),
     Int(i32),
     BigInt(i64),
     Text(String),
@@ -73,6 +77,20 @@ impl CQLValue {
     pub fn as_ascii(&self) -> Option<&String> {
         match self {
             Self::Ascii(s) => Some(&s),
+            _ => None,
+        }
+    }
+
+    pub fn as_date(&self) -> Option<u32> {
+        match self {
+            Self::Date(i) => Some(*i),
+            _ => None,
+        }
+    }
+
+    pub fn as_boolean(&self) -> Option<bool> {
+        match self {
+            Self::Boolean(i) => Some(*i),
             _ => None,
         }
     }
@@ -209,6 +227,8 @@ fn deser_type(buf: &mut &[u8]) -> StdResult<ColumnType, ParseError> {
     Ok(match id {
         0x0001 => Ascii,
         0x0002 => BigInt,
+        0x0004 => Boolean,
+        0x0005 => Date,
         0x0009 => Int,
         0x000D => Text,
         0x0010 => Inet,
@@ -346,6 +366,24 @@ fn deser_cql_value(typ: &ColumnType, buf: &mut &[u8]) -> StdResult<CQLValue, Par
                 return Err(ParseError::BadData("String is not ascii!".to_string()));
             }
             CQLValue::Ascii(str::from_utf8(buf)?.to_owned())
+        }
+        Boolean => {
+            if !buf.len() != 1 {
+                return Err(ParseError::BadData(format!(
+                    "Buffer length should be 1 not {}",
+                    buf.len()
+                )));
+            }
+            CQLValue::Boolean(buf[0] != 0x00)
+        }
+        Date => {
+            if !buf.len() != 4 {
+                return Err(ParseError::BadData(format!(
+                    "Buffer length should be 4 not {}",
+                    buf.len()
+                )));
+            }
+            CQLValue::Date(buf.read_u32::<BigEndian>()?)
         }
         Int => {
             if buf.len() != 4 {
