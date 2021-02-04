@@ -1,9 +1,8 @@
 /// Node represents a cluster node along with it's data and connections
 use crate::routing::{Shard, ShardInfo, Token};
-use crate::transport::connection::Connection;
+use crate::transport::connection::{Connection, ConnectionConfig};
 use crate::transport::connection_keeper::{ConnectionKeeper, ShardInfoSender};
 use crate::transport::errors::QueryError;
-use crate::transport::Compression;
 
 use futures::{future::RemoteHandle, FutureExt};
 use std::net::SocketAddr;
@@ -36,7 +35,7 @@ pub enum NodeConnections {
 struct NodeWorker {
     node_conns: Arc<AsyncRwLock<NodeConnections>>,
     node_addr: SocketAddr,
-    compression: Option<Compression>,
+    connection_config: ConnectionConfig,
 
     shard_info_sender: ShardInfoSender,
     shard_info_receiver: tokio::sync::watch::Receiver<Option<ShardInfo>>,
@@ -52,7 +51,7 @@ impl Node {
     /// `rack` - optional rack name
     pub fn new(
         address: SocketAddr,
-        compression: Option<Compression>,
+        connection_config: ConnectionConfig,
         datacenter: Option<String>,
         rack: Option<String>,
     ) -> Self {
@@ -61,13 +60,18 @@ impl Node {
         let shard_info_sender = Arc::new(std::sync::Mutex::new(shard_info_sender));
 
         let connections = Arc::new(AsyncRwLock::new(NodeConnections::Single(
-            ConnectionKeeper::new(address, compression, None, Some(shard_info_sender.clone())),
+            ConnectionKeeper::new(
+                address,
+                connection_config.clone(),
+                None,
+                Some(shard_info_sender.clone()),
+            ),
         )));
 
         let worker = NodeWorker {
             node_conns: connections.clone(),
             node_addr: address,
-            compression,
+            connection_config,
             shard_info_sender,
             shard_info_receiver,
         };
@@ -135,7 +139,7 @@ impl NodeWorker {
             let mut new_connections: NodeConnections = match &cur_shard_info {
                 None => NodeConnections::Single(ConnectionKeeper::new(
                     self.node_addr,
-                    self.compression,
+                    self.connection_config.clone(),
                     None,
                     Some(self.shard_info_sender.clone()),
                 )),
@@ -148,7 +152,7 @@ impl NodeWorker {
                         cur_conn_shard_info.shard = shard;
                         let cur_conn = ConnectionKeeper::new(
                             self.node_addr,
-                            self.compression,
+                            self.connection_config.clone(),
                             Some(cur_conn_shard_info),
                             Some(self.shard_info_sender.clone()),
                         );

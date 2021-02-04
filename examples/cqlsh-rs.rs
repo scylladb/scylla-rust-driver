@@ -1,8 +1,8 @@
 use anyhow::Result;
 use rustyline::error::ReadlineError;
 use rustyline::Editor;
-use scylla::transport::session::Session;
 use scylla::transport::Compression;
+use scylla::{Session, SessionBuilder};
 use std::env;
 
 #[tokio::main]
@@ -11,7 +11,11 @@ async fn main() -> Result<()> {
 
     println!("Connecting to {} ...", uri);
 
-    let session = Session::connect(uri, Some(Compression::LZ4)).await?;
+    let session: Session = SessionBuilder::new()
+        .known_node(uri)
+        .compression(Some(Compression::LZ4))
+        .build()
+        .await?;
 
     let mut rl = Editor::<()>::new();
     loop {

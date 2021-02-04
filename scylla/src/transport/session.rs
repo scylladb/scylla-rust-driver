@@ -1,11 +1,10 @@
 use core::ops::Bound::{Included, Unbounded};
 use futures::future::join_all;
 use rand::Rng;
-use std::fmt::Display;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Instant;
-use tokio::net::{lookup_host, ToSocketAddrs};
+use tokio::net::lookup_host;
 
 use super::errors::{BadQuery, NewSessionError, QueryError};
 use crate::batch::Batch;
@@ -18,7 +17,7 @@ use crate::prepared_statement::{PartitionKeyError, PreparedStatement};
 use crate::query::Query;
 use crate::routing::{murmur3_token, Token};
 use crate::transport::cluster::{Cluster, ClusterData};
-use crate::transport::connection::Connection;
+use crate::transport::connection::{Connection, ConnectionConfig};
 use crate::transport::iterator::RowIterator;
 use crate::transport::metrics::{Metrics, MetricsView};
 use crate::transport::node::Node;
@@ -28,6 +27,132 @@ pub struct Session {
     cluster: Cluster,
 
     metrics: Arc<Metrics>,
+}
+
+/// Configuration options for [`Session`].  
+/// Can be created manually, but usually it's easier to use
+/// [SessionBuilder](super::session_builder::SessionBuilder)
+pub struct SessionConfig {
+    /// List of database servers known on Session startup.  
+    /// Session will connect to these nodes to retrieve information about other nodes in the cluster.  
+    /// Each node can be represented as a hostname or an IP address.  
+    pub known_nodes: Vec<KnownNode>,
+
+    /// Preferred compression algorithm to use on connections.  
+    /// If it's not supported by database server Session will fall back to no compression.  
+    pub compression: Option<Compression>,
+    /*
+    These configuration options will be added in the future:
+
+    pub auth_username: Option<String>,
+    pub auth_password: Option<String>,
+
+    pub use_tls: bool,
+    pub tls_certificate_path: Option<String>,
+
+    pub tcp_nodelay: bool,
+    pub tcp_keepalive: bool,
+
+    pub load_balancing: Option<String>,
+    pub retry_policy: Option<String>,
+
+    pub default_consistency: Option<String>,
+    */
+}
+
+/// Describes database server known on Session startup.
+#[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Debug)]
+pub enum KnownNode {
+    Hostname(String),
+    Address(SocketAddr),
+}
+
+impl SessionConfig {
+    /// Creates a [`SessionConfig`] with default configuration
+    /// # Default configuration
+    /// * Compression: None
+    ///
+    /// # Example
+    /// ```
+    /// # use scylla::SessionConfig;
+    /// let config = SessionConfig::new();
+    /// ```
+    pub fn new() -> Self {
+        SessionConfig {
+            known_nodes: Vec::new(),
+            compression: None,
+        }
+    }
+
+    /// Adds a known database server with a hostname
+    /// # Example
+    /// ```
+    /// # use scylla::SessionConfig;
+    /// let mut config = SessionConfig::new();
+    /// config.add_known_node("127.0.0.1:9042");
+    /// config.add_known_node("db1.example.com:9042");
+    /// ```
+    pub fn add_known_node(&mut self, hostname: impl AsRef<str>) {
+        self.known_nodes
+            .push(KnownNode::Hostname(hostname.as_ref().to_string()));
+    }
+
+    /// Adds a known database server with an IP address
+    /// # Example
+    /// ```
+    /// # use scylla::SessionConfig;
+    /// # use std::net::{SocketAddr, IpAddr, Ipv4Addr};
+    /// let mut config = SessionConfig::new();
+    /// config.add_known_node_addr(SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), 9042));
+    /// ```
+    pub fn add_known_node_addr(&mut self, node_addr: SocketAddr) {
+        self.known_nodes.push(KnownNode::Address(node_addr));
+    }
+
+    /// Adds a list of known database server with hostnames
+    /// # Example
+    /// ```
+    /// # use scylla::SessionConfig;
+    /// # use std::net::{SocketAddr, IpAddr, Ipv4Addr};
+    /// let mut config = SessionConfig::new();
+    /// config.add_known_nodes(&["127.0.0.1:9042", "db1.example.com"]);
+    /// ```
+    pub fn add_known_nodes(&mut self, hostnames: &[impl AsRef<str>]) {
+        for hostname in hostnames {
+            self.add_known_node(hostname);
+        }
+    }
+
+    /// Adds a list of known database servers with IP addresses
+    /// # Example
+    /// ```
+    /// # use scylla::SessionConfig;
+    /// # use std::net::{SocketAddr, IpAddr, Ipv4Addr};
+    /// let addr1 = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(172, 17, 0, 3)), 9042);
+    /// let addr2 = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(172, 17, 0, 4)), 9042);
+    ///
+    /// let mut config = SessionConfig::new();
+    /// config.add_known_nodes_addr(&[addr1, addr2]);
+    /// ```
+    pub fn add_known_nodes_addr(&mut self, node_addrs: &[SocketAddr]) {
+        for address in node_addrs {
+            self.add_known_node_addr(*address);
+        }
+    }
+
+    /// Makes a config that should be used in Connection
+    fn get_connection_config(&self) -> ConnectionConfig {
+        ConnectionConfig {
+            compression: self.compression,
+        }
+    }
+}
+
+/// Creates default [`SessionConfig`], same as [`SessionConfig::new`]
+impl Default for SessionConfig {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 // Trait used to implement Vec<result::Row>::into_typed<RowT>(self)
@@ -69,16 +194,32 @@ impl Session {
     /// Estabilishes a CQL session with the database
     /// # Arguments
     ///
-    /// * `addr` - address of the server
-    /// * `compression` - optional compression settings
-    pub async fn connect(
-        addr: impl ToSocketAddrs + Display,
-        compression: Option<Compression>,
-    ) -> Result<Self, NewSessionError> {
-        let addr = resolve(addr).await?;
+    /// * `config` - Connectiong configuration - known nodes, Compression, etc.
+    pub async fn connect(config: SessionConfig) -> Result<Self, NewSessionError> {
+        // Ensure there is at least one known node
+        if config.known_nodes.is_empty() {
+            return Err(NewSessionError::EmptyKnownNodesList);
+        }
 
-        let cluster = Cluster::new(&[addr], compression).await?;
+        // Find IP addresses of all known nodes passed in the config
+        let mut node_addresses: Vec<SocketAddr> = Vec::with_capacity(config.known_nodes.len());
 
+        let mut to_resolve: Vec<&str> = Vec::new();
+
+        for node in &config.known_nodes {
+            match node {
+                KnownNode::Hostname(hostname) => to_resolve.push(&hostname),
+                KnownNode::Address(address) => node_addresses.push(*address),
+            };
+        }
+
+        let resolve_futures = to_resolve.into_iter().map(resolve_hostname);
+        let resolved: Vec<SocketAddr> = futures::future::try_join_all(resolve_futures).await?;
+
+        node_addresses.extend(resolved);
+
+        // Start the session
+        let cluster = Cluster::new(&node_addresses, config.get_connection_config()).await?;
         let metrics = Arc::new(Metrics::new());
 
         Ok(Session { cluster, metrics })
@@ -346,13 +487,13 @@ fn calculate_token(
     Ok(murmur3_token(partition_key))
 }
 
-// Resolve the given `ToSocketAddrs` using a DNS lookup if necessary.
+// Resolve the given hostname using a DNS lookup if necessary.
 // The resolution may return multiple IPs and the function returns one of them.
 // It prefers to return IPv4s first, and only if there are none, IPv6s.
-async fn resolve(addr: impl ToSocketAddrs + Display) -> Result<SocketAddr, NewSessionError> {
-    let failed_err = NewSessionError::FailedToResolveAddress(addr.to_string());
+async fn resolve_hostname(hostname: &str) -> Result<SocketAddr, NewSessionError> {
+    let failed_err = NewSessionError::FailedToResolveAddress(hostname.to_string());
     let mut ret = None;
-    for a in lookup_host(addr).await? {
+    for a in lookup_host(hostname).await? {
         match a {
             SocketAddr::V4(_) => return Ok(a),
             _ => {

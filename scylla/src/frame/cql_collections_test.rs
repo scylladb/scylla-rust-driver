@@ -1,5 +1,5 @@
 // use anyhow::Result;
-use crate::transport::session::{IntoTypedRows, Session};
+use crate::{IntoTypedRows, SessionBuilder};
 use std::collections::HashMap;
 use std::env;
 
@@ -12,8 +12,7 @@ async fn test_cql_collections() {
 
     println!("Connecting to {} ...", uri);
 
-    let session = Session::connect(uri, None).await.unwrap();
-    session.refresh_topology().await.unwrap();
+    let session = SessionBuilder::new().known_node(uri).build().await.unwrap();
 
     session.query("CREATE KEYSPACE IF NOT EXISTS ks WITH REPLICATION = {'class' : 'SimpleStrategy', 'replication_factor' : 1}", &[]).await.unwrap();
 

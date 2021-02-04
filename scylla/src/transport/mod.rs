@@ -3,6 +3,7 @@ pub mod connection;
 mod connection_keeper;
 mod node;
 pub mod session;
+pub mod session_builder;
 mod topology;
 
 pub mod errors;
@@ -13,7 +14,7 @@ mod metrics;
 mod session_test;
 
 /// The wire protocol compression algorithm.
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Debug)]
 pub enum Compression {
     /// LZ4 compression algorithm.
     LZ4,

@@ -58,6 +58,11 @@ pub enum NewSessionError {
     #[error("Couldn't resolve address: {0}")]
     FailedToResolveAddress(String),
 
+    /// List of known nodes passed to Session constructor is empty
+    /// There needs to be at least one node to connect to
+    #[error("Empty known nodes list")]
+    EmptyKnownNodesList,
+
     /// Database sent a response containing some error
     #[error(transparent)]
     DBError(#[from] DBError),
