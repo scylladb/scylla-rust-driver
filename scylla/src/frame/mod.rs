@@ -9,6 +9,7 @@ mod value_tests;
 
 #[cfg(test)]
 mod cql_collections_test;
+mod cql_types_test;
 
 #[cfg(test)]
 mod cql_types_test;
