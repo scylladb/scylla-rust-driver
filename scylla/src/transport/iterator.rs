@@ -38,7 +38,7 @@ impl Stream for RowIterator {
         let mut s = self.as_mut();
 
         if s.is_current_page_exhausted() {
-            match Pin::new(&mut s.page_receiver).poll_next(cx) {
+            match Pin::new(&mut s.page_receiver).poll_recv(cx) {
                 Poll::Ready(Some(Ok(rows))) => {
                     s.current_page = rows;
                     s.current_row_idx = 0;
