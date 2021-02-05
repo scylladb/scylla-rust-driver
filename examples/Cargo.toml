@@ -24,7 +24,7 @@ name = "parallel"
 path = "parallel.rs"
 
 [[example]]
-name = "parallel-prep"
+name = "parallel-prepared"
 path = "parallel-prepared.rs"
 
 [[example]]
