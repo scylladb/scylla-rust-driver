@@ -41,6 +41,7 @@ pub struct SessionConfig {
     /// Preferred compression algorithm to use on connections.  
     /// If it's not supported by database server Session will fall back to no compression.  
     pub compression: Option<Compression>,
+    pub tcp_nodelay: bool,
     /*
     These configuration options will be added in the future:
 
@@ -50,7 +51,6 @@ pub struct SessionConfig {
     pub use_tls: bool,
     pub tls_certificate_path: Option<String>,
 
-    pub tcp_nodelay: bool,
     pub tcp_keepalive: bool,
 
     pub load_balancing: Option<String>,
@@ -81,6 +81,7 @@ impl SessionConfig {
         SessionConfig {
             known_nodes: Vec::new(),
             compression: None,
+            tcp_nodelay: false,
         }
     }
 
@@ -144,6 +145,7 @@ impl SessionConfig {
     fn get_connection_config(&self) -> ConnectionConfig {
         ConnectionConfig {
             compression: self.compression,
+            tcp_nodelay: self.tcp_nodelay,
         }
     }
 }

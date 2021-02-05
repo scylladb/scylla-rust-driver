@@ -53,6 +53,7 @@ struct TaskResponse {
 #[derive(Clone)]
 pub struct ConnectionConfig {
     pub compression: Option<Compression>,
+    pub tcp_nodelay: bool,
     /*
     These configuration options will be added in the future:
 
@@ -62,7 +63,6 @@ pub struct ConnectionConfig {
     pub use_tls: bool,
     pub tls_certificate_path: Option<String>,
 
-    pub tcp_nodelay: bool,
     pub tcp_keepalive: bool,
 
     pub load_balancing: Option<String>,
@@ -83,6 +83,7 @@ impl Connection {
             None => TcpStream::connect(addr).await?,
         };
         let source_port = stream.local_addr()?.port();
+        stream.set_nodelay(config.tcp_nodelay)?;
 
         // TODO: What should be the size of the channel?
         let (sender, receiver) = mpsc::channel(128);
