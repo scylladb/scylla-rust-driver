@@ -52,7 +52,7 @@ async fn main() -> Result<()> {
 
     // Wait for all in-flight requests to finish
     for _ in 0..parallelism {
-        sem.acquire().await.forget();
+        sem.acquire().await.unwrap().forget();
     }
 
     println!("Ok.");
