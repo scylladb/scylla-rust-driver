@@ -1,7 +1,7 @@
 use anyhow::Result;
+use futures::stream::StreamExt;
 use scylla::{Session, SessionBuilder};
 use std::env;
-use tokio::stream::StreamExt;
 
 #[tokio::main]
 async fn main() -> Result<()> {

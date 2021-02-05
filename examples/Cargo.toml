@@ -1,14 +1,15 @@
 [package]
-name = "examples"
-version = "0.0.0"
-publish = false
 edition = "2018"
+name = "examples"
+publish = false
+version = "0.0.0"
 
 [dev-dependencies]
 anyhow = "1.0.33"
-scylla = { path = "../scylla" }
-tokio = { version = "0.3.0", features = ["full"] }
+futures = "0.3.6"
 rustyline = "6.3.0"
+scylla = {path = "../scylla"}
+tokio = {version = "1.1.0", features = ["full"]}
 
 [[example]]
 name = "basic"
@@ -23,7 +24,7 @@ name = "parallel"
 path = "parallel.rs"
 
 [[example]]
-name = "parallel-prep"
+name = "parallel-prepared"
 path = "parallel-prepared.rs"
 
 [[example]]
