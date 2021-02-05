@@ -133,6 +133,27 @@ impl SessionBuilder {
         self
     }
 
+    /// Set the nodelay TCP flag.  
+    /// The default is false.  
+    ///
+    /// # Example
+    /// ```
+    /// # use scylla::{Session, SessionBuilder};
+    /// # use scylla::transport::Compression;
+    /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
+    /// let session: Session = SessionBuilder::new()
+    ///     .known_node("127.0.0.1:9042")
+    ///     .tcp_nodelay(true)
+    ///     .build()
+    ///     .await?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn tcp_nodelay(mut self, nodelay: bool) -> Self {
+        self.config.tcp_nodelay = nodelay;
+        self
+    }
+
     /// Builds the Session after setting all the options
     ///
     /// # Example
@@ -247,6 +268,18 @@ mod tests {
     }
 
     #[test]
+    fn tcp_nodelay() {
+        let mut builder = SessionBuilder::new();
+        assert_eq!(builder.config.tcp_nodelay, false);
+
+        builder = builder.tcp_nodelay(true);
+        assert_eq!(builder.config.tcp_nodelay, true);
+
+        builder = builder.tcp_nodelay(false);
+        assert_eq!(builder.config.tcp_nodelay, false);
+    }
+
+    #[test]
     fn all_features() {
         let mut builder = SessionBuilder::new();
 
@@ -259,6 +292,7 @@ mod tests {
         builder = builder.known_nodes(&["hostname_test1", "hostname_test2"]);
         builder = builder.known_nodes_addr(&[addr1, addr2]);
         builder = builder.compression(Some(Compression::Snappy));
+        builder = builder.tcp_nodelay(true);
 
         assert_eq!(
             builder.config.known_nodes,
@@ -273,5 +307,6 @@ mod tests {
         );
 
         assert_eq!(builder.config.compression, Some(Compression::Snappy));
+        assert_eq!(builder.config.tcp_nodelay, true);
     }
 }
