@@ -497,7 +497,7 @@ async fn connect_with_source_port(
         socket.bind(format!("[{}]:{}", addr.ip(), source_port).parse().unwrap())?;
         Ok(socket.connect(addr).await?)
     } else {
-        Err(std::io::Error::new(ErrorKind::Other, "invalid ip address").into())
+        Err(std::io::Error::new(ErrorKind::Other, "invalid ip address"))
     }
 }
 
