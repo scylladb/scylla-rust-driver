@@ -490,11 +490,11 @@ async fn connect_with_source_port(
 ) -> Result<TcpStream, std::io::Error> {
     if addr.is_ipv4() {
         let socket = TcpSocket::new_v4().unwrap();
-        socket.bind(format!("{}:{}", addr, source_port).parse().unwrap())?;
+        socket.bind(format!("{}:{}", addr.ip(), source_port).parse().unwrap())?;
         Ok(socket.connect(addr).await?)
     } else if addr.is_ipv6() {
         let socket = TcpSocket::new_v6().unwrap();
-        socket.bind(format!("[{}]:{}", addr, source_port).parse().unwrap())?;
+        socket.bind(format!("[{}]:{}", addr.ip(), source_port).parse().unwrap())?;
         Ok(socket.connect(addr).await?)
     } else {
         Err(std::io::Error::new(ErrorKind::Other, "invalid ip address").into())
