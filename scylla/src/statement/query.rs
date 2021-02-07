@@ -106,3 +106,37 @@ impl QueryBuilder {
         self.0
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::{Query, QueryBuilder};
+    use crate::frame::types::Consistency;
+
+    #[test]
+    fn default_query_builder() {
+        let query: Query = QueryBuilder::new("query text").build();
+
+        assert_eq!(query.contents, "query text".to_string());
+        assert_eq!(query.page_size, None);
+        assert_eq!(query.consistency, Consistency::Quorum);
+    }
+
+    #[test]
+    fn query_builder_all_options() {
+        let query: Query = QueryBuilder::new("other query text")
+            .disable_paging()
+            .page_size(128)
+            .consistency(Consistency::LocalQuorum)
+            .build();
+
+        assert_eq!(query.contents, "other query text".to_string());
+        assert_eq!(query.page_size, Some(128));
+        assert_eq!(query.consistency, Consistency::LocalQuorum);
+    }
+
+    #[test]
+    #[should_panic]
+    fn query_builder_invalid_page_size() {
+        QueryBuilder::new("bad page size").page_size(-16);
+    }
+}
