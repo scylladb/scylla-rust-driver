@@ -64,29 +64,44 @@ impl<'a> From<&'a str> for Query {
     }
 }
 
+/// `QueryBuilder` makes creating a [`Query`] convenient
+///
+/// # Example:
+/// ```rust
+/// # use scylla::query::{Query, QueryBuilder};
+/// # use scylla::frame::types::Consistency;
+/// let query: Query = QueryBuilder::new("SELECT * FROM keyspace.table")
+///     .consistency(Consistency::One)
+///     .build();
+/// ```
 #[derive(Clone)]
 pub struct QueryBuilder(pub Query);
 
 impl QueryBuilder {
+    /// Creates new QueryBuilder for a [`Query`] with given query text
     pub fn new(text: impl Into<String>) -> QueryBuilder {
         QueryBuilder(Query::new(text.into()))
     }
 
+    /// Disables paging for this CQL query.
     pub fn disable_paging(mut self) -> Self {
         self.0.disable_paging();
         self
     }
 
+    /// Sets the page size for this CQL query
     pub fn page_size(mut self, page_size: i32) -> Self {
         self.0.set_page_size(page_size);
         self
     }
 
+    /// Sets the consistency to be used when executing this query.
     pub fn consistency(mut self, consistency: Consistency) -> Self {
         self.0.set_consistency(consistency);
         self
     }
 
+    /// Builds the result Query, turns `QueryBuilder` into `Query`
     pub fn build(self) -> Query {
         self.0
     }
