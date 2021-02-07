@@ -3,13 +3,16 @@ use futures::{future::RemoteHandle, FutureExt};
 use tokio::net::{tcp, TcpSocket, TcpStream};
 use tokio::sync::{mpsc, oneshot};
 
-use std::cmp::Ordering;
 use std::collections::HashMap;
 use std::convert::TryFrom;
 use std::io::ErrorKind;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::sync::Mutex as StdMutex;
+use std::{
+    cmp::Ordering,
+    net::{IpAddr, Ipv4Addr, Ipv6Addr},
+};
 
 use super::errors::{BadQuery, QueryError};
 
@@ -491,12 +494,18 @@ async fn connect_with_source_port(
     match addr {
         SocketAddr::V4(_) => {
             let socket = TcpSocket::new_v4()?;
-            socket.bind(format!("0.0.0.0:{}", source_port).parse().unwrap())?;
+            socket.bind(SocketAddr::new(
+                Ipv4Addr::new(0, 0, 0, 0).into(),
+                source_port,
+            ))?;
             Ok(socket.connect(addr).await?)
         }
         SocketAddr::V6(_) => {
             let socket = TcpSocket::new_v6()?;
-            socket.bind(format!("[::/0]:{}", source_port).parse().unwrap())?;
+            socket.bind(SocketAddr::new(
+                Ipv6Addr::new(0, 0, 0, 0, 0, 0, 0, 0).into(),
+                source_port,
+            ))?;
             Ok(socket.connect(addr).await?)
         }
     }
