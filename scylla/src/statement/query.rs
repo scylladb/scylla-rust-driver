@@ -63,3 +63,31 @@ impl<'a> From<&'a str> for Query {
         Query::new(s.to_owned())
     }
 }
+
+#[derive(Clone)]
+pub struct QueryBuilder(pub Query);
+
+impl QueryBuilder {
+    pub fn new(text: impl Into<String>) -> QueryBuilder {
+        QueryBuilder(Query::new(text.into()))
+    }
+
+    pub fn disable_paging(mut self) -> Self {
+        self.0.disable_paging();
+        self
+    }
+
+    pub fn page_size(mut self, page_size: i32) -> Self {
+        self.0.set_page_size(page_size);
+        self
+    }
+
+    pub fn consistency(mut self, consistency: Consistency) -> Self {
+        self.0.set_consistency(consistency);
+        self
+    }
+
+    pub fn build(self) -> Query {
+        self.0
+    }
+}
