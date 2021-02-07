@@ -11,7 +11,7 @@ use std::sync::Arc;
 use std::sync::Mutex as StdMutex;
 use std::{
     cmp::Ordering,
-    net::{IpAddr, Ipv4Addr, Ipv6Addr},
+    net::{Ipv4Addr, Ipv6Addr},
 };
 
 use super::errors::{BadQuery, QueryError};
