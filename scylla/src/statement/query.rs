@@ -61,7 +61,7 @@ impl Query {
 
     /// Gets the serial consistency to be used when executing this query.
     /// (Ignored unless the query is an LWT)
-    pub fn get_serial_consistency(&mut self) -> Option<Consistency> {
+    pub fn get_serial_consistency(&self) -> Option<Consistency> {
         self.serial_consistency
     }
 }

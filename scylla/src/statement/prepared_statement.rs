@@ -13,6 +13,7 @@ pub struct PreparedStatement {
     statement: String,
     page_size: Option<i32>,
     consistency: Consistency,
+    serial_consistency: Option<Consistency>,
 }
 
 impl PreparedStatement {
@@ -23,6 +24,7 @@ impl PreparedStatement {
             statement,
             page_size: None,
             consistency: Default::default(),
+            serial_consistency: None,
         }
     }
 
@@ -58,6 +60,18 @@ impl PreparedStatement {
     /// Gets the consistency to be used when executing this statement.
     pub fn get_consistency(&self) -> Consistency {
         self.consistency
+    }
+
+    /// Sets the serial consistency to be used when executing this statement.
+    /// (Ignored unless the statement is an LWT)
+    pub fn set_serial_consistency(&mut self, sc: Consistency) {
+        self.serial_consistency = Some(sc);
+    }
+
+    /// Gets the serial consistency to be used when executing this statement.
+    /// (Ignored unless the statement is an LWT)
+    pub fn get_serial_consistency(&self) -> Option<Consistency> {
+        self.serial_consistency
     }
 
     /// Computes the partition key of the target table from given values
