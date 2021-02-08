@@ -80,6 +80,42 @@ pub enum NewSessionError {
     ProtocolError(&'static str),
 }
 
+/// Invalid keyspace name given to `Session::use_keyspace()`
+#[derive(Debug, Error)]
+pub enum BadKeyspaceName {
+    /// Keyspace name is empty
+    #[error("Keyspace name is empty")]
+    Empty,
+
+    /// Keyspace name too long, must be up to 48 characters
+    #[error("Keyspace name too long, must be up to 48 characters, found {1} characters. Bad keyspace name: '{0}'")]
+    TooLong(String, usize),
+
+    /// Illegal character - only alpha-numeric and underscores allowed.
+    #[error("Illegal character found: '{1}', only alpha-numeric and underscores allowed. Bad keyspace name: '{0}'")]
+    IllegalCharacter(String, char),
+}
+
+/// Error occuring during `Session::use_keyspace()`
+#[derive(Debug, Error)]
+pub enum UseKeyspaceError {
+    /// Caller passed invalid keyspace name
+    #[error(transparent)]
+    BadKeyspaceName(#[from] BadKeyspaceName),
+
+    /// Database sent a response containing some error
+    #[error(transparent)]
+    DBError(#[from] DBError),
+
+    /// Input/Output error has occured, connection broken etc.
+    #[error("IO Error: {0}")]
+    IOError(Arc<std::io::Error>),
+
+    /// Unexpected or invalid message received
+    #[error("Protocol Error: {0}")]
+    ProtocolError(&'static str),
+}
+
 impl From<std::io::Error> for QueryError {
     fn from(io_error: std::io::Error) -> QueryError {
         QueryError::IOError(Arc::new(io_error))
@@ -117,6 +153,20 @@ impl From<QueryError> for NewSessionError {
             QueryError::BadQuery(e) => NewSessionError::BadQuery(e),
             QueryError::IOError(e) => NewSessionError::IOError(e),
             QueryError::ProtocolError(m) => NewSessionError::ProtocolError(m),
+        }
+    }
+}
+
+impl From<QueryError> for UseKeyspaceError {
+    fn from(query_error: QueryError) -> UseKeyspaceError {
+        match query_error {
+            QueryError::DBError(e) => UseKeyspaceError::DBError(e),
+            QueryError::IOError(e) => UseKeyspaceError::IOError(e),
+            QueryError::ProtocolError(m) => UseKeyspaceError::ProtocolError(m),
+            QueryError::BadQuery(_) => {
+                // BadQuery occurs with bad values, there are no values so this shouldn't happen
+                panic!("USE <keyspace_name> returned BadQuery - driver bug!")
+            }
         }
     }
 }

@@ -4,7 +4,7 @@ use std::sync::Arc;
 use std::time::Instant;
 use tokio::net::lookup_host;
 
-use super::errors::{BadQuery, NewSessionError, QueryError};
+use super::errors::{BadQuery, NewSessionError, QueryError, UseKeyspaceError};
 use crate::batch::Batch;
 use crate::cql_to_rust::FromRow;
 use crate::frame::response::cql_to_rust::FromRowError;
@@ -16,7 +16,7 @@ use crate::query::Query;
 use crate::routing::{murmur3_token, Token};
 use crate::transport::{
     cluster::Cluster,
-    connection::ConnectionConfig,
+    connection::{ConnectionConfig, VerifiedKeyspaceName},
     iterator::RowIterator,
     load_balancing::{LoadBalancingPolicy, RoundRobinPolicy, Statement, TokenAwarePolicy},
     metrics::{Metrics, MetricsView},
@@ -467,6 +467,18 @@ impl Session {
                 "BATCH: Unexpected server response",
             )),
         }
+    }
+
+    pub async fn use_keyspace(
+        &self,
+        keyspace_name: impl Into<String>,
+    ) -> Result<(), UseKeyspaceError> {
+        // Trying to pass keyspace as bound value in "USE ?" doesn't work
+        // So we have to create a string for query: "USE " + new_keyspace
+        // To avoid any possible CQL injections it's good to verify that the name is valid
+        let _verified_ks_name = VerifiedKeyspaceName::new(keyspace_name.into())?;
+
+        unimplemented!();
     }
 
     pub async fn refresh_topology(&self) -> Result<(), QueryError> {
