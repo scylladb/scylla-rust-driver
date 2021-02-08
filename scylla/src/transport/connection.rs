@@ -213,6 +213,7 @@ impl Connection {
             values,
             batch_type: batch.get_type(),
             consistency: batch.get_consistency(),
+            serial_consistency: batch.get_serial_consistency(),
         };
 
         self.send_request(&batch_frame, true).await

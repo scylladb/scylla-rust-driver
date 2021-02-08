@@ -1,6 +1,5 @@
 use crate::frame::frame_errors::ParseError;
 use bytes::{BufMut, Bytes};
-use types::write_consistency;
 
 use crate::{
     frame::request::{Request, RequestOpcode},

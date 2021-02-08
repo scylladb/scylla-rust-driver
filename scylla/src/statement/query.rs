@@ -18,7 +18,7 @@ impl Query {
             contents,
             page_size: None,
             consistency: Default::default(),
-            serial_consistency: None, 
+            serial_consistency: None,
         }
     }
 
@@ -55,8 +55,8 @@ impl Query {
 
     /// Sets the serial consistency to be used when executing this query.
     /// (Ignored unless the query is an LWT)
-    pub fn set_serial_consistency(&mut self, sc: Consistency) {
-        self.serial_consistency = Some(sc);
+    pub fn set_serial_consistency(&mut self, sc: Option<Consistency>) {
+        self.serial_consistency = sc;
     }
 
     /// Gets the serial consistency to be used when executing this query.

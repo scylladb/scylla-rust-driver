@@ -64,8 +64,8 @@ impl PreparedStatement {
 
     /// Sets the serial consistency to be used when executing this statement.
     /// (Ignored unless the statement is an LWT)
-    pub fn set_serial_consistency(&mut self, sc: Consistency) {
-        self.serial_consistency = Some(sc);
+    pub fn set_serial_consistency(&mut self, sc: Option<Consistency>) {
+        self.serial_consistency = sc;
     }
 
     /// Gets the serial consistency to be used when executing this statement.
