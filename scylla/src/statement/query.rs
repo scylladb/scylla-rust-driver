@@ -8,6 +8,7 @@ pub struct Query {
     contents: String,
     page_size: Option<i32>,
     consistency: Consistency,
+    serial_consistency: Option<Consistency>,
 }
 
 impl Query {
@@ -17,6 +18,7 @@ impl Query {
             contents,
             page_size: None,
             consistency: Default::default(),
+            serial_consistency: None, 
         }
     }
 
@@ -49,6 +51,18 @@ impl Query {
     /// Gets the consistency to be used when executing this query.
     pub fn get_consistency(&self) -> Consistency {
         self.consistency
+    }
+
+    /// Sets the serial consistency to be used when executing this query.
+    /// (Ignored unless the query is an LWT)
+    pub fn set_serial_consistency(&mut self, sc: Consistency) {
+        self.serial_consistency = Some(sc);
+    }
+
+    /// Gets the serial consistency to be used when executing this query.
+    /// (Ignored unless the query is an LWT)
+    pub fn get_serial_consistency(&mut self) -> Option<Consistency> {
+        self.serial_consistency
     }
 }
 
