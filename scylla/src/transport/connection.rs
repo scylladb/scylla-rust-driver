@@ -3,13 +3,16 @@ use futures::{future::RemoteHandle, FutureExt};
 use tokio::net::{tcp, TcpSocket, TcpStream};
 use tokio::sync::{mpsc, oneshot};
 
-use std::cmp::Ordering;
 use std::collections::HashMap;
 use std::convert::TryFrom;
 use std::io::ErrorKind;
-use std::net::{IpAddr, Ipv4Addr, SocketAddr};
+use std::net::SocketAddr;
 use std::sync::Arc;
 use std::sync::Mutex as StdMutex;
+use std::{
+    cmp::Ordering,
+    net::{Ipv4Addr, Ipv6Addr},
+};
 
 use super::errors::{BadQuery, QueryError};
 
@@ -488,11 +491,24 @@ async fn connect_with_source_port(
     addr: SocketAddr,
     source_port: u16,
 ) -> Result<TcpStream, std::io::Error> {
-    // TODO: handle ipv6?
-    let socket = TcpSocket::new_v4()?;
-    let source_addr = IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0));
-    socket.bind(SocketAddr::new(source_addr, source_port))?;
-    Ok(socket.connect(addr).await?)
+    match addr {
+        SocketAddr::V4(_) => {
+            let socket = TcpSocket::new_v4()?;
+            socket.bind(SocketAddr::new(
+                Ipv4Addr::new(0, 0, 0, 0).into(),
+                source_port,
+            ))?;
+            Ok(socket.connect(addr).await?)
+        }
+        SocketAddr::V6(_) => {
+            let socket = TcpSocket::new_v6()?;
+            socket.bind(SocketAddr::new(
+                Ipv6Addr::new(0, 0, 0, 0, 0, 0, 0, 0).into(),
+                source_port,
+            ))?;
+            Ok(socket.connect(addr).await?)
+        }
+    }
 }
 
 struct ResponseHandlerMap {
