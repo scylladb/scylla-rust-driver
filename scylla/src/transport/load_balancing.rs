@@ -1,7 +1,6 @@
 use super::{cluster::ClusterData, node::Node};
 use crate::routing::Token;
 
-use core::ops::Bound::{Included, Unbounded};
 use std::{
     collections::VecDeque,
     sync::{
@@ -83,7 +82,7 @@ impl ChildLoadBalancingPolicy for RoundRobinPolicy {
         // `plan` iterator is not cloneable, because of this we can't
         // call iter_rotated_left()
         let mut vec: VecDeque<Arc<Node>> = plan.collect();
-        vec.rotate_right(compute_rotation(index, vec.len()));
+        vec.rotate_left(compute_rotation(index, vec.len()));
 
         Box::new(vec.into_iter())
     }
@@ -111,18 +110,20 @@ impl LoadBalancingPolicy for TokenAwarePolicy {
                 // TODO: we try only the owner of the range (vnode) that the token lies in
                 // we should calculate the *set* of replicas for this token, using the replication strategy
                 // of the table being queried.
-                let mut owner = cluster
-                    .ring
-                    .range((Included(token), Unbounded))
-                    .map(|(_token, node)| node.clone())
-                    .take(1)
-                    .chain(cluster.ring.values().cloned())
-                    .take(1);
+                let get_first_node = || cluster.ring.values().next().unwrap().clone();
 
-                self.child_policy.apply_child_policy(&mut owner)
+                let owner: Arc<Node> = cluster
+                    .ring
+                    .range(token..)
+                    .next()
+                    .map(|(_token, node)| node.clone())
+                    .unwrap_or_else(get_first_node);
+
+                let mut plan = std::iter::once(owner);
+                self.child_policy.apply_child_policy(&mut plan)
             }
             // fallback to child policy
-            None => Box::new(self.child_policy.plan(statement, cluster)),
+            None => self.child_policy.plan(statement, cluster),
         }
     }
 }
@@ -142,13 +143,10 @@ impl DCAwareRoundRobinPolicy {
     }
 
     fn is_local_node(node: &Node, local_dc: &str) -> bool {
-        match &node.datacenter {
-            Some(dc) => (dc == local_dc),
-            None => false,
-        }
+        node.datacenter.as_deref() == Some(local_dc)
     }
 
-    fn retrieve_local_nodes<'a>(&self, cluster: &'a ClusterData) -> &'a Vec<Arc<Node>> {
+    fn retrieve_local_nodes<'a>(&self, cluster: &'a ClusterData) -> &'a [Arc<Node>] {
         cluster
             .datacenters
             .get(&self.local_dc)
