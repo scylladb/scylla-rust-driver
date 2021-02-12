@@ -295,6 +295,7 @@ mod tests {
             },
             datacenter,
             None,
+            None,
         );
 
         Arc::new(node)

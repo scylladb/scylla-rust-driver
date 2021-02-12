@@ -46,6 +46,9 @@ struct NodeWorker {
 
     // Channel used to receive use keyspace requests
     use_keyspace_channel: tokio::sync::mpsc::Receiver<UseKeyspaceRequest>,
+
+    // Keyspace send in "USE <keyspace name>" when opening each connection
+    used_keyspace: Option<VerifiedKeyspaceName>,
 }
 
 #[derive(Debug)]
@@ -67,6 +70,7 @@ impl Node {
         connection_config: ConnectionConfig,
         datacenter: Option<String>,
         rack: Option<String>,
+        keyspace_name: Option<VerifiedKeyspaceName>,
     ) -> Self {
         let (shard_info_sender, shard_info_receiver) = tokio::sync::watch::channel(None);
 
@@ -80,6 +84,7 @@ impl Node {
                 connection_config.clone(),
                 None,
                 Some(shard_info_sender.clone()),
+                keyspace_name.clone(),
             ),
         ))));
 
@@ -90,6 +95,7 @@ impl Node {
             shard_info_sender,
             shard_info_receiver,
             use_keyspace_channel: use_keyspace_receiver,
+            used_keyspace: keyspace_name,
         };
 
         let (fut, worker_handle) = worker.work().remote_handle();
@@ -175,6 +181,8 @@ impl NodeWorker {
                 recv_res = self.use_keyspace_channel.recv() => {
                     match recv_res {
                         Some(request) => {
+                            self.used_keyspace = Some(request.keyspace_name.clone());
+
                             let node_conns = self.node_conns.read().unwrap().clone();
                             let use_keyspace_future = Self::handle_use_keyspace_request(node_conns, request);
                             tokio::spawn(use_keyspace_future);
@@ -211,6 +219,7 @@ impl NodeWorker {
                     self.connection_config.clone(),
                     None,
                     Some(self.shard_info_sender.clone()),
+                    self.used_keyspace.clone(),
                 )),
                 Some(shard_info) => {
                     let mut connections: Vec<ConnectionKeeper> =
@@ -224,7 +233,9 @@ impl NodeWorker {
                             self.connection_config.clone(),
                             Some(cur_conn_shard_info),
                             Some(self.shard_info_sender.clone()),
+                            self.used_keyspace.clone(),
                         );
+
                         connections.push(cur_conn);
                     }
 

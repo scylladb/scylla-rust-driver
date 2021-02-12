@@ -44,6 +44,9 @@ struct ClusterWorker {
 
     // Channel used to receive use keyspace requests
     use_keyspace_channel: tokio::sync::mpsc::Receiver<UseKeyspaceRequest>,
+
+    // Keyspace send in "USE <keyspace name>" when opening each connection
+    used_keyspace: Option<VerifiedKeyspaceName>,
 }
 
 #[derive(Debug)]
@@ -83,6 +86,7 @@ impl Cluster {
             refresh_channel: refresh_receiver,
 
             use_keyspace_channel: use_keyspace_receiver,
+            used_keyspace: None,
         };
 
         let (fut, worker_handle) = worker.work().remote_handle();
@@ -208,6 +212,8 @@ impl ClusterWorker {
                 recv_res = self.use_keyspace_channel.recv() => {
                     match recv_res {
                         Some(request) => {
+                            self.used_keyspace = Some(request.keyspace_name.clone());
+
                             let cluster_data = self.cluster_data.read().unwrap().clone();
                             let use_keyspace_future = Self::handle_use_keyspace_request(cluster_data, request);
                             tokio::spawn(use_keyspace_future);
@@ -307,6 +313,7 @@ impl ClusterWorker {
                     self.connection_config.clone(),
                     peer.datacenter,
                     peer.rack,
+                    self.used_keyspace.clone(),
                 )),
             };
 

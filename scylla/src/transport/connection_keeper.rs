@@ -31,6 +31,9 @@ struct ConnectionKeeperWorker {
 
     shard_info_sender: Option<ShardInfoSender>,
     conn_state_sender: tokio::sync::watch::Sender<ConnectionState>,
+
+    // Keyspace send in "USE <keyspace name>" when opening each connection
+    used_keyspace: Option<VerifiedKeyspaceName>,
 }
 
 pub type ShardInfoSender = Arc<std::sync::Mutex<tokio::sync::watch::Sender<Option<ShardInfo>>>>;
@@ -48,6 +51,7 @@ impl ConnectionKeeper {
         config: ConnectionConfig,
         shard_info: Option<ShardInfo>,
         shard_info_sender: Option<ShardInfoSender>,
+        keyspace_name: Option<VerifiedKeyspaceName>,
     ) -> Self {
         let (conn_state_sender, conn_state_receiver) =
             tokio::sync::watch::channel(ConnectionState::Initializing);
@@ -58,6 +62,7 @@ impl ConnectionKeeper {
             shard_info,
             shard_info_sender,
             conn_state_sender,
+            used_keyspace: keyspace_name,
         };
 
         let (fut, worker_handle) = worker.work().remote_handle();
@@ -157,6 +162,12 @@ impl ConnectionKeeperWorker {
 
         let new_conn =
             connection::open_connection(self.address, source_port, self.config.clone()).await?;
+
+        if let Some(keyspace_name) = &self.used_keyspace {
+            let _ = new_conn.use_keyspace(&keyspace_name).await;
+            // Ignore the error, used_keyspace could be set a long time ago and then deleted
+            // user gets all errors from session.use_keyspace()
+        }
 
         Ok(Arc::new(new_conn))
     }
