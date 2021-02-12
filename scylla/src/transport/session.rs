@@ -478,6 +478,39 @@ impl Session {
         }
     }
 
+    /// Sends `USE <keyspace_name>` request on all connections  
+    /// This allows to write `SELECT * FROM table` instead of `SELECT * FROM keyspace.table`  
+    ///
+    /// Note that even failed `use_keyspace` can change currently used keyspace - the request is sent on all connections and
+    /// can overwrite previously used keyspace.
+    ///
+    /// Call only one `use_keyspace` at a time.  
+    /// Trying to do two `use_keyspace` requests simultaneously with different names
+    /// can end with some connections using one keyspace and the rest using the other.
+    /// # Arguments
+    ///
+    /// * `keyspace_name` - keyspace name to use,
+    /// keyspace names can have up to 48 alpha-numeric characters and contain underscores
+    ///
+    /// # Example
+    /// ```rust
+    /// # use scylla::{Session, SessionBuilder};
+    /// # use scylla::transport::Compression;
+    /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
+    /// # let session = SessionBuilder::new().known_node("127.0.0.1:9042").build().await?;
+    /// session
+    ///     .query("INSERT INTO my_keyspace.tab (a) VALUES ('test1')", &[])
+    ///     .await?;
+    ///
+    /// session.use_keyspace("my_keyspace").await?;
+    ///
+    /// // Now we can omit keyspace name in the query
+    /// session
+    ///     .query("INSERT INTO tab (a) VALUES ('test2')", &[])
+    ///     .await?;
+    /// # Ok(())
+    /// # }
+    /// ```
     pub async fn use_keyspace(
         &self,
         keyspace_name: impl Into<String>,
