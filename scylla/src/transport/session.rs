@@ -476,9 +476,11 @@ impl Session {
         // Trying to pass keyspace as bound value in "USE ?" doesn't work
         // So we have to create a string for query: "USE " + new_keyspace
         // To avoid any possible CQL injections it's good to verify that the name is valid
-        let _verified_ks_name = VerifiedKeyspaceName::new(keyspace_name.into())?;
+        let verified_ks_name = VerifiedKeyspaceName::new(keyspace_name.into())?;
 
-        unimplemented!();
+        self.cluster.use_keyspace(verified_ks_name).await?;
+
+        Ok(())
     }
 
     pub async fn refresh_topology(&self) -> Result<(), QueryError> {

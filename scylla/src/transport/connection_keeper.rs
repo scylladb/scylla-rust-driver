@@ -3,7 +3,7 @@ use crate::routing::ShardInfo;
 use crate::transport::errors::QueryError;
 use crate::transport::{
     connection,
-    connection::{Connection, ConnectionConfig},
+    connection::{Connection, ConnectionConfig, VerifiedKeyspaceName},
 };
 
 use futures::{future::RemoteHandle, FutureExt};
@@ -104,6 +104,19 @@ impl ConnectionKeeper {
             ConnectionState::Broken(e) => Err(e),
             _ => unreachable!(),
         }
+    }
+
+    pub async fn use_keyspace(
+        &self,
+        keyspace_name: &VerifiedKeyspaceName,
+    ) -> Result<(), QueryError> {
+        // ConnectionKeeper doesn't have reconnecting yet so this will be ok for now
+        // TODO: Modify once ConnectionKeeper gets reconnecting
+
+        self.get_connection()
+            .await?
+            .use_keyspace(keyspace_name)
+            .await
     }
 }
 

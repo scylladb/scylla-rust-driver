@@ -1,10 +1,11 @@
 /// Cluster manages up to date information and connections to database nodes
 use crate::routing::Token;
-use crate::transport::connection::{Connection, ConnectionConfig};
+use crate::transport::connection::{Connection, ConnectionConfig, VerifiedKeyspaceName};
 use crate::transport::errors::QueryError;
 use crate::transport::node::{Node, NodeConnections};
 use crate::transport::topology::{Keyspace, TopologyReader};
 
+use futures::future::join_all;
 use futures::{future::RemoteHandle, FutureExt};
 use std::collections::{BTreeMap, HashMap};
 use std::net::SocketAddr;
@@ -16,6 +17,8 @@ pub struct Cluster {
     data: Arc<RwLock<Arc<ClusterData>>>,
 
     refresh_channel: tokio::sync::mpsc::Sender<RefreshRequest>,
+    use_keyspace_channel: tokio::sync::mpsc::Sender<UseKeyspaceRequest>,
+
     _worker_handle: RemoteHandle<()>,
 }
 
@@ -38,10 +41,19 @@ struct ClusterWorker {
 
     // To listen for refresh requests
     refresh_channel: tokio::sync::mpsc::Receiver<RefreshRequest>,
+
+    // Channel used to receive use keyspace requests
+    use_keyspace_channel: tokio::sync::mpsc::Receiver<UseKeyspaceRequest>,
 }
 
 #[derive(Debug)]
 struct RefreshRequest {
+    response_chan: tokio::sync::oneshot::Sender<Result<(), QueryError>>,
+}
+
+#[derive(Debug)]
+struct UseKeyspaceRequest {
+    keyspace_name: VerifiedKeyspaceName,
     response_chan: tokio::sync::oneshot::Sender<Result<(), QueryError>>,
 }
 
@@ -60,6 +72,8 @@ impl Cluster {
 
         let (refresh_sender, refresh_receiver) = tokio::sync::mpsc::channel(32);
 
+        let (use_keyspace_sender, use_keyspace_receiver) = tokio::sync::mpsc::channel(32);
+
         let worker = ClusterWorker {
             cluster_data: cluster_data.clone(),
 
@@ -67,6 +81,8 @@ impl Cluster {
             connection_config,
 
             refresh_channel: refresh_receiver,
+
+            use_keyspace_channel: use_keyspace_receiver,
         };
 
         let (fut, worker_handle) = worker.work().remote_handle();
@@ -75,6 +91,7 @@ impl Cluster {
         let result = Cluster {
             data: cluster_data,
             refresh_channel: refresh_sender,
+            use_keyspace_channel: use_keyspace_sender,
             _worker_handle: worker_handle,
         };
 
@@ -104,6 +121,24 @@ impl Cluster {
         // ClusterWorker always responds
     }
 
+    pub async fn use_keyspace(
+        &self,
+        keyspace_name: VerifiedKeyspaceName,
+    ) -> Result<(), QueryError> {
+        let (response_sender, response_receiver) = tokio::sync::oneshot::channel();
+
+        self.use_keyspace_channel
+            .send(UseKeyspaceRequest {
+                keyspace_name,
+                response_chan: response_sender,
+            })
+            .await
+            .expect("Bug in Cluster::use_keyspace sending");
+        // Other end of this channel is in ClusterWorker, can't be dropped while we have &self to Cluster with _worker_handle
+
+        response_receiver.await.unwrap() // ClusterWorker always responds
+    }
+
     /// Returns nonempty list of working connections to all shards
     pub async fn get_working_connections(&self) -> Result<Vec<Arc<Connection>>, QueryError> {
         let cluster_data: Arc<ClusterData> = self.get_data();
@@ -122,7 +157,9 @@ impl Cluster {
         };
 
         for node in peers.values() {
-            match &*node.connections.read().await {
+            let connections: Arc<NodeConnections> = node.connections.read().unwrap().clone();
+
+            match &*connections {
                 NodeConnections::Single(conn_keeper) => {
                     push_to_result(conn_keeper.get_connection().await)
                 }
@@ -168,6 +205,18 @@ impl ClusterWorker {
                         None => return, // If refresh_channel was closed then cluster was dropped, we can stop working
                     }
                 }
+                recv_res = self.use_keyspace_channel.recv() => {
+                    match recv_res {
+                        Some(request) => {
+                            let cluster_data = self.cluster_data.read().unwrap().clone();
+                            let use_keyspace_future = Self::handle_use_keyspace_request(cluster_data, request);
+                            tokio::spawn(use_keyspace_future);
+                        },
+                        None => return, // If use_keyspace_channel was closed then cluster was dropped, we can stop working
+                    }
+
+                    continue; // Don't go to refreshing, wait for the next event
+                }
             }
 
             // Perform the refresh
@@ -180,6 +229,57 @@ impl ClusterWorker {
                 let _ = request.response_chan.send(refresh_res);
             }
         }
+    }
+
+    async fn handle_use_keyspace_request(
+        cluster_data: Arc<ClusterData>,
+        request: UseKeyspaceRequest,
+    ) {
+        let result = Self::send_use_keyspace(cluster_data, &request.keyspace_name).await;
+
+        // Don't care if nobody wants request result
+        let _ = request.response_chan.send(result);
+    }
+
+    async fn send_use_keyspace(
+        cluster_data: Arc<ClusterData>,
+        keyspace_name: &VerifiedKeyspaceName,
+    ) -> Result<(), QueryError> {
+        let mut use_keyspace_futures = Vec::new();
+
+        for node in cluster_data.known_peers.values() {
+            let fut = node.use_keyspace(keyspace_name.clone());
+            use_keyspace_futures.push(fut);
+        }
+
+        let use_keyspace_results: Vec<Result<(), QueryError>> =
+            join_all(use_keyspace_futures).await;
+
+        // If there was at least one Ok and the rest were IOErrors we can return Ok
+        // keyspace name is correct and will be used on broken connection on the next reconnect
+
+        // If there were only IOErrors then return IOError
+        // If there was an error different than IOError return this error - something is wrong
+
+        let mut was_ok: bool = false;
+        let mut io_error: Option<Arc<std::io::Error>> = None;
+
+        for result in use_keyspace_results {
+            match result {
+                Ok(()) => was_ok = true,
+                Err(err) => match err {
+                    QueryError::IOError(io_err) => io_error = Some(io_err),
+                    _ => return Err(err),
+                },
+            }
+        }
+
+        if was_ok {
+            return Ok(());
+        }
+
+        // We can unwrap io_error because use_keyspace_futures must be nonempty
+        return Err(QueryError::IOError(io_error.unwrap()));
     }
 
     async fn perform_refresh(&mut self) -> Result<(), QueryError> {
