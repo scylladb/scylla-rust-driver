@@ -596,13 +596,13 @@ impl StreamIDSet {
 
 /// This type can only hold a valid keyspace name
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
-pub struct VerifiedKeyspaceName(String);
+pub struct VerifiedKeyspaceName(Arc<String>);
 
 impl VerifiedKeyspaceName {
     pub fn new(keyspace_name: String) -> Result<Self, BadKeyspaceName> {
         Self::verify_keyspace_name_is_valid(&keyspace_name)?;
 
-        Ok(VerifiedKeyspaceName(keyspace_name))
+        Ok(VerifiedKeyspaceName(Arc::new(keyspace_name)))
     }
 
     pub fn as_str(&self) -> &str {
