@@ -63,6 +63,10 @@ pub enum NewSessionError {
     #[error("Empty known nodes list")]
     EmptyKnownNodesList,
 
+    /// Passed invalid keyspace name to use
+    #[error(transparent)]
+    BadKeyspaceName(#[from] BadKeyspaceName),
+
     /// Database sent a response containing some error
     #[error(transparent)]
     DBError(#[from] DBError),
@@ -81,7 +85,7 @@ pub enum NewSessionError {
 }
 
 /// Invalid keyspace name given to `Session::use_keyspace()`
-#[derive(Debug, Error)]
+#[derive(Debug, Error, Clone)]
 pub enum BadKeyspaceName {
     /// Keyspace name is empty
     #[error("Keyspace name is empty")]
@@ -153,6 +157,17 @@ impl From<QueryError> for NewSessionError {
             QueryError::BadQuery(e) => NewSessionError::BadQuery(e),
             QueryError::IOError(e) => NewSessionError::IOError(e),
             QueryError::ProtocolError(m) => NewSessionError::ProtocolError(m),
+        }
+    }
+}
+
+impl From<UseKeyspaceError> for NewSessionError {
+    fn from(use_ks_error: UseKeyspaceError) -> NewSessionError {
+        match use_ks_error {
+            UseKeyspaceError::BadKeyspaceName(e) => NewSessionError::BadKeyspaceName(e),
+            UseKeyspaceError::DBError(e) => NewSessionError::DBError(e),
+            UseKeyspaceError::IOError(e) => NewSessionError::IOError(e),
+            UseKeyspaceError::ProtocolError(e) => NewSessionError::ProtocolError(e),
         }
     }
 }

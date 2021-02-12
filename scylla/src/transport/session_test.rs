@@ -1,7 +1,7 @@
 use crate::frame::value::ValueList;
 use crate::routing::hash3_x64_128;
 use crate::transport::errors::{BadKeyspaceName, UseKeyspaceError};
-use crate::{IntoTypedRows, SessionBuilder};
+use crate::{IntoTypedRows, Session, SessionBuilder};
 
 // TODO: Requires a running local Scylla instance
 #[tokio::test]
@@ -300,7 +300,11 @@ async fn test_token_calculation() {
 #[ignore]
 async fn test_use_keyspace() {
     let uri = std::env::var("SCYLLA_URI").unwrap_or_else(|_| "127.0.0.1:9042".to_string());
-    let session = SessionBuilder::new().known_node(uri).build().await.unwrap();
+    let session = SessionBuilder::new()
+        .known_node(&uri)
+        .build()
+        .await
+        .unwrap();
 
     session.query("CREATE KEYSPACE IF NOT EXISTS use_ks_test WITH REPLICATION = {'class' : 'SimpleStrategy', 'replication_factor' : 1}", &[]).await.unwrap();
 
@@ -369,4 +373,25 @@ async fn test_use_keyspace() {
             BadKeyspaceName::IllegalCharacter(_, ';')
         ))
     ));
+
+    // Make sure that use_keyspace on SessionBuiler works
+    let session2: Session = SessionBuilder::new()
+        .known_node(uri)
+        .use_keyspace("use_ks_test")
+        .build()
+        .await
+        .unwrap();
+
+    let mut rows2: Vec<String> = session2
+        .query("SELECT * FROM tab", &[])
+        .await
+        .unwrap()
+        .unwrap()
+        .into_typed::<(String,)>()
+        .map(|res| res.unwrap().0)
+        .collect();
+
+    rows2.sort();
+
+    assert_eq!(rows2, vec!["test1".to_string(), "test2".to_string()]);
 }

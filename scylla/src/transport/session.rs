@@ -47,6 +47,8 @@ pub struct SessionConfig {
 
     /// Load balancing policy used by Session
     pub load_balancing: Box<dyn LoadBalancingPolicy>,
+
+    pub used_keyspace: Option<String>,
     /*
     These configuration options will be added in the future:
 
@@ -88,6 +90,7 @@ impl SessionConfig {
             compression: None,
             tcp_nodelay: false,
             load_balancing: Box::new(TokenAwarePolicy::new(Box::new(RoundRobinPolicy::new()))),
+            used_keyspace: None,
         }
     }
 
@@ -230,11 +233,17 @@ impl Session {
         let cluster = Cluster::new(&node_addresses, config.get_connection_config()).await?;
         let metrics = Arc::new(Metrics::new());
 
-        Ok(Session {
+        let session = Session {
             cluster,
             load_balancer: config.load_balancing,
             metrics,
-        })
+        };
+
+        if let Some(keyspace_name) = config.used_keyspace {
+            session.use_keyspace(keyspace_name).await?;
+        }
+
+        Ok(session)
     }
 
     // TODO: Should return an iterator over results
