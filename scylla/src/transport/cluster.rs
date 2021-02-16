@@ -23,6 +23,8 @@ pub struct ClusterData {
     pub known_peers: HashMap<SocketAddr, Arc<Node>>, // Invariant: nonempty after Cluster::new()
     pub ring: BTreeMap<Token, Arc<Node>>,            // Invariant: nonempty after Cluster::new()
     pub keyspaces: HashMap<String, Keyspace>,
+    pub all_nodes: Vec<Arc<Node>>,
+    pub datacenters: HashMap<String, Vec<Arc<Node>>>,
 }
 
 // Works in the background to keep the cluster updated
@@ -52,6 +54,8 @@ impl Cluster {
             known_peers: HashMap::new(),
             ring: BTreeMap::new(),
             keyspaces: HashMap::new(),
+            all_nodes: Vec::new(),
+            datacenters: HashMap::new(),
         })));
 
         let (refresh_sender, refresh_receiver) = tokio::sync::mpsc::channel(32);
@@ -186,6 +190,7 @@ impl ClusterWorker {
         let mut new_known_peers: HashMap<SocketAddr, Arc<Node>> =
             HashMap::with_capacity(topo_info.peers.len());
         let mut new_ring: BTreeMap<Token, Arc<Node>> = BTreeMap::new();
+        let mut new_datacenters: HashMap<String, Vec<Arc<Node>>> = HashMap::new();
 
         let cluster_data: Arc<ClusterData> = self.cluster_data.read().unwrap().clone();
 
@@ -207,15 +212,32 @@ impl ClusterWorker {
 
             new_known_peers.insert(peer.address, node.clone());
 
+            if let Some(dc) = &node.datacenter {
+                match new_datacenters.get_mut(dc) {
+                    Some(v) => v.push(node.clone()),
+                    None => {
+                        let v = vec![node.clone()];
+                        new_datacenters.insert(dc.clone(), v);
+                    }
+                }
+            }
+
             for token in peer.tokens {
                 new_ring.insert(token, node.clone());
             }
         }
 
+        let all_nodes = new_known_peers
+            .values()
+            .cloned()
+            .collect::<Vec<Arc<Node>>>();
+
         let mut new_cluster_data: Arc<ClusterData> = Arc::new(ClusterData {
             known_peers: new_known_peers,
             ring: new_ring,
             keyspaces: topo_info.keyspaces,
+            all_nodes,
+            datacenters: new_datacenters,
         });
 
         // Update current cluster_data

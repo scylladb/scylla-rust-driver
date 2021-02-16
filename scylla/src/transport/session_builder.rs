@@ -1,4 +1,5 @@
 use super::errors::NewSessionError;
+use super::load_balancing::LoadBalancingPolicy;
 use super::session::{Session, SessionConfig};
 use super::Compression;
 use std::net::SocketAddr;
@@ -111,9 +112,9 @@ impl SessionBuilder {
         self
     }
 
-    /// Set preferred Compression algorithm.  
-    /// The default is no compression.  
-    /// If it is not supported by database server Session will fall back to no encryption.  
+    /// Set preferred Compression algorithm.
+    /// The default is no compression.
+    /// If it is not supported by database server Session will fall back to no encryption.
     ///
     /// # Example
     /// ```
@@ -133,8 +134,8 @@ impl SessionBuilder {
         self
     }
 
-    /// Set the nodelay TCP flag.  
-    /// The default is false.  
+    /// Set the nodelay TCP flag.
+    /// The default is false.
     ///
     /// # Example
     /// ```
@@ -151,6 +152,28 @@ impl SessionBuilder {
     /// ```
     pub fn tcp_nodelay(mut self, nodelay: bool) -> Self {
         self.config.tcp_nodelay = nodelay;
+        self
+    }
+
+    /// Set the load balancing policy
+    /// The default is Token-aware Round-robin.
+    ///
+    /// # Example
+    /// ```
+    /// # use scylla::{Session, SessionBuilder};
+    /// # use scylla::transport::Compression;
+    /// # use scylla::transport::load_balancing::RoundRobinPolicy;
+    /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
+    /// let session: Session = SessionBuilder::new()
+    ///     .known_node("127.0.0.1:9042")
+    ///     .load_balancing(Box::new(RoundRobinPolicy::new()))
+    ///     .build()
+    ///     .await?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn load_balancing(mut self, policy: Box<dyn LoadBalancingPolicy>) -> Self {
+        self.config.load_balancing = policy;
         self
     }
 
@@ -184,6 +207,7 @@ impl Default for SessionBuilder {
 #[cfg(test)]
 mod tests {
     use super::SessionBuilder;
+    use crate::transport::load_balancing::RoundRobinPolicy;
     use crate::transport::session::KnownNode;
     use crate::transport::Compression;
     use std::net::{IpAddr, Ipv4Addr, SocketAddr};
@@ -280,6 +304,21 @@ mod tests {
     }
 
     #[test]
+    fn load_balancing() {
+        let mut builder = SessionBuilder::new();
+        assert_eq!(
+            builder.config.load_balancing.name(),
+            "TokenAwarePolicy{child_policy: RoundRobinPolicy}".to_string()
+        );
+
+        builder = builder.load_balancing(Box::new(RoundRobinPolicy::new()));
+        assert_eq!(
+            builder.config.load_balancing.name(),
+            "RoundRobinPolicy".to_string()
+        );
+    }
+
+    #[test]
     fn all_features() {
         let mut builder = SessionBuilder::new();
 
@@ -293,6 +332,7 @@ mod tests {
         builder = builder.known_nodes_addr(&[addr1, addr2]);
         builder = builder.compression(Some(Compression::Snappy));
         builder = builder.tcp_nodelay(true);
+        builder = builder.load_balancing(Box::new(RoundRobinPolicy::new()));
 
         assert_eq!(
             builder.config.known_nodes,
@@ -308,5 +348,9 @@ mod tests {
 
         assert_eq!(builder.config.compression, Some(Compression::Snappy));
         assert_eq!(builder.config.tcp_nodelay, true);
+        assert_eq!(
+            builder.config.load_balancing.name(),
+            "RoundRobinPolicy".to_string()
+        );
     }
 }
