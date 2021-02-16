@@ -23,6 +23,9 @@ pub trait LoadBalancingPolicy: Send + Sync {
         statement: &Statement,
         cluster: &'a ClusterData,
     ) -> Box<dyn Iterator<Item = Arc<Node>> + 'a>;
+
+    /// Returns name of load balancing policy
+    fn name(&self) -> String;
 }
 
 /// This trait is used to apply policy to plan made by parent policy.
@@ -69,6 +72,10 @@ impl LoadBalancingPolicy for RoundRobinPolicy {
         let rotated_nodes = slice_rotated_left(&cluster.all_nodes, rotation).cloned();
 
         Box::new(rotated_nodes)
+    }
+
+    fn name(&self) -> String {
+        "RoundRobinPolicy".to_string()
     }
 }
 
@@ -125,6 +132,13 @@ impl LoadBalancingPolicy for TokenAwarePolicy {
             // fallback to child policy
             None => self.child_policy.plan(statement, cluster),
         }
+    }
+
+    fn name(&self) -> String {
+        format!(
+            "TokenAwarePolicy{{child_policy: {}}}",
+            self.child_policy.name()
+        )
     }
 }
 
@@ -189,6 +203,10 @@ impl LoadBalancingPolicy for DCAwareRoundRobinPolicy {
 
         let plan = rotated_local_nodes.chain(rotated_remote_nodes);
         Box::new(plan)
+    }
+
+    fn name(&self) -> String {
+        "DCAwareRoundRobinPolicy".to_string()
     }
 }
 
@@ -396,5 +414,16 @@ mod tests {
         ];
 
         assert_eq!(plans, expected_plans);
+    }
+
+    #[test]
+    fn test_names() {
+        let local_dc = "eu".to_string();
+        let policy = TokenAwarePolicy::new(Box::new(DCAwareRoundRobinPolicy::new(local_dc)));
+
+        assert_eq!(
+            policy.name(),
+            "TokenAwarePolicy{child_policy: DCAwareRoundRobinPolicy}".to_string()
+        );
     }
 }
