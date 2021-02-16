@@ -50,14 +50,16 @@ pub struct SessionConfig {
 
     pub used_keyspace: Option<String>,
     pub keyspace_case_sensitive: bool,
+    
+    /// Should session use TLS.
+    pub use_tls: bool,
     /*
     These configuration options will be added in the future:
+    
+    pub tls_certificate_path: Option<String>,
 
     pub auth_username: Option<String>,
     pub auth_password: Option<String>,
-
-    pub use_tls: bool,
-    pub tls_certificate_path: Option<String>,
 
     pub tcp_keepalive: bool,
 
@@ -91,8 +93,12 @@ impl SessionConfig {
             compression: None,
             tcp_nodelay: false,
             load_balancing: Box::new(TokenAwarePolicy::new(Box::new(RoundRobinPolicy::new()))),
+<<<<<<< HEAD
             used_keyspace: None,
             keyspace_case_sensitive: false,
+=======
+            use_tls: false, 
+>>>>>>> a0b7bc6... Created setter for use_tls in SessionConfig
         }
     }
 

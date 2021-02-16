@@ -140,7 +140,6 @@ impl SessionBuilder {
     /// # Example
     /// ```
     /// # use scylla::{Session, SessionBuilder};
-    /// # use scylla::transport::Compression;
     /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
     /// let session: Session = SessionBuilder::new()
     ///     .known_node("127.0.0.1:9042")
@@ -184,7 +183,6 @@ impl SessionBuilder {
     /// # Example
     /// ```
     /// # use scylla::{Session, SessionBuilder};
-    /// # use scylla::transport::Compression;
     /// # use scylla::transport::load_balancing::RoundRobinPolicy;
     /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
     /// let session: Session = SessionBuilder::new()
@@ -197,6 +195,26 @@ impl SessionBuilder {
     /// ```
     pub fn load_balancing(mut self, policy: Box<dyn LoadBalancingPolicy>) -> Self {
         self.config.load_balancing = policy;
+        self
+    }
+
+    /// Decide if session should use TLS.
+    /// The default is false.
+    ///
+    /// # Example
+    /// ```
+    /// # use scylla::{Session, SessionBuilder};
+    /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
+    /// let session: Session = SessionBuilder::new()
+    ///     .known_node("127.0.0.1:9042")
+    ///     .use_tls(true)
+    ///     .build()
+    ///     .await?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn use_tls(mut self, use_tls: bool) -> Self {
+        self.config.use_tls = use_tls;
         self
     }
 
@@ -354,6 +372,17 @@ mod tests {
         builder = builder.use_keyspace("ks_name_2", false);
         assert_eq!(builder.config.used_keyspace, Some("ks_name_2".to_string()));
         assert_eq!(builder.config.keyspace_case_sensitive, false);
+
+#[test]
+    fn use_tls() {
+        let mut builder = SessionBuilder::new();
+        assert_eq!(builder.config.use_tls, false);
+
+        builder = builder.use_tls(true);
+        assert_eq!(builder.config.use_tls, true);
+
+        builder = builder.use_tls(false);
+        assert_eq!(builder.config.use_tls, false);
     }
 
     #[test]
@@ -372,6 +401,7 @@ mod tests {
         builder = builder.tcp_nodelay(true);
         builder = builder.load_balancing(Box::new(RoundRobinPolicy::new()));
         builder = builder.use_keyspace("ks_name", true);
+        builder = builder.use_tls(true);
 
         assert_eq!(
             builder.config.known_nodes,
@@ -393,7 +423,7 @@ mod tests {
         );
 
         assert_eq!(builder.config.used_keyspace, Some("ks_name".to_string()));
-
         assert_eq!(builder.config.keyspace_case_sensitive, true);
+        assert_eq!(builder.config.use_tls, true);
     }
 }
