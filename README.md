@@ -40,15 +40,15 @@ The driver supports the following:
 * Query paging
 * Compression (LZ4 and Snappy algorithms)
 * CQL binary protocol version 4
+* Batch statements
+* Configurable load balancing policies
+* Driver-side metrics
 
 We are planning to implement the following:
 
 * Restarting nodes :)
-* Configurable load balancing policies
 * Configurable retry policies
-* Driver-side metrics
 * Authentication support
-* Batch statements
 * TLS support
 * CQL tracing
 
