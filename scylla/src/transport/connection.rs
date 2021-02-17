@@ -39,7 +39,7 @@ pub struct Connection {
     is_shard_aware: bool,
 }
 
-type ResponseHandler = oneshot::Sender<TaskResponse>;
+type ResponseHandler = oneshot::Sender<Result<TaskResponse, QueryError>>;
 
 struct Task {
     request_flags: u8,
@@ -76,12 +76,16 @@ pub struct ConnectionConfig {
     */
 }
 
+// Used to listen for fatal error in connection
+pub type ErrorReceiver = tokio::sync::oneshot::Receiver<QueryError>;
+
 impl Connection {
+    // Returns new connection and ErrorReceiver which can be used to wait for a fatal error
     pub async fn new(
         addr: SocketAddr,
         source_port: Option<u16>,
         config: ConnectionConfig,
-    ) -> Result<Self, std::io::Error> {
+    ) -> Result<(Self, ErrorReceiver), std::io::Error> {
         let stream = match source_port {
             Some(p) => connect_with_source_port(addr, p).await?,
             None => TcpStream::connect(addr).await?,
@@ -92,10 +96,12 @@ impl Connection {
         // TODO: What should be the size of the channel?
         let (sender, receiver) = mpsc::channel(128);
 
-        let (fut, _worker_handle) = Self::router(stream, receiver).remote_handle();
+        let (error_sender, error_receiver) = tokio::sync::oneshot::channel();
+
+        let (fut, _worker_handle) = Self::router(stream, receiver, error_sender).remote_handle();
         tokio::task::spawn(fut);
 
-        Ok(Self {
+        let connection = Connection {
             submit_channel: sender,
             _worker_handle,
             source_port,
@@ -103,7 +109,9 @@ impl Connection {
             shard_info: None,
             config,
             is_shard_aware: false,
-        })
+        };
+
+        Ok((connection, error_receiver))
     }
 
     pub async fn startup(&self, options: HashMap<String, String>) -> Result<Response, QueryError> {
@@ -292,7 +300,7 @@ impl Connection {
                 ErrorKind::Other,
                 "Connection broken",
             )))
-        })?;
+        })??;
         let body_with_ext = frame::parse_response_body_extensions(
             task_response.params.flags,
             self.config.compression,
@@ -310,7 +318,11 @@ impl Connection {
         Ok(response)
     }
 
-    async fn router(mut stream: TcpStream, receiver: mpsc::Receiver<Task>) {
+    async fn router(
+        mut stream: TcpStream,
+        receiver: mpsc::Receiver<Task>,
+        error_sender: tokio::sync::oneshot::Sender<QueryError>,
+    ) {
         let (read_half, write_half) = stream.split();
 
         // Why are using a mutex here?
@@ -330,8 +342,24 @@ impl Connection {
         let r = Self::reader(read_half, &handler_map);
         let w = Self::writer(write_half, &handler_map, receiver);
 
-        // TODO: What to do with this error?
-        let _ = futures::try_join!(r, w);
+        let result = futures::try_join!(r, w);
+
+        let error: QueryError = match result {
+            Ok(_) => return, // Connection was dropped, we can return
+            Err(err) => err,
+        };
+
+        // Respond to all pending requests with the error
+        let response_handlers: HashMap<i16, ResponseHandler> =
+            handler_map.into_inner().unwrap().into_handlers();
+
+        for (_, handler) in response_handlers {
+            // Ignore sending error, request was dropped
+            let _ = handler.send(Err(error.clone()));
+        }
+
+        // If someone is listening for connection errors notify them
+        let _ = error_sender.send(error);
     }
 
     async fn reader(
@@ -366,11 +394,11 @@ impl Connection {
                 // Don't care if sending of the response fails. This must
                 // mean that the receiver side was impatient and is not
                 // waiting for the result anymore.
-                let _ = handler.send(TaskResponse {
+                let _ = handler.send(Ok(TaskResponse {
                     params,
                     opcode,
                     body,
-                });
+                }));
             } else {
                 // Unsolicited frame. This should not happen and indicates
                 // a bug either in the driver, or in the database
@@ -419,7 +447,7 @@ impl Connection {
             .await?;
         }
 
-        Err(std::io::Error::new(ErrorKind::Other, "connection broken").into())
+        Ok(())
     }
 
     pub fn get_shard_info(&self) -> &Option<ShardInfo> {
@@ -453,7 +481,7 @@ pub async fn open_connection(
     addr: SocketAddr,
     source_port: Option<u16>,
     config: ConnectionConfig,
-) -> Result<Connection, QueryError> {
+) -> Result<(Connection, ErrorReceiver), QueryError> {
     open_named_connection(
         addr,
         source_port,
@@ -468,9 +496,10 @@ pub async fn open_named_connection(
     source_port: Option<u16>,
     config: ConnectionConfig,
     driver_name: Option<String>,
-) -> Result<Connection, QueryError> {
+) -> Result<(Connection, ErrorReceiver), QueryError> {
     // TODO: shouldn't all this logic be in Connection::new?
-    let mut connection = Connection::new(addr, source_port, config.clone()).await?;
+    let (mut connection, error_receiver) =
+        Connection::new(addr, source_port, config.clone()).await?;
 
     let options_result = connection.get_options().await?;
 
@@ -522,7 +551,7 @@ pub async fn open_named_connection(
         }
     }
 
-    Ok(connection)
+    Ok((connection, error_receiver))
 }
 
 async fn connect_with_source_port(
@@ -572,6 +601,12 @@ impl ResponseHandlerMap {
     pub fn take(&mut self, stream_id: i16) -> Option<ResponseHandler> {
         self.stream_set.free(stream_id);
         self.handlers.remove(&stream_id)
+    }
+
+    // Retrieves the map of handlers, used after connection breaks
+    // and we have to respond to all of them with an error
+    pub fn into_handlers(self) -> HashMap<i16, ResponseHandler> {
+        self.handlers
     }
 }
 

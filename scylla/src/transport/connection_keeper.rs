@@ -3,7 +3,7 @@ use crate::routing::ShardInfo;
 use crate::transport::errors::QueryError;
 use crate::transport::{
     connection,
-    connection::{Connection, ConnectionConfig, VerifiedKeyspaceName},
+    connection::{Connection, ConnectionConfig, ErrorReceiver, VerifiedKeyspaceName},
 };
 
 use futures::{future::RemoteHandle, FutureExt};
@@ -127,10 +127,10 @@ impl ConnectionKeeper {
 
 impl ConnectionKeeperWorker {
     pub async fn work(self) {
-        let cur_connection = self.open_new_connection().await;
+        let connect_result = self.open_new_connection().await;
 
-        match &cur_connection {
-            Ok(conn) => {
+        match connect_result {
+            Ok((conn, _error_receiver)) => {
                 let _ = self
                     .conn_state_sender
                     .send(ConnectionState::Connected(conn.clone()));
@@ -147,20 +147,18 @@ impl ConnectionKeeperWorker {
                 }
             }
             Err(e) => {
-                let _ = self
-                    .conn_state_sender
-                    .send(ConnectionState::Broken(e.clone()));
+                let _ = self.conn_state_sender.send(ConnectionState::Broken(e));
             } // TODO: Wait for connection to fail, then create new, loop it
         };
     }
 
-    async fn open_new_connection(&self) -> Result<Arc<Connection>, QueryError> {
+    async fn open_new_connection(&self) -> Result<(Arc<Connection>, ErrorReceiver), QueryError> {
         let mut source_port: Option<u16> = None;
         if let Some(info) = &self.shard_info {
             source_port = Some(info.draw_source_port_for_shard(info.shard.into()));
         }
 
-        let new_conn =
+        let (new_conn, error_receiver) =
             connection::open_connection(self.address, source_port, self.config.clone()).await?;
 
         if let Some(keyspace_name) = &self.used_keyspace {
@@ -169,6 +167,6 @@ impl ConnectionKeeperWorker {
             // user gets all errors from session.use_keyspace()
         }
 
-        Ok(Arc::new(new_conn))
+        Ok((Arc::new(new_conn), error_receiver))
     }
 }
