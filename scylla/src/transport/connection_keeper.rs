@@ -262,3 +262,61 @@ impl ConnectionKeeperWorker {
         ))));
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::ConnectionKeeper;
+    use crate::transport::connection::ConnectionConfig;
+    use std::net::{SocketAddr, ToSocketAddrs};
+
+    // Open many connections to a node
+    // Port collision should occur
+    // If they are not handled this test will most likely fail
+    #[tokio::test]
+    #[ignore]
+    async fn many_connections() {
+        let connections_number = 512;
+
+        let connect_address: SocketAddr = std::env::var("SCYLLA_URI")
+            .unwrap_or_else(|_| "127.0.0.1:9042".to_string())
+            .to_socket_addrs()
+            .unwrap()
+            .next()
+            .unwrap();
+
+        let connection_config = ConnectionConfig {
+            compression: None,
+            tcp_nodelay: false,
+        };
+
+        // Get shard info from a single connection, all connections will open to this shard
+        let conn_keeper =
+            ConnectionKeeper::new(connect_address, connection_config.clone(), None, None, None);
+        let shard_info = conn_keeper
+            .get_connection()
+            .await
+            .unwrap()
+            .get_shard_info()
+            .clone();
+
+        // Open the connections
+        let mut conn_keepers: Vec<ConnectionKeeper> = Vec::new();
+
+        for _ in 0..connections_number {
+            let conn_keeper = ConnectionKeeper::new(
+                connect_address,
+                connection_config.clone(),
+                shard_info.clone(),
+                None,
+                None,
+            );
+
+            conn_keepers.push(conn_keeper);
+        }
+
+        // Check that each connection keeper connected succesfully
+        for conn_keeper in conn_keepers {
+            conn_keeper.get_connection().await.unwrap();
+        }
+    }
+}
