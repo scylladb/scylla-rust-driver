@@ -69,9 +69,9 @@ macro_rules! impl_from_cql_val {
 
 impl_from_cql_val!(i32, as_int); // i32::from_cql<CQLValue>
 impl_from_cql_val!(u32, as_date); // u32::from_cql<CQLValue>
-impl_from_cql_val!(f32, as_float); // i32::from_cql<CQLValue>
-impl_from_cql_val!(f64, as_double); // u32::from_cql<CQLValue>
-impl_from_cql_val!(bool, as_boolean); // u32::from_cql<CQLValue>
+impl_from_cql_val!(f32, as_float); // f32::from_cql<CQLValue>
+impl_from_cql_val!(f64, as_double); // f64::from_cql<CQLValue>
+impl_from_cql_val!(bool, as_boolean); // bool::from_cql<CQLValue>
 impl_from_cql_val!(i64, as_bigint); // i64::from_cql<CQLValue>
 impl_from_cql_val!(String, into_string); // String::from_cql<CQLValue>
 impl_from_cql_val!(IpAddr, as_inet); // IpAddr::from_cql<CQLValue>
