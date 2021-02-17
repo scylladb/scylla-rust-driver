@@ -408,7 +408,7 @@ fn deser_cql_value(typ: &ColumnType, buf: &mut &[u8]) -> StdResult<CQLValue, Par
             CQLValue::Ascii(str::from_utf8(buf)?.to_owned())
         }
         Boolean => {
-            if !buf.len() != 1 {
+            if buf.len() != 1 {
                 return Err(ParseError::BadData(format!(
                     "Buffer length should be 1 not {}",
                     buf.len()
@@ -416,17 +416,9 @@ fn deser_cql_value(typ: &ColumnType, buf: &mut &[u8]) -> StdResult<CQLValue, Par
             }
             CQLValue::Boolean(buf[0] != 0x00)
         }
-        Blob => {
-            if !buf.len() == 0 {
-                return Err(ParseError::BadData(format!(
-                    "Buffer length should not be {}",
-                    buf.len()
-                )));
-            }
-            CQLValue::Blob(buf.to_vec())
-        }
+        Blob => CQLValue::Blob(buf.to_vec()),
         Date => {
-            if !buf.len() != 4 {
+            if buf.len() != 4 {
                 return Err(ParseError::BadData(format!(
                     "Buffer length should be 4 not {}",
                     buf.len()
@@ -435,16 +427,16 @@ fn deser_cql_value(typ: &ColumnType, buf: &mut &[u8]) -> StdResult<CQLValue, Par
             CQLValue::Date(buf.read_u32::<BigEndian>()?)
         }
         Double => {
-            if !buf.len() != 8 {
+            if buf.len() != 8 {
                 return Err(ParseError::BadData(format!(
-                    "Buffer length should be 4 not {}",
+                    "Buffer length should be 8 not {}",
                     buf.len()
                 )));
             }
             CQLValue::Double(buf.read_f64::<BigEndian>()?)
         }
         Float => {
-            if !buf.len() != 4 {
+            if buf.len() != 4 {
                 return Err(ParseError::BadData(format!(
                     "Buffer length should be 4 not {}",
                     buf.len()
@@ -612,7 +604,7 @@ fn deser_prepared(buf: &mut &[u8]) -> StdResult<Prepared, ParseError> {
     })
 }
 
-#[allow(clippy::unnecessary_wraps)]
+#[allow(clippy::unnecessary_unwrap)]
 fn deser_schema_change(_buf: &mut &[u8]) -> StdResult<SchemaChange, ParseError> {
     Ok(SchemaChange {}) // TODO
 }

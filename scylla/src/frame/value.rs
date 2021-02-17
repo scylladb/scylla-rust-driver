@@ -208,7 +208,7 @@ impl Value for bool {
     fn serialize(&self, buf: &mut Vec<u8>) -> Result<(), ValueTooBig> {
         buf.put_i32(1);
         let false_bytes: &[u8] = &[0x00];
-        let true_bytes: &[u8] = &[0x00];
+        let true_bytes: &[u8] = &[0x01];
         if *self {
             buf.put(true_bytes);
         } else {
@@ -258,9 +258,7 @@ impl Value for Vec<u8> {
         let val_len: i32 = self.len().try_into().map_err(|_| ValueTooBig)?;
         buf.put_i32(val_len);
 
-        for byte in self {
-            buf.put_u8(*byte);
-        }
+        buf.extend_from_slice(&self);
 
         Ok(())
     }
