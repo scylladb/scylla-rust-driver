@@ -38,6 +38,7 @@ enum ColumnType {
     Ascii,
     Boolean,
     Date,
+    Timestamp,
     Int,
     BigInt,
     Text,
@@ -58,6 +59,7 @@ pub enum CQLValue {
     Ascii(String),
     Boolean(bool),
     Date(u32),
+    Timestamp(i64),
     Int(i32),
     BigInt(i64),
     Text(String),
@@ -77,6 +79,13 @@ impl CQLValue {
     pub fn as_ascii(&self) -> Option<&String> {
         match self {
             Self::Ascii(s) => Some(&s),
+            _ => None,
+        }
+    }
+
+    pub fn as_timestamp(&self) -> Option<i64> {
+        match self {
+            Self::Timestamp(i) => Some(*i),
             _ => None,
         }
     }
@@ -230,6 +239,7 @@ fn deser_type(buf: &mut &[u8]) -> StdResult<ColumnType, ParseError> {
         0x0004 => Boolean,
         0x0005 => Date,
         0x0009 => Int,
+        0x000B => Timestamp,
         0x000D => Text,
         0x0010 => Inet,
         0x0020 => List(Box::new(deser_type(buf)?)),
@@ -393,6 +403,15 @@ fn deser_cql_value(typ: &ColumnType, buf: &mut &[u8]) -> StdResult<CQLValue, Par
                 )));
             }
             CQLValue::Int(buf.read_i32::<BigEndian>()?)
+        }
+        Timestamp => {
+            if buf.len() != 8 {
+                return Err(ParseError::BadData(format!(
+                    "Buffer length should be 8 not {}",
+                    buf.len()
+                )));
+            }
+            CQLValue::Timestamp(buf.read_i64::<BigEndian>()?)
         }
         BigInt => {
             if buf.len() != 8 {
