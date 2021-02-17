@@ -7,7 +7,9 @@ async fn test_cql_collections() {
 
     println!("Connecting to {} ...", uri);
 
-    let session = crate::transport::session::Session::connect(uri, None).await.unwrap();
+    let session = crate::transport::session::Session::connect(uri, None)
+        .await
+        .unwrap();
     session.refresh_topology().await.unwrap();
 
     session.query("CREATE KEYSPACE IF NOT EXISTS ks WITH REPLICATION = {'class' : 'SimpleStrategy', 'replication_factor' : 1}", &[]).await.unwrap();
