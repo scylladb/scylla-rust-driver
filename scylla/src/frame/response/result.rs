@@ -39,6 +39,8 @@ enum ColumnType {
     Boolean,
     Blob,
     Date,
+    Double,
+    Float,
     Timestamp,
     Int,
     BigInt,
@@ -55,12 +57,14 @@ enum ColumnType {
     Tuple(Vec<ColumnType>),
 }
 
-#[derive(Debug, PartialEq, Eq, Hash)]
+#[derive(Debug, PartialEq)]
 pub enum CQLValue {
     Ascii(String),
     Boolean(bool),
     Blob(Vec<u8>),
     Date(u32),
+    Double(f64),
+    Float(f32),
     Timestamp(i64),
     Int(i32),
     BigInt(i64),
@@ -102,6 +106,20 @@ impl CQLValue {
     pub fn as_boolean(&self) -> Option<bool> {
         match self {
             Self::Boolean(i) => Some(*i),
+            _ => None,
+        }
+    }
+
+    pub fn as_double(&self) -> Option<f64> {
+        match self {
+            Self::Double(d) => Some(*d),
+            _ => None,
+        }
+    }
+
+    pub fn as_float(&self) -> Option<f32> {
+        match self {
+            Self::Float(f) => Some(*f),
             _ => None,
         }
     }
@@ -248,6 +266,8 @@ fn deser_type(buf: &mut &[u8]) -> StdResult<ColumnType, ParseError> {
         0x0003 => Blob,
         0x0004 => Boolean,
         0x0005 => Date,
+        0x0007 => Double,
+        0x0008 => Float,
         0x0009 => Int,
         0x000B => Timestamp,
         0x000D => Text,
@@ -413,6 +433,24 @@ fn deser_cql_value(typ: &ColumnType, buf: &mut &[u8]) -> StdResult<CQLValue, Par
                 )));
             }
             CQLValue::Date(buf.read_u32::<BigEndian>()?)
+        }
+        Double => {
+            if !buf.len() != 8 {
+                return Err(ParseError::BadData(format!(
+                    "Buffer length should be 4 not {}",
+                    buf.len()
+                )));
+            }
+            CQLValue::Double(buf.read_f64::<BigEndian>()?)
+        }
+        Float => {
+            if !buf.len() != 4 {
+                return Err(ParseError::BadData(format!(
+                    "Buffer length should be 4 not {}",
+                    buf.len()
+                )));
+            }
+            CQLValue::Float(buf.read_f32::<BigEndian>()?)
         }
         Int => {
             if buf.len() != 4 {
