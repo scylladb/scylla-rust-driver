@@ -163,6 +163,7 @@ impl SessionConfig {
         ConnectionConfig {
             compression: self.compression,
             tcp_nodelay: self.tcp_nodelay,
+            use_tls: self.use_tls,
         }
     }
 }

@@ -1,7 +1,9 @@
 use bytes::Bytes;
 use futures::{future::RemoteHandle, FutureExt};
-use tokio::net::{tcp, TcpSocket, TcpStream};
+use tokio::net::{TcpSocket, TcpStream};
+use tokio::io::{split, AsyncRead, AsyncWrite};
 use tokio::sync::{mpsc, oneshot};
+
 
 use std::collections::HashMap;
 use std::convert::TryFrom;
@@ -58,13 +60,13 @@ struct TaskResponse {
 pub struct ConnectionConfig {
     pub compression: Option<Compression>,
     pub tcp_nodelay: bool,
+    pub use_tls: bool,
     /*
     These configuration options will be added in the future:
 
     pub auth_username: Option<String>,
     pub auth_password: Option<String>,
 
-    pub use_tls: bool,
     pub tls_certificate_path: Option<String>,
 
     pub tcp_keepalive: bool,
@@ -310,8 +312,11 @@ impl Connection {
         Ok(response)
     }
 
-    async fn router(mut stream: TcpStream, receiver: mpsc::Receiver<Task>) {
-        let (read_half, write_half) = stream.split();
+    async fn router(
+        stream: (impl AsyncRead + AsyncWrite), 
+        receiver: mpsc::Receiver<Task>
+    ) {
+        let (read_half, write_half) = split(stream);
 
         // Why are using a mutex here?
         //
@@ -335,7 +340,7 @@ impl Connection {
     }
 
     async fn reader(
-        mut read_half: tcp::ReadHalf<'_>,
+        mut read_half: (impl AsyncRead + Unpin),
         handler_map: &StdMutex<ResponseHandlerMap>,
     ) -> Result<(), QueryError> {
         loop {
@@ -382,7 +387,7 @@ impl Connection {
     }
 
     async fn writer(
-        mut write_half: tcp::WriteHalf<'_>,
+        mut write_half: (impl AsyncWrite + Unpin),
         handler_map: &StdMutex<ResponseHandlerMap>,
         mut task_receiver: mpsc::Receiver<Task>,
     ) -> Result<(), QueryError> {

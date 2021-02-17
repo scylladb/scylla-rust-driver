@@ -292,6 +292,7 @@ mod tests {
             ConnectionConfig {
                 compression: None,
                 tcp_nodelay: false,
+                use_tls: false,
             },
             datacenter,
             None,
