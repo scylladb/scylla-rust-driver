@@ -208,11 +208,7 @@ impl Value for bool {
     fn serialize(&self, buf: &mut Vec<u8>) -> Result<(), ValueTooBig> {
         buf.put_i32(1);
         let false_bytes: &[u8] = &[0x00];
-<<<<<<< HEAD
         let true_bytes: &[u8] = &[0x01];
-=======
-        let true_bytes: &[u8] = &[0x00];
->>>>>>> Add Boolean, Date type.
         if *self {
             buf.put(true_bytes);
         } else {
@@ -223,7 +219,6 @@ impl Value for bool {
     }
 }
 
-<<<<<<< HEAD
 impl Value for f32 {
     fn serialize(&self, buf: &mut Vec<u8>) -> Result<(), ValueTooBig> {
         buf.put_i32(4);
@@ -240,8 +235,6 @@ impl Value for f64 {
     }
 }
 
-=======
->>>>>>> Add Boolean, Date type.
 impl Value for &str {
     fn serialize(&self, buf: &mut Vec<u8>) -> Result<(), ValueTooBig> {
         let str_bytes: &[u8] = self.as_bytes();

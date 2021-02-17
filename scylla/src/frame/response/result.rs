@@ -416,7 +416,19 @@ fn deser_cql_value(typ: &ColumnType, buf: &mut &[u8]) -> StdResult<CQLValue, Par
             }
             CQLValue::Boolean(buf[0] != 0x00)
         }
+<<<<<<< HEAD
         Blob => CQLValue::Blob(buf.to_vec()),
+=======
+        Blob => {
+            if !buf.len() == 0 {
+                return Err(ParseError::BadData(format!(
+                    "Buffer length should not be {}",
+                    buf.len()
+                )));
+            }
+            CQLValue::Blob(buf.to_vec())
+        }
+>>>>>>> Add blob CQL type.
         Date => {
             if buf.len() != 4 {
                 return Err(ParseError::BadData(format!(
