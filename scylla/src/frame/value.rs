@@ -228,6 +228,19 @@ impl Value for String {
     }
 }
 
+impl Value for Vec<u8> {
+    fn serialize(&self, buf: &mut Vec<u8>) -> Result<(), ValueTooBig> {
+        let val_len: i32 = self.len().try_into().map_err(|_| ValueTooBig)?;
+        buf.put_i32(val_len);
+
+        for byte in self {
+            buf.put_u8(*byte);
+        }
+        
+        Ok(())
+    }
+}
+
 /// Every Option<T> can be serialized as None -> NULL, Some(val) -> val.serialize()
 impl<T: Value> Value for Option<T> {
     fn serialize(&self, buf: &mut Vec<u8>) -> Result<(), ValueTooBig> {
