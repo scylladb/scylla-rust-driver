@@ -1,5 +1,6 @@
 use super::{cluster::ClusterData, node::Node};
 use crate::routing::Token;
+use crate::transport::topology::Strategy;
 
 use std::{
     collections::VecDeque,
@@ -104,6 +105,16 @@ impl TokenAwarePolicy {
     pub fn new(child_policy: Box<dyn ChildLoadBalancingPolicy>) -> Self {
         Self { child_policy }
     }
+
+    fn simple_strategy_replicas<'a>(
+        cluster: &'a ClusterData,
+        token: &Token,
+        replication_factor: usize,
+    ) -> impl Iterator<Item = Arc<Node>> + 'a {
+        use itertools::Itertools;
+
+        cluster.ring_range(&token).unique().take(replication_factor)
+    }
 }
 
 impl LoadBalancingPolicy for TokenAwarePolicy {
@@ -114,20 +125,33 @@ impl LoadBalancingPolicy for TokenAwarePolicy {
     ) -> Box<dyn Iterator<Item = Arc<Node>> + 'a> {
         match statement.token {
             Some(token) => {
-                // TODO: we try only the owner of the range (vnode) that the token lies in
-                // we should calculate the *set* of replicas for this token, using the replication strategy
-                // of the table being queried.
-                let get_first_node = || cluster.ring.values().next().unwrap().clone();
+                let keyspace = statement
+                    .keyspace
+                    .as_ref()
+                    .map(|k| cluster.keyspaces.get(k))
+                    .flatten();
 
-                let owner: Arc<Node> = cluster
-                    .ring
-                    .range(token..)
-                    .next()
-                    .map(|(_token, node)| node.clone())
-                    .unwrap_or_else(get_first_node);
+                let strategy = keyspace
+                    .map(|k| &k.strategy)
+                    // default to simple strategy
+                    .unwrap_or(&Strategy::SimpleStrategy {
+                        replication_factor: 1,
+                    });
 
-                let mut plan = std::iter::once(owner);
-                self.child_policy.apply_child_policy(&mut plan)
+                match strategy {
+                    Strategy::SimpleStrategy { replication_factor } => {
+                        let mut replicas =
+                            Self::simple_strategy_replicas(cluster, &token, *replication_factor);
+                        self.child_policy.apply_child_policy(&mut replicas)
+                    }
+                    _ => {
+                        // default to simple strategy with replication factor = 1
+                        let replication_factor = 1;
+                        let mut replica =
+                            Self::simple_strategy_replicas(cluster, &token, replication_factor);
+                        self.child_policy.apply_child_policy(&mut replica)
+                    }
+                }
             }
             // fallback to child policy
             None => self.child_policy.plan(statement, cluster),
@@ -264,6 +288,7 @@ fn slice_rotated_left<'a, T>(slice: &'a [T], mid: usize) -> impl Iterator<Item =
 #[cfg(test)]
 mod tests {
     use crate::transport::connection::ConnectionConfig;
+    use crate::transport::topology::Keyspace;
     use std::collections::{BTreeMap, HashMap};
     use std::net::SocketAddr;
 
@@ -301,21 +326,24 @@ mod tests {
         Arc::new(node)
     }
 
-    fn mock_cluster_data(nodes_recipe: &[(&str, u16)]) -> ClusterData {
-        let all_nodes = nodes_recipe
-            .iter()
-            .map(|(dc, id)| create_node_with_failing_connection(*id, Some(dc.to_string())))
-            .collect::<Vec<_>>();
+    struct NodeMockRecipe {
+        datacenter: Option<String>,
+        id: u16,
+        tokens: Vec<Token>,
+    }
 
-        let known_peers = all_nodes
-            .iter()
-            .cloned()
-            .map(|node| (node.address, node))
-            .collect::<HashMap<_, _>>();
-
+    fn mock_cluster_data(nodes_recipe: &[NodeMockRecipe]) -> ClusterData {
+        let mut ring = BTreeMap::new();
+        let mut all_nodes = Vec::new();
         let mut datacenters: HashMap<String, Vec<Arc<Node>>> = HashMap::new();
 
-        for node in &all_nodes {
+        for recipe in nodes_recipe {
+            let node = create_node_with_failing_connection(recipe.id, recipe.datacenter.clone());
+
+            for vnode in &recipe.tokens {
+                ring.insert(*vnode, node.clone());
+            }
+
             if let Some(dc) = &node.datacenter {
                 match datacenters.get_mut(dc) {
                     Some(v) => v.push(node.clone()),
@@ -325,15 +353,94 @@ mod tests {
                     }
                 }
             }
+
+            all_nodes.push(node);
         }
+
+        let known_peers = all_nodes
+            .iter()
+            .cloned()
+            .map(|node| (node.address, node))
+            .collect::<HashMap<_, _>>();
+
+        let keyspaces = [
+            (
+                "keyspace_with_simple_strategy_replication_factor_2".into(),
+                Keyspace {
+                    strategy: Strategy::SimpleStrategy {
+                        replication_factor: 2,
+                    },
+                },
+            ),
+            (
+                "keyspace_with_simple_strategy_replication_factor_3".into(),
+                Keyspace {
+                    strategy: Strategy::SimpleStrategy {
+                        replication_factor: 3,
+                    },
+                },
+            ),
+        ]
+        .iter()
+        .cloned()
+        .collect();
 
         ClusterData {
             known_peers,
-            ring: BTreeMap::new(),
-            keyspaces: HashMap::new(),
+            ring,
+            keyspaces,
             all_nodes,
             datacenters,
         }
+    }
+
+    // creates ClusterData with info about 5 nodes living in 2 different datacenters
+    // ring field is empty
+    fn mock_cluster_data_for_round_robin_tests() -> ClusterData {
+        let nodes_recipe = [("eu", 1), ("eu", 2), ("eu", 3), ("us", 4), ("us", 5)]
+            .iter()
+            .map(|(dc, id)| NodeMockRecipe {
+                datacenter: Some(dc.to_string()),
+                id: *id,
+                tokens: Vec::new(),
+            })
+            .collect::<Vec<_>>();
+
+        mock_cluster_data(&nodes_recipe)
+    }
+
+    // creates ClusterData with info about 3 nodes living in the same datacenter
+    // ring field is populated as follows:
+    // ring tokens:            50 100 150 200 250 300 400 500
+    // corresponding node ids: 2  1   2   3   1   2   3   1
+    fn mock_cluster_data_for_token_aware_tests() -> ClusterData {
+        let nodes_recipe = [
+            NodeMockRecipe {
+                datacenter: Some("eu".into()),
+                id: 1,
+                tokens: vec![
+                    Token { value: 100 },
+                    Token { value: 250 },
+                    Token { value: 500 },
+                ],
+            },
+            NodeMockRecipe {
+                datacenter: Some("eu".into()),
+                id: 2,
+                tokens: vec![
+                    Token { value: 50 },
+                    Token { value: 150 },
+                    Token { value: 300 },
+                ],
+            },
+            NodeMockRecipe {
+                datacenter: Some("us".into()),
+                id: 3,
+                tokens: vec![Token { value: 200 }, Token { value: 400 }],
+            },
+        ];
+
+        mock_cluster_data(&nodes_recipe)
     }
 
     const EMPTY_STATEMENT: Statement = Statement {
@@ -353,21 +460,21 @@ mod tests {
     // ConnectionKeeper (which lives in Node) requires context of Tokio runtime
     #[tokio::test]
     async fn test_round_robin_policy() {
-        let nodes_recipe = [("eu", 1), ("eu", 2), ("us", 3), ("us", 4)];
+        let cluster = mock_cluster_data_for_round_robin_tests();
 
-        let cluster = mock_cluster_data(&nodes_recipe);
         let policy = RoundRobinPolicy::new();
 
-        let plans = (0..5)
+        let plans = (0..6)
             .map(|_| get_plan_and_collect_node_identifiers(&policy, &EMPTY_STATEMENT, &cluster))
             .collect::<Vec<_>>();
 
         let expected_plans = vec![
-            vec![1, 2, 3, 4],
-            vec![2, 3, 4, 1],
-            vec![3, 4, 1, 2],
-            vec![4, 1, 2, 3],
-            vec![1, 2, 3, 4],
+            vec![1, 2, 3, 4, 5],
+            vec![2, 3, 4, 5, 1],
+            vec![3, 4, 5, 1, 2],
+            vec![4, 5, 1, 2, 3],
+            vec![5, 1, 2, 3, 4],
+            vec![1, 2, 3, 4, 5],
         ];
 
         assert_eq!(plans, expected_plans);
@@ -375,9 +482,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_dc_aware_round_robin_policy() {
-        let nodes_recipe = [("eu", 1), ("eu", 2), ("eu", 3), ("us", 4), ("us", 5)];
+        let cluster = mock_cluster_data_for_round_robin_tests();
 
-        let cluster = mock_cluster_data(&nodes_recipe);
         let local_dc = "eu".to_string();
         let policy = DCAwareRoundRobinPolicy::new(local_dc);
 
@@ -397,9 +503,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_token_aware_fallback_policy() {
-        let nodes_recipe = [("eu", 1), ("eu", 2), ("eu", 3), ("us", 4), ("us", 5)];
+        let cluster = mock_cluster_data_for_round_robin_tests();
 
-        let cluster = mock_cluster_data(&nodes_recipe);
         let local_dc = "eu".to_string();
         let policy = TokenAwarePolicy::new(Box::new(DCAwareRoundRobinPolicy::new(local_dc)));
 
@@ -415,6 +520,65 @@ mod tests {
         ];
 
         assert_eq!(plans, expected_plans);
+    }
+
+    #[tokio::test]
+    async fn test_token_aware_policy_with_simple_strategy() {
+        let cluster = mock_cluster_data_for_token_aware_tests();
+
+        struct Test {
+            statement: Statement,
+            expected_plans: Vec<Vec<u16>>,
+        };
+
+        let tests = [
+            Test {
+                statement: Statement {
+                    token: Some(Token { value: 160 }),
+                    keyspace: Some("keyspace_with_simple_strategy_replication_factor_2".into()),
+                },
+                expected_plans: vec![vec![3, 1], vec![1, 3]],
+            },
+            Test {
+                statement: Statement {
+                    token: Some(Token { value: 60 }),
+                    keyspace: Some("keyspace_with_simple_strategy_replication_factor_3".into()),
+                },
+                expected_plans: vec![vec![1, 2, 3], vec![2, 3, 1], vec![3, 1, 2]],
+            },
+            Test {
+                statement: Statement {
+                    token: Some(Token { value: 500 }),
+                    keyspace: Some("keyspace_with_simple_strategy_replication_factor_3".into()),
+                },
+                expected_plans: vec![vec![1, 2, 3], vec![2, 3, 1], vec![3, 1, 2]],
+            },
+            Test {
+                statement: Statement {
+                    token: Some(Token { value: 60 }),
+                    keyspace: Some("invalid".into()),
+                },
+                expected_plans: vec![vec![1]],
+            },
+            Test {
+                statement: Statement {
+                    token: Some(Token { value: 60 }),
+                    keyspace: None,
+                },
+                expected_plans: vec![vec![1]],
+            },
+        ];
+
+        for test in &tests {
+            let policy = TokenAwarePolicy::new(Box::new(RoundRobinPolicy::new()));
+
+            let plan_count = test.expected_plans.len();
+            let plans = (0..plan_count)
+                .map(|_| get_plan_and_collect_node_identifiers(&policy, &test.statement, &cluster))
+                .collect::<Vec<_>>();
+
+            assert_eq!(plans, test.expected_plans);
+        }
     }
 
     #[test]

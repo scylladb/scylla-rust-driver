@@ -8,6 +8,7 @@ use futures::future::join_all;
 
 use futures::{future::RemoteHandle, FutureExt};
 use rand::Rng;
+use std::hash::{Hash, Hasher};
 use std::net::SocketAddr;
 use std::sync::{Arc, RwLock};
 
@@ -162,6 +163,20 @@ impl Node {
         // Other end of this channel is in NodeWorker, can't be dropped while we have &self to Node with _worker_handle
 
         response_receiver.await.unwrap() // NodeWorker always responds
+    }
+}
+
+impl PartialEq for Node {
+    fn eq(&self, other: &Self) -> bool {
+        self.address == other.address
+    }
+}
+
+impl Eq for Node {}
+
+impl Hash for Node {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.address.hash(state);
     }
 }
 

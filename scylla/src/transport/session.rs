@@ -406,7 +406,7 @@ impl Session {
 
         let statement_info = Statement {
             token: Some(token),
-            keyspace: None,
+            keyspace: prepared.get_keyspace_name(),
         };
         let node = self.load_balancing_plan(statement_info);
 
