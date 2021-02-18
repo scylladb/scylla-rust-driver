@@ -3,7 +3,7 @@ use crate::routing::ShardInfo;
 use crate::transport::errors::QueryError;
 use crate::transport::{
     connection,
-    connection::{Connection, ConnectionConfig, VerifiedKeyspaceName},
+    connection::{Connection, ConnectionConfig, ErrorReceiver, VerifiedKeyspaceName},
 };
 
 use futures::{future::RemoteHandle, FutureExt};
@@ -172,18 +172,9 @@ impl ConnectionKeeperWorker {
 
     // Opens a new connection and waits until some fatal error occurs
     async fn run_connection(&mut self) -> QueryError {
-        // If shard is specified choose random source port
-        let mut source_port: Option<u16> = None;
-        if let Some(info) = &self.shard_info {
-            source_port = Some(info.draw_source_port_for_shard(info.shard.into()));
-        }
-
         // Connect to the node
-        let connect_result =
-            connection::open_connection(self.address, source_port, self.config.clone()).await;
-
-        let (connection, mut error_receiver) = match connect_result {
-            Ok((connection, error_receiver)) => (Arc::new(connection), error_receiver),
+        let (connection, mut error_receiver) = match self.open_new_connection().await {
+            Ok(opened) => opened,
             Err(e) => return e,
         };
 
@@ -236,5 +227,38 @@ impl ConnectionKeeperWorker {
                 }
             }
         }
+    }
+
+    async fn open_new_connection(&self) -> Result<(Arc<Connection>, ErrorReceiver), QueryError> {
+        let (connection, error_receiver) = match &self.shard_info {
+            Some(info) => self.open_new_connection_to_shard(info).await?,
+            None => connection::open_connection(self.address, None, self.config.clone()).await?,
+        };
+
+        Ok((Arc::new(connection), error_receiver))
+    }
+
+    async fn open_new_connection_to_shard(
+        &self,
+        shard_info: &ShardInfo,
+    ) -> Result<(Connection, ErrorReceiver), QueryError> {
+        // Create iterator over all possible source ports for this shard
+        let source_port_iter = shard_info.iter_source_ports_for_shard(shard_info.shard.into());
+
+        for port in source_port_iter {
+            let connect_result =
+                connection::open_connection(self.address, Some(port), self.config.clone()).await;
+
+            match connect_result {
+                Err(err) if err.is_address_in_use() => continue, // If port collision happened try next port
+                result => return result,
+            }
+        }
+
+        // Tried all source ports for that shard, give up
+        return Err(QueryError::IOError(Arc::new(std::io::Error::new(
+            std::io::ErrorKind::AddrInUse,
+            "Could not find free source port for shard",
+        ))));
     }
 }
