@@ -62,7 +62,7 @@ Please join the `#rust-driver` channel on [ScyllaDB Slack] to discuss any issues
 
 ## Other Drivers
 
-* [CDRS]: Apache Cassandra driver written in pure Rust.
+* [cdrs-tokio]: Apache Cassandra driver written in pure Rust.
 * [cassandra-rs]: Rust wrappers for the [DataStax C++ driver] for Apache Cassandra.
 
 ## License
@@ -76,7 +76,7 @@ at your option.
 
 [ScyllaDB Slack]: http://slack.scylladb.com/
 [Apache Cassandra®]: https://cassandra.apache.org/
-[CDRS]: https://github.com/AlexPikalov/cdrs
+[cdrs-tokio]: https://github.com/krojew/cdrs-tokio
 [CQL binary protocol]: https://github.com/apache/cassandra/blob/trunk/doc/native_protocol_v4.spec
 [DataStax C++ driver]: https://github.com/datastax/cpp-driver/
 [ScyllaDB]: https://www.scylladb.com/
