@@ -345,7 +345,7 @@ impl Session {
     /// Executes a previously prepared statement
     /// # Arguments
     ///
-    /// * `prepared` - a statement prepared with [prepare](crate::transport::session::prepare)
+    /// * `prepared` - a statement prepared with [prepare](crate::transport::session::Session::prepare)
     /// * `values` - values bound to the query
     pub async fn execute(
         &self,
