@@ -49,6 +49,10 @@ pub enum BadQuery {
     /// Serialized values are too long to compute parition key
     #[error("Serialized values are too long to compute parition key! Length: {0}, Max allowed length: {1}")]
     ValuesTooLongForKey(usize, usize),
+
+    /// Passed invalid keyspace name to use
+    #[error("Passed invalid keyspace name to use: {0}")]
+    BadKeyspaceName(#[from] BadKeyspaceName),
 }
 
 /// Error that occured during session creation
@@ -62,10 +66,6 @@ pub enum NewSessionError {
     /// There needs to be at least one node to connect to
     #[error("Empty known nodes list")]
     EmptyKnownNodesList,
-
-    /// Passed invalid keyspace name to use
-    #[error(transparent)]
-    BadKeyspaceName(#[from] BadKeyspaceName),
 
     /// Database sent a response containing some error
     #[error(transparent)]
@@ -98,26 +98,6 @@ pub enum BadKeyspaceName {
     /// Illegal character - only alpha-numeric and underscores allowed.
     #[error("Illegal character found: '{1}', only alpha-numeric and underscores allowed. Bad keyspace name: '{0}'")]
     IllegalCharacter(String, char),
-}
-
-/// Error occuring during `Session::use_keyspace()`
-#[derive(Debug, Error)]
-pub enum UseKeyspaceError {
-    /// Caller passed invalid keyspace name
-    #[error(transparent)]
-    BadKeyspaceName(#[from] BadKeyspaceName),
-
-    /// Database sent a response containing some error
-    #[error(transparent)]
-    DBError(#[from] DBError),
-
-    /// Input/Output error has occured, connection broken etc.
-    #[error("IO Error: {0}")]
-    IOError(Arc<std::io::Error>),
-
-    /// Unexpected or invalid message received
-    #[error("Protocol Error: {0}")]
-    ProtocolError(&'static str),
 }
 
 impl From<std::io::Error> for QueryError {
@@ -161,27 +141,8 @@ impl From<QueryError> for NewSessionError {
     }
 }
 
-impl From<UseKeyspaceError> for NewSessionError {
-    fn from(use_ks_error: UseKeyspaceError) -> NewSessionError {
-        match use_ks_error {
-            UseKeyspaceError::BadKeyspaceName(e) => NewSessionError::BadKeyspaceName(e),
-            UseKeyspaceError::DBError(e) => NewSessionError::DBError(e),
-            UseKeyspaceError::IOError(e) => NewSessionError::IOError(e),
-            UseKeyspaceError::ProtocolError(e) => NewSessionError::ProtocolError(e),
-        }
-    }
-}
-
-impl From<QueryError> for UseKeyspaceError {
-    fn from(query_error: QueryError) -> UseKeyspaceError {
-        match query_error {
-            QueryError::DBError(e) => UseKeyspaceError::DBError(e),
-            QueryError::IOError(e) => UseKeyspaceError::IOError(e),
-            QueryError::ProtocolError(m) => UseKeyspaceError::ProtocolError(m),
-            QueryError::BadQuery(_) => {
-                // BadQuery occurs with bad values, there are no values so this shouldn't happen
-                panic!("USE <keyspace_name> returned BadQuery - driver bug!")
-            }
-        }
+impl From<BadKeyspaceName> for QueryError {
+    fn from(keyspace_err: BadKeyspaceName) -> QueryError {
+        QueryError::BadQuery(BadQuery::BadKeyspaceName(keyspace_err))
     }
 }

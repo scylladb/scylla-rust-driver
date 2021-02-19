@@ -1,6 +1,6 @@
 use crate::frame::value::ValueList;
 use crate::routing::hash3_x64_128;
-use crate::transport::errors::{BadKeyspaceName, UseKeyspaceError};
+use crate::transport::errors::{BadKeyspaceName, BadQuery, QueryError};
 use crate::{IntoTypedRows, Session, SessionBuilder};
 
 // TODO: Requires a running local Scylla instance
@@ -355,23 +355,24 @@ async fn test_use_keyspace() {
     // Test that invalid keyspaces get rejected
     assert!(matches!(
         session.use_keyspace("", false).await,
-        Err(UseKeyspaceError::BadKeyspaceName(BadKeyspaceName::Empty))
+        Err(QueryError::BadQuery(BadQuery::BadKeyspaceName(
+            BadKeyspaceName::Empty
+        )))
     ));
 
     let long_name: String = vec!['a'; 49].iter().collect();
     assert!(matches!(
         session.use_keyspace(long_name, false).await,
-        Err(UseKeyspaceError::BadKeyspaceName(BadKeyspaceName::TooLong(
-            _,
-            _
+        Err(QueryError::BadQuery(BadQuery::BadKeyspaceName(
+            BadKeyspaceName::TooLong(_, _)
         )))
     ));
 
     assert!(matches!(
         session.use_keyspace("abcd;dfdsf", false).await,
-        Err(UseKeyspaceError::BadKeyspaceName(
+        Err(QueryError::BadQuery(BadQuery::BadKeyspaceName(
             BadKeyspaceName::IllegalCharacter(_, ';')
-        ))
+        )))
     ));
 
     // Make sure that use_keyspace on SessionBuiler works
@@ -474,4 +475,65 @@ async fn test_use_keyspace_case_sensitivity() {
         .collect();
 
     assert_eq!(rows, vec!["uppercase".to_string()]);
+}
+
+#[tokio::test]
+#[ignore]
+async fn test_raw_use_keyspace() {
+    let uri = std::env::var("SCYLLA_URI").unwrap_or_else(|_| "127.0.0.1:9042".to_string());
+    let session = SessionBuilder::new()
+        .known_node(&uri)
+        .build()
+        .await
+        .unwrap();
+
+    session.query("CREATE KEYSPACE IF NOT EXISTS raw_use_ks_test WITH REPLICATION = {'class' : 'SimpleStrategy', 'replication_factor' : 1}", &[]).await.unwrap();
+
+    session
+        .query("DROP TABLE IF EXISTS raw_use_ks_test.tab", &[])
+        .await
+        .unwrap();
+
+    session
+        .query(
+            "CREATE TABLE IF NOT EXISTS raw_use_ks_test.tab (a text primary key)",
+            &[],
+        )
+        .await
+        .unwrap();
+
+    session
+        .query(
+            "INSERT INTO raw_use_ks_test.tab (a) VALUES ('raw_test')",
+            &[],
+        )
+        .await
+        .unwrap();
+
+    session
+        .query("use    \"raw_use_ks_test\"    ;", &[])
+        .await
+        .unwrap();
+
+    let rows: Vec<String> = session
+        .query("SELECT * FROM tab", &[])
+        .await
+        .unwrap()
+        .unwrap()
+        .into_typed::<(String,)>()
+        .map(|res| res.unwrap().0)
+        .collect();
+
+    assert_eq!(rows, vec!["raw_test".to_string()]);
+
+    // Check if case sensitivity is correctly detected
+    assert!(session
+        .query("use    \"RAW_USE_KS_TEST\"    ;", &[])
+        .await
+        .is_err());
+
+    assert!(session
+        .query("use    RAW_USE_KS_TEST    ;", &[])
+        .await
+        .is_ok());
 }

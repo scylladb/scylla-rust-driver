@@ -4,7 +4,7 @@ use std::sync::Arc;
 use std::time::Instant;
 use tokio::net::lookup_host;
 
-use super::errors::{BadQuery, NewSessionError, QueryError, UseKeyspaceError};
+use super::errors::{BadQuery, NewSessionError, QueryError};
 use crate::batch::Batch;
 use crate::cql_to_rust::FromRow;
 use crate::frame::response::cql_to_rust::FromRowError;
@@ -280,6 +280,25 @@ impl Session {
         query: impl Into<Query>,
         values: impl ValueList,
     ) -> Result<Option<Vec<result::Row>>, QueryError> {
+        let query: Query = query.into();
+        let query_text: &str = query.get_contents();
+
+        // In case the user tried doing session.query("use keyspace ks") run session::use_keyspace
+        if query_text.to_lowercase().starts_with("use ") {
+            eprintln!("Warning: Raw USE KEYSPACE queries are experimental, please use session::use_keyspace instead");
+
+            let mut keyspace_name: &str = &query_text["use ".len()..].trim_end_matches(';').trim();
+
+            let case_sensitive: bool = keyspace_name.starts_with('"');
+
+            keyspace_name = keyspace_name.trim_matches('"');
+
+            return self
+                .use_keyspace(keyspace_name, case_sensitive)
+                .await
+                .map(|_| None);
+        }
+
         let statement_info = Statement {
             token: None,
             keyspace: None,
@@ -519,7 +538,7 @@ impl Session {
         &self,
         keyspace_name: impl Into<String>,
         case_sensitive: bool,
-    ) -> Result<(), UseKeyspaceError> {
+    ) -> Result<(), QueryError> {
         // Trying to pass keyspace as bound value in "USE ?" doesn't work
         // So we have to create a string for query: "USE " + new_keyspace
         // To avoid any possible CQL injections it's good to verify that the name is valid
