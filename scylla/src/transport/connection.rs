@@ -1,9 +1,10 @@
 use bytes::Bytes;
 use futures::{future::RemoteHandle, FutureExt};
-use tokio::net::{TcpSocket, TcpStream};
 use tokio::io::{split, AsyncRead, AsyncWrite};
+use tokio::net::{TcpSocket, TcpStream};
 use tokio::sync::{mpsc, oneshot};
 
+use tokio_rustls::{rustls::ClientConfig, webpki::DNSNameRef, TlsConnector};
 
 use std::collections::HashMap;
 use std::convert::TryFrom;
@@ -94,8 +95,21 @@ impl Connection {
         // TODO: What should be the size of the channel?
         let (sender, receiver) = mpsc::channel(128);
 
-        let (fut, _worker_handle) = Self::router(stream, receiver).remote_handle();
-        tokio::task::spawn(fut);
+        let _worker_handle = match config.use_tls {
+            true => {
+                let mut tls_config = ClientConfig::new();
+                tls_config
+                    .root_store
+                    .add_server_trust_anchors(&webpki_roots::TLS_SERVER_ROOTS);
+                let connector = TlsConnector::from(Arc::new(tls_config));
+                let domain = addr.to_string();
+                let domain = DNSNameRef::try_from_ascii_str(&domain).map_err(|_| {
+                    std::io::Error::new(std::io::ErrorKind::InvalidInput, "invalid dnsname")
+                })?;
+                Self::run_router(connector.connect(domain, stream).await?, receiver)
+            }
+            false => Self::run_router(stream, receiver),
+        };
 
         Ok(Self {
             submit_channel: sender,
@@ -312,10 +326,16 @@ impl Connection {
         Ok(response)
     }
 
-    async fn router(
-        stream: (impl AsyncRead + AsyncWrite), 
-        receiver: mpsc::Receiver<Task>
-    ) {
+    fn run_router(
+        stream: (impl AsyncRead + AsyncWrite + Send + 'static),
+        receiver: mpsc::Receiver<Task>,
+    ) -> RemoteHandle<()> {
+        let (task, handle) = Self::router(stream, receiver).remote_handle();
+        tokio::task::spawn(task);
+        handle
+    }
+
+    async fn router(stream: (impl AsyncRead + AsyncWrite), receiver: mpsc::Receiver<Task>) {
         let (read_half, write_half) = split(stream);
 
         // Why are using a mutex here?
