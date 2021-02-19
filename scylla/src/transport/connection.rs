@@ -225,12 +225,18 @@ impl Connection {
     ) -> Result<(), QueryError> {
         // Trying to pass keyspace_name as bound value doesn't work
         // We have to send "USE " + keyspace_name
-        let query: Query = format!("USE \"{}\"", keyspace_name.as_str()).into();
+        let query: Query = match keyspace_name.is_case_sensitive {
+            true => format!("USE \"{}\"", keyspace_name.as_str()).into(),
+            false => format!("USE {}", keyspace_name.as_str()).into(),
+        };
+
         let query_response = self.query(&query, (), None).await?;
 
         match query_response {
             Response::Result(result::Result::SetKeyspace(set_keyspace)) => {
-                if set_keyspace.keyspace_name != keyspace_name.as_str() {
+                if set_keyspace.keyspace_name.to_lowercase()
+                    != keyspace_name.as_str().to_lowercase()
+                {
                     return Err(QueryError::ProtocolError(
                         "USE <keyspace_name> returned response with different keyspace name",
                     ));
@@ -596,17 +602,23 @@ impl StreamIDSet {
 
 /// This type can only hold a valid keyspace name
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
-pub struct VerifiedKeyspaceName(Arc<String>);
+pub struct VerifiedKeyspaceName {
+    name: Arc<String>,
+    pub is_case_sensitive: bool,
+}
 
 impl VerifiedKeyspaceName {
-    pub fn new(keyspace_name: String) -> Result<Self, BadKeyspaceName> {
+    pub fn new(keyspace_name: String, case_sensitive: bool) -> Result<Self, BadKeyspaceName> {
         Self::verify_keyspace_name_is_valid(&keyspace_name)?;
 
-        Ok(VerifiedKeyspaceName(Arc::new(keyspace_name)))
+        Ok(VerifiedKeyspaceName {
+            name: Arc::new(keyspace_name),
+            is_case_sensitive: case_sensitive,
+        })
     }
 
     pub fn as_str(&self) -> &str {
-        self.0.as_str()
+        self.name.as_str()
     }
 
     // "Keyspace names can have up to 48 alpha-numeric characters and contain underscores;

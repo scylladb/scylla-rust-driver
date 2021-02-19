@@ -166,14 +166,15 @@ impl SessionBuilder {
     /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
     /// let session: Session = SessionBuilder::new()
     ///     .known_node("127.0.0.1:9042")
-    ///     .use_keyspace("my_keyspace_name")
+    ///     .use_keyspace("my_keyspace_name", false)
     ///     .build()
     ///     .await?;
     /// # Ok(())
     /// # }
     /// ```
-    pub fn use_keyspace(mut self, keyspace_name: impl Into<String>) -> Self {
+    pub fn use_keyspace(mut self, keyspace_name: impl Into<String>, case_sensitive: bool) -> Self {
         self.config.used_keyspace = Some(keyspace_name.into());
+        self.config.keyspace_case_sensitive = case_sensitive;
         self
     }
 
@@ -341,6 +342,21 @@ mod tests {
     }
 
     #[test]
+    fn use_keyspace() {
+        let mut builder = SessionBuilder::new();
+        assert_eq!(builder.config.used_keyspace, None);
+        assert_eq!(builder.config.keyspace_case_sensitive, false);
+
+        builder = builder.use_keyspace("ks_name_1", true);
+        assert_eq!(builder.config.used_keyspace, Some("ks_name_1".to_string()));
+        assert_eq!(builder.config.keyspace_case_sensitive, true);
+
+        builder = builder.use_keyspace("ks_name_2", false);
+        assert_eq!(builder.config.used_keyspace, Some("ks_name_2".to_string()));
+        assert_eq!(builder.config.keyspace_case_sensitive, false);
+    }
+
+    #[test]
     fn all_features() {
         let mut builder = SessionBuilder::new();
 
@@ -355,6 +371,7 @@ mod tests {
         builder = builder.compression(Some(Compression::Snappy));
         builder = builder.tcp_nodelay(true);
         builder = builder.load_balancing(Box::new(RoundRobinPolicy::new()));
+        builder = builder.use_keyspace("ks_name", true);
 
         assert_eq!(
             builder.config.known_nodes,
@@ -374,5 +391,9 @@ mod tests {
             builder.config.load_balancing.name(),
             "RoundRobinPolicy".to_string()
         );
+
+        assert_eq!(builder.config.used_keyspace, Some("ks_name".to_string()));
+
+        assert_eq!(builder.config.keyspace_case_sensitive, true);
     }
 }

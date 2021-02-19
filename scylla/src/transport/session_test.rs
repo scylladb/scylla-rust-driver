@@ -326,7 +326,7 @@ async fn test_use_keyspace() {
         .await
         .unwrap();
 
-    session.use_keyspace("use_ks_test").await.unwrap();
+    session.use_keyspace("use_ks_test", false).await.unwrap();
 
     session
         .query("INSERT INTO tab (a) VALUES ('test2')", &[])
@@ -348,19 +348,19 @@ async fn test_use_keyspace() {
 
     // Test that trying to use nonexisting keyspace fails
     assert!(session
-        .use_keyspace("this_keyspace_does_not_exist_at_all")
+        .use_keyspace("this_keyspace_does_not_exist_at_all", false)
         .await
         .is_err());
 
     // Test that invalid keyspaces get rejected
     assert!(matches!(
-        session.use_keyspace("").await,
+        session.use_keyspace("", false).await,
         Err(UseKeyspaceError::BadKeyspaceName(BadKeyspaceName::Empty))
     ));
 
     let long_name: String = vec!['a'; 49].iter().collect();
     assert!(matches!(
-        session.use_keyspace(long_name).await,
+        session.use_keyspace(long_name, false).await,
         Err(UseKeyspaceError::BadKeyspaceName(BadKeyspaceName::TooLong(
             _,
             _
@@ -368,7 +368,7 @@ async fn test_use_keyspace() {
     ));
 
     assert!(matches!(
-        session.use_keyspace("abcd;dfdsf").await,
+        session.use_keyspace("abcd;dfdsf", false).await,
         Err(UseKeyspaceError::BadKeyspaceName(
             BadKeyspaceName::IllegalCharacter(_, ';')
         ))
@@ -377,7 +377,7 @@ async fn test_use_keyspace() {
     // Make sure that use_keyspace on SessionBuiler works
     let session2: Session = SessionBuilder::new()
         .known_node(uri)
-        .use_keyspace("use_ks_test")
+        .use_keyspace("use_ks_test", false)
         .build()
         .await
         .unwrap();
@@ -394,4 +394,84 @@ async fn test_use_keyspace() {
     rows2.sort();
 
     assert_eq!(rows2, vec!["test1".to_string(), "test2".to_string()]);
+}
+
+#[tokio::test]
+#[ignore]
+async fn test_use_keyspace_case_sensitivity() {
+    let uri = std::env::var("SCYLLA_URI").unwrap_or_else(|_| "127.0.0.1:9042".to_string());
+    let session = SessionBuilder::new()
+        .known_node(&uri)
+        .build()
+        .await
+        .unwrap();
+
+    session.query("CREATE KEYSPACE IF NOT EXISTS \"ks_case_test\" WITH REPLICATION = {'class' : 'SimpleStrategy', 'replication_factor' : 1}", &[]).await.unwrap();
+    session.query("CREATE KEYSPACE IF NOT EXISTS \"KS_CASE_TEST\" WITH REPLICATION = {'class' : 'SimpleStrategy', 'replication_factor' : 1}", &[]).await.unwrap();
+
+    session
+        .query("DROP TABLE IF EXISTS ks_case_test.tab", &[])
+        .await
+        .unwrap();
+
+    session
+        .query("DROP TABLE IF EXISTS \"KS_CASE_TEST\".tab", &[])
+        .await
+        .unwrap();
+
+    session
+        .query("CREATE TABLE ks_case_test.tab (a text primary key)", &[])
+        .await
+        .unwrap();
+
+    session
+        .query(
+            "CREATE TABLE \"KS_CASE_TEST\".tab (a text primary key)",
+            &[],
+        )
+        .await
+        .unwrap();
+
+    session
+        .query("INSERT INTO ks_case_test.tab (a) VALUES ('lowercase')", &[])
+        .await
+        .unwrap();
+
+    session
+        .query(
+            "INSERT INTO \"KS_CASE_TEST\".tab (a) VALUES ('uppercase')",
+            &[],
+        )
+        .await
+        .unwrap();
+
+    // Use uppercase keyspace without case sesitivity
+    // Should select the lowercase one
+    session.use_keyspace("KS_CASE_TEST", false).await.unwrap();
+
+    let rows: Vec<String> = session
+        .query("SELECT * from tab", &[])
+        .await
+        .unwrap()
+        .unwrap()
+        .into_typed::<(String,)>()
+        .map(|row| row.unwrap().0)
+        .collect();
+
+    assert_eq!(rows, vec!["lowercase".to_string()]);
+
+    // Use uppercase keyspace with case sesitivity
+    // Should select the uppercase one
+    session.use_keyspace("KS_CASE_TEST", true).await.unwrap();
+
+    let rows: Vec<String> = session
+        .query("SELECT * from tab", &[])
+        .await
+        .unwrap()
+        .unwrap()
+        .into_typed::<(String,)>()
+        .map(|row| row.unwrap().0)
+        .collect();
+
+    assert_eq!(rows, vec!["uppercase".to_string()]);
 }

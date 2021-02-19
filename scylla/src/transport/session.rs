@@ -49,6 +49,7 @@ pub struct SessionConfig {
     pub load_balancing: Box<dyn LoadBalancingPolicy>,
 
     pub used_keyspace: Option<String>,
+    pub keyspace_case_sensitive: bool,
     /*
     These configuration options will be added in the future:
 
@@ -91,6 +92,7 @@ impl SessionConfig {
             tcp_nodelay: false,
             load_balancing: Box::new(TokenAwarePolicy::new(Box::new(RoundRobinPolicy::new()))),
             used_keyspace: None,
+            keyspace_case_sensitive: false,
         }
     }
 
@@ -240,7 +242,9 @@ impl Session {
         };
 
         if let Some(keyspace_name) = config.used_keyspace {
-            session.use_keyspace(keyspace_name).await?;
+            session
+                .use_keyspace(keyspace_name, config.keyspace_case_sensitive)
+                .await?;
         }
 
         Ok(session)
@@ -491,7 +495,7 @@ impl Session {
     ///
     /// * `keyspace_name` - keyspace name to use,
     /// keyspace names can have up to 48 alpha-numeric characters and contain underscores
-    ///
+    /// * `case_sensitive` - if set to true the generated query will put keyspace name in quotes
     /// # Example
     /// ```rust
     /// # use scylla::{Session, SessionBuilder};
@@ -502,7 +506,7 @@ impl Session {
     ///     .query("INSERT INTO my_keyspace.tab (a) VALUES ('test1')", &[])
     ///     .await?;
     ///
-    /// session.use_keyspace("my_keyspace").await?;
+    /// session.use_keyspace("my_keyspace", false).await?;
     ///
     /// // Now we can omit keyspace name in the query
     /// session
@@ -514,11 +518,12 @@ impl Session {
     pub async fn use_keyspace(
         &self,
         keyspace_name: impl Into<String>,
+        case_sensitive: bool,
     ) -> Result<(), UseKeyspaceError> {
         // Trying to pass keyspace as bound value in "USE ?" doesn't work
         // So we have to create a string for query: "USE " + new_keyspace
         // To avoid any possible CQL injections it's good to verify that the name is valid
-        let verified_ks_name = VerifiedKeyspaceName::new(keyspace_name.into())?;
+        let verified_ks_name = VerifiedKeyspaceName::new(keyspace_name.into(), case_sensitive)?;
 
         self.cluster.use_keyspace(verified_ks_name).await?;
 
