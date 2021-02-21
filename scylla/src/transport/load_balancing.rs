@@ -2,8 +2,9 @@ use super::{cluster::ClusterData, node::Node};
 use crate::routing::Token;
 use crate::transport::topology::Strategy;
 
+use itertools::Itertools;
 use std::{
-    collections::VecDeque,
+    collections::{HashMap, VecDeque},
     sync::{
         atomic::{AtomicUsize, Ordering},
         Arc,
@@ -111,9 +112,78 @@ impl TokenAwarePolicy {
         token: &Token,
         replication_factor: usize,
     ) -> impl Iterator<Item = Arc<Node>> + 'a {
-        use itertools::Itertools;
-
         cluster.ring_range(&token).unique().take(replication_factor)
+    }
+
+    fn network_topology_strategy_replicas<'a>(
+        cluster: &'a ClusterData,
+        token: &Token,
+        datacenter_repfactors: &HashMap<String, usize>,
+    ) -> impl Iterator<Item = Arc<Node>> + 'a {
+        let mut acceptable_repeats = datacenter_repfactors
+            .iter()
+            .map(|(dc_name, repfactor)| {
+                let rack_count = cluster
+                    .datacenters
+                    .get(dc_name)
+                    .map(|dc| dc.rack_count)
+                    .unwrap_or(0);
+
+                (dc_name.clone(), repfactor - rack_count)
+            })
+            .collect::<HashMap<String, usize>>();
+
+        let desired_result_len: usize = datacenter_repfactors.values().sum();
+
+        let mut result: Vec<Arc<Node>> = Vec::with_capacity(desired_result_len);
+        for node in cluster.ring_range(&token).unique() {
+            let current_node_dc = match &node.datacenter {
+                None => continue,
+                Some(dc) => dc,
+            };
+
+            let repfactor = match datacenter_repfactors.get(current_node_dc) {
+                None => continue,
+                Some(r) => r,
+            };
+
+            let picked_nodes_from_current_dc = || {
+                result
+                    .iter()
+                    .filter(|node| node.datacenter.as_ref() == Some(current_node_dc))
+            };
+
+            if *repfactor == picked_nodes_from_current_dc().count() {
+                // found enough nodes in this datacenter
+                continue;
+            }
+
+            let current_node_rack = node.rack.as_ref();
+            let current_node_rack_count = picked_nodes_from_current_dc()
+                .filter(|node| node.rack.as_ref() == current_node_rack)
+                .count();
+
+            if current_node_rack_count == 0 {
+                // new rack
+                result.push(node.clone());
+            } else {
+                // we’ve already found a node in this rack
+
+                // unwrap, because we already know repfactor
+                let repeats = acceptable_repeats.get_mut(current_node_dc).unwrap();
+                if *repeats > 0 {
+                    // we must pick multiple nodes in the same rack
+                    *repeats -= 1;
+                    result.push(node.clone());
+                }
+            }
+
+            if result.len() == desired_result_len {
+                break;
+            }
+        }
+
+        result.into_iter()
     }
 }
 
@@ -142,6 +212,16 @@ impl LoadBalancingPolicy for TokenAwarePolicy {
                     Strategy::SimpleStrategy { replication_factor } => {
                         let mut replicas =
                             Self::simple_strategy_replicas(cluster, &token, *replication_factor);
+                        self.child_policy.apply_child_policy(&mut replicas)
+                    }
+                    Strategy::NetworkTopologyStrategy {
+                        datacenter_repfactors,
+                    } => {
+                        let mut replicas = Self::network_topology_strategy_replicas(
+                            cluster,
+                            &token,
+                            datacenter_repfactors,
+                        );
                         self.child_policy.apply_child_policy(&mut replicas)
                     }
                     _ => {
@@ -188,6 +268,7 @@ impl DCAwareRoundRobinPolicy {
         cluster
             .datacenters
             .get(&self.local_dc)
+            .map(|dc| &dc.nodes)
             .unwrap_or(EMPTY_NODE_LIST)
     }
 
@@ -287,6 +368,7 @@ fn slice_rotated_left<'a, T>(slice: &'a [T], mid: usize) -> impl Iterator<Item =
 
 #[cfg(test)]
 mod tests {
+    use crate::transport::cluster::Datacenter;
     use crate::transport::connection::ConnectionConfig;
     use crate::transport::topology::Keyspace;
     use std::collections::{BTreeMap, HashMap};
@@ -311,7 +393,11 @@ mod tests {
         assert_eq!(vec![3, 4, 5, 1, 2], a_rotated);
     }
 
-    fn create_node_with_failing_connection(id: u16, datacenter: Option<String>) -> Arc<Node> {
+    fn create_node_with_failing_connection(
+        id: u16,
+        datacenter: Option<String>,
+        rack: Option<String>,
+    ) -> Arc<Node> {
         let node = Node::new(
             SocketAddr::from(([255, 255, 255, 255], id)),
             ConnectionConfig {
@@ -319,7 +405,7 @@ mod tests {
                 tcp_nodelay: false,
             },
             datacenter,
-            None,
+            rack,
             None,
         );
 
@@ -328,6 +414,7 @@ mod tests {
 
     struct NodeMockRecipe {
         datacenter: Option<String>,
+        rack: Option<String>,
         id: u16,
         tokens: Vec<Token>,
     }
@@ -335,10 +422,14 @@ mod tests {
     fn mock_cluster_data(nodes_recipe: &[NodeMockRecipe]) -> ClusterData {
         let mut ring = BTreeMap::new();
         let mut all_nodes = Vec::new();
-        let mut datacenters: HashMap<String, Vec<Arc<Node>>> = HashMap::new();
+        let mut datacenters: HashMap<String, Datacenter> = HashMap::new();
 
         for recipe in nodes_recipe {
-            let node = create_node_with_failing_connection(recipe.id, recipe.datacenter.clone());
+            let node = create_node_with_failing_connection(
+                recipe.id,
+                recipe.datacenter.clone(),
+                recipe.rack.clone(),
+            );
 
             for vnode in &recipe.tokens {
                 ring.insert(*vnode, node.clone());
@@ -346,10 +437,16 @@ mod tests {
 
             if let Some(dc) = &node.datacenter {
                 match datacenters.get_mut(dc) {
-                    Some(v) => v.push(node.clone()),
+                    Some(v) => v.nodes.push(node.clone()),
                     None => {
                         let v = vec![node.clone()];
-                        datacenters.insert(dc.clone(), v);
+                        datacenters.insert(
+                            dc.clone(),
+                            Datacenter {
+                                nodes: v,
+                                rack_count: 0,
+                            },
+                        );
                     }
                 }
             }
@@ -380,18 +477,32 @@ mod tests {
                     },
                 },
             ),
+            (
+                "keyspace_with_nts".into(),
+                Keyspace {
+                    strategy: Strategy::NetworkTopologyStrategy {
+                        datacenter_repfactors: [("waw".to_string(), 2), ("her".to_string(), 3)]
+                            .iter()
+                            .cloned()
+                            .collect::<HashMap<_, _>>(),
+                    },
+                },
+            ),
         ]
         .iter()
         .cloned()
         .collect();
 
-        ClusterData {
+        let mut cluster = ClusterData {
             known_peers,
             ring,
             keyspaces,
             all_nodes,
             datacenters,
-        }
+        };
+        cluster.update_rack_count();
+
+        cluster
     }
 
     // creates ClusterData with info about 5 nodes living in 2 different datacenters
@@ -401,6 +512,7 @@ mod tests {
             .iter()
             .map(|(dc, id)| NodeMockRecipe {
                 datacenter: Some(dc.to_string()),
+                rack: None,
                 id: *id,
                 tokens: Vec::new(),
             })
@@ -417,6 +529,7 @@ mod tests {
         let nodes_recipe = [
             NodeMockRecipe {
                 datacenter: Some("eu".into()),
+                rack: None,
                 id: 1,
                 tokens: vec![
                     Token { value: 100 },
@@ -426,6 +539,7 @@ mod tests {
             },
             NodeMockRecipe {
                 datacenter: Some("eu".into()),
+                rack: None,
                 id: 2,
                 tokens: vec![
                     Token { value: 50 },
@@ -435,8 +549,77 @@ mod tests {
             },
             NodeMockRecipe {
                 datacenter: Some("us".into()),
+                rack: None,
                 id: 3,
                 tokens: vec![Token { value: 200 }, Token { value: 400 }],
+            },
+        ];
+
+        mock_cluster_data(&nodes_recipe)
+    }
+
+    // creates ClusterData with info about 8 nodes living in two different datacenters
+    //
+    // ring field is populated as follows:
+    // ring tokens:            50 100 150 200 250 300 400 500 510
+    // corresponding node ids: 1  5   2   1   6   4   8   7   3
+    //
+    // datacenter:       waw
+    // nodes in rack r1: 1 2
+    // nodes in rack r2: 3 4
+    //
+    // datacenter:       her
+    // nodes in rack r3: 5 6
+    // nodes in rack r4: 7 8
+    fn mock_cluster_data_for_nts_token_aware_tests() -> ClusterData {
+        let nodes_recipe = [
+            NodeMockRecipe {
+                datacenter: Some("waw".into()),
+                rack: Some("r1".into()),
+                id: 1,
+                tokens: vec![Token { value: 50 }, Token { value: 200 }],
+            },
+            NodeMockRecipe {
+                datacenter: Some("waw".into()),
+                rack: Some("r1".into()),
+                id: 2,
+                tokens: vec![Token { value: 150 }],
+            },
+            NodeMockRecipe {
+                datacenter: Some("waw".into()),
+                rack: Some("r2".into()),
+                id: 3,
+                tokens: vec![Token { value: 510 }],
+            },
+            NodeMockRecipe {
+                datacenter: Some("waw".into()),
+                rack: Some("r2".into()),
+                id: 4,
+                tokens: vec![Token { value: 300 }],
+            },
+            NodeMockRecipe {
+                datacenter: Some("her".into()),
+                rack: Some("r3".into()),
+                id: 5,
+                tokens: vec![Token { value: 100 }],
+            },
+            NodeMockRecipe {
+                datacenter: Some("her".into()),
+                rack: Some("r3".into()),
+                id: 6,
+                tokens: vec![Token { value: 250 }],
+            },
+            NodeMockRecipe {
+                datacenter: Some("her".into()),
+                rack: Some("r4".into()),
+                id: 7,
+                tokens: vec![Token { value: 500 }],
+            },
+            NodeMockRecipe {
+                datacenter: Some("her".into()),
+                rack: Some("r4".into()),
+                id: 8,
+                tokens: vec![Token { value: 400 }],
             },
         ];
 
@@ -579,6 +762,23 @@ mod tests {
 
             assert_eq!(plans, test.expected_plans);
         }
+    }
+
+    #[tokio::test]
+    async fn test_token_aware_policy_with_nts() {
+        let cluster = mock_cluster_data_for_nts_token_aware_tests();
+
+        let policy = TokenAwarePolicy::new(Box::new(RoundRobinPolicy::new()));
+
+        let statement = Statement {
+            token: Some(Token { value: 0 }),
+            keyspace: Some("keyspace_with_nts".into()),
+        };
+
+        let plan = get_plan_and_collect_node_identifiers(&policy, &statement, &cluster);
+        let expected_plan = vec![1, 5, 6, 4, 8];
+
+        assert_eq!(plan, expected_plan);
     }
 
     #[test]

@@ -7,6 +7,7 @@ use crate::transport::topology::{Keyspace, TopologyReader};
 
 use futures::future::join_all;
 use futures::{future::RemoteHandle, FutureExt};
+use itertools::Itertools;
 use std::collections::{BTreeMap, HashMap};
 use std::net::SocketAddr;
 use std::sync::{Arc, RwLock};
@@ -22,12 +23,17 @@ pub struct Cluster {
     _worker_handle: RemoteHandle<()>,
 }
 
+pub struct Datacenter {
+    pub nodes: Vec<Arc<Node>>,
+    pub rack_count: usize,
+}
+
 pub struct ClusterData {
     pub known_peers: HashMap<SocketAddr, Arc<Node>>, // Invariant: nonempty after Cluster::new()
     pub ring: BTreeMap<Token, Arc<Node>>,            // Invariant: nonempty after Cluster::new()
     pub keyspaces: HashMap<String, Keyspace>,
     pub all_nodes: Vec<Arc<Node>>,
-    pub datacenters: HashMap<String, Vec<Arc<Node>>>,
+    pub datacenters: HashMap<String, Datacenter>,
 }
 
 // Works in the background to keep the cluster updated
@@ -192,6 +198,18 @@ impl ClusterData {
 
         before_wrap.chain(after_wrap).take(self.ring.len())
     }
+
+    /// Updates information about rack count in each datacenter
+    pub fn update_rack_count(&mut self) {
+        for datacenter in self.datacenters.values_mut() {
+            datacenter.rack_count = datacenter
+                .nodes
+                .iter()
+                .filter_map(|node| node.rack.clone())
+                .unique()
+                .count();
+        }
+    }
 }
 
 impl ClusterWorker {
@@ -307,7 +325,7 @@ impl ClusterWorker {
         let mut new_known_peers: HashMap<SocketAddr, Arc<Node>> =
             HashMap::with_capacity(topo_info.peers.len());
         let mut new_ring: BTreeMap<Token, Arc<Node>> = BTreeMap::new();
-        let mut new_datacenters: HashMap<String, Vec<Arc<Node>>> = HashMap::new();
+        let mut new_datacenters: HashMap<String, Datacenter> = HashMap::new();
 
         let cluster_data: Arc<ClusterData> = self.cluster_data.read().unwrap().clone();
 
@@ -332,9 +350,12 @@ impl ClusterWorker {
 
             if let Some(dc) = &node.datacenter {
                 match new_datacenters.get_mut(dc) {
-                    Some(v) => v.push(node.clone()),
+                    Some(v) => v.nodes.push(node.clone()),
                     None => {
-                        let v = vec![node.clone()];
+                        let v = Datacenter {
+                            nodes: vec![node.clone()],
+                            rack_count: 0,
+                        };
                         new_datacenters.insert(dc.clone(), v);
                     }
                 }
@@ -350,19 +371,22 @@ impl ClusterWorker {
             .cloned()
             .collect::<Vec<Arc<Node>>>();
 
-        let mut new_cluster_data: Arc<ClusterData> = Arc::new(ClusterData {
+        let mut new_cluster_data = ClusterData {
             known_peers: new_known_peers,
             ring: new_ring,
             keyspaces: topo_info.keyspaces,
             all_nodes,
             datacenters: new_datacenters,
-        });
+        };
+        new_cluster_data.update_rack_count();
+
+        let mut new_cluster_data_ptr = Arc::new(new_cluster_data);
 
         // Update current cluster_data
         // Use std::mem::swap to avoid dropping large structures with active write lock
         let mut cluster_data_lock = self.cluster_data.write().unwrap();
 
-        std::mem::swap(&mut *cluster_data_lock, &mut new_cluster_data);
+        std::mem::swap(&mut *cluster_data_lock, &mut new_cluster_data_ptr);
 
         drop(cluster_data_lock);
 
