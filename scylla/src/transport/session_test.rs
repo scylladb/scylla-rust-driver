@@ -2,9 +2,7 @@ use crate::frame::value::ValueList;
 use crate::routing::hash3_x64_128;
 use crate::SessionBuilder;
 
-// TODO: Requires a running local Scylla instance
 #[tokio::test]
-#[ignore]
 async fn test_unprepared_statement() {
     let uri = std::env::var("SCYLLA_URI").unwrap_or_else(|_| "127.0.0.1:9042".to_string());
     let session = SessionBuilder::new().known_node(uri).build().await.unwrap();
@@ -63,7 +61,6 @@ async fn test_unprepared_statement() {
 }
 
 #[tokio::test]
-#[ignore]
 async fn test_prepared_statement() {
     let uri = std::env::var("SCYLLA_URI").unwrap_or_else(|_| "127.0.0.1:9042".to_string());
     let session = SessionBuilder::new().known_node(uri).build().await.unwrap();
@@ -179,7 +176,6 @@ async fn test_prepared_statement() {
 }
 
 #[tokio::test]
-#[ignore]
 async fn test_batch() {
     let uri = std::env::var("SCYLLA_URI").unwrap_or_else(|_| "127.0.0.1:9042".to_string());
     let session = SessionBuilder::new().known_node(uri).build().await.unwrap();
@@ -244,7 +240,6 @@ async fn test_batch() {
 }
 
 #[tokio::test]
-#[ignore]
 async fn test_token_calculation() {
     let uri = std::env::var("SCYLLA_URI").unwrap_or_else(|_| "127.0.0.1:9042".to_string());
     let session = SessionBuilder::new().known_node(uri).build().await.unwrap();
