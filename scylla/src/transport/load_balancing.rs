@@ -4,7 +4,7 @@ use crate::transport::topology::Strategy;
 
 use itertools::Itertools;
 use std::{
-    collections::{HashMap, VecDeque},
+    collections::HashMap,
     sync::{
         atomic::{AtomicUsize, Ordering},
         Arc,
@@ -34,10 +34,7 @@ pub trait LoadBalancingPolicy: Send + Sync {
 ///
 /// For example, this enables RoundRobinPolicy to process plan made by TokenAwarePolicy.
 pub trait ChildLoadBalancingPolicy: LoadBalancingPolicy {
-    fn apply_child_policy(
-        &self,
-        plan: &mut dyn Iterator<Item = Arc<Node>>,
-    ) -> Box<dyn Iterator<Item = Arc<Node>>>;
+    fn apply_child_policy(&self, plan: Vec<Arc<Node>>) -> Box<dyn Iterator<Item = Arc<Node>>>;
 }
 
 /// A Round-robin load balancing policy.
@@ -82,18 +79,13 @@ impl LoadBalancingPolicy for RoundRobinPolicy {
 }
 
 impl ChildLoadBalancingPolicy for RoundRobinPolicy {
-    fn apply_child_policy(
-        &self,
-        plan: &mut dyn Iterator<Item = Arc<Node>>,
-    ) -> Box<dyn Iterator<Item = Arc<Node>>> {
+    fn apply_child_policy(&self, mut plan: Vec<Arc<Node>>) -> Box<dyn Iterator<Item = Arc<Node>>> {
         let index = self.index.fetch_add(1, ORDER_TYPE);
 
-        // `plan` iterator is not cloneable, because of this we can't
-        // call iter_rotated_left()
-        let mut vec: VecDeque<Arc<Node>> = plan.collect();
-        vec.rotate_left(compute_rotation(index, vec.len()));
+        let len = plan.len(); // borrow checker forces making such a variable
 
-        Box::new(vec.into_iter())
+        plan.rotate_left(compute_rotation(index, len));
+        Box::new(plan.into_iter())
     }
 }
 
@@ -111,15 +103,19 @@ impl TokenAwarePolicy {
         cluster: &'a ClusterData,
         token: &Token,
         replication_factor: usize,
-    ) -> impl Iterator<Item = Arc<Node>> + 'a {
-        cluster.ring_range(&token).unique().take(replication_factor)
+    ) -> Vec<Arc<Node>> {
+        cluster
+            .ring_range(&token)
+            .unique()
+            .take(replication_factor)
+            .collect()
     }
 
     fn network_topology_strategy_replicas<'a>(
         cluster: &'a ClusterData,
         token: &Token,
         datacenter_repfactors: &HashMap<String, usize>,
-    ) -> impl Iterator<Item = Arc<Node>> + 'a {
+    ) -> Vec<Arc<Node>> {
         let mut acceptable_repeats = datacenter_repfactors
             .iter()
             .map(|(dc_name, repfactor)| {
@@ -183,7 +179,7 @@ impl TokenAwarePolicy {
             }
         }
 
-        result.into_iter()
+        result
     }
 }
 
@@ -210,26 +206,26 @@ impl LoadBalancingPolicy for TokenAwarePolicy {
 
                 match strategy {
                     Strategy::SimpleStrategy { replication_factor } => {
-                        let mut replicas =
+                        let replicas =
                             Self::simple_strategy_replicas(cluster, &token, *replication_factor);
-                        self.child_policy.apply_child_policy(&mut replicas)
+                        self.child_policy.apply_child_policy(replicas)
                     }
                     Strategy::NetworkTopologyStrategy {
                         datacenter_repfactors,
                     } => {
-                        let mut replicas = Self::network_topology_strategy_replicas(
+                        let replicas = Self::network_topology_strategy_replicas(
                             cluster,
                             &token,
                             datacenter_repfactors,
                         );
-                        self.child_policy.apply_child_policy(&mut replicas)
+                        self.child_policy.apply_child_policy(replicas)
                     }
                     _ => {
                         // default to simple strategy with replication factor = 1
                         let replication_factor = 1;
-                        let mut replica =
+                        let replica =
                             Self::simple_strategy_replicas(cluster, &token, replication_factor);
-                        self.child_policy.apply_child_policy(&mut replica)
+                        self.child_policy.apply_child_policy(replica)
                     }
                 }
             }
@@ -316,14 +312,12 @@ impl LoadBalancingPolicy for DCAwareRoundRobinPolicy {
 }
 
 impl ChildLoadBalancingPolicy for DCAwareRoundRobinPolicy {
-    fn apply_child_policy(
-        &self,
-        plan: &mut dyn Iterator<Item = Arc<Node>>,
-    ) -> Box<dyn Iterator<Item = Arc<Node>>> {
+    fn apply_child_policy(&self, plan: Vec<Arc<Node>>) -> Box<dyn Iterator<Item = Arc<Node>>> {
         let index = self.index.fetch_add(1, ORDER_TYPE);
 
-        let (local_nodes, remote_nodes): (Vec<_>, Vec<_>) =
-            plan.partition(|node| DCAwareRoundRobinPolicy::is_local_node(node, &self.local_dc));
+        let (local_nodes, remote_nodes): (Vec<_>, Vec<_>) = plan
+            .into_iter()
+            .partition(|node| DCAwareRoundRobinPolicy::is_local_node(node, &self.local_dc));
 
         let local_nodes_rotation = compute_rotation(index, local_nodes.len());
         let rotated_local_nodes = slice_rotated_left(&local_nodes, local_nodes_rotation);
