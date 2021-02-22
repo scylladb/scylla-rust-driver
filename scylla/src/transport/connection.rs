@@ -76,6 +76,15 @@ pub struct ConnectionConfig {
     */
 }
 
+impl Default for ConnectionConfig {
+    fn default() -> Self {
+        Self {
+            compression: None,
+            tcp_nodelay: false,
+        }
+    }
+}
+
 // Used to listen for fatal error in connection
 pub type ErrorReceiver = tokio::sync::oneshot::Receiver<QueryError>;
 
