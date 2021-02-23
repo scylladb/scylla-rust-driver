@@ -32,6 +32,12 @@ impl Default for Consistency {
     }
 }
 
+impl std::fmt::Display for Consistency {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{:?}", self)
+    }
+}
+
 impl From<std::num::TryFromIntError> for ParseError {
     fn from(_err: std::num::TryFromIntError) -> Self {
         ParseError::BadData("Integer conversion out of range".to_string())
