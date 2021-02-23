@@ -14,6 +14,15 @@ pub trait Value {
 #[error("Value too big to be sent in a request - max 2GiB allowed")]
 pub struct ValueTooBig;
 
+/// Represents an unset value
+pub struct Unset;
+
+/// Enum providing a way to represent a value that might be unset
+pub enum MaybeUnset<V: Value> {
+    Unset,
+    Set(V),
+}
+
 /// Keeps a buffer with serialized Values
 /// Allows adding new Values and iterating over serialized ones
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
@@ -214,6 +223,23 @@ impl<T: Value> Value for Option<T> {
                 buf.put_i32(-1);
                 Ok(())
             }
+        }
+    }
+}
+
+impl Value for Unset {
+    fn serialize(&self, buf: &mut Vec<u8>) -> Result<(), ValueTooBig> {
+        // Unset serializes itself to empty value with length = -2
+        buf.put_i32(-2);
+        Ok(())
+    }
+}
+
+impl<V: Value> Value for MaybeUnset<V> {
+    fn serialize(&self, buf: &mut Vec<u8>) -> Result<(), ValueTooBig> {
+        match self {
+            MaybeUnset::Set(v) => v.serialize(buf),
+            MaybeUnset::Unset => Unset.serialize(buf),
         }
     }
 }

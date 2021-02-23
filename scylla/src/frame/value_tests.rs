@@ -1,6 +1,6 @@
 use super::value::{
-    BatchValues, SerializeValuesError, SerializedResult, SerializedValues, Value, ValueList,
-    ValueTooBig,
+    BatchValues, MaybeUnset, SerializeValuesError, SerializedResult, SerializedValues, Unset,
+    Value, ValueList, ValueTooBig,
 };
 use bytes::BufMut;
 use std::borrow::Cow;
@@ -31,6 +31,17 @@ fn option_value() {
     assert_eq!(serialized(Some(32_i32)), vec![0, 0, 0, 4, 0, 0, 0, 32]);
     let null_i32: Option<i32> = None;
     assert_eq!(serialized(null_i32), &(-1_i32).to_be_bytes()[..]);
+}
+
+#[test]
+fn unset_value() {
+    assert_eq!(serialized(Unset), &(-2_i32).to_be_bytes()[..]);
+
+    let unset_i32: MaybeUnset<i32> = MaybeUnset::Unset;
+    assert_eq!(serialized(unset_i32), &(-2_i32).to_be_bytes()[..]);
+
+    let set_i32: MaybeUnset<i32> = MaybeUnset::Set(32);
+    assert_eq!(serialized(set_i32), vec![0, 0, 0, 4, 0, 0, 0, 32]);
 }
 
 #[test]
