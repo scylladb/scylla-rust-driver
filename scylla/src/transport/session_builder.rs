@@ -3,6 +3,7 @@ use super::load_balancing::LoadBalancingPolicy;
 use super::session::{Session, SessionConfig};
 use super::Compression;
 use std::net::SocketAddr;
+use tokio_rustls::rustls::ClientConfig;
 
 /// SessionBuilder is used to create new Session instances
 /// # Example
@@ -218,6 +219,27 @@ impl SessionBuilder {
         self
     }
 
+    /// Sets what cipher suite should be used in TLS connection
+    ///
+    /// # Example
+    /// ```
+    /// # use scylla::{Session, SessionBuilder};
+    /// # use tokio_rustls::rustls::ClientConfig;
+    /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
+    /// let session: Session = SessionBuilder::new()
+    ///     .known_node("127.0.0.1:9042")
+    ///     .use_tls(true)
+    ///     .tls_config(ClientConfig::new())
+    ///     .build()
+    ///     .await?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn tls_config(mut self, config: ClientConfig) -> Self {
+        self.config.tls_config = config;
+        self
+    }
+
     /// Builds the Session after setting all the options
     ///
     /// # Example
@@ -372,8 +394,9 @@ mod tests {
         builder = builder.use_keyspace("ks_name_2", false);
         assert_eq!(builder.config.used_keyspace, Some("ks_name_2".to_string()));
         assert_eq!(builder.config.keyspace_case_sensitive, false);
+    }
 
-#[test]
+    #[test]
     fn use_tls() {
         let mut builder = SessionBuilder::new();
         assert_eq!(builder.config.use_tls, false);
@@ -383,6 +406,15 @@ mod tests {
 
         builder = builder.use_tls(false);
         assert_eq!(builder.config.use_tls, false);
+    }
+
+    #[test]
+    fn tls_config() {
+        // TODO
+        // use tokio_rustls::rustls::ClientConfig;
+        // let mut builder = SessionBuilder::new();
+        // let config = ClientConfig::new();
+        // assert_eq!(builder.config.tls_config, config);
     }
 
     #[test]

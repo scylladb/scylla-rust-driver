@@ -3,6 +3,7 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Instant;
 use tokio::net::lookup_host;
+use tokio_rustls::rustls::ClientConfig;
 
 use super::errors::{BadQuery, NewSessionError, QueryError};
 use crate::batch::Batch;
@@ -53,9 +54,10 @@ pub struct SessionConfig {
     
     /// Should session use TLS.
     pub use_tls: bool,
+    pub tls_config: ClientConfig,
     /*
     These configuration options will be added in the future:
-    
+
     pub tls_certificate_path: Option<String>,
 
     pub auth_username: Option<String>,
@@ -93,12 +95,10 @@ impl SessionConfig {
             compression: None,
             tcp_nodelay: false,
             load_balancing: Box::new(TokenAwarePolicy::new(Box::new(RoundRobinPolicy::new()))),
-<<<<<<< HEAD
             used_keyspace: None,
             keyspace_case_sensitive: false,
-=======
             use_tls: false, 
->>>>>>> a0b7bc6... Created setter for use_tls in SessionConfig
+            tls_config: ClientConfig::new(),
         }
     }
 
@@ -164,6 +164,7 @@ impl SessionConfig {
             compression: self.compression,
             tcp_nodelay: self.tcp_nodelay,
             use_tls: self.use_tls,
+            tls_config: self.tls_config.clone(),
         }
     }
 }

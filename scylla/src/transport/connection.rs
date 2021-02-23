@@ -62,6 +62,7 @@ pub struct ConnectionConfig {
     pub compression: Option<Compression>,
     pub tcp_nodelay: bool,
     pub use_tls: bool,
+    pub tls_config: ClientConfig,
     /*
     These configuration options will be added in the future:
 
@@ -97,10 +98,7 @@ impl Connection {
 
         let _worker_handle = match config.use_tls {
             true => {
-                let mut tls_config = ClientConfig::new();
-                tls_config
-                    .root_store
-                    .add_server_trust_anchors(&webpki_roots::TLS_SERVER_ROOTS);
+                let tls_config = config.tls_config.clone();
                 let connector = TlsConnector::from(Arc::new(tls_config));
                 let domain = addr.to_string();
                 let domain = DNSNameRef::try_from_ascii_str(&domain).map_err(|_| {

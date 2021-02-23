@@ -287,12 +287,14 @@ mod tests {
     }
 
     fn create_node_with_failing_connection(id: u16, datacenter: Option<String>) -> Arc<Node> {
+        use tokio_rustls::rustls::ClientConfig;
         let node = Node::new(
             SocketAddr::from(([255, 255, 255, 255], id)),
             ConnectionConfig {
                 compression: None,
                 tcp_nodelay: false,
                 use_tls: false,
+                tls_config: ClientConfig::new(),
             },
             datacenter,
             None,
