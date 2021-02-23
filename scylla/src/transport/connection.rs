@@ -32,6 +32,7 @@ use crate::transport::Compression;
 pub struct Connection {
     submit_channel: mpsc::Sender<Task>,
     _worker_handle: RemoteHandle<()>,
+    connect_address: SocketAddr,
     source_port: u16,
     shard_info: Option<ShardInfo>,
     config: ConnectionConfig,
@@ -98,6 +99,7 @@ impl Connection {
             submit_channel: sender,
             _worker_handle,
             source_port,
+            connect_address: addr,
             shard_info: None,
             config,
             is_shard_aware: false,
@@ -408,6 +410,10 @@ impl Connection {
 
     fn set_is_shard_aware(&mut self, is_shard_aware: bool) {
         self.is_shard_aware = is_shard_aware;
+    }
+
+    pub fn get_connect_address(&self) -> SocketAddr {
+        self.connect_address
     }
 }
 

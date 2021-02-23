@@ -174,12 +174,13 @@ async fn query_peers(conn: &Connection, connect_port: u16) -> Result<Vec<Peer>, 
 
     let typed_peers_rows =
         peers_rows.into_typed::<(IpAddr, Option<String>, Option<String>, Option<Vec<String>>)>();
-    let typed_local_rows =
-        local_rows.into_typed::<(IpAddr, Option<String>, Option<String>, Option<Vec<String>>)>();
 
-    // Here we are considering the local node to be just a regular peer, but datastax claims that unless
-    // you have SNI enabled, you shouldn't trust rpc_address (So they just use the initial connection's address)
-    // we could expose this from conn & use it directly instead of system.local.rpc_address
+    // For the local node we should use connection's address instead of rpc_address unless SNI is enabled (TODO)
+    // Replace address in local_rows with connection's address
+    let local_address: IpAddr = conn.get_connect_address().ip();
+    let typed_local_rows = local_rows
+        .into_typed::<(IpAddr, Option<String>, Option<String>, Option<Vec<String>>)>()
+        .map(|res| res.map(|(_addr, dc, rack, tokens)| (local_address, dc, rack, tokens)));
 
     for row in typed_peers_rows.chain(typed_local_rows) {
         let (ip_address, datacenter, rack, tokens) = row.map_err(|_| {
