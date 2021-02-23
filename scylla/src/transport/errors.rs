@@ -49,6 +49,10 @@ pub enum BadQuery {
     /// Serialized values are too long to compute parition key
     #[error("Serialized values are too long to compute parition key! Length: {0}, Max allowed length: {1}")]
     ValuesTooLongForKey(usize, usize),
+
+    /// Passed invalid keyspace name to use
+    #[error("Passed invalid keyspace name to use: {0}")]
+    BadKeyspaceName(#[from] BadKeyspaceName),
 }
 
 /// Error that occured during session creation
@@ -78,6 +82,22 @@ pub enum NewSessionError {
     /// Unexpected or invalid message received
     #[error("Protocol Error: {0}")]
     ProtocolError(&'static str),
+}
+
+/// Invalid keyspace name given to `Session::use_keyspace()`
+#[derive(Debug, Error, Clone)]
+pub enum BadKeyspaceName {
+    /// Keyspace name is empty
+    #[error("Keyspace name is empty")]
+    Empty,
+
+    /// Keyspace name too long, must be up to 48 characters
+    #[error("Keyspace name too long, must be up to 48 characters, found {1} characters. Bad keyspace name: '{0}'")]
+    TooLong(String, usize),
+
+    /// Illegal character - only alpha-numeric and underscores allowed.
+    #[error("Illegal character found: '{1}', only alpha-numeric and underscores allowed. Bad keyspace name: '{0}'")]
+    IllegalCharacter(String, char),
 }
 
 impl From<std::io::Error> for QueryError {
@@ -118,5 +138,11 @@ impl From<QueryError> for NewSessionError {
             QueryError::IOError(e) => NewSessionError::IOError(e),
             QueryError::ProtocolError(m) => NewSessionError::ProtocolError(m),
         }
+    }
+}
+
+impl From<BadKeyspaceName> for QueryError {
+    fn from(keyspace_err: BadKeyspaceName) -> QueryError {
+        QueryError::BadQuery(BadQuery::BadKeyspaceName(keyspace_err))
     }
 }

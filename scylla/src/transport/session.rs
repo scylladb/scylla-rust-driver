@@ -16,7 +16,7 @@ use crate::query::Query;
 use crate::routing::{murmur3_token, Token};
 use crate::transport::{
     cluster::Cluster,
-    connection::ConnectionConfig,
+    connection::{ConnectionConfig, VerifiedKeyspaceName},
     iterator::RowIterator,
     load_balancing::{LoadBalancingPolicy, RoundRobinPolicy, Statement, TokenAwarePolicy},
     metrics::{Metrics, MetricsView},
@@ -47,6 +47,9 @@ pub struct SessionConfig {
 
     /// Load balancing policy used by Session
     pub load_balancing: Box<dyn LoadBalancingPolicy>,
+
+    pub used_keyspace: Option<String>,
+    pub keyspace_case_sensitive: bool,
     /*
     These configuration options will be added in the future:
 
@@ -88,6 +91,8 @@ impl SessionConfig {
             compression: None,
             tcp_nodelay: false,
             load_balancing: Box::new(TokenAwarePolicy::new(Box::new(RoundRobinPolicy::new()))),
+            used_keyspace: None,
+            keyspace_case_sensitive: false,
         }
     }
 
@@ -230,11 +235,19 @@ impl Session {
         let cluster = Cluster::new(&node_addresses, config.get_connection_config()).await?;
         let metrics = Arc::new(Metrics::new());
 
-        Ok(Session {
+        let session = Session {
             cluster,
             load_balancer: config.load_balancing,
             metrics,
-        })
+        };
+
+        if let Some(keyspace_name) = config.used_keyspace {
+            session
+                .use_keyspace(keyspace_name, config.keyspace_case_sensitive)
+                .await?;
+        }
+
+        Ok(session)
     }
 
     // TODO: Should return an iterator over results
@@ -267,6 +280,25 @@ impl Session {
         query: impl Into<Query>,
         values: impl ValueList,
     ) -> Result<Option<Vec<result::Row>>, QueryError> {
+        let query: Query = query.into();
+        let query_text: &str = query.get_contents();
+
+        // In case the user tried doing session.query("use keyspace ks") run session::use_keyspace
+        if query_text.to_lowercase().starts_with("use ") {
+            eprintln!("Warning: Raw USE KEYSPACE queries are experimental, please use session::use_keyspace instead");
+
+            let mut keyspace_name: &str = &query_text["use ".len()..].trim_end_matches(';').trim();
+
+            let case_sensitive: bool = keyspace_name.starts_with('"');
+
+            keyspace_name = keyspace_name.trim_matches('"');
+
+            return self
+                .use_keyspace(keyspace_name, case_sensitive)
+                .await
+                .map(|_| None);
+        }
+
         let statement_info = Statement {
             token: None,
             keyspace: None,
@@ -467,6 +499,54 @@ impl Session {
                 "BATCH: Unexpected server response",
             )),
         }
+    }
+
+    /// Sends `USE <keyspace_name>` request on all connections  
+    /// This allows to write `SELECT * FROM table` instead of `SELECT * FROM keyspace.table`  
+    ///
+    /// Note that even failed `use_keyspace` can change currently used keyspace - the request is sent on all connections and
+    /// can overwrite previously used keyspace.
+    ///
+    /// Call only one `use_keyspace` at a time.  
+    /// Trying to do two `use_keyspace` requests simultaneously with different names
+    /// can end with some connections using one keyspace and the rest using the other.
+    /// # Arguments
+    ///
+    /// * `keyspace_name` - keyspace name to use,
+    /// keyspace names can have up to 48 alpha-numeric characters and contain underscores
+    /// * `case_sensitive` - if set to true the generated query will put keyspace name in quotes
+    /// # Example
+    /// ```rust
+    /// # use scylla::{Session, SessionBuilder};
+    /// # use scylla::transport::Compression;
+    /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
+    /// # let session = SessionBuilder::new().known_node("127.0.0.1:9042").build().await?;
+    /// session
+    ///     .query("INSERT INTO my_keyspace.tab (a) VALUES ('test1')", &[])
+    ///     .await?;
+    ///
+    /// session.use_keyspace("my_keyspace", false).await?;
+    ///
+    /// // Now we can omit keyspace name in the query
+    /// session
+    ///     .query("INSERT INTO tab (a) VALUES ('test2')", &[])
+    ///     .await?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub async fn use_keyspace(
+        &self,
+        keyspace_name: impl Into<String>,
+        case_sensitive: bool,
+    ) -> Result<(), QueryError> {
+        // Trying to pass keyspace as bound value in "USE ?" doesn't work
+        // So we have to create a string for query: "USE " + new_keyspace
+        // To avoid any possible CQL injections it's good to verify that the name is valid
+        let verified_ks_name = VerifiedKeyspaceName::new(keyspace_name.into(), case_sensitive)?;
+
+        self.cluster.use_keyspace(verified_ks_name).await?;
+
+        Ok(())
     }
 
     pub async fn refresh_topology(&self) -> Result<(), QueryError> {

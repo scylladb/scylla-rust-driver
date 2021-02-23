@@ -14,7 +14,7 @@ use std::{
     net::{Ipv4Addr, Ipv6Addr},
 };
 
-use super::errors::{BadQuery, QueryError};
+use super::errors::{BadKeyspaceName, BadQuery, QueryError};
 
 use crate::batch::{Batch, BatchStatement};
 use crate::frame::{
@@ -219,6 +219,38 @@ impl Connection {
         };
 
         self.send_request(&batch_frame, true).await
+    }
+
+    pub async fn use_keyspace(
+        &self,
+        keyspace_name: &VerifiedKeyspaceName,
+    ) -> Result<(), QueryError> {
+        // Trying to pass keyspace_name as bound value doesn't work
+        // We have to send "USE " + keyspace_name
+        let query: Query = match keyspace_name.is_case_sensitive {
+            true => format!("USE \"{}\"", keyspace_name.as_str()).into(),
+            false => format!("USE {}", keyspace_name.as_str()).into(),
+        };
+
+        let query_response = self.query(&query, (), None).await?;
+
+        match query_response {
+            Response::Result(result::Result::SetKeyspace(set_keyspace)) => {
+                if set_keyspace.keyspace_name.to_lowercase()
+                    != keyspace_name.as_str().to_lowercase()
+                {
+                    return Err(QueryError::ProtocolError(
+                        "USE <keyspace_name> returned response with different keyspace name",
+                    ));
+                }
+
+                Ok(())
+            }
+            Response::Error(err) => Err(err.into()),
+            _ => Err(QueryError::ProtocolError(
+                "USE <keyspace_name> returned unexpected response",
+            )),
+        }
     }
 
     // TODO: Return the response associated with that frame
@@ -571,5 +603,63 @@ impl StreamIDSet {
         let block_id = stream_id as usize / 64;
         let off = stream_id as usize % 64;
         self.used_bitmap[block_id] &= !(1 << off);
+    }
+}
+
+/// This type can only hold a valid keyspace name
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub struct VerifiedKeyspaceName {
+    name: Arc<String>,
+    pub is_case_sensitive: bool,
+}
+
+impl VerifiedKeyspaceName {
+    pub fn new(keyspace_name: String, case_sensitive: bool) -> Result<Self, BadKeyspaceName> {
+        Self::verify_keyspace_name_is_valid(&keyspace_name)?;
+
+        Ok(VerifiedKeyspaceName {
+            name: Arc::new(keyspace_name),
+            is_case_sensitive: case_sensitive,
+        })
+    }
+
+    pub fn as_str(&self) -> &str {
+        self.name.as_str()
+    }
+
+    // "Keyspace names can have up to 48 alpha-numeric characters and contain underscores;
+    // only letters and numbers are supported as the first character."
+    // https://docs.datastax.com/en/cql-oss/3.3/cql/cql_reference/cqlCreateKeyspace.html
+    // Despite that cassandra accepts underscore as first character so we do too
+    // https://github.com/scylladb/scylla/blob/62551b3bd382c7c47371eb3fc38173bd0cfed44d/test/cql-pytest/test_keyspace.py#L58
+    // https://github.com/scylladb/scylla/blob/718976e794790253c4b24e2c78208e11f24e7502/cql3/statements/create_keyspace_statement.cc#L75
+    fn verify_keyspace_name_is_valid(keyspace_name: &str) -> Result<(), BadKeyspaceName> {
+        if keyspace_name.is_empty() {
+            return Err(BadKeyspaceName::Empty);
+        }
+
+        // Verify that length <= 48
+        let keyspace_name_len: usize = keyspace_name.chars().count(); // Only ascii allowed so it's equal to .len()
+        if keyspace_name_len > 48 {
+            return Err(BadKeyspaceName::TooLong(
+                keyspace_name.to_string(),
+                keyspace_name_len,
+            ));
+        }
+
+        // Verify all chars are alpha-numeric or underscore
+        for character in keyspace_name.chars() {
+            match character {
+                'a'..='z' | 'A'..='Z' | '0'..='9' | '_' => {}
+                _ => {
+                    return Err(BadKeyspaceName::IllegalCharacter(
+                        keyspace_name.to_string(),
+                        character,
+                    ))
+                }
+            };
+        }
+
+        Ok(())
     }
 }

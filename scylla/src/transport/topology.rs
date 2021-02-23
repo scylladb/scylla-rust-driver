@@ -63,7 +63,7 @@ impl TopologyReader {
         for address in known_peers {
             control_connections.insert(
                 *address,
-                ConnectionKeeper::new(*address, connection_config.clone(), None, None),
+                ConnectionKeeper::new(*address, connection_config.clone(), None, None, None),
             );
         }
 
@@ -111,7 +111,13 @@ impl TopologyReader {
                 .control_connections
                 .remove(&peer.address)
                 .unwrap_or_else(|| {
-                    ConnectionKeeper::new(peer.address, self.connection_config.clone(), None, None)
+                    ConnectionKeeper::new(
+                        peer.address,
+                        self.connection_config.clone(),
+                        None,
+                        None,
+                        None,
+                    )
                 });
 
             new_control_connections.insert(peer.address, cur_connection);
