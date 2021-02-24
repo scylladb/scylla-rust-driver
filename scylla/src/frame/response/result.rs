@@ -41,6 +41,7 @@ enum ColumnType {
     Int,
     BigInt,
     Text,
+    Timestamp,
     Inet,
     List(Box<ColumnType>),
     Map(Box<ColumnType>, Box<ColumnType>),
@@ -61,6 +62,7 @@ pub enum CQLValue {
     Int(i32),
     BigInt(i64),
     Text(String),
+    Timestamp(i64),
     Inet(IpAddr),
     List(Vec<CQLValue>),
     Map(Vec<(CQLValue, CQLValue)>),
@@ -77,6 +79,13 @@ impl CQLValue {
     pub fn as_ascii(&self) -> Option<&String> {
         match self {
             Self::Ascii(s) => Some(&s),
+            _ => None,
+        }
+    }
+
+    pub fn as_timestamp(&self) -> Option<i64> {
+        match self {
+            Self::Timestamp(i) => Some(*i),
             _ => None,
         }
     }
@@ -229,9 +238,10 @@ fn deser_type(buf: &mut &[u8]) -> StdResult<ColumnType, ParseError> {
         0x0002 => BigInt,
         0x0004 => Boolean,
         0x0009 => Int,
-        0x0011 => Date,
+        0x000B => Timestamp,
         0x000D => Text,
         0x0010 => Inet,
+        0x0011 => Date,
         0x0020 => List(Box::new(deser_type(buf)?)),
         0x0021 => Map(Box::new(deser_type(buf)?), Box::new(deser_type(buf)?)),
         0x0022 => Set(Box::new(deser_type(buf)?)),
@@ -404,6 +414,15 @@ fn deser_cql_value(typ: &ColumnType, buf: &mut &[u8]) -> StdResult<CQLValue, Par
             CQLValue::BigInt(buf.read_i64::<BigEndian>()?)
         }
         Text => CQLValue::Text(str::from_utf8(buf)?.to_owned()),
+        Timestamp => {
+            if buf.len() != 8 {
+                return Err(ParseError::BadData(format!(
+                    "Buffer length should be 8 not {}",
+                    buf.len()
+                )));
+            }
+            CQLValue::Timestamp(buf.read_i64::<BigEndian>()?)
+        }
         Inet => CQLValue::Inet(match buf.len() {
             4 => {
                 let ret = IpAddr::from(<[u8; 4]>::try_from(&buf[0..4])?);
