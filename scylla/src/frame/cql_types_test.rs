@@ -1,5 +1,4 @@
 use crate::transport::session::IntoTypedRows;
-use crate::transport::session::Session;
 use crate::SessionBuilder;
 use std::env;
 
@@ -12,10 +11,9 @@ async fn test_cql_types() {
 
     println!("Connecting to {} ...", uri);
 
-    let session: Session = SessionBuilder::new().known_node(uri).build().await.unwrap();
+    let session = SessionBuilder::new().known_node(uri).build().await.unwrap();
 
     session.query("CREATE KEYSPACE IF NOT EXISTS ks WITH REPLICATION = {'class' : 'SimpleStrategy', 'replication_factor' : 1}", &[]).await.unwrap();
-
     // Date type test
     session
         .query(
@@ -31,10 +29,14 @@ async fn test_cql_types() {
         .await
         .unwrap();
 
-    if let Some(rows) = session.query("SELECT day FROM ks.days", &[]).await.unwrap() {
-        for row in rows.into_typed::<(u32,)>() {
-            let day: u32 = row.unwrap().0;
-            println!("day: {}", day);
+    if let Some(rows) = session
+        .query("SELECT day, id FROM ks.days", &[])
+        .await
+        .unwrap()
+    {
+        for row in rows.into_typed::<(u32, i32)>() {
+            let (a, b) = row.unwrap();
+            println!("day, id: {}, {}", a, b);
         }
     }
 
@@ -57,13 +59,13 @@ async fn test_cql_types() {
         .unwrap();
 
     if let Some(rows) = session
-        .query("SELECT boolvalue FROM ks.truefalse", &[])
+        .query("SELECT boolvalue, id FROM ks.truefalse", &[])
         .await
         .unwrap()
     {
-        for row in rows.into_typed::<(bool,)>() {
-            let bool_val: bool = row.unwrap().0;
-            println!("bool value: {}", bool_val);
+        for row in rows.into_typed::<(bool, i32)>() {
+            let (a, b) = row.unwrap();
+            println!("bool, id: {}, {}", a, b);
         }
     }
 
@@ -87,13 +89,13 @@ async fn test_cql_types() {
         .unwrap();
 
     if let Some(rows) = session
-        .query("SELECT float FROM ks.floatingpoint", &[])
+        .query("SELECT float, id FROM ks.floatingpoint", &[])
         .await
         .unwrap()
     {
-        for row in rows.into_typed::<(f32,)>() {
-            let bool_val: f32 = row.unwrap().0;
-            println!("float value: {}", bool_val);
+        for row in rows.into_typed::<(f32, i32)>() {
+            let (a, b) = row.unwrap();
+            println!("float, id: {}, {}", a, b);
         }
     }
 }

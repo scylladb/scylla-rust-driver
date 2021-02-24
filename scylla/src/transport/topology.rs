@@ -82,7 +82,7 @@ impl TopologyReader {
             self.update_control_connections(topology_info);
         }
 
-        return result;
+        result
     }
 
     async fn fetch_topology_info(&self) -> Result<TopologyInfo, QueryError> {
