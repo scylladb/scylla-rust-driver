@@ -14,6 +14,15 @@ pub trait Value {
 #[error("Value too big to be sent in a request - max 2GiB allowed")]
 pub struct ValueTooBig;
 
+/// Represents an unset value
+pub struct Unset;
+
+/// Enum providing a way to represent a value that might be unset
+pub enum MaybeUnset<V: Value> {
+    Unset,
+    Set(V),
+}
+
 /// Keeps a buffer with serialized Values
 /// Allows adding new Values and iterating over serialized ones
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
@@ -218,6 +227,23 @@ impl<T: Value> Value for Option<T> {
     }
 }
 
+impl Value for Unset {
+    fn serialize(&self, buf: &mut Vec<u8>) -> Result<(), ValueTooBig> {
+        // Unset serializes itself to empty value with length = -2
+        buf.put_i32(-2);
+        Ok(())
+    }
+}
+
+impl<V: Value> Value for MaybeUnset<V> {
+    fn serialize(&self, buf: &mut Vec<u8>) -> Result<(), ValueTooBig> {
+        match self {
+            MaybeUnset::Set(v) => v.serialize(buf),
+            MaybeUnset::Unset => Unset.serialize(buf),
+        }
+    }
+}
+
 // Every &impl Value should also implement Value
 impl<T: Value> Value for &T {
     fn serialize(&self, buf: &mut Vec<u8>) -> Result<(), ValueTooBig> {
@@ -294,9 +320,9 @@ impl_value_for_tuple!(T0, T1, T2, T3, T4, T5; 0, 1, 2, 3, 4, 5);
 impl_value_for_tuple!(T0, T1, T2, T3, T4, T5, T6; 0, 1, 2, 3, 4, 5, 6);
 impl_value_for_tuple!(T0, T1, T2, T3, T4, T5, T6, T7; 0, 1, 2, 3, 4, 5, 6, 7);
 impl_value_for_tuple!(T0, T1, T2, T3, T4, T5, T6, T7, T8; 0, 1, 2, 3, 4, 5, 6, 7, 8);
-impl_value_for_tuple!(T0, T1, T2, T3, T4, T5, T6, T7, T8, T9; 
+impl_value_for_tuple!(T0, T1, T2, T3, T4, T5, T6, T7, T8, T9;
                            0, 1, 2, 3, 4, 5, 6, 7, 8, 9);
-impl_value_for_tuple!(T0, T1, T2, T3, T4, T5, T6, T7, T8, T9, T10; 
+impl_value_for_tuple!(T0, T1, T2, T3, T4, T5, T6, T7, T8, T9, T10;
                            0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10);
 impl_value_for_tuple!(T0, T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11;
                            0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11);
@@ -388,9 +414,9 @@ impl_value_list_for_tuple!(T0, T1, T2, T3, T4, T5; 0, 1, 2, 3, 4, 5);
 impl_value_list_for_tuple!(T0, T1, T2, T3, T4, T5, T6; 0, 1, 2, 3, 4, 5, 6);
 impl_value_list_for_tuple!(T0, T1, T2, T3, T4, T5, T6, T7; 0, 1, 2, 3, 4, 5, 6, 7);
 impl_value_list_for_tuple!(T0, T1, T2, T3, T4, T5, T6, T7, T8; 0, 1, 2, 3, 4, 5, 6, 7, 8);
-impl_value_list_for_tuple!(T0, T1, T2, T3, T4, T5, T6, T7, T8, T9; 
+impl_value_list_for_tuple!(T0, T1, T2, T3, T4, T5, T6, T7, T8, T9;
                            0, 1, 2, 3, 4, 5, 6, 7, 8, 9);
-impl_value_list_for_tuple!(T0, T1, T2, T3, T4, T5, T6, T7, T8, T9, T10; 
+impl_value_list_for_tuple!(T0, T1, T2, T3, T4, T5, T6, T7, T8, T9, T10;
                            0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10);
 impl_value_list_for_tuple!(T0, T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11;
                            0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11);
@@ -520,17 +546,17 @@ impl_batch_values_for_tuple!(T0, T1, T2, T3, T4, T5; 0, 1, 2, 3, 4, 5; 6);
 impl_batch_values_for_tuple!(T0, T1, T2, T3, T4, T5, T6; 0, 1, 2, 3, 4, 5, 6; 7);
 impl_batch_values_for_tuple!(T0, T1, T2, T3, T4, T5, T6, T7; 0, 1, 2, 3, 4, 5, 6, 7; 8);
 impl_batch_values_for_tuple!(T0, T1, T2, T3, T4, T5, T6, T7, T8; 0, 1, 2, 3, 4, 5, 6, 7, 8; 9);
-impl_batch_values_for_tuple!(T0, T1, T2, T3, T4, T5, T6, T7, T8, T9; 
+impl_batch_values_for_tuple!(T0, T1, T2, T3, T4, T5, T6, T7, T8, T9;
                              0, 1, 2, 3, 4, 5, 6, 7, 8, 9; 10);
-impl_batch_values_for_tuple!(T0, T1, T2, T3, T4, T5, T6, T7, T8, T9, T10; 
+impl_batch_values_for_tuple!(T0, T1, T2, T3, T4, T5, T6, T7, T8, T9, T10;
                              0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10; 11);
-impl_batch_values_for_tuple!(T0, T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11; 
+impl_batch_values_for_tuple!(T0, T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11;
                              0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11; 12);
-impl_batch_values_for_tuple!(T0, T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, T12; 
+impl_batch_values_for_tuple!(T0, T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, T12;
                              0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12; 13);
-impl_batch_values_for_tuple!(T0, T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, T12, T13; 
+impl_batch_values_for_tuple!(T0, T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, T12, T13;
                              0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13; 14);
-impl_batch_values_for_tuple!(T0, T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, T12, T13, T14; 
+impl_batch_values_for_tuple!(T0, T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, T12, T13, T14;
                              0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14; 15);
 impl_batch_values_for_tuple!(T0, T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, T12, T13, T14, T15;
                              0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15; 16);
