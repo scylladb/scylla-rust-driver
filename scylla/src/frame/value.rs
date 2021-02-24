@@ -231,6 +231,17 @@ impl Value for &str {
     }
 }
 
+impl Value for Vec<u8> {
+    fn serialize(&self, buf: &mut Vec<u8>) -> Result<(), ValueTooBig> {
+        let val_len: i32 = self.len().try_into().map_err(|_| ValueTooBig)?;
+        buf.put_i32(val_len);
+
+        buf.extend_from_slice(&self);
+
+        Ok(())
+    }
+}
+
 impl Value for String {
     fn serialize(&self, buf: &mut Vec<u8>) -> Result<(), ValueTooBig> {
         <&str as Value>::serialize(&self.as_str(), buf)

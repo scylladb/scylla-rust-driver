@@ -37,6 +37,7 @@ struct TableSpec {
 enum ColumnType {
     Ascii,
     Boolean,
+    Blob,
     Date,
     Int,
     BigInt,
@@ -58,6 +59,7 @@ enum ColumnType {
 pub enum CQLValue {
     Ascii(String),
     Boolean(bool),
+    Blob(Vec<u8>),
     Date(u32),
     Int(i32),
     BigInt(i64),
@@ -114,6 +116,13 @@ impl CQLValue {
     pub fn as_bigint(&self) -> Option<i64> {
         match self {
             Self::BigInt(i) => Some(*i),
+            _ => None,
+        }
+    }
+
+    pub fn as_blob(&self) -> Option<&Vec<u8>> {
+        match self {
+            Self::Blob(v) => Some(&v),
             _ => None,
         }
     }
@@ -236,6 +245,7 @@ fn deser_type(buf: &mut &[u8]) -> StdResult<ColumnType, ParseError> {
     Ok(match id {
         0x0001 => Ascii,
         0x0002 => BigInt,
+        0x0003 => Blob,
         0x0004 => Boolean,
         0x0009 => Int,
         0x000B => Timestamp,
@@ -386,6 +396,7 @@ fn deser_cql_value(typ: &ColumnType, buf: &mut &[u8]) -> StdResult<CQLValue, Par
             }
             CQLValue::Boolean(buf[0] != 0x00)
         }
+        Blob => CQLValue::Blob(buf.to_vec()),
         Date => {
             if buf.len() != 4 {
                 return Err(ParseError::BadData(format!(
