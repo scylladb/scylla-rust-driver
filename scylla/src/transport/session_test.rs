@@ -363,16 +363,15 @@ async fn test_use_keyspace() {
     let long_name: String = vec!['a'; 49].iter().collect();
     assert!(matches!(
         session.use_keyspace(long_name, false).await,
-        Err(QueryError::BadQuery(BadQuery::BadKeyspaceName(
-            BadKeyspaceName::TooLong(_, _)
-        )))
+        Err(QueryError::BadQuery(BadQuery::BadKeyspaceName(BadKeyspaceName::TooLong(_, _))))
     ));
 
     assert!(matches!(
         session.use_keyspace("abcd;dfdsf", false).await,
-        Err(QueryError::BadQuery(BadQuery::BadKeyspaceName(
-            BadKeyspaceName::IllegalCharacter(_, ';')
-        )))
+        Err(QueryError::BadQuery(BadQuery::BadKeyspaceName(BadKeyspaceName::IllegalCharacter(
+            _,
+            ';',
+        ))))
     ));
 
     // Make sure that use_keyspace on SessionBuiler works
