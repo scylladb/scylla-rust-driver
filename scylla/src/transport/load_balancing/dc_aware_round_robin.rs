@@ -55,7 +55,7 @@ impl LoadBalancingPolicy for DCAwareRoundRobinPolicy {
         &self,
         _statement: &Statement,
         cluster: &'a ClusterData,
-    ) -> Box<dyn Iterator<Item = Arc<Node>> + 'a> {
+    ) -> Box<dyn Iterator<Item = Arc<Node>> + Send + Sync + 'a> {
         let index = self.index.fetch_add(1, ORDER_TYPE);
 
         let local_nodes = self.retrieve_local_nodes(cluster);
@@ -78,7 +78,10 @@ impl LoadBalancingPolicy for DCAwareRoundRobinPolicy {
 }
 
 impl ChildLoadBalancingPolicy for DCAwareRoundRobinPolicy {
-    fn apply_child_policy(&self, plan: Vec<Arc<Node>>) -> Box<dyn Iterator<Item = Arc<Node>>> {
+    fn apply_child_policy(
+        &self,
+        plan: Vec<Arc<Node>>,
+    ) -> Box<dyn Iterator<Item = Arc<Node>> + Send + Sync> {
         let index = self.index.fetch_add(1, ORDER_TYPE);
 
         let (local_nodes, remote_nodes): (Vec<_>, Vec<_>) = plan

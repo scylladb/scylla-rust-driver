@@ -1,4 +1,5 @@
 use futures::future::join_all;
+use std::future::Future;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Instant;
@@ -15,21 +16,22 @@ use crate::frame::value::{BatchValues, SerializedValues, ValueList};
 use crate::prepared_statement::{PartitionKeyError, PreparedStatement};
 use crate::query::Query;
 use crate::routing::{murmur3_token, Token};
+use crate::statement::Consistency;
 use crate::transport::{
     cluster::Cluster,
-    connection::{ConnectionConfig, VerifiedKeyspaceName},
+    connection::{Connection, ConnectionConfig, VerifiedKeyspaceName},
     iterator::RowIterator,
     load_balancing::{LoadBalancingPolicy, RoundRobinPolicy, Statement, TokenAwarePolicy},
     metrics::{Metrics, MetricsView},
     node::Node,
-    retry_policy::{DefaultRetryPolicy, RetryPolicy},
+    retry_policy::{DefaultRetryPolicy, QueryInfo, RetryDecision, RetryPolicy},
     Compression,
 };
 
 pub struct Session {
     cluster: Cluster,
     load_balancer: Box<dyn LoadBalancingPolicy>,
-    _retry_policy: Box<dyn RetryPolicy + Send + Sync>,
+    retry_policy: Box<dyn RetryPolicy + Send + Sync>,
 
     metrics: Arc<Metrics>,
 }
@@ -242,7 +244,7 @@ impl Session {
         let session = Session {
             cluster,
             load_balancer: config.load_balancing,
-            _retry_policy: config.retry_policy,
+            retry_policy: config.retry_policy,
             metrics,
         };
 
@@ -270,23 +272,9 @@ impl Session {
         query: impl Into<Query>,
         values: impl ValueList,
     ) -> Result<Option<Vec<result::Row>>, QueryError> {
-        let now = Instant::now();
-        self.metrics.inc_total_nonpaged_queries();
-        let result = self.query_no_metrics(query, values).await;
-        match &result {
-            Ok(_) => self.log_latency(now.elapsed().as_millis() as u64),
-            Err(_) => self.metrics.inc_failed_nonpaged_queries(),
-        };
-        result
-    }
-
-    async fn query_no_metrics(
-        &self,
-        query: impl Into<Query>,
-        values: impl ValueList,
-    ) -> Result<Option<Vec<result::Row>>, QueryError> {
-        let query = query.into();
+        let mut query = query.into();
         let query_text = query.get_contents();
+        let serialized_values = values.serialized();
 
         // In case the user tried doing session.query("use keyspace ks") run session::use_keyspace
         if query_is_setting_keyspace(query_text) {
@@ -302,16 +290,28 @@ impl Session {
                 .map(|_| None);
         }
 
-        let statement_info = Statement {
-            token: None,
-            keyspace: None,
-        };
-        let node = self.load_balancing_plan(statement_info);
+        let retry_policy = query
+            .retry_policy
+            .take()
+            .unwrap_or_else(|| self.retry_policy.clone_boxed());
 
-        node.random_connection()
-            .await?
-            .query_single_page(query, values)
-            .await
+        // Needed to avoid moving query and values into async move block
+        let query_ref: &Query = &query;
+        let values_ref = &serialized_values;
+
+        self.run_query(
+            Statement::default(),
+            query.is_idempotent,
+            query.consistency,
+            retry_policy,
+            |node: Arc<Node>| async move { node.random_connection().await },
+            |connection: Arc<Connection>| async move {
+                connection
+                    .query_single_page_by_ref(query_ref, values_ref)
+                    .await
+            },
+        )
+        .await
     }
 
     pub async fn query_iter(
@@ -571,6 +571,72 @@ impl Session {
         let mut plan = self.load_balancer.plan(&statement_info, &cluster_info);
 
         plan.next().unwrap() // Plan returned by load balancing policies should never be empty
+    }
+
+    // This method allows to easily run a query using load balancing, retry policy etc.
+    // Requires some information about the query and two closures
+    // First closure is used to choose a connection
+    // - query will use node.random_connection()
+    // - execute will use node.connection_for_token()
+    // The second closure is used to do the query itself on a connection
+    // - query will use connection.query()
+    // - execute will use connection.execute()
+    // If this query closure fails with some errors retry policy is used to perform retries
+    // On success this query's result is returned
+    // I tried to make this closures take a reference instead of an Arc but failed
+    // maybe once async closures get stabilized this can be fixed
+    async fn run_query<'a, ConnFut, QueryFut, ResT>(
+        &'a self,
+        statement_info: Statement<'a>,
+        query_is_idempotent: bool,
+        query_consistency: Consistency,
+        mut retry_policy: Box<dyn RetryPolicy + Send + Sync>,
+        choose_connection: impl Fn(Arc<Node>) -> ConnFut,
+        do_query: impl Fn(Arc<Connection>) -> QueryFut,
+    ) -> Result<ResT, QueryError>
+    where
+        ConnFut: Future<Output = Result<Arc<Connection>, QueryError>>,
+        QueryFut: Future<Output = Result<ResT, QueryError>>,
+    {
+        let cluster_data = self.cluster.get_data();
+        let query_plan = self.load_balancer.plan(&statement_info, &cluster_data);
+
+        let mut last_error: QueryError =
+            QueryError::ProtocolError("Empty query plan - driver bug!");
+
+        'nodes_in_plan: for node in query_plan {
+            'same_node_retries: loop {
+                let connection: Arc<Connection> = match choose_connection(node.clone()).await {
+                    Ok(connection) => connection,
+                    Err(e) => {
+                        last_error = e;
+                        continue 'nodes_in_plan;
+                    }
+                };
+
+                let query_result: Result<ResT, QueryError> = do_query(connection).await;
+
+                last_error = match query_result {
+                    Ok(response) => return Ok(response),
+                    Err(e) => e, // TODO: metrics
+                };
+
+                // Use retry policy to decide what to do next
+                let query_info = QueryInfo {
+                    error: &last_error,
+                    is_idempotent: query_is_idempotent,
+                    consistency: query_consistency,
+                };
+
+                match retry_policy.decide_should_retry(query_info) {
+                    RetryDecision::RetrySameNode => continue 'same_node_retries,
+                    RetryDecision::RetryNextNode => continue 'nodes_in_plan,
+                    RetryDecision::DontRetry => return Err(last_error),
+                };
+            }
+        }
+
+        return Err(last_error);
     }
 }
 

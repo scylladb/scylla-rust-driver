@@ -107,7 +107,7 @@ impl LoadBalancingPolicy for TokenAwarePolicy {
         &self,
         statement: &Statement,
         cluster: &'a ClusterData,
-    ) -> Box<dyn Iterator<Item = Arc<Node>> + 'a> {
+    ) -> Box<dyn Iterator<Item = Arc<Node>> + Send + Sync + 'a> {
         match statement.token {
             Some(token) => {
                 let keyspace = statement.keyspace.and_then(|k| cluster.keyspaces.get(k));
@@ -407,7 +407,7 @@ mod tests {
             &self,
             _: &Statement,
             _: &'a ClusterData,
-        ) -> Box<dyn Iterator<Item = Arc<Node>> + 'a> {
+        ) -> Box<dyn Iterator<Item = Arc<Node>> + Send + Sync + 'a> {
             let empty_node_list: Vec<Arc<Node>> = Vec::new();
 
             Box::new(empty_node_list.into_iter())
@@ -419,7 +419,10 @@ mod tests {
     }
 
     impl ChildLoadBalancingPolicy for DumbPolicy {
-        fn apply_child_policy(&self, plan: Vec<Arc<Node>>) -> Box<dyn Iterator<Item = Arc<Node>>> {
+        fn apply_child_policy(
+            &self,
+            plan: Vec<Arc<Node>>,
+        ) -> Box<dyn Iterator<Item = Arc<Node>> + Send + Sync> {
             Box::new(plan.into_iter())
         }
     }

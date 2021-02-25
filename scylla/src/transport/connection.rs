@@ -153,7 +153,16 @@ impl Connection {
         query: impl Into<Query>,
         values: impl ValueList,
     ) -> Result<Option<Vec<result::Row>>, QueryError> {
-        let result = self.query(&query.into(), values, None).await?;
+        let query: Query = query.into();
+        self.query_single_page_by_ref(&query, &values).await
+    }
+
+    pub async fn query_single_page_by_ref(
+        &self,
+        query: &Query,
+        values: &impl ValueList,
+    ) -> Result<Option<Vec<result::Row>>, QueryError> {
+        let result = self.query(query, values, None).await?;
         match result {
             Response::Error(err) => Err(err.into()),
             Response::Result(result::Result::Rows(rs)) => Ok(Some(rs.rows)),

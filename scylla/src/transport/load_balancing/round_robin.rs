@@ -32,7 +32,7 @@ impl LoadBalancingPolicy for RoundRobinPolicy {
         &self,
         _statement: &Statement,
         cluster: &'a ClusterData,
-    ) -> Box<dyn Iterator<Item = Arc<Node>> + 'a> {
+    ) -> Box<dyn Iterator<Item = Arc<Node>> + Send + Sync + 'a> {
         let index = self.index.fetch_add(1, ORDER_TYPE);
 
         let nodes_count = cluster.all_nodes.len();
@@ -48,7 +48,10 @@ impl LoadBalancingPolicy for RoundRobinPolicy {
 }
 
 impl ChildLoadBalancingPolicy for RoundRobinPolicy {
-    fn apply_child_policy(&self, mut plan: Vec<Arc<Node>>) -> Box<dyn Iterator<Item = Arc<Node>>> {
+    fn apply_child_policy(
+        &self,
+        mut plan: Vec<Arc<Node>>,
+    ) -> Box<dyn Iterator<Item = Arc<Node>> + Send + Sync> {
         let index = self.index.fetch_add(1, ORDER_TYPE);
 
         let len = plan.len(); // borrow checker forces making such a variable
