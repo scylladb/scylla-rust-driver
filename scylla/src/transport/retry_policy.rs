@@ -22,6 +22,8 @@ pub enum RetryDecision {
 
 pub trait RetryPolicy {
     fn decide_should_retry(&mut self, query_info: QueryInfo) -> RetryDecision;
+
+    fn clone_boxed(&self) -> Box<dyn RetryPolicy + Send + Sync>;
 }
 
 /// Forwards all errors directly to the user, never retries
@@ -31,10 +33,15 @@ impl RetryPolicy for FallthroughRetryPolicy {
     fn decide_should_retry(&mut self, _query_info: QueryInfo) -> RetryDecision {
         RetryDecision::DontRetry
     }
+
+    fn clone_boxed(&self) -> Box<dyn RetryPolicy + Send + Sync> {
+        Box::new(FallthroughRetryPolicy)
+    }
 }
 
 /// Default retry policy - retries when there is a high chance that a retry might help.  
 /// Behaviour based on [DataStax Java Driver](https://docs.datastax.com/en/developer/java-driver/4.10/manual/core/retries/)
+#[derive(Clone)]
 pub struct DefaultRetryPolicy {
     was_unavailable_retry: bool,
     was_read_timeout_retry: bool,
@@ -121,6 +128,10 @@ impl RetryPolicy for DefaultRetryPolicy {
             // In all other cases propagate the error to the user
             _ => RetryDecision::DontRetry,
         }
+    }
+
+    fn clone_boxed(&self) -> Box<dyn RetryPolicy + Send + Sync> {
+        Box::new(self.clone())
     }
 }
 

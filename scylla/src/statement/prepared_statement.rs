@@ -1,19 +1,21 @@
 use super::Consistency;
 use crate::frame::response::result::PreparedMetadata;
 use crate::frame::value::SerializedValues;
+use crate::transport::retry_policy::RetryPolicy;
 use bytes::{BufMut, Bytes, BytesMut};
 use std::convert::TryInto;
 use thiserror::Error;
 
 /// Represents a statement prepared on the server.
-#[derive(Debug, Clone)]
 pub struct PreparedStatement {
     id: Bytes,
     metadata: PreparedMetadata,
     statement: String,
     page_size: Option<i32>,
-    consistency: Consistency,
-    serial_consistency: Option<Consistency>,
+    pub consistency: Consistency,
+    pub serial_consistency: Option<Consistency>,
+    pub is_idempotent: bool,
+    pub retry_policy: Option<Box<dyn RetryPolicy + Send + Sync>>,
 }
 
 impl PreparedStatement {
@@ -25,6 +27,8 @@ impl PreparedStatement {
             page_size: None,
             consistency: Default::default(),
             serial_consistency: None,
+            is_idempotent: false,
+            retry_policy: None,
         }
     }
 
@@ -72,6 +76,31 @@ impl PreparedStatement {
     /// (Ignored unless the statement is an LWT)
     pub fn get_serial_consistency(&self) -> Option<Consistency> {
         self.serial_consistency
+    }
+
+    /// Sets the idempotence of this statement  
+    /// A query is idempotent if it can be applied multiple times without changing the result of the initial application  
+    /// If set to `true` we can be sure that it is idempotent  
+    /// If set to `false` it is unknown whether it is idempotent  
+    /// This is used in [`RetryPolicy`] to decide if retrying a query is safe
+    pub fn set_is_idempotent(&mut self, is_idempotent: bool) {
+        self.is_idempotent = is_idempotent;
+    }
+
+    /// Gets the idempotence of this statement
+    pub fn get_is_idempotent(&self) -> bool {
+        self.is_idempotent
+    }
+
+    /// Sets a custom [`RetryPolicy`] to be used with this statement  
+    /// By default Session's retry policy is used, this allows to use a custom retry policy
+    pub fn set_retry_policy(&mut self, retry_policy: Box<dyn RetryPolicy + Send + Sync>) {
+        self.retry_policy = Some(retry_policy);
+    }
+
+    /// Gets custom [`RetryPolicy`] used by this statement
+    pub fn get_retry_policy(&self) -> &Option<Box<dyn RetryPolicy + Send + Sync>> {
+        &self.retry_policy
     }
 
     /// Computes the partition key of the target table from given values
@@ -144,4 +173,22 @@ pub enum PartitionKeyError {
     NoPkIndexValue(u16, i16),
     #[error("Value bytes too long to create partition key, max 65 535 allowed! value.len(): {0}")]
     ValueTooLong(usize),
+}
+
+impl Clone for PreparedStatement {
+    fn clone(&self) -> PreparedStatement {
+        PreparedStatement {
+            id: self.id.clone(),
+            metadata: self.metadata.clone(),
+            statement: self.statement.clone(),
+            page_size: self.page_size,
+            consistency: self.consistency,
+            serial_consistency: self.serial_consistency,
+            is_idempotent: self.is_idempotent,
+            retry_policy: self
+                .retry_policy
+                .as_ref()
+                .map(|policy| policy.clone_boxed()),
+        }
+    }
 }
