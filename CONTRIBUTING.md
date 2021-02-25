@@ -30,22 +30,15 @@ Currently, we require new PRs to compile without warnings, pass `cargo fmt` and 
 
 ## Testing
 
-Tests are split into two categories: those which don't need a running Scylla instance to run, and those that do. Tests from the second category should be marked with `#[ignored]` attribute - our CI doesn't start Scylla during the test phase, so they need to be marked as ignored for the CI check to pass. This will be fixed in the future.
+The easiest way to setup a running Scylla instance is to use the [Scylla Docker image](https://hub.docker.com/r/scylladb/scylla/):
+You need a running Scylla instance for the tests. 
 
-To run tests which don't need the database, use `cargo test`.
-
-To run all tests, use:
-
-```bash
-SCYLLA_URI=<ip and port of your Scylla instance> cargo test -- --ignored --test-threads=1
-```
-
-Until the CI is fixed, __please__ make sure to run all tests before submitting the PR. The easiest way to setup a running Scylla instance is to use the [Scylla Docker image](https://hub.docker.com/r/scylladb/scylla/):
+Execute the commands below to run the tests:
 
 ```bash
 # Downloads and runs Scylla in Docker
 docker run --name scylla-ci -d scylladb/scylla
 
 # Run all tests
-SCYLLA_URI="$(docker inspect --format='{{ .NetworkSettings.IPAddress }}' scylla-ci):19042" cargo test -- --ignored --test-threads=1
+SCYLLA_URI="$(docker inspect --format='{{ .NetworkSettings.IPAddress }}' scylla-ci):19042" cargo test -- --test-threads=1
 ```

@@ -3,9 +3,7 @@ use crate::{IntoTypedRows, SessionBuilder};
 use std::collections::HashMap;
 use std::env;
 
-// TODO: Requires a running local Scylla instance
 #[tokio::test]
-#[ignore]
 async fn test_cql_collections() {
     // Create connection
     let uri = env::var("SCYLLA_URI").unwrap_or_else(|_| "127.0.0.1:9042".to_string());
