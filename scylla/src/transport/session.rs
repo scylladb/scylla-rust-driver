@@ -10,7 +10,6 @@ use crate::batch::Batch;
 use crate::cql_to_rust::FromRow;
 use crate::frame::response::cql_to_rust::FromRowError;
 use crate::frame::response::result;
-use crate::frame::response::Response;
 use crate::frame::value::{BatchValues, SerializedValues, ValueList};
 use crate::prepared_statement::{PartitionKeyError, PreparedStatement};
 use crate::query::Query;
@@ -441,26 +440,22 @@ impl Session {
     /// * `batch` - batch to be performed
     /// * `values` - values bound to the query
     pub async fn batch(&self, batch: &Batch, values: impl BatchValues) -> Result<(), QueryError> {
-        // FIXME: Prepared statement ids are local to a node
-        // this method does not handle this
-        let statement_info = Statement {
-            token: None,
-            keyspace: None,
-        };
-        let node = self.load_balancing_plan(statement_info);
+        let values_ref = &values;
 
-        let response = node
-            .random_connection()
-            .await?
-            .batch(&batch, values)
-            .await?;
-        match response {
-            Response::Error(err) => Err(err.into()),
-            Response::Result(_) => Ok(()),
-            _ => Err(QueryError::ProtocolError(
-                "BATCH: Unexpected server response",
-            )),
-        }
+        let retry_policy = match &batch.retry_policy {
+            Some(policy) => policy.clone_boxed(),
+            None => self.retry_policy.clone_boxed(),
+        };
+
+        self.run_query(
+            Statement::default(),
+            batch.is_idempotent,
+            batch.consistency,
+            retry_policy,
+            |node: Arc<Node>| async move { node.random_connection().await },
+            |connection: Arc<Connection>| async move { connection.batch(batch, values_ref).await },
+        )
+        .await
     }
 
     /// Sends `USE <keyspace_name>` request on all connections  
