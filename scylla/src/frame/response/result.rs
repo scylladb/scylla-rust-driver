@@ -54,6 +54,8 @@ enum ColumnType {
         keyspace: String,
         field_types: Vec<(String, ColumnType)>,
     },
+    SmallInt,
+    TinyInt,
     Tuple(Vec<ColumnType>),
 }
 
@@ -78,6 +80,8 @@ pub enum CQLValue {
         type_name: String,
         fields: BTreeMap<String, Option<CQLValue>>,
     },
+    SmallInt(i16),
+    TinyInt(i8),
     Tuple(Vec<CQLValue>),
 }
 
@@ -134,6 +138,20 @@ impl CQLValue {
     pub fn as_bigint(&self) -> Option<i64> {
         match self {
             Self::BigInt(i) => Some(*i),
+            _ => None,
+        }
+    }
+
+    pub fn as_tinyint(&self) -> Option<i8> {
+        match self {
+            Self::TinyInt(i) => Some(*i),
+            _ => None,
+        }
+    }
+
+    pub fn as_smallint(&self) -> Option<i16> {
+        match self {
+            Self::SmallInt(i) => Some(*i),
             _ => None,
         }
     }
@@ -272,6 +290,8 @@ fn deser_type(buf: &mut &[u8]) -> StdResult<ColumnType, ParseError> {
         0x000D => Text,
         0x0010 => Inet,
         0x0011 => Date,
+        0x0013 => SmallInt,
+        0x0014 => TinyInt,
         0x0020 => List(Box::new(deser_type(buf)?)),
         0x0021 => Map(Box::new(deser_type(buf)?), Box::new(deser_type(buf)?)),
         0x0022 => Set(Box::new(deser_type(buf)?)),
@@ -452,6 +472,25 @@ fn deser_cql_value(typ: &ColumnType, buf: &mut &[u8]) -> StdResult<CQLValue, Par
                 )));
             }
             CQLValue::Int(buf.read_i32::<BigEndian>()?)
+        }
+        SmallInt => {
+            if buf.len() != 2 {
+                return Err(ParseError::BadData(format!(
+                    "Buffer length should be 2 not {}",
+                    buf.len()
+                )));
+            }
+
+            CQLValue::SmallInt(buf.read_i16::<BigEndian>()?)
+        }
+        TinyInt => {
+            if buf.len() != 1 {
+                return Err(ParseError::BadData(format!(
+                    "Buffer length should be 1 not {}",
+                    buf.len()
+                )));
+            }
+            CQLValue::TinyInt(buf.read_i8()?)
         }
         BigInt => {
             if buf.len() != 8 {

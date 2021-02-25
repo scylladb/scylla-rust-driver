@@ -69,6 +69,8 @@ macro_rules! impl_from_cql_val {
 
 impl_from_cql_val!(i32, as_int); // i32::from_cql<CQLValue>
 impl_from_cql_val!(i64, as_bigint); // i64::from_cql<CQLValue>
+impl_from_cql_val!(i16, as_smallint); // i16::from_cql<CQLValue>
+impl_from_cql_val!(i8, as_tinyint); // i8::from_cql<CQLValue>
 impl_from_cql_val!(u32, as_date); // u32::from_cql<CQLValue>
 impl_from_cql_val!(f32, as_float); // f32::from_cql<CQLValue>
 impl_from_cql_val!(f64, as_double); // f64::from_cql<CQLValue>
