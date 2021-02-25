@@ -56,6 +56,7 @@ enum ColumnType {
     },
     SmallInt,
     TinyInt,
+    Time,
     Tuple(Vec<ColumnType>),
 }
 
@@ -82,6 +83,7 @@ pub enum CQLValue {
     },
     SmallInt(i16),
     TinyInt(i8),
+    Time(u64),
     Tuple(Vec<CQLValue>),
 }
 
@@ -96,6 +98,13 @@ impl CQLValue {
     pub fn as_timestamp(&self) -> Option<i64> {
         match self {
             Self::Timestamp(i) => Some(*i),
+            _ => None,
+        }
+    }
+
+    pub fn as_time(&self) -> Option<u64> {
+        match self {
+            Self::Time(i) => Some(*i),
             _ => None,
         }
     }
@@ -290,6 +299,7 @@ fn deser_type(buf: &mut &[u8]) -> StdResult<ColumnType, ParseError> {
         0x000D => Text,
         0x0010 => Inet,
         0x0011 => Date,
+        0x0012 => Time,
         0x0013 => SmallInt,
         0x0014 => TinyInt,
         0x0020 => List(Box::new(deser_type(buf)?)),
@@ -510,6 +520,15 @@ fn deser_cql_value(typ: &ColumnType, buf: &mut &[u8]) -> StdResult<CQLValue, Par
                 )));
             }
             CQLValue::Timestamp(buf.read_i64::<BigEndian>()?)
+        }
+        Time => {
+            if buf.len() != 8 {
+                return Err(ParseError::BadData(format!(
+                    "Buffer length should be 8 not {}",
+                    buf.len()
+                )));
+            }
+            CQLValue::Time(buf.read_u64::<BigEndian>()?)
         }
         Inet => CQLValue::Inet(match buf.len() {
             4 => {
