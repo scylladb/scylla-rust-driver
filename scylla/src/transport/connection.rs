@@ -15,7 +15,7 @@ use std::{
     net::{Ipv4Addr, Ipv6Addr},
 };
 
-use super::errors::{BadKeyspaceName, BadQuery, QueryError};
+use super::errors::{BadKeyspaceName, BadQuery, DBError, QueryError};
 
 use crate::batch::{Batch, BatchStatement};
 use crate::frame::{
@@ -195,6 +195,23 @@ impl Connection {
         self.send_request(&query_frame, true).await
     }
 
+    pub async fn execute_single_page(
+        &self,
+        prepared_statement: &PreparedStatement,
+        values: impl ValueList,
+    ) -> Result<Option<Vec<result::Row>>, QueryError> {
+        let response = self.execute(prepared_statement, values, None).await?;
+
+        match response {
+            Response::Error(err) => Err(err.into()),
+            Response::Result(result::Result::Rows(rs)) => Ok(Some(rs.rows)),
+            Response::Result(_) => Ok(None),
+            _ => Err(QueryError::ProtocolError(
+                "EXECUTE: Unexpected server response",
+            )),
+        }
+    }
+
     pub async fn execute(
         &self,
         prepared_statement: &PreparedStatement,
@@ -214,7 +231,25 @@ impl Connection {
             },
         };
 
-        self.send_request(&execute_frame, true).await
+        let response = self.send_request(&execute_frame, true).await?;
+
+        if let Response::Error(err) = &response {
+            if err.error == DBError::Unprepared {
+                // Repreparation of a statement is needed
+                let reprepared = self.prepare(prepared_statement.get_statement()).await?;
+                // Reprepared statement should keep its id - it's the md5 sum
+                // of statement contents
+                if reprepared.get_id() != prepared_statement.get_id() {
+                    return Err(QueryError::ProtocolError(
+                        "Prepared statement Id changed, md5 sum should stay the same",
+                    ));
+                }
+
+                return self.send_request(&execute_frame, true).await;
+            }
+        }
+
+        Ok(response)
     }
 
     pub async fn batch(

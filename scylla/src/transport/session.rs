@@ -2,11 +2,10 @@ use futures::future::join_all;
 use std::future::Future;
 use std::net::SocketAddr;
 use std::sync::Arc;
-use std::time::Instant;
 use tokio::net::lookup_host;
 use tracing::warn;
 
-use super::errors::{BadQuery, DBError, NewSessionError, QueryError};
+use super::errors::{BadQuery, NewSessionError, QueryError};
 use crate::batch::Batch;
 use crate::cql_to_rust::FromRow;
 use crate::frame::response::cql_to_rust::FromRowError;
@@ -387,24 +386,8 @@ impl Session {
         prepared: &PreparedStatement,
         values: impl ValueList,
     ) -> Result<Option<Vec<result::Row>>, QueryError> {
-        let now = Instant::now();
-        self.metrics.inc_total_nonpaged_queries();
-        let result = self.execute_no_metrics(prepared, values).await;
-        match &result {
-            Ok(_) => self.log_latency(now.elapsed().as_millis() as u64),
-            Err(_) => self.metrics.inc_failed_nonpaged_queries(),
-        };
-        result
-    }
-
-    async fn execute_no_metrics(
-        &self,
-        prepared: &PreparedStatement,
-        values: impl ValueList,
-    ) -> Result<Option<Vec<result::Row>>, QueryError> {
-        // FIXME: Prepared statement ids are local to a node, so we must make sure
-        // that prepare() sends to all nodes and keeps all ids.
         let serialized_values = values.serialized()?;
+        let values_ref = &serialized_values;
 
         let token = calculate_token(prepared, &serialized_values)?;
 
@@ -412,47 +395,23 @@ impl Session {
             token: Some(token),
             keyspace: prepared.get_keyspace_name(),
         };
-        let node = self.load_balancing_plan(statement_info);
 
-        let connection = node.connection_for_token(token).await?;
-        let result = connection
-            .execute(prepared, &serialized_values, None)
-            .await?;
-        match result {
-            Response::Error(err) => {
-                match err.error {
-                    DBError::Unprepared => {
-                        // Repreparation of a statement is needed
-                        let reprepared = connection.prepare(prepared.get_statement()).await?;
-                        // Reprepared statement should keep its id - it's the md5 sum
-                        // of statement contents
-                        if reprepared.get_id() != prepared.get_id() {
-                            return Err(QueryError::ProtocolError(
-                                "Prepared statement Id changed, md5 sum should stay the same",
-                            ));
-                        }
+        let retry_policy = match &prepared.retry_policy {
+            Some(policy) => policy.clone_boxed(),
+            None => self.retry_policy.clone_boxed(),
+        };
 
-                        let result = connection
-                            .execute(prepared, &serialized_values, None)
-                            .await?;
-                        match result {
-                            Response::Error(err) => Err(err.into()),
-                            Response::Result(result::Result::Rows(rs)) => Ok(Some(rs.rows)),
-                            Response::Result(_) => Ok(None),
-                            _ => Err(QueryError::ProtocolError(
-                                "EXECUTE: Unexpected server response",
-                            )),
-                        }
-                    }
-                    _ => Err(err.into()),
-                }
-            }
-            Response::Result(result::Result::Rows(rs)) => Ok(Some(rs.rows)),
-            Response::Result(_) => Ok(None),
-            _ => Err(QueryError::ProtocolError(
-                "EXECUTE: Unexpected server response",
-            )),
-        }
+        self.run_query(
+            statement_info,
+            prepared.is_idempotent,
+            prepared.consistency,
+            retry_policy,
+            |node: Arc<Node>| async move { node.connection_for_token(token).await },
+            |connection: Arc<Connection>| async move {
+                connection.execute_single_page(prepared, values_ref).await
+            },
+        )
+        .await
     }
 
     pub async fn execute_iter(
@@ -558,12 +517,6 @@ impl Session {
 
     pub fn get_metrics(&self) -> MetricsView {
         MetricsView::new(self.metrics.clone())
-    }
-
-    fn log_latency(&self, latency: u64) {
-        let _ = self // silent fail if mutex is poisoned
-            .metrics
-            .log_query_latency(latency);
     }
 
     fn load_balancing_plan(&self, statement_info: Statement) -> Arc<Node> {
