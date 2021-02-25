@@ -9,6 +9,7 @@ use std::{
     result::Result as StdResult,
     str,
 };
+use uuid::Uuid;
 
 #[derive(Debug)]
 pub struct SetKeyspace {
@@ -57,7 +58,9 @@ enum ColumnType {
     SmallInt,
     TinyInt,
     Time,
+    Timeuuid,
     Tuple(Vec<ColumnType>),
+    Uuid,
 }
 
 #[derive(Debug, PartialEq)]
@@ -84,7 +87,9 @@ pub enum CQLValue {
     SmallInt(i16),
     TinyInt(i8),
     Time(u64),
+    Timeuuid(Uuid),
     Tuple(Vec<CQLValue>),
+    Uuid(Uuid),
 }
 
 impl CQLValue {
@@ -126,6 +131,13 @@ impl CQLValue {
     pub fn as_double(&self) -> Option<f64> {
         match self {
             Self::Double(d) => Some(*d),
+            _ => None,
+        }
+    }
+
+    pub fn as_uuid(&self) -> Option<Uuid> {
+        match self {
+            Self::Uuid(u) => Some(*u),
             _ => None,
         }
     }
@@ -175,6 +187,13 @@ impl CQLValue {
     pub fn as_text(&self) -> Option<&String> {
         match self {
             Self::Text(s) => Some(&s),
+            _ => None,
+        }
+    }
+
+    pub fn as_timeuuid(&self) -> Option<Uuid> {
+        match self {
+            Self::Timeuuid(u) => Some(*u),
             _ => None,
         }
     }
@@ -296,7 +315,9 @@ fn deser_type(buf: &mut &[u8]) -> StdResult<ColumnType, ParseError> {
         0x0008 => Float,
         0x0009 => Int,
         0x000B => Timestamp,
+        0x000C => Uuid,
         0x000D => Text,
+        0x000F => Timeuuid,
         0x0010 => Inet,
         0x0011 => Date,
         0x0012 => Time,
@@ -530,6 +551,16 @@ fn deser_cql_value(typ: &ColumnType, buf: &mut &[u8]) -> StdResult<CQLValue, Par
             }
             CQLValue::Time(buf.read_u64::<BigEndian>()?)
         }
+        Timeuuid => {
+            if buf.len() != 16 {
+                return Err(ParseError::BadData(format!(
+                    "Buffer length should be 16 not {}",
+                    buf.len()
+                )));
+            }
+            let uuid = uuid::Uuid::from_slice(buf).expect("Deserializing Uuid failed.");
+            CQLValue::Timeuuid(uuid)
+        }
         Inet => CQLValue::Inet(match buf.len() {
             4 => {
                 let ret = IpAddr::from(<[u8; 4]>::try_from(&buf[0..4])?);
@@ -548,6 +579,16 @@ fn deser_cql_value(typ: &ColumnType, buf: &mut &[u8]) -> StdResult<CQLValue, Par
                 )));
             }
         }),
+        Uuid => {
+            if buf.len() != 16 {
+                return Err(ParseError::BadData(format!(
+                    "Buffer length should be 16 not {}",
+                    buf.len()
+                )));
+            }
+            let uuid = uuid::Uuid::from_slice(buf).expect("Deserializing Uuid failed.");
+            CQLValue::Uuid(uuid)
+        }
         List(type_name) => {
             let len: usize = types::read_int(buf)?.try_into()?;
             let mut res = Vec::with_capacity(len);

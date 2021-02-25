@@ -3,6 +3,7 @@ use std::borrow::Cow;
 use std::collections::HashMap;
 use std::convert::TryInto;
 use thiserror::Error;
+use uuid::Uuid;
 
 /// Every value being sent in a query must implement this trait
 /// serialize() should write the Value as [bytes] to the provided buffer
@@ -239,6 +240,14 @@ impl Value for f64 {
     fn serialize(&self, buf: &mut Vec<u8>) -> Result<(), ValueTooBig> {
         buf.put_i32(8);
         buf.put_f64(*self);
+        Ok(())
+    }
+}
+
+impl Value for Uuid {
+    fn serialize(&self, buf: &mut Vec<u8>) -> Result<(), ValueTooBig> {
+        buf.put_i32(16);
+        buf.extend_from_slice(self.as_bytes());
         Ok(())
     }
 }
