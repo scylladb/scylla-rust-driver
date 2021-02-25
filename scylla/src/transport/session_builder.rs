@@ -2,6 +2,7 @@ use super::errors::NewSessionError;
 use super::load_balancing::LoadBalancingPolicy;
 use super::session::{Session, SessionConfig};
 use super::Compression;
+use crate::transport::retry_policy::RetryPolicy;
 use std::net::SocketAddr;
 
 /// SessionBuilder is used to create new Session instances
@@ -197,6 +198,29 @@ impl SessionBuilder {
     /// ```
     pub fn load_balancing(mut self, policy: Box<dyn LoadBalancingPolicy>) -> Self {
         self.config.load_balancing = policy;
+        self
+    }
+
+    /// Sets the [`RetryPolicy`] to use by default on queries
+    /// The default is [DefaultRetryPolicy](crate::transport::retry_policy::DefaultRetryPolicy)
+    /// It is possible to implement a custom retry policy by implementing the trait [`RetryPolicy`]
+    ///
+    /// # Example
+    /// ```
+    /// # use scylla::{Session, SessionBuilder};
+    /// # use scylla::transport::Compression;
+    /// use scylla::transport::retry_policy::DefaultRetryPolicy;
+    /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
+    /// let session: Session = SessionBuilder::new()
+    ///     .known_node("127.0.0.1:9042")
+    ///     .retry_policy(Box::new(DefaultRetryPolicy::new()))
+    ///     .build()
+    ///     .await?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn retry_policy(mut self, retry_policy: Box<dyn RetryPolicy + Send + Sync>) -> Self {
+        self.config.retry_policy = retry_policy;
         self
     }
 

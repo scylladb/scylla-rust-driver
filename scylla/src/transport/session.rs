@@ -22,12 +22,14 @@ use crate::transport::{
     load_balancing::{LoadBalancingPolicy, RoundRobinPolicy, Statement, TokenAwarePolicy},
     metrics::{Metrics, MetricsView},
     node::Node,
+    retry_policy::{DefaultRetryPolicy, RetryPolicy},
     Compression,
 };
 
 pub struct Session {
     cluster: Cluster,
     load_balancer: Box<dyn LoadBalancingPolicy>,
+    _retry_policy: Box<dyn RetryPolicy + Send + Sync>,
 
     metrics: Arc<Metrics>,
 }
@@ -51,6 +53,8 @@ pub struct SessionConfig {
 
     pub used_keyspace: Option<String>,
     pub keyspace_case_sensitive: bool,
+
+    pub retry_policy: Box<dyn RetryPolicy + Send + Sync>,
     /*
     These configuration options will be added in the future:
 
@@ -61,8 +65,6 @@ pub struct SessionConfig {
     pub tls_certificate_path: Option<String>,
 
     pub tcp_keepalive: bool,
-
-    pub retry_policy: Option<String>,
 
     pub default_consistency: Option<String>,
     */
@@ -94,6 +96,7 @@ impl SessionConfig {
             load_balancing: Box::new(TokenAwarePolicy::new(Box::new(RoundRobinPolicy::new()))),
             used_keyspace: None,
             keyspace_case_sensitive: false,
+            retry_policy: Box::new(DefaultRetryPolicy::new()),
         }
     }
 
@@ -239,6 +242,7 @@ impl Session {
         let session = Session {
             cluster,
             load_balancer: config.load_balancing,
+            _retry_policy: config.retry_policy,
             metrics,
         };
 
