@@ -2,6 +2,7 @@ use crate::cql_to_rust::{FromRow, FromRowError};
 use crate::frame::{frame_errors::ParseError, types};
 use byteorder::{BigEndian, ReadBytesExt};
 use bytes::{Buf, Bytes};
+use num_bigint::{BigInt, Sign};
 use std::{
     collections::BTreeMap,
     convert::{TryFrom, TryInto},
@@ -62,6 +63,7 @@ enum ColumnType {
     Timeuuid,
     Tuple(Vec<ColumnType>),
     Uuid,
+    Varint,
 }
 
 #[derive(Debug, PartialEq)]
@@ -92,6 +94,7 @@ pub enum CQLValue {
     Timeuuid(Uuid),
     Tuple(Vec<CQLValue>),
     Uuid(Uuid),
+    Varint(BigInt),
 }
 
 impl CQLValue {
@@ -114,8 +117,8 @@ impl CQLValue {
             Self::Time(i) => Some(*i),
             _ => None,
         }
-    }    
-    
+    }
+
     pub fn as_counter(&self) -> Option<i64> {
         match self {
             Self::Counter(i) => Some(*i),
@@ -251,6 +254,12 @@ impl CQLValue {
         }
     }
 
+    pub fn as_varint(self) -> Option<BigInt> {
+        match self {
+            Self::Varint(i) => Some(i),
+            _ => None,
+        }
+    }
     // TODO
 }
 
@@ -327,6 +336,7 @@ fn deser_type(buf: &mut &[u8]) -> StdResult<ColumnType, ParseError> {
         0x000B => Timestamp,
         0x000C => Uuid,
         0x000D => Text,
+        0x000E => Varint,
         0x000F => Timeuuid,
         0x0010 => Inet,
         0x0011 => Date,
@@ -607,6 +617,15 @@ fn deser_cql_value(typ: &ColumnType, buf: &mut &[u8]) -> StdResult<CQLValue, Par
             }
             let uuid = uuid::Uuid::from_slice(buf).expect("Deserializing Uuid failed.");
             CQLValue::Uuid(uuid)
+        }
+        Varint => {
+            let int_value;
+            if buf[0] == 0x00 {
+                int_value = num_bigint::BigInt::from_bytes_be(Sign::Plus, buf);
+            } else {
+                int_value = num_bigint::BigInt::from_bytes_be(Sign::Minus, buf);
+            }
+            CQLValue::Varint(int_value)
         }
         List(type_name) => {
             let len: usize = types::read_int(buf)?.try_into()?;

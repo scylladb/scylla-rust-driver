@@ -1,4 +1,5 @@
 use bytes::BufMut;
+use num_bigint::BigInt;
 use std::borrow::Cow;
 use std::collections::HashMap;
 use std::convert::TryInto;
@@ -248,6 +249,20 @@ impl Value for Uuid {
     fn serialize(&self, buf: &mut Vec<u8>) -> Result<(), ValueTooBig> {
         buf.put_i32(16);
         buf.extend_from_slice(self.as_bytes());
+        Ok(())
+    }
+}
+
+impl Value for BigInt {
+    fn serialize(&self, buf: &mut Vec<u8>) -> Result<(), ValueTooBig> {
+        let bytes_num_pos: usize = buf.len();
+
+        buf.put_i32(0);
+        buf.extend_from_slice(&self.to_signed_bytes_be());
+
+        let written_bytes: usize = buf.len() - bytes_num_pos - 4;
+        let written_bytes_i32: i32 = written_bytes.try_into().map_err(|_| ValueTooBig)?;
+        buf[bytes_num_pos..(bytes_num_pos + 4)].copy_from_slice(&written_bytes_i32.to_be_bytes());
         Ok(())
     }
 }
