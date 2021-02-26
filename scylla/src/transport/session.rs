@@ -280,18 +280,17 @@ impl Session {
         query: impl Into<Query>,
         values: impl ValueList,
     ) -> Result<Option<Vec<result::Row>>, QueryError> {
-        let query: Query = query.into();
-        let query_text: &str = query.get_contents();
+        let query = query.into();
+        let query_text = query.get_contents();
 
         // In case the user tried doing session.query("use keyspace ks") run session::use_keyspace
-        if query_text.to_lowercase().starts_with("use ") {
+        if query_is_setting_keyspace(query_text) {
+            // TODO: replace with log library in https://github.com/scylladb/scylla-rust-driver/issues/158
             eprintln!("Warning: Raw USE KEYSPACE queries are experimental, please use session::use_keyspace instead");
 
-            let mut keyspace_name: &str = &query_text["use ".len()..].trim_end_matches(';').trim();
-
-            let case_sensitive: bool = keyspace_name.starts_with('"');
-
-            keyspace_name = keyspace_name.trim_matches('"');
+            let keyspace_name = &query_text["use ".len()..].trim_end_matches(';').trim();
+            let case_sensitive = keyspace_name.starts_with('"');
+            let keyspace_name = keyspace_name.trim_matches('"');
 
             return self
                 .use_keyspace(keyspace_name, case_sensitive)
@@ -571,6 +570,17 @@ impl Session {
     }
 }
 
+/// Checks if a query sets a keyspace
+fn query_is_setting_keyspace(query: &str) -> bool {
+    let query_bytes = query.as_bytes();
+
+    if query_bytes.len() < 4 {
+        return false;
+    }
+
+    query_bytes[0..=3].eq_ignore_ascii_case("use ".as_bytes())
+}
+
 fn calculate_token(
     stmt: &PreparedStatement,
     values: &SerializedValues,
@@ -611,4 +621,19 @@ async fn resolve_hostname(hostname: &str) -> Result<SocketAddr, NewSessionError>
     }
 
     ret.ok_or(failed_err)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_query_is_setting_keyspace() {
+        assert!(query_is_setting_keyspace("use some_keyspace"));
+        assert!(query_is_setting_keyspace("UsE anotherKeySpace;"));
+        assert!(query_is_setting_keyspace("USE SCREAMINGKEYSPACE"));
+        assert!(!query_is_setting_keyspace("select * from users;"));
+        assert!(!query_is_setting_keyspace("us"));
+        assert!(!query_is_setting_keyspace(""));
+    }
 }
