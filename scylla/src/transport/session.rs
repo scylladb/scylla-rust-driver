@@ -558,15 +558,27 @@ impl Session {
                     Ok(connection) => connection,
                     Err(e) => {
                         last_error = e;
+                        // Broken connection doesn't count as a failed query, don't log in metrics
                         continue 'nodes_in_plan;
                     }
                 };
 
+                self.metrics.inc_total_nonpaged_queries();
+                let query_start = std::time::Instant::now();
+
                 let query_result: Result<ResT, QueryError> = do_query(connection).await;
 
                 last_error = match query_result {
-                    Ok(response) => return Ok(response),
-                    Err(e) => e, // TODO: metrics
+                    Ok(response) => {
+                        let _ = self
+                            .metrics
+                            .log_query_latency(query_start.elapsed().as_millis() as u64);
+                        return Ok(response);
+                    }
+                    Err(e) => {
+                        self.metrics.inc_failed_nonpaged_queries();
+                        e
+                    }
                 };
 
                 // Use retry policy to decide what to do next

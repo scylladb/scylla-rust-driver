@@ -106,7 +106,7 @@ impl RowIterator {
                 query_consistency: query.consistency,
                 retry_policy,
                 load_balancer,
-                _metrics: metrics,
+                metrics,
                 paging_state: None,
             };
 
@@ -160,7 +160,7 @@ impl RowIterator {
                 query_consistency: prepared.consistency,
                 retry_policy,
                 load_balancer,
-                _metrics: metrics,
+                metrics,
                 paging_state: None,
             };
 
@@ -200,7 +200,7 @@ struct RowIteratorWorker<'a, ConnFunc, QueryFunc> {
 
     retry_policy: Box<dyn RetryPolicy + Send + Sync>,
     load_balancer: Arc<dyn LoadBalancingPolicy>,
-    _metrics: Arc<Metrics>,
+    metrics: Arc<Metrics>,
 
     paging_state: Option<Bytes>,
 }
@@ -225,6 +225,7 @@ where
                 Ok(connection) => connection,
                 Err(e) => {
                     last_error = e;
+                    // Broken connection doesn't count as a failed query, don't log in metrics
                     continue 'nodes_in_plan;
                 }
             };
@@ -260,11 +261,18 @@ where
     // Given a working connection query as many pages as possible until the first error
     async fn query_pages(&mut self, connection: &Arc<Connection>) -> Result<(), QueryError> {
         loop {
+            self.metrics.inc_total_paged_queries();
+            let query_start = std::time::Instant::now();
+
             let response: Response =
                 (self.page_query)(connection.clone(), self.paging_state.clone()).await?;
 
             match response {
                 Response::Result(result::Result::Rows(mut rows)) => {
+                    let _ = self
+                        .metrics
+                        .log_query_latency(query_start.elapsed().as_millis() as u64);
+
                     self.paging_state = rows.metadata.paging_state.take();
 
                     // Send next page to RowIterator
@@ -281,11 +289,16 @@ where
                     // Query succeded, reset retry policy for future retries
                     self.retry_policy.reset();
                 }
-                Response::Error(err) => return Err(err.into()),
+                Response::Error(err) => {
+                    self.metrics.inc_failed_paged_queries();
+                    return Err(err.into());
+                }
                 _ => {
+                    self.metrics.inc_failed_paged_queries();
+
                     return Err(QueryError::ProtocolError(
                         "Unexpected response to next page query",
-                    ))
+                    ));
                 }
             }
         }
