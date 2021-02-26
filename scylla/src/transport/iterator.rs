@@ -3,11 +3,10 @@ use std::mem;
 use std::pin::Pin;
 use std::sync::Arc;
 use std::task::{Context, Poll};
-use std::time::Instant;
 
 use bytes::Bytes;
 use futures::Stream;
-use std::result::Result as StdResult;
+use std::result::Result;
 use thiserror::Error;
 use tokio::sync::mpsc;
 
@@ -16,23 +15,30 @@ use crate::cql_to_rust::{FromRow, FromRowError};
 
 use crate::frame::{
     response::{
-        result::{Result, Row, Rows},
+        result,
+        result::{Row, Rows},
         Response,
     },
     value::SerializedValues,
 };
+use crate::routing::Token;
+use crate::statement::Consistency;
 use crate::statement::{prepared_statement::PreparedStatement, query::Query};
+use crate::transport::cluster::ClusterData;
 use crate::transport::connection::Connection;
+use crate::transport::load_balancing::{LoadBalancingPolicy, Statement};
 use crate::transport::metrics::Metrics;
+use crate::transport::node::Node;
+use crate::transport::retry_policy::{QueryInfo, RetryDecision, RetryPolicy};
 
 pub struct RowIterator {
     current_row_idx: usize,
     current_page: Rows,
-    page_receiver: mpsc::Receiver<StdResult<Rows, QueryError>>,
+    page_receiver: mpsc::Receiver<Result<Rows, QueryError>>,
 }
 
 impl Stream for RowIterator {
-    type Item = StdResult<Row, QueryError>;
+    type Item = Result<Row, QueryError>;
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         let mut s = self.as_mut();
@@ -72,67 +78,96 @@ impl RowIterator {
     }
 
     pub(crate) fn new_for_query(
-        conn: Arc<Connection>,
         query: Query,
         values: SerializedValues,
+        retry_policy: Box<dyn RetryPolicy + Send + Sync>,
+        load_balancer: Arc<dyn LoadBalancingPolicy>,
+        cluster_data: Arc<ClusterData>,
         metrics: Arc<Metrics>,
     ) -> RowIterator {
-        let metrics_copy = metrics.clone();
-        Self::new_with_worker(
-            |mut helper| async move {
-                let mut paging_state = None;
-                loop {
-                    let now = Instant::now();
-                    metrics_copy.inc_total_paged_queries();
-                    let rows = conn.query(&query, &values, paging_state).await;
-                    let _ = metrics_copy.log_query_latency(now.elapsed().as_millis() as u64);
-                    paging_state = helper.handle_response(rows).await;
-                    if paging_state.is_none() {
-                        break;
-                    }
-                }
-            },
-            metrics,
-        )
+        let (sender, receiver) = mpsc::channel(1);
+
+        let worker_task = async move {
+            let query_ref = &query;
+            let values_ref = &values;
+
+            let choose_connection = |node: Arc<Node>| async move { node.random_connection().await };
+
+            let page_query = |connection: Arc<Connection>, paging_state: Option<Bytes>| async move {
+                connection.query(query_ref, values_ref, paging_state).await
+            };
+
+            let worker = RowIteratorWorker {
+                sender,
+                choose_connection,
+                page_query,
+                statement_info: Statement::default(),
+                query_is_idempotent: query.is_idempotent,
+                query_consistency: query.consistency,
+                retry_policy,
+                load_balancer,
+                _metrics: metrics,
+                paging_state: None,
+            };
+
+            worker.work(cluster_data).await;
+        };
+
+        tokio::task::spawn(worker_task);
+
+        RowIterator {
+            current_row_idx: 0,
+            current_page: Default::default(),
+            page_receiver: receiver,
+        }
     }
 
     pub(crate) fn new_for_prepared_statement(
-        conn: Arc<Connection>,
-        prepared_statement: PreparedStatement,
+        prepared: PreparedStatement,
         values: SerializedValues,
+        token: Token,
+        retry_policy: Box<dyn RetryPolicy + Send + Sync>,
+        load_balancer: Arc<dyn LoadBalancingPolicy>,
+        cluster_data: Arc<ClusterData>,
         metrics: Arc<Metrics>,
     ) -> RowIterator {
-        let metrics_copy = metrics.clone();
-        Self::new_with_worker(
-            |mut helper| async move {
-                let mut paging_state = None;
-                loop {
-                    let now = Instant::now();
-                    metrics_copy.inc_total_paged_queries();
-                    let rows = conn
-                        .execute(&prepared_statement, &values, paging_state)
-                        .await;
-                    let _ = metrics_copy.log_query_latency(now.elapsed().as_millis() as u64);
-                    paging_state = helper.handle_response(rows).await;
-                    if paging_state.is_none() {
-                        break;
-                    }
-                }
-            },
-            metrics,
-        )
-    }
-
-    fn new_with_worker<F, G>(worker: F, metrics: Arc<Metrics>) -> RowIterator
-    where
-        F: FnOnce(WorkerHelper) -> G,
-        G: Future<Output = ()> + Send + 'static,
-    {
-        // TODO: How many pages in flight do we allow?
         let (sender, receiver) = mpsc::channel(1);
-        let helper = WorkerHelper::new(sender, metrics);
 
-        tokio::task::spawn(worker(helper));
+        let statement_info = Statement {
+            token: Some(token),
+            keyspace: None,
+        };
+
+        let worker_task = async move {
+            let prepared_ref = &prepared;
+            let values_ref = &values;
+
+            let choose_connection =
+                |node: Arc<Node>| async move { node.connection_for_token(token).await };
+
+            let page_query = |connection: Arc<Connection>, paging_state: Option<Bytes>| async move {
+                connection
+                    .execute(prepared_ref, values_ref, paging_state)
+                    .await
+            };
+
+            let worker = RowIteratorWorker {
+                sender,
+                choose_connection,
+                page_query,
+                statement_info,
+                query_is_idempotent: prepared.is_idempotent,
+                query_consistency: prepared.consistency,
+                retry_policy,
+                load_balancer,
+                _metrics: metrics,
+                paging_state: None,
+            };
+
+            worker.work(cluster_data).await;
+        };
+
+        tokio::task::spawn(worker_task);
 
         RowIterator {
             current_row_idx: 0,
@@ -145,49 +180,113 @@ impl RowIterator {
         self.current_row_idx >= self.current_page.rows.len()
     }
 }
-struct WorkerHelper {
-    sender: mpsc::Sender<StdResult<Rows, QueryError>>,
-    metrics: Arc<Metrics>,
+
+// RowIteratorWorker works in the background to fetch pages
+// RowIterator receives them through a channel
+struct RowIteratorWorker<'a, ConnFunc, QueryFunc> {
+    sender: mpsc::Sender<Result<Rows, QueryError>>,
+
+    // Closure used to choose a connection from a node
+    // AsyncFn(Arc<Node>) -> Result<Arc<Connection>, QueryError>
+    choose_connection: ConnFunc,
+
+    // Closure used to perform a single page query
+    // AsyncFn(Arc<Connection>, Option<Bytes>) -> Result<Response, QueryError>
+    page_query: QueryFunc,
+
+    statement_info: Statement<'a>,
+    query_is_idempotent: bool,
+    query_consistency: Consistency,
+
+    retry_policy: Box<dyn RetryPolicy + Send + Sync>,
+    load_balancer: Arc<dyn LoadBalancingPolicy>,
+    _metrics: Arc<Metrics>,
+
+    paging_state: Option<Bytes>,
 }
 
-impl WorkerHelper {
-    fn new(sender: mpsc::Sender<StdResult<Rows, QueryError>>, metrics: Arc<Metrics>) -> Self {
-        Self { sender, metrics }
+impl<ConnFunc, ConnFut, QueryFunc, QueryFut> RowIteratorWorker<'_, ConnFunc, QueryFunc>
+where
+    ConnFunc: Fn(Arc<Node>) -> ConnFut,
+    ConnFut: Future<Output = Result<Arc<Connection>, QueryError>>,
+    QueryFunc: Fn(Arc<Connection>, Option<Bytes>) -> QueryFut,
+    QueryFut: Future<Output = Result<Response, QueryError>>,
+{
+    async fn work(mut self, cluster_data: Arc<ClusterData>) {
+        let query_plan = self.load_balancer.plan(&self.statement_info, &cluster_data);
+
+        let mut last_error: QueryError =
+            QueryError::ProtocolError("Empty query plan - driver bug!");
+
+        'nodes_in_plan: for node in query_plan {
+            // For each node in the plan choose a connection to use
+            // This connection will be reused for same node retries to preserve paging cache on the shard
+            let connection: Arc<Connection> = match (self.choose_connection)(node).await {
+                Ok(connection) => connection,
+                Err(e) => {
+                    last_error = e;
+                    continue 'nodes_in_plan;
+                }
+            };
+
+            'same_node_retries: loop {
+                // Query pages until an error occurs
+                let queries_result: Result<(), QueryError> = self.query_pages(&connection).await;
+
+                last_error = match queries_result {
+                    Ok(()) => return,
+                    Err(error) => error,
+                };
+
+                // Use retry policy to decide what to do next
+                let query_info = QueryInfo {
+                    error: &last_error,
+                    is_idempotent: self.query_is_idempotent,
+                    consistency: self.query_consistency,
+                };
+
+                match self.retry_policy.decide_should_retry(query_info) {
+                    RetryDecision::RetrySameNode => continue 'same_node_retries,
+                    RetryDecision::RetryNextNode => continue 'nodes_in_plan,
+                    RetryDecision::DontRetry => break 'nodes_in_plan,
+                };
+            }
+        }
+
+        // Send last_error to RowIterator - query failed fully
+        let _ = self.sender.send(Err(last_error)).await;
     }
 
-    async fn handle_response(
-        &mut self,
-        response: StdResult<Response, QueryError>,
-    ) -> Option<Bytes> {
-        match response {
-            Ok(Response::Result(Result::Rows(rows))) => {
-                let paging_state = rows.metadata.paging_state.clone();
-                if self.sender.send(Ok(rows)).await.is_err() {
-                    // TODO: Log error
-                    None
-                } else {
-                    paging_state
+    // Given a working connection query as many pages as possible until the first error
+    async fn query_pages(&mut self, connection: &Arc<Connection>) -> Result<(), QueryError> {
+        loop {
+            let response: Response =
+                (self.page_query)(connection.clone(), self.paging_state.clone()).await?;
+
+            match response {
+                Response::Result(result::Result::Rows(mut rows)) => {
+                    self.paging_state = rows.metadata.paging_state.take();
+
+                    // Send next page to RowIterator
+                    if self.sender.send(Ok(rows)).await.is_err() {
+                        // channel was closed, RowIterator was dropped - should shutdown
+                        return Ok(());
+                    }
+
+                    if self.paging_state.is_none() {
+                        // Reached the last query, shutdown
+                        return Ok(());
+                    }
+
+                    // Query succeded, reset retry policy for future retries
+                    self.retry_policy.reset();
                 }
-            }
-            Ok(Response::Error(err)) => {
-                self.metrics.inc_failed_paged_queries();
-                let _ = self.sender.send(Err(err.into())).await;
-                None
-            }
-            Ok(_) => {
-                self.metrics.inc_failed_paged_queries();
-                let _ = self
-                    .sender
-                    .send(Err(QueryError::ProtocolError(
+                Response::Error(err) => return Err(err.into()),
+                _ => {
+                    return Err(QueryError::ProtocolError(
                         "Unexpected response to next page query",
-                    )))
-                    .await;
-                None
-            }
-            Err(err) => {
-                self.metrics.inc_failed_paged_queries();
-                let _ = self.sender.send(Err(err)).await;
-                None
+                    ))
+                }
             }
         }
     }
@@ -211,12 +310,12 @@ pub enum NextRowError {
 }
 
 impl<RowT: FromRow> Stream for TypedRowIterator<RowT> {
-    type Item = StdResult<RowT, NextRowError>;
+    type Item = Result<RowT, NextRowError>;
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         let mut s = self.as_mut();
 
-        let next_elem: Option<StdResult<Row, QueryError>> =
+        let next_elem: Option<Result<Row, QueryError>> =
             match Pin::new(&mut s.row_iterator).poll_next(cx) {
                 Poll::Ready(next_elem) => next_elem,
                 Poll::Pending => return Poll::Pending,

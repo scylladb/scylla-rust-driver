@@ -23,6 +23,9 @@ pub enum RetryDecision {
 pub trait RetryPolicy {
     fn decide_should_retry(&mut self, query_info: QueryInfo) -> RetryDecision;
 
+    // Reset before using for the next query
+    fn reset(&mut self);
+
     fn clone_boxed(&self) -> Box<dyn RetryPolicy + Send + Sync>;
 }
 
@@ -33,6 +36,8 @@ impl RetryPolicy for FallthroughRetryPolicy {
     fn decide_should_retry(&mut self, _query_info: QueryInfo) -> RetryDecision {
         RetryDecision::DontRetry
     }
+
+    fn reset(&mut self) {}
 
     fn clone_boxed(&self) -> Box<dyn RetryPolicy + Send + Sync> {
         Box::new(FallthroughRetryPolicy)
@@ -128,6 +133,10 @@ impl RetryPolicy for DefaultRetryPolicy {
             // In all other cases propagate the error to the user
             _ => RetryDecision::DontRetry,
         }
+    }
+
+    fn reset(&mut self) {
+        *self = DefaultRetryPolicy::new();
     }
 
     fn clone_boxed(&self) -> Box<dyn RetryPolicy + Send + Sync> {

@@ -28,7 +28,7 @@ use crate::transport::{
 
 pub struct Session {
     cluster: Cluster,
-    load_balancer: Box<dyn LoadBalancingPolicy>,
+    load_balancer: Arc<dyn LoadBalancingPolicy>,
     retry_policy: Box<dyn RetryPolicy + Send + Sync>,
 
     metrics: Arc<Metrics>,
@@ -49,7 +49,7 @@ pub struct SessionConfig {
     pub tcp_nodelay: bool,
 
     /// Load balancing policy used by Session
-    pub load_balancing: Box<dyn LoadBalancingPolicy>,
+    pub load_balancing: Arc<dyn LoadBalancingPolicy>,
 
     pub used_keyspace: Option<String>,
     pub keyspace_case_sensitive: bool,
@@ -93,7 +93,7 @@ impl SessionConfig {
             known_nodes: Vec::new(),
             compression: None,
             tcp_nodelay: false,
-            load_balancing: Box::new(TokenAwarePolicy::new(Box::new(RoundRobinPolicy::new()))),
+            load_balancing: Arc::new(TokenAwarePolicy::new(Box::new(RoundRobinPolicy::new()))),
             used_keyspace: None,
             keyspace_case_sensitive: false,
             retry_policy: Box::new(DefaultRetryPolicy::new()),
@@ -317,18 +317,20 @@ impl Session {
         query: impl Into<Query>,
         values: impl ValueList,
     ) -> Result<RowIterator, QueryError> {
+        let mut query: Query = query.into();
         let serialized_values = values.serialized()?;
 
-        let statement_info = Statement {
-            token: None,
-            keyspace: None,
-        };
-        let node = self.load_balancing_plan(statement_info);
+        let retry_policy = query
+            .retry_policy
+            .take()
+            .unwrap_or_else(|| self.retry_policy.clone_boxed());
 
         Ok(RowIterator::new_for_query(
-            node.random_connection().await?,
-            query.into(),
+            query,
             serialized_values.into_owned(),
+            retry_policy,
+            self.load_balancer.clone(),
+            self.cluster.get_data(),
             self.metrics.clone(),
         ))
     }
@@ -418,18 +420,23 @@ impl Session {
         prepared: impl Into<PreparedStatement>,
         values: impl ValueList,
     ) -> Result<RowIterator, QueryError> {
+        let mut prepared: PreparedStatement = prepared.into();
         let serialized_values = values.serialized()?;
 
-        let statement_info = Statement {
-            token: None,
-            keyspace: None,
-        };
-        let node = self.load_balancing_plan(statement_info);
+        let token = calculate_token(&prepared, &serialized_values)?;
+
+        let retry_policy = prepared
+            .retry_policy
+            .take()
+            .unwrap_or_else(|| self.retry_policy.clone_boxed());
 
         Ok(RowIterator::new_for_prepared_statement(
-            node.random_connection().await?,
-            prepared.into(),
+            prepared,
             serialized_values.into_owned(),
+            token,
+            retry_policy,
+            self.load_balancer.clone(),
+            self.cluster.get_data(),
             self.metrics.clone(),
         ))
     }
@@ -512,13 +519,6 @@ impl Session {
 
     pub fn get_metrics(&self) -> MetricsView {
         MetricsView::new(self.metrics.clone())
-    }
-
-    fn load_balancing_plan(&self, statement_info: Statement) -> Arc<Node> {
-        let cluster_info = self.cluster.get_data();
-        let mut plan = self.load_balancer.plan(&statement_info, &cluster_info);
-
-        plan.next().unwrap() // Plan returned by load balancing policies should never be empty
     }
 
     // This method allows to easily run a query using load balancing, retry policy etc.
