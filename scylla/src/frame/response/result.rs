@@ -39,6 +39,7 @@ enum ColumnType {
     Ascii,
     Boolean,
     Blob,
+    Counter,
     Date,
     Double,
     Float,
@@ -68,6 +69,7 @@ pub enum CQLValue {
     Ascii(String),
     Boolean(bool),
     Blob(Vec<u8>),
+    Counter(i64),
     Date(u32),
     Double(f64),
     Float(f32),
@@ -110,6 +112,13 @@ impl CQLValue {
     pub fn as_time(&self) -> Option<u64> {
         match self {
             Self::Time(i) => Some(*i),
+            _ => None,
+        }
+    }    
+    
+    pub fn as_counter(&self) -> Option<i64> {
+        match self {
+            Self::Counter(i) => Some(*i),
             _ => None,
         }
     }
@@ -311,6 +320,7 @@ fn deser_type(buf: &mut &[u8]) -> StdResult<ColumnType, ParseError> {
         0x0002 => BigInt,
         0x0003 => Blob,
         0x0004 => Boolean,
+        0x0005 => Counter,
         0x0007 => Double,
         0x0008 => Float,
         0x0009 => Int,
@@ -476,6 +486,15 @@ fn deser_cql_value(typ: &ColumnType, buf: &mut &[u8]) -> StdResult<CQLValue, Par
                 )));
             }
             CQLValue::Date(buf.read_u32::<BigEndian>()?)
+        }
+        Counter => {
+            if buf.len() != 8 {
+                return Err(ParseError::BadData(format!(
+                    "Buffer length should be 8 not {}",
+                    buf.len()
+                )));
+            }
+            CQLValue::Counter(buf.read_i64::<BigEndian>()?)
         }
         Double => {
             if buf.len() != 8 {
