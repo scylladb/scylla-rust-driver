@@ -292,7 +292,6 @@ async fn test_token_calculation() {
 }
 
 #[tokio::test]
-#[ignore]
 async fn test_use_keyspace() {
     let uri = std::env::var("SCYLLA_URI").unwrap_or_else(|_| "127.0.0.1:9042".to_string());
     let session = SessionBuilder::new()
@@ -393,7 +392,6 @@ async fn test_use_keyspace() {
 }
 
 #[tokio::test]
-#[ignore]
 async fn test_use_keyspace_case_sensitivity() {
     let uri = std::env::var("SCYLLA_URI").unwrap_or_else(|_| "127.0.0.1:9042".to_string());
     let session = SessionBuilder::new()
@@ -473,7 +471,6 @@ async fn test_use_keyspace_case_sensitivity() {
 }
 
 #[tokio::test]
-#[ignore]
 async fn test_raw_use_keyspace() {
     let uri = std::env::var("SCYLLA_URI").unwrap_or_else(|_| "127.0.0.1:9042".to_string());
     let session = SessionBuilder::new()
