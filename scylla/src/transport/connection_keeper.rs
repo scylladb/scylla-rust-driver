@@ -145,6 +145,13 @@ impl ConnectionKeeper {
     }
 }
 
+enum RunConnectionRes {
+    // An error occured during the connection
+    Error(QueryError),
+    // ConnectionKeeper was dropped and channels closed, we should stop
+    ShouldStop,
+}
+
 impl ConnectionKeeperWorker {
     pub async fn work(mut self) {
         // Reconnect at most every 8 seconds
@@ -155,12 +162,20 @@ impl ConnectionKeeperWorker {
             last_reconnect_time = tokio::time::Instant::now();
 
             // Connect and wait for error
-            let current_error: QueryError = self.run_connection().await;
+            let current_error: QueryError = match self.run_connection().await {
+                RunConnectionRes::Error(e) => e,
+                RunConnectionRes::ShouldStop => return,
+            };
 
             // Mark the connection as broken, wait cooldown and reconnect
-            let _ = self
+            if self
                 .conn_state_sender
-                .send(ConnectionState::Broken(current_error));
+                .send(ConnectionState::Broken(current_error))
+                .is_err()
+            {
+                // ConnectionKeeper was dropped, we should stop
+                return;
+            }
 
             let next_reconnect_time = last_reconnect_time
                 .checked_add(reconnect_cooldown)
@@ -171,17 +186,22 @@ impl ConnectionKeeperWorker {
     }
 
     // Opens a new connection and waits until some fatal error occurs
-    async fn run_connection(&mut self) -> QueryError {
+    async fn run_connection(&mut self) -> RunConnectionRes {
         // Connect to the node
         let (connection, mut error_receiver) = match self.open_new_connection().await {
             Ok(opened) => opened,
-            Err(e) => return e,
+            Err(e) => return RunConnectionRes::Error(e),
         };
 
         // Mark connection as Connected
-        let _ = self
+        if self
             .conn_state_sender
-            .send(ConnectionState::Connected(connection.clone()));
+            .send(ConnectionState::Connected(connection.clone()))
+            .is_err()
+        {
+            // If the channel was dropped we should stop
+            return RunConnectionRes::ShouldStop;
+        }
 
         // Notify about new shard info
         if let Some(sender) = &self.shard_info_sender {
@@ -219,11 +239,12 @@ impl ConnectionKeeperWorker {
                             let res = connection.use_keyspace(&request.keyspace_name).await;
                             let _ = request.response_chan.send(res);
                         },
-                        None => return connection_closed_error,
+                        None => return RunConnectionRes::ShouldStop, // If the channel was dropped we should stop
                     }
                 },
                 connection_error = &mut error_receiver => {
-                    return connection_error.unwrap_or(connection_closed_error);
+                    let error = connection_error.unwrap_or(connection_closed_error);
+                    return RunConnectionRes::Error(error);
                 }
             }
         }
