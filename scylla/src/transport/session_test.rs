@@ -529,3 +529,16 @@ async fn test_raw_use_keyspace() {
         .await
         .is_ok());
 }
+
+#[tokio::test]
+async fn test_fetch_system_keyspace() {
+    let uri = std::env::var("SCYLLA_URI").unwrap_or_else(|_| "127.0.0.1:9042".to_string());
+    let session = SessionBuilder::new().known_node(uri).build().await.unwrap();
+
+    let prepared_statement = session
+        .prepare("SELECT * FROM system_schema.keyspaces")
+        .await
+        .unwrap();
+
+    session.execute(&prepared_statement, &[]).await.unwrap();
+}
