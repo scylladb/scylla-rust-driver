@@ -9,6 +9,7 @@ use std::{
     result::Result as StdResult,
     str,
 };
+use uuid::Uuid;
 
 #[derive(Debug)]
 pub struct SetKeyspace {
@@ -36,9 +37,15 @@ struct TableSpec {
 #[derive(Debug, Clone)]
 enum ColumnType {
     Ascii,
+    Boolean,
+    Blob,
+    Date,
+    Double,
+    Float,
     Int,
     BigInt,
     Text,
+    Timestamp,
     Inet,
     List(Box<ColumnType>),
     Map(Box<ColumnType>, Box<ColumnType>),
@@ -48,15 +55,26 @@ enum ColumnType {
         keyspace: String,
         field_types: Vec<(String, ColumnType)>,
     },
+    SmallInt,
+    TinyInt,
+    Time,
+    Timeuuid,
     Tuple(Vec<ColumnType>),
+    Uuid,
 }
 
-#[derive(Debug, PartialEq, Eq, Hash)]
+#[derive(Debug, PartialEq)]
 pub enum CQLValue {
     Ascii(String),
+    Boolean(bool),
+    Blob(Vec<u8>),
+    Date(u32),
+    Double(f64),
+    Float(f32),
     Int(i32),
     BigInt(i64),
     Text(String),
+    Timestamp(i64),
     Inet(IpAddr),
     List(Vec<CQLValue>),
     Map(Vec<(CQLValue, CQLValue)>),
@@ -66,13 +84,67 @@ pub enum CQLValue {
         type_name: String,
         fields: BTreeMap<String, Option<CQLValue>>,
     },
+    SmallInt(i16),
+    TinyInt(i8),
+    Time(u64),
+    Timeuuid(Uuid),
     Tuple(Vec<CQLValue>),
+    Uuid(Uuid),
 }
 
 impl CQLValue {
     pub fn as_ascii(&self) -> Option<&String> {
         match self {
             Self::Ascii(s) => Some(&s),
+            _ => None,
+        }
+    }
+
+    pub fn as_timestamp(&self) -> Option<i64> {
+        match self {
+            Self::Timestamp(i) => Some(*i),
+            _ => None,
+        }
+    }
+
+    pub fn as_time(&self) -> Option<u64> {
+        match self {
+            Self::Time(i) => Some(*i),
+            _ => None,
+        }
+    }
+
+    pub fn as_date(&self) -> Option<u32> {
+        match self {
+            Self::Date(i) => Some(*i),
+            _ => None,
+        }
+    }
+
+    pub fn as_boolean(&self) -> Option<bool> {
+        match self {
+            Self::Boolean(i) => Some(*i),
+            _ => None,
+        }
+    }
+
+    pub fn as_double(&self) -> Option<f64> {
+        match self {
+            Self::Double(d) => Some(*d),
+            _ => None,
+        }
+    }
+
+    pub fn as_uuid(&self) -> Option<Uuid> {
+        match self {
+            Self::Uuid(u) => Some(*u),
+            _ => None,
+        }
+    }
+
+    pub fn as_float(&self) -> Option<f32> {
+        match self {
+            Self::Float(f) => Some(*f),
             _ => None,
         }
     }
@@ -91,9 +163,37 @@ impl CQLValue {
         }
     }
 
+    pub fn as_tinyint(&self) -> Option<i8> {
+        match self {
+            Self::TinyInt(i) => Some(*i),
+            _ => None,
+        }
+    }
+
+    pub fn as_smallint(&self) -> Option<i16> {
+        match self {
+            Self::SmallInt(i) => Some(*i),
+            _ => None,
+        }
+    }
+
+    pub fn as_blob(&self) -> Option<&Vec<u8>> {
+        match self {
+            Self::Blob(v) => Some(&v),
+            _ => None,
+        }
+    }
+
     pub fn as_text(&self) -> Option<&String> {
         match self {
             Self::Text(s) => Some(&s),
+            _ => None,
+        }
+    }
+
+    pub fn as_timeuuid(&self) -> Option<Uuid> {
+        match self {
+            Self::Timeuuid(u) => Some(*u),
             _ => None,
         }
     }
@@ -209,9 +309,20 @@ fn deser_type(buf: &mut &[u8]) -> StdResult<ColumnType, ParseError> {
     Ok(match id {
         0x0001 => Ascii,
         0x0002 => BigInt,
+        0x0003 => Blob,
+        0x0004 => Boolean,
+        0x0007 => Double,
+        0x0008 => Float,
         0x0009 => Int,
+        0x000B => Timestamp,
+        0x000C => Uuid,
         0x000D => Text,
+        0x000F => Timeuuid,
         0x0010 => Inet,
+        0x0011 => Date,
+        0x0012 => Time,
+        0x0013 => SmallInt,
+        0x0014 => TinyInt,
         0x0020 => List(Box::new(deser_type(buf)?)),
         0x0021 => Map(Box::new(deser_type(buf)?), Box::new(deser_type(buf)?)),
         0x0022 => Set(Box::new(deser_type(buf)?)),
@@ -347,6 +458,43 @@ fn deser_cql_value(typ: &ColumnType, buf: &mut &[u8]) -> StdResult<CQLValue, Par
             }
             CQLValue::Ascii(str::from_utf8(buf)?.to_owned())
         }
+        Boolean => {
+            if buf.len() != 1 {
+                return Err(ParseError::BadData(format!(
+                    "Buffer length should be 1 not {}",
+                    buf.len()
+                )));
+            }
+            CQLValue::Boolean(buf[0] != 0x00)
+        }
+        Blob => CQLValue::Blob(buf.to_vec()),
+        Date => {
+            if buf.len() != 4 {
+                return Err(ParseError::BadData(format!(
+                    "Buffer length should be 4 not {}",
+                    buf.len()
+                )));
+            }
+            CQLValue::Date(buf.read_u32::<BigEndian>()?)
+        }
+        Double => {
+            if buf.len() != 8 {
+                return Err(ParseError::BadData(format!(
+                    "Buffer length should be 8 not {}",
+                    buf.len()
+                )));
+            }
+            CQLValue::Double(buf.read_f64::<BigEndian>()?)
+        }
+        Float => {
+            if buf.len() != 4 {
+                return Err(ParseError::BadData(format!(
+                    "Buffer length should be 4 not {}",
+                    buf.len()
+                )));
+            }
+            CQLValue::Float(buf.read_f32::<BigEndian>()?)
+        }
         Int => {
             if buf.len() != 4 {
                 return Err(ParseError::BadData(format!(
@@ -355,6 +503,25 @@ fn deser_cql_value(typ: &ColumnType, buf: &mut &[u8]) -> StdResult<CQLValue, Par
                 )));
             }
             CQLValue::Int(buf.read_i32::<BigEndian>()?)
+        }
+        SmallInt => {
+            if buf.len() != 2 {
+                return Err(ParseError::BadData(format!(
+                    "Buffer length should be 2 not {}",
+                    buf.len()
+                )));
+            }
+
+            CQLValue::SmallInt(buf.read_i16::<BigEndian>()?)
+        }
+        TinyInt => {
+            if buf.len() != 1 {
+                return Err(ParseError::BadData(format!(
+                    "Buffer length should be 1 not {}",
+                    buf.len()
+                )));
+            }
+            CQLValue::TinyInt(buf.read_i8()?)
         }
         BigInt => {
             if buf.len() != 8 {
@@ -366,6 +533,34 @@ fn deser_cql_value(typ: &ColumnType, buf: &mut &[u8]) -> StdResult<CQLValue, Par
             CQLValue::BigInt(buf.read_i64::<BigEndian>()?)
         }
         Text => CQLValue::Text(str::from_utf8(buf)?.to_owned()),
+        Timestamp => {
+            if buf.len() != 8 {
+                return Err(ParseError::BadData(format!(
+                    "Buffer length should be 8 not {}",
+                    buf.len()
+                )));
+            }
+            CQLValue::Timestamp(buf.read_i64::<BigEndian>()?)
+        }
+        Time => {
+            if buf.len() != 8 {
+                return Err(ParseError::BadData(format!(
+                    "Buffer length should be 8 not {}",
+                    buf.len()
+                )));
+            }
+            CQLValue::Time(buf.read_u64::<BigEndian>()?)
+        }
+        Timeuuid => {
+            if buf.len() != 16 {
+                return Err(ParseError::BadData(format!(
+                    "Buffer length should be 16 not {}",
+                    buf.len()
+                )));
+            }
+            let uuid = uuid::Uuid::from_slice(buf).expect("Deserializing Uuid failed.");
+            CQLValue::Timeuuid(uuid)
+        }
         Inet => CQLValue::Inet(match buf.len() {
             4 => {
                 let ret = IpAddr::from(<[u8; 4]>::try_from(&buf[0..4])?);
@@ -384,6 +579,16 @@ fn deser_cql_value(typ: &ColumnType, buf: &mut &[u8]) -> StdResult<CQLValue, Par
                 )));
             }
         }),
+        Uuid => {
+            if buf.len() != 16 {
+                return Err(ParseError::BadData(format!(
+                    "Buffer length should be 16 not {}",
+                    buf.len()
+                )));
+            }
+            let uuid = uuid::Uuid::from_slice(buf).expect("Deserializing Uuid failed.");
+            CQLValue::Uuid(uuid)
+        }
         List(type_name) => {
             let len: usize = types::read_int(buf)?.try_into()?;
             let mut res = Vec::with_capacity(len);

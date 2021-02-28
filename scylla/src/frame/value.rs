@@ -3,6 +3,7 @@ use std::borrow::Cow;
 use std::collections::HashMap;
 use std::convert::TryInto;
 use thiserror::Error;
+use uuid::Uuid;
 
 /// Every value being sent in a query must implement this trait
 /// serialize() should write the Value as [bytes] to the provided buffer
@@ -196,6 +197,61 @@ impl Value for i64 {
     }
 }
 
+impl Value for u32 {
+    fn serialize(&self, buf: &mut Vec<u8>) -> Result<(), ValueTooBig> {
+        buf.put_i32(4);
+        buf.put_u32(*self);
+        Ok(())
+    }
+}
+
+impl Value for u64 {
+    fn serialize(&self, buf: &mut Vec<u8>) -> Result<(), ValueTooBig> {
+        buf.put_i32(8);
+        buf.put_u64(*self);
+        Ok(())
+    }
+}
+
+impl Value for bool {
+    fn serialize(&self, buf: &mut Vec<u8>) -> Result<(), ValueTooBig> {
+        buf.put_i32(1);
+        let false_bytes: &[u8] = &[0x00];
+        let true_bytes: &[u8] = &[0x01];
+        if *self {
+            buf.put(true_bytes);
+        } else {
+            buf.put(false_bytes);
+        }
+
+        Ok(())
+    }
+}
+
+impl Value for f32 {
+    fn serialize(&self, buf: &mut Vec<u8>) -> Result<(), ValueTooBig> {
+        buf.put_i32(4);
+        buf.put_f32(*self);
+        Ok(())
+    }
+}
+
+impl Value for f64 {
+    fn serialize(&self, buf: &mut Vec<u8>) -> Result<(), ValueTooBig> {
+        buf.put_i32(8);
+        buf.put_f64(*self);
+        Ok(())
+    }
+}
+
+impl Value for Uuid {
+    fn serialize(&self, buf: &mut Vec<u8>) -> Result<(), ValueTooBig> {
+        buf.put_i32(16);
+        buf.extend_from_slice(self.as_bytes());
+        Ok(())
+    }
+}
+
 impl Value for &str {
     fn serialize(&self, buf: &mut Vec<u8>) -> Result<(), ValueTooBig> {
         let str_bytes: &[u8] = self.as_bytes();
@@ -203,6 +259,17 @@ impl Value for &str {
 
         buf.put_i32(val_len);
         buf.put(str_bytes);
+
+        Ok(())
+    }
+}
+
+impl Value for Vec<u8> {
+    fn serialize(&self, buf: &mut Vec<u8>) -> Result<(), ValueTooBig> {
+        let val_len: i32 = self.len().try_into().map_err(|_| ValueTooBig)?;
+        buf.put_i32(val_len);
+
+        buf.extend_from_slice(&self);
 
         Ok(())
     }
