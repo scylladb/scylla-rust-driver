@@ -274,12 +274,12 @@ impl NodeWorker {
 
         match &*node_conns {
             NodeConnections::Single(conn_keeper) => {
-                let fut = conn_keeper.use_keyspace(keyspace_name);
+                let fut = conn_keeper.use_keyspace(keyspace_name.clone());
                 use_keyspace_futures.push(fut);
             }
             NodeConnections::Sharded { shard_conns, .. } => {
                 for conn_keeper in shard_conns {
-                    let fut = conn_keeper.use_keyspace(keyspace_name);
+                    let fut = conn_keeper.use_keyspace(keyspace_name.clone());
                     use_keyspace_futures.push(fut);
                 }
             }

@@ -71,6 +71,26 @@ impl ShardInfo {
             + shard as u16
     }
 
+    /// Returns iterator over source ports `p` such that `shard == shard_of_source_port(p)`.
+    /// Starts at a random port and goes forward by `nr_shards`. After reaching maximum wraps back around.
+    /// Stops once all possibile ports have been returned
+    pub fn iter_source_ports_for_shard(&self, shard: Shard) -> impl Iterator<Item = u16> {
+        assert!(shard < self.nr_shards as u32);
+
+        // Randomly choose a port to start at
+        let starting_port = self.draw_source_port_for_shard(shard);
+
+        // Choose smallest available port number to begin at after wrapping
+        // apply the formula from draw_source_port_for_shard for lowest possible gen_range result
+        let first_valid_port =
+            (49152 + self.nr_shards - 1) / self.nr_shards * self.nr_shards + shard as u16;
+
+        let before_wrap = (starting_port..=65535).step_by(self.nr_shards.into());
+        let after_wrap = (first_valid_port..starting_port).step_by(self.nr_shards.into());
+
+        before_wrap.chain(after_wrap)
+    }
+
     pub fn get_nr_shards(&self) -> u16 {
         self.nr_shards
     }
@@ -106,24 +126,6 @@ impl<'a> TryFrom<&'a HashMap<String, Vec<String>>> for ShardInfo {
         let msb_ignore = msb_ignore_entry.unwrap().first().unwrap().parse::<u8>()?;
         Ok(ShardInfo::new(shard, nr_shards, msb_ignore))
     }
-}
-
-#[test]
-fn test_shard_of() {
-    /* Test values taken from the gocql driver.  */
-    let shard_info = ShardInfo::new(0, 4, 12);
-    assert_eq!(
-        shard_info.shard_of(Token {
-            value: -9219783007514621794
-        }),
-        3
-    );
-    assert_eq!(
-        shard_info.shard_of(Token {
-            value: 9222582454147032830
-        }),
-        3
-    );
 }
 
 // An implementation of MurmurHash3 ported from Scylla. Please note that this
@@ -217,4 +219,64 @@ fn fmix(mut k: Wrapping<i64>) -> Wrapping<i64> {
     k ^= Wrapping((k.0 as u64 >> 33) as i64);
 
     k
+}
+
+#[cfg(test)]
+mod tests {
+    use super::ShardInfo;
+    use super::Token;
+    use std::collections::HashSet;
+
+    #[test]
+    fn test_shard_of() {
+        /* Test values taken from the gocql driver.  */
+        let shard_info = ShardInfo::new(0, 4, 12);
+        assert_eq!(
+            shard_info.shard_of(Token {
+                value: -9219783007514621794
+            }),
+            3
+        );
+        assert_eq!(
+            shard_info.shard_of(Token {
+                value: 9222582454147032830
+            }),
+            3
+        );
+    }
+
+    #[test]
+    fn test_iter_source_ports_for_shard() {
+        let nr_shards = 4;
+        let max_port_num = 65535;
+        let min_port_num = (49152 + nr_shards - 1) / nr_shards * nr_shards;
+
+        let shard_info = ShardInfo::new(0, nr_shards, 12);
+
+        // Test for each shard
+        for shard in 0..nr_shards {
+            // Find lowest port for this shard
+            let mut lowest_port = min_port_num;
+            while lowest_port % nr_shards != shard {
+                lowest_port += 1;
+            }
+
+            // Find total number of ports the iterator should return
+            let possible_ports_number: usize =
+                ((max_port_num - lowest_port) / nr_shards + 1).into();
+
+            let port_iter = shard_info.iter_source_ports_for_shard(shard.into());
+
+            let mut returned_ports: HashSet<u16> = HashSet::new();
+            for port in port_iter {
+                assert!(!returned_ports.contains(&port)); // No port occurs two times
+                assert!(port % nr_shards == shard); // Each port maps to this shard
+
+                returned_ports.insert(port);
+            }
+
+            // Numbers of ports returned matches the expected value
+            assert_eq!(returned_ports.len(), possible_ports_number);
+        }
+    }
 }

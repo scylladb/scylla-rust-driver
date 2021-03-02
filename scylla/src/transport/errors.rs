@@ -1,5 +1,6 @@
 use crate::frame::frame_errors::{FrameError, ParseError};
 use crate::frame::value::SerializeValuesError;
+use std::io::ErrorKind;
 use std::sync::Arc;
 use thiserror::Error;
 
@@ -144,5 +145,20 @@ impl From<QueryError> for NewSessionError {
 impl From<BadKeyspaceName> for QueryError {
     fn from(keyspace_err: BadKeyspaceName) -> QueryError {
         QueryError::BadQuery(BadQuery::BadKeyspaceName(keyspace_err))
+    }
+}
+
+impl QueryError {
+    /// Checks if this query error is an IO Error of kind AddrInUse
+    /// This type of error often occurs when we are choosing random port numbers
+    /// and there is a collision.
+    pub(crate) fn is_address_in_use(&self) -> bool {
+        if let QueryError::IOError(io_error) = self {
+            if io_error.kind() == ErrorKind::AddrInUse {
+                return true;
+            }
+        }
+
+        false
     }
 }
