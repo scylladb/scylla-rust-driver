@@ -2,6 +2,7 @@ use bytes::Bytes;
 use futures::{future::RemoteHandle, FutureExt};
 use tokio::net::{tcp, TcpSocket, TcpStream};
 use tokio::sync::{mpsc, oneshot};
+use tracing::warn;
 
 use std::collections::HashMap;
 use std::convert::TryFrom;
@@ -270,7 +271,6 @@ impl Connection {
         }
     }
 
-    // TODO: Return the response associated with that frame
     async fn send_request<R: Request>(
         &self,
         request: &R,
@@ -316,10 +316,8 @@ impl Connection {
             task_response.body,
         )?;
 
-        // TODO: Do something more sensible with warnings
-        // For now, just print them to stderr
-        for warning in body_with_ext.warnings {
-            eprintln!("Warning: {}", warning);
+        for warn_description in body_with_ext.warnings {
+            warn!(warning = warn_description.as_str());
         }
 
         let response = Response::deserialize(task_response.opcode, &mut &*body_with_ext.body)?;
@@ -437,6 +435,7 @@ impl Connection {
                 } else {
                     // TODO: Handle this error better, for now we drop this
                     // request and return an error to the receiver
+                    warn!("Could not allocate stream id");
                     continue;
                 }
             };
