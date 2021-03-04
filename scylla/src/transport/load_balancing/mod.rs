@@ -12,9 +12,9 @@ pub use round_robin::RoundRobinPolicy;
 pub use token_aware::TokenAwarePolicy;
 
 /// Represents info about statement that can be used by load balancing policies.
-pub struct Statement {
+pub struct Statement<'a> {
     pub token: Option<Token>,
-    pub keyspace: Option<String>,
+    pub keyspace: Option<&'a str>,
 }
 
 /// Policy that decides which nodes to contact for each query

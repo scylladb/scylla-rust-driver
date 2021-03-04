@@ -42,9 +42,9 @@ impl TokenAwarePolicy {
                     .map(|dc| dc.rack_count)
                     .unwrap_or(0);
 
-                (dc_name.clone(), repfactor - rack_count)
+                (dc_name.as_str(), repfactor - rack_count)
             })
-            .collect::<HashMap<String, usize>>();
+            .collect::<HashMap<&str, usize>>();
 
         let desired_result_len: usize = datacenter_repfactors.values().sum();
 
@@ -83,7 +83,9 @@ impl TokenAwarePolicy {
                 // we’ve already found a node in this rack
 
                 // unwrap, because we already know repfactor
-                let repeats = acceptable_repeats.get_mut(current_node_dc).unwrap();
+                let repeats = acceptable_repeats
+                    .get_mut(current_node_dc.as_str())
+                    .unwrap();
                 if *repeats > 0 {
                     // we must pick multiple nodes in the same rack
                     *repeats -= 1;
@@ -108,11 +110,7 @@ impl LoadBalancingPolicy for TokenAwarePolicy {
     ) -> Box<dyn Iterator<Item = Arc<Node>> + 'a> {
         match statement.token {
             Some(token) => {
-                let keyspace = statement
-                    .keyspace
-                    .as_ref()
-                    .map(|k| cluster.keyspaces.get(k))
-                    .flatten();
+                let keyspace = statement.keyspace.and_then(|k| cluster.keyspaces.get(k));
 
                 let strategy = keyspace
                     .map(|k| &k.strategy)
@@ -175,8 +173,8 @@ mod tests {
     async fn test_token_aware_policy() {
         let cluster = mock_cluster_data_for_token_aware_tests();
 
-        struct Test {
-            statement: Statement,
+        struct Test<'a> {
+            statement: Statement<'a>,
             expected_plan: Vec<u16>,
         };
 
@@ -184,28 +182,28 @@ mod tests {
             Test {
                 statement: Statement {
                     token: Some(Token { value: 160 }),
-                    keyspace: Some("keyspace_with_simple_strategy_replication_factor_2".into()),
+                    keyspace: Some("keyspace_with_simple_strategy_replication_factor_2"),
                 },
                 expected_plan: vec![3, 1],
             },
             Test {
                 statement: Statement {
                     token: Some(Token { value: 60 }),
-                    keyspace: Some("keyspace_with_simple_strategy_replication_factor_3".into()),
+                    keyspace: Some("keyspace_with_simple_strategy_replication_factor_3"),
                 },
                 expected_plan: vec![1, 2, 3],
             },
             Test {
                 statement: Statement {
                     token: Some(Token { value: 500 }),
-                    keyspace: Some("keyspace_with_simple_strategy_replication_factor_3".into()),
+                    keyspace: Some("keyspace_with_simple_strategy_replication_factor_3"),
                 },
                 expected_plan: vec![1, 2, 3],
             },
             Test {
                 statement: Statement {
                     token: Some(Token { value: 60 }),
-                    keyspace: Some("invalid".into()),
+                    keyspace: Some("invalid"),
                 },
                 expected_plan: vec![1],
             },
@@ -235,7 +233,7 @@ mod tests {
 
         let statement = Statement {
             token: Some(Token { value: 0 }),
-            keyspace: Some("keyspace_with_nts".into()),
+            keyspace: Some("keyspace_with_nts"),
         };
 
         let plan = tests::get_plan_and_collect_node_identifiers(&policy, &statement, &cluster);

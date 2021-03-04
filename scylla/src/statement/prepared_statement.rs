@@ -116,11 +116,11 @@ impl PreparedStatement {
     }
 
     /// Returns the name of the keyspace this statement is operating on.
-    pub fn get_keyspace_name(&self) -> Option<String> {
+    pub fn get_keyspace_name(&self) -> Option<&str> {
         self.metadata
             .col_specs
             .first()
-            .map(|col_spec| col_spec.table_spec.ks_name.clone())
+            .map(|col_spec| col_spec.table_spec.ks_name.as_str())
     }
 }
 
