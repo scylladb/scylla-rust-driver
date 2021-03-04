@@ -1,5 +1,6 @@
 use crate::cql_to_rust::{FromRow, FromRowError};
 use crate::frame::{frame_errors::ParseError, types};
+use bigdecimal::BigDecimal;
 use byteorder::{BigEndian, ReadBytesExt};
 use bytes::{Buf, Bytes};
 use num_bigint::{BigInt, Sign};
@@ -42,6 +43,7 @@ enum ColumnType {
     Blob,
     Counter,
     Date,
+    Decimal,
     Double,
     Float,
     Int,
@@ -73,6 +75,7 @@ pub enum CQLValue {
     Blob(Vec<u8>),
     Counter(i64),
     Date(u32),
+    Decimal(BigDecimal),
     Double(f64),
     Float(f32),
     Int(i32),
@@ -254,9 +257,16 @@ impl CQLValue {
         }
     }
 
-    pub fn as_varint(self) -> Option<BigInt> {
+    pub fn into_varint(self) -> Option<BigInt> {
         match self {
             Self::Varint(i) => Some(i),
+            _ => None,
+        }
+    }
+
+    pub fn into_decimal(self) -> Option<BigDecimal> {
+        match self {
+            Self::Decimal(i) => Some(i),
             _ => None,
         }
     }
@@ -330,6 +340,7 @@ fn deser_type(buf: &mut &[u8]) -> StdResult<ColumnType, ParseError> {
         0x0003 => Blob,
         0x0004 => Boolean,
         0x0005 => Counter,
+        0x0006 => Decimal,
         0x0007 => Double,
         0x0008 => Float,
         0x0009 => Int,
@@ -505,6 +516,20 @@ fn deser_cql_value(typ: &ColumnType, buf: &mut &[u8]) -> StdResult<CQLValue, Par
                 )));
             }
             CQLValue::Counter(buf.read_i64::<BigEndian>()?)
+        }
+        Decimal => {
+            let scale = types::read_int(buf)? as i64;
+
+            let int_value;
+            if buf[0] == 0x00 {
+                int_value = num_bigint::BigInt::from_bytes_be(Sign::Plus, buf);
+            } else {
+                int_value = num_bigint::BigInt::from_bytes_be(Sign::Minus, buf);
+            }
+
+            let big_decimal: BigDecimal = BigDecimal::from((int_value, scale));
+
+            CQLValue::Decimal(big_decimal)
         }
         Double => {
             if buf.len() != 8 {

@@ -109,7 +109,7 @@ async fn test_cql_types() {
         .unwrap();
 
     let val_positive = 10000.to_bigint().unwrap();
-    let val_negative = -10000.to_bigint().unwrap();
+    let val_negative = (-10000).to_bigint().unwrap();
 
     session
         .query(

@@ -1,3 +1,4 @@
+use bigdecimal::BigDecimal;
 use bytes::BufMut;
 use num_bigint::BigInt;
 use std::borrow::Cow;
@@ -210,6 +211,23 @@ impl Value for u64 {
     fn serialize(&self, buf: &mut Vec<u8>) -> Result<(), ValueTooBig> {
         buf.put_i32(8);
         buf.put_u64(*self);
+        Ok(())
+    }
+}
+
+impl Value for BigDecimal {
+    fn serialize(&self, buf: &mut Vec<u8>) -> Result<(), ValueTooBig> {
+        let bytes_num_pos: usize = buf.len();
+        buf.put_i32(0);
+
+        let (value, scale) = self.as_bigint_and_exponent();
+
+        buf.put_i32(scale.try_into().expect("scale incorrect"));
+        buf.extend_from_slice(&value.to_signed_bytes_be());
+
+        let written_bytes: usize = buf.len() - bytes_num_pos - 4;
+        let written_bytes_i32: i32 = written_bytes.try_into().map_err(|_| ValueTooBig)?;
+        buf[bytes_num_pos..(bytes_num_pos + 4)].copy_from_slice(&written_bytes_i32.to_be_bytes());
         Ok(())
     }
 }
