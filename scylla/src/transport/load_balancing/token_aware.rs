@@ -112,37 +112,27 @@ impl LoadBalancingPolicy for TokenAwarePolicy {
             Some(token) => {
                 let keyspace = statement.keyspace.and_then(|k| cluster.keyspaces.get(k));
 
-                let strategy = keyspace
-                    .map(|k| &k.strategy)
-                    // default to simple strategy
-                    .unwrap_or(&Strategy::SimpleStrategy {
-                        replication_factor: 1,
-                    });
+                let strategy = keyspace.map(|k| &k.strategy);
 
-                match strategy {
-                    Strategy::SimpleStrategy { replication_factor } => {
-                        let replicas =
-                            Self::simple_strategy_replicas(cluster, &token, *replication_factor);
-                        self.child_policy.apply_child_policy(replicas)
+                let replicas = match strategy {
+                    Some(Strategy::SimpleStrategy { replication_factor }) => {
+                        Self::simple_strategy_replicas(cluster, &token, *replication_factor)
                     }
-                    Strategy::NetworkTopologyStrategy {
+                    Some(Strategy::NetworkTopologyStrategy {
                         datacenter_repfactors,
-                    } => {
-                        let replicas = Self::network_topology_strategy_replicas(
-                            cluster,
-                            &token,
-                            datacenter_repfactors,
-                        );
-                        self.child_policy.apply_child_policy(replicas)
-                    }
+                    }) => Self::network_topology_strategy_replicas(
+                        cluster,
+                        &token,
+                        datacenter_repfactors,
+                    ),
                     _ => {
                         // default to simple strategy with replication factor = 1
                         let replication_factor = 1;
-                        let replica =
-                            Self::simple_strategy_replicas(cluster, &token, replication_factor);
-                        self.child_policy.apply_child_policy(replica)
+                        Self::simple_strategy_replicas(cluster, &token, replication_factor)
                     }
-                }
+                };
+
+                self.child_policy.apply_child_policy(replicas)
             }
             // fallback to child policy
             None => self.child_policy.plan(statement, cluster),
