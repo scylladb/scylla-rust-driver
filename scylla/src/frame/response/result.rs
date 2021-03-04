@@ -4,7 +4,10 @@ use crate::frame::{frame_errors::ParseError, types};
 use bigdecimal::BigDecimal;
 use byteorder::{BigEndian, ReadBytesExt};
 use bytes::{Buf, Bytes};
+use chrono::prelude::*;
+use chrono::Duration as DurationDateTime;
 use num_bigint::BigInt;
+use std::time::Duration;
 use std::{
     collections::BTreeMap,
     convert::{TryFrom, TryInto},
@@ -75,7 +78,7 @@ pub enum CQLValue {
     Boolean(bool),
     Blob(Vec<u8>),
     Counter(Counter),
-    Date(u32),
+    Date(NaiveDate),
     Decimal(BigDecimal),
     Double(f64),
     Float(f32),
@@ -94,7 +97,7 @@ pub enum CQLValue {
     },
     SmallInt(i16),
     TinyInt(i8),
-    Time(u64),
+    Time(Duration),
     Timeuuid(Uuid),
     Tuple(Vec<CQLValue>),
     Uuid(Uuid),
@@ -116,7 +119,7 @@ impl CQLValue {
         }
     }
 
-    pub fn as_time(&self) -> Option<u64> {
+    pub fn as_time(&self) -> Option<Duration> {
         match self {
             Self::Time(i) => Some(*i),
             _ => None,
@@ -130,7 +133,7 @@ impl CQLValue {
         }
     }
 
-    pub fn as_date(&self) -> Option<u32> {
+    pub fn as_date(&self) -> Option<NaiveDate> {
         match self {
             Self::Date(i) => Some(*i),
             _ => None,
@@ -507,7 +510,14 @@ fn deser_cql_value(typ: &ColumnType, buf: &mut &[u8]) -> StdResult<CQLValue, Par
                     buf.len()
                 )));
             }
-            CQLValue::Date(buf.read_u32::<BigEndian>()?)
+            let timestamp = buf.read_u32::<BigEndian>()? - super::DAYS_CENTERED;
+            //  An unsigned integer representing days with epoch centered at 2^31. (unix epoch January 1st, 1970).
+            let time = NaiveDate::from_ymd(
+                super::UNIX_TIME_YEAR,
+                super::UNIX_TIME_MONTH,
+                super::UNIX_TIME_DAY,
+            ) + DurationDateTime::days(timestamp.into());
+            CQLValue::Date(time)
         }
         Counter => {
             if buf.len() != 8 {
@@ -597,7 +607,13 @@ fn deser_cql_value(typ: &ColumnType, buf: &mut &[u8]) -> StdResult<CQLValue, Par
                     buf.len()
                 )));
             }
-            CQLValue::Time(buf.read_u64::<BigEndian>()?)
+            let nanoseconds = buf.read_i64::<BigEndian>()?;
+            if nanoseconds < 0 {
+                return Err(ParseError::BadData(
+                    "Time shouldn't be negative.".to_string(),
+                ));
+            }
+            CQLValue::Time(Duration::from_nanos(nanoseconds.try_into().unwrap()))
         }
         Timeuuid => {
             if buf.len() != 16 {

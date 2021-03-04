@@ -1,10 +1,12 @@
 use super::result::{CQLValue, Row};
 use crate::frame::value::Counter;
 use bigdecimal::BigDecimal;
+use chrono::prelude::*;
 use num_bigint::BigInt;
 use std::collections::HashMap;
 use std::hash::Hash;
 use std::net::IpAddr;
+use std::time::Duration;
 use thiserror::Error;
 use uuid::Uuid;
 
@@ -77,7 +79,7 @@ impl_from_cql_val!(Counter, as_counter); // Counter::from_cql<CQLValue>
 impl_from_cql_val!(i16, as_smallint); // i16::from_cql<CQLValue>
 impl_from_cql_val!(BigInt, into_varint); // BigInt::from_cql<CQLValue>
 impl_from_cql_val!(i8, as_tinyint); // i8::from_cql<CQLValue>
-impl_from_cql_val!(u32, as_date); // u32::from_cql<CQLValue>
+impl_from_cql_val!(NaiveDate, as_date); // NaiveDate::from_cql<CQLValue>
 impl_from_cql_val!(f32, as_float); // f32::from_cql<CQLValue>
 impl_from_cql_val!(f64, as_double); // f64::from_cql<CQLValue>
 impl_from_cql_val!(bool, as_boolean); // bool::from_cql<CQLValue>
@@ -85,6 +87,7 @@ impl_from_cql_val!(String, into_string); // String::from_cql<CQLValue>
 impl_from_cql_val!(IpAddr, as_inet); // IpAddr::from_cql<CQLValue>
 impl_from_cql_val!(Uuid, as_uuid); // Uuid::from_cql<CQLValue>
 impl_from_cql_val!(BigDecimal, into_decimal); // BigDecimal::from_cql<CQLValue>
+impl_from_cql_val!(Duration, as_time); // Duration::from_cql<CQLValue>
 
 // Vec<T>::from_cql<CQLValue>
 impl<T: FromCQLVal<CQLValue>> FromCQLVal<CQLValue> for Vec<T> {

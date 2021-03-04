@@ -9,6 +9,12 @@ use num_enum::TryFromPrimitive;
 pub use error::Error;
 pub use supported::Supported;
 
+// Time constans
+pub const DAYS_CENTERED: u32 = 2147483648;
+pub const UNIX_TIME_YEAR: i32 = 1970;
+pub const UNIX_TIME_MONTH: u32 = 1;
+pub const UNIX_TIME_DAY: u32 = 1;
+
 #[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord, TryFromPrimitive)]
 #[repr(u8)]
 pub enum ResponseOpcode {
