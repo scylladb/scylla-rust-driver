@@ -189,12 +189,23 @@ impl_tuple_from_cql!(T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, T12, T13, T14
 impl_tuple_from_cql!(T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, T12, T13, T14, T15);
 impl_tuple_from_cql!(T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, T12, T13, T14, T15, T16);
 
+/*impl_from_cql_val!(Uuid, as_uuid); // Uuid::from_cql<CQLValue>
+
+*/
 #[cfg(test)]
 mod tests {
     use super::{CQLValue, FromCQLVal, FromCQLValError, FromRow, FromRowError, Row};
     use crate as scylla;
     use crate::macros::FromRow;
+    use num_bigint::{BigInt, ToBigInt};
     use std::net::{IpAddr, Ipv4Addr};
+    use uuid::Uuid;
+
+    #[test]
+    fn uuid_from_cql() {
+        let my_uuid = Uuid::parse_str("936DA01F9ABD4d9d80C702AF85C822A8").unwrap();
+        assert_eq!(Ok(my_uuid), Uuid::from_cql(CQLValue::Uuid(my_uuid)));
+    }
 
     #[test]
     fn i32_from_cql() {
@@ -202,8 +213,32 @@ mod tests {
     }
 
     #[test]
+    fn bool_from_cql() {
+        assert_eq!(Ok(true), bool::from_cql(CQLValue::Boolean(true)));
+        assert_eq!(Ok(false), bool::from_cql(CQLValue::Boolean(false)));
+    }
+
+    #[test]
+    fn floatingpoints_from_cql() {
+        let float: f32 = 2.13;
+        let double: f64 = 4.26;
+        assert_eq!(Ok(float), f32::from_cql(CQLValue::Float(float)));
+        assert_eq!(Ok(double), f64::from_cql(CQLValue::Double(double)));
+    }
+
+    #[test]
     fn i64_from_cql() {
         assert_eq!(Ok(1234), i64::from_cql(CQLValue::BigInt(1234)));
+    }
+
+    #[test]
+    fn i8_from_cql() {
+        assert_eq!(Ok(6), i8::from_cql(CQLValue::TinyInt(6)));
+    }
+
+    #[test]
+    fn i16_from_cql() {
+        assert_eq!(Ok(16), i16::from_cql(CQLValue::SmallInt(16)));
     }
 
     #[test]
@@ -222,6 +257,15 @@ mod tests {
     fn ip_addr_from_cql() {
         let ip_addr = IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1));
         assert_eq!(Ok(ip_addr), IpAddr::from_cql(CQLValue::Inet(ip_addr)));
+    }
+
+    #[test]
+    fn varint_from_cql() {
+        let big_int = 0.to_bigint().unwrap();
+        assert_eq!(
+            Ok(big_int),
+            BigInt::from_cql(CQLValue::Varint(0.to_bigint().unwrap()))
+        );
     }
 
     #[test]
