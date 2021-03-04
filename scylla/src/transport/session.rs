@@ -55,13 +55,15 @@ pub struct SessionConfig {
     pub keyspace_case_sensitive: bool,
 
     pub retry_policy: Box<dyn RetryPolicy + Send + Sync>,
+    
+    /// Should session use TLS
+    pub use_tls: bool,
     /*
     These configuration options will be added in the future:
 
     pub auth_username: Option<String>,
     pub auth_password: Option<String>,
 
-    pub use_tls: bool,
     pub tls_certificate_path: Option<String>,
 
     pub tcp_keepalive: bool,
@@ -97,6 +99,7 @@ impl SessionConfig {
             used_keyspace: None,
             keyspace_case_sensitive: false,
             retry_policy: Box::new(DefaultRetryPolicy),
+            use_tls: false,
         }
     }
 
@@ -161,6 +164,7 @@ impl SessionConfig {
         ConnectionConfig {
             compression: self.compression,
             tcp_nodelay: self.tcp_nodelay,
+            use_tls: self.use_tls,
         }
     }
 }
