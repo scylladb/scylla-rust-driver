@@ -27,6 +27,8 @@ bigdecimal = "0.2.0"
 num-bigint = "0.3"
 tracing = "0.1.25"
 chrono = "0.4"
+openssl = "0.10.32"
+tokio-openssl = "0.6.1"
 
 [dev-dependencies]
 criterion = "0.3"

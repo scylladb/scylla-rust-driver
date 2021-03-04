@@ -1,8 +1,12 @@
 use bytes::Bytes;
 use futures::{future::RemoteHandle, FutureExt};
-use tokio::net::{tcp, TcpSocket, TcpStream};
+use tokio::io::{split, AsyncRead, AsyncWrite};
+use tokio::net::{TcpSocket, TcpStream};
 use tokio::sync::{mpsc, oneshot};
 use tracing::{error, warn};
+
+use openssl::ssl::{SslConnector, SslMethod};
+use tokio_openssl::SslStream;
 
 use std::collections::HashMap;
 use std::convert::TryFrom;
@@ -59,13 +63,13 @@ struct TaskResponse {
 pub struct ConnectionConfig {
     pub compression: Option<Compression>,
     pub tcp_nodelay: bool,
+    pub use_tls: bool,
     /*
     These configuration options will be added in the future:
 
     pub auth_username: Option<String>,
     pub auth_password: Option<String>,
 
-    pub use_tls: bool,
     pub tls_certificate_path: Option<String>,
 
     pub tcp_keepalive: bool,
@@ -108,8 +112,18 @@ impl Connection {
 
         let (error_sender, error_receiver) = tokio::sync::oneshot::channel();
 
-        let (fut, _worker_handle) = Self::router(stream, receiver, error_sender).remote_handle();
-        tokio::task::spawn(fut);
+        let _worker_handle = match config.use_tls {
+            true => {
+                let ssl = SslConnector::builder(SslMethod::tls())?
+                    .build()
+                    .configure()?
+                    .into_ssl(&addr.to_string())?;
+
+                let stream = SslStream::new(ssl, stream)?;
+                Self::run_router(stream, receiver, error_sender)
+            }
+            false => Self::run_router(stream, receiver, error_sender),
+        };
 
         let connection = Connection {
             submit_channel: sender,
@@ -376,12 +390,22 @@ impl Connection {
         Ok(response)
     }
 
+    fn run_router(
+        stream: (impl AsyncRead + AsyncWrite + Send + 'static),
+        receiver: mpsc::Receiver<Task>,
+        error_sender: tokio::sync::oneshot::Sender<QueryError>,
+    ) -> RemoteHandle<()> {
+        let (task, handle) = Self::router(stream, receiver, error_sender).remote_handle();
+        tokio::task::spawn(task);
+        handle
+    }
+
     async fn router(
-        mut stream: TcpStream,
+        stream: (impl AsyncRead + AsyncWrite),
         receiver: mpsc::Receiver<Task>,
         error_sender: tokio::sync::oneshot::Sender<QueryError>,
     ) {
-        let (read_half, write_half) = stream.split();
+        let (read_half, write_half) = split(stream);
 
         // Why are using a mutex here?
         //
@@ -421,7 +445,7 @@ impl Connection {
     }
 
     async fn reader(
-        mut read_half: tcp::ReadHalf<'_>,
+        mut read_half: (impl AsyncRead + Unpin),
         handler_map: &StdMutex<ResponseHandlerMap>,
     ) -> Result<(), QueryError> {
         loop {
@@ -468,7 +492,7 @@ impl Connection {
     }
 
     async fn writer(
-        mut write_half: tcp::WriteHalf<'_>,
+        mut write_half: (impl AsyncWrite + Unpin),
         handler_map: &StdMutex<ResponseHandlerMap>,
         mut task_receiver: mpsc::Receiver<Task>,
     ) -> Result<(), QueryError> {
