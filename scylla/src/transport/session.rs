@@ -58,13 +58,13 @@ pub struct SessionConfig {
     
     /// Should session use TLS
     pub use_tls: bool,
+    pub tls_certificate_path: Option<String>,
     /*
     These configuration options will be added in the future:
 
     pub auth_username: Option<String>,
     pub auth_password: Option<String>,
 
-    pub tls_certificate_path: Option<String>,
 
     pub tcp_keepalive: bool,
 
@@ -100,6 +100,7 @@ impl SessionConfig {
             keyspace_case_sensitive: false,
             retry_policy: Box::new(DefaultRetryPolicy),
             use_tls: false,
+            tls_certificate_path: None,
         }
     }
 
@@ -165,6 +166,7 @@ impl SessionConfig {
             compression: self.compression,
             tcp_nodelay: self.tcp_nodelay,
             use_tls: self.use_tls,
+            tls_certificate_path: self.tls_certificate_path.clone(),
         }
     }
 }

@@ -226,6 +226,7 @@ impl SessionBuilder {
 
     /// Decide if session should use TLS.
     /// The default is false.
+    /// Has to be used with tls_certificate_path.
     ///
     /// # Example
     /// ```
@@ -234,6 +235,7 @@ impl SessionBuilder {
     /// let session: Session = SessionBuilder::new()
     ///     .known_node("127.0.0.1:9042")
     ///     .use_tls(true)
+    ///     .tls_certificate_path("certificates/tls.pem")
     ///     .build()
     ///     .await?;
     /// # Ok(())
@@ -241,6 +243,27 @@ impl SessionBuilder {
     /// ``` 
     pub fn use_tls(mut self, use_tls: bool) -> Self {
         self.config.use_tls = use_tls;
+        self
+    }
+
+    /// Provide TLS Certificate Path for our connection
+    /// Argument should be a path to your .pem file.
+    ///
+    /// # Example
+    /// ```
+    /// # use scylla::{Session, SessionBuilder};
+    /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
+    /// let session: Session = SessionBuilder::new()
+    ///     .known_node("127.0.0.1:9042")
+    ///     .use_tls(true)
+    ///     .tls_certificate_path("certificates/tls.pem")
+    ///     .build()
+    ///     .await?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn tls_certificate_path(mut self, tls_certificate_path: String) -> Self {
+        self.config.tls_certificate_path = Some(tls_certificate_path);
         self
     }
 
@@ -411,6 +434,20 @@ mod tests {
 
         builder = builder.use_tls(false);
         assert_eq!(builder.config.use_tls, false);
+    }
+
+    #[test]
+    fn tls_certificate_path() {
+        let mut builder = SessionBuilder::new();
+        assert_eq!(builder.config.tls_certificate_path, None);
+
+        let host = "localhost".to_string();
+        builder = builder.tls_certificate_path(host.clone());
+        assert_eq!(builder.config.tls_certificate_path, Some(host));
+
+        let host = "127.0.0.1".to_string();
+        builder = builder.tls_certificate_path(host.clone());
+        assert_eq!(builder.config.tls_certificate_path, Some(host));
     }
 
     #[test]

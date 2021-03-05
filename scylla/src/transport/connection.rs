@@ -64,13 +64,12 @@ pub struct ConnectionConfig {
     pub compression: Option<Compression>,
     pub tcp_nodelay: bool,
     pub use_tls: bool,
+    pub tls_certificate_path: Option<String>,
     /*
     These configuration options will be added in the future:
 
     pub auth_username: Option<String>,
     pub auth_password: Option<String>,
-
-    pub tls_certificate_path: Option<String>,
 
     pub tcp_keepalive: bool,
 
@@ -114,10 +113,13 @@ impl Connection {
 
         let _worker_handle = match config.use_tls {
             true => {
-                let ssl = SslConnector::builder(SslMethod::tls())?
-                    .build()
-                    .configure()?
-                    .into_ssl(&addr.to_string())?;
+                let tls_certificate_path = match config.tls_certificate_path {
+                    Some(ref path) => path,
+                    None => panic!("certificate path not provided!"),
+                };
+                let mut connector = SslConnector::builder(SslMethod::tls())?;
+                connector.set_ca_file(tls_certificate_path)?;
+                let ssl = connector.build().configure()?.into_ssl(&addr.to_string())?;
 
                 let stream = SslStream::new(ssl, stream)?;
                 Self::run_router(stream, receiver, error_sender)
