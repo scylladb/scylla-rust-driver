@@ -217,17 +217,15 @@ impl Value for u64 {
 
 impl Value for BigDecimal {
     fn serialize(&self, buf: &mut Vec<u8>) -> Result<(), ValueTooBig> {
-        let bytes_num_pos: usize = buf.len();
-        buf.put_i32(0);
-
         let (value, scale) = self.as_bigint_and_exponent();
 
-        buf.put_i32(scale.try_into().expect("scale incorrect"));
-        buf.extend_from_slice(&value.to_signed_bytes_be());
+        let serialized = value.to_signed_bytes_be();
+        let serialized_len: i32 = serialized.len().try_into().map_err(|_| ValueTooBig)?;
 
-        let written_bytes: usize = buf.len() - bytes_num_pos - 4;
-        let written_bytes_i32: i32 = written_bytes.try_into().map_err(|_| ValueTooBig)?;
-        buf[bytes_num_pos..(bytes_num_pos + 4)].copy_from_slice(&written_bytes_i32.to_be_bytes());
+        buf.put_i32(serialized_len + 4);
+        buf.put_i32(scale.try_into().map_err(|_| ValueTooBig)?);
+        buf.extend_from_slice(&serialized);
+
         Ok(())
     }
 }
@@ -273,14 +271,12 @@ impl Value for Uuid {
 
 impl Value for BigInt {
     fn serialize(&self, buf: &mut Vec<u8>) -> Result<(), ValueTooBig> {
-        let bytes_num_pos: usize = buf.len();
+        let serialized = self.to_signed_bytes_be();
+        let serialized_len: i32 = serialized.len().try_into().map_err(|_| ValueTooBig)?;
 
-        buf.put_i32(0);
-        buf.extend_from_slice(&self.to_signed_bytes_be());
+        buf.put_i32(serialized_len);
+        buf.extend_from_slice(&serialized);
 
-        let written_bytes: usize = buf.len() - bytes_num_pos - 4;
-        let written_bytes_i32: i32 = written_bytes.try_into().map_err(|_| ValueTooBig)?;
-        buf[bytes_num_pos..(bytes_num_pos + 4)].copy_from_slice(&written_bytes_i32.to_be_bytes());
         Ok(())
     }
 }

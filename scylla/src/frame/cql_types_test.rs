@@ -1,12 +1,12 @@
 use crate::transport::session::IntoTypedRows;
 use crate::transport::session::Session;
 use crate::SessionBuilder;
+use bigdecimal::BigDecimal;
 use num_bigint::{BigInt, ToBigInt};
 use std::env;
 
 // TODO: Requires a running local Scylla instance
 #[tokio::test]
-#[ignore]
 async fn test_cql_types() {
     // Create connection
     let uri = env::var("SCYLLA_URI").unwrap_or_else(|_| "127.0.0.1:9042".to_string());
@@ -65,6 +65,7 @@ async fn test_cql_types() {
         for row in rows.into_typed::<(bool,)>() {
             let bool_val: bool = row.unwrap().0;
             println!("bool value: {}", bool_val);
+            assert_eq!(bool_val, true);
         }
     }
 
@@ -87,14 +88,30 @@ async fn test_cql_types() {
         .await
         .unwrap();
 
+    session
+        .query(
+            "INSERT INTO ks.floatingpoint (floatval, id) VALUES (?, 2)",
+            (f32::MAX,),
+        )
+        .await
+        .unwrap();
+
+    session
+        .query(
+            "INSERT INTO ks.floatingpoint (floatval, id) VALUES (?, 2)",
+            (f32::MIN,),
+        )
+        .await
+        .unwrap();
+
     if let Some(rows) = session
         .query("SELECT floatval FROM ks.floatingpoint", &[])
         .await
         .unwrap()
     {
         for row in rows.into_typed::<(f32,)>() {
-            let bool_val: f32 = row.unwrap().0;
-            println!("float value: {}", bool_val);
+            let row_val: f32 = row.unwrap().0;
+            println!("float value: {}", row_val);
         }
     }
 
@@ -109,7 +126,7 @@ async fn test_cql_types() {
         .unwrap();
 
     let val_positive = 10000.to_bigint().unwrap();
-    let val_negative = (-10000).to_bigint().unwrap();
+    let val_negative = (-1111111111111111111_i64).to_bigint().unwrap();
 
     session
         .query(
@@ -121,20 +138,129 @@ async fn test_cql_types() {
 
     session
         .query(
-            "INSERT INTO ks.varint_table (value, id) VALUES (?, 1)",
+            "INSERT INTO ks.varint_table (value, id) VALUES (?, 2)",
             (val_negative,),
         )
         .await
         .unwrap();
 
     if let Some(rows) = session
-        .query("SELECT value FROM ks.varint_table", &[])
+        .query("SELECT value FROM ks.varint_table where id = 1", &[])
         .await
         .unwrap()
     {
         for row in rows.into_typed::<(BigInt,)>() {
-            let bool_val: BigInt = row.unwrap().0;
-            println!("varint value: {}", bool_val);
+            let bigint_value_row: BigInt = row.unwrap().0;
+            println!("varint value: {}", bigint_value_row);
+            assert_eq!(bigint_value_row, 10000.to_bigint().unwrap());
+        }
+    }
+
+    if let Some(rows) = session
+        .query("SELECT value FROM ks.varint_table where id = 2", &[])
+        .await
+        .unwrap()
+    {
+        for row in rows.into_typed::<(BigInt,)>() {
+            let bigint_value_row: BigInt = row.unwrap().0;
+            println!("varint value: {}", bigint_value_row);
+            assert_eq!(
+                bigint_value_row,
+                (-1111111111111111111_i64).to_bigint().unwrap()
+            );
+        }
+    }
+
+    // Decimal
+
+    session
+        .query(
+            "CREATE TABLE IF NOT EXISTS ks.decimal_table (value decimal, id int PRIMARY KEY)",
+            &[],
+        )
+        .await
+        .unwrap();
+
+    let scale: i64 = 2;
+    let val_positive = 10000.to_bigint().unwrap();
+    let val_negative = (-1111111111111111111_i64).to_bigint().unwrap();
+
+    let decimal_positive = BigDecimal::from((val_positive, scale));
+    let decimal_negative = BigDecimal::from((val_negative, scale));
+
+    let decimal_other = BigDecimal::from(-234);
+
+    session
+        .query(
+            "INSERT INTO ks.decimal_table (value, id) VALUES (?, 1)",
+            (decimal_positive,),
+        )
+        .await
+        .unwrap();
+
+    session
+        .query(
+            "INSERT INTO ks.decimal_table (value, id) VALUES (1000000000000000000000000000000.111, 5)",
+            (),
+        )
+        .await
+        .unwrap();
+
+    if let Some(rows) = session
+        .query("SELECT value FROM ks.decimal_table WHERE id = 1", &[])
+        .await
+        .unwrap()
+    {
+        for row in rows.into_typed::<(BigDecimal,)>() {
+            let decimal_new: BigDecimal = row.unwrap().0;
+            println!("decimal value: {}", decimal_new);
+            assert_eq!(
+                decimal_new,
+                BigDecimal::from((10000.to_bigint().unwrap(), scale))
+            );
+        }
+    }
+
+    session
+        .query(
+            "INSERT INTO ks.decimal_table (value, id) VALUES (?, 2)",
+            (decimal_negative,),
+        )
+        .await
+        .unwrap();
+
+    if let Some(rows) = session
+        .query("SELECT value FROM ks.decimal_table WHERE id = 2", &[])
+        .await
+        .unwrap()
+    {
+        for row in rows.into_typed::<(BigDecimal,)>() {
+            let decimal_new: BigDecimal = row.unwrap().0;
+            println!("decimal value: {}", decimal_new);
+            assert_eq!(
+                decimal_new,
+                BigDecimal::from(((-1111111111111111111_i64).to_bigint().unwrap(), scale))
+            );
+        }
+    }
+
+    session
+        .query(
+            "INSERT INTO ks.decimal_table (value, id) VALUES (?, 3)",
+            (decimal_other,),
+        )
+        .await
+        .unwrap();
+
+    if let Some(rows) = session
+        .query("SELECT value FROM ks.decimal_table WHERE id = 3", &[])
+        .await
+        .unwrap()
+    {
+        for row in rows.into_typed::<(BigDecimal,)>() {
+            let decimal_new: BigDecimal = row.unwrap().0;
+            println!("decimal value: {}", decimal_new);
+            assert_eq!(decimal_new, BigDecimal::from(-234));
         }
     }
 }

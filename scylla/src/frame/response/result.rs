@@ -3,7 +3,7 @@ use crate::frame::{frame_errors::ParseError, types};
 use bigdecimal::BigDecimal;
 use byteorder::{BigEndian, ReadBytesExt};
 use bytes::{Buf, Bytes};
-use num_bigint::{BigInt, Sign};
+use num_bigint::BigInt;
 use std::{
     collections::BTreeMap,
     convert::{TryFrom, TryInto},
@@ -519,14 +519,7 @@ fn deser_cql_value(typ: &ColumnType, buf: &mut &[u8]) -> StdResult<CQLValue, Par
         }
         Decimal => {
             let scale = types::read_int(buf)? as i64;
-
-            let int_value;
-            if buf[0] == 0x00 {
-                int_value = num_bigint::BigInt::from_bytes_be(Sign::Plus, buf);
-            } else {
-                int_value = num_bigint::BigInt::from_bytes_be(Sign::Minus, buf);
-            }
-
+            let int_value = num_bigint::BigInt::from_signed_bytes_be(buf);
             let big_decimal: BigDecimal = BigDecimal::from((int_value, scale));
 
             CQLValue::Decimal(big_decimal)
@@ -643,15 +636,7 @@ fn deser_cql_value(typ: &ColumnType, buf: &mut &[u8]) -> StdResult<CQLValue, Par
             let uuid = uuid::Uuid::from_slice(buf).expect("Deserializing Uuid failed.");
             CQLValue::Uuid(uuid)
         }
-        Varint => {
-            let int_value;
-            if buf[0] == 0x00 {
-                int_value = num_bigint::BigInt::from_bytes_be(Sign::Plus, buf);
-            } else {
-                int_value = num_bigint::BigInt::from_bytes_be(Sign::Minus, buf);
-            }
-            CQLValue::Varint(int_value)
-        }
+        Varint => CQLValue::Varint(num_bigint::BigInt::from_signed_bytes_be(buf)),
         List(type_name) => {
             let len: usize = types::read_int(buf)?.try_into()?;
             let mut res = Vec::with_capacity(len);
@@ -791,7 +776,164 @@ pub fn deserialize(buf: &mut &[u8]) -> StdResult<Result, ParseError> {
 #[cfg(test)]
 mod tests {
     use crate as scylla;
-    use scylla::frame::response::result::CQLValue;
+    use bigdecimal::BigDecimal;
+    use num_bigint::ToBigInt;
+    use scylla::frame::response::result::{CQLValue, ColumnType};
+    use uuid::Uuid;
+
+    #[test]
+    fn test_deserialize_text_types() {
+        let mut buf = Vec::<u8>::new();
+        buf.push(0x41);
+        let int_slice = &mut &buf[..];
+        let ascii_serialized = super::deser_cql_value(&ColumnType::Ascii, int_slice).unwrap();
+        let text_serialized = super::deser_cql_value(&ColumnType::Text, int_slice).unwrap();
+        assert_eq!(ascii_serialized, CQLValue::Ascii("A".to_string()));
+        assert_eq!(text_serialized, CQLValue::Text("A".to_string()));
+    }
+
+    #[test]
+    fn test_deserialize_uuid_inet_types() {
+        let my_uuid = Uuid::parse_str("00000000000000000000000000000001").unwrap();
+
+        let uuid_buf: Vec<u8> = vec![0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1];
+        let uuid_slice = &mut &uuid_buf[..];
+        let uuid_serialize = super::deser_cql_value(&ColumnType::Uuid, uuid_slice).unwrap();
+        assert_eq!(uuid_serialize, CQLValue::Uuid(my_uuid));
+
+        let time_uuid_serialize =
+            super::deser_cql_value(&ColumnType::Timeuuid, uuid_slice).unwrap();
+        assert_eq!(time_uuid_serialize, CQLValue::Timeuuid(my_uuid));
+
+        let my_ip = "::1".parse().unwrap();
+        let ip_buf: Vec<u8> = vec![0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1];
+        let ip_slice = &mut &ip_buf[..];
+        let ip_serialize = super::deser_cql_value(&ColumnType::Inet, ip_slice).unwrap();
+        assert_eq!(ip_serialize, CQLValue::Inet(my_ip));
+
+        let max_ip = "ffff:ffff:ffff:ffff:ffff:ffff:ffff:ffff".parse().unwrap();
+        let max_ip_buf: Vec<u8> = vec![
+            255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255,
+        ];
+        let max_ip_slice = &mut &max_ip_buf[..];
+        let max_ip_serialize = super::deser_cql_value(&ColumnType::Inet, max_ip_slice).unwrap();
+        assert_eq!(max_ip_serialize, CQLValue::Inet(max_ip));
+    }
+
+    #[test]
+    fn test_floating_points() {
+        let float: f32 = 0.5;
+        let double: f64 = 2.0;
+
+        let float_buf: Vec<u8> = vec![63, 0, 0, 0];
+        let float_slice = &mut &float_buf[..];
+        let float_serialize = super::deser_cql_value(&ColumnType::Float, float_slice).unwrap();
+        assert_eq!(float_serialize, CQLValue::Float(float));
+
+        let double_buf: Vec<u8> = vec![64, 0, 0, 0, 0, 0, 0, 0];
+        let double_slice = &mut &double_buf[..];
+        let double_serialize = super::deser_cql_value(&ColumnType::Double, double_slice).unwrap();
+        assert_eq!(double_serialize, CQLValue::Double(double));
+    }
+
+    #[test]
+    fn test_deserialize_varint_and_decimal() {
+        let bigint_value = 1_i32.to_bigint().unwrap();
+
+        let bigint: Vec<u8> = vec![0x01];
+        let bigint_slice = &mut &bigint[..];
+        let bigint_serialize = super::deser_cql_value(&ColumnType::Varint, bigint_slice).unwrap();
+        assert_eq!(bigint_serialize, CQLValue::Varint(bigint_value));
+
+        let scale = 1;
+
+        let bigdecimal = BigDecimal::from((1_i32.to_bigint().unwrap(), scale));
+        let bigdecimal_buf: Vec<u8> = vec![0, 0, 0, 1, 0x01];
+        let bigdecimal_slice = &mut &bigdecimal_buf[..];
+        let bigdecimal_serialize =
+            super::deser_cql_value(&ColumnType::Decimal, bigdecimal_slice).unwrap();
+
+        assert_eq!(bigdecimal_serialize, CQLValue::Decimal(bigdecimal));
+
+        let bigint_value_negative = (-128_i32).to_bigint().unwrap();
+
+        let bigint_negative: Vec<u8> = vec![0x80];
+        let bigint_negative_slice = &mut &bigint_negative[..];
+        let bigint_negative_serialize =
+            super::deser_cql_value(&ColumnType::Varint, bigint_negative_slice).unwrap();
+        assert_eq!(
+            bigint_negative_serialize,
+            CQLValue::Varint(bigint_value_negative)
+        );
+
+        let scale = 2;
+
+        let bigdecimal_negative = BigDecimal::from(((-128_i32).to_bigint().unwrap(), scale));
+        let bigdecimal_buf_negative: Vec<u8> = vec![0, 0, 0, 2, 0x80];
+        let bigdecimal_slice_negative = &mut &bigdecimal_buf_negative[..];
+        let bigdecimal_serialize_negative =
+            super::deser_cql_value(&ColumnType::Decimal, bigdecimal_slice_negative).unwrap();
+
+        assert_eq!(
+            bigdecimal_serialize_negative,
+            CQLValue::Decimal(bigdecimal_negative)
+        );
+    }
+
+    #[test]
+    fn test_deserialize_counter() {
+        let counter: Vec<u8> = vec![0, 0, 0, 0, 0, 0, 1, 0];
+        let counter_slice = &mut &counter[..];
+        let counter_serialize =
+            super::deser_cql_value(&ColumnType::Counter, counter_slice).unwrap();
+        assert_eq!(counter_serialize, CQLValue::Counter(256));
+    }
+
+    #[test]
+    fn test_deserialize_blob() {
+        let blob: Vec<u8> = vec![0, 1, 2, 3];
+        let blob_slice = &mut &blob[..];
+        let blob_serialize = super::deser_cql_value(&ColumnType::Blob, blob_slice).unwrap();
+        assert_eq!(blob_serialize, CQLValue::Blob(blob));
+    }
+
+    #[test]
+    fn test_deserialize_bool() {
+        let bool_buf: Vec<u8> = vec![0x00];
+        let bool_slice = &mut &bool_buf[..];
+        let bool_serialize = super::deser_cql_value(&ColumnType::Boolean, bool_slice).unwrap();
+        assert_eq!(bool_serialize, CQLValue::Boolean(false));
+
+        let bool_buf: Vec<u8> = vec![0x01];
+        let bool_slice = &mut &bool_buf[..];
+        let bool_serialize = super::deser_cql_value(&ColumnType::Boolean, bool_slice).unwrap();
+        assert_eq!(bool_serialize, CQLValue::Boolean(true));
+    }
+
+    #[test]
+    fn test_deserialize_int_types() {
+        let int_buf: Vec<u8> = vec![0, 0, 0, 4];
+        let int_slice = &mut &int_buf[..];
+        let int_serialized = super::deser_cql_value(&ColumnType::Int, int_slice).unwrap();
+        assert_eq!(int_serialized, CQLValue::Int(4));
+
+        let smallint_buf: Vec<u8> = vec![0, 4];
+        let smallint_slice = &mut &smallint_buf[..];
+        let smallint_serialized =
+            super::deser_cql_value(&ColumnType::SmallInt, smallint_slice).unwrap();
+        assert_eq!(smallint_serialized, CQLValue::SmallInt(4));
+
+        let tinyint_buf: Vec<u8> = vec![4];
+        let tinyint_slice = &mut &tinyint_buf[..];
+        let tinyint_serialized =
+            super::deser_cql_value(&ColumnType::TinyInt, tinyint_slice).unwrap();
+        assert_eq!(tinyint_serialized, CQLValue::TinyInt(4));
+
+        let bigint_buf: Vec<u8> = vec![0, 0, 0, 0, 0, 0, 0, 4];
+        let bigint_slice = &mut &bigint_buf[..];
+        let bigint_serialized = super::deser_cql_value(&ColumnType::BigInt, bigint_slice).unwrap();
+        assert_eq!(bigint_serialized, CQLValue::BigInt(4));
+    }
 
     #[test]
     fn test_list_from_cql() {
