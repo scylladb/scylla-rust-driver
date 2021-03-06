@@ -228,7 +228,10 @@ impl Value for NaiveDate {
             super::UNIX_TIME_MONTH,
             super::UNIX_TIME_DAY,
         );
-        let days_centered = self.signed_duration_since(unix_time).num_days() + i64::pow(2, 31);
+        if self.signed_duration_since(unix_time).num_days() > super::DAYS_CENTERED {
+            return Err(ValueTooBig);
+        }
+        let days_centered = self.signed_duration_since(unix_time).num_days() + super::DAYS_CENTERED;
         buf.put_u32(days_centered.try_into().unwrap());
         Ok(())
     }
@@ -237,8 +240,11 @@ impl Value for NaiveDate {
 impl Value for Duration {
     fn serialize(&self, buf: &mut Vec<u8>) -> Result<(), ValueTooBig> {
         buf.put_i32(8);
-        let nanoseconds = self.as_nanos() as u64;
-        buf.put_i64(nanoseconds.try_into().unwrap());
+        let nanoseconds = self.as_nanos() as i64;
+        if nanoseconds < 0 {
+            return Err(ValueTooBig);
+        }
+        buf.put_i64(nanoseconds);
         Ok(())
     }
 }

@@ -510,7 +510,16 @@ fn deser_cql_value(typ: &ColumnType, buf: &mut &[u8]) -> StdResult<CQLValue, Par
                     buf.len()
                 )));
             }
-            let timestamp = buf.read_u32::<BigEndian>()? - super::DAYS_CENTERED;
+            let value_from_scylla = buf.read_u32::<BigEndian>()?;
+            if !(super::NAIVE_DATE_MIN_TIMESTAMP..=super::NAIVE_DATE_MAX_TIMESTAMP)
+                .contains(&value_from_scylla)
+            {
+                return Err(ParseError::BadData(format!(
+                    "Date cannot be converted to NaiveDate format: {}",
+                    value_from_scylla
+                )));
+            }
+            let timestamp = value_from_scylla - super::DAYS_CENTERED;
             //  An unsigned integer representing days with epoch centered at 2^31. (unix epoch January 1st, 1970).
             let time = NaiveDate::from_ymd(
                 super::UNIX_TIME_YEAR,
@@ -609,9 +618,9 @@ fn deser_cql_value(typ: &ColumnType, buf: &mut &[u8]) -> StdResult<CQLValue, Par
             }
             let nanoseconds = buf.read_i64::<BigEndian>()?;
             if nanoseconds < 0 {
-                return Err(ParseError::BadData(
-                    "Time shouldn't be negative.".to_string(),
-                ));
+                return Err(ParseError::BadData(format! {
+                    "Time shouldn't be negative: {}.", nanoseconds
+                }));
             }
             CQLValue::Time(Duration::from_nanos(nanoseconds.try_into().unwrap()))
         }
@@ -795,10 +804,12 @@ mod tests {
     use crate as scylla;
     use crate::frame::value::Counter;
     use bigdecimal::BigDecimal;
+    use chrono::NaiveDate;
     use num_bigint::BigInt;
     use num_bigint::ToBigInt;
     use scylla::frame::response::result::{CQLValue, ColumnType};
     use std::str::FromStr;
+    use std::time::Duration;
     use uuid::Uuid;
 
     #[test]
@@ -1053,5 +1064,33 @@ mod tests {
 
         assert_eq!(CQLValue::Int(2), decoded[1].0);
         assert_eq!(CQLValue::Int(3), decoded[1].1);
+    }
+
+    #[test]
+    fn test_date_time_serialization() {
+        // Time(Duration)
+        let negative_buf: Vec<u8> = vec![128, 0, 0, 0, 0, 0, 0, 0];
+        let time_slice = &mut &negative_buf[..];
+
+        let _err_negative = super::deser_cql_value(&ColumnType::Time, time_slice).unwrap_err();
+
+        let buf: Vec<u8> = vec![0, 0, 0, 0, 0, 0, 0, 1];
+        let time_slice_new = &mut &buf[..];
+
+        let duration_excpected = Duration::new(0, 1);
+        let duration_got = super::deser_cql_value(&ColumnType::Time, time_slice_new).unwrap();
+        assert_eq!(duration_got, CQLValue::Time(duration_excpected));
+
+        let time_unix = NaiveDate::from_ymd(1970, 1, 1);
+        let time_buf_unix: Vec<u8> = vec![128, 0, 0, 0];
+        let unix_slice = &mut &time_buf_unix[..];
+        let date_deserialize = super::deser_cql_value(&ColumnType::Date, unix_slice).unwrap();
+        assert_eq!(date_deserialize, CQLValue::Date(time_unix));
+
+        let time_biggest = NaiveDate::from_ymd(262143, 12, 31);
+        let buf_big: Vec<u8> = vec![133, 169, 253, 169];
+        let biggest_slice = &mut &buf_big[..];
+        let date_deserialize = super::deser_cql_value(&ColumnType::Date, biggest_slice).unwrap();
+        assert_eq!(date_deserialize, CQLValue::Date(time_biggest));
     }
 }
