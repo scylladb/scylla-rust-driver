@@ -5,7 +5,6 @@ use bigdecimal::BigDecimal;
 use byteorder::{BigEndian, ReadBytesExt};
 use bytes::{Buf, Bytes};
 use chrono::prelude::*;
-use chrono::Duration as DurationDateTime;
 use num_bigint::BigInt;
 use std::time::Duration;
 use std::{
@@ -511,21 +510,25 @@ fn deser_cql_value(typ: &ColumnType, buf: &mut &[u8]) -> StdResult<CQLValue, Par
                 )));
             }
             let value_from_scylla = buf.read_u32::<BigEndian>()?;
-            if !(super::NAIVE_DATE_MIN_TIMESTAMP..=super::NAIVE_DATE_MAX_TIMESTAMP)
-                .contains(&value_from_scylla)
-            {
-                return Err(ParseError::BadData(format!(
-                    "Date cannot be converted to NaiveDate format: {}",
-                    value_from_scylla
-                )));
-            }
-            let timestamp = value_from_scylla - super::DAYS_CENTERED;
-            //  An unsigned integer representing days with epoch centered at 2^31. (unix epoch January 1st, 1970).
+
+            // value from scylla is u32 then converted to i64
+            // then we substract 2^31 - this can't panic
+            let days_since_epoch =
+                chrono::Duration::days(value_from_scylla.into()) - chrono::Duration::days(1 << 31);
+
             let time = NaiveDate::from_ymd(
                 super::UNIX_TIME_YEAR,
                 super::UNIX_TIME_MONTH,
                 super::UNIX_TIME_DAY,
-            ) + DurationDateTime::days(timestamp.into());
+            )
+            .checked_add_signed(days_since_epoch)
+            .ok_or_else(|| {
+                ParseError::BadData(format!(
+                    "Date cannot be converted to NaiveDate format: {}",
+                    value_from_scylla
+                ))
+            })?;
+
             CQLValue::Date(time)
         }
         Counter => {

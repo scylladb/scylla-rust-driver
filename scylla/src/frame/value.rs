@@ -228,11 +228,15 @@ impl Value for NaiveDate {
             super::UNIX_TIME_MONTH,
             super::UNIX_TIME_DAY,
         );
-        if self.signed_duration_since(unix_time).num_days() > super::DAYS_CENTERED {
-            return Err(ValueTooBig);
-        }
-        let days_centered = self.signed_duration_since(unix_time).num_days() + super::DAYS_CENTERED;
-        buf.put_u32(days_centered.try_into().unwrap());
+
+        let days: u32 = self
+            .signed_duration_since(unix_time)
+            .num_days()
+            .checked_add(super::DAYS_CENTERED)
+            .and_then(|days| days.try_into().ok()) // convert to u32
+            .ok_or(ValueTooBig)?;
+
+        buf.put_u32(days);
         Ok(())
     }
 }
