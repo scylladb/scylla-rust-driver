@@ -20,42 +20,94 @@ pub enum RetryDecision {
     DontRetry,
 }
 
+/// Specifies a policy used to decide when to retry a query
 pub trait RetryPolicy {
+    /// Called for each new query, starts a session of deciding about retries
+    fn new_session(&self) -> Box<dyn RetrySession + Send + Sync>;
+
+    /// Used to clone this RetryPolicy
+    fn clone_boxed(&self) -> Box<dyn RetryPolicy + Send + Sync>;
+}
+
+/// Used throughout a single query to decide when to retry it
+/// After this query is finished it is destroyed or reset
+pub trait RetrySession {
+    /// Called after the query failed - decide what to do next
     fn decide_should_retry(&mut self, query_info: QueryInfo) -> RetryDecision;
 
-    // Reset before using for the next query
+    /// Reset before using for a new query
     fn reset(&mut self);
-
-    fn clone_boxed(&self) -> Box<dyn RetryPolicy + Send + Sync>;
 }
 
 /// Forwards all errors directly to the user, never retries
 pub struct FallthroughRetryPolicy;
+pub struct FallthroughRetrySession;
+
+impl FallthroughRetryPolicy {
+    pub fn new() -> FallthroughRetryPolicy {
+        FallthroughRetryPolicy
+    }
+}
+
+impl Default for FallthroughRetryPolicy {
+    fn default() -> FallthroughRetryPolicy {
+        FallthroughRetryPolicy
+    }
+}
 
 impl RetryPolicy for FallthroughRetryPolicy {
-    fn decide_should_retry(&mut self, _query_info: QueryInfo) -> RetryDecision {
-        RetryDecision::DontRetry
+    fn new_session(&self) -> Box<dyn RetrySession + Send + Sync> {
+        Box::new(FallthroughRetrySession)
     }
-
-    fn reset(&mut self) {}
 
     fn clone_boxed(&self) -> Box<dyn RetryPolicy + Send + Sync> {
         Box::new(FallthroughRetryPolicy)
     }
 }
 
+impl RetrySession for FallthroughRetrySession {
+    fn decide_should_retry(&mut self, _query_info: QueryInfo) -> RetryDecision {
+        RetryDecision::DontRetry
+    }
+
+    fn reset(&mut self) {}
+}
+
 /// Default retry policy - retries when there is a high chance that a retry might help.  
 /// Behaviour based on [DataStax Java Driver](https://docs.datastax.com/en/developer/java-driver/4.10/manual/core/retries/)
-#[derive(Clone)]
-pub struct DefaultRetryPolicy {
+pub struct DefaultRetryPolicy;
+
+impl DefaultRetryPolicy {
+    pub fn new() -> DefaultRetryPolicy {
+        DefaultRetryPolicy
+    }
+}
+
+impl Default for DefaultRetryPolicy {
+    fn default() -> DefaultRetryPolicy {
+        DefaultRetryPolicy::new()
+    }
+}
+
+impl RetryPolicy for DefaultRetryPolicy {
+    fn new_session(&self) -> Box<dyn RetrySession + Send + Sync> {
+        Box::new(DefaultRetrySession::new())
+    }
+
+    fn clone_boxed(&self) -> Box<dyn RetryPolicy + Send + Sync> {
+        Box::new(DefaultRetryPolicy)
+    }
+}
+
+pub struct DefaultRetrySession {
     was_unavailable_retry: bool,
     was_read_timeout_retry: bool,
     was_write_timeout_retry: bool,
 }
 
-impl DefaultRetryPolicy {
-    pub fn new() -> DefaultRetryPolicy {
-        DefaultRetryPolicy {
+impl DefaultRetrySession {
+    pub fn new() -> DefaultRetrySession {
+        DefaultRetrySession {
             was_unavailable_retry: false,
             was_read_timeout_retry: false,
             was_write_timeout_retry: false,
@@ -63,7 +115,13 @@ impl DefaultRetryPolicy {
     }
 }
 
-impl RetryPolicy for DefaultRetryPolicy {
+impl Default for DefaultRetrySession {
+    fn default() -> DefaultRetrySession {
+        DefaultRetrySession::new()
+    }
+}
+
+impl RetrySession for DefaultRetrySession {
     fn decide_should_retry(&mut self, query_info: QueryInfo) -> RetryDecision {
         match query_info.error {
             // Basic errors - there are some problems on this node
@@ -136,17 +194,7 @@ impl RetryPolicy for DefaultRetryPolicy {
     }
 
     fn reset(&mut self) {
-        *self = DefaultRetryPolicy::new();
-    }
-
-    fn clone_boxed(&self) -> Box<dyn RetryPolicy + Send + Sync> {
-        Box::new(self.clone())
-    }
-}
-
-impl Default for DefaultRetryPolicy {
-    fn default() -> DefaultRetryPolicy {
-        DefaultRetryPolicy::new()
+        *self = DefaultRetrySession::new();
     }
 }
 
@@ -168,13 +216,13 @@ mod tests {
 
     // Asserts that default policy never retries for this Error
     fn default_policy_assert_never_retries(error: QueryError) {
-        let mut policy = DefaultRetryPolicy::new();
+        let mut policy = DefaultRetryPolicy::new().new_session();
         assert_eq!(
             policy.decide_should_retry(make_query_info(&error, false)),
             RetryDecision::DontRetry
         );
 
-        let mut policy = DefaultRetryPolicy::new();
+        let mut policy = DefaultRetryPolicy::new().new_session();
         assert_eq!(
             policy.decide_should_retry(make_query_info(&error, true)),
             RetryDecision::DontRetry
@@ -227,13 +275,13 @@ mod tests {
 
     // Asserts that for this error policy retries on next on idempotent queries only
     fn default_policy_assert_idempotent_next(error: QueryError) {
-        let mut policy = DefaultRetryPolicy::new();
+        let mut policy = DefaultRetryPolicy::new().new_session();
         assert_eq!(
             policy.decide_should_retry(make_query_info(&error, false)),
             RetryDecision::DontRetry
         );
 
-        let mut policy = DefaultRetryPolicy::new();
+        let mut policy = DefaultRetryPolicy::new().new_session();
         assert_eq!(
             policy.decide_should_retry(make_query_info(&error, true)),
             RetryDecision::RetryNextNode
@@ -259,13 +307,13 @@ mod tests {
     fn default_bootstrapping() {
         let error = QueryError::DBError(DBError::IsBootstrapping, String::new());
 
-        let mut policy = DefaultRetryPolicy::new();
+        let mut policy = DefaultRetryPolicy::new().new_session();
         assert_eq!(
             policy.decide_should_retry(make_query_info(&error, false)),
             RetryDecision::RetryNextNode
         );
 
-        let mut policy = DefaultRetryPolicy::new();
+        let mut policy = DefaultRetryPolicy::new().new_session();
         assert_eq!(
             policy.decide_should_retry(make_query_info(&error, true)),
             RetryDecision::RetryNextNode
@@ -284,7 +332,7 @@ mod tests {
             String::new(),
         );
 
-        let mut policy_not_idempotent = DefaultRetryPolicy::new();
+        let mut policy_not_idempotent = DefaultRetryPolicy::new().new_session();
         assert_eq!(
             policy_not_idempotent.decide_should_retry(make_query_info(&error, false)),
             RetryDecision::RetryNextNode
@@ -294,7 +342,7 @@ mod tests {
             RetryDecision::DontRetry
         );
 
-        let mut policy_idempotent = DefaultRetryPolicy::new();
+        let mut policy_idempotent = DefaultRetryPolicy::new().new_session();
         assert_eq!(
             policy_idempotent.decide_should_retry(make_query_info(&error, true)),
             RetryDecision::RetryNextNode
@@ -320,7 +368,7 @@ mod tests {
         );
 
         // Not idempotent
-        let mut policy = DefaultRetryPolicy::new();
+        let mut policy = DefaultRetryPolicy::new().new_session();
         assert_eq!(
             policy.decide_should_retry(make_query_info(&enough_responses_with_data, false)),
             RetryDecision::RetrySameNode
@@ -331,7 +379,7 @@ mod tests {
         );
 
         // Idempotent
-        let mut policy = DefaultRetryPolicy::new();
+        let mut policy = DefaultRetryPolicy::new().new_session();
         assert_eq!(
             policy.decide_should_retry(make_query_info(&enough_responses_with_data, true)),
             RetryDecision::RetrySameNode
@@ -353,14 +401,14 @@ mod tests {
         );
 
         // Not idempotent
-        let mut policy = DefaultRetryPolicy::new();
+        let mut policy = DefaultRetryPolicy::new().new_session();
         assert_eq!(
             policy.decide_should_retry(make_query_info(&enough_responses_no_data, false)),
             RetryDecision::DontRetry
         );
 
         // Idempotent
-        let mut policy = DefaultRetryPolicy::new();
+        let mut policy = DefaultRetryPolicy::new().new_session();
         assert_eq!(
             policy.decide_should_retry(make_query_info(&enough_responses_no_data, true)),
             RetryDecision::DontRetry
@@ -378,14 +426,14 @@ mod tests {
         );
 
         // Not idempotent
-        let mut policy = DefaultRetryPolicy::new();
+        let mut policy = DefaultRetryPolicy::new().new_session();
         assert_eq!(
             policy.decide_should_retry(make_query_info(&not_enough_responses_with_data, false)),
             RetryDecision::DontRetry
         );
 
         // Idempotent
-        let mut policy = DefaultRetryPolicy::new();
+        let mut policy = DefaultRetryPolicy::new().new_session();
         assert_eq!(
             policy.decide_should_retry(make_query_info(&not_enough_responses_with_data, true)),
             RetryDecision::DontRetry
@@ -407,14 +455,14 @@ mod tests {
         );
 
         // Not idempotent
-        let mut policy = DefaultRetryPolicy::new();
+        let mut policy = DefaultRetryPolicy::new().new_session();
         assert_eq!(
             policy.decide_should_retry(make_query_info(&good_write_type, false)),
             RetryDecision::DontRetry
         );
 
         // Idempotent
-        let mut policy = DefaultRetryPolicy::new();
+        let mut policy = DefaultRetryPolicy::new().new_session();
         assert_eq!(
             policy.decide_should_retry(make_query_info(&good_write_type, true)),
             RetryDecision::RetrySameNode
@@ -436,14 +484,14 @@ mod tests {
         );
 
         // Not idempotent
-        let mut policy = DefaultRetryPolicy::new();
+        let mut policy = DefaultRetryPolicy::new().new_session();
         assert_eq!(
             policy.decide_should_retry(make_query_info(&bad_write_type, false)),
             RetryDecision::DontRetry
         );
 
         // Idempotent
-        let mut policy = DefaultRetryPolicy::new();
+        let mut policy = DefaultRetryPolicy::new().new_session();
         assert_eq!(
             policy.decide_should_retry(make_query_info(&bad_write_type, true)),
             RetryDecision::DontRetry

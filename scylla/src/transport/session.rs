@@ -22,7 +22,7 @@ use crate::transport::{
     load_balancing::{LoadBalancingPolicy, RoundRobinPolicy, Statement, TokenAwarePolicy},
     metrics::{Metrics, MetricsView},
     node::Node,
-    retry_policy::{DefaultRetryPolicy, QueryInfo, RetryDecision, RetryPolicy},
+    retry_policy::{DefaultRetryPolicy, QueryInfo, RetryDecision, RetryPolicy, RetrySession},
     Compression,
 };
 
@@ -96,7 +96,7 @@ impl SessionConfig {
             load_balancing: Arc::new(TokenAwarePolicy::new(Box::new(RoundRobinPolicy::new()))),
             used_keyspace: None,
             keyspace_case_sensitive: false,
-            retry_policy: Box::new(DefaultRetryPolicy::new()),
+            retry_policy: Box::new(DefaultRetryPolicy),
         }
     }
 
@@ -270,8 +270,8 @@ impl Session {
         query: impl Into<Query>,
         values: impl ValueList,
     ) -> Result<Option<Vec<result::Row>>, QueryError> {
-        let mut query = query.into();
-        let query_text = query.get_contents();
+        let query: Query = query.into();
+        let query_text: &str = query.get_contents();
         let serialized_values = values.serialized();
 
         // In case the user tried doing session.query("use keyspace ks") run session::use_keyspace
@@ -288,10 +288,10 @@ impl Session {
                 .map(|_| None);
         }
 
-        let retry_policy = query
-            .retry_policy
-            .take()
-            .unwrap_or_else(|| self.retry_policy.clone_boxed());
+        let retry_session = match &query.retry_policy {
+            Some(policy) => policy.new_session(),
+            None => self.retry_policy.new_session(),
+        };
 
         // Needed to avoid moving query and values into async move block
         let query_ref: &Query = &query;
@@ -301,7 +301,7 @@ impl Session {
             Statement::default(),
             query.is_idempotent,
             query.consistency,
-            retry_policy,
+            retry_session,
             |node: Arc<Node>| async move { node.random_connection().await },
             |connection: Arc<Connection>| async move {
                 connection
@@ -317,18 +317,18 @@ impl Session {
         query: impl Into<Query>,
         values: impl ValueList,
     ) -> Result<RowIterator, QueryError> {
-        let mut query: Query = query.into();
+        let query: Query = query.into();
         let serialized_values = values.serialized()?;
 
-        let retry_policy = query
-            .retry_policy
-            .take()
-            .unwrap_or_else(|| self.retry_policy.clone_boxed());
+        let retry_session = match &query.retry_policy {
+            Some(policy) => policy.new_session(),
+            None => self.retry_policy.new_session(),
+        };
 
         Ok(RowIterator::new_for_query(
             query,
             serialized_values.into_owned(),
-            retry_policy,
+            retry_session,
             self.load_balancer.clone(),
             self.cluster.get_data(),
             self.metrics.clone(),
@@ -397,16 +397,16 @@ impl Session {
             keyspace: prepared.get_keyspace_name(),
         };
 
-        let retry_policy = match &prepared.retry_policy {
-            Some(policy) => policy.clone_boxed(),
-            None => self.retry_policy.clone_boxed(),
+        let retry_session = match &prepared.retry_policy {
+            Some(policy) => policy.new_session(),
+            None => self.retry_policy.new_session(),
         };
 
         self.run_query(
             statement_info,
             prepared.is_idempotent,
             prepared.consistency,
-            retry_policy,
+            retry_session,
             |node: Arc<Node>| async move { node.connection_for_token(token).await },
             |connection: Arc<Connection>| async move {
                 connection.execute_single_page(prepared, values_ref).await
@@ -420,21 +420,21 @@ impl Session {
         prepared: impl Into<PreparedStatement>,
         values: impl ValueList,
     ) -> Result<RowIterator, QueryError> {
-        let mut prepared: PreparedStatement = prepared.into();
+        let prepared: PreparedStatement = prepared.into();
         let serialized_values = values.serialized()?;
 
         let token = calculate_token(&prepared, &serialized_values)?;
 
-        let retry_policy = prepared
-            .retry_policy
-            .take()
-            .unwrap_or_else(|| self.retry_policy.clone_boxed());
+        let retry_session = match &prepared.retry_policy {
+            Some(policy) => policy.new_session(),
+            None => self.retry_policy.new_session(),
+        };
 
         Ok(RowIterator::new_for_prepared_statement(
             prepared,
             serialized_values.into_owned(),
             token,
-            retry_policy,
+            retry_session,
             self.load_balancer.clone(),
             self.cluster.get_data(),
             self.metrics.clone(),
@@ -449,16 +449,16 @@ impl Session {
     pub async fn batch(&self, batch: &Batch, values: impl BatchValues) -> Result<(), QueryError> {
         let values_ref = &values;
 
-        let retry_policy = match &batch.retry_policy {
-            Some(policy) => policy.clone_boxed(),
-            None => self.retry_policy.clone_boxed(),
+        let retry_session = match &batch.retry_policy {
+            Some(policy) => policy.new_session(),
+            None => self.retry_policy.new_session(),
         };
 
         self.run_query(
             Statement::default(),
             batch.is_idempotent,
             batch.consistency,
-            retry_policy,
+            retry_session,
             |node: Arc<Node>| async move { node.random_connection().await },
             |connection: Arc<Connection>| async move { connection.batch(batch, values_ref).await },
         )
@@ -538,7 +538,7 @@ impl Session {
         statement_info: Statement<'a>,
         query_is_idempotent: bool,
         query_consistency: Consistency,
-        mut retry_policy: Box<dyn RetryPolicy + Send + Sync>,
+        mut retry_session: Box<dyn RetrySession + Send + Sync>,
         choose_connection: impl Fn(Arc<Node>) -> ConnFut,
         do_query: impl Fn(Arc<Connection>) -> QueryFut,
     ) -> Result<ResT, QueryError>
@@ -588,7 +588,7 @@ impl Session {
                     consistency: query_consistency,
                 };
 
-                match retry_policy.decide_should_retry(query_info) {
+                match retry_session.decide_should_retry(query_info) {
                     RetryDecision::RetrySameNode => {
                         self.metrics.inc_retries_num();
                         continue 'same_node_retries;

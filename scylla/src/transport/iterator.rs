@@ -29,7 +29,7 @@ use crate::transport::connection::Connection;
 use crate::transport::load_balancing::{LoadBalancingPolicy, Statement};
 use crate::transport::metrics::Metrics;
 use crate::transport::node::Node;
-use crate::transport::retry_policy::{QueryInfo, RetryDecision, RetryPolicy};
+use crate::transport::retry_policy::{QueryInfo, RetryDecision, RetrySession};
 
 pub struct RowIterator {
     current_row_idx: usize,
@@ -80,7 +80,7 @@ impl RowIterator {
     pub(crate) fn new_for_query(
         query: Query,
         values: SerializedValues,
-        retry_policy: Box<dyn RetryPolicy + Send + Sync>,
+        retry_session: Box<dyn RetrySession + Send + Sync>,
         load_balancer: Arc<dyn LoadBalancingPolicy>,
         cluster_data: Arc<ClusterData>,
         metrics: Arc<Metrics>,
@@ -104,7 +104,7 @@ impl RowIterator {
                 statement_info: Statement::default(),
                 query_is_idempotent: query.is_idempotent,
                 query_consistency: query.consistency,
-                retry_policy,
+                retry_session,
                 load_balancer,
                 metrics,
                 paging_state: None,
@@ -126,7 +126,7 @@ impl RowIterator {
         prepared: PreparedStatement,
         values: SerializedValues,
         token: Token,
-        retry_policy: Box<dyn RetryPolicy + Send + Sync>,
+        retry_session: Box<dyn RetrySession + Send + Sync>,
         load_balancer: Arc<dyn LoadBalancingPolicy>,
         cluster_data: Arc<ClusterData>,
         metrics: Arc<Metrics>,
@@ -158,7 +158,7 @@ impl RowIterator {
                 statement_info,
                 query_is_idempotent: prepared.is_idempotent,
                 query_consistency: prepared.consistency,
-                retry_policy,
+                retry_session,
                 load_balancer,
                 metrics,
                 paging_state: None,
@@ -198,7 +198,7 @@ struct RowIteratorWorker<'a, ConnFunc, QueryFunc> {
     query_is_idempotent: bool,
     query_consistency: Consistency,
 
-    retry_policy: Box<dyn RetryPolicy + Send + Sync>,
+    retry_session: Box<dyn RetrySession + Send + Sync>,
     load_balancer: Arc<dyn LoadBalancingPolicy>,
     metrics: Arc<Metrics>,
 
@@ -246,7 +246,7 @@ where
                     consistency: self.query_consistency,
                 };
 
-                match self.retry_policy.decide_should_retry(query_info) {
+                match self.retry_session.decide_should_retry(query_info) {
                     RetryDecision::RetrySameNode => {
                         self.metrics.inc_retries_num();
                         continue 'same_node_retries;
@@ -293,7 +293,7 @@ where
                     }
 
                     // Query succeded, reset retry policy for future retries
-                    self.retry_policy.reset();
+                    self.retry_session.reset();
                 }
                 Response::Error(err) => {
                     self.metrics.inc_failed_paged_queries();
