@@ -1,11 +1,11 @@
 use bigdecimal::BigDecimal;
 use bytes::BufMut;
 use chrono::prelude::*;
+use chrono::Duration;
 use num_bigint::BigInt;
 use std::borrow::Cow;
 use std::collections::HashMap;
 use std::convert::TryInto;
-use std::time::Duration;
 use thiserror::Error;
 use uuid::Uuid;
 
@@ -31,6 +31,16 @@ pub enum MaybeUnset<V: Value> {
     Unset,
     Set(V),
 }
+
+/// Wrapper used to differentiate between Time and Timestamp as sending values
+/// Milliseconds since unix epoch
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub struct Timestamp(pub Duration);
+
+/// Wrapper used to differentiate between Time and Timestamp as sending values
+/// Nanoseconds since midnight
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub struct Time(pub Duration);
 
 /// Keeps a buffer with serialized Values
 /// Allows adding new Values and iterating over serialized ones
@@ -241,14 +251,18 @@ impl Value for NaiveDate {
     }
 }
 
-impl Value for Duration {
+impl Value for Timestamp {
     fn serialize(&self, buf: &mut Vec<u8>) -> Result<(), ValueTooBig> {
         buf.put_i32(8);
-        let nanoseconds = self.as_nanos() as i64;
-        if nanoseconds < 0 {
-            return Err(ValueTooBig);
-        }
-        buf.put_i64(nanoseconds);
+        buf.put_i64(self.0.num_milliseconds());
+        Ok(())
+    }
+}
+
+impl Value for Time {
+    fn serialize(&self, buf: &mut Vec<u8>) -> Result<(), ValueTooBig> {
+        buf.put_i32(8);
+        buf.put_i64(self.0.num_nanoseconds().ok_or(ValueTooBig)?);
         Ok(())
     }
 }

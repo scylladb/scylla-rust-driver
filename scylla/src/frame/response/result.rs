@@ -129,15 +129,9 @@ impl CQLValue {
         NaiveDate::from_ymd(1970, 1, 1).checked_add_signed(days_since_epoch)
     }
 
-    pub fn as_timestamp(&self) -> Option<Duration> {
+    pub fn as_duration(&self) -> Option<Duration> {
         match self {
             Self::Timestamp(i) => Some(*i),
-            _ => None,
-        }
-    }
-
-    pub fn as_time(&self) -> Option<Duration> {
-        match self {
             Self::Time(i) => Some(*i),
             _ => None,
         }

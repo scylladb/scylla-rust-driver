@@ -87,7 +87,7 @@ impl_from_cql_val!(String, into_string); // String::from_cql<CQLValue>
 impl_from_cql_val!(IpAddr, as_inet); // IpAddr::from_cql<CQLValue>
 impl_from_cql_val!(Uuid, as_uuid); // Uuid::from_cql<CQLValue>
 impl_from_cql_val!(BigDecimal, into_decimal); // BigDecimal::from_cql<CQLValue>
-impl_from_cql_val!(Duration, as_time); // Duration::from_cql<CQLValue>
+impl_from_cql_val!(Duration, as_duration); // Duration::from_cql<CQLValue>
 
 // Vec<T>::from_cql<CQLValue>
 impl<T: FromCQLVal<CQLValue>> FromCQLVal<CQLValue> for Vec<T> {
