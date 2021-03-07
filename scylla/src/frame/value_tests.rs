@@ -3,6 +3,7 @@ use super::value::{
     Value, ValueList, ValueTooBig,
 };
 use bytes::BufMut;
+use chrono::NaiveDate;
 use std::borrow::Cow;
 use std::convert::TryInto;
 
@@ -24,6 +25,27 @@ fn basic_serialization() {
 
     assert_eq!(serialized("abc"), vec![0, 0, 0, 3, 97, 98, 99]);
     assert_eq!(serialized("abc".to_string()), vec![0, 0, 0, 3, 97, 98, 99]);
+}
+
+#[test]
+fn naive_date_serialization() {
+    // 1970-01-31 is 2^31
+    let unix_epoch: NaiveDate = NaiveDate::from_ymd(1970, 1, 1);
+    assert_eq!(serialized(unix_epoch), vec![0, 0, 0, 4, 128, 0, 0, 0]);
+    assert_eq!(2_u32.pow(31).to_be_bytes(), [128, 0, 0, 0]);
+
+    // 1969-12-02 is 2^31 - 30
+    let before_epoch: NaiveDate = NaiveDate::from_ymd(1969, 12, 2);
+    assert_eq!(
+        serialized(before_epoch),
+        vec![0, 0, 0, 4, 127, 255, 255, 226]
+    );
+    assert_eq!((2_u32.pow(31) - 30).to_be_bytes(), [127, 255, 255, 226]);
+
+    // 1970-01-31 is 2^31 + 30
+    let after_epoch: NaiveDate = NaiveDate::from_ymd(1970, 1, 31);
+    assert_eq!(serialized(after_epoch), vec![0, 0, 0, 4, 128, 0, 0, 30]);
+    assert_eq!((2_u32.pow(31) + 30).to_be_bytes(), [128, 0, 0, 30]);
 }
 
 #[test]

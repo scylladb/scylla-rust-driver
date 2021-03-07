@@ -806,6 +806,7 @@ mod tests {
     use crate::frame::value::Counter;
     use bigdecimal::BigDecimal;
     use chrono::Duration;
+    use chrono::NaiveDate;
     use num_bigint::BigInt;
     use num_bigint::ToBigInt;
     use scylla::frame::response::result::{CQLValue, ColumnType};
@@ -1064,6 +1065,75 @@ mod tests {
 
         assert_eq!(CQLValue::Int(2), decoded[1].0);
         assert_eq!(CQLValue::Int(3), decoded[1].1);
+    }
+
+    #[test]
+    fn date_deserialize() {
+        // Date is correctly parsed from a 4 byte array
+        let four_bytes: [u8; 4] = [12, 23, 34, 45];
+        let date: CQLValue =
+            super::deser_cql_value(&ColumnType::Date, &mut four_bytes.as_ref()).unwrap();
+        assert_eq!(date, CQLValue::Date(u32::from_be_bytes(four_bytes)));
+
+        // Date is parsed as u32 not i32, u32::max_value() is u32::max_value()
+        let date: CQLValue = super::deser_cql_value(
+            &ColumnType::Date,
+            &mut u32::max_value().to_be_bytes().as_ref(),
+        )
+        .unwrap();
+        assert_eq!(date, CQLValue::Date(u32::max_value()));
+
+        // Trying to parse a 0, 3 or 5 byte array fails
+        super::deser_cql_value(&ColumnType::Date, &mut [].as_ref()).unwrap_err();
+        super::deser_cql_value(&ColumnType::Date, &mut [1, 2, 3].as_ref()).unwrap_err();
+        super::deser_cql_value(&ColumnType::Date, &mut [1, 2, 3, 4, 5].as_ref()).unwrap_err();
+
+        // 2^31 when converted to NaiveDate is 1970-01-01
+        let unix_epoch: NaiveDate = NaiveDate::from_ymd(1970, 1, 1);
+        let date: CQLValue =
+            super::deser_cql_value(&ColumnType::Date, &mut 2_u32.pow(31).to_be_bytes().as_ref())
+                .unwrap();
+
+        assert_eq!(date.as_date().unwrap(), unix_epoch);
+
+        // 2^31 - 30 when converted to NaiveDate is 1969-12-02
+        let before_epoch: NaiveDate = NaiveDate::from_ymd(1969, 12, 2);
+        let date: CQLValue = super::deser_cql_value(
+            &ColumnType::Date,
+            &mut (2_u32.pow(31) - 30).to_be_bytes().as_ref(),
+        )
+        .unwrap();
+
+        assert_eq!(date.as_date().unwrap(), before_epoch);
+
+        // 2^31 + 30 when converted to NaiveDate is 1970-01-31
+        let after_epoch: NaiveDate = NaiveDate::from_ymd(1970, 1, 31);
+        let date: CQLValue = super::deser_cql_value(
+            &ColumnType::Date,
+            &mut (2_u32.pow(31) + 30).to_be_bytes().as_ref(),
+        )
+        .unwrap();
+
+        assert_eq!(date.as_date().unwrap(), after_epoch);
+
+        // 0 and u32::max_value() is out of NaiveDate range, fails with an error, not panics
+        assert!(
+            super::deser_cql_value(&ColumnType::Date, &mut 0_u32.to_be_bytes().as_ref())
+                .unwrap()
+                .as_date()
+                .is_none()
+        );
+
+        assert!(super::deser_cql_value(
+            &ColumnType::Date,
+            &mut u32::max_value().to_be_bytes().as_ref()
+        )
+        .unwrap()
+        .as_date()
+        .is_none());
+
+        // It's hard to test NaiveDate more because it involves calculating days between calendar dates
+        // There are more tests using database queries that should cover it
     }
 
     #[test]

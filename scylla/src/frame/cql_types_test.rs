@@ -6,6 +6,7 @@ use crate::transport::session::IntoTypedRows;
 use crate::transport::session::Session;
 use crate::SessionBuilder;
 use bigdecimal::BigDecimal;
+use chrono::NaiveDate;
 use num_bigint::BigInt;
 use std::cmp::PartialEq;
 use std::env;
@@ -183,4 +184,98 @@ async fn test_counter() {
         let expected_value = Counter(i64::from_str(test).unwrap());
         assert_eq!(read_values, vec![expected_value]);
     }
+}
+
+#[tokio::test]
+async fn test_naive_date() {
+    let session: Session = init_test("naive_date", "date").await;
+
+    let min_naive_date: NaiveDate = chrono::naive::MIN_DATE;
+    assert_eq!(min_naive_date, NaiveDate::from_ymd(-262144, 1, 1));
+
+    let max_naive_date: NaiveDate = chrono::naive::MAX_DATE;
+    assert_eq!(max_naive_date, NaiveDate::from_ymd(262143, 12, 31));
+
+    let tests = [
+        // Basic test values
+        ("0000-1-1", Some(NaiveDate::from_ymd(0000, 1, 1))),
+        ("1970-01-01", Some(NaiveDate::from_ymd(1970, 1, 1))),
+        ("2020-03-07", Some(NaiveDate::from_ymd(2020, 3, 7))),
+        ("1337-4-5", Some(NaiveDate::from_ymd(1337, 4, 5))),
+        ("-1-12-31", Some(NaiveDate::from_ymd(-1, 12, 31))),
+        // min/max values allowed by NaiveDate
+        ("-262144-1-1", Some(min_naive_date)),
+        ("262143-12-31", Some(max_naive_date)),
+        // 1 less/more than min/max values allowed by NaiveDate
+        ("-262145-12-31", None),
+        ("262144-1-1", None),
+        // min/max values allowed by the database
+        ("-5877641-06-23", None),
+        ("5881580-07-11", None),
+    ];
+
+    for (date_text, date) in tests.iter() {
+        session
+            .query(
+                format!(
+                    "INSERT INTO ks.naive_date (id, val) VALUES (0, '{}')",
+                    date_text
+                ),
+                &[],
+            )
+            .await
+            .unwrap();
+
+        let read_date: Option<NaiveDate> = session
+            .query("SELECT val from ks.naive_date", &[])
+            .await
+            .unwrap()
+            .unwrap()
+            .into_typed::<(NaiveDate,)>()
+            .next()
+            .unwrap()
+            .ok()
+            .map(|row| row.0);
+
+        assert_eq!(read_date, *date);
+
+        // If date is representable by NaiveDate try inserting it and reading again
+        if let Some(naive_date) = date {
+            session
+                .query(
+                    "INSERT INTO ks.naive_date (id, val) VALUES (0, ?)",
+                    (naive_date,),
+                )
+                .await
+                .unwrap();
+
+            let (read_date,): (NaiveDate,) = session
+                .query("SELECT val from ks.naive_date", &[])
+                .await
+                .unwrap()
+                .unwrap()
+                .into_typed::<(NaiveDate,)>()
+                .next()
+                .unwrap()
+                .unwrap();
+            assert_eq!(read_date, *naive_date);
+        }
+    }
+
+    // 1 less/more than min/max values allowed by the database should cause error
+    session
+        .query(
+            "INSERT INTO ks.naive_date (id, val) VALUES (0, '-5877641-06-22')",
+            &[],
+        )
+        .await
+        .unwrap_err();
+
+    session
+        .query(
+            "INSERT INTO ks.naive_date (id, val) VALUES (0, '5881580-07-12')",
+            &[],
+        )
+        .await
+        .unwrap_err();
 }

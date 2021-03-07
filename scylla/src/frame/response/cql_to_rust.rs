@@ -203,6 +203,7 @@ mod tests {
     use crate::frame::value::Counter;
     use crate::macros::FromRow;
     use bigdecimal::BigDecimal;
+    use chrono::NaiveDate;
     use num_bigint::{BigInt, ToBigInt};
     use std::net::{IpAddr, Ipv4Addr};
     use std::str::FromStr;
@@ -288,6 +289,33 @@ mod tests {
     fn counter_from_cql() {
         let counter = Counter(1);
         assert_eq!(Ok(counter), Counter::from_cql(CQLValue::Counter(counter)));
+    }
+
+    #[test]
+    fn naive_date_from_cql() {
+        let unix_epoch: CQLValue = CQLValue::Date(2_u32.pow(31));
+        assert_eq!(
+            Ok(NaiveDate::from_ymd(1970, 1, 1)),
+            NaiveDate::from_cql(unix_epoch)
+        );
+
+        let before_epoch: CQLValue = CQLValue::Date(2_u32.pow(31) - 30);
+        assert_eq!(
+            Ok(NaiveDate::from_ymd(1969, 12, 2)),
+            NaiveDate::from_cql(before_epoch)
+        );
+
+        let after_epoch: CQLValue = CQLValue::Date(2_u32.pow(31) + 30);
+        assert_eq!(
+            Ok(NaiveDate::from_ymd(1970, 1, 31)),
+            NaiveDate::from_cql(after_epoch)
+        );
+
+        let min_date: CQLValue = CQLValue::Date(0);
+        assert!(NaiveDate::from_cql(min_date).is_err());
+
+        let max_date: CQLValue = CQLValue::Date(u32::max_value());
+        assert!(NaiveDate::from_cql(max_date).is_err());
     }
 
     #[test]
