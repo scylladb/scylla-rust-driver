@@ -4,6 +4,7 @@ use crate::SessionBuilder;
 use bigdecimal::BigDecimal;
 use num_bigint::{BigInt, ToBigInt};
 use std::env;
+use std::str::FromStr;
 
 // TODO: Requires a running local Scylla instance
 #[tokio::test]
@@ -198,14 +199,6 @@ async fn test_cql_types() {
         .await
         .unwrap();
 
-    session
-        .query(
-            "INSERT INTO ks.decimal_table (value, id) VALUES (1000000000000000000000000000000.111, 5)",
-            (),
-        )
-        .await
-        .unwrap();
-
     if let Some(rows) = session
         .query("SELECT value FROM ks.decimal_table WHERE id = 1", &[])
         .await
@@ -218,6 +211,29 @@ async fn test_cql_types() {
                 decimal_new,
                 BigDecimal::from((10000.to_bigint().unwrap(), scale))
             );
+        }
+    }
+
+    let decimal_str = "-123456789012345678901234567890.123456789999999999";
+    session
+        .query(
+            format!(
+                "INSERT INTO ks.decimal_table (value, id) VALUES ({}, 5)",
+                decimal_str
+            ),
+            (),
+        )
+        .await
+        .unwrap();
+
+    if let Some(rows) = session
+        .query("SELECT value FROM ks.decimal_table WHERE id = 5", &[])
+        .await
+        .unwrap()
+    {
+        for row in rows.into_typed::<(BigDecimal,)>() {
+            let decimal_new: BigDecimal = row.unwrap().0;
+            assert_eq!(decimal_new, BigDecimal::from_str(decimal_str).unwrap());
         }
     }
 

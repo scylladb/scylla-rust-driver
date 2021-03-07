@@ -777,8 +777,10 @@ pub fn deserialize(buf: &mut &[u8]) -> StdResult<Result, ParseError> {
 mod tests {
     use crate as scylla;
     use bigdecimal::BigDecimal;
+    use num_bigint::BigInt;
     use num_bigint::ToBigInt;
     use scylla::frame::response::result::{CQLValue, ColumnType};
+    use std::str::FromStr;
     use uuid::Uuid;
 
     #[test]
@@ -837,47 +839,97 @@ mod tests {
     }
 
     #[test]
-    fn test_deserialize_varint_and_decimal() {
-        let bigint_value = 1_i32.to_bigint().unwrap();
+    fn test_varint() {
+        struct Test<'a> {
+            value: BigInt,
+            encoding: &'a [u8],
+        }
 
-        let bigint: Vec<u8> = vec![0x01];
-        let bigint_slice = &mut &bigint[..];
-        let bigint_serialize = super::deser_cql_value(&ColumnType::Varint, bigint_slice).unwrap();
-        assert_eq!(bigint_serialize, CQLValue::Varint(bigint_value));
+        /*
+            Table taken from CQL Binary Protocol v4 spec
 
-        let scale = 1;
+            Value | Encoding
+            ------|---------
+                0 |     0x00
+                1 |     0x01
+              127 |     0x7F
+              128 |   0x0080
+              129 |   0x0081
+               -1 |     0xFF
+             -128 |     0x80
+             -129 |   0xFF7F
+        */
+        let tests = [
+            Test {
+                value: 0.to_bigint().unwrap(),
+                encoding: &[0x00],
+            },
+            Test {
+                value: 1.to_bigint().unwrap(),
+                encoding: &[0x01],
+            },
+            Test {
+                value: 127.to_bigint().unwrap(),
+                encoding: &[0x7F],
+            },
+            Test {
+                value: 128.to_bigint().unwrap(),
+                encoding: &[0x00, 0x80],
+            },
+            Test {
+                value: 129.to_bigint().unwrap(),
+                encoding: &[0x00, 0x81],
+            },
+            Test {
+                value: (-1).to_bigint().unwrap(),
+                encoding: &[0xFF],
+            },
+            Test {
+                value: (-128).to_bigint().unwrap(),
+                encoding: &[0x80],
+            },
+            Test {
+                value: (-129).to_bigint().unwrap(),
+                encoding: &[0xFF, 0x7F],
+            },
+        ];
 
-        let bigdecimal = BigDecimal::from((1_i32.to_bigint().unwrap(), scale));
-        let bigdecimal_buf: Vec<u8> = vec![0, 0, 0, 1, 0x01];
-        let bigdecimal_slice = &mut &bigdecimal_buf[..];
-        let bigdecimal_serialize =
-            super::deser_cql_value(&ColumnType::Decimal, bigdecimal_slice).unwrap();
+        for t in tests.iter() {
+            let value = super::deser_cql_value(&ColumnType::Varint, &mut &t.encoding[..]).unwrap();
+            assert_eq!(CQLValue::Varint(t.value.clone()), value);
+        }
+    }
 
-        assert_eq!(bigdecimal_serialize, CQLValue::Decimal(bigdecimal));
+    #[test]
+    fn test_decimal() {
+        struct Test<'a> {
+            value: BigDecimal,
+            encoding: &'a [u8],
+        }
 
-        let bigint_value_negative = (-128_i32).to_bigint().unwrap();
+        let tests = [
+            Test {
+                value: BigDecimal::from_str("-1.28").unwrap(),
+                encoding: &[0x0, 0x0, 0x0, 0x2, 0x80],
+            },
+            Test {
+                value: BigDecimal::from_str("1.29").unwrap(),
+                encoding: &[0x0, 0x0, 0x0, 0x2, 0x0, 0x81],
+            },
+            Test {
+                value: BigDecimal::from_str("0").unwrap(),
+                encoding: &[0x0, 0x0, 0x0, 0x0, 0x0],
+            },
+            Test {
+                value: BigDecimal::from_str("123").unwrap(),
+                encoding: &[0x0, 0x0, 0x0, 0x0, 0x7b],
+            },
+        ];
 
-        let bigint_negative: Vec<u8> = vec![0x80];
-        let bigint_negative_slice = &mut &bigint_negative[..];
-        let bigint_negative_serialize =
-            super::deser_cql_value(&ColumnType::Varint, bigint_negative_slice).unwrap();
-        assert_eq!(
-            bigint_negative_serialize,
-            CQLValue::Varint(bigint_value_negative)
-        );
-
-        let scale = 2;
-
-        let bigdecimal_negative = BigDecimal::from(((-128_i32).to_bigint().unwrap(), scale));
-        let bigdecimal_buf_negative: Vec<u8> = vec![0, 0, 0, 2, 0x80];
-        let bigdecimal_slice_negative = &mut &bigdecimal_buf_negative[..];
-        let bigdecimal_serialize_negative =
-            super::deser_cql_value(&ColumnType::Decimal, bigdecimal_slice_negative).unwrap();
-
-        assert_eq!(
-            bigdecimal_serialize_negative,
-            CQLValue::Decimal(bigdecimal_negative)
-        );
+        for t in tests.iter() {
+            let value = super::deser_cql_value(&ColumnType::Decimal, &mut &t.encoding[..]).unwrap();
+            assert_eq!(CQLValue::Decimal(t.value.clone()), value);
+        }
     }
 
     #[test]
