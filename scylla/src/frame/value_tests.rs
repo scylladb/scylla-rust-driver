@@ -1,6 +1,6 @@
 use super::value::{
-    BatchValues, MaybeUnset, SerializeValuesError, SerializedResult, SerializedValues, Time, Unset,
-    Value, ValueList, ValueTooBig,
+    BatchValues, MaybeUnset, SerializeValuesError, SerializedResult, SerializedValues, Time,
+    Timestamp, Unset, Value, ValueList, ValueTooBig,
 };
 use bytes::BufMut;
 use chrono::Duration;
@@ -73,6 +73,30 @@ fn time_serialization() {
     // Durations so long that nanoseconds don't fit in i64 cause an error
     let long_time = Time(Duration::milliseconds(i64::max_value()));
     assert_eq!(long_time.serialize(&mut Vec::new()), Err(ValueTooBig));
+}
+
+#[test]
+fn timestamp_serialization() {
+    // Timestamp is milliseconds since unix epoch represented as i64
+
+    for test_val in &[
+        0,
+        -1,
+        1,
+        -45345346,
+        453451,
+        i64::min_value(),
+        i64::max_value(),
+    ] {
+        let test_timestamp: Timestamp = Timestamp(Duration::milliseconds(*test_val));
+        let bytes: Vec<u8> = serialized(test_timestamp);
+
+        let mut expected_bytes: Vec<u8> = vec![0, 0, 0, 8];
+        expected_bytes.extend_from_slice(&test_val.to_be_bytes());
+
+        assert_eq!(bytes, expected_bytes);
+        assert_eq!(expected_bytes.len(), 12);
+    }
 }
 
 #[test]

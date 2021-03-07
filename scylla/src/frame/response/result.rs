@@ -1166,4 +1166,34 @@ mod tests {
             86399999999999
         );
     }
+
+    #[test]
+    fn test_timestamp_deserialize() {
+        // Timestamp is an i64 - milliseconds since unix epoch
+
+        // Check that test values are deserialized correctly
+        for test_val in &[
+            0,
+            -1,
+            1,
+            74568745,
+            -4584658,
+            i64::min_value(),
+            i64::max_value(),
+        ] {
+            let bytes: [u8; 8] = test_val.to_be_bytes();
+            let cql_value: CQLValue =
+                super::deser_cql_value(&ColumnType::Timestamp, &mut &bytes[..]).unwrap();
+            assert_eq!(
+                cql_value,
+                CQLValue::Timestamp(Duration::milliseconds(*test_val))
+            );
+
+            // Check that Duration converted back to i64 is correct
+            assert_eq!(
+                Duration::milliseconds(*test_val).num_milliseconds(),
+                *test_val
+            );
+        }
+    }
 }

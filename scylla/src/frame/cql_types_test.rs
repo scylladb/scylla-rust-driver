@@ -1,8 +1,8 @@
 use crate::cql_to_rust::FromCQLVal;
 use crate::frame::response::result::CQLValue;
 use crate::frame::value::Counter;
-use crate::frame::value::Time;
 use crate::frame::value::Value;
+use crate::frame::value::{Time, Timestamp};
 use crate::transport::session::IntoTypedRows;
 use crate::transport::session::Session;
 use crate::SessionBuilder;
@@ -369,5 +369,86 @@ async fn test_time() {
             )
             .await
             .unwrap_err();
+    }
+}
+
+#[tokio::test]
+async fn test_timestamp() {
+    let session: Session = init_test("timestamp_tests", "timestamp").await;
+
+    let epoch_date = NaiveDate::from_ymd(1970, 1, 1);
+
+    //let before_epoch = NaiveDate::from_ymd(1333, 4, 30);
+    //let before_epoch_offset = before_epoch.signed_duration_since(epoch_date);
+
+    let after_epoch = NaiveDate::from_ymd(2020, 3, 8);
+    let after_epoch_offset = after_epoch.signed_duration_since(epoch_date);
+
+    let tests = [
+        ("0", Duration::milliseconds(0)),
+        (
+            "9223372036854775807",
+            Duration::milliseconds(i64::max_value()),
+        ),
+        (
+            "-9223372036854775808",
+            Duration::milliseconds(i64::min_value()),
+        ),
+        ("1970-01-01", Duration::milliseconds(0)),
+        ("2020-03-08", after_epoch_offset),
+        // Scylla rejects timestamps before 1970-01-01, but the specification says it shouldn't
+        // https://github.com/apache/cassandra/blob/78b13cd0e7a33d45c2081bb135e860bbaca7cbe5/doc/native_protocol_v4.spec#L929
+        // Scylla bug?
+        // ("1333-04-30", before_epoch_offset),
+        // Example taken from https://cassandra.apache.org/doc/latest/cql/types.html
+        // Doesn't work 0_o - Scylla's fault?
+        //("2011-02-03T04:05:00.000+0000", Duration::milliseconds(1299038700000)),
+    ];
+
+    for (timestamp_str, timestamp_duration) in &tests {
+        // Insert timestamp as a string and verify that it matches
+        session
+            .query(
+                format!(
+                    "INSERT INTO ks.timestamp_tests (id, val) VALUES (0, '{}')",
+                    timestamp_str
+                ),
+                &[],
+            )
+            .await
+            .unwrap();
+
+        let (read_timestamp,): (Duration,) = session
+            .query("SELECT val from ks.timestamp_tests", &[])
+            .await
+            .unwrap()
+            .unwrap()
+            .into_typed::<(Duration,)>()
+            .next()
+            .unwrap()
+            .unwrap();
+
+        assert_eq!(read_timestamp, *timestamp_duration);
+
+        // Insert timestamp as a bound Timestamp value and verify that it matches
+        session
+            .query(
+                "INSERT INTO ks.timestamp_tests (id, val) VALUES (0, ?)",
+                (Timestamp(*timestamp_duration),),
+            )
+            .await
+            .unwrap();
+
+        let (read_timestamp,): (Duration,) = session
+            .query("SELECT val from ks.timestamp_tests", &[])
+            .await
+            .unwrap()
+            .unwrap()
+            .into_typed::<(Duration,)>()
+            .next()
+            .unwrap()
+            .unwrap();
+
+        assert_eq!(read_timestamp, *timestamp_duration);
     }
 }
