@@ -1,12 +1,13 @@
 use crate::cql_to_rust::FromCQLVal;
 use crate::frame::response::result::CQLValue;
 use crate::frame::value::Counter;
+use crate::frame::value::Time;
 use crate::frame::value::Value;
 use crate::transport::session::IntoTypedRows;
 use crate::transport::session::Session;
 use crate::SessionBuilder;
 use bigdecimal::BigDecimal;
-use chrono::NaiveDate;
+use chrono::{Duration, NaiveDate};
 use num_bigint::BigInt;
 use std::cmp::PartialEq;
 use std::env;
@@ -278,4 +279,95 @@ async fn test_naive_date() {
         )
         .await
         .unwrap_err();
+}
+
+#[tokio::test]
+async fn test_time() {
+    // Time is an i64 - nanoseconds since midnight
+    // in range 0..=86399999999999
+
+    let session: Session = init_test("time_tests", "time").await;
+
+    let max_time: i64 = 24 * 60 * 60 * 1_000_000_000 - 1;
+    assert_eq!(max_time, 86399999999999);
+
+    let tests = [
+        ("00:00:00", Duration::nanoseconds(0)),
+        ("01:01:01", Duration::seconds(60 * 60 + 60 + 1)),
+        ("00:00:00.000000000", Duration::nanoseconds(0)),
+        ("00:00:00.000000001", Duration::nanoseconds(1)),
+        ("23:59:59.999999999", Duration::nanoseconds(max_time)),
+    ];
+
+    for (time_str, time_duration) in &tests {
+        // Insert time as a string and verify that it matches
+        session
+            .query(
+                format!(
+                    "INSERT INTO ks.time_tests (id, val) VALUES (0, '{}')",
+                    time_str
+                ),
+                &[],
+            )
+            .await
+            .unwrap();
+
+        let (read_time,): (Duration,) = session
+            .query("SELECT val from ks.time_tests", &[])
+            .await
+            .unwrap()
+            .unwrap()
+            .into_typed::<(Duration,)>()
+            .next()
+            .unwrap()
+            .unwrap();
+
+        assert_eq!(read_time, *time_duration);
+
+        // Insert time as a bound Time value and verify that it matches
+        session
+            .query(
+                "INSERT INTO ks.time_tests (id, val) VALUES (0, ?)",
+                (Time(*time_duration),),
+            )
+            .await
+            .unwrap();
+
+        let (read_time,): (Duration,) = session
+            .query("SELECT val from ks.time_tests", &[])
+            .await
+            .unwrap()
+            .unwrap()
+            .into_typed::<(Duration,)>()
+            .next()
+            .unwrap()
+            .unwrap();
+
+        assert_eq!(read_time, *time_duration);
+    }
+
+    // Tests with invalid time values
+    // Make sure that database rejects them
+    let invalid_tests = [
+        "-01:00:00",
+        // "-00:00:01", - actually this gets parsed as 0h 0m 1s, looks like a harmless bug
+        "0",
+        "86399999999999",
+        "24:00:00.000000000",
+        "00:00:00.0000000001",
+        "23:59:59.9999999999",
+    ];
+
+    for time_str in &invalid_tests {
+        session
+            .query(
+                format!(
+                    "INSERT INTO ks.time_tests (id, val) VALUES (0, '{}')",
+                    time_str
+                ),
+                &[],
+            )
+            .await
+            .unwrap_err();
+    }
 }

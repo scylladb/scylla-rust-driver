@@ -1131,24 +1131,39 @@ mod tests {
     }
 
     #[test]
-    fn test_date_time_serialization() {
-        // Time(Duration)
-        let negative_buf: Vec<u8> = vec![128, 0, 0, 0, 0, 0, 0, 0];
-        let time_slice = &mut &negative_buf[..];
+    fn test_time_deserialize() {
+        // Time is an i64 - nanoseconds since midnight
+        // in range 0..=86399999999999
 
-        let _err_negative = super::deser_cql_value(&ColumnType::Time, time_slice).unwrap_err();
+        let max_time: i64 = 24 * 60 * 60 * 1_000_000_000 - 1;
+        assert_eq!(max_time, 86399999999999);
 
-        let buf: Vec<u8> = vec![0, 0, 0, 0, 0, 0, 0, 1];
-        let time_slice_new = &mut &buf[..];
+        // Check that basic values are deserialized correctly
+        for test_val in [0, 1, 18463, max_time].iter() {
+            let bytes: [u8; 8] = test_val.to_be_bytes();
+            let cql_value: CQLValue =
+                super::deser_cql_value(&ColumnType::Time, &mut &bytes[..]).unwrap();
+            assert_eq!(cql_value, CQLValue::Time(Duration::nanoseconds(*test_val)));
+        }
 
-        let duration_excpected = Duration::nanoseconds(1);
-        let duration_got = super::deser_cql_value(&ColumnType::Time, time_slice_new).unwrap();
-        assert_eq!(duration_got, CQLValue::Time(duration_excpected));
+        // Negative values cause an error
+        // Values bigger than 86399999999999 cause an error
+        for test_val in [-1, i64::min_value(), max_time + 1, i64::max_value()].iter() {
+            let bytes: [u8; 8] = test_val.to_be_bytes();
+            super::deser_cql_value(&ColumnType::Time, &mut &bytes[..]).unwrap_err();
+        }
 
-        let time_unix: u32 = 1 << 31;
-        let time_buf_unix: Vec<u8> = vec![128, 0, 0, 0];
-        let unix_slice = &mut &time_buf_unix[..];
-        let date_deserialize = super::deser_cql_value(&ColumnType::Date, unix_slice).unwrap();
-        assert_eq!(date_deserialize, CQLValue::Date(time_unix));
+        // chrono::Duration has enough precision to represent nanoseconds accurately
+        assert_eq!(Duration::nanoseconds(1).num_nanoseconds().unwrap(), 1);
+        assert_eq!(
+            Duration::nanoseconds(7364737473).num_nanoseconds().unwrap(),
+            7364737473
+        );
+        assert_eq!(
+            Duration::nanoseconds(86399999999999)
+                .num_nanoseconds()
+                .unwrap(),
+            86399999999999
+        );
     }
 }

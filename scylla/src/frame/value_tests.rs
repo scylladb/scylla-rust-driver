@@ -1,8 +1,9 @@
 use super::value::{
-    BatchValues, MaybeUnset, SerializeValuesError, SerializedResult, SerializedValues, Unset,
+    BatchValues, MaybeUnset, SerializeValuesError, SerializedResult, SerializedValues, Time, Unset,
     Value, ValueList, ValueTooBig,
 };
 use bytes::BufMut;
+use chrono::Duration;
 use chrono::NaiveDate;
 use std::borrow::Cow;
 use std::convert::TryInto;
@@ -46,6 +47,32 @@ fn naive_date_serialization() {
     let after_epoch: NaiveDate = NaiveDate::from_ymd(1970, 1, 31);
     assert_eq!(serialized(after_epoch), vec![0, 0, 0, 4, 128, 0, 0, 30]);
     assert_eq!((2_u32.pow(31) + 30).to_be_bytes(), [128, 0, 0, 30]);
+}
+
+#[test]
+fn time_serialization() {
+    // Time is an i64 - nanoseconds since midnight
+    // in range 0..=86399999999999
+
+    let max_time: i64 = 24 * 60 * 60 * 1_000_000_000 - 1;
+    assert_eq!(max_time, 86399999999999);
+
+    // Check that basic values are serialized correctly
+    // Invalid values are also serialized correctly - database will respond with an error
+    for test_val in [0, 1, 15, 18463, max_time, -1, -324234, max_time + 16].iter() {
+        let test_time: Time = Time(Duration::nanoseconds(*test_val));
+        let bytes: Vec<u8> = serialized(test_time);
+
+        let mut expected_bytes: Vec<u8> = vec![0, 0, 0, 8];
+        expected_bytes.extend_from_slice(&test_val.to_be_bytes());
+
+        assert_eq!(bytes, expected_bytes);
+        assert_eq!(expected_bytes.len(), 12);
+    }
+
+    // Durations so long that nanoseconds don't fit in i64 cause an error
+    let long_time = Time(Duration::milliseconds(i64::max_value()));
+    assert_eq!(long_time.serialize(&mut Vec::new()), Err(ValueTooBig));
 }
 
 #[test]

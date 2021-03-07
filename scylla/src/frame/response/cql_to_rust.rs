@@ -1,8 +1,7 @@
 use super::result::{CQLValue, Row};
 use crate::frame::value::Counter;
 use bigdecimal::BigDecimal;
-use chrono::prelude::*;
-use chrono::Duration;
+use chrono::{Duration, NaiveDate};
 use num_bigint::BigInt;
 use std::collections::HashMap;
 use std::hash::Hash;
@@ -203,7 +202,7 @@ mod tests {
     use crate::frame::value::Counter;
     use crate::macros::FromRow;
     use bigdecimal::BigDecimal;
-    use chrono::NaiveDate;
+    use chrono::{Duration, NaiveDate};
     use num_bigint::{BigInt, ToBigInt};
     use std::net::{IpAddr, Ipv4Addr};
     use std::str::FromStr;
@@ -316,6 +315,21 @@ mod tests {
 
         let max_date: CQLValue = CQLValue::Date(u32::max_value());
         assert!(NaiveDate::from_cql(max_date).is_err());
+    }
+
+    #[test]
+    fn duration_from_cql() {
+        let time_duration = Duration::nanoseconds(86399999999999);
+        assert_eq!(
+            time_duration,
+            Duration::from_cql(CQLValue::Time(time_duration)).unwrap(),
+        );
+
+        let timestamp_duration = Duration::milliseconds(i64::min_value());
+        assert_eq!(
+            timestamp_duration,
+            Duration::from_cql(CQLValue::Timestamp(timestamp_duration)).unwrap(),
+        );
     }
 
     #[test]
