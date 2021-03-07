@@ -2,11 +2,11 @@ use super::result::{CQLValue, Row};
 use crate::frame::value::Counter;
 use bigdecimal::BigDecimal;
 use chrono::prelude::*;
+use chrono::Duration;
 use num_bigint::BigInt;
 use std::collections::HashMap;
 use std::hash::Hash;
 use std::net::IpAddr;
-use std::time::Duration;
 use thiserror::Error;
 use uuid::Uuid;
 

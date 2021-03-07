@@ -5,8 +5,8 @@ use bigdecimal::BigDecimal;
 use byteorder::{BigEndian, ReadBytesExt};
 use bytes::{Buf, Bytes};
 use chrono::prelude::*;
+use chrono::Duration;
 use num_bigint::BigInt;
-use std::time::Duration;
 use std::{
     collections::BTreeMap,
     convert::{TryFrom, TryInto},
@@ -77,14 +77,17 @@ pub enum CQLValue {
     Boolean(bool),
     Blob(Vec<u8>),
     Counter(Counter),
-    Date(NaiveDate),
     Decimal(BigDecimal),
+    /// Days since -5877641-06-23 i.e. 2^31 days before unix epoch
+    /// Can be converted to chrono::NaiveDate (-262145-1-1 to 262143-12-31) using as_date
+    Date(u32),
     Double(f64),
     Float(f32),
     Int(i32),
     BigInt(i64),
     Text(String),
-    Timestamp(i64),
+    /// Milliseconds since unix epoch
+    Timestamp(Duration),
     Inet(IpAddr),
     List(Vec<CQLValue>),
     Map(Vec<(CQLValue, CQLValue)>),
@@ -96,6 +99,7 @@ pub enum CQLValue {
     },
     SmallInt(i16),
     TinyInt(i8),
+    /// Nanoseconds since midnight
     Time(Duration),
     Timeuuid(Uuid),
     Tuple(Vec<CQLValue>),
@@ -111,7 +115,21 @@ impl CQLValue {
         }
     }
 
-    pub fn as_timestamp(&self) -> Option<i64> {
+    pub fn as_date(&self) -> Option<NaiveDate> {
+        // Days since -5877641-06-23 i.e. 2^31 days before unix epoch
+        let date_days: u32 = match self {
+            CQLValue::Date(days) => *days,
+            _ => return None,
+        };
+
+        // date_days is u32 then converted to i64
+        // then we substract 2^31 - this can't panic
+        let days_since_epoch = Duration::days(date_days.into()) - Duration::days(1 << 31);
+
+        NaiveDate::from_ymd(1970, 1, 1).checked_add_signed(days_since_epoch)
+    }
+
+    pub fn as_timestamp(&self) -> Option<Duration> {
         match self {
             Self::Timestamp(i) => Some(*i),
             _ => None,
@@ -128,13 +146,6 @@ impl CQLValue {
     pub fn as_counter(&self) -> Option<Counter> {
         match self {
             Self::Counter(i) => Some(*i),
-            _ => None,
-        }
-    }
-
-    pub fn as_date(&self) -> Option<NaiveDate> {
-        match self {
-            Self::Date(i) => Some(*i),
             _ => None,
         }
     }
@@ -509,27 +520,9 @@ fn deser_cql_value(typ: &ColumnType, buf: &mut &[u8]) -> StdResult<CQLValue, Par
                     buf.len()
                 )));
             }
-            let value_from_scylla = buf.read_u32::<BigEndian>()?;
 
-            // value from scylla is u32 then converted to i64
-            // then we substract 2^31 - this can't panic
-            let days_since_epoch =
-                chrono::Duration::days(value_from_scylla.into()) - chrono::Duration::days(1 << 31);
-
-            let time = NaiveDate::from_ymd(
-                super::UNIX_TIME_YEAR,
-                super::UNIX_TIME_MONTH,
-                super::UNIX_TIME_DAY,
-            )
-            .checked_add_signed(days_since_epoch)
-            .ok_or_else(|| {
-                ParseError::BadData(format!(
-                    "Date cannot be converted to NaiveDate format: {}",
-                    value_from_scylla
-                ))
-            })?;
-
-            CQLValue::Date(time)
+            let date_value = buf.read_u32::<BigEndian>()?;
+            CQLValue::Date(date_value)
         }
         Counter => {
             if buf.len() != 8 {
@@ -610,7 +603,9 @@ fn deser_cql_value(typ: &ColumnType, buf: &mut &[u8]) -> StdResult<CQLValue, Par
                     buf.len()
                 )));
             }
-            CQLValue::Timestamp(buf.read_i64::<BigEndian>()?)
+            let millis = buf.read_i64::<BigEndian>()?;
+
+            CQLValue::Timestamp(Duration::milliseconds(millis))
         }
         Time => {
             if buf.len() != 8 {
@@ -619,13 +614,16 @@ fn deser_cql_value(typ: &ColumnType, buf: &mut &[u8]) -> StdResult<CQLValue, Par
                     buf.len()
                 )));
             }
-            let nanoseconds = buf.read_i64::<BigEndian>()?;
-            if nanoseconds < 0 {
+            let nanoseconds: i64 = buf.read_i64::<BigEndian>()?;
+
+            // Valid values are in the range 0 to 86399999999999
+            if !(0..=86399999999999).contains(&nanoseconds) {
                 return Err(ParseError::BadData(format! {
-                    "Time shouldn't be negative: {}.", nanoseconds
+                    "Invalid time value only 0 to 86399999999999 allowed: {}.", nanoseconds
                 }));
             }
-            CQLValue::Time(Duration::from_nanos(nanoseconds.try_into().unwrap()))
+
+            CQLValue::Time(Duration::nanoseconds(nanoseconds))
         }
         Timeuuid => {
             if buf.len() != 16 {
@@ -807,12 +805,11 @@ mod tests {
     use crate as scylla;
     use crate::frame::value::Counter;
     use bigdecimal::BigDecimal;
-    use chrono::NaiveDate;
+    use chrono::Duration;
     use num_bigint::BigInt;
     use num_bigint::ToBigInt;
     use scylla::frame::response::result::{CQLValue, ColumnType};
     use std::str::FromStr;
-    use std::time::Duration;
     use uuid::Uuid;
 
     #[test]
@@ -1080,20 +1077,14 @@ mod tests {
         let buf: Vec<u8> = vec![0, 0, 0, 0, 0, 0, 0, 1];
         let time_slice_new = &mut &buf[..];
 
-        let duration_excpected = Duration::new(0, 1);
+        let duration_excpected = Duration::nanoseconds(1);
         let duration_got = super::deser_cql_value(&ColumnType::Time, time_slice_new).unwrap();
         assert_eq!(duration_got, CQLValue::Time(duration_excpected));
 
-        let time_unix = NaiveDate::from_ymd(1970, 1, 1);
+        let time_unix: u32 = 1 << 31;
         let time_buf_unix: Vec<u8> = vec![128, 0, 0, 0];
         let unix_slice = &mut &time_buf_unix[..];
         let date_deserialize = super::deser_cql_value(&ColumnType::Date, unix_slice).unwrap();
         assert_eq!(date_deserialize, CQLValue::Date(time_unix));
-
-        let time_biggest = NaiveDate::from_ymd(262143, 12, 31);
-        let buf_big: Vec<u8> = vec![133, 169, 253, 169];
-        let biggest_slice = &mut &buf_big[..];
-        let date_deserialize = super::deser_cql_value(&ColumnType::Date, biggest_slice).unwrap();
-        assert_eq!(date_deserialize, CQLValue::Date(time_biggest));
     }
 }
