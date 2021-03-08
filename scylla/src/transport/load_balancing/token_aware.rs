@@ -42,7 +42,7 @@ impl TokenAwarePolicy {
                     .map(|dc| dc.rack_count)
                     .unwrap_or(0);
 
-                (dc_name.as_str(), repfactor - rack_count)
+                (dc_name.as_str(), repfactor.saturating_sub(rack_count))
             })
             .collect::<HashMap<&str, usize>>();
 
