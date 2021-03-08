@@ -203,22 +203,6 @@ impl Value for i64 {
     }
 }
 
-impl Value for u32 {
-    fn serialize(&self, buf: &mut Vec<u8>) -> Result<(), ValueTooBig> {
-        buf.put_i32(4);
-        buf.put_u32(*self);
-        Ok(())
-    }
-}
-
-impl Value for u64 {
-    fn serialize(&self, buf: &mut Vec<u8>) -> Result<(), ValueTooBig> {
-        buf.put_i32(8);
-        buf.put_u64(*self);
-        Ok(())
-    }
-}
-
 impl Value for BigDecimal {
     fn serialize(&self, buf: &mut Vec<u8>) -> Result<(), ValueTooBig> {
         let (value, scale) = self.as_bigint_and_exponent();
