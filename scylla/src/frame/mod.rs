@@ -31,12 +31,6 @@ pub const FLAG_TRACING: u8 = 0x02;
 pub const FLAG_CUSTOM_PAYLOAD: u8 = 0x04;
 pub const FLAG_WARNING: u8 = 0x08;
 
-// Time constans
-const DAYS_CENTERED: i64 = 2147483648;
-const UNIX_TIME_YEAR: i32 = 1970;
-const UNIX_TIME_MONTH: u32 = 1;
-const UNIX_TIME_DAY: u32 = 1;
-
 // Parts of the frame header which are not determined by the request/response type.
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub struct FrameParams {
