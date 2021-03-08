@@ -34,6 +34,7 @@ pub struct Metrics {
     queries_num: AtomicU64,
     errors_iter_num: AtomicU64,
     queries_iter_num: AtomicU64,
+    retries_num: AtomicU64,
     histogram: Arc<Mutex<Histogram>>,
 }
 
@@ -44,6 +45,7 @@ impl Metrics {
             queries_num: AtomicU64::new(0),
             errors_iter_num: AtomicU64::new(0),
             queries_iter_num: AtomicU64::new(0),
+            retries_num: AtomicU64::new(0),
             histogram: Arc::new(Mutex::new(Histogram::new())),
         }
     }
@@ -67,6 +69,11 @@ impl Metrics {
     /// If query_iter would return 4 pages then this counter should be incremented 4 times.
     pub fn inc_total_paged_queries(&self) {
         self.queries_iter_num.fetch_add(1, ORDER_TYPE);
+    }
+
+    /// Increments counter measuring how many times a retry policy has decided to retry a query
+    pub fn inc_retries_num(&self) {
+        self.retries_num.fetch_add(1, ORDER_TYPE);
     }
 
     /// Saves to histogram latency of completing single query.
@@ -115,6 +122,11 @@ impl Metrics {
     pub fn get_queries_iter_num(&self) -> u64 {
         self.queries_iter_num.load(ORDER_TYPE)
     }
+
+    /// Returns counter measuring how many times a retry policy has decided to retry a query
+    pub fn get_retries_num(&self) -> u64 {
+        self.retries_num.load(ORDER_TYPE)
+    }
 }
 
 pub struct MetricsView {
@@ -157,5 +169,10 @@ impl MetricsView {
     /// Returns counter for pages requested in paged queries
     pub fn get_queries_iter_num(&self) -> u64 {
         self.metrics.get_queries_iter_num()
+    }
+
+    /// Returns counter measuring how many times a retry policy has decided to retry a query
+    pub fn get_retries_num(&self) -> u64 {
+        self.metrics.get_retries_num()
     }
 }

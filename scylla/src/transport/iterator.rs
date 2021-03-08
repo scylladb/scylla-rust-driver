@@ -247,8 +247,14 @@ where
                 };
 
                 match self.retry_policy.decide_should_retry(query_info) {
-                    RetryDecision::RetrySameNode => continue 'same_node_retries,
-                    RetryDecision::RetryNextNode => continue 'nodes_in_plan,
+                    RetryDecision::RetrySameNode => {
+                        self.metrics.inc_retries_num();
+                        continue 'same_node_retries;
+                    }
+                    RetryDecision::RetryNextNode => {
+                        self.metrics.inc_retries_num();
+                        continue 'nodes_in_plan;
+                    }
                     RetryDecision::DontRetry => break 'nodes_in_plan,
                 };
             }
