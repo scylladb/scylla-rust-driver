@@ -20,6 +20,10 @@ pub struct ValueTooBig;
 /// Represents an unset value
 pub struct Unset;
 
+/// Represents an counter value
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub struct Counter(pub i64);
+
 /// Enum providing a way to represent a value that might be unset
 pub enum MaybeUnset<V: Value> {
     Unset,
@@ -328,6 +332,12 @@ impl Value for Unset {
         // Unset serializes itself to empty value with length = -2
         buf.put_i32(-2);
         Ok(())
+    }
+}
+
+impl Value for Counter {
+    fn serialize(&self, buf: &mut Vec<u8>) -> Result<(), ValueTooBig> {
+        self.0.serialize(buf)
     }
 }
 

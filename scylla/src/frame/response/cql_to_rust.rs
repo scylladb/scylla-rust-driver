@@ -1,4 +1,5 @@
 use super::result::{CQLValue, Row};
+use crate::frame::value::Counter;
 use bigdecimal::BigDecimal;
 use num_bigint::BigInt;
 use std::collections::HashMap;
@@ -72,6 +73,7 @@ macro_rules! impl_from_cql_val {
 
 impl_from_cql_val!(i32, as_int); // i32::from_cql<CQLValue>
 impl_from_cql_val!(i64, as_bigint); // i64::from_cql<CQLValue>
+impl_from_cql_val!(Counter, as_counter); // Counter::from_cql<CQLValue>
 impl_from_cql_val!(i16, as_smallint); // i16::from_cql<CQLValue>
 impl_from_cql_val!(BigInt, into_varint); // BigInt::from_cql<CQLValue>
 impl_from_cql_val!(i8, as_tinyint); // i8::from_cql<CQLValue>

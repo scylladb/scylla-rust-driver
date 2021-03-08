@@ -1,4 +1,5 @@
 use crate::cql_to_rust::{FromRow, FromRowError};
+use crate::frame::value::Counter;
 use crate::frame::{frame_errors::ParseError, types};
 use bigdecimal::BigDecimal;
 use byteorder::{BigEndian, ReadBytesExt};
@@ -73,7 +74,7 @@ pub enum CQLValue {
     Ascii(String),
     Boolean(bool),
     Blob(Vec<u8>),
-    Counter(i64),
+    Counter(Counter),
     Date(u32),
     Decimal(BigDecimal),
     Double(f64),
@@ -122,7 +123,7 @@ impl CQLValue {
         }
     }
 
-    pub fn as_counter(&self) -> Option<i64> {
+    pub fn as_counter(&self) -> Option<Counter> {
         match self {
             Self::Counter(i) => Some(*i),
             _ => None,
@@ -515,7 +516,7 @@ fn deser_cql_value(typ: &ColumnType, buf: &mut &[u8]) -> StdResult<CQLValue, Par
                     buf.len()
                 )));
             }
-            CQLValue::Counter(buf.read_i64::<BigEndian>()?)
+            CQLValue::Counter(crate::frame::value::Counter(buf.read_i64::<BigEndian>()?))
         }
         Decimal => {
             let scale = types::read_int(buf)? as i64;
@@ -776,6 +777,7 @@ pub fn deserialize(buf: &mut &[u8]) -> StdResult<Result, ParseError> {
 #[cfg(test)]
 mod tests {
     use crate as scylla;
+    use crate::frame::value::Counter;
     use bigdecimal::BigDecimal;
     use num_bigint::BigInt;
     use num_bigint::ToBigInt;
@@ -938,7 +940,7 @@ mod tests {
         let counter_slice = &mut &counter[..];
         let counter_serialize =
             super::deser_cql_value(&ColumnType::Counter, counter_slice).unwrap();
-        assert_eq!(counter_serialize, CQLValue::Counter(256));
+        assert_eq!(counter_serialize, CQLValue::Counter(Counter(256)));
     }
 
     #[test]

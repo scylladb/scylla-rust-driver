@@ -1,5 +1,6 @@
 use crate::cql_to_rust::FromCQLVal;
 use crate::frame::response::result::CQLValue;
+use crate::frame::value::Counter;
 use crate::frame::value::Value;
 use crate::transport::session::IntoTypedRows;
 use crate::transport::session::Session;
@@ -149,4 +150,37 @@ async fn test_float() {
     ];
 
     run_tests::<f32>(&tests, "float").await;
+}
+
+#[tokio::test]
+async fn test_counter() {
+    let big_increment = i64::MAX.to_string();
+    let tests = ["1", "997", big_increment.as_str()];
+
+    // Can't use run_tests, because counters are special and can't be inserted
+    let type_name = "counter";
+    let session: Session = init_test(type_name, type_name).await;
+
+    for (i, test) in tests.iter().enumerate() {
+        let update_bound_value = format!("UPDATE ks.{} SET val = val + ? WHERE id = ?", type_name);
+        let value_to_bound = Counter(i64::from_str(test).unwrap());
+        session
+            .query(update_bound_value, (value_to_bound, i as i32))
+            .await
+            .unwrap();
+
+        let select_values = format!("SELECT val FROM ks.{} WHERE id = ?", type_name);
+        let read_values: Vec<Counter> = session
+            .query(select_values, (i as i32,))
+            .await
+            .unwrap()
+            .unwrap()
+            .into_typed::<(Counter,)>()
+            .map(Result::unwrap)
+            .map(|row| row.0)
+            .collect::<Vec<_>>();
+
+        let expected_value = Counter(i64::from_str(test).unwrap());
+        assert_eq!(read_values, vec![expected_value]);
+    }
 }
