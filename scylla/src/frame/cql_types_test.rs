@@ -2,7 +2,7 @@ use crate::cql_to_rust::FromCQLVal;
 use crate::frame::response::result::CQLValue;
 use crate::frame::value::Counter;
 use crate::frame::value::Value;
-use crate::frame::value::{Time, Timestamp};
+use crate::frame::value::{Date, Time, Timestamp};
 use crate::transport::session::IntoTypedRows;
 use crate::transport::session::Session;
 use crate::SessionBuilder;
@@ -280,6 +280,49 @@ async fn test_naive_date() {
         )
         .await
         .unwrap_err();
+}
+
+#[tokio::test]
+async fn test_date() {
+    // Tests value::Date which allows to insert dates outside NaiveDate range
+
+    let session: Session = init_test("date_tests", "date").await;
+
+    let tests = [
+        ("1970-01-01", Date(2_u32.pow(31))),
+        ("1969-12-02", Date(2_u32.pow(31) - 30)),
+        ("1970-01-31", Date(2_u32.pow(31) + 30)),
+        ("-5877641-06-23", Date(0)),
+        ("5881580-07-11", Date(u32::max_value())),
+    ];
+
+    for (date_text, date) in &tests {
+        session
+            .query(
+                format!(
+                    "INSERT INTO ks.date_tests (id, val) VALUES (0, '{}')",
+                    date_text
+                ),
+                &[],
+            )
+            .await
+            .unwrap();
+
+        let read_date: Date = session
+            .query("SELECT val from ks.date_tests", &[])
+            .await
+            .unwrap()
+            .unwrap()[0]
+            .columns[0]
+            .as_ref()
+            .map(|cql_val| match cql_val {
+                CQLValue::Date(days) => Date(*days),
+                _ => panic!(),
+            })
+            .unwrap();
+
+        assert_eq!(read_date, *date);
+    }
 }
 
 #[tokio::test]

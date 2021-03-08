@@ -1,5 +1,5 @@
 use super::value::{
-    BatchValues, MaybeUnset, SerializeValuesError, SerializedResult, SerializedValues, Time,
+    BatchValues, Date, MaybeUnset, SerializeValuesError, SerializedResult, SerializedValues, Time,
     Timestamp, Unset, Value, ValueList, ValueTooBig,
 };
 use bytes::BufMut;
@@ -48,6 +48,15 @@ fn naive_date_serialization() {
     let after_epoch: NaiveDate = NaiveDate::from_ymd(1970, 1, 31);
     assert_eq!(serialized(after_epoch), vec![0, 0, 0, 4, 128, 0, 0, 30]);
     assert_eq!((2_u32.pow(31) + 30).to_be_bytes(), [128, 0, 0, 30]);
+}
+
+#[test]
+fn date_serialization() {
+    assert_eq!(serialized(Date(0)), vec![0, 0, 0, 4, 0, 0, 0, 0]);
+    assert_eq!(
+        serialized(Date(u32::max_value())),
+        vec![0, 0, 0, 4, 255, 255, 255, 255]
+    );
 }
 
 #[test]

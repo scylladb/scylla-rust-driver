@@ -32,6 +32,11 @@ pub enum MaybeUnset<V: Value> {
     Set(V),
 }
 
+/// Wrapper that allows to send dates outside of NaiveDate range (-262145-1-1 to 262143-12-31)
+/// Days since -5877641-06-23 i.e. 2^31 days before unix epoch
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub struct Date(pub u32);
+
 /// Wrapper used to differentiate between Time and Timestamp as sending values
 /// Milliseconds since unix epoch
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -247,6 +252,14 @@ impl Value for NaiveDate {
             .ok_or(ValueTooBig)?;
 
         buf.put_u32(days);
+        Ok(())
+    }
+}
+
+impl Value for Date {
+    fn serialize(&self, buf: &mut Vec<u8>) -> Result<(), ValueTooBig> {
+        buf.put_i32(4);
+        buf.put_u32(self.0);
         Ok(())
     }
 }
