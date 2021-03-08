@@ -7,7 +7,7 @@ use crate::transport::errors::QueryError;
 use futures::future::join_all;
 
 use futures::{future::RemoteHandle, FutureExt};
-use rand::{seq::SliceRandom, Rng};
+use rand::Rng;
 use std::convert::TryInto;
 use std::hash::{Hash, Hasher};
 use std::net::SocketAddr;
@@ -124,8 +124,11 @@ impl Node {
                 shard_info,
                 shard_conns,
             } => {
-                let shard: usize = shard_info.shard_of(token).try_into().unwrap();
-                Self::connection_for_shard(shard, shard_conns).await
+                let shard: u16 = shard_info
+                    .shard_of(token)
+                    .try_into()
+                    .expect("Shard number doesn't fit in u16");
+                Self::connection_for_shard(shard, shard_info.nr_shards, shard_conns).await
             }
         }
     }
@@ -140,31 +143,32 @@ impl Node {
                 shard_info,
                 shard_conns,
             } => {
-                let shard: usize = rand::thread_rng().gen_range(0..shard_info.nr_shards).into();
-                Self::connection_for_shard(shard, shard_conns).await
+                let shard: u16 = rand::thread_rng().gen_range(0..shard_info.nr_shards);
+                Self::connection_for_shard(shard, shard_info.nr_shards, shard_conns).await
             }
         }
     }
 
     // Tries to get a connection to given shard, if it's broken returns any working connection
     async fn connection_for_shard(
-        shard: usize,
+        shard: u16,
+        nr_shards: u16,
         shard_conns: &[ConnectionKeeper],
     ) -> Result<Arc<Connection>, QueryError> {
         // Try getting the desired connection
-        let mut last_error: QueryError = match shard_conns[shard].get_connection().await {
+        let mut last_error: QueryError = match shard_conns[shard as usize].get_connection().await {
             Ok(connection) => return Ok(connection),
             Err(e) => e,
         };
 
         // If this fails try getting any other in random order
-        let mut shards_to_try: Vec<usize> =
-            (shard..shard_conns.len()).chain(0..shard).skip(1).collect();
+        let mut shards_to_try: Vec<u16> = (shard..nr_shards).chain(0..shard).skip(1).collect();
 
-        shards_to_try.shuffle(&mut rand::thread_rng());
+        while !shards_to_try.is_empty() {
+            let idx = rand::thread_rng().gen_range(0..shards_to_try.len());
+            let shard = shards_to_try.swap_remove(idx);
 
-        for shard in shards_to_try {
-            match shard_conns[shard].get_connection().await {
+            match shard_conns[shard as usize].get_connection().await {
                 Ok(conn) => return Ok(conn),
                 Err(e) => last_error = e,
             }
