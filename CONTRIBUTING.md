@@ -40,5 +40,5 @@ Execute the commands below to run the tests:
 docker run --name scylla-ci -d scylladb/scylla
 
 # Run all tests
-SCYLLA_URI="$(docker inspect --format='{{ .NetworkSettings.IPAddress }}' scylla-ci):19042" cargo test -- --test-threads=1
+SCYLLA_URI="$(docker inspect --format='{{ .NetworkSettings.IPAddress }}' scylla-ci):19042" cargo test
 ```
