@@ -13,6 +13,7 @@ use std::cmp::PartialEq;
 use std::env;
 use std::fmt::Debug;
 use std::str::FromStr;
+use uuid::Uuid;
 
 // Used to prepare a table for test
 // Creates keyspace ks
@@ -450,5 +451,80 @@ async fn test_timestamp() {
             .unwrap();
 
         assert_eq!(read_timestamp, *timestamp_duration);
+    }
+}
+
+#[tokio::test]
+async fn test_timeuuid() {
+    let session: Session = init_test("timeuuid_tests", "timeuuid").await;
+
+    // A few random timeuuids generated manually
+    let tests = [
+        (
+            "8e14e760-7fa8-11eb-bc66-000000000001",
+            [
+                0x8e, 0x14, 0xe7, 0x60, 0x7f, 0xa8, 0x11, 0xeb, 0xbc, 0x66, 0, 0, 0, 0, 0, 0x01,
+            ],
+        ),
+        (
+            "9b349580-7fa8-11eb-bc66-000000000001",
+            [
+                0x9b, 0x34, 0x95, 0x80, 0x7f, 0xa8, 0x11, 0xeb, 0xbc, 0x66, 0, 0, 0, 0, 0, 0x01,
+            ],
+        ),
+        (
+            "5d74bae0-7fa3-11eb-bc66-000000000001",
+            [
+                0x5d, 0x74, 0xba, 0xe0, 0x7f, 0xa3, 0x11, 0xeb, 0xbc, 0x66, 0, 0, 0, 0, 0, 0x01,
+            ],
+        ),
+    ];
+
+    for (timeuuid_str, timeuuid_bytes) in &tests {
+        // Insert timeuuid as a string and verify that it matches
+        session
+            .query(
+                format!(
+                    "INSERT INTO ks.timeuuid_tests (id, val) VALUES (0, {})",
+                    timeuuid_str
+                ),
+                &[],
+            )
+            .await
+            .unwrap();
+
+        let (read_timeuuid,): (Uuid,) = session
+            .query("SELECT val from ks.timeuuid_tests", &[])
+            .await
+            .unwrap()
+            .unwrap()
+            .into_typed::<(Uuid,)>()
+            .next()
+            .unwrap()
+            .unwrap();
+
+        assert_eq!(read_timeuuid.as_bytes(), timeuuid_bytes);
+
+        // Insert timeuuid as a bound value and verify that it matches
+        let test_uuid: Uuid = Uuid::from_slice(timeuuid_bytes.as_ref()).unwrap();
+        session
+            .query(
+                "INSERT INTO ks.timeuuid_tests (id, val) VALUES (0, ?)",
+                (test_uuid,),
+            )
+            .await
+            .unwrap();
+
+        let (read_timeuuid,): (Uuid,) = session
+            .query("SELECT val from ks.timeuuid_tests", &[])
+            .await
+            .unwrap()
+            .unwrap()
+            .into_typed::<(Uuid,)>()
+            .next()
+            .unwrap()
+            .unwrap();
+
+        assert_eq!(read_timeuuid.as_bytes(), timeuuid_bytes);
     }
 }

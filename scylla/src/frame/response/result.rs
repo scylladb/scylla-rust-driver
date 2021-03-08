@@ -161,6 +161,7 @@ impl CQLValue {
     pub fn as_uuid(&self) -> Option<Uuid> {
         match self {
             Self::Uuid(u) => Some(*u),
+            Self::Timeuuid(u) => Some(*u),
             _ => None,
         }
     }
@@ -1194,6 +1195,44 @@ mod tests {
                 Duration::milliseconds(*test_val).num_milliseconds(),
                 *test_val
             );
+        }
+    }
+
+    #[test]
+    fn test_timeuuid_deserialize() {
+        // A few random timeuuids generated manually
+        let tests = [
+            (
+                "8e14e760-7fa8-11eb-bc66-000000000001",
+                [
+                    0x8e, 0x14, 0xe7, 0x60, 0x7f, 0xa8, 0x11, 0xeb, 0xbc, 0x66, 0, 0, 0, 0, 0, 0x01,
+                ],
+            ),
+            (
+                "9b349580-7fa8-11eb-bc66-000000000001",
+                [
+                    0x9b, 0x34, 0x95, 0x80, 0x7f, 0xa8, 0x11, 0xeb, 0xbc, 0x66, 0, 0, 0, 0, 0, 0x01,
+                ],
+            ),
+            (
+                "5d74bae0-7fa3-11eb-bc66-000000000001",
+                [
+                    0x5d, 0x74, 0xba, 0xe0, 0x7f, 0xa3, 0x11, 0xeb, 0xbc, 0x66, 0, 0, 0, 0, 0, 0x01,
+                ],
+            ),
+        ];
+
+        for (uuid_str, uuid_bytes) in &tests {
+            let cql_val: CQLValue =
+                super::deser_cql_value(&ColumnType::Timeuuid, &mut &uuid_bytes[..]).unwrap();
+
+            match cql_val {
+                CQLValue::Timeuuid(uuid) => {
+                    assert_eq!(uuid.as_bytes(), uuid_bytes);
+                    assert_eq!(Uuid::parse_str(uuid_str).unwrap(), uuid);
+                }
+                _ => panic!("Timeuuid parsed as wrong CQLValue"),
+            }
         }
     }
 }

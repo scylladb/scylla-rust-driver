@@ -209,12 +209,6 @@ mod tests {
     use uuid::Uuid;
 
     #[test]
-    fn uuid_from_cql() {
-        let my_uuid = Uuid::parse_str("936DA01F9ABD4d9d80C702AF85C822A8").unwrap();
-        assert_eq!(Ok(my_uuid), Uuid::from_cql(CQLValue::Uuid(my_uuid)));
-    }
-
-    #[test]
     fn i32_from_cql() {
         assert_eq!(Ok(1234), i32::from_cql(CQLValue::Int(1234)));
     }
@@ -329,6 +323,21 @@ mod tests {
         assert_eq!(
             timestamp_duration,
             Duration::from_cql(CQLValue::Timestamp(timestamp_duration)).unwrap(),
+        );
+    }
+
+    #[test]
+    fn uuid_from_cql() {
+        let test_uuid: Uuid = Uuid::parse_str("8e14e760-7fa8-11eb-bc66-000000000001").unwrap();
+
+        assert_eq!(
+            test_uuid,
+            Uuid::from_cql(CQLValue::Uuid(test_uuid)).unwrap()
+        );
+
+        assert_eq!(
+            test_uuid,
+            Uuid::from_cql(CQLValue::Timeuuid(test_uuid)).unwrap()
         );
     }
 

@@ -7,6 +7,7 @@ use chrono::Duration;
 use chrono::NaiveDate;
 use std::borrow::Cow;
 use std::convert::TryInto;
+use uuid::Uuid;
 
 fn serialized(val: impl Value) -> Vec<u8> {
     let mut result: Vec<u8> = Vec::new();
@@ -96,6 +97,32 @@ fn timestamp_serialization() {
 
         assert_eq!(bytes, expected_bytes);
         assert_eq!(expected_bytes.len(), 12);
+    }
+}
+
+#[test]
+fn timeuuid_serialization() {
+    // A few random timeuuids generated manually
+    let tests = [
+        [
+            0x8e, 0x14, 0xe7, 0x60, 0x7f, 0xa8, 0x11, 0xeb, 0xbc, 0x66, 0, 0, 0, 0, 0, 0x01,
+        ],
+        [
+            0x9b, 0x34, 0x95, 0x80, 0x7f, 0xa8, 0x11, 0xeb, 0xbc, 0x66, 0, 0, 0, 0, 0, 0x01,
+        ],
+        [
+            0x5d, 0x74, 0xba, 0xe0, 0x7f, 0xa3, 0x11, 0xeb, 0xbc, 0x66, 0, 0, 0, 0, 0, 0x01,
+        ],
+    ];
+
+    for uuid_bytes in &tests {
+        let uuid = Uuid::from_slice(uuid_bytes.as_ref()).unwrap();
+        let uuid_serialized: Vec<u8> = serialized(uuid);
+
+        let mut expected_serialized: Vec<u8> = vec![0, 0, 0, 16];
+        expected_serialized.extend_from_slice(uuid_bytes.as_ref());
+
+        assert_eq!(uuid_serialized, expected_serialized);
     }
 }
 
