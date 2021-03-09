@@ -26,6 +26,8 @@ use crate::transport::{
     Compression,
 };
 
+use openssl::ssl::SslContext;
+
 pub struct Session {
     cluster: Cluster,
     load_balancer: Arc<dyn LoadBalancingPolicy>,
@@ -56,9 +58,8 @@ pub struct SessionConfig {
 
     pub retry_policy: Box<dyn RetryPolicy + Send + Sync>,
     
-    /// Should session use TLS
-    pub use_tls: bool,
-    pub tls_certificate_path: Option<String>,
+    /// Provide our Session with TLS
+    pub ssl_context: Option<SslContext>,
     /*
     These configuration options will be added in the future:
 
@@ -99,8 +100,7 @@ impl SessionConfig {
             used_keyspace: None,
             keyspace_case_sensitive: false,
             retry_policy: Box::new(DefaultRetryPolicy),
-            use_tls: false,
-            tls_certificate_path: None,
+            ssl_context: None,
         }
     }
 
@@ -165,8 +165,7 @@ impl SessionConfig {
         ConnectionConfig {
             compression: self.compression,
             tcp_nodelay: self.tcp_nodelay,
-            use_tls: self.use_tls,
-            tls_certificate_path: self.tls_certificate_path.clone(),
+            ssl_context: self.ssl_context.clone(),
         }
     }
 }

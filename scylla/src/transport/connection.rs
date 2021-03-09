@@ -5,7 +5,7 @@ use tokio::net::{TcpSocket, TcpStream};
 use tokio::sync::{mpsc, oneshot};
 use tracing::{error, warn};
 
-use openssl::ssl::{SslConnector, SslMethod};
+use openssl::ssl::{Ssl, SslContext};
 use tokio_openssl::SslStream;
 
 use std::collections::HashMap;
@@ -63,8 +63,7 @@ struct TaskResponse {
 pub struct ConnectionConfig {
     pub compression: Option<Compression>,
     pub tcp_nodelay: bool,
-    pub use_tls: bool,
-    pub tls_certificate_path: Option<String>,
+    pub ssl_context: Option<SslContext>,
     /*
     These configuration options will be added in the future:
 
@@ -111,20 +110,13 @@ impl Connection {
 
         let (error_sender, error_receiver) = tokio::sync::oneshot::channel();
 
-        let _worker_handle = match config.use_tls {
-            true => {
-                let tls_certificate_path = match config.tls_certificate_path {
-                    Some(ref path) => path,
-                    None => panic!("certificate path not provided!"),
-                };
-                let mut connector = SslConnector::builder(SslMethod::tls())?;
-                connector.set_ca_file(tls_certificate_path)?;
-                let ssl = connector.build().configure()?.into_ssl(&addr.to_string())?;
-
+        let _worker_handle = match config.ssl_context {
+            Some(ref context) => {
+                let ssl = Ssl::new(&context)?;
                 let stream = SslStream::new(ssl, stream)?;
                 Self::run_router(stream, receiver, error_sender)
             }
-            false => Self::run_router(stream, receiver, error_sender),
+            None => Self::run_router(stream, receiver, error_sender),
         };
 
         let connection = Connection {

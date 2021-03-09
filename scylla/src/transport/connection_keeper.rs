@@ -307,8 +307,7 @@ mod tests {
         let connection_config = ConnectionConfig {
             compression: None,
             tcp_nodelay: false,
-            use_tls: true,
-            tls_certificate_path: None,
+            ssl_context: None,
         };
 
         // Get shard info from a single connection, all connections will open to this shard
