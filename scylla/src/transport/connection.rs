@@ -2,7 +2,7 @@ use bytes::Bytes;
 use futures::{future::RemoteHandle, FutureExt};
 use tokio::net::{tcp, TcpSocket, TcpStream};
 use tokio::sync::{mpsc, oneshot};
-use tracing::warn;
+use tracing::{error, warn};
 
 use std::collections::HashMap;
 use std::convert::TryFrom;
@@ -435,7 +435,7 @@ impl Connection {
                 } else {
                     // TODO: Handle this error better, for now we drop this
                     // request and return an error to the receiver
-                    warn!("Could not allocate stream id");
+                    error!("Could not allocate stream id");
                     continue;
                 }
             };
