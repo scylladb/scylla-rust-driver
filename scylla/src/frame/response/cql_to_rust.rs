@@ -1,4 +1,7 @@
 use super::result::{CQLValue, Row};
+use crate::frame::value::Counter;
+use bigdecimal::BigDecimal;
+use num_bigint::BigInt;
 use std::collections::HashMap;
 use std::hash::Hash;
 use std::net::IpAddr;
@@ -19,7 +22,7 @@ pub enum CQLTypeError {
     InvalidNumberOfElements(i32),
 }
 
-/// This trait defines a way to convert CQLValue or Option<CQLValue> into some rust type  
+/// This trait defines a way to convert CQLValue or Option<CQLValue> into some rust type
 // We can't use From trait because impl From<Option<CQLValue>> for String {...}
 // is forbidden since neither From nor String are defined in this crate
 pub trait FromCQLVal<T>: Sized {
@@ -70,7 +73,9 @@ macro_rules! impl_from_cql_val {
 
 impl_from_cql_val!(i32, as_int); // i32::from_cql<CQLValue>
 impl_from_cql_val!(i64, as_bigint); // i64::from_cql<CQLValue>
+impl_from_cql_val!(Counter, as_counter); // Counter::from_cql<CQLValue>
 impl_from_cql_val!(i16, as_smallint); // i16::from_cql<CQLValue>
+impl_from_cql_val!(BigInt, into_varint); // BigInt::from_cql<CQLValue>
 impl_from_cql_val!(i8, as_tinyint); // i8::from_cql<CQLValue>
 impl_from_cql_val!(u32, as_date); // u32::from_cql<CQLValue>
 impl_from_cql_val!(f32, as_float); // f32::from_cql<CQLValue>
@@ -79,6 +84,7 @@ impl_from_cql_val!(bool, as_boolean); // bool::from_cql<CQLValue>
 impl_from_cql_val!(String, into_string); // String::from_cql<CQLValue>
 impl_from_cql_val!(IpAddr, as_inet); // IpAddr::from_cql<CQLValue>
 impl_from_cql_val!(Uuid, as_uuid); // Uuid::from_cql<CQLValue>
+impl_from_cql_val!(BigDecimal, into_decimal); // BigDecimal::from_cql<CQLValue>
 
 // Vec<T>::from_cql<CQLValue>
 impl<T: FromCQLVal<CQLValue>> FromCQLVal<CQLValue> for Vec<T> {
@@ -191,8 +197,19 @@ impl_tuple_from_cql!(T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, T12, T13, T14
 mod tests {
     use super::{CQLValue, FromCQLVal, FromCQLValError, FromRow, FromRowError, Row};
     use crate as scylla;
+    use crate::frame::value::Counter;
     use crate::macros::FromRow;
+    use bigdecimal::BigDecimal;
+    use num_bigint::{BigInt, ToBigInt};
     use std::net::{IpAddr, Ipv4Addr};
+    use std::str::FromStr;
+    use uuid::Uuid;
+
+    #[test]
+    fn uuid_from_cql() {
+        let my_uuid = Uuid::parse_str("936DA01F9ABD4d9d80C702AF85C822A8").unwrap();
+        assert_eq!(Ok(my_uuid), Uuid::from_cql(CQLValue::Uuid(my_uuid)));
+    }
 
     #[test]
     fn i32_from_cql() {
@@ -200,8 +217,32 @@ mod tests {
     }
 
     #[test]
+    fn bool_from_cql() {
+        assert_eq!(Ok(true), bool::from_cql(CQLValue::Boolean(true)));
+        assert_eq!(Ok(false), bool::from_cql(CQLValue::Boolean(false)));
+    }
+
+    #[test]
+    fn floatingpoints_from_cql() {
+        let float: f32 = 2.13;
+        let double: f64 = 4.26;
+        assert_eq!(Ok(float), f32::from_cql(CQLValue::Float(float)));
+        assert_eq!(Ok(double), f64::from_cql(CQLValue::Double(double)));
+    }
+
+    #[test]
     fn i64_from_cql() {
         assert_eq!(Ok(1234), i64::from_cql(CQLValue::BigInt(1234)));
+    }
+
+    #[test]
+    fn i8_from_cql() {
+        assert_eq!(Ok(6), i8::from_cql(CQLValue::TinyInt(6)));
+    }
+
+    #[test]
+    fn i16_from_cql() {
+        assert_eq!(Ok(16), i16::from_cql(CQLValue::SmallInt(16)));
     }
 
     #[test]
@@ -220,6 +261,30 @@ mod tests {
     fn ip_addr_from_cql() {
         let ip_addr = IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1));
         assert_eq!(Ok(ip_addr), IpAddr::from_cql(CQLValue::Inet(ip_addr)));
+    }
+
+    #[test]
+    fn varint_from_cql() {
+        let big_int = 0.to_bigint().unwrap();
+        assert_eq!(
+            Ok(big_int),
+            BigInt::from_cql(CQLValue::Varint(0.to_bigint().unwrap()))
+        );
+    }
+
+    #[test]
+    fn decimal_from_cql() {
+        let decimal = BigDecimal::from_str("123.4").unwrap();
+        assert_eq!(
+            Ok(decimal.clone()),
+            BigDecimal::from_cql(CQLValue::Decimal(decimal))
+        );
+    }
+
+    #[test]
+    fn counter_from_cql() {
+        let counter = Counter(1);
+        assert_eq!(Ok(counter), Counter::from_cql(CQLValue::Counter(counter)));
     }
 
     #[test]

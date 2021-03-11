@@ -1,7 +1,10 @@
 use crate::cql_to_rust::{FromRow, FromRowError};
+use crate::frame::value::Counter;
 use crate::frame::{frame_errors::ParseError, types};
+use bigdecimal::BigDecimal;
 use byteorder::{BigEndian, ReadBytesExt};
 use bytes::{Buf, Bytes};
+use num_bigint::BigInt;
 use std::{
     collections::BTreeMap,
     convert::{TryFrom, TryInto},
@@ -39,7 +42,9 @@ enum ColumnType {
     Ascii,
     Boolean,
     Blob,
+    Counter,
     Date,
+    Decimal,
     Double,
     Float,
     Int,
@@ -61,6 +66,7 @@ enum ColumnType {
     Timeuuid,
     Tuple(Vec<ColumnType>),
     Uuid,
+    Varint,
 }
 
 #[derive(Debug, PartialEq)]
@@ -68,7 +74,9 @@ pub enum CQLValue {
     Ascii(String),
     Boolean(bool),
     Blob(Vec<u8>),
+    Counter(Counter),
     Date(u32),
+    Decimal(BigDecimal),
     Double(f64),
     Float(f32),
     Int(i32),
@@ -90,6 +98,7 @@ pub enum CQLValue {
     Timeuuid(Uuid),
     Tuple(Vec<CQLValue>),
     Uuid(Uuid),
+    Varint(BigInt),
 }
 
 impl CQLValue {
@@ -110,6 +119,13 @@ impl CQLValue {
     pub fn as_time(&self) -> Option<u64> {
         match self {
             Self::Time(i) => Some(*i),
+            _ => None,
+        }
+    }
+
+    pub fn as_counter(&self) -> Option<Counter> {
+        match self {
+            Self::Counter(i) => Some(*i),
             _ => None,
         }
     }
@@ -242,6 +258,19 @@ impl CQLValue {
         }
     }
 
+    pub fn into_varint(self) -> Option<BigInt> {
+        match self {
+            Self::Varint(i) => Some(i),
+            _ => None,
+        }
+    }
+
+    pub fn into_decimal(self) -> Option<BigDecimal> {
+        match self {
+            Self::Decimal(i) => Some(i),
+            _ => None,
+        }
+    }
     // TODO
 }
 
@@ -311,12 +340,15 @@ fn deser_type(buf: &mut &[u8]) -> StdResult<ColumnType, ParseError> {
         0x0002 => BigInt,
         0x0003 => Blob,
         0x0004 => Boolean,
+        0x0005 => Counter,
+        0x0006 => Decimal,
         0x0007 => Double,
         0x0008 => Float,
         0x0009 => Int,
         0x000B => Timestamp,
         0x000C => Uuid,
         0x000D => Text,
+        0x000E => Varint,
         0x000F => Timeuuid,
         0x0010 => Inet,
         0x0011 => Date,
@@ -477,6 +509,22 @@ fn deser_cql_value(typ: &ColumnType, buf: &mut &[u8]) -> StdResult<CQLValue, Par
             }
             CQLValue::Date(buf.read_u32::<BigEndian>()?)
         }
+        Counter => {
+            if buf.len() != 8 {
+                return Err(ParseError::BadData(format!(
+                    "Buffer length should be 8 not {}",
+                    buf.len()
+                )));
+            }
+            CQLValue::Counter(crate::frame::value::Counter(buf.read_i64::<BigEndian>()?))
+        }
+        Decimal => {
+            let scale = types::read_int(buf)? as i64;
+            let int_value = num_bigint::BigInt::from_signed_bytes_be(buf);
+            let big_decimal: BigDecimal = BigDecimal::from((int_value, scale));
+
+            CQLValue::Decimal(big_decimal)
+        }
         Double => {
             if buf.len() != 8 {
                 return Err(ParseError::BadData(format!(
@@ -589,6 +637,7 @@ fn deser_cql_value(typ: &ColumnType, buf: &mut &[u8]) -> StdResult<CQLValue, Par
             let uuid = uuid::Uuid::from_slice(buf).expect("Deserializing Uuid failed.");
             CQLValue::Uuid(uuid)
         }
+        Varint => CQLValue::Varint(num_bigint::BigInt::from_signed_bytes_be(buf)),
         List(type_name) => {
             let len: usize = types::read_int(buf)?.try_into()?;
             let mut res = Vec::with_capacity(len);
@@ -728,7 +777,217 @@ pub fn deserialize(buf: &mut &[u8]) -> StdResult<Result, ParseError> {
 #[cfg(test)]
 mod tests {
     use crate as scylla;
-    use scylla::frame::response::result::CQLValue;
+    use crate::frame::value::Counter;
+    use bigdecimal::BigDecimal;
+    use num_bigint::BigInt;
+    use num_bigint::ToBigInt;
+    use scylla::frame::response::result::{CQLValue, ColumnType};
+    use std::str::FromStr;
+    use uuid::Uuid;
+
+    #[test]
+    fn test_deserialize_text_types() {
+        let mut buf = Vec::<u8>::new();
+        buf.push(0x41);
+        let int_slice = &mut &buf[..];
+        let ascii_serialized = super::deser_cql_value(&ColumnType::Ascii, int_slice).unwrap();
+        let text_serialized = super::deser_cql_value(&ColumnType::Text, int_slice).unwrap();
+        assert_eq!(ascii_serialized, CQLValue::Ascii("A".to_string()));
+        assert_eq!(text_serialized, CQLValue::Text("A".to_string()));
+    }
+
+    #[test]
+    fn test_deserialize_uuid_inet_types() {
+        let my_uuid = Uuid::parse_str("00000000000000000000000000000001").unwrap();
+
+        let uuid_buf: Vec<u8> = vec![0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1];
+        let uuid_slice = &mut &uuid_buf[..];
+        let uuid_serialize = super::deser_cql_value(&ColumnType::Uuid, uuid_slice).unwrap();
+        assert_eq!(uuid_serialize, CQLValue::Uuid(my_uuid));
+
+        let time_uuid_serialize =
+            super::deser_cql_value(&ColumnType::Timeuuid, uuid_slice).unwrap();
+        assert_eq!(time_uuid_serialize, CQLValue::Timeuuid(my_uuid));
+
+        let my_ip = "::1".parse().unwrap();
+        let ip_buf: Vec<u8> = vec![0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1];
+        let ip_slice = &mut &ip_buf[..];
+        let ip_serialize = super::deser_cql_value(&ColumnType::Inet, ip_slice).unwrap();
+        assert_eq!(ip_serialize, CQLValue::Inet(my_ip));
+
+        let max_ip = "ffff:ffff:ffff:ffff:ffff:ffff:ffff:ffff".parse().unwrap();
+        let max_ip_buf: Vec<u8> = vec![
+            255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255,
+        ];
+        let max_ip_slice = &mut &max_ip_buf[..];
+        let max_ip_serialize = super::deser_cql_value(&ColumnType::Inet, max_ip_slice).unwrap();
+        assert_eq!(max_ip_serialize, CQLValue::Inet(max_ip));
+    }
+
+    #[test]
+    fn test_floating_points() {
+        let float: f32 = 0.5;
+        let double: f64 = 2.0;
+
+        let float_buf: Vec<u8> = vec![63, 0, 0, 0];
+        let float_slice = &mut &float_buf[..];
+        let float_serialize = super::deser_cql_value(&ColumnType::Float, float_slice).unwrap();
+        assert_eq!(float_serialize, CQLValue::Float(float));
+
+        let double_buf: Vec<u8> = vec![64, 0, 0, 0, 0, 0, 0, 0];
+        let double_slice = &mut &double_buf[..];
+        let double_serialize = super::deser_cql_value(&ColumnType::Double, double_slice).unwrap();
+        assert_eq!(double_serialize, CQLValue::Double(double));
+    }
+
+    #[test]
+    fn test_varint() {
+        struct Test<'a> {
+            value: BigInt,
+            encoding: &'a [u8],
+        }
+
+        /*
+            Table taken from CQL Binary Protocol v4 spec
+
+            Value | Encoding
+            ------|---------
+                0 |     0x00
+                1 |     0x01
+              127 |     0x7F
+              128 |   0x0080
+              129 |   0x0081
+               -1 |     0xFF
+             -128 |     0x80
+             -129 |   0xFF7F
+        */
+        let tests = [
+            Test {
+                value: 0.to_bigint().unwrap(),
+                encoding: &[0x00],
+            },
+            Test {
+                value: 1.to_bigint().unwrap(),
+                encoding: &[0x01],
+            },
+            Test {
+                value: 127.to_bigint().unwrap(),
+                encoding: &[0x7F],
+            },
+            Test {
+                value: 128.to_bigint().unwrap(),
+                encoding: &[0x00, 0x80],
+            },
+            Test {
+                value: 129.to_bigint().unwrap(),
+                encoding: &[0x00, 0x81],
+            },
+            Test {
+                value: (-1).to_bigint().unwrap(),
+                encoding: &[0xFF],
+            },
+            Test {
+                value: (-128).to_bigint().unwrap(),
+                encoding: &[0x80],
+            },
+            Test {
+                value: (-129).to_bigint().unwrap(),
+                encoding: &[0xFF, 0x7F],
+            },
+        ];
+
+        for t in tests.iter() {
+            let value = super::deser_cql_value(&ColumnType::Varint, &mut &t.encoding[..]).unwrap();
+            assert_eq!(CQLValue::Varint(t.value.clone()), value);
+        }
+    }
+
+    #[test]
+    fn test_decimal() {
+        struct Test<'a> {
+            value: BigDecimal,
+            encoding: &'a [u8],
+        }
+
+        let tests = [
+            Test {
+                value: BigDecimal::from_str("-1.28").unwrap(),
+                encoding: &[0x0, 0x0, 0x0, 0x2, 0x80],
+            },
+            Test {
+                value: BigDecimal::from_str("1.29").unwrap(),
+                encoding: &[0x0, 0x0, 0x0, 0x2, 0x0, 0x81],
+            },
+            Test {
+                value: BigDecimal::from_str("0").unwrap(),
+                encoding: &[0x0, 0x0, 0x0, 0x0, 0x0],
+            },
+            Test {
+                value: BigDecimal::from_str("123").unwrap(),
+                encoding: &[0x0, 0x0, 0x0, 0x0, 0x7b],
+            },
+        ];
+
+        for t in tests.iter() {
+            let value = super::deser_cql_value(&ColumnType::Decimal, &mut &t.encoding[..]).unwrap();
+            assert_eq!(CQLValue::Decimal(t.value.clone()), value);
+        }
+    }
+
+    #[test]
+    fn test_deserialize_counter() {
+        let counter: Vec<u8> = vec![0, 0, 0, 0, 0, 0, 1, 0];
+        let counter_slice = &mut &counter[..];
+        let counter_serialize =
+            super::deser_cql_value(&ColumnType::Counter, counter_slice).unwrap();
+        assert_eq!(counter_serialize, CQLValue::Counter(Counter(256)));
+    }
+
+    #[test]
+    fn test_deserialize_blob() {
+        let blob: Vec<u8> = vec![0, 1, 2, 3];
+        let blob_slice = &mut &blob[..];
+        let blob_serialize = super::deser_cql_value(&ColumnType::Blob, blob_slice).unwrap();
+        assert_eq!(blob_serialize, CQLValue::Blob(blob));
+    }
+
+    #[test]
+    fn test_deserialize_bool() {
+        let bool_buf: Vec<u8> = vec![0x00];
+        let bool_slice = &mut &bool_buf[..];
+        let bool_serialize = super::deser_cql_value(&ColumnType::Boolean, bool_slice).unwrap();
+        assert_eq!(bool_serialize, CQLValue::Boolean(false));
+
+        let bool_buf: Vec<u8> = vec![0x01];
+        let bool_slice = &mut &bool_buf[..];
+        let bool_serialize = super::deser_cql_value(&ColumnType::Boolean, bool_slice).unwrap();
+        assert_eq!(bool_serialize, CQLValue::Boolean(true));
+    }
+
+    #[test]
+    fn test_deserialize_int_types() {
+        let int_buf: Vec<u8> = vec![0, 0, 0, 4];
+        let int_slice = &mut &int_buf[..];
+        let int_serialized = super::deser_cql_value(&ColumnType::Int, int_slice).unwrap();
+        assert_eq!(int_serialized, CQLValue::Int(4));
+
+        let smallint_buf: Vec<u8> = vec![0, 4];
+        let smallint_slice = &mut &smallint_buf[..];
+        let smallint_serialized =
+            super::deser_cql_value(&ColumnType::SmallInt, smallint_slice).unwrap();
+        assert_eq!(smallint_serialized, CQLValue::SmallInt(4));
+
+        let tinyint_buf: Vec<u8> = vec![4];
+        let tinyint_slice = &mut &tinyint_buf[..];
+        let tinyint_serialized =
+            super::deser_cql_value(&ColumnType::TinyInt, tinyint_slice).unwrap();
+        assert_eq!(tinyint_serialized, CQLValue::TinyInt(4));
+
+        let bigint_buf: Vec<u8> = vec![0, 0, 0, 0, 0, 0, 0, 4];
+        let bigint_slice = &mut &bigint_buf[..];
+        let bigint_serialized = super::deser_cql_value(&ColumnType::BigInt, bigint_slice).unwrap();
+        assert_eq!(bigint_serialized, CQLValue::BigInt(4));
+    }
 
     #[test]
     fn test_list_from_cql() {

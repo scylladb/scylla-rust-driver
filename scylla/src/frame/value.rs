@@ -1,4 +1,6 @@
+use bigdecimal::BigDecimal;
 use bytes::BufMut;
+use num_bigint::BigInt;
 use std::borrow::Cow;
 use std::collections::HashMap;
 use std::convert::TryInto;
@@ -17,6 +19,10 @@ pub struct ValueTooBig;
 
 /// Represents an unset value
 pub struct Unset;
+
+/// Represents an counter value
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub struct Counter(pub i64);
 
 /// Enum providing a way to represent a value that might be unset
 pub enum MaybeUnset<V: Value> {
@@ -197,18 +203,17 @@ impl Value for i64 {
     }
 }
 
-impl Value for u32 {
+impl Value for BigDecimal {
     fn serialize(&self, buf: &mut Vec<u8>) -> Result<(), ValueTooBig> {
-        buf.put_i32(4);
-        buf.put_u32(*self);
-        Ok(())
-    }
-}
+        let (value, scale) = self.as_bigint_and_exponent();
 
-impl Value for u64 {
-    fn serialize(&self, buf: &mut Vec<u8>) -> Result<(), ValueTooBig> {
-        buf.put_i32(8);
-        buf.put_u64(*self);
+        let serialized = value.to_signed_bytes_be();
+        let serialized_len: i32 = serialized.len().try_into().map_err(|_| ValueTooBig)?;
+
+        buf.put_i32(serialized_len + 4);
+        buf.put_i32(scale.try_into().map_err(|_| ValueTooBig)?);
+        buf.extend_from_slice(&serialized);
+
         Ok(())
     }
 }
@@ -248,6 +253,18 @@ impl Value for Uuid {
     fn serialize(&self, buf: &mut Vec<u8>) -> Result<(), ValueTooBig> {
         buf.put_i32(16);
         buf.extend_from_slice(self.as_bytes());
+        Ok(())
+    }
+}
+
+impl Value for BigInt {
+    fn serialize(&self, buf: &mut Vec<u8>) -> Result<(), ValueTooBig> {
+        let serialized = self.to_signed_bytes_be();
+        let serialized_len: i32 = serialized.len().try_into().map_err(|_| ValueTooBig)?;
+
+        buf.put_i32(serialized_len);
+        buf.extend_from_slice(&serialized);
+
         Ok(())
     }
 }
@@ -299,6 +316,12 @@ impl Value for Unset {
         // Unset serializes itself to empty value with length = -2
         buf.put_i32(-2);
         Ok(())
+    }
+}
+
+impl Value for Counter {
+    fn serialize(&self, buf: &mut Vec<u8>) -> Result<(), ValueTooBig> {
+        self.0.serialize(buf)
     }
 }
 
