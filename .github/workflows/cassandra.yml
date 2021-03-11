@@ -1,0 +1,28 @@
+# This workflow runs all tests on cassandra to ensure full compatibility
+name: Cassandra tests
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    services:
+      cassandra:
+        image: cassandra
+        ports:
+          - 9042:9042
+    steps:
+    - uses: actions/checkout@v2
+      # A separate step for building to separate measuring time of compilation and testing
+    - name: Build the project
+      run: cargo build --verbose --tests
+    - name: Run tests on cassandra
+      # test threads must be one because else database tests will run in parallel and will result in flaky tests
+      run: cargo test --verbose -- --test-threads=1
