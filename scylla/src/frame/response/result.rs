@@ -32,8 +32,8 @@ pub struct SchemaChange {
 }
 
 #[derive(Clone, Debug)]
-struct TableSpec {
-    ks_name: String,
+pub struct TableSpec {
+    pub ks_name: String,
     table_name: String,
 }
 
@@ -276,7 +276,7 @@ impl CQLValue {
 
 #[derive(Debug, Clone)]
 pub struct ColumnSpec {
-    table_spec: TableSpec,
+    pub table_spec: TableSpec,
     name: String,
     typ: ColumnType,
 }

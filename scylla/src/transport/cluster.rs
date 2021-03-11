@@ -3,10 +3,11 @@ use crate::routing::Token;
 use crate::transport::connection::{Connection, ConnectionConfig, VerifiedKeyspaceName};
 use crate::transport::errors::QueryError;
 use crate::transport::node::{Node, NodeConnections};
-use crate::transport::topology::{Keyspace, TopologyReader};
+use crate::transport::topology::{Keyspace, TopologyInfo, TopologyReader};
 
 use futures::future::join_all;
 use futures::{future::RemoteHandle, FutureExt};
+use itertools::Itertools;
 use std::collections::{BTreeMap, HashMap};
 use std::net::SocketAddr;
 use std::sync::{Arc, RwLock};
@@ -22,12 +23,17 @@ pub struct Cluster {
     _worker_handle: RemoteHandle<()>,
 }
 
+pub struct Datacenter {
+    pub nodes: Vec<Arc<Node>>,
+    pub rack_count: usize,
+}
+
 pub struct ClusterData {
     pub known_peers: HashMap<SocketAddr, Arc<Node>>, // Invariant: nonempty after Cluster::new()
     pub ring: BTreeMap<Token, Arc<Node>>,            // Invariant: nonempty after Cluster::new()
     pub keyspaces: HashMap<String, Keyspace>,
     pub all_nodes: Vec<Arc<Node>>,
-    pub datacenters: HashMap<String, Vec<Arc<Node>>>,
+    pub datacenters: HashMap<String, Datacenter>,
 }
 
 // Works in the background to keep the cluster updated
@@ -183,6 +189,94 @@ impl Cluster {
     }
 }
 
+impl ClusterData {
+    /// Returns an iterator to the sequence of ends of vnodes, starting at the vnode in which t
+    /// lies and going clockwise. Returned sequence has the same length as ring.
+    pub fn ring_range<'a>(&'a self, t: &Token) -> impl Iterator<Item = Arc<Node>> + 'a {
+        let before_wrap = self.ring.range(t..).map(|(_token, node)| node.clone());
+        let after_wrap = self.ring.values().cloned();
+
+        before_wrap.chain(after_wrap).take(self.ring.len())
+    }
+
+    // Updates information about rack count in each datacenter
+    fn update_rack_count(datacenters: &mut HashMap<String, Datacenter>) {
+        for datacenter in datacenters.values_mut() {
+            datacenter.rack_count = datacenter
+                .nodes
+                .iter()
+                .filter_map(|node| node.rack.clone())
+                .unique()
+                .count();
+        }
+    }
+
+    /// Creates new ClusterData using information about topology held in `info`.
+    /// Uses provided `known_peers` hashmap to recycle nodes if possible.
+    pub fn new(
+        info: TopologyInfo,
+        connection_config: &ConnectionConfig,
+        known_peers: &HashMap<SocketAddr, Arc<Node>>,
+        used_keyspace: &Option<VerifiedKeyspaceName>,
+    ) -> Self {
+        // Create new updated known_peers and ring
+        let mut new_known_peers: HashMap<SocketAddr, Arc<Node>> =
+            HashMap::with_capacity(info.peers.len());
+        let mut ring: BTreeMap<Token, Arc<Node>> = BTreeMap::new();
+        let mut datacenters: HashMap<String, Datacenter> = HashMap::new();
+        let mut all_nodes: Vec<Arc<Node>> = Vec::with_capacity(info.peers.len());
+
+        for peer in info.peers {
+            // Take existing Arc<Node> if possible, otherwise create new one
+            // Changing rack/datacenter but not ip address seems improbable
+            // so we can just create new node and connections then
+            let node: Arc<Node> = match known_peers.get(&peer.address) {
+                Some(node) if node.datacenter == peer.datacenter && node.rack == peer.rack => {
+                    node.clone()
+                }
+                _ => Arc::new(Node::new(
+                    peer.address,
+                    connection_config.clone(),
+                    peer.datacenter,
+                    peer.rack,
+                    used_keyspace.clone(),
+                )),
+            };
+
+            new_known_peers.insert(peer.address, node.clone());
+
+            if let Some(dc) = &node.datacenter {
+                match datacenters.get_mut(dc) {
+                    Some(v) => v.nodes.push(node.clone()),
+                    None => {
+                        let v = Datacenter {
+                            nodes: vec![node.clone()],
+                            rack_count: 0,
+                        };
+                        datacenters.insert(dc.clone(), v);
+                    }
+                }
+            }
+
+            for token in peer.tokens {
+                ring.insert(token, node.clone());
+            }
+
+            all_nodes.push(node);
+        }
+
+        Self::update_rack_count(&mut datacenters);
+
+        ClusterData {
+            known_peers: new_known_peers,
+            ring,
+            keyspaces: info.keyspaces,
+            all_nodes,
+            datacenters,
+        }
+    }
+}
+
 impl ClusterWorker {
     pub async fn work(mut self) {
         use tokio::time::{Duration, Instant};
@@ -291,68 +385,19 @@ impl ClusterWorker {
     async fn perform_refresh(&mut self) -> Result<(), QueryError> {
         // Read latest TopologyInfo
         let topo_info = self.topology_reader.read_topology_info().await?;
-
-        // Create new updated known_peers and ring
-        let mut new_known_peers: HashMap<SocketAddr, Arc<Node>> =
-            HashMap::with_capacity(topo_info.peers.len());
-        let mut new_ring: BTreeMap<Token, Arc<Node>> = BTreeMap::new();
-        let mut new_datacenters: HashMap<String, Vec<Arc<Node>>> = HashMap::new();
-
         let cluster_data: Arc<ClusterData> = self.cluster_data.read().unwrap().clone();
 
-        for peer in topo_info.peers {
-            // Take existing Arc<Node> if possible, otherwise create new one
-            // Changing rack/datacenter but not ip address seems improbable
-            // so we can just create new node and connections then
-            let node: Arc<Node> = match cluster_data.known_peers.get(&peer.address) {
-                Some(node) if node.datacenter == peer.datacenter && node.rack == peer.rack => {
-                    node.clone()
-                }
-                _ => Arc::new(Node::new(
-                    peer.address,
-                    self.connection_config.clone(),
-                    peer.datacenter,
-                    peer.rack,
-                    self.used_keyspace.clone(),
-                )),
-            };
-
-            new_known_peers.insert(peer.address, node.clone());
-
-            if let Some(dc) = &node.datacenter {
-                match new_datacenters.get_mut(dc) {
-                    Some(v) => v.push(node.clone()),
-                    None => {
-                        let v = vec![node.clone()];
-                        new_datacenters.insert(dc.clone(), v);
-                    }
-                }
-            }
-
-            for token in peer.tokens {
-                new_ring.insert(token, node.clone());
-            }
-        }
-
-        let all_nodes = new_known_peers
-            .values()
-            .cloned()
-            .collect::<Vec<Arc<Node>>>();
-
-        let mut new_cluster_data: Arc<ClusterData> = Arc::new(ClusterData {
-            known_peers: new_known_peers,
-            ring: new_ring,
-            keyspaces: topo_info.keyspaces,
-            all_nodes,
-            datacenters: new_datacenters,
-        });
+        let mut new_cluster_data = Arc::new(ClusterData::new(
+            topo_info,
+            &self.connection_config,
+            &cluster_data.known_peers,
+            &self.used_keyspace,
+        ));
 
         // Update current cluster_data
         // Use std::mem::swap to avoid dropping large structures with active write lock
         let mut cluster_data_lock = self.cluster_data.write().unwrap();
-
         std::mem::swap(&mut *cluster_data_lock, &mut new_cluster_data);
-
         drop(cluster_data_lock);
 
         Ok(())
