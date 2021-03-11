@@ -2,10 +2,10 @@
 name = "scylla"
 version = "0.0.1"
 edition = "2018"
-description = "Async CQL driver for Rust, optimized for Scylla."
-repository = "https://github.com/psarna/scylla-rust-driver"
+description = "Async CQL driver for Rust, optimized for Scylla, fully compatible with Apache Cassandra™"
+repository = "https://github.com/scylladb/scylla-rust-driver"
 readme = "../README.md"
-keywords = ["database", "scylla", "cql"]
+keywords = ["database", "scylla", "cql", "cassandra"]
 categories = ["database"]
 
 [dependencies]
