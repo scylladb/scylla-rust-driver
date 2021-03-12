@@ -1,3 +1,4 @@
+pub mod auth_response;
 pub mod batch;
 pub mod execute;
 pub mod options;
@@ -9,6 +10,7 @@ use crate::frame::frame_errors::ParseError;
 use bytes::{BufMut, Bytes};
 use num_enum::TryFromPrimitive;
 
+pub use auth_response::AuthResponse;
 pub use batch::Batch;
 pub use options::Options;
 pub use prepare::Prepare;

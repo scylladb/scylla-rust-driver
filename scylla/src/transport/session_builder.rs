@@ -182,6 +182,29 @@ impl SessionBuilder {
         self
     }
 
+    /// Set username and password for authentication.  
+    /// If the database server will require authentication  
+    ///
+    /// # Example
+    /// ```
+    /// # use scylla::{Session, SessionBuilder};
+    /// # use scylla::transport::Compression;
+    /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
+    /// let session: Session = SessionBuilder::new()
+    ///     .known_node("127.0.0.1:9042")
+    ///     .use_keyspace("my_keyspace_name", false)
+    ///     .user("cassandra", "cassandra")
+    ///     .build()
+    ///     .await?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn user(mut self, username: impl Into<String>, passwd: impl Into<String>) -> Self {
+        self.config.auth_username = Some(username.into());
+        self.config.auth_password = Some(passwd.into());
+        self
+    }
+
     /// Set the load balancing policy
     /// The default is Token-aware Round-robin.
     ///
