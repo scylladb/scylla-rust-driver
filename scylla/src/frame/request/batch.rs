@@ -8,6 +8,9 @@ use crate::frame::{
     value::BatchValues,
 };
 
+// Batch flags
+const FLAG_WITH_SERIAL_CONSISTENCY: u8 = 0x10;
+
 pub struct Batch<'a, StatementsIter, Values>
 where
     StatementsIter: Iterator<Item = BatchStatement<'a>> + Clone,
@@ -17,6 +20,7 @@ where
     pub statements_count: usize,
     pub batch_type: BatchType,
     pub consistency: types::Consistency,
+    pub serial_consistency: Option<types::Consistency>,
     pub values: Values,
 }
 
@@ -57,8 +61,16 @@ where
         types::write_consistency(self.consistency, buf);
 
         // Serializing flags
-        // FIXME: consider other flag values than 0
-        buf.put_u8(0);
+        let mut flags = 0;
+        if self.serial_consistency.is_some() {
+            flags |= FLAG_WITH_SERIAL_CONSISTENCY;
+        }
+
+        buf.put_u8(flags);
+
+        if let Some(serial_consistency) = self.serial_consistency {
+            types::write_consistency(serial_consistency, buf);
+        }
 
         Ok(())
     }

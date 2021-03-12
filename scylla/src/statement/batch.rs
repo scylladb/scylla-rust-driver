@@ -11,6 +11,7 @@ pub struct Batch {
     statements: Vec<BatchStatement>,
     batch_type: BatchType,
     consistency: Consistency,
+    serial_consistency: Option<Consistency>,
 }
 
 impl Batch {
@@ -46,6 +47,18 @@ impl Batch {
     pub fn get_consistency(&self) -> Consistency {
         self.consistency
     }
+
+    /// Sets the serial consistency to be used when executing this batch.
+    /// (Ignored unless the batch is an LWT)
+    pub fn set_serial_consistency(&mut self, sc: Option<Consistency>) {
+        self.serial_consistency = sc;
+    }
+
+    /// Gets the serial consistency to be used when executing this batch.
+    /// (Ignored unless the batch is an LWT)
+    pub fn get_serial_consistency(&self) -> Option<Consistency> {
+        self.serial_consistency
+    }
 }
 
 impl Default for Batch {
@@ -54,6 +67,7 @@ impl Default for Batch {
             statements: Vec::new(),
             batch_type: BatchType::Logged,
             consistency: Default::default(),
+            serial_consistency: None,
         }
     }
 }
