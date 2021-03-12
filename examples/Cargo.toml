@@ -10,10 +10,16 @@ futures = "0.3.6"
 rustyline = "6.3.0"
 scylla = {path = "../scylla"}
 tokio = {version = "1.1.0", features = ["full"]}
+tracing = "0.1.25"
+tracing-subscriber = "0.2.16"
 
 [[example]]
 name = "basic"
 path = "basic.rs"
+
+[[example]]
+name = "logging"
+path = "logging.rs"
 
 [[example]]
 name = "cqlsh-rs"

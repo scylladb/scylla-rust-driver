@@ -3,6 +3,7 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Instant;
 use tokio::net::lookup_host;
+use tracing::warn;
 
 use super::errors::{BadQuery, NewSessionError, QueryError};
 use crate::batch::Batch;
@@ -285,8 +286,7 @@ impl Session {
 
         // In case the user tried doing session.query("use keyspace ks") run session::use_keyspace
         if query_is_setting_keyspace(query_text) {
-            // TODO: replace with log library in https://github.com/scylladb/scylla-rust-driver/issues/158
-            eprintln!("Warning: Raw USE KEYSPACE queries are experimental, please use session::use_keyspace instead");
+            warn!("Raw USE KEYSPACE queries are experimental, please use session::use_keyspace instead");
 
             let keyspace_name = &query_text["use ".len()..].trim_end_matches(';').trim();
             let case_sensitive = keyspace_name.starts_with('"');
