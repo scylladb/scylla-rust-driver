@@ -12,6 +12,7 @@ use std::collections::HashMap;
 use std::convert::TryFrom;
 use std::io::ErrorKind;
 use std::net::SocketAddr;
+use std::pin::Pin;
 use std::sync::Arc;
 use std::sync::Mutex as StdMutex;
 use std::{
@@ -84,6 +85,7 @@ impl Default for ConnectionConfig {
         Self {
             compression: None,
             tcp_nodelay: false,
+            ssl_context: None,
         }
     }
 }
@@ -112,8 +114,9 @@ impl Connection {
 
         let _worker_handle = match config.ssl_context {
             Some(ref context) => {
-                let ssl = Ssl::new(&context)?;
-                let stream = SslStream::new(ssl, stream)?;
+                let ssl = Ssl::new(context)?;
+                let mut stream = SslStream::new(ssl, stream)?;
+                let _pin = Pin::new(&mut stream).connect().await;
                 Self::run_router(stream, receiver, error_sender)
             }
             None => Self::run_router(stream, receiver, error_sender),
@@ -400,7 +403,6 @@ impl Connection {
         error_sender: tokio::sync::oneshot::Sender<QueryError>,
     ) {
         let (read_half, write_half) = split(stream);
-
         // Why are using a mutex here?
         //
         // The handler_map is supposed to be shared between reader and writer

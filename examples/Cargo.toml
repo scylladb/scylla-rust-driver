@@ -7,6 +7,7 @@ version = "0.0.0"
 [dev-dependencies]
 anyhow = "1.0.33"
 futures = "0.3.6"
+openssl = "0.10.32"
 rustyline = "6.3.0"
 scylla = {path = "../scylla"}
 tokio = {version = "1.1.0", features = ["full"]}
@@ -21,6 +22,10 @@ path = "basic.rs"
 [[example]]
 name = "logging"
 path = "logging.rs"
+
+[[example]]
+name = "tls"
+path = "tls.rs"
 
 [[example]]
 name = "cqlsh-rs"

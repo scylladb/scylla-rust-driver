@@ -43,13 +43,13 @@ The driver supports the following:
 * Batch statements
 * Configurable load balancing policies
 * Driver-side metrics
+* TLS support - install openssl if you want to use it https://docs.rs/openssl/0.10.32/openssl/#automatic
 
 We are planning to implement the following:
 
 * Restarting nodes :)
 * Configurable retry policies
 * Authentication support
-* TLS support
 * CQL tracing
 
 ## Getting Help

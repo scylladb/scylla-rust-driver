@@ -4,24 +4,46 @@ use scylla::macros::FromRow;
 use scylla::transport::session::{IntoTypedRows, Session};
 use scylla::SessionBuilder;
 use std::env;
+use std::fs;
+use std::path::PathBuf;
 
+use openssl::ssl::{SslContextBuilder, SslFiletype, SslMethod, SslVerifyMode};
+
+// How to run scylla instance with TLS:
+//
+// Edit your scylla.yaml file and add paths to certificates
+// ex:
+// client_encryption_options:
+//     enabled: true
+//     certificate: /etc/scylla/db.crt
+//     keyfile: /etc/scylla/db.key
+//
+// If using docker mount your scylla.yaml file and your cert files with option
+// --volume $(pwd)/tls.yaml:/etc/scylla/scylla.yaml
+//
+// If python returns permission error 13 use "Z" flag
+// --volume $(pwd)/tls.yaml:/etc/scylla/scylla.yaml:Z
+//
+// In your Rust program connect to port 9142 if it wasn't changed
+// Create new SslContextBuilder with SslMethod that is used in your connection
+// Use set_certificate_file method with path to your .crt file and its filetype as arguments
+// Set verification mode
+// Build it and add to scylla-rust-driver's SessionBuilder
 #[tokio::main]
 async fn main() -> Result<()> {
     // Create connection
-    let uri = env::var("SCYLLA_URI").unwrap_or_else(|_| "127.0.0.1:9042".to_string());
+    let uri = env::var("SCYLLA_URI").unwrap_or_else(|_| "127.0.0.1:9142".to_string());
 
     println!("Connecting to {} ...", uri);
 
-    let cert = Path::new("test.pem");
-    let key = Path::new("test.key");
+    let certdir = fs::canonicalize(PathBuf::from("./examples/certs/scylla.crt"))?;
     let mut context_builder = SslContextBuilder::new(SslMethod::tls())?;
-    context_builder.set_certificate_file(cert, SslFiletype::PEM)?;
-    context_builder.set_private_key_file(key, SslFiletype::PEM)?;
+    context_builder.set_certificate_file(certdir.as_path(), SslFiletype::PEM)?;
     context_builder.set_verify(SslVerifyMode::NONE);
-     
+
     let session: Session = SessionBuilder::new()
         .known_node(uri)
-        .ssl_context(context_builder.build())
+        .ssl_context(Some(context_builder.build()))
         .build()
         .await?;
 
@@ -103,5 +125,6 @@ async fn main() -> Result<()> {
     );
 
     println!("Ok.");
-    OK(())
+
+    Ok(())
 }
