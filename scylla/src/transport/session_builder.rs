@@ -6,6 +6,7 @@ use crate::transport::retry_policy::RetryPolicy;
 use std::net::SocketAddr;
 use std::sync::Arc;
 
+#[cfg(feature = "ssl")]
 use openssl::ssl::SslContext;
 
 /// SessionBuilder is used to create new Session instances
@@ -252,6 +253,7 @@ impl SessionBuilder {
     /// # Ok(())
     /// # }
     /// ```
+    #[cfg(feature = "ssl")]
     pub fn ssl_context(mut self, ssl_context: Option<SslContext>) -> Self {
         self.config.ssl_context = ssl_context;
         self

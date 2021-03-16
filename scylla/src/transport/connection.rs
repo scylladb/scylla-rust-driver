@@ -5,14 +5,17 @@ use tokio::net::{TcpSocket, TcpStream};
 use tokio::sync::{mpsc, oneshot};
 use tracing::{error, warn};
 
+#[cfg(feature = "ssl")]
 use openssl::ssl::{Ssl, SslContext};
+#[cfg(feature = "ssl")]
+use std::pin::Pin;
+#[cfg(feature = "ssl")]
 use tokio_openssl::SslStream;
 
 use std::collections::HashMap;
 use std::convert::TryFrom;
 use std::io::ErrorKind;
 use std::net::SocketAddr;
-use std::pin::Pin;
 use std::sync::Arc;
 use std::sync::Mutex as StdMutex;
 use std::{
@@ -64,6 +67,7 @@ struct TaskResponse {
 pub struct ConnectionConfig {
     pub compression: Option<Compression>,
     pub tcp_nodelay: bool,
+    #[cfg(feature = "ssl")]
     pub ssl_context: Option<SslContext>,
     /*
     These configuration options will be added in the future:
@@ -85,6 +89,7 @@ impl Default for ConnectionConfig {
         Self {
             compression: None,
             tcp_nodelay: false,
+            #[cfg(feature = "ssl")]
             ssl_context: None,
         }
     }
@@ -112,15 +117,8 @@ impl Connection {
 
         let (error_sender, error_receiver) = tokio::sync::oneshot::channel();
 
-        let _worker_handle = match config.ssl_context {
-            Some(ref context) => {
-                let ssl = Ssl::new(context)?;
-                let mut stream = SslStream::new(ssl, stream)?;
-                let _pin = Pin::new(&mut stream).connect().await;
-                Self::run_router(stream, receiver, error_sender)
-            }
-            None => Self::run_router(stream, receiver, error_sender),
-        };
+        let _worker_handle =
+            Self::get_worker_handle(&config, stream, receiver, error_sender).await?;
 
         let connection = Connection {
             submit_channel: sender,
@@ -133,6 +131,36 @@ impl Connection {
         };
 
         Ok((connection, error_receiver))
+    }
+
+    #[cfg(feature = "ssl")]
+    async fn get_worker_handle(
+        config: &ConnectionConfig,
+        stream: TcpStream,
+        receiver: mpsc::Receiver<Task>,
+        error_sender: tokio::sync::oneshot::Sender<QueryError>,
+    ) -> Result<RemoteHandle<()>, std::io::Error> {
+        let res = match config.ssl_context {
+            Some(ref context) => {
+                let ssl = Ssl::new(context)?;
+                let mut stream = SslStream::new(ssl, stream)?;
+                let _pin = Pin::new(&mut stream).connect().await;
+                Self::run_router(stream, receiver, error_sender)
+            }
+            None => Self::run_router(stream, receiver, error_sender),
+        };
+        Ok(res)
+    }
+
+    #[cfg(not(feature = "ssl"))]
+    async fn get_worker_handle(
+        config: &ConnectionConfig,
+        stream: TcpStream,
+        receiver: mpsc::Receiver<Task>,
+        error_sender: tokio::sync::oneshot::Sender<QueryError>,
+    ) -> Result<RemoteHandle<()>, std::io::Error> {
+        let _config = config;
+        Ok(Self::run_router(stream, receiver, error_sender))
     }
 
     pub async fn startup(&self, options: HashMap<String, String>) -> Result<Response, QueryError> {

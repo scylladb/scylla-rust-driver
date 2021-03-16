@@ -26,6 +26,7 @@ use crate::transport::{
     Compression,
 };
 
+#[cfg(feature = "ssl")]
 use openssl::ssl::SslContext;
 
 pub struct Session {
@@ -59,6 +60,7 @@ pub struct SessionConfig {
     pub retry_policy: Box<dyn RetryPolicy + Send + Sync>,
     
     /// Provide our Session with TLS
+    #[cfg(feature = "ssl")]
     pub ssl_context: Option<SslContext>,
     /*
     These configuration options will be added in the future:
@@ -100,6 +102,7 @@ impl SessionConfig {
             used_keyspace: None,
             keyspace_case_sensitive: false,
             retry_policy: Box::new(DefaultRetryPolicy),
+            #[cfg(feature = "ssl")]
             ssl_context: None,
         }
     }
@@ -165,6 +168,7 @@ impl SessionConfig {
         ConnectionConfig {
             compression: self.compression,
             tcp_nodelay: self.tcp_nodelay,
+            #[cfg(feature = "ssl")]
             ssl_context: self.ssl_context.clone(),
         }
     }
