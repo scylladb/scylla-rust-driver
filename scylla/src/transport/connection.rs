@@ -247,17 +247,10 @@ impl Connection {
         &self,
         prepared_statement: &PreparedStatement,
         values: impl ValueList,
-    ) -> Result<Option<Vec<result::Row>>, QueryError> {
-        let response = self.execute(prepared_statement, values, None).await?;
-
-        match response {
-            Response::Error(err) => Err(err.into()),
-            Response::Result(result::Result::Rows(rs)) => Ok(Some(rs.rows)),
-            Response::Result(_) => Ok(None),
-            _ => Err(QueryError::ProtocolError(
-                "EXECUTE: Unexpected server response",
-            )),
-        }
+    ) -> Result<QueryResult, QueryError> {
+        self.execute(prepared_statement, values, None)
+            .await?
+            .into_query_result()
     }
 
     pub async fn execute(
@@ -265,7 +258,7 @@ impl Connection {
         prepared_statement: &PreparedStatement,
         values: impl ValueList,
         paging_state: Option<Bytes>,
-    ) -> Result<Response, QueryError> {
+    ) -> Result<QueryResponse, QueryError> {
         let serialized_values = values.serialized()?;
 
         let execute_frame = execute::Execute {
@@ -279,9 +272,9 @@ impl Connection {
             },
         };
 
-        let response = self.send_request(&execute_frame, true).await?.response;
+        let query_response = self.send_request(&execute_frame, true).await?;
 
-        if let Response::Error(err) = &response {
+        if let Response::Error(err) = &query_response.response {
             if err.error == DbError::Unprepared {
                 // Repreparation of a statement is needed
                 let reprepared = self.prepare(prepared_statement.get_statement()).await?;
@@ -293,11 +286,11 @@ impl Connection {
                     ));
                 }
 
-                return Ok(self.send_request(&execute_frame, true).await?.response);
+                return self.send_request(&execute_frame, true).await;
             }
         }
 
-        Ok(response)
+        Ok(query_response)
     }
 
     pub async fn batch(&self, batch: &Batch, values: impl BatchValues) -> Result<(), QueryError> {

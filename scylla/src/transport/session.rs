@@ -395,7 +395,7 @@ impl Session {
         &self,
         prepared: &PreparedStatement,
         values: impl ValueList,
-    ) -> Result<Option<Vec<result::Row>>, QueryError> {
+    ) -> Result<QueryResult, QueryError> {
         let serialized_values = values.serialized()?;
         let values_ref = &serialized_values;
 

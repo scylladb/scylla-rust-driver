@@ -149,9 +149,10 @@ impl RowIterator {
                 |node: Arc<Node>| async move { node.connection_for_token(token).await };
 
             let page_query = |connection: Arc<Connection>, paging_state: Option<Bytes>| async move {
-                connection
+                Ok(connection
                     .execute(prepared_ref, values_ref, paging_state)
-                    .await
+                    .await?
+                    .response)
             };
 
             let worker = RowIteratorWorker {
