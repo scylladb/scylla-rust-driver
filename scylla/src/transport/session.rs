@@ -17,7 +17,7 @@ use crate::routing::{murmur3_token, Token};
 use crate::statement::Consistency;
 use crate::transport::{
     cluster::Cluster,
-    connection::{Connection, ConnectionConfig, VerifiedKeyspaceName},
+    connection::{Connection, ConnectionConfig, QueryResult, VerifiedKeyspaceName},
     iterator::RowIterator,
     load_balancing::{LoadBalancingPolicy, RoundRobinPolicy, Statement, TokenAwarePolicy},
     metrics::{Metrics, MetricsView},
@@ -278,7 +278,7 @@ impl Session {
         &self,
         query: impl Into<Query>,
         values: impl ValueList,
-    ) -> Result<Option<Vec<result::Row>>, QueryError> {
+    ) -> Result<QueryResult, QueryError> {
         let query: Query = query.into();
         let query_text: &str = query.get_contents();
         let serialized_values = values.serialized();
@@ -294,7 +294,7 @@ impl Session {
             return self
                 .use_keyspace(keyspace_name, case_sensitive)
                 .await
-                .map(|_| None);
+                .map(|_| QueryResult::default());
         }
 
         let retry_session = match &query.retry_policy {

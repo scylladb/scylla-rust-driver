@@ -4,6 +4,7 @@ use tokio::io::{split, AsyncRead, AsyncWrite};
 use tokio::net::{TcpSocket, TcpStream};
 use tokio::sync::{mpsc, oneshot};
 use tracing::{error, warn};
+use uuid::Uuid;
 
 #[cfg(feature = "ssl")]
 use openssl::ssl::{Ssl, SslContext};
@@ -61,6 +62,45 @@ struct TaskResponse {
     params: FrameParams,
     opcode: ResponseOpcode,
     body: Bytes,
+}
+
+pub struct QueryResponse {
+    pub response: Response,
+    pub tracing_id: Option<Uuid>,
+    pub warnings: Vec<String>,
+}
+
+/// Result of a single query  
+/// Contains all rows returned by the database and some more information
+#[derive(Default, Debug)]
+pub struct QueryResult {
+    /// Rows returned by the database
+    pub rows: Option<Vec<result::Row>>,
+    /// Warnings returned by the database
+    pub warnings: Vec<String>,
+    /// CQL Tracing uuid - can only be Some if tracing is enabled for this query
+    pub tracing_id: Option<Uuid>,
+}
+
+impl QueryResponse {
+    pub fn into_query_result(self) -> Result<QueryResult, QueryError> {
+        let rows: Option<Vec<result::Row>> = match self.response {
+            Response::Error(err) => return Err(err.into()),
+            Response::Result(result::Result::Rows(rs)) => Some(rs.rows),
+            Response::Result(_) => None,
+            _ => {
+                return Err(QueryError::ProtocolError(
+                    "Unexpected server response, expected Result or Error",
+                ))
+            }
+        };
+
+        Ok(QueryResult {
+            rows,
+            warnings: self.warnings,
+            tracing_id: self.tracing_id,
+        })
+    }
 }
 
 #[derive(Clone)]
@@ -133,16 +173,24 @@ impl Connection {
     }
 
     pub async fn startup(&self, options: HashMap<String, String>) -> Result<Response, QueryError> {
-        self.send_request(&request::Startup { options }, false)
-            .await
+        Ok(self
+            .send_request(&request::Startup { options }, false)
+            .await?
+            .response)
     }
 
     pub async fn get_options(&self) -> Result<Response, QueryError> {
-        self.send_request(&request::Options {}, false).await
+        Ok(self
+            .send_request(&request::Options {}, false)
+            .await?
+            .response)
     }
 
     pub async fn prepare(&self, query: &str) -> Result<PreparedStatement, QueryError> {
-        let result = self.send_request(&request::Prepare { query }, true).await?;
+        let result = self
+            .send_request(&request::Prepare { query }, true)
+            .await?
+            .response;
         match result {
             Response::Error(err) => Err(err.into()),
             Response::Result(result::Result::Prepared(p)) => Ok(PreparedStatement::new(
@@ -160,25 +208,17 @@ impl Connection {
         &self,
         query: impl Into<Query>,
         values: impl ValueList,
-    ) -> Result<Option<Vec<result::Row>>, QueryError> {
+    ) -> Result<QueryResult, QueryError> {
         let query: Query = query.into();
-        self.query_single_page_by_ref(&query, &values).await
+        self.query(&query, &values, None).await?.into_query_result()
     }
 
     pub async fn query_single_page_by_ref(
         &self,
         query: &Query,
         values: &impl ValueList,
-    ) -> Result<Option<Vec<result::Row>>, QueryError> {
-        let result = self.query(query, values, None).await?;
-        match result {
-            Response::Error(err) => Err(err.into()),
-            Response::Result(result::Result::Rows(rs)) => Ok(Some(rs.rows)),
-            Response::Result(_) => Ok(None),
-            _ => Err(QueryError::ProtocolError(
-                "QUERY: Unexpected server response",
-            )),
-        }
+    ) -> Result<QueryResult, QueryError> {
+        self.query(query, values, None).await?.into_query_result()
     }
 
     pub async fn query(
@@ -186,7 +226,7 @@ impl Connection {
         query: &Query,
         values: impl ValueList,
         paging_state: Option<Bytes>,
-    ) -> Result<Response, QueryError> {
+    ) -> Result<QueryResponse, QueryError> {
         let serialized_values = values.serialized()?;
 
         let query_frame = query::Query {
@@ -239,7 +279,7 @@ impl Connection {
             },
         };
 
-        let response = self.send_request(&execute_frame, true).await?;
+        let response = self.send_request(&execute_frame, true).await?.response;
 
         if let Response::Error(err) = &response {
             if err.error == DbError::Unprepared {
@@ -253,7 +293,7 @@ impl Connection {
                     ));
                 }
 
-                return self.send_request(&execute_frame, true).await;
+                return Ok(self.send_request(&execute_frame, true).await?.response);
             }
         }
 
@@ -287,7 +327,7 @@ impl Connection {
             serial_consistency: batch.get_serial_consistency(),
         };
 
-        let response = self.send_request(&batch_frame, true).await?;
+        let response = self.send_request(&batch_frame, true).await?.response;
 
         match response {
             Response::Error(err) => Err(err.into()),
@@ -311,7 +351,7 @@ impl Connection {
 
         let query_response = self.query(&query, (), None).await?;
 
-        match query_response {
+        match query_response.response {
             Response::Result(result::Result::SetKeyspace(set_keyspace)) => {
                 if set_keyspace.keyspace_name.to_lowercase()
                     != keyspace_name.as_str().to_lowercase()
@@ -334,7 +374,7 @@ impl Connection {
         &self,
         request: &R,
         compress: bool,
-    ) -> Result<Response, QueryError> {
+    ) -> Result<QueryResponse, QueryError> {
         let body = request.to_bytes()?;
         let compression = if compress {
             self.config.compression
@@ -375,13 +415,17 @@ impl Connection {
             task_response.body,
         )?;
 
-        for warn_description in body_with_ext.warnings {
+        for warn_description in &body_with_ext.warnings {
             warn!(warning = warn_description.as_str());
         }
 
         let response = Response::deserialize(task_response.opcode, &mut &*body_with_ext.body)?;
 
-        Ok(response)
+        Ok(QueryResponse {
+            response,
+            warnings: body_with_ext.warnings,
+            tracing_id: body_with_ext.trace_id,
+        })
     }
 
     #[cfg(feature = "ssl")]

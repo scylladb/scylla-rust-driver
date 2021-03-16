@@ -44,7 +44,7 @@ async fn main() -> Result<()> {
         .await?;
 
     // Rows can be parsed as tuples
-    if let Some(rows) = session.query("SELECT a, b, c FROM ks.t", &[]).await? {
+    if let Some(rows) = session.query("SELECT a, b, c FROM ks.t", &[]).await?.rows {
         for row in rows.into_typed::<(i32, i32, String)>() {
             let (a, b, c) = row?;
             println!("a, b, c: {}, {}, {}", a, b, c);
@@ -59,7 +59,7 @@ async fn main() -> Result<()> {
         c: String,
     }
 
-    if let Some(rows) = session.query("SELECT a, b, c FROM ks.t", &[]).await? {
+    if let Some(rows) = session.query("SELECT a, b, c FROM ks.t", &[]).await?.rows {
         for row_data in rows.into_typed::<RowData>() {
             let row_data = row_data?;
             println!("row_data: {:?}", row_data);
@@ -67,7 +67,7 @@ async fn main() -> Result<()> {
     }
 
     // Or simply as untyped rows
-    if let Some(rows) = session.query("SELECT a, b, c FROM ks.t", &[]).await? {
+    if let Some(rows) = session.query("SELECT a, b, c FROM ks.t", &[]).await?.rows {
         for row in rows {
             let a = row.columns[0].as_ref().unwrap().as_int().unwrap();
             let b = row.columns[1].as_ref().unwrap().as_int().unwrap();

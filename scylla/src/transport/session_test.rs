@@ -39,6 +39,7 @@ async fn test_unprepared_statement() {
         .query("SELECT a, b, c FROM ks.t", &[])
         .await
         .unwrap()
+        .rows
         .unwrap();
 
     let mut results: Vec<(i32, i32, &String)> = rs
@@ -112,6 +113,7 @@ async fn test_prepared_statement() {
             .query("SELECT token(a) FROM ks.t2", &[])
             .await
             .unwrap()
+            .rows
             .unwrap();
         let token: i64 = rs.first().unwrap().columns[0]
             .as_ref()
@@ -131,6 +133,7 @@ async fn test_prepared_statement() {
             .query("SELECT token(a,b,c) FROM ks.complex_pk", &[])
             .await
             .unwrap()
+            .rows
             .unwrap();
         let token: i64 = rs.first().unwrap().columns[0]
             .as_ref()
@@ -152,6 +155,7 @@ async fn test_prepared_statement() {
             .query("SELECT a,b,c FROM ks.t2", &[])
             .await
             .unwrap()
+            .rows
             .unwrap();
         let r = rs.first().unwrap();
         let a = r.columns[0].as_ref().unwrap().as_int().unwrap();
@@ -164,6 +168,7 @@ async fn test_prepared_statement() {
             .query("SELECT a,b,c,d,e FROM ks.complex_pk", &[])
             .await
             .unwrap()
+            .rows
             .unwrap();
         let r = rs.first().unwrap();
         let a = r.columns[0].as_ref().unwrap().as_int().unwrap();
@@ -218,6 +223,7 @@ async fn test_batch() {
         .query("SELECT a, b, c FROM ks.t_batch", &[])
         .await
         .unwrap()
+        .rows
         .unwrap();
 
     let mut results: Vec<(i32, i32, &String)> = rs
@@ -276,6 +282,7 @@ async fn test_token_calculation() {
             .query("SELECT token(a) FROM ks.t3 WHERE a = ?", &values)
             .await
             .unwrap()
+            .rows
             .unwrap();
         let token: i64 = rs.first().unwrap().columns[0]
             .as_ref()
@@ -331,6 +338,7 @@ async fn test_use_keyspace() {
         .query("SELECT * FROM tab", &[])
         .await
         .unwrap()
+        .rows
         .unwrap()
         .into_typed::<(String,)>()
         .map(|res| res.unwrap().0)
@@ -381,6 +389,7 @@ async fn test_use_keyspace() {
         .query("SELECT * FROM tab", &[])
         .await
         .unwrap()
+        .rows
         .unwrap()
         .into_typed::<(String,)>()
         .map(|res| res.unwrap().0)
@@ -447,6 +456,7 @@ async fn test_use_keyspace_case_sensitivity() {
         .query("SELECT * from tab", &[])
         .await
         .unwrap()
+        .rows
         .unwrap()
         .into_typed::<(String,)>()
         .map(|row| row.unwrap().0)
@@ -462,6 +472,7 @@ async fn test_use_keyspace_case_sensitivity() {
         .query("SELECT * from tab", &[])
         .await
         .unwrap()
+        .rows
         .unwrap()
         .into_typed::<(String,)>()
         .map(|row| row.unwrap().0)
@@ -511,6 +522,7 @@ async fn test_raw_use_keyspace() {
         .query("SELECT * FROM tab", &[])
         .await
         .unwrap()
+        .rows
         .unwrap()
         .into_typed::<(String,)>()
         .map(|res| res.unwrap().0)

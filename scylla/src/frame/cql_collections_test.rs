@@ -50,6 +50,7 @@ async fn test_cql_collections() {
         .query("SELECT team FROM ks.teams", &[])
         .await
         .unwrap()
+        .rows
     {
         for row in rows.into_typed::<(HashMap<i32, String>,)>() {
             let teams: HashMap<i32, String> = row.unwrap().0;
@@ -83,6 +84,7 @@ async fn test_cql_collections() {
         .query("SELECT tags FROM ks.images", &[])
         .await
         .unwrap()
+        .rows
     {
         for row in rows.into_typed::<(Vec<String>,)>() {
             let tag: Vec<String> = row.unwrap().0;
@@ -101,6 +103,7 @@ async fn test_cql_collections() {
         .query("SELECT tags FROM ks.images", &[])
         .await
         .unwrap()
+        .rows
     {
         for row in rows.into_typed::<(Vec<String>,)>() {
             let tag: Vec<String> = row.unwrap().0;
@@ -130,6 +133,7 @@ async fn test_cql_collections() {
         .query("SELECT scores FROM ks.plays", &[])
         .await
         .unwrap()
+        .rows
     {
         for row in rows.into_typed::<(Vec<i32>,)>() {
             let scores: Vec<i32> = row.unwrap().0;
@@ -151,6 +155,7 @@ async fn test_cql_collections() {
         .query("SELECT scores FROM ks.plays", &[])
         .await
         .unwrap()
+        .rows
     {
         for row in rows.into_typed::<(Vec<i32>,)>() {
             let scores: Vec<i32> = row.unwrap().0;
@@ -180,6 +185,7 @@ async fn test_cql_collections() {
         .query("SELECT duration FROM ks.durations", &[])
         .await
         .unwrap()
+        .rows
     {
         for row in rows.into_typed::<((i32, String),)>() {
             let duration = row.unwrap().0;

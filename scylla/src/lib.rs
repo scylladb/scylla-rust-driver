@@ -15,5 +15,6 @@ pub use statement::query;
 
 pub use frame::response::cql_to_rust;
 
+pub use transport::connection::QueryResult;
 pub use transport::session::{IntoTypedRows, Session, SessionConfig};
 pub use transport::session_builder::SessionBuilder;

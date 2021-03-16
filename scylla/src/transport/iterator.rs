@@ -94,7 +94,10 @@ impl RowIterator {
             let choose_connection = |node: Arc<Node>| async move { node.random_connection().await };
 
             let page_query = |connection: Arc<Connection>, paging_state: Option<Bytes>| async move {
-                connection.query(query_ref, values_ref, paging_state).await
+                Ok(connection
+                    .query(query_ref, values_ref, paging_state)
+                    .await?
+                    .response)
             };
 
             let worker = RowIteratorWorker {

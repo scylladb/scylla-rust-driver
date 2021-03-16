@@ -47,7 +47,7 @@ async fn main() -> Result<()> {
         .await?;
 
     // And read like any normal value
-    if let Some(rows) = session.query("SELECT my FROM ks.udt_tab", &[]).await? {
+    if let Some(rows) = session.query("SELECT my FROM ks.udt_tab", &[]).await?.rows {
         for row in rows.into_typed::<(MyType,)>() {
             let (my_val,) = row?;
             println!("{:?}", my_val)
