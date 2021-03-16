@@ -2,11 +2,13 @@ use crate::frame::frame_errors::ParseError;
 use bytes::BufMut;
 
 use crate::frame::request::{Request, RequestOpcode};
+use crate::transport::Authenticator;
 
 // Implements Authenticate Response
 pub struct AuthResponse {
     pub username: Option<String>,
     pub password: Option<String>,
+    pub authenticator: Authenticator,
 }
 
 impl Request for AuthResponse {
