@@ -186,22 +186,34 @@ impl Connection {
             .response)
     }
 
-    pub async fn prepare(&self, query: &str) -> Result<PreparedStatement, QueryError> {
-        let result = self
-            .send_request(&request::Prepare { query }, true, false)
-            .await?
-            .response;
-        match result {
-            Response::Error(err) => Err(err.into()),
-            Response::Result(result::Result::Prepared(p)) => Ok(PreparedStatement::new(
-                p.id,
-                p.prepared_metadata,
-                query.to_owned(),
-            )),
-            _ => Err(QueryError::ProtocolError(
-                "PREPARE: Unexpected server response",
-            )),
+    pub async fn prepare(&self, query: &Query) -> Result<PreparedStatement, QueryError> {
+        let query_response = self
+            .send_request(
+                &request::Prepare {
+                    query: &query.get_contents(),
+                },
+                true,
+                query.tracing,
+            )
+            .await?;
+
+        let mut prepared_statement = match query_response.response {
+            Response::Error(err) => return Err(err.into()),
+            Response::Result(result::Result::Prepared(p)) => {
+                PreparedStatement::new(p.id, p.prepared_metadata, query.get_contents().to_owned())
+            }
+            _ => {
+                return Err(QueryError::ProtocolError(
+                    "PREPARE: Unexpected server response",
+                ))
+            }
+        };
+
+        if let Some(tracing_id) = query_response.tracing_id {
+            prepared_statement.prepare_tracing_ids.push(tracing_id);
         }
+
+        Ok(prepared_statement)
     }
 
     pub async fn query_single_page(
@@ -279,7 +291,8 @@ impl Connection {
         if let Response::Error(err) = &query_response.response {
             if err.error == DbError::Unprepared {
                 // Repreparation of a statement is needed
-                let reprepared = self.prepare(prepared_statement.get_statement()).await?;
+                let reprepare_query: Query = prepared_statement.get_statement().into();
+                let reprepared = self.prepare(&reprepare_query).await?;
                 // Reprepared statement should keep its id - it's the md5 sum
                 // of statement contents
                 if reprepared.get_id() != prepared_statement.get_id() {

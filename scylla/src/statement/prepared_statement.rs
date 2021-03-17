@@ -5,12 +5,14 @@ use crate::transport::retry_policy::RetryPolicy;
 use bytes::{BufMut, Bytes, BytesMut};
 use std::convert::TryInto;
 use thiserror::Error;
+use uuid::Uuid;
 
 /// Represents a statement prepared on the server.
 pub struct PreparedStatement {
     id: Bytes,
     metadata: PreparedMetadata,
     statement: String,
+    pub prepare_tracing_ids: Vec<Uuid>,
     page_size: Option<i32>,
     pub consistency: Consistency,
     pub serial_consistency: Option<Consistency>,
@@ -25,6 +27,7 @@ impl PreparedStatement {
             id,
             metadata,
             statement,
+            prepare_tracing_ids: Vec::new(),
             page_size: None,
             consistency: Default::default(),
             serial_consistency: None,
@@ -117,6 +120,11 @@ impl PreparedStatement {
         self.tracing
     }
 
+    /// Gets tracing ids of queries used to prepare this statement
+    pub fn get_prepare_tracing_ids(&self) -> &[Uuid] {
+        &self.prepare_tracing_ids
+    }
+
     /// Computes the partition key of the target table from given values
     /// Partition keys have a specific serialization rules.
     /// Ref: https://github.com/scylladb/scylla/blob/40adf38915b6d8f5314c621a94d694d172360833/compound_compat.hh#L33-L47
@@ -195,6 +203,7 @@ impl Clone for PreparedStatement {
             id: self.id.clone(),
             metadata: self.metadata.clone(),
             statement: self.statement.clone(),
+            prepare_tracing_ids: self.prepare_tracing_ids.clone(),
             page_size: self.page_size,
             consistency: self.consistency,
             serial_consistency: self.serial_consistency,

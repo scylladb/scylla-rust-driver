@@ -631,6 +631,7 @@ async fn test_tracing() {
 
     test_tracing_query(&session).await;
     test_tracing_execute(&session).await;
+    test_tracing_prepare(&session).await;
 }
 
 async fn test_tracing_query(session: &Session) {
@@ -676,6 +677,28 @@ async fn test_tracing_execute(session: &Session) {
 
     // Querying this uuid from tracing table gives some results
     assert_in_tracing_table(session, traced_prepared_result.tracing_id.unwrap()).await;
+}
+
+async fn test_tracing_prepare(session: &Session) {
+    // Preparing a statement without tracing enabled has no tracing uuids in result
+    let untraced_prepared = session
+        .prepare("SELECT * FROM test_tracing_ks.tab")
+        .await
+        .unwrap();
+
+    assert!(untraced_prepared.prepare_tracing_ids.is_empty());
+
+    // Preparing a statement with tracing enabled has tracing uuids in result
+    let mut to_prepare_traced = Query::new("SELECT * FROM test_tracing_ks.tab".to_string());
+    to_prepare_traced.tracing = true;
+
+    let traced_prepared = session.prepare(to_prepare_traced).await.unwrap();
+    assert!(!traced_prepared.prepare_tracing_ids.is_empty());
+
+    // Querying this uuid from tracing table gives some results
+    for tracing_id in traced_prepared.prepare_tracing_ids {
+        assert_in_tracing_table(session, tracing_id).await;
+    }
 }
 
 async fn assert_in_tracing_table(session: &Session, tracing_uuid: Uuid) {

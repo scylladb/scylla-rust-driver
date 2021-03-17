@@ -348,11 +348,13 @@ impl Session {
     /// which can later be used to perform more efficient queries
     /// # Arguments
     ///#
-    pub async fn prepare(&self, query: &str) -> Result<PreparedStatement, QueryError> {
+    pub async fn prepare(&self, query: impl Into<Query>) -> Result<PreparedStatement, QueryError> {
+        let query: Query = query.into();
+
         let connections = self.cluster.get_working_connections().await?;
 
         // Prepare statements on all connections concurrently
-        let handles = connections.iter().map(|c| c.prepare(query));
+        let handles = connections.iter().map(|c| c.prepare(&query));
         let mut results = join_all(handles).await;
 
         // If at least one prepare was succesfull prepare returns Ok
@@ -370,7 +372,7 @@ impl Session {
             }
         }
 
-        let prepared: PreparedStatement = first_ok.unwrap()?;
+        let mut prepared: PreparedStatement = first_ok.unwrap()?;
 
         // Validate prepared ids equality
         for res in results {
@@ -380,6 +382,11 @@ impl Session {
                         "Prepared statement Ids differ, all should be equal",
                     ));
                 }
+
+                // Collect all tracing ids from prepare() queries in the final result
+                prepared
+                    .prepare_tracing_ids
+                    .extend(statement.prepare_tracing_ids);
             }
         }
 
