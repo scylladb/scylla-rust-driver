@@ -272,7 +272,9 @@ impl Connection {
             },
         };
 
-        let query_response = self.send_request(&execute_frame, true, false).await?;
+        let query_response = self
+            .send_request(&execute_frame, true, prepared_statement.tracing)
+            .await?;
 
         if let Response::Error(err) = &query_response.response {
             if err.error == DbError::Unprepared {
@@ -286,7 +288,9 @@ impl Connection {
                     ));
                 }
 
-                return self.send_request(&execute_frame, true, false).await;
+                return self
+                    .send_request(&execute_frame, true, prepared_statement.tracing)
+                    .await;
             }
         }
 

@@ -630,7 +630,7 @@ async fn test_tracing() {
         .unwrap();
 
     test_tracing_query(&session).await;
-    // TODO: Add execute later
+    test_tracing_execute(&session).await;
 }
 
 async fn test_tracing_query(session: &Session) {
@@ -649,6 +649,33 @@ async fn test_tracing_query(session: &Session) {
 
     // Querying this uuid from tracing table gives some results
     assert_in_tracing_table(session, traced_query_result.tracing_id.unwrap()).await;
+}
+
+async fn test_tracing_execute(session: &Session) {
+    // Executing a prepared statement without tracing enabled has no tracing uuid in result
+    let untraced_prepared = session
+        .prepare("SELECT * FROM test_tracing_ks.tab")
+        .await
+        .unwrap();
+
+    let untraced_prepared_result: QueryResult =
+        session.execute(&untraced_prepared, &[]).await.unwrap();
+
+    assert!(untraced_prepared_result.tracing_id.is_none());
+
+    // Executing a prepared statement with tracing enabled has a tracing uuid in result
+    let mut traced_prepared = session
+        .prepare("SELECT * FROM test_tracing_ks.tab")
+        .await
+        .unwrap();
+
+    traced_prepared.tracing = true;
+
+    let traced_prepared_result: QueryResult = session.execute(&traced_prepared, &[]).await.unwrap();
+    assert!(traced_prepared_result.tracing_id.is_some());
+
+    // Querying this uuid from tracing table gives some results
+    assert_in_tracing_table(session, traced_prepared_result.tracing_id.unwrap()).await;
 }
 
 async fn assert_in_tracing_table(session: &Session, tracing_uuid: Uuid) {
