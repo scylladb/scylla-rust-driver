@@ -11,6 +11,7 @@ pub struct Query {
     pub serial_consistency: Option<Consistency>,
     pub is_idempotent: bool,
     pub retry_policy: Option<Box<dyn RetryPolicy + Send + Sync>>,
+    pub tracing: bool,
 }
 
 impl Query {
@@ -23,6 +24,7 @@ impl Query {
             serial_consistency: None,
             is_idempotent: false,
             retry_policy: None,
+            tracing: false,
         }
     }
 
@@ -93,6 +95,18 @@ impl Query {
     pub fn get_retry_policy(&self) -> &Option<Box<dyn RetryPolicy + Send + Sync>> {
         &self.retry_policy
     }
+
+    /// Enable or disable CQL Tracing for this query  
+    /// If enabled session.query() will return QueryResult containing tracing_id
+    /// which can be used to query tracing information about the execution of this query
+    pub fn set_tracing(&mut self, should_trace: bool) {
+        self.tracing = should_trace;
+    }
+
+    /// Gets whether tracing is enabled for this query
+    pub fn get_tracing(&self) -> bool {
+        self.tracing
+    }
 }
 
 impl From<String> for Query {
@@ -119,6 +133,7 @@ impl Clone for Query {
                 .retry_policy
                 .as_ref()
                 .map(|policy| policy.clone_boxed()),
+            tracing: self.tracing,
         }
     }
 }
