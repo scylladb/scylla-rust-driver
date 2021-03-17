@@ -7,6 +7,7 @@ use crate::transport::session::IntoTypedRows;
 use std::collections::HashMap;
 use std::net::{IpAddr, SocketAddr};
 use std::str::FromStr;
+use tracing::{debug, error, warn};
 
 /// Allows to read current topology info from the cluster
 pub struct TopologyReader {
@@ -86,6 +87,12 @@ impl TopologyReader {
                 break;
             }
 
+            warn!(
+                control_connection_address = self.control_connection_address.to_string().as_str(),
+                error = result.as_ref().err().unwrap().to_string().as_str(),
+                "Falied to fetch topology info using current control connection"
+            );
+
             self.control_connection_address = *peer;
             self.control_connection = ConnectionKeeper::new(
                 self.control_connection_address,
@@ -98,8 +105,15 @@ impl TopologyReader {
             result = self.fetch_topology_info().await;
         }
 
-        if let Ok(topology_info) = &result {
-            self.update_known_peers(topology_info);
+        match &result {
+            Ok(topology_info) => {
+                self.update_known_peers(topology_info);
+                debug!("Fetched new topology info");
+            }
+            Err(error) => error!(
+                error = error.to_string().as_str(),
+                "Could not fetch topology info"
+            ),
         }
 
         return result;
