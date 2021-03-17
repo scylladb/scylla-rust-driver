@@ -4,6 +4,7 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio::net::lookup_host;
 use tracing::warn;
+use uuid::Uuid;
 
 use super::errors::{BadQuery, NewSessionError, QueryError};
 use crate::batch::Batch;
@@ -15,6 +16,7 @@ use crate::prepared_statement::{PartitionKeyError, PreparedStatement};
 use crate::query::Query;
 use crate::routing::{murmur3_token, Token};
 use crate::statement::Consistency;
+use crate::tracing::{TracingEvent, TracingInfo};
 use crate::transport::{
     cluster::Cluster,
     connection::{Connection, ConnectionConfig, QueryResult, VerifiedKeyspaceName},
@@ -535,6 +537,69 @@ impl Session {
 
     pub fn get_metrics(&self) -> MetricsView {
         MetricsView::new(self.metrics.clone())
+    }
+
+    /// Get [`TracingInfo`] of a traced query performed earlier
+    pub async fn get_tracing_info(&self, tracing_id: &Uuid) -> Result<TracingInfo, QueryError> {
+        // Query system_traces.sessions for TracingInfo
+        // Consistency::One is enough - after creation there will be no modifications
+        let mut traces_session_query =
+            Query::new(crate::tracing::TRACES_SESSION_QUERY_STR.to_string());
+        traces_session_query.consistency = Consistency::One;
+
+        // Query system_traces.events for TracingEvents
+        // Consistency::One is enough - after creation there will be no modifications
+        let mut traces_events_query =
+            Query::new(crate::tracing::TRACES_EVENTS_QUERY_STR.to_string());
+        traces_events_query.consistency = Consistency::One;
+
+        let (traces_session_res, traces_events_res) = tokio::try_join!(
+            self.query(traces_session_query, (tracing_id,)),
+            self.query(traces_events_query, (tracing_id,))
+        )?;
+
+        // Get tracing info
+        let mut tracing_info: TracingInfo = traces_session_res
+            .rows
+            .ok_or(QueryError::ProtocolError(
+                "Response to system_traces.sessions query was not Rows",
+            ))?
+            .into_typed::<TracingInfo>()
+            .next()
+            .ok_or(QueryError::ProtocolError(
+                "Empty row list received from system_traces.session query",
+            ))?
+            .map_err(|_| {
+                QueryError::ProtocolError(
+                    "Columns from system_traces.session have an unexpected type",
+                )
+            })?;
+
+        // Get tracing events
+        let tracing_event_rows = traces_events_res
+            .rows
+            .ok_or(QueryError::ProtocolError(
+                "Response to system_traces.events query was not Rows",
+            ))?
+            .into_typed::<TracingEvent>();
+
+        for event in tracing_event_rows {
+            let tracing_event: TracingEvent = event.map_err(|_| {
+                QueryError::ProtocolError(
+                    "Columns from system_traces.events have an unexpected type",
+                )
+            })?;
+
+            tracing_info.events.push(tracing_event);
+        }
+
+        if tracing_info.events.is_empty() {
+            return Err(QueryError::ProtocolError(
+                "Empty row list received from system_traces.session query",
+            ));
+        }
+
+        Ok(tracing_info)
     }
 
     // This method allows to easily run a query using load balancing, retry policy etc.

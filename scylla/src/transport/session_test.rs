@@ -2,6 +2,7 @@ use crate::frame::value::ValueList;
 use crate::query::Query;
 use crate::routing::hash3_x64_128;
 use crate::statement::Consistency;
+use crate::tracing::TracingInfo;
 use crate::transport::connection::QueryResult;
 use crate::transport::errors::{BadKeyspaceName, BadQuery, DbError, QueryError};
 use crate::{IntoTypedRows, Session, SessionBuilder};
@@ -632,6 +633,7 @@ async fn test_tracing() {
     test_tracing_query(&session).await;
     test_tracing_execute(&session).await;
     test_tracing_prepare(&session).await;
+    test_get_tracing_info(&session).await;
 }
 
 async fn test_tracing_query(session: &Session) {
@@ -699,6 +701,40 @@ async fn test_tracing_prepare(session: &Session) {
     for tracing_id in traced_prepared.prepare_tracing_ids {
         assert_in_tracing_table(session, tracing_id).await;
     }
+}
+
+async fn test_get_tracing_info(session: &Session) {
+    // A query with tracing enabled has a tracing uuid in result
+    let mut traced_query: Query = Query::new("SELECT * FROM test_tracing_ks.tab".to_string());
+    traced_query.tracing = true;
+
+    let traced_query_result: QueryResult = session.query(traced_query, &[]).await.unwrap();
+    let tracing_id: Uuid = traced_query_result.tracing_id.unwrap();
+
+    // Getting tracing info from session using this uuid works
+    // Tracing info might not be immediately available
+    // Perform 8 retries with a 32ms wait in between
+    let mut last_error = None;
+
+    for _ in 0..8_u32 {
+        let tracing_info_res: Result<TracingInfo, _> = session.get_tracing_info(&tracing_id).await;
+
+        match tracing_info_res {
+            Ok(tracing_info) => {
+                assert!(!tracing_info.events.is_empty()); // Ok
+                return;
+            }
+            Err(e) => last_error = Some(e), // Retry
+        };
+
+        // Sleep before retry
+        tokio::time::sleep(std::time::Duration::from_millis(32)).await;
+    }
+
+    panic!(
+        "Failed to perform session.get_tracing_info(): {:?}",
+        last_error
+    );
 }
 
 async fn assert_in_tracing_table(session: &Session, tracing_uuid: Uuid) {

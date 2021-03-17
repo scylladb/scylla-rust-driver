@@ -6,6 +6,7 @@ pub mod macros;
 pub mod frame;
 pub mod routing;
 pub mod statement;
+pub mod tracing;
 pub mod transport;
 
 pub use macros::*;
