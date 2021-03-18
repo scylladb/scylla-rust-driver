@@ -176,6 +176,7 @@ impl SessionConfig {
             ssl_context: self.ssl_context.clone(),
             auth_username: self.auth_username.to_owned(),
             auth_password: self.auth_password.to_owned(),
+            ..Default::default()
         }
     }
 }

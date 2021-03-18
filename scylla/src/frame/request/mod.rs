@@ -4,6 +4,7 @@ pub mod execute;
 pub mod options;
 pub mod prepare;
 pub mod query;
+pub mod register;
 pub mod startup;
 
 use crate::frame::frame_errors::ParseError;

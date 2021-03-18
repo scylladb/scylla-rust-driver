@@ -29,7 +29,7 @@ use super::errors::{BadKeyspaceName, BadQuery, DbError, QueryError};
 use crate::batch::{Batch, BatchStatement};
 use crate::frame::{
     self,
-    request::{self, batch, execute, query, Request, RequestOpcode},
+    request::{self, batch, execute, query, register, register::EventType, Request, RequestOpcode},
     response::{result, Response, ResponseOpcode},
     value::{BatchValues, ValueList},
     FrameParams, RequestBodyWithExtensions,
@@ -43,6 +43,11 @@ use crate::transport::Authenticator::{
     PasswordAuthenticator, ScyllaTransitionalAuthenticator,
 };
 use crate::transport::Compression;
+
+// TODO add more events
+pub enum Event {
+    TopologyChange,
+}
 
 pub struct Connection {
     submit_channel: mpsc::Sender<Task>,
@@ -124,6 +129,9 @@ pub struct ConnectionConfig {
     pub ssl_context: Option<SslContext>,
     pub auth_username: Option<String>,
     pub auth_password: Option<String>,
+
+    // should be Some only in control connections,
+    pub event_sender: Option<mpsc::Sender<Event>>,
     /*
     These configuration options will be added in the future:
 
@@ -141,6 +149,7 @@ impl Default for ConnectionConfig {
         Self {
             compression: None,
             tcp_nodelay: false,
+            event_sender: None,
             #[cfg(feature = "ssl")]
             ssl_context: None,
             auth_username: None,
@@ -158,7 +167,7 @@ impl Connection {
         addr: SocketAddr,
         source_port: Option<u16>,
         config: ConnectionConfig,
-    ) -> Result<(Self, ErrorReceiver), std::io::Error> {
+    ) -> Result<(Self, ErrorReceiver), QueryError> {
         let stream = match source_port {
             Some(p) => connect_with_source_port(addr, p).await?,
             None => TcpStream::connect(addr).await?,
@@ -182,6 +191,15 @@ impl Connection {
             config,
             is_shard_aware: false,
         };
+
+        if connection.config.event_sender.is_some() {
+            let all_event_types = vec![
+                EventType::TopologyChange,
+                EventType::StatusChange,
+                EventType::SchemaChange,
+            ];
+            connection.register(all_event_types).await?;
+        }
 
         Ok((connection, error_receiver))
     }
@@ -226,6 +244,7 @@ impl Connection {
         if let Some(tracing_id) = query_response.tracing_id {
             prepared_statement.prepare_tracing_ids.push(tracing_id);
         }
+
         Ok(prepared_statement)
     }
 
@@ -414,6 +433,27 @@ impl Connection {
             Response::Error(err) => Err(err.into()),
             _ => Err(QueryError::ProtocolError(
                 "USE <keyspace_name> returned unexpected response",
+            )),
+        }
+    }
+
+    async fn register(
+        &self,
+        event_types_to_register_for: Vec<register::EventType>,
+    ) -> Result<(), QueryError> {
+        let register_frame = register::Register {
+            event_types_to_register_for,
+        };
+
+        match self
+            .send_request(&register_frame, true, false)
+            .await?
+            .response
+        {
+            Response::Ready => Ok(()),
+            Response::Error(err) => Err(err.into()),
+            _ => Err(QueryError::ProtocolError(
+                "Unexpected response to REGISTER message",
             )),
         }
     }
