@@ -1,10 +1,13 @@
 use super::value::{
-    BatchValues, MaybeUnset, SerializeValuesError, SerializedResult, SerializedValues, Unset,
-    Value, ValueList, ValueTooBig,
+    BatchValues, Date, MaybeUnset, SerializeValuesError, SerializedResult, SerializedValues, Time,
+    Timestamp, Unset, Value, ValueList, ValueTooBig,
 };
 use bytes::BufMut;
+use chrono::Duration;
+use chrono::NaiveDate;
 use std::borrow::Cow;
 use std::convert::TryInto;
+use uuid::Uuid;
 
 fn serialized(val: impl Value) -> Vec<u8> {
     let mut result: Vec<u8> = Vec::new();
@@ -24,6 +27,112 @@ fn basic_serialization() {
 
     assert_eq!(serialized("abc"), vec![0, 0, 0, 3, 97, 98, 99]);
     assert_eq!(serialized("abc".to_string()), vec![0, 0, 0, 3, 97, 98, 99]);
+}
+
+#[test]
+fn naive_date_serialization() {
+    // 1970-01-31 is 2^31
+    let unix_epoch: NaiveDate = NaiveDate::from_ymd(1970, 1, 1);
+    assert_eq!(serialized(unix_epoch), vec![0, 0, 0, 4, 128, 0, 0, 0]);
+    assert_eq!(2_u32.pow(31).to_be_bytes(), [128, 0, 0, 0]);
+
+    // 1969-12-02 is 2^31 - 30
+    let before_epoch: NaiveDate = NaiveDate::from_ymd(1969, 12, 2);
+    assert_eq!(
+        serialized(before_epoch),
+        vec![0, 0, 0, 4, 127, 255, 255, 226]
+    );
+    assert_eq!((2_u32.pow(31) - 30).to_be_bytes(), [127, 255, 255, 226]);
+
+    // 1970-01-31 is 2^31 + 30
+    let after_epoch: NaiveDate = NaiveDate::from_ymd(1970, 1, 31);
+    assert_eq!(serialized(after_epoch), vec![0, 0, 0, 4, 128, 0, 0, 30]);
+    assert_eq!((2_u32.pow(31) + 30).to_be_bytes(), [128, 0, 0, 30]);
+}
+
+#[test]
+fn date_serialization() {
+    assert_eq!(serialized(Date(0)), vec![0, 0, 0, 4, 0, 0, 0, 0]);
+    assert_eq!(
+        serialized(Date(u32::max_value())),
+        vec![0, 0, 0, 4, 255, 255, 255, 255]
+    );
+}
+
+#[test]
+fn time_serialization() {
+    // Time is an i64 - nanoseconds since midnight
+    // in range 0..=86399999999999
+
+    let max_time: i64 = 24 * 60 * 60 * 1_000_000_000 - 1;
+    assert_eq!(max_time, 86399999999999);
+
+    // Check that basic values are serialized correctly
+    // Invalid values are also serialized correctly - database will respond with an error
+    for test_val in [0, 1, 15, 18463, max_time, -1, -324234, max_time + 16].iter() {
+        let test_time: Time = Time(Duration::nanoseconds(*test_val));
+        let bytes: Vec<u8> = serialized(test_time);
+
+        let mut expected_bytes: Vec<u8> = vec![0, 0, 0, 8];
+        expected_bytes.extend_from_slice(&test_val.to_be_bytes());
+
+        assert_eq!(bytes, expected_bytes);
+        assert_eq!(expected_bytes.len(), 12);
+    }
+
+    // Durations so long that nanoseconds don't fit in i64 cause an error
+    let long_time = Time(Duration::milliseconds(i64::max_value()));
+    assert_eq!(long_time.serialize(&mut Vec::new()), Err(ValueTooBig));
+}
+
+#[test]
+fn timestamp_serialization() {
+    // Timestamp is milliseconds since unix epoch represented as i64
+
+    for test_val in &[
+        0,
+        -1,
+        1,
+        -45345346,
+        453451,
+        i64::min_value(),
+        i64::max_value(),
+    ] {
+        let test_timestamp: Timestamp = Timestamp(Duration::milliseconds(*test_val));
+        let bytes: Vec<u8> = serialized(test_timestamp);
+
+        let mut expected_bytes: Vec<u8> = vec![0, 0, 0, 8];
+        expected_bytes.extend_from_slice(&test_val.to_be_bytes());
+
+        assert_eq!(bytes, expected_bytes);
+        assert_eq!(expected_bytes.len(), 12);
+    }
+}
+
+#[test]
+fn timeuuid_serialization() {
+    // A few random timeuuids generated manually
+    let tests = [
+        [
+            0x8e, 0x14, 0xe7, 0x60, 0x7f, 0xa8, 0x11, 0xeb, 0xbc, 0x66, 0, 0, 0, 0, 0, 0x01,
+        ],
+        [
+            0x9b, 0x34, 0x95, 0x80, 0x7f, 0xa8, 0x11, 0xeb, 0xbc, 0x66, 0, 0, 0, 0, 0, 0x01,
+        ],
+        [
+            0x5d, 0x74, 0xba, 0xe0, 0x7f, 0xa3, 0x11, 0xeb, 0xbc, 0x66, 0, 0, 0, 0, 0, 0x01,
+        ],
+    ];
+
+    for uuid_bytes in &tests {
+        let uuid = Uuid::from_slice(uuid_bytes.as_ref()).unwrap();
+        let uuid_serialized: Vec<u8> = serialized(uuid);
+
+        let mut expected_serialized: Vec<u8> = vec![0, 0, 0, 16];
+        expected_serialized.extend_from_slice(uuid_bytes.as_ref());
+
+        assert_eq!(uuid_serialized, expected_serialized);
+    }
 }
 
 #[test]

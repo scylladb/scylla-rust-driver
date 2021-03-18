@@ -1,6 +1,7 @@
 use super::result::{CQLValue, Row};
 use crate::frame::value::Counter;
 use bigdecimal::BigDecimal;
+use chrono::{Duration, NaiveDate};
 use num_bigint::BigInt;
 use std::collections::HashMap;
 use std::hash::Hash;
@@ -77,7 +78,7 @@ impl_from_cql_val!(Counter, as_counter); // Counter::from_cql<CQLValue>
 impl_from_cql_val!(i16, as_smallint); // i16::from_cql<CQLValue>
 impl_from_cql_val!(BigInt, into_varint); // BigInt::from_cql<CQLValue>
 impl_from_cql_val!(i8, as_tinyint); // i8::from_cql<CQLValue>
-impl_from_cql_val!(u32, as_date); // u32::from_cql<CQLValue>
+impl_from_cql_val!(NaiveDate, as_date); // NaiveDate::from_cql<CQLValue>
 impl_from_cql_val!(f32, as_float); // f32::from_cql<CQLValue>
 impl_from_cql_val!(f64, as_double); // f64::from_cql<CQLValue>
 impl_from_cql_val!(bool, as_boolean); // bool::from_cql<CQLValue>
@@ -85,6 +86,7 @@ impl_from_cql_val!(String, into_string); // String::from_cql<CQLValue>
 impl_from_cql_val!(IpAddr, as_inet); // IpAddr::from_cql<CQLValue>
 impl_from_cql_val!(Uuid, as_uuid); // Uuid::from_cql<CQLValue>
 impl_from_cql_val!(BigDecimal, into_decimal); // BigDecimal::from_cql<CQLValue>
+impl_from_cql_val!(Duration, as_duration); // Duration::from_cql<CQLValue>
 
 // Vec<T>::from_cql<CQLValue>
 impl<T: FromCQLVal<CQLValue>> FromCQLVal<CQLValue> for Vec<T> {
@@ -200,16 +202,11 @@ mod tests {
     use crate::frame::value::Counter;
     use crate::macros::FromRow;
     use bigdecimal::BigDecimal;
+    use chrono::{Duration, NaiveDate};
     use num_bigint::{BigInt, ToBigInt};
     use std::net::{IpAddr, Ipv4Addr};
     use std::str::FromStr;
     use uuid::Uuid;
-
-    #[test]
-    fn uuid_from_cql() {
-        let my_uuid = Uuid::parse_str("936DA01F9ABD4d9d80C702AF85C822A8").unwrap();
-        assert_eq!(Ok(my_uuid), Uuid::from_cql(CQLValue::Uuid(my_uuid)));
-    }
 
     #[test]
     fn i32_from_cql() {
@@ -285,6 +282,63 @@ mod tests {
     fn counter_from_cql() {
         let counter = Counter(1);
         assert_eq!(Ok(counter), Counter::from_cql(CQLValue::Counter(counter)));
+    }
+
+    #[test]
+    fn naive_date_from_cql() {
+        let unix_epoch: CQLValue = CQLValue::Date(2_u32.pow(31));
+        assert_eq!(
+            Ok(NaiveDate::from_ymd(1970, 1, 1)),
+            NaiveDate::from_cql(unix_epoch)
+        );
+
+        let before_epoch: CQLValue = CQLValue::Date(2_u32.pow(31) - 30);
+        assert_eq!(
+            Ok(NaiveDate::from_ymd(1969, 12, 2)),
+            NaiveDate::from_cql(before_epoch)
+        );
+
+        let after_epoch: CQLValue = CQLValue::Date(2_u32.pow(31) + 30);
+        assert_eq!(
+            Ok(NaiveDate::from_ymd(1970, 1, 31)),
+            NaiveDate::from_cql(after_epoch)
+        );
+
+        let min_date: CQLValue = CQLValue::Date(0);
+        assert!(NaiveDate::from_cql(min_date).is_err());
+
+        let max_date: CQLValue = CQLValue::Date(u32::max_value());
+        assert!(NaiveDate::from_cql(max_date).is_err());
+    }
+
+    #[test]
+    fn duration_from_cql() {
+        let time_duration = Duration::nanoseconds(86399999999999);
+        assert_eq!(
+            time_duration,
+            Duration::from_cql(CQLValue::Time(time_duration)).unwrap(),
+        );
+
+        let timestamp_duration = Duration::milliseconds(i64::min_value());
+        assert_eq!(
+            timestamp_duration,
+            Duration::from_cql(CQLValue::Timestamp(timestamp_duration)).unwrap(),
+        );
+    }
+
+    #[test]
+    fn uuid_from_cql() {
+        let test_uuid: Uuid = Uuid::parse_str("8e14e760-7fa8-11eb-bc66-000000000001").unwrap();
+
+        assert_eq!(
+            test_uuid,
+            Uuid::from_cql(CQLValue::Uuid(test_uuid)).unwrap()
+        );
+
+        assert_eq!(
+            test_uuid,
+            Uuid::from_cql(CQLValue::Timeuuid(test_uuid)).unwrap()
+        );
     }
 
     #[test]

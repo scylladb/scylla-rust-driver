@@ -1,5 +1,7 @@
 use bigdecimal::BigDecimal;
 use bytes::BufMut;
+use chrono::prelude::*;
+use chrono::Duration;
 use num_bigint::BigInt;
 use std::borrow::Cow;
 use std::collections::HashMap;
@@ -29,6 +31,21 @@ pub enum MaybeUnset<V: Value> {
     Unset,
     Set(V),
 }
+
+/// Wrapper that allows to send dates outside of NaiveDate range (-262145-1-1 to 262143-12-31)
+/// Days since -5877641-06-23 i.e. 2^31 days before unix epoch
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub struct Date(pub u32);
+
+/// Wrapper used to differentiate between Time and Timestamp as sending values
+/// Milliseconds since unix epoch
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub struct Timestamp(pub Duration);
+
+/// Wrapper used to differentiate between Time and Timestamp as sending values
+/// Nanoseconds since midnight
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub struct Time(pub Duration);
 
 /// Keeps a buffer with serialized Values
 /// Allows adding new Values and iterating over serialized ones
@@ -214,6 +231,47 @@ impl Value for BigDecimal {
         buf.put_i32(scale.try_into().map_err(|_| ValueTooBig)?);
         buf.extend_from_slice(&serialized);
 
+        Ok(())
+    }
+}
+
+impl Value for NaiveDate {
+    fn serialize(&self, buf: &mut Vec<u8>) -> Result<(), ValueTooBig> {
+        buf.put_i32(4);
+        let unix_epoch = NaiveDate::from_ymd(1970, 1, 1);
+
+        let days: u32 = self
+            .signed_duration_since(unix_epoch)
+            .num_days()
+            .checked_add(1 << 31)
+            .and_then(|days| days.try_into().ok()) // convert to u32
+            .ok_or(ValueTooBig)?;
+
+        buf.put_u32(days);
+        Ok(())
+    }
+}
+
+impl Value for Date {
+    fn serialize(&self, buf: &mut Vec<u8>) -> Result<(), ValueTooBig> {
+        buf.put_i32(4);
+        buf.put_u32(self.0);
+        Ok(())
+    }
+}
+
+impl Value for Timestamp {
+    fn serialize(&self, buf: &mut Vec<u8>) -> Result<(), ValueTooBig> {
+        buf.put_i32(8);
+        buf.put_i64(self.0.num_milliseconds());
+        Ok(())
+    }
+}
+
+impl Value for Time {
+    fn serialize(&self, buf: &mut Vec<u8>) -> Result<(), ValueTooBig> {
+        buf.put_i32(8);
+        buf.put_i64(self.0.num_nanoseconds().ok_or(ValueTooBig)?);
         Ok(())
     }
 }

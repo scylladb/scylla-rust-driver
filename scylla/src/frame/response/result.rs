@@ -4,6 +4,8 @@ use crate::frame::{frame_errors::ParseError, types};
 use bigdecimal::BigDecimal;
 use byteorder::{BigEndian, ReadBytesExt};
 use bytes::{Buf, Bytes};
+use chrono::prelude::*;
+use chrono::Duration;
 use num_bigint::BigInt;
 use std::{
     collections::BTreeMap,
@@ -75,14 +77,17 @@ pub enum CQLValue {
     Boolean(bool),
     Blob(Vec<u8>),
     Counter(Counter),
-    Date(u32),
     Decimal(BigDecimal),
+    /// Days since -5877641-06-23 i.e. 2^31 days before unix epoch
+    /// Can be converted to chrono::NaiveDate (-262145-1-1 to 262143-12-31) using as_date
+    Date(u32),
     Double(f64),
     Float(f32),
     Int(i32),
     BigInt(i64),
     Text(String),
-    Timestamp(i64),
+    /// Milliseconds since unix epoch
+    Timestamp(Duration),
     Inet(IpAddr),
     List(Vec<CQLValue>),
     Map(Vec<(CQLValue, CQLValue)>),
@@ -94,7 +99,8 @@ pub enum CQLValue {
     },
     SmallInt(i16),
     TinyInt(i8),
-    Time(u64),
+    /// Nanoseconds since midnight
+    Time(Duration),
     Timeuuid(Uuid),
     Tuple(Vec<CQLValue>),
     Uuid(Uuid),
@@ -109,15 +115,23 @@ impl CQLValue {
         }
     }
 
-    pub fn as_timestamp(&self) -> Option<i64> {
-        match self {
-            Self::Timestamp(i) => Some(*i),
-            _ => None,
-        }
+    pub fn as_date(&self) -> Option<NaiveDate> {
+        // Days since -5877641-06-23 i.e. 2^31 days before unix epoch
+        let date_days: u32 = match self {
+            CQLValue::Date(days) => *days,
+            _ => return None,
+        };
+
+        // date_days is u32 then converted to i64
+        // then we substract 2^31 - this can't panic
+        let days_since_epoch = Duration::days(date_days.into()) - Duration::days(1 << 31);
+
+        NaiveDate::from_ymd(1970, 1, 1).checked_add_signed(days_since_epoch)
     }
 
-    pub fn as_time(&self) -> Option<u64> {
+    pub fn as_duration(&self) -> Option<Duration> {
         match self {
+            Self::Timestamp(i) => Some(*i),
             Self::Time(i) => Some(*i),
             _ => None,
         }
@@ -126,13 +140,6 @@ impl CQLValue {
     pub fn as_counter(&self) -> Option<Counter> {
         match self {
             Self::Counter(i) => Some(*i),
-            _ => None,
-        }
-    }
-
-    pub fn as_date(&self) -> Option<u32> {
-        match self {
-            Self::Date(i) => Some(*i),
             _ => None,
         }
     }
@@ -154,6 +161,7 @@ impl CQLValue {
     pub fn as_uuid(&self) -> Option<Uuid> {
         match self {
             Self::Uuid(u) => Some(*u),
+            Self::Timeuuid(u) => Some(*u),
             _ => None,
         }
     }
@@ -507,7 +515,9 @@ fn deser_cql_value(typ: &ColumnType, buf: &mut &[u8]) -> StdResult<CQLValue, Par
                     buf.len()
                 )));
             }
-            CQLValue::Date(buf.read_u32::<BigEndian>()?)
+
+            let date_value = buf.read_u32::<BigEndian>()?;
+            CQLValue::Date(date_value)
         }
         Counter => {
             if buf.len() != 8 {
@@ -588,7 +598,9 @@ fn deser_cql_value(typ: &ColumnType, buf: &mut &[u8]) -> StdResult<CQLValue, Par
                     buf.len()
                 )));
             }
-            CQLValue::Timestamp(buf.read_i64::<BigEndian>()?)
+            let millis = buf.read_i64::<BigEndian>()?;
+
+            CQLValue::Timestamp(Duration::milliseconds(millis))
         }
         Time => {
             if buf.len() != 8 {
@@ -597,7 +609,16 @@ fn deser_cql_value(typ: &ColumnType, buf: &mut &[u8]) -> StdResult<CQLValue, Par
                     buf.len()
                 )));
             }
-            CQLValue::Time(buf.read_u64::<BigEndian>()?)
+            let nanoseconds: i64 = buf.read_i64::<BigEndian>()?;
+
+            // Valid values are in the range 0 to 86399999999999
+            if !(0..=86399999999999).contains(&nanoseconds) {
+                return Err(ParseError::BadData(format! {
+                    "Invalid time value only 0 to 86399999999999 allowed: {}.", nanoseconds
+                }));
+            }
+
+            CQLValue::Time(Duration::nanoseconds(nanoseconds))
         }
         Timeuuid => {
             if buf.len() != 16 {
@@ -779,6 +800,8 @@ mod tests {
     use crate as scylla;
     use crate::frame::value::Counter;
     use bigdecimal::BigDecimal;
+    use chrono::Duration;
+    use chrono::NaiveDate;
     use num_bigint::BigInt;
     use num_bigint::ToBigInt;
     use scylla::frame::response::result::{CQLValue, ColumnType};
@@ -1037,5 +1060,179 @@ mod tests {
 
         assert_eq!(CQLValue::Int(2), decoded[1].0);
         assert_eq!(CQLValue::Int(3), decoded[1].1);
+    }
+
+    #[test]
+    fn date_deserialize() {
+        // Date is correctly parsed from a 4 byte array
+        let four_bytes: [u8; 4] = [12, 23, 34, 45];
+        let date: CQLValue =
+            super::deser_cql_value(&ColumnType::Date, &mut four_bytes.as_ref()).unwrap();
+        assert_eq!(date, CQLValue::Date(u32::from_be_bytes(four_bytes)));
+
+        // Date is parsed as u32 not i32, u32::max_value() is u32::max_value()
+        let date: CQLValue = super::deser_cql_value(
+            &ColumnType::Date,
+            &mut u32::max_value().to_be_bytes().as_ref(),
+        )
+        .unwrap();
+        assert_eq!(date, CQLValue::Date(u32::max_value()));
+
+        // Trying to parse a 0, 3 or 5 byte array fails
+        super::deser_cql_value(&ColumnType::Date, &mut [].as_ref()).unwrap_err();
+        super::deser_cql_value(&ColumnType::Date, &mut [1, 2, 3].as_ref()).unwrap_err();
+        super::deser_cql_value(&ColumnType::Date, &mut [1, 2, 3, 4, 5].as_ref()).unwrap_err();
+
+        // 2^31 when converted to NaiveDate is 1970-01-01
+        let unix_epoch: NaiveDate = NaiveDate::from_ymd(1970, 1, 1);
+        let date: CQLValue =
+            super::deser_cql_value(&ColumnType::Date, &mut 2_u32.pow(31).to_be_bytes().as_ref())
+                .unwrap();
+
+        assert_eq!(date.as_date().unwrap(), unix_epoch);
+
+        // 2^31 - 30 when converted to NaiveDate is 1969-12-02
+        let before_epoch: NaiveDate = NaiveDate::from_ymd(1969, 12, 2);
+        let date: CQLValue = super::deser_cql_value(
+            &ColumnType::Date,
+            &mut (2_u32.pow(31) - 30).to_be_bytes().as_ref(),
+        )
+        .unwrap();
+
+        assert_eq!(date.as_date().unwrap(), before_epoch);
+
+        // 2^31 + 30 when converted to NaiveDate is 1970-01-31
+        let after_epoch: NaiveDate = NaiveDate::from_ymd(1970, 1, 31);
+        let date: CQLValue = super::deser_cql_value(
+            &ColumnType::Date,
+            &mut (2_u32.pow(31) + 30).to_be_bytes().as_ref(),
+        )
+        .unwrap();
+
+        assert_eq!(date.as_date().unwrap(), after_epoch);
+
+        // 0 and u32::max_value() is out of NaiveDate range, fails with an error, not panics
+        assert!(
+            super::deser_cql_value(&ColumnType::Date, &mut 0_u32.to_be_bytes().as_ref())
+                .unwrap()
+                .as_date()
+                .is_none()
+        );
+
+        assert!(super::deser_cql_value(
+            &ColumnType::Date,
+            &mut u32::max_value().to_be_bytes().as_ref()
+        )
+        .unwrap()
+        .as_date()
+        .is_none());
+
+        // It's hard to test NaiveDate more because it involves calculating days between calendar dates
+        // There are more tests using database queries that should cover it
+    }
+
+    #[test]
+    fn test_time_deserialize() {
+        // Time is an i64 - nanoseconds since midnight
+        // in range 0..=86399999999999
+
+        let max_time: i64 = 24 * 60 * 60 * 1_000_000_000 - 1;
+        assert_eq!(max_time, 86399999999999);
+
+        // Check that basic values are deserialized correctly
+        for test_val in [0, 1, 18463, max_time].iter() {
+            let bytes: [u8; 8] = test_val.to_be_bytes();
+            let cql_value: CQLValue =
+                super::deser_cql_value(&ColumnType::Time, &mut &bytes[..]).unwrap();
+            assert_eq!(cql_value, CQLValue::Time(Duration::nanoseconds(*test_val)));
+        }
+
+        // Negative values cause an error
+        // Values bigger than 86399999999999 cause an error
+        for test_val in [-1, i64::min_value(), max_time + 1, i64::max_value()].iter() {
+            let bytes: [u8; 8] = test_val.to_be_bytes();
+            super::deser_cql_value(&ColumnType::Time, &mut &bytes[..]).unwrap_err();
+        }
+
+        // chrono::Duration has enough precision to represent nanoseconds accurately
+        assert_eq!(Duration::nanoseconds(1).num_nanoseconds().unwrap(), 1);
+        assert_eq!(
+            Duration::nanoseconds(7364737473).num_nanoseconds().unwrap(),
+            7364737473
+        );
+        assert_eq!(
+            Duration::nanoseconds(86399999999999)
+                .num_nanoseconds()
+                .unwrap(),
+            86399999999999
+        );
+    }
+
+    #[test]
+    fn test_timestamp_deserialize() {
+        // Timestamp is an i64 - milliseconds since unix epoch
+
+        // Check that test values are deserialized correctly
+        for test_val in &[
+            0,
+            -1,
+            1,
+            74568745,
+            -4584658,
+            i64::min_value(),
+            i64::max_value(),
+        ] {
+            let bytes: [u8; 8] = test_val.to_be_bytes();
+            let cql_value: CQLValue =
+                super::deser_cql_value(&ColumnType::Timestamp, &mut &bytes[..]).unwrap();
+            assert_eq!(
+                cql_value,
+                CQLValue::Timestamp(Duration::milliseconds(*test_val))
+            );
+
+            // Check that Duration converted back to i64 is correct
+            assert_eq!(
+                Duration::milliseconds(*test_val).num_milliseconds(),
+                *test_val
+            );
+        }
+    }
+
+    #[test]
+    fn test_timeuuid_deserialize() {
+        // A few random timeuuids generated manually
+        let tests = [
+            (
+                "8e14e760-7fa8-11eb-bc66-000000000001",
+                [
+                    0x8e, 0x14, 0xe7, 0x60, 0x7f, 0xa8, 0x11, 0xeb, 0xbc, 0x66, 0, 0, 0, 0, 0, 0x01,
+                ],
+            ),
+            (
+                "9b349580-7fa8-11eb-bc66-000000000001",
+                [
+                    0x9b, 0x34, 0x95, 0x80, 0x7f, 0xa8, 0x11, 0xeb, 0xbc, 0x66, 0, 0, 0, 0, 0, 0x01,
+                ],
+            ),
+            (
+                "5d74bae0-7fa3-11eb-bc66-000000000001",
+                [
+                    0x5d, 0x74, 0xba, 0xe0, 0x7f, 0xa3, 0x11, 0xeb, 0xbc, 0x66, 0, 0, 0, 0, 0, 0x01,
+                ],
+            ),
+        ];
+
+        for (uuid_str, uuid_bytes) in &tests {
+            let cql_val: CQLValue =
+                super::deser_cql_value(&ColumnType::Timeuuid, &mut &uuid_bytes[..]).unwrap();
+
+            match cql_val {
+                CQLValue::Timeuuid(uuid) => {
+                    assert_eq!(uuid.as_bytes(), uuid_bytes);
+                    assert_eq!(Uuid::parse_str(uuid_str).unwrap(), uuid);
+                }
+                _ => panic!("Timeuuid parsed as wrong CQLValue"),
+            }
+        }
     }
 }
