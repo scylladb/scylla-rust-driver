@@ -1,9 +1,11 @@
 // CQL Tracing allows to see each step during execution of a query
-// query() prepare() and execute() can be traced
+// query() prepare() execute() query_iter() and execute_iter() can be traced
 
 use anyhow::{anyhow, Result};
+use futures::StreamExt;
 use scylla::statement::{prepared_statement::PreparedStatement, query::Query, Consistency};
 use scylla::tracing::{GetTracingConfig, TracingInfo};
+use scylla::transport::iterator::RowIterator;
 use scylla::QueryResult;
 use scylla::{Session, SessionBuilder};
 use std::env;
@@ -44,7 +46,7 @@ async fn main() -> Result<()> {
 
     // PREPARE
     // Now prepare a query - query to be prepared has tracing set so the prepare will be traced
-    let mut prepared: PreparedStatement = session.prepare(query).await?;
+    let mut prepared: PreparedStatement = session.prepare(query.clone()).await?;
 
     // prepared.prepare_tracing_id contains tracing ids of all prepare requests
     let prepare_ids: &Vec<Uuid> = &prepared.prepare_tracing_ids;
@@ -56,6 +58,22 @@ async fn main() -> Result<()> {
 
     let execute_result: QueryResult = session.execute(&prepared, &[]).await?;
     println!("Execute tracing id: {:?}", execute_result.tracing_id);
+
+    // PAGED QUERY_ITER EXECUTE_ITER
+    // It's also possible to trace paged queries like query_iter or execute_iter
+    // After iterating through all rows iterator.get_tracing_ids() will give tracing ids
+    // for all page queries
+    let mut row_iterator: RowIterator = session.query_iter(query, &[]).await?;
+
+    while let Some(_row) = row_iterator.next().await {
+        // Receive rows
+    }
+
+    // Now print tracing ids for all page queries:
+    println!(
+        "Paged row iterator tracing ids: {:?}\n",
+        row_iterator.get_tracing_ids()
+    );
 
     // CUSTOM
     // GetTracingConfig allows to specify a custom settings for querying tracing info

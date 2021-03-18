@@ -6,6 +6,7 @@ use crate::tracing::TracingInfo;
 use crate::transport::connection::QueryResult;
 use crate::transport::errors::{BadKeyspaceName, BadQuery, DbError, QueryError};
 use crate::{IntoTypedRows, Session, SessionBuilder};
+use futures::StreamExt;
 use uuid::Uuid;
 
 #[tokio::test]
@@ -634,6 +635,8 @@ async fn test_tracing() {
     test_tracing_execute(&session).await;
     test_tracing_prepare(&session).await;
     test_get_tracing_info(&session).await;
+    test_tracing_query_iter(&session).await;
+    test_tracing_execute_iter(&session).await;
 }
 
 async fn test_tracing_query(session: &Session) {
@@ -714,6 +717,82 @@ async fn test_get_tracing_info(session: &Session) {
     // Getting tracing info from session using this uuid works
     let tracing_info: TracingInfo = session.get_tracing_info(&tracing_id).await.unwrap();
     assert!(!tracing_info.events.is_empty());
+}
+
+async fn test_tracing_query_iter(session: &Session) {
+    // A query without tracing enabled has no tracing ids
+    let untraced_query: Query = Query::new("SELECT * FROM test_tracing_ks.tab".to_string());
+
+    let mut untraced_row_iter = session.query_iter(untraced_query, &[]).await.unwrap();
+    while let Some(_row) = untraced_row_iter.next().await {
+        // Receive rows
+    }
+
+    assert!(untraced_row_iter.get_tracing_ids().is_empty());
+
+    // The same is true for TypedRowIter
+    let untraced_typed_row_iter = untraced_row_iter.into_typed::<(i32,)>();
+    assert!(untraced_typed_row_iter.get_tracing_ids().is_empty());
+
+    // A query with tracing enabled has a tracing ids in result
+    let mut traced_query: Query = Query::new("SELECT * FROM test_tracing_ks.tab".to_string());
+    traced_query.tracing = true;
+
+    let mut traced_row_iter = session.query_iter(traced_query, &[]).await.unwrap();
+    while let Some(_row) = traced_row_iter.next().await {
+        // Receive rows
+    }
+
+    assert!(!traced_row_iter.get_tracing_ids().is_empty());
+
+    // The same is true for TypedRowIter
+    let traced_typed_row_iter = traced_row_iter.into_typed::<(i32,)>();
+    assert!(!traced_typed_row_iter.get_tracing_ids().is_empty());
+
+    for tracing_id in traced_typed_row_iter.get_tracing_ids() {
+        assert_in_tracing_table(session, *tracing_id).await;
+    }
+}
+
+async fn test_tracing_execute_iter(session: &Session) {
+    // A prepared statement without tracing enabled has no tracing ids
+    let untraced_prepared = session
+        .prepare("SELECT * FROM test_tracing_ks.tab")
+        .await
+        .unwrap();
+
+    let mut untraced_row_iter = session.execute_iter(untraced_prepared, &[]).await.unwrap();
+    while let Some(_row) = untraced_row_iter.next().await {
+        // Receive rows
+    }
+
+    assert!(untraced_row_iter.get_tracing_ids().is_empty());
+
+    // The same is true for TypedRowIter
+    let untraced_typed_row_iter = untraced_row_iter.into_typed::<(i32,)>();
+    assert!(untraced_typed_row_iter.get_tracing_ids().is_empty());
+
+    // A prepared statement with tracing enabled has a tracing ids in result
+    let mut traced_prepared = session
+        .prepare("SELECT * FROM test_tracing_ks.tab")
+        .await
+        .unwrap();
+    traced_prepared.tracing = true;
+
+    let mut traced_row_iter = session.execute_iter(traced_prepared, &[]).await.unwrap();
+    while let Some(_row) = traced_row_iter.next().await {
+        // Receive rows
+    }
+
+    assert!(!traced_row_iter.get_tracing_ids().is_empty());
+
+    // The same is true for TypedRowIter
+    let traced_typed_row_iter = traced_row_iter.into_typed::<(i32,)>();
+    assert!(!traced_typed_row_iter.get_tracing_ids().is_empty());
+
+    for tracing_id in traced_typed_row_iter.get_tracing_ids() {
+        assert_in_tracing_table(session, *tracing_id).await;
+    }
 }
 
 async fn assert_in_tracing_table(session: &Session, tracing_uuid: Uuid) {

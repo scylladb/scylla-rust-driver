@@ -25,16 +25,23 @@ use crate::routing::Token;
 use crate::statement::Consistency;
 use crate::statement::{prepared_statement::PreparedStatement, query::Query};
 use crate::transport::cluster::ClusterData;
-use crate::transport::connection::Connection;
+use crate::transport::connection::{Connection, QueryResponse};
 use crate::transport::load_balancing::{LoadBalancingPolicy, Statement};
 use crate::transport::metrics::Metrics;
 use crate::transport::node::Node;
 use crate::transport::retry_policy::{QueryInfo, RetryDecision, RetrySession};
+use uuid::Uuid;
 
 pub struct RowIterator {
     current_row_idx: usize,
     current_page: Rows,
-    page_receiver: mpsc::Receiver<Result<Rows, QueryError>>,
+    page_receiver: mpsc::Receiver<Result<ReceivedPage, QueryError>>,
+    tracing_ids: Vec<Uuid>,
+}
+
+struct ReceivedPage {
+    pub rows: Rows,
+    pub tracing_id: Option<Uuid>,
 }
 
 impl Stream for RowIterator {
@@ -45,9 +52,13 @@ impl Stream for RowIterator {
 
         if s.is_current_page_exhausted() {
             match Pin::new(&mut s.page_receiver).poll_recv(cx) {
-                Poll::Ready(Some(Ok(rows))) => {
-                    s.current_page = rows;
+                Poll::Ready(Some(Ok(received_page))) => {
+                    s.current_page = received_page.rows;
                     s.current_row_idx = 0;
+
+                    if let Some(tracing_id) = received_page.tracing_id {
+                        s.tracing_ids.push(tracing_id);
+                    }
                 }
                 Poll::Ready(Some(Err(err))) => return Poll::Ready(Some(Err(err))),
                 Poll::Ready(None) => return Poll::Ready(None),
@@ -94,10 +105,7 @@ impl RowIterator {
             let choose_connection = |node: Arc<Node>| async move { node.random_connection().await };
 
             let page_query = |connection: Arc<Connection>, paging_state: Option<Bytes>| async move {
-                Ok(connection
-                    .query(query_ref, values_ref, paging_state)
-                    .await?
-                    .response)
+                connection.query(query_ref, values_ref, paging_state).await
             };
 
             let worker = RowIteratorWorker {
@@ -122,6 +130,7 @@ impl RowIterator {
             current_row_idx: 0,
             current_page: Default::default(),
             page_receiver: receiver,
+            tracing_ids: Vec::new(),
         }
     }
 
@@ -149,10 +158,9 @@ impl RowIterator {
                 |node: Arc<Node>| async move { node.connection_for_token(token).await };
 
             let page_query = |connection: Arc<Connection>, paging_state: Option<Bytes>| async move {
-                Ok(connection
+                connection
                     .execute(prepared_ref, values_ref, paging_state)
-                    .await?
-                    .response)
+                    .await
             };
 
             let worker = RowIteratorWorker {
@@ -177,7 +185,13 @@ impl RowIterator {
             current_row_idx: 0,
             current_page: Default::default(),
             page_receiver: receiver,
+            tracing_ids: Vec::new(),
         }
+    }
+
+    /// Returns tracing ids of all finished queries that had tracing enabled
+    pub fn get_tracing_ids(&self) -> &[Uuid] {
+        &self.tracing_ids
     }
 
     fn is_current_page_exhausted(&self) -> bool {
@@ -188,14 +202,14 @@ impl RowIterator {
 // RowIteratorWorker works in the background to fetch pages
 // RowIterator receives them through a channel
 struct RowIteratorWorker<'a, ConnFunc, QueryFunc> {
-    sender: mpsc::Sender<Result<Rows, QueryError>>,
+    sender: mpsc::Sender<Result<ReceivedPage, QueryError>>,
 
     // Closure used to choose a connection from a node
     // AsyncFn(Arc<Node>) -> Result<Arc<Connection>, QueryError>
     choose_connection: ConnFunc,
 
     // Closure used to perform a single page query
-    // AsyncFn(Arc<Connection>, Option<Bytes>) -> Result<Response, QueryError>
+    // AsyncFn(Arc<Connection>, Option<Bytes>) -> Result<QueryResponse, QueryError>
     page_query: QueryFunc,
 
     statement_info: Statement<'a>,
@@ -214,7 +228,7 @@ where
     ConnFunc: Fn(Arc<Node>) -> ConnFut,
     ConnFut: Future<Output = Result<Arc<Connection>, QueryError>>,
     QueryFunc: Fn(Arc<Connection>, Option<Bytes>) -> QueryFut,
-    QueryFut: Future<Output = Result<Response, QueryError>>,
+    QueryFut: Future<Output = Result<QueryResponse, QueryError>>,
 {
     async fn work(mut self, cluster_data: Arc<ClusterData>) {
         let query_plan = self.load_balancer.plan(&self.statement_info, &cluster_data);
@@ -274,10 +288,10 @@ where
             self.metrics.inc_total_paged_queries();
             let query_start = std::time::Instant::now();
 
-            let response: Response =
+            let query_response: QueryResponse =
                 (self.page_query)(connection.clone(), self.paging_state.clone()).await?;
 
-            match response {
+            match query_response.response {
                 Response::Result(result::Result::Rows(mut rows)) => {
                     let _ = self
                         .metrics
@@ -285,8 +299,13 @@ where
 
                     self.paging_state = rows.metadata.paging_state.take();
 
+                    let received_page = ReceivedPage {
+                        rows,
+                        tracing_id: query_response.tracing_id,
+                    };
+
                     // Send next page to RowIterator
-                    if self.sender.send(Ok(rows)).await.is_err() {
+                    if self.sender.send(Ok(received_page)).await.is_err() {
                         // channel was closed, RowIterator was dropped - should shutdown
                         return Ok(());
                     }
@@ -318,6 +337,13 @@ where
 pub struct TypedRowIterator<RowT> {
     row_iterator: RowIterator,
     phantom_data: std::marker::PhantomData<RowT>,
+}
+
+impl<RowT> TypedRowIterator<RowT> {
+    /// Returns tracing ids of all finished queries that had tracing enabled
+    pub fn get_tracing_ids(&self) -> &[Uuid] {
+        self.row_iterator.get_tracing_ids()
+    }
 }
 
 /// Couldn't get next typed row from the iterator
