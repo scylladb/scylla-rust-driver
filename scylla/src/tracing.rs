@@ -1,6 +1,8 @@
-use chrono::Duration;
+use crate::statement::Consistency;
 use std::collections::HashMap;
 use std::net::IpAddr;
+use std::num::NonZeroU32;
+use std::time::Duration;
 use uuid::Uuid;
 
 use crate::cql_to_rust::{FromRow, FromRowError};
@@ -17,7 +19,7 @@ pub struct TracingInfo {
     pub parameters: Option<HashMap<String, String>>,
     pub request: Option<String>,
     /// started_at is a timestamp - time since unix epoch
-    pub started_at: Option<Duration>,
+    pub started_at: Option<chrono::Duration>,
 
     pub events: Vec<TracingEvent>,
 }
@@ -30,6 +32,30 @@ pub struct TracingEvent {
     pub source: Option<IpAddr>,
     pub source_elapsed: Option<i32>,
     pub thread: Option<String>,
+}
+
+/// Used to configure a custom retry strategy when querying tracing info
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct GetTracingConfig {
+    /// Number of attempts to be made before giving up.
+    /// Default value: 5
+    pub attempts: NonZeroU32,
+    /// Interval to wait between each attempt.
+    /// Default value: 3 milliseconds
+    pub interval: Duration,
+    /// Consistency to use in queries that read TracingInfo.
+    /// Default value: One
+    pub consistency: Consistency,
+}
+
+impl Default for GetTracingConfig {
+    fn default() -> GetTracingConfig {
+        GetTracingConfig {
+            attempts: NonZeroU32::new(5).unwrap(),
+            interval: Duration::from_millis(3),
+            consistency: Consistency::One,
+        }
+    }
 }
 
 // A query used to query TracingInfo from system_traces.sessions
@@ -53,7 +79,7 @@ impl FromRow for TracingInfo {
                 Option<i32>,
                 Option<HashMap<String, String>>,
                 Option<String>,
-                Option<Duration>,
+                Option<chrono::Duration>,
             )>::from_row(row)?;
 
         Ok(TracingInfo {

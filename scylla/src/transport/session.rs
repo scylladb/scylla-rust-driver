@@ -16,7 +16,7 @@ use crate::prepared_statement::{PartitionKeyError, PreparedStatement};
 use crate::query::Query;
 use crate::routing::{murmur3_token, Token};
 use crate::statement::Consistency;
-use crate::tracing::{TracingEvent, TracingInfo};
+use crate::tracing::{GetTracingConfig, TracingEvent, TracingInfo};
 use crate::transport::{
     cluster::Cluster,
     connection::{Connection, ConnectionConfig, QueryResult, VerifiedKeyspaceName},
@@ -541,17 +541,57 @@ impl Session {
 
     /// Get [`TracingInfo`] of a traced query performed earlier
     pub async fn get_tracing_info(&self, tracing_id: &Uuid) -> Result<TracingInfo, QueryError> {
+        self.get_tracing_info_custom(tracing_id, &GetTracingConfig::default())
+            .await
+    }
+
+    /// Queries tracing info with custom retry settings.  
+    /// Tracing info might not be available immediately on queried node -
+    /// that's why the driver performs a few attempts with sleeps in between.
+    /// [`GetTracingConfig`] allows to specify a custom querying strategy.
+    pub async fn get_tracing_info_custom(
+        &self,
+        tracing_id: &Uuid,
+        config: &GetTracingConfig,
+    ) -> Result<TracingInfo, QueryError> {
+        // config.attempts is NonZeroU32 so at least one attempt will be made
+        for _ in 0..config.attempts.get() {
+            let current_try: Option<TracingInfo> = self
+                .try_getting_tracing_info(tracing_id, config.consistency)
+                .await?;
+
+            match current_try {
+                Some(tracing_info) => return Ok(tracing_info),
+                None => tokio::time::sleep(config.interval).await,
+            };
+        }
+
+        return Err(QueryError::ProtocolError(
+            "All tracing queries returned an empty result, \
+            maybe information didnt reach this node yet. \
+            Consider using get_tracing_info_custom with \
+            bigger interval in GetTracingConfig",
+        ));
+    }
+
+    // Tries getting the tracing info
+    // If the queries return 0 rows then returns None - the information didn't reach this node yet
+    // If there is some other error returns this error
+    async fn try_getting_tracing_info(
+        &self,
+        tracing_id: &Uuid,
+        consistency: Consistency,
+    ) -> Result<Option<TracingInfo>, QueryError> {
         // Query system_traces.sessions for TracingInfo
-        // Consistency::One is enough - after creation there will be no modifications
         let mut traces_session_query =
             Query::new(crate::tracing::TRACES_SESSION_QUERY_STR.to_string());
-        traces_session_query.consistency = Consistency::One;
+        traces_session_query.consistency = consistency;
 
         // Query system_traces.events for TracingEvents
-        // Consistency::One is enough - after creation there will be no modifications
         let mut traces_events_query =
             Query::new(crate::tracing::TRACES_EVENTS_QUERY_STR.to_string());
         traces_events_query.consistency = Consistency::One;
+        traces_events_query.consistency = consistency;
 
         let (traces_session_res, traces_events_res) = tokio::try_join!(
             self.query(traces_session_query, (tracing_id,)),
@@ -559,21 +599,22 @@ impl Session {
         )?;
 
         // Get tracing info
-        let mut tracing_info: TracingInfo = traces_session_res
+        let tracing_info_row_res: Option<Result<TracingInfo, _>> = traces_session_res
             .rows
             .ok_or(QueryError::ProtocolError(
                 "Response to system_traces.sessions query was not Rows",
             ))?
             .into_typed::<TracingInfo>()
-            .next()
-            .ok_or(QueryError::ProtocolError(
-                "Empty row list received from system_traces.session query",
-            ))?
-            .map_err(|_| {
+            .next();
+
+        let mut tracing_info: TracingInfo = match tracing_info_row_res {
+            Some(tracing_info_row_res) => tracing_info_row_res.map_err(|_| {
                 QueryError::ProtocolError(
                     "Columns from system_traces.session have an unexpected type",
                 )
-            })?;
+            })?,
+            None => return Ok(None),
+        };
 
         // Get tracing events
         let tracing_event_rows = traces_events_res
@@ -594,12 +635,10 @@ impl Session {
         }
 
         if tracing_info.events.is_empty() {
-            return Err(QueryError::ProtocolError(
-                "Empty row list received from system_traces.session query",
-            ));
+            return Ok(None);
         }
 
-        Ok(tracing_info)
+        Ok(Some(tracing_info))
     }
 
     // This method allows to easily run a query using load balancing, retry policy etc.

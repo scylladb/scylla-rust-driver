@@ -712,29 +712,8 @@ async fn test_get_tracing_info(session: &Session) {
     let tracing_id: Uuid = traced_query_result.tracing_id.unwrap();
 
     // Getting tracing info from session using this uuid works
-    // Tracing info might not be immediately available
-    // Perform 8 retries with a 32ms wait in between
-    let mut last_error = None;
-
-    for _ in 0..8_u32 {
-        let tracing_info_res: Result<TracingInfo, _> = session.get_tracing_info(&tracing_id).await;
-
-        match tracing_info_res {
-            Ok(tracing_info) => {
-                assert!(!tracing_info.events.is_empty()); // Ok
-                return;
-            }
-            Err(e) => last_error = Some(e), // Retry
-        };
-
-        // Sleep before retry
-        tokio::time::sleep(std::time::Duration::from_millis(32)).await;
-    }
-
-    panic!(
-        "Failed to perform session.get_tracing_info(): {:?}",
-        last_error
-    );
+    let tracing_info: TracingInfo = session.get_tracing_info(&tracing_id).await.unwrap();
+    assert!(!tracing_info.events.is_empty());
 }
 
 async fn assert_in_tracing_table(session: &Session, tracing_uuid: Uuid) {
