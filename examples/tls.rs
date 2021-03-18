@@ -1,6 +1,4 @@
 use anyhow::Result;
-use scylla::cql_to_rust::FromRow;
-use scylla::macros::FromRow;
 use scylla::transport::session::{IntoTypedRows, Session};
 use scylla::SessionBuilder;
 use std::env;
@@ -29,6 +27,7 @@ use openssl::ssl::{SslContextBuilder, SslFiletype, SslMethod, SslVerifyMode};
 // Use set_certificate_file method with path to your .crt file and its filetype as arguments
 // Set verification mode
 // Build it and add to scylla-rust-driver's SessionBuilder
+
 #[tokio::main]
 async fn main() -> Result<()> {
     // Create connection
@@ -36,7 +35,7 @@ async fn main() -> Result<()> {
 
     println!("Connecting to {} ...", uri);
 
-    let certdir = fs::canonicalize(PathBuf::from("./examples/certs/scylla.crt"))?;
+    let certdir = fs::canonicalize(PathBuf::from("./test/certs/scylla.crt"))?;
     let mut context_builder = SslContextBuilder::new(SslMethod::tls())?;
     context_builder.set_certificate_file(certdir.as_path(), SslFiletype::PEM)?;
     context_builder.set_verify(SslVerifyMode::NONE);
@@ -84,46 +83,6 @@ async fn main() -> Result<()> {
             println!("a, b, c: {}, {}, {}", a, b, c);
         }
     }
-
-    // Or as custom structs that derive FromRow
-    #[derive(Debug, FromRow)]
-    struct RowData {
-        a: i32,
-        b: Option<i32>,
-        c: String,
-    }
-
-    if let Some(rows) = session.query("SELECT a, b, c FROM ks.t", &[]).await? {
-        for row_data in rows.into_typed::<RowData>() {
-            let row_data = row_data?;
-            println!("row_data: {:?}", row_data);
-        }
-    }
-
-    // Or simply as untyped rows
-    if let Some(rows) = session.query("SELECT a, b, c FROM ks.t", &[]).await? {
-        for row in rows {
-            let a = row.columns[0].as_ref().unwrap().as_int().unwrap();
-            let b = row.columns[1].as_ref().unwrap().as_int().unwrap();
-            let c = row.columns[2].as_ref().unwrap().as_text().unwrap();
-            println!("a, b, c: {}, {}, {}", a, b, c);
-
-            // Alternatively each row can be parsed individually
-            // let (a2, b2, c2) = row.into_typed::<(i32, i32, String)>() ?;
-        }
-    }
-
-    let metrics = session.get_metrics();
-    println!("Queries requested: {}", metrics.get_queries_num());
-    println!("Iter queries requested: {}", metrics.get_queries_iter_num());
-    println!("Errors occured: {}", metrics.get_errors_num());
-    println!("Iter errors occured: {}", metrics.get_errors_iter_num());
-    println!("Average latency: {}", metrics.get_latency_avg_ms().unwrap());
-    println!(
-        "99.9 latency percentile: {}",
-        metrics.get_latency_percentile_ms(99.9).unwrap()
-    );
-
     println!("Ok.");
 
     Ok(())

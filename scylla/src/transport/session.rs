@@ -58,7 +58,7 @@ pub struct SessionConfig {
     pub keyspace_case_sensitive: bool,
 
     pub retry_policy: Box<dyn RetryPolicy + Send + Sync>,
-    
+
     /// Provide our Session with TLS
     #[cfg(feature = "ssl")]
     pub ssl_context: Option<SslContext>,
