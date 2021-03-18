@@ -1,9 +1,10 @@
+use crate::batch::Batch;
 use crate::frame::value::ValueList;
 use crate::query::Query;
 use crate::routing::hash3_x64_128;
 use crate::statement::Consistency;
 use crate::tracing::TracingInfo;
-use crate::transport::connection::QueryResult;
+use crate::transport::connection::{BatchResult, QueryResult};
 use crate::transport::errors::{BadKeyspaceName, BadQuery, DbError, QueryError};
 use crate::{IntoTypedRows, Session, SessionBuilder};
 use futures::StreamExt;
@@ -637,6 +638,7 @@ async fn test_tracing() {
     test_get_tracing_info(&session).await;
     test_tracing_query_iter(&session).await;
     test_tracing_execute_iter(&session).await;
+    test_tracing_batch(&session).await;
 }
 
 async fn test_tracing_query(session: &Session) {
@@ -793,6 +795,25 @@ async fn test_tracing_execute_iter(session: &Session) {
     for tracing_id in traced_typed_row_iter.get_tracing_ids() {
         assert_in_tracing_table(session, *tracing_id).await;
     }
+}
+
+async fn test_tracing_batch(session: &Session) {
+    // A batch without tracing enabled has no tracing id
+    let mut untraced_batch: Batch = Default::default();
+    untraced_batch.append_statement("INSERT INTO test_tracing_ks.tab (a) VALUES('a')");
+
+    let untraced_batch_result: BatchResult = session.batch(&untraced_batch, ((),)).await.unwrap();
+    assert!(untraced_batch_result.tracing_id.is_none());
+
+    // Batch with tracing enabled has a tracing uuid in result
+    let mut traced_batch: Batch = Default::default();
+    traced_batch.append_statement("INSERT INTO test_tracing_ks.tab (a) VALUES('a')");
+    traced_batch.tracing = true;
+
+    let traced_batch_result: BatchResult = session.batch(&traced_batch, ((),)).await.unwrap();
+    assert!(traced_batch_result.tracing_id.is_some());
+
+    assert_in_tracing_table(session, traced_batch_result.tracing_id.unwrap()).await;
 }
 
 async fn assert_in_tracing_table(session: &Session, tracing_uuid: Uuid) {

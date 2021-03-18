@@ -19,7 +19,7 @@ use crate::statement::Consistency;
 use crate::tracing::{GetTracingConfig, TracingEvent, TracingInfo};
 use crate::transport::{
     cluster::Cluster,
-    connection::{Connection, ConnectionConfig, QueryResult, VerifiedKeyspaceName},
+    connection::{BatchResult, Connection, ConnectionConfig, QueryResult, VerifiedKeyspaceName},
     iterator::RowIterator,
     load_balancing::{LoadBalancingPolicy, RoundRobinPolicy, Statement, TokenAwarePolicy},
     metrics::{Metrics, MetricsView},
@@ -464,7 +464,11 @@ impl Session {
     ///
     /// * `batch` - batch to be performed
     /// * `values` - values bound to the query
-    pub async fn batch(&self, batch: &Batch, values: impl BatchValues) -> Result<(), QueryError> {
+    pub async fn batch(
+        &self,
+        batch: &Batch,
+        values: impl BatchValues,
+    ) -> Result<BatchResult, QueryError> {
         let values_ref = &values;
 
         let retry_session = match &batch.retry_policy {

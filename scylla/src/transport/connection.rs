@@ -82,6 +82,14 @@ pub struct QueryResult {
     pub tracing_id: Option<Uuid>,
 }
 
+/// Result of Session::batch(). Contains no rows, only some useful information.
+pub struct BatchResult {
+    /// Warnings returned by the database
+    pub warnings: Vec<String>,
+    /// CQL Tracing uuid - can only be Some if tracing is enabled for this batch
+    pub tracing_id: Option<Uuid>,
+}
+
 impl QueryResponse {
     pub fn into_query_result(self) -> Result<QueryResult, QueryError> {
         let rows: Option<Vec<result::Row>> = match self.response {
@@ -310,7 +318,11 @@ impl Connection {
         Ok(query_response)
     }
 
-    pub async fn batch(&self, batch: &Batch, values: impl BatchValues) -> Result<(), QueryError> {
+    pub async fn batch(
+        &self,
+        batch: &Batch,
+        values: impl BatchValues,
+    ) -> Result<BatchResult, QueryError> {
         let statements_count = batch.get_statements().len();
         if statements_count != values.len() {
             return Err(QueryError::BadQuery(BadQuery::ValueLenMismatch(
@@ -337,11 +349,14 @@ impl Connection {
             serial_consistency: batch.get_serial_consistency(),
         };
 
-        let response = self.send_request(&batch_frame, true, false).await?.response;
+        let query_response = self.send_request(&batch_frame, true, batch.tracing).await?;
 
-        match response {
+        match query_response.response {
             Response::Error(err) => Err(err.into()),
-            Response::Result(_) => Ok(()),
+            Response::Result(_) => Ok(BatchResult {
+                warnings: query_response.warnings,
+                tracing_id: query_response.tracing_id,
+            }),
             _ => Err(QueryError::ProtocolError(
                 "BATCH: Unexpected server response",
             )),

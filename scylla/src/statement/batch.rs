@@ -14,6 +14,7 @@ pub struct Batch {
     pub serial_consistency: Option<Consistency>,
     pub is_idempotent: bool,
     pub retry_policy: Option<Box<dyn RetryPolicy + Send + Sync>>,
+    pub tracing: bool,
 }
 
 impl Batch {
@@ -86,6 +87,18 @@ impl Batch {
     pub fn get_retry_policy(&self) -> &Option<Box<dyn RetryPolicy + Send + Sync>> {
         &self.retry_policy
     }
+
+    /// Enable or disable CQL Tracing for this batch  
+    /// If enabled session.batch() will return a BatchResult containing tracing_id
+    /// which can be used to query tracing information about the execution of this query
+    pub fn set_tracing(&mut self, should_trace: bool) {
+        self.tracing = should_trace;
+    }
+
+    /// Gets whether tracing is enabled for this batch
+    pub fn get_tracing(&self) -> bool {
+        self.tracing
+    }
 }
 
 impl Default for Batch {
@@ -97,6 +110,7 @@ impl Default for Batch {
             serial_consistency: None,
             is_idempotent: false,
             retry_policy: None,
+            tracing: false,
         }
     }
 }
@@ -138,6 +152,7 @@ impl Clone for Batch {
                 .retry_policy
                 .as_ref()
                 .map(|policy| policy.clone_boxed()),
+            tracing: self.tracing,
         }
     }
 }

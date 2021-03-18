@@ -1,12 +1,13 @@
 // CQL Tracing allows to see each step during execution of a query
-// query() prepare() execute() query_iter() and execute_iter() can be traced
+// query() prepare() execute() batch() query_iter() and execute_iter() can be traced
 
 use anyhow::{anyhow, Result};
 use futures::StreamExt;
+use scylla::batch::Batch;
 use scylla::statement::{prepared_statement::PreparedStatement, query::Query, Consistency};
 use scylla::tracing::{GetTracingConfig, TracingInfo};
 use scylla::transport::iterator::RowIterator;
-use scylla::QueryResult;
+use scylla::{BatchResult, QueryResult};
 use scylla::{Session, SessionBuilder};
 use std::env;
 use std::num::NonZeroU32;
@@ -74,6 +75,16 @@ async fn main() -> Result<()> {
         "Paged row iterator tracing ids: {:?}\n",
         row_iterator.get_tracing_ids()
     );
+
+    // BATCH
+    // Create a simple batch and enable tracing
+    let mut batch: Batch = Batch::default();
+    batch.append_statement("INSERT INTO ks.tracing_example (val) VALUES('val')");
+    batch.set_tracing(true);
+
+    // Run the batch and print its tracing_id
+    let batch_result: BatchResult = session.batch(&batch, ((),)).await?;
+    println!("Batch tracing id: {:?}\n", batch_result.tracing_id);
 
     // CUSTOM
     // GetTracingConfig allows to specify a custom settings for querying tracing info
