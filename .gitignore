@@ -2,3 +2,4 @@
 /scylla/target
 /target
 Cargo.lock
+/book/book
