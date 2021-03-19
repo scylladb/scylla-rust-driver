@@ -24,7 +24,7 @@ pub trait LoadBalancingPolicy: Send + Sync {
         &self,
         statement: &Statement,
         cluster: &'a ClusterData,
-    ) -> Box<dyn Iterator<Item = Arc<Node>> + 'a>;
+    ) -> Box<dyn Iterator<Item = Arc<Node>> + Send + Sync + 'a>;
 
     /// Returns name of load balancing policy
     fn name(&self) -> String;
@@ -34,7 +34,10 @@ pub trait LoadBalancingPolicy: Send + Sync {
 ///
 /// For example, this enables RoundRobinPolicy to process plan made by TokenAwarePolicy.
 pub trait ChildLoadBalancingPolicy: LoadBalancingPolicy {
-    fn apply_child_policy(&self, plan: Vec<Arc<Node>>) -> Box<dyn Iterator<Item = Arc<Node>>>;
+    fn apply_child_policy(
+        &self,
+        plan: Vec<Arc<Node>>,
+    ) -> Box<dyn Iterator<Item = Arc<Node>> + Send + Sync>;
 }
 
 // Does safe modulo
@@ -61,6 +64,15 @@ fn slice_rotated_left<'a, T>(slice: &'a [T], mid: usize) -> impl Iterator<Item =
     let begin = &slice[mid..];
     let end = &slice[..mid];
     begin.iter().chain(end.iter())
+}
+
+impl Default for Statement<'_> {
+    fn default() -> Self {
+        Statement {
+            token: None,
+            keyspace: None,
+        }
+    }
 }
 
 #[cfg(test)]
