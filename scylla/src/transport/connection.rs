@@ -29,8 +29,9 @@ use super::errors::{BadKeyspaceName, BadQuery, DbError, QueryError};
 use crate::batch::{Batch, BatchStatement};
 use crate::frame::{
     self,
-    request::{self, batch, execute, query, register, register::EventType, Request, RequestOpcode},
-    response::{result, Response, ResponseOpcode},
+    request::{self, batch, execute, query, register, Request, RequestOpcode},
+    response::{event::Event, result, Response, ResponseOpcode},
+    server_event_type::EventType,
     value::{BatchValues, ValueList},
     FrameParams, RequestBodyWithExtensions,
 };
@@ -43,11 +44,6 @@ use crate::transport::Authenticator::{
     PasswordAuthenticator, ScyllaTransitionalAuthenticator,
 };
 use crate::transport::Compression;
-
-// TODO add more events
-pub enum Event {
-    TopologyChange,
-}
 
 pub struct Connection {
     submit_channel: mpsc::Sender<Task>,
@@ -439,7 +435,7 @@ impl Connection {
 
     async fn register(
         &self,
-        event_types_to_register_for: Vec<register::EventType>,
+        event_types_to_register_for: Vec<EventType>,
     ) -> Result<(), QueryError> {
         let register_frame = register::Register {
             event_types_to_register_for,
