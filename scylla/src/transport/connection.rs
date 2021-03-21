@@ -176,7 +176,8 @@ impl Connection {
 
         let (error_sender, error_receiver) = tokio::sync::oneshot::channel();
 
-        let _worker_handle = Self::run_router(&config, stream, receiver, error_sender).await?;
+        let _worker_handle =
+            Self::run_router(config.clone(), stream, receiver, error_sender).await?;
 
         let connection = Connection {
             submit_channel: sender,
@@ -494,9 +495,17 @@ impl Connection {
                 "Connection broken",
             )))
         })??;
+
+        Self::parse_response(task_response, self.config.compression)
+    }
+
+    fn parse_response(
+        task_response: TaskResponse,
+        compression: Option<Compression>,
+    ) -> Result<QueryResponse, QueryError> {
         let body_with_ext = frame::parse_response_body_extensions(
             task_response.params.flags,
-            self.config.compression,
+            compression,
             task_response.body,
         )?;
 
@@ -515,7 +524,7 @@ impl Connection {
 
     #[cfg(feature = "ssl")]
     async fn run_router(
-        config: &ConnectionConfig,
+        config: ConnectionConfig,
         stream: TcpStream,
         receiver: mpsc::Receiver<Task>,
         error_sender: tokio::sync::oneshot::Sender<QueryError>,
@@ -525,30 +534,36 @@ impl Connection {
                 let ssl = Ssl::new(context)?;
                 let mut stream = SslStream::new(ssl, stream)?;
                 let _pin = Pin::new(&mut stream).connect().await;
-                Self::run_router_spawner(stream, receiver, error_sender)
+                Self::run_router_spawner(stream, receiver, error_sender, config)
             }
-            None => Self::run_router_spawner(stream, receiver, error_sender),
+            None => Self::run_router_spawner(stream, receiver, error_sender, config),
         };
         Ok(res)
     }
 
     #[cfg(not(feature = "ssl"))]
     async fn run_router(
-        config: &ConnectionConfig,
+        config: ConnectionConfig,
         stream: TcpStream,
         receiver: mpsc::Receiver<Task>,
         error_sender: tokio::sync::oneshot::Sender<QueryError>,
     ) -> Result<RemoteHandle<()>, std::io::Error> {
         let _config = config;
-        Ok(Self::run_router_spawner(stream, receiver, error_sender))
+        Ok(Self::run_router_spawner(
+            stream,
+            receiver,
+            error_sender,
+            config,
+        ))
     }
 
     fn run_router_spawner(
         stream: (impl AsyncRead + AsyncWrite + Send + 'static),
         receiver: mpsc::Receiver<Task>,
         error_sender: tokio::sync::oneshot::Sender<QueryError>,
+        config: ConnectionConfig,
     ) -> RemoteHandle<()> {
-        let (task, handle) = Self::router(stream, receiver, error_sender).remote_handle();
+        let (task, handle) = Self::router(stream, receiver, error_sender, config).remote_handle();
         tokio::task::spawn(task);
         handle
     }
@@ -557,6 +572,7 @@ impl Connection {
         stream: (impl AsyncRead + AsyncWrite),
         receiver: mpsc::Receiver<Task>,
         error_sender: tokio::sync::oneshot::Sender<QueryError>,
+        config: ConnectionConfig,
     ) {
         let (read_half, write_half) = split(stream);
         // Why are using a mutex here?
@@ -573,7 +589,7 @@ impl Connection {
         // across .await points. Therefore, it should not be too expensive.
         let handler_map = StdMutex::new(ResponseHandlerMap::new());
 
-        let r = Self::reader(read_half, &handler_map);
+        let r = Self::reader(read_half, &handler_map, config);
         let w = Self::writer(write_half, &handler_map, receiver);
 
         let result = futures::try_join!(r, w);
@@ -599,9 +615,15 @@ impl Connection {
     async fn reader(
         mut read_half: (impl AsyncRead + Unpin),
         handler_map: &StdMutex<ResponseHandlerMap>,
+        config: ConnectionConfig,
     ) -> Result<(), QueryError> {
         loop {
             let (params, opcode, body) = frame::read_response_frame(&mut read_half).await?;
+            let response = TaskResponse {
+                params,
+                opcode,
+                body,
+            };
 
             match params.stream.cmp(&-1) {
                 Ordering::Less => {
@@ -611,7 +633,9 @@ impl Connection {
                     continue;
                 }
                 Ordering::Equal => {
-                    // TODO: Server events
+                    if let Some(event_sender) = config.event_sender.as_ref() {
+                        Self::handle_event(response, config.compression, event_sender).await?;
+                    }
                     continue;
                 }
                 _ => {}
@@ -628,11 +652,7 @@ impl Connection {
                 // Don't care if sending of the response fails. This must
                 // mean that the receiver side was impatient and is not
                 // waiting for the result anymore.
-                let _ = handler.send(Ok(TaskResponse {
-                    params,
-                    opcode,
-                    body,
-                }));
+                let _ = handler.send(Ok(response));
             } else {
                 // Unsolicited frame. This should not happen and indicates
                 // a bug either in the driver, or in the database
@@ -683,6 +703,28 @@ impl Connection {
         }
 
         Ok(())
+    }
+
+    async fn handle_event(
+        task_response: TaskResponse,
+        compression: Option<Compression>,
+        event_sender: &mpsc::Sender<Event>,
+    ) -> Result<(), QueryError> {
+        let response = Self::parse_response(task_response, compression)?.response;
+        let event = match response {
+            Response::Event(e) => e,
+            _ => {
+                warn!("Expected to receive Event response, got {:?}", response);
+                return Ok(());
+            }
+        };
+
+        event_sender.send(event).await.map_err(|_| {
+            QueryError::IoError(Arc::new(std::io::Error::new(
+                ErrorKind::Other,
+                "Connection broken",
+            )))
+        })
     }
 
     pub fn get_shard_info(&self) -> &Option<ShardInfo> {

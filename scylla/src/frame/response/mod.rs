@@ -33,6 +33,7 @@ pub enum Response {
     AuthSuccess(authenticate::AuthSuccess),
     AuthChallenge(authenticate::AuthChallenge),
     Supported(Supported),
+    Event(event::Event),
 }
 
 impl Response {
@@ -45,7 +46,7 @@ impl Response {
             }
             ResponseOpcode::Supported => Response::Supported(Supported::deserialize(buf)?),
             ResponseOpcode::Result => Response::Result(result::deserialize(buf)?),
-            ResponseOpcode::Event => unimplemented!(),
+            ResponseOpcode::Event => Response::Event(event::Event::deserialize(buf)?),
             ResponseOpcode::AuthChallenge => {
                 Response::AuthChallenge(authenticate::AuthChallenge::deserialize(buf)?)
             }
