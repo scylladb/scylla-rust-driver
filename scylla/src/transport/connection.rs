@@ -189,15 +189,6 @@ impl Connection {
             is_shard_aware: false,
         };
 
-        if connection.config.event_sender.is_some() {
-            let all_event_types = vec![
-                EventType::TopologyChange,
-                EventType::StatusChange,
-                EventType::SchemaChange,
-            ];
-            connection.register(all_event_types).await?;
-        }
-
         Ok((connection, error_receiver))
     }
 
@@ -859,6 +850,15 @@ pub async fn open_named_connection(
                 "Unexpected response to STARTUP message",
             ))
         }
+    }
+
+    if connection.config.event_sender.is_some() {
+        let all_event_types = vec![
+            EventType::TopologyChange,
+            EventType::StatusChange,
+            EventType::SchemaChange,
+        ];
+        connection.register(all_event_types).await?;
     }
 
     Ok((connection, error_receiver))

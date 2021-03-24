@@ -1,3 +1,4 @@
+use crate::frame::response::event::{Event, StatusChangeEvent};
 /// Cluster manages up to date information and connections to database nodes
 use crate::routing::Token;
 use crate::transport::connection::{Connection, ConnectionConfig, VerifiedKeyspaceName};
@@ -11,6 +12,7 @@ use itertools::Itertools;
 use std::collections::{BTreeMap, HashMap};
 use std::net::SocketAddr;
 use std::sync::{Arc, RwLock};
+use tracing::debug;
 
 /// Cluster manages up to date information and connections to database nodes.
 /// All data can be accessed by cloning Arc<ClusterData> in the `data` field
@@ -23,11 +25,13 @@ pub struct Cluster {
     _worker_handle: RemoteHandle<()>,
 }
 
+#[derive(Clone)]
 pub struct Datacenter {
     pub nodes: Vec<Arc<Node>>,
     pub rack_count: usize,
 }
 
+#[derive(Clone)]
 pub struct ClusterData {
     pub known_peers: HashMap<SocketAddr, Arc<Node>>, // Invariant: nonempty after Cluster::new()
     pub ring: BTreeMap<Token, Arc<Node>>,            // Invariant: nonempty after Cluster::new()
@@ -50,6 +54,9 @@ struct ClusterWorker {
 
     // Channel used to receive use keyspace requests
     use_keyspace_channel: tokio::sync::mpsc::Receiver<UseKeyspaceRequest>,
+
+    // Channel used to receive server events
+    server_events_channel: tokio::sync::mpsc::Receiver<Event>,
 
     // Keyspace send in "USE <keyspace name>" when opening each connection
     used_keyspace: Option<VerifiedKeyspaceName>,
@@ -80,16 +87,21 @@ impl Cluster {
         })));
 
         let (refresh_sender, refresh_receiver) = tokio::sync::mpsc::channel(32);
-
         let (use_keyspace_sender, use_keyspace_receiver) = tokio::sync::mpsc::channel(32);
+        let (server_events_sender, server_events_receiver) = tokio::sync::mpsc::channel(32);
 
         let worker = ClusterWorker {
             cluster_data: cluster_data.clone(),
 
-            topology_reader: TopologyReader::new(initial_peers, connection_config.clone()),
+            topology_reader: TopologyReader::new(
+                initial_peers,
+                connection_config.clone(),
+                server_events_sender,
+            ),
             connection_config,
 
             refresh_channel: refresh_receiver,
+            server_events_channel: server_events_receiver,
 
             use_keyspace_channel: use_keyspace_receiver,
             used_keyspace: None,
@@ -211,6 +223,28 @@ impl ClusterData {
         }
     }
 
+    fn without_node(&self, addr: SocketAddr) -> ClusterData {
+        let mut new_cluster_data = self.clone();
+
+        new_cluster_data.known_peers.remove(&addr);
+
+        new_cluster_data.ring = new_cluster_data
+            .ring
+            .into_iter()
+            .filter(|(_, node)| node.address != addr)
+            .collect();
+
+        new_cluster_data
+            .all_nodes
+            .retain(|node| node.address != addr);
+
+        for dc in new_cluster_data.datacenters.values_mut() {
+            dc.nodes.retain(|node| node.address != addr);
+        }
+
+        new_cluster_data
+    }
+
     /// Creates new ClusterData using information about topology held in `info`.
     /// Uses provided `known_peers` hashmap to recycle nodes if possible.
     pub fn new(
@@ -303,6 +337,28 @@ impl ClusterWorker {
                         None => return, // If refresh_channel was closed then cluster was dropped, we can stop working
                     }
                 }
+                recv_res = self.server_events_channel.recv() => {
+                    if let Some(event) = recv_res {
+                        debug!("Received server event: {:?}", event);
+                        match event {
+                            Event::TopologyChange(_) => (), // Refresh immediately
+                            Event::StatusChange(status) => {
+                                // If some node is down, remove it from ClusterData and refresh
+                                // later as planned. Otherwise, refresh immediately (to fetch
+                                // previously removed info about this node)
+                                if let StatusChangeEvent::Down(addr) = status {
+                                    self.remove_down_node(addr);
+                                    continue;
+                                }
+                            },
+                            _ => continue, // Don't go to refreshing
+                        }
+                    } else {
+                        // If server_events_channel was closed, than TopologyReader was dropped,
+                        // so we can probably stop working too
+                        return;
+                    }
+                }
                 recv_res = self.use_keyspace_channel.recv() => {
                     match recv_res {
                         Some(request) => {
@@ -320,6 +376,7 @@ impl ClusterWorker {
             }
 
             // Perform the refresh
+            debug!("Requesting topology refresh");
             last_refresh_time = Instant::now();
             let refresh_res = self.perform_refresh().await;
 
@@ -329,6 +386,13 @@ impl ClusterWorker {
                 let _ = request.response_chan.send(refresh_res);
             }
         }
+    }
+
+    fn remove_down_node(&mut self, addr: SocketAddr) {
+        let cluster_data = self.cluster_data.read().unwrap().clone();
+        let new_cluster_data = Arc::new(cluster_data.without_node(addr));
+
+        self.update_cluster_data(new_cluster_data);
     }
 
     async fn handle_use_keyspace_request(
@@ -387,19 +451,22 @@ impl ClusterWorker {
         let topo_info = self.topology_reader.read_topology_info().await?;
         let cluster_data: Arc<ClusterData> = self.cluster_data.read().unwrap().clone();
 
-        let mut new_cluster_data = Arc::new(ClusterData::new(
+        let new_cluster_data = Arc::new(ClusterData::new(
             topo_info,
             &self.connection_config,
             &cluster_data.known_peers,
             &self.used_keyspace,
         ));
 
-        // Update current cluster_data
-        // Use std::mem::swap to avoid dropping large structures with active write lock
-        let mut cluster_data_lock = self.cluster_data.write().unwrap();
-        std::mem::swap(&mut *cluster_data_lock, &mut new_cluster_data);
-        drop(cluster_data_lock);
+        self.update_cluster_data(new_cluster_data);
 
         Ok(())
+    }
+
+    fn update_cluster_data(&mut self, mut new_cluster_data: Arc<ClusterData>) {
+        let mut cluster_data_lock = self.cluster_data.write().unwrap();
+        // Use std::mem::swap to avoid dropping large structures with active write lock
+        std::mem::swap(&mut *cluster_data_lock, &mut new_cluster_data);
+        drop(cluster_data_lock);
     }
 }

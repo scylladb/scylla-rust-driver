@@ -1,3 +1,4 @@
+use crate::frame::response::event::Event;
 use crate::routing::Token;
 use crate::transport::connection::{Connection, ConnectionConfig};
 use crate::transport::connection_keeper::ConnectionKeeper;
@@ -7,6 +8,7 @@ use crate::transport::session::IntoTypedRows;
 use std::collections::HashMap;
 use std::net::{IpAddr, SocketAddr};
 use std::str::FromStr;
+use tokio::sync::mpsc;
 use tracing::{debug, error, warn};
 
 /// Allows to read current topology info from the cluster
@@ -55,10 +57,19 @@ pub enum Strategy {
 
 impl TopologyReader {
     /// Creates new TopologyReader, which connects to known_peers in the background
-    pub fn new(known_peers: &[SocketAddr], connection_config: ConnectionConfig) -> Self {
+    pub fn new(
+        known_peers: &[SocketAddr],
+        mut connection_config: ConnectionConfig,
+        server_event_sender: mpsc::Sender<Event>,
+    ) -> Self {
         let control_connection_address = *known_peers
             .last()
             .expect("Tried to initialize TopologyReader with empty known_peers list!");
+
+        // setting event_sender field in connection config will cause control connection to
+        // - send REGISTER message to receive server events
+        // - send received events via server_event_sender
+        connection_config.event_sender = Some(server_event_sender);
 
         let control_connection = ConnectionKeeper::new(
             control_connection_address,
