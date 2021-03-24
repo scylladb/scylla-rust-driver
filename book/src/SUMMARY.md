@@ -13,3 +13,12 @@
     - [TLS](connecting/tls.md)
 
 - [Making queries](queries/queries.md)
+    - [Simple query](queries/simple.md)
+    - [Query values](queries/values.md)
+    - [Query result](queries/result.md)
+    - [Prepared query](queries/prepared.md)
+    - [Batch statement](queries/batch.md)
+    - [Paged query](queries/paged.md)
+    - [USE keyspace](queries/usekeyspace.md)
+
+- [Data Types](data-types/data-types.md)
