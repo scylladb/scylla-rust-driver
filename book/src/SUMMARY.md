@@ -36,3 +36,11 @@
     - [List, Set, Map](data-types/collections.md)
     - [Tuple](data-types/tuple.md)
     - [UDT (User defined type)](data-types/udt.md)
+
+- [Load balancing](load-balancing/load-balancing.md)
+
+- [Retry policy configuration](retry-policy/retry-policy.md)
+
+- [Driver metrics](metrics/metrics.md)
+
+- [Query tracing](tracing/tracing.md)
