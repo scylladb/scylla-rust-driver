@@ -12,6 +12,7 @@ pub mod errors;
 pub mod iterator;
 mod metrics;
 
+mod authenticate_test;
 #[cfg(test)]
 mod session_test;
 
