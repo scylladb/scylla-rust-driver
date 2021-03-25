@@ -38,6 +38,10 @@
     - [UDT (User defined type)](data-types/udt.md)
 
 - [Load balancing](load-balancing/load-balancing.md)
+    - [Round robin](load-balancing/robin.md)
+    - [DC Aware Round robin](load-balancing/dc-robin.md)
+    - [Token aware Round robin](load-balancing/token-robin.md)
+    - [Token aware DC Aware Round robin](load-balancing/token-dc-robin.md)
 
 - [Retry policy configuration](retry-policy/retry-policy.md)
 
