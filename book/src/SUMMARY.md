@@ -44,6 +44,8 @@
     - [Token aware DC Aware Round robin](load-balancing/token-dc-robin.md)
 
 - [Retry policy configuration](retry-policy/retry-policy.md)
+    - [Fallthrough retry policy](retry-policy/fallthrough.md)
+    - [Default retry policy](retry-policy/default.md)
 
 - [Driver metrics](metrics/metrics.md)
 
