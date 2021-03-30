@@ -12,6 +12,7 @@ use num_bigint::BigInt;
 use std::cmp::PartialEq;
 use std::env;
 use std::fmt::Debug;
+use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 use std::str::FromStr;
 use uuid::Uuid;
 
@@ -569,5 +570,91 @@ async fn test_timeuuid() {
             .unwrap();
 
         assert_eq!(read_timeuuid.as_bytes(), timeuuid_bytes);
+    }
+}
+
+#[tokio::test]
+async fn test_inet() {
+    let session: Session = init_test("inet_tests", "inet").await;
+
+    let tests = [
+        ("0.0.0.0", IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0))),
+        ("127.0.0.1", IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1))),
+        ("10.0.0.1", IpAddr::V4(Ipv4Addr::new(10, 0, 0, 1))),
+        (
+            "255.255.255.255",
+            IpAddr::V4(Ipv4Addr::new(255, 255, 255, 255)),
+        ),
+        ("::0", IpAddr::V6(Ipv6Addr::new(0, 0, 0, 0, 0, 0, 0, 0))),
+        ("::1", IpAddr::V6(Ipv6Addr::new(0, 0, 0, 0, 0, 0, 0, 1))),
+        (
+            "2001:db8::8a2e:370:7334",
+            IpAddr::V6(Ipv6Addr::new(
+                0x2001, 0x0db8, 0, 0, 0, 0x8a2e, 0x0370, 0x7334,
+            )),
+        ),
+        (
+            "2001:0db8:0000:0000:0000:8a2e:0370:7334",
+            IpAddr::V6(Ipv6Addr::new(
+                0x2001, 0x0db8, 0, 0, 0, 0x8a2e, 0x0370, 0x7334,
+            )),
+        ),
+        (
+            "ffff:ffff:ffff:ffff:ffff:ffff:ffff:ffff",
+            IpAddr::V6(Ipv6Addr::new(
+                u16::MAX,
+                u16::MAX,
+                u16::MAX,
+                u16::MAX,
+                u16::MAX,
+                u16::MAX,
+                u16::MAX,
+                u16::MAX,
+            )),
+        ),
+    ];
+
+    for (inet_str, inet) in &tests {
+        // Insert inet as a string and verify that it matches
+        session
+            .query(
+                format!(
+                    "INSERT INTO ks.inet_tests (id, val) VALUES (0, '{}')",
+                    inet_str
+                ),
+                &[],
+            )
+            .await
+            .unwrap();
+
+        let (read_inet,): (IpAddr,) = session
+            .query("SELECT val from ks.inet_tests", &[])
+            .await
+            .unwrap()
+            .unwrap()
+            .into_typed::<(IpAddr,)>()
+            .next()
+            .unwrap()
+            .unwrap();
+
+        assert_eq!(read_inet, *inet);
+
+        // Insert inet as a bound value and verify that it matches
+        session
+            .query("INSERT INTO ks.inet_tests (id, val) VALUES (0, ?)", (inet,))
+            .await
+            .unwrap();
+
+        let (read_inet,): (IpAddr,) = session
+            .query("SELECT val from ks.inet_tests", &[])
+            .await
+            .unwrap()
+            .unwrap()
+            .into_typed::<(IpAddr,)>()
+            .next()
+            .unwrap()
+            .unwrap();
+
+        assert_eq!(read_inet, *inet);
     }
 }
