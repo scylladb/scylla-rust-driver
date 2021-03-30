@@ -230,6 +230,13 @@ impl CqlValue {
         }
     }
 
+    pub fn into_blob(self) -> Option<Vec<u8>> {
+        match self {
+            Self::Blob(b) => Some(b),
+            _ => None,
+        }
+    }
+
     pub fn as_inet(&self) -> Option<IpAddr> {
         match self {
             Self::Inet(a) => Some(*a),
