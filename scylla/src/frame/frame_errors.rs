@@ -1,5 +1,5 @@
 use super::response;
-use crate::cql_to_rust::CQLTypeError;
+use crate::cql_to_rust::CqlTypeError;
 use crate::frame::value::SerializeValuesError;
 use thiserror::Error;
 
@@ -10,7 +10,7 @@ pub enum FrameError {
     #[error("Frame is compressed, but no compression negotiated for connection.")]
     NoCompressionNegotiated,
     #[error("L4Z body decompression failed")]
-    LZ4BodyDecompression,
+    Lz4BodyDecompression,
     #[error("Received frame marked as coming from a client")]
     FrameFromClient,
     #[error("Received a frame from version {0}, but only 4 is supported")]
@@ -22,7 +22,7 @@ pub enum FrameError {
     #[error("Frame compression failed.")]
     FrameCompression,
     #[error("std io error encountered while processing")]
-    StdIOError(#[from] std::io::Error),
+    StdIoError(#[from] std::io::Error),
     #[error("Unrecognized opcode{0}")]
     TryFromPrimitiveError(#[from] num_enum::TryFromPrimitiveError<response::ResponseOpcode>),
 }
@@ -38,5 +38,5 @@ pub enum ParseError {
     #[error(transparent)]
     SerializeValuesError(#[from] SerializeValuesError),
     #[error(transparent)]
-    CQLTypeError(#[from] CQLTypeError),
+    CqlTypeError(#[from] CqlTypeError),
 }

@@ -1,5 +1,5 @@
-use crate::cql_to_rust::FromCQLVal;
-use crate::frame::response::result::CQLValue;
+use crate::cql_to_rust::FromCqlVal;
+use crate::frame::response::result::CqlValue;
 use crate::frame::value::Counter;
 use crate::frame::value::Value;
 use crate::frame::value::{Date, Time, Timestamp};
@@ -62,7 +62,7 @@ async fn init_test(table_name: &str, type_name: &str) -> Session {
 // Expected values and bound values are computed using T::from_str
 async fn run_tests<T>(tests: &[&str], type_name: &str)
 where
-    T: Value + FromCQLVal<CQLValue> + FromStr + Debug + Clone + PartialEq,
+    T: Value + FromCqlVal<CqlValue> + FromStr + Debug + Clone + PartialEq,
 {
     let session: Session = init_test(type_name, type_name).await;
 
@@ -316,7 +316,7 @@ async fn test_date() {
             .columns[0]
             .as_ref()
             .map(|cql_val| match cql_val {
-                CQLValue::Date(days) => Date(*days),
+                CqlValue::Date(days) => Date(*days),
                 _ => panic!(),
             })
             .unwrap();

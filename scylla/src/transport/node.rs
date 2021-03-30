@@ -333,11 +333,11 @@ impl NodeWorker {
         let use_keyspace_results: Vec<Result<(), QueryError>> =
             join_all(use_keyspace_futures).await;
 
-        // If there was at least one Ok and the rest were IOErrors we can return Ok
+        // If there was at least one Ok and the rest were IoErrors we can return Ok
         // keyspace name is correct and will be used on broken connection on the next reconnect
 
-        // If there were only IOErrors then return IOError
-        // If there was an error different than IOError return this error - something is wrong
+        // If there were only IoErrors then return IoError
+        // If there was an error different than IoError return this error - something is wrong
 
         let mut was_ok: bool = false;
         let mut io_error: Option<Arc<std::io::Error>> = None;
@@ -346,7 +346,7 @@ impl NodeWorker {
             match result {
                 Ok(()) => was_ok = true,
                 Err(err) => match err {
-                    QueryError::IOError(io_err) => io_error = Some(io_err),
+                    QueryError::IoError(io_err) => io_error = Some(io_err),
                     _ => return Err(err),
                 },
             }
@@ -357,6 +357,6 @@ impl NodeWorker {
         }
 
         // We can unwrap io_error because use_keyspace_futures must be nonempty
-        return Err(QueryError::IOError(io_error.unwrap()));
+        return Err(QueryError::IoError(io_error.unwrap()));
     }
 }

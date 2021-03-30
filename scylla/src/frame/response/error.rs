@@ -1,11 +1,11 @@
 use crate::frame::frame_errors::ParseError;
 use crate::frame::types;
-use crate::transport::errors::{DBError, QueryError, WriteType};
+use crate::transport::errors::{DbError, QueryError, WriteType};
 use byteorder::ReadBytesExt;
 
 #[derive(Debug)]
 pub struct Error {
-    pub error: DBError,
+    pub error: DbError,
     pub reason: String,
 }
 
@@ -14,68 +14,68 @@ impl Error {
         let code = types::read_int(buf)?;
         let reason = types::read_string(buf)?.to_owned();
 
-        let error: DBError = match code {
-            0x0000 => DBError::ServerError,
-            0x000A => DBError::ProtocolError,
-            0x0100 => DBError::AuthenticationError,
-            0x1000 => DBError::Unavailable {
+        let error: DbError = match code {
+            0x0000 => DbError::ServerError,
+            0x000A => DbError::ProtocolError,
+            0x0100 => DbError::AuthenticationError,
+            0x1000 => DbError::Unavailable {
                 consistency: types::read_consistency(buf)?,
                 required: types::read_int(buf)?,
                 alive: types::read_int(buf)?,
             },
-            0x1001 => DBError::Overloaded,
-            0x1002 => DBError::IsBootstrapping,
-            0x1003 => DBError::TruncateError,
-            0x1100 => DBError::WriteTimeout {
+            0x1001 => DbError::Overloaded,
+            0x1002 => DbError::IsBootstrapping,
+            0x1003 => DbError::TruncateError,
+            0x1100 => DbError::WriteTimeout {
                 consistency: types::read_consistency(buf)?,
                 received: types::read_int(buf)?,
                 required: types::read_int(buf)?,
                 write_type: WriteType::from(types::read_string(buf)?),
             },
-            0x1200 => DBError::ReadTimeout {
+            0x1200 => DbError::ReadTimeout {
                 consistency: types::read_consistency(buf)?,
                 received: types::read_int(buf)?,
                 required: types::read_int(buf)?,
                 data_present: buf.read_u8()? != 0,
             },
-            0x1300 => DBError::ReadFailure {
+            0x1300 => DbError::ReadFailure {
                 consistency: types::read_consistency(buf)?,
                 received: types::read_int(buf)?,
                 required: types::read_int(buf)?,
                 numfailures: types::read_int(buf)?,
                 data_present: buf.read_u8()? != 0,
             },
-            0x1400 => DBError::FunctionFailure {
+            0x1400 => DbError::FunctionFailure {
                 keyspace: types::read_string(buf)?.to_string(),
                 function: types::read_string(buf)?.to_string(),
                 arg_types: types::read_string_list(buf)?,
             },
-            0x1500 => DBError::WriteFailure {
+            0x1500 => DbError::WriteFailure {
                 consistency: types::read_consistency(buf)?,
                 received: types::read_int(buf)?,
                 required: types::read_int(buf)?,
                 numfailures: types::read_int(buf)?,
                 write_type: WriteType::from(types::read_string(buf)?),
             },
-            0x2000 => DBError::SyntaxError,
-            0x2100 => DBError::Unauthorized,
-            0x2200 => DBError::Invalid,
-            0x2300 => DBError::ConfigError,
-            0x2400 => DBError::AlreadyExists {
+            0x2000 => DbError::SyntaxError,
+            0x2100 => DbError::Unauthorized,
+            0x2200 => DbError::Invalid,
+            0x2300 => DbError::ConfigError,
+            0x2400 => DbError::AlreadyExists {
                 keyspace: types::read_string(buf)?.to_string(),
                 table: types::read_string(buf)?.to_string(),
             },
-            0x2500 => DBError::Unprepared,
-            _ => DBError::Other(code),
+            0x2500 => DbError::Unprepared,
+            _ => DbError::Other(code),
         };
 
         Ok(Error { error, reason })
     }
 }
 
-impl Into<QueryError> for Error {
-    fn into(self) -> QueryError {
-        QueryError::DBError(self.error, self.reason)
+impl From<Error> for QueryError {
+    fn from(error: Error) -> QueryError {
+        QueryError::DbError(error.error, error.reason)
     }
 }
 
@@ -83,7 +83,7 @@ impl Into<QueryError> for Error {
 mod tests {
     use super::Error;
     use crate::statement::Consistency;
-    use crate::transport::errors::{DBError, WriteType};
+    use crate::transport::errors::{DbError, WriteType};
     use std::convert::TryInto;
 
     // Serializes the beginning of an ERROR response - error code and message
@@ -102,19 +102,19 @@ mod tests {
     // Tests deserialization of all errors without and additional data
     #[test]
     fn deserialize_simple_errors() {
-        let simple_error_mappings: [(i32, DBError); 12] = [
-            (0x0000, DBError::ServerError),
-            (0x000A, DBError::ProtocolError),
-            (0x0100, DBError::AuthenticationError),
-            (0x1001, DBError::Overloaded),
-            (0x1002, DBError::IsBootstrapping),
-            (0x1003, DBError::TruncateError),
-            (0x2000, DBError::SyntaxError),
-            (0x2100, DBError::Unauthorized),
-            (0x2200, DBError::Invalid),
-            (0x2300, DBError::ConfigError),
-            (0x2500, DBError::Unprepared),
-            (0x1234, DBError::Other(0x1234)),
+        let simple_error_mappings: [(i32, DbError); 12] = [
+            (0x0000, DbError::ServerError),
+            (0x000A, DbError::ProtocolError),
+            (0x0100, DbError::AuthenticationError),
+            (0x1001, DbError::Overloaded),
+            (0x1002, DbError::IsBootstrapping),
+            (0x1003, DbError::TruncateError),
+            (0x2000, DbError::SyntaxError),
+            (0x2100, DbError::Unauthorized),
+            (0x2200, DbError::Invalid),
+            (0x2300, DbError::ConfigError),
+            (0x2500, DbError::Unprepared),
+            (0x1234, DbError::Other(0x1234)),
         ];
 
         for (error_code, expected_error) in &simple_error_mappings {
@@ -136,7 +136,7 @@ mod tests {
 
         assert_eq!(
             error.error,
-            DBError::Unavailable {
+            DbError::Unavailable {
                 consistency: Consistency::One,
                 required: 2,
                 alive: 3,
@@ -161,7 +161,7 @@ mod tests {
 
         assert_eq!(
             error.error,
-            DBError::WriteTimeout {
+            DbError::WriteTimeout {
                 consistency: Consistency::Quorum,
                 received: -5, // Allow negative values when they don't make sense, it's better than crashing with ProtocolError
                 required: 100,
@@ -183,7 +183,7 @@ mod tests {
 
         assert_eq!(
             error.error,
-            DBError::ReadTimeout {
+            DbError::ReadTimeout {
                 consistency: Consistency::Two,
                 received: 8,
                 required: 32,
@@ -206,7 +206,7 @@ mod tests {
 
         assert_eq!(
             error.error,
-            DBError::ReadFailure {
+            DbError::ReadFailure {
                 consistency: Consistency::Three,
                 received: 4,
                 required: 5,
@@ -247,7 +247,7 @@ mod tests {
 
         assert_eq!(
             error.error,
-            DBError::FunctionFailure {
+            DbError::FunctionFailure {
                 keyspace: "keyspace_name".to_string(),
                 function: "function_name".to_string(),
                 arg_types: vec!["type1".to_string(), "type2".to_string()]
@@ -274,7 +274,7 @@ mod tests {
 
         assert_eq!(
             error.error,
-            DBError::WriteFailure {
+            DbError::WriteFailure {
                 consistency: Consistency::Any,
                 received: 2,
                 required: 4,
@@ -304,7 +304,7 @@ mod tests {
 
         assert_eq!(
             error.error,
-            DBError::AlreadyExists {
+            DbError::AlreadyExists {
                 keyspace: "keyspace_name".to_string(),
                 table: "table_name".to_string(),
             }

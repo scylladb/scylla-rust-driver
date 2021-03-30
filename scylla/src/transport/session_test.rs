@@ -1,6 +1,6 @@
 use crate::frame::value::ValueList;
 use crate::routing::hash3_x64_128;
-use crate::transport::errors::{BadKeyspaceName, BadQuery, DBError, QueryError};
+use crate::transport::errors::{BadKeyspaceName, BadQuery, DbError, QueryError};
 use crate::{IntoTypedRows, Session, SessionBuilder};
 
 #[tokio::test]
@@ -552,21 +552,21 @@ async fn test_db_errors() {
     // SyntaxError on bad query
     assert!(matches!(
         session.query("gibberish", &[]).await,
-        Err(QueryError::DBError(DBError::SyntaxError, _))
+        Err(QueryError::DbError(DbError::SyntaxError, _))
     ));
 
     // AlreadyExists when creating a keyspace for the second time
     session.query("CREATE KEYSPACE IF NOT EXISTS db_errors_ks WITH REPLICATION = {'class' : 'SimpleStrategy', 'replication_factor' : 1}", &[]).await.unwrap();
 
     let create_keyspace_res = session.query("CREATE KEYSPACE db_errors_ks WITH REPLICATION = {'class' : 'SimpleStrategy', 'replication_factor' : 1}", &[]).await;
-    let keyspace_exists_error: DBError = match create_keyspace_res {
-        Err(QueryError::DBError(e, _)) => e,
+    let keyspace_exists_error: DbError = match create_keyspace_res {
+        Err(QueryError::DbError(e, _)) => e,
         _ => panic!("Second CREATE KEYSPACE didn't return an error!"),
     };
 
     assert_eq!(
         keyspace_exists_error,
-        DBError::AlreadyExists {
+        DbError::AlreadyExists {
             keyspace: "db_errors_ks".to_string(),
             table: "".to_string()
         }
@@ -584,14 +584,14 @@ async fn test_db_errors() {
     let create_table_res = session
         .query("CREATE TABLE db_errors_ks.tab (a text primary key)", &[])
         .await;
-    let create_tab_error: DBError = match create_table_res {
-        Err(QueryError::DBError(e, _)) => e,
+    let create_tab_error: DbError = match create_table_res {
+        Err(QueryError::DbError(e, _)) => e,
         _ => panic!("Second CREATE TABLE didn't return an error!"),
     };
 
     assert_eq!(
         create_tab_error,
-        DBError::AlreadyExists {
+        DbError::AlreadyExists {
             keyspace: "db_errors_ks".to_string(),
             table: "tab".to_string()
         }

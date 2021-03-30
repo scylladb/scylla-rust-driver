@@ -14,7 +14,7 @@ pub fn from_user_type_derive(tokens_input: TokenStream) -> TokenStream {
         let field_type = &field.ty;
 
         quote_spanned! {field.span() =>
-            #field_name: <#field_type as FromCQLVal<Option<CQLValue>>>::from_cql(
+            #field_name: <#field_type as FromCqlVal<Option<CqlValue>>>::from_cql(
                 // Take value with key #field_name out of fields map, if none found then return NULL
                 fields.remove(stringify!(#field_name)).unwrap_or(None)
             ) ?,
@@ -22,17 +22,17 @@ pub fn from_user_type_derive(tokens_input: TokenStream) -> TokenStream {
     });
 
     let generated = quote! {
-        impl FromCQLVal<scylla::frame::response::result::CQLValue> for #struct_name {
-            fn from_cql(cql_val: scylla::frame::response::result::CQLValue)
-            -> Result<Self, scylla::cql_to_rust::FromCQLValError> {
+        impl FromCqlVal<scylla::frame::response::result::CqlValue> for #struct_name {
+            fn from_cql(cql_val: scylla::frame::response::result::CqlValue)
+            -> Result<Self, scylla::cql_to_rust::FromCqlValError> {
                 use std::collections::BTreeMap;
-                use scylla::cql_to_rust::{FromCQLVal, FromCQLValError};
-                use scylla::frame::response::result::CQLValue;
+                use scylla::cql_to_rust::{FromCqlVal, FromCqlValError};
+                use scylla::frame::response::result::CqlValue;
 
-                // Interpret CQLValue as CQlValue::UserDefinedType
-                let mut fields: BTreeMap<String, Option<CQLValue>> = match cql_val {
-                    CQLValue::UserDefinedType{fields, ..} => fields,
-                    _ => return Err(FromCQLValError::BadCQLType),
+                // Interpret CqlValue as CQlValue::UserDefinedType
+                let mut fields: BTreeMap<String, Option<CqlValue>> = match cql_val {
+                    CqlValue::UserDefinedType{fields, ..} => fields,
+                    _ => return Err(FromCqlValError::BadCqlType),
                 };
 
                 // Parse struct using values from fields
@@ -42,7 +42,7 @@ pub fn from_user_type_derive(tokens_input: TokenStream) -> TokenStream {
 
                 // There should be no unused fields when reading user defined type
                 if !fields.is_empty() {
-                    return Err(FromCQLValError::BadCQLType);
+                    return Err(FromCqlValError::BadCqlType);
                 }
 
                 return Ok(result);

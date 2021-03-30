@@ -3,7 +3,7 @@
 
 use anyhow::Result;
 use chrono::{Duration, NaiveDate};
-use scylla::frame::response::result::CQLValue;
+use scylla::frame::response::result::CqlValue;
 use scylla::frame::value::{Date, Time, Timestamp};
 use scylla::transport::session::{IntoTypedRows, Session};
 use scylla::SessionBuilder;
@@ -56,7 +56,7 @@ async fn main() -> Result<()> {
     if let Some(rows) = session.query("SELECT d from ks.dates", &[]).await? {
         for row in rows {
             let read_days: u32 = match row.columns[0] {
-                Some(CQLValue::Date(days)) => days,
+                Some(CqlValue::Date(days)) => days,
                 _ => panic!("oh no"),
             };
 

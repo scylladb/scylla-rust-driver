@@ -222,7 +222,7 @@ impl ConnectionKeeperWorker {
             // user gets all errors from session.use_keyspace()
         }
 
-        let connection_closed_error = QueryError::IOError(Arc::new(std::io::Error::new(
+        let connection_closed_error = QueryError::IoError(Arc::new(std::io::Error::new(
             ErrorKind::Other,
             "Connection closed",
         )));
@@ -277,7 +277,7 @@ impl ConnectionKeeperWorker {
         }
 
         // Tried all source ports for that shard, give up
-        return Err(QueryError::IOError(Arc::new(std::io::Error::new(
+        return Err(QueryError::IoError(Arc::new(std::io::Error::new(
             std::io::ErrorKind::AddrInUse,
             "Could not find free source port for shard",
         ))));

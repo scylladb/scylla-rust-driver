@@ -7,7 +7,7 @@ mod dc_aware_round_robin;
 mod round_robin;
 mod token_aware;
 
-pub use dc_aware_round_robin::DCAwareRoundRobinPolicy;
+pub use dc_aware_round_robin::DcAwareRoundRobinPolicy;
 pub use round_robin::RoundRobinPolicy;
 pub use token_aware::TokenAwarePolicy;
 
@@ -104,11 +104,11 @@ mod tests {
     #[test]
     fn test_names() {
         let local_dc = "eu".to_string();
-        let policy = TokenAwarePolicy::new(Box::new(DCAwareRoundRobinPolicy::new(local_dc)));
+        let policy = TokenAwarePolicy::new(Box::new(DcAwareRoundRobinPolicy::new(local_dc)));
 
         assert_eq!(
             policy.name(),
-            "TokenAwarePolicy{child_policy: DCAwareRoundRobinPolicy}".to_string()
+            "TokenAwarePolicy{child_policy: DcAwareRoundRobinPolicy}".to_string()
         );
     }
 
