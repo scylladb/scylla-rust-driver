@@ -658,3 +658,77 @@ async fn test_inet() {
         assert_eq!(read_inet, *inet);
     }
 }
+
+#[tokio::test]
+async fn test_blob() {
+    let session: Session = init_test("blob_tests", "blob").await;
+
+    let long_blob: Vec<u8> = vec![0x11; 1234];
+    let mut long_blob_str: String = "0x".to_string();
+    long_blob_str.extend(std::iter::repeat('1').take(2 * 1234));
+
+    let tests = [
+        ("0x", vec![]),
+        ("0x00", vec![0x00]),
+        ("0x01", vec![0x01]),
+        ("0xff", vec![0xff]),
+        ("0x1122", vec![0x11, 0x22]),
+        ("0x112233", vec![0x11, 0x22, 0x33]),
+        ("0x11223344", vec![0x11, 0x22, 0x33, 0x44]),
+        ("0x1122334455", vec![0x11, 0x22, 0x33, 0x44, 0x55]),
+        ("0x112233445566", vec![0x11, 0x22, 0x33, 0x44, 0x55, 0x66]),
+        (
+            "0x11223344556677",
+            vec![0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77],
+        ),
+        (
+            "0x1122334455667788",
+            vec![0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88],
+        ),
+        (&long_blob_str, long_blob),
+    ];
+
+    for (blob_str, blob) in &tests {
+        // Insert blob as a string and verify that it matches
+        session
+            .query(
+                format!(
+                    "INSERT INTO ks.blob_tests (id, val) VALUES (0, {})",
+                    blob_str
+                ),
+                &[],
+            )
+            .await
+            .unwrap();
+
+        let (read_blob,): (Vec<u8>,) = session
+            .query("SELECT val from ks.blob_tests", &[])
+            .await
+            .unwrap()
+            .unwrap()
+            .into_typed::<(Vec<u8>,)>()
+            .next()
+            .unwrap()
+            .unwrap();
+
+        assert_eq!(read_blob, *blob);
+
+        // Insert blob as a bound value and verify that it matches
+        session
+            .query("INSERT INTO ks.blob_tests (id, val) VALUES (0, ?)", (blob,))
+            .await
+            .unwrap();
+
+        let (read_blob,): (Vec<u8>,) = session
+            .query("SELECT val from ks.blob_tests", &[])
+            .await
+            .unwrap()
+            .unwrap()
+            .into_typed::<(Vec<u8>,)>()
+            .next()
+            .unwrap()
+            .unwrap();
+
+        assert_eq!(read_blob, *blob);
+    }
+}
