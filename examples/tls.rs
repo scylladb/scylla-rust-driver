@@ -5,7 +5,7 @@ use std::env;
 use std::fs;
 use std::path::PathBuf;
 
-use openssl::ssl::{SslContextBuilder, SslFiletype, SslMethod, SslVerifyMode};
+use openssl::ssl::{SslContextBuilder, SslMethod, SslVerifyMode};
 
 // How to run scylla instance with TLS:
 //
@@ -24,8 +24,11 @@ use openssl::ssl::{SslContextBuilder, SslFiletype, SslMethod, SslVerifyMode};
 //
 // In your Rust program connect to port 9142 if it wasn't changed
 // Create new SslContextBuilder with SslMethod that is used in your connection
-// Use set_certificate_file method with path to your .crt file and its filetype as arguments
 // Set verification mode
+// if SslVerifyMode::PEER with self-signed certificate you have to
+// use set_ca_file method with path to your ca.crt file as an argument
+// if SslVerifyMode::NONE you don't need to use any aditional methods
+//
 // Build it and add to scylla-rust-driver's SessionBuilder
 
 #[tokio::main]
@@ -35,10 +38,10 @@ async fn main() -> Result<()> {
 
     println!("Connecting to {} ...", uri);
 
-    let certdir = fs::canonicalize(PathBuf::from("./test/certs/scylla.crt"))?;
     let mut context_builder = SslContextBuilder::new(SslMethod::tls())?;
-    context_builder.set_certificate_file(certdir.as_path(), SslFiletype::PEM)?;
-    context_builder.set_verify(SslVerifyMode::NONE);
+    let ca_dir = fs::canonicalize(PathBuf::from("./test/tls/ca.crt"))?;
+    context_builder.set_ca_file(ca_dir.as_path())?;
+    context_builder.set_verify(SslVerifyMode::PEER);
 
     let session: Session = SessionBuilder::new()
         .known_node(uri)
