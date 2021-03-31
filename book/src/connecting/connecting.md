@@ -16,7 +16,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
     let session: Session = SessionBuilder::new()
         .known_node(uri)
-        .known_node("10.20.30.40:4321")
+        .known_node("127.0.0.72:4321")
         .known_node("localhost:8000")
         .known_node_addr(SocketAddr::new(
             IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)),
