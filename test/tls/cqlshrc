@@ -1,0 +1,6 @@
+[connection]
+hostname = 172.17.0.2
+[ssl]
+certfile = /etc/scylla/db.crt
+validate = true
+

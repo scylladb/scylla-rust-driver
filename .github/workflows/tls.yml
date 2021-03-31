@@ -1,0 +1,35 @@
+name: SSL
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  tls:
+    runs-on: ubuntu-latest
+    services:
+      scylladb:
+        image: kejmer/scylla-tls
+        ports:
+          - 9042:9042
+          - 9142:9142
+        options: 
+          --health-cmd "cqlsh --debug" 
+          --health-interval 5s 
+          --health-retries 10
+        volumes:
+          - ${{ github.workspace }}:/workspace
+    env: 
+      working-directory: ./scylla
+    steps:
+    - uses: actions/checkout@v2
+    - name: Check
+      run: cargo check --verbose --features "ssl"
+      working-directory: ${{env.working-directory}}
+    - name: Run tls example
+      run: cargo run --example tls
