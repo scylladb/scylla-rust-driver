@@ -71,5 +71,38 @@ if let Some(rows) = session.query("SELECT a from ks.tab", &[]).await?.rows {
 # }
 ```
 
+### Parsing row as a custom struct
+It is possible to receive row as a struct with fields matching the columns.  
+The struct must:
+* have the same number of fields as the number of queried columns
+* have field types matching the columns being received
+* derive `FromRow`
+
+Field names don't need to match column names.
+```rust
+# extern crate scylla;
+# use scylla::Session;
+# use std::error::Error;
+# async fn check_only_compiles(session: &Session) -> Result<(), Box<dyn Error>> {
+use scylla::IntoTypedRows;
+use scylla::macros::FromRow;
+use scylla::frame::response::cql_to_rust::FromRow;
+
+#[derive(FromRow)]
+struct MyRow {
+    age: i32,
+    name: Option<String>
+}
+
+// Parse row as two columns containing an int and text which might be null
+if let Some(rows) = session.query("SELECT a from ks.tab", &[]).await?.rows {
+    for row in rows.into_typed::<MyRow>() {
+        let my_row: MyRow = row?;
+    }
+}
+# Ok(())
+# }
+```
+
 ### Other data types
 For parsing other data types see [Data Types](../data-types/data-types.md)
