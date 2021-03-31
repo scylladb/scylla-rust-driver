@@ -18,8 +18,11 @@ use std::error::Error;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
+    let uri = std::env::var("SCYLLA_URI")
+        .unwrap_or_else(|_| "127.0.0.1:9042".to_string());
+
     let session: Session = SessionBuilder::new()
-        .known_node("127.0.0.1:9042")
+        .known_node(uri)
         .compression(Some(Compression::Snappy))
         .build()
         .await?;

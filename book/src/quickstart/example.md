@@ -11,8 +11,12 @@ use std::error::Error;
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
     // Create a new Session which connects to node at 127.0.0.1:9042
+    // (or SCYLLA_URI if specified)
+    let uri = std::env::var("SCYLLA_URI")
+        .unwrap_or_else(|_| "127.0.0.1:9042".to_string());
+
     let session: Session = SessionBuilder::new()
-        .known_node("127.0.0.1:9042")
+        .known_node(uri)
         .build()
         .await?;
 

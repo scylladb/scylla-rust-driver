@@ -11,8 +11,12 @@ use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
+    let uri = std::env::var("SCYLLA_URI")
+        .unwrap_or_else(|_| "127.0.0.1:9042".to_string());
+
     let session: Session = SessionBuilder::new()
-        .known_node("127.0.0.1:9042")
+        .known_node(uri)
+        .known_node("10.20.30.40:4321")
         .known_node("localhost:8000")
         .known_node_addr(SocketAddr::new(
             IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)),
