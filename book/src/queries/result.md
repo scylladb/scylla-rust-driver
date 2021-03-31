@@ -42,7 +42,7 @@ if let Some(rows) = session.query("SELECT a from ks.tab", &[]).await?.rows {
 }
 
 // Parse row as two columns containing an int and text columns
-if let Some(rows) = session.query("SELECT a from ks.tab", &[]).await?.rows {
+if let Some(rows) = session.query("SELECT a, b from ks.tab", &[]).await?.rows {
     for row in rows.into_typed::<(i32, String)>() {
         let (int_value, text_value): (i32, String) = row?;
     }
@@ -62,7 +62,7 @@ To properly handle `NULL` values parse column as an `Option<>`:
 use scylla::IntoTypedRows;
 
 // Parse row as two columns containing an int and text which might be null
-if let Some(rows) = session.query("SELECT a from ks.tab", &[]).await?.rows {
+if let Some(rows) = session.query("SELECT a, b from ks.tab", &[]).await?.rows {
     for row in rows.into_typed::<(i32, Option<String>)>() {
         let (int_value, str_or_null): (i32, Option<String>) = row?;
     }
@@ -95,7 +95,7 @@ struct MyRow {
 }
 
 // Parse row as two columns containing an int and text which might be null
-if let Some(rows) = session.query("SELECT a from ks.tab", &[]).await?.rows {
+if let Some(rows) = session.query("SELECT a, b from ks.tab", &[]).await?.rows {
     for row in rows.into_typed::<MyRow>() {
         let my_row: MyRow = row?;
     }
