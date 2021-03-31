@@ -42,3 +42,33 @@ docker run --name scylla-ci -d scylladb/scylla
 # Run all tests
 SCYLLA_URI="$(docker inspect --format='{{ .NetworkSettings.IPAddress }}' scylla-ci):19042" cargo test -- --test-threads=1
 ```
+
+## Contributing to the book
+
+The documentation book is written using [mdbook](https://github.com/rust-lang/mdBook)  
+Book source is in `book/src`
+
+`mdbook` can be installed using:
+```shell
+cargo install mdbook
+```
+
+Build the book:
+```bash
+mdbook build book
+# HTML will be in book/book
+```
+
+Or serve it on a local http server (automatically refreshes on changes)
+```bash
+mdbook serve
+```
+
+Test code examples (requires a running scylla instance):
+```bash
+# Make a clean debug build, otherwise mdbook has problems with multiple versions
+cargo clean
+cargo build
+
+mdbook test -L target/debug/deps/ book
+```
