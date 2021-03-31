@@ -49,4 +49,6 @@
 
 - [Driver metrics](metrics/metrics.md)
 
+- [Logging](logging/logging.md)
+
 - [Query tracing](tracing/tracing.md)

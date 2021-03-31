@@ -68,7 +68,7 @@ Test code examples (requires a running scylla instance):
 ```bash
 # Make a clean debug build, otherwise mdbook has problems with multiple versions
 cargo clean
-cargo build
+cargo build --examples
 
 mdbook test -L target/debug/deps/ book
 ```

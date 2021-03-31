@@ -25,7 +25,7 @@ jobs:
     steps:
     - uses: actions/checkout@v2
     - name: Build the project
-      run: cargo build --verbose
+      run: cargo build --verbose --examples
     - name: Build the book
       run: mdbook build book
     - name: Run book tests
