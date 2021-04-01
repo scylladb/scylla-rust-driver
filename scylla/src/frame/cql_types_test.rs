@@ -628,7 +628,7 @@ async fn test_inet() {
             .unwrap();
 
         let (read_inet,): (IpAddr,) = session
-            .query("SELECT val from ks.inet_tests", &[])
+            .query("SELECT val from ks.inet_tests WHERE id = 0", &[])
             .await
             .unwrap()
             .unwrap()
@@ -646,7 +646,7 @@ async fn test_inet() {
             .unwrap();
 
         let (read_inet,): (IpAddr,) = session
-            .query("SELECT val from ks.inet_tests", &[])
+            .query("SELECT val from ks.inet_tests WHERE id = 0", &[])
             .await
             .unwrap()
             .unwrap()
@@ -702,7 +702,7 @@ async fn test_blob() {
             .unwrap();
 
         let (read_blob,): (Vec<u8>,) = session
-            .query("SELECT val from ks.blob_tests", &[])
+            .query("SELECT val from ks.blob_tests WHERE id = 0", &[])
             .await
             .unwrap()
             .unwrap()
@@ -720,7 +720,7 @@ async fn test_blob() {
             .unwrap();
 
         let (read_blob,): (Vec<u8>,) = session
-            .query("SELECT val from ks.blob_tests", &[])
+            .query("SELECT val from ks.blob_tests WHERE id = 0", &[])
             .await
             .unwrap()
             .unwrap()
