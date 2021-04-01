@@ -7,12 +7,12 @@ use std::sync::{
 };
 
 /// A data-center aware Round-robin load balancing policy.
-pub struct DCAwareRoundRobinPolicy {
+pub struct DcAwareRoundRobinPolicy {
     index: AtomicUsize,
     local_dc: String,
 }
 
-impl DCAwareRoundRobinPolicy {
+impl DcAwareRoundRobinPolicy {
     pub fn new(local_dc: String) -> Self {
         Self {
             index: AtomicUsize::new(0),
@@ -43,14 +43,14 @@ impl DCAwareRoundRobinPolicy {
             .all_nodes
             .iter()
             .cloned()
-            .filter(move |node| !DCAwareRoundRobinPolicy::is_local_node(node, &local_dc))
+            .filter(move |node| !DcAwareRoundRobinPolicy::is_local_node(node, &local_dc))
     }
 }
 
 const EMPTY_NODE_LIST: &Vec<Arc<Node>> = &vec![];
 const ORDER_TYPE: Ordering = Ordering::Relaxed;
 
-impl LoadBalancingPolicy for DCAwareRoundRobinPolicy {
+impl LoadBalancingPolicy for DcAwareRoundRobinPolicy {
     fn plan<'a>(
         &self,
         _statement: &Statement,
@@ -73,11 +73,11 @@ impl LoadBalancingPolicy for DCAwareRoundRobinPolicy {
     }
 
     fn name(&self) -> String {
-        "DCAwareRoundRobinPolicy".to_string()
+        "DcAwareRoundRobinPolicy".to_string()
     }
 }
 
-impl ChildLoadBalancingPolicy for DCAwareRoundRobinPolicy {
+impl ChildLoadBalancingPolicy for DcAwareRoundRobinPolicy {
     fn apply_child_policy(
         &self,
         plan: Vec<Arc<Node>>,
@@ -86,7 +86,7 @@ impl ChildLoadBalancingPolicy for DCAwareRoundRobinPolicy {
 
         let (local_nodes, remote_nodes): (Vec<_>, Vec<_>) = plan
             .into_iter()
-            .partition(|node| DCAwareRoundRobinPolicy::is_local_node(node, &self.local_dc));
+            .partition(|node| DcAwareRoundRobinPolicy::is_local_node(node, &self.local_dc));
 
         let local_nodes_rotation = super::compute_rotation(index, local_nodes.len());
         let rotated_local_nodes = super::slice_rotated_left(&local_nodes, local_nodes_rotation);
@@ -114,7 +114,7 @@ mod tests {
         let cluster = tests::mock_cluster_data_for_round_robin_tests();
 
         let local_dc = "eu".to_string();
-        let policy = DCAwareRoundRobinPolicy::new(local_dc);
+        let policy = DcAwareRoundRobinPolicy::new(local_dc);
 
         let plans = (0..4)
             .map(|_| {

@@ -10,7 +10,7 @@ use thiserror::Error;
 pub enum QueryError {
     /// Database sent a response containing some error with a message
     #[error("Database returned an error: {0}, Error message: {1}")]
-    DBError(DBError, String),
+    DbError(DbError, String),
 
     /// Caller passed an invalid query
     #[error(transparent)]
@@ -18,7 +18,7 @@ pub enum QueryError {
 
     /// Input/Output error has occured, connection broken etc.
     #[error("IO Error: {0}")]
-    IOError(Arc<std::io::Error>),
+    IoError(Arc<std::io::Error>),
 
     /// Unexpected or invalid message received
     #[error("Protocol Error: {0}")]
@@ -28,7 +28,7 @@ pub enum QueryError {
 /// An error sent from the database in response to a query
 /// as described in the [specification](https://github.com/apache/cassandra/blob/5ed5e84613ef0e9664a774493db7d2604e3596e0/doc/native_protocol_v4.spec#L1029)  
 #[derive(Error, Debug, Clone, PartialEq, Eq)]
-pub enum DBError {
+pub enum DbError {
     /// The submitted query has a syntax error
     #[error("The submitted query has a syntax error")]
     SyntaxError,
@@ -201,11 +201,11 @@ pub enum WriteType {
     /// Timeout occured during the write to the batch log when a logged batch was requested
     BatchLog,
     /// Timeout occured during Compare And Set write/update
-    CAS,
+    Cas,
     /// Write involves VIEW update and failure to acquire local view(MV) lock for key within timeout
     View,
     /// Timeout occured  when a cdc_total_space_in_mb is exceeded when doing a write to data tracked by cdc
-    CDC,
+    Cdc,
     /// Other type not specified in the specification
     Other(String),
 }
@@ -245,7 +245,7 @@ pub enum NewSessionError {
 
     /// Database sent a response containing some error with a message
     #[error("Database returned an error: {0}, Error message: {1}")]
-    DBError(DBError, String),
+    DbError(DbError, String),
 
     /// Caller passed an invalid query
     #[error(transparent)]
@@ -253,7 +253,7 @@ pub enum NewSessionError {
 
     /// Input/Output error has occured, connection broken etc.
     #[error("IO Error: {0}")]
-    IOError(Arc<std::io::Error>),
+    IoError(Arc<std::io::Error>),
 
     /// Unexpected or invalid message received
     #[error("Protocol Error: {0}")]
@@ -284,7 +284,7 @@ impl std::fmt::Display for WriteType {
 
 impl From<std::io::Error> for QueryError {
     fn from(io_error: std::io::Error) -> QueryError {
-        QueryError::IOError(Arc::new(io_error))
+        QueryError::IoError(Arc::new(io_error))
     }
 }
 
@@ -308,16 +308,16 @@ impl From<FrameError> for QueryError {
 
 impl From<std::io::Error> for NewSessionError {
     fn from(io_error: std::io::Error) -> NewSessionError {
-        NewSessionError::IOError(Arc::new(io_error))
+        NewSessionError::IoError(Arc::new(io_error))
     }
 }
 
 impl From<QueryError> for NewSessionError {
     fn from(query_error: QueryError) -> NewSessionError {
         match query_error {
-            QueryError::DBError(e, msg) => NewSessionError::DBError(e, msg),
+            QueryError::DbError(e, msg) => NewSessionError::DbError(e, msg),
             QueryError::BadQuery(e) => NewSessionError::BadQuery(e),
-            QueryError::IOError(e) => NewSessionError::IOError(e),
+            QueryError::IoError(e) => NewSessionError::IoError(e),
             QueryError::ProtocolError(m) => NewSessionError::ProtocolError(m),
         }
     }
@@ -334,7 +334,7 @@ impl QueryError {
     /// This type of error often occurs when we are choosing random port numbers
     /// and there is a collision.
     pub(crate) fn is_address_in_use(&self) -> bool {
-        if let QueryError::IOError(io_error) = self {
+        if let QueryError::IoError(io_error) = self {
             if io_error.kind() == ErrorKind::AddrInUse {
                 return true;
             }
@@ -352,9 +352,9 @@ impl From<&str> for WriteType {
             "UNLOGGED_BATCH" => WriteType::UnloggedBatch,
             "COUNTER" => WriteType::Counter,
             "BATCH_LOG" => WriteType::BatchLog,
-            "CAS" => WriteType::CAS,
+            "CAS" => WriteType::Cas,
             "VIEW" => WriteType::View,
-            "CDC" => WriteType::CDC,
+            "CDC" => WriteType::Cdc,
             _ => WriteType::Other(write_type_str.to_string()),
         }
     }
@@ -362,7 +362,7 @@ impl From<&str> for WriteType {
 
 #[cfg(test)]
 mod tests {
-    use super::{DBError, QueryError, WriteType};
+    use super::{DbError, QueryError, WriteType};
     use crate::statement::Consistency;
 
     #[test]
@@ -373,9 +373,9 @@ mod tests {
             ("UNLOGGED_BATCH", WriteType::UnloggedBatch),
             ("COUNTER", WriteType::Counter),
             ("BATCH_LOG", WriteType::BatchLog),
-            ("CAS", WriteType::CAS),
+            ("CAS", WriteType::Cas),
             ("VIEW", WriteType::View),
-            ("CDC", WriteType::CDC),
+            ("CDC", WriteType::Cdc),
             ("SOMEOTHER", WriteType::Other("SOMEOTHER".to_string())),
         ];
 
@@ -385,15 +385,15 @@ mod tests {
         }
     }
 
-    // A test to check that displaying DBError and QueryError::DBError works as expected
+    // A test to check that displaying DbError and QueryError::DbError works as expected
     // - displays error description
     // - displays error parameters
     // - displays error message
     // - indented multiline strings dont cause whitespace gaps
     #[test]
     fn dberror_full_info() {
-        // Test that DBError::Unavailable is displayed correctly
-        let db_error = DBError::Unavailable {
+        // Test that DbError::Unavailable is displayed correctly
+        let db_error = DbError::Unavailable {
             consistency: Consistency::Three,
             required: 3,
             alive: 2,
@@ -407,9 +407,9 @@ mod tests {
 
         assert_eq!(db_error_displayed, expected_dberr_msg);
 
-        // Test that QueryError::DBError::(DBError::Unavailable) is displayed correctly
+        // Test that QueryError::DbError::(DbError::Unavailable) is displayed correctly
         let query_error =
-            QueryError::DBError(db_error, "a message about unavailable error".to_string());
+            QueryError::DbError(db_error, "a message about unavailable error".to_string());
         let query_error_displayed: String = format!("{}", query_error);
 
         let mut expected_querr_msg = "Database returned an error: ".to_string();

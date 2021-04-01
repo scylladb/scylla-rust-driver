@@ -166,7 +166,7 @@ mod tests {
         struct Test<'a> {
             statement: Statement<'a>,
             expected_plan: Vec<u16>,
-        };
+        }
 
         let tests = [
             Test {

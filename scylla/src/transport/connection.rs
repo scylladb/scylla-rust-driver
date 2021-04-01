@@ -15,7 +15,7 @@ use std::{
     net::{Ipv4Addr, Ipv6Addr},
 };
 
-use super::errors::{BadKeyspaceName, BadQuery, DBError, QueryError};
+use super::errors::{BadKeyspaceName, BadQuery, DbError, QueryError};
 
 use crate::batch::{Batch, BatchStatement};
 use crate::frame::{
@@ -234,7 +234,7 @@ impl Connection {
         let response = self.send_request(&execute_frame, true).await?;
 
         if let Response::Error(err) = &response {
-            if err.error == DBError::Unprepared {
+            if err.error == DbError::Unprepared {
                 // Repreparation of a statement is needed
                 let reprepared = self.prepare(prepared_statement.get_statement()).await?;
                 // Reprepared statement should keep its id - it's the md5 sum
@@ -349,14 +349,14 @@ impl Connection {
             })
             .await
             .map_err(|_| {
-                QueryError::IOError(Arc::new(std::io::Error::new(
+                QueryError::IoError(Arc::new(std::io::Error::new(
                     ErrorKind::Other,
                     "Connection broken",
                 )))
             })?;
 
         let task_response = receiver.await.map_err(|_| {
-            QueryError::IOError(Arc::new(std::io::Error::new(
+            QueryError::IoError(Arc::new(std::io::Error::new(
                 ErrorKind::Other,
                 "Connection broken",
             )))
@@ -638,14 +638,14 @@ async fn connect_with_source_port(
 }
 
 struct ResponseHandlerMap {
-    stream_set: StreamIDSet,
+    stream_set: StreamIdSet,
     handlers: HashMap<i16, ResponseHandler>,
 }
 
 impl ResponseHandlerMap {
     pub fn new() -> Self {
         Self {
-            stream_set: StreamIDSet::new(),
+            stream_set: StreamIdSet::new(),
             handlers: HashMap::new(),
         }
     }
@@ -669,11 +669,11 @@ impl ResponseHandlerMap {
     }
 }
 
-struct StreamIDSet {
+struct StreamIdSet {
     used_bitmap: Box<[u64]>,
 }
 
-impl StreamIDSet {
+impl StreamIdSet {
     pub fn new() -> Self {
         const BITMAP_SIZE: usize = (std::i16::MAX as usize + 1) / 64;
         Self {

@@ -321,10 +321,12 @@ pub fn write_string_list(v: &[String], buf: &mut impl BufMut) -> Result<(), Pars
 
 #[test]
 fn type_string_list() {
-    let mut val = Vec::new();
-    val.push("".to_owned());
-    val.push("CQL_VERSION".to_owned());
-    val.push("THROW_ON_OVERLOAD".to_owned());
+    let val = vec![
+        "".to_owned(),
+        "CQL_VERSION".to_owned(),
+        "THROW_ON_OVERLOAD".to_owned(),
+    ];
+
     let mut buf = Vec::new();
     write_string_list(&val, &mut buf).unwrap();
     assert_eq!(read_string_list(&mut &buf[..]).unwrap(), val);

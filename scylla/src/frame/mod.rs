@@ -194,11 +194,11 @@ pub fn parse_response_body_extensions(
 
 pub fn compress(uncomp_body: &[u8], compression: Compression) -> Result<Vec<u8>, FrameError> {
     match compression {
-        Compression::LZ4 => {
+        Compression::Lz4 => {
             let uncomp_len = uncomp_body.len() as u32;
             let mut tmp =
                 Vec::with_capacity(lz4::compression_bound(uncomp_len).unwrap_or(0) as usize);
-            lz4::encode_block(&uncomp_body[..], &mut tmp);
+            lz4::encode_block(uncomp_body, &mut tmp);
 
             let mut comp_body = Vec::with_capacity(std::mem::size_of::<u32>() + tmp.len());
             comp_body.put_u32(uncomp_len);
@@ -213,16 +213,16 @@ pub fn compress(uncomp_body: &[u8], compression: Compression) -> Result<Vec<u8>,
 
 pub fn decompress(mut comp_body: &[u8], compression: Compression) -> Result<Vec<u8>, FrameError> {
     match compression {
-        Compression::LZ4 => {
+        Compression::Lz4 => {
             let uncomp_len = comp_body.get_u32() as usize;
             let mut uncomp_body = Vec::with_capacity(uncomp_len);
             if uncomp_len == 0 {
                 return Ok(uncomp_body);
             }
-            if lz4::decode_block(&comp_body[..], &mut uncomp_body) > 0 {
+            if lz4::decode_block(comp_body, &mut uncomp_body) > 0 {
                 Ok(uncomp_body)
             } else {
-                Err(FrameError::LZ4BodyDecompression)
+                Err(FrameError::Lz4BodyDecompression)
             }
         }
         Compression::Snappy => snap::raw::Decoder::new()

@@ -1,4 +1,4 @@
-use super::result::{CQLValue, Row};
+use super::result::{CqlValue, Row};
 use crate::frame::value::Counter;
 use bigdecimal::BigDecimal;
 use chrono::{Duration, NaiveDate};
@@ -12,28 +12,28 @@ use uuid::Uuid;
 #[derive(Error, Debug, Clone, PartialEq, Eq)]
 pub enum FromRowError {
     #[error("Bad CQL value")]
-    BadCQLVal(#[from] FromCQLValError),
+    BadCqlVal(#[from] FromCqlValError),
     #[error("Row too short")]
     RowTooShort,
 }
 
 #[derive(Error, Debug, PartialEq, Eq)]
-pub enum CQLTypeError {
+pub enum CqlTypeError {
     #[error("Invalid number of set elements: {0}")]
     InvalidNumberOfElements(i32),
 }
 
-/// This trait defines a way to convert CQLValue or Option<CQLValue> into some rust type
-// We can't use From trait because impl From<Option<CQLValue>> for String {...}
+/// This trait defines a way to convert CqlValue or Option<CqlValue> into some rust type
+// We can't use From trait because impl From<Option<CqlValue>> for String {...}
 // is forbidden since neither From nor String are defined in this crate
-pub trait FromCQLVal<T>: Sized {
-    fn from_cql(cql_val: T) -> Result<Self, FromCQLValError>;
+pub trait FromCqlVal<T>: Sized {
+    fn from_cql(cql_val: T) -> Result<Self, FromCqlValError>;
 }
 
 #[derive(Error, Debug, Clone, PartialEq, Eq)]
-pub enum FromCQLValError {
+pub enum FromCqlValError {
     #[error("Bad CQL type")]
-    BadCQLType,
+    BadCqlType,
     #[error("Value is null")]
     ValIsNull,
 }
@@ -43,68 +43,68 @@ pub trait FromRow: Sized {
     fn from_row(row: Row) -> Result<Self, FromRowError>;
 }
 
-// Implement from_cql<Option<CQLValue>> for every type that has from_cql<CQLValue>
+// Implement from_cql<Option<CqlValue>> for every type that has from_cql<CqlValue>
 // This tries to unwrap the option or fails with an error
-impl<T: FromCQLVal<CQLValue>> FromCQLVal<Option<CQLValue>> for T {
-    fn from_cql(cql_val_opt: Option<CQLValue>) -> Result<Self, FromCQLValError> {
-        T::from_cql(cql_val_opt.ok_or(FromCQLValError::ValIsNull)?)
+impl<T: FromCqlVal<CqlValue>> FromCqlVal<Option<CqlValue>> for T {
+    fn from_cql(cql_val_opt: Option<CqlValue>) -> Result<Self, FromCqlValError> {
+        T::from_cql(cql_val_opt.ok_or(FromCqlValError::ValIsNull)?)
     }
 }
 
-// Implement from_cql<Option<CQLValue>> for Option<T> for every type that has from_cql<CQLValue>
-// Value inside Option gets mapped from CQLValue to T
-impl<T: FromCQLVal<CQLValue>> FromCQLVal<Option<CQLValue>> for Option<T> {
-    fn from_cql(cql_val_opt: Option<CQLValue>) -> Result<Self, FromCQLValError> {
+// Implement from_cql<Option<CqlValue>> for Option<T> for every type that has from_cql<CqlValue>
+// Value inside Option gets mapped from CqlValue to T
+impl<T: FromCqlVal<CqlValue>> FromCqlVal<Option<CqlValue>> for Option<T> {
+    fn from_cql(cql_val_opt: Option<CqlValue>) -> Result<Self, FromCqlValError> {
         match cql_val_opt {
             Some(cql_val) => Ok(Some(T::from_cql(cql_val)?)),
             None => Ok(None),
         }
     }
 }
-// This macro implements FromCQLVal given a type and method of CQLValue that returns this type
+// This macro implements FromCqlVal given a type and method of CqlValue that returns this type
 macro_rules! impl_from_cql_val {
     ($T:ty, $convert_func:ident) => {
-        impl FromCQLVal<CQLValue> for $T {
-            fn from_cql(cql_val: CQLValue) -> Result<$T, FromCQLValError> {
-                cql_val.$convert_func().ok_or(FromCQLValError::BadCQLType)
+        impl FromCqlVal<CqlValue> for $T {
+            fn from_cql(cql_val: CqlValue) -> Result<$T, FromCqlValError> {
+                cql_val.$convert_func().ok_or(FromCqlValError::BadCqlType)
             }
         }
     };
 }
 
-impl_from_cql_val!(i32, as_int); // i32::from_cql<CQLValue>
-impl_from_cql_val!(i64, as_bigint); // i64::from_cql<CQLValue>
-impl_from_cql_val!(Counter, as_counter); // Counter::from_cql<CQLValue>
-impl_from_cql_val!(i16, as_smallint); // i16::from_cql<CQLValue>
-impl_from_cql_val!(BigInt, into_varint); // BigInt::from_cql<CQLValue>
-impl_from_cql_val!(i8, as_tinyint); // i8::from_cql<CQLValue>
-impl_from_cql_val!(NaiveDate, as_date); // NaiveDate::from_cql<CQLValue>
-impl_from_cql_val!(f32, as_float); // f32::from_cql<CQLValue>
-impl_from_cql_val!(f64, as_double); // f64::from_cql<CQLValue>
-impl_from_cql_val!(bool, as_boolean); // bool::from_cql<CQLValue>
-impl_from_cql_val!(String, into_string); // String::from_cql<CQLValue>
-impl_from_cql_val!(IpAddr, as_inet); // IpAddr::from_cql<CQLValue>
-impl_from_cql_val!(Uuid, as_uuid); // Uuid::from_cql<CQLValue>
-impl_from_cql_val!(BigDecimal, into_decimal); // BigDecimal::from_cql<CQLValue>
-impl_from_cql_val!(Duration, as_duration); // Duration::from_cql<CQLValue>
+impl_from_cql_val!(i32, as_int); // i32::from_cql<CqlValue>
+impl_from_cql_val!(i64, as_bigint); // i64::from_cql<CqlValue>
+impl_from_cql_val!(Counter, as_counter); // Counter::from_cql<CqlValue>
+impl_from_cql_val!(i16, as_smallint); // i16::from_cql<CqlValue>
+impl_from_cql_val!(BigInt, into_varint); // BigInt::from_cql<CqlValue>
+impl_from_cql_val!(i8, as_tinyint); // i8::from_cql<CqlValue>
+impl_from_cql_val!(NaiveDate, as_date); // NaiveDate::from_cql<CqlValue>
+impl_from_cql_val!(f32, as_float); // f32::from_cql<CqlValue>
+impl_from_cql_val!(f64, as_double); // f64::from_cql<CqlValue>
+impl_from_cql_val!(bool, as_boolean); // bool::from_cql<CqlValue>
+impl_from_cql_val!(String, into_string); // String::from_cql<CqlValue>
+impl_from_cql_val!(IpAddr, as_inet); // IpAddr::from_cql<CqlValue>
+impl_from_cql_val!(Uuid, as_uuid); // Uuid::from_cql<CqlValue>
+impl_from_cql_val!(BigDecimal, into_decimal); // BigDecimal::from_cql<CqlValue>
+impl_from_cql_val!(Duration, as_duration); // Duration::from_cql<CqlValue>
 
-// Vec<T>::from_cql<CQLValue>
-impl<T: FromCQLVal<CQLValue>> FromCQLVal<CQLValue> for Vec<T> {
-    fn from_cql(cql_val: CQLValue) -> Result<Self, FromCQLValError> {
+// Vec<T>::from_cql<CqlValue>
+impl<T: FromCqlVal<CqlValue>> FromCqlVal<CqlValue> for Vec<T> {
+    fn from_cql(cql_val: CqlValue) -> Result<Self, FromCqlValError> {
         cql_val
             .into_vec()
-            .ok_or(FromCQLValError::BadCQLType)?
+            .ok_or(FromCqlValError::BadCqlType)?
             .into_iter()
             .map(T::from_cql)
-            .collect::<Result<Vec<T>, FromCQLValError>>()
+            .collect::<Result<Vec<T>, FromCqlValError>>()
     }
 }
 
-impl<T1: FromCQLVal<CQLValue> + Eq + Hash, T2: FromCQLVal<CQLValue>> FromCQLVal<CQLValue>
+impl<T1: FromCqlVal<CqlValue> + Eq + Hash, T2: FromCqlVal<CqlValue>> FromCqlVal<CqlValue>
     for HashMap<T1, T2>
 {
-    fn from_cql(cql_val: CQLValue) -> Result<Self, FromCQLValError> {
-        let vec = cql_val.into_pair_vec().ok_or(FromCQLValError::BadCQLType)?;
+    fn from_cql(cql_val: CqlValue) -> Result<Self, FromCqlValError> {
+        let vec = cql_val.into_pair_vec().ok_or(FromCqlValError::BadCqlType)?;
         let mut res = HashMap::with_capacity(vec.len());
         for (key, value) in vec {
             res.insert(T1::from_cql(key)?, T2::from_cql(value)?);
@@ -113,12 +113,12 @@ impl<T1: FromCQLVal<CQLValue> + Eq + Hash, T2: FromCQLVal<CQLValue>> FromCQLVal<
     }
 }
 
-// This macro implements FromRow for tuple of types that have FromCQLVal
+// This macro implements FromRow for tuple of types that have FromCqlVal
 macro_rules! impl_tuple_from_row {
     ( $($Ti:tt),+ ) => {
         impl<$($Ti),+> FromRow for ($($Ti,)+)
         where
-            $($Ti: FromCQLVal<Option<CQLValue>>),+
+            $($Ti: FromCqlVal<Option<CqlValue>>),+
         {
             fn from_row(row: Row) -> Result<Self, FromRowError> {
                 let mut vals_iter = row.columns.into_iter();
@@ -156,21 +156,21 @@ impl_tuple_from_row!(T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, T12, T13, T14
 
 macro_rules! impl_tuple_from_cql {
     ( $($Ti:tt),+ ) => {
-        impl<$($Ti),+> FromCQLVal<CQLValue> for ($($Ti,)+)
+        impl<$($Ti),+> FromCqlVal<CqlValue> for ($($Ti,)+)
         where
-            $($Ti: FromCQLVal<CQLValue>),+
+            $($Ti: FromCqlVal<CqlValue>),+
         {
-            fn from_cql(cql_val: CQLValue) -> Result<Self, FromCQLValError> {
+            fn from_cql(cql_val: CqlValue) -> Result<Self, FromCqlValError> {
                 let tuple_fields = match cql_val {
-                    CQLValue::Tuple(fields) => fields,
-                    _ => return Err(FromCQLValError::BadCQLType)
+                    CqlValue::Tuple(fields) => fields,
+                    _ => return Err(FromCqlValError::BadCqlType)
                 };
 
                 let mut tuple_fields_iter = tuple_fields.into_iter();
 
                 Ok((
                     $(
-                        $Ti::from_cql(tuple_fields_iter.next().ok_or(FromCQLValError::BadCQLType) ?) ?
+                        $Ti::from_cql(tuple_fields_iter.next().ok_or(FromCqlValError::BadCqlType) ?) ?
                     ,)+
                 ))
             }
@@ -197,7 +197,7 @@ impl_tuple_from_cql!(T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, T12, T13, T14
 
 #[cfg(test)]
 mod tests {
-    use super::{CQLValue, FromCQLVal, FromCQLValError, FromRow, FromRowError, Row};
+    use super::{CqlValue, FromCqlVal, FromCqlValError, FromRow, FromRowError, Row};
     use crate as scylla;
     use crate::frame::value::Counter;
     use crate::macros::FromRow;
@@ -210,54 +210,54 @@ mod tests {
 
     #[test]
     fn i32_from_cql() {
-        assert_eq!(Ok(1234), i32::from_cql(CQLValue::Int(1234)));
+        assert_eq!(Ok(1234), i32::from_cql(CqlValue::Int(1234)));
     }
 
     #[test]
     fn bool_from_cql() {
-        assert_eq!(Ok(true), bool::from_cql(CQLValue::Boolean(true)));
-        assert_eq!(Ok(false), bool::from_cql(CQLValue::Boolean(false)));
+        assert_eq!(Ok(true), bool::from_cql(CqlValue::Boolean(true)));
+        assert_eq!(Ok(false), bool::from_cql(CqlValue::Boolean(false)));
     }
 
     #[test]
     fn floatingpoints_from_cql() {
         let float: f32 = 2.13;
         let double: f64 = 4.26;
-        assert_eq!(Ok(float), f32::from_cql(CQLValue::Float(float)));
-        assert_eq!(Ok(double), f64::from_cql(CQLValue::Double(double)));
+        assert_eq!(Ok(float), f32::from_cql(CqlValue::Float(float)));
+        assert_eq!(Ok(double), f64::from_cql(CqlValue::Double(double)));
     }
 
     #[test]
     fn i64_from_cql() {
-        assert_eq!(Ok(1234), i64::from_cql(CQLValue::BigInt(1234)));
+        assert_eq!(Ok(1234), i64::from_cql(CqlValue::BigInt(1234)));
     }
 
     #[test]
     fn i8_from_cql() {
-        assert_eq!(Ok(6), i8::from_cql(CQLValue::TinyInt(6)));
+        assert_eq!(Ok(6), i8::from_cql(CqlValue::TinyInt(6)));
     }
 
     #[test]
     fn i16_from_cql() {
-        assert_eq!(Ok(16), i16::from_cql(CQLValue::SmallInt(16)));
+        assert_eq!(Ok(16), i16::from_cql(CqlValue::SmallInt(16)));
     }
 
     #[test]
     fn string_from_cql() {
         assert_eq!(
             Ok("ascii_test".to_string()),
-            String::from_cql(CQLValue::Ascii("ascii_test".to_string()))
+            String::from_cql(CqlValue::Ascii("ascii_test".to_string()))
         );
         assert_eq!(
             Ok("text_test".to_string()),
-            String::from_cql(CQLValue::Text("text_test".to_string()))
+            String::from_cql(CqlValue::Text("text_test".to_string()))
         );
     }
 
     #[test]
     fn ip_addr_from_cql() {
         let ip_addr = IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1));
-        assert_eq!(Ok(ip_addr), IpAddr::from_cql(CQLValue::Inet(ip_addr)));
+        assert_eq!(Ok(ip_addr), IpAddr::from_cql(CqlValue::Inet(ip_addr)));
     }
 
     #[test]
@@ -265,7 +265,7 @@ mod tests {
         let big_int = 0.to_bigint().unwrap();
         assert_eq!(
             Ok(big_int),
-            BigInt::from_cql(CQLValue::Varint(0.to_bigint().unwrap()))
+            BigInt::from_cql(CqlValue::Varint(0.to_bigint().unwrap()))
         );
     }
 
@@ -274,40 +274,40 @@ mod tests {
         let decimal = BigDecimal::from_str("123.4").unwrap();
         assert_eq!(
             Ok(decimal.clone()),
-            BigDecimal::from_cql(CQLValue::Decimal(decimal))
+            BigDecimal::from_cql(CqlValue::Decimal(decimal))
         );
     }
 
     #[test]
     fn counter_from_cql() {
         let counter = Counter(1);
-        assert_eq!(Ok(counter), Counter::from_cql(CQLValue::Counter(counter)));
+        assert_eq!(Ok(counter), Counter::from_cql(CqlValue::Counter(counter)));
     }
 
     #[test]
     fn naive_date_from_cql() {
-        let unix_epoch: CQLValue = CQLValue::Date(2_u32.pow(31));
+        let unix_epoch: CqlValue = CqlValue::Date(2_u32.pow(31));
         assert_eq!(
             Ok(NaiveDate::from_ymd(1970, 1, 1)),
             NaiveDate::from_cql(unix_epoch)
         );
 
-        let before_epoch: CQLValue = CQLValue::Date(2_u32.pow(31) - 30);
+        let before_epoch: CqlValue = CqlValue::Date(2_u32.pow(31) - 30);
         assert_eq!(
             Ok(NaiveDate::from_ymd(1969, 12, 2)),
             NaiveDate::from_cql(before_epoch)
         );
 
-        let after_epoch: CQLValue = CQLValue::Date(2_u32.pow(31) + 30);
+        let after_epoch: CqlValue = CqlValue::Date(2_u32.pow(31) + 30);
         assert_eq!(
             Ok(NaiveDate::from_ymd(1970, 1, 31)),
             NaiveDate::from_cql(after_epoch)
         );
 
-        let min_date: CQLValue = CQLValue::Date(0);
+        let min_date: CqlValue = CqlValue::Date(0);
         assert!(NaiveDate::from_cql(min_date).is_err());
 
-        let max_date: CQLValue = CQLValue::Date(u32::max_value());
+        let max_date: CqlValue = CqlValue::Date(u32::max_value());
         assert!(NaiveDate::from_cql(max_date).is_err());
     }
 
@@ -316,13 +316,13 @@ mod tests {
         let time_duration = Duration::nanoseconds(86399999999999);
         assert_eq!(
             time_duration,
-            Duration::from_cql(CQLValue::Time(time_duration)).unwrap(),
+            Duration::from_cql(CqlValue::Time(time_duration)).unwrap(),
         );
 
         let timestamp_duration = Duration::milliseconds(i64::min_value());
         assert_eq!(
             timestamp_duration,
-            Duration::from_cql(CQLValue::Timestamp(timestamp_duration)).unwrap(),
+            Duration::from_cql(CqlValue::Timestamp(timestamp_duration)).unwrap(),
         );
     }
 
@@ -332,18 +332,18 @@ mod tests {
 
         assert_eq!(
             test_uuid,
-            Uuid::from_cql(CQLValue::Uuid(test_uuid)).unwrap()
+            Uuid::from_cql(CqlValue::Uuid(test_uuid)).unwrap()
         );
 
         assert_eq!(
             test_uuid,
-            Uuid::from_cql(CQLValue::Timeuuid(test_uuid)).unwrap()
+            Uuid::from_cql(CqlValue::Timeuuid(test_uuid)).unwrap()
         );
     }
 
     #[test]
     fn vec_from_cql() {
-        let cql_val = CQLValue::Set(vec![CQLValue::Int(1), CQLValue::Int(2), CQLValue::Int(3)]);
+        let cql_val = CqlValue::Set(vec![CqlValue::Int(1), CqlValue::Int(2), CqlValue::Int(3)]);
         assert_eq!(Ok(vec![1, 2, 3]), Vec::<i32>::from_cql(cql_val));
     }
 
@@ -351,8 +351,8 @@ mod tests {
     fn tuple_from_row() {
         let row = Row {
             columns: vec![
-                Some(CQLValue::Int(1)),
-                Some(CQLValue::Text("some_text".to_string())),
+                Some(CqlValue::Int(1)),
+                Some(CqlValue::Text("some_text".to_string())),
                 None,
             ],
         };
@@ -363,7 +363,7 @@ mod tests {
         assert_eq!(c, None);
 
         let row2 = Row {
-            columns: vec![Some(CQLValue::Int(1)), Some(CQLValue::Int(2))],
+            columns: vec![Some(CqlValue::Int(1)), Some(CqlValue::Int(2))],
         };
 
         let (d,) = <(i32,)>::from_row(row2).unwrap();
@@ -372,14 +372,14 @@ mod tests {
 
     #[test]
     fn from_cql_null() {
-        assert_eq!(i32::from_cql(None), Err(FromCQLValError::ValIsNull));
+        assert_eq!(i32::from_cql(None), Err(FromCqlValError::ValIsNull));
     }
 
     #[test]
     fn from_cql_wrong_type() {
         assert_eq!(
-            i32::from_cql(CQLValue::BigInt(1234)),
-            Err(FromCQLValError::BadCQLType)
+            i32::from_cql(CqlValue::BigInt(1234)),
+            Err(FromCqlValError::BadCqlType)
         );
     }
 
@@ -391,26 +391,26 @@ mod tests {
 
         assert_eq!(
             <(i32,)>::from_row(row),
-            Err(FromRowError::BadCQLVal(FromCQLValError::ValIsNull))
+            Err(FromRowError::BadCqlVal(FromCqlValError::ValIsNull))
         );
     }
 
     #[test]
     fn from_row_wrong_type() {
         let row = Row {
-            columns: vec![Some(CQLValue::Int(1234))],
+            columns: vec![Some(CqlValue::Int(1234))],
         };
 
         assert_eq!(
             <(String,)>::from_row(row),
-            Err(FromRowError::BadCQLVal(FromCQLValError::BadCQLType))
+            Err(FromRowError::BadCqlVal(FromCqlValError::BadCqlType))
         );
     }
 
     #[test]
     fn from_row_too_short() {
         let row = Row {
-            columns: vec![Some(CQLValue::Int(1234))],
+            columns: vec![Some(CqlValue::Int(1234))],
         };
 
         assert_eq!(<(i32, i32)>::from_row(row), Err(FromRowError::RowTooShort));
@@ -427,9 +427,9 @@ mod tests {
 
         let row = Row {
             columns: vec![
-                Some(CQLValue::Int(16)),
+                Some(CqlValue::Int(16)),
                 None,
-                Some(CQLValue::Set(vec![CQLValue::Int(1), CQLValue::Int(2)])),
+                Some(CqlValue::Set(vec![CqlValue::Int(1), CqlValue::Int(2)])),
             ],
         };
 

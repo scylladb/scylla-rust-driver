@@ -13,7 +13,7 @@ async fn main() -> Result<()> {
 
     let session: Session = SessionBuilder::new()
         .known_node(uri)
-        .compression(Some(Compression::LZ4))
+        .compression(Some(Compression::Lz4))
         .build()
         .await?;
 

@@ -331,8 +331,8 @@ mod tests {
         let mut builder = SessionBuilder::new();
         assert_eq!(builder.config.compression, None);
 
-        builder = builder.compression(Some(Compression::LZ4));
-        assert_eq!(builder.config.compression, Some(Compression::LZ4));
+        builder = builder.compression(Some(Compression::Lz4));
+        assert_eq!(builder.config.compression, Some(Compression::Lz4));
 
         builder = builder.compression(Some(Compression::Snappy));
         assert_eq!(builder.config.compression, Some(Compression::Snappy));

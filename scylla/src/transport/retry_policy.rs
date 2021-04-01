@@ -1,5 +1,5 @@
 use crate::statement::Consistency;
-use crate::transport::errors::{DBError, QueryError, WriteType};
+use crate::transport::errors::{DbError, QueryError, WriteType};
 
 /// Information about a failed query
 pub struct QueryInfo<'a> {
@@ -126,10 +126,10 @@ impl RetrySession for DefaultRetrySession {
         match query_info.error {
             // Basic errors - there are some problems on this node
             // Retry on a different one if possible
-            QueryError::IOError(_)
-            | QueryError::DBError(DBError::Overloaded, _)
-            | QueryError::DBError(DBError::ServerError, _)
-            | QueryError::DBError(DBError::TruncateError, _) => {
+            QueryError::IoError(_)
+            | QueryError::DbError(DbError::Overloaded, _)
+            | QueryError::DbError(DbError::ServerError, _)
+            | QueryError::DbError(DbError::TruncateError, _) => {
                 if query_info.is_idempotent {
                     RetryDecision::RetryNextNode
                 } else {
@@ -141,7 +141,7 @@ impl RetrySession for DefaultRetrySession {
             // Maybe this node has network problems - try a different one.
             // Perform at most one retry - it's unlikely that two nodes
             // have network problems at the same time
-            QueryError::DBError(DBError::Unavailable { .. }, _) => {
+            QueryError::DbError(DbError::Unavailable { .. }, _) => {
                 if !self.was_unavailable_retry {
                     self.was_unavailable_retry = true;
                     RetryDecision::RetryNextNode
@@ -155,8 +155,8 @@ impl RetrySession for DefaultRetrySession {
             // This happens when the coordinator picked replicas that were overloaded/dying.
             // Retried request should have some useful response because the node will detect
             // that these replicas are dead.
-            QueryError::DBError(
-                DBError::ReadTimeout {
+            QueryError::DbError(
+                DbError::ReadTimeout {
                     received,
                     required,
                     data_present,
@@ -175,7 +175,7 @@ impl RetrySession for DefaultRetrySession {
             // Retry at most once and only for BatchLog write.
             // Coordinator probably didn't detect the nodes as dead.
             // By the time we retry they should be detected as dead.
-            QueryError::DBError(DBError::WriteTimeout { write_type, .. }, _) => {
+            QueryError::DbError(DbError::WriteTimeout { write_type, .. }, _) => {
                 if !self.was_write_timeout_retry
                     && query_info.is_idempotent
                     && *write_type == WriteType::BatchLog
@@ -187,7 +187,7 @@ impl RetrySession for DefaultRetrySession {
                 }
             }
             // The node is still bootstrapping it can't execute the query, we should try another one
-            QueryError::DBError(DBError::IsBootstrapping, _) => RetryDecision::RetryNextNode,
+            QueryError::DbError(DbError::IsBootstrapping, _) => RetryDecision::RetryNextNode,
             // In all other cases propagate the error to the user
             _ => RetryDecision::DontRetry,
         }
@@ -202,7 +202,7 @@ impl RetrySession for DefaultRetrySession {
 mod tests {
     use super::{DefaultRetryPolicy, QueryInfo, RetryDecision, RetryPolicy};
     use crate::statement::Consistency;
-    use crate::transport::errors::{BadQuery, DBError, QueryError, WriteType};
+    use crate::transport::errors::{BadQuery, DbError, QueryError, WriteType};
     use std::io::ErrorKind;
     use std::sync::Arc;
 
@@ -232,41 +232,41 @@ mod tests {
     #[test]
     fn default_never_retries() {
         let never_retried_dberrors = vec![
-            DBError::SyntaxError,
-            DBError::Invalid,
-            DBError::AlreadyExists {
+            DbError::SyntaxError,
+            DbError::Invalid,
+            DbError::AlreadyExists {
                 keyspace: String::new(),
                 table: String::new(),
             },
-            DBError::FunctionFailure {
+            DbError::FunctionFailure {
                 keyspace: String::new(),
                 function: String::new(),
                 arg_types: vec![],
             },
-            DBError::AuthenticationError,
-            DBError::Unauthorized,
-            DBError::ConfigError,
-            DBError::ReadFailure {
+            DbError::AuthenticationError,
+            DbError::Unauthorized,
+            DbError::ConfigError,
+            DbError::ReadFailure {
                 consistency: Consistency::Two,
                 received: 2,
                 required: 1,
                 numfailures: 1,
                 data_present: false,
             },
-            DBError::WriteFailure {
+            DbError::WriteFailure {
                 consistency: Consistency::Two,
                 received: 1,
                 required: 2,
                 numfailures: 1,
                 write_type: WriteType::BatchLog,
             },
-            DBError::Unprepared,
-            DBError::ProtocolError,
-            DBError::Other(0x124816),
+            DbError::Unprepared,
+            DbError::ProtocolError,
+            DbError::Other(0x124816),
         ];
 
         for dberror in never_retried_dberrors {
-            default_policy_assert_never_retries(QueryError::DBError(dberror, String::new()));
+            default_policy_assert_never_retries(QueryError::DbError(dberror, String::new()));
         }
 
         default_policy_assert_never_retries(QueryError::BadQuery(BadQuery::ValueLenMismatch(1, 2)));
@@ -291,10 +291,10 @@ mod tests {
     #[test]
     fn default_idempotent_next_retries() {
         let idempotent_next_errors = vec![
-            QueryError::DBError(DBError::Overloaded, String::new()),
-            QueryError::DBError(DBError::TruncateError, String::new()),
-            QueryError::DBError(DBError::ServerError, String::new()),
-            QueryError::IOError(Arc::new(std::io::Error::new(ErrorKind::Other, "test"))),
+            QueryError::DbError(DbError::Overloaded, String::new()),
+            QueryError::DbError(DbError::TruncateError, String::new()),
+            QueryError::DbError(DbError::ServerError, String::new()),
+            QueryError::IoError(Arc::new(std::io::Error::new(ErrorKind::Other, "test"))),
         ];
 
         for error in idempotent_next_errors {
@@ -305,7 +305,7 @@ mod tests {
     // Always retry on next node if current one is bootstrapping
     #[test]
     fn default_bootstrapping() {
-        let error = QueryError::DBError(DBError::IsBootstrapping, String::new());
+        let error = QueryError::DbError(DbError::IsBootstrapping, String::new());
 
         let mut policy = DefaultRetryPolicy::new().new_session();
         assert_eq!(
@@ -323,8 +323,8 @@ mod tests {
     // On Unavailable error we retry one time no matter the idempotence
     #[test]
     fn default_unavailable() {
-        let error = QueryError::DBError(
-            DBError::Unavailable {
+        let error = QueryError::DbError(
+            DbError::Unavailable {
                 consistency: Consistency::Two,
                 required: 2,
                 alive: 1,
@@ -357,8 +357,8 @@ mod tests {
     #[test]
     fn default_read_timeout() {
         // Enough responses and data_present == true
-        let enough_responses_with_data = QueryError::DBError(
-            DBError::ReadTimeout {
+        let enough_responses_with_data = QueryError::DbError(
+            DbError::ReadTimeout {
                 consistency: Consistency::Two,
                 received: 2,
                 required: 2,
@@ -390,8 +390,8 @@ mod tests {
         );
 
         // Enough responses but data_present == false
-        let enough_responses_no_data = QueryError::DBError(
-            DBError::ReadTimeout {
+        let enough_responses_no_data = QueryError::DbError(
+            DbError::ReadTimeout {
                 consistency: Consistency::Two,
                 received: 2,
                 required: 2,
@@ -415,8 +415,8 @@ mod tests {
         );
 
         // Not enough responses, data_present == true
-        let not_enough_responses_with_data = QueryError::DBError(
-            DBError::ReadTimeout {
+        let not_enough_responses_with_data = QueryError::DbError(
+            DbError::ReadTimeout {
                 consistency: Consistency::Two,
                 received: 1,
                 required: 2,
@@ -444,8 +444,8 @@ mod tests {
     #[test]
     fn default_write_timeout() {
         // WriteType == BatchLog
-        let good_write_type = QueryError::DBError(
-            DBError::WriteTimeout {
+        let good_write_type = QueryError::DbError(
+            DbError::WriteTimeout {
                 consistency: Consistency::Two,
                 received: 1,
                 required: 2,
@@ -473,8 +473,8 @@ mod tests {
         );
 
         // WriteType != BatchLog
-        let bad_write_type = QueryError::DBError(
-            DBError::WriteTimeout {
+        let bad_write_type = QueryError::DbError(
+            DbError::WriteTimeout {
                 consistency: Consistency::Two,
                 received: 4,
                 required: 2,
