@@ -6,6 +6,7 @@ use num_bigint::BigInt;
 use std::borrow::Cow;
 use std::collections::HashMap;
 use std::convert::TryInto;
+use std::net::IpAddr;
 use thiserror::Error;
 use uuid::Uuid;
 
@@ -345,6 +346,23 @@ impl Value for Vec<u8> {
         buf.put_i32(val_len);
 
         buf.extend_from_slice(&self);
+
+        Ok(())
+    }
+}
+
+impl Value for IpAddr {
+    fn serialize(&self, buf: &mut Vec<u8>) -> Result<(), ValueTooBig> {
+        match self {
+            IpAddr::V4(addr) => {
+                buf.put_i32(4);
+                buf.extend_from_slice(&addr.octets());
+            }
+            IpAddr::V6(addr) => {
+                buf.put_i32(16);
+                buf.extend_from_slice(&addr.octets());
+            }
+        }
 
         Ok(())
     }

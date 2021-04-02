@@ -83,6 +83,7 @@ impl_from_cql_val!(f32, as_float); // f32::from_cql<CqlValue>
 impl_from_cql_val!(f64, as_double); // f64::from_cql<CqlValue>
 impl_from_cql_val!(bool, as_boolean); // bool::from_cql<CqlValue>
 impl_from_cql_val!(String, into_string); // String::from_cql<CqlValue>
+impl_from_cql_val!(Vec<u8>, into_blob); // Vec<u8>::from_cql<CqlValue>
 impl_from_cql_val!(IpAddr, as_inet); // IpAddr::from_cql<CqlValue>
 impl_from_cql_val!(Uuid, as_uuid); // Uuid::from_cql<CqlValue>
 impl_from_cql_val!(BigDecimal, into_decimal); // BigDecimal::from_cql<CqlValue>

@@ -12,6 +12,7 @@ use num_bigint::BigInt;
 use std::cmp::PartialEq;
 use std::env;
 use std::fmt::Debug;
+use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 use std::str::FromStr;
 use uuid::Uuid;
 
@@ -569,5 +570,165 @@ async fn test_timeuuid() {
             .unwrap();
 
         assert_eq!(read_timeuuid.as_bytes(), timeuuid_bytes);
+    }
+}
+
+#[tokio::test]
+async fn test_inet() {
+    let session: Session = init_test("inet_tests", "inet").await;
+
+    let tests = [
+        ("0.0.0.0", IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0))),
+        ("127.0.0.1", IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1))),
+        ("10.0.0.1", IpAddr::V4(Ipv4Addr::new(10, 0, 0, 1))),
+        (
+            "255.255.255.255",
+            IpAddr::V4(Ipv4Addr::new(255, 255, 255, 255)),
+        ),
+        ("::0", IpAddr::V6(Ipv6Addr::new(0, 0, 0, 0, 0, 0, 0, 0))),
+        ("::1", IpAddr::V6(Ipv6Addr::new(0, 0, 0, 0, 0, 0, 0, 1))),
+        (
+            "2001:db8::8a2e:370:7334",
+            IpAddr::V6(Ipv6Addr::new(
+                0x2001, 0x0db8, 0, 0, 0, 0x8a2e, 0x0370, 0x7334,
+            )),
+        ),
+        (
+            "2001:0db8:0000:0000:0000:8a2e:0370:7334",
+            IpAddr::V6(Ipv6Addr::new(
+                0x2001, 0x0db8, 0, 0, 0, 0x8a2e, 0x0370, 0x7334,
+            )),
+        ),
+        (
+            "ffff:ffff:ffff:ffff:ffff:ffff:ffff:ffff",
+            IpAddr::V6(Ipv6Addr::new(
+                u16::MAX,
+                u16::MAX,
+                u16::MAX,
+                u16::MAX,
+                u16::MAX,
+                u16::MAX,
+                u16::MAX,
+                u16::MAX,
+            )),
+        ),
+    ];
+
+    for (inet_str, inet) in &tests {
+        // Insert inet as a string and verify that it matches
+        session
+            .query(
+                format!(
+                    "INSERT INTO ks.inet_tests (id, val) VALUES (0, '{}')",
+                    inet_str
+                ),
+                &[],
+            )
+            .await
+            .unwrap();
+
+        let (read_inet,): (IpAddr,) = session
+            .query("SELECT val from ks.inet_tests WHERE id = 0", &[])
+            .await
+            .unwrap()
+            .unwrap()
+            .into_typed::<(IpAddr,)>()
+            .next()
+            .unwrap()
+            .unwrap();
+
+        assert_eq!(read_inet, *inet);
+
+        // Insert inet as a bound value and verify that it matches
+        session
+            .query("INSERT INTO ks.inet_tests (id, val) VALUES (0, ?)", (inet,))
+            .await
+            .unwrap();
+
+        let (read_inet,): (IpAddr,) = session
+            .query("SELECT val from ks.inet_tests WHERE id = 0", &[])
+            .await
+            .unwrap()
+            .unwrap()
+            .into_typed::<(IpAddr,)>()
+            .next()
+            .unwrap()
+            .unwrap();
+
+        assert_eq!(read_inet, *inet);
+    }
+}
+
+#[tokio::test]
+async fn test_blob() {
+    let session: Session = init_test("blob_tests", "blob").await;
+
+    let long_blob: Vec<u8> = vec![0x11; 1234];
+    let mut long_blob_str: String = "0x".to_string();
+    long_blob_str.extend(std::iter::repeat('1').take(2 * 1234));
+
+    let tests = [
+        ("0x", vec![]),
+        ("0x00", vec![0x00]),
+        ("0x01", vec![0x01]),
+        ("0xff", vec![0xff]),
+        ("0x1122", vec![0x11, 0x22]),
+        ("0x112233", vec![0x11, 0x22, 0x33]),
+        ("0x11223344", vec![0x11, 0x22, 0x33, 0x44]),
+        ("0x1122334455", vec![0x11, 0x22, 0x33, 0x44, 0x55]),
+        ("0x112233445566", vec![0x11, 0x22, 0x33, 0x44, 0x55, 0x66]),
+        (
+            "0x11223344556677",
+            vec![0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77],
+        ),
+        (
+            "0x1122334455667788",
+            vec![0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88],
+        ),
+        (&long_blob_str, long_blob),
+    ];
+
+    for (blob_str, blob) in &tests {
+        // Insert blob as a string and verify that it matches
+        session
+            .query(
+                format!(
+                    "INSERT INTO ks.blob_tests (id, val) VALUES (0, {})",
+                    blob_str
+                ),
+                &[],
+            )
+            .await
+            .unwrap();
+
+        let (read_blob,): (Vec<u8>,) = session
+            .query("SELECT val from ks.blob_tests WHERE id = 0", &[])
+            .await
+            .unwrap()
+            .unwrap()
+            .into_typed::<(Vec<u8>,)>()
+            .next()
+            .unwrap()
+            .unwrap();
+
+        assert_eq!(read_blob, *blob);
+
+        // Insert blob as a bound value and verify that it matches
+        session
+            .query("INSERT INTO ks.blob_tests (id, val) VALUES (0, ?)", (blob,))
+            .await
+            .unwrap();
+
+        let (read_blob,): (Vec<u8>,) = session
+            .query("SELECT val from ks.blob_tests WHERE id = 0", &[])
+            .await
+            .unwrap()
+            .unwrap()
+            .into_typed::<(Vec<u8>,)>()
+            .next()
+            .unwrap()
+            .unwrap();
+
+        assert_eq!(read_blob, *blob);
     }
 }
