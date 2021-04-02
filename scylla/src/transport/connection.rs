@@ -1,8 +1,16 @@
 use bytes::Bytes;
 use futures::{future::RemoteHandle, FutureExt};
-use tokio::net::{tcp, TcpSocket, TcpStream};
+use tokio::io::{split, AsyncRead, AsyncWrite};
+use tokio::net::{TcpSocket, TcpStream};
 use tokio::sync::{mpsc, oneshot};
 use tracing::{error, warn};
+
+#[cfg(feature = "ssl")]
+use openssl::ssl::{Ssl, SslContext};
+#[cfg(feature = "ssl")]
+use std::pin::Pin;
+#[cfg(feature = "ssl")]
+use tokio_openssl::SslStream;
 
 use std::collections::HashMap;
 use std::convert::TryFrom;
@@ -59,14 +67,13 @@ struct TaskResponse {
 pub struct ConnectionConfig {
     pub compression: Option<Compression>,
     pub tcp_nodelay: bool,
+    #[cfg(feature = "ssl")]
+    pub ssl_context: Option<SslContext>,
     /*
     These configuration options will be added in the future:
 
     pub auth_username: Option<String>,
     pub auth_password: Option<String>,
-
-    pub use_tls: bool,
-    pub tls_certificate_path: Option<String>,
 
     pub tcp_keepalive: bool,
 
@@ -82,6 +89,8 @@ impl Default for ConnectionConfig {
         Self {
             compression: None,
             tcp_nodelay: false,
+            #[cfg(feature = "ssl")]
+            ssl_context: None,
         }
     }
 }
@@ -108,8 +117,7 @@ impl Connection {
 
         let (error_sender, error_receiver) = tokio::sync::oneshot::channel();
 
-        let (fut, _worker_handle) = Self::router(stream, receiver, error_sender).remote_handle();
-        tokio::task::spawn(fut);
+        let _worker_handle = Self::run_router(&config, stream, receiver, error_sender).await?;
 
         let connection = Connection {
             submit_channel: sender,
@@ -376,13 +384,52 @@ impl Connection {
         Ok(response)
     }
 
+    #[cfg(feature = "ssl")]
+    async fn run_router(
+        config: &ConnectionConfig,
+        stream: TcpStream,
+        receiver: mpsc::Receiver<Task>,
+        error_sender: tokio::sync::oneshot::Sender<QueryError>,
+    ) -> Result<RemoteHandle<()>, std::io::Error> {
+        let res = match config.ssl_context {
+            Some(ref context) => {
+                let ssl = Ssl::new(context)?;
+                let mut stream = SslStream::new(ssl, stream)?;
+                let _pin = Pin::new(&mut stream).connect().await;
+                Self::run_router_spawner(stream, receiver, error_sender)
+            }
+            None => Self::run_router_spawner(stream, receiver, error_sender),
+        };
+        Ok(res)
+    }
+
+    #[cfg(not(feature = "ssl"))]
+    async fn run_router(
+        config: &ConnectionConfig,
+        stream: TcpStream,
+        receiver: mpsc::Receiver<Task>,
+        error_sender: tokio::sync::oneshot::Sender<QueryError>,
+    ) -> Result<RemoteHandle<()>, std::io::Error> {
+        let _config = config;
+        Ok(Self::run_router_spawner(stream, receiver, error_sender))
+    }
+
+    fn run_router_spawner(
+        stream: (impl AsyncRead + AsyncWrite + Send + 'static),
+        receiver: mpsc::Receiver<Task>,
+        error_sender: tokio::sync::oneshot::Sender<QueryError>,
+    ) -> RemoteHandle<()> {
+        let (task, handle) = Self::router(stream, receiver, error_sender).remote_handle();
+        tokio::task::spawn(task);
+        handle
+    }
+
     async fn router(
-        mut stream: TcpStream,
+        stream: (impl AsyncRead + AsyncWrite),
         receiver: mpsc::Receiver<Task>,
         error_sender: tokio::sync::oneshot::Sender<QueryError>,
     ) {
-        let (read_half, write_half) = stream.split();
-
+        let (read_half, write_half) = split(stream);
         // Why are using a mutex here?
         //
         // The handler_map is supposed to be shared between reader and writer
@@ -421,7 +468,7 @@ impl Connection {
     }
 
     async fn reader(
-        mut read_half: tcp::ReadHalf<'_>,
+        mut read_half: (impl AsyncRead + Unpin),
         handler_map: &StdMutex<ResponseHandlerMap>,
     ) -> Result<(), QueryError> {
         loop {
@@ -468,7 +515,7 @@ impl Connection {
     }
 
     async fn writer(
-        mut write_half: tcp::WriteHalf<'_>,
+        mut write_half: (impl AsyncWrite + Unpin),
         handler_map: &StdMutex<ResponseHandlerMap>,
         mut task_receiver: mpsc::Receiver<Task>,
     ) -> Result<(), QueryError> {

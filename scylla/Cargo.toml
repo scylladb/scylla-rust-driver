@@ -8,6 +8,10 @@ readme = "../README.md"
 keywords = ["database", "scylla", "cql", "cassandra"]
 categories = ["database"]
 
+[features]
+defaults = []
+ssl = ["tokio-openssl", "openssl"]
+
 [dependencies]
 scylla-macros = { version = "0.1.0", path = "../scylla-macros"}
 byteorder = "1.3.4"
@@ -27,6 +31,8 @@ bigdecimal = "0.2.0"
 num-bigint = "0.3"
 tracing = "0.1.25"
 chrono = "0.4"
+openssl = { version = "0.10.32", optional = true }
+tokio-openssl = { version = "0.6.1", optional = true }
 
 [dev-dependencies]
 criterion = "0.3"
