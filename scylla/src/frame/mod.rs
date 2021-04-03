@@ -124,6 +124,7 @@ pub struct RequestBodyWithExtensions {
 pub fn prepare_request_body_with_extensions(
     body_with_ext: RequestBodyWithExtensions,
     compression: Option<Compression>,
+    tracing: bool,
 ) -> Result<(u8, Bytes), FrameError> {
     let mut flags = 0;
 
@@ -131,6 +132,10 @@ pub fn prepare_request_body_with_extensions(
     if let Some(compression) = compression {
         flags |= FLAG_COMPRESSION;
         body = compress(&body, compression)?.into();
+    }
+
+    if tracing {
+        flags |= FLAG_TRACING;
     }
 
     Ok((flags, body))

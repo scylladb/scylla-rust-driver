@@ -1,7 +1,14 @@
+use crate::batch::Batch;
 use crate::frame::value::ValueList;
+use crate::query::Query;
 use crate::routing::hash3_x64_128;
+use crate::statement::Consistency;
+use crate::tracing::TracingInfo;
+use crate::transport::connection::{BatchResult, QueryResult};
 use crate::transport::errors::{BadKeyspaceName, BadQuery, DbError, QueryError};
 use crate::{IntoTypedRows, Session, SessionBuilder};
+use futures::StreamExt;
+use uuid::Uuid;
 
 #[tokio::test]
 async fn test_unprepared_statement() {
@@ -39,6 +46,7 @@ async fn test_unprepared_statement() {
         .query("SELECT a, b, c FROM ks.t", &[])
         .await
         .unwrap()
+        .rows
         .unwrap();
 
     let mut results: Vec<(i32, i32, &String)> = rs
@@ -112,6 +120,7 @@ async fn test_prepared_statement() {
             .query("SELECT token(a) FROM ks.t2", &[])
             .await
             .unwrap()
+            .rows
             .unwrap();
         let token: i64 = rs.first().unwrap().columns[0]
             .as_ref()
@@ -131,6 +140,7 @@ async fn test_prepared_statement() {
             .query("SELECT token(a,b,c) FROM ks.complex_pk", &[])
             .await
             .unwrap()
+            .rows
             .unwrap();
         let token: i64 = rs.first().unwrap().columns[0]
             .as_ref()
@@ -152,6 +162,7 @@ async fn test_prepared_statement() {
             .query("SELECT a,b,c FROM ks.t2", &[])
             .await
             .unwrap()
+            .rows
             .unwrap();
         let r = rs.first().unwrap();
         let a = r.columns[0].as_ref().unwrap().as_int().unwrap();
@@ -164,6 +175,7 @@ async fn test_prepared_statement() {
             .query("SELECT a,b,c,d,e FROM ks.complex_pk", &[])
             .await
             .unwrap()
+            .rows
             .unwrap();
         let r = rs.first().unwrap();
         let a = r.columns[0].as_ref().unwrap().as_int().unwrap();
@@ -218,6 +230,7 @@ async fn test_batch() {
         .query("SELECT a, b, c FROM ks.t_batch", &[])
         .await
         .unwrap()
+        .rows
         .unwrap();
 
     let mut results: Vec<(i32, i32, &String)> = rs
@@ -276,6 +289,7 @@ async fn test_token_calculation() {
             .query("SELECT token(a) FROM ks.t3 WHERE a = ?", &values)
             .await
             .unwrap()
+            .rows
             .unwrap();
         let token: i64 = rs.first().unwrap().columns[0]
             .as_ref()
@@ -331,6 +345,7 @@ async fn test_use_keyspace() {
         .query("SELECT * FROM tab", &[])
         .await
         .unwrap()
+        .rows
         .unwrap()
         .into_typed::<(String,)>()
         .map(|res| res.unwrap().0)
@@ -381,6 +396,7 @@ async fn test_use_keyspace() {
         .query("SELECT * FROM tab", &[])
         .await
         .unwrap()
+        .rows
         .unwrap()
         .into_typed::<(String,)>()
         .map(|res| res.unwrap().0)
@@ -447,6 +463,7 @@ async fn test_use_keyspace_case_sensitivity() {
         .query("SELECT * from tab", &[])
         .await
         .unwrap()
+        .rows
         .unwrap()
         .into_typed::<(String,)>()
         .map(|row| row.unwrap().0)
@@ -462,6 +479,7 @@ async fn test_use_keyspace_case_sensitivity() {
         .query("SELECT * from tab", &[])
         .await
         .unwrap()
+        .rows
         .unwrap()
         .into_typed::<(String,)>()
         .map(|row| row.unwrap().0)
@@ -511,6 +529,7 @@ async fn test_raw_use_keyspace() {
         .query("SELECT * FROM tab", &[])
         .await
         .unwrap()
+        .rows
         .unwrap()
         .into_typed::<(String,)>()
         .map(|res| res.unwrap().0)
@@ -596,4 +615,233 @@ async fn test_db_errors() {
             table: "tab".to_string()
         }
     );
+}
+
+#[tokio::test]
+async fn test_tracing() {
+    let uri = std::env::var("SCYLLA_URI").unwrap_or_else(|_| "127.0.0.1:9042".to_string());
+    let session = SessionBuilder::new().known_node(uri).build().await.unwrap();
+
+    session.query("CREATE KEYSPACE IF NOT EXISTS test_tracing_ks WITH REPLICATION = {'class' : 'SimpleStrategy', 'replication_factor' : 1}", &[]).await.unwrap();
+
+    session
+        .query(
+            "CREATE TABLE IF NOT EXISTS test_tracing_ks.tab (a text primary key)",
+            &[],
+        )
+        .await
+        .unwrap();
+
+    test_tracing_query(&session).await;
+    test_tracing_execute(&session).await;
+    test_tracing_prepare(&session).await;
+    test_get_tracing_info(&session).await;
+    test_tracing_query_iter(&session).await;
+    test_tracing_execute_iter(&session).await;
+    test_tracing_batch(&session).await;
+}
+
+async fn test_tracing_query(session: &Session) {
+    // A query without tracing enabled has no tracing uuid in result
+    let untraced_query: Query = Query::new("SELECT * FROM test_tracing_ks.tab".to_string());
+    let untraced_query_result: QueryResult = session.query(untraced_query, &[]).await.unwrap();
+
+    assert!(untraced_query_result.tracing_id.is_none());
+
+    // A query with tracing enabled has a tracing uuid in result
+    let mut traced_query: Query = Query::new("SELECT * FROM test_tracing_ks.tab".to_string());
+    traced_query.tracing = true;
+
+    let traced_query_result: QueryResult = session.query(traced_query, &[]).await.unwrap();
+    assert!(traced_query_result.tracing_id.is_some());
+
+    // Querying this uuid from tracing table gives some results
+    assert_in_tracing_table(session, traced_query_result.tracing_id.unwrap()).await;
+}
+
+async fn test_tracing_execute(session: &Session) {
+    // Executing a prepared statement without tracing enabled has no tracing uuid in result
+    let untraced_prepared = session
+        .prepare("SELECT * FROM test_tracing_ks.tab")
+        .await
+        .unwrap();
+
+    let untraced_prepared_result: QueryResult =
+        session.execute(&untraced_prepared, &[]).await.unwrap();
+
+    assert!(untraced_prepared_result.tracing_id.is_none());
+
+    // Executing a prepared statement with tracing enabled has a tracing uuid in result
+    let mut traced_prepared = session
+        .prepare("SELECT * FROM test_tracing_ks.tab")
+        .await
+        .unwrap();
+
+    traced_prepared.tracing = true;
+
+    let traced_prepared_result: QueryResult = session.execute(&traced_prepared, &[]).await.unwrap();
+    assert!(traced_prepared_result.tracing_id.is_some());
+
+    // Querying this uuid from tracing table gives some results
+    assert_in_tracing_table(session, traced_prepared_result.tracing_id.unwrap()).await;
+}
+
+async fn test_tracing_prepare(session: &Session) {
+    // Preparing a statement without tracing enabled has no tracing uuids in result
+    let untraced_prepared = session
+        .prepare("SELECT * FROM test_tracing_ks.tab")
+        .await
+        .unwrap();
+
+    assert!(untraced_prepared.prepare_tracing_ids.is_empty());
+
+    // Preparing a statement with tracing enabled has tracing uuids in result
+    let mut to_prepare_traced = Query::new("SELECT * FROM test_tracing_ks.tab".to_string());
+    to_prepare_traced.tracing = true;
+
+    let traced_prepared = session.prepare(to_prepare_traced).await.unwrap();
+    assert!(!traced_prepared.prepare_tracing_ids.is_empty());
+
+    // Querying this uuid from tracing table gives some results
+    for tracing_id in traced_prepared.prepare_tracing_ids {
+        assert_in_tracing_table(session, tracing_id).await;
+    }
+}
+
+async fn test_get_tracing_info(session: &Session) {
+    // A query with tracing enabled has a tracing uuid in result
+    let mut traced_query: Query = Query::new("SELECT * FROM test_tracing_ks.tab".to_string());
+    traced_query.tracing = true;
+
+    let traced_query_result: QueryResult = session.query(traced_query, &[]).await.unwrap();
+    let tracing_id: Uuid = traced_query_result.tracing_id.unwrap();
+
+    // Getting tracing info from session using this uuid works
+    let tracing_info: TracingInfo = session.get_tracing_info(&tracing_id).await.unwrap();
+    assert!(!tracing_info.events.is_empty());
+}
+
+async fn test_tracing_query_iter(session: &Session) {
+    // A query without tracing enabled has no tracing ids
+    let untraced_query: Query = Query::new("SELECT * FROM test_tracing_ks.tab".to_string());
+
+    let mut untraced_row_iter = session.query_iter(untraced_query, &[]).await.unwrap();
+    while let Some(_row) = untraced_row_iter.next().await {
+        // Receive rows
+    }
+
+    assert!(untraced_row_iter.get_tracing_ids().is_empty());
+
+    // The same is true for TypedRowIter
+    let untraced_typed_row_iter = untraced_row_iter.into_typed::<(i32,)>();
+    assert!(untraced_typed_row_iter.get_tracing_ids().is_empty());
+
+    // A query with tracing enabled has a tracing ids in result
+    let mut traced_query: Query = Query::new("SELECT * FROM test_tracing_ks.tab".to_string());
+    traced_query.tracing = true;
+
+    let mut traced_row_iter = session.query_iter(traced_query, &[]).await.unwrap();
+    while let Some(_row) = traced_row_iter.next().await {
+        // Receive rows
+    }
+
+    assert!(!traced_row_iter.get_tracing_ids().is_empty());
+
+    // The same is true for TypedRowIter
+    let traced_typed_row_iter = traced_row_iter.into_typed::<(i32,)>();
+    assert!(!traced_typed_row_iter.get_tracing_ids().is_empty());
+
+    for tracing_id in traced_typed_row_iter.get_tracing_ids() {
+        assert_in_tracing_table(session, *tracing_id).await;
+    }
+}
+
+async fn test_tracing_execute_iter(session: &Session) {
+    // A prepared statement without tracing enabled has no tracing ids
+    let untraced_prepared = session
+        .prepare("SELECT * FROM test_tracing_ks.tab")
+        .await
+        .unwrap();
+
+    let mut untraced_row_iter = session.execute_iter(untraced_prepared, &[]).await.unwrap();
+    while let Some(_row) = untraced_row_iter.next().await {
+        // Receive rows
+    }
+
+    assert!(untraced_row_iter.get_tracing_ids().is_empty());
+
+    // The same is true for TypedRowIter
+    let untraced_typed_row_iter = untraced_row_iter.into_typed::<(i32,)>();
+    assert!(untraced_typed_row_iter.get_tracing_ids().is_empty());
+
+    // A prepared statement with tracing enabled has a tracing ids in result
+    let mut traced_prepared = session
+        .prepare("SELECT * FROM test_tracing_ks.tab")
+        .await
+        .unwrap();
+    traced_prepared.tracing = true;
+
+    let mut traced_row_iter = session.execute_iter(traced_prepared, &[]).await.unwrap();
+    while let Some(_row) = traced_row_iter.next().await {
+        // Receive rows
+    }
+
+    assert!(!traced_row_iter.get_tracing_ids().is_empty());
+
+    // The same is true for TypedRowIter
+    let traced_typed_row_iter = traced_row_iter.into_typed::<(i32,)>();
+    assert!(!traced_typed_row_iter.get_tracing_ids().is_empty());
+
+    for tracing_id in traced_typed_row_iter.get_tracing_ids() {
+        assert_in_tracing_table(session, *tracing_id).await;
+    }
+}
+
+async fn test_tracing_batch(session: &Session) {
+    // A batch without tracing enabled has no tracing id
+    let mut untraced_batch: Batch = Default::default();
+    untraced_batch.append_statement("INSERT INTO test_tracing_ks.tab (a) VALUES('a')");
+
+    let untraced_batch_result: BatchResult = session.batch(&untraced_batch, ((),)).await.unwrap();
+    assert!(untraced_batch_result.tracing_id.is_none());
+
+    // Batch with tracing enabled has a tracing uuid in result
+    let mut traced_batch: Batch = Default::default();
+    traced_batch.append_statement("INSERT INTO test_tracing_ks.tab (a) VALUES('a')");
+    traced_batch.tracing = true;
+
+    let traced_batch_result: BatchResult = session.batch(&traced_batch, ((),)).await.unwrap();
+    assert!(traced_batch_result.tracing_id.is_some());
+
+    assert_in_tracing_table(session, traced_batch_result.tracing_id.unwrap()).await;
+}
+
+async fn assert_in_tracing_table(session: &Session, tracing_uuid: Uuid) {
+    let mut traces_query =
+        Query::new("SELECT * FROM system_traces.sessions WHERE session_id = ?".to_string());
+    traces_query.consistency = Consistency::One;
+
+    // Tracing info might not be immediately available
+    // If rows are empty perform 8 retries with a 32ms wait in between
+
+    for _ in 0..8 {
+        let row_opt = session
+            .query(traces_query.clone(), (tracing_uuid,))
+            .await
+            .unwrap()
+            .rows
+            .into_iter()
+            .next();
+
+        if row_opt.is_some() {
+            // Ok there was some row for this tracing_uuid
+            return;
+        }
+
+        // Otherwise retry
+        tokio::time::sleep(std::time::Duration::from_millis(32)).await;
+    }
+
+    // If all retries failed panic with an error
+    panic!("No rows for tracing with this session id!");
 }

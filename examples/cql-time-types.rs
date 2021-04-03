@@ -36,7 +36,7 @@ async fn main() -> Result<()> {
         .query("INSERT INTO ks.dates (d) VALUES (?)", (example_date,))
         .await?;
 
-    if let Some(rows) = session.query("SELECT d from ks.dates", &[]).await? {
+    if let Some(rows) = session.query("SELECT d from ks.dates", &[]).await?.rows {
         for row in rows.into_typed::<(NaiveDate,)>() {
             let (read_date,): (NaiveDate,) = match row {
                 Ok(read_date) => read_date,
@@ -53,7 +53,7 @@ async fn main() -> Result<()> {
         .query("INSERT INTO ks.dates (d) VALUES (?)", (example_big_date,))
         .await?;
 
-    if let Some(rows) = session.query("SELECT d from ks.dates", &[]).await? {
+    if let Some(rows) = session.query("SELECT d from ks.dates", &[]).await?.rows {
         for row in rows {
             let read_days: u32 = match row.columns[0] {
                 Some(CqlValue::Date(days)) => days,
@@ -79,7 +79,7 @@ async fn main() -> Result<()> {
         .query("INSERT INTO ks.times (t) VALUES (?)", (Time(example_time),))
         .await?;
 
-    if let Some(rows) = session.query("SELECT t from ks.times", &[]).await? {
+    if let Some(rows) = session.query("SELECT t from ks.times", &[]).await?.rows {
         for row in rows.into_typed::<(Duration,)>() {
             let (read_time,): (Duration,) = row?;
 
@@ -105,7 +105,11 @@ async fn main() -> Result<()> {
         )
         .await?;
 
-    if let Some(rows) = session.query("SELECT t from ks.timestamps", &[]).await? {
+    if let Some(rows) = session
+        .query("SELECT t from ks.timestamps", &[])
+        .await?
+        .rows
+    {
         for row in rows.into_typed::<(Duration,)>() {
             let (read_time,): (Duration,) = row?;
 

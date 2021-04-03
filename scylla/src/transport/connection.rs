@@ -4,6 +4,7 @@ use tokio::io::{split, AsyncRead, AsyncWrite};
 use tokio::net::{TcpSocket, TcpStream};
 use tokio::sync::{mpsc, oneshot};
 use tracing::{error, warn};
+use uuid::Uuid;
 
 #[cfg(feature = "ssl")]
 use openssl::ssl::{Ssl, SslContext};
@@ -61,6 +62,53 @@ struct TaskResponse {
     params: FrameParams,
     opcode: ResponseOpcode,
     body: Bytes,
+}
+
+pub struct QueryResponse {
+    pub response: Response,
+    pub tracing_id: Option<Uuid>,
+    pub warnings: Vec<String>,
+}
+
+/// Result of a single query  
+/// Contains all rows returned by the database and some more information
+#[derive(Default, Debug)]
+pub struct QueryResult {
+    /// Rows returned by the database
+    pub rows: Option<Vec<result::Row>>,
+    /// Warnings returned by the database
+    pub warnings: Vec<String>,
+    /// CQL Tracing uuid - can only be Some if tracing is enabled for this query
+    pub tracing_id: Option<Uuid>,
+}
+
+/// Result of Session::batch(). Contains no rows, only some useful information.
+pub struct BatchResult {
+    /// Warnings returned by the database
+    pub warnings: Vec<String>,
+    /// CQL Tracing uuid - can only be Some if tracing is enabled for this batch
+    pub tracing_id: Option<Uuid>,
+}
+
+impl QueryResponse {
+    pub fn into_query_result(self) -> Result<QueryResult, QueryError> {
+        let rows: Option<Vec<result::Row>> = match self.response {
+            Response::Error(err) => return Err(err.into()),
+            Response::Result(result::Result::Rows(rs)) => Some(rs.rows),
+            Response::Result(_) => None,
+            _ => {
+                return Err(QueryError::ProtocolError(
+                    "Unexpected server response, expected Result or Error",
+                ))
+            }
+        };
+
+        Ok(QueryResult {
+            rows,
+            warnings: self.warnings,
+            tracing_id: self.tracing_id,
+        })
+    }
 }
 
 #[derive(Clone)]
@@ -133,52 +181,64 @@ impl Connection {
     }
 
     pub async fn startup(&self, options: HashMap<String, String>) -> Result<Response, QueryError> {
-        self.send_request(&request::Startup { options }, false)
-            .await
+        Ok(self
+            .send_request(&request::Startup { options }, false, false)
+            .await?
+            .response)
     }
 
     pub async fn get_options(&self) -> Result<Response, QueryError> {
-        self.send_request(&request::Options {}, false).await
+        Ok(self
+            .send_request(&request::Options {}, false, false)
+            .await?
+            .response)
     }
 
-    pub async fn prepare(&self, query: &str) -> Result<PreparedStatement, QueryError> {
-        let result = self.send_request(&request::Prepare { query }, true).await?;
-        match result {
-            Response::Error(err) => Err(err.into()),
-            Response::Result(result::Result::Prepared(p)) => Ok(PreparedStatement::new(
-                p.id,
-                p.prepared_metadata,
-                query.to_owned(),
-            )),
-            _ => Err(QueryError::ProtocolError(
-                "PREPARE: Unexpected server response",
-            )),
+    pub async fn prepare(&self, query: &Query) -> Result<PreparedStatement, QueryError> {
+        let query_response = self
+            .send_request(
+                &request::Prepare {
+                    query: &query.get_contents(),
+                },
+                true,
+                query.tracing,
+            )
+            .await?;
+
+        let mut prepared_statement = match query_response.response {
+            Response::Error(err) => return Err(err.into()),
+            Response::Result(result::Result::Prepared(p)) => {
+                PreparedStatement::new(p.id, p.prepared_metadata, query.get_contents().to_owned())
+            }
+            _ => {
+                return Err(QueryError::ProtocolError(
+                    "PREPARE: Unexpected server response",
+                ))
+            }
+        };
+
+        if let Some(tracing_id) = query_response.tracing_id {
+            prepared_statement.prepare_tracing_ids.push(tracing_id);
         }
+
+        Ok(prepared_statement)
     }
 
     pub async fn query_single_page(
         &self,
         query: impl Into<Query>,
         values: impl ValueList,
-    ) -> Result<Option<Vec<result::Row>>, QueryError> {
+    ) -> Result<QueryResult, QueryError> {
         let query: Query = query.into();
-        self.query_single_page_by_ref(&query, &values).await
+        self.query(&query, &values, None).await?.into_query_result()
     }
 
     pub async fn query_single_page_by_ref(
         &self,
         query: &Query,
         values: &impl ValueList,
-    ) -> Result<Option<Vec<result::Row>>, QueryError> {
-        let result = self.query(query, values, None).await?;
-        match result {
-            Response::Error(err) => Err(err.into()),
-            Response::Result(result::Result::Rows(rs)) => Ok(Some(rs.rows)),
-            Response::Result(_) => Ok(None),
-            _ => Err(QueryError::ProtocolError(
-                "QUERY: Unexpected server response",
-            )),
-        }
+    ) -> Result<QueryResult, QueryError> {
+        self.query(query, values, None).await?.into_query_result()
     }
 
     pub async fn query(
@@ -186,7 +246,7 @@ impl Connection {
         query: &Query,
         values: impl ValueList,
         paging_state: Option<Bytes>,
-    ) -> Result<Response, QueryError> {
+    ) -> Result<QueryResponse, QueryError> {
         let serialized_values = values.serialized()?;
 
         let query_frame = query::Query {
@@ -200,24 +260,17 @@ impl Connection {
             },
         };
 
-        self.send_request(&query_frame, true).await
+        self.send_request(&query_frame, true, query.tracing).await
     }
 
     pub async fn execute_single_page(
         &self,
         prepared_statement: &PreparedStatement,
         values: impl ValueList,
-    ) -> Result<Option<Vec<result::Row>>, QueryError> {
-        let response = self.execute(prepared_statement, values, None).await?;
-
-        match response {
-            Response::Error(err) => Err(err.into()),
-            Response::Result(result::Result::Rows(rs)) => Ok(Some(rs.rows)),
-            Response::Result(_) => Ok(None),
-            _ => Err(QueryError::ProtocolError(
-                "EXECUTE: Unexpected server response",
-            )),
-        }
+    ) -> Result<QueryResult, QueryError> {
+        self.execute(prepared_statement, values, None)
+            .await?
+            .into_query_result()
     }
 
     pub async fn execute(
@@ -225,7 +278,7 @@ impl Connection {
         prepared_statement: &PreparedStatement,
         values: impl ValueList,
         paging_state: Option<Bytes>,
-    ) -> Result<Response, QueryError> {
+    ) -> Result<QueryResponse, QueryError> {
         let serialized_values = values.serialized()?;
 
         let execute_frame = execute::Execute {
@@ -239,12 +292,15 @@ impl Connection {
             },
         };
 
-        let response = self.send_request(&execute_frame, true).await?;
+        let query_response = self
+            .send_request(&execute_frame, true, prepared_statement.tracing)
+            .await?;
 
-        if let Response::Error(err) = &response {
+        if let Response::Error(err) = &query_response.response {
             if err.error == DbError::Unprepared {
                 // Repreparation of a statement is needed
-                let reprepared = self.prepare(prepared_statement.get_statement()).await?;
+                let reprepare_query: Query = prepared_statement.get_statement().into();
+                let reprepared = self.prepare(&reprepare_query).await?;
                 // Reprepared statement should keep its id - it's the md5 sum
                 // of statement contents
                 if reprepared.get_id() != prepared_statement.get_id() {
@@ -253,14 +309,20 @@ impl Connection {
                     ));
                 }
 
-                return self.send_request(&execute_frame, true).await;
+                return self
+                    .send_request(&execute_frame, true, prepared_statement.tracing)
+                    .await;
             }
         }
 
-        Ok(response)
+        Ok(query_response)
     }
 
-    pub async fn batch(&self, batch: &Batch, values: impl BatchValues) -> Result<(), QueryError> {
+    pub async fn batch(
+        &self,
+        batch: &Batch,
+        values: impl BatchValues,
+    ) -> Result<BatchResult, QueryError> {
         let statements_count = batch.get_statements().len();
         if statements_count != values.len() {
             return Err(QueryError::BadQuery(BadQuery::ValueLenMismatch(
@@ -287,11 +349,14 @@ impl Connection {
             serial_consistency: batch.get_serial_consistency(),
         };
 
-        let response = self.send_request(&batch_frame, true).await?;
+        let query_response = self.send_request(&batch_frame, true, batch.tracing).await?;
 
-        match response {
+        match query_response.response {
             Response::Error(err) => Err(err.into()),
-            Response::Result(_) => Ok(()),
+            Response::Result(_) => Ok(BatchResult {
+                warnings: query_response.warnings,
+                tracing_id: query_response.tracing_id,
+            }),
             _ => Err(QueryError::ProtocolError(
                 "BATCH: Unexpected server response",
             )),
@@ -311,7 +376,7 @@ impl Connection {
 
         let query_response = self.query(&query, (), None).await?;
 
-        match query_response {
+        match query_response.response {
             Response::Result(result::Result::SetKeyspace(set_keyspace)) => {
                 if set_keyspace.keyspace_name.to_lowercase()
                     != keyspace_name.as_str().to_lowercase()
@@ -334,7 +399,8 @@ impl Connection {
         &self,
         request: &R,
         compress: bool,
-    ) -> Result<Response, QueryError> {
+        tracing: bool,
+    ) -> Result<QueryResponse, QueryError> {
         let body = request.to_bytes()?;
         let compression = if compress {
             self.config.compression
@@ -344,7 +410,7 @@ impl Connection {
         let body_with_ext = RequestBodyWithExtensions { body };
 
         let (flags, raw_request) =
-            frame::prepare_request_body_with_extensions(body_with_ext, compression)?;
+            frame::prepare_request_body_with_extensions(body_with_ext, compression, tracing)?;
 
         let (sender, receiver) = oneshot::channel();
 
@@ -375,13 +441,17 @@ impl Connection {
             task_response.body,
         )?;
 
-        for warn_description in body_with_ext.warnings {
+        for warn_description in &body_with_ext.warnings {
             warn!(warning = warn_description.as_str());
         }
 
         let response = Response::deserialize(task_response.opcode, &mut &*body_with_ext.body)?;
 
-        Ok(response)
+        Ok(QueryResponse {
+            response,
+            warnings: body_with_ext.warnings,
+            tracing_id: body_with_ext.trace_id,
+        })
     }
 
     #[cfg(feature = "ssl")]

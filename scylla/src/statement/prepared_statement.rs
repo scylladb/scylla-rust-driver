@@ -5,17 +5,20 @@ use crate::transport::retry_policy::RetryPolicy;
 use bytes::{BufMut, Bytes, BytesMut};
 use std::convert::TryInto;
 use thiserror::Error;
+use uuid::Uuid;
 
 /// Represents a statement prepared on the server.
 pub struct PreparedStatement {
     id: Bytes,
     metadata: PreparedMetadata,
     statement: String,
+    pub prepare_tracing_ids: Vec<Uuid>,
     page_size: Option<i32>,
     pub consistency: Consistency,
     pub serial_consistency: Option<Consistency>,
     pub is_idempotent: bool,
     pub retry_policy: Option<Box<dyn RetryPolicy + Send + Sync>>,
+    pub tracing: bool,
 }
 
 impl PreparedStatement {
@@ -24,11 +27,13 @@ impl PreparedStatement {
             id,
             metadata,
             statement,
+            prepare_tracing_ids: Vec::new(),
             page_size: None,
             consistency: Default::default(),
             serial_consistency: None,
             is_idempotent: false,
             retry_policy: None,
+            tracing: false,
         }
     }
 
@@ -101,6 +106,23 @@ impl PreparedStatement {
     /// Gets custom [`RetryPolicy`] used by this statement
     pub fn get_retry_policy(&self) -> &Option<Box<dyn RetryPolicy + Send + Sync>> {
         &self.retry_policy
+    }
+
+    /// Enable or disable CQL Tracing for this prepared statement  
+    /// If enabled session.execute() will return QueryResult containing tracing_id
+    /// which can be used to query tracing information about the execution of this statement
+    pub fn set_tracing(&mut self, should_trace: bool) {
+        self.tracing = should_trace;
+    }
+
+    /// Gets whether tracing is enabled for this prepared statement
+    pub fn get_tracing(&self) -> bool {
+        self.tracing
+    }
+
+    /// Gets tracing ids of queries used to prepare this statement
+    pub fn get_prepare_tracing_ids(&self) -> &[Uuid] {
+        &self.prepare_tracing_ids
     }
 
     /// Computes the partition key of the target table from given values
@@ -181,6 +203,7 @@ impl Clone for PreparedStatement {
             id: self.id.clone(),
             metadata: self.metadata.clone(),
             statement: self.statement.clone(),
+            prepare_tracing_ids: self.prepare_tracing_ids.clone(),
             page_size: self.page_size,
             consistency: self.consistency,
             serial_consistency: self.serial_consistency,
@@ -189,6 +212,7 @@ impl Clone for PreparedStatement {
                 .retry_policy
                 .as_ref()
                 .map(|policy| policy.clone_boxed()),
+            tracing: self.tracing,
         }
     }
 }

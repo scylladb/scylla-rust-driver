@@ -4,6 +4,7 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio::net::lookup_host;
 use tracing::warn;
+use uuid::Uuid;
 
 use super::errors::{BadQuery, NewSessionError, QueryError};
 use crate::batch::Batch;
@@ -15,9 +16,10 @@ use crate::prepared_statement::{PartitionKeyError, PreparedStatement};
 use crate::query::Query;
 use crate::routing::{murmur3_token, Token};
 use crate::statement::Consistency;
+use crate::tracing::{GetTracingConfig, TracingEvent, TracingInfo};
 use crate::transport::{
     cluster::Cluster,
-    connection::{Connection, ConnectionConfig, VerifiedKeyspaceName},
+    connection::{BatchResult, Connection, ConnectionConfig, QueryResult, VerifiedKeyspaceName},
     iterator::RowIterator,
     load_balancing::{LoadBalancingPolicy, RoundRobinPolicy, Statement, TokenAwarePolicy},
     metrics::{Metrics, MetricsView},
@@ -278,7 +280,7 @@ impl Session {
         &self,
         query: impl Into<Query>,
         values: impl ValueList,
-    ) -> Result<Option<Vec<result::Row>>, QueryError> {
+    ) -> Result<QueryResult, QueryError> {
         let query: Query = query.into();
         let query_text: &str = query.get_contents();
         let serialized_values = values.serialized();
@@ -294,7 +296,7 @@ impl Session {
             return self
                 .use_keyspace(keyspace_name, case_sensitive)
                 .await
-                .map(|_| None);
+                .map(|_| QueryResult::default());
         }
 
         let retry_session = match &query.retry_policy {
@@ -348,11 +350,13 @@ impl Session {
     /// which can later be used to perform more efficient queries
     /// # Arguments
     ///#
-    pub async fn prepare(&self, query: &str) -> Result<PreparedStatement, QueryError> {
+    pub async fn prepare(&self, query: impl Into<Query>) -> Result<PreparedStatement, QueryError> {
+        let query: Query = query.into();
+
         let connections = self.cluster.get_working_connections().await?;
 
         // Prepare statements on all connections concurrently
-        let handles = connections.iter().map(|c| c.prepare(query));
+        let handles = connections.iter().map(|c| c.prepare(&query));
         let mut results = join_all(handles).await;
 
         // If at least one prepare was succesfull prepare returns Ok
@@ -370,7 +374,7 @@ impl Session {
             }
         }
 
-        let prepared: PreparedStatement = first_ok.unwrap()?;
+        let mut prepared: PreparedStatement = first_ok.unwrap()?;
 
         // Validate prepared ids equality
         for res in results {
@@ -380,6 +384,11 @@ impl Session {
                         "Prepared statement Ids differ, all should be equal",
                     ));
                 }
+
+                // Collect all tracing ids from prepare() queries in the final result
+                prepared
+                    .prepare_tracing_ids
+                    .extend(statement.prepare_tracing_ids);
             }
         }
 
@@ -395,7 +404,7 @@ impl Session {
         &self,
         prepared: &PreparedStatement,
         values: impl ValueList,
-    ) -> Result<Option<Vec<result::Row>>, QueryError> {
+    ) -> Result<QueryResult, QueryError> {
         let serialized_values = values.serialized()?;
         let values_ref = &serialized_values;
 
@@ -455,7 +464,11 @@ impl Session {
     ///
     /// * `batch` - batch to be performed
     /// * `values` - values bound to the query
-    pub async fn batch(&self, batch: &Batch, values: impl BatchValues) -> Result<(), QueryError> {
+    pub async fn batch(
+        &self,
+        batch: &Batch,
+        values: impl BatchValues,
+    ) -> Result<BatchResult, QueryError> {
         let values_ref = &values;
 
         let retry_session = match &batch.retry_policy {
@@ -528,6 +541,108 @@ impl Session {
 
     pub fn get_metrics(&self) -> MetricsView {
         MetricsView::new(self.metrics.clone())
+    }
+
+    /// Get [`TracingInfo`] of a traced query performed earlier
+    pub async fn get_tracing_info(&self, tracing_id: &Uuid) -> Result<TracingInfo, QueryError> {
+        self.get_tracing_info_custom(tracing_id, &GetTracingConfig::default())
+            .await
+    }
+
+    /// Queries tracing info with custom retry settings.  
+    /// Tracing info might not be available immediately on queried node -
+    /// that's why the driver performs a few attempts with sleeps in between.
+    /// [`GetTracingConfig`] allows to specify a custom querying strategy.
+    pub async fn get_tracing_info_custom(
+        &self,
+        tracing_id: &Uuid,
+        config: &GetTracingConfig,
+    ) -> Result<TracingInfo, QueryError> {
+        // config.attempts is NonZeroU32 so at least one attempt will be made
+        for _ in 0..config.attempts.get() {
+            let current_try: Option<TracingInfo> = self
+                .try_getting_tracing_info(tracing_id, config.consistency)
+                .await?;
+
+            match current_try {
+                Some(tracing_info) => return Ok(tracing_info),
+                None => tokio::time::sleep(config.interval).await,
+            };
+        }
+
+        return Err(QueryError::ProtocolError(
+            "All tracing queries returned an empty result, \
+            maybe information didnt reach this node yet. \
+            Consider using get_tracing_info_custom with \
+            bigger interval in GetTracingConfig",
+        ));
+    }
+
+    // Tries getting the tracing info
+    // If the queries return 0 rows then returns None - the information didn't reach this node yet
+    // If there is some other error returns this error
+    async fn try_getting_tracing_info(
+        &self,
+        tracing_id: &Uuid,
+        consistency: Consistency,
+    ) -> Result<Option<TracingInfo>, QueryError> {
+        // Query system_traces.sessions for TracingInfo
+        let mut traces_session_query =
+            Query::new(crate::tracing::TRACES_SESSION_QUERY_STR.to_string());
+        traces_session_query.consistency = consistency;
+
+        // Query system_traces.events for TracingEvents
+        let mut traces_events_query =
+            Query::new(crate::tracing::TRACES_EVENTS_QUERY_STR.to_string());
+        traces_events_query.consistency = Consistency::One;
+        traces_events_query.consistency = consistency;
+
+        let (traces_session_res, traces_events_res) = tokio::try_join!(
+            self.query(traces_session_query, (tracing_id,)),
+            self.query(traces_events_query, (tracing_id,))
+        )?;
+
+        // Get tracing info
+        let tracing_info_row_res: Option<Result<TracingInfo, _>> = traces_session_res
+            .rows
+            .ok_or(QueryError::ProtocolError(
+                "Response to system_traces.sessions query was not Rows",
+            ))?
+            .into_typed::<TracingInfo>()
+            .next();
+
+        let mut tracing_info: TracingInfo = match tracing_info_row_res {
+            Some(tracing_info_row_res) => tracing_info_row_res.map_err(|_| {
+                QueryError::ProtocolError(
+                    "Columns from system_traces.session have an unexpected type",
+                )
+            })?,
+            None => return Ok(None),
+        };
+
+        // Get tracing events
+        let tracing_event_rows = traces_events_res
+            .rows
+            .ok_or(QueryError::ProtocolError(
+                "Response to system_traces.events query was not Rows",
+            ))?
+            .into_typed::<TracingEvent>();
+
+        for event in tracing_event_rows {
+            let tracing_event: TracingEvent = event.map_err(|_| {
+                QueryError::ProtocolError(
+                    "Columns from system_traces.events have an unexpected type",
+                )
+            })?;
+
+            tracing_info.events.push(tracing_event);
+        }
+
+        if tracing_info.events.is_empty() {
+            return Ok(None);
+        }
+
+        Ok(Some(tracing_info))
     }
 
     // This method allows to easily run a query using load balancing, retry policy etc.
