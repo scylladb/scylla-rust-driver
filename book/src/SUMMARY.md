@@ -52,3 +52,7 @@
 - [Logging](logging/logging.md)
 
 - [Query tracing](tracing/tracing.md)
+    - [Tracing a simple/prepared query](tracing/simple-prepared.md)
+    - [Tracing a batch query](tracing/batch.md)
+    - [Tracing a paged query](tracing/paged.md)
+    - [Tracing `Session::prepare`](tracing/prepare.md)
