@@ -1,6 +1,6 @@
 # Tracing a simple/prepared query
 
-Both [simple query](/queries/simple.md) and [prepared query](/queries/prepared.md)
+Both [simple query](../queries/simple.md) and [prepared query](../queries/prepared.md)
 return a `QueryResult` which contains a `tracing_id` if tracing was enabled.
 
 ### Tracing a simple query
