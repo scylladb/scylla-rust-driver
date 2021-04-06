@@ -65,3 +65,5 @@ let session: Session = SessionBuilder::new()
 # Ok(())
 # }
 ```
+
+See the full [example](https://github.com/scylladb/scylla-rust-driver/blob/main/examples/tls.rs) for more details
