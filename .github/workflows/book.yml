@@ -1,0 +1,32 @@
+# This workflow builds the book with documentation and runs book tests
+name: Book
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    container: cvybhu/rust-mdbook
+    runs-on: ubuntu-latest
+    services:
+      scylladb:
+        image: scylladb/scylla
+        ports:
+          - 9042:9042
+        options: --health-cmd "cqlsh --debug" --health-interval 5s --health-retries 10
+        volumes:
+          - ${{ github.workspace }}:/workspace
+    steps:
+    - uses: actions/checkout@v2
+    - name: Build the project
+      run: cargo build --verbose --examples
+    - name: Build the book
+      run: mdbook build book
+    - name: Run book tests
+      run: SCYLLA_URI=scylladb:9042 mdbook test -L target/debug/deps book

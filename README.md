@@ -8,7 +8,9 @@ Although optimized for ScyllaDB, the driver is also compatible with [Apache Cass
 **Note: this driver is still in early development and is not for production nor officially supported.**
 
 ## Getting Started
+The [documentation book](https://cvybhu.github.io/scyllabook/index.html) is a good place to get started
 
+## Examples
 ```rust
 let uri = "127.0.0.1:9042";
 
@@ -28,6 +30,8 @@ You can also run the example as follows if you have a Scylla server running:
 ```sh
 SCYLLA_URI="127.0.0.1:9042" cargo run --example basic
 ```
+
+All examples are available in the [examples](examples) directory
 
 ## Features and Roadmap
 
