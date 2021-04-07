@@ -5,7 +5,7 @@
 This is a client-side driver for [ScyllaDB] written in pure Rust with a fully async API using [Tokio].
 Although optimized for ScyllaDB, the driver is also compatible with [Apache Cassandra®].
 
-**Note: this driver is still in development and is not for production nor officially supported.**
+**Note: this driver is not officially supported.**
 
 ## Getting Started
 The [documentation book](https://cvybhu.github.io/scyllabook/index.html) is a good place to get started
