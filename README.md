@@ -5,7 +5,7 @@
 This is a client-side driver for [ScyllaDB] written in pure Rust with a fully async API using [Tokio].
 Although optimized for ScyllaDB, the driver is also compatible with [Apache Cassandra®].
 
-**Note: this driver is still in early development and is not for production nor officially supported.**
+**Note: this driver is still in development and is not for production nor officially supported.**
 
 ## Getting Started
 The [documentation book](https://cvybhu.github.io/scyllabook/index.html) is a good place to get started
@@ -48,13 +48,14 @@ The driver supports the following:
 * Configurable load balancing policies
 * Driver-side metrics
 * TLS support - install openssl if you want to use it https://docs.rs/openssl/0.10.32/openssl/#automatic
-
-We are planning to implement the following:
-
-* Restarting nodes :)
 * Configurable retry policies
 * Authentication support
 * CQL tracing
+
+Ongoing efforts:
+* CQL Events
+* More tests
+* More benchmarks
 
 ## Getting Help
 
