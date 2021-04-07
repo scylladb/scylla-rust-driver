@@ -6,6 +6,7 @@ description = "proc macros for scylla async CQL driver"
 repository = "https://github.com/scylladb/scylla-rust-driver"
 readme = "../README.md"
 categories = ["database"]
+license = "MIT OR Apache-2.0"
 
 [lib]
 proc-macro = true
