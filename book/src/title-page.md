@@ -5,7 +5,7 @@ Although optimized for Scylla, the driver is also compatible with [Apache Cassan
 
 ### Other documentation
 * [Examples](https://github.com/scylladb/scylla-rust-driver/tree/main/examples)
-*  *API documentation* (Coming soon, for now download the [repo](https://github.com/scylladb/scylla-rust-driver) and run `cargo doc`)
+* [API documentation](https://docs.rs/scylla)
 * [Scylla documentation](https://docs.scylladb.com)
 * [Cassandra® documentation](https://cassandra.apache.org/doc/latest/)
 

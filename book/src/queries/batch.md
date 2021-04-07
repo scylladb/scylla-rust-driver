@@ -64,6 +64,9 @@ session.batch(&batch, ((), )).await?;
 # }
 ```
 
+See [Batch API documentation](https://docs.rs/scylla/0.1.0/scylla/statement/batch/struct.Batch.html)
+for more options
+
 ### Batch values
 Batch takes a tuple of values specified just like in [simple](simple.md) or [prepared](prepared.md) queries.
 
