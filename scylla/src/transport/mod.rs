@@ -12,8 +12,19 @@ pub mod errors;
 pub mod iterator;
 mod metrics;
 
+mod authenticate_test;
 #[cfg(test)]
 mod session_test;
+
+// All of the Authenticators supported by Scylla
+#[derive(Debug, PartialEq)]
+pub enum Authenticator {
+    AllowAllAuthenticator,
+    PasswordAuthenticator,
+    CassandraPasswordAuthenticator,
+    CassandraAllowAllAuthenticator,
+    ScyllaTransitionalAuthenticator,
+}
 
 /// The wire protocol compression algorithm.
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Debug)]

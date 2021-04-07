@@ -64,11 +64,11 @@ pub struct SessionConfig {
     /// Provide our Session with TLS
     #[cfg(feature = "ssl")]
     pub ssl_context: Option<SslContext>,
-    /*
-    These configuration options will be added in the future:
 
     pub auth_username: Option<String>,
     pub auth_password: Option<String>,
+    /*
+    These configuration options will be added in the future:
 
 
     pub tcp_keepalive: bool,
@@ -106,6 +106,8 @@ impl SessionConfig {
             retry_policy: Box::new(DefaultRetryPolicy),
             #[cfg(feature = "ssl")]
             ssl_context: None,
+            auth_username: None,
+            auth_password: None,
         }
     }
 
@@ -172,6 +174,8 @@ impl SessionConfig {
             tcp_nodelay: self.tcp_nodelay,
             #[cfg(feature = "ssl")]
             ssl_context: self.ssl_context.clone(),
+            auth_username: self.auth_username.to_owned(),
+            auth_password: self.auth_password.to_owned(),
         }
     }
 }

@@ -1,0 +1,27 @@
+name: Authenticate
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  # PasswordAuthenticator
+  build:
+    runs-on: ubuntu-latest
+    services:
+      scylladb:
+        image: cvybhu/scylla-passauth
+        ports:
+          - 9042:9042
+        options: --health-cmd "cqlsh --username cassandra --password cassandra --debug" --health-interval 5s --health-retries 30
+        volumes:
+          - ${{ github.workspace }}:/workspace
+    steps:
+    - uses: actions/checkout@v2
+    - name: Run tests
+      run: cargo test --verbose --  --ignored

@@ -1,3 +1,4 @@
+pub mod authenticate;
 pub mod cql_to_rust;
 pub mod error;
 pub mod result;
@@ -27,7 +28,9 @@ pub enum Response {
     Error(Error),
     Ready,
     Result(result::Result),
-    Authenticate,
+    Authenticate(authenticate::Authenticate),
+    AuthSuccess(authenticate::AuthSuccess),
+    AuthChallenge(authenticate::AuthChallenge),
     Supported(Supported),
 }
 
@@ -36,12 +39,18 @@ impl Response {
         let response = match opcode {
             ResponseOpcode::Error => Response::Error(Error::deserialize(buf)?),
             ResponseOpcode::Ready => Response::Ready,
-            ResponseOpcode::Authenticate => unimplemented!(),
+            ResponseOpcode::Authenticate => {
+                Response::Authenticate(authenticate::Authenticate::deserialize(buf)?)
+            }
             ResponseOpcode::Supported => Response::Supported(Supported::deserialize(buf)?),
             ResponseOpcode::Result => Response::Result(result::deserialize(buf)?),
             ResponseOpcode::Event => unimplemented!(),
-            ResponseOpcode::AuthChallenge => unimplemented!(),
-            ResponseOpcode::AuthSuccess => unimplemented!(),
+            ResponseOpcode::AuthChallenge => {
+                Response::AuthChallenge(authenticate::AuthChallenge::deserialize(buf)?)
+            }
+            ResponseOpcode::AuthSuccess => {
+                Response::AuthSuccess(authenticate::AuthSuccess::deserialize(buf)?)
+            }
         };
 
         Ok(response)
