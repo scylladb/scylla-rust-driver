@@ -14,7 +14,7 @@ jobs:
     runs-on: ubuntu-latest
     services:
       scylladb:
-        image: kejmer/scylla-tls
+        image: scylladb/scylla-tls
         ports:
           - 9042:9042
           - 9142:9142
