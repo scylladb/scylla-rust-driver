@@ -12,6 +12,9 @@ Each of these basic load balancing strategies can be wrapped in `TokenAwarePolic
 > **Note**  
 > Only [prepared queries](../queries/prepared.md) use token aware load balancing
 
+All queries are shard aware, there is no way to turn off shard awareness.  
+If a token is available the query is sent to the correct shard, otherwise to a random one.
+
 So, the available load balancing policies are:
 * [Round robin](robin.md)
 * [DC Aware Round robin](dc-robin.md)
