@@ -12,7 +12,7 @@ env:
 
 jobs:
   build:
-    container: cvybhu/rust-mdbook
+    container: scylladb/rust-mdbook
     runs-on: ubuntu-latest
     services:
       scylladb:
