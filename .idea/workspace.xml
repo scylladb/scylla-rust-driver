@@ -1,6 +1,169 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <project version="4">
+  <component name="BranchesTreeState">
+    <expand>
+      <path>
+        <item name="ROOT" type="e8cecc67:BranchNodeDescriptor" />
+        <item name="LOCAL_ROOT" type="e8cecc67:BranchNodeDescriptor" />
+      </path>
+      <path>
+        <item name="ROOT" type="e8cecc67:BranchNodeDescriptor" />
+        <item name="REMOTE_ROOT" type="e8cecc67:BranchNodeDescriptor" />
+      </path>
+      <path>
+        <item name="ROOT" type="e8cecc67:BranchNodeDescriptor" />
+        <item name="REMOTE_ROOT" type="e8cecc67:BranchNodeDescriptor" />
+        <item name="GROUP_NODE:origin" type="e8cecc67:BranchNodeDescriptor" />
+      </path>
+      <path>
+        <item name="ROOT" type="e8cecc67:BranchNodeDescriptor" />
+        <item name="REMOTE_ROOT" type="e8cecc67:BranchNodeDescriptor" />
+        <item name="GROUP_NODE:origin" type="e8cecc67:BranchNodeDescriptor" />
+        <item name="GROUP_NODE:piodul" type="e8cecc67:BranchNodeDescriptor" />
+      </path>
+    </expand>
+    <select>
+      <path>
+        <item name="ROOT" type="e8cecc67:BranchNodeDescriptor" />
+        <item name="LOCAL_ROOT" type="e8cecc67:BranchNodeDescriptor" />
+        <item name="BRANCH:new-docs" type="e8cecc67:BranchNodeDescriptor" />
+      </path>
+    </select>
+  </component>
+  <component name="ChangeListManager">
+    <list default="true" id="50b7117b-015e-449c-94db-2a0c582c3691" name="Default Changelist" comment="">
+      <change afterPath="$PROJECT_DIR$/docs/Makefile" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/docs/source/SUMMARY.md" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/docs/source/conf.py" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/docs/source/connecting/authentication.md" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/docs/source/connecting/compression.md" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/docs/source/connecting/connecting.md" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/docs/source/connecting/tls.md" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/docs/source/data-types/blob.md" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/docs/source/data-types/collections.md" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/docs/source/data-types/counter.md" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/docs/source/data-types/data-types.md" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/docs/source/data-types/date.md" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/docs/source/data-types/decimal.md" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/docs/source/data-types/inet.md" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/docs/source/data-types/primitive.md" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/docs/source/data-types/text.md" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/docs/source/data-types/time.md" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/docs/source/data-types/timestamp.md" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/docs/source/data-types/tuple.md" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/docs/source/data-types/udt.md" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/docs/source/data-types/uuid.md" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/docs/source/data-types/varint.md" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/docs/source/index.rst" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/docs/source/load-balancing/dc-robin.md" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/docs/source/load-balancing/load-balancing.md" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/docs/source/load-balancing/robin.md" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/docs/source/load-balancing/token-dc-robin.md" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/docs/source/load-balancing/token-robin.md" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/docs/source/logging/logging.md" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/docs/source/metrics/metrics.md" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/docs/source/queries/batch.md" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/docs/source/queries/paged.md" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/docs/source/queries/prepared.md" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/docs/source/queries/queries.md" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/docs/source/queries/result.md" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/docs/source/queries/simple.md" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/docs/source/queries/usekeyspace.md" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/docs/source/queries/values.md" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/docs/source/quickstart/create-project.md" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/docs/source/quickstart/example.md" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/docs/source/quickstart/quickstart.md" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/docs/source/quickstart/scylla-docker.md" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/docs/source/retry-policy/default.md" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/docs/source/retry-policy/fallthrough.md" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/docs/source/retry-policy/retry-policy.md" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/docs/source/title-page.md" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/docs/source/tracing/batch.md" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/docs/source/tracing/paged.md" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/docs/source/tracing/prepare.md" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/docs/source/tracing/simple-prepared.md" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/docs/source/tracing/tracing.md" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/.gitignore" beforeDir="false" afterPath="$PROJECT_DIR$/.gitignore" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/pyproject.toml" beforeDir="false" afterPath="$PROJECT_DIR$/docs/pyproject.toml" afterDir="false" />
+    </list>
+    <option name="SHOW_DIALOG" value="false" />
+    <option name="HIGHLIGHT_CONFLICTS" value="true" />
+    <option name="HIGHLIGHT_NON_ACTIVE_CHANGELIST" value="false" />
+    <option name="LAST_RESOLUTION" value="IGNORE" />
+  </component>
+  <component name="Git.Settings">
+    <option name="RECENT_BRANCH_BY_REPOSITORY">
+      <map>
+        <entry key="$PROJECT_DIR$" value="main" />
+      </map>
+    </option>
+    <option name="RECENT_GIT_ROOT_PATH" value="$PROJECT_DIR$" />
+  </component>
+  <component name="ProjectId" id="1r1R1IFhXVuycYi2ifmYNUhc9VM" />
+  <component name="ProjectViewState">
+    <option name="hideEmptyMiddlePackages" value="true" />
+    <option name="showLibraryContents" value="true" />
+    <option name="showMembers" value="true" />
+  </component>
   <component name="PropertiesComponent">
+    <property name="RunOnceActivity.OpenProjectViewOnStart" value="true" />
+    <property name="last_opened_file_path" value="$PROJECT_DIR$/docs/source" />
     <property name="settings.editor.selected.configurable" value="preferences.lookFeel" />
+  </component>
+  <component name="RecentsManager">
+    <key name="CopyFile.RECENT_KEYS">
+      <recent name="$PROJECT_DIR$/docs/source" />
+      <recent name="$PROJECT_DIR$/docs" />
+    </key>
+    <key name="MoveFile.RECENT_KEYS">
+      <recent name="$PROJECT_DIR$/docs" />
+      <recent name="$PROJECT_DIR$" />
+    </key>
+  </component>
+  <component name="SpellCheckerSettings" RuntimeDictionaries="0" Folders="0" CustomDictionaries="0" DefaultDictionary="application-level" UseSingleDictionary="true" transferred="true" />
+  <component name="TaskManager">
+    <task active="true" id="Default" summary="Default task">
+      <changelist id="50b7117b-015e-449c-94db-2a0c582c3691" name="Default Changelist" comment="" />
+      <created>1618141393028</created>
+      <option name="number" value="Default" />
+      <option name="presentableId" value="Default" />
+      <updated>1618141393028</updated>
+    </task>
+    <task id="LOCAL-00001" summary="new files">
+      <created>1618142240202</created>
+      <option name="number" value="00001" />
+      <option name="presentableId" value="LOCAL-00001" />
+      <option name="project" value="LOCAL" />
+      <updated>1618142240202</updated>
+    </task>
+    <option name="localTasksCounter" value="2" />
+    <servers />
+  </component>
+  <component name="Vcs.Log.Tabs.Properties">
+    <option name="TAB_STATES">
+      <map>
+        <entry key="MAIN">
+          <value>
+            <State>
+              <option name="FILTERS">
+                <map>
+                  <entry key="branch">
+                    <value>
+                      <list>
+                        <option value="new-docs" />
+                      </list>
+                    </value>
+                  </entry>
+                </map>
+              </option>
+            </State>
+          </value>
+        </entry>
+      </map>
+    </option>
+  </component>
+  <component name="VcsManagerConfiguration">
+    <MESSAGE value="new files" />
+    <option name="LAST_COMMIT_MESSAGE" value="new files" />
   </component>
 </project>
