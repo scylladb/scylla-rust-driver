@@ -39,3 +39,13 @@ prepared.set_is_idempotent(true);
 # Ok(())
 # }
 ```
+
+```eval_rst
+.. toctree::
+   :hidden:
+   :glob:
+
+   fallthrough
+   default
+
+```

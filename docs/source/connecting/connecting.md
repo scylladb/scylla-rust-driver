@@ -31,3 +31,14 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
 After succesfully connecting to some specified node the driver will fetch topology information about
 other nodes in this cluster and connect to them as well.
+
+```eval_rst
+.. toctree::
+   :hidden:
+   :glob:
+
+   compression
+   authentication
+   tls
+
+```
