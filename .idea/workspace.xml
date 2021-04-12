@@ -31,8 +31,66 @@
     </select>
   </component>
   <component name="ChangeListManager">
-    <list default="true" id="50b7117b-015e-449c-94db-2a0c582c3691" name="Default Changelist" comment="add sphinx theme">
-      <change beforePath="$PROJECT_DIR$/docs/source/index.rst" beforeDir="false" afterPath="$PROJECT_DIR$/docs/source/index.rst" afterDir="false" />
+    <list default="true" id="50b7117b-015e-449c-94db-2a0c582c3691" name="Default Changelist" comment="add index">
+      <change afterPath="$PROJECT_DIR$/.idea/.gitignore" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/.idea/inspectionProfiles/Project_Default.xml" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/.idea/inspectionProfiles/profiles_settings.xml" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/.idea/laura-rust-driver.iml" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/.idea/misc.xml" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/.idea/modules.xml" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/.idea/vcs.xml" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/.gitignore" beforeDir="false" afterPath="$PROJECT_DIR$/.gitignore" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/book/book.toml" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/book/src/SUMMARY.md" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/book/src/connecting/authentication.md" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/book/src/connecting/compression.md" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/book/src/connecting/connecting.md" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/book/src/connecting/tls.md" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/book/src/data-types/blob.md" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/book/src/data-types/collections.md" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/book/src/data-types/counter.md" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/book/src/data-types/data-types.md" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/book/src/data-types/date.md" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/book/src/data-types/decimal.md" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/book/src/data-types/inet.md" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/book/src/data-types/primitive.md" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/book/src/data-types/text.md" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/book/src/data-types/time.md" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/book/src/data-types/timestamp.md" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/book/src/data-types/tuple.md" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/book/src/data-types/udt.md" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/book/src/data-types/uuid.md" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/book/src/data-types/varint.md" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/book/src/load-balancing/dc-robin.md" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/book/src/load-balancing/load-balancing.md" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/book/src/load-balancing/robin.md" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/book/src/load-balancing/token-dc-robin.md" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/book/src/load-balancing/token-robin.md" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/book/src/logging/logging.md" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/book/src/metrics/metrics.md" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/book/src/queries/batch.md" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/book/src/queries/paged.md" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/book/src/queries/prepared.md" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/book/src/queries/queries.md" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/book/src/queries/result.md" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/book/src/queries/simple.md" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/book/src/queries/usekeyspace.md" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/book/src/queries/values.md" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/book/src/quickstart/create-project.md" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/book/src/quickstart/example.md" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/book/src/quickstart/quickstart.md" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/book/src/quickstart/scylla-docker.md" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/book/src/retry-policy/default.md" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/book/src/retry-policy/fallthrough.md" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/book/src/retry-policy/retry-policy.md" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/book/src/title-page.md" beforeDir="false" afterPath="$PROJECT_DIR$/docs/source/index.md" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/book/src/tracing/batch.md" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/book/src/tracing/paged.md" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/book/src/tracing/prepare.md" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/book/src/tracing/simple-prepared.md" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/book/src/tracing/tracing.md" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/docs/pyproject.toml" beforeDir="false" afterPath="$PROJECT_DIR$/docs/pyproject.toml" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/docs/source/index.rst" beforeDir="false" afterPath="$PROJECT_DIR$/docs/source/contents.rst" afterDir="false" />
     </list>
     <option name="SHOW_DIALOG" value="false" />
     <option name="HIGHLIGHT_CONFLICTS" value="true" />
@@ -54,16 +112,19 @@
     <option name="showMembers" value="true" />
   </component>
   <component name="PropertiesComponent">
+    <property name="ASKED_SHARE_PROJECT_CONFIGURATION_FILES" value="true" />
     <property name="RunOnceActivity.OpenProjectViewOnStart" value="true" />
-    <property name="last_opened_file_path" value="$PROJECT_DIR$/docs/source" />
+    <property name="SHARE_PROJECT_CONFIGURATION_FILES" value="true" />
+    <property name="last_opened_file_path" value="$PROJECT_DIR$/docs" />
     <property name="settings.editor.selected.configurable" value="preferences.lookFeel" />
   </component>
   <component name="RecentsManager">
     <key name="CopyFile.RECENT_KEYS">
-      <recent name="$PROJECT_DIR$/docs/source" />
       <recent name="$PROJECT_DIR$/docs" />
+      <recent name="$PROJECT_DIR$/docs/source" />
     </key>
     <key name="MoveFile.RECENT_KEYS">
+      <recent name="$PROJECT_DIR$/docs/source" />
       <recent name="$PROJECT_DIR$/docs" />
       <recent name="$PROJECT_DIR$" />
     </key>
@@ -91,7 +152,14 @@
       <option name="project" value="LOCAL" />
       <updated>1618144672184</updated>
     </task>
-    <option name="localTasksCounter" value="3" />
+    <task id="LOCAL-00003" summary="add index">
+      <created>1618218140228</created>
+      <option name="number" value="00003" />
+      <option name="presentableId" value="LOCAL-00003" />
+      <option name="project" value="LOCAL" />
+      <updated>1618218140228</updated>
+    </task>
+    <option name="localTasksCounter" value="4" />
     <servers />
   </component>
   <component name="Vcs.Log.Tabs.Properties">
@@ -120,12 +188,14 @@
   <component name="VcsManagerConfiguration">
     <MESSAGE value="new files" />
     <MESSAGE value="add sphinx theme" />
-    <option name="LAST_COMMIT_MESSAGE" value="add sphinx theme" />
+    <MESSAGE value="add index" />
+    <option name="LAST_COMMIT_MESSAGE" value="add index" />
   </component>
   <component name="WindowStateProjectService">
-    <state x="2738" y="323" width="800" height="535" key="Vcs.Push.Dialog.v2" timestamp="1618144680726">
-      <screen x="1920" y="0" width="2560" height="1440" />
+    <state x="614" y="263" width="800" height="535" key="Vcs.Push.Dialog.v2" timestamp="1618218145669">
+      <screen x="0" y="27" width="1920" height="1053" />
     </state>
+    <state x="614" y="263" key="Vcs.Push.Dialog.v2/4480.0.1920.1080/1920.0.2560.1440/0.27.1920.1053@0.27.1920.1053" timestamp="1618218145669" />
     <state x="2738" y="323" width="800" height="535" key="Vcs.Push.Dialog.v2/4480.0.1920.1080/1920.0.2560.1440/0.27.1920.1053@1920.0.2560.1440" timestamp="1618144680726" />
     <state x="2806" y="312" width="672" height="678" key="search.everywhere.popup" timestamp="1618215266172">
       <screen x="1920" y="0" width="2560" height="1440" />
