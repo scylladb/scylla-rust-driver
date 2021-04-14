@@ -1,10 +1,9 @@
 .. toctree::
    :hidden:
-   :glob:
    :titlesonly:
+   :maxdepth: 1
 
-   index
-   quickstart/*
+   quickstart/index
    connecting/*
    queries/*
    data-types/*

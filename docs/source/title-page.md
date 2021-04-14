@@ -11,7 +11,7 @@ Although optimized for Scylla, the driver is also compatible with [Apache Cassan
 
 
 ## Contents
-* [Quick start](quickstart/quickstart.md) - Setting up a Rust project using `scylla-rust-driver` and running a few queries
+* [Quick start](quickstart/index.rst) - Setting up a Rust project using `scylla-rust-driver` and running a few queries
 * [Connecting to the cluster](connecting/connecting.md) - Configuring a connection to scylla cluster
 * [Making queries](queries/queries.md) - Making different types of queries (simple, prepared, batch, paged)
 * [Data Types](data-types/data-types.md) - How to use various column data types

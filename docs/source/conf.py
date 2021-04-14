@@ -41,7 +41,7 @@ autosectionlabel_prefix_document = True
 # source_encoding = 'utf-8-sig'
 
 # The master toctree document.
-master_doc = 'index'
+master_doc = 'contents'
 
 # General information about the project.
 project = 'Scylla Documentation Theme and Extensions'
@@ -112,7 +112,7 @@ html_theme_options = {
     ('ScyllaDB Home', 'https://www.scylladb.com/')],
     'site_description': 'Scylla Driver for Rust.',
     'github_issues_repository': 'scylladb/scylla-rust-driver',
-    'show_sidebar_index': 'false',
+    'show_sidebar_index': 'true',
     'hide_banner': 'true',
     'default_branch': 'stable'
 }

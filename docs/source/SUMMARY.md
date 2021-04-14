@@ -2,7 +2,7 @@
 
 [Scylla Rust Driver](title-page.md)
 
-- [Quick start](quickstart/quickstart.md)
+- [Quick start](quickstart/index.rst)
     - [Creating a project](quickstart/create-project.md)
     - [Running Scylla using Docker](quickstart/scylla-docker.md)
     - [Connecting and running a simple query](quickstart/example.md)
