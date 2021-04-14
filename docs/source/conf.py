@@ -6,6 +6,9 @@ from sphinx.util import logging
 import recommonmark
 from recommonmark.transform import AutoStructify
 from sphinx_scylladb_theme.utils import multiversion_regex_builder
+from pygments.lexers.rust import RustLexer
+from sphinx.highlighting import lexers
+
 
 logger = logging.getLogger(__name__)
 
@@ -82,6 +85,7 @@ def setup(sphinx):
         'enable_auto_toc_tree': False,
     }, True)
     sphinx.add_transform(AutoStructify)
+    lexers['rust'] = RustLexer()
 
 # Adds version variables for monitoring and manager versions when used in inline text
 rst_prolog = """
@@ -138,7 +142,7 @@ html_sidebars = {'**': ['side-nav.html']}
 htmlhelp_basename = 'ScyllaDocumentationdoc'
 
 # URL which points to the root of the HTML documentation. 
-html_baseurl = 'https://sphinx-theme.scylladb.com'
+html_baseurl = 'https://rust-driver.docs.scylladb.com/'
 
 # Dictionary of values to pass into the template engine’s context for all pages
 html_context = {'html_baseurl': html_baseurl}
@@ -162,7 +166,7 @@ redirects_file = "_utils/redirections.yaml"
 TAGS = ['0.1.0']
 smv_tag_whitelist = multiversion_regex_builder(TAGS)
 # Whitelist pattern for branches (set to None to ignore all branches)
-BRANCHES = ['release_0_1_0']
+BRANCHES = ['main']
 smv_branch_whitelist = multiversion_regex_builder(BRANCHES)
 # Defines which version is considered to be the latest stable version.
 # Must be listed in smv_tag_whitelist or smv_branch_whitelist.

@@ -22,3 +22,15 @@ So, the available load balancing policies are:
 * [Token aware DC Aware Round robin](token-dc-robin.md)
 
 By default the driver uses `Token aware Round robin`
+
+```eval_rst
+.. toctree::
+   :hidden:
+   :glob:
+
+   robin
+   dc-robin
+   token-robin
+   token-dc-robin
+
+```

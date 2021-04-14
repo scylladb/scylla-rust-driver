@@ -16,3 +16,15 @@ After obtaining the tracing id you can use `Session::get_tracing_info()` to quer
 `TracingInfo` contains values that are the same in Scylla and Cassandra®.  
 If `TracingInfo` does not contain some needed value it's possible to query it manually from the tables
 `system_traces.sessions` and `system_traces.events`
+
+```eval_rst
+.. toctree::
+   :hidden:
+   :glob:
+
+   simple-prepared
+   batch
+   paged
+   prepare
+
+```
