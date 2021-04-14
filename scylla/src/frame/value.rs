@@ -105,6 +105,13 @@ impl SerializedValues {
         }
     }
 
+    pub fn with_capacity(capacity: usize) -> Self {
+        SerializedValues {
+            serialized_values: Vec::with_capacity(capacity),
+            values_num: 0,
+        }
+    }
+
     /// A const empty instance, useful for taking references
     pub const EMPTY: &'static SerializedValues = &SerializedValues::new();
 
@@ -522,7 +529,7 @@ impl ValueList for [u8; 0] {
 // Implement ValueList for slices of Value types
 impl<T: Value> ValueList for &[T] {
     fn serialized(&self) -> SerializedResult<'_> {
-        let mut result = SerializedValues::new();
+        let mut result = SerializedValues::with_capacity(self.len());
         for val in *self {
             result.add_value(val)?;
         }
@@ -534,7 +541,7 @@ impl<T: Value> ValueList for &[T] {
 // Implement ValueList for Vec<Value>
 impl<T: Value> ValueList for Vec<T> {
     fn serialized(&self) -> SerializedResult<'_> {
-        let mut result = SerializedValues::new();
+        let mut result = SerializedValues::with_capacity(self.len());
         for val in self {
             result.add_value(val)?;
         }
@@ -549,7 +556,7 @@ impl<T: Value> ValueList for Vec<T> {
 // Further variants are done using a macro
 impl<T0: Value> ValueList for (T0,) {
     fn serialized(&self) -> SerializedResult<'_> {
-        let mut result = SerializedValues::new();
+        let mut result = SerializedValues::with_capacity(1);
         result.add_value(&self.0)?;
         Ok(Cow::Owned(result))
     }
