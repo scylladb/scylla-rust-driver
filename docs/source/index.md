@@ -1,11 +1,14 @@
-<img src="assets/monster+rust.png" height="150" align="right">
-
 # Scylla Rust Driver
 This book contains documentation for [scylla-rust-driver](https://github.com/scylladb/scylla-rust-driver) - a driver
 for the [Scylla](https://scylladb.com) database written in Rust. 
 Although optimized for Scylla, the driver is also compatible with [Apache Cassandra®](https://cassandra.apache.org/).
 
 This project is not yet available as GA, but you're welcome to [download and try it](https://github.com/scylladb/scylla-rust-driver)!
+
+```eval_rst
+.. image:: monster+rust.png
+   :scale: 30%
+```
 
 
 ## Contents
