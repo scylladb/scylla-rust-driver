@@ -5,6 +5,8 @@ use crate::transport::connection_keeper::ConnectionKeeper;
 use crate::transport::errors::QueryError;
 use crate::transport::session::IntoTypedRows;
 
+use rand::seq::SliceRandom;
+use rand::thread_rng;
 use std::collections::HashMap;
 use std::net::{IpAddr, SocketAddr};
 use std::str::FromStr;
@@ -63,7 +65,7 @@ impl TopologyReader {
         server_event_sender: mpsc::Sender<Event>,
     ) -> Self {
         let control_connection_address = *known_peers
-            .last()
+            .choose(&mut thread_rng())
             .expect("Tried to initialize TopologyReader with empty known_peers list!");
 
         // setting event_sender field in connection config will cause control connection to
@@ -91,9 +93,18 @@ impl TopologyReader {
     pub async fn read_topology_info(&mut self) -> Result<TopologyInfo, QueryError> {
         let mut result = self.fetch_topology_info().await;
 
+        // shuffle known_peers to iterate through them in random order later
+        self.known_peers.shuffle(&mut thread_rng());
+
+        let address_of_failed_control_connection = self.control_connection_address;
+        let filtered_known_peers = self
+            .known_peers
+            .iter()
+            .filter(|&peer| peer != &address_of_failed_control_connection);
+
         // if fetching topology info on current control connection failed,
         // try to fetch topology info from other known peer
-        for peer in self.known_peers.iter() {
+        for peer in filtered_known_peers {
             if result.is_ok() {
                 break;
             }
