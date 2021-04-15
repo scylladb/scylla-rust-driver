@@ -105,13 +105,14 @@ impl TopologyReader {
         // if fetching topology info on current control connection failed,
         // try to fetch topology info from other known peer
         for peer in filtered_known_peers {
-            if result.is_ok() {
-                break;
-            }
+            let err = match result {
+                Ok(_) => break,
+                Err(err) => err,
+            };
 
             warn!(
                 control_connection_address = self.control_connection_address.to_string().as_str(),
-                error = result.as_ref().err().unwrap().to_string().as_str(),
+                error = err.to_string().as_str(),
                 "Falied to fetch topology info using current control connection"
             );
 
@@ -138,7 +139,7 @@ impl TopologyReader {
             ),
         }
 
-        return result;
+        result
     }
 
     async fn fetch_topology_info(&self) -> Result<TopologyInfo, QueryError> {

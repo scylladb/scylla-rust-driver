@@ -232,7 +232,6 @@ impl Connection {
         if let Some(tracing_id) = query_response.tracing_id {
             prepared_statement.prepare_tracing_ids.push(tracing_id);
         }
-
         Ok(prepared_statement)
     }
 
