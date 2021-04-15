@@ -12,7 +12,7 @@ use itertools::Itertools;
 use std::collections::{BTreeMap, HashMap};
 use std::net::SocketAddr;
 use std::sync::{Arc, RwLock};
-use tracing::debug;
+use tracing::{debug, warn};
 
 /// Cluster manages up to date information and connections to database nodes.
 /// All data can be accessed by cloning Arc<ClusterData> in the `data` field
@@ -223,28 +223,6 @@ impl ClusterData {
         }
     }
 
-    fn without_node(&self, addr: SocketAddr) -> ClusterData {
-        let mut new_cluster_data = self.clone();
-
-        new_cluster_data.known_peers.remove(&addr);
-
-        new_cluster_data.ring = new_cluster_data
-            .ring
-            .into_iter()
-            .filter(|(_, node)| node.address != addr)
-            .collect();
-
-        new_cluster_data
-            .all_nodes
-            .retain(|node| node.address != addr);
-
-        for dc in new_cluster_data.datacenters.values_mut() {
-            dc.nodes.retain(|node| node.address != addr);
-        }
-
-        new_cluster_data
-    }
-
     /// Creates new ClusterData using information about topology held in `info`.
     /// Uses provided `known_peers` hashmap to recycle nodes if possible.
     pub fn new(
@@ -343,13 +321,14 @@ impl ClusterWorker {
                         match event {
                             Event::TopologyChange(_) => (), // Refresh immediately
                             Event::StatusChange(status) => {
-                                // If some node is down, remove it from ClusterData and refresh
-                                // later as planned. Otherwise, refresh immediately (to fetch
-                                // previously removed info about this node)
-                                if let StatusChangeEvent::Down(addr) = status {
-                                    self.remove_down_node(addr);
-                                    continue;
+                                // If some node went down/up, update it's marker and refresh
+                                // later as planned.
+
+                                match status {
+                                    StatusChangeEvent::Down(addr) => self.change_node_down_marker(addr, true),
+                                    StatusChangeEvent::Up(addr) => self.change_node_down_marker(addr, false),
                                 }
+                                continue;
                             },
                             _ => continue, // Don't go to refreshing
                         }
@@ -388,11 +367,18 @@ impl ClusterWorker {
         }
     }
 
-    fn remove_down_node(&mut self, addr: SocketAddr) {
+    fn change_node_down_marker(&mut self, addr: SocketAddr, is_down: bool) {
         let cluster_data = self.cluster_data.read().unwrap().clone();
-        let new_cluster_data = Arc::new(cluster_data.without_node(addr));
 
-        self.update_cluster_data(new_cluster_data);
+        let node = match cluster_data.known_peers.get(&addr) {
+            Some(node) => node,
+            None => {
+                warn!("Unknown node address {}", addr);
+                return;
+            }
+        };
+
+        node.change_down_marker(is_down);
     }
 
     async fn handle_use_keyspace_request(
