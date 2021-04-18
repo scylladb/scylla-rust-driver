@@ -1,0 +1,341 @@
+
+
+
+<!doctype html>
+<html class="no-js" lang="en">
+  
+<head><!-- begin head.html -->
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width initial-scale=1" />
+    <meta http-equiv="X-UA-Compatible" content="IE=edge" />
+    <title>
+    Query values | Scylla Docs
+    </title>
+    <meta name="description" content="Scylla Driver for Rust."/>
+
+    <link rel="icon" href="../../_static/img/favicon.ico" type="image/x-icon"/>
+    <link rel="canonical" href="https://docs.scylladb.com/">
+
+    <link rel="author" href="mailto:info@scylladb.com">
+    <link rel="stylesheet" href="../../_static/" type="text/css" />
+    <link rel="stylesheet" href="../../_static/pygments.css" type="text/css" />
+    <link rel="stylesheet" type="text/css" href="../../_static/copybutton.css" />
+    <link rel="stylesheet" type="text/css" href="../../_static/sphinx_tabs/semantic-ui-2.4.1/segment.min.css" />
+    <link rel="stylesheet" type="text/css" href="../../_static/sphinx_tabs/semantic-ui-2.4.1/menu.min.css" />
+    <link rel="stylesheet" type="text/css" href="../../_static/sphinx_tabs/semantic-ui-2.4.1/tab.min.css" />
+    <link rel="stylesheet" type="text/css" href="../../_static/sphinx_tabs/tabs.css" />
+    
+    <link href='https://fonts.googleapis.com/css?family=Roboto:400,100,300,500,700' rel='stylesheet' type='text/css'>
+
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/foundation/5.5.2/css/foundation.min.css" type="text/css" />
+    <link rel="stylesheet" href="../../_static/css/doc/main.css" type="text/css" />
+    <link rel="stylesheet" href="../../_static/pygments.css" type="text/css" />
+
+    <link href="https://maxcdn.bootstrapcdn.com/font-awesome/4.7.0/css/font-awesome.min.css" rel="stylesheet" />
+    <script type="text/javascript" id="documentation_options" data-url_root="../../" src="../../_static/documentation_options.js"></script>
+    <script src="../../_static/jquery.js"></script>
+    <script src="../../_static/underscore.js"></script>
+    <script src="../../_static/doctools.js"></script>
+    <script src="../../_static/language_data.js"></script>
+    <script src="../../_static/clipboard.min.js"></script>
+    <script src="../../_static/copybutton.js"></script>
+
+    <script src="../../_static/js/vendor/modernizr.js"></script>
+    <!-- Google Tag Manager -->
+    <script>(function(w,d,s,l,i){w[l]=w[l]||[];w[l].push({'gtm.start':
+      new Date().getTime(),event:'gtm.js'});var f=d.getElementsByTagName(s)[0],
+    j=d.createElement(s),dl=l!='dataLayer'?'&l='+l:'';j.async=true;j.src=
+    'https://www.googletagmanager.com/gtm.js?id='+i+dl;f.parentNode.insertBefore(j,f);
+})(window,document,'script','dataLayer','GTM-T8P2JP');</script>
+    <!-- End Google Tag Manager -->
+
+    <!-- Marketo -->
+    <script type="text/javascript"> (function() { var didInit = false; function initMunchkin() { if(didInit === false) { didInit = true; Munchkin.init('791-QBF-350'); } } var s = document.createElement('script'); s.type = 'text/javascript'; s.async = true; s.src = '//munchkin.marketo.net/munchkin.js'; s.onreadystatechange = function() { if (this.readyState == 'complete' || this.readyState == 'loaded') { initMunchkin(); } }; s.onload = initMunchkin; document.getElementsByTagName('head')[0].appendChild(s); })(); </script>
+    <!-- End Marketo -->
+
+<!-- end head.html -->
+</head>
+
+<body>
+
+
+
+<header id="header" class="animated">
+    <div class="topbar_continer contain-to-grid clearfix">
+        <nav class="top-bar" id="top-bar" data-topbar role="navigation">
+            <ul class="title-area">
+                <li class="name">
+                    <div class="logo">
+                        <a href="https://docs.scylladb.com/"><img src="../../_static/img/logo-scylla-docs.svg" alt="" width="151"></a>
+                    </div>
+                </li>
+                <li class="toggle-topbar"><a href="#"><span class="icon-manu"></span></a></li>
+            </ul>
+            <section class="top-bar-section clearfix">
+                <ul class="right">
+                    
+                    <li>
+                        <a href="https://scylladb.github.io/rust-driver/">Scylla Rust Driver</a>
+                    </li>
+                    
+                    <li>
+                        <a href="https://docs.scylladb.com/scylla-cloud/">Scylla Cloud</a>
+                    </li>
+                    
+                    <li>
+                        <a href="https://university.scylladb.com/">Scylla University</a>
+                    </li>
+                    
+                    <li>
+                        <a href="https://www.scylladb.com/">ScyllaDB Home</a>
+                    </li>
+                    
+                    <li class="search_continer show-for-medium-up">	
+                        <ci-search></ci-search>	
+                    </li>	
+                </ul>
+            </section>
+        </nav>
+    </div>
+</header>
+<section id="content">
+    <div class="row">
+	
+	<div class="large-6 large-push-3 columns">
+
+        
+
+        <section id="query-values">
+<h1>Query values<a class="headerlink" href="#query-values" title="Permalink to this headline">¶</a></h1>
+<p>Query text is constant, but the values might change.
+You can pass changing values to a query by specifying a list of variables as bound values.Each <code class="docutils literal notranslate"><span class="pre">?</span></code> in query text will be filled with the matching value.</p>
+<blockquote>
+<div><p><strong>Never</strong> pass values by adding strings, this could lead to <a class="reference external" href="https://en.wikipedia.org/wiki/SQL_injection">SQL Injection</a></p>
+</div></blockquote>
+<p>Each list of values to send in a query must implement the trait <code class="docutils literal notranslate"><span class="pre">ValueList</span></code>.By default this can be a slice <code class="docutils literal notranslate"><span class="pre">&amp;[]</span></code> or a tuple <code class="docutils literal notranslate"><span class="pre">()</span></code> (max 16 elements) of values to send.</p>
+<p>A few examples:</p>
+<div class="highlight-rust notranslate"><div class="highlight"><pre><span></span><span class="err">#</span><span class="w"> </span><span class="k">extern</span><span class="w"> </span><span class="k">crate</span><span class="w"> </span><span class="n">scylla</span><span class="p">;</span><span class="w"></span>
+<span class="err">#</span><span class="w"> </span><span class="k">use</span><span class="w"> </span><span class="n">scylla</span>::<span class="n">Session</span><span class="p">;</span><span class="w"></span>
+<span class="err">#</span><span class="w"> </span><span class="k">use</span><span class="w"> </span><span class="n">std</span>::<span class="n">error</span>::<span class="n">Error</span><span class="p">;</span><span class="w"></span>
+<span class="err">#</span><span class="w"> </span><span class="k">async</span><span class="w"> </span><span class="k">fn</span> <span class="nf">check_only_compiles</span><span class="p">(</span><span class="n">session</span>: <span class="kp">&amp;</span><span class="nc">Session</span><span class="p">)</span><span class="w"> </span>-&gt; <span class="nb">Result</span><span class="o">&lt;</span><span class="p">(),</span><span class="w"> </span><span class="nb">Box</span><span class="o">&lt;</span><span class="k">dyn</span><span class="w"> </span><span class="n">Error</span><span class="o">&gt;&gt;</span><span class="w"> </span><span class="p">{</span><span class="w"></span>
+<span class="c1">// Empty slice means that there are no values to send</span>
+<span class="n">session</span><span class="p">.</span><span class="n">query</span><span class="p">(</span><span class="s">&quot;INSERT INTO ks.tab (a) VALUES(1)&quot;</span><span class="p">,</span><span class="w"> </span><span class="o">&amp;</span><span class="p">[]).</span><span class="k">await</span><span class="o">?</span><span class="p">;</span><span class="w"></span>
+
+<span class="c1">// Empty tuple/unit also means that there are no values to send</span>
+<span class="n">session</span><span class="p">.</span><span class="n">query</span><span class="p">(</span><span class="s">&quot;INSERT INTO ks.tab (a) VALUES(1)&quot;</span><span class="p">,</span><span class="w"> </span><span class="p">()).</span><span class="k">await</span><span class="o">?</span><span class="p">;</span><span class="w"></span>
+
+<span class="c1">// Sending three integers using a slice:</span>
+<span class="n">session</span><span class="w"></span>
+<span class="w">    </span><span class="p">.</span><span class="n">query</span><span class="p">(</span><span class="s">&quot;INSERT INTO ks.tab (a, b, c) VALUES(?, ?, ?)&quot;</span><span class="p">,</span><span class="w"> </span><span class="p">[</span><span class="mi">1_</span><span class="k">i32</span><span class="p">,</span><span class="w"> </span><span class="mi">2</span><span class="p">,</span><span class="w"> </span><span class="mi">3</span><span class="p">].</span><span class="n">as_ref</span><span class="p">())</span><span class="w"></span>
+<span class="w">    </span><span class="p">.</span><span class="k">await</span><span class="o">?</span><span class="p">;</span><span class="w"></span>
+
+<span class="c1">// Sending an integer and a string using a tuple</span>
+<span class="n">session</span><span class="w"></span>
+<span class="w">    </span><span class="p">.</span><span class="n">query</span><span class="p">(</span><span class="s">&quot;INSERT INTO ks.tab (a, b) VALUES(?, ?)&quot;</span><span class="p">,</span><span class="w"> </span><span class="p">(</span><span class="mi">2_</span><span class="k">i32</span><span class="p">,</span><span class="w"> </span><span class="s">&quot;Some text&quot;</span><span class="p">))</span><span class="w"></span>
+<span class="w">    </span><span class="p">.</span><span class="k">await</span><span class="o">?</span><span class="p">;</span><span class="w"></span>
+
+<span class="c1">// Sending a single value as a tuple requires a trailing coma (Rust syntax):</span>
+<span class="n">session</span><span class="p">.</span><span class="n">query</span><span class="p">(</span><span class="s">&quot;INSERT INTO ks.tab (a) VALUES(?)&quot;</span><span class="p">,</span><span class="w"> </span><span class="p">(</span><span class="mi">2_</span><span class="k">i32</span><span class="p">,)).</span><span class="k">await</span><span class="o">?</span><span class="p">;</span><span class="w"></span>
+
+<span class="c1">// Each value can also be sent using a reference:</span>
+<span class="n">session</span><span class="w"></span>
+<span class="w">    </span><span class="p">.</span><span class="n">query</span><span class="p">(</span><span class="s">&quot;INSERT INTO ks.tab (a, b) VALUES(?, ?)&quot;</span><span class="p">,</span><span class="w"> </span><span class="o">&amp;</span><span class="p">(</span><span class="o">&amp;</span><span class="mi">2_</span><span class="k">i32</span><span class="p">,</span><span class="w"> </span><span class="o">&amp;</span><span class="s">&quot;Some text&quot;</span><span class="p">))</span><span class="w"></span>
+<span class="w">    </span><span class="p">.</span><span class="k">await</span><span class="o">?</span><span class="p">;</span><span class="w"></span>
+<span class="err">#</span><span class="w"> </span><span class="nb">Ok</span><span class="p">(())</span><span class="w"></span>
+<span class="err">#</span><span class="w"> </span><span class="p">}</span><span class="w"></span>
+</pre></div>
+</div>
+<section id="null-values">
+<h2><code class="docutils literal notranslate"><span class="pre">NULL</span></code> values<a class="headerlink" href="#null-values" title="Permalink to this headline">¶</a></h2>
+<p>Null values can be sent using <code class="docutils literal notranslate"><span class="pre">Option&lt;&gt;</span></code> - sending a <code class="docutils literal notranslate"><span class="pre">None</span></code> will make the value <code class="docutils literal notranslate"><span class="pre">NULL</span></code>:</p>
+<div class="highlight-rust notranslate"><div class="highlight"><pre><span></span><span class="err">#</span><span class="w"> </span><span class="k">extern</span><span class="w"> </span><span class="k">crate</span><span class="w"> </span><span class="n">scylla</span><span class="p">;</span><span class="w"></span>
+<span class="err">#</span><span class="w"> </span><span class="k">use</span><span class="w"> </span><span class="n">scylla</span>::<span class="n">Session</span><span class="p">;</span><span class="w"></span>
+<span class="err">#</span><span class="w"> </span><span class="k">use</span><span class="w"> </span><span class="n">std</span>::<span class="n">error</span>::<span class="n">Error</span><span class="p">;</span><span class="w"></span>
+<span class="err">#</span><span class="w"> </span><span class="k">async</span><span class="w"> </span><span class="k">fn</span> <span class="nf">check_only_compiles</span><span class="p">(</span><span class="n">session</span>: <span class="kp">&amp;</span><span class="nc">Session</span><span class="p">)</span><span class="w"> </span>-&gt; <span class="nb">Result</span><span class="o">&lt;</span><span class="p">(),</span><span class="w"> </span><span class="nb">Box</span><span class="o">&lt;</span><span class="k">dyn</span><span class="w"> </span><span class="n">Error</span><span class="o">&gt;&gt;</span><span class="w"> </span><span class="p">{</span><span class="w"></span>
+<span class="kd">let</span><span class="w"> </span><span class="n">null_i32</span>: <span class="nb">Option</span><span class="o">&lt;</span><span class="kt">i32</span><span class="o">&gt;</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="nb">None</span><span class="p">;</span><span class="w"></span>
+<span class="n">session</span><span class="w"></span>
+<span class="w">    </span><span class="p">.</span><span class="n">query</span><span class="p">(</span><span class="s">&quot;INSERT INTO ks.tab (a) VALUES(?)&quot;</span><span class="p">,</span><span class="w"> </span><span class="p">(</span><span class="n">null_i32</span><span class="p">,))</span><span class="w"></span>
+<span class="w">    </span><span class="p">.</span><span class="k">await</span><span class="o">?</span><span class="p">;</span><span class="w"></span>
+<span class="err">#</span><span class="w"> </span><span class="nb">Ok</span><span class="p">(())</span><span class="w"></span>
+<span class="err">#</span><span class="w"> </span><span class="p">}</span><span class="w"></span>
+</pre></div>
+</div>
+</section>
+<section id="unset-values">
+<h2><code class="docutils literal notranslate"><span class="pre">Unset</span></code> values<a class="headerlink" href="#unset-values" title="Permalink to this headline">¶</a></h2>
+<p>When performing an insert with values which might be <code class="docutils literal notranslate"><span class="pre">NULL</span></code>, it’s better to use <code class="docutils literal notranslate"><span class="pre">Unset</span></code>.Database treats inserting <code class="docutils literal notranslate"><span class="pre">NULL</span></code> as a delete operation and will generate a tombstone.
+Using <code class="docutils literal notranslate"><span class="pre">Unset</span></code> results in better performance:</p>
+<div class="highlight-rust notranslate"><div class="highlight"><pre><span></span><span class="err">#</span><span class="w"> </span><span class="k">extern</span><span class="w"> </span><span class="k">crate</span><span class="w"> </span><span class="n">scylla</span><span class="p">;</span><span class="w"></span>
+<span class="err">#</span><span class="w"> </span><span class="k">use</span><span class="w"> </span><span class="n">scylla</span>::<span class="n">Session</span><span class="p">;</span><span class="w"></span>
+<span class="err">#</span><span class="w"> </span><span class="k">use</span><span class="w"> </span><span class="n">std</span>::<span class="n">error</span>::<span class="n">Error</span><span class="p">;</span><span class="w"></span>
+<span class="err">#</span><span class="w"> </span><span class="k">async</span><span class="w"> </span><span class="k">fn</span> <span class="nf">check_only_compiles</span><span class="p">(</span><span class="n">session</span>: <span class="kp">&amp;</span><span class="nc">Session</span><span class="p">)</span><span class="w"> </span>-&gt; <span class="nb">Result</span><span class="o">&lt;</span><span class="p">(),</span><span class="w"> </span><span class="nb">Box</span><span class="o">&lt;</span><span class="k">dyn</span><span class="w"> </span><span class="n">Error</span><span class="o">&gt;&gt;</span><span class="w"> </span><span class="p">{</span><span class="w"></span>
+<span class="k">use</span><span class="w"> </span><span class="n">scylla</span>::<span class="n">frame</span>::<span class="n">value</span>::<span class="p">{</span><span class="n">MaybeUnset</span><span class="p">,</span><span class="w"> </span><span class="n">Unset</span><span class="p">};</span><span class="w"></span>
+
+<span class="c1">// Inserting a null results in suboptimal performance</span>
+<span class="kd">let</span><span class="w"> </span><span class="n">null_i32</span>: <span class="nb">Option</span><span class="o">&lt;</span><span class="kt">i32</span><span class="o">&gt;</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="nb">None</span><span class="p">;</span><span class="w"></span>
+<span class="n">session</span><span class="w"></span>
+<span class="w">    </span><span class="p">.</span><span class="n">query</span><span class="p">(</span><span class="s">&quot;INSERT INTO ks.tab (a) VALUES(?)&quot;</span><span class="p">,</span><span class="w"> </span><span class="p">(</span><span class="n">null_i32</span><span class="p">,))</span><span class="w"></span>
+<span class="w">    </span><span class="p">.</span><span class="k">await</span><span class="o">?</span><span class="p">;</span><span class="w"></span>
+
+<span class="c1">// Using MaybeUnset enum is better</span>
+<span class="kd">let</span><span class="w"> </span><span class="n">unset_i32</span>: <span class="nc">MaybeUnset</span><span class="o">&lt;</span><span class="kt">i32</span><span class="o">&gt;</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">MaybeUnset</span>::<span class="n">Unset</span><span class="p">;</span><span class="w"></span>
+<span class="n">session</span><span class="w"></span>
+<span class="w">    </span><span class="p">.</span><span class="n">query</span><span class="p">(</span><span class="s">&quot;INSERT INTO ks.tab (a) VALUES(?)&quot;</span><span class="p">,</span><span class="w"> </span><span class="p">(</span><span class="n">unset_i32</span><span class="p">,))</span><span class="w"></span>
+<span class="w">    </span><span class="p">.</span><span class="k">await</span><span class="o">?</span><span class="p">;</span><span class="w"></span>
+
+<span class="c1">// If we are sure that a value should be unset we can simply use Unset</span>
+<span class="n">session</span><span class="w"></span>
+<span class="w">    </span><span class="p">.</span><span class="n">query</span><span class="p">(</span><span class="s">&quot;INSERT INTO ks.tab (a) VALUES(?)&quot;</span><span class="p">,</span><span class="w"> </span><span class="p">(</span><span class="n">Unset</span><span class="p">,))</span><span class="w"></span>
+<span class="w">    </span><span class="p">.</span><span class="k">await</span><span class="o">?</span><span class="p">;</span><span class="w"></span>
+<span class="err">#</span><span class="w"> </span><span class="nb">Ok</span><span class="p">(())</span><span class="w"></span>
+<span class="err">#</span><span class="w"> </span><span class="p">}</span><span class="w"></span>
+</pre></div>
+</div>
+<p>See the <a class="reference external" href="https://issues.apache.org/jira/browse/CASSANDRA-7304">issue</a> for more information about <code class="docutils literal notranslate"><span class="pre">Unset</span></code></p>
+</section>
+<section id="other-data-types">
+<h2>Other data types<a class="headerlink" href="#other-data-types" title="Permalink to this headline">¶</a></h2>
+<p>See <a class="reference internal" href="../../data-types/data-types/"><span class="doc">Data Types</span></a> for instructions on sending other data types</p>
+</section>
+</section>
+
+        </div>
+
+        <div id="sidebar" class="large-3 large-pull-6 columns"><div class="side-nav">
+<ul class="current">
+<li class="toctree-l1"><a class="reference internal" href="../../">Scylla Rust Driver</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../quickstart/quickstart/">Quick Start</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../connecting/connecting/">Connecting to the cluster</a></li>
+<li class="toctree-l1 current"><a class="reference internal" href="../queries/">Making queries</a><ul class="current">
+<li class="toctree-l2"><a class="reference internal" href="../simple/">Simple query</a></li>
+<li class="toctree-l2 current"><a class="current reference internal" href="#">Query values</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../result/">Query result</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../prepared/">Prepared query</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../batch/">Batch statement</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../paged/">Paged query</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../usekeyspace/">USE keyspace</a></li>
+</ul>
+</li>
+<li class="toctree-l1"><a class="reference internal" href="../../data-types/data-types/">Data Types</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../load-balancing/load-balancing/">Load balancing</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../retry-policy/retry-policy/">Retry policy configuration</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../metrics/metrics/">Driver metrics</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../logging/logging/">Logging</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../tracing/tracing/">Query tracing</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../SUMMARY/">Summary</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../title-page/">Scylla Rust Driver</a></li>
+</ul>
+
+</div>
+        </div>
+
+        <div class="large-3 columns">
+            
+        </div>
+
+    </div>
+</section>
+
+<!-- newsleter modal -->
+
+<div id="newsletter_signup" class="reveal-modal tiny radius dark_modal" data-reveal aria-labelledby="modalTitle" aria-hidden="true" role="dialog">
+    <a class="close-reveal-modal" aria-label="Close">×</a>
+    <h2 id="modalTitle">Sign up for the Scylla newsletter</h2>
+    <div id="mc_embed_signup">
+        <form action="//cloudius-systems.us10.list-manage.com/subscribe/post?u=df8bb543c68230d5f7b4dcf78&amp;id=9a4589f144" method="post" id="mc-embedded-subscribe-form" name="mc-embedded-subscribe-form" class="validate" target="_blank" novalidate="">
+            <div id="mc_embed_signup_scroll">
+
+                <div class="mc-field-group">
+                    <div class="row collapse">
+                        <div class="small-3 columns"><label for="mce-EMAIL">Email</label></div>
+                        <div class="small-9 columns"><input type="email" value="" name="EMAIL" class="required email" id="mce-EMAIL"></div>
+                    </div>
+                </div>
+                <div class="mc-field-group">
+                    <div class="row collapse">
+                        <div class="small-3 columns"><label for="mce-FNAME">First Name </label></div>
+                        <div class="small-9 columns"><input type="text" value="" name="FNAME" class="" id="mce-FNAME"></div>
+                    </div>
+                </div>
+                <div class="mc-field-group">
+                    <div class="row collapse">
+                        <div class="small-3 columns"><label for="mce-LNAME">Last Name </label></div>
+                        <div class="small-9 columns"><input type="text" value="" name="LNAME" class="" id="mce-LNAME"></div>
+                    </div>
+                </div>
+                <div id="mce-responses" class="clear">
+                    <div class="response" id="mce-error-response" style="display:none"></div>
+                    <div class="response" id="mce-success-response" style="display:none"></div>
+                </div>    <!-- real people should not fill this in and expect good things - do not remove this or risk form bot signups-->
+                <div style="position: absolute; left: -5000px;"><input type="text" name="b_df8bb543c68230d5f7b4dcf78_9a4589f144" tabindex="-1" value=""></div>
+                <div class="clear"><input type="submit" class="button" value="Sign up" name="subscribe" id="mc-embedded-subscribe"></div>
+            </div>
+        </form>
+    </div>
+</div>
+
+<!-- end newsleter modal -->
+
+
+
+<!-- footer.html -->
+<footer id="footer">
+    <div class="footer-top">
+        <a class="logo" href="https://www.scylladb.com"><img src="../../_static/img/logo-scylla-horizontal-RGB.svg" alt=""></a>
+        <div class="footer-links">
+            <a class="link" href="https://docs.scylladb.com">Docs</a>
+            <a class="link" href="https://www.scylladb.com/company/contact-us/">Contact Us</a>
+            <a class="link" href="https://www.scylladb.com/company/">About Us</a>
+            <a class="link button" href="https://github.com/scylladb/scylla-rust-driver/issues/new?title=Issue in page Query values&&body=I%20would%20like%20to%20report%20an%20issue%20in%20page%20https://rust-driver.docs.scylladb.com//queries/values%0A%0A%23%23%23%20Problem%0A%0A%23%23%23%20%20Suggest%20a%20fix" target="_blank">
+                Report an issue on this page</a>
+        </div>
+        <div class="footer-actions">
+            <a class="link-icon" href="https://github.com/ScyllaDB" target="_blank">
+                <span class="icon-github2"></span></a>
+            <a class="link-icon" href="https://twitter.com/ScyllaDB" target="_blank">
+                <span class="icon-twitter"></span></a>
+            <a class="link-icon" href="https://www.linkedin.com/company/scylladb"  target="_blank">
+                <span class="icon-linkedin2"></span></a>
+            <a class="link-icon" href="https://www.facebook.com/scylladb/" target="_blank">
+                <span class="icon-facebook"></span></a>
+        </div>
+    </div>
+
+    <div class="footer-bottom">
+        <div class="footer-info">
+            <div class="footer-copyright">
+                &#169; 2021, ScyllaDB. All rights reserved.
+            </div>
+            <div class="footer-last-updated">
+                Last updated on 18 April 2021.
+            </div>
+            <div class="footer-version">
+                Powered by <a href="http://sphinx-doc.org/">Sphinx 2.4.4</a>
+                &amp; <a href="https://pypi.org/project/sphinx-scylladb-theme">ScyllaDB Theme 0.1.22</a>
+            </div>
+        </div>
+        <div class="footer-links">
+        </div>
+    </div>
+</footer>
+<!-- end footer.html -->
+
+<!-- bodyscripts.html -->
+<!-- at the end of the BODY --> 
+<script src="../../_static/js/vendor/jquery.js"></script>
+<script src="../../_static/js/vendor/jquery.cookie.min.js"></script>
+<script src="../../_static/expertrec.js"></script>
+<script src="../../_static/js/foundation/foundation.js"></script>
+<script src="../../_static/js/foundation/foundation.topbar.js"></script>
+<script src="../../_static/app.js"></script>
+<script>
+    $(document).foundation();
+</script>
+<!-- Google Tag Manager (noscript) -->
+<noscript><iframe src="https://www.googletagmanager.com/ns.html?id=GTM-T8P2JP"
+  height="0" width="0" style="display:none;visibility:hidden"></iframe></noscript>
+<!-- End Google Tag Manager (noscript) -->
+
+  <!-- end bodyscripts.html -->
+</body>
+</html>

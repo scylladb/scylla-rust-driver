@@ -1,0 +1,105 @@
+body {
+  transition: all 400ms ease;
+}
+.custom-promo-banner-wrap {
+  background-image: url("../../../img/scylla-u-live-topbar-back.png");
+  background-position: center center;
+  background-repeat: no-repeat;
+  background-size: cover;
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 1000;
+  overflow: hidden;
+}
+
+.custom-promo-banner {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  z-index: 10;
+  padding: 24px 14px;
+}
+
+.custom-promo-banner__text {
+  padding: 3px 150px 5px 0;
+  font-size: 16px;
+  position: relative;
+  margin-bottom: 15px;
+}
+
+.custom-promo-banner__text:after {
+  content: "";
+  position: absolute;
+  right: 10px;
+  top: -10px;
+  width: 129px;
+  height: 44px;
+  background: url("../../../img/scylla-u-live-topbar-mascot.png") no-repeat;
+  background-size: contain;
+}
+
+.custom-promo-banner__logo {
+  color: #000;
+  margin-right: 18px;
+  font-size: 19px;
+  font-weight: bold;
+}
+.custom-promo-banner .custom-promo-banner__button {
+  font-size: 16px;
+  font-weight: bold;
+  color: #fff;
+  padding: 3px 10px;
+  background: #326de6;
+  border-radius: 4px;
+  transition: all 0.3s ease-in-out;
+  width: max-content;
+}
+
+.custom-promo-banner__button:hover {
+  color: #326de6;
+  background: #fff;
+}
+
+.custom-promo-banner__close {
+  right: 14px;
+  top: -8px;
+  color: #fff !important;
+  background-color: transparent !important;
+  opacity: 0.5;
+  position: fixed;
+  width: 31px;
+  font-size: 52px;
+  color: #4f80b0;
+  background: none;
+  border: none;
+  transition: color 0.3s ease-in-out;
+  outline: none;
+}
+
+.custom-promo-banner__close:hover {
+  opacity: 1;
+  background-color: transparent;
+}
+
+@media (min-width: 992px) {
+  .custom-promo-banner {
+    flex-direction: unset;
+    max-width: 900px;
+    margin: 0 auto;
+    position: relative;
+    align-items: center;
+  }
+
+  .custom-promo-banner__text {
+    margin-bottom: 0;
+  }
+  .custom-promo-banner__logo {
+    margin-bottom: 3px;
+  }
+
+  .custom-promo-banner__button {
+    margin: -4px 0 0 !important;
+  }
+}

@@ -1,0 +1,26 @@
+.sphinx-tabs .sphinx-menu a.item {
+    color: #5f71b4 !important;
+    background-color: #FFFFFF !important;
+    border-color: #edf0fa !important;
+}
+
+.sphinx-tabs .sphinx-menu {
+    border-bottom-color: #5f71b4 !important;
+    display: flex;
+    flex-direction: row;
+    flex-wrap: wrap;
+    background-color: #FFFFFF !important;
+}
+
+.sphinx-tabs .sphinx-menu a.active.item {
+    border-color: #5f71b4 !important;
+    background-color: #FFFFFF !important;
+}
+
+.sphinx-tab {
+    border-color: #5f71b4 !important;
+    box-sizing: border-box;
+    background-color: #FFFFFF !important;
+}
+
+

@@ -1,0 +1,49 @@
+.versions-dropdown {
+  position: relative;
+}
+
+.versions-dropdown .button {
+    background: #F4F3F5;
+    border: 1px solid #DDE0E7;
+    color: #525055;
+    padding: 5px 10px;
+    border-radius: 5px;
+    cursor: pointer;
+    margin-bottom: 5px;
+}
+
+.versions-dropdown .content {
+    display: none;
+    position: absolute;
+    overflow: hidden;
+    width: 100%;
+    list-style-type: none;    
+    margin: 0 !important;
+    padding: 5px 10px;
+    border-radius: 5px;
+    background: #F4F3F5;
+    border: 1px solid #DDE0E7;
+    z-index: 10;
+}
+
+.versions-dropdown:hover .content {
+    display:block;
+}
+
+.versions-dropdown .content li {
+    padding: 4px 10px;
+    display: block;
+}
+
+.versions-dropdown.single-version .button {
+    cursor: initial;
+    outline: none;
+}
+
+.versions-dropdown.single-version .fa {
+    display: none;
+}
+
+.versions-dropdown.single-version:hover .content {
+    display: none;
+}
