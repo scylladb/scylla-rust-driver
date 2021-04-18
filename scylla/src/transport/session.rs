@@ -2,7 +2,9 @@ use futures::future::join_all;
 use std::future::Future;
 use std::net::SocketAddr;
 use std::sync::Arc;
+use std::time::Duration;
 use tokio::net::lookup_host;
+use tokio::time::timeout;
 use tracing::warn;
 use uuid::Uuid;
 
@@ -35,6 +37,7 @@ pub struct Session {
     cluster: Cluster,
     load_balancer: Arc<dyn LoadBalancingPolicy>,
     retry_policy: Box<dyn RetryPolicy + Send + Sync>,
+    schema_agreement_interval: Duration,
 
     metrics: Arc<Metrics>,
 }
@@ -67,6 +70,8 @@ pub struct SessionConfig {
 
     pub auth_username: Option<String>,
     pub auth_password: Option<String>,
+
+    pub schema_agreement_interval: Duration,
     /*
     These configuration options will be added in the future:
 
@@ -100,6 +105,7 @@ impl SessionConfig {
             known_nodes: Vec::new(),
             compression: None,
             tcp_nodelay: false,
+            schema_agreement_interval: Duration::from_millis(10),
             load_balancing: Arc::new(TokenAwarePolicy::new(Box::new(RoundRobinPolicy::new()))),
             used_keyspace: None,
             keyspace_case_sensitive: false,
@@ -220,6 +226,10 @@ impl<RowT: FromRow> Iterator for TypedRowIter<RowT> {
     }
 }
 
+// Queries for schema agreement
+const LOCAL_VERSION: &str = "SELECT schema_version FROM system.local WHERE key='local'";
+const PEERS_VERSION: &str = "SELECT schema_version FROM system.peers";
+
 /// Represents a CQL session, which can be used to communicate
 /// with the database
 impl Session {
@@ -259,6 +269,7 @@ impl Session {
             cluster,
             load_balancer: config.load_balancing,
             retry_policy: config.retry_policy,
+            schema_agreement_interval: config.schema_agreement_interval,
             metrics,
         };
 
@@ -732,6 +743,58 @@ impl Session {
         }
 
         return Err(last_error);
+    }
+
+    pub async fn await_schema_agreement(&self) -> Result<(), QueryError> {
+        while !self.check_schema_agreement().await? {
+            tokio::time::sleep(self.schema_agreement_interval).await
+        }
+        Ok(())
+    }
+
+    pub async fn await_timed_schema_agreement(
+        &self,
+        timeout_duration: u64,
+    ) -> Result<bool, QueryError> {
+        if timeout(
+            Duration::from_millis(timeout_duration),
+            self.await_schema_agreement(),
+        )
+        .await
+        .is_err()
+        {
+            return Ok(false);
+        }
+        Ok(true)
+    }
+
+    async fn check_schema_agreement(&self) -> Result<bool, QueryError> {
+        let peers_rows = self.query(PEERS_VERSION, &[]);
+        let local_version = self.fetch_schema_version().await?;
+        if let Some(rows) = peers_rows.await?.rows {
+            for row in rows.into_typed::<(Uuid,)>() {
+                let (version,) = row.map_err(|_| {
+                    QueryError::ProtocolError("Row is not uuid type as it should be")
+                })?;
+                if local_version != version {
+                    return Ok(false);
+                }
+            }
+        }
+        Ok(true)
+    }
+
+    pub async fn fetch_schema_version(&self) -> Result<Uuid, QueryError> {
+        let (version_id,): (Uuid,) = self
+            .query(LOCAL_VERSION, &[])
+            .await?
+            .rows
+            .ok_or(QueryError::ProtocolError("Version query returned not rows"))?
+            .into_typed::<(Uuid,)>()
+            .next()
+            .ok_or(QueryError::ProtocolError("Admin table returned empty rows"))?
+            .map_err(|_| QueryError::ProtocolError("Row is not uuid type as it should be"))?;
+        Ok(version_id)
     }
 }
 
