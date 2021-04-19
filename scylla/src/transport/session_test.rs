@@ -845,3 +845,24 @@ async fn assert_in_tracing_table(session: &Session, tracing_uuid: Uuid) {
     // If all retries failed panic with an error
     panic!("No rows for tracing with this session id!");
 }
+
+#[tokio::test]
+async fn test_fetch_schema_version() {
+    let uri = std::env::var("SCYLLA_URI").unwrap_or_else(|_| "127.0.0.1:9042".to_string());
+    let session = SessionBuilder::new().known_node(uri).build().await.unwrap();
+    session.fetch_schema_version().await.unwrap();
+}
+
+#[tokio::test]
+async fn test_await_schema_agreement() {
+    let uri = std::env::var("SCYLLA_URI").unwrap_or_else(|_| "127.0.0.1:9042".to_string());
+    let session = SessionBuilder::new().known_node(uri).build().await.unwrap();
+    session.await_schema_agreement().await.unwrap();
+}
+
+#[tokio::test]
+async fn test_await_timed_schema_agreement() {
+    let uri = std::env::var("SCYLLA_URI").unwrap_or_else(|_| "127.0.0.1:9042".to_string());
+    let session = SessionBuilder::new().known_node(uri).build().await.unwrap();
+    session.await_timed_schema_agreement(300).await.unwrap();
+}
