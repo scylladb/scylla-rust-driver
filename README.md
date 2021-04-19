@@ -24,14 +24,14 @@ if let Some(rows) = session.query("SELECT a, b, c FROM ks.t", &[]).await?.rows {
 }
 ```
 
-Please see the full [example](examples/basic.rs) program for more information.
+Please see the full [example](https://github.com/scylladb/scylla-rust-driver/tree/main/examples/basic.rs) program for more information.
 You can also run the example as follows if you have a Scylla server running:
 
 ```sh
 SCYLLA_URI="127.0.0.1:9042" cargo run --example basic
 ```
 
-All examples are available in the [examples](examples) directory
+All examples are available in the [examples](https://github.com/scylladb/scylla-rust-driver/tree/main/examples) directory
 
 ## Features and Roadmap
 
@@ -72,12 +72,11 @@ Please join the `#rust-driver` channel on [ScyllaDB Slack] to discuss any issues
 
 ## License
 
-This project is licensed under either of
+This project is licensed under any of the following:
 
-- Apache License, Version 2.0, ([LICENSE-APACHE](LICENSE-APACHE) or [http://www.apache.org/licenses/LICENSE-2.0](http://www.apache.org/licenses/LICENSE-2.0))
-- MIT license ([LICENSE-MIT](LICENSE-MIT) or [http://opensource.org/licenses/MIT](http://opensource.org/licenses/MIT))
+- Apache License, Version 2.0, ([LICENSE-APACHE](https://github.com/scylladb/scylla-rust-driver/blob/main/LICENSE-APACHE) or [http://www.apache.org/licenses/LICENSE-2.0](http://www.apache.org/licenses/LICENSE-2.0))
+- MIT license ([LICENSE-MIT](https://github.com/scylladb/scylla-rust-driver/blob/main/LICENSE-MIT) or [http://opensource.org/licenses/MIT](http://opensource.org/licenses/MIT))
 
-at your option.
 
 [ScyllaDB Slack]: http://slack.scylladb.com/
 [Apache Cassandra®]: https://cassandra.apache.org/
