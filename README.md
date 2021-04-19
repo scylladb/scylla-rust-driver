@@ -1,10 +1,12 @@
-<img src="assets/monster+rust.png" height="150" align="right">
-
 # ScyllaDB Rust Driver
 
 This is a client-side driver for [ScyllaDB] written in pure Rust with a fully async API using [Tokio].
 Although optimized for ScyllaDB, the driver is also compatible with [Apache Cassandra®].
 
+```eval_rst
+.. image:: monster+rust.png
+   :width: 100
+```
 **Note: this driver has not been officially released as GA..**
 
 ## Getting Started
