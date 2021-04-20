@@ -29,4 +29,4 @@ jobs:
     - name: Build the book
       run: mdbook build docs
     - name: Run book tests
-      run: run: SCYLLA_URI=scylladb:9042 mdbook test -L target/debug/deps docs
+      run: SCYLLA_URI=scylladb:9042 mdbook test -L target/debug/deps docs
