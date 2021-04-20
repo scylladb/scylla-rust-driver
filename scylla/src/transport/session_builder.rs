@@ -207,7 +207,7 @@ impl SessionBuilder {
     }
 
     /// Set the delay for schema agreement check. How often driver should ask if schema is in agreement
-    /// The default is 10 miliseconds.
+    /// The default is 200 miliseconds.
     ///
     /// # Example
     /// ```
@@ -216,7 +216,7 @@ impl SessionBuilder {
     /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
     /// let session: Session = SessionBuilder::new()
     ///     .known_node("127.0.0.1:9042")
-    ///     .schema_agreement_interval(Duration::new(5, 0)) // five seconds
+    ///     .schema_agreement_interval(Duration::from_secs(5))
     ///     .build()
     ///     .await?;
     /// # Ok(())

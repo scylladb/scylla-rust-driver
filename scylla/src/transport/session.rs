@@ -105,7 +105,7 @@ impl SessionConfig {
             known_nodes: Vec::new(),
             compression: None,
             tcp_nodelay: false,
-            schema_agreement_interval: Duration::from_millis(10),
+            schema_agreement_interval: Duration::from_millis(200),
             load_balancing: Arc::new(TokenAwarePolicy::new(Box::new(RoundRobinPolicy::new()))),
             used_keyspace: None,
             keyspace_case_sensitive: false,
@@ -225,10 +225,6 @@ impl<RowT: FromRow> Iterator for TypedRowIter<RowT> {
         self.row_iter.next().map(RowT::from_row)
     }
 }
-
-// Queries for schema agreement
-const LOCAL_VERSION: &str = "SELECT schema_version FROM system.local WHERE key='local'";
-const PEERS_VERSION: &str = "SELECT schema_version FROM system.peers";
 
 /// Represents a CQL session, which can be used to communicate
 /// with the database
@@ -754,47 +750,43 @@ impl Session {
 
     pub async fn await_timed_schema_agreement(
         &self,
-        timeout_duration: u64,
+        timeout_duration: Duration,
     ) -> Result<bool, QueryError> {
-        if timeout(
-            Duration::from_millis(timeout_duration),
-            self.await_schema_agreement(),
-        )
-        .await
-        .is_err()
-        {
-            return Ok(false);
-        }
-        Ok(true)
+        timeout(timeout_duration, self.await_schema_agreement())
+            .await
+            .map_or(Ok(false), |res| res.and(Ok(true)))
     }
 
-    async fn check_schema_agreement(&self) -> Result<bool, QueryError> {
-        let peers_rows = self.query(PEERS_VERSION, &[]);
-        let local_version = self.fetch_schema_version().await?;
-        if let Some(rows) = peers_rows.await?.rows {
-            for row in rows.into_typed::<(Uuid,)>() {
-                let (version,) = row.map_err(|_| {
-                    QueryError::ProtocolError("Row is not uuid type as it should be")
-                })?;
-                if local_version != version {
-                    return Ok(false);
-                }
-            }
-        }
-        Ok(true)
+    async fn schema_agreement_auxilary<ResT, QueryFut>(
+        &self,
+        do_query: impl Fn(Arc<Connection>) -> QueryFut,
+    ) -> Result<ResT, QueryError>
+    where
+        QueryFut: Future<Output = Result<ResT, QueryError>>,
+    {
+        self.run_query(
+            Statement::default(),
+            true,
+            Consistency::One,
+            self.retry_policy.new_session(),
+            |node: Arc<Node>| async move { node.random_connection().await },
+            do_query,
+        )
+        .await
+    }
+
+    pub async fn check_schema_agreement(&self) -> Result<bool, QueryError> {
+        self.schema_agreement_auxilary(|connection: Arc<Connection>| async move {
+            connection.check_schema_agreement().await
+        })
+        .await
     }
 
     pub async fn fetch_schema_version(&self) -> Result<Uuid, QueryError> {
-        let (version_id,): (Uuid,) = self
-            .query(LOCAL_VERSION, &[])
-            .await?
-            .rows
-            .ok_or(QueryError::ProtocolError("Version query returned not rows"))?
-            .into_typed::<(Uuid,)>()
-            .next()
-            .ok_or(QueryError::ProtocolError("Admin table returned empty rows"))?
-            .map_err(|_| QueryError::ProtocolError("Row is not uuid type as it should be"))?;
-        Ok(version_id)
+        self.schema_agreement_auxilary(|connection: Arc<Connection>| async move {
+            connection.fetch_schema_version().await
+        })
+        .await
     }
 }
 

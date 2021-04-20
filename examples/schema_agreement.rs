@@ -13,7 +13,7 @@ async fn main() -> Result<()> {
 
     let session: Session = SessionBuilder::new()
         .known_node(uri)
-        .schema_agreement_interval(Duration::new(1, 0)) // check every second for schema agreement if not agreed first check
+        .schema_agreement_interval(Duration::from_secs(1)) // check every second for schema agreement if not agreed first check
         .build()
         .await?;
 
@@ -23,7 +23,10 @@ async fn main() -> Result<()> {
     session.await_schema_agreement().await?; // without timeout example
     session.query("CREATE KEYSPACE IF NOT EXISTS ks WITH REPLICATION = {'class' : 'SimpleStrategy', 'replication_factor' : 1}", &[]).await?;
 
-    if session.await_timed_schema_agreement(500).await? {
+    if session
+        .await_timed_schema_agreement(Duration::from_secs(5))
+        .await?
+    {
         // with timeout example
         println!("Timed schema is in agreement");
     } else {

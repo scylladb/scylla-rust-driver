@@ -30,7 +30,7 @@ use crate::batch::{Batch, BatchStatement};
 use crate::frame::{
     self,
     request::{self, batch, execute, query, register, Request, RequestOpcode},
-    response::{event::Event, result, Response, ResponseOpcode},
+    response::{event::Event, result, result::Row, Response, ResponseOpcode},
     server_event_type::EventType,
     value::{BatchValues, ValueList},
     FrameParams, RequestBodyWithExtensions,
@@ -38,12 +38,17 @@ use crate::frame::{
 use crate::query::Query;
 use crate::routing::ShardInfo;
 use crate::statement::prepared_statement::PreparedStatement;
+use crate::transport::session::IntoTypedRows;
 use crate::transport::Authenticator;
 use crate::transport::Authenticator::{
     AllowAllAuthenticator, CassandraAllowAllAuthenticator, CassandraPasswordAuthenticator,
     PasswordAuthenticator, ScyllaTransitionalAuthenticator,
 };
 use crate::transport::Compression;
+
+// Queries for schema agreement
+const LOCAL_VERSION: &str = "SELECT schema_version FROM system.local WHERE key='local'";
+const PEERS_VERSION: &str = "SELECT schema_version FROM system.peers";
 
 pub struct Connection {
     submit_channel: mpsc::Sender<Task>,
@@ -443,6 +448,41 @@ impl Connection {
                 "Unexpected response to REGISTER message",
             )),
         }
+    }
+
+    pub async fn check_schema_agreement(&self) -> Result<bool, QueryError> {
+        let peers_rows = self.fetch_peers_schema_version();
+        let local_version = self.fetch_schema_version();
+        let (peers_rows, local_version) = tokio::try_join!(peers_rows, local_version)?;
+        for row in peers_rows {
+            let (version,) = row
+                .into_typed::<(Uuid,)>()
+                .map_err(|_| QueryError::ProtocolError("Row is not uuid type as it should be"))?;
+            if local_version != version {
+                return Ok(false);
+            }
+        }
+        Ok(true)
+    }
+
+    async fn fetch_peers_schema_version(&self) -> Result<Vec<Row>, QueryError> {
+        self.query_single_page(PEERS_VERSION, &[])
+            .await?
+            .rows
+            .ok_or(QueryError::ProtocolError("Peers query returned not rows"))
+    }
+
+    pub async fn fetch_schema_version(&self) -> Result<Uuid, QueryError> {
+        let (version_id,): (Uuid,) = self
+            .query_single_page(LOCAL_VERSION, &[])
+            .await?
+            .rows
+            .ok_or(QueryError::ProtocolError("Version query returned not rows"))?
+            .into_typed::<(Uuid,)>()
+            .next()
+            .ok_or(QueryError::ProtocolError("Admin table returned empty rows"))?
+            .map_err(|_| QueryError::ProtocolError("Row is not uuid type as it should be"))?;
+        Ok(version_id)
     }
 
     async fn send_request<R: Request>(

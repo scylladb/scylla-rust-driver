@@ -862,7 +862,11 @@ async fn test_await_schema_agreement() {
 
 #[tokio::test]
 async fn test_await_timed_schema_agreement() {
+    use std::time::Duration;
     let uri = std::env::var("SCYLLA_URI").unwrap_or_else(|_| "127.0.0.1:9042".to_string());
     let session = SessionBuilder::new().known_node(uri).build().await.unwrap();
-    session.await_timed_schema_agreement(300).await.unwrap();
+    session
+        .await_timed_schema_agreement(Duration::from_millis(50))
+        .await
+        .unwrap();
 }
