@@ -12,6 +12,9 @@ pub mod errors;
 pub mod iterator;
 mod metrics;
 
+// MetricsView is exposed in public interface so it should be public
+pub use metrics::MetricsView;
+
 mod authenticate_test;
 #[cfg(test)]
 mod session_test;

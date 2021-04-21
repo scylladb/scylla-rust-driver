@@ -1,3 +1,6 @@
+//! `Session` is the main object used in the driver.  
+//! It manages all connections to the cluster and allows to perform queries.
+
 use futures::future::join_all;
 use std::future::Future;
 use std::net::SocketAddr;
@@ -31,6 +34,7 @@ use crate::transport::{
 #[cfg(feature = "ssl")]
 use openssl::ssl::SslContext;
 
+/// `Session` manages connections to the cluster and allows to perform queries
 pub struct Session {
     cluster: Cluster,
     load_balancer: Arc<dyn LoadBalancingPolicy>,
@@ -188,7 +192,7 @@ impl Default for SessionConfig {
     }
 }
 
-// Trait used to implement Vec<result::Row>::into_typed<RowT>(self)
+/// Trait used to implement `Vec<result::Row>::into_typed<RowT>`
 // This is the only way to add custom method to Vec
 pub trait IntoTypedRows {
     fn into_typed<RowT: FromRow>(self) -> TypedRowIter<RowT>;
@@ -205,8 +209,8 @@ impl IntoTypedRows for Vec<result::Row> {
     }
 }
 
-// Iterator that maps a Vec<result::Row> into custom RowType used by IntoTypedRows::into_typed
-// impl Trait doesn't compile so we have to be explicit
+/// Iterator over rows parsed as the given type  
+/// Returned by `rows.into_typed::<(...)>()`
 pub struct TypedRowIter<RowT: FromRow> {
     row_iter: std::vec::IntoIter<result::Row>,
     phantom_data: std::marker::PhantomData<RowT>,
@@ -225,10 +229,28 @@ impl<RowT: FromRow> Iterator for TypedRowIter<RowT> {
 impl Session {
     // because it's more convenient
     /// Estabilishes a CQL session with the database
-    /// # Arguments
     ///
-    /// * `config` - Connectiong configuration - known nodes, Compression, etc.
-    pub async fn connect(config: SessionConfig) -> Result<Self, NewSessionError> {
+    /// Usually it's easier to use [SessionBuilder](crate::transport::session_builder::SessionBuilder)
+    /// instead of calling `Session::connect` directly
+    /// # Arguments
+    /// * `config` - Connection configuration - known nodes, Compression, etc.
+    /// Must contain at least one known node.
+    ///
+    /// # Example
+    /// ```rust
+    /// # use std::error::Error;
+    /// # async fn check_only_compiles() -> Result<(), Box<dyn Error>> {
+    /// use scylla::{Session, SessionConfig};
+    /// use scylla::transport::session::KnownNode;
+    ///
+    /// let mut config = SessionConfig::new();
+    /// config.known_nodes.push(KnownNode::Hostname("127.0.0.1:9042".to_string()));
+    ///
+    /// let session: Session = Session::connect(config).await?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub async fn connect(config: SessionConfig) -> Result<Session, NewSessionError> {
         // Ensure there is at least one known node
         if config.known_nodes.is_empty() {
             return Err(NewSessionError::EmptyKnownNodesList);
@@ -271,16 +293,52 @@ impl Session {
         Ok(session)
     }
 
-    // TODO: Should return an iterator over results
-    // actually, if we consider "INSERT" a query, then no.
-    // But maybe "INSERT" and "SELECT" should go through different methods,
-    // so we expect "SELECT" to always return Vec<result::Row>?
-    /// Sends a query to the database and receives a response.
-    /// If `query` has paging enabled, this will return only the first page.
-    /// # Arguments
+    /// Sends a query to the database and receives a response.  
+    /// Returns only a single page of results, to receive multiple pages use [query_iter](Session::query_iter)
     ///
-    /// * `query` - query to be performed
-    /// * `values` - values bound to the query
+    /// This is the easiest way to make a query, but performance is worse than that of prepared queries.
+    ///
+    /// See [the book](https://cvybhu.github.io/scyllabook/queries/simple.html) for more information
+    /// # Arguments
+    /// * `query` - query to perform, can be just a `&str` or the [Query](crate::query::Query) struct.
+    /// * `values` - values bound to the query, easiest way is to use a tuple of bound values
+    ///
+    /// # Examples
+    /// ```rust
+    /// # use scylla::Session;
+    /// # use std::error::Error;
+    /// # async fn check_only_compiles(session: &Session) -> Result<(), Box<dyn Error>> {
+    /// // Insert an int and text into a table
+    /// session
+    ///     .query(
+    ///         "INSERT INTO ks.tab (a, b) VALUES(?, ?)",
+    ///         (2_i32, "some text")
+    ///     )
+    ///     .await?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    /// ```rust
+    /// # use scylla::Session;
+    /// # use std::error::Error;
+    /// # async fn check_only_compiles(session: &Session) -> Result<(), Box<dyn Error>> {
+    /// use scylla::IntoTypedRows;
+    ///
+    /// // Read rows containing an int and text
+    /// let rows_opt = session
+    /// .query("SELECT a, b FROM ks.tab", &[])
+    ///     .await?
+    ///     .rows;
+    ///
+    /// if let Some(rows) = rows_opt {
+    ///     for row in rows.into_typed::<(i32, String)>() {
+    ///         // Parse row as int and text   
+    ///         let (int_val, text_val): (i32, String) = row?;
+    ///     }
+    /// }
+    /// # Ok(())
+    /// # }
+    /// ```
     pub async fn query(
         &self,
         query: impl Into<Query>,
@@ -328,6 +386,39 @@ impl Session {
         .await
     }
 
+    /// Run a simple query with paging  
+    /// This method will query all pages of the result  
+    ///
+    /// Returns an async iterator (stream) over all received rows  
+    /// Page size can be specified in the [Query](crate::query::Query) passed to the function
+    ///
+    /// See [the book](https://cvybhu.github.io/scyllabook/queries/paged.html) for more information
+    ///
+    /// # Arguments
+    /// * `query` - query to perform, can be just a `&str` or the [Query](crate::query::Query) struct.
+    /// * `values` - values bound to the query, easiest way is to use a tuple of bound values
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// # use scylla::Session;
+    /// # use std::error::Error;
+    /// # async fn check_only_compiles(session: &Session) -> Result<(), Box<dyn Error>> {
+    /// use scylla::IntoTypedRows;
+    /// use futures::stream::StreamExt;
+    ///
+    /// let mut rows_stream = session
+    ///    .query_iter("SELECT a, b FROM ks.t", &[])
+    ///    .await?
+    ///    .into_typed::<(i32, i32)>();
+    ///
+    /// while let Some(next_row_res) = rows_stream.next().await {
+    ///     let (a, b): (i32, i32) = next_row_res?;
+    ///     println!("a, b: {}, {}", a, b);
+    /// }
+    /// # Ok(())
+    /// # }
+    /// ```
     pub async fn query_iter(
         &self,
         query: impl Into<Query>,
@@ -353,8 +444,39 @@ impl Session {
 
     /// Prepares a statement on the server side and returns a prepared statement,
     /// which can later be used to perform more efficient queries
+    ///
+    /// Prepared queries are much faster than simple queries:
+    /// * Database doesn't need to parse the query
+    /// * They are properly load balanced using token aware routing
+    ///
+    /// > ***Warning***  
+    /// > For token/shard aware load balancing to work properly, all partition key values
+    /// > must be sent as bound values
+    /// > (see [performance section](https://cvybhu.github.io/scyllabook/queries/prepared.html#performance))
+    ///
+    /// See [the book](https://cvybhu.github.io/scyllabook/queries/prepared.html) for more information
+    ///
     /// # Arguments
-    ///#
+    /// * `query` - query to prepare, can be just a `&str` or the [Query](crate::query::Query) struct.
+    ///
+    /// # Example
+    /// ```rust
+    /// # use scylla::Session;
+    /// # use std::error::Error;
+    /// # async fn check_only_compiles(session: &Session) -> Result<(), Box<dyn Error>> {
+    /// use scylla::prepared_statement::PreparedStatement;
+    ///
+    /// // Prepare the query for later execution
+    /// let prepared: PreparedStatement = session
+    ///     .prepare("INSERT INTO ks.tab (a) VALUES(?)")
+    ///     .await?;
+    ///
+    /// // Run the prepared query with some values, just like a simple query
+    /// let to_insert: i32 = 12345;
+    /// session.execute(&prepared, (to_insert,)).await?;
+    /// # Ok(())
+    /// # }
+    /// ```
     pub async fn prepare(&self, query: impl Into<Query>) -> Result<PreparedStatement, QueryError> {
         let query: Query = query.into();
 
@@ -400,11 +522,43 @@ impl Session {
         Ok(prepared)
     }
 
-    /// Executes a previously prepared statement
-    /// # Arguments
+    /// Execute a prepared query. Requires a [PreparedStatement](crate::prepared_statement::PreparedStatement)
+    /// generated using [`Session::prepare`](Session::prepare)  
+    /// Returns only a single page of results, to receive multiple pages use [execute_iter](Session::execute_iter)
     ///
-    /// * `prepared` - a statement prepared with [prepare](crate::transport::session::Session::prepare)
-    /// * `values` - values bound to the query
+    /// Prepared queries are much faster than simple queries:
+    /// * Database doesn't need to parse the query
+    /// * They are properly load balanced using token aware routing
+    ///
+    /// > ***Warning***  
+    /// > For token/shard aware load balancing to work properly, all partition key values
+    /// > must be sent as bound values
+    /// > (see [performance section](https://cvybhu.github.io/scyllabook/queries/prepared.html#performance))
+    ///
+    /// See [the book](https://cvybhu.github.io/scyllabook/queries/prepared.html) for more information
+    ///
+    /// # Arguments
+    /// * `prepared` - the prepared statement to execute, generated using [`Session::prepare`](Session::prepare)
+    /// * `values` - values bound to the query, easiest way is to use a tuple of bound values
+    ///
+    /// # Example
+    /// ```rust
+    /// # use scylla::Session;
+    /// # use std::error::Error;
+    /// # async fn check_only_compiles(session: &Session) -> Result<(), Box<dyn Error>> {
+    /// use scylla::prepared_statement::PreparedStatement;
+    ///
+    /// // Prepare the query for later execution
+    /// let prepared: PreparedStatement = session
+    ///     .prepare("INSERT INTO ks.tab (a) VALUES(?)")
+    ///     .await?;
+    ///
+    /// // Run the prepared query with some values, just like a simple query
+    /// let to_insert: i32 = 12345;
+    /// session.execute(&prepared, (to_insert,)).await?;
+    /// # Ok(())
+    /// # }
+    /// ```
     pub async fn execute(
         &self,
         prepared: &PreparedStatement,
@@ -438,6 +592,47 @@ impl Session {
         .await
     }
 
+    /// Run a prepared query with paging  
+    /// This method will query all pages of the result  
+    ///
+    /// Returns an async iterator (stream) over all received rows  
+    /// Page size can be specified in the [PreparedStatement](crate::prepared_statement::PreparedStatement)
+    /// passed to the function
+    ///
+    /// See [the book](https://cvybhu.github.io/scyllabook/queries/paged.html) for more information
+    ///
+    /// # Arguments
+    /// * `prepared` - the prepared statement to execute, generated using [`Session::prepare`](Session::prepare)
+    /// * `values` - values bound to the query, easiest way is to use a tuple of bound values
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// # use scylla::Session;
+    /// # use std::error::Error;
+    /// # async fn check_only_compiles(session: &Session) -> Result<(), Box<dyn Error>> {
+    /// use scylla::prepared_statement::PreparedStatement;
+    /// use scylla::IntoTypedRows;
+    /// use futures::stream::StreamExt;
+    ///
+    /// // Prepare the query for later execution
+    /// let prepared: PreparedStatement = session
+    ///     .prepare("SELECT a, b FROM ks.t")
+    ///     .await?;
+    ///
+    /// // Execute the query and receive all pages
+    /// let mut rows_stream = session
+    ///    .execute_iter(prepared, &[])
+    ///    .await?
+    ///    .into_typed::<(i32, i32)>();
+    ///
+    /// while let Some(next_row_res) = rows_stream.next().await {
+    ///     let (a, b): (i32, i32) = next_row_res?;
+    ///     println!("a, b: {}, {}", a, b);
+    /// }
+    /// # Ok(())
+    /// # }
+    /// ```
     pub async fn execute_iter(
         &self,
         prepared: impl Into<PreparedStatement>,
@@ -464,11 +659,46 @@ impl Session {
         ))
     }
 
-    /// Sends a batch to the database.
-    /// # Arguments
+    /// Perform a batch query  
+    /// Batch contains many `simple` or `prepared` queries which are executed at once  
+    /// Batch doesn't return any rows
     ///
-    /// * `batch` - batch to be performed
-    /// * `values` - values bound to the query
+    /// Batch values must contain values for each of the queries
+    ///
+    /// See [the book](https://cvybhu.github.io/scyllabook/queries/batch.html) for more information
+    ///
+    /// # Arguments
+    /// * `batch` - [Batch](crate::batch::Batch) to be performed
+    /// * `values` - List of values for each query, it's the easiest to use a tuple of tuples
+    ///
+    /// # Example
+    /// ```rust
+    /// # use scylla::Session;
+    /// # use std::error::Error;
+    /// # async fn check_only_compiles(session: &Session) -> Result<(), Box<dyn Error>> {
+    /// use scylla::batch::Batch;
+    ///
+    /// let mut batch: Batch = Default::default();
+    ///
+    /// // A query with two bound values
+    /// batch.append_statement("INSERT INTO ks.tab(a, b) VALUES(?, ?)");
+    ///
+    /// // A query with one bound value
+    /// batch.append_statement("INSERT INTO ks.tab(a, b) VALUES(3, ?)");
+    ///
+    /// // A query with no bound values
+    /// batch.append_statement("INSERT INTO ks.tab(a, b) VALUES(5, 6)");
+    ///
+    /// // Batch values is a tuple of 3 tuples containing values for each query
+    /// let batch_values = ((1_i32, 2_i32), // Tuple with two values for the first query
+    ///                     (4_i32,),       // Tuple with one value for the second query
+    ///                     ());            // Empty tuple/unit for the third query
+    ///
+    /// // Run the batch
+    /// session.batch(&batch, batch_values).await?;
+    /// # Ok(())
+    /// # }
+    /// ```
     pub async fn batch(
         &self,
         batch: &Batch,
@@ -501,6 +731,9 @@ impl Session {
     /// Call only one `use_keyspace` at a time.  
     /// Trying to do two `use_keyspace` requests simultaneously with different names
     /// can end with some connections using one keyspace and the rest using the other.
+    ///
+    /// See [the book](https://cvybhu.github.io/scyllabook/queries/usekeyspace.html) for more information
+    ///
     /// # Arguments
     ///
     /// * `keyspace_name` - keyspace name to use,
@@ -540,15 +773,26 @@ impl Session {
         Ok(())
     }
 
+    /// Manually trigger a topology refresh  
+    /// The driver will fetch current nodes in the cluster and update its topology information
+    ///
+    /// Normally this is not needed,
+    /// the driver should automatically detect all topology changes in the cluster
     pub async fn refresh_topology(&self) -> Result<(), QueryError> {
         self.cluster.refresh_topology().await
     }
 
+    /// Access metrics collected by the driver  
+    /// Driver collects various metrics like number of queries or query latencies.
+    /// They can be read using this method
     pub fn get_metrics(&self) -> MetricsView {
         MetricsView::new(self.metrics.clone())
     }
 
     /// Get [`TracingInfo`] of a traced query performed earlier
+    ///
+    /// See [the book](https://cvybhu.github.io/scyllabook/tracing/tracing.html)
+    /// for more information about query tracing
     pub async fn get_tracing_info(&self, tracing_id: &Uuid) -> Result<TracingInfo, QueryError> {
         self.get_tracing_info_custom(tracing_id, &GetTracingConfig::default())
             .await
