@@ -2,11 +2,13 @@
 
 use super::frame_errors::ParseError;
 use byteorder::{BigEndian, ReadBytesExt};
-use bytes::BufMut;
+use bytes::{Buf, BufMut};
 use num_enum::TryFromPrimitive;
 use std::collections::HashMap;
 use std::convert::TryFrom;
 use std::convert::TryInto;
+use std::net::IpAddr;
+use std::net::SocketAddr;
 use std::str;
 use uuid::Uuid;
 
@@ -419,4 +421,62 @@ fn type_consistency() {
     // Check that the error message contains information about the invalid value
     let err_str = format!("{}", c_result.unwrap_err());
     assert!(err_str.contains(&format!("{}", c)));
+}
+
+pub fn read_inet(buf: &mut &[u8]) -> Result<SocketAddr, ParseError> {
+    let len = buf.read_u8()?;
+    let ip_addr = match len {
+        4 => {
+            let ret = IpAddr::from(<[u8; 4]>::try_from(&buf[0..4])?);
+            buf.advance(4);
+            ret
+        }
+        16 => {
+            let ret = IpAddr::from(<[u8; 16]>::try_from(&buf[0..16])?);
+            buf.advance(16);
+            ret
+        }
+        v => {
+            return Err(ParseError::BadData(format!(
+                "Invalid inet bytes length: {}",
+                v
+            )))
+        }
+    };
+    let port = read_int(buf)?;
+
+    Ok(SocketAddr::new(ip_addr, port as u16))
+}
+
+pub fn write_inet(addr: SocketAddr, buf: &mut impl BufMut) {
+    match addr.ip() {
+        IpAddr::V4(v4) => {
+            buf.put_u8(4);
+            buf.put_slice(&v4.octets());
+        }
+        IpAddr::V6(v6) => {
+            buf.put_u8(16);
+            buf.put_slice(&v6.octets());
+        }
+    }
+
+    write_int(addr.port() as i32, buf)
+}
+
+#[test]
+fn type_inet() {
+    use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
+
+    let iv4 = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), 1234);
+    let iv6 = SocketAddr::new(IpAddr::V6(Ipv6Addr::new(0, 0, 0, 0, 0, 0, 0, 1)), 2345);
+    let mut buf = Vec::new();
+
+    write_inet(iv4, &mut buf);
+    let read_iv4 = read_inet(&mut &*buf).unwrap();
+    assert_eq!(iv4, read_iv4);
+    buf.clear();
+
+    write_inet(iv6, &mut buf);
+    let read_iv6 = read_inet(&mut &*buf).unwrap();
+    assert_eq!(iv6, read_iv6);
 }

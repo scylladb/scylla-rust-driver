@@ -8,10 +8,15 @@ use futures::future::join_all;
 
 use futures::{future::RemoteHandle, FutureExt};
 use rand::Rng;
-use std::convert::TryInto;
-use std::hash::{Hash, Hasher};
-use std::net::SocketAddr;
-use std::sync::{Arc, RwLock};
+use std::{
+    convert::TryInto,
+    hash::{Hash, Hasher},
+    net::SocketAddr,
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc, RwLock,
+    },
+};
 
 /// Node represents a cluster node along with it's data and connections
 pub struct Node {
@@ -20,6 +25,8 @@ pub struct Node {
     pub rack: Option<String>,
 
     pub connections: Arc<RwLock<Arc<NodeConnections>>>,
+
+    down_marker: AtomicBool,
 
     use_keyspace_channel: tokio::sync::mpsc::Sender<UseKeyspaceRequest>,
 
@@ -108,6 +115,7 @@ impl Node {
             datacenter,
             rack,
             connections,
+            down_marker: false.into(),
             use_keyspace_channel: use_keyspace_sender,
             _worker_handle: worker_handle,
         }
@@ -147,6 +155,14 @@ impl Node {
                 Self::connection_for_shard(shard, shard_info.nr_shards, shard_conns).await
             }
         }
+    }
+
+    pub fn is_down(&self) -> bool {
+        self.down_marker.load(Ordering::Relaxed)
+    }
+
+    pub fn change_down_marker(&self, is_down: bool) {
+        self.down_marker.store(is_down, Ordering::Relaxed);
     }
 
     // Tries to get a connection to given shard, if it's broken returns any working connection
