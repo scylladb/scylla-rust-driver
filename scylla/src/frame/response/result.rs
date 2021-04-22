@@ -1,4 +1,5 @@
 use crate::cql_to_rust::{FromRow, FromRowError};
+use crate::frame::response::event::SchemaChangeEvent;
 use crate::frame::value::Counter;
 use crate::frame::{frame_errors::ParseError, types};
 use bigdecimal::BigDecimal;
@@ -30,7 +31,7 @@ pub struct Prepared {
 
 #[derive(Debug)]
 pub struct SchemaChange {
-    // TODO
+    pub event: SchemaChangeEvent,
 }
 
 #[derive(Clone, Debug)]
@@ -781,8 +782,10 @@ fn deser_prepared(buf: &mut &[u8]) -> StdResult<Prepared, ParseError> {
 }
 
 #[allow(clippy::unnecessary_wraps)]
-fn deser_schema_change(_buf: &mut &[u8]) -> StdResult<SchemaChange, ParseError> {
-    Ok(SchemaChange {}) // TODO
+fn deser_schema_change(buf: &mut &[u8]) -> StdResult<SchemaChange, ParseError> {
+    Ok(SchemaChange {
+        event: SchemaChangeEvent::deserialize(buf)?,
+    })
 }
 
 pub fn deserialize(buf: &mut &[u8]) -> StdResult<Result, ParseError> {
