@@ -352,6 +352,21 @@ impl Session {
         query: impl Into<Query>,
         values: impl ValueList,
     ) -> Result<QueryResult, QueryError> {
+        self.query_paged(query, values, None).await
+    }
+
+    /// Queries the database with a custom paging state.
+    /// # Arguments
+    ///
+    /// * `query` - query to be performed
+    /// * `values` - values bound to the query
+    /// * `paging_state` - previously received paging state or None
+    pub async fn query_paged(
+        &self,
+        query: impl Into<Query>,
+        values: impl ValueList,
+        paging_state: Option<Bytes>,
+    ) -> Result<QueryResult, QueryError> {
         let query: Query = query.into();
         let query_text: &str = query.get_contents();
         let serialized_values = values.serialized();
@@ -378,6 +393,7 @@ impl Session {
         // Needed to avoid moving query and values into async move block
         let query_ref: &Query = &query;
         let values_ref = &serialized_values;
+        let paging_state_ref = &paging_state;
 
         self.run_query(
             Statement::default(),
@@ -387,7 +403,7 @@ impl Session {
             |node: Arc<Node>| async move { node.random_connection().await },
             |connection: Arc<Connection>| async move {
                 connection
-                    .query_single_page_by_ref(query_ref, values_ref)
+                    .query_single_page_by_ref(query_ref, values_ref, paging_state_ref.clone())
                     .await
             },
         )

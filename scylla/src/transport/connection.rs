@@ -277,8 +277,11 @@ impl Connection {
         &self,
         query: &Query,
         values: &impl ValueList,
+        paging_state: Option<Bytes>,
     ) -> Result<QueryResult, QueryError> {
-        self.query(query, values, None).await?.into_query_result()
+        self.query(query, values, paging_state)
+            .await?
+            .into_query_result()
     }
 
     pub async fn query(
