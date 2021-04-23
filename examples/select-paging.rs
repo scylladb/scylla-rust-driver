@@ -44,6 +44,18 @@ async fn main() -> Result<()> {
     let paging_state = session.query(paged_query, &[]).await?.paging_state;
     println!("Paging state: {:#?}", paging_state);
 
+    let paged_prepared = session
+        .prepare(Query::with_page_size(
+            "SELECT a, b, c FROM ks.t".to_owned(),
+            1,
+        ))
+        .await?;
+    let paging_state_from_prepared = session.execute(&paged_prepared, &[]).await?.paging_state;
+    println!(
+        "Paging state from the prepared statement execution: {:#?}",
+        paging_state_from_prepared
+    );
+
     println!("Ok.");
 
     Ok(())

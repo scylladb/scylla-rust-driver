@@ -22,13 +22,18 @@ pub struct PreparedStatement {
 }
 
 impl PreparedStatement {
-    pub fn new(id: Bytes, metadata: PreparedMetadata, statement: String) -> Self {
+    pub fn new(
+        id: Bytes,
+        metadata: PreparedMetadata,
+        statement: String,
+        page_size: Option<i32>,
+    ) -> Self {
         Self {
             id,
             metadata,
             statement,
             prepare_tracing_ids: Vec::new(),
-            page_size: None,
+            page_size,
             consistency: Default::default(),
             serial_consistency: None,
             is_idempotent: false,

@@ -227,9 +227,12 @@ impl Connection {
 
         let mut prepared_statement = match query_response.response {
             Response::Error(err) => return Err(err.into()),
-            Response::Result(result::Result::Prepared(p)) => {
-                PreparedStatement::new(p.id, p.prepared_metadata, query.get_contents().to_owned())
-            }
+            Response::Result(result::Result::Prepared(p)) => PreparedStatement::new(
+                p.id,
+                p.prepared_metadata,
+                query.get_contents().to_owned(),
+                query.get_page_size(),
+            ),
             _ => {
                 return Err(QueryError::ProtocolError(
                     "PREPARE: Unexpected server response",
