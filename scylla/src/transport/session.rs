@@ -1,6 +1,7 @@
 //! `Session` is the main object used in the driver.  
 //! It manages all connections to the cluster and allows to perform queries.
 
+use bytes::Bytes;
 use futures::future::join_all;
 use std::future::Future;
 use std::net::SocketAddr;
@@ -571,8 +572,24 @@ impl Session {
         prepared: &PreparedStatement,
         values: impl ValueList,
     ) -> Result<QueryResult, QueryError> {
+        self.execute_paged(prepared, values, None).await
+    }
+
+    /// Executes a previously prepared statement with previously received paging state
+    /// # Arguments
+    ///
+    /// * `prepared` - a statement prepared with [prepare](crate::transport::session::Session::prepare)
+    /// * `values` - values bound to the query
+    /// * `paging_state` - paging state from the previous query or None
+    pub async fn execute_paged(
+        &self,
+        prepared: &PreparedStatement,
+        values: impl ValueList,
+        paging_state: Option<Bytes>,
+    ) -> Result<QueryResult, QueryError> {
         let serialized_values = values.serialized()?;
         let values_ref = &serialized_values;
+        let paging_state_ref = &paging_state;
 
         let token = calculate_token(prepared, &serialized_values)?;
 
@@ -593,7 +610,9 @@ impl Session {
             retry_session,
             |node: Arc<Node>| async move { node.connection_for_token(token).await },
             |connection: Arc<Connection>| async move {
-                connection.execute_single_page(prepared, values_ref).await
+                connection
+                    .execute_single_page(prepared, values_ref, paging_state_ref.clone())
+                    .await
             },
         )
         .await

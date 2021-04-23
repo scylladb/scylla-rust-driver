@@ -307,8 +307,9 @@ impl Connection {
         &self,
         prepared_statement: &PreparedStatement,
         values: impl ValueList,
+        paging_state: Option<Bytes>,
     ) -> Result<QueryResult, QueryError> {
-        self.execute(prepared_statement, values, None)
+        self.execute(prepared_statement, values, paging_state)
             .await?
             .into_query_result()
     }
