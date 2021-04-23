@@ -1,6 +1,6 @@
 use anyhow::Result;
 use futures::stream::StreamExt;
-use scylla::{Session, SessionBuilder};
+use scylla::{query::Query, Session, SessionBuilder};
 use std::env;
 
 #[tokio::main]
@@ -39,6 +39,10 @@ async fn main() -> Result<()> {
         let (a, b, c) = next_row_res?;
         println!("a, b, c: {}, {}, {}", a, b, c);
     }
+
+    let paged_query = Query::new("SELECT a, b, c FROM ks.t".to_owned()).with_page_size(1);
+    let paging_state = session.query(paged_query, &[]).await?.paging_state;
+    println!("Paging state: {:#?}", paging_state);
 
     println!("Ok.");
 
