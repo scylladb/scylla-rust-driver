@@ -1,3 +1,5 @@
+//! This module contains various erros which can be returned by [`Session`](crate::Session)
+
 use crate::frame::frame_errors::{FrameError, ParseError};
 use crate::frame::value::SerializeValuesError;
 use crate::statement::Consistency;
@@ -186,7 +188,7 @@ pub enum DbError {
     Other(i32),
 }
 
-// Type of write operation requested
+/// Type of write operation requested
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum WriteType {
     /// Non-batched non-counter write
