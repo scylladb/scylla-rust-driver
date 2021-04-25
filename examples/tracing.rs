@@ -33,7 +33,7 @@ async fn main() -> Result<()> {
     // QUERY
     // Create a simple query and enable tracing for it
     let mut query: Query = Query::new("SELECT val from ks.tracing_example".to_string());
-    query.set_tracing(true);
+    query.config.set_tracing(true);
 
     // QueryResult will contain a tracing_id which can be used to query tracing information
     let query_result: QueryResult = session.query(query.clone(), &[]).await?;
@@ -55,7 +55,7 @@ async fn main() -> Result<()> {
 
     // EXECUTE
     // To trace execution of a prepared statement tracing must be enabled for it
-    prepared.set_tracing(true);
+    prepared.config.set_tracing(true);
 
     let execute_result: QueryResult = session.execute(&prepared, &[]).await?;
     println!("Execute tracing id: {:?}", execute_result.tracing_id);
@@ -80,7 +80,7 @@ async fn main() -> Result<()> {
     // Create a simple batch and enable tracing
     let mut batch: Batch = Batch::default();
     batch.append_statement("INSERT INTO ks.tracing_example (val) VALUES('val')");
-    batch.set_tracing(true);
+    batch.config.set_tracing(true);
 
     // Run the batch and print its tracing_id
     let batch_result: BatchResult = session.batch(&batch, ((),)).await?;

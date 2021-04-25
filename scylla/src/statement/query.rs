@@ -1,17 +1,14 @@
-use super::Consistency;
-use crate::transport::retry_policy::RetryPolicy;
+use super::StatementConfig;
 
 /// CQL query statement.
 ///
 /// This represents a CQL query that can be executed on a server.
+#[derive(Clone)]
 pub struct Query {
+    pub config: StatementConfig,
+
     contents: String,
     page_size: Option<i32>,
-    pub consistency: Consistency,
-    pub serial_consistency: Option<Consistency>,
-    pub is_idempotent: bool,
-    pub retry_policy: Option<Box<dyn RetryPolicy + Send + Sync>>,
-    pub tracing: bool,
 }
 
 impl Query {
@@ -20,11 +17,7 @@ impl Query {
         Self {
             contents,
             page_size: None,
-            consistency: Default::default(),
-            serial_consistency: None,
-            is_idempotent: false,
-            retry_policy: None,
-            tracing: false,
+            config: Default::default(),
         }
     }
 
@@ -54,65 +47,6 @@ impl Query {
     pub fn get_page_size(&self) -> Option<i32> {
         self.page_size
     }
-
-    /// Sets the consistency to be used when executing this query.
-    pub fn set_consistency(&mut self, c: Consistency) {
-        self.consistency = c;
-    }
-
-    /// Gets the consistency to be used when executing this query.
-    pub fn get_consistency(&self) -> Consistency {
-        self.consistency
-    }
-
-    /// Sets the serial consistency to be used when executing this query.
-    /// (Ignored unless the query is an LWT)
-    pub fn set_serial_consistency(&mut self, sc: Option<Consistency>) {
-        self.serial_consistency = sc;
-    }
-
-    /// Gets the serial consistency to be used when executing this query.
-    /// (Ignored unless the query is an LWT)
-    pub fn get_serial_consistency(&self) -> Option<Consistency> {
-        self.serial_consistency
-    }
-
-    /// Sets the idempotence of this query  
-    /// A query is idempotent if it can be applied multiple times without changing the result of the initial application  
-    /// If set to `true` we can be sure that it is idempotent  
-    /// If set to `false` it is unknown whether it is idempotent  
-    /// This is used in [`RetryPolicy`] to decide if retrying a query is safe
-    pub fn set_is_idempotent(&mut self, is_idempotent: bool) {
-        self.is_idempotent = is_idempotent;
-    }
-
-    /// Gets the idempotence of this statement
-    pub fn get_is_idempotent(&self) -> bool {
-        self.is_idempotent
-    }
-
-    /// Sets a custom [`RetryPolicy`] to be used with this statement  
-    /// By default Session's retry policy is used, this allows to use a custom retry policy
-    pub fn set_retry_policy(&mut self, retry_policy: Box<dyn RetryPolicy + Send + Sync>) {
-        self.retry_policy = Some(retry_policy);
-    }
-
-    /// Gets custom [`RetryPolicy`] used by this statement
-    pub fn get_retry_policy(&self) -> &Option<Box<dyn RetryPolicy + Send + Sync>> {
-        &self.retry_policy
-    }
-
-    /// Enable or disable CQL Tracing for this query  
-    /// If enabled session.query() will return QueryResult containing tracing_id
-    /// which can be used to query tracing information about the execution of this query
-    pub fn set_tracing(&mut self, should_trace: bool) {
-        self.tracing = should_trace;
-    }
-
-    /// Gets whether tracing is enabled for this query
-    pub fn get_tracing(&self) -> bool {
-        self.tracing
-    }
 }
 
 impl From<String> for Query {
@@ -124,22 +58,5 @@ impl From<String> for Query {
 impl<'a> From<&'a str> for Query {
     fn from(s: &'a str) -> Query {
         Query::new(s.to_owned())
-    }
-}
-
-impl Clone for Query {
-    fn clone(&self) -> Query {
-        Query {
-            contents: self.contents.clone(),
-            page_size: self.page_size,
-            consistency: self.consistency,
-            serial_consistency: self.serial_consistency,
-            is_idempotent: self.is_idempotent,
-            retry_policy: self
-                .retry_policy
-                .as_ref()
-                .map(|policy| policy.clone_boxed()),
-            tracing: self.tracing,
-        }
     }
 }

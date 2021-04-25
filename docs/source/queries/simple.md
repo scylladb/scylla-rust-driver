@@ -32,7 +32,7 @@ use scylla::statement::Consistency;
 
 // Create a Query manually to change the Consistency to ONE
 let mut my_query: Query = Query::new("INSERT INTO ks.tab (a) VALUES(?)".to_string());
-my_query.set_consistency(Consistency::One);
+my_query.config.set_consistency(Consistency::One);
 
 // Insert a value into the table
 let to_insert: i32 = 12345;

@@ -57,7 +57,7 @@ let mut prepared: PreparedStatement = session
 
 // Set prepared query consistency to One
 // This is the consistency with which this query will be executed
-prepared.set_consistency(Consistency::One);
+prepared.config.set_consistency(Consistency::One);
 
 // Run the prepared query with some values, just like a simple query
 let to_insert: i32 = 12345;

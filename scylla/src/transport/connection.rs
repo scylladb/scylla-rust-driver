@@ -228,7 +228,7 @@ impl Connection {
                     query: &query.get_contents(),
                 },
                 true,
-                query.tracing,
+                query.config.tracing,
             )
             .await?;
 
@@ -302,15 +302,16 @@ impl Connection {
         let query_frame = query::Query {
             contents: query.get_contents().to_owned(),
             parameters: query::QueryParameters {
-                consistency: query.get_consistency(),
-                serial_consistency: query.get_serial_consistency(),
+                consistency: query.config.get_consistency(),
+                serial_consistency: query.config.get_serial_consistency(),
                 values: &serialized_values,
                 page_size: query.get_page_size(),
                 paging_state,
             },
         };
 
-        self.send_request(&query_frame, true, query.tracing).await
+        self.send_request(&query_frame, true, query.config.tracing)
+            .await
     }
 
     pub async fn execute_single_page(
@@ -335,8 +336,8 @@ impl Connection {
         let execute_frame = execute::Execute {
             id: prepared_statement.get_id().to_owned(),
             parameters: query::QueryParameters {
-                consistency: prepared_statement.get_consistency(),
-                serial_consistency: prepared_statement.get_serial_consistency(),
+                consistency: prepared_statement.config.get_consistency(),
+                serial_consistency: prepared_statement.config.get_serial_consistency(),
                 values: &serialized_values,
                 page_size: prepared_statement.get_page_size(),
                 paging_state,
@@ -344,7 +345,7 @@ impl Connection {
         };
 
         let query_response = self
-            .send_request(&execute_frame, true, prepared_statement.tracing)
+            .send_request(&execute_frame, true, prepared_statement.config.tracing)
             .await?;
 
         if let Response::Error(err) = &query_response.response {
@@ -361,7 +362,7 @@ impl Connection {
                 }
 
                 return self
-                    .send_request(&execute_frame, true, prepared_statement.tracing)
+                    .send_request(&execute_frame, true, prepared_statement.config.tracing)
                     .await;
             }
         }
@@ -396,11 +397,13 @@ impl Connection {
             statements_count,
             values,
             batch_type: batch.get_type(),
-            consistency: batch.get_consistency(),
-            serial_consistency: batch.get_serial_consistency(),
+            consistency: batch.config.get_consistency(),
+            serial_consistency: batch.config.get_serial_consistency(),
         };
 
-        let query_response = self.send_request(&batch_frame, true, batch.tracing).await?;
+        let query_response = self
+            .send_request(&batch_frame, true, batch.config.tracing)
+            .await?;
 
         match query_response.response {
             Response::Error(err) => Err(err.into()),

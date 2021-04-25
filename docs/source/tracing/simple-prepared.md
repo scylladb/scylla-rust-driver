@@ -17,7 +17,7 @@ use uuid::Uuid;
 
 // Create a Query manually and enable tracing
 let mut query: Query = Query::new("INSERT INTO ks.tab (a) VALUES(4)".to_string());
-query.set_tracing(true);
+query.config.set_tracing(true);
 
 let res: QueryResult = session.query(query, &[]).await?;
 let tracing_id: Option<Uuid> = res.tracing_id;
@@ -49,7 +49,7 @@ let mut prepared: PreparedStatement = session
     .await?;
 
 // Enable tracing for the prepared query
-prepared.set_tracing(true);
+prepared.config.set_tracing(true);
 
 let res: QueryResult = session.execute(&prepared, &[]).await?;
 let tracing_id: Option<Uuid> = res.tracing_id;
