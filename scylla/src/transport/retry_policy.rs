@@ -1,3 +1,7 @@
+//! Query retries configurations  
+//! To decide when to retry a query the `Session` can use any object which implements
+//! the `RetryPolicy` trait
+
 use crate::statement::Consistency;
 use crate::transport::errors::{DbError, QueryError, WriteType};
 
