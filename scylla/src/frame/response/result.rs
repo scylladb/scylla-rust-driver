@@ -310,7 +310,7 @@ pub struct PreparedMetadata {
     pub col_specs: Vec<ColumnSpec>,
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug, Default, PartialEq)]
 pub struct Row {
     pub columns: Vec<Option<CqlValue>>,
 }
