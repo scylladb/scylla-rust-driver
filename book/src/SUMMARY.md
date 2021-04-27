@@ -20,6 +20,7 @@
     - [Batch statement](queries/batch.md)
     - [Paged query](queries/paged.md)
     - [USE keyspace](queries/usekeyspace.md)
+    - [Schema agreement](queries/schema_agreement.md)
 
 - [Data Types](data-types/data-types.md)
     - [Bool, Tinyint, Smallint, Int, Bigint, Float, Double](data-types/primitive.md)

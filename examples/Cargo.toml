@@ -60,3 +60,7 @@ path = "cql-time-types.rs"
 name = "tracing"
 path = "tracing.rs"
 
+[[example]]
+name = "schema_agreement"
+path = "schema_agreement.rs"
+

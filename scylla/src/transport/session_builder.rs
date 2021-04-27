@@ -5,6 +5,7 @@ use super::Compression;
 use crate::transport::retry_policy::RetryPolicy;
 use std::net::SocketAddr;
 use std::sync::Arc;
+use std::time::Duration;
 
 #[cfg(feature = "ssl")]
 use openssl::ssl::SslContext;
@@ -202,6 +203,27 @@ impl SessionBuilder {
     pub fn user(mut self, username: impl Into<String>, passwd: impl Into<String>) -> Self {
         self.config.auth_username = Some(username.into());
         self.config.auth_password = Some(passwd.into());
+        self
+    }
+
+    /// Set the delay for schema agreement check. How often driver should ask if schema is in agreement
+    /// The default is 200 miliseconds.
+    ///
+    /// # Example
+    /// ```
+    /// # use scylla::{Session, SessionBuilder};
+    /// # use std::time::Duration;
+    /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
+    /// let session: Session = SessionBuilder::new()
+    ///     .known_node("127.0.0.1:9042")
+    ///     .schema_agreement_interval(Duration::from_secs(5))
+    ///     .build()
+    ///     .await?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn schema_agreement_interval(mut self, timeout: Duration) -> Self {
+        self.config.schema_agreement_interval = timeout;
         self
     }
 
