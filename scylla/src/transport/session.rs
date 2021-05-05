@@ -2,7 +2,9 @@ use futures::future::join_all;
 use std::future::Future;
 use std::net::SocketAddr;
 use std::sync::Arc;
+use std::time::Duration;
 use tokio::net::lookup_host;
+use tokio::time::timeout;
 use tracing::warn;
 use uuid::Uuid;
 
@@ -35,6 +37,7 @@ pub struct Session {
     cluster: Cluster,
     load_balancer: Arc<dyn LoadBalancingPolicy>,
     retry_policy: Box<dyn RetryPolicy + Send + Sync>,
+    schema_agreement_interval: Duration,
 
     metrics: Arc<Metrics>,
 }
@@ -67,6 +70,8 @@ pub struct SessionConfig {
 
     pub auth_username: Option<String>,
     pub auth_password: Option<String>,
+
+    pub schema_agreement_interval: Duration,
     /*
     These configuration options will be added in the future:
 
@@ -100,6 +105,7 @@ impl SessionConfig {
             known_nodes: Vec::new(),
             compression: None,
             tcp_nodelay: false,
+            schema_agreement_interval: Duration::from_millis(200),
             load_balancing: Arc::new(TokenAwarePolicy::new(Box::new(RoundRobinPolicy::new()))),
             used_keyspace: None,
             keyspace_case_sensitive: false,
@@ -176,6 +182,7 @@ impl SessionConfig {
             ssl_context: self.ssl_context.clone(),
             auth_username: self.auth_username.to_owned(),
             auth_password: self.auth_password.to_owned(),
+            ..Default::default()
         }
     }
 }
@@ -258,6 +265,7 @@ impl Session {
             cluster,
             load_balancer: config.load_balancing,
             retry_policy: config.retry_policy,
+            schema_agreement_interval: config.schema_agreement_interval,
             metrics,
         };
 
@@ -731,6 +739,54 @@ impl Session {
         }
 
         return Err(last_error);
+    }
+
+    pub async fn await_schema_agreement(&self) -> Result<(), QueryError> {
+        while !self.check_schema_agreement().await? {
+            tokio::time::sleep(self.schema_agreement_interval).await
+        }
+        Ok(())
+    }
+
+    pub async fn await_timed_schema_agreement(
+        &self,
+        timeout_duration: Duration,
+    ) -> Result<bool, QueryError> {
+        timeout(timeout_duration, self.await_schema_agreement())
+            .await
+            .map_or(Ok(false), |res| res.and(Ok(true)))
+    }
+
+    async fn schema_agreement_auxilary<ResT, QueryFut>(
+        &self,
+        do_query: impl Fn(Arc<Connection>) -> QueryFut,
+    ) -> Result<ResT, QueryError>
+    where
+        QueryFut: Future<Output = Result<ResT, QueryError>>,
+    {
+        self.run_query(
+            Statement::default(),
+            true,
+            Consistency::One,
+            self.retry_policy.new_session(),
+            |node: Arc<Node>| async move { node.random_connection().await },
+            do_query,
+        )
+        .await
+    }
+
+    pub async fn check_schema_agreement(&self) -> Result<bool, QueryError> {
+        self.schema_agreement_auxilary(|connection: Arc<Connection>| async move {
+            connection.check_schema_agreement().await
+        })
+        .await
+    }
+
+    pub async fn fetch_schema_version(&self) -> Result<Uuid, QueryError> {
+        self.schema_agreement_auxilary(|connection: Arc<Connection>| async move {
+            connection.fetch_schema_version().await
+        })
+        .await
     }
 }
 

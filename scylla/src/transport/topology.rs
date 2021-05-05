@@ -1,18 +1,26 @@
+use crate::frame::response::event::Event;
 use crate::routing::Token;
 use crate::transport::connection::{Connection, ConnectionConfig};
 use crate::transport::connection_keeper::ConnectionKeeper;
 use crate::transport::errors::QueryError;
 use crate::transport::session::IntoTypedRows;
 
+use rand::seq::SliceRandom;
+use rand::thread_rng;
 use std::collections::HashMap;
 use std::net::{IpAddr, SocketAddr};
 use std::str::FromStr;
+use tokio::sync::mpsc;
+use tracing::{debug, error, warn};
 
 /// Allows to read current topology info from the cluster
 pub struct TopologyReader {
-    control_connections: HashMap<SocketAddr, ConnectionKeeper>,
-    connect_port: u16,
     connection_config: ConnectionConfig,
+    control_connection_address: SocketAddr,
+    control_connection: ConnectionKeeper,
+
+    // when control connection fails, TopologyReader tries to connect to one of known_peers
+    known_peers: Vec<SocketAddr>,
 }
 
 /// Describes all topology information retrieved from the cluster
@@ -51,79 +59,108 @@ pub enum Strategy {
 
 impl TopologyReader {
     /// Creates new TopologyReader, which connects to known_peers in the background
-    pub fn new(known_peers: &[SocketAddr], connection_config: ConnectionConfig) -> Self {
-        let connect_port: u16 = known_peers
-            .first()
-            .expect("Tried to initialize TopologyReader with empty known_peers list!")
-            .port();
+    pub fn new(
+        known_peers: &[SocketAddr],
+        mut connection_config: ConnectionConfig,
+        server_event_sender: mpsc::Sender<Event>,
+    ) -> Self {
+        let control_connection_address = *known_peers
+            .choose(&mut thread_rng())
+            .expect("Tried to initialize TopologyReader with empty known_peers list!");
 
-        let mut control_connections: HashMap<SocketAddr, ConnectionKeeper> =
-            HashMap::with_capacity(known_peers.len());
+        // setting event_sender field in connection config will cause control connection to
+        // - send REGISTER message to receive server events
+        // - send received events via server_event_sender
+        connection_config.event_sender = Some(server_event_sender);
 
-        for address in known_peers {
-            control_connections.insert(
-                *address,
-                ConnectionKeeper::new(*address, connection_config.clone(), None, None, None),
-            );
-        }
+        let control_connection = ConnectionKeeper::new(
+            control_connection_address,
+            connection_config.clone(),
+            None,
+            None,
+            None,
+        );
 
         TopologyReader {
-            control_connections,
-            connect_port,
+            control_connection_address,
+            control_connection,
             connection_config,
+            known_peers: known_peers.into(),
         }
     }
 
     /// Fetches current topology info from the cluster
     pub async fn read_topology_info(&mut self) -> Result<TopologyInfo, QueryError> {
-        let result = self.fetch_topology_info().await;
-
-        if let Ok(topology_info) = &result {
-            self.update_control_connections(topology_info);
+        let mut result = self.fetch_topology_info().await;
+        if result.is_ok() {
+            return result;
         }
 
-        return result;
+        // shuffle known_peers to iterate through them in random order later
+        self.known_peers.shuffle(&mut thread_rng());
+
+        let address_of_failed_control_connection = self.control_connection_address;
+        let filtered_known_peers = self
+            .known_peers
+            .iter()
+            .filter(|&peer| peer != &address_of_failed_control_connection);
+
+        // if fetching topology info on current control connection failed,
+        // try to fetch topology info from other known peer
+        for peer in filtered_known_peers {
+            let err = match result {
+                Ok(_) => break,
+                Err(err) => err,
+            };
+
+            warn!(
+                control_connection_address = self.control_connection_address.to_string().as_str(),
+                error = err.to_string().as_str(),
+                "Falied to fetch topology info using current control connection"
+            );
+
+            self.control_connection_address = *peer;
+            self.control_connection = ConnectionKeeper::new(
+                self.control_connection_address,
+                self.connection_config.clone(),
+                None,
+                None,
+                None,
+            );
+
+            result = self.fetch_topology_info().await;
+        }
+
+        match &result {
+            Ok(topology_info) => {
+                self.update_known_peers(topology_info);
+                debug!("Fetched new topology info");
+            }
+            Err(error) => error!(
+                error = error.to_string().as_str(),
+                "Could not fetch topology info"
+            ),
+        }
+
+        result
     }
 
     async fn fetch_topology_info(&self) -> Result<TopologyInfo, QueryError> {
-        // TODO: Timeouts? New attempts in parallel?
+        // TODO: Timeouts?
 
-        let mut last_error: QueryError = QueryError::ProtocolError(
-            "Invariant broken - TopologyReader control_connections not empty",
-        );
-
-        for conn in self.control_connections.values() {
-            match query_topology_info(conn, self.connect_port).await {
-                Ok(info) => return Ok(info),
-                Err(e) => last_error = e,
-            };
-        }
-
-        Err(last_error)
+        query_topology_info(
+            &self.control_connection,
+            self.control_connection_address.port(),
+        )
+        .await
     }
 
-    fn update_control_connections(&mut self, topology_info: &TopologyInfo) {
-        let mut new_control_connections: HashMap<SocketAddr, ConnectionKeeper> =
-            HashMap::with_capacity(topology_info.peers.len());
-
-        for peer in &topology_info.peers {
-            let cur_connection = self
-                .control_connections
-                .remove(&peer.address)
-                .unwrap_or_else(|| {
-                    ConnectionKeeper::new(
-                        peer.address,
-                        self.connection_config.clone(),
-                        None,
-                        None,
-                        None,
-                    )
-                });
-
-            new_control_connections.insert(peer.address, cur_connection);
-        }
-
-        self.control_connections = new_control_connections;
+    fn update_known_peers(&mut self, topology_info: &TopologyInfo) {
+        self.known_peers = topology_info
+            .peers
+            .iter()
+            .map(|peer| peer.address)
+            .collect();
     }
 }
 

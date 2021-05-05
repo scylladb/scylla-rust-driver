@@ -3,7 +3,11 @@ name: "CI Docs"
 on:
   push:
     branches:
+<<<<<<< HEAD
     - master
+=======
+    - main
+>>>>>>> upstream/main
     paths:
     - 'docs/**'
 jobs:

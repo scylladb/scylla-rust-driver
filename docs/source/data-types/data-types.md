@@ -31,3 +31,26 @@ Database types and their Rust equivalents:
 * `Map` <----> `std::collections::HashMap<K, V>`
 * `Tuple` <----> Rust tuples
 * `UDT (User defined type)` <----> Custom user structs with macros
+
+
+```eval_rst
+.. toctree::
+   :hidden:
+   :glob:
+
+   primitive
+   text
+   counter
+   blob
+   inet
+   uuid
+   date
+   time
+   timestamp
+   decimal
+   varint
+   collections
+   tuple
+   udt
+
+```

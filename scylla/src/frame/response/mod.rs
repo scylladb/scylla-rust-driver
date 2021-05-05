@@ -1,6 +1,7 @@
 pub mod authenticate;
 pub mod cql_to_rust;
 pub mod error;
+pub mod event;
 pub mod result;
 pub mod supported;
 
@@ -32,6 +33,7 @@ pub enum Response {
     AuthSuccess(authenticate::AuthSuccess),
     AuthChallenge(authenticate::AuthChallenge),
     Supported(Supported),
+    Event(event::Event),
 }
 
 impl Response {
@@ -44,7 +46,7 @@ impl Response {
             }
             ResponseOpcode::Supported => Response::Supported(Supported::deserialize(buf)?),
             ResponseOpcode::Result => Response::Result(result::deserialize(buf)?),
-            ResponseOpcode::Event => unimplemented!(),
+            ResponseOpcode::Event => Response::Event(event::Event::deserialize(buf)?),
             ResponseOpcode::AuthChallenge => {
                 Response::AuthChallenge(authenticate::AuthChallenge::deserialize(buf)?)
             }

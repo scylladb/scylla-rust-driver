@@ -22,13 +22,13 @@ jobs:
           - ${{ github.workspace }}:/workspace
     steps:
     - uses: actions/checkout@v2
-    - name: Run tests
-      # test threads must be one because else database tests will run in parallel and will result in flaky tests
-      run: cargo test --verbose -- --test-threads=1
     - name: Format check
       run: cargo fmt --verbose --all -- --check
     - name: Clippy check
       run: cargo clippy --verbose --examples --tests -- -D warnings
     - name: Build
       run: cargo build --verbose --examples
+    - name: Run tests
+      # test threads must be one because else database tests will run in parallel and will result in flaky tests
+      run: cargo test --verbose -- --test-threads=1
       

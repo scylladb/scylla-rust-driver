@@ -20,3 +20,18 @@ Additionaly there is special functionality to enable `USE KEYSPACE` queries:
 [USE keyspace](usekeyspace.md)
 
 Queries are fully asynchronous - you can run as many of them in parallel as you wish.
+
+```eval_rst
+.. toctree::
+   :hidden:
+   :glob:
+
+   simple
+   values
+   result
+   prepared
+   batch
+   paged
+   usekeyspace
+
+```

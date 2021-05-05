@@ -309,8 +309,7 @@ mod tests {
             tcp_nodelay: false,
             #[cfg(feature = "ssl")]
             ssl_context: None,
-            auth_password: None,
-            auth_username: None,
+            ..Default::default()
         };
 
         // Get shard info from a single connection, all connections will open to this shard
