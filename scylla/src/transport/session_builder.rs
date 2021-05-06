@@ -1,3 +1,5 @@
+//! SessionBuilder provides an easy way to create new Sessions
+
 use super::errors::NewSessionError;
 use super::load_balancing::LoadBalancingPolicy;
 use super::session::{Session, SessionConfig};

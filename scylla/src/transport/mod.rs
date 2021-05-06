@@ -1,5 +1,5 @@
 mod cluster;
-pub mod connection;
+pub(crate) mod connection;
 mod connection_keeper;
 pub mod load_balancing;
 mod node;
@@ -10,7 +10,7 @@ mod topology;
 
 pub mod errors;
 pub mod iterator;
-mod metrics;
+pub(crate) mod metrics;
 
 mod authenticate_test;
 #[cfg(test)]
