@@ -91,6 +91,8 @@ pub struct QueryResult {
     pub warnings: Vec<String>,
     /// CQL Tracing uuid - can only be Some if tracing is enabled for this query
     pub tracing_id: Option<Uuid>,
+    /// Paging state returned from the server
+    pub paging_state: Option<Bytes>,
 }
 
 /// Result of Session::batch(). Contains no rows, only some useful information.
@@ -103,10 +105,10 @@ pub struct BatchResult {
 
 impl QueryResponse {
     pub fn into_query_result(self) -> Result<QueryResult, QueryError> {
-        let rows: Option<Vec<result::Row>> = match self.response {
+        let (rows, paging_state) = match self.response {
             Response::Error(err) => return Err(err.into()),
-            Response::Result(result::Result::Rows(rs)) => Some(rs.rows),
-            Response::Result(_) => None,
+            Response::Result(result::Result::Rows(rs)) => (Some(rs.rows), rs.metadata.paging_state),
+            Response::Result(_) => (None, None),
             _ => {
                 return Err(QueryError::ProtocolError(
                     "Unexpected server response, expected Result or Error",
@@ -118,6 +120,7 @@ impl QueryResponse {
             rows,
             warnings: self.warnings,
             tracing_id: self.tracing_id,
+            paging_state,
         })
     }
 }
@@ -224,9 +227,12 @@ impl Connection {
 
         let mut prepared_statement = match query_response.response {
             Response::Error(err) => return Err(err.into()),
-            Response::Result(result::Result::Prepared(p)) => {
-                PreparedStatement::new(p.id, p.prepared_metadata, query.get_contents().to_owned())
-            }
+            Response::Result(result::Result::Prepared(p)) => PreparedStatement::new(
+                p.id,
+                p.prepared_metadata,
+                query.get_contents().to_owned(),
+                query.get_page_size(),
+            ),
             _ => {
                 return Err(QueryError::ProtocolError(
                     "PREPARE: Unexpected server response",
@@ -271,8 +277,11 @@ impl Connection {
         &self,
         query: &Query,
         values: &impl ValueList,
+        paging_state: Option<Bytes>,
     ) -> Result<QueryResult, QueryError> {
-        self.query(query, values, None).await?.into_query_result()
+        self.query(query, values, paging_state)
+            .await?
+            .into_query_result()
     }
 
     pub async fn query(
@@ -301,8 +310,9 @@ impl Connection {
         &self,
         prepared_statement: &PreparedStatement,
         values: impl ValueList,
+        paging_state: Option<Bytes>,
     ) -> Result<QueryResult, QueryError> {
-        self.execute(prepared_statement, values, None)
+        self.execute(prepared_statement, values, paging_state)
             .await?
             .into_query_result()
     }

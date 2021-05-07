@@ -28,6 +28,12 @@ impl Query {
         }
     }
 
+    /// Returns self with page size set to the given value
+    pub fn with_page_size(mut self, page_size: i32) -> Self {
+        self.page_size = Some(page_size);
+        self
+    }
+
     /// Returns the string representation of the CQL query.
     pub fn get_contents(&self) -> &str {
         &self.contents

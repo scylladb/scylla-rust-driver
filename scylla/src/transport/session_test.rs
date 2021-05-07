@@ -1,4 +1,5 @@
 use crate::batch::Batch;
+use crate::frame::response::result::Row;
 use crate::frame::value::ValueList;
 use crate::query::Query;
 use crate::routing::hash3_x64_128;
@@ -7,6 +8,7 @@ use crate::tracing::TracingInfo;
 use crate::transport::connection::{BatchResult, QueryResult};
 use crate::transport::errors::{BadKeyspaceName, BadQuery, DbError, QueryError};
 use crate::{IntoTypedRows, Session, SessionBuilder};
+use bytes::Bytes;
 use futures::StreamExt;
 use uuid::Uuid;
 
@@ -67,6 +69,23 @@ async fn test_unprepared_statement() {
             (7, 11, &String::from(""))
         ]
     );
+    let mut results_from_manual_paging: Vec<Row> = vec![];
+    let query = Query::new("SELECT a, b, c FROM ks.t".to_owned()).with_page_size(1);
+    let mut paging_state: Option<Bytes> = None;
+    let mut watchdog = 0;
+    loop {
+        let rs_manual = session
+            .query_paged(query.clone(), &[], paging_state)
+            .await
+            .unwrap();
+        results_from_manual_paging.append(&mut rs_manual.rows.unwrap());
+        if watchdog > 30 || rs_manual.paging_state == None {
+            break;
+        }
+        watchdog += 1;
+        paging_state = rs_manual.paging_state;
+    }
+    assert_eq!(results_from_manual_paging, rs);
 }
 
 #[tokio::test]
@@ -168,7 +187,26 @@ async fn test_prepared_statement() {
         let a = r.columns[0].as_ref().unwrap().as_int().unwrap();
         let b = r.columns[1].as_ref().unwrap().as_int().unwrap();
         let c = r.columns[2].as_ref().unwrap().as_text().unwrap();
-        assert_eq!((a, b, c), (17, 16, &String::from("I'm prepared!!!")))
+        assert_eq!((a, b, c), (17, 16, &String::from("I'm prepared!!!")));
+
+        let mut results_from_manual_paging: Vec<Row> = vec![];
+        let query = Query::new("SELECT a, b, c FROM ks.t2".to_owned()).with_page_size(1);
+        let prepared_paged = session.prepare(query).await.unwrap();
+        let mut paging_state: Option<Bytes> = None;
+        let mut watchdog = 0;
+        loop {
+            let rs_manual = session
+                .execute_paged(&prepared_paged, &[], paging_state)
+                .await
+                .unwrap();
+            results_from_manual_paging.append(&mut rs_manual.rows.unwrap());
+            if watchdog > 30 || rs_manual.paging_state == None {
+                break;
+            }
+            watchdog += 1;
+            paging_state = rs_manual.paging_state;
+        }
+        assert_eq!(results_from_manual_paging, rs);
     }
     {
         let rs = session
