@@ -25,6 +25,10 @@ pub enum QueryError {
     /// Unexpected or invalid message received
     #[error("Protocol Error: {0}")]
     ProtocolError(&'static str),
+
+    /// Timeout error has occured, function didn't complete in time.
+    #[error("Timeout Error")]
+    TimeoutError,
 }
 
 /// An error sent from the database in response to a query
@@ -260,6 +264,10 @@ pub enum NewSessionError {
     /// Unexpected or invalid message received
     #[error("Protocol Error: {0}")]
     ProtocolError(&'static str),
+
+    /// Timeout error has occured, couldn't connect to node in time.
+    #[error("Timeout Error")]
+    TimeoutError,
 }
 
 /// Invalid keyspace name given to `Session::use_keyspace()`
@@ -321,6 +329,7 @@ impl From<QueryError> for NewSessionError {
             QueryError::BadQuery(e) => NewSessionError::BadQuery(e),
             QueryError::IoError(e) => NewSessionError::IoError(e),
             QueryError::ProtocolError(m) => NewSessionError::ProtocolError(m),
+            QueryError::TimeoutError => NewSessionError::TimeoutError,
         }
     }
 }
