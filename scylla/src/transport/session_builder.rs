@@ -326,6 +326,8 @@ impl SessionBuilder {
     }
 
     /// Changes connection timeout
+    /// The default is 5 seconds.
+    /// If it's higher than underlying os's default connection timeout it won't effect.
     ///
     /// # Example
     /// ```
@@ -334,13 +336,13 @@ impl SessionBuilder {
     /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
     /// let session: Session = SessionBuilder::new()
     ///     .known_node("127.0.0.1:9042")
-    ///     .set_connect_timeout(Duration::from_secs(30))
+    ///     .connection_timeout(Duration::from_secs(30))
     ///     .build() // Turns SessionBuilder into Session
     ///     .await?;
     /// # Ok(())
     /// # }
     /// ```
-    pub fn set_connect_timeout(mut self, duration: std::time::Duration) -> Self {
+    pub fn connection_timeout(mut self, duration: std::time::Duration) -> Self {
         self.config.connect_timeout = duration;
         self
     }
