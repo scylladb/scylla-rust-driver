@@ -488,10 +488,16 @@ mod tests {
     #[test]
     fn connection_timeout() {
         let mut builder = SessionBuilder::new();
-        assert_eq!(builder.config.connect_timeout, std::time::Duration::from_secs(5));
+        assert_eq!(
+            builder.config.connect_timeout,
+            std::time::Duration::from_secs(5)
+        );
 
         builder = builder.connection_timeout(std::time::Duration::from_secs(10));
-        assert_eq!(builder.config.connect_timeout, std::time::Duration::from_secs(10));
+        assert_eq!(
+            builder.config.connect_timeout,
+            std::time::Duration::from_secs(10)
+        );
     }
 
     #[test]
