@@ -7,6 +7,7 @@ When creating a `Session` you can specify a few known nodes to which the driver 
 # extern crate tokio;
 use scylla::{Session, SessionBuilder};
 use std::error::Error;
+use std::time::Duration;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 
 #[tokio::main]
@@ -18,6 +19,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
         .known_node(uri)
         .known_node("127.0.0.72:4321")
         .known_node("localhost:8000")
+        .connection_timeout(Duration::from_secs(3))
         .known_node_addr(SocketAddr::new(
             IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)),
             9000,
