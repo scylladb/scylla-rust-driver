@@ -243,9 +243,9 @@ async fn query_peers(conn: &Connection, connect_port: u16) -> Result<Vec<Peer>, 
 
         result.push(Peer {
             address,
+            tokens,
             datacenter,
             rack,
-            tokens,
         });
     }
 
