@@ -528,19 +528,17 @@ impl Session {
         let mut prepared: PreparedStatement = first_ok.unwrap()?;
 
         // Validate prepared ids equality
-        for res in results {
-            if let Ok(statement) = res {
-                if prepared.get_id() != statement.get_id() {
-                    return Err(QueryError::ProtocolError(
-                        "Prepared statement Ids differ, all should be equal",
-                    ));
-                }
-
-                // Collect all tracing ids from prepare() queries in the final result
-                prepared
-                    .prepare_tracing_ids
-                    .extend(statement.prepare_tracing_ids);
+        for statement in results.into_iter().flatten() {
+            if prepared.get_id() != statement.get_id() {
+                return Err(QueryError::ProtocolError(
+                    "Prepared statement Ids differ, all should be equal",
+                ));
             }
+
+            // Collect all tracing ids from prepare() queries in the final result
+            prepared
+                .prepare_tracing_ids
+                .extend(statement.prepare_tracing_ids);
         }
 
         Ok(prepared)
