@@ -1,6 +1,6 @@
 # Summary
 
-[Scylla Rust Driver](title-page.md)
+[Scylla Rust Driver](index.md)
 
 - [Quick start](quickstart/quickstart.md)
     - [Creating a project](quickstart/create-project.md)
