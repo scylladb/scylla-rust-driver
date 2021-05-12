@@ -77,6 +77,7 @@ pub struct SessionConfig {
     pub auth_password: Option<String>,
 
     pub schema_agreement_interval: Duration,
+    pub connect_timeout: std::time::Duration,
     /*
     These configuration options will be added in the future:
 
@@ -119,6 +120,7 @@ impl SessionConfig {
             ssl_context: None,
             auth_username: None,
             auth_password: None,
+            connect_timeout: std::time::Duration::from_secs(5),
         }
     }
 
@@ -187,6 +189,7 @@ impl SessionConfig {
             ssl_context: self.ssl_context.clone(),
             auth_username: self.auth_username.to_owned(),
             auth_password: self.auth_password.to_owned(),
+            connect_timeout: self.connect_timeout,
             ..Default::default()
         }
     }

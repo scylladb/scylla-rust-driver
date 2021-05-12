@@ -133,7 +133,7 @@ pub struct ConnectionConfig {
     pub ssl_context: Option<SslContext>,
     pub auth_username: Option<String>,
     pub auth_password: Option<String>,
-
+    pub connect_timeout: std::time::Duration,
     // should be Some only in control connections,
     pub event_sender: Option<mpsc::Sender<Event>>,
     /*
@@ -158,6 +158,7 @@ impl Default for ConnectionConfig {
             ssl_context: None,
             auth_username: None,
             auth_password: None,
+            connect_timeout: std::time::Duration::from_secs(5),
         }
     }
 }
@@ -172,9 +173,18 @@ impl Connection {
         source_port: Option<u16>,
         config: ConnectionConfig,
     ) -> Result<(Self, ErrorReceiver), QueryError> {
-        let stream = match source_port {
-            Some(p) => connect_with_source_port(addr, p).await?,
-            None => TcpStream::connect(addr).await?,
+        let stream_connector = match source_port {
+            Some(p) => {
+                tokio::time::timeout(config.connect_timeout, connect_with_source_port(addr, p))
+                    .await
+            }
+            None => tokio::time::timeout(config.connect_timeout, TcpStream::connect(addr)).await,
+        };
+        let stream = match stream_connector {
+            Ok(stream) => stream?,
+            Err(_) => {
+                return Err(QueryError::TimeoutError);
+            }
         };
         let source_port = stream.local_addr()?.port();
         stream.set_nodelay(config.tcp_nodelay)?;

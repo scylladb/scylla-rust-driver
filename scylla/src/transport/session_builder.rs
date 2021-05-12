@@ -324,6 +324,28 @@ impl SessionBuilder {
     pub async fn build(self) -> Result<Session, NewSessionError> {
         Session::connect(self.config).await
     }
+
+    /// Changes connection timeout
+    /// The default is 5 seconds.
+    /// If it's higher than underlying os's default connection timeout it won't effect.
+    ///
+    /// # Example
+    /// ```
+    /// # use scylla::{Session, SessionBuilder};
+    /// # use std::time::Duration;
+    /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
+    /// let session: Session = SessionBuilder::new()
+    ///     .known_node("127.0.0.1:9042")
+    ///     .connection_timeout(Duration::from_secs(30))
+    ///     .build() // Turns SessionBuilder into Session
+    ///     .await?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn connection_timeout(mut self, duration: std::time::Duration) -> Self {
+        self.config.connect_timeout = duration;
+        self
+    }
 }
 
 /// Creates a [`SessionBuilder`] with default configuration, same as [`SessionBuilder::new`]
@@ -461,6 +483,21 @@ mod tests {
         builder = builder.use_keyspace("ks_name_2", false);
         assert_eq!(builder.config.used_keyspace, Some("ks_name_2".to_string()));
         assert_eq!(builder.config.keyspace_case_sensitive, false);
+    }
+
+    #[test]
+    fn connection_timeout() {
+        let mut builder = SessionBuilder::new();
+        assert_eq!(
+            builder.config.connect_timeout,
+            std::time::Duration::from_secs(5)
+        );
+
+        builder = builder.connection_timeout(std::time::Duration::from_secs(10));
+        assert_eq!(
+            builder.config.connect_timeout,
+            std::time::Duration::from_secs(10)
+        );
     }
 
     #[test]
