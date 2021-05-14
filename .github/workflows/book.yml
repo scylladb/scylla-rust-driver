@@ -28,5 +28,7 @@ jobs:
       run: cargo build --verbose --examples
     - name: Build the book
       run: mdbook build docs
+    - name: Build the book using the script
+      run: python3 docs/build_book.py
     - name: Run book tests
       run: SCYLLA_URI=scylladb:9042 mdbook test -L target/debug/deps docs
