@@ -598,7 +598,6 @@ impl Connection {
         receiver: mpsc::Receiver<Task>,
         error_sender: tokio::sync::oneshot::Sender<QueryError>,
     ) -> Result<RemoteHandle<()>, std::io::Error> {
-        let _config = config;
         Ok(Self::run_router_spawner(
             stream,
             receiver,

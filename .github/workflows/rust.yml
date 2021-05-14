@@ -26,6 +26,8 @@ jobs:
       run: cargo fmt --verbose --all -- --check
     - name: Clippy check
       run: cargo clippy --verbose --examples --tests -- -D warnings
+    - name: Cargo check without features
+      run: cargo check --manifest-path "scylla/Cargo.toml" --features ""
     - name: Build
       run: cargo build --verbose --examples
     - name: Run tests
