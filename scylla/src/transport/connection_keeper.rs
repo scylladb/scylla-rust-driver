@@ -306,7 +306,7 @@ mod tests {
 
         let connection_config = ConnectionConfig {
             compression: None,
-            tcp_nodelay: false,
+            tcp_nodelay: true,
             #[cfg(feature = "ssl")]
             ssl_context: None,
             ..Default::default()

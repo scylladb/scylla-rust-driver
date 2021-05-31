@@ -143,7 +143,7 @@ impl SessionBuilder {
     }
 
     /// Set the nodelay TCP flag.
-    /// The default is false.
+    /// The default is true.
     ///
     /// # Example
     /// ```
@@ -446,13 +446,13 @@ mod tests {
     #[test]
     fn tcp_nodelay() {
         let mut builder = SessionBuilder::new();
-        assert_eq!(builder.config.tcp_nodelay, false);
-
-        builder = builder.tcp_nodelay(true);
         assert_eq!(builder.config.tcp_nodelay, true);
 
         builder = builder.tcp_nodelay(false);
         assert_eq!(builder.config.tcp_nodelay, false);
+
+        builder = builder.tcp_nodelay(true);
+        assert_eq!(builder.config.tcp_nodelay, true);
     }
 
     #[test]

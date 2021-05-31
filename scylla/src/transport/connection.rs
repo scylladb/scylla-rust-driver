@@ -152,7 +152,7 @@ impl Default for ConnectionConfig {
     fn default() -> Self {
         Self {
             compression: None,
-            tcp_nodelay: false,
+            tcp_nodelay: true,
             event_sender: None,
             #[cfg(feature = "ssl")]
             ssl_context: None,

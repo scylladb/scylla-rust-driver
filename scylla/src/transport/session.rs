@@ -110,7 +110,7 @@ impl SessionConfig {
         SessionConfig {
             known_nodes: Vec::new(),
             compression: None,
-            tcp_nodelay: false,
+            tcp_nodelay: true,
             schema_agreement_interval: Duration::from_millis(200),
             load_balancing: Arc::new(TokenAwarePolicy::new(Box::new(RoundRobinPolicy::new()))),
             used_keyspace: None,
