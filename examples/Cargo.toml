@@ -68,3 +68,6 @@ path = "schema_agreement.rs"
 name = "clone"
 path = "clone.rs"
 
+[[example]]
+name = "speculative-execution"
+path = "speculative-execution.rs"
