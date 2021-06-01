@@ -26,7 +26,7 @@ use crate::transport::{
     connection::{BatchResult, Connection, ConnectionConfig, QueryResult, VerifiedKeyspaceName},
     iterator::RowIterator,
     load_balancing::{LoadBalancingPolicy, RoundRobinPolicy, Statement, TokenAwarePolicy},
-    metrics::{Metrics, MetricsView},
+    metrics::Metrics,
     node::Node,
     retry_policy::{DefaultRetryPolicy, QueryInfo, RetryDecision, RetryPolicy, RetrySession},
     speculative_execution::SpeculativeExecutionPolicy,
@@ -82,6 +82,10 @@ pub struct SessionConfig {
 
     pub schema_agreement_interval: Duration,
     pub connect_timeout: std::time::Duration,
+
+    /// Provide session with metrics prepared earlier (this can also be used to share metrics
+    /// between sessions)
+    pub metrics: Option<Arc<Metrics>>,
     /*
     These configuration options will be added in the future:
 
@@ -126,6 +130,7 @@ impl SessionConfig {
             auth_username: None,
             auth_password: None,
             connect_timeout: std::time::Duration::from_secs(5),
+            metrics: None,
         }
     }
 
@@ -183,6 +188,21 @@ impl SessionConfig {
         for address in node_addrs {
             self.add_known_node_addr(*address);
         }
+    }
+
+    /// Adds previously prepared metrics object
+    /// # Example
+    /// ```
+    /// # use scylla::SessionConfig;
+    /// # use scylla::Metrics;
+    /// # use std::sync::Arc;
+    /// let metrics = Arc::new(Metrics::new());
+    ///
+    /// let mut config = SessionConfig::new();
+    /// config.add_metrics(metrics);
+    /// ```
+    pub fn add_metrics(&mut self, metrics: Arc<Metrics>) {
+        self.metrics = Some(metrics)
     }
 
     /// Makes a config that should be used in Connection
@@ -290,7 +310,7 @@ impl Session {
 
         // Start the session
         let cluster = Cluster::new(&node_addresses, config.get_connection_config()).await?;
-        let metrics = Arc::new(Metrics::new());
+        let metrics = config.metrics.unwrap_or_else(|| Arc::new(Metrics::new()));
 
         let session = Session {
             cluster,
@@ -813,8 +833,8 @@ impl Session {
     /// Access metrics collected by the driver  
     /// Driver collects various metrics like number of queries or query latencies.
     /// They can be read using this method
-    pub fn get_metrics(&self) -> MetricsView {
-        MetricsView::new(self.metrics.clone())
+    pub fn get_metrics(&self) -> Arc<Metrics> {
+        self.metrics.clone()
     }
 
     /// Get [`TracingInfo`] of a traced query performed earlier

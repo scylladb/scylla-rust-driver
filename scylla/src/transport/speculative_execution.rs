@@ -5,8 +5,7 @@ use futures::{
 use std::{future::Future, sync::Arc, time::Duration};
 use tracing::warn;
 
-use super::errors::QueryError;
-use crate::MetricsView;
+use super::{errors::QueryError, metrics::Metrics};
 
 pub trait SpeculativeExecutionPolicy: Send + Sync {
     fn max_retry_count(&self) -> usize;
@@ -23,7 +22,7 @@ pub struct SimpleSpeculativeExecutionPolicy {
 pub struct PercentileSpeculativeExecutionPolicy {
     pub max_retry_count: usize,
     pub percentile: f64,
-    pub metrics: Arc<MetricsView>,
+    pub metrics: Arc<Metrics>,
 }
 
 impl SpeculativeExecutionPolicy for SimpleSpeculativeExecutionPolicy {
