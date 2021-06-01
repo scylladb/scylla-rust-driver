@@ -132,7 +132,9 @@ pub fn prepare_request_body_with_extensions(
     let mut body = body_with_ext.body;
     if let Some(compression) = compression {
         flags |= FLAG_COMPRESSION;
-        body = compress(&body, compression)?.into();
+        let mut new_body = Vec::new();
+        compress_append(&body, compression, &mut new_body)?;
+        body = new_body.into();
     }
 
     if tracing {
@@ -198,7 +200,11 @@ pub fn parse_response_body_extensions(
     })
 }
 
-pub fn compress(uncomp_body: &[u8], compression: Compression) -> Result<Vec<u8>, FrameError> {
+pub fn compress_append(
+    uncomp_body: &[u8],
+    compression: Compression,
+    out: &mut Vec<u8>,
+) -> Result<(), FrameError> {
     match compression {
         Compression::Lz4 => {
             let uncomp_len = uncomp_body.len() as u32;
@@ -206,14 +212,20 @@ pub fn compress(uncomp_body: &[u8], compression: Compression) -> Result<Vec<u8>,
                 Vec::with_capacity(lz4::compression_bound(uncomp_len).unwrap_or(0) as usize);
             lz4::encode_block(uncomp_body, &mut tmp);
 
-            let mut comp_body = Vec::with_capacity(std::mem::size_of::<u32>() + tmp.len());
-            comp_body.put_u32(uncomp_len);
-            comp_body.extend_from_slice(&tmp[..]);
-            Ok(comp_body)
+            out.reserve_exact(std::mem::size_of::<u32>() + tmp.len());
+            out.put_u32(uncomp_len);
+            out.extend_from_slice(&tmp[..]);
+            Ok(())
         }
-        Compression::Snappy => snap::raw::Encoder::new()
-            .compress_vec(uncomp_body)
-            .map_err(|_| FrameError::FrameCompression),
+        Compression::Snappy => {
+            let old_size = out.len();
+            out.resize(old_size + snap::raw::max_compress_len(uncomp_body.len()), 0);
+            let compressed_size = snap::raw::Encoder::new()
+                .compress(uncomp_body, &mut out[old_size..])
+                .map_err(|_| FrameError::FrameCompression)?;
+            out.truncate(old_size + compressed_size);
+            Ok(())
+        }
     }
 }
 
