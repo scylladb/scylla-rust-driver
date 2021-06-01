@@ -3,6 +3,7 @@
 use super::errors::NewSessionError;
 use super::load_balancing::LoadBalancingPolicy;
 use super::session::{Session, SessionConfig};
+use super::speculative_execution::SpeculativeExecutionPolicy;
 use super::Compression;
 use crate::transport::retry_policy::RetryPolicy;
 use std::net::SocketAddr;
@@ -248,6 +249,39 @@ impl SessionBuilder {
     /// ```
     pub fn load_balancing(mut self, policy: Arc<dyn LoadBalancingPolicy>) -> Self {
         self.config.load_balancing = policy;
+        self
+    }
+
+    /// Set the speculative execution policy
+    /// The default is None
+    /// # Example
+    /// ```
+    /// # extern crate scylla;
+    /// # use scylla::Session;
+    /// # use std::error::Error;
+    /// # async fn check_only_compiles() -> Result<(), Box<dyn Error>> {
+    /// use std::{sync::Arc, time::Duration};
+    /// use scylla::{
+    ///     Session,
+    ///     SessionBuilder,
+    ///     transport::speculative_execution::SimpleSpeculativeExecutionPolicy
+    /// };
+    ///
+    /// let policy = SimpleSpeculativeExecutionPolicy {
+    ///     max_retry_count: 3,
+    ///     retry_interval: Duration::from_millis(100),
+    /// };
+    ///
+    /// let session: Session = SessionBuilder::new()
+    ///     .known_node("127.0.0.1:9042")
+    ///     .speculative_execution(Arc::new(policy))
+    ///     .build()
+    ///     .await?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn speculative_execution(mut self, policy: Arc<dyn SpeculativeExecutionPolicy>) -> Self {
+        self.config.speculative_execution_policy = Some(policy);
         self
     }
 
