@@ -1056,10 +1056,17 @@ impl Session {
     }
 
     pub async fn check_schema_agreement(&self) -> Result<bool, QueryError> {
-        self.schema_agreement_auxilary(|connection: Arc<Connection>| async move {
-            connection.check_schema_agreement().await
-        })
-        .await
+        let connections = self.cluster.get_working_connections().await?;
+
+        let handles = connections.iter().map(|c| c.fetch_schema_version());
+        let results = join_all(handles).await;
+        let versions: Vec<Uuid> = results
+            .iter()
+            .cloned()
+            .collect::<Result<Vec<_>, QueryError>>()?;
+        let local_version: Uuid = versions[0];
+        let in_agreement = versions.into_iter().all(|v| v == local_version);
+        Ok(in_agreement)
     }
 
     pub async fn fetch_schema_version(&self) -> Result<Uuid, QueryError> {
