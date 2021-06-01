@@ -7,21 +7,43 @@ use tracing::warn;
 
 use super::{errors::QueryError, metrics::Metrics};
 
+/// The policy that decides if the driver will send speculative queries to the
+/// next hosts when the current host takes too long to respond.
 pub trait SpeculativeExecutionPolicy: Send + Sync {
+    /// The maximum number of speculative executions that will be triggered
+    /// for a given request (does not include the initial request)
     fn max_retry_count(&self) -> usize;
+
+    /// The delay between each speculative execution
     fn retry_interval(&self) -> Duration;
 }
 
+/// A SpeculativeExecutionPolicy that schedules a given number of speculative
+/// executions, separated by a fixed delay.
 #[derive(Debug, Clone)]
 pub struct SimpleSpeculativeExecutionPolicy {
+    /// The maximum number of speculative executions that will be triggered
+    /// for a given request (does not include the initial request)
     pub max_retry_count: usize,
+
+    /// The delay between each speculative execution
     pub retry_interval: Duration,
 }
 
+/// A policy that triggers speculative executions when the request to the current
+/// host is above a given percentile.
 #[derive(Debug, Clone)]
 pub struct PercentileSpeculativeExecutionPolicy {
+    /// The maximum number of speculative executions that will be triggered
+    /// for a given request (does not include the initial request)
     pub max_retry_count: usize,
+
+    /// The percentile that a request's latency must fall into to be considered
+    /// slow (ex: 99.0)
     pub percentile: f64,
+
+    /// The component that will provide information about the latencies
+    /// It can be acquired using `session.get_metrics()` method
     pub metrics: Arc<Metrics>,
 }
 
