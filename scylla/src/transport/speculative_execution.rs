@@ -1,9 +1,12 @@
-use futures::future::FutureExt;
-use futures::stream::{FuturesUnordered, StreamExt};
-use std::future::Future;
-use std::time::Duration;
+use futures::{
+    future::FutureExt,
+    stream::{FuturesUnordered, StreamExt},
+};
+use std::{future::Future, sync::Arc, time::Duration};
+use tracing::warn;
 
 use super::errors::QueryError;
+use crate::MetricsView;
 
 pub trait SpeculativeExecutionPolicy: Send + Sync {
     fn max_retry_count(&self) -> usize;
@@ -16,12 +19,41 @@ pub struct SimpleSpeculativeExecutionPolicy {
     pub retry_interval: Duration,
 }
 
+#[derive(Debug, Clone)]
+pub struct PercentileSpeculativeExecutionPolicy {
+    pub max_retry_count: usize,
+    pub percentile: f64,
+    pub metrics: Arc<MetricsView>,
+}
+
 impl SpeculativeExecutionPolicy for SimpleSpeculativeExecutionPolicy {
     fn max_retry_count(&self) -> usize {
         self.max_retry_count
     }
+
     fn retry_interval(&self) -> Duration {
         self.retry_interval
+    }
+}
+
+impl SpeculativeExecutionPolicy for PercentileSpeculativeExecutionPolicy {
+    fn max_retry_count(&self) -> usize {
+        self.max_retry_count
+    }
+
+    fn retry_interval(&self) -> Duration {
+        let interval = self.metrics.get_latency_percentile_ms(self.percentile);
+        let ms = match interval {
+            Ok(d) => d,
+            Err(e) => {
+                warn!(
+                    "Failed to get latency percentile ({}), defaulting to 100 ms",
+                    e
+                );
+                100
+            }
+        };
+        Duration::from_millis(ms)
     }
 }
 

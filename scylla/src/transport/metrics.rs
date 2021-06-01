@@ -28,7 +28,7 @@ impl std::fmt::Display for MetricsError<'_> {
     }
 }
 
-#[derive(Default)]
+#[derive(Default, Debug)]
 pub struct Metrics {
     errors_num: AtomicU64,
     queries_num: AtomicU64,
@@ -129,6 +129,7 @@ impl Metrics {
     }
 }
 
+#[derive(Debug, Clone)]
 pub struct MetricsView {
     metrics: Arc<Metrics>,
 }
