@@ -17,20 +17,67 @@ mod cql_types_test;
 use crate::frame::frame_errors::FrameError;
 use crate::transport::Compression;
 use bytes::{Buf, BufMut, Bytes};
-use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
+use tokio::io::{AsyncRead, AsyncReadExt};
 use uuid::Uuid;
 
 use std::convert::TryFrom;
 
 use compress::lz4;
-use request::RequestOpcode;
+use request::Request;
 use response::ResponseOpcode;
+
+const HEADER_SIZE: usize = 9;
 
 // Frame flags
 pub const FLAG_COMPRESSION: u8 = 0x01;
 pub const FLAG_TRACING: u8 = 0x02;
 pub const FLAG_CUSTOM_PAYLOAD: u8 = 0x04;
 pub const FLAG_WARNING: u8 = 0x08;
+
+pub struct SerializedRequest {
+    data: Vec<u8>,
+}
+
+impl SerializedRequest {
+    pub fn make<R: Request>(
+        req: &R,
+        compression: Option<Compression>,
+        tracing: bool,
+    ) -> Result<SerializedRequest, FrameError> {
+        let mut flags = 0;
+        let mut data = vec![0; HEADER_SIZE];
+
+        if let Some(compression) = compression {
+            flags |= FLAG_COMPRESSION;
+            let body = req.to_bytes()?;
+            compress_append(&body, compression, &mut data)?;
+        } else {
+            req.serialize(&mut data)?;
+        }
+
+        if tracing {
+            flags |= FLAG_TRACING;
+        }
+
+        data[0] = 4; // We only support version 4 for now
+        data[1] = flags;
+        // Leave space for the stream number
+        data[4] = R::OPCODE as u8;
+
+        let req_size = (data.len() - HEADER_SIZE) as u32;
+        data[5..9].copy_from_slice(&req_size.to_be_bytes());
+
+        Ok(Self { data })
+    }
+
+    pub fn set_stream(&mut self, stream: i16) {
+        self.data[2..4].copy_from_slice(&stream.to_be_bytes());
+    }
+
+    pub fn get_data(&self) -> &[u8] {
+        &self.data[..]
+    }
+}
 
 // Parts of the frame header which are not determined by the request/response type.
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
@@ -50,32 +97,10 @@ impl Default for FrameParams {
     }
 }
 
-pub async fn write_request_frame(
-    writer: &mut (impl AsyncWrite + Unpin),
-    params: FrameParams,
-    opcode: RequestOpcode,
-    body: Bytes,
-) -> Result<(), std::io::Error> {
-    let mut header = [0u8; 9];
-    let mut v = &mut header[..];
-    v.put_u8(params.version);
-    v.put_u8(params.flags);
-    v.put_i16(params.stream);
-    v.put_u8(opcode as u8);
-
-    // TODO: Return an error if the frame is too big?
-    v.put_u32(body.len() as u32);
-
-    writer.write_all(&header).await?;
-    writer.write_all(&body).await?;
-
-    Ok(())
-}
-
 pub async fn read_response_frame(
     reader: &mut (impl AsyncRead + Unpin),
 ) -> Result<(FrameParams, ResponseOpcode, Bytes), FrameError> {
-    let mut raw_header = [0u8; 9];
+    let mut raw_header = [0u8; HEADER_SIZE];
     reader.read_exact(&mut raw_header[..]).await?;
 
     let mut buf = &raw_header[..];
@@ -116,32 +141,6 @@ pub async fn read_response_frame(
     }
 
     Ok((frame_params, opcode, raw_body.into_inner().into()))
-}
-
-pub struct RequestBodyWithExtensions {
-    pub body: Bytes,
-}
-
-pub fn prepare_request_body_with_extensions(
-    body_with_ext: RequestBodyWithExtensions,
-    compression: Option<Compression>,
-    tracing: bool,
-) -> Result<(u8, Bytes), FrameError> {
-    let mut flags = 0;
-
-    let mut body = body_with_ext.body;
-    if let Some(compression) = compression {
-        flags |= FLAG_COMPRESSION;
-        let mut new_body = Vec::new();
-        compress_append(&body, compression, &mut new_body)?;
-        body = new_body.into();
-    }
-
-    if tracing {
-        flags |= FLAG_TRACING;
-    }
-
-    Ok((flags, body))
 }
 
 pub struct ResponseBodyWithExtensions {

@@ -1,6 +1,6 @@
 use bytes::Bytes;
 use futures::{future::RemoteHandle, FutureExt};
-use tokio::io::{split, AsyncRead, AsyncWrite};
+use tokio::io::{split, AsyncRead, AsyncWrite, AsyncWriteExt};
 use tokio::net::{TcpSocket, TcpStream};
 use tokio::sync::{mpsc, oneshot};
 use tracing::{error, warn};
@@ -29,11 +29,11 @@ use super::errors::{BadKeyspaceName, BadQuery, DbError, QueryError};
 use crate::batch::{Batch, BatchStatement};
 use crate::frame::{
     self,
-    request::{self, batch, execute, query, register, Request, RequestOpcode},
+    request::{self, batch, execute, query, register, Request},
     response::{event::Event, result, result::Row, Response, ResponseOpcode},
     server_event_type::EventType,
     value::{BatchValues, ValueList},
-    FrameParams, RequestBodyWithExtensions,
+    FrameParams, SerializedRequest,
 };
 use crate::query::Query;
 use crate::routing::ShardInfo;
@@ -63,9 +63,7 @@ pub struct Connection {
 type ResponseHandler = oneshot::Sender<Result<TaskResponse, QueryError>>;
 
 struct Task {
-    request_flags: u8,
-    request_opcode: RequestOpcode,
-    request_body: Bytes,
+    serialized_request: SerializedRequest,
     response_handler: ResponseHandler,
 }
 
@@ -511,24 +509,18 @@ impl Connection {
         compress: bool,
         tracing: bool,
     ) -> Result<QueryResponse, QueryError> {
-        let body = request.to_bytes()?;
         let compression = if compress {
             self.config.compression
         } else {
             None
         };
-        let body_with_ext = RequestBodyWithExtensions { body };
-
-        let (flags, raw_request) =
-            frame::prepare_request_body_with_extensions(body_with_ext, compression, tracing)?;
+        let serialized_request = SerializedRequest::make(request, compression, tracing)?;
 
         let (sender, receiver) = oneshot::channel();
 
         self.submit_channel
             .send(Task {
-                request_flags: flags,
-                request_opcode: R::OPCODE,
-                request_body: raw_request,
+                serialized_request,
                 response_handler: sender,
             })
             .await
@@ -736,19 +728,9 @@ impl Connection {
                 }
             };
 
-            let params = frame::FrameParams {
-                stream: stream_id,
-                flags: task.request_flags,
-                ..Default::default()
-            };
-
-            frame::write_request_frame(
-                &mut write_half,
-                params,
-                task.request_opcode,
-                task.request_body,
-            )
-            .await?;
+            let mut req = task.serialized_request;
+            req.set_stream(stream_id);
+            write_half.write_all(req.get_data()).await?;
         }
 
         Ok(())
