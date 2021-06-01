@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use crate::transport::retry_policy::RetryPolicy;
 use crate::transport::speculative_execution::SpeculativeExecutionPolicy;
 
@@ -14,7 +16,7 @@ pub struct StatementConfig {
     pub is_idempotent: bool,
 
     pub retry_policy: Option<Box<dyn RetryPolicy>>,
-    pub speculative_execution_policy: Option<SpeculativeExecutionPolicy>,
+    pub speculative_execution_policy: Option<Arc<dyn SpeculativeExecutionPolicy>>,
 
     pub tracing: bool,
 }

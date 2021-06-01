@@ -13,7 +13,6 @@ use tracing::warn;
 use uuid::Uuid;
 
 use super::errors::{BadQuery, NewSessionError, QueryError};
-use crate::cql_to_rust::FromRow;
 use crate::frame::response::cql_to_rust::FromRowError;
 use crate::frame::response::result;
 use crate::frame::value::{BatchValues, SerializedValues, ValueList};
@@ -34,6 +33,7 @@ use crate::transport::{
     Compression,
 };
 use crate::{batch::Batch, statement::StatementConfig};
+use crate::{cql_to_rust::FromRow, transport::speculative_execution};
 
 #[cfg(feature = "ssl")]
 use openssl::ssl::SslContext;
@@ -44,7 +44,7 @@ pub struct Session {
     load_balancer: Arc<dyn LoadBalancingPolicy>,
     schema_agreement_interval: Duration,
     retry_policy: Box<dyn RetryPolicy>,
-    speculative_execution_policy: Option<SpeculativeExecutionPolicy>,
+    speculative_execution_policy: Option<Arc<dyn SpeculativeExecutionPolicy>>,
 
     metrics: Arc<Metrics>,
 }
@@ -71,7 +71,7 @@ pub struct SessionConfig {
     pub keyspace_case_sensitive: bool,
 
     pub retry_policy: Box<dyn RetryPolicy>,
-    pub speculative_execution_policy: Option<SpeculativeExecutionPolicy>,
+    pub speculative_execution_policy: Option<Arc<dyn SpeculativeExecutionPolicy>>,
 
     /// Provide our Session with TLS
     #[cfg(feature = "ssl")]
@@ -996,7 +996,7 @@ impl Session {
                     )
                 };
 
-                speculative.execute(execute_query_generator).await
+                speculative_execution::execute(speculative.as_ref(), execute_query_generator).await
             }
             _ => self
                 .execute_query(
