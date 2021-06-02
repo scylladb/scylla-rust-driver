@@ -30,7 +30,7 @@ use crate::batch::{Batch, BatchStatement};
 use crate::frame::{
     self,
     request::{self, batch, execute, query, register, Request},
-    response::{event::Event, result, result::Row, Response, ResponseOpcode},
+    response::{event::Event, result, Response, ResponseOpcode},
     server_event_type::EventType,
     value::{BatchValues, ValueList},
     FrameParams, SerializedRequest,
@@ -48,7 +48,6 @@ use crate::transport::Compression;
 
 // Queries for schema agreement
 const LOCAL_VERSION: &str = "SELECT schema_version FROM system.local WHERE key='local'";
-const PEERS_VERSION: &str = "SELECT schema_version FROM system.peers";
 
 pub struct Connection {
     submit_channel: mpsc::Sender<Task>,
@@ -466,28 +465,6 @@ impl Connection {
                 "Unexpected response to REGISTER message",
             )),
         }
-    }
-
-    pub async fn check_schema_agreement(&self) -> Result<bool, QueryError> {
-        let peers_rows = self.fetch_peers_schema_version();
-        let local_version = self.fetch_schema_version();
-        let (peers_rows, local_version) = tokio::try_join!(peers_rows, local_version)?;
-        for row in peers_rows {
-            let (version,) = row
-                .into_typed::<(Uuid,)>()
-                .map_err(|_| QueryError::ProtocolError("Row is not uuid type as it should be"))?;
-            if local_version != version {
-                return Ok(false);
-            }
-        }
-        Ok(true)
-    }
-
-    async fn fetch_peers_schema_version(&self) -> Result<Vec<Row>, QueryError> {
-        self.query_single_page(PEERS_VERSION, &[])
-            .await?
-            .rows
-            .ok_or(QueryError::ProtocolError("Peers query returned not rows"))
     }
 
     pub async fn fetch_schema_version(&self) -> Result<Uuid, QueryError> {
