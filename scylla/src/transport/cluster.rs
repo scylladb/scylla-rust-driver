@@ -6,18 +6,21 @@ use crate::transport::errors::QueryError;
 use crate::transport::node::{Node, NodeConnections};
 use crate::transport::topology::{Keyspace, TopologyInfo, TopologyReader};
 
+use arc_swap::ArcSwap;
 use futures::future::join_all;
 use futures::{future::RemoteHandle, FutureExt};
 use itertools::Itertools;
 use std::collections::{BTreeMap, HashMap};
 use std::net::SocketAddr;
-use std::sync::{Arc, RwLock};
+use std::sync::Arc;
 use tracing::{debug, warn};
 
 /// Cluster manages up to date information and connections to database nodes.
 /// All data can be accessed by cloning Arc<ClusterData> in the `data` field
 pub struct Cluster {
-    data: Arc<RwLock<Arc<ClusterData>>>,
+    // `ArcSwap<ClusterData>` is wrapped in `Arc` to support sharing cluster data
+    // between `Cluster` and `ClusterWorker`
+    data: Arc<ArcSwap<ClusterData>>,
 
     refresh_channel: tokio::sync::mpsc::Sender<RefreshRequest>,
     use_keyspace_channel: tokio::sync::mpsc::Sender<UseKeyspaceRequest>,
@@ -43,7 +46,7 @@ pub struct ClusterData {
 // Works in the background to keep the cluster updated
 struct ClusterWorker {
     // Cluster data to keep updated:
-    cluster_data: Arc<RwLock<Arc<ClusterData>>>,
+    cluster_data: Arc<ArcSwap<ClusterData>>,
 
     // Cluster connections
     topology_reader: TopologyReader,
@@ -78,7 +81,7 @@ impl Cluster {
         initial_peers: &[SocketAddr],
         connection_config: ConnectionConfig,
     ) -> Result<Cluster, QueryError> {
-        let cluster_data = Arc::new(RwLock::new(Arc::new(ClusterData {
+        let cluster_data = Arc::new(ArcSwap::from(Arc::new(ClusterData {
             known_peers: HashMap::new(),
             ring: BTreeMap::new(),
             keyspaces: HashMap::new(),
@@ -123,7 +126,7 @@ impl Cluster {
     }
 
     pub fn get_data(&self) -> Arc<ClusterData> {
-        self.data.read().unwrap().clone()
+        self.data.load_full()
     }
 
     pub async fn refresh_topology(&self) -> Result<(), QueryError> {
@@ -343,7 +346,7 @@ impl ClusterWorker {
                         Some(request) => {
                             self.used_keyspace = Some(request.keyspace_name.clone());
 
-                            let cluster_data = self.cluster_data.read().unwrap().clone();
+                            let cluster_data = self.cluster_data.load_full();
                             let use_keyspace_future = Self::handle_use_keyspace_request(cluster_data, request);
                             tokio::spawn(use_keyspace_future);
                         },
@@ -368,7 +371,7 @@ impl ClusterWorker {
     }
 
     fn change_node_down_marker(&mut self, addr: SocketAddr, is_down: bool) {
-        let cluster_data = self.cluster_data.read().unwrap().clone();
+        let cluster_data = self.cluster_data.load_full();
 
         let node = match cluster_data.known_peers.get(&addr) {
             Some(node) => node,
@@ -435,7 +438,7 @@ impl ClusterWorker {
     async fn perform_refresh(&mut self) -> Result<(), QueryError> {
         // Read latest TopologyInfo
         let topo_info = self.topology_reader.read_topology_info().await?;
-        let cluster_data: Arc<ClusterData> = self.cluster_data.read().unwrap().clone();
+        let cluster_data: Arc<ClusterData> = self.cluster_data.load_full();
 
         let new_cluster_data = Arc::new(ClusterData::new(
             topo_info,
@@ -449,10 +452,7 @@ impl ClusterWorker {
         Ok(())
     }
 
-    fn update_cluster_data(&mut self, mut new_cluster_data: Arc<ClusterData>) {
-        let mut cluster_data_lock = self.cluster_data.write().unwrap();
-        // Use std::mem::swap to avoid dropping large structures with active write lock
-        std::mem::swap(&mut *cluster_data_lock, &mut new_cluster_data);
-        drop(cluster_data_lock);
+    fn update_cluster_data(&mut self, new_cluster_data: Arc<ClusterData>) {
+        self.cluster_data.store(new_cluster_data);
     }
 }
