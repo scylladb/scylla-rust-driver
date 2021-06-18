@@ -321,8 +321,8 @@ impl SessionBuilder {
     /// # Ok(())
     /// # }
     /// ```
-    pub async fn build(self) -> Result<Session, NewSessionError> {
-        Session::connect(self.config).await
+    pub async fn build(&self) -> Result<Session, NewSessionError> {
+        Session::connect(self.config.clone()).await
     }
 
     /// Changes connection timeout

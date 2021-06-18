@@ -33,6 +33,12 @@ pub trait RetryPolicy {
     fn clone_boxed(&self) -> Box<dyn RetryPolicy + Send + Sync>;
 }
 
+impl Clone for Box<dyn RetryPolicy + Send + Sync> {
+    fn clone(&self) -> Box<dyn RetryPolicy + Send + Sync> {
+        self.clone_boxed()
+    }
+}
+
 /// Used throughout a single query to decide when to retry it
 /// After this query is finished it is destroyed or reset
 pub trait RetrySession {
