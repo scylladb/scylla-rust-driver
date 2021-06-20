@@ -271,7 +271,7 @@ impl ConnectionKeeperWorker {
                 connection::open_connection(self.address, Some(port), self.config.clone()).await;
 
             match connect_result {
-                Err(err) if err.is_address_in_use() => continue, // If port collision happened try next port
+                Err(err) if err.is_address_unavailable_for_use() => continue, // If we can't use this port, try the next one
                 result => return result,
             }
         }
