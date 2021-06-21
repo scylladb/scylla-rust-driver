@@ -50,6 +50,7 @@ pub struct Session {
 /// Configuration options for [`Session`].
 /// Can be created manually, but usually it's easier to use
 /// [SessionBuilder](super::session_builder::SessionBuilder)
+#[derive(Clone)]
 pub struct SessionConfig {
     /// List of database servers known on Session startup.
     /// Session will connect to these nodes to retrieve information about other nodes in the cluster.
