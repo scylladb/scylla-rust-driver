@@ -846,12 +846,12 @@ impl Session {
             };
         }
 
-        return Err(QueryError::ProtocolError(
+        Err(QueryError::ProtocolError(
             "All tracing queries returned an empty result, \
             maybe information didnt reach this node yet. \
             Consider using get_tracing_info_custom with \
             bigger interval in GetTracingConfig",
-        ));
+        ))
     }
 
     // Tries getting the tracing info

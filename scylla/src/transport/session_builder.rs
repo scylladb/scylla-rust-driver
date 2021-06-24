@@ -480,13 +480,13 @@ mod tests {
     #[test]
     fn tcp_nodelay() {
         let mut builder = SessionBuilder::new();
-        assert_eq!(builder.config.tcp_nodelay, true);
+        assert!(builder.config.tcp_nodelay);
 
         builder = builder.tcp_nodelay(false);
-        assert_eq!(builder.config.tcp_nodelay, false);
+        assert!(!builder.config.tcp_nodelay);
 
         builder = builder.tcp_nodelay(true);
-        assert_eq!(builder.config.tcp_nodelay, true);
+        assert!(builder.config.tcp_nodelay);
     }
 
     #[test]
@@ -508,15 +508,15 @@ mod tests {
     fn use_keyspace() {
         let mut builder = SessionBuilder::new();
         assert_eq!(builder.config.used_keyspace, None);
-        assert_eq!(builder.config.keyspace_case_sensitive, false);
+        assert!(!builder.config.keyspace_case_sensitive);
 
         builder = builder.use_keyspace("ks_name_1", true);
         assert_eq!(builder.config.used_keyspace, Some("ks_name_1".to_string()));
-        assert_eq!(builder.config.keyspace_case_sensitive, true);
+        assert!(builder.config.keyspace_case_sensitive);
 
         builder = builder.use_keyspace("ks_name_2", false);
         assert_eq!(builder.config.used_keyspace, Some("ks_name_2".to_string()));
-        assert_eq!(builder.config.keyspace_case_sensitive, false);
+        assert!(!builder.config.keyspace_case_sensitive);
     }
 
     #[test]
@@ -564,7 +564,7 @@ mod tests {
         );
 
         assert_eq!(builder.config.compression, Some(Compression::Snappy));
-        assert_eq!(builder.config.tcp_nodelay, true);
+        assert!(builder.config.tcp_nodelay);
         assert_eq!(
             builder.config.load_balancing.name(),
             "RoundRobinPolicy".to_string()
@@ -572,6 +572,6 @@ mod tests {
 
         assert_eq!(builder.config.used_keyspace, Some("ks_name".to_string()));
 
-        assert_eq!(builder.config.keyspace_case_sensitive, true);
+        assert!(builder.config.keyspace_case_sensitive);
     }
 }
