@@ -13,8 +13,6 @@ use tracing::warn;
 use uuid::Uuid;
 
 use super::errors::{BadQuery, NewSessionError, QueryError};
-use crate::batch::Batch;
-use crate::cql_to_rust::FromRow;
 use crate::frame::response::cql_to_rust::FromRowError;
 use crate::frame::response::result;
 use crate::frame::value::{BatchValues, SerializedValues, ValueList};
@@ -28,11 +26,14 @@ use crate::transport::{
     connection::{BatchResult, Connection, ConnectionConfig, QueryResult, VerifiedKeyspaceName},
     iterator::RowIterator,
     load_balancing::{LoadBalancingPolicy, RoundRobinPolicy, Statement, TokenAwarePolicy},
-    metrics::{Metrics, MetricsView},
+    metrics::Metrics,
     node::Node,
     retry_policy::{DefaultRetryPolicy, QueryInfo, RetryDecision, RetryPolicy, RetrySession},
+    speculative_execution::SpeculativeExecutionPolicy,
     Compression,
 };
+use crate::{batch::Batch, statement::StatementConfig};
+use crate::{cql_to_rust::FromRow, transport::speculative_execution};
 
 #[cfg(feature = "ssl")]
 use openssl::ssl::SslContext;
@@ -41,8 +42,9 @@ use openssl::ssl::SslContext;
 pub struct Session {
     cluster: Cluster,
     load_balancer: Arc<dyn LoadBalancingPolicy>,
-    retry_policy: Box<dyn RetryPolicy + Send + Sync>,
     schema_agreement_interval: Duration,
+    retry_policy: Box<dyn RetryPolicy>,
+    speculative_execution_policy: Option<Arc<dyn SpeculativeExecutionPolicy>>,
 
     metrics: Arc<Metrics>,
 }
@@ -68,7 +70,8 @@ pub struct SessionConfig {
     pub used_keyspace: Option<String>,
     pub keyspace_case_sensitive: bool,
 
-    pub retry_policy: Box<dyn RetryPolicy + Send + Sync>,
+    pub retry_policy: Box<dyn RetryPolicy>,
+    pub speculative_execution_policy: Option<Arc<dyn SpeculativeExecutionPolicy>>,
 
     /// Provide our Session with TLS
     #[cfg(feature = "ssl")]
@@ -117,6 +120,7 @@ impl SessionConfig {
             used_keyspace: None,
             keyspace_case_sensitive: false,
             retry_policy: Box::new(DefaultRetryPolicy),
+            speculative_execution_policy: None,
             #[cfg(feature = "ssl")]
             ssl_context: None,
             auth_username: None,
@@ -286,14 +290,14 @@ impl Session {
 
         // Start the session
         let cluster = Cluster::new(&node_addresses, config.get_connection_config()).await?;
-        let metrics = Arc::new(Metrics::new());
 
         let session = Session {
             cluster,
             load_balancer: config.load_balancing,
             retry_policy: config.retry_policy,
             schema_agreement_interval: config.schema_agreement_interval,
-            metrics,
+            speculative_execution_policy: config.speculative_execution_policy,
+            metrics: Arc::new(Metrics::new()),
         };
 
         if let Some(keyspace_name) = config.used_keyspace {
@@ -389,11 +393,6 @@ impl Session {
                 .map(|_| QueryResult::default());
         }
 
-        let retry_session = match &query.retry_policy {
-            Some(policy) => policy.new_session(),
-            None => self.retry_policy.new_session(),
-        };
-
         // Needed to avoid moving query and values into async move block
         let query_ref: &Query = &query;
         let values_ref = &serialized_values;
@@ -401,9 +400,7 @@ impl Session {
 
         self.run_query(
             Statement::default(),
-            query.is_idempotent,
-            query.consistency,
-            retry_session,
+            &query.config,
             |node: Arc<Node>| async move { node.random_connection().await },
             |connection: Arc<Connection>| async move {
                 connection
@@ -455,7 +452,7 @@ impl Session {
         let query: Query = query.into();
         let serialized_values = values.serialized()?;
 
-        let retry_session = match &query.retry_policy {
+        let retry_session = match &query.config.retry_policy {
             Some(policy) => policy.new_session(),
             None => self.retry_policy.new_session(),
         };
@@ -616,16 +613,9 @@ impl Session {
             keyspace: prepared.get_keyspace_name(),
         };
 
-        let retry_session = match &prepared.retry_policy {
-            Some(policy) => policy.new_session(),
-            None => self.retry_policy.new_session(),
-        };
-
         self.run_query(
             statement_info,
-            prepared.is_idempotent,
-            prepared.consistency,
-            retry_session,
+            &prepared.config,
             |node: Arc<Node>| async move { node.connection_for_token(token).await },
             |connection: Arc<Connection>| async move {
                 connection
@@ -687,7 +677,7 @@ impl Session {
 
         let token = calculate_token(&prepared, &serialized_values)?;
 
-        let retry_session = match &prepared.retry_policy {
+        let retry_session = match &prepared.config.retry_policy {
             Some(policy) => policy.new_session(),
             None => self.retry_policy.new_session(),
         };
@@ -750,16 +740,9 @@ impl Session {
     ) -> Result<BatchResult, QueryError> {
         let values_ref = &values;
 
-        let retry_session = match &batch.retry_policy {
-            Some(policy) => policy.new_session(),
-            None => self.retry_policy.new_session(),
-        };
-
         self.run_query(
             Statement::default(),
-            batch.is_idempotent,
-            batch.consistency,
-            retry_session,
+            &batch.config,
             |node: Arc<Node>| async move { node.random_connection().await },
             |connection: Arc<Connection>| async move { connection.batch(batch, values_ref).await },
         )
@@ -829,8 +812,8 @@ impl Session {
     /// Access metrics collected by the driver  
     /// Driver collects various metrics like number of queries or query latencies.
     /// They can be read using this method
-    pub fn get_metrics(&self) -> MetricsView {
-        MetricsView::new(self.metrics.clone())
+    pub fn get_metrics(&self) -> Arc<Metrics> {
+        self.metrics.clone()
     }
 
     /// Get [`TracingInfo`] of a traced query performed earlier
@@ -863,12 +846,12 @@ impl Session {
             };
         }
 
-        return Err(QueryError::ProtocolError(
+        Err(QueryError::ProtocolError(
             "All tracing queries returned an empty result, \
             maybe information didnt reach this node yet. \
             Consider using get_tracing_info_custom with \
             bigger interval in GetTracingConfig",
-        ));
+        ))
     }
 
     // Tries getting the tracing info
@@ -882,13 +865,13 @@ impl Session {
         // Query system_traces.sessions for TracingInfo
         let mut traces_session_query =
             Query::new(crate::tracing::TRACES_SESSION_QUERY_STR.to_string());
-        traces_session_query.consistency = consistency;
+        traces_session_query.config.consistency = consistency;
 
         // Query system_traces.events for TracingEvents
         let mut traces_events_query =
             Query::new(crate::tracing::TRACES_EVENTS_QUERY_STR.to_string());
-        traces_events_query.consistency = Consistency::One;
-        traces_events_query.consistency = consistency;
+        traces_events_query.config.consistency = Consistency::One;
+        traces_events_query.config.consistency = consistency;
 
         let (traces_session_res, traces_events_res) = tokio::try_join!(
             self.query(traces_session_query, (tracing_id,)),
@@ -953,9 +936,7 @@ impl Session {
     async fn run_query<'a, ConnFut, QueryFut, ResT>(
         &'a self,
         statement_info: Statement<'a>,
-        query_is_idempotent: bool,
-        query_consistency: Consistency,
-        mut retry_session: Box<dyn RetrySession + Send + Sync>,
+        statement_config: &StatementConfig,
         choose_connection: impl Fn(Arc<Node>) -> ConnFut,
         do_query: impl Fn(Arc<Connection>) -> QueryFut,
     ) -> Result<ResT, QueryError>
@@ -966,15 +947,102 @@ impl Session {
         let cluster_data = self.cluster.get_data();
         let query_plan = self.load_balancer.plan(&statement_info, &cluster_data);
 
-        let mut last_error: QueryError =
-            QueryError::ProtocolError("Empty query plan - driver bug!");
+        // If a speculative execution policy is used to run query, query_plan has to be shared
+        // between different async functions. This struct helps to wrap query_plan in mutex so it
+        // can be shared safely.
+        struct SharedPlan<I>
+        where
+            I: Iterator<Item = Arc<Node>>,
+        {
+            iter: std::sync::Mutex<I>,
+        }
+
+        impl<I> Iterator for &SharedPlan<I>
+        where
+            I: Iterator<Item = Arc<Node>>,
+        {
+            type Item = Arc<Node>;
+
+            fn next(&mut self) -> Option<Self::Item> {
+                self.iter.lock().unwrap().next()
+            }
+        }
+
+        let retry_policy = match &statement_config.retry_policy {
+            Some(policy) => policy,
+            None => &self.retry_policy,
+        };
+
+        let speculative_policy = statement_config
+            .speculative_execution_policy
+            .as_ref()
+            .or_else(|| self.speculative_execution_policy.as_ref());
+
+        match speculative_policy {
+            Some(speculative) if statement_config.is_idempotent => {
+                let shared_query_plan = SharedPlan {
+                    iter: std::sync::Mutex::new(query_plan),
+                };
+
+                let execute_query_generator = || {
+                    self.execute_query(
+                        &shared_query_plan,
+                        statement_config.is_idempotent,
+                        statement_config.consistency,
+                        retry_policy.new_session(),
+                        &choose_connection,
+                        &do_query,
+                    )
+                };
+
+                let context = speculative_execution::Context {
+                    metrics: self.metrics.clone(),
+                };
+
+                speculative_execution::execute(
+                    speculative.as_ref(),
+                    &context,
+                    execute_query_generator,
+                )
+                .await
+            }
+            _ => self
+                .execute_query(
+                    query_plan,
+                    statement_config.is_idempotent,
+                    statement_config.consistency,
+                    retry_policy.new_session(),
+                    &choose_connection,
+                    &do_query,
+                )
+                .await
+                .unwrap_or(Err(QueryError::ProtocolError(
+                    "Empty query plan - driver bug!",
+                ))),
+        }
+    }
+
+    async fn execute_query<ConnFut, QueryFut, ResT>(
+        &self,
+        query_plan: impl Iterator<Item = Arc<Node>>,
+        is_idempotent: bool,
+        consistency: Consistency,
+        mut retry_session: Box<dyn RetrySession>,
+        choose_connection: impl Fn(Arc<Node>) -> ConnFut,
+        do_query: impl Fn(Arc<Connection>) -> QueryFut,
+    ) -> Option<Result<ResT, QueryError>>
+    where
+        ConnFut: Future<Output = Result<Arc<Connection>, QueryError>>,
+        QueryFut: Future<Output = Result<ResT, QueryError>>,
+    {
+        let mut last_error: Option<QueryError> = None;
 
         'nodes_in_plan: for node in query_plan {
             'same_node_retries: loop {
                 let connection: Arc<Connection> = match choose_connection(node.clone()).await {
                     Ok(connection) => connection,
                     Err(e) => {
-                        last_error = e;
+                        last_error = Some(e);
                         // Broken connection doesn't count as a failed query, don't log in metrics
                         continue 'nodes_in_plan;
                     }
@@ -990,19 +1058,19 @@ impl Session {
                         let _ = self
                             .metrics
                             .log_query_latency(query_start.elapsed().as_millis() as u64);
-                        return Ok(response);
+                        return Some(Ok(response));
                     }
                     Err(e) => {
                         self.metrics.inc_failed_nonpaged_queries();
-                        e
+                        Some(e)
                     }
                 };
 
                 // Use retry policy to decide what to do next
                 let query_info = QueryInfo {
-                    error: &last_error,
-                    is_idempotent: query_is_idempotent,
-                    consistency: query_consistency,
+                    error: last_error.as_ref().unwrap(),
+                    is_idempotent,
+                    consistency,
                 };
 
                 match retry_session.decide_should_retry(query_info) {
@@ -1014,12 +1082,12 @@ impl Session {
                         self.metrics.inc_retries_num();
                         continue 'nodes_in_plan;
                     }
-                    RetryDecision::DontRetry => return Err(last_error),
+                    RetryDecision::DontRetry => return last_error.map(Result::Err),
                 };
             }
         }
 
-        return Err(last_error);
+        last_error.map(Result::Err)
     }
 
     pub async fn await_schema_agreement(&self) -> Result<(), QueryError> {
@@ -1045,11 +1113,16 @@ impl Session {
     where
         QueryFut: Future<Output = Result<ResT, QueryError>>,
     {
+        let info = Statement::default();
+        let config = StatementConfig {
+            is_idempotent: true,
+            serial_consistency: Some(Consistency::One),
+            ..Default::default()
+        };
+
         self.run_query(
-            Statement::default(),
-            true,
-            Consistency::One,
-            self.retry_policy.new_session(),
+            info,
+            &config,
             |node: Arc<Node>| async move { node.random_connection().await },
             do_query,
         )

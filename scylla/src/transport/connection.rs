@@ -228,7 +228,7 @@ impl Connection {
                     query: &query.get_contents(),
                 },
                 true,
-                query.tracing,
+                query.config.tracing,
             )
             .await?;
 
@@ -310,7 +310,8 @@ impl Connection {
             },
         };
 
-        self.send_request(&query_frame, true, query.tracing).await
+        self.send_request(&query_frame, true, query.config.tracing)
+            .await
     }
 
     pub async fn execute_single_page(
@@ -344,7 +345,7 @@ impl Connection {
         };
 
         let query_response = self
-            .send_request(&execute_frame, true, prepared_statement.tracing)
+            .send_request(&execute_frame, true, prepared_statement.config.tracing)
             .await?;
 
         if let Response::Error(err) = &query_response.response {
@@ -361,7 +362,7 @@ impl Connection {
                 }
 
                 return self
-                    .send_request(&execute_frame, true, prepared_statement.tracing)
+                    .send_request(&execute_frame, true, prepared_statement.config.tracing)
                     .await;
             }
         }
@@ -400,7 +401,9 @@ impl Connection {
             serial_consistency: batch.get_serial_consistency(),
         };
 
-        let query_response = self.send_request(&batch_frame, true, batch.tracing).await?;
+        let query_response = self
+            .send_request(&batch_frame, true, batch.config.tracing)
+            .await?;
 
         match query_response.response {
             Response::Error(err) => Err(err.into()),

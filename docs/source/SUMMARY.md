@@ -48,6 +48,10 @@
     - [Fallthrough retry policy](retry-policy/fallthrough.md)
     - [Default retry policy](retry-policy/default.md)
 
+- [Speculative execution](speculative-execution/speculative.md)
+    - [Simple](speculative-execution/simple.md)
+    - [Latency Percentile](speculative-execution/percentile.md)
+
 - [Driver metrics](metrics/metrics.md)
 
 - [Logging](logging/logging.md)

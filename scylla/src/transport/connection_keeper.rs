@@ -277,10 +277,10 @@ impl ConnectionKeeperWorker {
         }
 
         // Tried all source ports for that shard, give up
-        return Err(QueryError::IoError(Arc::new(std::io::Error::new(
+        Err(QueryError::IoError(Arc::new(std::io::Error::new(
             std::io::ErrorKind::AddrInUse,
             "Could not find free source port for shard",
-        ))));
+        ))))
     }
 }
 

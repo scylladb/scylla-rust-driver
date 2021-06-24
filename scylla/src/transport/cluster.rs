@@ -432,7 +432,7 @@ impl ClusterWorker {
         }
 
         // We can unwrap io_error because use_keyspace_futures must be nonempty
-        return Err(QueryError::IoError(io_error.unwrap()));
+        Err(QueryError::IoError(io_error.unwrap()))
     }
 
     async fn perform_refresh(&mut self) -> Result<(), QueryError> {
