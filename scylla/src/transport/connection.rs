@@ -858,6 +858,9 @@ pub async fn open_named_connection(
                 Response::AuthSuccess(_authenticate_success) => {
                     return Ok((connection, error_receiver));
                 }
+                Response::Error(err) => {
+                    return Err(err.into());
+                }
                 _ => {
                     return Err(QueryError::ProtocolError(
                         "Unexpected response to Authenticate Response message",
