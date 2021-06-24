@@ -17,7 +17,7 @@ let mut batch: Batch = Default::default();
 batch.append_statement("INSERT INTO ks.tab (a) VALUES(4)");
 
 // Enable tracing
-batch.config.set_tracing(true);
+batch.set_tracing(true);
 
 let res: BatchResult = session.batch(&batch, ((),)).await?;
 let tracing_id: Option<Uuid> = res.tracing_id;

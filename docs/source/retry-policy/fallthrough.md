@@ -32,7 +32,7 @@ use scylla::transport::retry_policy::FallthroughRetryPolicy;
 
 // Create a Query manually and set the retry policy
 let mut my_query: Query = Query::new("INSERT INTO ks.tab (a) VALUES(?)".to_string());
-my_query.config.set_retry_policy(Box::new(FallthroughRetryPolicy::new()));
+my_query.set_retry_policy(Box::new(FallthroughRetryPolicy::new()));
 
 // Run the query using this retry policy
 let to_insert: i32 = 12345;
@@ -55,7 +55,7 @@ let mut prepared: PreparedStatement = session
     .prepare("INSERT INTO ks.tab (a) VALUES(?)")
     .await?;
 
-prepared.config.set_retry_policy(Box::new(FallthroughRetryPolicy::new()));
+prepared.set_retry_policy(Box::new(FallthroughRetryPolicy::new()));
 
 // Run the query using this retry policy
 let to_insert: i32 = 12345;

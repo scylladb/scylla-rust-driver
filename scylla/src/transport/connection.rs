@@ -302,8 +302,8 @@ impl Connection {
         let query_frame = query::Query {
             contents: query.get_contents().to_owned(),
             parameters: query::QueryParameters {
-                consistency: query.config.get_consistency(),
-                serial_consistency: query.config.get_serial_consistency(),
+                consistency: query.get_consistency(),
+                serial_consistency: query.get_serial_consistency(),
                 values: &serialized_values,
                 page_size: query.get_page_size(),
                 paging_state,
@@ -336,8 +336,8 @@ impl Connection {
         let execute_frame = execute::Execute {
             id: prepared_statement.get_id().to_owned(),
             parameters: query::QueryParameters {
-                consistency: prepared_statement.config.get_consistency(),
-                serial_consistency: prepared_statement.config.get_serial_consistency(),
+                consistency: prepared_statement.get_consistency(),
+                serial_consistency: prepared_statement.get_serial_consistency(),
                 values: &serialized_values,
                 page_size: prepared_statement.get_page_size(),
                 paging_state,
@@ -397,8 +397,8 @@ impl Connection {
             statements_count,
             values,
             batch_type: batch.get_type(),
-            consistency: batch.config.get_consistency(),
-            serial_consistency: batch.config.get_serial_consistency(),
+            consistency: batch.get_consistency(),
+            serial_consistency: batch.get_serial_consistency(),
         };
 
         let query_response = self

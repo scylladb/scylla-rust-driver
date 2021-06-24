@@ -56,7 +56,7 @@ let mut batch: Batch = Default::default();
 batch.append_statement("INSERT INTO ks.tab(a) VALUES(16)");
 
 // Set batch consistency to One
-batch.config.set_consistency(Consistency::One);
+batch.set_consistency(Consistency::One);
 
 // Run the batch
 session.batch(&batch, ((), )).await?;

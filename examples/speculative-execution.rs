@@ -33,7 +33,7 @@ async fn main() -> Result<()> {
     let mut select_stmt = session.prepare("SELECT a, b, c FROM ks.t").await?;
 
     // This will allow for speculative execution
-    select_stmt.config.set_is_idempotent(true);
+    select_stmt.set_is_idempotent(true);
 
     // This will trigger speculative execution
     session.execute(&select_stmt, &[]).await?;

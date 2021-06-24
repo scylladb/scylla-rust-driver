@@ -5,12 +5,14 @@ use uuid::Uuid;
 
 use super::StatementConfig;
 use crate::frame::response::result::PreparedMetadata;
+use crate::frame::types::Consistency;
 use crate::frame::value::SerializedValues;
+use crate::transport::retry_policy::RetryPolicy;
 
 /// Represents a statement prepared on the server.
 #[derive(Clone)]
 pub struct PreparedStatement {
-    pub config: StatementConfig,
+    pub(crate) config: StatementConfig,
     pub prepare_tracing_ids: Vec<Uuid>,
 
     id: Bytes,
@@ -126,6 +128,65 @@ impl PreparedStatement {
             .col_specs
             .first()
             .map(|col_spec| col_spec.table_spec.ks_name.as_str())
+    }
+
+    /// Sets the consistency to be used when executing this batch.
+    pub fn set_consistency(&mut self, c: Consistency) {
+        self.config.consistency = c;
+    }
+
+    /// Gets the consistency to be used when executing this batch.
+    pub fn get_consistency(&self) -> Consistency {
+        self.config.consistency
+    }
+
+    /// Sets the serial consistency to be used when executing this batch.
+    /// (Ignored unless the batch is an LWT)
+    pub fn set_serial_consistency(&mut self, sc: Option<Consistency>) {
+        self.config.serial_consistency = sc;
+    }
+
+    /// Gets the serial consistency to be used when executing this batch.
+    /// (Ignored unless the batch is an LWT)
+    pub fn get_serial_consistency(&self) -> Option<Consistency> {
+        self.config.serial_consistency
+    }
+
+    /// Sets the idempotence of this statement
+    /// A query is idempotent if it can be applied multiple times without changing the result of the initial application
+    /// If set to `true` we can be sure that it is idempotent
+    /// If set to `false` it is unknown whether it is idempotent
+    /// This is used in [`RetryPolicy`] to decide if retrying a query is safe
+    pub fn set_is_idempotent(&mut self, is_idempotent: bool) {
+        self.config.is_idempotent = is_idempotent;
+    }
+
+    /// Gets the idempotence of this statement
+    pub fn get_is_idempotent(&self) -> bool {
+        self.config.is_idempotent
+    }
+
+    /// Sets a custom [`RetryPolicy`] to be used with this statement
+    /// By default Session's retry policy is used, this allows to use a custom retry policy
+    pub fn set_retry_policy(&mut self, retry_policy: Box<dyn RetryPolicy>) {
+        self.config.retry_policy = Some(retry_policy);
+    }
+
+    /// Gets custom [`RetryPolicy`] used by this statement
+    pub fn get_retry_policy(&self) -> &Option<Box<dyn RetryPolicy>> {
+        &self.config.retry_policy
+    }
+
+    /// Enable or disable CQL Tracing for this batch
+    /// If enabled session.batch() will return a BatchResult containing tracing_id
+    /// which can be used to query tracing information about the execution of this query
+    pub fn set_tracing(&mut self, should_trace: bool) {
+        self.config.tracing = should_trace;
+    }
+
+    /// Gets whether tracing is enabled for this batch
+    pub fn get_tracing(&self) -> bool {
+        self.config.tracing
     }
 }
 

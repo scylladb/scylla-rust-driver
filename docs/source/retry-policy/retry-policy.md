@@ -27,7 +27,7 @@ use scylla::prepared_statement::PreparedStatement;
 
 // Specify that a Query is idempotent
 let mut my_query: Query = Query::new("SELECT a FROM ks.tab".to_string());
-my_query.config.set_is_idempotent(true);
+my_query.set_is_idempotent(true);
 
 
 // Specify that a PreparedStatement is idempotent
@@ -35,7 +35,7 @@ let mut prepared: PreparedStatement = session
     .prepare("SELECT a FROM ks.tab")
     .await?;
 
-prepared.config.set_is_idempotent(true);
+prepared.set_is_idempotent(true);
 # Ok(())
 # }
 ```
