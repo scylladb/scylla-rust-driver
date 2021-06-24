@@ -82,10 +82,6 @@ pub struct SessionConfig {
 
     pub schema_agreement_interval: Duration,
     pub connect_timeout: std::time::Duration,
-
-    /// Provide session with metrics prepared earlier (this can also be used to share metrics
-    /// between sessions)
-    pub metrics: Option<Arc<Metrics>>,
     /*
     These configuration options will be added in the future:
 
@@ -130,7 +126,6 @@ impl SessionConfig {
             auth_username: None,
             auth_password: None,
             connect_timeout: std::time::Duration::from_secs(5),
-            metrics: None,
         }
     }
 
@@ -188,21 +183,6 @@ impl SessionConfig {
         for address in node_addrs {
             self.add_known_node_addr(*address);
         }
-    }
-
-    /// Adds previously prepared metrics object
-    /// # Example
-    /// ```
-    /// # use scylla::SessionConfig;
-    /// # use scylla::Metrics;
-    /// # use std::sync::Arc;
-    /// let metrics = Arc::new(Metrics::new());
-    ///
-    /// let mut config = SessionConfig::new();
-    /// config.add_metrics(metrics);
-    /// ```
-    pub fn add_metrics(&mut self, metrics: Arc<Metrics>) {
-        self.metrics = Some(metrics)
     }
 
     /// Makes a config that should be used in Connection
@@ -310,7 +290,6 @@ impl Session {
 
         // Start the session
         let cluster = Cluster::new(&node_addresses, config.get_connection_config()).await?;
-        let metrics = config.metrics.unwrap_or_else(|| Arc::new(Metrics::new()));
 
         let session = Session {
             cluster,
@@ -318,7 +297,7 @@ impl Session {
             retry_policy: config.retry_policy,
             schema_agreement_interval: config.schema_agreement_interval,
             speculative_execution_policy: config.speculative_execution_policy,
-            metrics,
+            metrics: Arc::new(Metrics::new()),
         };
 
         if let Some(keyspace_name) = config.used_keyspace {
@@ -1016,7 +995,16 @@ impl Session {
                     )
                 };
 
-                speculative_execution::execute(speculative.as_ref(), execute_query_generator).await
+                let context = speculative_execution::Context {
+                    metrics: self.metrics.clone(),
+                };
+
+                speculative_execution::execute(
+                    speculative.as_ref(),
+                    &context,
+                    execute_query_generator,
+                )
+                .await
             }
             _ => self
                 .execute_query(

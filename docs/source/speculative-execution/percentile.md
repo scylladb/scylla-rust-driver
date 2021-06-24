@@ -16,22 +16,17 @@ use std::{sync::Arc, time::Duration};
 use scylla::{
     Session,
     SessionBuilder,
-    Metrics,
     speculative_execution::PercentileSpeculativeExecutionPolicy,
 };
-
-let metrics = Arc::new(Metrics::new());
 
 let policy = PercentileSpeculativeExecutionPolicy  {
     max_retry_count: 3,
     percentile: 99.0,
-    metrics: metrics.clone(),
 };
 
 let session: Session = SessionBuilder::new()
     .known_node("127.0.0.1:9042")
     .speculative_execution(Arc::new(policy))
-    .metrics(metrics)
     .build()
     .await?;
 # Ok(())

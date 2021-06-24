@@ -5,7 +5,7 @@ use super::load_balancing::LoadBalancingPolicy;
 use super::session::{Session, SessionConfig};
 use super::speculative_execution::SpeculativeExecutionPolicy;
 use super::Compression;
-use crate::{transport::retry_policy::RetryPolicy, Metrics};
+use crate::transport::retry_policy::RetryPolicy;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration;
@@ -378,29 +378,6 @@ impl SessionBuilder {
     /// ```
     pub fn connection_timeout(mut self, duration: std::time::Duration) -> Self {
         self.config.connect_timeout = duration;
-        self
-    }
-
-    /// Sets metrics
-    /// The default are empty.
-    ///
-    /// # Example
-    /// ```
-    /// # use scylla::{Session, SessionBuilder, Metrics};
-    /// # use std::sync::Arc;
-    /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
-    /// let metrics = Arc::new(Metrics::new());
-    ///
-    /// let session: Session = SessionBuilder::new()
-    ///     .known_node("127.0.0.1:9042")
-    ///     .metrics(metrics)
-    ///     .build() // Turns SessionBuilder into Session
-    ///     .await?;
-    /// # Ok(())
-    /// # }
-    /// ```
-    pub fn metrics(mut self, metrics: Arc<Metrics>) -> Self {
-        self.config.metrics = Some(metrics);
         self
     }
 }

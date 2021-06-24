@@ -1,5 +1,5 @@
 use scylla::{
-    speculative_execution::PercentileSpeculativeExecutionPolicy, Metrics, Session, SessionBuilder,
+    speculative_execution::PercentileSpeculativeExecutionPolicy, Session, SessionBuilder,
 };
 
 use anyhow::Result;
@@ -10,19 +10,13 @@ async fn main() -> Result<()> {
     let uri = env::var("SCYLLA_URI").unwrap_or_else(|_| "127.0.0.1:9042".to_string());
     println!("Connecting to {} ...", uri);
 
-    let metrics = Arc::new(Metrics::new());
-
     let speculative = PercentileSpeculativeExecutionPolicy {
         max_retry_count: 2,
         percentile: 99.0,
-
-        // Share metrics between session and speculative execution policy
-        metrics: metrics.clone(),
     };
 
     let session: Session = SessionBuilder::new()
         .known_node(uri)
-        .metrics(metrics)
         .speculative_execution(Arc::new(speculative))
         .build()
         .await?;
