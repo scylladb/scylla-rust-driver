@@ -79,6 +79,18 @@ impl SpeculativeExecutionPolicy for PercentileSpeculativeExecutionPolicy {
     }
 }
 
+// checks if a result created in a speculative execution branch can be ignored
+fn can_be_ignored<ResT>(result: &Result<ResT, QueryError>) -> bool {
+    match result {
+        Ok(_) => false,
+        Err(QueryError::IoError(_)) => true,
+        Err(QueryError::TimeoutError) => true,
+        _ => false,
+    }
+}
+
+const EMPTY_PLAN_ERROR: QueryError = QueryError::ProtocolError("Empty query plan - driver bug!");
+
 pub async fn execute<QueryFut, ResT>(
     policy: &dyn SpeculativeExecutionPolicy,
     context: &Context,
@@ -96,6 +108,7 @@ where
     let sleep = tokio::time::sleep(retry_interval).fuse();
     tokio::pin!(sleep);
 
+    let mut last_error = None;
     loop {
         futures::select! {
             _ = &mut sleep => {
@@ -109,14 +122,19 @@ where
             }
             res = async_tasks.select_next_some() => {
                 match res {
-                    Some(r) => return r,
+                    Some(r) => {
+                        if !can_be_ignored(&r) {
+                            return r;
+                        } else {
+                            last_error = Some(r)
+                        }
+                    },
                     None =>  {
                         if async_tasks.is_empty() && retries_remaining == 0 {
-                            return Err(QueryError::ProtocolError(
-                                "Empty query plan - driver bug!",
-                            ));
+                            return last_error.unwrap_or({
+                                Err(EMPTY_PLAN_ERROR)
+                            });
                         }
-                        continue
                     },
                 }
             }
