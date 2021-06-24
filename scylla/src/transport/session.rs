@@ -954,7 +954,7 @@ impl Session {
         where
             I: Iterator<Item = Arc<Node>>,
         {
-            iter: Arc<std::sync::Mutex<I>>,
+            iter: std::sync::Mutex<I>,
         }
 
         impl<I> Iterator for &SharedPlan<I>
@@ -981,7 +981,7 @@ impl Session {
         match speculative_policy {
             Some(speculative) if statement_config.is_idempotent => {
                 let shared_query_plan = SharedPlan {
-                    iter: Arc::new(std::sync::Mutex::new(query_plan)),
+                    iter: std::sync::Mutex::new(query_plan),
                 };
 
                 let execute_query_generator = || {
