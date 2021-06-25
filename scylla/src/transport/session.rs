@@ -129,12 +129,13 @@ impl SessionConfig {
         }
     }
 
-    /// Adds a known database server with a hostname
+    /// Adds a known database server with a hostname.
+    /// If the port is not explicitly specified, 9042 is used as default
     /// # Example
     /// ```
     /// # use scylla::SessionConfig;
     /// let mut config = SessionConfig::new();
-    /// config.add_known_node("127.0.0.1:9042");
+    /// config.add_known_node("127.0.0.1");
     /// config.add_known_node("db1.example.com:9042");
     /// ```
     pub fn add_known_node(&mut self, hostname: impl AsRef<str>) {
@@ -154,7 +155,8 @@ impl SessionConfig {
         self.known_nodes.push(KnownNode::Address(node_addr));
     }
 
-    /// Adds a list of known database server with hostnames
+    /// Adds a list of known database server with hostnames.
+    /// If the port is not explicitly specified, 9042 is used as default
     /// # Example
     /// ```
     /// # use scylla::SessionConfig;
@@ -1245,7 +1247,12 @@ fn calculate_token(
 async fn resolve_hostname(hostname: &str) -> Result<SocketAddr, NewSessionError> {
     let failed_err = NewSessionError::FailedToResolveAddress(hostname.to_string());
     let mut ret = None;
-    for a in lookup_host(hostname).await? {
+    let addrs: Vec<SocketAddr> = match lookup_host(hostname).await {
+        Ok(addrs) => addrs.collect(),
+        // Use a default port in case of error, but propagate the original error on failure
+        Err(e) => lookup_host((hostname, 9042)).await.or(Err(e))?.collect(),
+    };
+    for a in addrs {
         match a {
             SocketAddr::V4(_) => return Ok(a),
             _ => {
