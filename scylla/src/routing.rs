@@ -3,7 +3,7 @@ use rand::Rng;
 use std::collections::HashMap;
 use std::convert::TryFrom;
 use std::net::SocketAddr;
-use std::num::Wrapping;
+use std::num::{NonZeroU16, Wrapping};
 use thiserror::Error;
 
 #[derive(PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Copy)]
@@ -19,11 +19,12 @@ pub struct Token {
 }
 
 pub type Shard = u32;
+pub type ShardCount = NonZeroU16;
 
 #[derive(PartialEq, Eq, Clone, Debug)]
 pub struct ShardInfo {
     pub shard: u16,
-    pub nr_shards: u16,
+    pub nr_shards: ShardCount,
     pub msb_ignore: u8,
 }
 
@@ -41,8 +42,7 @@ pub fn murmur3_token(pk: Bytes) -> Token {
 }
 
 impl ShardInfo {
-    pub fn new(shard: u16, nr_shards: u16, msb_ignore: u8) -> Self {
-        assert!(nr_shards > 0);
+    pub fn new(shard: u16, nr_shards: ShardCount, msb_ignore: u8) -> Self {
         ShardInfo {
             shard,
             nr_shards,
@@ -53,21 +53,22 @@ impl ShardInfo {
     pub fn shard_of(&self, token: Token) -> Shard {
         let mut biased_token = (token.value as u64).wrapping_add(1u64 << 63);
         biased_token <<= self.msb_ignore;
-        (((biased_token as u128) * (self.nr_shards as u128)) >> 64) as Shard
+        (((biased_token as u128) * (self.nr_shards.get() as u128)) >> 64) as Shard
     }
 
     /// If we connect to Scylla using Scylla's shard aware port, then Scylla assigns a shard to the
     /// connection based on the source port. This calculates the assigned shard.
     pub fn shard_of_source_port(&self, source_port: u16) -> Shard {
-        (source_port % self.nr_shards) as Shard
+        (source_port % self.nr_shards.get()) as Shard
     }
 
     /// Randomly choose a source port `p` such that `shard == shard_of_source_port(p)`.
     pub fn draw_source_port_for_shard(&self, shard: Shard) -> u16 {
-        assert!(shard < self.nr_shards as u32);
-        rand::thread_rng().gen_range((49152 + self.nr_shards - 1)..(65535 - self.nr_shards + 1))
-            / self.nr_shards
-            * self.nr_shards
+        assert!(shard < self.nr_shards.get() as u32);
+        rand::thread_rng()
+            .gen_range((49152 + self.nr_shards.get() - 1)..(65535 - self.nr_shards.get() + 1))
+            / self.nr_shards.get()
+            * self.nr_shards.get()
             + shard as u16
     }
 
@@ -75,23 +76,24 @@ impl ShardInfo {
     /// Starts at a random port and goes forward by `nr_shards`. After reaching maximum wraps back around.
     /// Stops once all possibile ports have been returned
     pub fn iter_source_ports_for_shard(&self, shard: Shard) -> impl Iterator<Item = u16> {
-        assert!(shard < self.nr_shards as u32);
+        assert!(shard < self.nr_shards.get() as u32);
 
         // Randomly choose a port to start at
         let starting_port = self.draw_source_port_for_shard(shard);
 
         // Choose smallest available port number to begin at after wrapping
         // apply the formula from draw_source_port_for_shard for lowest possible gen_range result
-        let first_valid_port =
-            (49152 + self.nr_shards - 1) / self.nr_shards * self.nr_shards + shard as u16;
+        let first_valid_port = (49152 + self.nr_shards.get() - 1) / self.nr_shards.get()
+            * self.nr_shards.get()
+            + shard as u16;
 
-        let before_wrap = (starting_port..=65535).step_by(self.nr_shards.into());
-        let after_wrap = (first_valid_port..starting_port).step_by(self.nr_shards.into());
+        let before_wrap = (starting_port..=65535).step_by(self.nr_shards.get().into());
+        let after_wrap = (first_valid_port..starting_port).step_by(self.nr_shards.get().into());
 
         before_wrap.chain(after_wrap)
     }
 
-    pub fn get_nr_shards(&self) -> u16 {
+    pub fn get_nr_shards(&self) -> ShardCount {
         self.nr_shards
     }
 }
@@ -102,6 +104,8 @@ pub enum ShardingError {
     MissingShardInfoParameter,
     #[error("ShardInfo parameters missing after unwraping")]
     MissingUnwrapedShardInfoParameter,
+    #[error("ShardInfo contains an invalid number of shards (0)")]
+    ZeroShards,
     #[error("ParseIntError encountered while getting ShardInfo")]
     ParseIntError(#[from] std::num::ParseIntError),
 }
@@ -123,6 +127,7 @@ impl<'a> TryFrom<&'a HashMap<String, Vec<String>>> for ShardInfo {
         }
         let shard = shard_entry.unwrap().first().unwrap().parse::<u16>()?;
         let nr_shards = nr_shards_entry.unwrap().first().unwrap().parse::<u16>()?;
+        let nr_shards = ShardCount::new(nr_shards).ok_or(ShardingError::ZeroShards)?;
         let msb_ignore = msb_ignore_entry.unwrap().first().unwrap().parse::<u8>()?;
         Ok(ShardInfo::new(shard, nr_shards, msb_ignore))
     }
@@ -223,14 +228,14 @@ fn fmix(mut k: Wrapping<i64>) -> Wrapping<i64> {
 
 #[cfg(test)]
 mod tests {
-    use super::ShardInfo;
     use super::Token;
+    use super::{ShardCount, ShardInfo};
     use std::collections::HashSet;
 
     #[test]
     fn test_shard_of() {
         /* Test values taken from the gocql driver.  */
-        let shard_info = ShardInfo::new(0, 4, 12);
+        let shard_info = ShardInfo::new(0, ShardCount::new(4).unwrap(), 12);
         assert_eq!(
             shard_info.shard_of(Token {
                 value: -9219783007514621794
@@ -251,7 +256,7 @@ mod tests {
         let max_port_num = 65535;
         let min_port_num = (49152 + nr_shards - 1) / nr_shards * nr_shards;
 
-        let shard_info = ShardInfo::new(0, nr_shards, 12);
+        let shard_info = ShardInfo::new(0, ShardCount::new(nr_shards).unwrap(), 12);
 
         // Test for each shard
         for shard in 0..nr_shards {
