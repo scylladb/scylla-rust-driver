@@ -1,5 +1,5 @@
 /// Node represents a cluster node along with it's data and connections
-use crate::routing::{ShardInfo, Token};
+use crate::routing::{ShardCount, ShardInfo, Token};
 use crate::transport::connection::VerifiedKeyspaceName;
 use crate::transport::connection::{Connection, ConnectionConfig};
 use crate::transport::connection_keeper::{ConnectionKeeper, ShardInfoSender};
@@ -151,7 +151,7 @@ impl Node {
                 shard_info,
                 shard_conns,
             } => {
-                let shard: u16 = rand::thread_rng().gen_range(0..shard_info.nr_shards);
+                let shard: u16 = rand::thread_rng().gen_range(0..shard_info.nr_shards.get());
                 Self::connection_for_shard(shard, shard_info.nr_shards, shard_conns).await
             }
         }
@@ -168,7 +168,7 @@ impl Node {
     // Tries to get a connection to given shard, if it's broken returns any working connection
     async fn connection_for_shard(
         shard: u16,
-        nr_shards: u16,
+        nr_shards: ShardCount,
         shard_conns: &[ConnectionKeeper],
     ) -> Result<Arc<Connection>, QueryError> {
         // Try getting the desired connection
@@ -178,7 +178,8 @@ impl Node {
         };
 
         // If this fails try getting any other in random order
-        let mut shards_to_try: Vec<u16> = (shard..nr_shards).chain(0..shard).skip(1).collect();
+        let mut shards_to_try: Vec<u16> =
+            (shard..nr_shards.get()).chain(0..shard).skip(1).collect();
 
         while !shards_to_try.is_empty() {
             let idx = rand::thread_rng().gen_range(0..shards_to_try.len());
@@ -284,9 +285,9 @@ impl NodeWorker {
                 )),
                 Some(shard_info) => {
                     let mut connections: Vec<ConnectionKeeper> =
-                        Vec::with_capacity(shard_info.nr_shards as usize);
+                        Vec::with_capacity(shard_info.nr_shards.get() as usize);
 
-                    for shard in 0..shard_info.nr_shards {
+                    for shard in 0..shard_info.nr_shards.get() {
                         let mut cur_conn_shard_info = shard_info.clone();
                         cur_conn_shard_info.shard = shard;
                         let cur_conn = ConnectionKeeper::new(
