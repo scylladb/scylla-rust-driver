@@ -264,7 +264,9 @@ impl ConnectionKeeperWorker {
         shard_info: &ShardInfo,
     ) -> Result<(Connection, ErrorReceiver), QueryError> {
         // Create iterator over all possible source ports for this shard
-        let source_port_iter = shard_info.iter_source_ports_for_shard(shard_info.shard.into());
+        let source_port_iter = shard_info
+            .get_sharder()
+            .iter_source_ports_for_shard(shard_info.shard.into());
 
         for port in source_port_iter {
             let connect_result =
