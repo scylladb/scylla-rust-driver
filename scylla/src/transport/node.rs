@@ -133,6 +133,7 @@ impl Node {
                 shard_conns,
             } => {
                 let shard: u16 = shard_info
+                    .get_sharder()
                     .shard_of(token)
                     .try_into()
                     .expect("Shard number doesn't fit in u16");

@@ -28,6 +28,12 @@ pub struct ShardInfo {
     pub msb_ignore: u8,
 }
 
+#[derive(PartialEq, Eq, Clone, Debug)]
+pub struct Sharder {
+    pub nr_shards: ShardCount,
+    pub msb_ignore: u8,
+}
+
 impl std::str::FromStr for Token {
     type Err = std::num::ParseIntError;
     fn from_str(s: &str) -> Result<Token, std::num::ParseIntError> {
@@ -45,6 +51,19 @@ impl ShardInfo {
     pub fn new(shard: u16, nr_shards: ShardCount, msb_ignore: u8) -> Self {
         ShardInfo {
             shard,
+            nr_shards,
+            msb_ignore,
+        }
+    }
+
+    pub fn get_sharder(&self) -> Sharder {
+        Sharder::new(self.nr_shards, self.msb_ignore)
+    }
+}
+
+impl Sharder {
+    pub fn new(nr_shards: ShardCount, msb_ignore: u8) -> Self {
+        Sharder {
             nr_shards,
             msb_ignore,
         }
@@ -225,21 +244,21 @@ fn fmix(mut k: Wrapping<i64>) -> Wrapping<i64> {
 #[cfg(test)]
 mod tests {
     use super::Token;
-    use super::{ShardCount, ShardInfo};
+    use super::{ShardCount, Sharder};
     use std::collections::HashSet;
 
     #[test]
     fn test_shard_of() {
         /* Test values taken from the gocql driver.  */
-        let shard_info = ShardInfo::new(0, ShardCount::new(4).unwrap(), 12);
+        let sharder = Sharder::new(ShardCount::new(4).unwrap(), 12);
         assert_eq!(
-            shard_info.shard_of(Token {
+            sharder.shard_of(Token {
                 value: -9219783007514621794
             }),
             3
         );
         assert_eq!(
-            shard_info.shard_of(Token {
+            sharder.shard_of(Token {
                 value: 9222582454147032830
             }),
             3
@@ -252,7 +271,7 @@ mod tests {
         let max_port_num = 65535;
         let min_port_num = (49152 + nr_shards - 1) / nr_shards * nr_shards;
 
-        let shard_info = ShardInfo::new(0, ShardCount::new(nr_shards).unwrap(), 12);
+        let sharder = Sharder::new(ShardCount::new(nr_shards).unwrap(), 12);
 
         // Test for each shard
         for shard in 0..nr_shards {
@@ -266,7 +285,7 @@ mod tests {
             let possible_ports_number: usize =
                 ((max_port_num - lowest_port) / nr_shards + 1).into();
 
-            let port_iter = shard_info.iter_source_ports_for_shard(shard.into());
+            let port_iter = sharder.iter_source_ports_for_shard(shard.into());
 
             let mut returned_ports: HashSet<u16> = HashSet::new();
             for port in port_iter {
