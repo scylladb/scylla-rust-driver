@@ -92,10 +92,6 @@ impl ShardInfo {
 
         before_wrap.chain(after_wrap)
     }
-
-    pub fn get_nr_shards(&self) -> ShardCount {
-        self.nr_shards
-    }
 }
 
 #[derive(Error, Debug)]
