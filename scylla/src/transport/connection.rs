@@ -56,7 +56,7 @@ pub struct Connection {
     source_port: u16,
     shard_info: Option<ShardInfo>,
     config: ConnectionConfig,
-    is_shard_aware: bool,
+    shard_aware_port: Option<u16>,
 }
 
 type ResponseHandler = oneshot::Sender<Result<TaskResponse, QueryError>>;
@@ -225,7 +225,7 @@ impl Connection {
             connect_address: addr,
             shard_info: None,
             config,
-            is_shard_aware: false,
+            shard_aware_port: None,
         };
 
         Ok((connection, error_receiver))
@@ -772,7 +772,11 @@ impl Connection {
     /// Are we connected to Scylla's shard aware port?
     // TODO: couple this with shard_info?
     pub fn get_is_shard_aware(&self) -> bool {
-        self.is_shard_aware
+        Some(self.connect_address.port()) == self.shard_aware_port
+    }
+
+    pub fn get_shard_aware_port(&self) -> Option<u16> {
+        self.shard_aware_port
     }
 
     pub fn get_source_port(&self) -> u16 {
@@ -783,8 +787,8 @@ impl Connection {
         self.shard_info = shard_info
     }
 
-    fn set_is_shard_aware(&mut self, is_shard_aware: bool) {
-        self.is_shard_aware = is_shard_aware;
+    fn set_shard_aware_port(&mut self, shard_aware_port: Option<u16>) {
+        self.shard_aware_port = shard_aware_port;
     }
 
     pub fn get_connect_address(&self) -> SocketAddr {
@@ -837,7 +841,7 @@ pub async fn open_named_connection(
         _ => (None, Vec::new(), None),
     };
     connection.set_shard_info(shard_info);
-    connection.set_is_shard_aware(Some(addr.port()) == shard_aware_port);
+    connection.set_shard_aware_port(shard_aware_port);
 
     let mut options = HashMap::new();
     options.insert("CQL_VERSION".to_string(), "4.0.0".to_string()); // FIXME: hardcoded values
