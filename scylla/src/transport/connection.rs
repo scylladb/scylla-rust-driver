@@ -827,6 +827,11 @@ pub async fn open_named_connection(
 
     let options_result = connection.get_options().await?;
 
+    let shard_aware_port_key = match config.is_ssl() {
+        true => "SCYLLA_SHARD_AWARE_PORT_SSL",
+        false => "SCYLLA_SHARD_AWARE_PORT",
+    };
+
     let (shard_info, supported_compression, shard_aware_port) = match options_result {
         Response::Supported(mut supported) => {
             let shard_info = ShardInfo::try_from(&supported.options).ok();
@@ -836,7 +841,7 @@ pub async fn open_named_connection(
                 .unwrap_or_else(Vec::new);
             let shard_aware_port = supported
                 .options
-                .remove("SCYLLA_SHARD_AWARE_PORT")
+                .remove(shard_aware_port_key)
                 .unwrap_or_else(Vec::new)
                 .into_iter()
                 .next()
