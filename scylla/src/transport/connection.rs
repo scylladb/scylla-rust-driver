@@ -184,6 +184,18 @@ impl Default for ConnectionConfig {
     }
 }
 
+impl ConnectionConfig {
+    #[cfg(feature = "ssl")]
+    pub fn is_ssl(&self) -> bool {
+        self.ssl_context.is_some()
+    }
+
+    #[cfg(not(feature = "ssl"))]
+    pub fn is_ssl(&self) -> bool {
+        false
+    }
+}
+
 // Used to listen for fatal error in connection
 pub type ErrorReceiver = tokio::sync::oneshot::Receiver<QueryError>;
 
