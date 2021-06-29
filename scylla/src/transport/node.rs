@@ -74,7 +74,7 @@ impl Node {
     /// `compression` - preferred compression to use
     /// `datacenter` - optional datacenter name
     /// `rack` - optional rack name
-    pub fn new(
+    pub async fn new(
         address: SocketAddr,
         connection_config: ConnectionConfig,
         datacenter: Option<String>,

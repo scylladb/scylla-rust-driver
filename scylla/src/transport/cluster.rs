@@ -228,7 +228,7 @@ impl ClusterData {
 
     /// Creates new ClusterData using information about topology held in `info`.
     /// Uses provided `known_peers` hashmap to recycle nodes if possible.
-    pub fn new(
+    pub async fn new(
         info: TopologyInfo,
         connection_config: &ConnectionConfig,
         known_peers: &HashMap<SocketAddr, Arc<Node>>,
@@ -241,7 +241,7 @@ impl ClusterData {
         let mut datacenters: HashMap<String, Datacenter> = HashMap::new();
         let mut all_nodes: Vec<Arc<Node>> = Vec::with_capacity(info.peers.len());
 
-        for peer in info.peers {
+        let conn_futs = info.peers.into_iter().map(|peer| async {
             // Take existing Arc<Node> if possible, otherwise create new one
             // Changing rack/datacenter but not ip address seems improbable
             // so we can just create new node and connections then
@@ -249,16 +249,24 @@ impl ClusterData {
                 Some(node) if node.datacenter == peer.datacenter && node.rack == peer.rack => {
                     node.clone()
                 }
-                _ => Arc::new(Node::new(
-                    peer.address,
-                    connection_config.clone(),
-                    peer.datacenter,
-                    peer.rack,
-                    used_keyspace.clone(),
-                )),
+                _ => Arc::new(
+                    Node::new(
+                        peer.address,
+                        connection_config.clone(),
+                        peer.datacenter,
+                        peer.rack,
+                        used_keyspace.clone(),
+                    )
+                    .await,
+                ),
             };
 
-            new_known_peers.insert(peer.address, node.clone());
+            (peer.address, peer.tokens, node)
+        });
+
+        let conns = futures::future::join_all(conn_futs).await;
+        for (address, tokens, node) in conns {
+            new_known_peers.insert(address, node.clone());
 
             if let Some(dc) = &node.datacenter {
                 match datacenters.get_mut(dc) {
@@ -273,7 +281,7 @@ impl ClusterData {
                 }
             }
 
-            for token in peer.tokens {
+            for token in tokens {
                 ring.insert(token, node.clone());
             }
 
@@ -440,12 +448,15 @@ impl ClusterWorker {
         let topo_info = self.topology_reader.read_topology_info().await?;
         let cluster_data: Arc<ClusterData> = self.cluster_data.load_full();
 
-        let new_cluster_data = Arc::new(ClusterData::new(
-            topo_info,
-            &self.connection_config,
-            &cluster_data.known_peers,
-            &self.used_keyspace,
-        ));
+        let new_cluster_data = Arc::new(
+            ClusterData::new(
+                topo_info,
+                &self.connection_config,
+                &cluster_data.known_peers,
+                &self.used_keyspace,
+            )
+            .await,
+        );
 
         self.update_cluster_data(new_cluster_data);
 
