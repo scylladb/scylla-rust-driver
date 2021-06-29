@@ -1,6 +1,7 @@
 mod cluster;
 pub(crate) mod connection;
 mod connection_keeper;
+mod connection_pool;
 pub mod load_balancing;
 mod node;
 pub mod retry_policy;

@@ -3,7 +3,7 @@ use crate::frame::response::event::{Event, StatusChangeEvent};
 use crate::routing::Token;
 use crate::transport::connection::{Connection, ConnectionConfig, VerifiedKeyspaceName};
 use crate::transport::errors::QueryError;
-use crate::transport::node::{Node, NodeConnections};
+use crate::transport::node::Node;
 use crate::transport::topology::{Keyspace, TopologyInfo, TopologyReader};
 
 use arc_swap::ArcSwap;
@@ -173,26 +173,10 @@ impl Cluster {
 
         let mut last_error: Option<QueryError> = None;
 
-        // Takes result of ConnectionKeeper::get_connection() and pushes it onto result list or sets last_error
-        let mut push_to_result = |get_conn_res: Result<Arc<Connection>, QueryError>| {
-            match get_conn_res {
-                Ok(conn) => result.push(conn),
-                Err(e) => last_error = Some(e),
-            };
-        };
-
         for node in peers.values() {
-            let connections: Arc<NodeConnections> = node.connections.read().unwrap().clone();
-
-            match &*connections {
-                NodeConnections::Single(conn_keeper) => {
-                    push_to_result(conn_keeper.get_connection().await)
-                }
-                NodeConnections::Sharded { shard_conns, .. } => {
-                    for conn_keeper in shard_conns {
-                        push_to_result(conn_keeper.get_connection().await);
-                    }
-                }
+            match node.get_working_connections() {
+                Ok(conns) => result.extend(conns),
+                Err(e) => last_error = Some(e),
             }
         }
 
@@ -223,6 +207,12 @@ impl ClusterData {
                 .filter_map(|node| node.rack.clone())
                 .unique()
                 .count();
+        }
+    }
+
+    pub async fn wait_until_all_pools_are_initialized(&self) {
+        for node in self.all_nodes.iter() {
+            node.wait_until_pool_initialized().await;
         }
     }
 
@@ -446,6 +436,10 @@ impl ClusterWorker {
             &cluster_data.known_peers,
             &self.used_keyspace,
         ));
+
+        new_cluster_data
+            .wait_until_all_pools_are_initialized()
+            .await;
 
         self.update_cluster_data(new_cluster_data);
 
