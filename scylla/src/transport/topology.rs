@@ -73,13 +73,8 @@ impl TopologyReader {
         // - send received events via server_event_sender
         connection_config.event_sender = Some(server_event_sender);
 
-        let control_connection = ConnectionKeeper::new(
-            control_connection_address,
-            connection_config.clone(),
-            None,
-            None,
-            None,
-        );
+        let control_connection =
+            ConnectionKeeper::new(control_connection_address, connection_config.clone());
 
         TopologyReader {
             control_connection_address,
@@ -123,9 +118,6 @@ impl TopologyReader {
             self.control_connection = ConnectionKeeper::new(
                 self.control_connection_address,
                 self.connection_config.clone(),
-                None,
-                None,
-                None,
             );
 
             result = self.fetch_topology_info().await;
