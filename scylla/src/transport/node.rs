@@ -1,8 +1,8 @@
 /// Node represents a cluster node along with it's data and connections
 use crate::routing::Token;
+use crate::transport::connection::Connection;
 use crate::transport::connection::VerifiedKeyspaceName;
-use crate::transport::connection::{Connection, ConnectionConfig};
-use crate::transport::connection_pool::NodeConnectionPool;
+use crate::transport::connection_pool::{NodeConnectionPool, PoolConfig};
 use crate::transport::errors::QueryError;
 
 use std::{
@@ -41,20 +41,13 @@ impl Node {
     /// `rack` - optional rack name
     pub async fn new(
         address: SocketAddr,
-        connection_config: ConnectionConfig,
+        pool_config: PoolConfig,
         datacenter: Option<String>,
         rack: Option<String>,
         keyspace_name: Option<VerifiedKeyspaceName>,
     ) -> Self {
-        // TODO: Provide a RefillGoal here
-        let pool = NodeConnectionPool::new(
-            address.ip(),
-            address.port(),
-            connection_config,
-            Default::default(),
-            keyspace_name,
-        )
-        .await;
+        let pool =
+            NodeConnectionPool::new(address.ip(), address.port(), pool_config, keyspace_name).await;
 
         Node {
             address,

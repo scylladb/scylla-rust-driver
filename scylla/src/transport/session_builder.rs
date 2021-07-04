@@ -5,7 +5,7 @@ use super::load_balancing::LoadBalancingPolicy;
 use super::session::{Session, SessionConfig};
 use super::speculative_execution::SpeculativeExecutionPolicy;
 use super::Compression;
-use crate::transport::retry_policy::RetryPolicy;
+use crate::transport::{connection_pool::PoolSize, retry_policy::RetryPolicy};
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration;
@@ -378,6 +378,70 @@ impl SessionBuilder {
     /// ```
     pub fn connection_timeout(mut self, duration: std::time::Duration) -> Self {
         self.config.connect_timeout = duration;
+        self
+    }
+
+    /// Sets the per-node connection pool size.
+    /// The default is one connection per shard, which is the recommended setting for Scylla.
+    ///
+    /// # Example
+    /// ```
+    /// # use scylla::{Session, SessionBuilder};
+    /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
+    /// use std::num::NonZeroUsize;
+    /// use scylla::transport::session::PoolSize;
+    ///
+    /// // This session will establish 4 connections to each node.
+    /// // For Scylla clusters, this number will be divided across shards
+    /// let session: Session = SessionBuilder::new()
+    ///     .known_node("127.0.0.1:9042")
+    ///     .pool_size(PoolSize::PerHost(NonZeroUsize::new(4).unwrap()))
+    ///     .build()
+    ///     .await?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn pool_size(mut self, size: PoolSize) -> Self {
+        self.config.connection_pool_size = size;
+        self
+    }
+
+    /// If true, prevents the driver from connecting to the shard-aware port, even if the node supports it.
+    ///
+    /// _This is a Scylla-specific option_. It has no effect on Cassandra clusters.
+    ///
+    /// By default, connecting to the shard-aware port is __allowed__ and, in general, this setting
+    /// _should not be changed_. The shard-aware port (19042 or 19142) makes the process of
+    /// establishing connection per shard more robust compared to the regular transport port
+    /// (9042 or 9142). With the shard-aware port, the driver is able to choose which shard
+    /// will be assigned to the connection.
+    ///
+    /// In order to be able to use the shard-aware port effectively, the port needs to be
+    /// reachable and not behind a NAT which changes source ports (the driver uses the source port
+    /// to tell Scylla which shard to assign). However, the driver is designed to behave in a robust
+    /// way if those conditions are not met - if the driver fails to connect to the port or gets
+    /// a connection to the wrong shard, it will re-attempt the connection to the regular transport port.
+    ///
+    /// The only cost of misconfigured shard-aware port should be a slightly longer reconnection time.
+    /// If it is unacceptable to you or suspect that it causes you some other problems,
+    /// you can use this option to disable the shard-aware port feature completely.
+    /// However, __you should use it as a last resort__. Before you do that, we strongly recommend
+    /// that you consider fixing the network issues.
+    ///
+    /// # Example
+    /// ```
+    /// # use scylla::{Session, SessionBuilder};
+    /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
+    /// let session: Session = SessionBuilder::new()
+    ///     .known_node("127.0.0.1:9042")
+    ///     .disallow_shard_aware_port(true)
+    ///     .build()
+    ///     .await?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn disallow_shard_aware_port(mut self, disallow: bool) -> Self {
+        self.config.disallow_shard_aware_port = disallow;
         self
     }
 }

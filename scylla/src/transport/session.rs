@@ -5,6 +5,7 @@ use bytes::Bytes;
 use futures::future::join_all;
 use std::future::Future;
 use std::net::SocketAddr;
+use std::num::NonZeroUsize;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::net::lookup_host;
@@ -21,6 +22,7 @@ use crate::query::Query;
 use crate::routing::{murmur3_token, Token};
 use crate::statement::Consistency;
 use crate::tracing::{GetTracingConfig, TracingEvent, TracingInfo};
+use crate::transport::connection_pool::PoolConfig;
 use crate::transport::{
     cluster::Cluster,
     connection::{BatchResult, Connection, ConnectionConfig, QueryResult, VerifiedKeyspaceName},
@@ -34,6 +36,8 @@ use crate::transport::{
 };
 use crate::{batch::Batch, statement::StatementConfig};
 use crate::{cql_to_rust::FromRow, transport::speculative_execution};
+
+pub use crate::transport::connection_pool::PoolSize;
 
 #[cfg(feature = "ssl")]
 use openssl::ssl::SslContext;
@@ -82,6 +86,14 @@ pub struct SessionConfig {
 
     pub schema_agreement_interval: Duration,
     pub connect_timeout: std::time::Duration,
+
+    /// Size of the per-node connection pool, i.e. how many connections the driver should keep to each node.
+    /// The default is `PerShard(1)`, which is the recommended setting for Scylla clusters.
+    pub connection_pool_size: PoolSize,
+
+    /// If true, prevents the driver from connecting to the shard-aware port, even if the node supports it.
+    /// Generally, this options is best left as default (false).
+    pub disallow_shard_aware_port: bool,
     /*
     These configuration options will be added in the future:
 
@@ -126,6 +138,8 @@ impl SessionConfig {
             auth_username: None,
             auth_password: None,
             connect_timeout: std::time::Duration::from_secs(5),
+            connection_pool_size: PoolSize::PerShard(NonZeroUsize::new(1).unwrap()),
+            disallow_shard_aware_port: false,
         }
     }
 
@@ -184,6 +198,15 @@ impl SessionConfig {
     pub fn add_known_nodes_addr(&mut self, node_addrs: &[SocketAddr]) {
         for address in node_addrs {
             self.add_known_node_addr(*address);
+        }
+    }
+
+    /// Creates a PoolConfig which can be used to create NodeConnectionPools
+    fn get_pool_config(&self) -> PoolConfig {
+        PoolConfig {
+            connection_config: self.get_connection_config(),
+            pool_size: self.connection_pool_size.clone(),
+            can_use_shard_aware_port: !self.disallow_shard_aware_port,
         }
     }
 
@@ -290,7 +313,7 @@ impl Session {
 
         node_addresses.extend(resolved);
 
-        let cluster = Cluster::new(&node_addresses, config.get_connection_config()).await?;
+        let cluster = Cluster::new(&node_addresses, config.get_pool_config()).await?;
 
         let session = Session {
             cluster,
