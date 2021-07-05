@@ -40,7 +40,7 @@ session.query(my_query, (to_insert,)).await?;
 # Ok(())
 # }
 ```
-See [Query API documentation](https://docs.rs/scylla/0.1.0/scylla/statement/query/struct.Query.html) for more options
+See [Query API documentation](https://docs.rs/scylla/0.2.0/scylla/statement/query/struct.Query.html) for more options
 
 ### Second argument - the values
 Query text is constant, but the values might change.
