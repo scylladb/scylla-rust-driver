@@ -66,7 +66,7 @@ session.execute(&prepared, (to_insert,)).await?;
 # }
 ```
 
-See [PreparedStatement API documentation](https://docs.rs/scylla/0.1.0/scylla/statement/prepared_statement/struct.PreparedStatement.html) 
+See [PreparedStatement API documentation](https://docs.rs/scylla/0.2.0/scylla/statement/prepared_statement/struct.PreparedStatement.html) 
 for more options
 
 ### Performance
