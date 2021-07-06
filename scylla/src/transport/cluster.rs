@@ -1,9 +1,10 @@
 use crate::frame::response::event::{Event, StatusChangeEvent};
 /// Cluster manages up to date information and connections to database nodes
 use crate::routing::Token;
-use crate::transport::connection::{Connection, ConnectionConfig, VerifiedKeyspaceName};
+use crate::transport::connection::{Connection, VerifiedKeyspaceName};
+use crate::transport::connection_pool::PoolConfig;
 use crate::transport::errors::QueryError;
-use crate::transport::node::{Node, NodeConnections};
+use crate::transport::node::Node;
 use crate::transport::topology::{Keyspace, TopologyInfo, TopologyReader};
 
 use arc_swap::ArcSwap;
@@ -50,7 +51,7 @@ struct ClusterWorker {
 
     // Cluster connections
     topology_reader: TopologyReader,
-    connection_config: ConnectionConfig,
+    pool_config: PoolConfig,
 
     // To listen for refresh requests
     refresh_channel: tokio::sync::mpsc::Receiver<RefreshRequest>,
@@ -79,7 +80,7 @@ struct UseKeyspaceRequest {
 impl Cluster {
     pub async fn new(
         initial_peers: &[SocketAddr],
-        connection_config: ConnectionConfig,
+        pool_config: PoolConfig,
     ) -> Result<Cluster, QueryError> {
         let cluster_data = Arc::new(ArcSwap::from(Arc::new(ClusterData {
             known_peers: HashMap::new(),
@@ -98,10 +99,10 @@ impl Cluster {
 
             topology_reader: TopologyReader::new(
                 initial_peers,
-                connection_config.clone(),
+                pool_config.connection_config.clone(),
                 server_events_sender,
             ),
-            connection_config,
+            pool_config,
 
             refresh_channel: refresh_receiver,
             server_events_channel: server_events_receiver,
@@ -173,26 +174,10 @@ impl Cluster {
 
         let mut last_error: Option<QueryError> = None;
 
-        // Takes result of ConnectionKeeper::get_connection() and pushes it onto result list or sets last_error
-        let mut push_to_result = |get_conn_res: Result<Arc<Connection>, QueryError>| {
-            match get_conn_res {
-                Ok(conn) => result.push(conn),
-                Err(e) => last_error = Some(e),
-            };
-        };
-
         for node in peers.values() {
-            let connections: Arc<NodeConnections> = node.connections.read().unwrap().clone();
-
-            match &*connections {
-                NodeConnections::Single(conn_keeper) => {
-                    push_to_result(conn_keeper.get_connection().await)
-                }
-                NodeConnections::Sharded { shard_conns, .. } => {
-                    for conn_keeper in shard_conns {
-                        push_to_result(conn_keeper.get_connection().await);
-                    }
-                }
+            match node.get_working_connections() {
+                Ok(conns) => result.extend(conns),
+                Err(e) => last_error = Some(e),
             }
         }
 
@@ -228,9 +213,9 @@ impl ClusterData {
 
     /// Creates new ClusterData using information about topology held in `info`.
     /// Uses provided `known_peers` hashmap to recycle nodes if possible.
-    pub fn new(
+    pub async fn new(
         info: TopologyInfo,
-        connection_config: &ConnectionConfig,
+        pool_config: &PoolConfig,
         known_peers: &HashMap<SocketAddr, Arc<Node>>,
         used_keyspace: &Option<VerifiedKeyspaceName>,
     ) -> Self {
@@ -241,7 +226,7 @@ impl ClusterData {
         let mut datacenters: HashMap<String, Datacenter> = HashMap::new();
         let mut all_nodes: Vec<Arc<Node>> = Vec::with_capacity(info.peers.len());
 
-        for peer in info.peers {
+        let conn_futs = info.peers.into_iter().map(|peer| async {
             // Take existing Arc<Node> if possible, otherwise create new one
             // Changing rack/datacenter but not ip address seems improbable
             // so we can just create new node and connections then
@@ -249,16 +234,24 @@ impl ClusterData {
                 Some(node) if node.datacenter == peer.datacenter && node.rack == peer.rack => {
                     node.clone()
                 }
-                _ => Arc::new(Node::new(
-                    peer.address,
-                    connection_config.clone(),
-                    peer.datacenter,
-                    peer.rack,
-                    used_keyspace.clone(),
-                )),
+                _ => Arc::new(
+                    Node::new(
+                        peer.address,
+                        pool_config.clone(),
+                        peer.datacenter,
+                        peer.rack,
+                        used_keyspace.clone(),
+                    )
+                    .await,
+                ),
             };
 
-            new_known_peers.insert(peer.address, node.clone());
+            (peer.address, peer.tokens, node)
+        });
+
+        let conns = futures::future::join_all(conn_futs).await;
+        for (address, tokens, node) in conns {
+            new_known_peers.insert(address, node.clone());
 
             if let Some(dc) = &node.datacenter {
                 match datacenters.get_mut(dc) {
@@ -273,7 +266,7 @@ impl ClusterData {
                 }
             }
 
-            for token in peer.tokens {
+            for token in tokens {
                 ring.insert(token, node.clone());
             }
 
@@ -440,12 +433,15 @@ impl ClusterWorker {
         let topo_info = self.topology_reader.read_topology_info().await?;
         let cluster_data: Arc<ClusterData> = self.cluster_data.load_full();
 
-        let new_cluster_data = Arc::new(ClusterData::new(
-            topo_info,
-            &self.connection_config,
-            &cluster_data.known_peers,
-            &self.used_keyspace,
-        ));
+        let new_cluster_data = Arc::new(
+            ClusterData::new(
+                topo_info,
+                &self.pool_config,
+                &cluster_data.known_peers,
+                &self.used_keyspace,
+            )
+            .await,
+        );
 
         self.update_cluster_data(new_cluster_data);
 
