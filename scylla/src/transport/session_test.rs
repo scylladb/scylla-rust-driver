@@ -44,29 +44,25 @@ async fn test_unprepared_statement() {
         .await
         .unwrap();
 
-    let rs = session
+    let rs: Vec<Row> = session
         .query("SELECT a, b, c FROM ks.t", &[])
         .await
         .unwrap()
-        .rows
-        .unwrap();
+        .rows();
 
-    let mut results: Vec<(i32, i32, &String)> = rs
-        .iter()
-        .map(|r| {
-            let a = r.columns[0].as_ref().unwrap().as_int().unwrap();
-            let b = r.columns[1].as_ref().unwrap().as_int().unwrap();
-            let c = r.columns[2].as_ref().unwrap().as_text().unwrap();
-            (a, b, c)
-        })
+    let mut results: Vec<(i32, i32, String)> = rs
+        .clone()
+        .into_typed::<(i32, i32, String)>()
+        .map(|r| r.unwrap())
         .collect();
+
     results.sort();
     assert_eq!(
         results,
         vec![
-            (1, 2, &String::from("abc")),
-            (1, 4, &String::from("hello")),
-            (7, 11, &String::from(""))
+            (1, 2, String::from("abc")),
+            (1, 4, String::from("hello")),
+            (7, 11, String::from(""))
         ]
     );
     let mut results_from_manual_paging: Vec<Row> = vec![];
@@ -135,17 +131,14 @@ async fn test_prepared_statement() {
 
     // Verify that token calculation is compatible with Scylla
     {
-        let rs = session
+        let (token,): (i64,) = session
             .query("SELECT token(a) FROM ks.t2", &[])
             .await
             .unwrap()
-            .rows
-            .unwrap();
-        let token: i64 = rs.first().unwrap().columns[0]
-            .as_ref()
+            .first_row_typed::<(i64,)>()
             .unwrap()
-            .as_bigint()
             .unwrap();
+
         let expected_token = hash3_x64_128(
             &prepared_statement
                 .compute_partition_key(&serialized_values)
@@ -155,17 +148,14 @@ async fn test_prepared_statement() {
         assert_eq!(token, expected_token)
     }
     {
-        let rs = session
+        let (token,): (i64,) = session
             .query("SELECT token(a,b,c) FROM ks.complex_pk", &[])
             .await
             .unwrap()
-            .rows
-            .unwrap();
-        let token: i64 = rs.first().unwrap().columns[0]
-            .as_ref()
+            .first_row_typed::<(i64,)>()
             .unwrap()
-            .as_bigint()
             .unwrap();
+
         let expected_token = hash3_x64_128(
             &prepared_complex_pk_statement
                 .compute_partition_key(&serialized_values)
@@ -177,17 +167,15 @@ async fn test_prepared_statement() {
 
     // Verify that correct data was insertd
     {
-        let rs = session
+        let rs: Vec<Row> = session
             .query("SELECT a,b,c FROM ks.t2", &[])
             .await
             .unwrap()
-            .rows
-            .unwrap();
-        let r = rs.first().unwrap();
-        let a = r.columns[0].as_ref().unwrap().as_int().unwrap();
-        let b = r.columns[1].as_ref().unwrap().as_int().unwrap();
-        let c = r.columns[2].as_ref().unwrap().as_text().unwrap();
-        assert_eq!((a, b, c), (17, 16, &String::from("I'm prepared!!!")));
+            .rows();
+
+        let (a, b, c): (i32, i32, String) =
+            rs[0].clone().into_typed::<(i32, i32, String)>().unwrap();
+        assert_eq!((a, b, c), (17, 16, String::from("I'm prepared!!!")));
 
         let mut results_from_manual_paging: Vec<Row> = vec![];
         let query = Query::new("SELECT a, b, c FROM ks.t2".to_owned()).with_page_size(1);
@@ -209,20 +197,16 @@ async fn test_prepared_statement() {
         assert_eq!(results_from_manual_paging, rs);
     }
     {
-        let rs = session
+        let (a, b, c, d, e): (i32, i32, String, i32, Option<i32>) = session
             .query("SELECT a,b,c,d,e FROM ks.complex_pk", &[])
             .await
             .unwrap()
-            .rows
+            .first_row_typed::<(i32, i32, String, i32, Option<i32>)>()
+            .unwrap()
             .unwrap();
-        let r = rs.first().unwrap();
-        let a = r.columns[0].as_ref().unwrap().as_int().unwrap();
-        let b = r.columns[1].as_ref().unwrap().as_int().unwrap();
-        let c = r.columns[2].as_ref().unwrap().as_text().unwrap();
-        let d = r.columns[3].as_ref().unwrap().as_int().unwrap();
-        let e = r.columns[4].as_ref();
+
         assert!(e.is_none());
-        assert_eq!((a, b, c, d), (17, 16, &String::from("I'm prepared!!!"), 7))
+        assert_eq!((a, b, c, d), (17, 16, String::from("I'm prepared!!!"), 7))
     }
 }
 
@@ -264,29 +248,21 @@ async fn test_batch() {
 
     session.batch(&batch, values).await.unwrap();
 
-    let rs = session
+    let mut results: Vec<(i32, i32, String)> = session
         .query("SELECT a, b, c FROM ks.t_batch", &[])
         .await
         .unwrap()
-        .rows
-        .unwrap();
-
-    let mut results: Vec<(i32, i32, &String)> = rs
-        .iter()
-        .map(|r| {
-            let a = r.columns[0].as_ref().unwrap().as_int().unwrap();
-            let b = r.columns[1].as_ref().unwrap().as_int().unwrap();
-            let c = r.columns[2].as_ref().unwrap().as_text().unwrap();
-            (a, b, c)
-        })
+        .rows_typed::<(i32, i32, String)>()
+        .map(|r| r.unwrap())
         .collect();
+
     results.sort();
     assert_eq!(
         results,
         vec![
-            (1, 2, &String::from("abc")),
-            (1, 4, &String::from("hello")),
-            (7, 11, &String::from(""))
+            (1, 2, String::from("abc")),
+            (1, 4, String::from("hello")),
+            (7, 11, String::from(""))
         ]
     );
 }
@@ -323,17 +299,14 @@ async fn test_token_calculation() {
         let serialized_values = values.serialized().unwrap().into_owned();
         session.execute(&prepared_statement, &values).await.unwrap();
 
-        let rs = session
+        let (token,): (i64,) = session
             .query("SELECT token(a) FROM ks.t3 WHERE a = ?", &values)
             .await
             .unwrap()
-            .rows
-            .unwrap();
-        let token: i64 = rs.first().unwrap().columns[0]
-            .as_ref()
+            .first_row_typed::<(i64,)>()
             .unwrap()
-            .as_bigint()
             .unwrap();
+
         let expected_token = hash3_x64_128(
             &prepared_statement
                 .compute_partition_key(&serialized_values)
@@ -383,9 +356,7 @@ async fn test_use_keyspace() {
         .query("SELECT * FROM tab", &[])
         .await
         .unwrap()
-        .rows
-        .unwrap()
-        .into_typed::<(String,)>()
+        .rows_typed::<(String,)>()
         .map(|res| res.unwrap().0)
         .collect();
 
@@ -434,9 +405,7 @@ async fn test_use_keyspace() {
         .query("SELECT * FROM tab", &[])
         .await
         .unwrap()
-        .rows
-        .unwrap()
-        .into_typed::<(String,)>()
+        .rows_typed::<(String,)>()
         .map(|res| res.unwrap().0)
         .collect();
 
@@ -501,9 +470,7 @@ async fn test_use_keyspace_case_sensitivity() {
         .query("SELECT * from tab", &[])
         .await
         .unwrap()
-        .rows
-        .unwrap()
-        .into_typed::<(String,)>()
+        .rows_typed::<(String,)>()
         .map(|row| row.unwrap().0)
         .collect();
 
@@ -517,9 +484,7 @@ async fn test_use_keyspace_case_sensitivity() {
         .query("SELECT * from tab", &[])
         .await
         .unwrap()
-        .rows
-        .unwrap()
-        .into_typed::<(String,)>()
+        .rows_typed::<(String,)>()
         .map(|row| row.unwrap().0)
         .collect();
 
@@ -567,9 +532,7 @@ async fn test_raw_use_keyspace() {
         .query("SELECT * FROM tab", &[])
         .await
         .unwrap()
-        .rows
-        .unwrap()
-        .into_typed::<(String,)>()
+        .rows_typed::<(String,)>()
         .map(|res| res.unwrap().0)
         .collect();
 
@@ -867,9 +830,7 @@ async fn assert_in_tracing_table(session: &Session, tracing_uuid: Uuid) {
             .query(traces_query.clone(), (tracing_uuid,))
             .await
             .unwrap()
-            .rows
-            .into_iter()
-            .next();
+            .first_row();
 
         if row_opt.is_some() {
             // Ok there was some row for this tracing_uuid

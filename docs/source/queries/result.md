@@ -9,10 +9,10 @@
 # use scylla::Session;
 # use std::error::Error;
 # async fn check_only_compiles(session: &Session) -> Result<(), Box<dyn Error>> {
-if let Some(rows) = session.query("SELECT a from ks.tab", &[]).await?.rows {
-    for row in rows {
-        let int_value: i32 = row.columns[0].as_ref().unwrap().as_int().unwrap();
-    }
+let rows = session.query("SELECT a from ks.tab", &[]).await?.rows();
+
+for row in rows {
+    let int_value: i32 = row.columns[0].as_ref().unwrap().as_int().unwrap();
 }
 # Ok(())
 # }
@@ -28,28 +28,70 @@ The driver provides a way to parse a row as a tuple of Rust types:
 use scylla::IntoTypedRows;
 
 // Parse row as a single column containing an int value
-if let Some(rows) = session.query("SELECT a from ks.tab", &[]).await?.rows {
-    for row in rows {
-        let (int_value,): (i32,) = row.into_typed::<(i32,)>()?;
-    }
+let rows = session.query("SELECT a from ks.tab", &[]).await?.rows();
+
+for row in rows {
+    let (int_value,): (i32,) = row.into_typed::<(i32,)>()?;
 }
 
 // rows.into_typed() converts a Vec of Rows to an iterator of parsing results
-if let Some(rows) = session.query("SELECT a from ks.tab", &[]).await?.rows {
-    for row in rows.into_typed::<(i32,)>() {
-        let (int_value,): (i32,) = row?;
-    }
+let rows = session.query("SELECT a from ks.tab", &[]).await?.rows();
+
+for row in rows.into_typed::<(i32,)>() {
+    let (int_value,): (i32,) = row?;
 }
 
 // Parse row as two columns containing an int and text columns
-if let Some(rows) = session.query("SELECT a, b from ks.tab", &[]).await?.rows {
-    for row in rows.into_typed::<(i32, String)>() {
-        let (int_value, text_value): (i32, String) = row?;
-    }
+let rows = session.query("SELECT a, b from ks.tab", &[]).await?.rows();
+
+for row in rows.into_typed::<(i32, String)>() {
+    let (int_value, text_value): (i32, String) = row?;
 }
 # Ok(())
 # }
 ```
+
+### Parsing using convenience methods
+[`QueryResult`](https://docs.rs/scylla/0.1.0/scylla/transport/connection/struct.QueryResult.html) provides convenience methods for parsing rows:
+* `rows()` - Returns `Vec<Row>`, in case of `None` returns an empty `Vec`
+* `rows_typed::<RowT>()` - Shorthand for `.rows().into_typed::<RowT>()`
+* `first_row()` - Take first row in raw representation
+* `first_row_typed::<RowT>` - Take first row and parse as `RowT`
+
+```rust
+# extern crate scylla;
+# use scylla::Session;
+# use std::error::Error;
+# async fn check_only_compiles(session: &Session) -> Result<(), Box<dyn Error>> {
+use scylla::frame::response::result::Row;
+
+// Parse row as a single column containing an int value
+let rows = session
+    .query("SELECT a from ks.tab", &[])
+    .await?
+    .rows_typed::<(i32,)>(); // Same as .rows().into_typed()
+
+for row in rows {
+    let (int_value,): (i32,) = row?;
+}
+
+// first_row gets frist row in raw representation
+let first_row: Option<Row> = session
+    .query("SELECT a from ks.tab", &[])
+    .await?
+    .first_row();
+
+let int_value: i32 = first_row.unwrap().columns[0].as_ref().unwrap().as_int().unwrap();
+
+// first_row_typed gets first row and parses it as the given type
+let first_int_val: Option<Result<(i32,), _>> = session
+    .query("SELECT a from ks.tab", &[])
+    .await?
+    .first_row_typed::<(i32,)>();
+# Ok(())
+# }
+```
+
 
 ### `NULL` values
 `NULL` values will return an error when parsed as a Rust type. 
@@ -62,10 +104,10 @@ To properly handle `NULL` values parse column as an `Option<>`:
 use scylla::IntoTypedRows;
 
 // Parse row as two columns containing an int and text which might be null
-if let Some(rows) = session.query("SELECT a, b from ks.tab", &[]).await?.rows {
-    for row in rows.into_typed::<(i32, Option<String>)>() {
-        let (int_value, str_or_null): (i32, Option<String>) = row?;
-    }
+let rows = session.query("SELECT a, b from ks.tab", &[]).await?.rows();
+
+for row in rows.into_typed::<(i32, Option<String>)>() {
+    let (int_value, str_or_null): (i32, Option<String>) = row?;
 }
 # Ok(())
 # }
@@ -95,10 +137,10 @@ struct MyRow {
 }
 
 // Parse row as two columns containing an int and text which might be null
-if let Some(rows) = session.query("SELECT a, b from ks.tab", &[]).await?.rows {
-    for row in rows.into_typed::<MyRow>() {
-        let my_row: MyRow = row?;
-    }
+let rows = session.query("SELECT a, b from ks.tab", &[]).await?.rows();
+
+for row in rows.into_typed::<MyRow>() {
+    let my_row: MyRow = row?;
 }
 # Ok(())
 # }

@@ -3,7 +3,6 @@ use crate::frame::response::result::CqlValue;
 use crate::frame::value::Counter;
 use crate::frame::value::Value;
 use crate::frame::value::{Date, Time, Timestamp};
-use crate::transport::session::IntoTypedRows;
 use crate::transport::session::Session;
 use crate::SessionBuilder;
 use bigdecimal::BigDecimal;
@@ -89,11 +88,8 @@ where
             .query(select_values, &[])
             .await
             .unwrap()
-            .rows
-            .unwrap()
-            .into_typed::<(T,)>()
-            .map(Result::unwrap)
-            .map(|row| row.0)
+            .rows_typed::<(T,)>()
+            .map(|r| r.unwrap().0)
             .collect::<Vec<_>>();
 
         let expected_value = T::from_str(test).ok().unwrap();
@@ -179,9 +175,7 @@ async fn test_counter() {
             .query(select_values, (i as i32,))
             .await
             .unwrap()
-            .rows
-            .unwrap()
-            .into_typed::<(Counter,)>()
+            .rows_typed::<(Counter,)>()
             .map(Result::unwrap)
             .map(|row| row.0)
             .collect::<Vec<_>>();
@@ -235,12 +229,8 @@ async fn test_naive_date() {
             .query("SELECT val from ks.naive_date", &[])
             .await
             .unwrap()
-            .rows
-            .unwrap()
-            .into_typed::<(NaiveDate,)>()
-            .next()
-            .unwrap()
-            .ok()
+            .first_row_typed::<(NaiveDate,)>()
+            .and_then(|res| res.ok()) // Dates outside NaiveDate range fail parsing, mark as None
             .map(|row| row.0);
 
         assert_eq!(read_date, *date);
@@ -259,12 +249,10 @@ async fn test_naive_date() {
                 .query("SELECT val from ks.naive_date", &[])
                 .await
                 .unwrap()
-                .rows
-                .unwrap()
-                .into_typed::<(NaiveDate,)>()
-                .next()
+                .first_row_typed::<(NaiveDate,)>()
                 .unwrap()
                 .unwrap();
+
             assert_eq!(read_date, *naive_date);
         }
     }
@@ -317,8 +305,7 @@ async fn test_date() {
             .query("SELECT val from ks.date_tests", &[])
             .await
             .unwrap()
-            .rows
-            .unwrap()[0]
+            .rows()[0]
             .columns[0]
             .as_ref()
             .map(|cql_val| match cql_val {
@@ -366,10 +353,7 @@ async fn test_time() {
             .query("SELECT val from ks.time_tests", &[])
             .await
             .unwrap()
-            .rows
-            .unwrap()
-            .into_typed::<(Duration,)>()
-            .next()
+            .first_row_typed::<(Duration,)>()
             .unwrap()
             .unwrap();
 
@@ -388,10 +372,7 @@ async fn test_time() {
             .query("SELECT val from ks.time_tests", &[])
             .await
             .unwrap()
-            .rows
-            .unwrap()
-            .into_typed::<(Duration,)>()
-            .next()
+            .first_row_typed::<(Duration,)>()
             .unwrap()
             .unwrap();
 
@@ -474,10 +455,7 @@ async fn test_timestamp() {
             .query("SELECT val from ks.timestamp_tests", &[])
             .await
             .unwrap()
-            .rows
-            .unwrap()
-            .into_typed::<(Duration,)>()
-            .next()
+            .first_row_typed::<(Duration,)>()
             .unwrap()
             .unwrap();
 
@@ -496,10 +474,7 @@ async fn test_timestamp() {
             .query("SELECT val from ks.timestamp_tests", &[])
             .await
             .unwrap()
-            .rows
-            .unwrap()
-            .into_typed::<(Duration,)>()
-            .next()
+            .first_row_typed::<(Duration,)>()
             .unwrap()
             .unwrap();
 
@@ -550,10 +525,7 @@ async fn test_timeuuid() {
             .query("SELECT val from ks.timeuuid_tests", &[])
             .await
             .unwrap()
-            .rows
-            .unwrap()
-            .into_typed::<(Uuid,)>()
-            .next()
+            .first_row_typed::<(Uuid,)>()
             .unwrap()
             .unwrap();
 
@@ -573,10 +545,7 @@ async fn test_timeuuid() {
             .query("SELECT val from ks.timeuuid_tests", &[])
             .await
             .unwrap()
-            .rows
-            .unwrap()
-            .into_typed::<(Uuid,)>()
-            .next()
+            .first_row_typed::<(Uuid,)>()
             .unwrap()
             .unwrap();
 
@@ -642,10 +611,7 @@ async fn test_inet() {
             .query("SELECT val from ks.inet_tests WHERE id = 0", &[])
             .await
             .unwrap()
-            .rows
-            .unwrap()
-            .into_typed::<(IpAddr,)>()
-            .next()
+            .first_row_typed::<(IpAddr,)>()
             .unwrap()
             .unwrap();
 
@@ -661,10 +627,7 @@ async fn test_inet() {
             .query("SELECT val from ks.inet_tests WHERE id = 0", &[])
             .await
             .unwrap()
-            .rows
-            .unwrap()
-            .into_typed::<(IpAddr,)>()
-            .next()
+            .first_row_typed::<(IpAddr,)>()
             .unwrap()
             .unwrap();
 
@@ -718,10 +681,7 @@ async fn test_blob() {
             .query("SELECT val from ks.blob_tests WHERE id = 0", &[])
             .await
             .unwrap()
-            .rows
-            .unwrap()
-            .into_typed::<(Vec<u8>,)>()
-            .next()
+            .first_row_typed::<(Vec<u8>,)>()
             .unwrap()
             .unwrap();
 
@@ -737,10 +697,7 @@ async fn test_blob() {
             .query("SELECT val from ks.blob_tests WHERE id = 0", &[])
             .await
             .unwrap()
-            .rows
-            .unwrap()
-            .into_typed::<(Vec<u8>,)>()
-            .next()
+            .first_row_typed::<(Vec<u8>,)>()
             .unwrap()
             .unwrap();
 

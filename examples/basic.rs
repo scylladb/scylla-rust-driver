@@ -1,8 +1,8 @@
 use anyhow::Result;
 use scylla::cql_to_rust::FromRow;
 use scylla::macros::FromRow;
-use scylla::transport::session::{IntoTypedRows, Session};
-use scylla::SessionBuilder;
+use scylla::transport::session::Session;
+use scylla::{IntoTypedRows, SessionBuilder};
 use std::env;
 
 #[tokio::main]
@@ -44,11 +44,11 @@ async fn main() -> Result<()> {
         .await?;
 
     // Rows can be parsed as tuples
-    if let Some(rows) = session.query("SELECT a, b, c FROM ks.t", &[]).await?.rows {
-        for row in rows.into_typed::<(i32, i32, String)>() {
-            let (a, b, c) = row?;
-            println!("a, b, c: {}, {}, {}", a, b, c);
-        }
+    let rows = session.query("SELECT a, b, c FROM ks.t", &[]).await?.rows();
+
+    for row in rows.into_typed::<(i32, i32, String)>() {
+        let (a, b, c) = row?;
+        println!("a, b, c: {}, {}, {}", a, b, c);
     }
 
     // Or as custom structs that derive FromRow
@@ -59,24 +59,23 @@ async fn main() -> Result<()> {
         c: String,
     }
 
-    if let Some(rows) = session.query("SELECT a, b, c FROM ks.t", &[]).await?.rows {
-        for row_data in rows.into_typed::<RowData>() {
-            let row_data = row_data?;
-            println!("row_data: {:?}", row_data);
-        }
+    let rows = session.query("SELECT a, b, c FROM ks.t", &[]).await?.rows();
+
+    for row_data in rows.into_typed::<RowData>() {
+        let row_data = row_data?;
+        println!("row_data: {:?}", row_data);
     }
 
     // Or simply as untyped rows
-    if let Some(rows) = session.query("SELECT a, b, c FROM ks.t", &[]).await?.rows {
-        for row in rows {
-            let a = row.columns[0].as_ref().unwrap().as_int().unwrap();
-            let b = row.columns[1].as_ref().unwrap().as_int().unwrap();
-            let c = row.columns[2].as_ref().unwrap().as_text().unwrap();
-            println!("a, b, c: {}, {}, {}", a, b, c);
+    let rows = session.query("SELECT a, b, c FROM ks.t", &[]).await?.rows();
+    for row in rows {
+        let a = row.columns[0].as_ref().unwrap().as_int().unwrap();
+        let b = row.columns[1].as_ref().unwrap().as_int().unwrap();
+        let c = row.columns[2].as_ref().unwrap().as_text().unwrap();
+        println!("a, b, c: {}, {}, {}", a, b, c);
 
-            // Alternatively each row can be parsed individually
-            // let (a2, b2, c2) = row.into_typed::<(i32, i32, String)>() ?;
-        }
+        // Alternatively each row can be parsed individually
+        // let (a2, b2, c2) = row.into_typed::<(i32, i32, String)>() ?;
     }
 
     let metrics = session.get_metrics();

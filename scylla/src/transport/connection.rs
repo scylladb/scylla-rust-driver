@@ -27,6 +27,7 @@ use std::{
 use super::errors::{BadKeyspaceName, BadQuery, DbError, QueryError};
 
 use crate::batch::{Batch, BatchStatement};
+use crate::cql_to_rust::{FromRow, FromRowError};
 use crate::frame::{
     self,
     request::{self, batch, execute, query, register, Request},
@@ -90,6 +91,70 @@ pub struct QueryResult {
     pub tracing_id: Option<Uuid>,
     /// Paging state returned from the server
     pub paging_state: Option<Bytes>,
+}
+
+impl QueryResult {
+    /// Returns the received rows  
+    /// If the result didn't contain any rows returns an empty Vec
+    pub fn rows(self) -> Vec<result::Row> {
+        self.rows.unwrap_or_else(Vec::new)
+    }
+
+    /// Returns length of the received rows
+    pub fn rows_len(&self) -> usize {
+        match &self.rows {
+            Some(rows) => rows.len(),
+            None => 0,
+        }
+    }
+
+    /// Returns first row in the result
+    pub fn first_row(self) -> Option<result::Row> {
+        self.rows().into_iter().next()
+    }
+
+    /// Returns first row in the result parsed as the given type  
+    /// When rows are empty returns `None`  
+    /// When the row can't be parsed as the given type returns the parsing error
+    ///
+    /// # Example
+    /// ```rust
+    /// # use scylla::Session;
+    /// # async fn check_only_compiles(session: &Session) -> Result<(), Box<dyn std::error::Error>> {
+    /// // first_row_typed gets first row and parses it as the given type
+    /// let first_int_val: Option<Result<(i32,), _>> = session
+    ///     .query("SELECT a from ks.tab", &[])
+    ///     .await?
+    ///     .first_row_typed::<(i32,)>();
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn first_row_typed<RowT: FromRow>(self) -> Option<Result<RowT, FromRowError>> {
+        self.rows_typed::<RowT>().next()
+    }
+
+    /// Returns iterator over rows parsed as the given type  
+    /// Shorthand for `.rows().into_typed::<>()`
+    ///
+    /// # Example
+    /// ```rust
+    /// # use scylla::Session;
+    /// # async fn check_only_compiles(session: &Session) -> Result<(), Box<dyn std::error::Error>> {
+    /// // Parse row as a single column containing an int value
+    /// let rows = session
+    ///     .query("SELECT a from ks.tab", &[])
+    ///     .await?
+    ///     .rows_typed::<(i32,)>(); // Same as .rows.into_typed()
+    ///
+    /// for row in rows {
+    ///     let (int_value,): (i32,) = row?;
+    /// }
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn rows_typed<RowT: FromRow>(self) -> impl Iterator<Item = Result<RowT, FromRowError>> {
+        self.rows().into_typed::<RowT>()
+    }
 }
 
 /// Result of Session::batch(). Contains no rows, only some useful information.

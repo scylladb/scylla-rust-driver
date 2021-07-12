@@ -17,10 +17,10 @@ session
     .await?;
 
 // Read a bool from the table
-if let Some(rows) = session.query("SELECT a FROM keyspace.table", &[]).await?.rows {
-    for row in rows.into_typed::<(bool,)>() {
-        let (bool_value,): (bool,) = row?;
-    }
+let rows = session.query("SELECT a FROM keyspace.table", &[]).await?.rows();
+
+for row in rows.into_typed::<(bool,)>() {
+    let (bool_value,): (bool,) = row?;
 }
 # Ok(())
 # }
@@ -43,10 +43,10 @@ session
     .await?;
 
 // Read a tinyint from the table
-if let Some(rows) = session.query("SELECT a FROM keyspace.table", &[]).await?.rows {
-    for row in rows.into_typed::<(i8,)>() {
-        let (tinyint_value,): (i8,) = row?;
-    }
+let rows = session.query("SELECT a FROM keyspace.table", &[]).await?.rows();
+
+for row in rows.into_typed::<(i8,)>() {
+    let (tinyint_value,): (i8,) = row?;
 }
 # Ok(())
 # }
@@ -69,10 +69,10 @@ session
     .await?;
 
 // Read a smallint from the table
-if let Some(rows) = session.query("SELECT a FROM keyspace.table", &[]).await?.rows {
-    for row in rows.into_typed::<(i16,)>() {
-        let (smallint_value,): (i16,) = row?;
-    }
+let rows = session.query("SELECT a FROM keyspace.table", &[]).await?.rows();
+
+for row in rows.into_typed::<(i16,)>() {
+    let (smallint_value,): (i16,) = row?;
 }
 # Ok(())
 # }
@@ -95,10 +95,10 @@ session
     .await?;
 
 // Read an int from the table
-if let Some(rows) = session.query("SELECT a FROM keyspace.table", &[]).await?.rows {
-    for row in rows.into_typed::<(i32,)>() {
-        let (int_value,): (i32,) = row?;
-    }
+let rows = session.query("SELECT a FROM keyspace.table", &[]).await?.rows();
+
+for row in rows.into_typed::<(i32,)>() {
+    let (int_value,): (i32,) = row?;
 }
 # Ok(())
 # }
@@ -121,10 +121,10 @@ session
     .await?;
 
 // Read a bigint from the table
-if let Some(rows) = session.query("SELECT a FROM keyspace.table", &[]).await?.rows {
-    for row in rows.into_typed::<(i64,)>() {
-        let (bigint_value,): (i64,) = row?;
-    }
+let rows = session.query("SELECT a FROM keyspace.table", &[]).await?.rows();
+
+for row in rows.into_typed::<(i64,)>() {
+    let (bigint_value,): (i64,) = row?;
 }
 # Ok(())
 # }
@@ -147,10 +147,10 @@ session
     .await?;
 
 // Read a float from the table
-if let Some(rows) = session.query("SELECT a FROM keyspace.table", &[]).await?.rows {
-    for row in rows.into_typed::<(f32,)>() {
-        let (float_value,): (f32,) = row?;
-    }
+let rows = session.query("SELECT a FROM keyspace.table", &[]).await?.rows();
+
+for row in rows.into_typed::<(f32,)>() {
+    let (float_value,): (f32,) = row?;
 }
 # Ok(())
 # }
@@ -173,10 +173,10 @@ session
     .await?;
 
 // Read a double from the table
-if let Some(rows) = session.query("SELECT a FROM keyspace.table", &[]).await?.rows {
-    for row in rows.into_typed::<(f64,)>() {
-        let (double_value,): (f64,) = row?;
-    }
+let rows = session.query("SELECT a FROM keyspace.table", &[]).await?.rows();
+
+for row in rows.into_typed::<(f64,)>() {
+    let (double_value,): (f64,) = row?;
 }
 # Ok(())
 # }
