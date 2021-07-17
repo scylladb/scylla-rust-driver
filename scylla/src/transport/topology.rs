@@ -92,8 +92,9 @@ impl TopologyReader {
     /// Fetches current topology info from the cluster
     pub async fn read_topology_info(&mut self) -> Result<TopologyInfo, QueryError> {
         let mut result = self.fetch_topology_info().await;
-        if result.is_ok() {
-            return result;
+        if let Ok(topology_info) = result {
+            self.update_known_peers(&topology_info);
+            return Ok(topology_info);
         }
 
         // shuffle known_peers to iterate through them in random order later
