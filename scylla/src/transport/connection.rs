@@ -859,7 +859,7 @@ pub async fn open_named_connection(
                     )
                 }
                 Response::AuthSuccess(_authenticate_success) => {
-                    return Ok((connection, error_receiver));
+                    // OK, continue
                 }
                 Response::Error(err) => {
                     return Err(err.into());
