@@ -17,6 +17,10 @@ chrono = "0.4"
 uuid = "0.8.1"
 
 [[example]]
+name = "auth"
+path = "auth.rs"
+
+[[example]]
 name = "basic"
 path = "basic.rs"
 
