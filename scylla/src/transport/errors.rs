@@ -320,7 +320,7 @@ impl From<ParseError> for QueryError {
 
 impl From<FrameError> for QueryError {
     fn from(frame_error: FrameError) -> QueryError {
-        QueryError::InvalidMessage(format!("Error parsing message frame: {}", frame_error))
+        QueryError::InvalidMessage(format!("Frame error: {}", frame_error))
     }
 }
 
