@@ -5,7 +5,7 @@ use thiserror::Error;
 
 #[derive(Error, Debug)]
 pub enum FrameError {
-    #[error("Type parsing failed")]
+    #[error(transparent)]
     Parse(#[from] ParseError),
     #[error("Frame is compressed, but no compression negotiated for connection.")]
     NoCompressionNegotiated,
