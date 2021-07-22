@@ -853,10 +853,13 @@ pub async fn open_named_connection(
             match auth_result.response {
                 Response::AuthChallenge(authenticate_challenge) => {
                     let challenge_message = authenticate_challenge.authenticate_message;
-                    unimplemented!("Auth Challenge not implemented yet, {}", challenge_message)
+                    unimplemented!(
+                        "Auth Challenge not implemented yet, {:?}",
+                        challenge_message
+                    )
                 }
                 Response::AuthSuccess(_authenticate_success) => {
-                    return Ok((connection, error_receiver));
+                    // OK, continue
                 }
                 Response::Error(err) => {
                     return Err(err.into());

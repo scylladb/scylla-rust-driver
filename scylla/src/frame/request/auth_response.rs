@@ -1,5 +1,6 @@
 use crate::frame::frame_errors::ParseError;
 use bytes::BufMut;
+use std::convert::TryInto;
 
 use crate::frame::request::{Request, RequestOpcode};
 use crate::transport::Authenticator;
@@ -23,18 +24,14 @@ impl Request for AuthResponse {
         let username_as_bytes = self.username.as_ref().unwrap().as_bytes();
         let password_as_bytes = self.password.as_ref().unwrap().as_bytes();
 
-        let buf_size = 2 + (username_as_bytes.len() as u8) + (password_as_bytes.len() as u8);
-
-        buf.put_u8(buf_size);
+        // The body of AuthResponse is a single [bytes] value (i32 length and then contents)
+        let buf_size = 2 + username_as_bytes.len() + password_as_bytes.len();
+        buf.put_i32(buf_size.try_into()?);
 
         buf.put_u8(0);
-        for byte in username_as_bytes {
-            buf.put_u8(*byte);
-        }
+        buf.put_slice(username_as_bytes);
         buf.put_u8(0);
-        for byte in password_as_bytes {
-            buf.put_u8(*byte);
-        }
+        buf.put_slice(password_as_bytes);
         Ok(())
     }
 }
