@@ -29,7 +29,7 @@ pub enum FrameError {
 
 #[derive(Error, Debug)]
 pub enum ParseError {
-    #[error("Bad data - couldn't serialize. Error msg: {0}")]
+    #[error("Could not serialize frame: {0}")]
     BadData(String),
     #[error(transparent)]
     IoError(#[from] std::io::Error),
