@@ -301,7 +301,7 @@ pub struct ColumnSpec {
 pub struct ResultMetadata {
     col_count: usize,
     pub paging_state: Option<Bytes>,
-    col_specs: Vec<ColumnSpec>,
+    pub col_specs: Vec<ColumnSpec>,
 }
 
 #[derive(Debug, Clone)]
