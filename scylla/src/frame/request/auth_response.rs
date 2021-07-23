@@ -18,7 +18,7 @@ impl Request for AuthResponse {
     fn serialize(&self, buf: &mut impl BufMut) -> Result<(), ParseError> {
         if self.username.is_none() || self.password.is_none() {
             return Err(ParseError::BadData(
-                "Bad credentials given - username and password shouldn't be none".to_string(),
+                "Bad credentials: username or password missing. You can use SessionBuilder::user(\"user\", \"pass\") to provide credentials.".to_string(),
             ));
         }
         let username_as_bytes = self.username.as_ref().unwrap().as_bytes();
