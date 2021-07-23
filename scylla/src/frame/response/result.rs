@@ -293,7 +293,7 @@ impl CqlValue {
 #[derive(Debug, Clone)]
 pub struct ColumnSpec {
     pub table_spec: TableSpec,
-    name: String,
+    pub name: String,
     typ: ColumnType,
 }
 

@@ -94,6 +94,16 @@ pub struct QueryResult {
     pub col_specs: Vec<ColumnSpec>,
 }
 
+impl QueryResult {
+    // Returns a column specification for a column with given name, or None if not found
+    pub fn get_column_spec<'a>(&'a self, name: &str) -> Option<(usize, &'a ColumnSpec)> {
+        self.col_specs
+            .iter()
+            .enumerate()
+            .find(|(_id, spec)| spec.name == name)
+    }
+}
+
 /// Result of Session::batch(). Contains no rows, only some useful information.
 pub struct BatchResult {
     /// Warnings returned by the database
