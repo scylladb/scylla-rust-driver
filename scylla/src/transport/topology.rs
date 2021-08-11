@@ -42,6 +42,7 @@ pub struct Keyspace {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
+#[allow(clippy::enum_variant_names)]
 pub enum Strategy {
     SimpleStrategy {
         replication_factor: usize,
@@ -238,7 +239,7 @@ async fn query_peers(conn: &Connection, connect_port: u16) -> Result<Vec<Peer>, 
         // Parse string representation of tokens as integer values
         let tokens: Vec<Token> = tokens_str
             .iter()
-            .map(|s| Token::from_str(&s))
+            .map(|s| Token::from_str(s))
             .collect::<Result<Vec<Token>, _>>()
             .map_err(|_| QueryError::ProtocolError("Couldn't parse tokens as integer values"))?;
 

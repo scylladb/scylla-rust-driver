@@ -111,7 +111,7 @@ pub enum CqlValue {
 impl CqlValue {
     pub fn as_ascii(&self) -> Option<&String> {
         match self {
-            Self::Ascii(s) => Some(&s),
+            Self::Ascii(s) => Some(s),
             _ => None,
         }
     }
@@ -204,14 +204,14 @@ impl CqlValue {
 
     pub fn as_blob(&self) -> Option<&Vec<u8>> {
         match self {
-            Self::Blob(v) => Some(&v),
+            Self::Blob(v) => Some(v),
             _ => None,
         }
     }
 
     pub fn as_text(&self) -> Option<&String> {
         match self {
-            Self::Text(s) => Some(&s),
+            Self::Text(s) => Some(s),
             _ => None,
         }
     }
@@ -247,14 +247,14 @@ impl CqlValue {
 
     pub fn as_list(&self) -> Option<&Vec<CqlValue>> {
         match self {
-            Self::List(s) => Some(&s),
+            Self::List(s) => Some(s),
             _ => None,
         }
     }
 
     pub fn as_set(&self) -> Option<&Vec<CqlValue>> {
         match self {
-            Self::Set(s) => Some(&s),
+            Self::Set(s) => Some(s),
             _ => None,
         }
     }
@@ -708,7 +708,7 @@ fn deser_cql_value(typ: &ColumnType, buf: &mut &[u8]) -> StdResult<CqlValue, Par
             for (field_name, field_type) in field_types {
                 let mut field_value: Option<CqlValue> = None;
                 if let Some(mut field_val_bytes) = types::read_bytes_opt(buf)? {
-                    field_value = Some(deser_cql_value(&field_type, &mut field_val_bytes)?);
+                    field_value = Some(deser_cql_value(field_type, &mut field_val_bytes)?);
                 }
 
                 fields.insert(field_name.clone(), field_value);

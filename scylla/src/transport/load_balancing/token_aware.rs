@@ -22,7 +22,7 @@ impl TokenAwarePolicy {
         replication_factor: usize,
     ) -> Vec<Arc<Node>> {
         cluster
-            .ring_range(&token)
+            .ring_range(token)
             .unique()
             .take(replication_factor)
             .collect()
@@ -49,7 +49,7 @@ impl TokenAwarePolicy {
         let desired_result_len: usize = datacenter_repfactors.values().sum();
 
         let mut result: Vec<Arc<Node>> = Vec::with_capacity(desired_result_len);
-        for node in cluster.ring_range(&token).unique() {
+        for node in cluster.ring_range(token).unique() {
             let current_node_dc = match &node.datacenter {
                 None => continue,
                 Some(dc) => dc,

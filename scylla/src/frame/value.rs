@@ -352,7 +352,7 @@ impl Value for Vec<u8> {
         let val_len: i32 = self.len().try_into().map_err(|_| ValueTooBig)?;
         buf.put_i32(val_len);
 
-        buf.extend_from_slice(&self);
+        buf.extend_from_slice(self);
 
         Ok(())
     }

@@ -217,7 +217,7 @@ impl ConnectionKeeperWorker {
 
         // Use the specified keyspace
         if let Some(keyspace_name) = &self.used_keyspace {
-            let _ = connection.use_keyspace(&keyspace_name).await;
+            let _ = connection.use_keyspace(keyspace_name).await;
             // Ignore the error, used_keyspace could be set a long time ago and then deleted
             // user gets all errors from session.use_keyspace()
         }

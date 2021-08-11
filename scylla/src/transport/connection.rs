@@ -225,7 +225,7 @@ impl Connection {
         let query_response = self
             .send_request(
                 &request::Prepare {
-                    query: &query.get_contents(),
+                    query: query.get_contents(),
                 },
                 true,
                 query.config.tracing,

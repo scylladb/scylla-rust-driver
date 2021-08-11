@@ -280,7 +280,7 @@ impl Session {
 
         for node in &config.known_nodes {
             match node {
-                KnownNode::Hostname(hostname) => to_resolve.push(&hostname),
+                KnownNode::Hostname(hostname) => to_resolve.push(hostname),
                 KnownNode::Address(address) => node_addresses.push(*address),
             };
         }
