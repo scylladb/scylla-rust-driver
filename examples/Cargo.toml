@@ -75,3 +75,7 @@ path = "clone.rs"
 [[example]]
 name = "speculative-execution"
 path = "speculative-execution.rs"
+
+[[example]]
+name = "get_by_name"
+path = "get_by_name.rs"

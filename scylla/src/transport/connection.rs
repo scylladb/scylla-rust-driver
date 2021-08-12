@@ -30,7 +30,7 @@ use crate::batch::{Batch, BatchStatement};
 use crate::frame::{
     self,
     request::{self, batch, execute, query, register, Request},
-    response::{event::Event, result, Response, ResponseOpcode},
+    response::{event::Event, result, result::ColumnSpec, Response, ResponseOpcode},
     server_event_type::EventType,
     value::{BatchValues, ValueList},
     FrameParams, SerializedRequest,
@@ -90,6 +90,18 @@ pub struct QueryResult {
     pub tracing_id: Option<Uuid>,
     /// Paging state returned from the server
     pub paging_state: Option<Bytes>,
+    /// Column specification returned from the server
+    pub col_specs: Vec<ColumnSpec>,
+}
+
+impl QueryResult {
+    // Returns a column specification for a column with given name, or None if not found
+    pub fn get_column_spec<'a>(&'a self, name: &str) -> Option<(usize, &'a ColumnSpec)> {
+        self.col_specs
+            .iter()
+            .enumerate()
+            .find(|(_id, spec)| spec.name == name)
+    }
 }
 
 /// Result of Session::batch(). Contains no rows, only some useful information.
@@ -102,10 +114,14 @@ pub struct BatchResult {
 
 impl QueryResponse {
     pub fn into_query_result(self) -> Result<QueryResult, QueryError> {
-        let (rows, paging_state) = match self.response {
+        let (rows, paging_state, col_specs) = match self.response {
             Response::Error(err) => return Err(err.into()),
-            Response::Result(result::Result::Rows(rs)) => (Some(rs.rows), rs.metadata.paging_state),
-            Response::Result(_) => (None, None),
+            Response::Result(result::Result::Rows(rs)) => (
+                Some(rs.rows),
+                rs.metadata.paging_state,
+                rs.metadata.col_specs,
+            ),
+            Response::Result(_) => (None, None, vec![]),
             _ => {
                 return Err(QueryError::ProtocolError(
                     "Unexpected server response, expected Result or Error",
@@ -118,6 +134,7 @@ impl QueryResponse {
             warnings: self.warnings,
             tracing_id: self.tracing_id,
             paging_state,
+            col_specs,
         })
     }
 }

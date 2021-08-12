@@ -44,19 +44,24 @@ async fn test_unprepared_statement() {
         .await
         .unwrap();
 
-    let rs = session
+    let query_result = session
         .query("SELECT a, b, c FROM ks.t", &[])
         .await
-        .unwrap()
-        .rows
         .unwrap();
+
+    let (a_idx, _) = query_result.get_column_spec("a").unwrap();
+    let (b_idx, _) = query_result.get_column_spec("b").unwrap();
+    let (c_idx, _) = query_result.get_column_spec("c").unwrap();
+    assert!(query_result.get_column_spec("d").is_none());
+
+    let rs = query_result.rows.unwrap();
 
     let mut results: Vec<(i32, i32, &String)> = rs
         .iter()
         .map(|r| {
-            let a = r.columns[0].as_ref().unwrap().as_int().unwrap();
-            let b = r.columns[1].as_ref().unwrap().as_int().unwrap();
-            let c = r.columns[2].as_ref().unwrap().as_text().unwrap();
+            let a = r.columns[a_idx].as_ref().unwrap().as_int().unwrap();
+            let b = r.columns[b_idx].as_ref().unwrap().as_int().unwrap();
+            let c = r.columns[c_idx].as_ref().unwrap().as_text().unwrap();
             (a, b, c)
         })
         .collect();

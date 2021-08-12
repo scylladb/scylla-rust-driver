@@ -293,7 +293,7 @@ impl CqlValue {
 #[derive(Debug, Clone)]
 pub struct ColumnSpec {
     pub table_spec: TableSpec,
-    name: String,
+    pub name: String,
     typ: ColumnType,
 }
 
@@ -301,7 +301,7 @@ pub struct ColumnSpec {
 pub struct ResultMetadata {
     col_count: usize,
     pub paging_state: Option<Bytes>,
-    col_specs: Vec<ColumnSpec>,
+    pub col_specs: Vec<ColumnSpec>,
 }
 
 #[derive(Debug, Clone)]
