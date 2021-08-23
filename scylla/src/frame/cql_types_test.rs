@@ -4,7 +4,7 @@ use crate::frame::response::result::CqlValue;
 use crate::frame::value::Counter;
 use crate::frame::value::Value;
 use crate::frame::value::{Date, Time, Timestamp};
-use crate::macros::{IntoUserType,FromUserType};
+use crate::macros::{FromUserType, IntoUserType};
 use crate::transport::session::IntoTypedRows;
 use crate::transport::session::Session;
 use crate::SessionBuilder;
@@ -807,7 +807,7 @@ async fn test_udt_after_schema_update() {
         pub second: bool,
     };
 
-    let v1 = UdtV1{
+    let v1 = UdtV1 {
         first: 123,
         second: true,
     };
@@ -846,7 +846,7 @@ async fn test_udt_after_schema_update() {
         )
         .await
         .unwrap();
-    
+
     let (read_udt,): (UdtV1,) = session
         .query(
             format!("SELECT val from ks.{} WHERE id = 0", table_name),
@@ -891,7 +891,7 @@ async fn test_udt_after_schema_update() {
 
     assert_eq!(
         read_udt,
-        UdtV2{
+        UdtV2 {
             first: 123,
             second: true,
             third: None,
