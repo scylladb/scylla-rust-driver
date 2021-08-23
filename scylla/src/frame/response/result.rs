@@ -706,11 +706,11 @@ fn deser_cql_value(typ: &ColumnType, buf: &mut &[u8]) -> StdResult<CqlValue, Par
             let mut fields: BTreeMap<String, Option<CqlValue>> = BTreeMap::new();
 
             for (field_name, field_type) in field_types {
-                // If a field is added to a UDT and we read an old (frozen ?) version of it, 
+                // If a field is added to a UDT and we read an old (frozen ?) version of it,
                 // the driver will fail to parse the whole UDT.
                 // This is why we break the parsing after we reach the end of the serialized UDT.
                 if buf.is_empty() {
-                    break
+                    break;
                 }
 
                 let mut field_value: Option<CqlValue> = None;
