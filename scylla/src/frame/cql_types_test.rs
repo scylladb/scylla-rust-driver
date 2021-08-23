@@ -1,8 +1,10 @@
+use crate as scylla;
 use crate::cql_to_rust::FromCqlVal;
 use crate::frame::response::result::CqlValue;
 use crate::frame::value::Counter;
 use crate::frame::value::Value;
 use crate::frame::value::{Date, Time, Timestamp};
+use crate::macros::{IntoUserType,FromUserType};
 use crate::transport::session::IntoTypedRows;
 use crate::transport::session::Session;
 use crate::SessionBuilder;
@@ -15,8 +17,6 @@ use std::fmt::Debug;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 use std::str::FromStr;
 use uuid::Uuid;
-use crate as scylla;
-use crate::macros::{IntoUserType,FromUserType};
 
 // Used to prepare a table for test
 // Creates keyspace ks
@@ -750,7 +750,6 @@ async fn test_blob() {
     }
 }
 
-
 #[tokio::test]
 async fn test_udt_after_schema_update() {
     let table_name = "udt_tests";
@@ -774,7 +773,7 @@ async fn test_udt_after_schema_update() {
         .query(format!("DROP TABLE IF EXISTS ks.{}", table_name), &[])
         .await
         .unwrap();
-    
+
     session
         .query(format!("DROP TYPE IF EXISTS ks.{}", type_name), &[])
         .await
@@ -805,12 +804,12 @@ async fn test_udt_after_schema_update() {
     #[derive(IntoUserType, FromUserType, Debug, PartialEq)]
     struct UdtV1 {
         pub first: i32,
-        pub second: bool
+        pub second: bool,
     };
 
     let v1 = UdtV1{
         first: 123,
-        second: true
+        second: true,
     };
 
     session
@@ -823,9 +822,12 @@ async fn test_udt_after_schema_update() {
         )
         .await
         .unwrap();
-    
+
     let (read_udt,): (UdtV1,) = session
-        .query(format!("SELECT val from ks.{} WHERE id = 0", table_name), &[])
+        .query(
+            format!("SELECT val from ks.{} WHERE id = 0", table_name),
+            &[],
+        )
         .await
         .unwrap()
         .rows
@@ -839,17 +841,17 @@ async fn test_udt_after_schema_update() {
 
     session
         .query(
-            format!(
-                "INSERT INTO ks.{}(id,val) VALUES (0, ?)",
-                table_name
-            ),
+            format!("INSERT INTO ks.{}(id,val) VALUES (0, ?)", table_name),
             &(&v1,),
         )
         .await
         .unwrap();
     
     let (read_udt,): (UdtV1,) = session
-        .query(format!("SELECT val from ks.{} WHERE id = 0", table_name), &[])
+        .query(
+            format!("SELECT val from ks.{} WHERE id = 0", table_name),
+            &[],
+        )
         .await
         .unwrap()
         .rows
@@ -862,27 +864,22 @@ async fn test_udt_after_schema_update() {
     assert_eq!(read_udt, v1);
 
     session
-        .query(
-            format!(
-                "ALTER TYPE ks.{} ADD third text;",
-                type_name
-            ),
-            &[],
-        )
+        .query(format!("ALTER TYPE ks.{} ADD third text;", type_name), &[])
         .await
         .unwrap();
-
 
     #[derive(FromUserType, Debug, PartialEq)]
     struct UdtV2 {
         pub first: i32,
         pub second: bool,
-        pub third: Option<String>
+        pub third: Option<String>,
     };
 
-
     let (read_udt,): (UdtV2,) = session
-        .query(format!("SELECT val from ks.{} WHERE id = 0", table_name), &[])
+        .query(
+            format!("SELECT val from ks.{} WHERE id = 0", table_name),
+            &[],
+        )
         .await
         .unwrap()
         .rows
@@ -892,9 +889,12 @@ async fn test_udt_after_schema_update() {
         .unwrap()
         .unwrap();
 
-    assert_eq!(read_udt, UdtV2{
-        first: 123,
-        second: true,
-        third: None
-    });
+    assert_eq!(
+        read_udt,
+        UdtV2{
+            first: 123,
+            second: true,
+            third: None,
+        }
+    );
 }
