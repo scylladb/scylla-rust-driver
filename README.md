@@ -2,7 +2,7 @@
 
 # ScyllaDB Rust Driver
 
-[![Crates.io](https://img.shields.io/crates/v/scylla.svg)](https://crates.io/crates/scylla)
+[![Crates.io](https://img.shields.io/crates/v/scylla.svg)](https://crates.io/crates/scylla) [![docs.rs](https://docs.rs/scylla/badge.svg)](https://docs.rs/scylla)
 
 This is a client-side driver for [ScyllaDB] written in pure Rust with a fully async API using [Tokio].
 Although optimized for ScyllaDB, the driver is also compatible with [Apache Cassandra®].
