@@ -11,8 +11,8 @@ use uuid::Uuid;
 
 #[derive(Error, Debug, Clone, PartialEq, Eq)]
 pub enum FromRowError {
-    #[error("Bad CQL value")]
-    BadCqlVal(#[from] FromCqlValError),
+    #[error("{err} in the column with index {column}")]
+    BadCqlVal { err: FromCqlValError, column: usize },
     #[error("Row too short")]
     RowTooShort,
 }
@@ -122,14 +122,21 @@ macro_rules! impl_tuple_from_row {
             $($Ti: FromCqlVal<Option<CqlValue>>),+
         {
             fn from_row(row: Row) -> Result<Self, FromRowError> {
-                let mut vals_iter = row.columns.into_iter();
+                let mut vals_iter = row.columns.into_iter().enumerate();
 
                 Ok((
                     $(
-                        $Ti::from_cql(vals_iter
-                                      .next()
-                                      .ok_or(FromRowError::RowTooShort) ?
-                                     ) ?
+                        {
+                            let (col_ix, col_value) = vals_iter
+                                .next()
+                                .ok_or(FromRowError::RowTooShort)?;
+
+                            $Ti::from_cql(col_value)
+                                .map_err(|e| FromRowError::BadCqlVal {
+                                    err: e,
+                                    column: col_ix,
+                                })?
+                        }
                     ,)+
                 ))
             }
@@ -392,7 +399,10 @@ mod tests {
 
         assert_eq!(
             <(i32,)>::from_row(row),
-            Err(FromRowError::BadCqlVal(FromCqlValError::ValIsNull))
+            Err(FromRowError::BadCqlVal {
+                err: FromCqlValError::ValIsNull,
+                column: 0
+            })
         );
     }
 
@@ -404,7 +414,10 @@ mod tests {
 
         assert_eq!(
             <(String,)>::from_row(row),
-            Err(FromRowError::BadCqlVal(FromCqlValError::BadCqlType))
+            Err(FromRowError::BadCqlVal {
+                err: FromCqlValError::BadCqlType,
+                column: 0
+            })
         );
     }
 

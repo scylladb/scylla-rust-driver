@@ -14,11 +14,17 @@ pub fn from_row_derive(tokens_input: TokenStream) -> TokenStream {
         let field_type = &field.ty;
 
         quote_spanned! {field.span() =>
-            #field_name: <#field_type as FromCqlVal<Option<CqlValue>>>::from_cql(
-                vals_iter
-                .next()
-                .ok_or(FromRowError::RowTooShort) ?
-            ) ?,
+            #field_name: {
+                let (col_ix, col_value) = vals_iter
+                    .next()
+                    .ok_or(FromRowError::RowTooShort)?;
+
+                <#field_type as FromCqlVal<Option<CqlValue>>>::from_cql(col_value)
+                    .map_err(|e| FromRowError::BadCqlVal {
+                        err: e,
+                        column: col_ix,
+                    })?
+            },
         }
     });
 
@@ -29,7 +35,7 @@ pub fn from_row_derive(tokens_input: TokenStream) -> TokenStream {
                 use scylla::frame::response::result::CqlValue;
                 use scylla::cql_to_rust::{FromCqlVal, FromRow, FromRowError};
 
-                let mut vals_iter = row.columns.into_iter();
+                let mut vals_iter = row.columns.into_iter().enumerate();
 
                 Ok(#struct_name {
                     #(#set_fields_code)*
