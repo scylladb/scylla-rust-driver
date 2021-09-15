@@ -152,7 +152,7 @@ mod tests {
         statement: &Statement,
         cluster: &ClusterData,
     ) -> Vec<u16> {
-        let plan = policy.plan(statement, &cluster);
+        let plan = policy.plan(statement, cluster);
         plan.map(|node| node.address.port()).collect::<Vec<_>>()
     }
 }

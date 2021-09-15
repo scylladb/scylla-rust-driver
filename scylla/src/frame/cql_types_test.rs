@@ -805,7 +805,7 @@ async fn test_udt_after_schema_update() {
     struct UdtV1 {
         pub first: i32,
         pub second: bool,
-    };
+    }
 
     let v1 = UdtV1 {
         first: 123,
@@ -873,7 +873,7 @@ async fn test_udt_after_schema_update() {
         pub first: i32,
         pub second: bool,
         pub third: Option<String>,
-    };
+    }
 
     let (read_udt,): (UdtV2,) = session
         .query(
