@@ -13,8 +13,8 @@ use uuid::Uuid;
 pub enum FromRowError {
     #[error("{err} in the column with index {column}")]
     BadCqlVal { err: FromCqlValError, column: usize },
-    #[error("Row too short")]
-    RowTooShort,
+    #[error("Wrong row size: expected {expected}, actual {actual}")]
+    WrongRowSize { expected: usize, actual: usize },
 }
 
 #[derive(Error, Debug, PartialEq, Eq)]
@@ -114,6 +114,12 @@ impl<T1: FromCqlVal<CqlValue> + Eq + Hash, T2: FromCqlVal<CqlValue>> FromCqlVal<
     }
 }
 
+macro_rules! replace_expr {
+    ($_t:tt $sub:expr) => {
+        $sub
+    };
+}
+
 // This macro implements FromRow for tuple of types that have FromCqlVal
 macro_rules! impl_tuple_from_row {
     ( $($Ti:tt),+ ) => {
@@ -122,6 +128,17 @@ macro_rules! impl_tuple_from_row {
             $($Ti: FromCqlVal<Option<CqlValue>>),+
         {
             fn from_row(row: Row) -> Result<Self, FromRowError> {
+                // From what I know, it is not possible yet to get the number of metavariable
+                // repetitions (https://github.com/rust-lang/lang-team/issues/28#issue-644523674)
+                // This is a workaround
+                let expected_len = <[()]>::len(&[$(replace_expr!(($Ti) ())),*]);
+
+                if expected_len != row.columns.len() {
+                    return Err(FromRowError::WrongRowSize {
+                        expected: expected_len,
+                        actual: row.columns.len(),
+                    });
+                }
                 let mut vals_iter = row.columns.into_iter().enumerate();
 
                 Ok((
@@ -129,7 +146,9 @@ macro_rules! impl_tuple_from_row {
                         {
                             let (col_ix, col_value) = vals_iter
                                 .next()
-                                .ok_or(FromRowError::RowTooShort)?;
+                                .unwrap(); // vals_iter size is checked before this code is reached,
+                                           // so it is safe to unwrap
+
 
                             $Ti::from_cql(col_value)
                                 .map_err(|e| FromRowError::BadCqlVal {
@@ -369,13 +388,6 @@ mod tests {
         assert_eq!(a, 1);
         assert_eq!(b, Some("some_text".to_string()));
         assert_eq!(c, None);
-
-        let row2 = Row {
-            columns: vec![Some(CqlValue::Int(1)), Some(CqlValue::Int(2))],
-        };
-
-        let (d,) = <(i32,)>::from_row(row2).unwrap();
-        assert_eq!(d, 1);
     }
 
     #[test]
@@ -422,12 +434,33 @@ mod tests {
     }
 
     #[test]
-    fn from_row_too_short() {
+    fn from_row_too_large() {
         let row = Row {
-            columns: vec![Some(CqlValue::Int(1234))],
+            columns: vec![Some(CqlValue::Int(1234)), Some(CqlValue::Int(1234))],
         };
 
-        assert_eq!(<(i32, i32)>::from_row(row), Err(FromRowError::RowTooShort));
+        assert_eq!(
+            <(i32,)>::from_row(row),
+            Err(FromRowError::WrongRowSize {
+                expected: 1,
+                actual: 2
+            })
+        );
+    }
+
+    #[test]
+    fn from_row_too_short() {
+        let row = Row {
+            columns: vec![Some(CqlValue::Int(1234)), Some(CqlValue::Int(1234))],
+        };
+
+        assert_eq!(
+            <(i32, i32, i32)>::from_row(row),
+            Err(FromRowError::WrongRowSize {
+                expected: 3,
+                actual: 2
+            })
+        );
     }
 
     #[test]
@@ -452,5 +485,44 @@ mod tests {
         assert_eq!(my_row.a, 16);
         assert_eq!(my_row.b, None);
         assert_eq!(my_row.c, Some(vec![1, 2]));
+    }
+
+    #[test]
+    fn struct_from_row_wrong_size() {
+        #[derive(FromRow, PartialEq, Eq, Debug)]
+        struct MyRow {
+            a: i32,
+            b: Option<String>,
+            c: Option<Vec<i32>>,
+        }
+
+        let too_short_row = Row {
+            columns: vec![Some(CqlValue::Int(16)), None],
+        };
+
+        let too_large_row = Row {
+            columns: vec![
+                Some(CqlValue::Int(16)),
+                None,
+                Some(CqlValue::Set(vec![CqlValue::Int(1), CqlValue::Int(2)])),
+                Some(CqlValue::Set(vec![CqlValue::Int(1), CqlValue::Int(2)])),
+            ],
+        };
+
+        assert_eq!(
+            MyRow::from_row(too_short_row),
+            Err(FromRowError::WrongRowSize {
+                expected: 3,
+                actual: 2
+            })
+        );
+
+        assert_eq!(
+            MyRow::from_row(too_large_row),
+            Err(FromRowError::WrongRowSize {
+                expected: 3,
+                actual: 4
+            })
+        );
     }
 }
