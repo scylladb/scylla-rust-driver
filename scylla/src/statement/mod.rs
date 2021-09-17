@@ -26,7 +26,7 @@ impl Default for StatementConfig {
     fn default() -> Self {
         Self {
             consistency: Default::default(),
-            serial_consistency: None,
+            serial_consistency: Some(SerialConsistency::LocalSerial),
             is_idempotent: false,
             retry_policy: None,
             speculative_execution_policy: None,
