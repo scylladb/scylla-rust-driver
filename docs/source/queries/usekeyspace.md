@@ -49,6 +49,19 @@ session
 The first argument is the keyspace name.  
 The second argument states whether this name is case sensitive.
 
+It is also possible to send raw use keyspace query using `Session::query` instead of `Session::use_keyspace` such as:
+```rust
+# extern crate scylla;
+# use scylla::Session;
+# use std::error::Error;
+# async fn check_only_compiles(session: &Session) -> Result<(), Box<dyn Error>> {
+session.query("USE my_keyspace", &[]).await?;
+# Ok(())
+# }
+```
+This method has a slightly worse latency than `Session::use_keyspace` - there are two roundtrips needed instead of one.
+Therefore, `Session::use_keyspace` is the preferred method for setting keyspaces.
+
 ### Multiple use queries at once
 Don't run multiple `use_keyspace` queries at once. 
 This could end up with half of connections using one keyspace and the other half using the other.

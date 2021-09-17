@@ -9,9 +9,10 @@ use std::sync::Arc;
 use std::time::Duration;
 use tokio::net::lookup_host;
 use tokio::time::timeout;
-use tracing::{info, warn};
+use tracing::{debug, info, warn};
 use uuid::Uuid;
 
+use super::connection::QueryResponse;
 use super::errors::{BadQuery, NewSessionError, QueryError};
 use crate::frame::response::cql_to_rust::FromRowError;
 use crate::frame::response::{result, Response};
@@ -431,39 +432,44 @@ impl Session {
         paging_state: Option<Bytes>,
     ) -> Result<QueryResult, QueryError> {
         let query: Query = query.into();
-        let query_text: &str = query.get_contents();
         let serialized_values = values.serialized();
-
-        // In case the user tried doing session.query("use keyspace ks") run session::use_keyspace
-        if query_is_setting_keyspace(query_text) {
-            warn!("Raw USE KEYSPACE queries are experimental, please use session::use_keyspace instead");
-
-            let keyspace_name = &query_text["use ".len()..].trim_end_matches(';').trim();
-            let case_sensitive = keyspace_name.starts_with('"');
-            let keyspace_name = keyspace_name.trim_matches('"');
-
-            return self
-                .use_keyspace(keyspace_name, case_sensitive)
-                .await
-                .map(|_| QueryResult::default());
-        }
 
         // Needed to avoid moving query and values into async move block
         let query_ref: &Query = &query;
         let values_ref = &serialized_values;
         let paging_state_ref = &paging_state;
 
-        self.run_query(
-            Statement::default(),
-            &query.config,
-            |node: Arc<Node>| async move { node.random_connection().await },
-            |connection: Arc<Connection>| async move {
-                connection
-                    .query_single_page_by_ref(query_ref, values_ref, paging_state_ref.clone())
-                    .await
-            },
-        )
-        .await
+        let response = self
+            .run_query(
+                Statement::default(),
+                &query.config,
+                |node: Arc<Node>| async move { node.random_connection().await },
+                |connection: Arc<Connection>| async move {
+                    connection
+                        .query(query_ref, values_ref, paging_state_ref.clone())
+                        .await
+                },
+            )
+            .await?;
+        self.handle_set_keyspace_response(&response).await?;
+
+        response.into_query_result()
+    }
+
+    async fn handle_set_keyspace_response(
+        &self,
+        response: &QueryResponse,
+    ) -> Result<(), QueryError> {
+        if let Some(set_keyspace) = response.as_set_keyspace() {
+            debug!(
+                "Detected USE KEYSPACE query, setting session's keyspace to {}",
+                set_keyspace.keyspace_name
+            );
+            self.use_keyspace(set_keyspace.keyspace_name.clone(), true)
+                .await?;
+        }
+
+        Ok(())
     }
 
     /// Run a simple query with paging  
@@ -668,17 +674,21 @@ impl Session {
             keyspace: prepared.get_keyspace_name(),
         };
 
-        self.run_query(
-            statement_info,
-            &prepared.config,
-            |node: Arc<Node>| async move { node.connection_for_token(token).await },
-            |connection: Arc<Connection>| async move {
-                connection
-                    .execute_single_page(prepared, values_ref, paging_state_ref.clone())
-                    .await
-            },
-        )
-        .await
+        let response = self
+            .run_query(
+                statement_info,
+                &prepared.config,
+                |node: Arc<Node>| async move { node.connection_for_token(token).await },
+                |connection: Arc<Connection>| async move {
+                    connection
+                        .execute(prepared, values_ref, paging_state_ref.clone())
+                        .await
+                },
+            )
+            .await?;
+        self.handle_set_keyspace_response(&response).await?;
+
+        response.into_query_result()
     }
 
     /// Run a prepared query with paging  
@@ -1206,17 +1216,6 @@ impl Session {
     }
 }
 
-/// Checks if a query sets a keyspace
-fn query_is_setting_keyspace(query: &str) -> bool {
-    let query_bytes = query.as_bytes();
-
-    if query_bytes.len() < 4 {
-        return false;
-    }
-
-    query_bytes[0..=3].eq_ignore_ascii_case("use ".as_bytes())
-}
-
 fn calculate_token(
     stmt: &PreparedStatement,
     values: &SerializedValues,
@@ -1262,19 +1261,4 @@ async fn resolve_hostname(hostname: &str) -> Result<SocketAddr, NewSessionError>
     }
 
     ret.ok_or(failed_err)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_query_is_setting_keyspace() {
-        assert!(query_is_setting_keyspace("use some_keyspace"));
-        assert!(query_is_setting_keyspace("UsE anotherKeySpace;"));
-        assert!(query_is_setting_keyspace("USE SCREAMINGKEYSPACE"));
-        assert!(!query_is_setting_keyspace("select * from users;"));
-        assert!(!query_is_setting_keyspace("us"));
-        assert!(!query_is_setting_keyspace(""));
-    }
 }
