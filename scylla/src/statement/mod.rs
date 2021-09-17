@@ -7,11 +7,11 @@ pub mod batch;
 pub mod prepared_statement;
 pub mod query;
 
-pub use crate::frame::types::Consistency;
+pub use crate::frame::types::{Consistency, SerialConsistency};
 
 pub struct StatementConfig {
     pub consistency: Consistency,
-    pub serial_consistency: Option<Consistency>,
+    pub serial_consistency: Option<SerialConsistency>,
 
     pub is_idempotent: bool,
 

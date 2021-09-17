@@ -23,9 +23,14 @@ pub enum Consistency {
     All = 0x0005,
     LocalQuorum = 0x0006,
     EachQuorum = 0x0007,
+    LocalOne = 0x000A,
+}
+
+#[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord, TryFromPrimitive)]
+#[repr(i16)]
+pub enum SerialConsistency {
     Serial = 0x0008,
     LocalSerial = 0x0009,
-    LocalOne = 0x000A,
 }
 
 impl Default for Consistency {
@@ -401,6 +406,10 @@ pub fn read_consistency(buf: &mut &[u8]) -> Result<Consistency, ParseError> {
 }
 
 pub fn write_consistency(c: Consistency, buf: &mut impl BufMut) {
+    write_short(c as i16, buf);
+}
+
+pub fn write_serial_consistency(c: SerialConsistency, buf: &mut impl BufMut) {
     write_short(c as i16, buf);
 }
 

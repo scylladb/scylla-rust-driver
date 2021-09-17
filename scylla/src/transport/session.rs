@@ -20,7 +20,7 @@ use crate::frame::value::{BatchValues, SerializedValues, ValueList};
 use crate::prepared_statement::{PartitionKeyError, PreparedStatement};
 use crate::query::Query;
 use crate::routing::{murmur3_token, Token};
-use crate::statement::Consistency;
+use crate::statement::{Consistency, SerialConsistency};
 use crate::tracing::{GetTracingConfig, TracingEvent, TracingInfo};
 use crate::transport::{
     cluster::Cluster,
@@ -1181,7 +1181,7 @@ impl Session {
         let info = Statement::default();
         let config = StatementConfig {
             is_idempotent: true,
-            serial_consistency: Some(Consistency::One),
+            serial_consistency: Some(SerialConsistency::LocalSerial),
             ..Default::default()
         };
 

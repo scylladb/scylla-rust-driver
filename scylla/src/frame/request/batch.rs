@@ -21,7 +21,7 @@ where
     pub statements_count: usize,
     pub batch_type: BatchType,
     pub consistency: types::Consistency,
-    pub serial_consistency: Option<types::Consistency>,
+    pub serial_consistency: Option<types::SerialConsistency>,
     pub timestamp: Option<i64>,
     pub values: Values,
 }
@@ -74,7 +74,7 @@ where
         buf.put_u8(flags);
 
         if let Some(serial_consistency) = self.serial_consistency {
-            types::write_consistency(serial_consistency, buf);
+            types::write_serial_consistency(serial_consistency, buf);
         }
         if let Some(timestamp) = self.timestamp {
             types::write_long(timestamp, buf);

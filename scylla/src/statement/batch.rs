@@ -1,8 +1,8 @@
 use crate::statement::{prepared_statement::PreparedStatement, query::Query};
 use crate::transport::retry_policy::RetryPolicy;
 
-pub use super::Consistency;
 use super::StatementConfig;
+pub use super::{Consistency, SerialConsistency};
 pub use crate::frame::request::batch::BatchType;
 
 /// CQL batch statement.
@@ -56,13 +56,13 @@ impl Batch {
 
     /// Sets the serial consistency to be used when executing this batch.
     /// (Ignored unless the batch is an LWT)
-    pub fn set_serial_consistency(&mut self, sc: Option<Consistency>) {
+    pub fn set_serial_consistency(&mut self, sc: Option<SerialConsistency>) {
         self.config.serial_consistency = sc;
     }
 
     /// Gets the serial consistency to be used when executing this batch.
     /// (Ignored unless the batch is an LWT)
-    pub fn get_serial_consistency(&self) -> Option<Consistency> {
+    pub fn get_serial_consistency(&self) -> Option<SerialConsistency> {
         self.config.serial_consistency
     }
 
