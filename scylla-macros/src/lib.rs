@@ -4,6 +4,7 @@ mod from_row;
 mod from_user_type;
 mod into_user_type;
 mod parser;
+mod value_list;
 
 /// #[derive(FromRow)] derives FromRow for struct
 /// Works only on simple structs without generics etc
@@ -24,4 +25,11 @@ pub fn from_user_type_derive(tokens_input: TokenStream) -> TokenStream {
 #[proc_macro_derive(IntoUserType)]
 pub fn into_user_type_derive(tokens_input: TokenStream) -> TokenStream {
     into_user_type::into_user_type_derive(tokens_input)
+}
+
+/// #[derive(ValueList)] derives ValueList for struct
+/// Works only on simple structs without generics etc
+#[proc_macro_derive(ValueList)]
+pub fn value_list_derive(tokens_input: TokenStream) -> TokenStream {
+    value_list::value_list_derive(tokens_input)
 }
