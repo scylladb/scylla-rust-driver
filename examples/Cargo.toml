@@ -79,3 +79,7 @@ path = "speculative-execution.rs"
 [[example]]
 name = "get_by_name"
 path = "get_by_name.rs"
+
+[[example]]
+name = "value_list"
+path = "value_list.rs"
