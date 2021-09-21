@@ -106,6 +106,7 @@ pub use statement::prepared_statement;
 pub use statement::query;
 
 pub use frame::response::cql_to_rust;
+pub use frame::response::cql_to_rust::FromRow;
 
 pub use transport::connection::{BatchResult, QueryResult};
 pub use transport::session::{IntoTypedRows, Session, SessionConfig};
