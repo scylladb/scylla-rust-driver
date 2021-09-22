@@ -23,7 +23,7 @@ pub fn from_row_derive(tokens_input: TokenStream) -> TokenStream {
     });
 
     let generated = quote! {
-        impl FromRow for #struct_name {
+        impl scylla::cql_to_rust::FromRow for #struct_name {
             fn from_row(row: scylla::frame::response::result::Row)
             -> Result<Self, scylla::cql_to_rust::FromRowError> {
                 use scylla::frame::response::result::CqlValue;
