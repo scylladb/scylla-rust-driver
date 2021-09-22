@@ -30,7 +30,7 @@ impl Query {
     }
 
     /// Returns the string representation of the CQL query.
-    pub fn get_contents(&self) -> &str {
+    pub fn get_contents(&self) -> &String {
         &self.contents
     }
 

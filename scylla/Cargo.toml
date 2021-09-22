@@ -35,6 +35,7 @@ chrono = "0.4"
 openssl = { version = "0.10.32", optional = true }
 tokio-openssl = { version = "0.6.1", optional = true }
 arc-swap = "1.3.0"
+lru = "0.6.6"
 
 [dev-dependencies]
 criterion = "0.3"

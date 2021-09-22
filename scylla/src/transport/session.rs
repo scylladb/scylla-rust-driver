@@ -3,6 +3,7 @@
 
 use bytes::Bytes;
 use futures::future::join_all;
+use lru::LruCache;
 use std::future::Future;
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -35,8 +36,10 @@ use crate::transport::{
 use crate::{batch::Batch, statement::StatementConfig};
 use crate::{cql_to_rust::FromRow, transport::speculative_execution};
 
+use crate::transport::errors::DbError;
 #[cfg(feature = "ssl")]
 use openssl::ssl::SslContext;
+use std::borrow::Cow;
 
 /// `Session` manages connections to the cluster and allows to perform queries
 pub struct Session {
@@ -45,8 +48,8 @@ pub struct Session {
     schema_agreement_interval: Duration,
     retry_policy: Box<dyn RetryPolicy>,
     speculative_execution_policy: Option<Arc<dyn SpeculativeExecutionPolicy>>,
-
     metrics: Arc<Metrics>,
+    prepared_statement_cache: LruCache<String, PreparedStatement>,
 }
 
 /// Configuration options for [`Session`].
@@ -82,6 +85,11 @@ pub struct SessionConfig {
 
     pub schema_agreement_interval: Duration,
     pub connect_timeout: std::time::Duration,
+
+    /// The maximum number of prepared statements to keep in cache
+    /// When the maximum is reached, the least recently used query is dropped
+    /// Defaults to 5_000
+    pub prepared_statement_cache_size: usize,
     /*
     These configuration options will be added in the future:
 
@@ -126,6 +134,7 @@ impl SessionConfig {
             auth_username: None,
             auth_password: None,
             connect_timeout: std::time::Duration::from_secs(5),
+            prepared_statement_cache_size: 5_000,
         }
     }
 
@@ -330,6 +339,7 @@ impl Session {
             schema_agreement_interval: config.schema_agreement_interval,
             speculative_execution_policy: config.speculative_execution_policy,
             metrics: Arc::new(Metrics::new()),
+            prepared_statement_cache: LruCache::new(config.prepared_statement_cache_size),
         };
 
         if let Some(keyspace_name) = config.used_keyspace {
@@ -746,6 +756,84 @@ impl Session {
             self.cluster.get_data(),
             self.metrics.clone(),
         ))
+    }
+
+    /// TODO: write more docs
+    async fn add_prepared_statement(
+        &mut self,
+        query: &String,
+    ) -> Result<PreparedStatement, QueryError> {
+        if let Some(prepared) = self.prepared_statement_cache.get(query) {
+            // Clone, because else the value is mutably borrowed and the execute method gives a compile error
+            Ok(prepared.clone())
+        } else {
+            let prepared = self.prepare(query.clone()).await?;
+
+            self.prepared_statement_cache
+                .put(query.to_string(), prepared.clone());
+
+            Ok(prepared)
+        }
+    }
+
+    /// Does the same thing as [`Session::prepare`](Session::prepare) but uses the prepared statement cache
+    /// TODO: more documentation
+    pub async fn execute_cached(
+        &mut self,
+        query: impl Into<Query>,
+        values: impl ValueList,
+    ) -> Result<QueryResult, QueryError> {
+        let query = query.into();
+        let prepared = self.add_prepared_statement(query.get_contents()).await?;
+        let values = values.serialized()?;
+
+        match self.execute(&prepared, values.clone()).await {
+            Ok(qr) => Ok(qr),
+            Err(err) => {
+                // Check if the Unprepare error is thrown
+                // In that case, re-prepare it and send it again
+                // In all other cases, just return the error
+                match err {
+                    QueryError::DbError(db_error, message) => {
+                        match db_error {
+                            DbError::Unprepared => {
+                                let did_remove =
+                                    self.prepared_statement_cache.pop(query.get_contents());
+
+                                // The old entry should be removed
+                                debug_assert!(did_remove.is_some());
+
+                                let prepared =
+                                    self.add_prepared_statement(query.get_contents()).await?;
+
+                                // Can't use recursion because else boxing issues will occur
+                                // so repeat the execute function
+                                self.execute(&prepared, values).await
+                            }
+                            _ => Err(QueryError::DbError(db_error, message)),
+                        }
+                    }
+                    _ => Err(err),
+                }
+            }
+        }
+    }
+
+    pub async fn execute_cached_iter(
+        &mut self,
+        query: impl Into<Query>,
+        values: impl ValueList,
+    ) -> Result<RowIterator, QueryError> {
+        unimplemented!();
+    }
+
+    pub async fn execute_cached_paged(
+        &mut self,
+        query: impl Into<Query>,
+        values: impl ValueList,
+        paging_state: Option<Bytes>,
+    ) -> Result<QueryResult, QueryError> {
+        unimplemented!();
     }
 
     /// Perform a batch query  
@@ -1267,6 +1355,33 @@ async fn resolve_hostname(hostname: &str) -> Result<SocketAddr, NewSessionError>
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::SessionBuilder;
+
+    #[tokio::test]
+    async fn test_execute_cached() {
+        let mut session = SessionBuilder::new_for_test().await;
+
+        session
+            .execute_cached("select * from test_table", &[])
+            .await
+            .unwrap();
+
+        todo!("More assertions?")
+    }
+
+    #[tokio::test]
+    async fn test_execute_cached_iter() {
+        let mut session = SessionBuilder::new_for_test().await;
+
+        unimplemented!();
+    }
+
+    #[tokio::test]
+    async fn test_execute_cached_paged() {
+        let mut session = SessionBuilder::new_for_test().await;
+
+        unimplemented!();
+    }
 
     #[test]
     fn test_query_is_setting_keyspace() {
