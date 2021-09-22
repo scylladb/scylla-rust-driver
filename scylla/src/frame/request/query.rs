@@ -18,7 +18,7 @@ const FLAG_WITH_DEFAULT_TIMESTAMP: u8 = 0x20;
 // const FLAG_WITH_NAMES_FOR_VALUES: u8 = 0x40;
 
 pub struct Query<'a> {
-    pub contents: String,
+    pub contents: &'a str,
     pub parameters: QueryParameters<'a>,
 }
 
@@ -26,7 +26,7 @@ impl Request for Query<'_> {
     const OPCODE: RequestOpcode = RequestOpcode::Query;
 
     fn serialize(&self, buf: &mut impl BufMut) -> Result<(), ParseError> {
-        types::write_long_string(&self.contents, buf)?;
+        types::write_long_string(self.contents, buf)?;
         self.parameters.serialize(buf)?;
         Ok(())
     }

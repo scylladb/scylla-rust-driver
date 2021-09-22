@@ -37,10 +37,14 @@ use crate::transport::{
 use crate::{batch::Batch, statement::StatementConfig};
 use crate::{cql_to_rust::FromRow, transport::speculative_execution};
 
+use crate::transport::errors::DbError;
 pub use crate::transport::connection_pool::PoolSize;
 
 #[cfg(feature = "ssl")]
 use openssl::ssl::SslContext;
+use std::borrow::Cow;
+use itertools::Either;
+use dashmap::DashMap;
 
 /// `Session` manages connections to the cluster and allows to perform queries
 pub struct Session {
@@ -49,8 +53,8 @@ pub struct Session {
     schema_agreement_interval: Duration,
     retry_policy: Box<dyn RetryPolicy>,
     speculative_execution_policy: Option<Arc<dyn SpeculativeExecutionPolicy>>,
-
     metrics: Arc<Metrics>,
+    prepared_statement_cache: DashMap<String, PreparedStatement>,
 }
 
 /// Configuration options for [`Session`].
@@ -322,6 +326,7 @@ impl Session {
             schema_agreement_interval: config.schema_agreement_interval,
             speculative_execution_policy: config.speculative_execution_policy,
             metrics: Arc::new(Metrics::new()),
+            prepared_statement_cache: DashMap::new(),
         };
 
         if let Some(keyspace_name) = config.used_keyspace {
@@ -399,7 +404,7 @@ impl Session {
         values: impl ValueList,
         paging_state: Option<Bytes>,
     ) -> Result<QueryResult, QueryError> {
-        let query: Query = query.into();
+        let query = query.into();
         let serialized_values = values.serialized();
 
         // Needed to avoid moving query and values into async move block
@@ -532,7 +537,7 @@ impl Session {
     /// # }
     /// ```
     pub async fn prepare(&self, query: impl Into<Query>) -> Result<PreparedStatement, QueryError> {
-        let query: Query = query.into();
+        let query = query.into();
 
         let connections = self.cluster.get_working_connections().await?;
 
@@ -705,7 +710,7 @@ impl Session {
         prepared: impl Into<PreparedStatement>,
         values: impl ValueList,
     ) -> Result<RowIterator, QueryError> {
-        let prepared: PreparedStatement = prepared.into();
+        let prepared = prepared.into();
         let serialized_values = values.serialized()?;
 
         let token = calculate_token(&prepared, &serialized_values)?;
@@ -726,7 +731,121 @@ impl Session {
         ))
     }
 
-    /// Perform a batch query  
+    /// TODO: write more docs
+    async fn add_prepared_statement(
+        &self,
+        query: &Query,
+    ) -> Result<PreparedStatement, QueryError> {
+        if let Some(prepared) = self.prepared_statement_cache.get(&query.contents) {
+            // Clone, because else the value is mutably borrowed and the execute method gives a compile error
+            Ok(prepared.clone())
+        } else {
+            let prepared = self.prepare(query.clone()).await?;
+
+            self.prepared_statement_cache
+                .insert(query.contents.clone(), prepared.clone());
+
+            Ok(prepared)
+        }
+    }
+
+    // TODO: doc
+    // TODO: tried it with fn pointers and all, but failed because execute_paged_cached has a different fn parameter list
+    // TODO: rename?
+    async fn post_execute_prepared_statement<T>(
+        &self,
+        query: &Query,
+        result: Result<T, QueryError>
+    ) -> Result<Either<T, PreparedStatement>, QueryError> {
+        match result {
+            Ok(qr) => Ok(Either::Left(qr)),
+            Err(err) => {
+                // Check if the Unprepare error is thrown
+                // In that case, re-prepare it and send it again
+                // In all other cases, just return the error
+                match err {
+                    QueryError::DbError(db_error, message) => {
+                        match db_error {
+                            DbError::Unprepared => {
+                                let did_remove =
+                                    self.prepared_statement_cache.remove(&query.contents);
+
+                                // The old entry should be removed
+                                debug_assert!(did_remove.is_some());
+
+                                let prepared =
+                                    self.add_prepared_statement(&query).await?;
+
+                                Ok(Either::Right(prepared))
+                            }
+                            _ => Err(QueryError::DbError(db_error, message)),
+                        }
+                    }
+                    _ => Err(err),
+                }
+            }
+        }
+    }
+
+    /// Does the same thing as [`Session::prepare`](Session::prepare) but uses the prepared statement cache
+    /// TODO: more documentation
+    /// TODO: maybe write the methods with macro's
+    pub async fn execute_cached(
+        &self,
+        query: impl Into<Query>,
+        values: &impl ValueList,
+    ) -> Result<QueryResult, QueryError> {
+        let query = query.into();
+        let prepared = self.add_prepared_statement(&query).await?;
+        let values = values.serialized()?;
+        let result = self.execute(&prepared, values.clone()).await;
+
+        match self.post_execute_prepared_statement(&query, result).await? {
+            Either::Left(result) => Ok(result),
+            Either::Right(new_prepared_statement) => {
+                self.execute(&new_prepared_statement, values).await
+            }
+        }
+    }
+
+    pub async fn execute_iter_cached(
+        &self,
+        query: impl Into<Query>,
+        values: impl ValueList,
+    ) -> Result<RowIterator, QueryError> {
+        let query = query.into();
+        let prepared = self.add_prepared_statement(&query).await?;
+        let values = values.serialized()?;
+        let result = self.execute_iter(prepared.clone(), values.clone()).await;
+
+        match self.post_execute_prepared_statement(&query, result).await? {
+            Either::Left(result) => Ok(result),
+            Either::Right(new_prepared_statement) => {
+                self.execute_iter(new_prepared_statement, values).await
+            }
+        }
+    }
+
+    pub async fn execute_paged_cached(
+        &self,
+        query: impl Into<Query>,
+        values: impl ValueList,
+        paging_state: Option<Bytes>,
+    ) -> Result<QueryResult, QueryError> {
+        let query = query.into();
+        let prepared = self.add_prepared_statement(&query).await?;
+        let values = values.serialized()?;
+        let result = self.execute_paged(&prepared, values.clone(), paging_state.clone()).await;
+
+        match self.post_execute_prepared_statement(&query, result).await? {
+            Either::Left(result) => Ok(result),
+            Either::Right(new_prepared_statement) => {
+                self.execute_paged(&new_prepared_statement, values, paging_state).await
+            }
+        }
+    }
+
+    /// Perform a batch query
     /// Batch contains many `simple` or `prepared` queries which are executed at once  
     /// Batch doesn't return any rows
     ///
@@ -1229,4 +1348,36 @@ async fn resolve_hostname(hostname: &str) -> Result<SocketAddr, NewSessionError>
     }
 
     ret.ok_or(failed_err)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::SessionBuilder;
+
+    #[tokio::test]
+    async fn test_execute_cached() {
+        let session = SessionBuilder::new_for_test().await;
+
+        session
+            .execute_cached("select * from test_table", &[])
+            .await
+            .unwrap();
+
+        todo!("More assertions?")
+    }
+
+    #[tokio::test]
+    async fn test_execute_cached_iter() {
+        let session = SessionBuilder::new_for_test().await;
+
+        unimplemented!();
+    }
+
+    #[tokio::test]
+    async fn test_execute_cached_paged() {
+        let session = SessionBuilder::new_for_test().await;
+
+        unimplemented!();
+    }
 }
