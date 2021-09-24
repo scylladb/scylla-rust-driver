@@ -861,9 +861,8 @@ async fn assert_in_tracing_table(session: &Session, tracing_uuid: Uuid) {
             .query(traces_query.clone(), (tracing_uuid,))
             .await
             .unwrap()
-            .rows()
-            .into_iter()
-            .next();
+            .maybe_first_row()
+            .unwrap();
 
         if row_opt.is_some() {
             // Ok there was some row for this tracing_uuid
