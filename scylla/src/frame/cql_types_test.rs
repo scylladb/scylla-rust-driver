@@ -232,11 +232,9 @@ async fn test_naive_date() {
             .query("SELECT val from ks.naive_date", &[])
             .await
             .unwrap()
-            .rows_typed::<(NaiveDate,)>()
+            .maybe_first_row()
             .unwrap()
-            .next()
-            .unwrap()
-            .ok()
+            .and_then(|res| res.into_typed::<(NaiveDate,)>().ok()) // Dates outside NaiveDate range fail parsing.
             .map(|row| row.0);
 
         assert_eq!(read_date, *date);
