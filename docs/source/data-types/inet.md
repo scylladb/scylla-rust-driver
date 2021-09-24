@@ -16,10 +16,9 @@ session
     .await?;
 
 // Read inet from the table
-if let Some(rows) = session.query("SELECT a FROM keyspace.table", &[]).await?.rows {
-    for row in rows.into_typed::<(IpAddr,)>() {
-        let (inet_value,): (IpAddr,) = row?;
-    }
+let rows = session.query("SELECT a FROM keyspace.table", &[]).await?.rows()?;
+for row in rows.into_typed::<(IpAddr,)>() {
+    let (inet_value,): (IpAddr,) = row?;
 }
 # Ok(())
 # }

@@ -18,11 +18,10 @@ let uri = "127.0.0.1:9042";
 
 let session: Session = SessionBuilder::new().known_node(uri).build().await?;
 
-if let Some(rows) = session.query("SELECT a, b, c FROM ks.t", &[]).await?.rows {
-    for row in rows.into_typed::<(i32, i32, String)>() {
-        let (a, b, c) = row?;
-        println!("a, b, c: {}, {}, {}", a, b, c);
-    }
+let rows = session.query("SELECT a, b, c FROM ks.t", &[]).await?.rows()?;
+for row in rows.into_typed::<(i32, i32, String)>() {
+    let (a, b, c) = row?;
+    println!("a, b, c: {}, {}, {}", a, b, c);
 }
 ```
 

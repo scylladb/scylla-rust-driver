@@ -23,10 +23,9 @@ session
     .await?;
 
 // Read timestamp from the table, no need for a wrapper here
-if let Some(rows) = session.query("SELECT a FROM keyspace.table", &[]).await?.rows {
-    for row in rows.into_typed::<(Duration,)>() {
-        let (timestamp_value,): (Duration,) = row?;
-    }
+let rows = session.query("SELECT a FROM keyspace.table", &[]).await?.rows()?;
+for row in rows.into_typed::<(Duration,)>() {
+    let (timestamp_value,): (Duration,) = row?;
 }
 # Ok(())
 # }

@@ -18,10 +18,9 @@ session
     .await?;
 
 // Read uuid/timeuuid from the table
-if let Some(rows) = session.query("SELECT a FROM keyspace.table", &[]).await?.rows {
-    for row in rows.into_typed::<(Uuid,)>() {
-        let (uuid_value,): (Uuid,) = row?;
-    }
+let rows = session.query("SELECT a FROM keyspace.table", &[]).await?.rows()?;
+for row in rows.into_typed::<(Uuid,)>() {
+    let (uuid_value,): (Uuid,) = row?;
 }
 # Ok(())
 # }

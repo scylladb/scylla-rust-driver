@@ -38,10 +38,9 @@ session
     .await?;
 
 // Read MyType from the table
-if let Some(rows) = session.query("SELECT a FROM keyspace.table", &[]).await?.rows {
-    for row in rows.into_typed::<(MyType,)>() {
-        let (my_type_value,): (MyType,) = row?;
-    }
+let rows = session.query("SELECT a FROM keyspace.table", &[]).await?.rows()?;
+for row in rows.into_typed::<(MyType,)>() {
+    let (my_type_value,): (MyType,) = row?;
 }
 # Ok(())
 # }

@@ -39,13 +39,12 @@ async fn main() -> Result<()> {
             .unwrap();
     }
 
-    if let Some(rows) = sessions[42]
+    let rows = sessions[42]
         .query("SELECT a, b, c FROM ks.t", &[])
         .await?
-        .rows
-    {
-        println!("Read {} rows", rows.len());
-    }
+        .rows()?;
+
+    println!("Read {} rows", rows.len());
 
     Ok(())
 }

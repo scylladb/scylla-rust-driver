@@ -473,8 +473,8 @@ impl Connection {
         let (version_id,): (Uuid,) = self
             .query_single_page(LOCAL_VERSION, &[])
             .await?
-            .rows
-            .ok_or(QueryError::ProtocolError("Version query returned not rows"))?
+            .rows()
+            .map_err(|_| QueryError::ProtocolError("Version query returned not rows"))?
             .into_typed::<(Uuid,)>()
             .next()
             .ok_or(QueryError::ProtocolError("Admin table returned empty rows"))?

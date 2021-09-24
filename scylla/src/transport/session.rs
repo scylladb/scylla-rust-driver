@@ -946,10 +946,10 @@ impl Session {
 
         // Get tracing info
         let tracing_info_row_res: Option<Result<TracingInfo, _>> = traces_session_res
-            .rows
-            .ok_or(QueryError::ProtocolError(
-                "Response to system_traces.sessions query was not Rows",
-            ))?
+            .rows()
+            .map_err(|_| {
+                QueryError::ProtocolError("Response to system_traces.sessions query was not Rows")
+            })?
             .into_typed::<TracingInfo>()
             .next();
 
@@ -964,10 +964,10 @@ impl Session {
 
         // Get tracing events
         let tracing_event_rows = traces_events_res
-            .rows
-            .ok_or(QueryError::ProtocolError(
-                "Response to system_traces.events query was not Rows",
-            ))?
+            .rows()
+            .map_err(|_| {
+                QueryError::ProtocolError("Response to system_traces.events query was not Rows")
+            })?
             .into_typed::<TracingEvent>();
 
         for event in tracing_event_rows {

@@ -18,10 +18,9 @@ session
     .await?;
 
 // Read a decimal from the table
-if let Some(rows) = session.query("SELECT a FROM keyspace.table", &[]).await?.rows {
-    for row in rows.into_typed::<(BigDecimal,)>() {
-        let (decimal_value,): (BigDecimal,) = row?;
-    }
+let rows = session.query("SELECT a FROM keyspace.table", &[]).await?.rows()?;
+for row in rows.into_typed::<(BigDecimal,)>() {
+    let (decimal_value,): (BigDecimal,) = row?;
 }
 # Ok(())
 # }

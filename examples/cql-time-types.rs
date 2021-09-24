@@ -36,15 +36,14 @@ async fn main() -> Result<()> {
         .query("INSERT INTO ks.dates (d) VALUES (?)", (example_date,))
         .await?;
 
-    if let Some(rows) = session.query("SELECT d from ks.dates", &[]).await?.rows {
-        for row in rows.into_typed::<(NaiveDate,)>() {
-            let (read_date,): (NaiveDate,) = match row {
-                Ok(read_date) => read_date,
-                Err(_) => continue, // We might read a date that does not fit in NaiveDate, skip it
-            };
+    let rows1 = session.query("SELECT d from ks.dates", &[]).await?.rows()?;
+    for row in rows1.into_typed::<(NaiveDate,)>() {
+        let (read_date,): (NaiveDate,) = match row {
+            Ok(read_date) => read_date,
+            Err(_) => continue, // We might read a date that does not fit in NaiveDate, skip it
+        };
 
-            println!("Read a date: {:?}", read_date);
-        }
+        println!("Read a date: {:?}", read_date);
     }
 
     // Dates outside this range must be represented in the raw form - an u32 describing days since -5877641-06-23
@@ -53,15 +52,14 @@ async fn main() -> Result<()> {
         .query("INSERT INTO ks.dates (d) VALUES (?)", (example_big_date,))
         .await?;
 
-    if let Some(rows) = session.query("SELECT d from ks.dates", &[]).await?.rows {
-        for row in rows {
-            let read_days: u32 = match row.columns[0] {
-                Some(CqlValue::Date(days)) => days,
-                _ => panic!("oh no"),
-            };
+    let rows2 = session.query("SELECT d from ks.dates", &[]).await?.rows()?;
+    for row in rows2 {
+        let read_days: u32 = match row.columns[0] {
+            Some(CqlValue::Date(days)) => days,
+            _ => panic!("oh no"),
+        };
 
-            println!("Read a date as raw days: {}", read_days);
-        }
+        println!("Read a date as raw days: {}", read_days);
     }
 
     // Time - nanoseconds since midnight in range 0..=86399999999999
@@ -79,12 +77,11 @@ async fn main() -> Result<()> {
         .query("INSERT INTO ks.times (t) VALUES (?)", (Time(example_time),))
         .await?;
 
-    if let Some(rows) = session.query("SELECT t from ks.times", &[]).await?.rows {
-        for row in rows.into_typed::<(Duration,)>() {
-            let (read_time,): (Duration,) = row?;
+    let rows3 = session.query("SELECT t from ks.times", &[]).await?.rows()?;
+    for row in rows3.into_typed::<(Duration,)>() {
+        let (read_time,): (Duration,) = row?;
 
-            println!("Read a time: {:?}", read_time);
-        }
+        println!("Read a time: {:?}", read_time);
     }
 
     // Timestamp - milliseconds since unix epoch - 1970-01-01
@@ -105,16 +102,15 @@ async fn main() -> Result<()> {
         )
         .await?;
 
-    if let Some(rows) = session
+    let rows4 = session
         .query("SELECT t from ks.timestamps", &[])
         .await?
-        .rows
-    {
-        for row in rows.into_typed::<(Duration,)>() {
-            let (read_time,): (Duration,) = row?;
+        .rows()?;
 
-            println!("Read a timestamp: {:?}", read_time);
-        }
+    for row in rows4.into_typed::<(Duration,)>() {
+        let (read_time,): (Duration,) = row?;
+
+        println!("Read a timestamp: {:?}", read_time);
     }
 
     Ok(())

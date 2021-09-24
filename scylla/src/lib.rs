@@ -75,16 +75,10 @@
 //! use scylla::IntoTypedRows;
 //!
 //! // Read rows containing an int and text
-//! let rows_opt = session
-//! .query("SELECT a, b FROM ks.tab", &[])
-//!     .await?
-//!     .rows;
-//!
-//! if let Some(rows) = rows_opt {
-//!     for row in rows.into_typed::<(i32, String)>() {
-//!         // Parse row as int and text   
-//!         let (int_val, text_val): (i32, String) = row?;
-//!     }
+//! let query_result = session.query("SELECT a, b FROM ks.tab", &[]).await?;
+//! for row in query_result.rows()?.into_typed::<(i32, String)>() {
+//!     // Parse row as int and text   
+//!     let (int_val, text_val): (i32, String) = row?;
 //! }
 //! # Ok(())
 //! # }

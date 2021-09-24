@@ -18,10 +18,9 @@ session
     .await?;
 
 // Read a varint from the table
-if let Some(rows) = session.query("SELECT a FROM keyspace.table", &[]).await?.rows {
-    for row in rows.into_typed::<(BigInt,)>() {
-        let (varint_value,): (BigInt,) = row?;
-    }
+let rows = session.query("SELECT a FROM keyspace.table", &[]).await?.rows()?;
+for row in rows.into_typed::<(BigInt,)>() {
+    let (varint_value,): (BigInt,) = row?;
 }
 # Ok(())
 # }

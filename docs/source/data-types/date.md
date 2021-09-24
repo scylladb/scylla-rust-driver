@@ -23,10 +23,9 @@ session
     .await?;
 
 // Read NaiveDate from the table
-if let Some(rows) = session.query("SELECT a FROM keyspace.table", &[]).await?.rows {
-    for row in rows.into_typed::<(NaiveDate,)>() {
-        let (date_value,): (NaiveDate,) = row?;
-    }
+let rows = session.query("SELECT a FROM keyspace.table", &[]).await?.rows()?;
+for row in rows.into_typed::<(NaiveDate,)>() {
+    let (date_value,): (NaiveDate,) = row?;
 }
 # Ok(())
 # }
@@ -50,13 +49,12 @@ session
     .await?;
 
 // Read raw Date from the table
-if let Some(rows) = session.query("SELECT a FROM keyspace.table", &[]).await?.rows {
-    for row in rows {
-        let date_value: u32 = match row.columns[0] {
-            Some(CqlValue::Date(date_value)) => date_value,
-            _ => panic!("Should be a date!")
-        };
-    }
+let rows = session.query("SELECT a FROM keyspace.table", &[]).await?.rows()?;
+for row in rows {
+    let date_value: u32 = match row.columns[0] {
+        Some(CqlValue::Date(date_value)) => date_value,
+        _ => panic!("Should be a date!")
+    };
 }
 # Ok(())
 # }

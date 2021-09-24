@@ -21,10 +21,9 @@ session
     .await?;
 
 // Read ascii/text/varchar from the table
-if let Some(rows) = session.query("SELECT a FROM keyspace.table", &[]).await?.rows {
-    for row in rows.into_typed::<(String,)>() {
-        let (text_value,): (String,) = row?;
-    }
+let rows = session.query("SELECT a FROM keyspace.table", &[]).await?.rows()?;
+for row in rows.into_typed::<(String,)>() {
+    let (text_value,): (String,) = row?;
 }
 # Ok(())
 # }

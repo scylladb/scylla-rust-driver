@@ -46,17 +46,17 @@ async fn test_cql_collections() {
 
     // Recieve data in singular map:
 
-    if let Some(rows) = session
+    let rows1 = session
         .query("SELECT team FROM ks.teams", &[])
         .await
         .unwrap()
-        .rows
-    {
-        for row in rows.into_typed::<(HashMap<i32, String>,)>() {
-            let teams: HashMap<i32, String> = row.unwrap().0;
-            for (key, value) in &teams {
-                println!("{}: {}", key, value);
-            }
+        .rows()
+        .unwrap();
+
+    for row in rows1.into_typed::<(HashMap<i32, String>,)>() {
+        let teams: HashMap<i32, String> = row.unwrap().0;
+        for (key, value) in &teams {
+            println!("{}: {}", key, value);
         }
     }
 
@@ -80,16 +80,16 @@ async fn test_cql_collections() {
         .await
         .unwrap();
 
-    if let Some(rows) = session
+    let rows2 = session
         .query("SELECT tags FROM ks.images", &[])
         .await
         .unwrap()
-        .rows
-    {
-        for row in rows.into_typed::<(Vec<String>,)>() {
-            let tag: Vec<String> = row.unwrap().0;
-            println!("{:?}", tag);
-        }
+        .rows()
+        .unwrap();
+
+    for row in rows2.into_typed::<(Vec<String>,)>() {
+        let tag: Vec<String> = row.unwrap().0;
+        println!("{:?}", tag);
     }
 
     session
@@ -99,16 +99,17 @@ async fn test_cql_collections() {
         )
         .await
         .unwrap();
-    if let Some(rows) = session
+
+    let rows3 = session
         .query("SELECT tags FROM ks.images", &[])
         .await
         .unwrap()
-        .rows
-    {
-        for row in rows.into_typed::<(Vec<String>,)>() {
-            let tag: Vec<String> = row.unwrap().0;
-            println!("{:?}", tag);
-        }
+        .rows()
+        .unwrap();
+
+    for row in rows3.into_typed::<(Vec<String>,)>() {
+        let tag: Vec<String> = row.unwrap().0;
+        println!("{:?}", tag);
     }
 
     // List example
@@ -129,16 +130,16 @@ async fn test_cql_collections() {
         .await
         .unwrap();
 
-    if let Some(rows) = session
+    let rows4 = session
         .query("SELECT scores FROM ks.plays", &[])
         .await
         .unwrap()
-        .rows
-    {
-        for row in rows.into_typed::<(Vec<i32>,)>() {
-            let scores: Vec<i32> = row.unwrap().0;
-            println!("{:?}", scores);
-        }
+        .rows()
+        .unwrap();
+
+    for row in rows4.into_typed::<(Vec<i32>,)>() {
+        let scores: Vec<i32> = row.unwrap().0;
+        println!("{:?}", scores);
     }
 
     let scores2: Vec<i32> = vec![3, 9, 4];
@@ -151,16 +152,16 @@ async fn test_cql_collections() {
         .await
         .unwrap();
 
-    if let Some(rows) = session
+    let rows5 = session
         .query("SELECT scores FROM ks.plays", &[])
         .await
         .unwrap()
-        .rows
-    {
-        for row in rows.into_typed::<(Vec<i32>,)>() {
-            let scores: Vec<i32> = row.unwrap().0;
-            println!("{:?}", scores);
-        }
+        .rows()
+        .unwrap();
+
+    for row in rows5.into_typed::<(Vec<i32>,)>() {
+        let scores: Vec<i32> = row.unwrap().0;
+        println!("{:?}", scores);
     }
 
     // Tuple example
@@ -181,15 +182,15 @@ async fn test_cql_collections() {
         .await
         .unwrap();
 
-    if let Some(rows) = session
+    let rows6 = session
         .query("SELECT duration FROM ks.durations", &[])
         .await
         .unwrap()
-        .rows
-    {
-        for row in rows.into_typed::<((i32, String),)>() {
-            let duration = row.unwrap().0;
-            println!("{:?}", duration);
-        }
+        .rows()
+        .unwrap();
+
+    for row in rows6.into_typed::<((i32, String),)>() {
+        let duration = row.unwrap().0;
+        println!("{:?}", duration);
     }
 }

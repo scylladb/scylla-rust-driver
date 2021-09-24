@@ -207,13 +207,13 @@ async fn query_peers(conn: &Connection, connect_port: u16) -> Result<Vec<Peer>, 
 
     let (peers_res, local_res) = tokio::try_join!(peers_query, local_query)?;
 
-    let peers_rows = peers_res.rows.ok_or(QueryError::ProtocolError(
-        "system.peers query response was not Rows",
-    ))?;
+    let peers_rows = peers_res
+        .rows()
+        .map_err(|_| QueryError::ProtocolError("system.peers query response was not Rows"))?;
 
-    let local_rows = local_res.rows.ok_or(QueryError::ProtocolError(
-        "system.local query response was not Rows",
-    ))?;
+    let local_rows = local_res
+        .rows()
+        .map_err(|_| QueryError::ProtocolError("system.local query response was not Rows"))?;
 
     let mut result: Vec<Peer> = Vec::with_capacity(peers_rows.len() + 1);
 
@@ -261,10 +261,10 @@ async fn query_keyspaces(conn: &Connection) -> Result<HashMap<String, Keyspace>,
             &[],
         )
         .await?
-        .rows
-        .ok_or(QueryError::ProtocolError(
-            "system_schema.keyspaces query response was not Rows",
-        ))?;
+        .rows()
+        .map_err(|_| {
+            QueryError::ProtocolError("system_schema.keyspaces query response was not Rows")
+        })?;
 
     let mut result = HashMap::with_capacity(rows.len());
 
