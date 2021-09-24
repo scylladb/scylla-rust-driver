@@ -109,7 +109,8 @@ pub use frame::response::cql_to_rust;
 pub use frame::response::cql_to_rust::FromRow;
 
 pub use transport::caching_session::CachingSession;
-pub use transport::connection::{BatchResult, QueryResult};
+pub use transport::connection::BatchResult;
+pub use transport::query_result::QueryResult;
 pub use transport::session::{IntoTypedRows, Session, SessionConfig};
 pub use transport::session_builder::SessionBuilder;
 
