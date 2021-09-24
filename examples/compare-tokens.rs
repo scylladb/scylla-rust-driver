@@ -31,17 +31,12 @@ async fn main() -> Result<()> {
         let serialized_pk = (pk,).serialized()?.into_owned();
         let t = murmur3_token(prepared.compute_partition_key(&serialized_pk)?).value;
 
-        let qt = session
+        let (qt,) = session
             .query(format!("SELECT token(pk) FROM ks.t where pk = {}", pk), &[])
             .await?
-            .rows()?
-            .get(0)
-            .expect("token query no rows!")
-            .columns[0]
-            .as_ref()
-            .expect("token query null value!")
-            .as_bigint()
-            .expect("token wrong type!");
+            .first_row_typed::<(i64,)>()
+            .unwrap();
+
         assert_eq!(t, qt);
         println!("token for {}: {}", pk, t);
     }

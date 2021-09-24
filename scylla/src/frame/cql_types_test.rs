@@ -255,10 +255,7 @@ async fn test_naive_date() {
                 .query("SELECT val from ks.naive_date", &[])
                 .await
                 .unwrap()
-                .rows_typed::<(NaiveDate,)>()
-                .unwrap()
-                .next()
-                .unwrap()
+                .first_row_typed::<(NaiveDate,)>()
                 .unwrap();
             assert_eq!(read_date, *naive_date);
         }
@@ -361,10 +358,7 @@ async fn test_time() {
             .query("SELECT val from ks.time_tests", &[])
             .await
             .unwrap()
-            .rows_typed::<(Duration,)>()
-            .unwrap()
-            .next()
-            .unwrap()
+            .first_row_typed::<(Duration,)>()
             .unwrap();
 
         assert_eq!(read_time, *time_duration);
@@ -382,10 +376,7 @@ async fn test_time() {
             .query("SELECT val from ks.time_tests", &[])
             .await
             .unwrap()
-            .rows_typed::<(Duration,)>()
-            .unwrap()
-            .next()
-            .unwrap()
+            .first_row_typed::<(Duration,)>()
             .unwrap();
 
         assert_eq!(read_time, *time_duration);
@@ -467,10 +458,7 @@ async fn test_timestamp() {
             .query("SELECT val from ks.timestamp_tests", &[])
             .await
             .unwrap()
-            .rows_typed::<(Duration,)>()
-            .unwrap()
-            .next()
-            .unwrap()
+            .first_row_typed::<(Duration,)>()
             .unwrap();
 
         assert_eq!(read_timestamp, *timestamp_duration);
@@ -488,10 +476,7 @@ async fn test_timestamp() {
             .query("SELECT val from ks.timestamp_tests", &[])
             .await
             .unwrap()
-            .rows_typed::<(Duration,)>()
-            .unwrap()
-            .next()
-            .unwrap()
+            .first_row_typed::<(Duration,)>()
             .unwrap();
 
         assert_eq!(read_timestamp, *timestamp_duration);
@@ -541,10 +526,7 @@ async fn test_timeuuid() {
             .query("SELECT val from ks.timeuuid_tests", &[])
             .await
             .unwrap()
-            .rows_typed::<(Uuid,)>()
-            .unwrap()
-            .next()
-            .unwrap()
+            .first_row_typed::<(Uuid,)>()
             .unwrap();
 
         assert_eq!(read_timeuuid.as_bytes(), timeuuid_bytes);
@@ -563,10 +545,7 @@ async fn test_timeuuid() {
             .query("SELECT val from ks.timeuuid_tests", &[])
             .await
             .unwrap()
-            .rows_typed::<(Uuid,)>()
-            .unwrap()
-            .next()
-            .unwrap()
+            .first_row_typed::<(Uuid,)>()
             .unwrap();
 
         assert_eq!(read_timeuuid.as_bytes(), timeuuid_bytes);
@@ -631,10 +610,7 @@ async fn test_inet() {
             .query("SELECT val from ks.inet_tests WHERE id = 0", &[])
             .await
             .unwrap()
-            .rows_typed::<(IpAddr,)>()
-            .unwrap()
-            .next()
-            .unwrap()
+            .first_row_typed::<(IpAddr,)>()
             .unwrap();
 
         assert_eq!(read_inet, *inet);
@@ -649,10 +625,7 @@ async fn test_inet() {
             .query("SELECT val from ks.inet_tests WHERE id = 0", &[])
             .await
             .unwrap()
-            .rows_typed::<(IpAddr,)>()
-            .unwrap()
-            .next()
-            .unwrap()
+            .first_row_typed::<(IpAddr,)>()
             .unwrap();
 
         assert_eq!(read_inet, *inet);
@@ -705,10 +678,7 @@ async fn test_blob() {
             .query("SELECT val from ks.blob_tests WHERE id = 0", &[])
             .await
             .unwrap()
-            .rows_typed::<(Vec<u8>,)>()
-            .unwrap()
-            .next()
-            .unwrap()
+            .first_row_typed::<(Vec<u8>,)>()
             .unwrap();
 
         assert_eq!(read_blob, *blob);
@@ -723,10 +693,7 @@ async fn test_blob() {
             .query("SELECT val from ks.blob_tests WHERE id = 0", &[])
             .await
             .unwrap()
-            .rows_typed::<(Vec<u8>,)>()
-            .unwrap()
-            .next()
-            .unwrap()
+            .first_row_typed::<(Vec<u8>,)>()
             .unwrap();
 
         assert_eq!(read_blob, *blob);
@@ -813,10 +780,7 @@ async fn test_udt_after_schema_update() {
         )
         .await
         .unwrap()
-        .rows_typed::<(UdtV1,)>()
-        .unwrap()
-        .next()
-        .unwrap()
+        .first_row_typed::<(UdtV1,)>()
         .unwrap();
 
     assert_eq!(read_udt, v1);
@@ -836,10 +800,7 @@ async fn test_udt_after_schema_update() {
         )
         .await
         .unwrap()
-        .rows_typed::<(UdtV1,)>()
-        .unwrap()
-        .next()
-        .unwrap()
+        .first_row_typed::<(UdtV1,)>()
         .unwrap();
 
     assert_eq!(read_udt, v1);
@@ -863,10 +824,7 @@ async fn test_udt_after_schema_update() {
         )
         .await
         .unwrap()
-        .rows_typed::<(UdtV2,)>()
-        .unwrap()
-        .next()
-        .unwrap()
+        .first_row_typed::<(UdtV2,)>()
         .unwrap();
 
     assert_eq!(
