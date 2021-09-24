@@ -8,7 +8,7 @@ use crate::tracing::TracingInfo;
 use crate::transport::connection::BatchResult;
 use crate::transport::errors::{BadKeyspaceName, BadQuery, DbError, QueryError};
 use crate::QueryResult;
-use crate::{IntoTypedRows, Session, SessionBuilder};
+use crate::{Session, SessionBuilder};
 use bytes::Bytes;
 use futures::StreamExt;
 use uuid::Uuid;
@@ -270,29 +270,22 @@ async fn test_batch() {
 
     session.batch(&batch, values).await.unwrap();
 
-    let rs = session
+    let mut results: Vec<(i32, i32, String)> = session
         .query("SELECT a, b, c FROM ks.t_batch", &[])
         .await
         .unwrap()
-        .rows()
-        .unwrap();
-
-    let mut results: Vec<(i32, i32, &String)> = rs
-        .iter()
-        .map(|r| {
-            let a = r.columns[0].as_ref().unwrap().as_int().unwrap();
-            let b = r.columns[1].as_ref().unwrap().as_int().unwrap();
-            let c = r.columns[2].as_ref().unwrap().as_text().unwrap();
-            (a, b, c)
-        })
+        .rows_typed::<(i32, i32, String)>()
+        .unwrap()
+        .map(|row| row.unwrap())
         .collect();
+
     results.sort();
     assert_eq!(
         results,
         vec![
-            (1, 2, &String::from("abc")),
-            (1, 4, &String::from("hello")),
-            (7, 11, &String::from(""))
+            (1, 2, String::from("abc")),
+            (1, 4, String::from("hello")),
+            (7, 11, String::from(""))
         ]
     );
 }
@@ -389,9 +382,8 @@ async fn test_use_keyspace() {
         .query("SELECT * FROM tab", &[])
         .await
         .unwrap()
-        .rows()
+        .rows_typed::<(String,)>()
         .unwrap()
-        .into_typed::<(String,)>()
         .map(|res| res.unwrap().0)
         .collect();
 
@@ -440,9 +432,8 @@ async fn test_use_keyspace() {
         .query("SELECT * FROM tab", &[])
         .await
         .unwrap()
-        .rows()
+        .rows_typed::<(String,)>()
         .unwrap()
-        .into_typed::<(String,)>()
         .map(|res| res.unwrap().0)
         .collect();
 
@@ -507,9 +498,8 @@ async fn test_use_keyspace_case_sensitivity() {
         .query("SELECT * from tab", &[])
         .await
         .unwrap()
-        .rows()
+        .rows_typed::<(String,)>()
         .unwrap()
-        .into_typed::<(String,)>()
         .map(|row| row.unwrap().0)
         .collect();
 
@@ -523,9 +513,8 @@ async fn test_use_keyspace_case_sensitivity() {
         .query("SELECT * from tab", &[])
         .await
         .unwrap()
-        .rows()
+        .rows_typed::<(String,)>()
         .unwrap()
-        .into_typed::<(String,)>()
         .map(|row| row.unwrap().0)
         .collect();
 
@@ -573,9 +562,8 @@ async fn test_raw_use_keyspace() {
         .query("SELECT * FROM tab", &[])
         .await
         .unwrap()
-        .rows()
+        .rows_typed::<(String,)>()
         .unwrap()
-        .into_typed::<(String,)>()
         .map(|res| res.unwrap().0)
         .collect();
 

@@ -3,7 +3,6 @@ use crate::routing::Token;
 use crate::transport::connection::{Connection, ConnectionConfig};
 use crate::transport::connection_keeper::ConnectionKeeper;
 use crate::transport::errors::QueryError;
-use crate::transport::session::IntoTypedRows;
 
 use rand::seq::SliceRandom;
 use rand::thread_rng;
@@ -207,24 +206,21 @@ async fn query_peers(conn: &Connection, connect_port: u16) -> Result<Vec<Peer>, 
 
     let (peers_res, local_res) = tokio::try_join!(peers_query, local_query)?;
 
-    let peers_rows = peers_res
-        .rows()
-        .map_err(|_| QueryError::ProtocolError("system.peers query response was not Rows"))?;
+    let rows_num = peers_res
+        .rows_num()
+        .map_err(|_| QueryError::ProtocolError("system.peers select - response was not rows"))?;
+    let mut result: Vec<Peer> = Vec::with_capacity(rows_num + 1);
 
-    let local_rows = local_res
-        .rows()
-        .map_err(|_| QueryError::ProtocolError("system.local query response was not Rows"))?;
-
-    let mut result: Vec<Peer> = Vec::with_capacity(peers_rows.len() + 1);
-
-    let typed_peers_rows =
-        peers_rows.into_typed::<(IpAddr, Option<String>, Option<String>, Option<Vec<String>>)>();
+    let typed_peers_rows = peers_res
+        .rows_typed::<(IpAddr, Option<String>, Option<String>, Option<Vec<String>>)>()
+        .map_err(|_| QueryError::ProtocolError("system.peers select - response was not rows"))?;
 
     // For the local node we should use connection's address instead of rpc_address unless SNI is enabled (TODO)
     // Replace address in local_rows with connection's address
     let local_address: IpAddr = conn.get_connect_address().ip();
-    let typed_local_rows = local_rows
-        .into_typed::<(IpAddr, Option<String>, Option<String>, Option<Vec<String>>)>()
+    let typed_local_rows = local_res
+        .rows_typed::<(IpAddr, Option<String>, Option<String>, Option<Vec<String>>)>()
+        .map_err(|_| QueryError::ProtocolError("system.local select - response was not rows"))?
         .map(|res| res.map(|(_addr, dc, rack, tokens)| (local_address, dc, rack, tokens)));
 
     for row in typed_peers_rows.chain(typed_local_rows) {
@@ -255,20 +251,23 @@ async fn query_peers(conn: &Connection, connect_port: u16) -> Result<Vec<Peer>, 
 }
 
 async fn query_keyspaces(conn: &Connection) -> Result<HashMap<String, Keyspace>, QueryError> {
-    let rows = conn
+    let query_res = conn
         .query_single_page(
             "select keyspace_name, toJson(replication) from system_schema.keyspaces",
             &[],
         )
-        .await?
-        .rows()
-        .map_err(|_| {
-            QueryError::ProtocolError("system_schema.keyspaces query response was not Rows")
-        })?;
+        .await?;
 
-    let mut result = HashMap::with_capacity(rows.len());
+    let rows_num = query_res.rows_num().map_err(|_| {
+        QueryError::ProtocolError("system_schema.keyspaces select - the response was not rows")
+    })?;
+    let mut result = HashMap::with_capacity(rows_num);
 
-    for row in rows.into_typed::<(String, String)>() {
+    let rows = query_res.rows_typed::<(String, String)>().map_err(|_| {
+        QueryError::ProtocolError("system_schema.keyspaces select - the response was not rows")
+    })?;
+
+    for row in rows {
         let (keyspace_name, keyspace_json_text) = row.map_err(|_| {
             QueryError::ProtocolError("system_schema.keyspaces has invalid column type")
         })?;

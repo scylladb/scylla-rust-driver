@@ -5,7 +5,6 @@ use crate::frame::value::Counter;
 use crate::frame::value::Value;
 use crate::frame::value::{Date, Time, Timestamp};
 use crate::macros::{FromUserType, IntoUserType};
-use crate::transport::session::IntoTypedRows;
 use crate::transport::session::Session;
 use crate::SessionBuilder;
 use bigdecimal::BigDecimal;
@@ -91,11 +90,9 @@ where
             .query(select_values, &[])
             .await
             .unwrap()
-            .rows()
+            .rows_typed::<(T,)>()
             .unwrap()
-            .into_typed::<(T,)>()
-            .map(Result::unwrap)
-            .map(|row| row.0)
+            .map(|row| row.unwrap().0)
             .collect::<Vec<_>>();
 
         let expected_value = T::from_str(test).ok().unwrap();
@@ -181,11 +178,9 @@ async fn test_counter() {
             .query(select_values, (i as i32,))
             .await
             .unwrap()
-            .rows()
+            .rows_typed::<(Counter,)>()
             .unwrap()
-            .into_typed::<(Counter,)>()
-            .map(Result::unwrap)
-            .map(|row| row.0)
+            .map(|row| row.unwrap().0)
             .collect::<Vec<_>>();
 
         let expected_value = Counter(i64::from_str(test).unwrap());
@@ -237,9 +232,8 @@ async fn test_naive_date() {
             .query("SELECT val from ks.naive_date", &[])
             .await
             .unwrap()
-            .rows()
+            .rows_typed::<(NaiveDate,)>()
             .unwrap()
-            .into_typed::<(NaiveDate,)>()
             .next()
             .unwrap()
             .ok()
@@ -261,9 +255,8 @@ async fn test_naive_date() {
                 .query("SELECT val from ks.naive_date", &[])
                 .await
                 .unwrap()
-                .rows()
+                .rows_typed::<(NaiveDate,)>()
                 .unwrap()
-                .into_typed::<(NaiveDate,)>()
                 .next()
                 .unwrap()
                 .unwrap();
@@ -368,9 +361,8 @@ async fn test_time() {
             .query("SELECT val from ks.time_tests", &[])
             .await
             .unwrap()
-            .rows()
+            .rows_typed::<(Duration,)>()
             .unwrap()
-            .into_typed::<(Duration,)>()
             .next()
             .unwrap()
             .unwrap();
@@ -390,9 +382,8 @@ async fn test_time() {
             .query("SELECT val from ks.time_tests", &[])
             .await
             .unwrap()
-            .rows()
+            .rows_typed::<(Duration,)>()
             .unwrap()
-            .into_typed::<(Duration,)>()
             .next()
             .unwrap()
             .unwrap();
@@ -476,9 +467,8 @@ async fn test_timestamp() {
             .query("SELECT val from ks.timestamp_tests", &[])
             .await
             .unwrap()
-            .rows()
+            .rows_typed::<(Duration,)>()
             .unwrap()
-            .into_typed::<(Duration,)>()
             .next()
             .unwrap()
             .unwrap();
@@ -498,9 +488,8 @@ async fn test_timestamp() {
             .query("SELECT val from ks.timestamp_tests", &[])
             .await
             .unwrap()
-            .rows()
+            .rows_typed::<(Duration,)>()
             .unwrap()
-            .into_typed::<(Duration,)>()
             .next()
             .unwrap()
             .unwrap();
@@ -552,9 +541,8 @@ async fn test_timeuuid() {
             .query("SELECT val from ks.timeuuid_tests", &[])
             .await
             .unwrap()
-            .rows()
+            .rows_typed::<(Uuid,)>()
             .unwrap()
-            .into_typed::<(Uuid,)>()
             .next()
             .unwrap()
             .unwrap();
@@ -575,9 +563,8 @@ async fn test_timeuuid() {
             .query("SELECT val from ks.timeuuid_tests", &[])
             .await
             .unwrap()
-            .rows()
+            .rows_typed::<(Uuid,)>()
             .unwrap()
-            .into_typed::<(Uuid,)>()
             .next()
             .unwrap()
             .unwrap();
@@ -644,9 +631,8 @@ async fn test_inet() {
             .query("SELECT val from ks.inet_tests WHERE id = 0", &[])
             .await
             .unwrap()
-            .rows()
+            .rows_typed::<(IpAddr,)>()
             .unwrap()
-            .into_typed::<(IpAddr,)>()
             .next()
             .unwrap()
             .unwrap();
@@ -663,9 +649,8 @@ async fn test_inet() {
             .query("SELECT val from ks.inet_tests WHERE id = 0", &[])
             .await
             .unwrap()
-            .rows()
+            .rows_typed::<(IpAddr,)>()
             .unwrap()
-            .into_typed::<(IpAddr,)>()
             .next()
             .unwrap()
             .unwrap();
@@ -720,9 +705,8 @@ async fn test_blob() {
             .query("SELECT val from ks.blob_tests WHERE id = 0", &[])
             .await
             .unwrap()
-            .rows()
+            .rows_typed::<(Vec<u8>,)>()
             .unwrap()
-            .into_typed::<(Vec<u8>,)>()
             .next()
             .unwrap()
             .unwrap();
@@ -739,9 +723,8 @@ async fn test_blob() {
             .query("SELECT val from ks.blob_tests WHERE id = 0", &[])
             .await
             .unwrap()
-            .rows()
+            .rows_typed::<(Vec<u8>,)>()
             .unwrap()
-            .into_typed::<(Vec<u8>,)>()
             .next()
             .unwrap()
             .unwrap();
@@ -830,9 +813,8 @@ async fn test_udt_after_schema_update() {
         )
         .await
         .unwrap()
-        .rows()
+        .rows_typed::<(UdtV1,)>()
         .unwrap()
-        .into_typed::<(UdtV1,)>()
         .next()
         .unwrap()
         .unwrap();
@@ -854,9 +836,8 @@ async fn test_udt_after_schema_update() {
         )
         .await
         .unwrap()
-        .rows()
+        .rows_typed::<(UdtV1,)>()
         .unwrap()
-        .into_typed::<(UdtV1,)>()
         .next()
         .unwrap()
         .unwrap();
@@ -882,9 +863,8 @@ async fn test_udt_after_schema_update() {
         )
         .await
         .unwrap()
-        .rows()
+        .rows_typed::<(UdtV2,)>()
         .unwrap()
-        .into_typed::<(UdtV2,)>()
         .next()
         .unwrap()
         .unwrap();
