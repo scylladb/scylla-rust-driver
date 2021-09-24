@@ -51,6 +51,43 @@ if let Some(rows) = session.query("SELECT a, b from ks.tab", &[]).await?.rows {
 # }
 ```
 
+## Parsing using convenience methods
+[`QueryResult`](https://docs.rs/scylla/0.2.0/scylla/transport/query_result/struct.QueryResult.html) provides convenience methods for parsing rows.
+Here are a few of them:
+* `rows_typed::<RowT>()` - returns the rows parsed as the given type
+* `maybe_first_row_typed::<RowT>` - returns `Option<RowT>` containing first row from the result
+* `first_row_typed::<RowT>` - same as `maybe_first_row`, but fails without the first row
+* `single_row_typed::<RowT>` - same as `first_row`, but fails when there is more than one row
+* `result_not_rows()` - ensures that query response was not `rows`, helps avoid bugs
+
+
+```rust
+# extern crate scylla;
+# use scylla::Session;
+# use std::error::Error;
+# async fn check_only_compiles(session: &Session) -> Result<(), Box<dyn Error>> {
+// Parse row as a single column containing an int value
+let rows = session
+    .query("SELECT a from ks.tab", &[])
+    .await?
+    .rows_typed::<(i32,)>()?; // Same as .rows()?.into_typed()
+for row in rows {
+    let (int_value,): (i32,) = row?;
+}
+
+// maybe_first_row_typed gets the first row and parses it as the given type
+let first_int_val: Option<(i32,)> = session
+    .query("SELECT a from ks.tab", &[])
+    .await?
+    .maybe_first_row_typed::<(i32,)>()?;
+
+// no_rows fails when the response is rows
+session.query("INSERT INTO ks.tab (a) VALUES (0)", &[]).await?.result_not_rows()?;
+# Ok(())
+# }
+```
+For more see [`QueryResult`](https://docs.rs/scylla/0.2.0/scylla/transport/query_result/struct.QueryResult.html)
+
 ### `NULL` values
 `NULL` values will return an error when parsed as a Rust type. 
 To properly handle `NULL` values parse column as an `Option<>`:
