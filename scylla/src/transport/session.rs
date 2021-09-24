@@ -24,11 +24,12 @@ use crate::statement::Consistency;
 use crate::tracing::{GetTracingConfig, TracingEvent, TracingInfo};
 use crate::transport::{
     cluster::Cluster,
-    connection::{BatchResult, Connection, ConnectionConfig, QueryResult, VerifiedKeyspaceName},
+    connection::{BatchResult, Connection, ConnectionConfig, VerifiedKeyspaceName},
     iterator::RowIterator,
     load_balancing::{LoadBalancingPolicy, RoundRobinPolicy, Statement, TokenAwarePolicy},
     metrics::Metrics,
     node::Node,
+    query_result::QueryResult,
     retry_policy::{DefaultRetryPolicy, QueryInfo, RetryDecision, RetryPolicy, RetrySession},
     speculative_execution::SpeculativeExecutionPolicy,
     Compression,

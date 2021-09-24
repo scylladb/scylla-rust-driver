@@ -3,6 +3,7 @@ pub(crate) mod connection;
 mod connection_keeper;
 pub mod load_balancing;
 mod node;
+pub mod query_result;
 pub mod retry_policy;
 pub mod session;
 pub mod session_builder;
