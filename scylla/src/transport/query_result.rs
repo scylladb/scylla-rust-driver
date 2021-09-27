@@ -271,3 +271,333 @@ impl From<SingleRowError> for SingleRowTypedError {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::frame::response::result::{ColumnSpec, ColumnType, CqlValue, Row, TableSpec};
+    use std::convert::TryInto;
+
+    // Returns specified number of rows, each one containing one int32 value.
+    // Values are 0, 1, 2, 3, 4, ...
+    fn make_rows(rows_num: usize) -> Vec<Row> {
+        let mut rows: Vec<Row> = Vec::with_capacity(rows_num);
+        for cur_value in 0..rows_num {
+            let int_val: i32 = cur_value.try_into().unwrap();
+            rows.push(Row {
+                columns: vec![Some(CqlValue::Int(int_val))],
+            });
+        }
+        rows
+    }
+
+    // Just like make_rows, but each column has one String value
+    // values are "val0", "val1", "val2", ...
+    fn make_string_rows(rows_num: usize) -> Vec<Row> {
+        let mut rows: Vec<Row> = Vec::with_capacity(rows_num);
+        for cur_value in 0..rows_num {
+            rows.push(Row {
+                columns: vec![Some(CqlValue::Text(format!("val{}", cur_value)))],
+            });
+        }
+        rows
+    }
+
+    fn make_not_rows_query_result() -> QueryResult {
+        let table_spec = TableSpec {
+            ks_name: "some_keyspace".to_string(),
+            table_name: "some_table".to_string(),
+        };
+
+        let column_spec = ColumnSpec {
+            table_spec,
+            name: "column0".to_string(),
+            typ: ColumnType::Int,
+        };
+
+        QueryResult {
+            rows: None,
+            warnings: vec![],
+            tracing_id: None,
+            paging_state: None,
+            col_specs: vec![column_spec],
+        }
+    }
+
+    fn make_rows_query_result(rows_num: usize) -> QueryResult {
+        let mut res = make_not_rows_query_result();
+        res.rows = Some(make_rows(rows_num));
+        res
+    }
+
+    fn make_string_rows_query_result(rows_num: usize) -> QueryResult {
+        let mut res = make_not_rows_query_result();
+        res.rows = Some(make_string_rows(rows_num));
+        res
+    }
+
+    #[test]
+    fn rows_num_test() {
+        assert_eq!(
+            make_not_rows_query_result().rows_num(),
+            Err(RowsExpectedError)
+        );
+        assert_eq!(make_rows_query_result(0).rows_num(), Ok(0));
+        assert_eq!(make_rows_query_result(1).rows_num(), Ok(1));
+        assert_eq!(make_rows_query_result(2).rows_num(), Ok(2));
+        assert_eq!(make_rows_query_result(3).rows_num(), Ok(3));
+    }
+
+    #[test]
+    fn rows_test() {
+        assert_eq!(make_not_rows_query_result().rows(), Err(RowsExpectedError));
+        assert_eq!(make_rows_query_result(0).rows(), Ok(vec![]));
+        assert_eq!(make_rows_query_result(1).rows(), Ok(make_rows(1)));
+        assert_eq!(make_rows_query_result(2).rows(), Ok(make_rows(2)));
+    }
+
+    #[test]
+    fn rows_typed_test() {
+        assert!(make_not_rows_query_result().rows_typed::<(i32,)>().is_err());
+
+        let rows0: Vec<(i32,)> = make_rows_query_result(0)
+            .rows_typed::<(i32,)>()
+            .unwrap()
+            .map(|r| r.unwrap())
+            .collect();
+
+        assert_eq!(rows0, vec![]);
+
+        let rows1: Vec<(i32,)> = make_rows_query_result(1)
+            .rows_typed::<(i32,)>()
+            .unwrap()
+            .map(|r| r.unwrap())
+            .collect();
+
+        assert_eq!(rows1, vec![(0,)]);
+
+        let rows2: Vec<(i32,)> = make_rows_query_result(2)
+            .rows_typed::<(i32,)>()
+            .unwrap()
+            .map(|r| r.unwrap())
+            .collect();
+
+        assert_eq!(rows2, vec![(0,), (1,)]);
+    }
+
+    #[test]
+    fn result_not_rows_test() {
+        assert_eq!(make_not_rows_query_result().result_not_rows(), Ok(()));
+        assert_eq!(
+            make_rows_query_result(0).result_not_rows(),
+            Err(RowsNotExpectedError)
+        );
+        assert_eq!(
+            make_rows_query_result(1).result_not_rows(),
+            Err(RowsNotExpectedError)
+        );
+        assert_eq!(
+            make_rows_query_result(2).result_not_rows(),
+            Err(RowsNotExpectedError)
+        );
+    }
+
+    #[test]
+    fn rows_or_empty_test() {
+        assert_eq!(make_not_rows_query_result().rows_or_empty(), vec![]);
+        assert_eq!(make_rows_query_result(0).rows_or_empty(), make_rows(0));
+        assert_eq!(make_rows_query_result(1).rows_or_empty(), make_rows(1));
+        assert_eq!(make_rows_query_result(2).rows_or_empty(), make_rows(2));
+    }
+
+    #[test]
+    fn rows_typed_or_empty() {
+        let rows_empty: Vec<(i32,)> = make_not_rows_query_result()
+            .rows_typed_or_empty::<(i32,)>()
+            .map(|r| r.unwrap())
+            .collect();
+
+        assert_eq!(rows_empty, vec![]);
+
+        let rows0: Vec<(i32,)> = make_rows_query_result(0)
+            .rows_typed_or_empty::<(i32,)>()
+            .map(|r| r.unwrap())
+            .collect();
+
+        assert_eq!(rows0, vec![]);
+
+        let rows1: Vec<(i32,)> = make_rows_query_result(1)
+            .rows_typed_or_empty::<(i32,)>()
+            .map(|r| r.unwrap())
+            .collect();
+
+        assert_eq!(rows1, vec![(0,)]);
+
+        let rows2: Vec<(i32,)> = make_rows_query_result(2)
+            .rows_typed_or_empty::<(i32,)>()
+            .map(|r| r.unwrap())
+            .collect();
+
+        assert_eq!(rows2, vec![(0,), (1,)]);
+    }
+
+    #[test]
+    fn first_row_test() {
+        assert_eq!(
+            make_not_rows_query_result().first_row(),
+            Err(FirstRowError::RowsExpected(RowsExpectedError))
+        );
+        assert_eq!(
+            make_rows_query_result(0).first_row(),
+            Err(FirstRowError::RowsEmpty)
+        );
+        assert_eq!(
+            make_rows_query_result(1).first_row(),
+            Ok(make_rows(1).into_iter().next().unwrap())
+        );
+        assert_eq!(
+            make_rows_query_result(2).first_row(),
+            Ok(make_rows(2).into_iter().next().unwrap())
+        );
+        assert_eq!(
+            make_rows_query_result(3).first_row(),
+            Ok(make_rows(3).into_iter().next().unwrap())
+        );
+    }
+
+    #[test]
+    fn first_row_typed_test() {
+        assert_eq!(
+            make_not_rows_query_result().first_row_typed::<(i32,)>(),
+            Err(FirstRowTypedError::RowsExpected(RowsExpectedError))
+        );
+        assert_eq!(
+            make_rows_query_result(0).first_row_typed::<(i32,)>(),
+            Err(FirstRowTypedError::RowsEmpty)
+        );
+        assert_eq!(
+            make_rows_query_result(1).first_row_typed::<(i32,)>(),
+            Ok((0,))
+        );
+        assert_eq!(
+            make_rows_query_result(2).first_row_typed::<(i32,)>(),
+            Ok((0,))
+        );
+        assert_eq!(
+            make_rows_query_result(3).first_row_typed::<(i32,)>(),
+            Ok((0,))
+        );
+
+        assert!(matches!(
+            make_string_rows_query_result(2).first_row_typed::<(i32,)>(),
+            Err(FirstRowTypedError::FromRowError(_))
+        ));
+    }
+
+    #[test]
+    fn maybe_first_row_test() {
+        assert_eq!(
+            make_not_rows_query_result().maybe_first_row(),
+            Err(RowsExpectedError)
+        );
+        assert_eq!(make_rows_query_result(0).maybe_first_row(), Ok(None));
+        assert_eq!(
+            make_rows_query_result(1).maybe_first_row(),
+            Ok(Some(make_rows(1).into_iter().next().unwrap()))
+        );
+        assert_eq!(
+            make_rows_query_result(2).maybe_first_row(),
+            Ok(Some(make_rows(2).into_iter().next().unwrap()))
+        );
+        assert_eq!(
+            make_rows_query_result(3).maybe_first_row(),
+            Ok(Some(make_rows(3).into_iter().next().unwrap()))
+        );
+    }
+
+    #[test]
+    fn maybe_first_row_typed_test() {
+        assert_eq!(
+            make_not_rows_query_result().maybe_first_row_typed::<(i32,)>(),
+            Err(MaybeFirstRowTypedError::RowsExpected(RowsExpectedError))
+        );
+
+        assert_eq!(
+            make_rows_query_result(0).maybe_first_row_typed::<(i32,)>(),
+            Ok(None)
+        );
+
+        assert_eq!(
+            make_rows_query_result(1).maybe_first_row_typed::<(i32,)>(),
+            Ok(Some((0,)))
+        );
+
+        assert_eq!(
+            make_rows_query_result(2).maybe_first_row_typed::<(i32,)>(),
+            Ok(Some((0,)))
+        );
+
+        assert_eq!(
+            make_rows_query_result(3).maybe_first_row_typed::<(i32,)>(),
+            Ok(Some((0,)))
+        );
+
+        assert!(matches!(
+            make_string_rows_query_result(1).maybe_first_row_typed::<(i32,)>(),
+            Err(MaybeFirstRowTypedError::FromRowError(_))
+        ))
+    }
+
+    #[test]
+    fn single_row_test() {
+        assert_eq!(
+            make_not_rows_query_result().single_row(),
+            Err(SingleRowError::RowsExpected(RowsExpectedError))
+        );
+        assert_eq!(
+            make_rows_query_result(0).single_row(),
+            Err(SingleRowError::BadNumberOfRows(0))
+        );
+        assert_eq!(
+            make_rows_query_result(1).single_row(),
+            Ok(make_rows(1).into_iter().next().unwrap())
+        );
+        assert_eq!(
+            make_rows_query_result(2).single_row(),
+            Err(SingleRowError::BadNumberOfRows(2))
+        );
+        assert_eq!(
+            make_rows_query_result(3).single_row(),
+            Err(SingleRowError::BadNumberOfRows(3))
+        );
+    }
+
+    #[test]
+    fn single_row_typed_test() {
+        assert_eq!(
+            make_not_rows_query_result().single_row_typed::<(i32,)>(),
+            Err(SingleRowTypedError::RowsExpected(RowsExpectedError))
+        );
+        assert_eq!(
+            make_rows_query_result(0).single_row_typed::<(i32,)>(),
+            Err(SingleRowTypedError::BadNumberOfRows(0))
+        );
+        assert_eq!(
+            make_rows_query_result(1).single_row_typed::<(i32,)>(),
+            Ok((0,))
+        );
+        assert_eq!(
+            make_rows_query_result(2).single_row_typed::<(i32,)>(),
+            Err(SingleRowTypedError::BadNumberOfRows(2))
+        );
+        assert_eq!(
+            make_rows_query_result(3).single_row_typed::<(i32,)>(),
+            Err(SingleRowTypedError::BadNumberOfRows(3))
+        );
+
+        assert!(matches!(
+            make_string_rows_query_result(1).single_row_typed::<(i32,)>(),
+            Err(SingleRowTypedError::FromRowError(_))
+        ));
+    }
+}
