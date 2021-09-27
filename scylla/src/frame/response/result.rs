@@ -40,7 +40,7 @@ pub struct TableSpec {
 }
 
 #[derive(Debug, Clone)]
-enum ColumnType {
+pub enum ColumnType {
     Ascii,
     Boolean,
     Blob,
@@ -297,7 +297,7 @@ impl CqlValue {
 pub struct ColumnSpec {
     pub table_spec: TableSpec,
     pub name: String,
-    typ: ColumnType,
+    pub typ: ColumnType,
 }
 
 #[derive(Debug, Default)]
