@@ -50,24 +50,24 @@ impl Query {
         self.page_size
     }
 
-    /// Sets the consistency to be used when executing this batch.
+    /// Sets the consistency to be used when executing this statement.
     pub fn set_consistency(&mut self, c: Consistency) {
         self.config.consistency = c;
     }
 
-    /// Gets the consistency to be used when executing this batch.
+    /// Gets the consistency to be used when executing this statement.
     pub fn get_consistency(&self) -> Consistency {
         self.config.consistency
     }
 
-    /// Sets the serial consistency to be used when executing this batch.
-    /// (Ignored unless the batch is an LWT)
+    /// Sets the serial consistency to be used when executing this statement.
+    /// (Ignored unless the statement is an LWT)
     pub fn set_serial_consistency(&mut self, sc: Option<Consistency>) {
         self.config.serial_consistency = sc;
     }
 
-    /// Gets the serial consistency to be used when executing this batch.
-    /// (Ignored unless the batch is an LWT)
+    /// Gets the serial consistency to be used when executing this statement.
+    /// (Ignored unless the statement is an LWT)
     pub fn get_serial_consistency(&self) -> Option<Consistency> {
         self.config.serial_consistency
     }
@@ -97,14 +97,14 @@ impl Query {
         &self.config.retry_policy
     }
 
-    /// Enable or disable CQL Tracing for this batch
-    /// If enabled session.batch() will return a BatchResult containing tracing_id
+    /// Enable or disable CQL Tracing for this statement
+    /// If enabled session.query() will return a QueryResult containing tracing_id
     /// which can be used to query tracing information about the execution of this query
     pub fn set_tracing(&mut self, should_trace: bool) {
         self.config.tracing = should_trace;
     }
 
-    /// Gets whether tracing is enabled for this batch
+    /// Gets whether tracing is enabled for this statement
     pub fn get_tracing(&self) -> bool {
         self.config.tracing
     }
