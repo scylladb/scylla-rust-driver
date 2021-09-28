@@ -19,6 +19,7 @@ pub struct StatementConfig {
     pub speculative_execution_policy: Option<Arc<dyn SpeculativeExecutionPolicy>>,
 
     pub tracing: bool,
+    pub timestamp: Option<i64>,
 }
 
 impl Default for StatementConfig {
@@ -30,6 +31,7 @@ impl Default for StatementConfig {
             retry_policy: None,
             speculative_execution_policy: None,
             tracing: false,
+            timestamp: None,
         }
     }
 }
@@ -46,6 +48,7 @@ impl Clone for StatementConfig {
                 .map(|policy| policy.clone_boxed()),
             speculative_execution_policy: self.speculative_execution_policy.clone(),
             tracing: self.tracing,
+            timestamp: self.timestamp,
         }
     }
 }

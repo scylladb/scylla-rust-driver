@@ -10,6 +10,7 @@ use crate::frame::{
 
 // Batch flags
 const FLAG_WITH_SERIAL_CONSISTENCY: u8 = 0x10;
+const FLAG_WITH_DEFAULT_TIMESTAMP: u8 = 0x20;
 
 pub struct Batch<'a, StatementsIter, Values>
 where
@@ -21,6 +22,7 @@ where
     pub batch_type: BatchType,
     pub consistency: types::Consistency,
     pub serial_consistency: Option<types::Consistency>,
+    pub timestamp: Option<i64>,
     pub values: Values,
 }
 
@@ -65,11 +67,17 @@ where
         if self.serial_consistency.is_some() {
             flags |= FLAG_WITH_SERIAL_CONSISTENCY;
         }
+        if self.timestamp.is_some() {
+            flags |= FLAG_WITH_DEFAULT_TIMESTAMP;
+        }
 
         buf.put_u8(flags);
 
         if let Some(serial_consistency) = self.serial_consistency {
             types::write_consistency(serial_consistency, buf);
+        }
+        if let Some(timestamp) = self.timestamp {
+            types::write_long(timestamp, buf);
         }
 
         Ok(())
