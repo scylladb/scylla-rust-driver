@@ -62,7 +62,7 @@ impl Batch {
         self.config.serial_consistency
     }
 
-    /// Sets the idempotence of this statement
+    /// Sets the idempotence of this batch
     /// A query is idempotent if it can be applied multiple times without changing the result of the initial application
     /// If set to `true` we can be sure that it is idempotent
     /// If set to `false` it is unknown whether it is idempotent
@@ -71,18 +71,18 @@ impl Batch {
         self.config.is_idempotent = is_idempotent;
     }
 
-    /// Gets the idempotence of this statement
+    /// Gets the idempotence of this batch
     pub fn get_is_idempotent(&self) -> bool {
         self.config.is_idempotent
     }
 
-    /// Sets a custom [`RetryPolicy`] to be used with this statement
+    /// Sets a custom [`RetryPolicy`] to be used with this batch
     /// By default Session's retry policy is used, this allows to use a custom retry policy
     pub fn set_retry_policy(&mut self, retry_policy: Box<dyn RetryPolicy>) {
         self.config.retry_policy = Some(retry_policy);
     }
 
-    /// Gets custom [`RetryPolicy`] used by this statement
+    /// Gets custom [`RetryPolicy`] used by this batch
     pub fn get_retry_policy(&self) -> &Option<Box<dyn RetryPolicy>> {
         &self.config.retry_policy
     }
