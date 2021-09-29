@@ -42,7 +42,6 @@ pub use crate::transport::connection_pool::PoolSize;
 
 #[cfg(feature = "ssl")]
 use openssl::ssl::SslContext;
-use std::borrow::Cow;
 use itertools::Either;
 use dashmap::DashMap;
 
@@ -54,7 +53,7 @@ pub struct Session {
     retry_policy: Box<dyn RetryPolicy>,
     speculative_execution_policy: Option<Arc<dyn SpeculativeExecutionPolicy>>,
     metrics: Arc<Metrics>,
-    prepared_statement_cache: DashMap<String, PreparedStatement>,
+    prepared_statement_cache: PreparedStatementCache,
 }
 
 /// Configuration options for [`Session`].
@@ -91,6 +90,11 @@ pub struct SessionConfig {
     pub schema_agreement_interval: Duration,
     pub connect_timeout: std::time::Duration,
 
+    /// The prepared statement cache size
+    /// If a prepared statement is added while the limit is reached, the oldest prepared statement
+    /// is removed from the cache
+    pub prepared_statement_cache_size: usize,
+
     /// Size of the per-node connection pool, i.e. how many connections the driver should keep to each node.
     /// The default is `PerShard(1)`, which is the recommended setting for Scylla clusters.
     pub connection_pool_size: PoolSize,
@@ -106,6 +110,11 @@ pub struct SessionConfig {
 
     pub default_consistency: Option<String>,
     */
+}
+
+pub struct PreparedStatementCache {
+    max_capacity: usize,
+    cache: DashMap<String, PreparedStatement>,
 }
 
 /// Describes database server known on Session startup.
@@ -144,7 +153,12 @@ impl SessionConfig {
             connect_timeout: std::time::Duration::from_secs(5),
             connection_pool_size: Default::default(),
             disallow_shard_aware_port: false,
+            prepared_statement_cache_size: 10_000,
         }
+    }
+
+    pub fn set_prepared_statement_cache_size(&mut self, prepared_statement_cache_size: usize) {
+        self.prepared_statement_cache_size = prepared_statement_cache_size;
     }
 
     /// Adds a known database server with a hostname.
@@ -326,7 +340,12 @@ impl Session {
             schema_agreement_interval: config.schema_agreement_interval,
             speculative_execution_policy: config.speculative_execution_policy,
             metrics: Arc::new(Metrics::new()),
-            prepared_statement_cache: DashMap::new(),
+            prepared_statement_cache: PreparedStatementCache {
+                max_capacity: config.prepared_statement_cache_size,
+                // Don't initialize it already with the prepared_statement_cache_size capacity
+                // since that would be a waste of memory if it won't be filled
+                cache: Default::default(),
+            },
         };
 
         if let Some(keyspace_name) = config.used_keyspace {
@@ -736,13 +755,32 @@ impl Session {
         &self,
         query: &Query,
     ) -> Result<PreparedStatement, QueryError> {
-        if let Some(prepared) = self.prepared_statement_cache.get(&query.contents) {
+        if let Some(prepared) = self.prepared_statement_cache.cache.get(&query.contents) {
             // Clone, because else the value is mutably borrowed and the execute method gives a compile error
             Ok(prepared.clone())
         } else {
             let prepared = self.prepare(query.clone()).await?;
 
+            if self.prepared_statement_cache.max_capacity == self.prepared_statement_cache.cache.len() {
+                // Cache is full, remove the first entry
+                // Don't delete while holding the key, this could deadlock
+                // Instead, store the raw string in a variable and remove it later on when there
+                // are no more references to the cache
+                let mut query = "".to_string();
+
+                // There is no easy way to just get a random/first element
+                for first in self.prepared_statement_cache.cache.iter() {
+                    query = first.key().clone();
+
+                    // Only the first entry is important
+                    break;
+                }
+
+                self.prepared_statement_cache.cache.remove(&query);
+            }
+
             self.prepared_statement_cache
+                .cache
                 .insert(query.contents.clone(), prepared.clone());
 
             Ok(prepared)
@@ -767,11 +805,7 @@ impl Session {
                     QueryError::DbError(db_error, message) => {
                         match db_error {
                             DbError::Unprepared => {
-                                let did_remove =
-                                    self.prepared_statement_cache.remove(&query.contents);
-
-                                // The old entry should be removed
-                                debug_assert!(did_remove.is_some());
+                                self.prepared_statement_cache.cache.remove(&query.contents);
 
                                 let prepared =
                                     self.add_prepared_statement(&query).await?;
@@ -1352,7 +1386,6 @@ async fn resolve_hostname(hostname: &str) -> Result<SocketAddr, NewSessionError>
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use crate::SessionBuilder;
 
     #[tokio::test]
@@ -1369,14 +1402,14 @@ mod tests {
 
     #[tokio::test]
     async fn test_execute_cached_iter() {
-        let session = SessionBuilder::new_for_test().await;
+        let _session = SessionBuilder::new_for_test().await;
 
         unimplemented!();
     }
 
     #[tokio::test]
     async fn test_execute_cached_paged() {
-        let session = SessionBuilder::new_for_test().await;
+        let _session = SessionBuilder::new_for_test().await;
 
         unimplemented!();
     }

@@ -10,8 +10,6 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration;
 
-use crate::transport::errors::QueryError;
-use crate::QueryResult;
 #[cfg(feature = "ssl")]
 use openssl::ssl::SslContext;
 
