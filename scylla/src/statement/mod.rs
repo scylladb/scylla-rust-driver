@@ -10,7 +10,7 @@ pub mod query;
 pub use crate::frame::types::{Consistency, SerialConsistency};
 
 pub struct StatementConfig {
-    pub consistency: Consistency,
+    pub consistency: Option<Consistency>,
     pub serial_consistency: Option<SerialConsistency>,
 
     pub is_idempotent: bool,
@@ -51,4 +51,12 @@ impl Clone for StatementConfig {
             timestamp: self.timestamp,
         }
     }
+}
+
+/// Determines the consistency of a query
+pub fn determine_consistency(
+    default_consistency: Consistency,
+    other_consistency: &Option<Consistency>,
+) -> Consistency {
+    other_consistency.unwrap_or(default_consistency)
 }

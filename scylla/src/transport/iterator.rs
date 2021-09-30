@@ -24,7 +24,7 @@ use crate::frame::{
     value::SerializedValues,
 };
 use crate::routing::Token;
-use crate::statement::Consistency;
+use crate::statement::{determine_consistency, Consistency};
 use crate::statement::{prepared_statement::PreparedStatement, query::Query};
 use crate::transport::cluster::ClusterData;
 use crate::transport::connection::{Connection, QueryResponse};
@@ -98,12 +98,14 @@ impl RowIterator {
     pub(crate) fn new_for_query(
         query: Query,
         values: SerializedValues,
+        default_consistency: Consistency,
         retry_session: Box<dyn RetrySession>,
         load_balancer: Arc<dyn LoadBalancingPolicy>,
         cluster_data: Arc<ClusterData>,
         metrics: Arc<Metrics>,
     ) -> RowIterator {
         let (sender, receiver) = mpsc::channel(1);
+        let consistency = determine_consistency(default_consistency, &query.config.consistency);
 
         let worker_task = async move {
             let query_ref = &query;
@@ -121,7 +123,7 @@ impl RowIterator {
                 page_query,
                 statement_info: Statement::default(),
                 query_is_idempotent: query.config.is_idempotent,
-                query_consistency: query.config.consistency,
+                query_consistency: consistency,
                 retry_session,
                 load_balancer,
                 metrics,
@@ -141,9 +143,11 @@ impl RowIterator {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn new_for_prepared_statement(
         prepared: PreparedStatement,
         values: SerializedValues,
+        default_consistency: Consistency,
         token: Token,
         retry_session: Box<dyn RetrySession>,
         load_balancer: Arc<dyn LoadBalancingPolicy>,
@@ -151,6 +155,7 @@ impl RowIterator {
         metrics: Arc<Metrics>,
     ) -> RowIterator {
         let (sender, receiver) = mpsc::channel(1);
+        let consistency = determine_consistency(default_consistency, &prepared.config.consistency);
 
         let statement_info = Statement {
             token: Some(token),
@@ -176,7 +181,7 @@ impl RowIterator {
                 page_query,
                 statement_info,
                 query_is_idempotent: prepared.config.is_idempotent,
-                query_consistency: prepared.config.consistency,
+                query_consistency: consistency,
                 retry_session,
                 load_balancer,
                 metrics,

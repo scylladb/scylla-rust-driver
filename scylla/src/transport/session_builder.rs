@@ -10,6 +10,7 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration;
 
+use crate::statement::Consistency;
 #[cfg(feature = "ssl")]
 use openssl::ssl::SslContext;
 
@@ -62,6 +63,12 @@ impl SessionBuilder {
     /// ```
     pub fn known_node(mut self, hostname: impl AsRef<str>) -> Self {
         self.config.add_known_node(hostname);
+        self
+    }
+
+    /// Add a default consistency to be used for all queries unless they are explicitly set
+    pub fn default_consistency(mut self, consistency: Consistency) -> Self {
+        self.config.default_consistency = consistency;
         self
     }
 

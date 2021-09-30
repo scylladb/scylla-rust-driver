@@ -38,6 +38,7 @@ use crate::frame::{
 use crate::query::Query;
 use crate::routing::ShardInfo;
 use crate::statement::prepared_statement::PreparedStatement;
+use crate::statement::{determine_consistency, Consistency};
 use crate::transport::session::IntoTypedRows;
 use crate::transport::Authenticator;
 use crate::transport::Authenticator::{
@@ -174,6 +175,7 @@ pub struct ConnectionConfig {
     pub connect_timeout: std::time::Duration,
     // should be Some only in control connections,
     pub event_sender: Option<mpsc::Sender<Event>>,
+    pub default_consistency: Consistency,
     /*
     These configuration options will be added in the future:
 
@@ -181,8 +183,6 @@ pub struct ConnectionConfig {
 
     pub load_balancing: Option<String>,
     pub retry_policy: Option<String>,
-
-    pub default_consistency: Option<String>,
     */
 }
 
@@ -197,6 +197,7 @@ impl Default for ConnectionConfig {
             auth_username: None,
             auth_password: None,
             connect_timeout: std::time::Duration::from_secs(5),
+            default_consistency: Default::default(),
         }
     }
 }
@@ -355,7 +356,10 @@ impl Connection {
         let query_frame = query::Query {
             contents: query.get_contents().to_owned(),
             parameters: query::QueryParameters {
-                consistency: query.get_consistency(),
+                consistency: determine_consistency(
+                    self.config.default_consistency,
+                    &query.get_consistency(),
+                ),
                 serial_consistency: query.get_serial_consistency(),
                 values: &serialized_values,
                 page_size: query.get_page_size(),
@@ -429,7 +433,10 @@ impl Connection {
         let execute_frame = execute::Execute {
             id: prepared_statement.get_id().to_owned(),
             parameters: query::QueryParameters {
-                consistency: prepared_statement.get_consistency(),
+                consistency: determine_consistency(
+                    self.config.default_consistency,
+                    &prepared_statement.get_consistency(),
+                ),
                 serial_consistency: prepared_statement.get_serial_consistency(),
                 values: &serialized_values,
                 page_size: prepared_statement.get_page_size(),
@@ -528,7 +535,10 @@ impl Connection {
             statements_count,
             values,
             batch_type: batch.get_type(),
-            consistency: batch.get_consistency(),
+            consistency: determine_consistency(
+                self.config.default_consistency,
+                &batch.get_consistency(),
+            ),
             serial_consistency: batch.get_serial_consistency(),
             timestamp: batch.get_timestamp(),
         };

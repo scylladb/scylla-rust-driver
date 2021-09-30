@@ -46,11 +46,12 @@ impl Batch {
 
     /// Sets the consistency to be used when executing this batch.
     pub fn set_consistency(&mut self, c: Consistency) {
-        self.config.consistency = c;
+        self.config.consistency = Some(c);
     }
 
-    /// Gets the consistency to be used when executing this batch.
-    pub fn get_consistency(&self) -> Consistency {
+    /// Gets the consistency to be used when executing this batch if it is filled, else the default_consistency
+    /// of the session will be used.
+    pub fn get_consistency(&self) -> Option<Consistency> {
         self.config.consistency
     }
 

@@ -899,7 +899,7 @@ async fn test_tracing_batch(session: &Session) {
 
 async fn assert_in_tracing_table(session: &Session, tracing_uuid: Uuid) {
     let mut traces_query = Query::new("SELECT * FROM system_traces.sessions WHERE session_id = ?");
-    traces_query.config.consistency = Consistency::One;
+    traces_query.config.consistency = Some(Consistency::One);
 
     // Tracing info might not be immediately available
     // If rows are empty perform 8 retries with a 32ms wait in between
