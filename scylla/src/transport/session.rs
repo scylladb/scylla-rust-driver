@@ -38,6 +38,8 @@ use crate::{batch::Batch, statement::StatementConfig};
 use crate::{cql_to_rust::FromRow, transport::speculative_execution};
 
 pub use crate::transport::connection_pool::PoolSize;
+
+use crate::transport::iterator::PreparedIteratorConfig;
 #[cfg(feature = "ssl")]
 use openssl::ssl::SslContext;
 
@@ -49,6 +51,7 @@ pub struct Session {
     retry_policy: Box<dyn RetryPolicy>,
     speculative_execution_policy: Option<Arc<dyn SpeculativeExecutionPolicy>>,
     metrics: Arc<Metrics>,
+    default_consistency: Consistency,
 }
 
 /// Configuration options for [`Session`].
@@ -92,13 +95,13 @@ pub struct SessionConfig {
     /// If true, prevents the driver from connecting to the shard-aware port, even if the node supports it.
     /// Generally, this options is best left as default (false).
     pub disallow_shard_aware_port: bool,
+
+    pub default_consistency: Consistency,
     /*
     These configuration options will be added in the future:
 
 
     pub tcp_keepalive: bool,
-
-    pub default_consistency: Option<String>,
     */
 }
 
@@ -138,6 +141,7 @@ impl SessionConfig {
             connect_timeout: std::time::Duration::from_secs(5),
             connection_pool_size: Default::default(),
             disallow_shard_aware_port: false,
+            default_consistency: Consistency::Quorum,
         }
     }
 
@@ -218,7 +222,8 @@ impl SessionConfig {
             auth_username: self.auth_username.to_owned(),
             auth_password: self.auth_password.to_owned(),
             connect_timeout: self.connect_timeout,
-            ..Default::default()
+            event_sender: None,
+            default_consistency: self.default_consistency,
         }
     }
 }
@@ -320,6 +325,7 @@ impl Session {
             schema_agreement_interval: config.schema_agreement_interval,
             speculative_execution_policy: config.speculative_execution_policy,
             metrics: Arc::new(Metrics::new()),
+            default_consistency: config.default_consistency,
         };
 
         if let Some(keyspace_name) = config.used_keyspace {
@@ -487,6 +493,7 @@ impl Session {
         Ok(RowIterator::new_for_query(
             query,
             serialized_values.into_owned(),
+            self.default_consistency,
             retry_session,
             self.load_balancer.clone(),
             self.cluster.get_data(),
@@ -714,17 +721,20 @@ impl Session {
         };
 
         Ok(RowIterator::new_for_prepared_statement(
-            prepared,
-            serialized_values.into_owned(),
-            token,
-            retry_session,
-            self.load_balancer.clone(),
-            self.cluster.get_data(),
-            self.metrics.clone(),
+            PreparedIteratorConfig {
+                prepared,
+                values: serialized_values.into_owned(),
+                default_consistency: self.default_consistency,
+                token,
+                retry_session,
+                load_balancer: self.load_balancer.clone(),
+                cluster_data: self.cluster.get_data(),
+                metrics: self.metrics.clone(),
+            },
         ))
     }
 
-    /// Perform a batch query
+    /// Perform a batch query  
     /// Batch contains many `simple` or `prepared` queries which are executed at once  
     /// Batch doesn't return any rows
     ///
@@ -868,7 +878,7 @@ impl Session {
         // config.attempts is NonZeroU32 so at least one attempt will be made
         for _ in 0..config.attempts.get() {
             let current_try: Option<TracingInfo> = self
-                .try_getting_tracing_info(tracing_id, config.consistency)
+                .try_getting_tracing_info(tracing_id, Some(config.consistency))
                 .await?;
 
             match current_try {
@@ -891,7 +901,7 @@ impl Session {
     async fn try_getting_tracing_info(
         &self,
         tracing_id: &Uuid,
-        consistency: Consistency,
+        consistency: Option<Consistency>,
     ) -> Result<Option<TracingInfo>, QueryError> {
         // Query system_traces.sessions for TracingInfo
         let mut traces_session_query = Query::new(crate::tracing::TRACES_SESSION_QUERY_STR);
@@ -900,7 +910,6 @@ impl Session {
 
         // Query system_traces.events for TracingEvents
         let mut traces_events_query = Query::new(crate::tracing::TRACES_EVENTS_QUERY_STR);
-        traces_events_query.config.consistency = Consistency::One;
         traces_events_query.config.consistency = consistency;
         traces_events_query.set_page_size(1024);
 
@@ -1057,7 +1066,7 @@ impl Session {
         &self,
         query_plan: impl Iterator<Item = Arc<Node>>,
         is_idempotent: bool,
-        consistency: Consistency,
+        consistency: Option<Consistency>,
         mut retry_session: Box<dyn RetrySession>,
         choose_connection: impl Fn(Arc<Node>) -> ConnFut,
         do_query: impl Fn(Arc<Connection>) -> QueryFut,
@@ -1101,7 +1110,7 @@ impl Session {
                 let query_info = QueryInfo {
                     error: last_error.as_ref().unwrap(),
                     is_idempotent,
-                    consistency,
+                    consistency: consistency.unwrap_or(self.default_consistency),
                 };
 
                 match retry_session.decide_should_retry(query_info) {
