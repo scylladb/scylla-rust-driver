@@ -102,6 +102,23 @@ impl QueryResult {
             .enumerate()
             .find(|(_id, spec)| spec.name == name)
     }
+
+    /// This function is used to merge results of multiple paged queries into one.  
+    /// other is the result of a new paged query.  
+    /// It is merged with current result kept in self.  
+    pub(crate) fn merge_with_next_page_res(&mut self, other: QueryResult) {
+        if let Some(other_rows) = other.rows {
+            match &mut self.rows {
+                Some(self_rows) => self_rows.extend(other_rows),
+                None => self.rows = Some(other_rows),
+            }
+        };
+
+        self.warnings.extend(other.warnings);
+        self.tracing_id = other.tracing_id;
+        self.paging_state = other.paging_state;
+        self.col_specs = other.col_specs;
+    }
 }
 
 /// Result of Session::batch(). Contains no rows, only some useful information.
@@ -349,6 +366,45 @@ impl Connection {
 
         self.send_request(&query_frame, true, query.config.tracing)
             .await
+    }
+
+    /// Performs query_single_page multiple times to query all available pages
+    pub async fn query_all(
+        &self,
+        query: &Query,
+        values: impl ValueList,
+    ) -> Result<QueryResult, QueryError> {
+        if query.get_page_size().is_none() {
+            // Page size should be set when someone wants to use paging
+            // This is an internal function, we can use ProtocolError even if it's not technically desigen for this
+            return Err(QueryError::ProtocolError(
+                "Called Connection::query_all without page size set!",
+            ));
+        }
+
+        let mut final_result = QueryResult::default();
+
+        let serialized_values = values.serialized()?;
+        let mut paging_state: Option<Bytes> = None;
+
+        loop {
+            // Send next paged query
+            let mut cur_result: QueryResult = self
+                .query(query, &serialized_values, paging_state)
+                .await?
+                .into_query_result()?;
+
+            // Set paging_state for the next query
+            paging_state = cur_result.paging_state.take();
+
+            // Add current query results to the final_result
+            final_result.merge_with_next_page_res(cur_result);
+
+            if paging_state.is_none() {
+                // No more pages to query, we can return the final result
+                return Ok(final_result);
+            }
+        }
     }
 
     pub async fn execute_single_page(
