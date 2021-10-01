@@ -464,6 +464,43 @@ impl Connection {
         Ok(query_response)
     }
 
+    /// Performs execute_single_page multiple times to fetch all available pages
+    pub async fn execute_all(
+        &self,
+        prepared_statement: &PreparedStatement,
+        values: impl ValueList,
+    ) -> Result<QueryResult, QueryError> {
+        if prepared_statement.get_page_size().is_none() {
+            // This is an internal function, we can use ProtocolError even if it's not technically desigen for this
+            return Err(QueryError::ProtocolError(
+                "Called Connection::execute_all without page size set!",
+            ));
+        }
+
+        let mut final_result = QueryResult::default();
+
+        let serialized_values = values.serialized()?;
+        let mut paging_state: Option<Bytes> = None;
+
+        loop {
+            // Send next paged query
+            let mut cur_result: QueryResult = self
+                .execute_single_page(prepared_statement, &serialized_values, paging_state)
+                .await?;
+
+            // Set paging_state for the next query
+            paging_state = cur_result.paging_state.take();
+
+            // Add current query results to the final_result
+            final_result.merge_with_next_page_res(cur_result);
+
+            if paging_state.is_none() {
+                // No more pages to query, we can return the final result
+                return Ok(final_result);
+            }
+        }
+    }
+
     pub async fn batch(
         &self,
         batch: &Batch,
