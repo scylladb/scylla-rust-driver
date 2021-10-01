@@ -14,7 +14,7 @@ use scylla::tracing::TracingInfo;
 use uuid::Uuid;
 
 // Prepare the query with tracing enabled
-let mut to_prepare: Query = Query::new("SELECT a FROM ks.tab".to_string());
+let mut to_prepare: Query = Query::new("SELECT a FROM ks.tab");
 to_prepare.set_tracing(true);
 
 let mut prepared: PreparedStatement = session

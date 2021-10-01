@@ -20,7 +20,7 @@ let mut batch: Batch = Default::default();
 batch.append_statement("INSERT INTO ks.tab(a, b) VALUES(?, ?)");
 
 // Add a simple query created manually to the batch
-let simple: Query = Query::new("INSERT INTO ks.tab (a, b) VALUES(3, 4)".to_string());
+let simple: Query = Query::new("INSERT INTO ks.tab (a, b) VALUES(3, 4)");
 batch.append_statement(simple);
 
 // Add a prepared query to the batch

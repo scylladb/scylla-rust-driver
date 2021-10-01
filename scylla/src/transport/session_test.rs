@@ -76,7 +76,7 @@ async fn test_unprepared_statement() {
         ]
     );
     let mut results_from_manual_paging: Vec<Row> = vec![];
-    let query = Query::new("SELECT a, b, c FROM ks.t".to_owned()).with_page_size(1);
+    let query = Query::new("SELECT a, b, c FROM ks.t").with_page_size(1);
     let mut paging_state: Option<Bytes> = None;
     let mut watchdog = 0;
     loop {
@@ -196,7 +196,7 @@ async fn test_prepared_statement() {
         assert_eq!((a, b, c), (17, 16, &String::from("I'm prepared!!!")));
 
         let mut results_from_manual_paging: Vec<Row> = vec![];
-        let query = Query::new("SELECT a, b, c FROM ks.t2".to_owned()).with_page_size(1);
+        let query = Query::new("SELECT a, b, c FROM ks.t2").with_page_size(1);
         let prepared_paged = session.prepare(query).await.unwrap();
         let mut paging_state: Option<Bytes> = None;
         let mut watchdog = 0;
@@ -724,13 +724,13 @@ async fn test_tracing() {
 
 async fn test_tracing_query(session: &Session) {
     // A query without tracing enabled has no tracing uuid in result
-    let untraced_query: Query = Query::new("SELECT * FROM test_tracing_ks.tab".to_string());
+    let untraced_query: Query = Query::new("SELECT * FROM test_tracing_ks.tab");
     let untraced_query_result: QueryResult = session.query(untraced_query, &[]).await.unwrap();
 
     assert!(untraced_query_result.tracing_id.is_none());
 
     // A query with tracing enabled has a tracing uuid in result
-    let mut traced_query: Query = Query::new("SELECT * FROM test_tracing_ks.tab".to_string());
+    let mut traced_query: Query = Query::new("SELECT * FROM test_tracing_ks.tab");
     traced_query.config.tracing = true;
 
     let traced_query_result: QueryResult = session.query(traced_query, &[]).await.unwrap();
@@ -777,7 +777,7 @@ async fn test_tracing_prepare(session: &Session) {
     assert!(untraced_prepared.prepare_tracing_ids.is_empty());
 
     // Preparing a statement with tracing enabled has tracing uuids in result
-    let mut to_prepare_traced = Query::new("SELECT * FROM test_tracing_ks.tab".to_string());
+    let mut to_prepare_traced = Query::new("SELECT * FROM test_tracing_ks.tab");
     to_prepare_traced.config.tracing = true;
 
     let traced_prepared = session.prepare(to_prepare_traced).await.unwrap();
@@ -791,7 +791,7 @@ async fn test_tracing_prepare(session: &Session) {
 
 async fn test_get_tracing_info(session: &Session) {
     // A query with tracing enabled has a tracing uuid in result
-    let mut traced_query: Query = Query::new("SELECT * FROM test_tracing_ks.tab".to_string());
+    let mut traced_query: Query = Query::new("SELECT * FROM test_tracing_ks.tab");
     traced_query.config.tracing = true;
 
     let traced_query_result: QueryResult = session.query(traced_query, &[]).await.unwrap();
@@ -804,7 +804,7 @@ async fn test_get_tracing_info(session: &Session) {
 
 async fn test_tracing_query_iter(session: &Session) {
     // A query without tracing enabled has no tracing ids
-    let untraced_query: Query = Query::new("SELECT * FROM test_tracing_ks.tab".to_string());
+    let untraced_query: Query = Query::new("SELECT * FROM test_tracing_ks.tab");
 
     let mut untraced_row_iter = session.query_iter(untraced_query, &[]).await.unwrap();
     while let Some(_row) = untraced_row_iter.next().await {
@@ -818,7 +818,7 @@ async fn test_tracing_query_iter(session: &Session) {
     assert!(untraced_typed_row_iter.get_tracing_ids().is_empty());
 
     // A query with tracing enabled has a tracing ids in result
-    let mut traced_query: Query = Query::new("SELECT * FROM test_tracing_ks.tab".to_string());
+    let mut traced_query: Query = Query::new("SELECT * FROM test_tracing_ks.tab");
     traced_query.config.tracing = true;
 
     let mut traced_row_iter = session.query_iter(traced_query, &[]).await.unwrap();
@@ -898,8 +898,7 @@ async fn test_tracing_batch(session: &Session) {
 }
 
 async fn assert_in_tracing_table(session: &Session, tracing_uuid: Uuid) {
-    let mut traces_query =
-        Query::new("SELECT * FROM system_traces.sessions WHERE session_id = ?".to_string());
+    let mut traces_query = Query::new("SELECT * FROM system_traces.sessions WHERE session_id = ?");
     traces_query.config.consistency = Consistency::One;
 
     // Tracing info might not be immediately available

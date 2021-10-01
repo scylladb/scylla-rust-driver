@@ -15,9 +15,9 @@ pub struct Query {
 
 impl Query {
     /// Creates a new `Query` from a CQL query string.
-    pub fn new(contents: String) -> Self {
+    pub fn new(query_text: impl Into<String>) -> Self {
         Self {
-            contents,
+            contents: query_text.into(),
             page_size: None,
             config: Default::default(),
         }

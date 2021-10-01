@@ -32,7 +32,7 @@ use scylla::query::Query;
 use scylla::transport::retry_policy::DefaultRetryPolicy;
 
 // Create a Query manually and set the retry policy
-let mut my_query: Query = Query::new("INSERT INTO ks.tab (a) VALUES(?)".to_string());
+let mut my_query: Query = Query::new("INSERT INTO ks.tab (a) VALUES(?)");
 my_query.set_retry_policy(Box::new(DefaultRetryPolicy::new()));
 
 // Run the query using this retry policy

@@ -40,7 +40,7 @@ async fn main() -> Result<()> {
         println!("a, b, c: {}, {}, {}", a, b, c);
     }
 
-    let paged_query = Query::new("SELECT a, b, c FROM ks.t".to_owned()).with_page_size(6);
+    let paged_query = Query::new("SELECT a, b, c FROM ks.t").with_page_size(6);
     let res1 = session.query(paged_query.clone(), &[]).await?;
     println!(
         "Paging state: {:#?} ({} rows)",
@@ -65,7 +65,7 @@ async fn main() -> Result<()> {
     );
 
     let paged_prepared = session
-        .prepare(Query::new("SELECT a, b, c FROM ks.t".to_owned()).with_page_size(7))
+        .prepare(Query::new("SELECT a, b, c FROM ks.t").with_page_size(7))
         .await?;
     let res4 = session.execute(&paged_prepared, &[]).await?;
     println!(
