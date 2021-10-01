@@ -1175,3 +1175,126 @@ impl VerifiedKeyspaceName {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::super::errors::QueryError;
+    use super::ConnectionConfig;
+    use crate::query::Query;
+    use crate::IntoTypedRows;
+    use std::net::SocketAddr;
+
+    // Just like resolve_hostname in session.rs
+    async fn resolve_hostname(hostname: &str) -> SocketAddr {
+        match tokio::net::lookup_host(hostname).await {
+            Ok(mut addrs) => addrs.next().unwrap(),
+            Err(_) => {
+                tokio::net::lookup_host((hostname, 9042)) // Port might not be specified, try default
+                    .await
+                    .unwrap()
+                    .next()
+                    .unwrap()
+            }
+        }
+    }
+
+    /// Tests for Connection::query_all and Connection::execute_all
+    /// 1. SELECT from an empty table.
+    /// 2. Create table and insert ints 0..100.
+    ///    Then use query_all and execute_all with page_size set to 7 to select all 100 rows.
+    /// 3. INSERT query_all should have None in result rows.
+    /// 4. Calling query_all with a Query that doesn't have page_size set should result in an error.
+    #[tokio::test]
+    async fn connection_query_all_execute_all_test() {
+        let uri = std::env::var("SCYLLA_URI").unwrap_or_else(|_| "127.0.0.1:9042".to_string());
+        let addr: SocketAddr = resolve_hostname(&uri).await;
+
+        let (connection, _) = super::open_connection(addr, None, ConnectionConfig::default())
+            .await
+            .unwrap();
+
+        connection.query_single_page("CREATE KEYSPACE IF NOT EXISTS ks WITH REPLICATION = {'class' : 'SimpleStrategy', 'replication_factor' : 1}", &[]).await.unwrap();
+        connection
+            .query_single_page("DROP TABLE IF EXISTS ks.connection_query_all_tab", &[])
+            .await
+            .unwrap();
+        connection
+            .query_single_page(
+                "CREATE TABLE IF NOT EXISTS ks.connection_query_all_tab (p int primary key)",
+                &[],
+            )
+            .await
+            .unwrap();
+
+        // 1. SELECT from an empty table returns query result where rows are Some(Vec::new())
+        let select_query =
+            Query::new("SELECT p FROM ks.connection_query_all_tab").with_page_size(7);
+        let empty_res = connection.query_all(&select_query, &[]).await.unwrap();
+        assert!(empty_res.rows.unwrap().is_empty());
+
+        let mut prepared_select = connection.prepare(&select_query).await.unwrap();
+        prepared_select.set_page_size(7);
+        let empty_res_prepared = connection.execute_all(&prepared_select, &[]).await.unwrap();
+        assert!(empty_res_prepared.rows.unwrap().is_empty());
+
+        // 2. Insert 100 and select using query_all with page_size 7
+        let values: Vec<i32> = (0..100).collect();
+        let mut insert_futures = Vec::new();
+        let insert_query =
+            Query::new("INSERT INTO ks.connection_query_all_tab (p) VALUES (?)").with_page_size(7);
+        for v in &values {
+            insert_futures.push(connection.query_single_page(insert_query.clone(), (v,)));
+        }
+
+        futures::future::try_join_all(insert_futures).await.unwrap();
+
+        let mut results: Vec<i32> = connection
+            .query_all(&select_query, &[])
+            .await
+            .unwrap()
+            .rows
+            .unwrap()
+            .into_typed::<(i32,)>()
+            .map(|r| r.unwrap().0)
+            .collect();
+        results.sort_unstable(); // Clippy recommended to use sort_unstable instead of sort()
+        assert_eq!(results, values);
+
+        let mut results2: Vec<i32> = connection
+            .execute_all(&prepared_select, &[])
+            .await
+            .unwrap()
+            .rows
+            .unwrap()
+            .into_typed::<(i32,)>()
+            .map(|r| r.unwrap().0)
+            .collect();
+        results2.sort_unstable();
+        assert_eq!(results2, values);
+
+        // 3. INSERT query_all should have None in result rows.
+        let insert_res1 = connection.query_all(&insert_query, (0,)).await.unwrap();
+        assert!(insert_res1.rows.is_none());
+
+        let prepared_insert = connection.prepare(&insert_query).await.unwrap();
+        let insert_res2 = connection
+            .execute_all(&prepared_insert, (0,))
+            .await
+            .unwrap();
+        assert!(insert_res2.rows.is_none(),);
+
+        // 4. Calling query_all with a Query that doesn't have page_size set should result in an error.
+        let no_page_size_query = Query::new("SELECT p FROM ks.connection_query_all_tab");
+        let no_page_res = connection.query_all(&no_page_size_query, &[]).await;
+        assert!(matches!(no_page_res, Err(QueryError::ProtocolError(_))));
+
+        let prepared_no_page_size_query = connection.prepare(&no_page_size_query).await.unwrap();
+        let prepared_no_page_res = connection
+            .execute_all(&prepared_no_page_size_query, &[])
+            .await;
+        assert!(matches!(
+            prepared_no_page_res,
+            Err(QueryError::ProtocolError(_))
+        ));
+    }
+}
