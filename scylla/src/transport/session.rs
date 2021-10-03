@@ -751,7 +751,7 @@ impl Session {
     }
 
     /// TODO: write more docs
-    async fn add_prepared_statement(
+    pub async fn add_prepared_statement(
         &self,
         query: &Query,
     ) -> Result<PreparedStatement, QueryError> {
