@@ -753,8 +753,10 @@ impl Session {
     /// TODO: write more docs
     pub async fn add_prepared_statement(
         &self,
-        query: &Query,
+        query: impl Into<&Query>,
     ) -> Result<PreparedStatement, QueryError> {
+        let query = query.into();
+
         if let Some(prepared) = self.prepared_statement_cache.cache.get(&query.contents) {
             // Clone, because else the value is mutably borrowed and the execute method gives a compile error
             Ok(prepared.clone())
@@ -808,7 +810,7 @@ impl Session {
                                 self.prepared_statement_cache.cache.remove(&query.contents);
 
                                 let prepared =
-                                    self.add_prepared_statement(&query).await?;
+                                    self.add_prepared_statement(query).await?;
 
                                 Ok(Either::Right(prepared))
                             }
