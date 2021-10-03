@@ -399,7 +399,7 @@ impl Connection {
         batch: &Batch,
         values: impl BatchValues,
     ) -> Result<BatchResult, QueryError> {
-        let statements_count = batch.get_statements().len();
+        let statements_count = batch.statements.len();
         if statements_count != values.len() {
             return Err(QueryError::BadQuery(BadQuery::ValueLenMismatch(
                 values.len(),
@@ -407,7 +407,7 @@ impl Connection {
             )));
         }
 
-        let statements_iter = batch.get_statements().iter().map(|s| match s {
+        let statements_iter = batch.statements.iter().map(|s| match s {
             BatchStatement::Query(q) => batch::BatchStatement::Query {
                 text: q.get_contents(),
             },
@@ -420,9 +420,9 @@ impl Connection {
             statements: statements_iter,
             statements_count,
             values,
-            batch_type: batch.get_type(),
-            consistency: batch.get_consistency(),
-            serial_consistency: batch.get_serial_consistency(),
+            batch_type: batch.batch_type,
+            consistency: batch.config.consistency,
+            serial_consistency: batch.config.serial_consistency,
         };
 
         let query_response = self
