@@ -515,9 +515,7 @@ impl Connection {
         }
 
         let statements_iter = batch.statements.iter().map(|s| match s {
-            BatchStatement::Query(q) => batch::BatchStatement::Query {
-                text: &q.contents,
-            },
+            BatchStatement::Query(q) => batch::BatchStatement::Query { text: &q.contents },
             BatchStatement::PreparedStatement(s) => {
                 batch::BatchStatement::Prepared { id: s.get_id() }
             }
