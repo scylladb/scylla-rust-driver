@@ -38,12 +38,11 @@ use crate::{batch::Batch, statement::StatementConfig};
 use crate::{cql_to_rust::FromRow, transport::speculative_execution};
 
 use crate::transport::errors::DbError;
+use dashmap::DashMap;
+use itertools::Either;
 pub use crate::transport::connection_pool::PoolSize;
-
 #[cfg(feature = "ssl")]
 use openssl::ssl::SslContext;
-use itertools::Either;
-use dashmap::DashMap;
 
 /// `Session` manages connections to the cluster and allows to perform queries
 pub struct Session {
@@ -763,7 +762,9 @@ impl Session {
         } else {
             let prepared = self.prepare(query.clone()).await?;
 
-            if self.prepared_statement_cache.max_capacity == self.prepared_statement_cache.cache.len() {
+            if self.prepared_statement_cache.max_capacity
+                == self.prepared_statement_cache.cache.len()
+            {
                 // Cache is full, remove the first entry
                 // Don't delete while holding the key, this could deadlock
                 // Instead, store the raw string in a variable and remove it later on when there
@@ -771,6 +772,7 @@ impl Session {
                 let mut query = "".to_string();
 
                 // There is no easy way to just get a random/first element
+                #[allow(clippy::never_loop)]
                 for first in self.prepared_statement_cache.cache.iter() {
                     query = first.key().clone();
 
@@ -789,43 +791,40 @@ impl Session {
         }
     }
 
-    // TODO: doc
-    // TODO: tried it with fn pointers and all, but failed because execute_paged_cached has a different fn parameter list
-    // TODO: rename?
+    /// This method is called after a cached prepared statement
+    /// It returns:
+    ///     - a success result, nothing has to be done: [`Either::Left`]
+    ///     - a new prepared statement in which the caller should retry the query: [`Either::Right`].
+    ///     - [`QueryError`] when an error occurred
     async fn post_execute_prepared_statement<T>(
         &self,
         query: &Query,
-        result: Result<T, QueryError>
+        result: Result<T, QueryError>,
     ) -> Result<Either<T, PreparedStatement>, QueryError> {
         match result {
             Ok(qr) => Ok(Either::Left(qr)),
             Err(err) => {
-                // Check if the Unprepare error is thrown
+                // Check if the 'Unprepare; error is thrown
                 // In that case, re-prepare it and send it again
                 // In all other cases, just return the error
                 match err {
-                    QueryError::DbError(db_error, message) => {
-                        match db_error {
-                            DbError::Unprepared => {
-                                self.prepared_statement_cache.cache.remove(&query.contents);
+                    QueryError::DbError(db_error, message) => match db_error {
+                        DbError::Unprepared => {
+                            self.prepared_statement_cache.cache.remove(&query.contents);
 
-                                let prepared =
-                                    self.add_prepared_statement(query).await?;
+                            let prepared = self.add_prepared_statement(query).await?;
 
-                                Ok(Either::Right(prepared))
-                            }
-                            _ => Err(QueryError::DbError(db_error, message)),
+                            Ok(Either::Right(prepared))
                         }
-                    }
+                        _ => Err(QueryError::DbError(db_error, message)),
+                    },
                     _ => Err(err),
                 }
             }
         }
     }
 
-    /// Does the same thing as [`Session::prepare`](Session::prepare) but uses the prepared statement cache
-    /// TODO: more documentation
-    /// TODO: maybe write the methods with macro's
+    /// Does the same thing as [`Session::execute`] but uses the prepared statement cache
     pub async fn execute_cached(
         &self,
         query: impl Into<Query>,
@@ -844,6 +843,7 @@ impl Session {
         }
     }
 
+    /// Does the same thing as [`Session::execute_iter`] but uses the prepared statement cache
     pub async fn execute_iter_cached(
         &self,
         query: impl Into<Query>,
@@ -852,7 +852,7 @@ impl Session {
         let query = query.into();
         let prepared = self.add_prepared_statement(&query).await?;
         let values = values.serialized()?;
-        let result = self.execute_iter(prepared.clone(), values.clone()).await;
+        let result = self.execute_iter(prepared, values.clone()).await;
 
         match self.post_execute_prepared_statement(&query, result).await? {
             Either::Left(result) => Ok(result),
@@ -862,6 +862,7 @@ impl Session {
         }
     }
 
+    /// Does the same thing as [`Session::execute_paged`] but uses the prepared statement cache
     pub async fn execute_paged_cached(
         &self,
         query: impl Into<Query>,
@@ -871,12 +872,34 @@ impl Session {
         let query = query.into();
         let prepared = self.add_prepared_statement(&query).await?;
         let values = values.serialized()?;
-        let result = self.execute_paged(&prepared, values.clone(), paging_state.clone()).await;
+        let result = self
+            .execute_paged(&prepared, values.clone(), paging_state.clone())
+            .await;
 
         match self.post_execute_prepared_statement(&query, result).await? {
             Either::Left(result) => Ok(result),
             Either::Right(new_prepared_statement) => {
-                self.execute_paged(&new_prepared_statement, values, paging_state).await
+                self.execute_paged(&new_prepared_statement, values, paging_state)
+                    .await
+            }
+        }
+    }
+
+    /// Does the same thing as [`Session::execute_all`] but uses the prepared statement cache
+    pub async fn execute_all_cached(
+        &self,
+        query: impl Into<Query>,
+        values: impl ValueList,
+    ) -> Result<QueryResult, QueryError> {
+        let query = query.into();
+        let prepared = self.add_prepared_statement(&query).await?;
+        let values = values.serialized()?;
+        let result = self.execute_all(prepared, values.clone()).await;
+
+        match self.post_execute_prepared_statement(&query, result).await? {
+            Either::Left(result) => Ok(result),
+            Either::Right(new_prepared_statement) => {
+                self.execute_all(new_prepared_statement, values).await
             }
         }
     }
@@ -1394,25 +1417,62 @@ mod tests {
     async fn test_execute_cached() {
         let session = SessionBuilder::new_for_test().await;
 
+        assert!(session.prepared_statement_cache.cache.is_empty());
+
         session
             .execute_cached("select * from test_table", &[])
             .await
             .unwrap();
 
-        todo!("More assertions?")
+        assert_eq!(1, session.prepared_statement_cache.cache.len());
+
+        session
+            .execute_cached("select * from test_table", &[])
+            .await
+            .unwrap();
+
+        assert_eq!(1, session.prepared_statement_cache.cache.len());
     }
 
     #[tokio::test]
-    async fn test_execute_cached_iter() {
-        let _session = SessionBuilder::new_for_test().await;
+    async fn test_execute_iter_cached() {
+        let session = SessionBuilder::new_for_test().await;
 
-        unimplemented!();
+        assert!(session.prepared_statement_cache.cache.is_empty());
+
+        session
+            .execute_iter_cached("select * from test_table", &[])
+            .await
+            .unwrap();
+
+        assert_eq!(1, session.prepared_statement_cache.cache.len());
     }
 
     #[tokio::test]
-    async fn test_execute_cached_paged() {
-        let _session = SessionBuilder::new_for_test().await;
+    async fn test_execute_paged_cached() {
+        let session = SessionBuilder::new_for_test().await;
 
-        unimplemented!();
+        assert!(session.prepared_statement_cache.cache.is_empty());
+
+        session
+            .execute_paged_cached("select * from test_table", &[], None)
+            .await
+            .unwrap();
+
+        assert_eq!(1, session.prepared_statement_cache.cache.len());
+    }
+
+    #[tokio::test]
+    async fn test_execute_all_cached() {
+        let session = SessionBuilder::new_for_test().await;
+
+        assert!(session.prepared_statement_cache.cache.is_empty());
+
+        session
+            .execute_cached("select * from test_table", &[])
+            .await
+            .unwrap();
+
+        assert_eq!(1, session.prepared_statement_cache.cache.len());
     }
 }
