@@ -56,6 +56,7 @@ impl<T: FromCqlVal<CqlValue>> FromCqlVal<Option<CqlValue>> for T {
 impl<T: FromCqlVal<CqlValue>> FromCqlVal<Option<CqlValue>> for Option<T> {
     fn from_cql(cql_val_opt: Option<CqlValue>) -> Result<Self, FromCqlValError> {
         match cql_val_opt {
+            Some(CqlValue::Empty) => Ok(None),
             Some(cql_val) => Ok(Some(T::from_cql(cql_val)?)),
             None => Ok(None),
         }
@@ -401,6 +402,16 @@ mod tests {
             i32::from_cql(CqlValue::BigInt(1234)),
             Err(FromCqlValError::BadCqlType)
         );
+    }
+
+    #[test]
+    fn from_cql_empty_value() {
+        assert_eq!(
+            i32::from_cql(CqlValue::Empty),
+            Err(FromCqlValError::BadCqlType)
+        );
+
+        assert_eq!(<Option<i32>>::from_cql(Some(CqlValue::Empty)), Ok(None));
     }
 
     #[test]
