@@ -1,22 +1,15 @@
-// use anyhow::Result;
-use crate::{IntoTypedRows, SessionBuilder};
-use std::collections::HashMap;
-use std::env;
+use crate::{frame::response::result::CqlValue, IntoTypedRows, SessionBuilder};
+use std::{collections::HashMap, env};
 
 #[tokio::test]
 async fn test_cql_collections() {
     // Create connection
     let uri = env::var("SCYLLA_URI").unwrap_or_else(|_| "127.0.0.1:9042".to_string());
-
-    println!("Connecting to {} ...", uri);
-
     let session = SessionBuilder::new().known_node(uri).build().await.unwrap();
 
     session.query("CREATE KEYSPACE IF NOT EXISTS ks WITH REPLICATION = {'class' : 'SimpleStrategy', 'replication_factor' : 1}", &[]).await.unwrap();
 
-    // HashMap example
-
-    // Create the table
+    // HashMap test
 
     session
         .query(
@@ -29,38 +22,46 @@ async fn test_cql_collections() {
     let team1: HashMap<i32, String> = vec![(1, "Ginny".to_owned()), (2, "Cho".to_owned())]
         .into_iter()
         .collect();
-
-    let team2: HashMap<i32, String> = vec![(1, "John".to_owned()), (2, "Jessica".to_owned())]
-        .into_iter()
-        .collect();
+    // Test CqlValue serialization too
+    let team2: CqlValue = CqlValue::Map(vec![
+        (CqlValue::Int(1), CqlValue::Text("John".into())),
+        (CqlValue::Int(2), CqlValue::Text("Jessica".into())),
+    ]);
 
     session
         .query("INSERT INTO ks.teams (id, team) VALUES (1, ?)", (team1,))
         .await
         .unwrap();
-
     session
         .query("INSERT INTO ks.teams (id, team) VALUES (2, ?)", (team2,))
         .await
         .unwrap();
 
-    // Recieve data in singular map:
-
-    if let Some(rows) = session
+    let mut received_kv_pairs: Vec<Vec<(i32, String)>> = session
         .query("SELECT team FROM ks.teams", &[])
         .await
         .unwrap()
         .rows
-    {
-        for row in rows.into_typed::<(HashMap<i32, String>,)>() {
-            let teams: HashMap<i32, String> = row.unwrap().0;
-            for (key, value) in &teams {
-                println!("{}: {}", key, value);
-            }
-        }
-    }
+        .unwrap()
+        .into_typed::<(HashMap<i32, String>,)>()
+        .map(Result::unwrap)
+        .map(|(hashmap,)| {
+            let mut v: Vec<_> = hashmap.into_iter().collect();
+            v.sort_unstable();
+            v
+        })
+        .collect();
+    received_kv_pairs.sort_unstable();
 
-    // Set example
+    assert_eq!(
+        received_kv_pairs,
+        vec![
+            vec![(1, "Ginny".into()), (2, "Cho".into())],
+            vec![(1, "John".into()), (2, "Jessica".into())]
+        ]
+    );
+
+    // Set test
 
     session
         .query(
@@ -70,7 +71,11 @@ async fn test_cql_collections() {
         .await.unwrap();
 
     let tags1: Vec<String> = vec!["pet".to_owned(), "cute".to_owned()];
-    let tags2: Vec<String> = vec!["kitten".to_owned(), "cat".to_owned(), "lol".to_owned()];
+    let tags2: CqlValue = CqlValue::Set(vec![
+        CqlValue::Text("kitten".into()),
+        CqlValue::Text("cat".into()),
+        CqlValue::Text("lol".into()),
+    ]);
 
     session
         .query(
@@ -79,19 +84,6 @@ async fn test_cql_collections() {
         )
         .await
         .unwrap();
-
-    if let Some(rows) = session
-        .query("SELECT tags FROM ks.images", &[])
-        .await
-        .unwrap()
-        .rows
-    {
-        for row in rows.into_typed::<(Vec<String>,)>() {
-            let tag: Vec<String> = row.unwrap().0;
-            println!("{:?}", tag);
-        }
-    }
-
     session
         .query(
             "UPDATE ks.images SET tags = ? WHERE name = 'cat.jpg';",
@@ -99,19 +91,26 @@ async fn test_cql_collections() {
         )
         .await
         .unwrap();
-    if let Some(rows) = session
+
+    let mut received_elements: Vec<String> = session
         .query("SELECT tags FROM ks.images", &[])
         .await
         .unwrap()
         .rows
-    {
-        for row in rows.into_typed::<(Vec<String>,)>() {
-            let tag: Vec<String> = row.unwrap().0;
-            println!("{:?}", tag);
-        }
-    }
+        .unwrap()
+        .into_typed::<(Vec<String>,)>()
+        .map(Result::unwrap)
+        .map(|(v,)| v.into_iter())
+        .flatten()
+        .collect();
+    received_elements.sort_unstable();
 
-    // List example
+    assert_eq!(
+        received_elements,
+        vec!["cat".to_string(), "kitten".to_string(), "lol".to_string()]
+    );
+
+    // List test
 
     session
         .query(
@@ -121,6 +120,9 @@ async fn test_cql_collections() {
         .await.unwrap();
 
     let scores1: Vec<i32> = vec![17, 4, 2];
+    let scores2: CqlValue =
+        CqlValue::List(vec![CqlValue::Int(3), CqlValue::Int(9), CqlValue::Int(4)]);
+
     session
         .query(
             "INSERT INTO ks.plays (id, game, players, scores) VALUES ('123-afde', 'quake', 3, ?)",
@@ -128,42 +130,29 @@ async fn test_cql_collections() {
         )
         .await
         .unwrap();
-
-    if let Some(rows) = session
-        .query("SELECT scores FROM ks.plays", &[])
-        .await
-        .unwrap()
-        .rows
-    {
-        for row in rows.into_typed::<(Vec<i32>,)>() {
-            let scores: Vec<i32> = row.unwrap().0;
-            println!("{:?}", scores);
-        }
-    }
-
-    let scores2: Vec<i32> = vec![3, 9, 4];
-
     session
         .query(
-            "UPDATE ks.plays SET scores = ? WHERE id = '123-afde'",
+            "INSERT INTO ks.plays (id, game, players, scores) VALUES ('1234-qwer', 'cs', 10, ?)",
             (&scores2,),
         )
         .await
         .unwrap();
 
-    if let Some(rows) = session
+    let mut received_elements: Vec<Vec<i32>> = session
         .query("SELECT scores FROM ks.plays", &[])
         .await
         .unwrap()
         .rows
-    {
-        for row in rows.into_typed::<(Vec<i32>,)>() {
-            let scores: Vec<i32> = row.unwrap().0;
-            println!("{:?}", scores);
-        }
-    }
+        .unwrap()
+        .into_typed::<(Vec<i32>,)>()
+        .map(Result::unwrap)
+        .map(|(v,)| v.into_iter().collect())
+        .collect();
+    received_elements.sort_unstable();
 
-    // Tuple example
+    assert_eq!(received_elements, vec![vec![3, 9, 4], vec![17, 4, 2]]);
+
+    // Tuple test
 
     session
         .query(
@@ -172,24 +161,37 @@ async fn test_cql_collections() {
         )
         .await.unwrap();
 
-    let duration = (3, "hours");
+    let duration1 = (3, "hours");
+    let duration2 = CqlValue::Tuple(vec![CqlValue::Int(2), CqlValue::Text("minutes".into())]);
     session
         .query(
             "INSERT INTO ks.durations (event, duration) VALUES ('ev1', ?)",
-            (duration,),
+            (duration1,),
+        )
+        .await
+        .unwrap();
+    session
+        .query(
+            "INSERT INTO ks.durations (event, duration) VALUES ('ev2', ?)",
+            (duration2,),
         )
         .await
         .unwrap();
 
-    if let Some(rows) = session
+    let mut received_elements: Vec<(i32, String)> = session
         .query("SELECT duration FROM ks.durations", &[])
         .await
         .unwrap()
         .rows
-    {
-        for row in rows.into_typed::<((i32, String),)>() {
-            let duration = row.unwrap().0;
-            println!("{:?}", duration);
-        }
-    }
+        .unwrap()
+        .into_typed::<((i32, String),)>()
+        .map(Result::unwrap)
+        .map(|(x,)| x)
+        .collect();
+    received_elements.sort_unstable();
+
+    assert_eq!(
+        received_elements,
+        vec![(2, "minutes".into()), (3, "hours".into())]
+    );
 }
