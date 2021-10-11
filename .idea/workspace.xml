@@ -25,12 +25,8 @@
     <select />
   </component>
   <component name="ChangeListManager">
-    <list default="true" id="7fedbfa4-e838-4536-b580-eb75a061fb9b" name="Default Changelist" comment="">
-      <change beforePath="$PROJECT_DIR$/.github/workflows/pages.yml" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/docs/Makefile" beforeDir="false" afterPath="$PROJECT_DIR$/docs/Makefile" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/docs/pyproject.toml" beforeDir="false" afterPath="$PROJECT_DIR$/docs/pyproject.toml" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/docs/source/conf.py" beforeDir="false" afterPath="$PROJECT_DIR$/docs/source/conf.py" afterDir="false" />
+    <list default="true" id="7fedbfa4-e838-4536-b580-eb75a061fb9b" name="Default Changelist" comment="fix build errors">
+      <change beforePath="$PROJECT_DIR$/docs/source/speculative-execution/speculative.md" beforeDir="false" afterPath="$PROJECT_DIR$/docs/source/speculative-execution/speculative.md" afterDir="false" />
     </list>
     <option name="SHOW_DIALOG" value="false" />
     <option name="HIGHLIGHT_CONFLICTS" value="true" />
@@ -41,12 +37,16 @@
     <option name="RECENT_GIT_ROOT_PATH" value="$PROJECT_DIR$" />
   </component>
   <component name="ProjectId" id="1zMHJUUUwh6gQgnbKwfzkc1mVB8" />
+  <component name="ProjectLevelVcsManager">
+    <ConfirmationsSetting value="2" id="Add" />
+  </component>
   <component name="ProjectViewState">
     <option name="hideEmptyMiddlePackages" value="true" />
     <option name="showLibraryContents" value="true" />
     <option name="showMembers" value="true" />
   </component>
   <component name="PropertiesComponent">
+    <property name="ASKED_ADD_EXTERNAL_FILES" value="true" />
     <property name="RunOnceActivity.OpenProjectViewOnStart" value="true" />
     <property name="last_opened_file_path" value="$PROJECT_DIR$" />
     <property name="settings.editor.selected.configurable" value="preferences.lookFeel" />
@@ -60,6 +60,21 @@
       <option name="presentableId" value="Default" />
       <updated>1633950964932</updated>
     </task>
+    <task id="LOCAL-00001" summary="Upgrade sphinx theme to v1.x">
+      <created>1633951406383</created>
+      <option name="number" value="00001" />
+      <option name="presentableId" value="LOCAL-00001" />
+      <option name="project" value="LOCAL" />
+      <updated>1633951406383</updated>
+    </task>
+    <task id="LOCAL-00002" summary="fix build errors">
+      <created>1633951548598</created>
+      <option name="number" value="00002" />
+      <option name="presentableId" value="LOCAL-00002" />
+      <option name="project" value="LOCAL" />
+      <updated>1633951548598</updated>
+    </task>
+    <option name="localTasksCounter" value="3" />
     <servers />
   </component>
   <component name="Vcs.Log.Tabs.Properties">
@@ -72,6 +87,12 @@
         </entry>
       </map>
     </option>
+  </component>
+  <component name="VcsManagerConfiguration">
+    <option name="ADD_EXTERNAL_FILES_SILENTLY" value="true" />
+    <MESSAGE value="Upgrade sphinx theme to v1.x" />
+    <MESSAGE value="fix build errors" />
+    <option name="LAST_COMMIT_MESSAGE" value="fix build errors" />
   </component>
   <component name="WindowStateProjectService">
     <state x="2663" y="298" width="424" height="491" key="FileChooserDialogImpl" timestamp="1633950981609">
