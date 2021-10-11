@@ -109,14 +109,9 @@ html_style = ''
 #
 
 html_theme_options = {
-    'header_links': [
-    ('Scylla Rust Driver', 'https://rust-driver.docs.scylladb.com/'),
-    ('Scylla Cloud', 'https://docs.scylladb.com/scylla-cloud/'),
-    ('Scylla University', 'https://university.scylladb.com/'),
-    ('ScyllaDB Home', 'https://www.scylladb.com/')],
     'site_description': 'Scylla Driver for Rust.',
     'github_issues_repository': 'scylladb/scylla-rust-driver',
-    'show_sidebar_index': 'true',
+    'hide_sidebar_index': 'false',
     'hide_banner': 'true',
     'default_branch': 'stable'
 }
