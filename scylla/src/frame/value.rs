@@ -496,11 +496,10 @@ impl Value for CqlValue {
             CqlValue::Tuple(t) => serialize_tuple(t.iter(), buf),
 
             // A UDT value is composed of successive [bytes] values, one for each field of the UDT
-            // value (in the order defined by the type). Due to the fact, that
-            // CqlValue::UserDefinedType stores fields in a BTreeMap, it is impossible to find out
-            // the order of fields defined by the type. When the field order is not known,
-            // CqlValue::UserDefinedType serialization is also impossible.
-            CqlValue::UserDefinedType { .. } => unimplemented!(),
+            // value (in the order defined by the type), so they serialize in a same way tuples do.
+            CqlValue::UserDefinedType { fields, .. } => {
+                serialize_tuple(fields.iter().map(|(_, value)| value), buf)
+            }
 
             CqlValue::Date(d) => Date(*d).serialize(buf),
             CqlValue::Timestamp(t) => Timestamp(*t).serialize(buf),
