@@ -1,6 +1,6 @@
 # Summary
 
-[Scylla Rust Driver](title-page.md)
+[Scylla Rust Driver](index.md)
 
 - [Quick start](quickstart/quickstart.md)
     - [Creating a project](quickstart/create-project.md)
@@ -47,6 +47,10 @@
 - [Retry policy configuration](retry-policy/retry-policy.md)
     - [Fallthrough retry policy](retry-policy/fallthrough.md)
     - [Default retry policy](retry-policy/default.md)
+
+- [Speculative execution](speculative-execution/speculative.md)
+    - [Simple](speculative-execution/simple.md)
+    - [Latency Percentile](speculative-execution/percentile.md)
 
 - [Driver metrics](metrics/metrics.md)
 

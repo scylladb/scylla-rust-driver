@@ -1,3 +1,5 @@
+//! Iterators over rows returned by paged queries
+
 use std::future::Future;
 use std::mem;
 use std::pin::Pin;
@@ -32,6 +34,8 @@ use crate::transport::node::Node;
 use crate::transport::retry_policy::{QueryInfo, RetryDecision, RetrySession};
 use uuid::Uuid;
 
+/// Iterator over rows returned by paged queries  
+/// Allows to easily access rows without worrying about handling multiple pages
 pub struct RowIterator {
     current_row_idx: usize,
     current_page: Rows,
@@ -44,6 +48,8 @@ struct ReceivedPage {
     pub tracing_id: Option<Uuid>,
 }
 
+/// Fetching pages is asynchronous so `RowIterator` does not implement the `Iterator` trait.  
+/// Instead it uses the asynchronous `Stream` trait
 impl Stream for RowIterator {
     type Item = Result<Row, QueryError>;
 
@@ -81,6 +87,7 @@ impl Stream for RowIterator {
 }
 
 impl RowIterator {
+    /// Converts this iterator into an iterator over rows parsed as given type
     pub fn into_typed<RowT: FromRow>(self) -> TypedRowIterator<RowT> {
         TypedRowIterator {
             row_iterator: self,
@@ -91,7 +98,7 @@ impl RowIterator {
     pub(crate) fn new_for_query(
         query: Query,
         values: SerializedValues,
-        retry_session: Box<dyn RetrySession + Send + Sync>,
+        retry_session: Box<dyn RetrySession>,
         load_balancer: Arc<dyn LoadBalancingPolicy>,
         cluster_data: Arc<ClusterData>,
         metrics: Arc<Metrics>,
@@ -113,8 +120,8 @@ impl RowIterator {
                 choose_connection,
                 page_query,
                 statement_info: Statement::default(),
-                query_is_idempotent: query.is_idempotent,
-                query_consistency: query.consistency,
+                query_is_idempotent: query.config.is_idempotent,
+                query_consistency: query.config.consistency,
                 retry_session,
                 load_balancer,
                 metrics,
@@ -138,7 +145,7 @@ impl RowIterator {
         prepared: PreparedStatement,
         values: SerializedValues,
         token: Token,
-        retry_session: Box<dyn RetrySession + Send + Sync>,
+        retry_session: Box<dyn RetrySession>,
         load_balancer: Arc<dyn LoadBalancingPolicy>,
         cluster_data: Arc<ClusterData>,
         metrics: Arc<Metrics>,
@@ -168,8 +175,8 @@ impl RowIterator {
                 choose_connection,
                 page_query,
                 statement_info,
-                query_is_idempotent: prepared.is_idempotent,
-                query_consistency: prepared.consistency,
+                query_is_idempotent: prepared.config.is_idempotent,
+                query_consistency: prepared.config.consistency,
                 retry_session,
                 load_balancer,
                 metrics,
@@ -189,7 +196,7 @@ impl RowIterator {
         }
     }
 
-    /// Returns tracing ids of all finished queries that had tracing enabled
+    /// If tracing was enabled returns tracing ids of all finished page queries
     pub fn get_tracing_ids(&self) -> &[Uuid] {
         &self.tracing_ids
     }
@@ -216,7 +223,7 @@ struct RowIteratorWorker<'a, ConnFunc, QueryFunc> {
     query_is_idempotent: bool,
     query_consistency: Consistency,
 
-    retry_session: Box<dyn RetrySession + Send + Sync>,
+    retry_session: Box<dyn RetrySession>,
     load_balancer: Arc<dyn LoadBalancingPolicy>,
     metrics: Arc<Metrics>,
 
@@ -334,13 +341,16 @@ where
     }
 }
 
+/// Iterator over rows returned by paged queries
+/// where each row is parsed as the given type  
+/// Returned by `RowIterator::into_typed`
 pub struct TypedRowIterator<RowT> {
     row_iterator: RowIterator,
     phantom_data: std::marker::PhantomData<RowT>,
 }
 
 impl<RowT> TypedRowIterator<RowT> {
-    /// Returns tracing ids of all finished queries that had tracing enabled
+    /// If tracing was enabled returns tracing ids of all finished page queries
     pub fn get_tracing_ids(&self) -> &[Uuid] {
         self.row_iterator.get_tracing_ids()
     }
@@ -358,6 +368,8 @@ pub enum NextRowError {
     FromRowError(#[from] FromRowError),
 }
 
+/// Fetching pages is asynchronous so `TypedRowIterator` does not implement the `Iterator` trait.  
+/// Instead it uses the asynchronous `Stream` trait
 impl<RowT: FromRow> Stream for TypedRowIterator<RowT> {
     type Item = Result<RowT, NextRowError>;
 

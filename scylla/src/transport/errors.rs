@@ -1,3 +1,5 @@
+//! This module contains various erros which can be returned by [`Session`](crate::Session)
+
 use crate::frame::frame_errors::{FrameError, ParseError};
 use crate::frame::value::SerializeValuesError;
 use crate::statement::Consistency;
@@ -20,9 +22,17 @@ pub enum QueryError {
     #[error("IO Error: {0}")]
     IoError(Arc<std::io::Error>),
 
-    /// Unexpected or invalid message received
+    /// Unexpected message received
     #[error("Protocol Error: {0}")]
     ProtocolError(&'static str),
+
+    /// Invalid message received
+    #[error("Invalid message: {0}")]
+    InvalidMessage(String),
+
+    /// Timeout error has occured, function didn't complete in time.
+    #[error("Timeout Error")]
+    TimeoutError,
 }
 
 /// An error sent from the database in response to a query
@@ -186,7 +196,7 @@ pub enum DbError {
     Other(i32),
 }
 
-// Type of write operation requested
+/// Type of write operation requested
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum WriteType {
     /// Non-batched non-counter write
@@ -255,9 +265,17 @@ pub enum NewSessionError {
     #[error("IO Error: {0}")]
     IoError(Arc<std::io::Error>),
 
-    /// Unexpected or invalid message received
+    /// Unexpected message received
     #[error("Protocol Error: {0}")]
     ProtocolError(&'static str),
+
+    /// Invalid message received
+    #[error("Invalid message: {0}")]
+    InvalidMessage(String),
+
+    /// Timeout error has occured, couldn't connect to node in time.
+    #[error("Timeout Error")]
+    TimeoutError,
 }
 
 /// Invalid keyspace name given to `Session::use_keyspace()`
@@ -295,14 +313,14 @@ impl From<SerializeValuesError> for QueryError {
 }
 
 impl From<ParseError> for QueryError {
-    fn from(_parse_error: ParseError) -> QueryError {
-        QueryError::ProtocolError("Error parsing message")
+    fn from(parse_error: ParseError) -> QueryError {
+        QueryError::InvalidMessage(format!("Error parsing message: {}", parse_error))
     }
 }
 
 impl From<FrameError> for QueryError {
-    fn from(_frame_error: FrameError) -> QueryError {
-        QueryError::ProtocolError("Error parsing message frame")
+    fn from(frame_error: FrameError) -> QueryError {
+        QueryError::InvalidMessage(format!("Frame error: {}", frame_error))
     }
 }
 
@@ -319,6 +337,8 @@ impl From<QueryError> for NewSessionError {
             QueryError::BadQuery(e) => NewSessionError::BadQuery(e),
             QueryError::IoError(e) => NewSessionError::IoError(e),
             QueryError::ProtocolError(m) => NewSessionError::ProtocolError(m),
+            QueryError::InvalidMessage(m) => NewSessionError::InvalidMessage(m),
+            QueryError::TimeoutError => NewSessionError::TimeoutError,
         }
     }
 }
@@ -330,13 +350,15 @@ impl From<BadKeyspaceName> for QueryError {
 }
 
 impl QueryError {
-    /// Checks if this query error is an IO Error of kind AddrInUse
-    /// This type of error often occurs when we are choosing random port numbers
-    /// and there is a collision.
-    pub(crate) fn is_address_in_use(&self) -> bool {
+    /// Checks if this error indicates that a chosen source port/address cannot be bound.
+    /// This is caused by one of the following:
+    /// - The source address is already used by another socket,
+    /// - The source address is reserved and the process does not have sufficient privileges to use it.
+    pub(crate) fn is_address_unavailable_for_use(&self) -> bool {
         if let QueryError::IoError(io_error) = self {
-            if io_error.kind() == ErrorKind::AddrInUse {
-                return true;
+            match io_error.kind() {
+                ErrorKind::AddrInUse | ErrorKind::PermissionDenied => return true,
+                _ => {}
             }
         }
 

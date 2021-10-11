@@ -42,6 +42,7 @@ pub struct Keyspace {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
+#[allow(clippy::enum_variant_names)]
 pub enum Strategy {
     SimpleStrategy {
         replication_factor: usize,
@@ -92,8 +93,9 @@ impl TopologyReader {
     /// Fetches current topology info from the cluster
     pub async fn read_topology_info(&mut self) -> Result<TopologyInfo, QueryError> {
         let mut result = self.fetch_topology_info().await;
-        if result.is_ok() {
-            return result;
+        if let Ok(topology_info) = result {
+            self.update_known_peers(&topology_info);
+            return Ok(topology_info);
         }
 
         // shuffle known_peers to iterate through them in random order later
@@ -237,15 +239,15 @@ async fn query_peers(conn: &Connection, connect_port: u16) -> Result<Vec<Peer>, 
         // Parse string representation of tokens as integer values
         let tokens: Vec<Token> = tokens_str
             .iter()
-            .map(|s| Token::from_str(&s))
+            .map(|s| Token::from_str(s))
             .collect::<Result<Vec<Token>, _>>()
             .map_err(|_| QueryError::ProtocolError("Couldn't parse tokens as integer values"))?;
 
         result.push(Peer {
             address,
+            tokens,
             datacenter,
             rack,
-            tokens,
         });
     }
 

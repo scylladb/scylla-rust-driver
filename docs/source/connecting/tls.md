@@ -10,7 +10,7 @@ It was chosen because [`rustls`](https://github.com/ctz/rustls) doesn't support 
 
 To enable the `tls` feature add in `Cargo.toml`:
 ```toml
-scylla = { version = "0.1.0", features = ["ssl"] }
+scylla = { version = "0.2.0", features = ["ssl"] }
 openssl = "0.10.32"
 ```
 

@@ -1,6 +1,9 @@
+//! SessionBuilder provides an easy way to create new Sessions
+
 use super::errors::NewSessionError;
 use super::load_balancing::LoadBalancingPolicy;
 use super::session::{Session, SessionConfig};
+use super::speculative_execution::SpeculativeExecutionPolicy;
 use super::Compression;
 use crate::transport::retry_policy::RetryPolicy;
 use std::net::SocketAddr;
@@ -141,7 +144,7 @@ impl SessionBuilder {
     }
 
     /// Set the nodelay TCP flag.
-    /// The default is false.
+    /// The default is true.
     ///
     /// # Example
     /// ```
@@ -249,6 +252,39 @@ impl SessionBuilder {
         self
     }
 
+    /// Set the speculative execution policy
+    /// The default is None
+    /// # Example
+    /// ```
+    /// # extern crate scylla;
+    /// # use scylla::Session;
+    /// # use std::error::Error;
+    /// # async fn check_only_compiles() -> Result<(), Box<dyn Error>> {
+    /// use std::{sync::Arc, time::Duration};
+    /// use scylla::{
+    ///     Session,
+    ///     SessionBuilder,
+    ///     transport::speculative_execution::SimpleSpeculativeExecutionPolicy
+    /// };
+    ///
+    /// let policy = SimpleSpeculativeExecutionPolicy {
+    ///     max_retry_count: 3,
+    ///     retry_interval: Duration::from_millis(100),
+    /// };
+    ///
+    /// let session: Session = SessionBuilder::new()
+    ///     .known_node("127.0.0.1:9042")
+    ///     .speculative_execution(Arc::new(policy))
+    ///     .build()
+    ///     .await?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn speculative_execution(mut self, policy: Arc<dyn SpeculativeExecutionPolicy>) -> Self {
+        self.config.speculative_execution_policy = Some(policy);
+        self
+    }
+
     /// Sets the [`RetryPolicy`] to use by default on queries
     /// The default is [DefaultRetryPolicy](crate::transport::retry_policy::DefaultRetryPolicy)
     /// It is possible to implement a custom retry policy by implementing the trait [`RetryPolicy`]
@@ -319,8 +355,30 @@ impl SessionBuilder {
     /// # Ok(())
     /// # }
     /// ```
-    pub async fn build(self) -> Result<Session, NewSessionError> {
-        Session::connect(self.config).await
+    pub async fn build(&self) -> Result<Session, NewSessionError> {
+        Session::connect(self.config.clone()).await
+    }
+
+    /// Changes connection timeout
+    /// The default is 5 seconds.
+    /// If it's higher than underlying os's default connection timeout it won't effect.
+    ///
+    /// # Example
+    /// ```
+    /// # use scylla::{Session, SessionBuilder};
+    /// # use std::time::Duration;
+    /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
+    /// let session: Session = SessionBuilder::new()
+    ///     .known_node("127.0.0.1:9042")
+    ///     .connection_timeout(Duration::from_secs(30))
+    ///     .build() // Turns SessionBuilder into Session
+    ///     .await?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn connection_timeout(mut self, duration: std::time::Duration) -> Self {
+        self.config.connect_timeout = duration;
+        self
     }
 }
 
@@ -422,13 +480,13 @@ mod tests {
     #[test]
     fn tcp_nodelay() {
         let mut builder = SessionBuilder::new();
-        assert_eq!(builder.config.tcp_nodelay, false);
-
-        builder = builder.tcp_nodelay(true);
-        assert_eq!(builder.config.tcp_nodelay, true);
+        assert!(builder.config.tcp_nodelay);
 
         builder = builder.tcp_nodelay(false);
-        assert_eq!(builder.config.tcp_nodelay, false);
+        assert!(!builder.config.tcp_nodelay);
+
+        builder = builder.tcp_nodelay(true);
+        assert!(builder.config.tcp_nodelay);
     }
 
     #[test]
@@ -450,15 +508,30 @@ mod tests {
     fn use_keyspace() {
         let mut builder = SessionBuilder::new();
         assert_eq!(builder.config.used_keyspace, None);
-        assert_eq!(builder.config.keyspace_case_sensitive, false);
+        assert!(!builder.config.keyspace_case_sensitive);
 
         builder = builder.use_keyspace("ks_name_1", true);
         assert_eq!(builder.config.used_keyspace, Some("ks_name_1".to_string()));
-        assert_eq!(builder.config.keyspace_case_sensitive, true);
+        assert!(builder.config.keyspace_case_sensitive);
 
         builder = builder.use_keyspace("ks_name_2", false);
         assert_eq!(builder.config.used_keyspace, Some("ks_name_2".to_string()));
-        assert_eq!(builder.config.keyspace_case_sensitive, false);
+        assert!(!builder.config.keyspace_case_sensitive);
+    }
+
+    #[test]
+    fn connection_timeout() {
+        let mut builder = SessionBuilder::new();
+        assert_eq!(
+            builder.config.connect_timeout,
+            std::time::Duration::from_secs(5)
+        );
+
+        builder = builder.connection_timeout(std::time::Duration::from_secs(10));
+        assert_eq!(
+            builder.config.connect_timeout,
+            std::time::Duration::from_secs(10)
+        );
     }
 
     #[test]
@@ -491,7 +564,7 @@ mod tests {
         );
 
         assert_eq!(builder.config.compression, Some(Compression::Snappy));
-        assert_eq!(builder.config.tcp_nodelay, true);
+        assert!(builder.config.tcp_nodelay);
         assert_eq!(
             builder.config.load_balancing.name(),
             "RoundRobinPolicy".to_string()
@@ -499,6 +572,6 @@ mod tests {
 
         assert_eq!(builder.config.used_keyspace, Some("ks_name".to_string()));
 
-        assert_eq!(builder.config.keyspace_case_sensitive, true);
+        assert!(builder.config.keyspace_case_sensitive);
     }
 }

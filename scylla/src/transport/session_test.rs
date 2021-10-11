@@ -1,4 +1,5 @@
 use crate::batch::Batch;
+use crate::frame::response::result::Row;
 use crate::frame::value::ValueList;
 use crate::query::Query;
 use crate::routing::hash3_x64_128;
@@ -7,6 +8,7 @@ use crate::tracing::TracingInfo;
 use crate::transport::connection::{BatchResult, QueryResult};
 use crate::transport::errors::{BadKeyspaceName, BadQuery, DbError, QueryError};
 use crate::{IntoTypedRows, Session, SessionBuilder};
+use bytes::Bytes;
 use futures::StreamExt;
 use uuid::Uuid;
 
@@ -42,19 +44,24 @@ async fn test_unprepared_statement() {
         .await
         .unwrap();
 
-    let rs = session
+    let query_result = session
         .query("SELECT a, b, c FROM ks.t", &[])
         .await
-        .unwrap()
-        .rows
         .unwrap();
+
+    let (a_idx, _) = query_result.get_column_spec("a").unwrap();
+    let (b_idx, _) = query_result.get_column_spec("b").unwrap();
+    let (c_idx, _) = query_result.get_column_spec("c").unwrap();
+    assert!(query_result.get_column_spec("d").is_none());
+
+    let rs = query_result.rows.unwrap();
 
     let mut results: Vec<(i32, i32, &String)> = rs
         .iter()
         .map(|r| {
-            let a = r.columns[0].as_ref().unwrap().as_int().unwrap();
-            let b = r.columns[1].as_ref().unwrap().as_int().unwrap();
-            let c = r.columns[2].as_ref().unwrap().as_text().unwrap();
+            let a = r.columns[a_idx].as_ref().unwrap().as_int().unwrap();
+            let b = r.columns[b_idx].as_ref().unwrap().as_int().unwrap();
+            let c = r.columns[c_idx].as_ref().unwrap().as_text().unwrap();
             (a, b, c)
         })
         .collect();
@@ -67,6 +74,23 @@ async fn test_unprepared_statement() {
             (7, 11, &String::from(""))
         ]
     );
+    let mut results_from_manual_paging: Vec<Row> = vec![];
+    let query = Query::new("SELECT a, b, c FROM ks.t".to_owned()).with_page_size(1);
+    let mut paging_state: Option<Bytes> = None;
+    let mut watchdog = 0;
+    loop {
+        let rs_manual = session
+            .query_paged(query.clone(), &[], paging_state)
+            .await
+            .unwrap();
+        results_from_manual_paging.append(&mut rs_manual.rows.unwrap());
+        if watchdog > 30 || rs_manual.paging_state == None {
+            break;
+        }
+        watchdog += 1;
+        paging_state = rs_manual.paging_state;
+    }
+    assert_eq!(results_from_manual_paging, rs);
 }
 
 #[tokio::test]
@@ -168,7 +192,26 @@ async fn test_prepared_statement() {
         let a = r.columns[0].as_ref().unwrap().as_int().unwrap();
         let b = r.columns[1].as_ref().unwrap().as_int().unwrap();
         let c = r.columns[2].as_ref().unwrap().as_text().unwrap();
-        assert_eq!((a, b, c), (17, 16, &String::from("I'm prepared!!!")))
+        assert_eq!((a, b, c), (17, 16, &String::from("I'm prepared!!!")));
+
+        let mut results_from_manual_paging: Vec<Row> = vec![];
+        let query = Query::new("SELECT a, b, c FROM ks.t2".to_owned()).with_page_size(1);
+        let prepared_paged = session.prepare(query).await.unwrap();
+        let mut paging_state: Option<Bytes> = None;
+        let mut watchdog = 0;
+        loop {
+            let rs_manual = session
+                .execute_paged(&prepared_paged, &[], paging_state)
+                .await
+                .unwrap();
+            results_from_manual_paging.append(&mut rs_manual.rows.unwrap());
+            if watchdog > 30 || rs_manual.paging_state == None {
+                break;
+            }
+            watchdog += 1;
+            paging_state = rs_manual.paging_state;
+        }
+        assert_eq!(results_from_manual_paging, rs);
     }
     {
         let rs = session
@@ -650,7 +693,7 @@ async fn test_tracing_query(session: &Session) {
 
     // A query with tracing enabled has a tracing uuid in result
     let mut traced_query: Query = Query::new("SELECT * FROM test_tracing_ks.tab".to_string());
-    traced_query.tracing = true;
+    traced_query.config.tracing = true;
 
     let traced_query_result: QueryResult = session.query(traced_query, &[]).await.unwrap();
     assert!(traced_query_result.tracing_id.is_some());
@@ -677,7 +720,7 @@ async fn test_tracing_execute(session: &Session) {
         .await
         .unwrap();
 
-    traced_prepared.tracing = true;
+    traced_prepared.config.tracing = true;
 
     let traced_prepared_result: QueryResult = session.execute(&traced_prepared, &[]).await.unwrap();
     assert!(traced_prepared_result.tracing_id.is_some());
@@ -697,7 +740,7 @@ async fn test_tracing_prepare(session: &Session) {
 
     // Preparing a statement with tracing enabled has tracing uuids in result
     let mut to_prepare_traced = Query::new("SELECT * FROM test_tracing_ks.tab".to_string());
-    to_prepare_traced.tracing = true;
+    to_prepare_traced.config.tracing = true;
 
     let traced_prepared = session.prepare(to_prepare_traced).await.unwrap();
     assert!(!traced_prepared.prepare_tracing_ids.is_empty());
@@ -711,7 +754,7 @@ async fn test_tracing_prepare(session: &Session) {
 async fn test_get_tracing_info(session: &Session) {
     // A query with tracing enabled has a tracing uuid in result
     let mut traced_query: Query = Query::new("SELECT * FROM test_tracing_ks.tab".to_string());
-    traced_query.tracing = true;
+    traced_query.config.tracing = true;
 
     let traced_query_result: QueryResult = session.query(traced_query, &[]).await.unwrap();
     let tracing_id: Uuid = traced_query_result.tracing_id.unwrap();
@@ -738,7 +781,7 @@ async fn test_tracing_query_iter(session: &Session) {
 
     // A query with tracing enabled has a tracing ids in result
     let mut traced_query: Query = Query::new("SELECT * FROM test_tracing_ks.tab".to_string());
-    traced_query.tracing = true;
+    traced_query.config.tracing = true;
 
     let mut traced_row_iter = session.query_iter(traced_query, &[]).await.unwrap();
     while let Some(_row) = traced_row_iter.next().await {
@@ -779,7 +822,7 @@ async fn test_tracing_execute_iter(session: &Session) {
         .prepare("SELECT * FROM test_tracing_ks.tab")
         .await
         .unwrap();
-    traced_prepared.tracing = true;
+    traced_prepared.config.tracing = true;
 
     let mut traced_row_iter = session.execute_iter(traced_prepared, &[]).await.unwrap();
     while let Some(_row) = traced_row_iter.next().await {
@@ -808,7 +851,7 @@ async fn test_tracing_batch(session: &Session) {
     // Batch with tracing enabled has a tracing uuid in result
     let mut traced_batch: Batch = Default::default();
     traced_batch.append_statement("INSERT INTO test_tracing_ks.tab (a) VALUES('a')");
-    traced_batch.tracing = true;
+    traced_batch.config.tracing = true;
 
     let traced_batch_result: BatchResult = session.batch(&traced_batch, ((),)).await.unwrap();
     assert!(traced_batch_result.tracing_id.is_some());
@@ -819,7 +862,7 @@ async fn test_tracing_batch(session: &Session) {
 async fn assert_in_tracing_table(session: &Session, tracing_uuid: Uuid) {
     let mut traces_query =
         Query::new("SELECT * FROM system_traces.sessions WHERE session_id = ?".to_string());
-    traces_query.consistency = Consistency::One;
+    traces_query.config.consistency = Consistency::One;
 
     // Tracing info might not be immediately available
     // If rows are empty perform 8 retries with a 32ms wait in between

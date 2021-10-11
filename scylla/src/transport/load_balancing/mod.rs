@@ -1,3 +1,8 @@
+//! Load balancing configurations  
+//! `Session` can use any load balancing policy which implements the `LoadBalancingPolicy` trait  
+//! Policies which implement the `ChildLoadBalancingPolicy` can be wrapped in some other policies  
+//! See [the book](https://cvybhu.github.io/scyllabook/load-balancing/load-balancing.html) for more information
+
 use super::{cluster::ClusterData, node::Node};
 use crate::routing::Token;
 
@@ -147,7 +152,7 @@ mod tests {
         statement: &Statement,
         cluster: &ClusterData,
     ) -> Vec<u16> {
-        let plan = policy.plan(statement, &cluster);
+        let plan = policy.plan(statement, cluster);
         plan.map(|node| node.address.port()).collect::<Vec<_>>()
     }
 }

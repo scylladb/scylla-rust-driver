@@ -46,22 +46,36 @@ SCYLLA_URI="$(docker inspect --format='{{ .NetworkSettings.IPAddress }}' scylla-
 ## Contributing to the book
 
 The documentation book is written using [mdbook](https://github.com/rust-lang/mdBook)  
-Book source is in `book/src`
+Book source is in `docs/source`  
+This source has to be compatible with `Sphinx` so it might sometimes contain chunks like:
+````
+```eval_rst
+something
+```
+````
+But they are removed when building the book
+
 
 `mdbook` can be installed using:
 ```shell
 cargo install mdbook
 ```
 
-Build the book:
+Build the book (simple method, contains `Sphinx` artifacts):
 ```bash
-mdbook build book
-# HTML will be in book/book
+mdbook build docs
+# HTML will be in docs/book
+```
+
+To build the release version use a script which automatically removes `Sphinx` chunks:
+```bash
+python3 docs/build_book.py
+# HTML will be in docs/book/scriptbuild/book
 ```
 
 Or serve it on a local http server (automatically refreshes on changes)
 ```bash
-mdbook serve
+mdbook serve docs
 ```
 
 Test code examples (requires a running scylla instance):
@@ -70,5 +84,5 @@ Test code examples (requires a running scylla instance):
 cargo clean
 cargo build --examples
 
-mdbook test -L target/debug/deps/ book
+mdbook test -L target/debug/deps/ docs
 ```

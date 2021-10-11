@@ -97,6 +97,47 @@ let _ = session.execute_iter(prepared, &[]).await?; // ...
 # }
 ```
 
+### Passing the paging state manually
+It's possible to fetch a single page from the table, extract the paging state
+from the result and manually pass it to the next query. That way, the next
+query will start fetching the results from where the previous one left off.
+
+On a `Query`:
+```rust
+# extern crate scylla;
+# use scylla::Session;
+# use std::error::Error;
+# async fn check_only_compiles(session: &Session) -> Result<(), Box<dyn Error>> {
+use scylla::query::Query;
+
+let paged_query = Query::new("SELECT a, b, c FROM ks.t".to_owned()).with_page_size(6);
+let res1 = session.query(paged_query.clone(), &[]).await?;
+let res2 = session
+    .query_paged(paged_query.clone(), &[], res1.paging_state)
+    .await?;
+# Ok(())
+# }
+```
+
+On a `PreparedStatement`:
+```rust
+# extern crate scylla;
+# use scylla::Session;
+# use std::error::Error;
+# async fn check_only_compiles(session: &Session) -> Result<(), Box<dyn Error>> {
+use scylla::query::Query;
+
+let paged_prepared = session
+    .prepare(Query::new("SELECT a, b, c FROM ks.t".to_owned()).with_page_size(7))
+    .await?;
+let res1 = session.execute(&paged_prepared, &[]).await?;
+let res2 = session
+    .execute_paged(&paged_prepared, &[], res1.paging_state)
+    .await?;
+# Ok(())
+# }
+```
+
 ### Performance
 Performance is the same as in non-paged variants.  
 For the best performance use [prepared queries](prepared.md).

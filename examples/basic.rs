@@ -1,5 +1,4 @@
 use anyhow::Result;
-use scylla::cql_to_rust::FromRow;
 use scylla::macros::FromRow;
 use scylla::transport::session::{IntoTypedRows, Session};
 use scylla::SessionBuilder;

@@ -13,10 +13,6 @@
    metrics/metrics
    logging/logging
    tracing/tracing
-   SUMMARY
-   title-page
-
-
 
 
 

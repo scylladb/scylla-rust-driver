@@ -162,7 +162,7 @@ fn ref_value() {
 fn empty_serialized_values() {
     const EMPTY: SerializedValues = SerializedValues::new();
     assert_eq!(EMPTY.len(), 0);
-    assert_eq!(EMPTY.is_empty(), true);
+    assert!(EMPTY.is_empty());
     assert_eq!(EMPTY.iter().next(), None);
 
     let mut empty_request = Vec::<u8>::new();
@@ -173,13 +173,13 @@ fn empty_serialized_values() {
 #[test]
 fn serialized_values() {
     let mut values = SerializedValues::new();
-    assert_eq!(values.is_empty(), true);
+    assert!(values.is_empty());
 
     // Add first value
     values.add_value(&8_i8).unwrap();
     {
         assert_eq!(values.len(), 1);
-        assert_eq!(values.is_empty(), false);
+        assert!(!values.is_empty());
 
         let mut request = Vec::<u8>::new();
         values.write_to_request(&mut request);
@@ -192,7 +192,7 @@ fn serialized_values() {
     values.add_value(&16_i16).unwrap();
     {
         assert_eq!(values.len(), 2);
-        assert_eq!(values.is_empty(), false);
+        assert!(!values.is_empty());
 
         let mut request = Vec::<u8>::new();
         values.write_to_request(&mut request);
@@ -224,7 +224,7 @@ fn serialized_values() {
     // All checks for two values should still pass
     {
         assert_eq!(values.len(), 2);
-        assert_eq!(values.is_empty(), false);
+        assert!(!values.is_empty());
 
         let mut request = Vec::<u8>::new();
         values.write_to_request(&mut request);

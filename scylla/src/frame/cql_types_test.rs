@@ -1,8 +1,10 @@
+use crate as scylla;
 use crate::cql_to_rust::FromCqlVal;
 use crate::frame::response::result::CqlValue;
 use crate::frame::value::Counter;
 use crate::frame::value::Value;
 use crate::frame::value::{Date, Time, Timestamp};
+use crate::macros::{FromUserType, IntoUserType};
 use crate::transport::session::IntoTypedRows;
 use crate::transport::session::Session;
 use crate::SessionBuilder;
@@ -746,4 +748,153 @@ async fn test_blob() {
 
         assert_eq!(read_blob, *blob);
     }
+}
+
+#[tokio::test]
+async fn test_udt_after_schema_update() {
+    let table_name = "udt_tests";
+    let type_name = "usertype1";
+
+    let uri = env::var("SCYLLA_URI").unwrap_or_else(|_| "127.0.0.1:9042".to_string());
+
+    println!("Connecting to {} ...", uri);
+    let session: Session = SessionBuilder::new().known_node(uri).build().await.unwrap();
+
+    session
+        .query(
+            "CREATE KEYSPACE IF NOT EXISTS ks WITH REPLICATION = \
+            {'class' : 'SimpleStrategy', 'replication_factor' : 1}",
+            &[],
+        )
+        .await
+        .unwrap();
+
+    session
+        .query(format!("DROP TABLE IF EXISTS ks.{}", table_name), &[])
+        .await
+        .unwrap();
+
+    session
+        .query(format!("DROP TYPE IF EXISTS ks.{}", type_name), &[])
+        .await
+        .unwrap();
+
+    session
+        .query(
+            format!(
+                "CREATE TYPE IF NOT EXISTS ks.{} (first int, second boolean)",
+                type_name
+            ),
+            &[],
+        )
+        .await
+        .unwrap();
+
+    session
+        .query(
+            format!(
+                "CREATE TABLE IF NOT EXISTS ks.{} (id int PRIMARY KEY, val ks.{})",
+                table_name, type_name
+            ),
+            &[],
+        )
+        .await
+        .unwrap();
+
+    #[derive(IntoUserType, FromUserType, Debug, PartialEq)]
+    struct UdtV1 {
+        pub first: i32,
+        pub second: bool,
+    }
+
+    let v1 = UdtV1 {
+        first: 123,
+        second: true,
+    };
+
+    session
+        .query(
+            format!(
+                "INSERT INTO ks.{}(id,val) VALUES (0, {})",
+                table_name, "{first: 123, second: true}"
+            ),
+            &[],
+        )
+        .await
+        .unwrap();
+
+    let (read_udt,): (UdtV1,) = session
+        .query(
+            format!("SELECT val from ks.{} WHERE id = 0", table_name),
+            &[],
+        )
+        .await
+        .unwrap()
+        .rows
+        .unwrap()
+        .into_typed::<(UdtV1,)>()
+        .next()
+        .unwrap()
+        .unwrap();
+
+    assert_eq!(read_udt, v1);
+
+    session
+        .query(
+            format!("INSERT INTO ks.{}(id,val) VALUES (0, ?)", table_name),
+            &(&v1,),
+        )
+        .await
+        .unwrap();
+
+    let (read_udt,): (UdtV1,) = session
+        .query(
+            format!("SELECT val from ks.{} WHERE id = 0", table_name),
+            &[],
+        )
+        .await
+        .unwrap()
+        .rows
+        .unwrap()
+        .into_typed::<(UdtV1,)>()
+        .next()
+        .unwrap()
+        .unwrap();
+
+    assert_eq!(read_udt, v1);
+
+    session
+        .query(format!("ALTER TYPE ks.{} ADD third text;", type_name), &[])
+        .await
+        .unwrap();
+
+    #[derive(FromUserType, Debug, PartialEq)]
+    struct UdtV2 {
+        pub first: i32,
+        pub second: bool,
+        pub third: Option<String>,
+    }
+
+    let (read_udt,): (UdtV2,) = session
+        .query(
+            format!("SELECT val from ks.{} WHERE id = 0", table_name),
+            &[],
+        )
+        .await
+        .unwrap()
+        .rows
+        .unwrap()
+        .into_typed::<(UdtV2,)>()
+        .next()
+        .unwrap()
+        .unwrap();
+
+    assert_eq!(
+        read_udt,
+        UdtV2 {
+            first: 123,
+            second: true,
+            third: None,
+        }
+    );
 }

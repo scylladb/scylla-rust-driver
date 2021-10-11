@@ -190,7 +190,7 @@ impl Node {
             }
         }
 
-        return Err(last_error);
+        Err(last_error)
     }
 
     pub async fn use_keyspace(
@@ -373,6 +373,6 @@ impl NodeWorker {
         }
 
         // We can unwrap io_error because use_keyspace_futures must be nonempty
-        return Err(QueryError::IoError(io_error.unwrap()));
+        Err(QueryError::IoError(io_error.unwrap()))
     }
 }

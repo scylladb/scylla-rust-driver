@@ -70,7 +70,7 @@ language = None
 # List of patterns, relative to source directory, that match files and
 # directories to ignore when looking for source files.
 # This patterns also effect to html_static_path and html_extra_path
-exclude_patterns = ['_build', 'Thumbs.db', '.DS_Store', 'lib', 'lib64','**/_common/*', 'README.md', '.git', '.github', '_utils', '_templates', 'rst_include']
+exclude_patterns = ['_build', 'Thumbs.db', '.DS_Store', '_utils', 'SUMMARY.md']
 
 # The name of the Pygments (syntax highlighting) style to use.
 pygments_style = 'sphinx'
@@ -110,7 +110,7 @@ html_style = ''
 
 html_theme_options = {
     'header_links': [
-    ('Scylla Rust Driver', 'https://scylladb.github.io/rust-driver/'),
+    ('Scylla Rust Driver', 'https://rust-driver.docs.scylladb.com/'),
     ('Scylla Cloud', 'https://docs.scylladb.com/scylla-cloud/'),
     ('Scylla University', 'https://university.scylladb.com/'),
     ('ScyllaDB Home', 'https://www.scylladb.com/')],
@@ -163,14 +163,14 @@ redirects_file = "_utils/redirections.yaml"
 # -- Options for multiversion extension ----------------------------------
 
 # Whitelist pattern for tags (set to None to ignore all tags)
-TAGS = ['0.1.0']
+TAGS = []
 smv_tag_whitelist = multiversion_regex_builder(TAGS)
 # Whitelist pattern for branches (set to None to ignore all branches)
 BRANCHES = ['main']
 smv_branch_whitelist = multiversion_regex_builder(BRANCHES)
 # Defines which version is considered to be the latest stable version.
 # Must be listed in smv_tag_whitelist or smv_branch_whitelist.
-smv_latest_version = '0.1.0'
+smv_latest_version = 'main'
 smv_rename_latest_version = 'stable'
 # Whitelist pattern for remotes (set to None to use local branches only)
 smv_remote_whitelist = r"^origin$"

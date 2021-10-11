@@ -1,6 +1,6 @@
 use bytes::Bytes;
 use futures::{future::RemoteHandle, FutureExt};
-use tokio::io::{split, AsyncRead, AsyncWrite};
+use tokio::io::{split, AsyncRead, AsyncWrite, AsyncWriteExt};
 use tokio::net::{TcpSocket, TcpStream};
 use tokio::sync::{mpsc, oneshot};
 use tracing::{error, warn};
@@ -29,11 +29,11 @@ use super::errors::{BadKeyspaceName, BadQuery, DbError, QueryError};
 use crate::batch::{Batch, BatchStatement};
 use crate::frame::{
     self,
-    request::{self, batch, execute, query, register, Request, RequestOpcode},
-    response::{event::Event, result, result::Row, Response, ResponseOpcode},
+    request::{self, batch, execute, query, register, Request},
+    response::{event::Event, result, result::ColumnSpec, Response, ResponseOpcode},
     server_event_type::EventType,
     value::{BatchValues, ValueList},
-    FrameParams, RequestBodyWithExtensions,
+    FrameParams, SerializedRequest,
 };
 use crate::query::Query;
 use crate::routing::ShardInfo;
@@ -48,7 +48,6 @@ use crate::transport::Compression;
 
 // Queries for schema agreement
 const LOCAL_VERSION: &str = "SELECT schema_version FROM system.local WHERE key='local'";
-const PEERS_VERSION: &str = "SELECT schema_version FROM system.peers";
 
 pub struct Connection {
     submit_channel: mpsc::Sender<Task>,
@@ -63,9 +62,7 @@ pub struct Connection {
 type ResponseHandler = oneshot::Sender<Result<TaskResponse, QueryError>>;
 
 struct Task {
-    request_flags: u8,
-    request_opcode: RequestOpcode,
-    request_body: Bytes,
+    serialized_request: SerializedRequest,
     response_handler: ResponseHandler,
 }
 
@@ -91,6 +88,20 @@ pub struct QueryResult {
     pub warnings: Vec<String>,
     /// CQL Tracing uuid - can only be Some if tracing is enabled for this query
     pub tracing_id: Option<Uuid>,
+    /// Paging state returned from the server
+    pub paging_state: Option<Bytes>,
+    /// Column specification returned from the server
+    pub col_specs: Vec<ColumnSpec>,
+}
+
+impl QueryResult {
+    // Returns a column specification for a column with given name, or None if not found
+    pub fn get_column_spec<'a>(&'a self, name: &str) -> Option<(usize, &'a ColumnSpec)> {
+        self.col_specs
+            .iter()
+            .enumerate()
+            .find(|(_id, spec)| spec.name == name)
+    }
 }
 
 /// Result of Session::batch(). Contains no rows, only some useful information.
@@ -102,11 +113,22 @@ pub struct BatchResult {
 }
 
 impl QueryResponse {
+    pub fn as_set_keyspace(&self) -> Option<&result::SetKeyspace> {
+        match &self.response {
+            Response::Result(result::Result::SetKeyspace(sk)) => Some(sk),
+            _ => None,
+        }
+    }
+
     pub fn into_query_result(self) -> Result<QueryResult, QueryError> {
-        let rows: Option<Vec<result::Row>> = match self.response {
+        let (rows, paging_state, col_specs) = match self.response {
             Response::Error(err) => return Err(err.into()),
-            Response::Result(result::Result::Rows(rs)) => Some(rs.rows),
-            Response::Result(_) => None,
+            Response::Result(result::Result::Rows(rs)) => (
+                Some(rs.rows),
+                rs.metadata.paging_state,
+                rs.metadata.col_specs,
+            ),
+            Response::Result(_) => (None, None, vec![]),
             _ => {
                 return Err(QueryError::ProtocolError(
                     "Unexpected server response, expected Result or Error",
@@ -118,6 +140,8 @@ impl QueryResponse {
             rows,
             warnings: self.warnings,
             tracing_id: self.tracing_id,
+            paging_state,
+            col_specs,
         })
     }
 }
@@ -130,7 +154,7 @@ pub struct ConnectionConfig {
     pub ssl_context: Option<SslContext>,
     pub auth_username: Option<String>,
     pub auth_password: Option<String>,
-
+    pub connect_timeout: std::time::Duration,
     // should be Some only in control connections,
     pub event_sender: Option<mpsc::Sender<Event>>,
     /*
@@ -149,12 +173,13 @@ impl Default for ConnectionConfig {
     fn default() -> Self {
         Self {
             compression: None,
-            tcp_nodelay: false,
+            tcp_nodelay: true,
             event_sender: None,
             #[cfg(feature = "ssl")]
             ssl_context: None,
             auth_username: None,
             auth_password: None,
+            connect_timeout: std::time::Duration::from_secs(5),
         }
     }
 }
@@ -169,9 +194,18 @@ impl Connection {
         source_port: Option<u16>,
         config: ConnectionConfig,
     ) -> Result<(Self, ErrorReceiver), QueryError> {
-        let stream = match source_port {
-            Some(p) => connect_with_source_port(addr, p).await?,
-            None => TcpStream::connect(addr).await?,
+        let stream_connector = match source_port {
+            Some(p) => {
+                tokio::time::timeout(config.connect_timeout, connect_with_source_port(addr, p))
+                    .await
+            }
+            None => tokio::time::timeout(config.connect_timeout, TcpStream::connect(addr)).await,
+        };
+        let stream = match stream_connector {
+            Ok(stream) => stream?,
+            Err(_) => {
+                return Err(QueryError::TimeoutError);
+            }
         };
         let source_port = stream.local_addr()?.port();
         stream.set_nodelay(config.tcp_nodelay)?;
@@ -215,18 +249,21 @@ impl Connection {
         let query_response = self
             .send_request(
                 &request::Prepare {
-                    query: &query.get_contents(),
+                    query: query.get_contents(),
                 },
                 true,
-                query.tracing,
+                query.config.tracing,
             )
             .await?;
 
         let mut prepared_statement = match query_response.response {
             Response::Error(err) => return Err(err.into()),
-            Response::Result(result::Result::Prepared(p)) => {
-                PreparedStatement::new(p.id, p.prepared_metadata, query.get_contents().to_owned())
-            }
+            Response::Result(result::Result::Prepared(p)) => PreparedStatement::new(
+                p.id,
+                p.prepared_metadata,
+                query.get_contents().to_owned(),
+                query.get_page_size(),
+            ),
             _ => {
                 return Err(QueryError::ProtocolError(
                     "PREPARE: Unexpected server response",
@@ -271,8 +308,11 @@ impl Connection {
         &self,
         query: &Query,
         values: &impl ValueList,
+        paging_state: Option<Bytes>,
     ) -> Result<QueryResult, QueryError> {
-        self.query(query, values, None).await?.into_query_result()
+        self.query(query, values, paging_state)
+            .await?
+            .into_query_result()
     }
 
     pub async fn query(
@@ -294,15 +334,17 @@ impl Connection {
             },
         };
 
-        self.send_request(&query_frame, true, query.tracing).await
+        self.send_request(&query_frame, true, query.config.tracing)
+            .await
     }
 
     pub async fn execute_single_page(
         &self,
         prepared_statement: &PreparedStatement,
         values: impl ValueList,
+        paging_state: Option<Bytes>,
     ) -> Result<QueryResult, QueryError> {
-        self.execute(prepared_statement, values, None)
+        self.execute(prepared_statement, values, paging_state)
             .await?
             .into_query_result()
     }
@@ -327,7 +369,7 @@ impl Connection {
         };
 
         let query_response = self
-            .send_request(&execute_frame, true, prepared_statement.tracing)
+            .send_request(&execute_frame, true, prepared_statement.config.tracing)
             .await?;
 
         if let Response::Error(err) = &query_response.response {
@@ -344,7 +386,7 @@ impl Connection {
                 }
 
                 return self
-                    .send_request(&execute_frame, true, prepared_statement.tracing)
+                    .send_request(&execute_frame, true, prepared_statement.config.tracing)
                     .await;
             }
         }
@@ -383,7 +425,9 @@ impl Connection {
             serial_consistency: batch.get_serial_consistency(),
         };
 
-        let query_response = self.send_request(&batch_frame, true, batch.tracing).await?;
+        let query_response = self
+            .send_request(&batch_frame, true, batch.config.tracing)
+            .await?;
 
         match query_response.response {
             Response::Error(err) => Err(err.into()),
@@ -450,28 +494,6 @@ impl Connection {
         }
     }
 
-    pub async fn check_schema_agreement(&self) -> Result<bool, QueryError> {
-        let peers_rows = self.fetch_peers_schema_version();
-        let local_version = self.fetch_schema_version();
-        let (peers_rows, local_version) = tokio::try_join!(peers_rows, local_version)?;
-        for row in peers_rows {
-            let (version,) = row
-                .into_typed::<(Uuid,)>()
-                .map_err(|_| QueryError::ProtocolError("Row is not uuid type as it should be"))?;
-            if local_version != version {
-                return Ok(false);
-            }
-        }
-        Ok(true)
-    }
-
-    async fn fetch_peers_schema_version(&self) -> Result<Vec<Row>, QueryError> {
-        self.query_single_page(PEERS_VERSION, &[])
-            .await?
-            .rows
-            .ok_or(QueryError::ProtocolError("Peers query returned not rows"))
-    }
-
     pub async fn fetch_schema_version(&self) -> Result<Uuid, QueryError> {
         let (version_id,): (Uuid,) = self
             .query_single_page(LOCAL_VERSION, &[])
@@ -491,24 +513,18 @@ impl Connection {
         compress: bool,
         tracing: bool,
     ) -> Result<QueryResponse, QueryError> {
-        let body = request.to_bytes()?;
         let compression = if compress {
             self.config.compression
         } else {
             None
         };
-        let body_with_ext = RequestBodyWithExtensions { body };
-
-        let (flags, raw_request) =
-            frame::prepare_request_body_with_extensions(body_with_ext, compression, tracing)?;
+        let serialized_request = SerializedRequest::make(request, compression, tracing)?;
 
         let (sender, receiver) = oneshot::channel();
 
         self.submit_channel
             .send(Task {
-                request_flags: flags,
-                request_opcode: R::OPCODE,
-                request_body: raw_request,
+                serialized_request,
                 response_handler: sender,
             })
             .await
@@ -578,7 +594,6 @@ impl Connection {
         receiver: mpsc::Receiver<Task>,
         error_sender: tokio::sync::oneshot::Sender<QueryError>,
     ) -> Result<RemoteHandle<()>, std::io::Error> {
-        let _config = config;
         Ok(Self::run_router_spawner(
             stream,
             receiver,
@@ -717,19 +732,9 @@ impl Connection {
                 }
             };
 
-            let params = frame::FrameParams {
-                stream: stream_id,
-                flags: task.request_flags,
-                ..Default::default()
-            };
-
-            frame::write_request_frame(
-                &mut write_half,
-                params,
-                task.request_opcode,
-                task.request_body,
-            )
-            .await?;
+            let mut req = task.serialized_request;
+            req.set_stream(stream_id);
+            write_half.write_all(req.get_data()).await?;
         }
 
         Ok(())
@@ -872,10 +877,16 @@ pub async fn open_named_connection(
             match auth_result.response {
                 Response::AuthChallenge(authenticate_challenge) => {
                     let challenge_message = authenticate_challenge.authenticate_message;
-                    unimplemented!("Auth Challenge not implemented yet, {}", challenge_message)
+                    unimplemented!(
+                        "Auth Challenge not implemented yet, {:?}",
+                        challenge_message
+                    )
                 }
                 Response::AuthSuccess(_authenticate_success) => {
-                    return Ok((connection, error_receiver));
+                    // OK, continue
+                }
+                Response::Error(err) => {
+                    return Err(err.into());
                 }
                 _ => {
                     return Err(QueryError::ProtocolError(

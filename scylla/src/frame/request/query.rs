@@ -84,7 +84,7 @@ impl QueryParameters<'_> {
         }
 
         if let Some(paging_state) = &self.paging_state {
-            types::write_bytes(&paging_state, buf)?;
+            types::write_bytes(paging_state, buf)?;
         }
 
         if let Some(serial_consistency) = self.serial_consistency {

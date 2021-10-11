@@ -217,7 +217,7 @@ impl ConnectionKeeperWorker {
 
         // Use the specified keyspace
         if let Some(keyspace_name) = &self.used_keyspace {
-            let _ = connection.use_keyspace(&keyspace_name).await;
+            let _ = connection.use_keyspace(keyspace_name).await;
             // Ignore the error, used_keyspace could be set a long time ago and then deleted
             // user gets all errors from session.use_keyspace()
         }
@@ -271,16 +271,16 @@ impl ConnectionKeeperWorker {
                 connection::open_connection(self.address, Some(port), self.config.clone()).await;
 
             match connect_result {
-                Err(err) if err.is_address_in_use() => continue, // If port collision happened try next port
+                Err(err) if err.is_address_unavailable_for_use() => continue, // If we can't use this port, try the next one
                 result => return result,
             }
         }
 
         // Tried all source ports for that shard, give up
-        return Err(QueryError::IoError(Arc::new(std::io::Error::new(
+        Err(QueryError::IoError(Arc::new(std::io::Error::new(
             std::io::ErrorKind::AddrInUse,
             "Could not find free source port for shard",
-        ))));
+        ))))
     }
 }
 
@@ -306,7 +306,7 @@ mod tests {
 
         let connection_config = ConnectionConfig {
             compression: None,
-            tcp_nodelay: false,
+            tcp_nodelay: true,
             #[cfg(feature = "ssl")]
             ssl_context: None,
             ..Default::default()

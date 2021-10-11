@@ -5,7 +5,7 @@ use thiserror::Error;
 
 #[derive(Error, Debug)]
 pub enum FrameError {
-    #[error("Type parsing failed")]
+    #[error(transparent)]
     Parse(#[from] ParseError),
     #[error("Frame is compressed, but no compression negotiated for connection.")]
     NoCompressionNegotiated,
@@ -29,7 +29,7 @@ pub enum FrameError {
 
 #[derive(Error, Debug)]
 pub enum ParseError {
-    #[error("Bad data - couldn't serialize. Error msg: {0}")]
+    #[error("Could not serialize frame: {0}")]
     BadData(String),
     #[error(transparent)]
     IoError(#[from] std::io::Error),

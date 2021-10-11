@@ -17,6 +17,10 @@ chrono = "0.4"
 uuid = "0.8.1"
 
 [[example]]
+name = "auth"
+path = "auth.rs"
+
+[[example]]
 name = "basic"
 path = "basic.rs"
 
@@ -64,3 +68,14 @@ path = "tracing.rs"
 name = "schema_agreement"
 path = "schema_agreement.rs"
 
+[[example]]
+name = "clone"
+path = "clone.rs"
+
+[[example]]
+name = "speculative-execution"
+path = "speculative-execution.rs"
+
+[[example]]
+name = "get_by_name"
+path = "get_by_name.rs"
