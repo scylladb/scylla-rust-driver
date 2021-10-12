@@ -10,5 +10,8 @@ pub use scylla_macros::FromUserType;
 /// Works only on simple structs without generics etc
 pub use scylla_macros::IntoUserType;
 
+/// #[derive(ValueList)] allows to pass struct as a list of values for a query
+pub use scylla_macros::ValueList;
+
 // Reexports for derive(IntoUserType)
 pub use bytes::{BufMut, Bytes, BytesMut};

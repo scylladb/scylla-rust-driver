@@ -1,4 +1,6 @@
+use crate as scylla;
 use crate::batch::Batch;
+use crate::cql_to_rust::FromRow;
 use crate::frame::response::result::Row;
 use crate::frame::value::ValueList;
 use crate::query::Query;
@@ -228,6 +230,43 @@ async fn test_prepared_statement() {
         let e = r.columns[4].as_ref();
         assert!(e.is_none());
         assert_eq!((a, b, c, d), (17, 16, &String::from("I'm prepared!!!"), 7))
+    }
+    // Check that ValueList macro works
+    {
+        #[derive(scylla::ValueList, scylla::FromRow, PartialEq, Debug, Clone)]
+        struct ComplexPk {
+            a: i32,
+            b: i32,
+            c: Option<String>,
+            d: i32,
+            e: i32,
+        }
+        let input: ComplexPk = ComplexPk {
+            a: 9,
+            b: 8,
+            c: Some("seven".into()),
+            d: 6,
+            e: 5,
+        };
+        session
+            .query(
+                "INSERT INTO ks.complex_pk (a,b,c,d,e) VALUES (?,?,?,?,?)",
+                input.clone(),
+            )
+            .await
+            .unwrap();
+        let mut rs = session
+            .query(
+                "SELECT * FROM ks.complex_pk WHERE a = 9 and b = 8 and c = 'seven'",
+                &[],
+            )
+            .await
+            .unwrap()
+            .rows
+            .unwrap()
+            .into_typed::<ComplexPk>();
+        let output = rs.next().unwrap().unwrap();
+        assert_eq!(input, output)
     }
 }
 
