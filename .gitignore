@@ -8,3 +8,4 @@ Cargo.lock
 /docs/source/.doctrees
 /docs/poetry.lock
 .idea
+.idea/workspace.xml
