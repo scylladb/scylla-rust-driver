@@ -40,12 +40,12 @@ pub struct Date(pub u32);
 
 /// Wrapper used to differentiate between Time and Timestamp as sending values
 /// Milliseconds since unix epoch
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub struct Timestamp(pub Duration);
 
 /// Wrapper used to differentiate between Time and Timestamp as sending values
 /// Nanoseconds since midnight
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub struct Time(pub Duration);
 
 /// Keeps a buffer with serialized Values
