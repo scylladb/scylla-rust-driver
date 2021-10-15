@@ -331,6 +331,7 @@ impl Connection {
                 values: &serialized_values,
                 page_size: query.get_page_size(),
                 paging_state,
+                timestamp: query.get_timestamp(),
             },
         };
 
@@ -364,6 +365,7 @@ impl Connection {
                 serial_consistency: prepared_statement.get_serial_consistency(),
                 values: &serialized_values,
                 page_size: prepared_statement.get_page_size(),
+                timestamp: prepared_statement.get_timestamp(),
                 paging_state,
             },
         };
@@ -423,6 +425,7 @@ impl Connection {
             batch_type: batch.get_type(),
             consistency: batch.get_consistency(),
             serial_consistency: batch.get_serial_consistency(),
+            timestamp: batch.get_timestamp(),
         };
 
         let query_response = self

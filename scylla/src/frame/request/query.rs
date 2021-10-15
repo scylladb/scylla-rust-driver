@@ -14,7 +14,7 @@ const FLAG_VALUES: u8 = 0x01;
 const FLAG_PAGE_SIZE: u8 = 0x04;
 const FLAG_WITH_PAGING_STATE: u8 = 0x08;
 const FLAG_WITH_SERIAL_CONSISTENCY: u8 = 0x10;
-// const FLAG_WITH_DEFAULT_TIMESTAMP: u8 = 0x20;
+const FLAG_WITH_DEFAULT_TIMESTAMP: u8 = 0x20;
 // const FLAG_WITH_NAMES_FOR_VALUES: u8 = 0x40;
 
 pub struct Query<'a> {
@@ -35,6 +35,7 @@ impl Request for Query<'_> {
 pub struct QueryParameters<'a> {
     pub consistency: types::Consistency,
     pub serial_consistency: Option<types::Consistency>,
+    pub timestamp: Option<i64>,
     pub page_size: Option<i32>,
     pub paging_state: Option<Bytes>,
     pub values: &'a SerializedValues,
@@ -45,6 +46,7 @@ impl Default for QueryParameters<'_> {
         Self {
             consistency: Default::default(),
             serial_consistency: None,
+            timestamp: None,
             page_size: None,
             paging_state: None,
             values: SerializedValues::EMPTY,
@@ -73,6 +75,10 @@ impl QueryParameters<'_> {
             flags |= FLAG_WITH_SERIAL_CONSISTENCY;
         }
 
+        if self.timestamp.is_some() {
+            flags |= FLAG_WITH_DEFAULT_TIMESTAMP;
+        }
+
         buf.put_u8(flags);
 
         if !self.values.is_empty() {
@@ -89,6 +95,10 @@ impl QueryParameters<'_> {
 
         if let Some(serial_consistency) = self.serial_consistency {
             types::write_consistency(serial_consistency, buf);
+        }
+
+        if let Some(timestamp) = self.timestamp {
+            types::write_long(timestamp, buf);
         }
 
         Ok(())
