@@ -12,7 +12,7 @@ pub use crate::frame::request::batch::BatchType;
 pub struct Batch {
     pub(crate) config: StatementConfig,
 
-    statements: Vec<BatchStatement>,
+    pub statements: Vec<BatchStatement>,
     batch_type: BatchType,
 }
 
@@ -25,6 +25,15 @@ impl Batch {
         }
     }
 
+    /// Creates a new, empty `Batch` of `batch_type` type with the provided statements.
+    pub fn new_with_statements(batch_type: BatchType, statements: Vec<BatchStatement>) -> Self {
+        Self {
+            batch_type,
+            statements,
+            ..Default::default()
+        }
+    }
+
     /// Appends a new statement to the batch.
     pub fn append_statement(&mut self, statement: impl Into<BatchStatement>) {
         self.statements.push(statement.into());
@@ -33,11 +42,6 @@ impl Batch {
     /// Gets type of batch.
     pub fn get_type(&self) -> BatchType {
         self.batch_type
-    }
-
-    /// Returns statements contained in the batch.
-    pub fn get_statements(&self) -> &[BatchStatement] {
-        self.statements.as_ref()
     }
 
     /// Sets the consistency to be used when executing this batch.
