@@ -10,6 +10,8 @@ use std::net::IpAddr;
 use thiserror::Error;
 use uuid::Uuid;
 
+use super::response::result::CqlValue;
+
 /// Every value being sent in a query must implement this trait
 /// serialize() should write the Value as [bytes] to the provided buffer
 pub trait Value {
@@ -424,22 +426,30 @@ impl<T: Value> Value for &T {
     }
 }
 
+fn serialize_map<K: Value, V: Value>(
+    kv_iter: impl Iterator<Item = (K, V)>,
+    kv_count: usize,
+    buf: &mut Vec<u8>,
+) -> Result<(), ValueTooBig> {
+    let bytes_num_pos: usize = buf.len();
+    buf.put_i32(0);
+
+    buf.put_i32(kv_count.try_into().map_err(|_| ValueTooBig)?);
+    for (key, value) in kv_iter {
+        <K as Value>::serialize(&key, buf)?;
+        <V as Value>::serialize(&value, buf)?;
+    }
+
+    let written_bytes: usize = buf.len() - bytes_num_pos - 4;
+    let written_bytes_i32: i32 = written_bytes.try_into().map_err(|_| ValueTooBig)?;
+    buf[bytes_num_pos..(bytes_num_pos + 4)].copy_from_slice(&written_bytes_i32.to_be_bytes());
+
+    Ok(())
+}
+
 impl<K: Value, V: Value> Value for HashMap<K, V> {
     fn serialize(&self, buf: &mut Vec<u8>) -> Result<(), ValueTooBig> {
-        let bytes_num_pos: usize = buf.len();
-        buf.put_i32(0);
-
-        buf.put_i32(self.len().try_into().map_err(|_| ValueTooBig)?);
-        for (key, value) in self {
-            <K as Value>::serialize(key, buf)?;
-            <V as Value>::serialize(value, buf)?;
-        }
-
-        let written_bytes: usize = buf.len() - bytes_num_pos - 4;
-        let written_bytes_i32: i32 = written_bytes.try_into().map_err(|_| ValueTooBig)?;
-        buf[bytes_num_pos..(bytes_num_pos + 4)].copy_from_slice(&written_bytes_i32.to_be_bytes());
-
-        Ok(())
+        serialize_map(self.iter(), self.len(), buf)
     }
 }
 
@@ -458,6 +468,61 @@ impl<T: Value> Value for Vec<T> {
         buf[bytes_num_pos..(bytes_num_pos + 4)].copy_from_slice(&written_bytes_i32.to_be_bytes());
 
         Ok(())
+    }
+}
+
+fn serialize_tuple<V: Value>(
+    elem_iter: impl Iterator<Item = V>,
+    buf: &mut Vec<u8>,
+) -> Result<(), ValueTooBig> {
+    let bytes_num_pos: usize = buf.len();
+    buf.put_i32(0);
+
+    for elem in elem_iter {
+        elem.serialize(buf)?;
+    }
+
+    let written_bytes: usize = buf.len() - bytes_num_pos - 4;
+    let written_bytes_i32: i32 = written_bytes.try_into().map_err(|_| ValueTooBig)?;
+    buf[bytes_num_pos..(bytes_num_pos + 4)].copy_from_slice(&written_bytes_i32.to_be_bytes());
+
+    Ok(())
+}
+
+impl Value for CqlValue {
+    fn serialize(&self, buf: &mut Vec<u8>) -> Result<(), ValueTooBig> {
+        match self {
+            CqlValue::Map(m) => serialize_map(m.iter().map(|(k, v)| (k, v)), m.len(), buf),
+            CqlValue::Tuple(t) => serialize_tuple(t.iter(), buf),
+
+            // A UDT value is composed of successive [bytes] values, one for each field of the UDT
+            // value (in the order defined by the type), so they serialize in a same way tuples do.
+            CqlValue::UserDefinedType { fields, .. } => {
+                serialize_tuple(fields.iter().map(|(_, value)| value), buf)
+            }
+
+            CqlValue::Date(d) => Date(*d).serialize(buf),
+            CqlValue::Timestamp(t) => Timestamp(*t).serialize(buf),
+            CqlValue::Time(t) => Time(*t).serialize(buf),
+
+            CqlValue::Ascii(s) | CqlValue::Text(s) => s.serialize(buf),
+            CqlValue::List(v) | CqlValue::Set(v) => v.serialize(buf),
+
+            CqlValue::Blob(b) => b.serialize(buf),
+            CqlValue::Boolean(b) => b.serialize(buf),
+            CqlValue::Counter(c) => c.serialize(buf),
+            CqlValue::Decimal(d) => d.serialize(buf),
+            CqlValue::Double(d) => d.serialize(buf),
+            CqlValue::Float(f) => f.serialize(buf),
+            CqlValue::Int(i) => i.serialize(buf),
+            CqlValue::BigInt(i) => i.serialize(buf),
+            CqlValue::Inet(i) => i.serialize(buf),
+            CqlValue::SmallInt(s) => s.serialize(buf),
+            CqlValue::TinyInt(t) => t.serialize(buf),
+            CqlValue::Timeuuid(t) => t.serialize(buf),
+            CqlValue::Uuid(u) => u.serialize(buf),
+            CqlValue::Varint(v) => v.serialize(buf),
+        }
     }
 }
 

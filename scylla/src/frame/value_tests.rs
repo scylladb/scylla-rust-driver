@@ -1,12 +1,14 @@
-use super::value::{
-    BatchValues, Date, MaybeUnset, SerializeValuesError, SerializedResult, SerializedValues, Time,
-    Timestamp, Unset, Value, ValueList, ValueTooBig,
+use super::{
+    response::result::CqlValue,
+    value::{
+        BatchValues, Date, MaybeUnset, SerializeValuesError, SerializedResult, SerializedValues,
+        Time, Timestamp, Unset, Value, ValueList, ValueTooBig,
+    },
 };
+use crate::{Session, SessionBuilder};
 use bytes::BufMut;
-use chrono::Duration;
-use chrono::NaiveDate;
-use std::borrow::Cow;
-use std::convert::TryInto;
+use chrono::{Duration, NaiveDate};
+use std::{borrow::Cow, convert::TryInto, env};
 use uuid::Uuid;
 
 fn serialized(val: impl Value) -> Vec<u8> {
@@ -665,4 +667,64 @@ fn ref_batch_values() {
             .unwrap();
         assert_eq!(request, vec![0, 2, 0, 0, 0, 1, 1, 0, 0, 0, 1, 2]);
     }
+}
+
+#[tokio::test]
+async fn test_cqlvalue_udt() {
+    let uri = env::var("SCYLLA_URI").unwrap_or_else(|_| "127.0.0.1:9042".to_string());
+    let session: Session = SessionBuilder::new().known_node(uri).build().await.unwrap();
+    session
+        .query(
+            "CREATE KEYSPACE IF NOT EXISTS ks WITH REPLICATION = \
+            {'class' : 'SimpleStrategy', 'replication_factor' : 1}",
+            &[],
+        )
+        .await
+        .unwrap();
+
+    session
+        .query(
+            "CREATE TYPE IF NOT EXISTS ks.cqlvalue_udt_type (int_val int, text_val text)",
+            &[],
+        )
+        .await
+        .unwrap();
+    session
+        .query(
+            "CREATE TABLE IF NOT EXISTS ks.cqlvalue_udt_test (k int, my cqlvalue_udt_type, primary key (k))",
+            &[],
+        )
+        .await
+        .unwrap();
+
+    let udt_cql_value = CqlValue::UserDefinedType {
+        keyspace: "ks".to_string(),
+        type_name: "cqlvalue_udt_type".to_string(),
+        fields: vec![
+            ("int_val".to_string(), Some(CqlValue::Int(42))),
+            ("text_val".to_string(), Some(CqlValue::Text("hi".into()))),
+        ],
+    };
+
+    session
+        .query(
+            "INSERT INTO ks.cqlvalue_udt_test (k, my) VALUES (5, ?)",
+            (&udt_cql_value,),
+        )
+        .await
+        .unwrap();
+
+    let rows = session
+        .query("SELECT my FROM ks.cqlvalue_udt_test", &[])
+        .await
+        .unwrap()
+        .rows
+        .unwrap();
+
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0].columns.len(), 1);
+
+    let received_udt_cql_value = rows[0].columns[0].as_ref().unwrap();
+
+    assert_eq!(received_udt_cql_value, &udt_cql_value);
 }

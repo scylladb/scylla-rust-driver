@@ -9,7 +9,6 @@ use chrono::prelude::*;
 use chrono::Duration;
 use num_bigint::BigInt;
 use std::{
-    collections::BTreeMap,
     convert::{TryFrom, TryInto},
     net::IpAddr,
     result::Result as StdResult,
@@ -96,7 +95,10 @@ pub enum CqlValue {
     UserDefinedType {
         keyspace: String,
         type_name: String,
-        fields: BTreeMap<String, Option<CqlValue>>,
+        /// Order of `fields` vector must match the order of fields as defined in the UDT. The
+        /// driver does not check it by itself, so incorrect data will be written if the order is
+        /// wrong.
+        fields: Vec<(String, Option<CqlValue>)>,
     },
     SmallInt(i16),
     TinyInt(i8),
@@ -703,7 +705,7 @@ fn deser_cql_value(typ: &ColumnType, buf: &mut &[u8]) -> StdResult<CqlValue, Par
             keyspace,
             field_types,
         } => {
-            let mut fields: BTreeMap<String, Option<CqlValue>> = BTreeMap::new();
+            let mut fields: Vec<(String, Option<CqlValue>)> = Vec::new();
 
             for (field_name, field_type) in field_types {
                 // If a field is added to a UDT and we read an old (frozen ?) version of it,
@@ -718,7 +720,7 @@ fn deser_cql_value(typ: &ColumnType, buf: &mut &[u8]) -> StdResult<CqlValue, Par
                     field_value = Some(deser_cql_value(field_type, &mut field_val_bytes)?);
                 }
 
-                fields.insert(field_name.clone(), field_value);
+                fields.push((field_name.clone(), field_value));
             }
 
             CqlValue::UserDefinedType {

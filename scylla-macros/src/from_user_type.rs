@@ -15,8 +15,27 @@ pub fn from_user_type_derive(tokens_input: TokenStream) -> TokenStream {
 
         quote_spanned! {field.span() =>
             #field_name: <#field_type as FromCqlVal<Option<CqlValue>>>::from_cql(
-                // Take value with key #field_name out of fields map, if none found then return NULL
-                fields.remove(stringify!(#field_name)).unwrap_or(None)
+                {
+                    let received_field_name: Option<&String> = fields_iter
+                        .peek()
+                        .map(|(ref name, _)| name);
+
+                    // Order of received fields is the same as the order of processed struct's
+                    // fields. There cannot be an extra received field present, so it is safe to
+                    // assign subsequent received fields, to processed struct's fields (inserting
+                    // None if there is no received field corresponding to processed struct's
+                    // field)
+                    if let Some(received_field_name) = received_field_name {
+                        if received_field_name == stringify!(#field_name) {
+                            let (_, value) = fields_iter.next().unwrap();
+                            value
+                        } else {
+                            None
+                        }
+                    } else {
+                        None
+                    }
+                }
             ) ?,
         }
     });
@@ -30,8 +49,8 @@ pub fn from_user_type_derive(tokens_input: TokenStream) -> TokenStream {
                 use scylla::frame::response::result::CqlValue;
 
                 // Interpret CqlValue as CQlValue::UserDefinedType
-                let mut fields: BTreeMap<String, Option<CqlValue>> = match cql_val {
-                    CqlValue::UserDefinedType{fields, ..} => fields,
+                let mut fields_iter = match cql_val {
+                    CqlValue::UserDefinedType{fields, ..} => fields.into_iter().peekable(),
                     _ => return Err(FromCqlValError::BadCqlType),
                 };
 
@@ -41,7 +60,7 @@ pub fn from_user_type_derive(tokens_input: TokenStream) -> TokenStream {
                 };
 
                 // There should be no unused fields when reading user defined type
-                if !fields.is_empty() {
+                if fields_iter.next().is_some() {
                     return Err(FromCqlValError::BadCqlType);
                 }
 
