@@ -1,7 +1,8 @@
 use crate::frame::response::event::{Event, StatusChangeEvent};
 /// Cluster manages up to date information and connections to database nodes
 use crate::routing::Token;
-use crate::transport::connection::{Connection, ConnectionConfig, VerifiedKeyspaceName};
+use crate::transport::connection::{Connection, VerifiedKeyspaceName};
+use crate::transport::connection_pool::PoolConfig;
 use crate::transport::errors::QueryError;
 use crate::transport::node::Node;
 use crate::transport::topology::{Keyspace, TopologyInfo, TopologyReader};
@@ -50,7 +51,7 @@ struct ClusterWorker {
 
     // Cluster connections
     topology_reader: TopologyReader,
-    connection_config: ConnectionConfig,
+    pool_config: PoolConfig,
 
     // To listen for refresh requests
     refresh_channel: tokio::sync::mpsc::Receiver<RefreshRequest>,
@@ -79,7 +80,7 @@ struct UseKeyspaceRequest {
 impl Cluster {
     pub async fn new(
         initial_peers: &[SocketAddr],
-        connection_config: ConnectionConfig,
+        pool_config: PoolConfig,
     ) -> Result<Cluster, QueryError> {
         let cluster_data = Arc::new(ArcSwap::from(Arc::new(ClusterData {
             known_peers: HashMap::new(),
@@ -98,10 +99,10 @@ impl Cluster {
 
             topology_reader: TopologyReader::new(
                 initial_peers,
-                connection_config.clone(),
+                pool_config.connection_config.clone(),
                 server_events_sender,
             ),
-            connection_config,
+            pool_config,
 
             refresh_channel: refresh_receiver,
             server_events_channel: server_events_receiver,
@@ -220,7 +221,7 @@ impl ClusterData {
     /// Uses provided `known_peers` hashmap to recycle nodes if possible.
     pub fn new(
         info: TopologyInfo,
-        connection_config: &ConnectionConfig,
+        pool_config: &PoolConfig,
         known_peers: &HashMap<SocketAddr, Arc<Node>>,
         used_keyspace: &Option<VerifiedKeyspaceName>,
     ) -> Self {
@@ -241,7 +242,7 @@ impl ClusterData {
                 }
                 _ => Arc::new(Node::new(
                     peer.address,
-                    connection_config.clone(),
+                    pool_config.clone(),
                     peer.datacenter,
                     peer.rack,
                     used_keyspace.clone(),
@@ -432,7 +433,7 @@ impl ClusterWorker {
 
         let new_cluster_data = Arc::new(ClusterData::new(
             topo_info,
-            &self.connection_config,
+            &self.pool_config,
             &cluster_data.known_peers,
             &self.used_keyspace,
         ));

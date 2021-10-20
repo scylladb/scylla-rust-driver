@@ -59,17 +59,6 @@ impl Default for PoolConfig {
     }
 }
 
-// Temporary code used to reduce commit sizes,
-// will be removed in further commits
-impl From<ConnectionConfig> for PoolConfig {
-    fn from(connection_config: ConnectionConfig) -> PoolConfig {
-        PoolConfig {
-            connection_config,
-            ..Default::default()
-        }
-    }
-}
-
 enum MaybePoolConnections {
     // The pool is being filled for the first time
     Initializing,
