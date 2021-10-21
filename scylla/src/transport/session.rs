@@ -885,25 +885,6 @@ impl Session {
         }
     }
 
-    /// Does the same thing as [`Session::execute_all`] but uses the prepared statement cache
-    pub async fn execute_all_cached(
-        &self,
-        query: impl Into<Query>,
-        values: impl ValueList,
-    ) -> Result<QueryResult, QueryError> {
-        let query = query.into();
-        let prepared = self.add_prepared_statement(&query).await?;
-        let values = values.serialized()?;
-        let result = self.execute_all(prepared, values.clone()).await;
-
-        match self.post_execute_prepared_statement(&query, result).await? {
-            Either::Left(result) => Ok(result),
-            Either::Right(new_prepared_statement) => {
-                self.execute_all(new_prepared_statement, values).await
-            }
-        }
-    }
-
     /// Perform a batch query
     /// Batch contains many `simple` or `prepared` queries which are executed at once  
     /// Batch doesn't return any rows
@@ -1456,20 +1437,6 @@ mod tests {
 
         session
             .execute_paged_cached("select * from test_table", &[], None)
-            .await
-            .unwrap();
-
-        assert_eq!(1, session.prepared_statement_cache.cache.len());
-    }
-
-    #[tokio::test]
-    async fn test_execute_all_cached() {
-        let session = SessionBuilder::new_for_test().await;
-
-        assert!(session.prepared_statement_cache.cache.is_empty());
-
-        session
-            .execute_cached("select * from test_table", &[])
             .await
             .unwrap();
 
