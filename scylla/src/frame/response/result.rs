@@ -71,7 +71,7 @@ enum ColumnType {
     Varint,
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone)]
 pub enum CqlValue {
     Ascii(String),
     Boolean(bool),
@@ -313,7 +313,7 @@ pub struct PreparedMetadata {
     pub col_specs: Vec<ColumnSpec>,
 }
 
-#[derive(Debug, Default, PartialEq)]
+#[derive(Debug, Default, PartialEq, Clone)]
 pub struct Row {
     pub columns: Vec<Option<CqlValue>>,
 }

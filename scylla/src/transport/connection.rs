@@ -80,7 +80,7 @@ pub struct QueryResponse {
 
 /// Result of a single query  
 /// Contains all rows returned by the database and some more information
-#[derive(Default, Debug)]
+#[derive(Default, Debug, Clone)]
 pub struct QueryResult {
     /// Rows returned by the database
     pub rows: Option<Vec<result::Row>>,
