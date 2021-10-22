@@ -25,5 +25,5 @@ jobs:
       run: make -C docs multiversion
     - name: Deploy
       run: ./docs/_utils/deploy.sh
-    env:
-      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
