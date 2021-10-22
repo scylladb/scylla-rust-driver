@@ -67,6 +67,11 @@ impl PreparedStatement {
         &self.prepare_tracing_ids
     }
 
+    /// Gets the metadata returned by the server for this CQL query.
+    pub fn get_metadata(&self) -> &PreparedMetadata {
+        &self.metadata
+    }
+
     /// Computes the partition key of the target table from given values
     /// Partition keys have a specific serialization rules.
     /// Ref: https://github.com/scylladb/scylla/blob/40adf38915b6d8f5314c621a94d694d172360833/compound_compat.hh#L33-L47
