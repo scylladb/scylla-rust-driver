@@ -28,6 +28,7 @@ use openssl::ssl::SslContext;
 /// # Ok(())
 /// # }
 /// ```
+#[derive(Clone)]
 pub struct SessionBuilder {
     pub config: SessionConfig,
 }
