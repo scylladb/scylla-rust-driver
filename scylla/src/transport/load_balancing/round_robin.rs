@@ -25,6 +25,12 @@ impl Default for RoundRobinPolicy {
     }
 }
 
+impl Clone for RoundRobinPolicy {
+    fn clone(&self) -> Self {
+        Self::new()
+    }
+}
+
 const ORDER_TYPE: Ordering = Ordering::Relaxed;
 
 impl LoadBalancingPolicy for RoundRobinPolicy {

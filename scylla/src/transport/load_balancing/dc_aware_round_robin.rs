@@ -103,6 +103,12 @@ impl ChildLoadBalancingPolicy for DcAwareRoundRobinPolicy {
     }
 }
 
+impl Clone for DcAwareRoundRobinPolicy {
+    fn clone(&self) -> Self {
+        Self::new(self.local_dc.clone())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
