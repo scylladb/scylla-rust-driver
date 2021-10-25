@@ -105,7 +105,7 @@ pub enum CqlValue {
     /// Nanoseconds since midnight
     Time(Duration),
     Timeuuid(Uuid),
-    Tuple(Vec<CqlValue>),
+    Tuple(Vec<Option<CqlValue>>),
     Uuid(Uuid),
     Varint(BigInt),
 }
@@ -732,9 +732,12 @@ fn deser_cql_value(typ: &ColumnType, buf: &mut &[u8]) -> StdResult<CqlValue, Par
         Tuple(type_names) => {
             let mut res = Vec::with_capacity(type_names.len());
             for type_name in type_names {
-                let mut b = types::read_bytes(buf)?;
-                res.push(deser_cql_value(type_name, &mut b)?);
+                match types::read_bytes_opt(buf)? {
+                    Some(mut b) => res.push(Some(deser_cql_value(type_name, &mut b)?)),
+                    None => res.push(None),
+                };
             }
+
             CqlValue::Tuple(res)
         }
     })

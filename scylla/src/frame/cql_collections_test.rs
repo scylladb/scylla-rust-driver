@@ -162,7 +162,7 @@ async fn test_cql_collections() {
         .await.unwrap();
 
     let duration1 = (3, "hours");
-    let duration2 = CqlValue::Tuple(vec![CqlValue::Int(2), CqlValue::Text("minutes".into())]);
+    let duration2 = CqlValue::Tuple(vec![Some(CqlValue::Int(2)), Some(CqlValue::Text("minutes".into()))]);
     session
         .query(
             "INSERT INTO ks.durations (event, duration) VALUES ('ev1', ?)",
