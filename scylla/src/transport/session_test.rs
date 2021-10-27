@@ -1,6 +1,5 @@
 use crate as scylla;
 use crate::batch::Batch;
-use crate::cql_to_rust::FromRow;
 use crate::frame::response::result::Row;
 use crate::frame::value::ValueList;
 use crate::query::Query;
