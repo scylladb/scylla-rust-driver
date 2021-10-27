@@ -522,6 +522,8 @@ impl Value for CqlValue {
             CqlValue::Timeuuid(t) => t.serialize(buf),
             CqlValue::Uuid(u) => u.serialize(buf),
             CqlValue::Varint(v) => v.serialize(buf),
+
+            CqlValue::Empty => Ok(()),
         }
     }
 }
