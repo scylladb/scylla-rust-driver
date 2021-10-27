@@ -82,6 +82,7 @@ pub enum CqlValue {
     /// Can be converted to chrono::NaiveDate (-262145-1-1 to 262143-12-31) using as_date
     Date(u32),
     Double(f64),
+    Empty,
     Float(f32),
     Int(i32),
     BigInt(i64),
@@ -501,6 +502,16 @@ fn deser_prepared_metadata(buf: &mut &[u8]) -> StdResult<PreparedMetadata, Parse
 
 fn deser_cql_value(typ: &ColumnType, buf: &mut &[u8]) -> StdResult<CqlValue, ParseError> {
     use ColumnType::*;
+
+    if buf.is_empty() {
+        match typ {
+            Ascii | Blob | Text => {
+                // can't be empty
+            }
+            _ => return Ok(CqlValue::Empty),
+        }
+    }
+
     Ok(match typ {
         Ascii => {
             if !buf.is_ascii() {
@@ -1089,7 +1100,7 @@ mod tests {
         assert_eq!(date, CqlValue::Date(u32::max_value()));
 
         // Trying to parse a 0, 3 or 5 byte array fails
-        super::deser_cql_value(&ColumnType::Date, &mut [].as_ref()).unwrap_err();
+        super::deser_cql_value(&ColumnType::Date, &mut [].as_ref()).unwrap();
         super::deser_cql_value(&ColumnType::Date, &mut [1, 2, 3].as_ref()).unwrap_err();
         super::deser_cql_value(&ColumnType::Date, &mut [1, 2, 3, 4, 5].as_ref()).unwrap_err();
 
@@ -1205,6 +1216,49 @@ mod tests {
                 Duration::milliseconds(*test_val).num_milliseconds(),
                 *test_val
             );
+        }
+    }
+    #[test]
+    fn test_deserialize_empty_payload() {
+        for (test_type, res_cql) in [
+            (ColumnType::Ascii, CqlValue::Ascii("".to_owned())),
+            (ColumnType::Boolean, CqlValue::Empty),
+            (ColumnType::Blob, CqlValue::Blob(vec![])),
+            (ColumnType::Counter, CqlValue::Empty),
+            (ColumnType::Date, CqlValue::Empty),
+            (ColumnType::Decimal, CqlValue::Empty),
+            (ColumnType::Double, CqlValue::Empty),
+            (ColumnType::Float, CqlValue::Empty),
+            (ColumnType::Int, CqlValue::Empty),
+            (ColumnType::BigInt, CqlValue::Empty),
+            (ColumnType::Text, CqlValue::Text("".to_owned())),
+            (ColumnType::Timestamp, CqlValue::Empty),
+            (ColumnType::Inet, CqlValue::Empty),
+            (ColumnType::List(Box::new(ColumnType::Int)), CqlValue::Empty),
+            (
+                ColumnType::Map(Box::new(ColumnType::Int), Box::new(ColumnType::Int)),
+                CqlValue::Empty,
+            ),
+            (ColumnType::Set(Box::new(ColumnType::Int)), CqlValue::Empty),
+            (
+                ColumnType::UserDefinedType {
+                    type_name: "".to_owned(),
+                    keyspace: "".to_owned(),
+                    field_types: vec![],
+                },
+                CqlValue::Empty,
+            ),
+            (ColumnType::SmallInt, CqlValue::Empty),
+            (ColumnType::TinyInt, CqlValue::Empty),
+            (ColumnType::Time, CqlValue::Empty),
+            (ColumnType::Timeuuid, CqlValue::Empty),
+            (ColumnType::Tuple(vec![]), CqlValue::Empty),
+            (ColumnType::Uuid, CqlValue::Empty),
+            (ColumnType::Varint, CqlValue::Empty),
+        ] {
+            let cql_value: CqlValue = super::deser_cql_value(&test_type, &mut &[][..]).unwrap();
+
+            assert_eq!(cql_value, res_cql);
         }
     }
 
