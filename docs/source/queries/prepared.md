@@ -27,8 +27,11 @@ session.execute(&prepared, (to_insert,)).await?;
 > must be sent as bound values (see [performance section](#performance))
 
 > ***Warning***  
-> Prepared query returns only a single page of results.
-> If number of rows might exceed single page size use a [paged query](paged.md) instead.
+> Don't use `execute` to receive large amounts of data.  
+> By default the query is unpaged and might cause heavy load on the cluster.
+> In such cases set a page size and use a [paged query](paged.md) instead.
+> 
+> When page size is set, `execute` will return only the first page of results.
 
 ### `Session::prepare`
 `Session::prepare` takes query text and prepares the query on all nodes and shards.
