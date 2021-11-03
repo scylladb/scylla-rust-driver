@@ -7,7 +7,7 @@ async fn main() -> Result<()> {
 
     println!("Connecting to {} with cassandra superuser ...", uri);
 
-    let session = crate::SessionBuilder::new()
+    let session = SessionBuilder::new()
         .known_node(uri)
         .user("cassandra", "cassandra")
         .build()
