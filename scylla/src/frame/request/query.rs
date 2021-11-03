@@ -34,7 +34,7 @@ impl Request for Query<'_> {
 
 pub struct QueryParameters<'a> {
     pub consistency: types::Consistency,
-    pub serial_consistency: Option<types::Consistency>,
+    pub serial_consistency: Option<types::SerialConsistency>,
     pub timestamp: Option<i64>,
     pub page_size: Option<i32>,
     pub paging_state: Option<Bytes>,
@@ -94,7 +94,7 @@ impl QueryParameters<'_> {
         }
 
         if let Some(serial_consistency) = self.serial_consistency {
-            types::write_consistency(serial_consistency, buf);
+            types::write_serial_consistency(serial_consistency, buf);
         }
 
         if let Some(timestamp) = self.timestamp {

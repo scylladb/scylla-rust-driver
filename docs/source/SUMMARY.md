@@ -19,6 +19,7 @@
     - [Prepared query](queries/prepared.md)
     - [Batch statement](queries/batch.md)
     - [Paged query](queries/paged.md)
+    - [Lightweight transaction query (LWT)](queries/lwt.md)
     - [USE keyspace](queries/usekeyspace.md)
     - [Schema agreement](queries/schema_agreement.md)
 

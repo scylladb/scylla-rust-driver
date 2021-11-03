@@ -34,4 +34,5 @@ Queries are fully asynchronous - you can run as many of them in parallel as you 
    paged
    usekeyspace
    schema_agreement
+   lwt
 ```

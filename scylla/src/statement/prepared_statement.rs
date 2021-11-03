@@ -5,7 +5,7 @@ use uuid::Uuid;
 
 use super::StatementConfig;
 use crate::frame::response::result::PreparedMetadata;
-use crate::frame::types::Consistency;
+use crate::frame::types::{Consistency, SerialConsistency};
 use crate::frame::value::SerializedValues;
 use crate::transport::retry_policy::RetryPolicy;
 
@@ -142,13 +142,13 @@ impl PreparedStatement {
 
     /// Sets the serial consistency to be used when executing this statement.
     /// (Ignored unless the statement is an LWT)
-    pub fn set_serial_consistency(&mut self, sc: Option<Consistency>) {
+    pub fn set_serial_consistency(&mut self, sc: Option<SerialConsistency>) {
         self.config.serial_consistency = sc;
     }
 
     /// Gets the serial consistency to be used when executing this statement.
     /// (Ignored unless the statement is an LWT)
-    pub fn get_serial_consistency(&self) -> Option<Consistency> {
+    pub fn get_serial_consistency(&self) -> Option<SerialConsistency> {
         self.config.serial_consistency
     }
 
