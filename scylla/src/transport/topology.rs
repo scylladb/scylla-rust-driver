@@ -324,7 +324,7 @@ fn strategy_from_string_map(
         ))?;
 
     let strategy: Strategy = match strategy_name.as_str() {
-        "org.apache.cassandra.locator.SimpleStrategy" => {
+        "org.apache.cassandra.locator.SimpleStrategy" | "SimpleStrategy" => {
             let rep_factor_str: String =
                 strategy_map
                     .remove("replication_factor")
@@ -338,7 +338,7 @@ fn strategy_from_string_map(
 
             Strategy::SimpleStrategy { replication_factor }
         }
-        "org.apache.cassandra.locator.NetworkTopologyStrategy" => {
+        "org.apache.cassandra.locator.NetworkTopologyStrategy" | "NetworkTopologyStrategy" => {
             let mut datacenter_repfactors: HashMap<String, usize> =
                 HashMap::with_capacity(strategy_map.len());
 
@@ -355,7 +355,7 @@ fn strategy_from_string_map(
                 datacenter_repfactors,
             }
         }
-        "org.apache.cassandra.locator.LocalStrategy" => Strategy::LocalStrategy,
+        "org.apache.cassandra.locator.LocalStrategy" | "LocalStrategy" => Strategy::LocalStrategy,
         _ => Strategy::Other {
             name: strategy_name,
             data: strategy_map,
