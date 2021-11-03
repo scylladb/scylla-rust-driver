@@ -162,7 +162,10 @@ async fn test_cql_collections() {
         .await.unwrap();
 
     let duration1 = (3, "hours");
-    let duration2 = CqlValue::Tuple(vec![CqlValue::Int(2), CqlValue::Text("minutes".into())]);
+    let duration2 = CqlValue::Tuple(vec![
+        Some(CqlValue::Int(2)),
+        Some(CqlValue::Text("minutes".into())),
+    ]);
     session
         .query(
             "INSERT INTO ks.durations (event, duration) VALUES ('ev1', ?)",
@@ -177,14 +180,21 @@ async fn test_cql_collections() {
         )
         .await
         .unwrap();
+    session
+        .query(
+            "INSERT INTO ks.durations (event, duration) VALUES ('ev3', (4, null))",
+            &[],
+        )
+        .await
+        .unwrap();
 
-    let mut received_elements: Vec<(i32, String)> = session
+    let mut received_elements: Vec<(i32, Option<String>)> = session
         .query("SELECT duration FROM ks.durations", &[])
         .await
         .unwrap()
         .rows
         .unwrap()
-        .into_typed::<((i32, String),)>()
+        .into_typed::<((i32, Option<String>),)>()
         .map(Result::unwrap)
         .map(|(x,)| x)
         .collect();
@@ -192,6 +202,10 @@ async fn test_cql_collections() {
 
     assert_eq!(
         received_elements,
-        vec![(2, "minutes".into()), (3, "hours".into())]
+        vec![
+            (2, Some("minutes".into())),
+            (3, Some("hours".into())),
+            (4, None)
+        ]
     );
 }

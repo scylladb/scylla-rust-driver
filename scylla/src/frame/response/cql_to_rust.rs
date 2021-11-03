@@ -186,7 +186,7 @@ macro_rules! impl_tuple_from_cql {
     ( $($Ti:tt),+ ) => {
         impl<$($Ti),+> FromCqlVal<CqlValue> for ($($Ti,)+)
         where
-            $($Ti: FromCqlVal<CqlValue>),+
+            $($Ti: FromCqlVal<Option<CqlValue>>),+
         {
             fn from_cql(cql_val: CqlValue) -> Result<Self, FromCqlValError> {
                 let tuple_fields = match cql_val {
