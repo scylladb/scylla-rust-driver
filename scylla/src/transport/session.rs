@@ -9,19 +9,20 @@ use std::sync::Arc;
 use std::time::Duration;
 use tokio::net::lookup_host;
 use tokio::time::timeout;
-use tracing::{debug, info, warn};
+use tracing::debug;
 use uuid::Uuid;
 
 use super::connection::QueryResponse;
 use super::errors::{BadQuery, NewSessionError, QueryError};
 use crate::frame::response::cql_to_rust::FromRowError;
-use crate::frame::response::{result, Response};
+use crate::frame::response::result;
 use crate::frame::value::{BatchValues, SerializedValues, ValueList};
 use crate::prepared_statement::{PartitionKeyError, PreparedStatement};
 use crate::query::Query;
 use crate::routing::{murmur3_token, Token};
 use crate::statement::{Consistency, SerialConsistency};
 use crate::tracing::{GetTracingConfig, TracingEvent, TracingInfo};
+use crate::transport::connection_pool::PoolConfig;
 use crate::transport::{
     cluster::Cluster,
     connection::{BatchResult, Connection, ConnectionConfig, QueryResult, VerifiedKeyspaceName},
@@ -35,6 +36,8 @@ use crate::transport::{
 };
 use crate::{batch::Batch, statement::StatementConfig};
 use crate::{cql_to_rust::FromRow, transport::speculative_execution};
+
+pub use crate::transport::connection_pool::PoolSize;
 
 #[cfg(feature = "ssl")]
 use openssl::ssl::SslContext;
@@ -83,6 +86,14 @@ pub struct SessionConfig {
 
     pub schema_agreement_interval: Duration,
     pub connect_timeout: std::time::Duration,
+
+    /// Size of the per-node connection pool, i.e. how many connections the driver should keep to each node.
+    /// The default is `PerShard(1)`, which is the recommended setting for Scylla clusters.
+    pub connection_pool_size: PoolSize,
+
+    /// If true, prevents the driver from connecting to the shard-aware port, even if the node supports it.
+    /// Generally, this options is best left as default (false).
+    pub disallow_shard_aware_port: bool,
     /*
     These configuration options will be added in the future:
 
@@ -127,6 +138,8 @@ impl SessionConfig {
             auth_username: None,
             auth_password: None,
             connect_timeout: std::time::Duration::from_secs(5),
+            connection_pool_size: Default::default(),
+            disallow_shard_aware_port: false,
         }
     }
 
@@ -185,6 +198,15 @@ impl SessionConfig {
     pub fn add_known_nodes_addr(&mut self, node_addrs: &[SocketAddr]) {
         for address in node_addrs {
             self.add_known_node_addr(*address);
+        }
+    }
+
+    /// Creates a PoolConfig which can be used to create NodeConnectionPools
+    fn get_pool_config(&self) -> PoolConfig {
+        PoolConfig {
+            connection_config: self.get_connection_config(),
+            pool_size: self.connection_pool_size.clone(),
+            can_use_shard_aware_port: !self.disallow_shard_aware_port,
         }
     }
 
@@ -291,38 +313,7 @@ impl Session {
 
         node_addresses.extend(resolved);
 
-        let use_ssl = match () {
-            #[cfg(not(feature = "ssl"))]
-            () => false,
-            #[cfg(feature = "ssl")]
-            () => config.ssl_context.is_some(),
-        };
-
-        let mut shard_aware_addresses: Vec<SocketAddr> = vec![];
-        if let Some(shard_aware_port) =
-            Self::get_shard_aware_port(node_addresses[0], config.get_connection_config(), use_ssl)
-                .await
-        {
-            info!("Shard-aware port detected: {}", shard_aware_port);
-            shard_aware_addresses = (&node_addresses)
-                .iter()
-                .map(|addr| SocketAddr::new(addr.ip(), shard_aware_port))
-                .collect();
-        }
-
-        // Start the session
-        let cluster = if !shard_aware_addresses.is_empty() {
-            match Cluster::new(&shard_aware_addresses, config.get_connection_config()).await {
-                Ok(clust) => clust,
-                Err(e) => {
-                    warn!("Unable to establish connections at detected shard-aware port, falling back to default ports: {}", e);
-                    Cluster::new(&node_addresses, config.get_connection_config()).await?
-                }
-            }
-        } else {
-            info!("Shard-aware ports not available, falling back to default ports");
-            Cluster::new(&node_addresses, config.get_connection_config()).await?
-        };
+        let cluster = Cluster::new(&node_addresses, config.get_pool_config()).await?;
 
         let session = Session {
             cluster,
@@ -340,29 +331,6 @@ impl Session {
         }
 
         Ok(session)
-    }
-
-    async fn get_shard_aware_port(
-        addr: SocketAddr,
-        config: ConnectionConfig,
-        use_ssl: bool,
-    ) -> Option<u16> {
-        let (probe, _) = Connection::new(addr, None, config).await.ok()?;
-        let options_result = probe.get_options().await.ok()?;
-        let options_key = if use_ssl {
-            "SCYLLA_SHARD_AWARE_PORT_SSL"
-        } else {
-            "SCYLLA_SHARD_AWARE_PORT"
-        };
-        match options_result {
-            Response::Supported(mut supported) => supported
-                .options
-                .remove(options_key)
-                .unwrap_or_else(Vec::new)
-                .get(0)
-                .and_then(|p| p.parse::<u16>().ok()),
-            _ => None,
-        }
     }
 
     /// Sends a query to the database and receives a response.  

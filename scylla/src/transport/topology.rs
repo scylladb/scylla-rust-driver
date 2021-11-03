@@ -1,7 +1,7 @@
 use crate::frame::response::event::Event;
 use crate::routing::Token;
 use crate::transport::connection::{Connection, ConnectionConfig};
-use crate::transport::connection_keeper::ConnectionKeeper;
+use crate::transport::connection_pool::{NodeConnectionPool, PoolConfig, PoolSize};
 use crate::transport::errors::QueryError;
 use crate::transport::session::IntoTypedRows;
 
@@ -9,6 +9,7 @@ use rand::seq::SliceRandom;
 use rand::thread_rng;
 use std::collections::HashMap;
 use std::net::{IpAddr, SocketAddr};
+use std::num::NonZeroUsize;
 use std::str::FromStr;
 use tokio::sync::mpsc;
 use tracing::{debug, error, warn};
@@ -17,7 +18,7 @@ use tracing::{debug, error, warn};
 pub struct TopologyReader {
     connection_config: ConnectionConfig,
     control_connection_address: SocketAddr,
-    control_connection: ConnectionKeeper,
+    control_connection: NodeConnectionPool,
 
     // when control connection fails, TopologyReader tries to connect to one of known_peers
     known_peers: Vec<SocketAddr>,
@@ -74,12 +75,9 @@ impl TopologyReader {
         // - send received events via server_event_sender
         connection_config.event_sender = Some(server_event_sender);
 
-        let control_connection = ConnectionKeeper::new(
+        let control_connection = Self::make_control_connection_pool(
             control_connection_address,
             connection_config.clone(),
-            None,
-            None,
-            None,
         );
 
         TopologyReader {
@@ -122,12 +120,9 @@ impl TopologyReader {
             );
 
             self.control_connection_address = *peer;
-            self.control_connection = ConnectionKeeper::new(
+            self.control_connection = Self::make_control_connection_pool(
                 self.control_connection_address,
                 self.connection_config.clone(),
-                None,
-                None,
-                None,
             );
 
             result = self.fetch_topology_info().await;
@@ -164,13 +159,32 @@ impl TopologyReader {
             .map(|peer| peer.address)
             .collect();
     }
+
+    fn make_control_connection_pool(
+        addr: SocketAddr,
+        connection_config: ConnectionConfig,
+    ) -> NodeConnectionPool {
+        let pool_config = PoolConfig {
+            connection_config,
+
+            // We want to have only one connection to receive events from
+            pool_size: PoolSize::PerHost(NonZeroUsize::new(1).unwrap()),
+
+            // The shard-aware port won't be used with PerHost pool size anyway,
+            // so explicitly disable it here
+            can_use_shard_aware_port: false,
+        };
+
+        NodeConnectionPool::new(addr.ip(), addr.port(), pool_config, None)
+    }
 }
 
 async fn query_topology_info(
-    conn_keeper: &ConnectionKeeper,
+    pool: &NodeConnectionPool,
     connect_port: u16,
 ) -> Result<TopologyInfo, QueryError> {
-    let conn: &Connection = &*conn_keeper.get_connection().await?;
+    pool.wait_until_initialized().await;
+    let conn: &Connection = &*pool.random_connection()?;
 
     let peers_query = query_peers(conn, connect_port);
     let keyspaces_query = query_keyspaces(conn);
