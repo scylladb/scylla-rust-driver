@@ -271,7 +271,7 @@ async fn query_peers(conn: &Connection, connect_port: u16) -> Result<Vec<Peer>, 
 async fn query_keyspaces(conn: &Connection) -> Result<HashMap<String, Keyspace>, QueryError> {
     let rows = conn
         .query_single_page(
-            "select keyspace_name, toJson(replication) from system_schema.keyspaces",
+            "select keyspace_name, replication from system_schema.keyspaces",
             &[],
         )
         .await?
@@ -282,47 +282,14 @@ async fn query_keyspaces(conn: &Connection) -> Result<HashMap<String, Keyspace>,
 
     let mut result = HashMap::with_capacity(rows.len());
 
-    for row in rows.into_typed::<(String, String)>() {
-        let (keyspace_name, keyspace_json_text) = row.map_err(|_| {
+    for row in rows.into_typed::<(String, HashMap<String, String>)>() {
+        let (keyspace_name, strategy_map) = row.map_err(|_| {
             QueryError::ProtocolError("system_schema.keyspaces has invalid column type")
         })?;
-
-        let strategy_map: HashMap<String, String> = json_to_string_map(&keyspace_json_text)?;
 
         let strategy: Strategy = strategy_from_string_map(strategy_map)?;
 
         result.insert(keyspace_name, Keyspace { strategy });
-    }
-
-    Ok(result)
-}
-
-fn json_to_string_map(json_text: &str) -> Result<HashMap<String, String>, QueryError> {
-    use serde_json::Value;
-
-    let json: Value = serde_json::from_str(json_text)
-        .map_err(|_| QueryError::ProtocolError("Couldn't parse keyspaces as json"))?;
-
-    let object_map = match json {
-        Value::Object(map) => map,
-        _ => {
-            return Err(QueryError::ProtocolError(
-                "keyspaces map json is not a json object",
-            ))
-        }
-    };
-
-    let mut result = HashMap::with_capacity(object_map.len());
-
-    for (key, val) in object_map.into_iter() {
-        match val {
-            Value::String(string) => result.insert(key, string),
-            _ => {
-                return Err(QueryError::ProtocolError(
-                    "json keyspaces map does not contain strings",
-                ))
-            }
-        };
     }
 
     Ok(result)
