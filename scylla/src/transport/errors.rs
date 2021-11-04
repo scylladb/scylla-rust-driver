@@ -30,6 +30,10 @@ pub enum QueryError {
     #[error("Invalid message: {0}")]
     InvalidMessage(String),
 
+    /// Client timeout occurred before any response arrived
+    #[error("Client timeout: {0}")]
+    ClientTimeout(String),
+
     /// Timeout error has occured, function didn't complete in time.
     #[error("Timeout Error")]
     TimeoutError,
@@ -324,6 +328,12 @@ impl From<FrameError> for QueryError {
     }
 }
 
+impl From<tokio::time::error::Elapsed> for QueryError {
+    fn from(timer_error: tokio::time::error::Elapsed) -> QueryError {
+        QueryError::ClientTimeout(format!("{}", timer_error))
+    }
+}
+
 impl From<std::io::Error> for NewSessionError {
     fn from(io_error: std::io::Error) -> NewSessionError {
         NewSessionError::IoError(Arc::new(io_error))
@@ -338,6 +348,7 @@ impl From<QueryError> for NewSessionError {
             QueryError::IoError(e) => NewSessionError::IoError(e),
             QueryError::ProtocolError(m) => NewSessionError::ProtocolError(m),
             QueryError::InvalidMessage(m) => NewSessionError::InvalidMessage(m),
+            QueryError::ClientTimeout(_m) => NewSessionError::TimeoutError,
             QueryError::TimeoutError => NewSessionError::TimeoutError,
         }
     }
