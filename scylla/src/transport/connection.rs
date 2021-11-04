@@ -650,12 +650,21 @@ impl Connection {
                 )))
             })?;
 
-        let task_response = receiver.await.map_err(|_| {
-            QueryError::IoError(Arc::new(std::io::Error::new(
-                ErrorKind::Other,
-                "Connection broken",
-            )))
-        })??;
+        let task_response = tokio::time::timeout(self.config.client_timeout, receiver)
+            .await
+            .map_err(|e| {
+                QueryError::ClientTimeout(format!(
+                    "Request took longer than {}ms: {}",
+                    self.config.client_timeout.as_millis(),
+                    e
+                ))
+            })?
+            .map_err(|_| {
+                QueryError::IoError(Arc::new(std::io::Error::new(
+                    ErrorKind::Other,
+                    "Connection broken",
+                )))
+            })??;
 
         Self::parse_response(task_response, self.config.compression)
     }
