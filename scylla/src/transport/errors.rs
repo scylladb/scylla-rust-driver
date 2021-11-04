@@ -33,6 +33,9 @@ pub enum QueryError {
     /// Timeout error has occured, function didn't complete in time.
     #[error("Timeout Error")]
     TimeoutError,
+
+    #[error("Too many orphaned stream ids: {0}")]
+    TooManyOrphanedStreamIds(u16),
 }
 
 /// An error sent from the database in response to a query
@@ -276,6 +279,9 @@ pub enum NewSessionError {
     /// Timeout error has occured, couldn't connect to node in time.
     #[error("Timeout Error")]
     TimeoutError,
+
+    #[error("Too many orphaned stream ids: {0}")]
+    TooManyOrphanedStreamIds(u16),
 }
 
 /// Invalid keyspace name given to `Session::use_keyspace()`
@@ -339,6 +345,9 @@ impl From<QueryError> for NewSessionError {
             QueryError::ProtocolError(m) => NewSessionError::ProtocolError(m),
             QueryError::InvalidMessage(m) => NewSessionError::InvalidMessage(m),
             QueryError::TimeoutError => NewSessionError::TimeoutError,
+            QueryError::TooManyOrphanedStreamIds(ids) => {
+                NewSessionError::TooManyOrphanedStreamIds(ids)
+            }
         }
     }
 }
