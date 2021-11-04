@@ -419,6 +419,27 @@ impl SessionBuilder {
         self
     }
 
+    /// Changes client-side timeout
+    /// The default is 30 seconds.
+    ///
+    /// # Example
+    /// ```
+    /// # use scylla::{Session, SessionBuilder};
+    /// # use std::time::Duration;
+    /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
+    /// let session: Session = SessionBuilder::new()
+    ///     .known_node("127.0.0.1:9042")
+    ///     .client_timeout(Duration::from_millis(500))
+    ///     .build() // Turns SessionBuilder into Session
+    ///     .await?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn client_timeout(mut self, duration: std::time::Duration) -> Self {
+        self.config.client_timeout = duration;
+        self
+    }
+
     /// Sets the per-node connection pool size.
     /// The default is one connection per shard, which is the recommended setting for Scylla.
     ///
@@ -632,6 +653,21 @@ mod tests {
         builder = builder.connection_timeout(std::time::Duration::from_secs(10));
         assert_eq!(
             builder.config.connect_timeout,
+            std::time::Duration::from_secs(10)
+        );
+    }
+
+    #[test]
+    fn client_timeout() {
+        let mut builder = SessionBuilder::new();
+        assert_eq!(
+            builder.config.client_timeout,
+            std::time::Duration::from_secs(30)
+        );
+
+        builder = builder.client_timeout(std::time::Duration::from_secs(10));
+        assert_eq!(
+            builder.config.client_timeout,
             std::time::Duration::from_secs(10)
         );
     }
