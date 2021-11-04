@@ -62,9 +62,17 @@ pub struct Connection {
 
 type ResponseHandler = oneshot::Sender<Result<TaskResponse, QueryError>>;
 
-struct Task {
-    serialized_request: SerializedRequest,
-    response_handler: ResponseHandler,
+enum Task {
+    // Send a request to the server and return the allocated stream id
+    Request {
+        stream_id_sender: oneshot::Sender<i16>,
+        response_handler: ResponseHandler,
+        serialized_request: SerializedRequest,
+    },
+    // Mark a stream id as orphaned
+    Orphan {
+        stream_id: i16,
+    },
 }
 
 struct TaskResponse {
@@ -635,12 +643,13 @@ impl Connection {
         };
         let serialized_request = SerializedRequest::make(request, compression, tracing)?;
 
-        let (sender, receiver) = oneshot::channel();
-
+        let (response_handler, receiver) = oneshot::channel();
+        let (stream_id_sender, stream_id_receiver) = oneshot::channel();
         self.submit_channel
-            .send(Task {
+            .send(Task::Request {
+                stream_id_sender,
+                response_handler,
                 serialized_request,
-                response_handler: sender,
             })
             .await
             .map_err(|_| {
@@ -649,22 +658,35 @@ impl Connection {
                     "Connection broken",
                 )))
             })?;
-
-        let task_response = tokio::time::timeout(self.config.client_timeout, receiver)
+        let stream_id = stream_id_receiver
             .await
-            .map_err(|e| {
-                QueryError::ClientTimeout(format!(
+            .map_err(|_| QueryError::UnableToAllocStreamId)?;
+        let received = match tokio::time::timeout(self.config.client_timeout, receiver).await {
+            Err(e) => {
+                self.submit_channel
+                    .send(Task::Orphan { stream_id })
+                    .await
+                    .map_err(|_| {
+                        QueryError::IoError(Arc::new(std::io::Error::new(
+                            ErrorKind::Other,
+                            "Failed to orphan a stream id",
+                        )))
+                    })?;
+                return Err(QueryError::ClientTimeout(format!(
                     "Request took longer than {}ms: {}",
                     self.config.client_timeout.as_millis(),
                     e
-                ))
-            })?
-            .map_err(|_| {
-                QueryError::IoError(Arc::new(std::io::Error::new(
-                    ErrorKind::Other,
-                    "Connection broken",
-                )))
-            })??;
+                )));
+            }
+            Ok(resp) => resp,
+        };
+
+        let task_response = received.map_err(|_| {
+            QueryError::IoError(Arc::new(std::io::Error::new(
+                ErrorKind::Other,
+                "Connection broken",
+            )))
+        })??;
 
         Self::parse_response(task_response, self.config.compression)
     }
@@ -762,7 +784,6 @@ impl Connection {
         let w = Self::writer(write_half, &handler_map, receiver);
 
         let result = futures::try_join!(r, w);
-
         let error: QueryError = match result {
             Ok(_) => return, // Connection was dropped, we can return
             Err(err) => err,
@@ -841,24 +862,43 @@ impl Connection {
         // of the channel will be dropped, this task will return an error
         // and the whole worker will be stopped
         while let Some(task) = task_receiver.recv().await {
-            let stream_id = {
-                // We are guaranteed here that handler_map will not be locked
-                // by anybody else, so we can do try_lock().unwrap()
-                let mut lock = handler_map.try_lock().unwrap();
-
-                if let Some(stream_id) = lock.allocate(task.response_handler) {
-                    stream_id
-                } else {
-                    // TODO: Handle this error better, for now we drop this
-                    // request and return an error to the receiver
-                    error!("Could not allocate stream id");
-                    continue;
+            match task {
+                Task::Request {
+                    stream_id_sender,
+                    response_handler,
+                    serialized_request,
+                } => {
+                    let stream_id = {
+                        let mut hmap = handler_map.try_lock().unwrap();
+                        // TODO: Handle stream id allocation error better,
+                        // for now the error is propagated to the connection
+                        if let Some(id) = hmap.allocate(response_handler) {
+                            stream_id_sender
+                                .send(id)
+                                .map_err(|_| QueryError::UnableToAllocStreamId)?;
+                            id
+                        } else {
+                            error!("Unable to allocate stream id");
+                            continue;
+                        }
+                    };
+                    let mut req = serialized_request;
+                    req.set_stream(stream_id);
+                    write_half.write_all(req.get_data()).await?;
                 }
-            };
-
-            let mut req = task.serialized_request;
-            req.set_stream(stream_id);
-            write_half.write_all(req.get_data()).await?;
+                Task::Orphan { stream_id } => {
+                    let mut hmap = handler_map.try_lock().unwrap();
+                    if hmap.orphan_count() >= 1024 {
+                        //FIXME: make the orphan threshold configurable
+                        warn!(
+                            "Too many orphaned stream ids: {}, dropping connection",
+                            hmap.orphan_count()
+                        );
+                        return Err(QueryError::TooManyOrphanedStreamIds(hmap.orphan_count()));
+                    }
+                    hmap.orphan(stream_id)
+                }
+            }
         }
 
         Ok(())
@@ -1074,6 +1114,8 @@ async fn connect_with_source_port(
 struct ResponseHandlerMap {
     stream_set: StreamIdSet,
     handlers: HashMap<i16, ResponseHandler>,
+    orphan_count: u16,
+    orphanage: StreamIdSet,
 }
 
 impl ResponseHandlerMap {
@@ -1081,6 +1123,8 @@ impl ResponseHandlerMap {
         Self {
             stream_set: StreamIdSet::new(),
             handlers: HashMap::new(),
+            orphan_count: 0,
+            orphanage: StreamIdSet::new(),
         }
     }
 
@@ -1093,7 +1137,22 @@ impl ResponseHandlerMap {
 
     pub fn take(&mut self, stream_id: i16) -> Option<ResponseHandler> {
         self.stream_set.free(stream_id);
+        if self.orphanage.contains(stream_id) {
+            self.orphanage.free(stream_id);
+            self.orphan_count -= 1;
+        }
         self.handlers.remove(&stream_id)
+    }
+
+    pub fn orphan(&mut self, stream_id: i16) {
+        if self.stream_set.contains(stream_id) && !self.orphanage.contains(stream_id) {
+            self.orphan_count += 1;
+            self.orphanage.insert(stream_id)
+        }
+    }
+
+    pub fn orphan_count(&self) -> u16 {
+        self.orphan_count
     }
 
     // Retrieves the map of handlers, used after connection breaks
@@ -1131,6 +1190,18 @@ impl StreamIdSet {
         let block_id = stream_id as usize / 64;
         let off = stream_id as usize % 64;
         self.used_bitmap[block_id] &= !(1 << off);
+    }
+
+    pub fn contains(&self, stream_id: i16) -> bool {
+        let block_id = stream_id as usize / 64;
+        let off = stream_id as usize % 64;
+        self.used_bitmap[block_id] & (1 << off) != 0
+    }
+
+    pub fn insert(&mut self, stream_id: i16) {
+        let block_id = stream_id as usize / 64;
+        let off = stream_id as usize % 64;
+        self.used_bitmap[block_id] |= 1 << off;
     }
 }
 
