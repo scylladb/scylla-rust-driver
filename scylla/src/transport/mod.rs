@@ -1,3 +1,4 @@
+pub(crate) mod caching_session;
 mod cluster;
 pub(crate) mod connection;
 mod connection_pool;
@@ -5,7 +6,6 @@ pub mod load_balancing;
 mod node;
 pub mod retry_policy;
 pub mod session;
-pub(crate) mod caching_session;
 pub mod session_builder;
 pub mod speculative_execution;
 mod topology;

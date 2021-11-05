@@ -1,12 +1,12 @@
-use bytes::Bytes;
-use dashmap::DashMap;
-use itertools::Either;
 use crate::frame::value::ValueList;
 use crate::prepared_statement::PreparedStatement;
 use crate::query::Query;
-use crate::{QueryResult, Session};
 use crate::transport::errors::{DbError, QueryError};
 use crate::transport::iterator::RowIterator;
+use crate::{QueryResult, Session};
+use bytes::Bytes;
+use dashmap::DashMap;
+use itertools::Either;
 
 /// Provides auto caching while executing queries
 pub struct CachingSession {
@@ -46,7 +46,6 @@ impl CachingSession {
         }
     }
 
-
     /// Does the same thing as [`Session::execute_iter`] but uses the prepared statement cache
     pub async fn execute_iter(
         &self,
@@ -61,7 +60,9 @@ impl CachingSession {
         match self.post_execute_prepared_statement(&query, result).await? {
             Either::Left(result) => Ok(result),
             Either::Right(new_prepared_statement) => {
-                self.session.execute_iter(new_prepared_statement, values).await
+                self.session
+                    .execute_iter(new_prepared_statement, values)
+                    .await
             }
         }
     }
@@ -84,8 +85,7 @@ impl CachingSession {
         match self.post_execute_prepared_statement(&query, result).await? {
             Either::Left(result) => Ok(result),
             Either::Right(new_prepared_statement) => {
-                self
-                    .session
+                self.session
                     .execute_paged(&new_prepared_statement, values, paging_state)
                     .await
             }
@@ -105,9 +105,7 @@ impl CachingSession {
         } else {
             let prepared = self.session.prepare(query.clone()).await?;
 
-            if self.max_capacity
-                == self.cache.len()
-            {
+            if self.max_capacity == self.cache.len() {
                 // Cache is full, remove the first entry
                 // Don't delete while holding the key, this could deadlock
                 // Instead, store the raw string in a variable and remove it later on when there
@@ -168,14 +166,17 @@ impl CachingSession {
 
 #[cfg(test)]
 mod tests {
-    use futures::StreamExt;
     use crate::{CachingSession, SessionBuilder};
+    use futures::StreamExt;
 
     async fn create_caching_session() -> CachingSession {
         let session = CachingSession::from(SessionBuilder::new_for_test().await, 2);
 
         // Add a row, this makes it easier to check if the caching works combined with the regular execute fn on Session
-        session.execute("insert into test_table(a, b) values (1, 2)", &[]).await.unwrap();
+        session
+            .execute("insert into test_table(a, b) values (1, 2)", &[])
+            .await
+            .unwrap();
 
         // Clear the cache because it now contains an insert
         assert_eq!(session.cache.len(), 1);
@@ -195,9 +196,18 @@ mod tests {
         let middle_query = "insert into test_table(a, b) values (?, ?)";
         let last_query = "update test_table set b = ? where a = 1";
 
-        session.add_prepared_statement(&first_query.into()).await.unwrap();
-        session.add_prepared_statement(&middle_query.into()).await.unwrap();
-        session.add_prepared_statement(&last_query.into()).await.unwrap();
+        session
+            .add_prepared_statement(&first_query.into())
+            .await
+            .unwrap();
+        session
+            .add_prepared_statement(&middle_query.into())
+            .await
+            .unwrap();
+        session
+            .add_prepared_statement(&last_query.into())
+            .await
+            .unwrap();
 
         assert_eq!(2, session.cache.len());
 
