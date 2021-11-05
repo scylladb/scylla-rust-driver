@@ -40,6 +40,9 @@ pub enum QueryError {
 
     #[error("Too many orphaned stream ids: {0}")]
     TooManyOrphanedStreamIds(u16),
+
+    #[error("Unable to allocate stream id")]
+    UnableToAllocStreamId,
 }
 
 /// An error sent from the database in response to a query
@@ -286,6 +289,9 @@ pub enum NewSessionError {
 
     #[error("Too many orphaned stream ids: {0}")]
     TooManyOrphanedStreamIds(u16),
+
+    #[error("Unable to allocate stream id")]
+    UnableToAllocStreamId,
 }
 
 /// Invalid keyspace name given to `Session::use_keyspace()`
@@ -359,6 +365,7 @@ impl From<QueryError> for NewSessionError {
             QueryError::TooManyOrphanedStreamIds(ids) => {
                 NewSessionError::TooManyOrphanedStreamIds(ids)
             }
+            QueryError::UnableToAllocStreamId => NewSessionError::UnableToAllocStreamId,
         }
     }
 }
