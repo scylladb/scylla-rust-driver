@@ -89,6 +89,7 @@ pub struct SessionConfig {
     pub schema_agreement_interval: Duration,
     pub connect_timeout: std::time::Duration,
     pub client_timeout: std::time::Duration,
+    pub max_orphan_count: Option<u16>,
 
     /// Size of the per-node connection pool, i.e. how many connections the driver should keep to each node.
     /// The default is `PerShard(1)`, which is the recommended setting for Scylla clusters.
@@ -142,6 +143,7 @@ impl SessionConfig {
             auth_password: None,
             connect_timeout: std::time::Duration::from_secs(5),
             client_timeout: std::time::Duration::from_secs(30),
+            max_orphan_count: Some(1024),
             connection_pool_size: Default::default(),
             disallow_shard_aware_port: false,
             default_consistency: Consistency::Quorum,
@@ -228,6 +230,7 @@ impl SessionConfig {
             event_sender: None,
             default_consistency: self.default_consistency,
             client_timeout: self.client_timeout,
+            max_orphan_count: self.max_orphan_count,
         }
     }
 }

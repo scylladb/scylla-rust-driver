@@ -182,6 +182,7 @@ pub struct ConnectionConfig {
     pub auth_password: Option<String>,
     pub connect_timeout: std::time::Duration,
     pub client_timeout: std::time::Duration,
+    pub max_orphan_count: Option<u16>,
     // should be Some only in control connections,
     pub event_sender: Option<mpsc::Sender<Event>>,
     pub default_consistency: Consistency,
@@ -208,6 +209,7 @@ impl Default for ConnectionConfig {
             connect_timeout: std::time::Duration::from_secs(5),
             default_consistency: Default::default(),
             client_timeout: std::time::Duration::from_secs(30),
+            max_orphan_count: Some(1024),
         }
     }
 }
@@ -780,8 +782,8 @@ impl Connection {
         // across .await points. Therefore, it should not be too expensive.
         let handler_map = StdMutex::new(ResponseHandlerMap::new());
 
+        let w = Self::writer(write_half, &handler_map, receiver, config.max_orphan_count);
         let r = Self::reader(read_half, &handler_map, config);
-        let w = Self::writer(write_half, &handler_map, receiver);
 
         let result = futures::try_join!(r, w);
         let error: QueryError = match result {
@@ -857,6 +859,7 @@ impl Connection {
         mut write_half: (impl AsyncWrite + Unpin),
         handler_map: &StdMutex<ResponseHandlerMap>,
         mut task_receiver: mpsc::Receiver<Task>,
+        max_orphan_count: Option<u16>,
     ) -> Result<(), QueryError> {
         // When the Connection object is dropped, the sender half
         // of the channel will be dropped, this task will return an error
@@ -888,11 +891,13 @@ impl Connection {
                 }
                 Task::Orphan { stream_id } => {
                     let mut hmap = handler_map.try_lock().unwrap();
-                    if hmap.orphan_count() >= 1024 {
-                        //FIXME: make the orphan threshold configurable
+                    if max_orphan_count.is_some()
+                        && hmap.orphan_count() >= max_orphan_count.unwrap()
+                    {
                         warn!(
-                            "Too many orphaned stream ids: {}, dropping connection",
-                            hmap.orphan_count()
+                            "Too many orphaned stream ids: {}/{}, dropping connection",
+                            hmap.orphan_count(),
+                            max_orphan_count.unwrap(),
                         );
                         return Err(QueryError::TooManyOrphanedStreamIds(hmap.orphan_count()));
                     }

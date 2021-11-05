@@ -440,6 +440,28 @@ impl SessionBuilder {
         self
     }
 
+    /// Changes the threshold for orphaned stream ids
+    /// until the connection is killed
+    /// The default is 1024.
+    ///
+    /// # Example
+    /// ```
+    /// # use scylla::{Session, SessionBuilder};
+    /// # use std::time::Duration;
+    /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
+    /// let session: Session = SessionBuilder::new()
+    ///     .known_node("127.0.0.1:9042")
+    ///     .max_orphan_count(Some(16))
+    ///     .build() // Turns SessionBuilder into Session
+    ///     .await?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn max_orphan_count(mut self, count: Option<u16>) -> Self {
+        self.config.max_orphan_count = count;
+        self
+    }
+
     /// Sets the per-node connection pool size.
     /// The default is one connection per shard, which is the recommended setting for Scylla.
     ///
@@ -670,6 +692,15 @@ mod tests {
             builder.config.client_timeout,
             std::time::Duration::from_secs(10)
         );
+    }
+
+    #[test]
+    fn max_orphan_count() {
+        let mut builder = SessionBuilder::new();
+        assert_eq!(builder.config.max_orphan_count, Some(1024));
+
+        builder = builder.max_orphan_count(None);
+        assert_eq!(builder.config.max_orphan_count, None);
     }
 
     #[test]
