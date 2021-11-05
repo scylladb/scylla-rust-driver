@@ -5,6 +5,7 @@ pub mod load_balancing;
 mod node;
 pub mod retry_policy;
 pub mod session;
+pub(crate) mod caching_session;
 pub mod session_builder;
 pub mod speculative_execution;
 mod topology;
