@@ -732,7 +732,7 @@ impl Session {
         ))
     }
 
-    /// Perform a batch query
+    /// Perform a batch query  
     /// Batch contains many `simple` or `prepared` queries which are executed at once  
     /// Batch doesn't return any rows
     ///
