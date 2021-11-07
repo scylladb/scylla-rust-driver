@@ -41,6 +41,7 @@ pub use crate::transport::connection_pool::PoolSize;
 
 #[cfg(feature = "ssl")]
 use openssl::ssl::SslContext;
+use crate::transport::iterator::PreparedIteratorConfig;
 
 /// `Session` manages connections to the cluster and allows to perform queries
 pub struct Session {
@@ -721,14 +722,16 @@ impl Session {
         };
 
         Ok(RowIterator::new_for_prepared_statement(
-            prepared,
-            serialized_values.into_owned(),
-            self.default_consistency,
-            token,
-            retry_session,
-            self.load_balancer.clone(),
-            self.cluster.get_data(),
-            self.metrics.clone(),
+            PreparedIteratorConfig {
+                prepared,
+                values: serialized_values.into_owned(),
+                default_consistency: self.default_consistency,
+                token,
+                retry_session,
+                load_balancer: self.load_balancer.clone(),
+                cluster_data: self.cluster.get_data(),
+                metrics: self.metrics.clone(),
+            }
         ))
     }
 

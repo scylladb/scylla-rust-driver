@@ -48,6 +48,17 @@ struct ReceivedPage {
     pub tracing_id: Option<Uuid>,
 }
 
+pub(crate) struct PreparedIteratorConfig {
+    pub prepared: PreparedStatement,
+    pub values: SerializedValues,
+    pub default_consistency: Consistency,
+    pub token: Token,
+    pub retry_session: Box<dyn RetrySession>,
+    pub load_balancer: Arc<dyn LoadBalancingPolicy>,
+    pub cluster_data: Arc<ClusterData>,
+    pub metrics: Arc<Metrics>,
+}
+
 /// Fetching pages is asynchronous so `RowIterator` does not implement the `Iterator` trait.  
 /// Instead it uses the asynchronous `Stream` trait
 impl Stream for RowIterator {
@@ -143,28 +154,21 @@ impl RowIterator {
         }
     }
 
-    #[allow(clippy::too_many_arguments)]
     pub(crate) fn new_for_prepared_statement(
-        prepared: PreparedStatement,
-        values: SerializedValues,
-        default_consistency: Consistency,
-        token: Token,
-        retry_session: Box<dyn RetrySession>,
-        load_balancer: Arc<dyn LoadBalancingPolicy>,
-        cluster_data: Arc<ClusterData>,
-        metrics: Arc<Metrics>,
+        config: PreparedIteratorConfig,
     ) -> RowIterator {
         let (sender, receiver) = mpsc::channel(1);
-        let consistency = prepared.config.determine_consistency(default_consistency);
+        let consistency = config.prepared.config.determine_consistency(config.default_consistency);
 
         let statement_info = Statement {
-            token: Some(token),
+            token: Some(config.token),
             keyspace: None,
         };
 
         let worker_task = async move {
-            let prepared_ref = &prepared;
-            let values_ref = &values;
+            let prepared_ref = &config.prepared;
+            let values_ref = &config.values;
+            let token = config.token;
 
             let choose_connection =
                 |node: Arc<Node>| async move { node.connection_for_token(token).await };
@@ -180,15 +184,15 @@ impl RowIterator {
                 choose_connection,
                 page_query,
                 statement_info,
-                query_is_idempotent: prepared.config.is_idempotent,
+                query_is_idempotent: config.prepared.config.is_idempotent,
                 query_consistency: consistency,
-                retry_session,
-                load_balancer,
-                metrics,
+                retry_session: config.retry_session,
+                load_balancer: config.load_balancer,
+                metrics: config.metrics,
                 paging_state: None,
             };
 
-            worker.work(cluster_data).await;
+            worker.work(config.cluster_data).await;
         };
 
         tokio::task::spawn(worker_task);
