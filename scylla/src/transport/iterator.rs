@@ -154,11 +154,12 @@ impl RowIterator {
         }
     }
 
-    pub(crate) fn new_for_prepared_statement(
-        config: PreparedIteratorConfig,
-    ) -> RowIterator {
+    pub(crate) fn new_for_prepared_statement(config: PreparedIteratorConfig) -> RowIterator {
         let (sender, receiver) = mpsc::channel(1);
-        let consistency = config.prepared.config.determine_consistency(config.default_consistency);
+        let consistency = config
+            .prepared
+            .config
+            .determine_consistency(config.default_consistency);
 
         let statement_info = Statement {
             token: Some(config.token),

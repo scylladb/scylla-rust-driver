@@ -39,9 +39,9 @@ use crate::{cql_to_rust::FromRow, transport::speculative_execution};
 
 pub use crate::transport::connection_pool::PoolSize;
 
+use crate::transport::iterator::PreparedIteratorConfig;
 #[cfg(feature = "ssl")]
 use openssl::ssl::SslContext;
-use crate::transport::iterator::PreparedIteratorConfig;
 
 /// `Session` manages connections to the cluster and allows to perform queries
 pub struct Session {
@@ -731,7 +731,7 @@ impl Session {
                 load_balancer: self.load_balancer.clone(),
                 cluster_data: self.cluster.get_data(),
                 metrics: self.metrics.clone(),
-            }
+            },
         ))
     }
 
