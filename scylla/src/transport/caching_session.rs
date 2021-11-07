@@ -107,21 +107,15 @@ impl CachingSession {
 
             if self.max_capacity == self.cache.len() {
                 // Cache is full, remove the first entry
-                // Don't delete while holding the key, this could deadlock
-                // Instead, store the raw string in a variable and remove it later on when there
-                // are no more references to the cache
-                let mut query = "".to_string();
+                // Don't hold a reference into the map (that's why the to_string() is called)
+                // This is because the documentation of the remove fn tells us that it may deadlock
+                // when holding some sort of reference into the map
+                let query = self.cache.iter().next().map(|c| c.key().to_string());
 
-                // There is no easy way to just get a random/first element
-                #[allow(clippy::never_loop)]
-                for first in self.cache.iter() {
-                    query = first.key().clone();
-
-                    // Only the first entry is important
-                    break;
+                // Don't inline this: https://stackoverflow.com/questions/69873846/an-owned-value-is-still-references-somehow
+                if let Some(q) = query {
+                    self.cache.remove(&q);
                 }
-
-                self.cache.remove(&query);
             }
 
             self.cache.insert(query.contents.clone(), prepared.clone());
