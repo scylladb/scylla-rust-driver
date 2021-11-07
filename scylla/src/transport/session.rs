@@ -20,7 +20,7 @@ use crate::frame::value::{BatchValues, SerializedValues, ValueList};
 use crate::prepared_statement::{PartitionKeyError, PreparedStatement};
 use crate::query::Query;
 use crate::routing::{murmur3_token, Token};
-use crate::statement::{determine_consistency, Consistency, SerialConsistency};
+use crate::statement::{Consistency, SerialConsistency};
 use crate::tracing::{GetTracingConfig, TracingEvent, TracingInfo};
 use crate::transport::connection_pool::PoolConfig;
 use crate::transport::{
@@ -1108,7 +1108,7 @@ impl Session {
                 let query_info = QueryInfo {
                     error: last_error.as_ref().unwrap(),
                     is_idempotent,
-                    consistency: determine_consistency(self.default_consistency, &consistency),
+                    consistency: consistency.unwrap_or(self.default_consistency),
                 };
 
                 match retry_session.decide_should_retry(query_info) {

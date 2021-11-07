@@ -38,7 +38,7 @@ use crate::frame::{
 use crate::query::Query;
 use crate::routing::ShardInfo;
 use crate::statement::prepared_statement::PreparedStatement;
-use crate::statement::{determine_consistency, Consistency};
+use crate::statement::Consistency;
 use crate::transport::session::IntoTypedRows;
 use crate::transport::Authenticator;
 use crate::transport::Authenticator::{
@@ -356,10 +356,9 @@ impl Connection {
         let query_frame = query::Query {
             contents: query.get_contents().to_owned(),
             parameters: query::QueryParameters {
-                consistency: determine_consistency(
-                    self.config.default_consistency,
-                    &query.get_consistency(),
-                ),
+                consistency: query
+                    .config
+                    .determine_consistency(self.config.default_consistency),
                 serial_consistency: query.get_serial_consistency(),
                 values: &serialized_values,
                 page_size: query.get_page_size(),
@@ -433,10 +432,9 @@ impl Connection {
         let execute_frame = execute::Execute {
             id: prepared_statement.get_id().to_owned(),
             parameters: query::QueryParameters {
-                consistency: determine_consistency(
-                    self.config.default_consistency,
-                    &prepared_statement.get_consistency(),
-                ),
+                consistency: prepared_statement
+                    .config
+                    .determine_consistency(self.config.default_consistency),
                 serial_consistency: prepared_statement.get_serial_consistency(),
                 values: &serialized_values,
                 page_size: prepared_statement.get_page_size(),
@@ -535,10 +533,9 @@ impl Connection {
             statements_count,
             values,
             batch_type: batch.get_type(),
-            consistency: determine_consistency(
-                self.config.default_consistency,
-                &batch.get_consistency(),
-            ),
+            consistency: batch
+                .config
+                .determine_consistency(self.config.default_consistency),
             serial_consistency: batch.get_serial_consistency(),
             timestamp: batch.get_timestamp(),
         };

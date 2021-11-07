@@ -24,7 +24,7 @@ use crate::frame::{
     value::SerializedValues,
 };
 use crate::routing::Token;
-use crate::statement::{determine_consistency, Consistency};
+use crate::statement::Consistency;
 use crate::statement::{prepared_statement::PreparedStatement, query::Query};
 use crate::transport::cluster::ClusterData;
 use crate::transport::connection::{Connection, QueryResponse};
@@ -105,7 +105,7 @@ impl RowIterator {
         metrics: Arc<Metrics>,
     ) -> RowIterator {
         let (sender, receiver) = mpsc::channel(1);
-        let consistency = determine_consistency(default_consistency, &query.config.consistency);
+        let consistency = query.config.determine_consistency(default_consistency);
 
         let worker_task = async move {
             let query_ref = &query;
@@ -155,7 +155,7 @@ impl RowIterator {
         metrics: Arc<Metrics>,
     ) -> RowIterator {
         let (sender, receiver) = mpsc::channel(1);
-        let consistency = determine_consistency(default_consistency, &prepared.config.consistency);
+        let consistency = prepared.config.determine_consistency(default_consistency);
 
         let statement_info = Statement {
             token: Some(token),
