@@ -66,7 +66,8 @@ impl SessionBuilder {
         self
     }
 
-    /// Add a default consistency to be used for all queries unless they are explicitly set
+    /// Specify a default consistency to be used for queries.
+    /// It's possible to override it by explictly setting a consistency on the chosen query.
     pub fn default_consistency(mut self, consistency: Consistency) -> Self {
         self.config.default_consistency = consistency;
         self

@@ -55,8 +55,8 @@ impl Query {
         self.config.consistency = Some(c);
     }
 
-    /// Gets the consistency to be used when executing this batch if it is filled, else the default_consistency
-    /// of the session will be used.
+    /// Gets the consistency to be used when executing this query if it is filled.
+    /// If this is empty, the default_consistency of the session will be used.
     pub fn get_consistency(&self) -> Option<Consistency> {
         self.config.consistency
     }
