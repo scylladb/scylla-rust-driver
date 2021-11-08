@@ -401,6 +401,7 @@ impl Session {
         paging_state: Option<Bytes>,
     ) -> Result<QueryResult, QueryError> {
         let query: Query = query.into();
+        let serialized_values = values.serialized()?;
 
         let response = self
             .run_query(
@@ -410,7 +411,7 @@ impl Session {
                 |connection: Arc<Connection>| {
                     // Needed to avoid moving query and values into async move block
                     let query_ref = &query;
-                    let values_ref = &values;
+                    let values_ref = &serialized_values;
                     let paging_state_ref = &paging_state;
 
                     async move {
