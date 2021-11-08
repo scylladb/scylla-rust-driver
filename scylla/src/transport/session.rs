@@ -401,22 +401,23 @@ impl Session {
         paging_state: Option<Bytes>,
     ) -> Result<QueryResult, QueryError> {
         let query: Query = query.into();
-        let serialized_values = values.serialized();
-
-        // Needed to avoid moving query and values into async move block
-        let query_ref: &Query = &query;
-        let values_ref = &serialized_values;
-        let paging_state_ref = &paging_state;
 
         let response = self
             .run_query(
                 Statement::default(),
                 &query.config,
                 |node: Arc<Node>| async move { node.random_connection().await },
-                |connection: Arc<Connection>| async move {
-                    connection
-                        .query(query_ref, values_ref, paging_state_ref.clone())
-                        .await
+                |connection: Arc<Connection>| {
+                    // Needed to avoid moving query and values into async move block
+                    let query_ref = &query;
+                    let values_ref = &values;
+                    let paging_state_ref = &paging_state;
+
+                    async move {
+                        connection
+                            .query(query_ref, values_ref, paging_state_ref.clone())
+                            .await
+                    }
                 },
             )
             .await?;
