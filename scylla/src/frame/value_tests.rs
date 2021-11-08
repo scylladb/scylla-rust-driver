@@ -400,16 +400,6 @@ fn cow_serialized_values_value_list() {
 }
 
 #[test]
-fn serialized_result_value_list() {
-    let ser_result: SerializedResult = (1_i32,).serialized();
-    assert!(matches!(ser_result, Ok(Cow::Owned(_))));
-
-    let ser_ser_result: Cow<SerializedValues> = ser_result.serialized().unwrap();
-
-    assert!(matches!(ser_ser_result, Cow::Borrowed(_)));
-}
-
-#[test]
 fn slice_batch_values() {
     let batch_values: &[&[i8]] = &[&[1, 2], &[2, 3, 4, 5], &[6]];
 
