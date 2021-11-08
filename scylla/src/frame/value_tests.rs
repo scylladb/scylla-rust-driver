@@ -1,8 +1,8 @@
 use super::{
     response::result::CqlValue,
     value::{
-        BatchValues, Date, MaybeUnset, SerializeValuesError, SerializedResult, SerializedValues,
-        Time, Timestamp, Unset, Value, ValueList, ValueTooBig,
+        BatchValues, Date, MaybeUnset, SerializeValuesError, SerializedValues, Time, Timestamp,
+        Unset, Value, ValueList, ValueTooBig,
     },
 };
 use crate::{Session, SessionBuilder};
@@ -397,16 +397,6 @@ fn cow_serialized_values_value_list() {
     assert!(matches!(serialized, Cow::Borrowed(_)));
 
     assert_eq!(cow_ser_values.as_ref(), serialized.as_ref());
-}
-
-#[test]
-fn serialized_result_value_list() {
-    let ser_result: SerializedResult = (1_i32,).serialized();
-    assert!(matches!(ser_result, Ok(Cow::Owned(_))));
-
-    let ser_ser_result: Cow<SerializedValues> = ser_result.serialized().unwrap();
-
-    assert!(matches!(ser_ser_result, Cow::Borrowed(_)));
 }
 
 #[test]

@@ -688,15 +688,6 @@ impl<'b> ValueList for Cow<'b, SerializedValues> {
     }
 }
 
-impl<'b> ValueList for SerializedResult<'b> {
-    fn serialized(&self) -> SerializedResult<'_> {
-        match self {
-            Ok(ser_values_cow) => Ok(Cow::Borrowed(ser_values_cow.as_ref())),
-            Err(e) => Err(*e),
-        }
-    }
-}
-
 //
 // BatchValues impls
 //
