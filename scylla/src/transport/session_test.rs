@@ -1058,3 +1058,32 @@ async fn test_timestamp() {
 
     assert_eq!(results, expected_results);
 }
+
+#[tokio::test]
+async fn test_client_timeout() {
+    use std::time::Duration;
+    let uri = std::env::var("SCYLLA_URI").unwrap_or_else(|_| "127.0.0.1:9042".to_string());
+    let session = SessionBuilder::new().known_node(uri).build().await.unwrap();
+    session
+        .await_timed_schema_agreement(Duration::from_secs(1))
+        .await
+        .unwrap();
+
+    let mut query: Query = Query::new("SELECT * FROM system_schema.tables");
+    query.set_client_timeout(Some(std::time::Duration::from_secs(0)));
+    match session.query(query, &[]).await {
+        Ok(_) => panic!("the query should have failed due to a client-side timeout"),
+        Err(e) => assert!(e.to_string().contains("Request took longer than")),
+    }
+
+    let mut prepared = session
+        .prepare("SELECT * FROM system_schema.tables")
+        .await
+        .unwrap();
+
+    prepared.set_client_timeout(Some(std::time::Duration::from_secs(0)));
+    match session.execute(&prepared, &[]).await {
+        Ok(_) => panic!("the prepared query should have failed due to a client-side timeout"),
+        Err(e) => assert!(e.to_string().contains("Request took longer than")),
+    }
+}
