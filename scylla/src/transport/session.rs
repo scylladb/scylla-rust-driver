@@ -896,15 +896,15 @@ impl Session {
         consistency: Consistency,
     ) -> Result<Option<TracingInfo>, QueryError> {
         // Query system_traces.sessions for TracingInfo
-        let mut traces_session_query =
-            Query::new(crate::tracing::TRACES_SESSION_QUERY_STR.to_string());
+        let mut traces_session_query = Query::new(crate::tracing::TRACES_SESSION_QUERY_STR);
         traces_session_query.config.consistency = consistency;
+        traces_session_query.set_page_size(1024);
 
         // Query system_traces.events for TracingEvents
-        let mut traces_events_query =
-            Query::new(crate::tracing::TRACES_EVENTS_QUERY_STR.to_string());
+        let mut traces_events_query = Query::new(crate::tracing::TRACES_EVENTS_QUERY_STR);
         traces_events_query.config.consistency = Consistency::One;
         traces_events_query.config.consistency = consistency;
+        traces_events_query.set_page_size(1024);
 
         let (traces_session_res, traces_events_res) = tokio::try_join!(
             self.query(traces_session_query, (tracing_id,)),

@@ -26,7 +26,7 @@ use scylla::query::Query;
 use scylla::prepared_statement::PreparedStatement;
 
 // Specify that a Query is idempotent
-let mut my_query: Query = Query::new("SELECT a FROM ks.tab".to_string());
+let mut my_query: Query = Query::new("SELECT a FROM ks.tab");
 my_query.set_is_idempotent(true);
 
 

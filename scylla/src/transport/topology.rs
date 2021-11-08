@@ -5,6 +5,7 @@ use crate::transport::connection_pool::{NodeConnectionPool, PoolConfig, PoolSize
 use crate::transport::errors::QueryError;
 use crate::transport::session::IntoTypedRows;
 
+use crate::statement::query::Query;
 use rand::seq::SliceRandom;
 use rand::thread_rng;
 use std::collections::HashMap;
@@ -209,17 +210,16 @@ async fn query_topology_info(
 }
 
 async fn query_peers(conn: &Connection, connect_port: u16) -> Result<Vec<Peer>, QueryError> {
-    // There shouldn't be more peers than a single page capacity
-    let peers_query = conn.query_single_page(
-        "select peer, data_center, rack, tokens from system.peers",
-        &[],
-    );
-    let local_query = conn.query_single_page(
-        "select rpc_address, data_center, rack, tokens from system.local",
-        &[],
-    );
+    let mut peers_query = Query::new("select peer, data_center, rack, tokens from system.peers");
+    peers_query.set_page_size(1024);
+    let peers_query_future = conn.query_all(&peers_query, &[]);
 
-    let (peers_res, local_res) = tokio::try_join!(peers_query, local_query)?;
+    let mut local_query =
+        Query::new("select rpc_address, data_center, rack, tokens from system.local");
+    local_query.set_page_size(1024);
+    let local_query_future = conn.query_all(&local_query, &[]);
+
+    let (peers_res, local_res) = tokio::try_join!(peers_query_future, local_query_future)?;
 
     let peers_rows = peers_res.rows.ok_or(QueryError::ProtocolError(
         "system.peers query response was not Rows",
@@ -269,16 +269,17 @@ async fn query_peers(conn: &Connection, connect_port: u16) -> Result<Vec<Peer>, 
 }
 
 async fn query_keyspaces(conn: &Connection) -> Result<HashMap<String, Keyspace>, QueryError> {
-    let rows = conn
-        .query_single_page(
-            "select keyspace_name, replication from system_schema.keyspaces",
-            &[],
-        )
-        .await?
-        .rows
-        .ok_or(QueryError::ProtocolError(
-            "system_schema.keyspaces query response was not Rows",
-        ))?;
+    let mut keyspaces_query =
+        Query::new("select keyspace_name, replication from system_schema.keyspaces");
+    keyspaces_query.set_page_size(1024);
+
+    let rows =
+        conn.query_all(&keyspaces_query, &[])
+            .await?
+            .rows
+            .ok_or(QueryError::ProtocolError(
+                "system_schema.keyspaces query response was not Rows",
+            ))?;
 
     let mut result = HashMap::with_capacity(rows.len());
 

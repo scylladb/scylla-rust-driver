@@ -16,7 +16,7 @@ use scylla::tracing::TracingInfo;
 use uuid::Uuid;
 
 // Create a Query manually and enable tracing
-let mut query: Query = Query::new("INSERT INTO ks.tab (a) VALUES(4)".to_string());
+let mut query: Query = Query::new("INSERT INTO ks.tab (a) VALUES(4)");
 query.set_tracing(true);
 
 let res: QueryResult = session.query(query, &[]).await?;

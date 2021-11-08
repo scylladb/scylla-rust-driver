@@ -34,7 +34,7 @@ async fn main() -> Result<()> {
 
     // QUERY
     // Create a simple query and enable tracing for it
-    let mut query: Query = Query::new("SELECT val from ks.tracing_example".to_string());
+    let mut query: Query = Query::new("SELECT val from ks.tracing_example");
     query.set_tracing(true);
     query.set_serial_consistency(Some(SerialConsistency::LocalSerial));
 

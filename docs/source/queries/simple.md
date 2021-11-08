@@ -16,8 +16,11 @@ session
 ```
 
 > ***Warning***  
-> Simple query returns only a single page of results.
-> If number of rows might exceed single page size use a [paged query](paged.md) instead.  
+> Don't use simple query to receive large amounts of data.  
+> By default the query is unpaged and might cause heavy load on the cluster.  
+> In such cases set a page size and use [paged query](paged.md) instead.  
+> 
+> When page size is set, `query` will return only the first page of results.
 
 ### First argument - the query
 As the first argument `Session::query` takes anything implementing `Into<Query>`.  
@@ -31,7 +34,7 @@ use scylla::query::Query;
 use scylla::statement::Consistency;
 
 // Create a Query manually to change the Consistency to ONE
-let mut my_query: Query = Query::new("INSERT INTO ks.tab (a) VALUES(?)".to_string());
+let mut my_query: Query = Query::new("INSERT INTO ks.tab (a) VALUES(?)");
 my_query.set_consistency(Consistency::One);
 
 // Insert a value into the table
@@ -86,8 +89,8 @@ if let Some(rows) = session.query("SELECT a FROM ks.tab", &[]).await?.rows {
 # Ok(())
 # }
 ```
-> Simple query returns only a single page of results.
-> If number of rows might exceed single page size use a [paged query](paged.md) instead.  
+> In cases where page size is set, simple query returns only a single page of results.  
+> To receive all pages use a [paged query](paged.md) instead.  
 
 See [Query result](result.md) for more information about handling query results
 

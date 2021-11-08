@@ -70,7 +70,7 @@ On a `Query`:
 # async fn check_only_compiles(session: &Session) -> Result<(), Box<dyn Error>> {
 use scylla::query::Query;
 
-let mut query: Query = Query::new("SELECT a, b FROM ks.t".to_string());
+let mut query: Query = Query::new("SELECT a, b FROM ks.t");
 query.set_page_size(16);
 
 let _ = session.query_iter(query, &[]).await?; // ...
@@ -110,7 +110,7 @@ On a `Query`:
 # async fn check_only_compiles(session: &Session) -> Result<(), Box<dyn Error>> {
 use scylla::query::Query;
 
-let paged_query = Query::new("SELECT a, b, c FROM ks.t".to_owned()).with_page_size(6);
+let paged_query = Query::new("SELECT a, b, c FROM ks.t").with_page_size(6);
 let res1 = session.query(paged_query.clone(), &[]).await?;
 let res2 = session
     .query_paged(paged_query.clone(), &[], res1.paging_state)
@@ -128,7 +128,7 @@ On a `PreparedStatement`:
 use scylla::query::Query;
 
 let paged_prepared = session
-    .prepare(Query::new("SELECT a, b, c FROM ks.t".to_owned()).with_page_size(7))
+    .prepare(Query::new("SELECT a, b, c FROM ks.t").with_page_size(7))
     .await?;
 let res1 = session.execute(&paged_prepared, &[]).await?;
 let res2 = session
