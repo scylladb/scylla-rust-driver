@@ -3,6 +3,7 @@
 
 use bytes::Bytes;
 use futures::future::join_all;
+use futures::future::try_join_all;
 use std::future::Future;
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -403,23 +404,25 @@ impl Session {
         values: impl ValueList,
         paging_state: Option<Bytes>,
     ) -> Result<QueryResult, QueryError> {
-        let query = query.into();
-        let serialized_values = values.serialized();
-
-        // Needed to avoid moving query and values into async move block
-        let query_ref: &Query = &query;
-        let values_ref = &serialized_values;
-        let paging_state_ref = &paging_state;
+        let query: Query = query.into();
+        let serialized_values = values.serialized()?;
 
         let response = self
             .run_query(
                 Statement::default(),
                 &query.config,
                 |node: Arc<Node>| async move { node.random_connection().await },
-                |connection: Arc<Connection>| async move {
-                    connection
-                        .query(query_ref, values_ref, paging_state_ref.clone())
-                        .await
+                |connection: Arc<Connection>| {
+                    // Needed to avoid moving query and values into async move block
+                    let query_ref = &query;
+                    let values_ref = &serialized_values;
+                    let paging_state_ref = &paging_state;
+
+                    async move {
+                        connection
+                            .query(query_ref, values_ref, paging_state_ref.clone())
+                            .await
+                    }
                 },
             )
             .await?;
@@ -1173,11 +1176,8 @@ impl Session {
         let connections = self.cluster.get_working_connections().await?;
 
         let handles = connections.iter().map(|c| c.fetch_schema_version());
-        let results = join_all(handles).await;
-        let versions: Vec<Uuid> = results
-            .iter()
-            .cloned()
-            .collect::<Result<Vec<_>, QueryError>>()?;
+        let versions = try_join_all(handles).await?;
+
         let local_version: Uuid = versions[0];
         let in_agreement = versions.into_iter().all(|v| v == local_version);
         Ok(in_agreement)
