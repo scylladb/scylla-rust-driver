@@ -9,7 +9,7 @@ use crate::transport::retry_policy::RetryPolicy;
 pub struct Query {
     pub(crate) config: StatementConfig,
 
-    contents: String,
+    pub contents: String,
     page_size: Option<i32>,
 }
 
@@ -27,11 +27,6 @@ impl Query {
     pub fn with_page_size(mut self, page_size: i32) -> Self {
         self.page_size = Some(page_size);
         self
-    }
-
-    /// Returns the string representation of the CQL query.
-    pub fn get_contents(&self) -> &str {
-        &self.contents
     }
 
     /// Sets the page size for this CQL query.

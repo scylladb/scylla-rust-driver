@@ -43,6 +43,36 @@ impl SessionBuilder {
         }
     }
 
+    #[cfg(test)]
+    pub async fn new_for_test() -> Session {
+        let uri = std::env::var("SCYLLA_URI").unwrap_or_else(|_| "127.0.0.1:9042".to_string());
+        let session = SessionBuilder::new()
+            .known_node(uri)
+            .build()
+            .await
+            .expect("Could not create session");
+
+        session
+            .query("CREATE KEYSPACE IF NOT EXISTS ks WITH REPLICATION = {'class' : 'SimpleStrategy', 'replication_factor' : 1}", &[])
+            .await
+            .expect("Could not create keyspace");
+
+        session
+            .query(
+                "CREATE TABLE IF NOT EXISTS ks.test_table (a int primary key, b int)",
+                &[],
+            )
+            .await
+            .expect("Could not create table");
+
+        session
+            .use_keyspace("ks", false)
+            .await
+            .expect("Could not set keyspace");
+
+        session
+    }
+
     /// Add a known node with a hostname
     /// # Examples
     /// ```

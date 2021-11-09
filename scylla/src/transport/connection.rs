@@ -278,7 +278,7 @@ impl Connection {
         let query_response = self
             .send_request(
                 &request::Prepare {
-                    query: query.get_contents(),
+                    query: &query.contents,
                 },
                 true,
                 query.config.tracing,
@@ -290,7 +290,7 @@ impl Connection {
             Response::Result(result::Result::Prepared(p)) => PreparedStatement::new(
                 p.id,
                 p.prepared_metadata,
-                query.get_contents().to_owned(),
+                query.contents.clone(),
                 query.get_page_size(),
             ),
             _ => {
@@ -353,7 +353,7 @@ impl Connection {
         let serialized_values = values.serialized()?;
 
         let query_frame = query::Query {
-            contents: query.get_contents().to_owned(),
+            contents: &query.contents,
             parameters: query::QueryParameters {
                 consistency: query.get_consistency(),
                 serial_consistency: query.get_serial_consistency(),
@@ -515,9 +515,7 @@ impl Connection {
         }
 
         let statements_iter = batch.statements.iter().map(|s| match s {
-            BatchStatement::Query(q) => batch::BatchStatement::Query {
-                text: q.get_contents(),
-            },
+            BatchStatement::Query(q) => batch::BatchStatement::Query { text: &q.contents },
             BatchStatement::PreparedStatement(s) => {
                 batch::BatchStatement::Prepared { id: s.get_id() }
             }

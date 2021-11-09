@@ -38,7 +38,6 @@ use crate::{batch::Batch, statement::StatementConfig};
 use crate::{cql_to_rust::FromRow, transport::speculative_execution};
 
 pub use crate::transport::connection_pool::PoolSize;
-
 #[cfg(feature = "ssl")]
 use openssl::ssl::SslContext;
 
@@ -49,7 +48,6 @@ pub struct Session {
     schema_agreement_interval: Duration,
     retry_policy: Box<dyn RetryPolicy>,
     speculative_execution_policy: Option<Arc<dyn SpeculativeExecutionPolicy>>,
-
     metrics: Arc<Metrics>,
 }
 
@@ -399,7 +397,7 @@ impl Session {
         values: impl ValueList,
         paging_state: Option<Bytes>,
     ) -> Result<QueryResult, QueryError> {
-        let query: Query = query.into();
+        let query = query.into();
         let serialized_values = values.serialized();
 
         // Needed to avoid moving query and values into async move block
@@ -532,7 +530,7 @@ impl Session {
     /// # }
     /// ```
     pub async fn prepare(&self, query: impl Into<Query>) -> Result<PreparedStatement, QueryError> {
-        let query: Query = query.into();
+        let query = query.into();
 
         let connections = self.cluster.get_working_connections().await?;
 
@@ -705,7 +703,7 @@ impl Session {
         prepared: impl Into<PreparedStatement>,
         values: impl ValueList,
     ) -> Result<RowIterator, QueryError> {
-        let prepared: PreparedStatement = prepared.into();
+        let prepared = prepared.into();
         let serialized_values = values.serialized()?;
 
         let token = calculate_token(&prepared, &serialized_values)?;
@@ -726,7 +724,7 @@ impl Session {
         ))
     }
 
-    /// Perform a batch query  
+    /// Perform a batch query
     /// Batch contains many `simple` or `prepared` queries which are executed at once  
     /// Batch doesn't return any rows
     ///
