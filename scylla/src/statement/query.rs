@@ -117,6 +117,19 @@ impl Query {
     pub fn get_timestamp(&self) -> Option<i64> {
         self.config.timestamp
     }
+
+    /// Sets the client-side timeout for this statement.
+    /// If not None, the driver will stop waiting for the request
+    /// to finish after `timeout` passed.
+    /// Otherwise, default session client timeout will be applied.
+    pub fn set_client_timeout(&mut self, timeout: Option<std::time::Duration>) {
+        self.config.client_timeout = timeout
+    }
+
+    /// Gets client timeout associated with this query
+    pub fn get_client_timeout(&mut self) -> Option<std::time::Duration> {
+        self.config.client_timeout
+    }
 }
 
 impl From<String> for Query {

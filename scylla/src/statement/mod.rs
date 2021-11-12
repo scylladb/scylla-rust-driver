@@ -20,6 +20,7 @@ pub struct StatementConfig {
 
     pub tracing: bool,
     pub timestamp: Option<i64>,
+    pub client_timeout: Option<std::time::Duration>,
 }
 
 impl Default for StatementConfig {
@@ -32,6 +33,7 @@ impl Default for StatementConfig {
             speculative_execution_policy: None,
             tracing: false,
             timestamp: None,
+            client_timeout: None,
         }
     }
 }
@@ -49,6 +51,7 @@ impl Clone for StatementConfig {
             speculative_execution_policy: self.speculative_execution_policy.clone(),
             tracing: self.tracing,
             timestamp: self.timestamp,
+            client_timeout: self.client_timeout,
         }
     }
 }

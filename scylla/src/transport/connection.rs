@@ -275,14 +275,14 @@ impl Connection {
 
     pub async fn startup(&self, options: HashMap<String, String>) -> Result<Response, QueryError> {
         Ok(self
-            .send_request(&request::Startup { options }, false, false)
+            .send_request(&request::Startup { options }, false, false, None)
             .await?
             .response)
     }
 
     pub async fn get_options(&self) -> Result<Response, QueryError> {
         Ok(self
-            .send_request(&request::Options {}, false, false)
+            .send_request(&request::Options {}, false, false, None)
             .await?
             .response)
     }
@@ -295,6 +295,7 @@ impl Connection {
                 },
                 true,
                 query.config.tracing,
+                query.config.client_timeout,
             )
             .await?;
 
@@ -333,6 +334,7 @@ impl Connection {
             },
             false,
             false,
+            None,
         )
         .await
     }
@@ -379,8 +381,13 @@ impl Connection {
             },
         };
 
-        self.send_request(&query_frame, true, query.config.tracing)
-            .await
+        self.send_request(
+            &query_frame,
+            true,
+            query.config.tracing,
+            query.config.client_timeout,
+        )
+        .await
     }
 
     /// Performs query_single_page multiple times to query all available pages
@@ -456,7 +463,12 @@ impl Connection {
         };
 
         let query_response = self
-            .send_request(&execute_frame, true, prepared_statement.config.tracing)
+            .send_request(
+                &execute_frame,
+                true,
+                prepared_statement.config.tracing,
+                prepared_statement.config.client_timeout,
+            )
             .await?;
 
         if let Response::Error(err) = &query_response.response {
@@ -473,7 +485,12 @@ impl Connection {
                 }
 
                 return self
-                    .send_request(&execute_frame, true, prepared_statement.config.tracing)
+                    .send_request(
+                        &execute_frame,
+                        true,
+                        prepared_statement.config.tracing,
+                        prepared_statement.config.client_timeout,
+                    )
                     .await;
             }
         }
@@ -551,7 +568,12 @@ impl Connection {
         };
 
         let query_response = self
-            .send_request(&batch_frame, true, batch.config.tracing)
+            .send_request(
+                &batch_frame,
+                true,
+                batch.config.tracing,
+                batch.config.client_timeout,
+            )
             .await?;
 
         match query_response.response {
@@ -607,7 +629,7 @@ impl Connection {
         };
 
         match self
-            .send_request(&register_frame, true, false)
+            .send_request(&register_frame, true, false, None)
             .await?
             .response
         {
@@ -637,6 +659,7 @@ impl Connection {
         request: &R,
         compress: bool,
         tracing: bool,
+        client_timeout: Option<std::time::Duration>,
     ) -> Result<QueryResponse, QueryError> {
         let compression = if compress {
             self.config.compression
@@ -663,7 +686,9 @@ impl Connection {
         let stream_id = stream_id_receiver
             .await
             .map_err(|_| QueryError::UnableToAllocStreamId)?;
-        let received = match tokio::time::timeout(self.config.client_timeout, receiver).await {
+
+        let effective_timeout = client_timeout.unwrap_or(self.config.client_timeout);
+        let received = match tokio::time::timeout(effective_timeout, receiver).await {
             Err(e) => {
                 self.submit_channel
                     .send(Task::Orphan { stream_id })
