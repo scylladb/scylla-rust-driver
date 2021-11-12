@@ -4,7 +4,7 @@ This driver supports all query types available in Scylla:
 * [Simple queries](simple.md)
     * Easy to use
     * Poor performance
-    * Primitve load balancing
+    * Primitive load balancing
 * [Prepared queries](prepared.md)
     * Need to be prepared before use
     * Fast
@@ -19,7 +19,9 @@ This driver supports all query types available in Scylla:
 Additionaly there is special functionality to enable `USE KEYSPACE` queries:
 [USE keyspace](usekeyspace.md)
 
-Queries are fully asynchronous - you can run as many of them in parallel as you wish.
+Queries are fully asynchronous - you can run as many of them in parallel as you wish,
+but be mindful of the per-connection limit of 32768 limit per connection imposed
+by the CQL protocol.
 
 ```eval_rst
 .. toctree::
