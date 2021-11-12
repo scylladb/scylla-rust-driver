@@ -75,6 +75,14 @@ async fn test_unprepared_statement() {
             (7, 11, &String::from(""))
         ]
     );
+    let query_result = session
+        .query_iter("SELECT a, b, c FROM ks.t", &[])
+        .await
+        .unwrap();
+    for (spec, name) in query_result.get_column_specs().iter().zip(["a", "b", "c"]) {
+        assert_eq!(spec.name, name); // Check column name.
+        assert_eq!(spec.table_spec.ks_name, "ks");
+    }
     let mut results_from_manual_paging: Vec<Row> = vec![];
     let query = Query::new("SELECT a, b, c FROM ks.t").with_page_size(1);
     let mut paging_state: Option<Bytes> = None;
@@ -121,6 +129,14 @@ async fn test_prepared_statement() {
         .unwrap();
     // Wait for schema agreement
     std::thread::sleep(std::time::Duration::from_millis(300));
+
+    let prepared_statement = session.prepare("SELECT a, b, c FROM ks.t2").await.unwrap();
+    let query_result = session.execute_iter(prepared_statement, &[]).await.unwrap();
+    for (spec, name) in query_result.get_column_specs().iter().zip(["a", "b", "c"]) {
+        assert_eq!(spec.name, name); // Check column name.
+        assert_eq!(spec.table_spec.ks_name, "ks");
+    }
+
     let prepared_statement = session
         .prepare("INSERT INTO ks.t2 (a, b, c) VALUES (?, ?, ?)")
         .await
