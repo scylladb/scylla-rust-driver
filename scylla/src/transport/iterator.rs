@@ -18,7 +18,7 @@ use crate::cql_to_rust::{FromRow, FromRowError};
 use crate::frame::{
     response::{
         result,
-        result::{Row, Rows},
+        result::{ColumnSpec, Row, Rows},
         Response,
     },
     value::SerializedValues,
@@ -225,6 +225,11 @@ impl RowIterator {
         &self.tracing_ids
     }
 
+    /// Returns specification of row columns
+    pub fn get_column_specs(&self) -> &[ColumnSpec] {
+        &self.current_page.metadata.col_specs
+    }
+
     fn is_current_page_exhausted(&self) -> bool {
         self.current_row_idx >= self.current_page.rows.len()
     }
@@ -377,6 +382,11 @@ impl<RowT> TypedRowIterator<RowT> {
     /// If tracing was enabled returns tracing ids of all finished page queries
     pub fn get_tracing_ids(&self) -> &[Uuid] {
         self.row_iterator.get_tracing_ids()
+    }
+
+    /// Returns specification of row columns
+    pub fn get_column_specs(&self) -> &[ColumnSpec] {
+        self.row_iterator.get_column_specs()
     }
 }
 
