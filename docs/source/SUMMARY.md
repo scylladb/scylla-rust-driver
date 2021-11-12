@@ -22,6 +22,7 @@
     - [Lightweight transaction query (LWT)](queries/lwt.md)
     - [USE keyspace](queries/usekeyspace.md)
     - [Schema agreement](queries/schema_agreement.md)
+    - [Client timeout](queries/client_timeout.md)
 
 - [Data Types](data-types/data-types.md)
     - [Bool, Tinyint, Smallint, Int, Bigint, Float, Double](data-types/primitive.md)

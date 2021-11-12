@@ -19,6 +19,8 @@ This driver supports all query types available in Scylla:
 Additionaly there is special functionality to enable `USE KEYSPACE` queries:
 [USE keyspace](usekeyspace.md)
 
+Queries can be subject to driver-side timeouts: [client timeout](client_timeout.md)
+
 Queries are fully asynchronous - you can run as many of them in parallel as you wish,
 but be mindful of the per-connection limit of 32768 limit per connection imposed
 by the CQL protocol.
@@ -37,4 +39,5 @@ by the CQL protocol.
    usekeyspace
    schema_agreement
    lwt
+   client_timeout
 ```
