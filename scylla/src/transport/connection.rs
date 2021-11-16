@@ -1,6 +1,6 @@
 use bytes::Bytes;
 use futures::{future::RemoteHandle, FutureExt};
-use tokio::io::{split, AsyncRead, AsyncWrite, AsyncWriteExt};
+use tokio::io::{split, AsyncRead, AsyncWrite, AsyncWriteExt, BufReader};
 use tokio::net::{TcpSocket, TcpStream};
 use tokio::sync::{mpsc, oneshot};
 use tracing::{error, warn};
@@ -747,7 +747,11 @@ impl Connection {
         // across .await points. Therefore, it should not be too expensive.
         let handler_map = StdMutex::new(ResponseHandlerMap::new());
 
-        let r = Self::reader(read_half, &handler_map, config);
+        let r = Self::reader(
+            BufReader::with_capacity(8192, read_half),
+            &handler_map,
+            config,
+        );
         let w = Self::writer(write_half, &handler_map, receiver);
 
         let result = futures::try_join!(r, w);
