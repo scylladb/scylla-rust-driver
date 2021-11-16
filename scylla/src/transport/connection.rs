@@ -241,7 +241,7 @@ impl Connection {
         stream.set_nodelay(config.tcp_nodelay)?;
 
         // TODO: What should be the size of the channel?
-        let (sender, receiver) = mpsc::channel(128);
+        let (sender, receiver) = mpsc::channel(1024);
 
         let (error_sender, error_receiver) = tokio::sync::oneshot::channel();
 
