@@ -22,11 +22,12 @@ pub struct PreparedStatement {
 }
 
 impl PreparedStatement {
-    pub fn new(
+    pub(crate) fn new(
         id: Bytes,
         metadata: PreparedMetadata,
         statement: String,
         page_size: Option<i32>,
+        config: StatementConfig,
     ) -> Self {
         Self {
             id,
@@ -34,7 +35,7 @@ impl PreparedStatement {
             statement,
             prepare_tracing_ids: Vec::new(),
             page_size,
-            config: Default::default(),
+            config,
         }
     }
 
