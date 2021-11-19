@@ -4,6 +4,7 @@ use bigdecimal::BigDecimal;
 use chrono::{Duration, NaiveDate};
 use num_bigint::BigInt;
 use std::collections::HashMap;
+use std::collections::HashSet;
 use std::hash::Hash;
 use std::net::IpAddr;
 use thiserror::Error;
@@ -112,6 +113,17 @@ impl<T1: FromCqlVal<CqlValue> + Eq + Hash, T2: FromCqlVal<CqlValue>> FromCqlVal<
             res.insert(T1::from_cql(key)?, T2::from_cql(value)?);
         }
         Ok(res)
+    }
+}
+
+impl<T: FromCqlVal<CqlValue> + Eq + Hash> FromCqlVal<CqlValue> for HashSet<T> {
+    fn from_cql(cql_val: CqlValue) -> Result<Self, FromCqlValError> {
+        cql_val
+            .into_vec()
+            .ok_or(FromCqlValError::BadCqlType)?
+            .into_iter()
+            .map(T::from_cql)
+            .collect::<Result<HashSet<T>, FromCqlValError>>()
     }
 }
 
@@ -232,6 +244,7 @@ mod tests {
     use bigdecimal::BigDecimal;
     use chrono::{Duration, NaiveDate};
     use num_bigint::{BigInt, ToBigInt};
+    use std::collections::HashSet;
     use std::net::{IpAddr, Ipv4Addr};
     use std::str::FromStr;
     use uuid::Uuid;
@@ -373,6 +386,26 @@ mod tests {
     fn vec_from_cql() {
         let cql_val = CqlValue::Set(vec![CqlValue::Int(1), CqlValue::Int(2), CqlValue::Int(3)]);
         assert_eq!(Ok(vec![1, 2, 3]), Vec::<i32>::from_cql(cql_val));
+    }
+
+    #[test]
+    fn set_from_cql() {
+        let cql_val = CqlValue::Set(vec![
+            CqlValue::Int(1),
+            CqlValue::Int(2),
+            CqlValue::Int(3),
+            CqlValue::Int(1),
+            CqlValue::Int(2),
+            CqlValue::Int(3),
+        ]);
+        assert_eq!(
+            Ok(vec![1, 2, 3]),
+            HashSet::<i32>::from_cql(cql_val).map(|value| {
+                let mut values = value.into_iter().collect::<Vec<_>>();
+                values.sort_unstable();
+                values
+            })
+        );
     }
 
     #[test]
