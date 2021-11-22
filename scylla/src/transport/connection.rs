@@ -293,6 +293,7 @@ impl Connection {
                 p.prepared_metadata,
                 query.contents.clone(),
                 query.get_page_size(),
+                query.config.clone(),
             ),
             _ => {
                 return Err(QueryError::ProtocolError(

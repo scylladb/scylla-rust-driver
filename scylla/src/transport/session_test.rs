@@ -1058,3 +1058,18 @@ async fn test_timestamp() {
 
     assert_eq!(results, expected_results);
 }
+
+#[tokio::test]
+async fn test_prepared_config() {
+    let uri = std::env::var("SCYLLA_URI").unwrap_or_else(|_| "127.0.0.1:9042".to_string());
+    let session = SessionBuilder::new().known_node(uri).build().await.unwrap();
+
+    let mut query = Query::new("SELECT * FROM system_schema.tables");
+    query.set_is_idempotent(true);
+    query.set_page_size(42);
+
+    let prepared_statement = session.prepare(query).await.unwrap();
+
+    assert_eq!(prepared_statement.get_is_idempotent(), true);
+    assert_eq!(prepared_statement.get_page_size(), Some(42));
+}
