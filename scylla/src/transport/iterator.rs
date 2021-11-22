@@ -106,7 +106,7 @@ impl RowIterator {
         }
     }
 
-    pub(crate) fn new_for_query(
+    pub(crate) async fn new_for_query(
         query: Query,
         values: SerializedValues,
         default_consistency: Consistency,
@@ -114,8 +114,8 @@ impl RowIterator {
         load_balancer: Arc<dyn LoadBalancingPolicy>,
         cluster_data: Arc<ClusterData>,
         metrics: Arc<Metrics>,
-    ) -> RowIterator {
-        let (sender, receiver) = mpsc::channel(1);
+    ) -> Result<RowIterator, QueryError> {
+        let (sender, mut receiver) = mpsc::channel(1);
         let consistency = query.config.determine_consistency(default_consistency);
 
         let worker_task = async move {
@@ -146,16 +146,24 @@ impl RowIterator {
 
         tokio::task::spawn(worker_task);
 
-        RowIterator {
+        let pages_received = receiver.recv().await.unwrap()?;
+
+        Ok(RowIterator {
             current_row_idx: 0,
-            current_page: Default::default(),
+            current_page: pages_received.rows,
             page_receiver: receiver,
-            tracing_ids: Vec::new(),
-        }
+            tracing_ids: if let Some(tracing_id) = pages_received.tracing_id {
+                vec![tracing_id]
+            } else {
+                Vec::new()
+            },
+        })
     }
 
-    pub(crate) fn new_for_prepared_statement(config: PreparedIteratorConfig) -> RowIterator {
-        let (sender, receiver) = mpsc::channel(1);
+    pub(crate) async fn new_for_prepared_statement(
+        config: PreparedIteratorConfig,
+    ) -> Result<RowIterator, QueryError> {
+        let (sender, mut receiver) = mpsc::channel(1);
         let consistency = config
             .prepared
             .config
@@ -198,12 +206,18 @@ impl RowIterator {
 
         tokio::task::spawn(worker_task);
 
-        RowIterator {
+        let pages_received = receiver.recv().await.unwrap()?;
+
+        Ok(RowIterator {
             current_row_idx: 0,
-            current_page: Default::default(),
+            current_page: pages_received.rows,
             page_receiver: receiver,
-            tracing_ids: Vec::new(),
-        }
+            tracing_ids: if let Some(tracing_id) = pages_received.tracing_id {
+                vec![tracing_id]
+            } else {
+                Vec::new()
+            },
+        })
     }
 
     /// If tracing was enabled returns tracing ids of all finished page queries
