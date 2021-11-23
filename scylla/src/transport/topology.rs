@@ -55,6 +55,7 @@ pub struct Table {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Column {
     pub type_: CqlType,
+    pub kind: ColumnKind,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -95,6 +96,15 @@ pub enum CollectionType {
     List(Box<CqlType>),
     Map(Box<CqlType>, Box<CqlType>),
     Set(Box<CqlType>),
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, EnumString)]
+#[strum(serialize_all = "snake_case")]
+pub enum ColumnKind {
+    Regular,
+    Static,
+    Clustering,
+    PartitionKey,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -419,7 +429,7 @@ async fn query_columns(
     const THRIFT_EMPTY_TYPE: &str = "empty";
 
     let mut columns_query = Query::new(
-        "select keyspace_name, table_name, column_name, type from system_schema.columns",
+        "select keyspace_name, table_name, column_name, kind, type from system_schema.columns",
     );
     columns_query.set_page_size(1024);
 
@@ -433,8 +443,8 @@ async fn query_columns(
 
     let mut result = HashMap::with_capacity(rows.len());
 
-    for row in rows.into_typed::<(String, String, String, String)>() {
-        let (keyspace_name, table_name, column_name, type_) = row.map_err(|_| {
+    for row in rows.into_typed::<(String, String, String, String, String)>() {
+        let (keyspace_name, table_name, column_name, kind, type_) = row.map_err(|_| {
             QueryError::ProtocolError("system_schema.columns has invalid column type")
         })?;
 
@@ -443,10 +453,21 @@ async fn query_columns(
         }
 
         let cql_type = map_string_to_cql_type(&type_)?;
+
+        let kind = ColumnKind::from_str(&kind)
+            // FIXME: The correct error type is QueryError:ProtocolError but at the moment it accepts only &'static str
+            .map_err(|_| QueryError::InvalidMessage(format!("invalid column kind {}", kind)))?;
+
         result
             .entry((keyspace_name, table_name))
             .or_insert_with(HashMap::new)
-            .insert(column_name, Column { type_: cql_type });
+            .insert(
+                column_name,
+                Column {
+                    type_: cql_type,
+                    kind,
+                },
+            );
     }
 
     Ok(result)

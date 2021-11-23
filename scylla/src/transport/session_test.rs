@@ -8,7 +8,7 @@ use crate::statement::Consistency;
 use crate::tracing::TracingInfo;
 use crate::transport::connection::{BatchResult, QueryResult};
 use crate::transport::errors::{BadKeyspaceName, BadQuery, DbError, QueryError};
-use crate::transport::topology::{CollectionType, CqlType, NativeType};
+use crate::transport::topology::{CollectionType, ColumnKind, CqlType, NativeType};
 use crate::{IntoTypedRows, Session, SessionBuilder};
 use bytes::Bytes;
 use futures::StreamExt;
@@ -1234,4 +1234,51 @@ async fn test_schema_types_in_metadata() {
             frozen: true
         }
     );
+}
+
+#[tokio::test]
+async fn test_column_kinds_in_metadata() {
+    let uri = std::env::var("SCYLLA_URI").unwrap_or_else(|_| "127.0.0.1:9042".to_string());
+    let session = SessionBuilder::new().known_node(uri).build().await.unwrap();
+
+    session
+        .query("DROP KEYSPACE IF EXISTS test_metadata_ks", &[])
+        .await
+        .unwrap();
+
+    session
+        .query("CREATE KEYSPACE test_metadata_ks WITH REPLICATION = {'class' : 'SimpleStrategy', 'replication_factor' : 1}", &[])
+        .await
+        .unwrap();
+
+    session.query("USE test_metadata_ks", &[]).await.unwrap();
+
+    session
+        .query(
+            "CREATE TABLE IF NOT EXISTS t (
+                    a int,
+                    b int,
+                    c int,
+                    d int STATIC,
+                    e int,
+                    f int,
+                    PRIMARY KEY ((c, e), b, a)
+                  )",
+            &[],
+        )
+        .await
+        .unwrap();
+
+    session.await_schema_agreement().await.unwrap();
+    session.refresh_metadata().await.unwrap();
+
+    let cluster_data = session.get_cluster_data();
+    let columns = &cluster_data.get_keyspace_info()["test_metadata_ks"].tables["t"].columns;
+
+    assert_eq!(columns["a"].kind, ColumnKind::Clustering);
+    assert_eq!(columns["b"].kind, ColumnKind::Clustering);
+    assert_eq!(columns["c"].kind, ColumnKind::PartitionKey);
+    assert_eq!(columns["d"].kind, ColumnKind::Static);
+    assert_eq!(columns["e"].kind, ColumnKind::PartitionKey);
+    assert_eq!(columns["f"].kind, ColumnKind::Regular);
 }
