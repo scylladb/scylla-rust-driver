@@ -8,6 +8,7 @@ use crate::transport::session::IntoTypedRows;
 
 use rand::seq::SliceRandom;
 use rand::{thread_rng, Rng};
+use std::borrow::BorrowMut;
 use std::collections::HashMap;
 use std::fmt;
 use std::fmt::Formatter;
@@ -50,6 +51,8 @@ pub struct Keyspace {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Table {
     pub columns: HashMap<String, Column>,
+    pub partition_key: Vec<String>,
+    pub clustering_key: Vec<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -400,7 +403,7 @@ async fn query_tables(
         ))?;
 
     let mut result = HashMap::with_capacity(rows.len());
-    let mut columns = query_columns(conn).await?;
+    let mut tables = query_tables_schema(conn).await?;
 
     for row in rows.into_typed::<(String, String)>() {
         let (keyspace_name, table_name) = row.map_err(|_| {
@@ -409,27 +412,31 @@ async fn query_tables(
 
         let keyspace_and_table_name = (keyspace_name, table_name);
 
-        let columns = columns.remove(&keyspace_and_table_name).unwrap_or_default();
+        let table = tables.remove(&keyspace_and_table_name).unwrap_or(Table {
+            columns: HashMap::new(),
+            partition_key: vec![],
+            clustering_key: vec![],
+        });
 
         result
             .entry(keyspace_and_table_name.0)
             .or_insert_with(HashMap::new)
-            .insert(keyspace_and_table_name.1, Table { columns });
+            .insert(keyspace_and_table_name.1, table);
     }
 
     Ok(result)
 }
 
-async fn query_columns(
+async fn query_tables_schema(
     conn: &Connection,
-) -> Result<HashMap<(String, String), HashMap<String, Column>>, QueryError> {
+) -> Result<HashMap<(String, String), Table>, QueryError> {
     // Upon migration from thrift to CQL, Cassandra internally creates a surrogate column "value" of
     // type EmptyType for dense tables. This resolves into this CQL type name.
     // This column shouldn't be exposed to the user but is currently exposed in system tables.
     const THRIFT_EMPTY_TYPE: &str = "empty";
 
     let mut columns_query = Query::new(
-        "select keyspace_name, table_name, column_name, kind, type from system_schema.columns",
+        "select keyspace_name, table_name, column_name, kind, position, type from system_schema.columns",
     );
     columns_query.set_page_size(1024);
 
@@ -441,16 +448,23 @@ async fn query_columns(
             "system_schema.columns query response was not Rows",
         ))?;
 
-    let mut result = HashMap::with_capacity(rows.len());
+    let mut tables_schema = HashMap::with_capacity(rows.len());
 
-    for row in rows.into_typed::<(String, String, String, String, String)>() {
-        let (keyspace_name, table_name, column_name, kind, type_) = row.map_err(|_| {
-            QueryError::ProtocolError("system_schema.columns has invalid column type")
-        })?;
+    for row in rows.into_typed::<(String, String, String, String, i32, String)>() {
+        let (keyspace_name, table_name, column_name, kind, position, type_) =
+            row.map_err(|_| {
+                QueryError::ProtocolError("system_schema.columns has invalid column type")
+            })?;
 
         if type_ == THRIFT_EMPTY_TYPE {
             continue;
         }
+
+        let entry = tables_schema.entry((keyspace_name, table_name)).or_insert((
+            HashMap::new(), // columns
+            HashMap::new(), // partition key
+            HashMap::new(), // clustering key
+        ));
 
         let cql_type = map_string_to_cql_type(&type_)?;
 
@@ -458,16 +472,47 @@ async fn query_columns(
             // FIXME: The correct error type is QueryError:ProtocolError but at the moment it accepts only &'static str
             .map_err(|_| QueryError::InvalidMessage(format!("invalid column kind {}", kind)))?;
 
-        result
-            .entry((keyspace_name, table_name))
-            .or_insert_with(HashMap::new)
-            .insert(
-                column_name,
-                Column {
-                    type_: cql_type,
-                    kind,
-                },
-            );
+        if kind == ColumnKind::PartitionKey || kind == ColumnKind::Clustering {
+            let key_map = if kind == ColumnKind::PartitionKey {
+                entry.1.borrow_mut()
+            } else {
+                entry.2.borrow_mut()
+            };
+            key_map.insert(position, column_name.clone());
+        }
+
+        entry.0.insert(
+            column_name,
+            Column {
+                type_: cql_type,
+                kind,
+            },
+        );
+    }
+
+    let mut result = HashMap::new();
+
+    for ((keyspace_name, table_name), (columns, partition_key_columns, clustering_key_columns)) in
+        tables_schema
+    {
+        let mut partition_key = vec!["".to_string(); partition_key_columns.len()];
+        for (position, column_name) in partition_key_columns {
+            partition_key[position as usize] = column_name;
+        }
+
+        let mut clustering_key = vec!["".to_string(); clustering_key_columns.len()];
+        for (position, column_name) in clustering_key_columns {
+            clustering_key[position as usize] = column_name;
+        }
+
+        result.insert(
+            (keyspace_name, table_name),
+            Table {
+                columns,
+                partition_key,
+                clustering_key,
+            },
+        );
     }
 
     Ok(result)

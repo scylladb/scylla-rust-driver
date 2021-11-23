@@ -1282,3 +1282,49 @@ async fn test_column_kinds_in_metadata() {
     assert_eq!(columns["e"].kind, ColumnKind::PartitionKey);
     assert_eq!(columns["f"].kind, ColumnKind::Regular);
 }
+
+#[tokio::test]
+async fn test_primary_key_ordering_in_metadata() {
+    let uri = std::env::var("SCYLLA_URI").unwrap_or_else(|_| "127.0.0.1:9042".to_string());
+    let session = SessionBuilder::new().known_node(uri).build().await.unwrap();
+
+    session
+        .query("DROP KEYSPACE IF EXISTS test_metadata_ks", &[])
+        .await
+        .unwrap();
+
+    session
+        .query("CREATE KEYSPACE test_metadata_ks WITH REPLICATION = {'class' : 'SimpleStrategy', 'replication_factor' : 1}", &[])
+        .await
+        .unwrap();
+
+    session.query("USE test_metadata_ks", &[]).await.unwrap();
+
+    session
+        .query(
+            "CREATE TABLE IF NOT EXISTS t (
+                    a int,
+                    b int,
+                    c int,
+                    d int STATIC,
+                    e int,
+                    f int,
+                    g int,
+                    h int,
+                    i int STATIC,
+                    PRIMARY KEY ((c, e), b, a)
+                  )",
+            &[],
+        )
+        .await
+        .unwrap();
+
+    session.await_schema_agreement().await.unwrap();
+    session.refresh_metadata().await.unwrap();
+
+    let cluster_data = session.get_cluster_data();
+    let table = &cluster_data.get_keyspace_info()["test_metadata_ks"].tables["t"];
+
+    assert_eq!(table.partition_key, vec!["c", "e"]);
+    assert_eq!(table.clustering_key, vec!["b", "a"]);
+}
