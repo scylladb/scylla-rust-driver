@@ -18,6 +18,8 @@ jobs:
         image: cassandra
         ports:
           - 9042:9042
+    env:
+      CDC: 'disabled'
     steps:
     - uses: actions/checkout@v2
       # A separate step for building to separate measuring time of compilation and testing

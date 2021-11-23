@@ -1328,3 +1328,47 @@ async fn test_primary_key_ordering_in_metadata() {
     assert_eq!(table.partition_key, vec!["c", "e"]);
     assert_eq!(table.clustering_key, vec!["b", "a"]);
 }
+
+#[tokio::test]
+async fn test_table_partitioner_in_metadata() {
+    if option_env!("CDC") == Some("disabled") {
+        return;
+    }
+
+    let uri = std::env::var("SCYLLA_URI").unwrap_or_else(|_| "127.0.0.1:9042".to_string());
+    let session = SessionBuilder::new().known_node(uri).build().await.unwrap();
+
+    session
+        .query("DROP KEYSPACE IF EXISTS test_metadata_ks", &[])
+        .await
+        .unwrap();
+
+    session
+        .query("CREATE KEYSPACE test_metadata_ks WITH REPLICATION = {'class' : 'SimpleStrategy', 'replication_factor' : 1}", &[])
+        .await
+        .unwrap();
+
+    session.query("USE test_metadata_ks", &[]).await.unwrap();
+
+    session
+        .query(
+            "CREATE TABLE t (pk int, ck int, v int, PRIMARY KEY (pk, ck, v))WITH cdc = {'enabled':true}",
+            &[],
+        )
+        .await
+        .unwrap();
+
+    session.await_schema_agreement().await.unwrap();
+    session.refresh_metadata().await.unwrap();
+
+    let cluster_data = session.get_cluster_data();
+    let tables = &cluster_data.get_keyspace_info()["test_metadata_ks"].tables;
+    let table = &tables["t"];
+    let cdc_table = &tables["t_scylla_cdc_log"];
+
+    assert_eq!(table.partitioner, None);
+    assert_eq!(
+        cdc_table.partitioner.as_ref().unwrap(),
+        "com.scylladb.dht.CDCPartitioner"
+    );
+}

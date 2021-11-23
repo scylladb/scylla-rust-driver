@@ -3,7 +3,7 @@ use crate::routing::Token;
 use crate::statement::query::Query;
 use crate::transport::connection::{Connection, ConnectionConfig};
 use crate::transport::connection_pool::{NodeConnectionPool, PoolConfig, PoolSize};
-use crate::transport::errors::QueryError;
+use crate::transport::errors::{DbError, QueryError};
 use crate::transport::session::IntoTypedRows;
 
 use rand::seq::SliceRandom;
@@ -53,6 +53,7 @@ pub struct Table {
     pub columns: HashMap<String, Column>,
     pub partition_key: Vec<String>,
     pub clustering_key: Vec<String>,
+    pub partitioner: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -416,6 +417,7 @@ async fn query_tables(
             columns: HashMap::new(),
             partition_key: vec![],
             clustering_key: vec![],
+            partitioner: None,
         });
 
         result
@@ -490,6 +492,7 @@ async fn query_tables_schema(
         );
     }
 
+    let mut all_partitioners = query_table_partitioners(conn).await?;
     let mut result = HashMap::new();
 
     for ((keyspace_name, table_name), (columns, partition_key_columns, clustering_key_columns)) in
@@ -505,12 +508,19 @@ async fn query_tables_schema(
             clustering_key[position as usize] = column_name;
         }
 
+        let keyspace_and_table_name = (keyspace_name, table_name);
+
+        let partitioner = all_partitioners
+            .remove(&keyspace_and_table_name)
+            .unwrap_or_default();
+
         result.insert(
-            (keyspace_name, table_name),
+            keyspace_and_table_name,
             Table {
                 columns,
                 partition_key,
                 clustering_key,
+                partitioner,
             },
         );
     }
@@ -570,6 +580,36 @@ fn map_string_to_cql_type(type_: &str) -> Result<CqlType, InvalidCqlType> {
             name: type_.to_string(),
         },
     })
+}
+
+async fn query_table_partitioners(
+    conn: &Connection,
+) -> Result<HashMap<(String, String), Option<String>>, QueryError> {
+    let mut partitioner_query = Query::new(
+        "select keyspace_name, table_name, partitioner from system_schema.scylla_tables",
+    );
+    partitioner_query.set_page_size(1024);
+
+    let rows = match conn.query_all(&partitioner_query, &[]).await {
+        // FIXME: This match catches all database errors with this error code despite the fact
+        // that we are only interested in the ones resulting from non-existent table
+        // system_schema.scylla_tables.
+        // For more information please refer to https://github.com/scylladb/scylla-rust-driver/pull/349#discussion_r762050262
+        Err(QueryError::DbError(DbError::Invalid, _)) => return Ok(HashMap::new()),
+        query_result => query_result?.rows.ok_or(QueryError::ProtocolError(
+            "system_schema.scylla_tables query response was not Rows",
+        ))?,
+    };
+
+    let mut result = HashMap::with_capacity(rows.len());
+
+    for row in rows.into_typed::<(String, String, Option<String>)>() {
+        let (keyspace_name, table_name, partitioner) = row.map_err(|_| {
+            QueryError::ProtocolError("system_schema.tables has invalid column type")
+        })?;
+        result.insert((keyspace_name, table_name), partitioner);
+    }
+    Ok(result)
 }
 
 fn strategy_from_string_map(
