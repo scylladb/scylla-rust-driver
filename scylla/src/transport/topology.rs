@@ -7,13 +7,13 @@ use crate::transport::session::IntoTypedRows;
 
 use crate::statement::query::Query;
 use rand::seq::SliceRandom;
-use rand::thread_rng;
+use rand::{thread_rng, Rng};
 use std::collections::HashMap;
 use std::net::{IpAddr, SocketAddr};
 use std::num::NonZeroUsize;
 use std::str::FromStr;
 use tokio::sync::mpsc;
-use tracing::{debug, error, warn};
+use tracing::{debug, error, trace, warn};
 
 /// Allows to read current topology info from the cluster
 pub struct TopologyReader {
@@ -251,12 +251,23 @@ async fn query_peers(conn: &Connection, connect_port: u16) -> Result<Vec<Peer>, 
         let address = SocketAddr::new(ip_address, connect_port);
 
         // Parse string representation of tokens as integer values
-        let tokens: Vec<Token> = tokens_str
+        let tokens: Vec<Token> = match tokens_str
             .iter()
             .map(|s| Token::from_str(s))
             .collect::<Result<Vec<Token>, _>>()
-            .map_err(|_| QueryError::ProtocolError("Couldn't parse tokens as integer values"))?;
-
+        {
+            Ok(parsed) => parsed,
+            Err(e) => {
+                // FIXME: we could allow the users to provide custom partitioning information
+                // in order for it to work with non-standard token sizes.
+                // Also, we could implement support for Cassandra's other standard partitioners
+                // like RandomPartitioner or ByteOrderedPartitioner.
+                trace!("Couldn't parse tokens as 64-bit integers: {}, proceeding with a dummy token. If you're using a partitioner with different token size, consider migrating to murmur3", e);
+                vec![Token {
+                    value: rand::thread_rng().gen::<i64>(),
+                }]
+            }
+        };
         result.push(Peer {
             address,
             tokens,
