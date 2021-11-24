@@ -35,7 +35,7 @@ pub enum SerialConsistency {
 
 impl Default for Consistency {
     fn default() -> Self {
-        Consistency::Quorum
+        Consistency::LocalQuorum
     }
 }
 

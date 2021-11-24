@@ -142,7 +142,7 @@ impl SessionConfig {
             connect_timeout: std::time::Duration::from_secs(5),
             connection_pool_size: Default::default(),
             disallow_shard_aware_port: false,
-            default_consistency: Consistency::Quorum,
+            default_consistency: Consistency::LocalQuorum,
         }
     }
 
