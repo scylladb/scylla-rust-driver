@@ -1,5 +1,5 @@
 # Default retry policy
-This is the retry policy used by default. It retries when there is a high chance that it might help.  
+This is the retry policy used by default. It retries when there is a high chance that it might help.\
 This policy is based on the one in [DataStax Java Driver](https://docs.datastax.com/en/developer/java-driver/4.11/manual/core/retries/).
 The behaviour is the same.
 

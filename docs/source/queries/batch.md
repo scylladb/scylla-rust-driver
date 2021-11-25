@@ -1,7 +1,7 @@
 # Batch statement
 
-A batch statement allows to run many queries at once.  
-These queries can be [simple queries](simple.md) or [prepared queries](prepared.md).  
+A batch statement allows to run many queries at once.\
+These queries can be [simple queries](simple.md) or [prepared queries](prepared.md).\
 Only queries like `INSERT` or `UPDATE` can be in a batch, batch doesn't return any rows.
 
 ```rust
@@ -41,7 +41,7 @@ session.batch(&batch, batch_values).await?;
 ```
 
 ### Batch options
-You can set various options by operating on the `Batch` object.  
+You can set various options by operating on the `Batch` object.\
 For example to change consistency:
 ```rust
 # extern crate scylla;
@@ -70,11 +70,11 @@ for more options
 ### Batch values
 Batch takes a tuple of values specified just like in [simple](simple.md) or [prepared](prepared.md) queries.
 
-Length of batch values must be equal to the number of statements in a batch.  
+Length of batch values must be equal to the number of statements in a batch.\
 Each query must have its values specified, even if they are empty.
 
-Values passed to `Session::batch` must implement the trait `BatchValues`.  
-By default this includes tuples `()` and slices `&[]` of tuples and slices which implement `ValueList`.  
+Values passed to `Session::batch` must implement the trait `BatchValues`.\
+By default this includes tuples `()` and slices `&[]` of tuples and slices which implement `ValueList`.\
 
 Example:
 ```rust

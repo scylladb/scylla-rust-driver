@@ -139,5 +139,5 @@ let res2 = session
 ```
 
 ### Performance
-Performance is the same as in non-paged variants.  
+Performance is the same as in non-paged variants.\
 For the best performance use [prepared queries](prepared.md).

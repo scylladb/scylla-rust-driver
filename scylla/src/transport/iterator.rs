@@ -34,7 +34,7 @@ use crate::transport::node::Node;
 use crate::transport::retry_policy::{QueryInfo, RetryDecision, RetrySession};
 use uuid::Uuid;
 
-/// Iterator over rows returned by paged queries  
+/// Iterator over rows returned by paged queries\
 /// Allows to easily access rows without worrying about handling multiple pages
 pub struct RowIterator {
     current_row_idx: usize,
@@ -59,7 +59,7 @@ pub(crate) struct PreparedIteratorConfig {
     pub metrics: Arc<Metrics>,
 }
 
-/// Fetching pages is asynchronous so `RowIterator` does not implement the `Iterator` trait.  
+/// Fetching pages is asynchronous so `RowIterator` does not implement the `Iterator` trait.\
 /// Instead it uses the asynchronous `Stream` trait
 impl Stream for RowIterator {
     type Item = Result<Row, QueryError>;
@@ -352,7 +352,7 @@ where
 }
 
 /// Iterator over rows returned by paged queries
-/// where each row is parsed as the given type  
+/// where each row is parsed as the given type\
 /// Returned by `RowIterator::into_typed`
 pub struct TypedRowIterator<RowT> {
     row_iterator: RowIterator,
@@ -378,7 +378,7 @@ pub enum NextRowError {
     FromRowError(#[from] FromRowError),
 }
 
-/// Fetching pages is asynchronous so `TypedRowIterator` does not implement the `Iterator` trait.  
+/// Fetching pages is asynchronous so `TypedRowIterator` does not implement the `Iterator` trait.\
 /// Instead it uses the asynchronous `Stream` trait
 impl<RowT: FromRow> Stream for TypedRowIterator<RowT> {
     type Item = Result<RowT, NextRowError>;

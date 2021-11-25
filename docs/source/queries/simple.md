@@ -15,15 +15,15 @@ session
 # }
 ```
 
-> ***Warning***  
-> Don't use simple query to receive large amounts of data.  
-> By default the query is unpaged and might cause heavy load on the cluster.  
-> In such cases set a page size and use [paged query](paged.md) instead.  
+> ***Warning***\
+> Don't use simple query to receive large amounts of data.\
+> By default the query is unpaged and might cause heavy load on the cluster.\
+> In such cases set a page size and use [paged query](paged.md) instead.\
 > 
 > When page size is set, `query` will return only the first page of results.
 
 ### First argument - the query
-As the first argument `Session::query` takes anything implementing `Into<Query>`.  
+As the first argument `Session::query` takes anything implementing `Into<Query>`.\
 You can create a query manually to set custom options. For example to change query consistency:
 ```rust
 # extern crate scylla;
@@ -47,7 +47,7 @@ See [Query API documentation](https://docs.rs/scylla/0.2.0/scylla/statement/quer
 
 ### Second argument - the values
 Query text is constant, but the values might change.
-You can pass changing values to a query by specifying a list of variables as bound values.  
+You can pass changing values to a query by specifying a list of variables as bound values.\
 Each `?` in query text will be filled with the matching value. 
 
 The easiest way is to pass values using a tuple:
@@ -69,7 +69,7 @@ Here the first `?` will be filled with `2` and the second with `"Some text"`.
 See [Query values](values.md) for more information about sending values in queries
 
 ### Query result
-`Session::query` returns `QueryResult` with rows represented as `Option<Vec<Row>>`.  
+`Session::query` returns `QueryResult` with rows represented as `Option<Vec<Row>>`.\
 Each row can be parsed as a tuple of rust types using `into_typed`:
 ```rust
 # extern crate scylla;
@@ -89,15 +89,15 @@ if let Some(rows) = session.query("SELECT a FROM ks.tab", &[]).await?.rows {
 # Ok(())
 # }
 ```
-> In cases where page size is set, simple query returns only a single page of results.  
-> To receive all pages use a [paged query](paged.md) instead.  
+> In cases where page size is set, simple query returns only a single page of results.\
+> To receive all pages use a [paged query](paged.md) instead.\
 
 See [Query result](result.md) for more information about handling query results
 
 ### Performance
-Simple queries should not be used in places where performance matters.  
+Simple queries should not be used in places where performance matters.\
 If perfomance matters use a [Prepared query](prepared.md) instead.
 
-With simple query the database has to parse query text each time it's executed, which worsens performance.  
+With simple query the database has to parse query text each time it's executed, which worsens performance.\
 
 Additionaly token and shard aware load balancing does not work with simple queries. They are sent to random nodes.

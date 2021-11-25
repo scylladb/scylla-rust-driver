@@ -1,6 +1,6 @@
 # Tracing a paged query
 
-A paged query performs multiple simple/prepared queries to query subsequent pages.  
+A paged query performs multiple simple/prepared queries to query subsequent pages.\
 If tracing is enabled the row iterator will contain a list of tracing ids for all performed queries.
 
 

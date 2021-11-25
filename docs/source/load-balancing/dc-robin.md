@@ -1,7 +1,7 @@
 # DC Aware Round robin
 
 This is a more sophisticated version of [Round robin policy](robin.md).
-It takes all nodes in the local datacenter and uses them one after another.  
+It takes all nodes in the local datacenter and uses them one after another.\
 If no nodes from the local datacenter are available it will fall back to other nodes.
 
 For example if there are two datacenters:

@@ -1,6 +1,6 @@
-//! Load balancing configurations  
-//! `Session` can use any load balancing policy which implements the `LoadBalancingPolicy` trait  
-//! Policies which implement the `ChildLoadBalancingPolicy` can be wrapped in some other policies  
+//! Load balancing configurations\
+//! `Session` can use any load balancing policy which implements the `LoadBalancingPolicy` trait\
+//! Policies which implement the `ChildLoadBalancingPolicy` can be wrapped in some other policies\
 //! See [the book](https://cvybhu.github.io/scyllabook/load-balancing/load-balancing.html) for more information
 
 use super::{cluster::ClusterData, node::Node};

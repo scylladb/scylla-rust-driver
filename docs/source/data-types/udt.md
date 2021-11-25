@@ -1,5 +1,5 @@
 # User defined types
-Scylla allows users to define their own data types with named fields.  
+Scylla allows users to define their own data types with named fields.\
 The driver supports this by allowing to create a custom struct with derived functionality.
 
 For example let's say `my_type` was created using this query:

@@ -1,6 +1,6 @@
 # TLS
 
-Driver uses the [`openssl`](https://github.com/sfackler/rust-openssl) crate for TLS functionality.  
+Driver uses the [`openssl`](https://github.com/sfackler/rust-openssl) crate for TLS functionality.\
 It was chosen because [`rustls`](https://github.com/ctz/rustls) doesn't support certificates for ip addresses
 (see [issue](https://github.com/briansmith/webpki/issues/54)), which is a common use case for Scylla.
 

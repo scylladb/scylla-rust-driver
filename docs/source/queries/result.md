@@ -72,7 +72,7 @@ if let Some(rows) = session.query("SELECT a, b from ks.tab", &[]).await?.rows {
 ```
 
 ### Parsing row as a custom struct
-It is possible to receive row as a struct with fields matching the columns.  
+It is possible to receive row as a struct with fields matching the columns.\
 The struct must:
 * have the same number of fields as the number of queried columns
 * have field types matching the columns being received

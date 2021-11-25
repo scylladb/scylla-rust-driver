@@ -1,6 +1,6 @@
 # Logging
 
-The driver uses the [tracing](https://github.com/tokio-rs/tracing) crate for all logs.  
+The driver uses the [tracing](https://github.com/tokio-rs/tracing) crate for all logs.\
 To view the logs you have to create a `tracing` subscriber to which all logs will be written.
 
 To just print the logs you can use the default subscriber:
