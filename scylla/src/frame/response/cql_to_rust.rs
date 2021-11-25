@@ -3,8 +3,7 @@ use crate::frame::value::Counter;
 use bigdecimal::BigDecimal;
 use chrono::{Duration, NaiveDate};
 use num_bigint::BigInt;
-use std::collections::HashMap;
-use std::collections::HashSet;
+use std::collections::{BTreeSet, HashMap, HashSet};
 use std::hash::Hash;
 use std::net::IpAddr;
 use thiserror::Error;
@@ -124,6 +123,17 @@ impl<T: FromCqlVal<CqlValue> + Eq + Hash> FromCqlVal<CqlValue> for HashSet<T> {
             .into_iter()
             .map(T::from_cql)
             .collect::<Result<HashSet<T>, FromCqlValError>>()
+    }
+}
+
+impl<T: FromCqlVal<CqlValue> + Ord> FromCqlVal<CqlValue> for BTreeSet<T> {
+    fn from_cql(cql_val: CqlValue) -> Result<Self, FromCqlValError> {
+        cql_val
+            .into_vec()
+            .ok_or(FromCqlValError::BadCqlType)?
+            .into_iter()
+            .map(T::from_cql)
+            .collect::<Result<BTreeSet<T>, FromCqlValError>>()
     }
 }
 
