@@ -844,13 +844,13 @@ impl Session {
         Ok(())
     }
 
-    /// Manually trigger a topology refresh\
-    /// The driver will fetch current nodes in the cluster and update its topology information
+    /// Manually trigger a metadata refresh\
+    /// The driver will fetch current nodes in the cluster and update its metadata
     ///
     /// Normally this is not needed,
-    /// the driver should automatically detect all topology changes in the cluster
-    pub async fn refresh_topology(&self) -> Result<(), QueryError> {
-        self.cluster.refresh_topology().await
+    /// the driver should automatically detect all metadata changes in the cluster
+    pub async fn refresh_metadata(&self) -> Result<(), QueryError> {
+        self.cluster.refresh_metadata().await
     }
 
     /// Access metrics collected by the driver\

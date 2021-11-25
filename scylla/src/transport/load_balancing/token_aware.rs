@@ -155,7 +155,7 @@ mod tests {
     use crate::transport::topology::Keyspace;
     use crate::transport::topology::Peer;
     use crate::transport::topology::Strategy;
-    use crate::transport::topology::TopologyInfo;
+    use crate::transport::topology::Metadata;
     use std::collections::HashMap;
 
     // ConnectionKeeper (which lives in Node) requires context of Tokio runtime
@@ -302,7 +302,7 @@ mod tests {
         .cloned()
         .collect();
 
-        let info = TopologyInfo {
+        let info = Metadata {
             peers: Vec::from(peers),
             keyspaces,
         };
@@ -390,7 +390,7 @@ mod tests {
         .cloned()
         .collect();
 
-        let info = TopologyInfo {
+        let info = Metadata {
             peers: Vec::from(peers),
             keyspaces,
         };

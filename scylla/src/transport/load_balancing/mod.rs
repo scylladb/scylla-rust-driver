@@ -84,8 +84,8 @@ impl Default for Statement<'_> {
 mod tests {
     use super::*;
 
+    use crate::transport::topology::Metadata;
     use crate::transport::topology::Peer;
-    use crate::transport::topology::TopologyInfo;
     use std::collections::HashMap;
     use std::net::SocketAddr;
 
@@ -134,7 +134,7 @@ mod tests {
             })
             .collect::<Vec<_>>();
 
-        let info = TopologyInfo {
+        let info = Metadata {
             peers,
             keyspaces: HashMap::new(),
         };

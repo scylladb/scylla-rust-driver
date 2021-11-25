@@ -15,18 +15,18 @@ use std::str::FromStr;
 use tokio::sync::mpsc;
 use tracing::{debug, error, trace, warn};
 
-/// Allows to read current topology info from the cluster
-pub struct TopologyReader {
+/// Allows to read current metadata from the cluster
+pub struct MetadataReader {
     connection_config: ConnectionConfig,
     control_connection_address: SocketAddr,
     control_connection: NodeConnectionPool,
 
-    // when control connection fails, TopologyReader tries to connect to one of known_peers
+    // when control connection fails, MetadataReader tries to connect to one of known_peers
     known_peers: Vec<SocketAddr>,
 }
 
-/// Describes all topology information retrieved from the cluster
-pub struct TopologyInfo {
+/// Describes all metadata retrieved from the cluster
+pub struct Metadata {
     pub peers: Vec<Peer>,
     pub keyspaces: HashMap<String, Keyspace>,
 }
@@ -60,8 +60,8 @@ pub enum Strategy {
     },
 }
 
-impl TopologyReader {
-    /// Creates new TopologyReader, which connects to known_peers in the background
+impl MetadataReader {
+    /// Creates new MetadataReader, which connects to known_peers in the background
     pub fn new(
         known_peers: &[SocketAddr],
         mut connection_config: ConnectionConfig,
@@ -69,7 +69,7 @@ impl TopologyReader {
     ) -> Self {
         let control_connection_address = *known_peers
             .choose(&mut thread_rng())
-            .expect("Tried to initialize TopologyReader with empty known_peers list!");
+            .expect("Tried to initialize MetadataReader with empty known_peers list!");
 
         // setting event_sender field in connection config will cause control connection to
         // - send REGISTER message to receive server events
@@ -81,7 +81,7 @@ impl TopologyReader {
             connection_config.clone(),
         );
 
-        TopologyReader {
+        MetadataReader {
             control_connection_address,
             control_connection,
             connection_config,
@@ -89,12 +89,12 @@ impl TopologyReader {
         }
     }
 
-    /// Fetches current topology info from the cluster
-    pub async fn read_topology_info(&mut self) -> Result<TopologyInfo, QueryError> {
-        let mut result = self.fetch_topology_info().await;
-        if let Ok(topology_info) = result {
-            self.update_known_peers(&topology_info);
-            return Ok(topology_info);
+    /// Fetches current metadata from the cluster
+    pub async fn read_metadata(&mut self) -> Result<Metadata, QueryError> {
+        let mut result = self.fetch_metadata().await;
+        if let Ok(metadata) = result {
+            self.update_known_peers(&metadata);
+            return Ok(metadata);
         }
 
         // shuffle known_peers to iterate through them in random order later
@@ -106,8 +106,8 @@ impl TopologyReader {
             .iter()
             .filter(|&peer| peer != &address_of_failed_control_connection);
 
-        // if fetching topology info on current control connection failed,
-        // try to fetch topology info from other known peer
+        // if fetching metadata on current control connection failed,
+        // try to fetch metadata from other known peer
         for peer in filtered_known_peers {
             let err = match result {
                 Ok(_) => break,
@@ -117,7 +117,7 @@ impl TopologyReader {
             warn!(
                 control_connection_address = self.control_connection_address.to_string().as_str(),
                 error = err.to_string().as_str(),
-                "Falied to fetch topology info using current control connection"
+                "Failed to fetch metadata using current control connection"
             );
 
             self.control_connection_address = *peer;
@@ -126,39 +126,35 @@ impl TopologyReader {
                 self.connection_config.clone(),
             );
 
-            result = self.fetch_topology_info().await;
+            result = self.fetch_metadata().await;
         }
 
         match &result {
-            Ok(topology_info) => {
-                self.update_known_peers(topology_info);
-                debug!("Fetched new topology info");
+            Ok(metadata) => {
+                self.update_known_peers(metadata);
+                debug!("Fetched new metadata");
             }
             Err(error) => error!(
                 error = error.to_string().as_str(),
-                "Could not fetch topology info"
+                "Could not fetch metadata"
             ),
         }
 
         result
     }
 
-    async fn fetch_topology_info(&self) -> Result<TopologyInfo, QueryError> {
+    async fn fetch_metadata(&self) -> Result<Metadata, QueryError> {
         // TODO: Timeouts?
 
-        query_topology_info(
+        query_metadata(
             &self.control_connection,
             self.control_connection_address.port(),
         )
         .await
     }
 
-    fn update_known_peers(&mut self, topology_info: &TopologyInfo) {
-        self.known_peers = topology_info
-            .peers
-            .iter()
-            .map(|peer| peer.address)
-            .collect();
+    fn update_known_peers(&mut self, metadata: &Metadata) {
+        self.known_peers = metadata.peers.iter().map(|peer| peer.address).collect();
     }
 
     fn make_control_connection_pool(
@@ -180,10 +176,10 @@ impl TopologyReader {
     }
 }
 
-async fn query_topology_info(
+async fn query_metadata(
     pool: &NodeConnectionPool,
     connect_port: u16,
-) -> Result<TopologyInfo, QueryError> {
+) -> Result<Metadata, QueryError> {
     pool.wait_until_initialized().await;
     let conn: &Connection = &*pool.random_connection()?;
 
@@ -195,18 +191,18 @@ async fn query_topology_info(
     // There must be at least one peer
     if peers.is_empty() {
         return Err(QueryError::ProtocolError(
-            "Bad TopologyInfo: peers list is empty",
+            "Bad Metadata: peers list is empty",
         ));
     }
 
     // At least one peer has to have some tokens
     if peers.iter().all(|peer| peer.tokens.is_empty()) {
         return Err(QueryError::ProtocolError(
-            "Bad TopoologyInfo: All peers have empty token list",
+            "Bad Metadata: All peers have empty token list",
         ));
     }
 
-    Ok(TopologyInfo { peers, keyspaces })
+    Ok(Metadata { peers, keyspaces })
 }
 
 async fn query_peers(conn: &Connection, connect_port: u16) -> Result<Vec<Peer>, QueryError> {
