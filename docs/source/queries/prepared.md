@@ -22,12 +22,12 @@ session.execute(&prepared, (to_insert,)).await?;
 # }
 ```
 
-> ***Warning***
+> ***Warning***\
 > For token/shard aware load balancing to work properly, all partition key values
 > must be sent as bound values (see [performance section](#performance))
 
-> ***Warning***
-> Don't use `execute` to receive large amounts of data.
+> ***Warning***\
+> Don't use `execute` to receive large amounts of data.\
 > By default the query is unpaged and might cause heavy load on the cluster.
 > In such cases set a page size and use a [paged query](paged.md) instead.
 >
