@@ -4,7 +4,7 @@ use chrono::prelude::*;
 use chrono::Duration;
 use num_bigint::BigInt;
 use std::borrow::Cow;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::convert::TryInto;
 use std::net::IpAddr;
 use thiserror::Error;
@@ -465,6 +465,12 @@ fn serialize_list_or_set<'a, V: 'a + Value>(
     buf[bytes_num_pos..(bytes_num_pos + 4)].copy_from_slice(&written_bytes_i32.to_be_bytes());
 
     Ok(())
+}
+
+impl<V: Value> Value for HashSet<V> {
+    fn serialize(&self, buf: &mut Vec<u8>) -> Result<(), ValueTooBig> {
+        serialize_list_or_set(self.iter(), self.len(), buf)
+    }
 }
 
 impl<K: Value, V: Value> Value for HashMap<K, V> {
