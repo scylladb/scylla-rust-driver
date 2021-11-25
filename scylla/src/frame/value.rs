@@ -4,7 +4,7 @@ use chrono::prelude::*;
 use chrono::Duration;
 use num_bigint::BigInt;
 use std::borrow::Cow;
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeSet, HashMap, HashSet};
 use std::convert::TryInto;
 use std::net::IpAddr;
 use thiserror::Error;
@@ -476,6 +476,12 @@ impl<V: Value> Value for HashSet<V> {
 impl<K: Value, V: Value> Value for HashMap<K, V> {
     fn serialize(&self, buf: &mut Vec<u8>) -> Result<(), ValueTooBig> {
         serialize_map(self.iter(), self.len(), buf)
+    }
+}
+
+impl<V: Value> Value for BTreeSet<V> {
+    fn serialize(&self, buf: &mut Vec<u8>) -> Result<(), ValueTooBig> {
+        serialize_list_or_set(self.iter(), self.len(), buf)
     }
 }
 
