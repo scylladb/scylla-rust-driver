@@ -35,6 +35,8 @@ openssl = { version = "0.10.32", optional = true }
 tokio-openssl = { version = "0.6.1", optional = true }
 arc-swap = "1.3.0"
 dashmap = "4.0.2"
+strum = "0.23"
+strum_macros = "0.23"
 
 [dev-dependencies]
 criterion = "0.3"

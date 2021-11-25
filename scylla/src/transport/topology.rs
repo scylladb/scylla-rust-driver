@@ -1,17 +1,20 @@
 use crate::frame::response::event::Event;
 use crate::routing::Token;
+use crate::statement::query::Query;
 use crate::transport::connection::{Connection, ConnectionConfig};
 use crate::transport::connection_pool::{NodeConnectionPool, PoolConfig, PoolSize};
 use crate::transport::errors::QueryError;
 use crate::transport::session::IntoTypedRows;
 
-use crate::statement::query::Query;
 use rand::seq::SliceRandom;
 use rand::{thread_rng, Rng};
 use std::collections::HashMap;
+use std::fmt;
+use std::fmt::Formatter;
 use std::net::{IpAddr, SocketAddr};
 use std::num::NonZeroUsize;
 use std::str::FromStr;
+use strum_macros::EnumString;
 use tokio::sync::mpsc;
 use tracing::{debug, error, trace, warn};
 
@@ -41,6 +44,57 @@ pub struct Peer {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Keyspace {
     pub strategy: Strategy,
+    pub tables: HashMap<String, Table>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Table {
+    pub columns: HashMap<String, Column>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Column {
+    pub type_: CqlType,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum CqlType {
+    Native(NativeType),
+    Collection { frozen: bool, type_: CollectionType },
+    Tuple(Vec<CqlType>),
+    UserDefinedType { frozen: bool, name: String },
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, EnumString)]
+#[strum(serialize_all = "lowercase")]
+pub enum NativeType {
+    Ascii,
+    Boolean,
+    Blob,
+    Counter,
+    Date,
+    Decimal,
+    Double,
+    Duration,
+    Float,
+    Int,
+    BigInt,
+    Text,
+    Timestamp,
+    Inet,
+    SmallInt,
+    TinyInt,
+    Time,
+    Timeuuid,
+    Uuid,
+    Varint,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum CollectionType {
+    List(Box<CqlType>),
+    Map(Box<CqlType>, Box<CqlType>),
+    Set(Box<CqlType>),
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -58,6 +112,22 @@ pub enum Strategy {
         name: String,
         data: HashMap<String, String>,
     },
+}
+
+#[derive(Clone, Debug)]
+struct InvalidCqlType(String);
+
+impl fmt::Display for InvalidCqlType {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        write!(f, "{:?}", self)
+    }
+}
+
+impl From<InvalidCqlType> for QueryError {
+    fn from(e: InvalidCqlType) -> Self {
+        // FIXME: The correct error type is QueryError:ProtocolError but at the moment it accepts only &'static str
+        QueryError::InvalidMessage(format!("type {} is not implemented", e.0))
+    }
 }
 
 impl MetadataReader {
@@ -289,6 +359,7 @@ async fn query_keyspaces(conn: &Connection) -> Result<HashMap<String, Keyspace>,
             ))?;
 
     let mut result = HashMap::with_capacity(rows.len());
+    let mut all_tables = query_tables(conn).await?;
 
     for row in rows.into_typed::<(String, HashMap<String, String>)>() {
         let (keyspace_name, strategy_map) = row.map_err(|_| {
@@ -296,11 +367,143 @@ async fn query_keyspaces(conn: &Connection) -> Result<HashMap<String, Keyspace>,
         })?;
 
         let strategy: Strategy = strategy_from_string_map(strategy_map)?;
+        let tables = all_tables.remove(&keyspace_name).unwrap_or_default();
 
-        result.insert(keyspace_name, Keyspace { strategy });
+        result.insert(keyspace_name, Keyspace { strategy, tables });
     }
 
     Ok(result)
+}
+
+async fn query_tables(
+    conn: &Connection,
+) -> Result<HashMap<String, HashMap<String, Table>>, QueryError> {
+    let mut tables_query = Query::new("select keyspace_name, table_name from system_schema.tables");
+    tables_query.set_page_size(1024);
+
+    let rows = conn
+        .query_all(&tables_query, &[])
+        .await?
+        .rows
+        .ok_or(QueryError::ProtocolError(
+            "system_schema.tables query response was not Rows",
+        ))?;
+
+    let mut result = HashMap::with_capacity(rows.len());
+    let mut columns = query_columns(conn).await?;
+
+    for row in rows.into_typed::<(String, String)>() {
+        let (keyspace_name, table_name) = row.map_err(|_| {
+            QueryError::ProtocolError("system_schema.tables has invalid column type")
+        })?;
+
+        let keyspace_and_table_name = (keyspace_name, table_name);
+
+        let columns = columns.remove(&keyspace_and_table_name).unwrap_or_default();
+
+        result
+            .entry(keyspace_and_table_name.0)
+            .or_insert_with(HashMap::new)
+            .insert(keyspace_and_table_name.1, Table { columns });
+    }
+
+    Ok(result)
+}
+
+async fn query_columns(
+    conn: &Connection,
+) -> Result<HashMap<(String, String), HashMap<String, Column>>, QueryError> {
+    // Upon migration from thrift to CQL, Cassandra internally creates a surrogate column "value" of
+    // type EmptyType for dense tables. This resolves into this CQL type name.
+    // This column shouldn't be exposed to the user but is currently exposed in system tables.
+    const THRIFT_EMPTY_TYPE: &str = "empty";
+
+    let mut columns_query = Query::new(
+        "select keyspace_name, table_name, column_name, type from system_schema.columns",
+    );
+    columns_query.set_page_size(1024);
+
+    let rows = conn
+        .query_all(&columns_query, &[])
+        .await?
+        .rows
+        .ok_or(QueryError::ProtocolError(
+            "system_schema.columns query response was not Rows",
+        ))?;
+
+    let mut result = HashMap::with_capacity(rows.len());
+
+    for row in rows.into_typed::<(String, String, String, String)>() {
+        let (keyspace_name, table_name, column_name, type_) = row.map_err(|_| {
+            QueryError::ProtocolError("system_schema.columns has invalid column type")
+        })?;
+
+        if type_ == THRIFT_EMPTY_TYPE {
+            continue;
+        }
+
+        let cql_type = map_string_to_cql_type(&type_)?;
+        result
+            .entry((keyspace_name, table_name))
+            .or_insert_with(HashMap::new)
+            .insert(column_name, Column { type_: cql_type });
+    }
+
+    Ok(result)
+}
+
+fn map_string_to_cql_type(type_: &str) -> Result<CqlType, InvalidCqlType> {
+    use CollectionType::*;
+
+    let frozen = type_.starts_with("frozen<");
+
+    let type_ = if frozen {
+        let langle_position = type_.find('<').unwrap();
+        &type_[langle_position + 1..type_.len() - 1]
+    } else {
+        type_
+    };
+
+    if type_.ends_with('>') && type_.contains('<') {
+        let langle_position = type_.find('<').unwrap();
+        let inner_type = &type_[langle_position + 1..type_.len() - 1];
+        let outer_type = &type_[..langle_position];
+        let type_ = match outer_type {
+            "map" | "tuple" => {
+                let types = inner_type.split(", ").collect::<Vec<_>>();
+                if outer_type == "map" {
+                    if types.len() != 2 {
+                        return Err(InvalidCqlType(type_.to_string()));
+                    }
+                    Map(
+                        Box::new(map_string_to_cql_type(types[0])?),
+                        Box::new(map_string_to_cql_type(types[1])?),
+                    )
+                } else {
+                    return Ok(CqlType::Tuple(
+                        types
+                            .iter()
+                            .map(|type_| map_string_to_cql_type(type_))
+                            .collect::<Result<Vec<_>, _>>()?,
+                    ));
+                }
+            }
+            "set" => Set(Box::new(map_string_to_cql_type(inner_type)?)),
+            "list" => List(Box::new(map_string_to_cql_type(inner_type)?)),
+            _ => {
+                return Err(InvalidCqlType(type_.to_string()));
+            }
+        };
+        return Ok(CqlType::Collection { frozen, type_ });
+    }
+
+    Ok(match NativeType::from_str(type_) {
+        Ok(type_) => CqlType::Native(type_),
+        _ => CqlType::UserDefinedType {
+            frozen,
+            name: type_.to_string(),
+        },
+    })
 }
 
 fn strategy_from_string_map(

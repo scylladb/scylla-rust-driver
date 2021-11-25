@@ -8,9 +8,11 @@ use crate::statement::Consistency;
 use crate::tracing::TracingInfo;
 use crate::transport::connection::{BatchResult, QueryResult};
 use crate::transport::errors::{BadKeyspaceName, BadQuery, DbError, QueryError};
+use crate::transport::topology::{CollectionType, CqlType, NativeType};
 use crate::{IntoTypedRows, Session, SessionBuilder};
 use bytes::Bytes;
 use futures::StreamExt;
+use itertools::Itertools;
 use uuid::Uuid;
 
 #[tokio::test]
@@ -1072,4 +1074,164 @@ async fn test_prepared_config() {
 
     assert_eq!(prepared_statement.get_is_idempotent(), true);
     assert_eq!(prepared_statement.get_page_size(), Some(42));
+}
+
+#[tokio::test]
+async fn test_schema_types_in_metadata() {
+    let uri = std::env::var("SCYLLA_URI").unwrap_or_else(|_| "127.0.0.1:9042".to_string());
+    let session = SessionBuilder::new().known_node(uri).build().await.unwrap();
+
+    session
+        .query("DROP KEYSPACE IF EXISTS test_metadata_ks", &[])
+        .await
+        .unwrap();
+
+    session
+        .query("CREATE KEYSPACE test_metadata_ks WITH REPLICATION = {'class' : 'SimpleStrategy', 'replication_factor' : 1}", &[])
+        .await
+        .unwrap();
+
+    session.query("USE test_metadata_ks", &[]).await.unwrap();
+
+    session
+        .query(
+            "CREATE TYPE IF NOT EXISTS type_a (
+                    a map<frozen<list<int>>, text>,
+                    b frozen<map<frozen<list<int>>, frozen<set<text>>>>
+                   )",
+            &[],
+        )
+        .await
+        .unwrap();
+
+    session
+        .query("CREATE TYPE IF NOT EXISTS type_b (a int, b text)", &[])
+        .await
+        .unwrap();
+
+    session
+        .query(
+            "CREATE TYPE IF NOT EXISTS type_c (a map<frozen<set<text>>, frozen<type_b>>)",
+            &[],
+        )
+        .await
+        .unwrap();
+
+    session
+        .query(
+            "CREATE TABLE IF NOT EXISTS table_a (
+                    a frozen<type_a> PRIMARY KEY,
+                    b type_b,
+                    c frozen<type_c>,
+                    d map<text, frozen<list<int>>>,
+                    e tuple<int, text>
+                  )",
+            &[],
+        )
+        .await
+        .unwrap();
+
+    session
+        .query(
+            "CREATE TABLE IF NOT EXISTS table_b (
+                        a text PRIMARY KEY,
+                        b frozen<map<int, int>>
+                     )",
+            &[],
+        )
+        .await
+        .unwrap();
+
+    session.await_schema_agreement().await.unwrap();
+    session.refresh_metadata().await.unwrap();
+
+    let cluster_data = session.get_cluster_data();
+    let tables = &cluster_data.get_keyspace_info()["test_metadata_ks"].tables;
+
+    assert_eq!(
+        tables.keys().sorted().collect::<Vec<_>>(),
+        vec!["table_a", "table_b"]
+    );
+
+    let table_a_columns = &tables["table_a"].columns;
+
+    assert_eq!(
+        table_a_columns.keys().sorted().collect::<Vec<_>>(),
+        vec!["a", "b", "c", "d", "e"]
+    );
+
+    let a = &table_a_columns["a"];
+
+    assert_eq!(
+        a.type_,
+        CqlType::UserDefinedType {
+            name: "type_a".to_string(),
+            frozen: true
+        }
+    );
+
+    let b = &table_a_columns["b"];
+
+    assert_eq!(
+        b.type_,
+        CqlType::UserDefinedType {
+            name: "type_b".to_string(),
+            frozen: false,
+        }
+    );
+
+    let c = &table_a_columns["c"];
+
+    assert_eq!(
+        c.type_,
+        CqlType::UserDefinedType {
+            name: "type_c".to_string(),
+            frozen: true
+        }
+    );
+
+    let d = &table_a_columns["d"];
+
+    assert_eq!(
+        d.type_,
+        CqlType::Collection {
+            type_: CollectionType::Map(
+                Box::new(CqlType::Native(NativeType::Text)),
+                Box::new(CqlType::Collection {
+                    type_: CollectionType::List(Box::new(CqlType::Native(NativeType::Int))),
+                    frozen: true
+                })
+            ),
+            frozen: false
+        }
+    );
+
+    let e = &table_a_columns["e"];
+
+    assert_eq!(
+        e.type_,
+        CqlType::Tuple(vec![
+            CqlType::Native(NativeType::Int),
+            CqlType::Native(NativeType::Text)
+        ])
+    );
+
+    let table_b_columns = &tables["table_b"].columns;
+
+    let a = &table_b_columns["a"];
+
+    assert_eq!(a.type_, CqlType::Native(NativeType::Text));
+
+    let b = &table_b_columns["b"];
+
+    assert_eq!(
+        b.type_,
+        CqlType::Collection {
+            type_: CollectionType::Map(
+                Box::new(CqlType::Native(NativeType::Int),),
+                Box::new(CqlType::Native(NativeType::Int),)
+            ),
+            frozen: true
+        }
+    );
 }

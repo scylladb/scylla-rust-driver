@@ -281,6 +281,13 @@ impl ClusterData {
             datacenters,
         }
     }
+
+    /// Access keyspaces details collected by the driver
+    /// Driver collects various schema details like tables, partitioners, columns, types.
+    /// They can be read using this method
+    pub fn get_keyspace_info(&self) -> &HashMap<String, Keyspace> {
+        &self.keyspaces
+    }
 }
 
 impl ClusterWorker {
