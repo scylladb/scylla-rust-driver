@@ -46,7 +46,7 @@ session
 # }
 ```
 
-The first argument is the keyspace name.  
+The first argument is the keyspace name.\
 The second argument states whether this name is case sensitive.
 
 It is also possible to send raw use keyspace query using `Session::query` instead of `Session::use_keyspace` such as:
@@ -68,8 +68,8 @@ This could end up with half of connections using one keyspace and the other half
 
 ### Case sensitivity
 
-In CQL a keyspace name can be case insensitive (without `"`) or case sensitive (with `"`).  
-If the second argument to `use_keyspace` is set to `true` this keyspace name will be wrapped in `"`.  
+In CQL a keyspace name can be case insensitive (without `"`) or case sensitive (with `"`).\
+If the second argument to `use_keyspace` is set to `true` this keyspace name will be wrapped in `"`.\
 It is best to avoid the problem altogether and just not create two keyspaces with the same name but different cases.
 
 Let's see what happens when there are two keyspaces with the same name but different cases: `my_keyspace` and `MY_KEYSPACE`:

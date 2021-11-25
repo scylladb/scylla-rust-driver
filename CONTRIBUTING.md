@@ -45,8 +45,8 @@ SCYLLA_URI="$(docker inspect --format='{{ .NetworkSettings.IPAddress }}' scylla-
 
 ## Contributing to the book
 
-The documentation book is written using [mdbook](https://github.com/rust-lang/mdBook)  
-Book source is in `docs/source`  
+The documentation book is written using [mdbook](https://github.com/rust-lang/mdBook)\
+Book source is in `docs/source`\
 This source has to be compatible with `Sphinx` so it might sometimes contain chunks like:
 ````
 ```eval_rst

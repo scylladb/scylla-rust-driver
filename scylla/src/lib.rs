@@ -2,7 +2,7 @@
 //! Although optimized for Scylla, the driver is also compatible with [Apache Cassandra®](https://cassandra.apache.org/).
 //!
 //! # Documentation book
-//! The best source to learn about this driver is the [documentation book](https://cvybhu.github.io/scyllabook/index.html).  
+//! The best source to learn about this driver is the [documentation book](https://cvybhu.github.io/scyllabook/index.html).\
 //! This page contains mainly API documentation
 //!
 //! # Other documentation
@@ -13,7 +13,7 @@
 //!
 //! # Driver overview
 //! ### Connecting
-//! All driver activity revolves around the [Session](crate::Session)  
+//! All driver activity revolves around the [Session](crate::Session)\
 //! `Session` is created by specifying a few known nodes and connecting to them:
 //!
 //! ```rust,no_run
@@ -31,11 +31,11 @@
 //!    Ok(())
 //! }
 //! ```
-//! `Session` is usually created using the [SessionBuilder](crate::SessionBuilder).  
+//! `Session` is usually created using the [SessionBuilder](crate::SessionBuilder).\
 //! All configuration options for a `Session` can be specified while building.
 //!
 //! ### Making queries
-//! After succesfully connecting to the cluster we can make queries.  
+//! After succesfully connecting to the cluster we can make queries.\
 //! The driver supports multiple query types:
 //! * [Simple](crate::Session::query)
 //! * [Simple paged](crate::Session::query_iter)
@@ -82,7 +82,7 @@
 //!
 //! if let Some(rows) = rows_opt {
 //!     for row in rows.into_typed::<(i32, String)>() {
-//!         // Parse row as int and text   
+//!         // Parse row as int and text \
 //!         let (int_val, text_val): (i32, String) = row?;
 //!     }
 //! }

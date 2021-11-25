@@ -1,6 +1,6 @@
 # Token aware Round robin
 
-This policy will try to calculate a token to find replica nodes in which queried data is stored.  
+This policy will try to calculate a token to find replica nodes in which queried data is stored.\
 After finding the replicas it performs a round robin on them.
 
 ### Example

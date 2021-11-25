@@ -1,5 +1,5 @@
 # Counter
-`Counter` is represented as `struct Counter(pub i64)`  
+`Counter` is represented as `struct Counter(pub i64)`\
 `Counter` can't be inserted, it can only be read or updated.
 
 ```rust

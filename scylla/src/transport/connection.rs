@@ -79,7 +79,7 @@ pub struct QueryResponse {
     pub warnings: Vec<String>,
 }
 
-/// Result of a single query  
+/// Result of a single query\
 /// Contains all rows returned by the database and some more information
 #[derive(Default, Debug)]
 pub struct QueryResult {
@@ -104,9 +104,9 @@ impl QueryResult {
             .find(|(_id, spec)| spec.name == name)
     }
 
-    /// This function is used to merge results of multiple paged queries into one.  
-    /// other is the result of a new paged query.  
-    /// It is merged with current result kept in self.  
+    /// This function is used to merge results of multiple paged queries into one.\
+    /// other is the result of a new paged query.\
+    /// It is merged with current result kept in self.\
     pub(crate) fn merge_with_next_page_res(&mut self, other: QueryResult) {
         if let Some(other_rows) = other.rows {
             match &mut self.rows {

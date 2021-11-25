@@ -1,6 +1,6 @@
 # Round robin
-The simplest load balancing policy available.  
-Takes all nodes in the cluster and uses them one after another.  
+The simplest load balancing policy available.\
+Takes all nodes in the cluster and uses them one after another.\
 
 For example if there are nodes `A`, `B`, `C` in the cluster, 
 this policy will use `A`, `B`, `C`, `A`, `B`, ...

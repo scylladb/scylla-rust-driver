@@ -1,7 +1,7 @@
 # Compression
 
-By default the driver does not use any compression on connections.  
-It's possible to specify a preferred compression algorithm.   
+By default the driver does not use any compression on connections.\
+It's possible to specify a preferred compression algorithm. \
 The driver will try using it, but if the database doesn't support it, it will fall back to no compression.
 
 Available compression algorithms:

@@ -1,7 +1,7 @@
 # Date
 
 For most use cases `Date` can be represented as 
-[`chrono::NaiveDate`](https://docs.rs/chrono/0.4.19/chrono/naive/struct.NaiveDate.html).  
+[`chrono::NaiveDate`](https://docs.rs/chrono/0.4.19/chrono/naive/struct.NaiveDate.html).\
 `NaiveDate` supports dates from -262145-1-1 to 262143-12-31.
 
 For dates outside of this range you can use the raw `u32` representation.

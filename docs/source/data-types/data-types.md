@@ -5,7 +5,7 @@ to achieve seamless sending and receiving of CQL values.
 
 See the following chapters for examples on how to send and receive each data type.
 
-See [Query values](../queries/values.md) for more information about sending values in queries.  
+See [Query values](../queries/values.md) for more information about sending values in queries.\
 See [Query result](../queries/result.md) for more information about reading values from queries
 
 Database types and their Rust equivalents:

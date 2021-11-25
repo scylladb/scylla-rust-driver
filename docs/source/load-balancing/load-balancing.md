@@ -1,6 +1,6 @@
 # Load balancing
 
-There are multiple load balancing strategies that the driver can use.  
+There are multiple load balancing strategies that the driver can use.\
 Load balancing can be configured for the whole `Session` during creation.
 
 Basic load balancing strategies:
@@ -9,10 +9,10 @@ Basic load balancing strategies:
 
 Each of these basic load balancing strategies can be wrapped in `TokenAwarePolicy` to enable token awareness.
 
-> **Note**  
+> **Note**\
 > Only [prepared queries](../queries/prepared.md) use token aware load balancing
 
-All queries are shard aware, there is no way to turn off shard awareness.  
+All queries are shard aware, there is no way to turn off shard awareness.\
 If a token is available the query is sent to the correct shard, otherwise to a random one.
 
 So, the available load balancing policies are:

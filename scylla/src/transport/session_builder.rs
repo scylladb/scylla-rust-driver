@@ -201,8 +201,8 @@ impl SessionBuilder {
         self
     }
 
-    /// Set keyspace to be used on all connections.  
-    /// Each connection will send `"USE <keyspace_name>"` before sending any requests.  
+    /// Set keyspace to be used on all connections.\
+    /// Each connection will send `"USE <keyspace_name>"` before sending any requests.\
     /// This can be later changed with [`Session::use_keyspace`]
     ///
     /// # Example
@@ -224,8 +224,8 @@ impl SessionBuilder {
         self
     }
 
-    /// Set username and password for authentication.  
-    /// If the database server will require authentication  
+    /// Set username and password for authentication.\
+    /// If the database server will require authentication\
     ///
     /// # Example
     /// ```

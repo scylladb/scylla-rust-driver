@@ -1,4 +1,4 @@
-//! `Session` is the main object used in the driver.  
+//! `Session` is the main object used in the driver.\
 //! It manages all connections to the cluster and allows to perform queries.
 
 use bytes::Bytes;
@@ -253,7 +253,7 @@ impl IntoTypedRows for Vec<result::Row> {
     }
 }
 
-/// Iterator over rows parsed as the given type  
+/// Iterator over rows parsed as the given type\
 /// Returned by `rows.into_typed::<(...)>()`
 pub struct TypedRowIter<RowT: FromRow> {
     row_iter: std::vec::IntoIter<result::Row>,
@@ -338,7 +338,7 @@ impl Session {
         Ok(session)
     }
 
-    /// Sends a query to the database and receives a response.  
+    /// Sends a query to the database and receives a response.\
     /// Returns only a single page of results, to receive multiple pages use [query_iter](Session::query_iter)
     ///
     /// This is the easiest way to make a query, but performance is worse than that of prepared queries.
@@ -377,7 +377,7 @@ impl Session {
     ///
     /// if let Some(rows) = rows_opt {
     ///     for row in rows.into_typed::<(i32, String)>() {
-    ///         // Parse row as int and text   
+    ///         // Parse row as int and text \
     ///         let (int_val, text_val): (i32, String) = row?;
     ///     }
     /// }
@@ -447,10 +447,10 @@ impl Session {
         Ok(())
     }
 
-    /// Run a simple query with paging  
-    /// This method will query all pages of the result  
+    /// Run a simple query with paging\
+    /// This method will query all pages of the result\
     ///
-    /// Returns an async iterator (stream) over all received rows  
+    /// Returns an async iterator (stream) over all received rows\
     /// Page size can be specified in the [Query](crate::query::Query) passed to the function
     ///
     /// See [the book](https://cvybhu.github.io/scyllabook/queries/paged.html) for more information
@@ -511,7 +511,7 @@ impl Session {
     /// * Database doesn't need to parse the query
     /// * They are properly load balanced using token aware routing
     ///
-    /// > ***Warning***  
+    /// > ***Warning***\
     /// > For token/shard aware load balancing to work properly, all partition key values
     /// > must be sent as bound values
     /// > (see [performance section](https://cvybhu.github.io/scyllabook/queries/prepared.html#performance))
@@ -583,14 +583,14 @@ impl Session {
     }
 
     /// Execute a prepared query. Requires a [PreparedStatement](crate::prepared_statement::PreparedStatement)
-    /// generated using [`Session::prepare`](Session::prepare)  
+    /// generated using [`Session::prepare`](Session::prepare)\
     /// Returns only a single page of results, to receive multiple pages use [execute_iter](Session::execute_iter)
     ///
     /// Prepared queries are much faster than simple queries:
     /// * Database doesn't need to parse the query
     /// * They are properly load balanced using token aware routing
     ///
-    /// > ***Warning***  
+    /// > ***Warning***\
     /// > For token/shard aware load balancing to work properly, all partition key values
     /// > must be sent as bound values
     /// > (see [performance section](https://cvybhu.github.io/scyllabook/queries/prepared.html#performance))
@@ -667,10 +667,10 @@ impl Session {
         response.into_query_result()
     }
 
-    /// Run a prepared query with paging  
-    /// This method will query all pages of the result  
+    /// Run a prepared query with paging\
+    /// This method will query all pages of the result\
     ///
-    /// Returns an async iterator (stream) over all received rows  
+    /// Returns an async iterator (stream) over all received rows\
     /// Page size can be specified in the [PreparedStatement](crate::prepared_statement::PreparedStatement)
     /// passed to the function
     ///
@@ -737,8 +737,8 @@ impl Session {
         ))
     }
 
-    /// Perform a batch query  
-    /// Batch contains many `simple` or `prepared` queries which are executed at once  
+    /// Perform a batch query\
+    /// Batch contains many `simple` or `prepared` queries which are executed at once\
     /// Batch doesn't return any rows
     ///
     /// Batch values must contain values for each of the queries
@@ -793,13 +793,13 @@ impl Session {
         .await
     }
 
-    /// Sends `USE <keyspace_name>` request on all connections  
-    /// This allows to write `SELECT * FROM table` instead of `SELECT * FROM keyspace.table`  
+    /// Sends `USE <keyspace_name>` request on all connections\
+    /// This allows to write `SELECT * FROM table` instead of `SELECT * FROM keyspace.table`\
     ///
     /// Note that even failed `use_keyspace` can change currently used keyspace - the request is sent on all connections and
     /// can overwrite previously used keyspace.
     ///
-    /// Call only one `use_keyspace` at a time.  
+    /// Call only one `use_keyspace` at a time.\
     /// Trying to do two `use_keyspace` requests simultaneously with different names
     /// can end with some connections using one keyspace and the rest using the other.
     ///
@@ -844,7 +844,7 @@ impl Session {
         Ok(())
     }
 
-    /// Manually trigger a topology refresh  
+    /// Manually trigger a topology refresh\
     /// The driver will fetch current nodes in the cluster and update its topology information
     ///
     /// Normally this is not needed,
@@ -853,7 +853,7 @@ impl Session {
         self.cluster.refresh_topology().await
     }
 
-    /// Access metrics collected by the driver  
+    /// Access metrics collected by the driver\
     /// Driver collects various metrics like number of queries or query latencies.
     /// They can be read using this method
     pub fn get_metrics(&self) -> Arc<Metrics> {
@@ -869,7 +869,7 @@ impl Session {
             .await
     }
 
-    /// Queries tracing info with custom retry settings.  
+    /// Queries tracing info with custom retry settings.\
     /// Tracing info might not be available immediately on queried node -
     /// that's why the driver performs a few attempts with sleeps in between.
     /// [`GetTracingConfig`] allows to specify a custom querying strategy.

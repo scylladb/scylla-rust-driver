@@ -1,4 +1,4 @@
-//! Query retries configurations  
+//! Query retries configurations\
 //! To decide when to retry a query the `Session` can use any object which implements
 //! the `RetryPolicy` trait
 
@@ -9,8 +9,8 @@ use crate::transport::errors::{DbError, QueryError, WriteType};
 pub struct QueryInfo<'a> {
     /// The error with which the query failed
     pub error: &'a QueryError,
-    /// A query is idempotent if it can be applied multiple times without changing the result of the initial application  
-    /// If set to `true` we can be sure that it is idempotent  
+    /// A query is idempotent if it can be applied multiple times without changing the result of the initial application\
+    /// If set to `true` we can be sure that it is idempotent\
     /// If set to `false` it is unknown whether it is idempotent
     pub is_idempotent: bool,
     /// Consistency with which the query failed
@@ -83,7 +83,7 @@ impl RetrySession for FallthroughRetrySession {
     fn reset(&mut self) {}
 }
 
-/// Default retry policy - retries when there is a high chance that a retry might help.  
+/// Default retry policy - retries when there is a high chance that a retry might help.\
 /// Behaviour based on [DataStax Java Driver](https://docs.datastax.com/en/developer/java-driver/4.10/manual/core/retries/)
 pub struct DefaultRetryPolicy;
 
