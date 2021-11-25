@@ -28,5 +28,5 @@ session.query(my_query, (to_insert,)).await?;
 
 The rest of the API remains identical for LWT and non-LWT queries.
 
-See [Query API documentation](https://docs.rs/scylla/0.2.0/scylla/statement/query/struct.Query.html) for more options
+See [Query API documentation](https://docs.rs/scylla/latest/scylla/statement/query/struct.Query.html) for more options
 
