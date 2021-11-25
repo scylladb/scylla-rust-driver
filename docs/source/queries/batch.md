@@ -64,7 +64,7 @@ session.batch(&batch, ((), )).await?;
 # }
 ```
 
-See [Batch API documentation](https://docs.rs/scylla/0.3.1/scylla/statement/batch/struct.Batch.html)
+See [Batch API documentation](https://docs.rs/scylla/latest/scylla/statement/batch/struct.Batch.html)
 for more options
 
 ### Batch values
