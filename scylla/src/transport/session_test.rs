@@ -1237,6 +1237,129 @@ async fn test_schema_types_in_metadata() {
 }
 
 #[tokio::test]
+async fn test_user_defined_types_in_metadata() {
+    let uri = std::env::var("SCYLLA_URI").unwrap_or_else(|_| "127.0.0.1:9042".to_string());
+    let session = SessionBuilder::new().known_node(uri).build().await.unwrap();
+
+    session
+        .query("DROP KEYSPACE IF EXISTS test_metadata_ks", &[])
+        .await
+        .unwrap();
+
+    session
+        .query("CREATE KEYSPACE test_metadata_ks WITH REPLICATION = {'class' : 'SimpleStrategy', 'replication_factor' : 1}", &[])
+        .await
+        .unwrap();
+
+    session.query("USE test_metadata_ks", &[]).await.unwrap();
+
+    session
+        .query(
+            "CREATE TYPE IF NOT EXISTS type_a (
+                    a map<frozen<list<int>>, text>,
+                    b frozen<map<frozen<list<int>>, frozen<set<text>>>>
+                   )",
+            &[],
+        )
+        .await
+        .unwrap();
+
+    session
+        .query("CREATE TYPE IF NOT EXISTS type_b (a int, b text)", &[])
+        .await
+        .unwrap();
+
+    session
+        .query(
+            "CREATE TYPE IF NOT EXISTS type_c (a map<frozen<set<text>>, frozen<type_b>>)",
+            &[],
+        )
+        .await
+        .unwrap();
+
+    session.await_schema_agreement().await.unwrap();
+    session.refresh_metadata().await.unwrap();
+
+    let cluster_data = session.get_cluster_data();
+    let user_defined_types =
+        &cluster_data.get_keyspace_info()["test_metadata_ks"].user_defined_types;
+
+    assert_eq!(
+        user_defined_types.keys().sorted().collect::<Vec<_>>(),
+        vec!["type_a", "type_b", "type_c"]
+    );
+
+    let type_a = &user_defined_types["type_a"];
+
+    assert_eq!(
+        type_a,
+        &vec![
+            (
+                "a".to_string(),
+                CqlType::Collection {
+                    frozen: false,
+                    type_: CollectionType::Map(
+                        Box::new(CqlType::Collection {
+                            frozen: true,
+                            type_: CollectionType::List(Box::new(CqlType::Native(NativeType::Int)))
+                        }),
+                        Box::new(CqlType::Native(NativeType::Text))
+                    )
+                }
+            ),
+            (
+                "b".to_string(),
+                CqlType::Collection {
+                    frozen: true,
+                    type_: CollectionType::Map(
+                        Box::new(CqlType::Collection {
+                            frozen: true,
+                            type_: CollectionType::List(Box::new(CqlType::Native(NativeType::Int)))
+                        }),
+                        Box::new(CqlType::Collection {
+                            frozen: true,
+                            type_: CollectionType::Set(Box::new(CqlType::Native(NativeType::Text)))
+                        })
+                    )
+                }
+            )
+        ]
+    );
+
+    let type_b = &user_defined_types["type_b"];
+
+    assert_eq!(
+        type_b,
+        &vec![
+            ("a".to_string(), CqlType::Native(NativeType::Int)),
+            ("b".to_string(), CqlType::Native(NativeType::Text))
+        ]
+    );
+
+    let type_c = &user_defined_types["type_c"];
+
+    assert_eq!(
+        type_c,
+        &vec![(
+            "a".to_string(),
+            CqlType::Collection {
+                frozen: false,
+                type_: CollectionType::Map(
+                    Box::new(CqlType::Collection {
+                        frozen: true,
+                        type_: CollectionType::Set(Box::new(CqlType::Native(NativeType::Text)))
+                    }),
+                    Box::new(CqlType::UserDefinedType {
+                        frozen: true,
+                        name: "type_b".to_string()
+                    })
+                )
+            }
+        )]
+    );
+}
+
+#[tokio::test]
 async fn test_column_kinds_in_metadata() {
     let uri = std::env::var("SCYLLA_URI").unwrap_or_else(|_| "127.0.0.1:9042".to_string());
     let session = SessionBuilder::new().known_node(uri).build().await.unwrap();

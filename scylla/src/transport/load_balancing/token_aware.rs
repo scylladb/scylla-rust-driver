@@ -288,6 +288,7 @@ mod tests {
                         replication_factor: 2,
                     },
                     tables: HashMap::new(),
+                    user_defined_types: HashMap::new(),
                 },
             ),
             (
@@ -297,6 +298,7 @@ mod tests {
                         replication_factor: 3,
                     },
                     tables: HashMap::new(),
+                    user_defined_types: HashMap::new(),
                 },
             ),
         ]
@@ -387,6 +389,7 @@ mod tests {
                         .collect::<HashMap<_, _>>(),
                 },
                 tables: HashMap::new(),
+                user_defined_types: HashMap::new(),
             },
         )]
         .iter()

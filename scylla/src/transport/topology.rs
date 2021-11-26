@@ -46,6 +46,7 @@ pub struct Peer {
 pub struct Keyspace {
     pub strategy: Strategy,
     pub tables: HashMap<String, Table>,
+    pub user_defined_types: HashMap<String, Vec<(String, CqlType)>>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -374,6 +375,7 @@ async fn query_keyspaces(conn: &Connection) -> Result<HashMap<String, Keyspace>,
 
     let mut result = HashMap::with_capacity(rows.len());
     let mut all_tables = query_tables(conn).await?;
+    let mut all_user_defined_types = query_user_defined_types(conn).await?;
 
     for row in rows.into_typed::<(String, HashMap<String, String>)>() {
         let (keyspace_name, strategy_map) = row.map_err(|_| {
@@ -382,8 +384,56 @@ async fn query_keyspaces(conn: &Connection) -> Result<HashMap<String, Keyspace>,
 
         let strategy: Strategy = strategy_from_string_map(strategy_map)?;
         let tables = all_tables.remove(&keyspace_name).unwrap_or_default();
+        let user_defined_types = all_user_defined_types
+            .remove(&keyspace_name)
+            .unwrap_or_default();
 
-        result.insert(keyspace_name, Keyspace { strategy, tables });
+        result.insert(
+            keyspace_name,
+            Keyspace {
+                strategy,
+                tables,
+                user_defined_types,
+            },
+        );
+    }
+
+    Ok(result)
+}
+
+async fn query_user_defined_types(
+    conn: &Connection,
+) -> Result<HashMap<String, HashMap<String, Vec<(String, CqlType)>>>, QueryError> {
+    let mut user_defined_types_query = Query::new(
+        "select keyspace_name, type_name, field_names, field_types from system_schema.types",
+    );
+    user_defined_types_query.set_page_size(1024);
+
+    let rows = conn
+        .query_all(&user_defined_types_query, &[])
+        .await?
+        .rows
+        .ok_or(QueryError::ProtocolError(
+            "system_schema.types query response was not Rows",
+        ))?;
+
+    let mut result = HashMap::with_capacity(rows.len());
+
+    for row in rows.into_typed::<(String, String, Vec<String>, Vec<String>)>() {
+        let (keyspace_name, type_name, field_names, field_types) = row.map_err(|_| {
+            QueryError::ProtocolError("system_schema.types has invalid column type")
+        })?;
+
+        let mut fields = Vec::with_capacity(field_names.len());
+
+        for (field_name, field_type) in field_names.into_iter().zip(field_types.iter()) {
+            fields.push((field_name, map_string_to_cql_type(field_type)?));
+        }
+
+        result
+            .entry(keyspace_name)
+            .or_insert_with(HashMap::new)
+            .insert(type_name, fields);
     }
 
     Ok(result)
