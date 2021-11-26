@@ -1,211 +1,227 @@
-use crate::{frame::response::result::CqlValue, IntoTypedRows, SessionBuilder};
-use std::{collections::HashMap, env};
+use crate::cql_to_rust::FromCqlVal;
+use crate::frame::value::Value;
+use crate::{frame::response::result::CqlValue, IntoTypedRows, Session, SessionBuilder};
+use std::{
+    collections::{BTreeMap, BTreeSet, HashMap, HashSet},
+    env,
+};
 
-#[tokio::test]
-async fn test_cql_collections() {
-    // Create connection
+async fn connect() -> Session {
     let uri = env::var("SCYLLA_URI").unwrap_or_else(|_| "127.0.0.1:9042".to_string());
     let session = SessionBuilder::new().known_node(uri).build().await.unwrap();
-
     session.query("CREATE KEYSPACE IF NOT EXISTS ks WITH REPLICATION = {'class' : 'SimpleStrategy', 'replication_factor' : 1}", &[]).await.unwrap();
 
-    // HashMap test
+    session
+}
 
+async fn create_table(session: &Session, table_name: &str, value_type: &str) {
     session
         .query(
-            "CREATE TABLE IF NOT EXISTS ks.teams (id int, team map<int, text>, primary key (id))",
-            &[],
+            format!(
+                "CREATE TABLE IF NOT EXISTS ks.{} (p int PRIMARY KEY, val {})",
+                table_name, value_type
+            ),
+            (),
+        )
+        .await
+        .unwrap();
+}
+
+async fn insert_and_select<InsertT, SelectT>(
+    session: &Session,
+    table_name: &str,
+    to_insert: &InsertT,
+    expected: &SelectT,
+) where
+    InsertT: Value,
+    SelectT: FromCqlVal<Option<CqlValue>> + PartialEq + std::fmt::Debug,
+{
+    session
+        .query(
+            format!("INSERT INTO ks.{} (p, val) VALUES (0, ?)", table_name),
+            (&to_insert,),
         )
         .await
         .unwrap();
 
-    let team1: HashMap<i32, String> = vec![(1, "Ginny".to_owned()), (2, "Cho".to_owned())]
-        .into_iter()
-        .collect();
-    // Test CqlValue serialization too
-    let team2: CqlValue = CqlValue::Map(vec![
-        (CqlValue::Int(1), CqlValue::Text("John".into())),
-        (CqlValue::Int(2), CqlValue::Text("Jessica".into())),
+    let selected_value: SelectT = session
+        .query(format!("SELECT val FROM ks.{} WHERE p = 0", table_name), ())
+        .await
+        .unwrap()
+        .rows
+        .unwrap()
+        .into_typed::<(SelectT,)>()
+        .next()
+        .unwrap()
+        .unwrap()
+        .0;
+
+    assert_eq!(&selected_value, expected);
+}
+
+#[tokio::test]
+async fn test_cql_list() {
+    let session: Session = connect().await;
+
+    let table_name: &str = "test_cql_list_tab";
+    create_table(&session, table_name, "list<int>").await;
+
+    // Vec
+    let list1: Vec<i32> = vec![-1, 0, 1, 1, 2];
+    let list2: Vec<i32> = vec![100, 212, 2323];
+    let list_empty: Vec<i32> = vec![];
+    let list_empty_selected: Option<Vec<i32>> = None;
+    insert_and_select(&session, table_name, &list1, &list1).await;
+    insert_and_select(&session, table_name, &list2, &list2).await;
+    insert_and_select(&session, table_name, &list_empty, &list_empty_selected).await;
+
+    // CqlValue
+    let list_cql_value: CqlValue =
+        CqlValue::List(vec![CqlValue::Int(-1), CqlValue::Int(1), CqlValue::Int(0)]);
+    let list_cql_value_empty: CqlValue = CqlValue::List(Vec::new());
+    let list_cql_value_empty_selected: Option<CqlValue> = None;
+
+    insert_and_select(&session, table_name, &list_cql_value, &list_cql_value).await;
+    insert_and_select(
+        &session,
+        table_name,
+        &list_cql_value_empty,
+        &list_cql_value_empty_selected,
+    )
+    .await;
+}
+
+#[tokio::test]
+async fn test_cql_set() {
+    let session: Session = connect().await;
+
+    let table_name: &str = "test_cql_set_tab";
+    create_table(&session, table_name, "set<int>").await;
+
+    // Vec
+    let set_vec_sorted: Vec<i32> = vec![-1, 0, 1, 2];
+    let set_vec_unordered: Vec<i32> = vec![1, -1, 1, 2, 0];
+    let set_vec_empty: Vec<i32> = vec![];
+    let set_vec_empty_selected: Option<Vec<i32>> = None;
+    insert_and_select(&session, table_name, &set_vec_sorted, &set_vec_sorted).await;
+    insert_and_select(&session, table_name, &set_vec_unordered, &set_vec_sorted).await;
+    insert_and_select(
+        &session,
+        table_name,
+        &set_vec_empty,
+        &set_vec_empty_selected,
+    )
+    .await;
+
+    // HashSet
+    let set_hashset: HashSet<i32> = vec![-1, 1, -2].into_iter().collect();
+    let set_hashset_empty: HashSet<i32> = HashSet::new();
+    let set_hashset_empty_selected: Option<HashSet<i32>> = None;
+    insert_and_select(&session, table_name, &set_hashset, &set_hashset).await;
+    insert_and_select(
+        &session,
+        table_name,
+        &set_hashset_empty,
+        &set_hashset_empty_selected,
+    )
+    .await;
+
+    // BTreeSet
+    let set_btreeset: BTreeSet<i32> = vec![0, -2, -1].into_iter().collect();
+    let set_btreeset_empty: BTreeSet<i32> = BTreeSet::new();
+    let set_btreeset_empty_selected: Option<BTreeSet<i32>> = None;
+    insert_and_select(&session, table_name, &set_btreeset, &set_btreeset).await;
+    insert_and_select(
+        &session,
+        table_name,
+        &set_btreeset_empty,
+        &set_btreeset_empty_selected,
+    )
+    .await;
+
+    // CqlValue
+    let set_cql_value: CqlValue =
+        CqlValue::Set(vec![CqlValue::Int(-1), CqlValue::Int(1), CqlValue::Int(2)]);
+    let set_cql_value_empty: CqlValue = CqlValue::Set(Vec::new());
+    let set_cql_value_empty_selected: Option<CqlValue> = None;
+    insert_and_select(&session, table_name, &set_cql_value, &set_cql_value).await;
+    insert_and_select(
+        &session,
+        table_name,
+        &set_cql_value_empty,
+        &set_cql_value_empty_selected,
+    )
+    .await;
+}
+
+#[tokio::test]
+async fn test_cql_map() {
+    let session: Session = connect().await;
+
+    let table_name: &str = "test_cql_map_tab";
+    create_table(&session, table_name, "map<int, int>").await;
+
+    // HashMap
+    let map_hashmap: HashMap<i32, i32> = vec![(-1, 0), (0, 1), (2, 1)].into_iter().collect();
+    let map_hashmap_empty: HashMap<i32, i32> = HashMap::new();
+    let map_hashmap_empty_selected: Option<HashMap<i32, i32>> = None;
+    insert_and_select(&session, table_name, &map_hashmap, &map_hashmap).await;
+    insert_and_select(
+        &session,
+        table_name,
+        &map_hashmap_empty,
+        &map_hashmap_empty_selected,
+    )
+    .await;
+
+    // BTreeMap
+    let map_btreemap: BTreeMap<i32, i32> = vec![(10, 20), (30, 10), (4, 5)].into_iter().collect();
+    let map_btreemap_empty: BTreeMap<i32, i32> = BTreeMap::new();
+    let map_btreemap_empty_selected: Option<BTreeMap<i32, i32>> = None;
+    insert_and_select(&session, table_name, &map_btreemap, &map_btreemap).await;
+    insert_and_select(
+        &session,
+        table_name,
+        &map_btreemap_empty,
+        &map_btreemap_empty_selected,
+    )
+    .await;
+
+    // CqlValue
+    let map_cql_value: CqlValue = CqlValue::Map(vec![
+        (CqlValue::Int(2), CqlValue::Int(4)),
+        (CqlValue::Int(8), CqlValue::Int(16)),
     ]);
+    let map_cql_value_empty: CqlValue = CqlValue::Map(Vec::new());
+    let map_cql_value_empty_selected: Option<CqlValue> = None;
+    insert_and_select(&session, table_name, &map_cql_value, &map_cql_value).await;
+    insert_and_select(
+        &session,
+        table_name,
+        &map_cql_value_empty,
+        &map_cql_value_empty_selected,
+    )
+    .await;
+}
 
-    session
-        .query("INSERT INTO ks.teams (id, team) VALUES (1, ?)", (team1,))
-        .await
-        .unwrap();
-    session
-        .query("INSERT INTO ks.teams (id, team) VALUES (2, ?)", (team2,))
-        .await
-        .unwrap();
+#[tokio::test]
+async fn test_cql_tuple() {
+    let session: Session = connect().await;
 
-    let mut received_kv_pairs: Vec<Vec<(i32, String)>> = session
-        .query("SELECT team FROM ks.teams", &[])
-        .await
-        .unwrap()
-        .rows
-        .unwrap()
-        .into_typed::<(HashMap<i32, String>,)>()
-        .map(Result::unwrap)
-        .map(|(hashmap,)| {
-            let mut v: Vec<_> = hashmap.into_iter().collect();
-            v.sort_unstable();
-            v
-        })
-        .collect();
-    received_kv_pairs.sort_unstable();
+    let table_name: &str = "test_cql_tuple_tab";
+    create_table(&session, table_name, "tuple<int, int, text>").await;
 
-    assert_eq!(
-        received_kv_pairs,
-        vec![
-            vec![(1, "Ginny".into()), (2, "Cho".into())],
-            vec![(1, "John".into()), (2, "Jessica".into())]
-        ]
-    );
+    // Rust tuple ()
+    let tuple1: (i32, i32, String) = (1, 2, "three".to_string());
+    let tuple2: (Option<i32>, Option<i32>, String) = (Some(4), None, "sixteen".to_string());
+    insert_and_select(&session, table_name, &tuple1, &tuple1).await;
+    insert_and_select(&session, table_name, &tuple2, &tuple2).await;
 
-    // Set test
-
-    session
-        .query(
-            "CREATE TABLE IF NOT EXISTS ks.images (name text PRIMARY KEY, owner text, tags set<text>)",
-            &[],
-        )
-        .await.unwrap();
-
-    let tags1: Vec<String> = vec!["pet".to_owned(), "cute".to_owned()];
-    let tags2: CqlValue = CqlValue::Set(vec![
-        CqlValue::Text("kitten".into()),
-        CqlValue::Text("cat".into()),
-        CqlValue::Text("lol".into()),
+    // CqlValue
+    let tuple_cql_value: CqlValue = CqlValue::Tuple(vec![
+        None,
+        Some(CqlValue::Int(1024)),
+        Some(CqlValue::Text("cql_value_text".to_string())),
     ]);
-
-    session
-        .query(
-            "INSERT INTO ks.images (name, owner, tags) VALUES ('cat.jpg', 'jsmith', ?)",
-            (tags1,),
-        )
-        .await
-        .unwrap();
-    session
-        .query(
-            "UPDATE ks.images SET tags = ? WHERE name = 'cat.jpg';",
-            (tags2,),
-        )
-        .await
-        .unwrap();
-
-    let mut received_elements: Vec<String> = session
-        .query("SELECT tags FROM ks.images", &[])
-        .await
-        .unwrap()
-        .rows
-        .unwrap()
-        .into_typed::<(Vec<String>,)>()
-        .map(Result::unwrap)
-        .map(|(v,)| v.into_iter())
-        .flatten()
-        .collect();
-    received_elements.sort_unstable();
-
-    assert_eq!(
-        received_elements,
-        vec!["cat".to_string(), "kitten".to_string(), "lol".to_string()]
-    );
-
-    // List test
-
-    session
-        .query(
-            "CREATE TABLE IF NOT EXISTS ks.plays ( id text PRIMARY KEY, game text, players int, scores list<int>)",
-            &[],
-        )
-        .await.unwrap();
-
-    let scores1: Vec<i32> = vec![17, 4, 2];
-    let scores2: CqlValue =
-        CqlValue::List(vec![CqlValue::Int(3), CqlValue::Int(9), CqlValue::Int(4)]);
-
-    session
-        .query(
-            "INSERT INTO ks.plays (id, game, players, scores) VALUES ('123-afde', 'quake', 3, ?)",
-            (&scores1,),
-        )
-        .await
-        .unwrap();
-    session
-        .query(
-            "INSERT INTO ks.plays (id, game, players, scores) VALUES ('1234-qwer', 'cs', 10, ?)",
-            (&scores2,),
-        )
-        .await
-        .unwrap();
-
-    let mut received_elements: Vec<Vec<i32>> = session
-        .query("SELECT scores FROM ks.plays", &[])
-        .await
-        .unwrap()
-        .rows
-        .unwrap()
-        .into_typed::<(Vec<i32>,)>()
-        .map(Result::unwrap)
-        .map(|(v,)| v.into_iter().collect())
-        .collect();
-    received_elements.sort_unstable();
-
-    assert_eq!(received_elements, vec![vec![3, 9, 4], vec![17, 4, 2]]);
-
-    // Tuple test
-
-    session
-        .query(
-            "CREATE TABLE IF NOT EXISTS ks.durations (event text, duration tuple<int, text>, primary key (event))",
-            &[],
-        )
-        .await.unwrap();
-
-    let duration1 = (3, "hours");
-    let duration2 = CqlValue::Tuple(vec![
-        Some(CqlValue::Int(2)),
-        Some(CqlValue::Text("minutes".into())),
-    ]);
-    session
-        .query(
-            "INSERT INTO ks.durations (event, duration) VALUES ('ev1', ?)",
-            (duration1,),
-        )
-        .await
-        .unwrap();
-    session
-        .query(
-            "INSERT INTO ks.durations (event, duration) VALUES ('ev2', ?)",
-            (duration2,),
-        )
-        .await
-        .unwrap();
-    session
-        .query(
-            "INSERT INTO ks.durations (event, duration) VALUES ('ev3', (4, null))",
-            &[],
-        )
-        .await
-        .unwrap();
-
-    let mut received_elements: Vec<(i32, Option<String>)> = session
-        .query("SELECT duration FROM ks.durations", &[])
-        .await
-        .unwrap()
-        .rows
-        .unwrap()
-        .into_typed::<((i32, Option<String>),)>()
-        .map(Result::unwrap)
-        .map(|(x,)| x)
-        .collect();
-    received_elements.sort_unstable();
-
-    assert_eq!(
-        received_elements,
-        vec![
-            (2, Some("minutes".into())),
-            (3, Some("hours".into())),
-            (4, None)
-        ]
-    );
+    insert_and_select(&session, table_name, &tuple_cql_value, &tuple_cql_value).await;
 }
