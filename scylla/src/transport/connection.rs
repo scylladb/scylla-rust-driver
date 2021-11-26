@@ -3,17 +3,18 @@ use futures::{future::RemoteHandle, FutureExt};
 use tokio::io::{split, AsyncRead, AsyncWrite, AsyncWriteExt, BufReader, BufWriter};
 use tokio::net::{TcpSocket, TcpStream};
 use tokio::sync::{mpsc, oneshot};
-use tracing::{error, trace, warn};
+use tracing::{debug, error, trace, warn};
 use uuid::Uuid;
 
 #[cfg(feature = "ssl")]
 use openssl::ssl::{Ssl, SslContext};
 #[cfg(feature = "ssl")]
 use std::pin::Pin;
+use std::sync::atomic::AtomicU64;
 #[cfg(feature = "ssl")]
 use tokio_openssl::SslStream;
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::convert::TryFrom;
 use std::io::ErrorKind;
 use std::net::SocketAddr;
@@ -53,14 +54,63 @@ const LOCAL_VERSION: &str = "SELECT schema_version FROM system.local WHERE key='
 pub struct Connection {
     submit_channel: mpsc::Sender<Task>,
     _worker_handle: RemoteHandle<()>,
+
     connect_address: SocketAddr,
     source_port: u16,
     shard_info: Option<ShardInfo>,
-    config: ConnectionConfig,
     shard_aware_port: Option<u16>,
+    config: ConnectionConfig,
+
+    // Each request send by `Connection::send_request` needs a unique request id.
+    // This field is a monotonic generator of such ids.
+    request_id_generator: AtomicU64,
+    // If a `Connection::send_request` is cancelled, it sends notification
+    // about orphaning via the sender below.
+    // Also, this sender is unbounded, because only unbounded channels support
+    // pushing values in a synchronous way (without an `.await`), which is
+    // needed for pushing values in `Drop` implementations.
+    orphan_notification_sender: mpsc::UnboundedSender<RequestId>,
 }
 
-type ResponseHandler = oneshot::Sender<Result<TaskResponse, QueryError>>;
+type RequestId = u64;
+
+struct ResponseHandler {
+    response_sender: oneshot::Sender<Result<TaskResponse, QueryError>>,
+    request_id: RequestId,
+}
+
+// Used to notify `Connection::orphaner` about `Connection::send_request`
+// future being dropped before receiving response.
+struct OrphanhoodNotifier<'a> {
+    enabled: bool,
+    request_id: RequestId,
+    notification_sender: &'a mpsc::UnboundedSender<RequestId>,
+}
+
+impl<'a> OrphanhoodNotifier<'a> {
+    fn new(
+        request_id: RequestId,
+        notification_sender: &'a mpsc::UnboundedSender<RequestId>,
+    ) -> Self {
+        Self {
+            enabled: true,
+            request_id,
+            notification_sender,
+        }
+    }
+
+    fn disable(mut self) {
+        self.enabled = false;
+    }
+}
+
+impl<'a> Drop for OrphanhoodNotifier<'a> {
+    fn drop(&mut self) {
+        if self.enabled {
+            let _ = self.notification_sender.send(self.request_id);
+        }
+    }
+}
 
 struct Task {
     serialized_request: SerializedRequest,
@@ -242,20 +292,29 @@ impl Connection {
 
         // TODO: What should be the size of the channel?
         let (sender, receiver) = mpsc::channel(1024);
-
         let (error_sender, error_receiver) = tokio::sync::oneshot::channel();
+        // Unbounded because it allows for synchronous pushes
+        let (orphan_notification_sender, orphan_notification_receiver) = mpsc::unbounded_channel();
 
-        let _worker_handle =
-            Self::run_router(config.clone(), stream, receiver, error_sender).await?;
+        let _worker_handle = Self::run_router(
+            config.clone(),
+            stream,
+            receiver,
+            error_sender,
+            orphan_notification_receiver,
+        )
+        .await?;
 
         let connection = Connection {
             submit_channel: sender,
             _worker_handle,
+            config,
             source_port,
             connect_address: addr,
             shard_info: None,
-            config,
             shard_aware_port: None,
+            request_id_generator: AtomicU64::new(0),
+            orphan_notification_sender,
         };
 
         Ok((connection, error_receiver))
@@ -621,6 +680,11 @@ impl Connection {
         Ok(version_id)
     }
 
+    fn allocate_request_id(&self) -> RequestId {
+        self.request_id_generator
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+    }
+
     async fn send_request<R: Request>(
         &self,
         request: &R,
@@ -633,13 +697,23 @@ impl Connection {
             None
         };
         let serialized_request = SerializedRequest::make(request, compression, tracing)?;
+        let request_id = self.allocate_request_id();
 
-        let (sender, receiver) = oneshot::channel();
+        let (response_sender, receiver) = oneshot::channel();
+        let response_handler = ResponseHandler {
+            response_sender,
+            request_id,
+        };
+
+        // Dropping `notifier` (before calling `notifier.disable()`) will send a notification to
+        // `Connection::router`. This notification is then used to mark a `stream_id` associated
+        // with this request as orphaned and free associated resources.
+        let notifier = OrphanhoodNotifier::new(request_id, &self.orphan_notification_sender);
 
         self.submit_channel
             .send(Task {
                 serialized_request,
-                response_handler: sender,
+                response_handler,
             })
             .await
             .map_err(|_| {
@@ -654,9 +728,13 @@ impl Connection {
                 ErrorKind::Other,
                 "Connection broken",
             )))
-        })??;
+        })?;
 
-        Self::parse_response(task_response, self.config.compression)
+        // Response was successfully received, so it's time to disable
+        // notification about orphaning.
+        notifier.disable();
+
+        Self::parse_response(task_response?, self.config.compression)
     }
 
     fn parse_response(
@@ -688,15 +766,28 @@ impl Connection {
         stream: TcpStream,
         receiver: mpsc::Receiver<Task>,
         error_sender: tokio::sync::oneshot::Sender<QueryError>,
+        orphan_notification_receiver: mpsc::UnboundedReceiver<RequestId>,
     ) -> Result<RemoteHandle<()>, std::io::Error> {
         let res = match config.ssl_context {
             Some(ref context) => {
                 let ssl = Ssl::new(context)?;
                 let mut stream = SslStream::new(ssl, stream)?;
                 let _pin = Pin::new(&mut stream).connect().await;
-                Self::run_router_spawner(stream, receiver, error_sender, config)
+                Self::run_router_spawner(
+                    config,
+                    stream,
+                    receiver,
+                    error_sender,
+                    orphan_notification_receiver,
+                )
             }
-            None => Self::run_router_spawner(stream, receiver, error_sender, config),
+            None => Self::run_router_spawner(
+                config,
+                stream,
+                receiver,
+                error_sender,
+                orphan_notification_receiver,
+            ),
         };
         Ok(res)
     }
@@ -707,31 +798,42 @@ impl Connection {
         stream: TcpStream,
         receiver: mpsc::Receiver<Task>,
         error_sender: tokio::sync::oneshot::Sender<QueryError>,
+        orphan_notification_receiver: mpsc::UnboundedReceiver<RequestId>,
     ) -> Result<RemoteHandle<()>, std::io::Error> {
         Ok(Self::run_router_spawner(
+            config,
             stream,
             receiver,
             error_sender,
-            config,
+            orphan_notification_receiver,
         ))
     }
 
     fn run_router_spawner(
+        config: ConnectionConfig,
         stream: (impl AsyncRead + AsyncWrite + Send + 'static),
         receiver: mpsc::Receiver<Task>,
         error_sender: tokio::sync::oneshot::Sender<QueryError>,
-        config: ConnectionConfig,
+        orphan_notification_receiver: mpsc::UnboundedReceiver<RequestId>,
     ) -> RemoteHandle<()> {
-        let (task, handle) = Self::router(stream, receiver, error_sender, config).remote_handle();
+        let (task, handle) = Self::router(
+            config,
+            stream,
+            receiver,
+            error_sender,
+            orphan_notification_receiver,
+        )
+        .remote_handle();
         tokio::task::spawn(task);
         handle
     }
 
     async fn router(
+        config: ConnectionConfig,
         stream: (impl AsyncRead + AsyncWrite),
         receiver: mpsc::Receiver<Task>,
         error_sender: tokio::sync::oneshot::Sender<QueryError>,
-        config: ConnectionConfig,
+        orphan_notification_receiver: mpsc::UnboundedReceiver<RequestId>,
     ) {
         let (read_half, write_half) = split(stream);
         // Why are using a mutex here?
@@ -758,8 +860,9 @@ impl Connection {
             &handler_map,
             receiver,
         );
+        let o = Self::orphaner(&handler_map, orphan_notification_receiver);
 
-        let result = futures::try_join!(r, w);
+        let result = futures::try_join!(r, w, o);
 
         let error: QueryError = match result {
             Ok(_) => return, // Connection was dropped, we can return
@@ -772,7 +875,7 @@ impl Connection {
 
         for (_, handler) in response_handlers {
             // Ignore sending error, request was dropped
-            let _ = handler.send(Err(error.clone()));
+            let _ = handler.response_sender.send(Err(error.clone()));
         }
 
         // If someone is listening for connection errors notify them
@@ -808,24 +911,36 @@ impl Connection {
                 _ => {}
             }
 
-            let handler = {
+            let handler_lookup_res = {
                 // We are guaranteed here that handler_map will not be locked
                 // by anybody else, so we can do try_lock().unwrap()
-                let mut lock = handler_map.try_lock().unwrap();
-                lock.take(params.stream)
+                let mut handler_map_guard = handler_map.try_lock().unwrap();
+                handler_map_guard.lookup(params.stream)
             };
 
-            if let Some(handler) = handler {
-                // Don't care if sending of the response fails. This must
-                // mean that the receiver side was impatient and is not
-                // waiting for the result anymore.
-                let _ = handler.send(Ok(response));
-            } else {
-                // Unsolicited frame. This should not happen and indicates
-                // a bug either in the driver, or in the database
-                return Err(QueryError::ProtocolError(
-                    "Received reponse with unexpected StreamId",
-                ));
+            use HandlerLookupResult::*;
+            match handler_lookup_res {
+                Handler(handler) => {
+                    // Don't care if sending of the response fails. This must
+                    // mean that the receiver side was impatient and is not
+                    // waiting for the result anymore.
+                    let _ = handler.response_sender.send(Ok(response));
+                }
+                Missing => {
+                    // Unsolicited frame. This should not happen and indicates
+                    // a bug either in the driver, or in the database
+                    debug!(
+                        "Received response with unexpected StreamId {}",
+                        params.stream
+                    );
+                    return Err(QueryError::ProtocolError(
+                        "Received reponse with unexpected StreamId",
+                    ));
+                }
+                Orphaned => {
+                    // Do nothing, handler was freed because this stream_id has
+                    // been marked as orphaned
+                }
             }
         }
     }
@@ -836,8 +951,8 @@ impl Connection {
     ) -> Option<i16> {
         // We are guaranteed here that handler_map will not be locked
         // by anybody else, so we can do try_lock().unwrap()
-        let mut lock = handler_map.try_lock().unwrap();
-        if let Some(stream_id) = lock.allocate(response_handler) {
+        let mut handler_map_guard = handler_map.try_lock().unwrap();
+        if let Some(stream_id) = handler_map_guard.allocate(response_handler) {
             Some(stream_id)
         } else {
             // TODO: Handle this error better, for now we drop this
@@ -874,6 +989,25 @@ impl Connection {
             write_half.flush().await?;
         }
 
+        Ok(())
+    }
+
+    // This task receives notifications from `OrphanhoodNotifier`s and tries to
+    // mark streams as orphaned
+    async fn orphaner(
+        handler_map: &StdMutex<ResponseHandlerMap>,
+        mut orphan_receiver: mpsc::UnboundedReceiver<RequestId>,
+    ) -> Result<(), QueryError> {
+        while let Some(request_id) = orphan_receiver.recv().await {
+            trace!(
+                "Trying to orphan stream id associated with request_id = {}",
+                request_id,
+            );
+            // We are guaranteed here that handler_map will not be locked
+            // by anybody else, so we can do try_lock().unwrap()
+            let mut handler_map_guard = handler_map.try_lock().unwrap();
+            handler_map_guard.orphan(request_id);
+        }
         Ok(())
     }
 
@@ -1084,9 +1218,42 @@ async fn connect_with_source_port(
     }
 }
 
+struct OrphanageTracker {
+    orphans: HashSet<i16>,
+}
+
+impl OrphanageTracker {
+    pub fn new() -> Self {
+        Self {
+            orphans: HashSet::new(),
+        }
+    }
+
+    pub fn insert(&mut self, stream_id: i16) {
+        self.orphans.insert(stream_id);
+    }
+
+    pub fn remove(&mut self, stream_id: i16) {
+        self.orphans.remove(&stream_id);
+    }
+
+    pub fn contains(&self, stream_id: i16) -> bool {
+        self.orphans.contains(&stream_id)
+    }
+}
+
 struct ResponseHandlerMap {
     stream_set: StreamIdSet,
     handlers: HashMap<i16, ResponseHandler>,
+
+    request_to_stream: HashMap<RequestId, i16>,
+    orphanage_tracker: OrphanageTracker,
+}
+
+enum HandlerLookupResult {
+    Orphaned,
+    Handler(ResponseHandler),
+    Missing,
 }
 
 impl ResponseHandlerMap {
@@ -1094,19 +1261,55 @@ impl ResponseHandlerMap {
         Self {
             stream_set: StreamIdSet::new(),
             handlers: HashMap::new(),
+            request_to_stream: HashMap::new(),
+            orphanage_tracker: OrphanageTracker::new(),
         }
     }
 
     pub fn allocate(&mut self, response_handler: ResponseHandler) -> Option<i16> {
         let stream_id = self.stream_set.allocate()?;
+        self.request_to_stream
+            .insert(response_handler.request_id, stream_id);
         let prev_handler = self.handlers.insert(stream_id, response_handler);
         assert!(prev_handler.is_none());
+
         Some(stream_id)
     }
 
-    pub fn take(&mut self, stream_id: i16) -> Option<ResponseHandler> {
+    // Orphan stream_id (associated with this request_id) by moving it to
+    // `orphanage_tracker`, and freeing its handler
+    pub fn orphan(&mut self, request_id: RequestId) {
+        if let Some(stream_id) = self.request_to_stream.get(&request_id) {
+            debug!(
+                "Orphaning stream_id = {} associated with request_id = {}",
+                stream_id, request_id
+            );
+            self.orphanage_tracker.insert(*stream_id);
+            self.handlers.remove(stream_id);
+            self.request_to_stream.remove(&request_id);
+        }
+    }
+
+    pub fn lookup(&mut self, stream_id: i16) -> HandlerLookupResult {
         self.stream_set.free(stream_id);
-        self.handlers.remove(&stream_id)
+
+        if self.orphanage_tracker.contains(stream_id) {
+            self.orphanage_tracker.remove(stream_id);
+            // This `stream_id` had been orphaned, so its handler got removed.
+            // This is a valid state (as opposed to missing handler)
+            return HandlerLookupResult::Orphaned;
+        }
+
+        if let Some(handler) = self.handlers.remove(&stream_id) {
+            // A mapping `request_id` -> `stream_id` must be removed, to
+            // prevent marking this `stream_id` as orphaned by some late
+            // orphan notification.
+            self.request_to_stream.remove(&handler.request_id);
+
+            HandlerLookupResult::Handler(handler)
+        } else {
+            HandlerLookupResult::Missing
+        }
     }
 
     // Retrieves the map of handlers, used after connection breaks
