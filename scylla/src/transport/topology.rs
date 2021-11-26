@@ -27,6 +27,7 @@ pub struct MetadataReader {
 
     // when control connection fails, MetadataReader tries to connect to one of known_peers
     known_peers: Vec<SocketAddr>,
+    fetch_schema: bool,
 }
 
 /// Describes all metadata retrieved from the cluster
@@ -45,7 +46,9 @@ pub struct Peer {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Keyspace {
     pub strategy: Strategy,
+    /// Empty HashMap may as well mean that the client disabled schema fetching in SessionConfig
     pub tables: HashMap<String, Table>,
+    /// Empty HashMap may as well mean that the client disabled schema fetching in SessionConfig
     pub user_defined_types: HashMap<String, Vec<(String, CqlType)>>,
 }
 
@@ -151,6 +154,7 @@ impl MetadataReader {
         known_peers: &[SocketAddr],
         mut connection_config: ConnectionConfig,
         server_event_sender: mpsc::Sender<Event>,
+        fetch_schema: bool,
     ) -> Self {
         let control_connection_address = *known_peers
             .choose(&mut thread_rng())
@@ -171,6 +175,7 @@ impl MetadataReader {
             control_connection,
             connection_config,
             known_peers: known_peers.into(),
+            fetch_schema,
         }
     }
 
@@ -234,6 +239,7 @@ impl MetadataReader {
         query_metadata(
             &self.control_connection,
             self.control_connection_address.port(),
+            self.fetch_schema,
         )
         .await
     }
@@ -264,12 +270,13 @@ impl MetadataReader {
 async fn query_metadata(
     pool: &NodeConnectionPool,
     connect_port: u16,
+    fetch_schema: bool,
 ) -> Result<Metadata, QueryError> {
     pool.wait_until_initialized().await;
     let conn: &Connection = &*pool.random_connection()?;
 
     let peers_query = query_peers(conn, connect_port);
-    let keyspaces_query = query_keyspaces(conn);
+    let keyspaces_query = query_keyspaces(conn, fetch_schema);
 
     let (peers, keyspaces) = tokio::try_join!(peers_query, keyspaces_query)?;
 
@@ -360,7 +367,10 @@ async fn query_peers(conn: &Connection, connect_port: u16) -> Result<Vec<Peer>, 
     Ok(result)
 }
 
-async fn query_keyspaces(conn: &Connection) -> Result<HashMap<String, Keyspace>, QueryError> {
+async fn query_keyspaces(
+    conn: &Connection,
+    fetch_schema: bool,
+) -> Result<HashMap<String, Keyspace>, QueryError> {
     let mut keyspaces_query =
         Query::new("select keyspace_name, replication from system_schema.keyspaces");
     keyspaces_query.set_page_size(1024);
@@ -374,8 +384,14 @@ async fn query_keyspaces(conn: &Connection) -> Result<HashMap<String, Keyspace>,
             ))?;
 
     let mut result = HashMap::with_capacity(rows.len());
-    let mut all_tables = query_tables(conn).await?;
-    let mut all_user_defined_types = query_user_defined_types(conn).await?;
+    let (mut all_tables, mut all_user_defined_types) = if fetch_schema {
+        (
+            query_tables(conn).await?,
+            query_user_defined_types(conn).await?,
+        )
+    } else {
+        (HashMap::new(), HashMap::new())
+    };
 
     for row in rows.into_typed::<(String, HashMap<String, String>)>() {
         let (keyspace_name, strategy_map) = row.map_err(|_| {

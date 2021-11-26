@@ -8,6 +8,7 @@ use crate::statement::Consistency;
 use crate::tracing::TracingInfo;
 use crate::transport::connection::{BatchResult, QueryResult};
 use crate::transport::errors::{BadKeyspaceName, BadQuery, DbError, QueryError};
+use crate::transport::topology::Strategy::SimpleStrategy;
 use crate::transport::topology::{CollectionType, ColumnKind, CqlType, NativeType};
 use crate::{IntoTypedRows, Session, SessionBuilder};
 use bytes::Bytes;
@@ -1494,4 +1495,72 @@ async fn test_table_partitioner_in_metadata() {
         cdc_table.partitioner.as_ref().unwrap(),
         "com.scylladb.dht.CDCPartitioner"
     );
+}
+
+#[tokio::test]
+async fn test_turning_off_schema_fetching() {
+    let uri = std::env::var("SCYLLA_URI").unwrap_or_else(|_| "127.0.0.1:9042".to_string());
+    let session = SessionBuilder::new()
+        .fetch_schema_metadata(false)
+        .known_node(uri)
+        .build()
+        .await
+        .unwrap();
+
+    session
+        .query("CREATE KEYSPACE IF NOT EXISTS test_metadata_ks WITH REPLICATION = {'class' : 'SimpleStrategy', 'replication_factor' : 1}", &[])
+        .await
+        .unwrap();
+
+    session.query("USE test_metadata_ks", &[]).await.unwrap();
+
+    session
+        .query(
+            "CREATE TYPE IF NOT EXISTS type_a (
+                    a map<frozen<list<int>>, text>,
+                    b frozen<map<frozen<list<int>>, frozen<set<text>>>>
+                   )",
+            &[],
+        )
+        .await
+        .unwrap();
+
+    session
+        .query("CREATE TYPE IF NOT EXISTS type_b (a int, b text)", &[])
+        .await
+        .unwrap();
+
+    session
+        .query(
+            "CREATE TYPE IF NOT EXISTS type_c (a map<frozen<set<text>>, frozen<type_b>>)",
+            &[],
+        )
+        .await
+        .unwrap();
+
+    session
+        .query(
+            "CREATE TABLE IF NOT EXISTS table_a (
+                    a frozen<type_a> PRIMARY KEY,
+                    b type_b,
+                    c frozen<type_c>,
+                    d map<text, frozen<list<int>>>,
+                    e tuple<int, text>
+                  )",
+            &[],
+        )
+        .await
+        .unwrap();
+
+    let cluster_data = &session.get_cluster_data();
+    let keyspace = &cluster_data.get_keyspace_info()["test_metadata_ks"];
+
+    assert_eq!(
+        keyspace.strategy,
+        SimpleStrategy {
+            replication_factor: 1
+        }
+    );
+    assert_eq!(keyspace.tables.len(), 0);
+    assert_eq!(keyspace.user_defined_types.len(), 0);
 }

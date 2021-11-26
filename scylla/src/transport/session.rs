@@ -102,6 +102,9 @@ pub struct SessionConfig {
     pub disallow_shard_aware_port: bool,
 
     pub default_consistency: Consistency,
+
+    /// If true, full schema is fetched with every metadata refresh.
+    pub fetch_schema_metadata: bool,
     /*
     These configuration options will be added in the future:
 
@@ -147,6 +150,7 @@ impl SessionConfig {
             connection_pool_size: Default::default(),
             disallow_shard_aware_port: false,
             default_consistency: Consistency::LocalQuorum,
+            fetch_schema_metadata: true,
         }
     }
 
@@ -321,7 +325,12 @@ impl Session {
 
         node_addresses.extend(resolved);
 
-        let cluster = Cluster::new(&node_addresses, config.get_pool_config()).await?;
+        let cluster = Cluster::new(
+            &node_addresses,
+            config.get_pool_config(),
+            config.fetch_schema_metadata,
+        )
+        .await?;
 
         let session = Session {
             cluster,

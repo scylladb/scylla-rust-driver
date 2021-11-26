@@ -81,6 +81,7 @@ impl Cluster {
     pub async fn new(
         initial_peers: &[SocketAddr],
         pool_config: PoolConfig,
+        fetch_schema_metadata: bool,
     ) -> Result<Cluster, QueryError> {
         let cluster_data = Arc::new(ArcSwap::from(Arc::new(ClusterData {
             known_peers: HashMap::new(),
@@ -101,6 +102,7 @@ impl Cluster {
                 initial_peers,
                 pool_config.connection_config.clone(),
                 server_events_sender,
+                fetch_schema_metadata,
             ),
             pool_config,
 
