@@ -43,6 +43,13 @@ pub trait FromRow: Sized {
     fn from_row(row: Row) -> Result<Self, FromRowError>;
 }
 
+// CqlValue can be converted to CqlValue
+impl FromCqlVal<CqlValue> for CqlValue {
+    fn from_cql(cql_val: CqlValue) -> Result<CqlValue, FromCqlValError> {
+        Ok(cql_val)
+    }
+}
+
 // Implement from_cql<Option<CqlValue>> for every type that has from_cql<CqlValue>
 // This tries to unwrap the option or fails with an error
 impl<T: FromCqlVal<CqlValue>> FromCqlVal<Option<CqlValue>> for T {
