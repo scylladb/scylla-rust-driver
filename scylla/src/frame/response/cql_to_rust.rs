@@ -3,8 +3,7 @@ use crate::frame::value::Counter;
 use bigdecimal::BigDecimal;
 use chrono::{Duration, NaiveDate};
 use num_bigint::BigInt;
-use std::collections::HashMap;
-use std::collections::HashSet;
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::hash::Hash;
 use std::net::IpAddr;
 use thiserror::Error;
@@ -42,6 +41,13 @@ pub enum FromCqlValError {
 /// This trait defines a way to convert CQL Row into some rust type
 pub trait FromRow: Sized {
     fn from_row(row: Row) -> Result<Self, FromRowError>;
+}
+
+// CqlValue can be converted to CqlValue
+impl FromCqlVal<CqlValue> for CqlValue {
+    fn from_cql(cql_val: CqlValue) -> Result<CqlValue, FromCqlValError> {
+        Ok(cql_val)
+    }
 }
 
 // Implement from_cql<Option<CqlValue>> for every type that has from_cql<CqlValue>
@@ -124,6 +130,30 @@ impl<T: FromCqlVal<CqlValue> + Eq + Hash> FromCqlVal<CqlValue> for HashSet<T> {
             .into_iter()
             .map(T::from_cql)
             .collect::<Result<HashSet<T>, FromCqlValError>>()
+    }
+}
+
+impl<T: FromCqlVal<CqlValue> + Ord> FromCqlVal<CqlValue> for BTreeSet<T> {
+    fn from_cql(cql_val: CqlValue) -> Result<Self, FromCqlValError> {
+        cql_val
+            .into_vec()
+            .ok_or(FromCqlValError::BadCqlType)?
+            .into_iter()
+            .map(T::from_cql)
+            .collect::<Result<BTreeSet<T>, FromCqlValError>>()
+    }
+}
+
+impl<K: FromCqlVal<CqlValue> + Ord, V: FromCqlVal<CqlValue>> FromCqlVal<CqlValue>
+    for BTreeMap<K, V>
+{
+    fn from_cql(cql_val: CqlValue) -> Result<Self, FromCqlValError> {
+        let vec = cql_val.into_pair_vec().ok_or(FromCqlValError::BadCqlType)?;
+        let mut res = BTreeMap::new();
+        for (key, value) in vec {
+            res.insert(K::from_cql(key)?, V::from_cql(value)?);
+        }
+        Ok(res)
     }
 }
 

@@ -4,7 +4,7 @@ use chrono::prelude::*;
 use chrono::Duration;
 use num_bigint::BigInt;
 use std::borrow::Cow;
-use std::collections::HashMap;
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::convert::TryInto;
 use std::net::IpAddr;
 use thiserror::Error;
@@ -447,7 +447,45 @@ fn serialize_map<K: Value, V: Value>(
     Ok(())
 }
 
+fn serialize_list_or_set<'a, V: 'a + Value>(
+    elements_iter: impl Iterator<Item = &'a V>,
+    element_count: usize,
+    buf: &mut Vec<u8>,
+) -> Result<(), ValueTooBig> {
+    let bytes_num_pos: usize = buf.len();
+    buf.put_i32(0);
+
+    buf.put_i32(element_count.try_into().map_err(|_| ValueTooBig)?);
+    for value in elements_iter {
+        <V as Value>::serialize(value, buf)?;
+    }
+
+    let written_bytes: usize = buf.len() - bytes_num_pos - 4;
+    let written_bytes_i32: i32 = written_bytes.try_into().map_err(|_| ValueTooBig)?;
+    buf[bytes_num_pos..(bytes_num_pos + 4)].copy_from_slice(&written_bytes_i32.to_be_bytes());
+
+    Ok(())
+}
+
+impl<V: Value> Value for HashSet<V> {
+    fn serialize(&self, buf: &mut Vec<u8>) -> Result<(), ValueTooBig> {
+        serialize_list_or_set(self.iter(), self.len(), buf)
+    }
+}
+
 impl<K: Value, V: Value> Value for HashMap<K, V> {
+    fn serialize(&self, buf: &mut Vec<u8>) -> Result<(), ValueTooBig> {
+        serialize_map(self.iter(), self.len(), buf)
+    }
+}
+
+impl<V: Value> Value for BTreeSet<V> {
+    fn serialize(&self, buf: &mut Vec<u8>) -> Result<(), ValueTooBig> {
+        serialize_list_or_set(self.iter(), self.len(), buf)
+    }
+}
+
+impl<K: Value, V: Value> Value for BTreeMap<K, V> {
     fn serialize(&self, buf: &mut Vec<u8>) -> Result<(), ValueTooBig> {
         serialize_map(self.iter(), self.len(), buf)
     }
@@ -455,19 +493,7 @@ impl<K: Value, V: Value> Value for HashMap<K, V> {
 
 impl<T: Value> Value for Vec<T> {
     fn serialize(&self, buf: &mut Vec<u8>) -> Result<(), ValueTooBig> {
-        let bytes_num_pos: usize = buf.len();
-        buf.put_i32(0);
-
-        buf.put_i32(self.len().try_into().map_err(|_| ValueTooBig)?);
-        for value in self {
-            <T as Value>::serialize(value, buf)?;
-        }
-
-        let written_bytes: usize = buf.len() - bytes_num_pos - 4;
-        let written_bytes_i32: i32 = written_bytes.try_into().map_err(|_| ValueTooBig)?;
-        buf[bytes_num_pos..(bytes_num_pos + 4)].copy_from_slice(&written_bytes_i32.to_be_bytes());
-
-        Ok(())
+        serialize_list_or_set(self.iter(), self.len(), buf)
     }
 }
 

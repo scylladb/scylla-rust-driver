@@ -11,9 +11,9 @@
 use scylla::IntoTypedRows;
 
 // Insert a list of ints into the table
-let to_insert: Vec<i32> = vec![1, 2, 3, 4, 5];
+let my_list: Vec<i32> = vec![1, 2, 3, 4, 5];
 session
-    .query("INSERT INTO keyspace.table (a) VALUES(?)", (&to_insert,))
+    .query("INSERT INTO keyspace.table (a) VALUES(?)", (&my_list,))
     .await?;
 
 // Read a list of ints from the table
@@ -27,7 +27,7 @@ if let Some(rows) = session.query("SELECT a FROM keyspace.table", &[]).await?.ro
 ```
 
 ## Set
-`Set` is represented as `Vec<T>`
+`Set` is represented as `Vec<T>`, `HashSet<T>` or `BTreeSet<T>`:
 
 ```rust
 # extern crate scylla;
@@ -37,9 +37,9 @@ if let Some(rows) = session.query("SELECT a FROM keyspace.table", &[]).await?.ro
 use scylla::IntoTypedRows;
 
 // Insert a set of ints into the table
-let to_insert: Vec<i32> = vec![1, 2, 3, 4, 5];
+let my_set: Vec<i32> = vec![1, 2, 3, 4, 5];
 session
-    .query("INSERT INTO keyspace.table (a) VALUES(?)", (&to_insert,))
+    .query("INSERT INTO keyspace.table (a) VALUES(?)", (&my_set,))
     .await?;
 
 // Read a set of ints from the table
@@ -52,8 +52,56 @@ if let Some(rows) = session.query("SELECT a FROM keyspace.table", &[]).await?.ro
 # }
 ```
 
+```rust
+# extern crate scylla;
+# use scylla::Session;
+# use std::error::Error;
+# async fn check_only_compiles(session: &Session) -> Result<(), Box<dyn Error>> {
+use scylla::IntoTypedRows;
+use std::collections::HashSet;
+
+// Insert a set of ints into the table
+let my_set: HashSet<i32> = vec![1, 2, 3, 4, 5].into_iter().collect();
+session
+    .query("INSERT INTO keyspace.table (a) VALUES(?)", (&my_set,))
+    .await?;
+
+// Read a set of ints from the table
+if let Some(rows) = session.query("SELECT a FROM keyspace.table", &[]).await?.rows {
+    for row in rows.into_typed::<(HashSet<i32>,)>() {
+        let (set_value,): (HashSet<i32>,) = row?;
+    }
+}
+# Ok(())
+# }
+```
+
+```rust
+# extern crate scylla;
+# use scylla::Session;
+# use std::error::Error;
+# async fn check_only_compiles(session: &Session) -> Result<(), Box<dyn Error>> {
+use scylla::IntoTypedRows;
+use std::collections::BTreeSet;
+
+// Insert a set of ints into the table
+let my_set: BTreeSet<i32> = vec![1, 2, 3, 4, 5].into_iter().collect();
+session
+    .query("INSERT INTO keyspace.table (a) VALUES(?)", (&my_set,))
+    .await?;
+
+// Read a set of ints from the table
+if let Some(rows) = session.query("SELECT a FROM keyspace.table", &[]).await?.rows {
+    for row in rows.into_typed::<(BTreeSet<i32>,)>() {
+        let (set_value,): (BTreeSet<i32>,) = row?;
+    }
+}
+# Ok(())
+# }
+```
+
 ## Map
-`Map` is represented as `std::collections::HashMap<K, V>`
+`Map` is represented as `HashMap<K, V>` or `BTreeMap<K, V>`
 
 ```rust
 # extern crate scylla;
@@ -64,17 +112,43 @@ use scylla::IntoTypedRows;
 use std::collections::HashMap;
 
 // Insert a map of text and int into the table
-let mut to_insert: HashMap<String, i32> = HashMap::new();
-to_insert.insert("abcd".to_string(), 16);
+let mut my_map: HashMap<String, i32> = HashMap::new();
+my_map.insert("abcd".to_string(), 16);
 
 session
-    .query("INSERT INTO keyspace.table (a) VALUES(?)", (&to_insert,))
+    .query("INSERT INTO keyspace.table (a) VALUES(?)", (&my_map,))
     .await?;
 
 // Read a map from the table
 if let Some(rows) = session.query("SELECT a FROM keyspace.table", &[]).await?.rows {
     for row in rows.into_typed::<(HashMap<String, i32>,)>() {
         let (map_value,): (HashMap<String, i32>,) = row?;
+    }
+}
+# Ok(())
+# }
+```
+
+```rust
+# extern crate scylla;
+# use scylla::Session;
+# use std::error::Error;
+# async fn check_only_compiles(session: &Session) -> Result<(), Box<dyn Error>> {
+use scylla::IntoTypedRows;
+use std::collections::BTreeMap;
+
+// Insert a map of text and int into the table
+let mut my_map: BTreeMap<String, i32> = BTreeMap::new();
+my_map.insert("abcd".to_string(), 16);
+
+session
+    .query("INSERT INTO keyspace.table (a) VALUES(?)", (&my_map,))
+    .await?;
+
+// Read a map from the table
+if let Some(rows) = session.query("SELECT a FROM keyspace.table", &[]).await?.rows {
+    for row in rows.into_typed::<(BTreeMap<String, i32>,)>() {
+        let (map_value,): (BTreeMap<String, i32>,) = row?;
     }
 }
 # Ok(())
