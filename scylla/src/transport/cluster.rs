@@ -37,11 +37,11 @@ pub struct Datacenter {
 
 #[derive(Clone)]
 pub struct ClusterData {
-    pub known_peers: HashMap<SocketAddr, Arc<Node>>, // Invariant: nonempty after Cluster::new()
-    pub ring: BTreeMap<Token, Arc<Node>>,            // Invariant: nonempty after Cluster::new()
-    pub keyspaces: HashMap<String, Keyspace>,
-    pub all_nodes: Vec<Arc<Node>>,
-    pub datacenters: HashMap<String, Datacenter>,
+    pub(crate) known_peers: HashMap<SocketAddr, Arc<Node>>, // Invariant: nonempty after Cluster::new()
+    pub(crate) ring: BTreeMap<Token, Arc<Node>>, // Invariant: nonempty after Cluster::new()
+    pub(crate) keyspaces: HashMap<String, Keyspace>,
+    pub(crate) all_nodes: Vec<Arc<Node>>,
+    pub(crate) datacenters: HashMap<String, Datacenter>,
 }
 
 // Works in the background to keep the cluster updated
@@ -194,7 +194,7 @@ impl Cluster {
 impl ClusterData {
     /// Returns an iterator to the sequence of ends of vnodes, starting at the vnode in which t
     /// lies and going clockwise. Returned sequence has the same length as ring.
-    pub fn ring_range<'a>(&'a self, t: &Token) -> impl Iterator<Item = Arc<Node>> + 'a {
+    pub(crate) fn ring_range<'a>(&'a self, t: &Token) -> impl Iterator<Item = Arc<Node>> + 'a {
         let before_wrap = self.ring.range(t..).map(|(_token, node)| node.clone());
         let after_wrap = self.ring.values().cloned();
 
@@ -213,7 +213,7 @@ impl ClusterData {
         }
     }
 
-    pub async fn wait_until_all_pools_are_initialized(&self) {
+    pub(crate) async fn wait_until_all_pools_are_initialized(&self) {
         for node in self.all_nodes.iter() {
             node.wait_until_pool_initialized().await;
         }
@@ -221,7 +221,7 @@ impl ClusterData {
 
     /// Creates new ClusterData using information about topology held in `metadata`.
     /// Uses provided `known_peers` hashmap to recycle nodes if possible.
-    pub fn new(
+    pub(crate) fn new(
         metadata: Metadata,
         pool_config: &PoolConfig,
         known_peers: &HashMap<SocketAddr, Arc<Node>>,
