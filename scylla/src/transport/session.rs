@@ -493,7 +493,7 @@ impl Session {
             None => self.retry_policy.new_session(),
         };
 
-        Ok(RowIterator::new_for_query(
+        RowIterator::new_for_query(
             query,
             serialized_values.into_owned(),
             self.default_consistency,
@@ -501,7 +501,8 @@ impl Session {
             self.load_balancer.clone(),
             self.cluster.get_data(),
             self.metrics.clone(),
-        ))
+        )
+        .await
     }
 
     /// Prepares a statement on the server side and returns a prepared statement,
@@ -723,18 +724,17 @@ impl Session {
             None => self.retry_policy.new_session(),
         };
 
-        Ok(RowIterator::new_for_prepared_statement(
-            PreparedIteratorConfig {
-                prepared,
-                values: serialized_values.into_owned(),
-                default_consistency: self.default_consistency,
-                token,
-                retry_session,
-                load_balancer: self.load_balancer.clone(),
-                cluster_data: self.cluster.get_data(),
-                metrics: self.metrics.clone(),
-            },
-        ))
+        RowIterator::new_for_prepared_statement(PreparedIteratorConfig {
+            prepared,
+            values: serialized_values.into_owned(),
+            default_consistency: self.default_consistency,
+            token,
+            retry_session,
+            load_balancer: self.load_balancer.clone(),
+            cluster_data: self.cluster.get_data(),
+            metrics: self.metrics.clone(),
+        })
+        .await
     }
 
     /// Perform a batch query\

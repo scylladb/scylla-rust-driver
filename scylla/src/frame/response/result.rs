@@ -326,7 +326,7 @@ impl Row {
     }
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct Rows {
     pub metadata: ResultMetadata,
     rows_count: usize,
