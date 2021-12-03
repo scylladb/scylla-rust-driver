@@ -482,6 +482,26 @@ impl SessionBuilder {
         self.config.disallow_shard_aware_port = disallow;
         self
     }
+
+    /// Set the fetch schema metadata flag.
+    /// The default is true.
+    ///
+    /// # Example
+    /// ```
+    /// # use scylla::{Session, SessionBuilder};
+    /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
+    /// let session: Session = SessionBuilder::new()
+    ///     .known_node("127.0.0.1:9042")
+    ///     .fetch_schema_metadata(true)
+    ///     .build()
+    ///     .await?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn fetch_schema_metadata(mut self, fetch: bool) -> Self {
+        self.config.fetch_schema_metadata = fetch;
+        self
+    }
 }
 
 /// Creates a [`SessionBuilder`] with default configuration, same as [`SessionBuilder::new`]
@@ -637,6 +657,18 @@ mod tests {
     }
 
     #[test]
+    fn fetch_schema_metadata() {
+        let mut builder = SessionBuilder::new();
+        assert!(builder.config.fetch_schema_metadata);
+
+        builder = builder.fetch_schema_metadata(false);
+        assert!(!builder.config.fetch_schema_metadata);
+
+        builder = builder.fetch_schema_metadata(true);
+        assert!(builder.config.fetch_schema_metadata);
+    }
+
+    #[test]
     fn all_features() {
         let mut builder = SessionBuilder::new();
 
@@ -652,6 +684,7 @@ mod tests {
         builder = builder.tcp_nodelay(true);
         builder = builder.load_balancing(Arc::new(RoundRobinPolicy::new()));
         builder = builder.use_keyspace("ks_name", true);
+        builder = builder.fetch_schema_metadata(false);
 
         assert_eq!(
             builder.config.known_nodes,
@@ -675,5 +708,6 @@ mod tests {
         assert_eq!(builder.config.used_keyspace, Some("ks_name".to_string()));
 
         assert!(builder.config.keyspace_case_sensitive);
+        assert!(!builder.config.fetch_schema_metadata);
     }
 }

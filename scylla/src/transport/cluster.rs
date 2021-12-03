@@ -5,7 +5,7 @@ use crate::transport::connection::{Connection, VerifiedKeyspaceName};
 use crate::transport::connection_pool::PoolConfig;
 use crate::transport::errors::QueryError;
 use crate::transport::node::Node;
-use crate::transport::topology::{Keyspace, TopologyInfo, TopologyReader};
+use crate::transport::topology::{Keyspace, Metadata, MetadataReader};
 
 use arc_swap::ArcSwap;
 use futures::future::join_all;
@@ -37,11 +37,11 @@ pub struct Datacenter {
 
 #[derive(Clone)]
 pub struct ClusterData {
-    pub known_peers: HashMap<SocketAddr, Arc<Node>>, // Invariant: nonempty after Cluster::new()
-    pub ring: BTreeMap<Token, Arc<Node>>,            // Invariant: nonempty after Cluster::new()
-    pub keyspaces: HashMap<String, Keyspace>,
-    pub all_nodes: Vec<Arc<Node>>,
-    pub datacenters: HashMap<String, Datacenter>,
+    pub(crate) known_peers: HashMap<SocketAddr, Arc<Node>>, // Invariant: nonempty after Cluster::new()
+    pub(crate) ring: BTreeMap<Token, Arc<Node>>, // Invariant: nonempty after Cluster::new()
+    pub(crate) keyspaces: HashMap<String, Keyspace>,
+    pub(crate) all_nodes: Vec<Arc<Node>>,
+    pub(crate) datacenters: HashMap<String, Datacenter>,
 }
 
 // Works in the background to keep the cluster updated
@@ -50,7 +50,7 @@ struct ClusterWorker {
     cluster_data: Arc<ArcSwap<ClusterData>>,
 
     // Cluster connections
-    topology_reader: TopologyReader,
+    metadata_reader: MetadataReader,
     pool_config: PoolConfig,
 
     // To listen for refresh requests
@@ -81,6 +81,7 @@ impl Cluster {
     pub async fn new(
         initial_peers: &[SocketAddr],
         pool_config: PoolConfig,
+        fetch_schema_metadata: bool,
     ) -> Result<Cluster, QueryError> {
         let cluster_data = Arc::new(ArcSwap::from(Arc::new(ClusterData {
             known_peers: HashMap::new(),
@@ -97,10 +98,11 @@ impl Cluster {
         let worker = ClusterWorker {
             cluster_data: cluster_data.clone(),
 
-            topology_reader: TopologyReader::new(
+            metadata_reader: MetadataReader::new(
                 initial_peers,
                 pool_config.connection_config.clone(),
                 server_events_sender,
+                fetch_schema_metadata,
             ),
             pool_config,
 
@@ -121,7 +123,7 @@ impl Cluster {
             _worker_handle: worker_handle,
         };
 
-        result.refresh_topology().await?;
+        result.refresh_metadata().await?;
 
         Ok(result)
     }
@@ -130,7 +132,7 @@ impl Cluster {
         self.data.load_full()
     }
 
-    pub async fn refresh_topology(&self) -> Result<(), QueryError> {
+    pub async fn refresh_metadata(&self) -> Result<(), QueryError> {
         let (response_sender, response_receiver) = tokio::sync::oneshot::channel();
 
         self.refresh_channel
@@ -138,12 +140,12 @@ impl Cluster {
                 response_chan: response_sender,
             })
             .await
-            .expect("Bug in Cluster::refresh_topology sending");
+            .expect("Bug in Cluster::refresh_metadata sending");
         // Other end of this channel is in ClusterWorker, can't be dropped while we have &self to Cluster with _worker_handle
 
         response_receiver
             .await
-            .expect("Bug in Cluster::refresh_topology receiving")
+            .expect("Bug in Cluster::refresh_metadata receiving")
         // ClusterWorker always responds
     }
 
@@ -192,7 +194,7 @@ impl Cluster {
 impl ClusterData {
     /// Returns an iterator to the sequence of ends of vnodes, starting at the vnode in which t
     /// lies and going clockwise. Returned sequence has the same length as ring.
-    pub fn ring_range<'a>(&'a self, t: &Token) -> impl Iterator<Item = Arc<Node>> + 'a {
+    pub(crate) fn ring_range<'a>(&'a self, t: &Token) -> impl Iterator<Item = Arc<Node>> + 'a {
         let before_wrap = self.ring.range(t..).map(|(_token, node)| node.clone());
         let after_wrap = self.ring.values().cloned();
 
@@ -211,28 +213,28 @@ impl ClusterData {
         }
     }
 
-    pub async fn wait_until_all_pools_are_initialized(&self) {
+    pub(crate) async fn wait_until_all_pools_are_initialized(&self) {
         for node in self.all_nodes.iter() {
             node.wait_until_pool_initialized().await;
         }
     }
 
-    /// Creates new ClusterData using information about topology held in `info`.
+    /// Creates new ClusterData using information about topology held in `metadata`.
     /// Uses provided `known_peers` hashmap to recycle nodes if possible.
-    pub fn new(
-        info: TopologyInfo,
+    pub(crate) fn new(
+        metadata: Metadata,
         pool_config: &PoolConfig,
         known_peers: &HashMap<SocketAddr, Arc<Node>>,
         used_keyspace: &Option<VerifiedKeyspaceName>,
     ) -> Self {
         // Create new updated known_peers and ring
         let mut new_known_peers: HashMap<SocketAddr, Arc<Node>> =
-            HashMap::with_capacity(info.peers.len());
+            HashMap::with_capacity(metadata.peers.len());
         let mut ring: BTreeMap<Token, Arc<Node>> = BTreeMap::new();
         let mut datacenters: HashMap<String, Datacenter> = HashMap::new();
-        let mut all_nodes: Vec<Arc<Node>> = Vec::with_capacity(info.peers.len());
+        let mut all_nodes: Vec<Arc<Node>> = Vec::with_capacity(metadata.peers.len());
 
-        for peer in info.peers {
+        for peer in metadata.peers {
             // Take existing Arc<Node> if possible, otherwise create new one
             // Changing rack/datacenter but not ip address seems improbable
             // so we can just create new node and connections then
@@ -276,10 +278,17 @@ impl ClusterData {
         ClusterData {
             known_peers: new_known_peers,
             ring,
-            keyspaces: info.keyspaces,
+            keyspaces: metadata.keyspaces,
             all_nodes,
             datacenters,
         }
+    }
+
+    /// Access keyspaces details collected by the driver
+    /// Driver collects various schema details like tables, partitioners, columns, types.
+    /// They can be read using this method
+    pub fn get_keyspace_info(&self) -> &HashMap<String, Keyspace> {
+        &self.keyspaces
     }
 }
 
@@ -427,12 +436,12 @@ impl ClusterWorker {
     }
 
     async fn perform_refresh(&mut self) -> Result<(), QueryError> {
-        // Read latest TopologyInfo
-        let topo_info = self.topology_reader.read_topology_info().await?;
+        // Read latest Metadata
+        let metadata = self.metadata_reader.read_metadata().await?;
         let cluster_data: Arc<ClusterData> = self.cluster_data.load_full();
 
         let new_cluster_data = Arc::new(ClusterData::new(
-            topo_info,
+            metadata,
             &self.pool_config,
             &cluster_data.known_peers,
             &self.used_keyspace,

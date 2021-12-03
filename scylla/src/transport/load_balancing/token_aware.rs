@@ -153,9 +153,9 @@ mod tests {
 
     use crate::transport::load_balancing::tests;
     use crate::transport::topology::Keyspace;
+    use crate::transport::topology::Metadata;
     use crate::transport::topology::Peer;
     use crate::transport::topology::Strategy;
-    use crate::transport::topology::TopologyInfo;
     use std::collections::HashMap;
 
     // ConnectionKeeper (which lives in Node) requires context of Tokio runtime
@@ -287,6 +287,8 @@ mod tests {
                     strategy: Strategy::SimpleStrategy {
                         replication_factor: 2,
                     },
+                    tables: HashMap::new(),
+                    user_defined_types: HashMap::new(),
                 },
             ),
             (
@@ -295,6 +297,8 @@ mod tests {
                     strategy: Strategy::SimpleStrategy {
                         replication_factor: 3,
                     },
+                    tables: HashMap::new(),
+                    user_defined_types: HashMap::new(),
                 },
             ),
         ]
@@ -302,7 +306,7 @@ mod tests {
         .cloned()
         .collect();
 
-        let info = TopologyInfo {
+        let info = Metadata {
             peers: Vec::from(peers),
             keyspaces,
         };
@@ -384,13 +388,15 @@ mod tests {
                         .cloned()
                         .collect::<HashMap<_, _>>(),
                 },
+                tables: HashMap::new(),
+                user_defined_types: HashMap::new(),
             },
         )]
         .iter()
         .cloned()
         .collect();
 
-        let info = TopologyInfo {
+        let info = Metadata {
             peers: Vec::from(peers),
             keyspaces,
         };

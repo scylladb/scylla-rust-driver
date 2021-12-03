@@ -15,6 +15,7 @@ use uuid::Uuid;
 
 use super::connection::QueryResponse;
 use super::errors::{BadQuery, NewSessionError, QueryError};
+use crate::cql_to_rust::FromRow;
 use crate::frame::response::cql_to_rust::FromRowError;
 use crate::frame::response::result;
 use crate::frame::value::{BatchValues, SerializedValues, ValueList};
@@ -23,24 +24,27 @@ use crate::query::Query;
 use crate::routing::{murmur3_token, Token};
 use crate::statement::{Consistency, SerialConsistency};
 use crate::tracing::{GetTracingConfig, TracingEvent, TracingInfo};
-use crate::transport::connection_pool::PoolConfig;
-use crate::transport::{
-    cluster::Cluster,
-    connection::{BatchResult, Connection, ConnectionConfig, QueryResult, VerifiedKeyspaceName},
-    iterator::RowIterator,
-    load_balancing::{LoadBalancingPolicy, RoundRobinPolicy, Statement, TokenAwarePolicy},
-    metrics::Metrics,
-    node::Node,
-    retry_policy::{DefaultRetryPolicy, QueryInfo, RetryDecision, RetryPolicy, RetrySession},
-    speculative_execution::SpeculativeExecutionPolicy,
-    Compression,
+use crate::transport::cluster::{Cluster, ClusterData};
+use crate::transport::connection::{
+    BatchResult, Connection, ConnectionConfig, QueryResult, VerifiedKeyspaceName,
 };
+use crate::transport::connection_pool::PoolConfig;
+use crate::transport::iterator::{PreparedIteratorConfig, RowIterator};
+use crate::transport::load_balancing::{
+    LoadBalancingPolicy, RoundRobinPolicy, Statement, TokenAwarePolicy,
+};
+use crate::transport::metrics::Metrics;
+use crate::transport::node::Node;
+use crate::transport::retry_policy::{
+    DefaultRetryPolicy, QueryInfo, RetryDecision, RetryPolicy, RetrySession,
+};
+use crate::transport::speculative_execution;
+use crate::transport::speculative_execution::SpeculativeExecutionPolicy;
+use crate::transport::Compression;
 use crate::{batch::Batch, statement::StatementConfig};
-use crate::{cql_to_rust::FromRow, transport::speculative_execution};
 
 pub use crate::transport::connection_pool::PoolSize;
 
-use crate::transport::iterator::PreparedIteratorConfig;
 #[cfg(feature = "ssl")]
 use openssl::ssl::SslContext;
 
@@ -98,6 +102,9 @@ pub struct SessionConfig {
     pub disallow_shard_aware_port: bool,
 
     pub default_consistency: Consistency,
+
+    /// If true, full schema is fetched with every metadata refresh.
+    pub fetch_schema_metadata: bool,
     /*
     These configuration options will be added in the future:
 
@@ -143,6 +150,7 @@ impl SessionConfig {
             connection_pool_size: Default::default(),
             disallow_shard_aware_port: false,
             default_consistency: Consistency::LocalQuorum,
+            fetch_schema_metadata: true,
         }
     }
 
@@ -317,7 +325,12 @@ impl Session {
 
         node_addresses.extend(resolved);
 
-        let cluster = Cluster::new(&node_addresses, config.get_pool_config()).await?;
+        let cluster = Cluster::new(
+            &node_addresses,
+            config.get_pool_config(),
+            config.fetch_schema_metadata,
+        )
+        .await?;
 
         let session = Session {
             cluster,
@@ -844,13 +857,13 @@ impl Session {
         Ok(())
     }
 
-    /// Manually trigger a topology refresh\
-    /// The driver will fetch current nodes in the cluster and update its topology information
+    /// Manually trigger a metadata refresh\
+    /// The driver will fetch current nodes in the cluster and update its metadata
     ///
     /// Normally this is not needed,
-    /// the driver should automatically detect all topology changes in the cluster
-    pub async fn refresh_topology(&self) -> Result<(), QueryError> {
-        self.cluster.refresh_topology().await
+    /// the driver should automatically detect all metadata changes in the cluster
+    pub async fn refresh_metadata(&self) -> Result<(), QueryError> {
+        self.cluster.refresh_metadata().await
     }
 
     /// Access metrics collected by the driver\
@@ -858,6 +871,13 @@ impl Session {
     /// They can be read using this method
     pub fn get_metrics(&self) -> Arc<Metrics> {
         self.metrics.clone()
+    }
+
+    /// Access cluster data collected by the driver\
+    /// Driver collects various information about network topology or schema.
+    /// They can be read using this method
+    pub fn get_cluster_data(&self) -> Arc<ClusterData> {
+        self.cluster.get_data()
     }
 
     /// Get [`TracingInfo`] of a traced query performed earlier

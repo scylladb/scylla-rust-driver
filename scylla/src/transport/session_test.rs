@@ -8,9 +8,12 @@ use crate::statement::Consistency;
 use crate::tracing::TracingInfo;
 use crate::transport::connection::{BatchResult, QueryResult};
 use crate::transport::errors::{BadKeyspaceName, BadQuery, DbError, QueryError};
+use crate::transport::topology::Strategy::SimpleStrategy;
+use crate::transport::topology::{CollectionType, ColumnKind, CqlType, NativeType};
 use crate::{IntoTypedRows, Session, SessionBuilder};
 use bytes::Bytes;
 use futures::StreamExt;
+use itertools::Itertools;
 use uuid::Uuid;
 
 #[tokio::test]
@@ -1092,4 +1095,492 @@ async fn test_prepared_config() {
 
     assert_eq!(prepared_statement.get_is_idempotent(), true);
     assert_eq!(prepared_statement.get_page_size(), Some(42));
+}
+
+#[tokio::test]
+async fn test_schema_types_in_metadata() {
+    let uri = std::env::var("SCYLLA_URI").unwrap_or_else(|_| "127.0.0.1:9042".to_string());
+    let session = SessionBuilder::new().known_node(uri).build().await.unwrap();
+
+    session
+        .query("DROP KEYSPACE IF EXISTS test_metadata_ks", &[])
+        .await
+        .unwrap();
+
+    session
+        .query("CREATE KEYSPACE test_metadata_ks WITH REPLICATION = {'class' : 'SimpleStrategy', 'replication_factor' : 1}", &[])
+        .await
+        .unwrap();
+
+    session.query("USE test_metadata_ks", &[]).await.unwrap();
+
+    session
+        .query(
+            "CREATE TYPE IF NOT EXISTS type_a (
+                    a map<frozen<list<int>>, text>,
+                    b frozen<map<frozen<list<int>>, frozen<set<text>>>>
+                   )",
+            &[],
+        )
+        .await
+        .unwrap();
+
+    session
+        .query("CREATE TYPE IF NOT EXISTS type_b (a int, b text)", &[])
+        .await
+        .unwrap();
+
+    session
+        .query(
+            "CREATE TYPE IF NOT EXISTS type_c (a map<frozen<set<text>>, frozen<type_b>>)",
+            &[],
+        )
+        .await
+        .unwrap();
+
+    session
+        .query(
+            "CREATE TABLE IF NOT EXISTS table_a (
+                    a frozen<type_a> PRIMARY KEY,
+                    b type_b,
+                    c frozen<type_c>,
+                    d map<text, frozen<list<int>>>,
+                    e tuple<int, text>
+                  )",
+            &[],
+        )
+        .await
+        .unwrap();
+
+    session
+        .query(
+            "CREATE TABLE IF NOT EXISTS table_b (
+                        a text PRIMARY KEY,
+                        b frozen<map<int, int>>
+                     )",
+            &[],
+        )
+        .await
+        .unwrap();
+
+    session.await_schema_agreement().await.unwrap();
+    session.refresh_metadata().await.unwrap();
+
+    let cluster_data = session.get_cluster_data();
+    let tables = &cluster_data.get_keyspace_info()["test_metadata_ks"].tables;
+
+    assert_eq!(
+        tables.keys().sorted().collect::<Vec<_>>(),
+        vec!["table_a", "table_b"]
+    );
+
+    let table_a_columns = &tables["table_a"].columns;
+
+    assert_eq!(
+        table_a_columns.keys().sorted().collect::<Vec<_>>(),
+        vec!["a", "b", "c", "d", "e"]
+    );
+
+    let a = &table_a_columns["a"];
+
+    assert_eq!(
+        a.type_,
+        CqlType::UserDefinedType {
+            name: "type_a".to_string(),
+            frozen: true
+        }
+    );
+
+    let b = &table_a_columns["b"];
+
+    assert_eq!(
+        b.type_,
+        CqlType::UserDefinedType {
+            name: "type_b".to_string(),
+            frozen: false,
+        }
+    );
+
+    let c = &table_a_columns["c"];
+
+    assert_eq!(
+        c.type_,
+        CqlType::UserDefinedType {
+            name: "type_c".to_string(),
+            frozen: true
+        }
+    );
+
+    let d = &table_a_columns["d"];
+
+    assert_eq!(
+        d.type_,
+        CqlType::Collection {
+            type_: CollectionType::Map(
+                Box::new(CqlType::Native(NativeType::Text)),
+                Box::new(CqlType::Collection {
+                    type_: CollectionType::List(Box::new(CqlType::Native(NativeType::Int))),
+                    frozen: true
+                })
+            ),
+            frozen: false
+        }
+    );
+
+    let e = &table_a_columns["e"];
+
+    assert_eq!(
+        e.type_,
+        CqlType::Tuple(vec![
+            CqlType::Native(NativeType::Int),
+            CqlType::Native(NativeType::Text)
+        ])
+    );
+
+    let table_b_columns = &tables["table_b"].columns;
+
+    let a = &table_b_columns["a"];
+
+    assert_eq!(a.type_, CqlType::Native(NativeType::Text));
+
+    let b = &table_b_columns["b"];
+
+    assert_eq!(
+        b.type_,
+        CqlType::Collection {
+            type_: CollectionType::Map(
+                Box::new(CqlType::Native(NativeType::Int),),
+                Box::new(CqlType::Native(NativeType::Int),)
+            ),
+            frozen: true
+        }
+    );
+}
+
+#[tokio::test]
+async fn test_user_defined_types_in_metadata() {
+    let uri = std::env::var("SCYLLA_URI").unwrap_or_else(|_| "127.0.0.1:9042".to_string());
+    let session = SessionBuilder::new().known_node(uri).build().await.unwrap();
+
+    session
+        .query("DROP KEYSPACE IF EXISTS test_metadata_ks", &[])
+        .await
+        .unwrap();
+
+    session
+        .query("CREATE KEYSPACE test_metadata_ks WITH REPLICATION = {'class' : 'SimpleStrategy', 'replication_factor' : 1}", &[])
+        .await
+        .unwrap();
+
+    session.query("USE test_metadata_ks", &[]).await.unwrap();
+
+    session
+        .query(
+            "CREATE TYPE IF NOT EXISTS type_a (
+                    a map<frozen<list<int>>, text>,
+                    b frozen<map<frozen<list<int>>, frozen<set<text>>>>
+                   )",
+            &[],
+        )
+        .await
+        .unwrap();
+
+    session
+        .query("CREATE TYPE IF NOT EXISTS type_b (a int, b text)", &[])
+        .await
+        .unwrap();
+
+    session
+        .query(
+            "CREATE TYPE IF NOT EXISTS type_c (a map<frozen<set<text>>, frozen<type_b>>)",
+            &[],
+        )
+        .await
+        .unwrap();
+
+    session.await_schema_agreement().await.unwrap();
+    session.refresh_metadata().await.unwrap();
+
+    let cluster_data = session.get_cluster_data();
+    let user_defined_types =
+        &cluster_data.get_keyspace_info()["test_metadata_ks"].user_defined_types;
+
+    assert_eq!(
+        user_defined_types.keys().sorted().collect::<Vec<_>>(),
+        vec!["type_a", "type_b", "type_c"]
+    );
+
+    let type_a = &user_defined_types["type_a"];
+
+    assert_eq!(
+        type_a,
+        &vec![
+            (
+                "a".to_string(),
+                CqlType::Collection {
+                    frozen: false,
+                    type_: CollectionType::Map(
+                        Box::new(CqlType::Collection {
+                            frozen: true,
+                            type_: CollectionType::List(Box::new(CqlType::Native(NativeType::Int)))
+                        }),
+                        Box::new(CqlType::Native(NativeType::Text))
+                    )
+                }
+            ),
+            (
+                "b".to_string(),
+                CqlType::Collection {
+                    frozen: true,
+                    type_: CollectionType::Map(
+                        Box::new(CqlType::Collection {
+                            frozen: true,
+                            type_: CollectionType::List(Box::new(CqlType::Native(NativeType::Int)))
+                        }),
+                        Box::new(CqlType::Collection {
+                            frozen: true,
+                            type_: CollectionType::Set(Box::new(CqlType::Native(NativeType::Text)))
+                        })
+                    )
+                }
+            )
+        ]
+    );
+
+    let type_b = &user_defined_types["type_b"];
+
+    assert_eq!(
+        type_b,
+        &vec![
+            ("a".to_string(), CqlType::Native(NativeType::Int)),
+            ("b".to_string(), CqlType::Native(NativeType::Text))
+        ]
+    );
+
+    let type_c = &user_defined_types["type_c"];
+
+    assert_eq!(
+        type_c,
+        &vec![(
+            "a".to_string(),
+            CqlType::Collection {
+                frozen: false,
+                type_: CollectionType::Map(
+                    Box::new(CqlType::Collection {
+                        frozen: true,
+                        type_: CollectionType::Set(Box::new(CqlType::Native(NativeType::Text)))
+                    }),
+                    Box::new(CqlType::UserDefinedType {
+                        frozen: true,
+                        name: "type_b".to_string()
+                    })
+                )
+            }
+        )]
+    );
+}
+
+#[tokio::test]
+async fn test_column_kinds_in_metadata() {
+    let uri = std::env::var("SCYLLA_URI").unwrap_or_else(|_| "127.0.0.1:9042".to_string());
+    let session = SessionBuilder::new().known_node(uri).build().await.unwrap();
+
+    session
+        .query("DROP KEYSPACE IF EXISTS test_metadata_ks", &[])
+        .await
+        .unwrap();
+
+    session
+        .query("CREATE KEYSPACE test_metadata_ks WITH REPLICATION = {'class' : 'SimpleStrategy', 'replication_factor' : 1}", &[])
+        .await
+        .unwrap();
+
+    session.query("USE test_metadata_ks", &[]).await.unwrap();
+
+    session
+        .query(
+            "CREATE TABLE IF NOT EXISTS t (
+                    a int,
+                    b int,
+                    c int,
+                    d int STATIC,
+                    e int,
+                    f int,
+                    PRIMARY KEY ((c, e), b, a)
+                  )",
+            &[],
+        )
+        .await
+        .unwrap();
+
+    session.await_schema_agreement().await.unwrap();
+    session.refresh_metadata().await.unwrap();
+
+    let cluster_data = session.get_cluster_data();
+    let columns = &cluster_data.get_keyspace_info()["test_metadata_ks"].tables["t"].columns;
+
+    assert_eq!(columns["a"].kind, ColumnKind::Clustering);
+    assert_eq!(columns["b"].kind, ColumnKind::Clustering);
+    assert_eq!(columns["c"].kind, ColumnKind::PartitionKey);
+    assert_eq!(columns["d"].kind, ColumnKind::Static);
+    assert_eq!(columns["e"].kind, ColumnKind::PartitionKey);
+    assert_eq!(columns["f"].kind, ColumnKind::Regular);
+}
+
+#[tokio::test]
+async fn test_primary_key_ordering_in_metadata() {
+    let uri = std::env::var("SCYLLA_URI").unwrap_or_else(|_| "127.0.0.1:9042".to_string());
+    let session = SessionBuilder::new().known_node(uri).build().await.unwrap();
+
+    session
+        .query("DROP KEYSPACE IF EXISTS test_metadata_ks", &[])
+        .await
+        .unwrap();
+
+    session
+        .query("CREATE KEYSPACE test_metadata_ks WITH REPLICATION = {'class' : 'SimpleStrategy', 'replication_factor' : 1}", &[])
+        .await
+        .unwrap();
+
+    session.query("USE test_metadata_ks", &[]).await.unwrap();
+
+    session
+        .query(
+            "CREATE TABLE IF NOT EXISTS t (
+                    a int,
+                    b int,
+                    c int,
+                    d int STATIC,
+                    e int,
+                    f int,
+                    g int,
+                    h int,
+                    i int STATIC,
+                    PRIMARY KEY ((c, e), b, a)
+                  )",
+            &[],
+        )
+        .await
+        .unwrap();
+
+    session.await_schema_agreement().await.unwrap();
+    session.refresh_metadata().await.unwrap();
+
+    let cluster_data = session.get_cluster_data();
+    let table = &cluster_data.get_keyspace_info()["test_metadata_ks"].tables["t"];
+
+    assert_eq!(table.partition_key, vec!["c", "e"]);
+    assert_eq!(table.clustering_key, vec!["b", "a"]);
+}
+
+#[tokio::test]
+async fn test_table_partitioner_in_metadata() {
+    if option_env!("CDC") == Some("disabled") {
+        return;
+    }
+
+    let uri = std::env::var("SCYLLA_URI").unwrap_or_else(|_| "127.0.0.1:9042".to_string());
+    let session = SessionBuilder::new().known_node(uri).build().await.unwrap();
+
+    session
+        .query("DROP KEYSPACE IF EXISTS test_metadata_ks", &[])
+        .await
+        .unwrap();
+
+    session
+        .query("CREATE KEYSPACE test_metadata_ks WITH REPLICATION = {'class' : 'SimpleStrategy', 'replication_factor' : 1}", &[])
+        .await
+        .unwrap();
+
+    session.query("USE test_metadata_ks", &[]).await.unwrap();
+
+    session
+        .query(
+            "CREATE TABLE t (pk int, ck int, v int, PRIMARY KEY (pk, ck, v))WITH cdc = {'enabled':true}",
+            &[],
+        )
+        .await
+        .unwrap();
+
+    session.await_schema_agreement().await.unwrap();
+    session.refresh_metadata().await.unwrap();
+
+    let cluster_data = session.get_cluster_data();
+    let tables = &cluster_data.get_keyspace_info()["test_metadata_ks"].tables;
+    let table = &tables["t"];
+    let cdc_table = &tables["t_scylla_cdc_log"];
+
+    assert_eq!(table.partitioner, None);
+    assert_eq!(
+        cdc_table.partitioner.as_ref().unwrap(),
+        "com.scylladb.dht.CDCPartitioner"
+    );
+}
+
+#[tokio::test]
+async fn test_turning_off_schema_fetching() {
+    let uri = std::env::var("SCYLLA_URI").unwrap_or_else(|_| "127.0.0.1:9042".to_string());
+    let session = SessionBuilder::new()
+        .fetch_schema_metadata(false)
+        .known_node(uri)
+        .build()
+        .await
+        .unwrap();
+
+    session
+        .query("CREATE KEYSPACE IF NOT EXISTS test_metadata_ks WITH REPLICATION = {'class' : 'SimpleStrategy', 'replication_factor' : 1}", &[])
+        .await
+        .unwrap();
+
+    session.query("USE test_metadata_ks", &[]).await.unwrap();
+
+    session
+        .query(
+            "CREATE TYPE IF NOT EXISTS type_a (
+                    a map<frozen<list<int>>, text>,
+                    b frozen<map<frozen<list<int>>, frozen<set<text>>>>
+                   )",
+            &[],
+        )
+        .await
+        .unwrap();
+
+    session
+        .query("CREATE TYPE IF NOT EXISTS type_b (a int, b text)", &[])
+        .await
+        .unwrap();
+
+    session
+        .query(
+            "CREATE TYPE IF NOT EXISTS type_c (a map<frozen<set<text>>, frozen<type_b>>)",
+            &[],
+        )
+        .await
+        .unwrap();
+
+    session
+        .query(
+            "CREATE TABLE IF NOT EXISTS table_a (
+                    a frozen<type_a> PRIMARY KEY,
+                    b type_b,
+                    c frozen<type_c>,
+                    d map<text, frozen<list<int>>>,
+                    e tuple<int, text>
+                  )",
+            &[],
+        )
+        .await
+        .unwrap();
+
+    let cluster_data = &session.get_cluster_data();
+    let keyspace = &cluster_data.get_keyspace_info()["test_metadata_ks"];
+
+    assert_eq!(
+        keyspace.strategy,
+        SimpleStrategy {
+            replication_factor: 1
+        }
+    );
+    assert_eq!(keyspace.tables.len(), 0);
+    assert_eq!(keyspace.user_defined_types.len(), 0);
 }
