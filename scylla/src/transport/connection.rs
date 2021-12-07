@@ -71,9 +71,8 @@ pub struct Connection {
     _worker_handle: RemoteHandle<()>,
 
     connect_address: SocketAddr,
-    shard_info: Option<ShardInfo>,
-    shard_aware_port: Option<u16>,
     config: ConnectionConfig,
+    features: ConnectionFeatures,
 
     // Each request send by `Connection::send_request` needs a unique request id.
     // This field is a monotonic generator of such ids.
@@ -84,6 +83,12 @@ pub struct Connection {
     // pushing values in a synchronous way (without an `.await`), which is
     // needed for pushing values in `Drop` implementations.
     orphan_notification_sender: mpsc::UnboundedSender<RequestId>,
+}
+
+#[derive(Default)]
+pub(crate) struct ConnectionFeatures {
+    shard_info: Option<ShardInfo>,
+    shard_aware_port: Option<u16>,
 }
 
 type RequestId = u64;
@@ -298,9 +303,8 @@ impl Connection {
             submit_channel: sender,
             _worker_handle,
             config,
+            features: Default::default(),
             connect_address: addr,
-            shard_info: None,
-            shard_aware_port: None,
             request_id_generator: AtomicU64::new(0),
             orphan_notification_sender,
         };
@@ -1129,19 +1133,15 @@ impl Connection {
     }
 
     pub fn get_shard_info(&self) -> &Option<ShardInfo> {
-        &self.shard_info
+        &self.features.shard_info
     }
 
     pub fn get_shard_aware_port(&self) -> Option<u16> {
-        self.shard_aware_port
+        self.features.shard_aware_port
     }
 
-    fn set_shard_info(&mut self, shard_info: Option<ShardInfo>) {
-        self.shard_info = shard_info
-    }
-
-    fn set_shard_aware_port(&mut self, shard_aware_port: Option<u16>) {
-        self.shard_aware_port = shard_aware_port;
+    fn set_features(&mut self, features: ConnectionFeatures) {
+        self.features = features;
     }
 
     pub fn get_connect_address(&self) -> SocketAddr {
@@ -1195,8 +1195,12 @@ pub async fn open_named_connection(
         }
         _ => (None, Vec::new(), None),
     };
-    connection.set_shard_info(shard_info);
-    connection.set_shard_aware_port(shard_aware_port);
+
+    let features = ConnectionFeatures {
+        shard_info,
+        shard_aware_port,
+    };
+    connection.set_features(features);
 
     let mut options = HashMap::new();
     options.insert("CQL_VERSION".to_string(), "4.0.0".to_string()); // FIXME: hardcoded values
