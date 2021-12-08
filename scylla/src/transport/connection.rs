@@ -1180,21 +1180,24 @@ pub async fn open_named_connection(
         false => "SCYLLA_SHARD_AWARE_PORT",
     };
 
-    let (shard_info, supported_compression, shard_aware_port) = match options_result {
-        Response::Supported(mut supported) => {
-            let shard_info = ShardInfo::try_from(&supported.options).ok();
-            let supported_compression = supported.options.remove("COMPRESSION").unwrap_or_default();
-            let shard_aware_port = supported
-                .options
-                .remove(shard_aware_port_key)
-                .unwrap_or_default()
-                .into_iter()
-                .next()
-                .and_then(|p| p.parse::<u16>().ok());
-            (shard_info, supported_compression, shard_aware_port)
+    let mut supported = match options_result {
+        Response::Supported(supported) => supported,
+        _ => {
+            return Err(QueryError::ProtocolError(
+                "Wrong response to OPTIONS message was received",
+            ));
         }
-        _ => (None, Vec::new(), None),
     };
+
+    let shard_info = ShardInfo::try_from(&supported.options).ok();
+    let supported_compression = supported.options.remove("COMPRESSION").unwrap_or_default();
+    let shard_aware_port = supported
+        .options
+        .remove(shard_aware_port_key)
+        .unwrap_or_default()
+        .into_iter()
+        .next()
+        .and_then(|p| p.parse::<u16>().ok());
 
     let features = ConnectionFeatures {
         shard_info,
