@@ -851,7 +851,6 @@ impl Connection {
         })
     }
 
-    #[cfg(feature = "ssl")]
     async fn run_router(
         config: ConnectionConfig,
         stream: TcpStream,
@@ -859,54 +858,24 @@ impl Connection {
         error_sender: tokio::sync::oneshot::Sender<QueryError>,
         orphan_notification_receiver: mpsc::UnboundedReceiver<RequestId>,
     ) -> Result<RemoteHandle<()>, std::io::Error> {
-        let res = match config.ssl_context {
-            Some(ref context) => {
-                let ssl = Ssl::new(context)?;
-                let mut stream = SslStream::new(ssl, stream)?;
-                let _pin = Pin::new(&mut stream).connect().await;
-                Self::run_router_spawner(
-                    config,
-                    stream,
-                    receiver,
-                    error_sender,
-                    orphan_notification_receiver,
-                )
-            }
-            None => Self::run_router_spawner(
+        #[cfg(feature = "ssl")]
+        if let Some(context) = &config.ssl_context {
+            let ssl = Ssl::new(context)?;
+            let mut stream = SslStream::new(ssl, stream)?;
+            let _pin = Pin::new(&mut stream).connect().await;
+
+            let (task, handle) = Self::router(
                 config,
                 stream,
                 receiver,
                 error_sender,
                 orphan_notification_receiver,
-            ),
-        };
-        Ok(res)
-    }
+            )
+            .remote_handle();
+            tokio::task::spawn(task);
+            return Ok(handle);
+        }
 
-    #[cfg(not(feature = "ssl"))]
-    async fn run_router(
-        config: ConnectionConfig,
-        stream: TcpStream,
-        receiver: mpsc::Receiver<Task>,
-        error_sender: tokio::sync::oneshot::Sender<QueryError>,
-        orphan_notification_receiver: mpsc::UnboundedReceiver<RequestId>,
-    ) -> Result<RemoteHandle<()>, std::io::Error> {
-        Ok(Self::run_router_spawner(
-            config,
-            stream,
-            receiver,
-            error_sender,
-            orphan_notification_receiver,
-        ))
-    }
-
-    fn run_router_spawner(
-        config: ConnectionConfig,
-        stream: (impl AsyncRead + AsyncWrite + Send + 'static),
-        receiver: mpsc::Receiver<Task>,
-        error_sender: tokio::sync::oneshot::Sender<QueryError>,
-        orphan_notification_receiver: mpsc::UnboundedReceiver<RequestId>,
-    ) -> RemoteHandle<()> {
         let (task, handle) = Self::router(
             config,
             stream,
@@ -916,7 +885,7 @@ impl Connection {
         )
         .remote_handle();
         tokio::task::spawn(task);
-        handle
+        Ok(handle)
     }
 
     async fn router(
