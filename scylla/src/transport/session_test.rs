@@ -14,6 +14,7 @@ use crate::{IntoTypedRows, Session, SessionBuilder};
 use bytes::Bytes;
 use futures::StreamExt;
 use itertools::Itertools;
+use std::collections::{BTreeMap, HashMap};
 use uuid::Uuid;
 
 #[tokio::test]
@@ -1613,4 +1614,67 @@ async fn test_turning_off_schema_fetching() {
     );
     assert_eq!(keyspace.tables.len(), 0);
     assert_eq!(keyspace.user_defined_types.len(), 0);
+}
+
+#[tokio::test]
+async fn test_named_bind_markers() {
+    let uri = std::env::var("SCYLLA_URI").unwrap_or_else(|_| "127.0.0.1:9042".to_string());
+    let session = SessionBuilder::new().known_node(uri).build().await.unwrap();
+
+    session
+        .query("DROP KEYSPACE IF EXISTS test_named_bind_markers", &[])
+        .await
+        .unwrap();
+
+    session
+        .query("CREATE KEYSPACE test_named_bind_markers WITH REPLICATION = {'class' : 'SimpleStrategy', 'replication_factor' : 1}", &[])
+        .await
+        .unwrap();
+
+    session
+        .query("USE test_named_bind_markers", &[])
+        .await
+        .unwrap();
+
+    session
+        .query(
+            "CREATE TABLE t (pk int, ck int, v int, PRIMARY KEY (pk, ck, v))",
+            &[],
+        )
+        .await
+        .unwrap();
+
+    session.await_schema_agreement().await.unwrap();
+
+    let prepared = session
+        .prepare("INSERT INTO t (pk, ck, v) VALUES (:pk, :ck, :v)")
+        .await
+        .unwrap();
+    let hashmap: HashMap<&str, i32> = HashMap::from([("pk", 7), ("v", 42), ("ck", 13)]);
+    session.execute(&prepared, &hashmap).await.unwrap();
+
+    let btreemap: BTreeMap<&str, i32> = BTreeMap::from([("ck", 113), ("v", 142), ("pk", 17)]);
+    session.execute(&prepared, &btreemap).await.unwrap();
+
+    let rows: Vec<(i32, i32, i32)> = session
+        .query("SELECT pk, ck, v FROM t", &[])
+        .await
+        .unwrap()
+        .rows
+        .unwrap()
+        .into_typed::<(i32, i32, i32)>()
+        .map(|res| res.unwrap())
+        .collect();
+
+    assert_eq!(rows, vec![(7, 13, 42), (17, 113, 142)]);
+
+    let wrongmaps: Vec<HashMap<&str, i32>> = vec![
+        HashMap::from([("pk", 7), ("fefe", 42), ("ck", 13)]),
+        HashMap::from([("xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx", 7)]),
+        HashMap::new(),
+        HashMap::from([("ck", 9)]),
+    ];
+    for wrongmap in wrongmaps {
+        assert!(session.execute(&prepared, &wrongmap).await.is_err());
+    }
 }
