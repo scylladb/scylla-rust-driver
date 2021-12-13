@@ -25,7 +25,7 @@ pub struct SetKeyspace {
 pub struct Prepared {
     pub id: Bytes,
     pub prepared_metadata: PreparedMetadata,
-    result_metadata: ResultMetadata,
+    pub result_metadata: ResultMetadata,
 }
 
 #[derive(Debug)]
@@ -36,7 +36,7 @@ pub struct SchemaChange {
 #[derive(Clone, Debug)]
 pub struct TableSpec {
     pub ks_name: String,
-    table_name: String,
+    pub table_name: String,
 }
 
 #[derive(Debug, Clone)]
@@ -329,7 +329,7 @@ impl Row {
 #[derive(Debug)]
 pub struct Rows {
     pub metadata: ResultMetadata,
-    rows_count: usize,
+    pub rows_count: usize,
     pub rows: Vec<Row>,
 }
 
