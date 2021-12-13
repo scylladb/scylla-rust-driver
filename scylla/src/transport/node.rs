@@ -25,12 +25,6 @@ pub struct Node {
     down_marker: AtomicBool,
 }
 
-#[derive(Debug)]
-struct UseKeyspaceRequest {
-    keyspace_name: VerifiedKeyspaceName,
-    response_chan: tokio::sync::oneshot::Sender<Result<(), QueryError>>,
-}
-
 impl Node {
     /// Creates new node which starts connecting in the background
     /// # Arguments
