@@ -17,6 +17,7 @@ pub use round_robin::RoundRobinPolicy;
 pub use token_aware::TokenAwarePolicy;
 
 /// Represents info about statement that can be used by load balancing policies.
+#[derive(Default)]
 pub struct Statement<'a> {
     pub token: Option<Token>,
     pub keyspace: Option<&'a str>,
@@ -69,15 +70,6 @@ fn slice_rotated_left<'a, T>(slice: &'a [T], mid: usize) -> impl Iterator<Item =
     let begin = &slice[mid..];
     let end = &slice[..mid];
     begin.iter().chain(end.iter())
-}
-
-impl Default for Statement<'_> {
-    fn default() -> Self {
-        Statement {
-            token: None,
-            keyspace: None,
-        }
-    }
 }
 
 #[cfg(test)]
