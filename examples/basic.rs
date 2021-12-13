@@ -53,9 +53,9 @@ async fn main() -> Result<()> {
     // Or as custom structs that derive FromRow
     #[derive(Debug, FromRow)]
     struct RowData {
-        a: i32,
-        b: Option<i32>,
-        c: String,
+        _a: i32,
+        _b: Option<i32>,
+        _c: String,
     }
 
     if let Some(rows) = session.query("SELECT a, b, c FROM ks.t", &[]).await?.rows {
