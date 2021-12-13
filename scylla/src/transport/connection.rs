@@ -3,6 +3,7 @@ use futures::{future::RemoteHandle, FutureExt};
 use tokio::io::{split, AsyncRead, AsyncWrite, AsyncWriteExt, BufReader, BufWriter};
 use tokio::net::{TcpSocket, TcpStream};
 use tokio::sync::{mpsc, oneshot};
+use tokio::time::Instant;
 use tracing::{debug, error, trace, warn};
 use uuid::Uuid;
 
@@ -14,7 +15,7 @@ use std::sync::atomic::AtomicU64;
 #[cfg(feature = "ssl")]
 use tokio_openssl::SslStream;
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeSet, HashMap};
 use std::convert::TryFrom;
 use std::io::ErrorKind;
 use std::net::SocketAddr;
@@ -50,6 +51,15 @@ use crate::transport::Compression;
 
 // Queries for schema agreement
 const LOCAL_VERSION: &str = "SELECT schema_version FROM system.local WHERE key='local'";
+
+// FIXME: Make this constants configurable
+// The term "orphan" refers to stream ids, that were allocated for a {request, response} that no
+// one is waiting anymore (due to cancellation of `Connection::send_request`). Old orphan refers to
+// a stream id, that is orphaned for a long time. This long time is defined below
+// (`OLD_AGE_ORPHAN_THRESHOLD`). Connection, that has a big number (`OLD_ORPHAN_COUNT_THRESHOLD`)
+// of old orphans is shut down (and created again by a connection management layer).
+const OLD_ORPHAN_COUNT_THRESHOLD: usize = 1024;
+const OLD_AGE_ORPHAN_THRESHOLD: std::time::Duration = std::time::Duration::from_secs(1);
 
 pub struct Connection {
     submit_channel: mpsc::Sender<Task>,
@@ -993,21 +1003,41 @@ impl Connection {
     }
 
     // This task receives notifications from `OrphanhoodNotifier`s and tries to
-    // mark streams as orphaned
+    // mark streams as orphaned. It also checks count of old orphans periodically.
+    // After an ald orphan threshold is reached, `orphaner` returns an error
+    // causing the connection to break.
     async fn orphaner(
         handler_map: &StdMutex<ResponseHandlerMap>,
         mut orphan_receiver: mpsc::UnboundedReceiver<RequestId>,
     ) -> Result<(), QueryError> {
-        while let Some(request_id) = orphan_receiver.recv().await {
-            trace!(
-                "Trying to orphan stream id associated with request_id = {}",
-                request_id,
-            );
-            // We are guaranteed here that handler_map will not be locked
-            // by anybody else, so we can do try_lock().unwrap()
-            let mut handler_map_guard = handler_map.try_lock().unwrap();
-            handler_map_guard.orphan(request_id);
+        let mut interval = tokio::time::interval(OLD_AGE_ORPHAN_THRESHOLD);
+        loop {
+            tokio::select! {
+                _ = interval.tick() => {
+                    // We are guaranteed here that handler_map will not be locked
+                    // by anybody else, so we can do try_lock().unwrap()
+                    let handler_map_guard = handler_map.try_lock().unwrap();
+                    let old_orphan_count = handler_map_guard.old_orphans_count();
+                    if old_orphan_count > OLD_ORPHAN_COUNT_THRESHOLD {
+                        warn!(
+                            "Too many old orphaned stream ids: {}",
+                            old_orphan_count,
+                        );
+                        return Err(QueryError::TooManyOrphanedStreamIds(old_orphan_count as u16))
+                    }
+                }
+                Some(request_id) = orphan_receiver.recv() => {
+                    trace!(
+                        "Trying to orphan stream id associated with request_id = {}",
+                        request_id,
+                    );
+                    let mut handler_map_guard = handler_map.try_lock().unwrap(); // Same as above
+                    handler_map_guard.orphan(request_id);
+                }
+                else => { break }
+            }
         }
+
         Ok(())
     }
 
@@ -1219,26 +1249,42 @@ async fn connect_with_source_port(
 }
 
 struct OrphanageTracker {
-    orphans: HashSet<i16>,
+    orphans: HashMap<i16, Instant>,
+    by_orphaning_times: BTreeSet<(Instant, i16)>,
 }
 
 impl OrphanageTracker {
     pub fn new() -> Self {
         Self {
-            orphans: HashSet::new(),
+            orphans: HashMap::new(),
+            by_orphaning_times: BTreeSet::new(),
         }
     }
 
     pub fn insert(&mut self, stream_id: i16) {
-        self.orphans.insert(stream_id);
+        let now = Instant::now();
+        self.orphans.insert(stream_id, now);
+        self.by_orphaning_times.insert((now, stream_id));
     }
 
     pub fn remove(&mut self, stream_id: i16) {
-        self.orphans.remove(&stream_id);
+        if let Some(time) = self.orphans.remove(&stream_id) {
+            self.by_orphaning_times.remove(&(time, stream_id));
+        }
     }
 
     pub fn contains(&self, stream_id: i16) -> bool {
-        self.orphans.contains(&stream_id)
+        self.orphans.contains_key(&stream_id)
+    }
+
+    pub fn orphans_older_than(&self, age: std::time::Duration) -> usize {
+        let minimal_age = Instant::now() - age;
+        self.by_orphaning_times
+            .range(..(minimal_age, i16::MAX))
+            .count() // This has linear time complexity, but in terms of
+                     // the number of old orphans. Healthy connection - one
+                     // that does not have old orphaned stream ids, will
+                     // calculate this function quickly.
     }
 }
 
@@ -1288,6 +1334,11 @@ impl ResponseHandlerMap {
             self.handlers.remove(stream_id);
             self.request_to_stream.remove(&request_id);
         }
+    }
+
+    pub fn old_orphans_count(&self) -> usize {
+        self.orphanage_tracker
+            .orphans_older_than(OLD_AGE_ORPHAN_THRESHOLD)
     }
 
     pub fn lookup(&mut self, stream_id: i16) -> HandlerLookupResult {
