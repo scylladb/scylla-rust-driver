@@ -962,13 +962,15 @@ impl Connection {
         // We are guaranteed here that handler_map will not be locked
         // by anybody else, so we can do try_lock().unwrap()
         let mut handler_map_guard = handler_map.try_lock().unwrap();
-        if let Some(stream_id) = handler_map_guard.allocate(response_handler) {
-            Some(stream_id)
-        } else {
-            // TODO: Handle this error better, for now we drop this
-            // request and return an error to the receiver
-            error!("Could not allocate stream id");
-            None
+        match handler_map_guard.allocate(response_handler) {
+            Ok(stream_id) => Some(stream_id),
+            Err(response_handler) => {
+                error!("Could not allocate stream id");
+                let _ = response_handler
+                    .response_sender
+                    .send(Err(QueryError::UnableToAllocStreamId));
+                None
+            }
         }
     }
 
@@ -1312,14 +1314,17 @@ impl ResponseHandlerMap {
         }
     }
 
-    pub fn allocate(&mut self, response_handler: ResponseHandler) -> Option<i16> {
-        let stream_id = self.stream_set.allocate()?;
-        self.request_to_stream
-            .insert(response_handler.request_id, stream_id);
-        let prev_handler = self.handlers.insert(stream_id, response_handler);
-        assert!(prev_handler.is_none());
+    pub fn allocate(&mut self, response_handler: ResponseHandler) -> Result<i16, ResponseHandler> {
+        if let Some(stream_id) = self.stream_set.allocate() {
+            self.request_to_stream
+                .insert(response_handler.request_id, stream_id);
+            let prev_handler = self.handlers.insert(stream_id, response_handler);
+            assert!(prev_handler.is_none());
 
-        Some(stream_id)
+            Ok(stream_id)
+        } else {
+            Err(response_handler)
+        }
     }
 
     // Orphan stream_id (associated with this request_id) by moving it to
