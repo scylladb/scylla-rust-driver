@@ -41,6 +41,7 @@ pub struct TableSpec {
 
 #[derive(Debug, Clone)]
 pub enum ColumnType {
+    Custom(String),
     Ascii,
     Boolean,
     Blob,
@@ -376,6 +377,10 @@ fn deser_type(buf: &mut &[u8]) -> StdResult<ColumnType, ParseError> {
     use ColumnType::*;
     let id = types::read_short(buf)?;
     Ok(match id {
+        0x0000 => {
+            let type_str: String = types::read_string(buf)?.to_string();
+            Custom(type_str)
+        }
         0x0001 => Ascii,
         0x0002 => BigInt,
         0x0003 => Blob,
@@ -534,6 +539,12 @@ fn deser_cql_value(typ: &ColumnType, buf: &mut &[u8]) -> StdResult<CqlValue, Par
     }
 
     Ok(match typ {
+        Custom(type_str) => {
+            return Err(ParseError::BadData(format!(
+                "Support for custom types is not yet implemented: {}",
+                type_str
+            )));
+        }
         Ascii => {
             if !buf.is_ascii() {
                 return Err(ParseError::BadData("String is not ascii!".to_string()));
