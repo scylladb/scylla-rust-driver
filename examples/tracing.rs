@@ -46,7 +46,23 @@ async fn main() -> Result<()> {
 
     // Get tracing information for this query and print it
     let tracing_info: TracingInfo = session.get_tracing_info(&query_tracing_id).await?;
-    println!("Query tracing info: {:#?}\n", tracing_info);
+    println!(
+        "Tracing command {} performed by {:?}, which took {}µs total",
+        tracing_info.command.as_deref().unwrap_or("?"),
+        tracing_info.client,
+        tracing_info.duration.unwrap_or(0)
+    );
+    println!("│  UUID   │ Elapsed  │ Command");
+    println!("├─────────┼──────────┼──────────────────");
+    for event in tracing_info.events {
+        println!(
+            "│{} │ {:6}µs │ {}",
+            &event.event_id.to_string()[0..8],
+            event.source_elapsed.unwrap_or(0),
+            event.activity.as_deref().unwrap_or("?"),
+        );
+    }
+    println!("└─────────┴──────────┴──────────────────");
 
     // PREPARE
     // Now prepare a query - query to be prepared has tracing set so the prepare will be traced
