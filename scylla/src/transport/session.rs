@@ -1,6 +1,7 @@
 //! `Session` is the main object used in the driver.\
 //! It manages all connections to the cluster and allows to perform queries.
 
+use crate::frame::types::LegacyConsistency;
 use bytes::Bytes;
 use futures::future::join_all;
 use futures::future::try_join_all;
@@ -1133,7 +1134,9 @@ impl Session {
                 let query_info = QueryInfo {
                     error: last_error.as_ref().unwrap(),
                     is_idempotent,
-                    consistency: consistency.unwrap_or(self.default_consistency),
+                    consistency: LegacyConsistency::Regular(
+                        consistency.unwrap_or(self.default_consistency),
+                    ),
                 };
 
                 match retry_session.decide_should_retry(query_info) {

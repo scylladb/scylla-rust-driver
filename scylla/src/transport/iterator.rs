@@ -15,6 +15,7 @@ use tokio::sync::mpsc;
 use super::errors::QueryError;
 use crate::cql_to_rust::{FromRow, FromRowError};
 
+use crate::frame::types::LegacyConsistency;
 use crate::frame::{
     response::{
         result,
@@ -297,7 +298,7 @@ where
                 let query_info = QueryInfo {
                     error: &last_error,
                     is_idempotent: self.query_is_idempotent,
-                    consistency: self.query_consistency,
+                    consistency: LegacyConsistency::Regular(self.query_consistency),
                 };
 
                 match self.retry_session.decide_should_retry(query_info) {
