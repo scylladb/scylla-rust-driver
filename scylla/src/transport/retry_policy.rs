@@ -2,7 +2,7 @@
 //! To decide when to retry a query the `Session` can use any object which implements
 //! the `RetryPolicy` trait
 
-use crate::statement::Consistency;
+use crate::frame::types::LegacyConsistency;
 use crate::transport::errors::{DbError, QueryError, WriteType};
 
 /// Information about a failed query
@@ -14,7 +14,7 @@ pub struct QueryInfo<'a> {
     /// If set to `false` it is unknown whether it is idempotent
     pub is_idempotent: bool,
     /// Consistency with which the query failed
-    pub consistency: Consistency,
+    pub consistency: LegacyConsistency,
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -211,6 +211,7 @@ impl RetrySession for DefaultRetrySession {
 #[cfg(test)]
 mod tests {
     use super::{DefaultRetryPolicy, QueryInfo, RetryDecision, RetryPolicy};
+    use crate::frame::types::LegacyConsistency;
     use crate::statement::Consistency;
     use crate::transport::errors::{BadQuery, DbError, QueryError, WriteType};
     use std::io::ErrorKind;
@@ -220,7 +221,7 @@ mod tests {
         QueryInfo {
             error,
             is_idempotent,
-            consistency: Consistency::One,
+            consistency: LegacyConsistency::Regular(Consistency::One),
         }
     }
 
@@ -257,14 +258,14 @@ mod tests {
             DbError::Unauthorized,
             DbError::ConfigError,
             DbError::ReadFailure {
-                consistency: Consistency::Two,
+                consistency: LegacyConsistency::Regular(Consistency::Two),
                 received: 2,
                 required: 1,
                 numfailures: 1,
                 data_present: false,
             },
             DbError::WriteFailure {
-                consistency: Consistency::Two,
+                consistency: LegacyConsistency::Regular(Consistency::Two),
                 received: 1,
                 required: 2,
                 numfailures: 1,
@@ -335,7 +336,7 @@ mod tests {
     fn default_unavailable() {
         let error = QueryError::DbError(
             DbError::Unavailable {
-                consistency: Consistency::Two,
+                consistency: LegacyConsistency::Regular(Consistency::Two),
                 required: 2,
                 alive: 1,
             },
@@ -369,7 +370,7 @@ mod tests {
         // Enough responses and data_present == true
         let enough_responses_with_data = QueryError::DbError(
             DbError::ReadTimeout {
-                consistency: Consistency::Two,
+                consistency: LegacyConsistency::Regular(Consistency::Two),
                 received: 2,
                 required: 2,
                 data_present: true,
@@ -402,7 +403,7 @@ mod tests {
         // Enough responses but data_present == false
         let enough_responses_no_data = QueryError::DbError(
             DbError::ReadTimeout {
-                consistency: Consistency::Two,
+                consistency: LegacyConsistency::Regular(Consistency::Two),
                 received: 2,
                 required: 2,
                 data_present: false,
@@ -427,7 +428,7 @@ mod tests {
         // Not enough responses, data_present == true
         let not_enough_responses_with_data = QueryError::DbError(
             DbError::ReadTimeout {
-                consistency: Consistency::Two,
+                consistency: LegacyConsistency::Regular(Consistency::Two),
                 received: 1,
                 required: 2,
                 data_present: true,
@@ -456,7 +457,7 @@ mod tests {
         // WriteType == BatchLog
         let good_write_type = QueryError::DbError(
             DbError::WriteTimeout {
-                consistency: Consistency::Two,
+                consistency: LegacyConsistency::Regular(Consistency::Two),
                 received: 1,
                 required: 2,
                 write_type: WriteType::BatchLog,
@@ -485,7 +486,7 @@ mod tests {
         // WriteType != BatchLog
         let bad_write_type = QueryError::DbError(
             DbError::WriteTimeout {
-                consistency: Consistency::Two,
+                consistency: LegacyConsistency::Regular(Consistency::Two),
                 received: 4,
                 required: 2,
                 write_type: WriteType::Simple,

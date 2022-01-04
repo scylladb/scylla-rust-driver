@@ -33,6 +33,15 @@ pub enum SerialConsistency {
     LocalSerial = 0x0009,
 }
 
+// LegacyConsistency exists, because Scylla may return a SerialConsistency value
+// as Consistency when returning certain error types - the distinction between
+// Consistency and SerialConsistency is not really a thing in CQL.
+#[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub enum LegacyConsistency {
+    Regular(Consistency),
+    Serial(SerialConsistency),
+}
+
 impl Default for Consistency {
     fn default() -> Self {
         Consistency::LocalQuorum
@@ -42,6 +51,21 @@ impl Default for Consistency {
 impl std::fmt::Display for Consistency {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{:?}", self)
+    }
+}
+
+impl std::fmt::Display for SerialConsistency {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{:?}", self)
+    }
+}
+
+impl std::fmt::Display for LegacyConsistency {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        match self {
+            Self::Regular(c) => c.fmt(f),
+            Self::Serial(c) => c.fmt(f),
+        }
     }
 }
 
@@ -398,10 +422,16 @@ fn type_uuid() {
     assert_eq!(u, u2);
 }
 
-pub fn read_consistency(buf: &mut &[u8]) -> Result<Consistency, ParseError> {
+pub fn read_consistency(buf: &mut &[u8]) -> Result<LegacyConsistency, ParseError> {
     let raw = read_short(buf)?;
-    let parsed = Consistency::try_from(raw)
-        .map_err(|_| ParseError::BadData(format!("unknown consistency: {}", raw)))?;
+    let parsed = match Consistency::try_from(raw) {
+        Ok(c) => LegacyConsistency::Regular(c),
+        Err(_) => {
+            let parsed_serial = SerialConsistency::try_from(raw)
+                .map_err(|_| ParseError::BadData(format!("unknown consistency: {}", raw)))?;
+            LegacyConsistency::Serial(parsed_serial)
+        }
+    };
     Ok(parsed)
 }
 
@@ -419,7 +449,7 @@ fn type_consistency() {
     let mut buf = Vec::new();
     write_consistency(c, &mut buf);
     let c2 = read_consistency(&mut &*buf).unwrap();
-    assert_eq!(c, c2);
+    assert_eq!(LegacyConsistency::Regular(c), c2);
 
     let c: i16 = 0x1234;
     buf.clear();

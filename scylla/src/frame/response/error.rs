@@ -82,6 +82,7 @@ impl From<Error> for QueryError {
 #[cfg(test)]
 mod tests {
     use super::Error;
+    use crate::frame::types::LegacyConsistency;
     use crate::statement::Consistency;
     use crate::transport::errors::{DbError, WriteType};
     use std::convert::TryInto;
@@ -137,7 +138,7 @@ mod tests {
         assert_eq!(
             error.error,
             DbError::Unavailable {
-                consistency: Consistency::One,
+                consistency: LegacyConsistency::Regular(Consistency::One),
                 required: 2,
                 alive: 3,
             }
@@ -162,7 +163,7 @@ mod tests {
         assert_eq!(
             error.error,
             DbError::WriteTimeout {
-                consistency: Consistency::Quorum,
+                consistency: LegacyConsistency::Regular(Consistency::Quorum),
                 received: -5, // Allow negative values when they don't make sense, it's better than crashing with ProtocolError
                 required: 100,
                 write_type: WriteType::Simple,
@@ -184,7 +185,7 @@ mod tests {
         assert_eq!(
             error.error,
             DbError::ReadTimeout {
-                consistency: Consistency::Two,
+                consistency: LegacyConsistency::Regular(Consistency::Two),
                 received: 8,
                 required: 32,
                 data_present: false,
@@ -207,7 +208,7 @@ mod tests {
         assert_eq!(
             error.error,
             DbError::ReadFailure {
-                consistency: Consistency::Three,
+                consistency: LegacyConsistency::Regular(Consistency::Three),
                 received: 4,
                 required: 5,
                 numfailures: 6,
@@ -275,7 +276,7 @@ mod tests {
         assert_eq!(
             error.error,
             DbError::WriteFailure {
-                consistency: Consistency::Any,
+                consistency: LegacyConsistency::Regular(Consistency::Any),
                 received: 2,
                 required: 4,
                 numfailures: 8,
