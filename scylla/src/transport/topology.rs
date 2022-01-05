@@ -20,7 +20,7 @@ use tokio::sync::mpsc;
 use tracing::{debug, error, trace, warn};
 
 /// Allows to read current metadata from the cluster
-pub struct MetadataReader {
+pub(crate) struct MetadataReader {
     connection_config: ConnectionConfig,
     control_connection_address: SocketAddr,
     control_connection: NodeConnectionPool,

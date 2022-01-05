@@ -8,7 +8,7 @@ pub mod retry_policy;
 pub mod session;
 pub mod session_builder;
 pub mod speculative_execution;
-mod topology;
+pub mod topology;
 pub use cluster::ClusterData;
 
 pub mod errors;
