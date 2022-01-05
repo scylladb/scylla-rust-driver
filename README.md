@@ -10,7 +10,7 @@ Although optimized for ScyllaDB, the driver is also compatible with [Apache Cass
 **Note: this driver is officially supported but currently available in beta. Bug reports and pull requests are welcome!**
 
 ## Getting Started
-The [documentation book](https://cvybhu.github.io/scyllabook/index.html) is a good place to get started
+The [documentation book](https://cvybhu.github.io/scyllabook/index.html) is a good place to get started. Another useful resource is the Rust and Scylla [lesson](https://university.scylladb.com/courses/using-scylla-drivers/lessons/rust-and-scylla-2/) on Scylla Univeristy. 
 
 ## Examples
 ```rust
