@@ -449,7 +449,7 @@ impl Connection {
             .await?;
 
         if let Response::Error(err) = &query_response.response {
-            if err.error == DbError::Unprepared {
+            if let DbError::Unprepared { .. } = err.error {
                 // Repreparation of a statement is needed
                 let reprepare_query: Query = prepared_statement.get_statement().into();
                 let reprepared = self.prepare(&reprepare_query).await?;

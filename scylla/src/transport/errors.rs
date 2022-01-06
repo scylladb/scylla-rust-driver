@@ -3,6 +3,7 @@
 use crate::frame::frame_errors::{FrameError, ParseError};
 use crate::frame::types::LegacyConsistency;
 use crate::frame::value::SerializeValuesError;
+use bytes::Bytes;
 use std::io::ErrorKind;
 use std::sync::Arc;
 use thiserror::Error;
@@ -181,7 +182,10 @@ pub enum DbError {
     #[error(
         "Tried to execute a prepared statement that is not prepared. Driver shoud prepare it again"
     )]
-    Unprepared,
+    Unprepared {
+        /// Statement id of the requested prepared query
+        statement_id: Bytes,
+    },
 
     /// Internal server error. This indicates a server-side bug
     #[error("Internal server error. This indicates a server-side bug")]

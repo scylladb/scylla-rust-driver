@@ -201,6 +201,12 @@ pub fn read_bytes<'a>(buf: &mut &'a [u8]) -> Result<&'a [u8], ParseError> {
     Ok(v)
 }
 
+pub fn read_short_bytes<'a>(buf: &mut &'a [u8]) -> Result<&'a [u8], ParseError> {
+    let len = read_short_length(buf)?;
+    let v = read_raw_bytes(len, buf)?;
+    Ok(v)
+}
+
 pub fn write_bytes(v: &[u8], buf: &mut impl BufMut) -> Result<(), ParseError> {
     write_int_length(v.len(), buf)?;
     buf.put_slice(v);
