@@ -71,7 +71,7 @@ enum ColumnType {
     Varint,
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum CqlValue {
     Ascii(String),
     Boolean(bool),
