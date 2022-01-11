@@ -8,7 +8,8 @@ version = "0.0.0"
 anyhow = "1.0.33"
 futures = "0.3.6"
 openssl = "0.10.32"
-rustyline = "6.3.0"
+rustyline = "9"
+rustyline-derive = "0.6"
 scylla = {path = "../scylla", features = ["ssl"]}
 tokio = {version = "1.1.0", features = ["full"]}
 tracing = "0.1.25"
