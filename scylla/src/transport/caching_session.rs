@@ -142,7 +142,7 @@ impl CachingSession {
                 // In all other cases, just return the error
                 match err {
                     QueryError::DbError(db_error, message) => match db_error {
-                        DbError::Unprepared => {
+                        DbError::Unprepared { .. } => {
                             self.cache.remove(&query.contents);
 
                             let prepared = self.add_prepared_statement(query).await?;

@@ -324,7 +324,7 @@ async fn test_batch() {
     let mut batch: Batch = Default::default();
     batch.append_statement("INSERT INTO ks.t_batch (a, b, c) VALUES (?, ?, ?)");
     batch.append_statement("INSERT INTO ks.t_batch (a, b, c) VALUES (7, 11, '')");
-    batch.append_statement(prepared_statement);
+    batch.append_statement(prepared_statement.clone());
 
     let values = ((1_i32, 2_i32, "abc"), (), (1_i32, 4_i32, "hello"));
 
@@ -355,6 +355,36 @@ async fn test_batch() {
             (7, 11, &String::from(""))
         ]
     );
+
+    // Test repreparing statement inside a batch
+    let mut batch: Batch = Default::default();
+    batch.append_statement(prepared_statement);
+    let values = ((4_i32, 20_i32, "foobar"),);
+
+    // This statement flushes the prepared statement cache
+    session
+        .query("ALTER TABLE ks.t_batch WITH gc_grace_seconds = 42", &[])
+        .await
+        .unwrap();
+    session.batch(&batch, values).await.unwrap();
+
+    let rs = session
+        .query("SELECT a, b, c FROM ks.t_batch WHERE a = 4", &[])
+        .await
+        .unwrap()
+        .rows
+        .unwrap();
+    let results: Vec<(i32, i32, &String)> = rs
+        .iter()
+        .map(|r| {
+            let a = r.columns[0].as_ref().unwrap().as_int().unwrap();
+            let b = r.columns[1].as_ref().unwrap().as_int().unwrap();
+            let c = r.columns[2].as_ref().unwrap().as_text().unwrap();
+            (a, b, c)
+        })
+        .collect();
+
+    assert_eq!(results, vec![(4, 20, &String::from("foobar"))]);
 }
 
 #[tokio::test]

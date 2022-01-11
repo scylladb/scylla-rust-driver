@@ -2,6 +2,7 @@ use crate::frame::frame_errors::ParseError;
 use crate::frame::types;
 use crate::transport::errors::{DbError, QueryError, WriteType};
 use byteorder::ReadBytesExt;
+use bytes::Bytes;
 
 #[derive(Debug)]
 pub struct Error {
@@ -65,7 +66,9 @@ impl Error {
                 keyspace: types::read_string(buf)?.to_string(),
                 table: types::read_string(buf)?.to_string(),
             },
-            0x2500 => DbError::Unprepared,
+            0x2500 => DbError::Unprepared {
+                statement_id: Bytes::from(types::read_short_bytes(buf)?.to_owned()),
+            },
             _ => DbError::Other(code),
         };
 
@@ -85,6 +88,7 @@ mod tests {
     use crate::frame::types::LegacyConsistency;
     use crate::statement::Consistency;
     use crate::transport::errors::{DbError, WriteType};
+    use bytes::Bytes;
     use std::convert::TryInto;
 
     // Serializes the beginning of an ERROR response - error code and message
@@ -103,7 +107,7 @@ mod tests {
     // Tests deserialization of all errors without and additional data
     #[test]
     fn deserialize_simple_errors() {
-        let simple_error_mappings: [(i32, DbError); 12] = [
+        let simple_error_mappings: [(i32, DbError); 11] = [
             (0x0000, DbError::ServerError),
             (0x000A, DbError::ProtocolError),
             (0x0100, DbError::AuthenticationError),
@@ -114,7 +118,6 @@ mod tests {
             (0x2100, DbError::Unauthorized),
             (0x2200, DbError::Invalid),
             (0x2300, DbError::ConfigError),
-            (0x2500, DbError::Unprepared),
             (0x1234, DbError::Other(0x1234)),
         ];
 
@@ -311,5 +314,23 @@ mod tests {
             }
         );
         assert_eq!(error.reason, "message 2");
+    }
+
+    #[test]
+    fn deserialize_unprepared() {
+        let mut bytes = make_error_request_bytes(0x2500, "message 3");
+        let statement_id = b"deadbeef";
+        bytes.extend((statement_id.len() as i16).to_be_bytes());
+        bytes.extend(statement_id);
+
+        let error: Error = Error::deserialize(&mut bytes.as_slice()).unwrap();
+
+        assert_eq!(
+            error.error,
+            DbError::Unprepared {
+                statement_id: Bytes::from_static(b"deadbeef")
+            }
+        );
+        assert_eq!(error.reason, "message 3");
     }
 }

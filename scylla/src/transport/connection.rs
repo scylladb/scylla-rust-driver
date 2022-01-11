@@ -449,7 +449,7 @@ impl Connection {
             .await?;
 
         if let Response::Error(err) = &query_response.response {
-            if err.error == DbError::Unprepared {
+            if let DbError::Unprepared { .. } = err.error {
                 // Repreparation of a statement is needed
                 let reprepare_query: Query = prepared_statement.get_statement().into();
                 let reprepared = self.prepare(&reprepare_query).await?;
@@ -539,19 +539,45 @@ impl Connection {
             timestamp: batch.get_timestamp(),
         };
 
-        let query_response = self
-            .send_request(&batch_frame, true, batch.config.tracing)
-            .await?;
+        loop {
+            let query_response = self
+                .send_request(&batch_frame, true, batch.config.tracing)
+                .await?;
 
-        match query_response.response {
-            Response::Error(err) => Err(err.into()),
-            Response::Result(_) => Ok(BatchResult {
-                warnings: query_response.warnings,
-                tracing_id: query_response.tracing_id,
-            }),
-            _ => Err(QueryError::ProtocolError(
-                "BATCH: Unexpected server response",
-            )),
+            return match query_response.response {
+                Response::Error(err) => match err.error {
+                    DbError::Unprepared { statement_id } => {
+                        let prepared_statement = batch.statements.iter().find_map(|s| match s {
+                            BatchStatement::PreparedStatement(s) if *s.get_id() == statement_id => {
+                                Some(s)
+                            }
+                            _ => None,
+                        });
+                        if let Some(p) = prepared_statement {
+                            let reprepare_query: Query = p.get_statement().into();
+                            let reprepared = self.prepare(&reprepare_query).await?;
+                            if reprepared.get_id() != p.get_id() {
+                                return Err(QueryError::ProtocolError(
+                                    "Prepared statement Id changed, md5 sum should stay the same",
+                                ));
+                            }
+                            continue;
+                        } else {
+                            return Err(QueryError::ProtocolError(
+                                "The server returned a prepared statement Id that did not exist in the batch",
+                            ));
+                        }
+                    }
+                    _ => Err(err.into()),
+                },
+                Response::Result(_) => Ok(BatchResult {
+                    warnings: query_response.warnings,
+                    tracing_id: query_response.tracing_id,
+                }),
+                _ => Err(QueryError::ProtocolError(
+                    "BATCH: Unexpected server response",
+                )),
+            };
         }
     }
 

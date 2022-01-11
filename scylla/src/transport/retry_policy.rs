@@ -214,6 +214,7 @@ mod tests {
     use crate::frame::types::LegacyConsistency;
     use crate::statement::Consistency;
     use crate::transport::errors::{BadQuery, DbError, QueryError, WriteType};
+    use bytes::Bytes;
     use std::io::ErrorKind;
     use std::sync::Arc;
 
@@ -271,7 +272,9 @@ mod tests {
                 numfailures: 1,
                 write_type: WriteType::BatchLog,
             },
-            DbError::Unprepared,
+            DbError::Unprepared {
+                statement_id: Bytes::from_static(b"deadbeef"),
+            },
             DbError::ProtocolError,
             DbError::Other(0x124816),
         ];
