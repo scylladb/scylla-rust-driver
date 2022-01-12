@@ -1,9 +1,177 @@
 use anyhow::Result;
+use rustyline::completion::{Completer, Pair};
 use rustyline::error::ReadlineError;
-use rustyline::Editor;
+use rustyline::{CompletionType, Config, Context, Editor};
+use rustyline_derive::{Helper, Highlighter, Hinter, Validator};
 use scylla::transport::Compression;
 use scylla::{QueryResult, Session, SessionBuilder};
 use std::env;
+
+#[derive(Helper, Highlighter, Validator, Hinter)]
+struct CqlHelper;
+
+const CQL_KEYWORDS: &[&str] = &[
+    "ADD",
+    "AGGREGATE",
+    "ALL",
+    "ALLOW",
+    "ALTER",
+    "AND",
+    "ANY",
+    "APPLY",
+    "AS",
+    "ASC",
+    "ASCII",
+    "AUTHORIZE",
+    "BATCH",
+    "BEGIN",
+    "BIGINT",
+    "BLOB",
+    "BOOLEAN",
+    "BY",
+    "CLUSTERING",
+    "COLUMNFAMILY",
+    "COMPACT",
+    "CONSISTENCY",
+    "COUNT",
+    "COUNTER",
+    "CREATE",
+    "CUSTOM",
+    "DECIMAL",
+    "DELETE",
+    "DESC",
+    "DISTINCT",
+    "DOUBLE",
+    "DROP",
+    "EACH_QUORUM",
+    "ENTRIES",
+    "EXISTS",
+    "FILTERING",
+    "FLOAT",
+    "FROM",
+    "FROZEN",
+    "FULL",
+    "GRANT",
+    "IF",
+    "IN",
+    "INDEX",
+    "INET",
+    "INFINITY",
+    "INSERT",
+    "INT",
+    "INTO",
+    "KEY",
+    "KEYSPACE",
+    "KEYSPACES",
+    "LEVEL",
+    "LIMIT",
+    "LIST",
+    "LOCAL_ONE",
+    "LOCAL_QUORUM",
+    "MAP",
+    "MATERIALIZED",
+    "MODIFY",
+    "NAN",
+    "NORECURSIVE",
+    "NOSUPERUSER",
+    "NOT",
+    "OF",
+    "ON",
+    "ONE",
+    "ORDER",
+    "PARTITION",
+    "PASSWORD",
+    "PER",
+    "PERMISSION",
+    "PERMISSIONS",
+    "PRIMARY",
+    "QUORUM",
+    "RENAME",
+    "REVOKE",
+    "SCHEMA",
+    "SELECT",
+    "SET",
+    "STATIC",
+    "STORAGE",
+    "SUPERUSER",
+    "TABLE",
+    "TEXT",
+    "TIME",
+    "TIMESTAMP",
+    "TIMEUUID",
+    "THREE",
+    "TO",
+    "TOKEN",
+    "TRUNCATE",
+    "TTL",
+    "TUPLE",
+    "TWO",
+    "TYPE",
+    "UNLOGGED",
+    "UPDATE",
+    "USE",
+    "USER",
+    "USERS",
+    "USING",
+    "UUID",
+    "VALUES",
+    "VARCHAR",
+    "VARINT",
+    "VIEW",
+    "WHERE",
+    "WITH",
+    "WRITETIME",
+    // Scylla-specific
+    "BYPASS",
+    "CACHE",
+    "SERVICE",
+    "LEVEL",
+    "LEVELS",
+    "ATTACH",
+    "ATTACHED",
+    "DETACH",
+    "TIMEOUT",
+    "FOR",
+    "PER",
+    "PARTITION",
+    "LIKE",
+];
+
+impl Completer for CqlHelper {
+    type Candidate = Pair;
+
+    fn complete(
+        &self,
+        line: &str,
+        pos: usize,
+        _ctx: &Context<'_>,
+    ) -> Result<(usize, Vec<Pair>), ReadlineError> {
+        if !line.is_empty() {
+            let start: usize = line[..pos].rfind(' ').map_or(0, |p| p + 1);
+            let prefix = &line[start..pos].to_uppercase();
+            // NOTICE: yes, linear, but still fast enough for a cli
+            // TODO:
+            //  * completion from schema information
+            //  * completion with context - e.g. INTO only comes after INSERT
+            //  * completion for internal commands (once implemented)
+            if !prefix.is_empty() {
+                let mut matches: Vec<Pair> = Vec::new();
+                for keyword in CQL_KEYWORDS {
+                    if keyword.starts_with(prefix) {
+                        matches.push(Pair {
+                            display: keyword.to_string(),
+                            replacement: format!("{} ", keyword),
+                        })
+                    }
+                }
+                if !matches.is_empty() {
+                    return Ok((start, matches));
+                }
+            }
+        }
+        Ok((0, vec![]))
+    }
+}
 
 fn print_result(result: &QueryResult) {
     if result.rows.is_none() {
@@ -37,7 +205,12 @@ async fn main() -> Result<()> {
         .build()
         .await?;
 
-    let mut rl = Editor::<()>::new();
+    let config = Config::builder()
+        .history_ignore_space(true)
+        .completion_type(CompletionType::List)
+        .build();
+    let mut rl = Editor::with_config(config);
+    rl.set_helper(Some(CqlHelper {}));
     loop {
         let readline = rl.readline(">> ");
         match readline {
