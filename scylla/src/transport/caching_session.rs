@@ -161,7 +161,7 @@ impl CachingSession {
 #[cfg(test)]
 mod tests {
     use crate::{CachingSession, SessionBuilder};
-    use futures::StreamExt;
+    use futures::TryStreamExt;
 
     async fn create_caching_session() -> CachingSession {
         let session = CachingSession::from(SessionBuilder::new_for_test().await, 2);
@@ -243,16 +243,12 @@ mod tests {
 
         assert!(session.cache.is_empty());
 
-        let mut iter = session
+        let iter = session
             .execute_iter("select * from test_table", &[])
             .await
             .unwrap();
 
-        let mut rows = 0;
-
-        while let Some(_) = iter.next().await {
-            rows += 1;
-        }
+        let rows = iter.try_collect::<Vec<_>>().await.unwrap().len();
 
         assert_eq!(1, rows);
         assert_eq!(1, session.cache.len());
