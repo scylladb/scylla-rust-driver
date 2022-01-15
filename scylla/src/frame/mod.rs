@@ -22,6 +22,7 @@ use uuid::Uuid;
 
 use std::convert::TryFrom;
 
+#[cfg(not(feature = "safe_lz4"))]
 use compress::lz4;
 use request::Request;
 use response::ResponseOpcode;
@@ -205,12 +206,22 @@ pub fn compress_append(
     out: &mut Vec<u8>,
 ) -> Result<(), FrameError> {
     match compression {
+        #[cfg(not(feature = "safe_lz4"))]
         Compression::Lz4 => {
             let uncomp_len = uncomp_body.len() as u32;
             let mut tmp =
                 Vec::with_capacity(lz4::compression_bound(uncomp_len).unwrap_or(0) as usize);
             lz4::encode_block(uncomp_body, &mut tmp);
 
+            out.reserve_exact(std::mem::size_of::<u32>() + tmp.len());
+            out.put_u32(uncomp_len);
+            out.extend_from_slice(&tmp[..]);
+            Ok(())
+        }
+        #[cfg(feature = "safe_lz4")]
+        Compression::Lz4 => {
+            let uncomp_len = uncomp_body.len() as u32;
+            let tmp = lz4_flex::compress(uncomp_body);
             out.reserve_exact(std::mem::size_of::<u32>() + tmp.len());
             out.put_u32(uncomp_len);
             out.extend_from_slice(&tmp[..]);
@@ -230,6 +241,7 @@ pub fn compress_append(
 
 pub fn decompress(mut comp_body: &[u8], compression: Compression) -> Result<Vec<u8>, FrameError> {
     match compression {
+        #[cfg(not(feature = "safe_lz4"))]
         Compression::Lz4 => {
             let uncomp_len = comp_body.get_u32() as usize;
             let mut uncomp_body = Vec::with_capacity(uncomp_len);
@@ -242,8 +254,44 @@ pub fn decompress(mut comp_body: &[u8], compression: Compression) -> Result<Vec<
                 Err(FrameError::Lz4BodyDecompression)
             }
         }
+        #[cfg(feature = "safe_lz4")]
+        Compression::Lz4 => {
+            let uncomp_len = comp_body.get_u32() as usize;
+            let uncomp_body = lz4_flex::decompress(comp_body, uncomp_len)?;
+            Ok(uncomp_body)
+        }
         Compression::Snappy => snap::raw::Decoder::new()
             .decompress_vec(comp_body)
             .map_err(|_| FrameError::FrameDecompression),
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+
+    #[test]
+    fn test_lz4_compress() {
+        let mut out = Vec::from(&b"Hello"[..]);
+        let uncomp_body = b", World!";
+        let compression = Compression::Lz4;
+        let expect = vec![
+            72, 101, 108, 108, 111, 0, 0, 0, 8, 128, 44, 32, 87, 111, 114, 108, 100, 33,
+        ];
+
+        compress_append(uncomp_body, compression, &mut out).unwrap();
+        assert_eq!(expect, out);
+    }
+
+    #[test]
+    fn test_lz4_decompress() {
+        let mut comp_body = Vec::new();
+        let uncomp_body = b"Hello, World!";
+        let compression = Compression::Lz4;
+        compress_append(uncomp_body, compression, &mut comp_body).unwrap();
+        let result = decompress(&comp_body[..], compression).unwrap();
+        let expect = vec![72, 101, 108, 108, 111, 44, 32, 87, 111, 114, 108, 100, 33];
+        assert_eq!(&expect[..], &result[..]);
+        assert_eq!(&uncomp_body[..], &result[..]);
     }
 }
