@@ -1123,7 +1123,7 @@ async fn test_prepared_config() {
 
     let prepared_statement = session.prepare(query).await.unwrap();
 
-    assert_eq!(prepared_statement.get_is_idempotent(), true);
+    assert!(prepared_statement.get_is_idempotent());
     assert_eq!(prepared_statement.get_page_size(), Some(42));
 }
 
