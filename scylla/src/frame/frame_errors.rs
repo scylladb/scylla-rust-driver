@@ -9,9 +9,6 @@ pub enum FrameError {
     Parse(#[from] ParseError),
     #[error("Frame is compressed, but no compression negotiated for connection.")]
     NoCompressionNegotiated,
-    #[cfg(not(feature = "safe_lz4"))]
-    #[error("L4Z body decompression failed")]
-    Lz4BodyDecompression,
     #[error("Received frame marked as coming from a client")]
     FrameFromClient,
     #[error("Received a frame from version {0}, but only 4 is supported")]
@@ -26,10 +23,8 @@ pub enum FrameError {
     StdIoError(#[from] std::io::Error),
     #[error("Unrecognized opcode{0}")]
     TryFromPrimitiveError(#[from] num_enum::TryFromPrimitiveError<response::ResponseOpcode>),
-    #[cfg(feature = "safe_lz4")]
     #[error("Error compressing lz4 data {0}")]
     Lz4CompressError(#[from] lz4_flex::block::CompressError),
-    #[cfg(feature = "safe_lz4")]
     #[error("Error decompressing lz4 data {0}")]
     Lz4DecompressError(#[from] lz4_flex::block::DecompressError),
 }
