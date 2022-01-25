@@ -2,22 +2,24 @@ pub(crate) mod caching_session;
 mod cluster;
 pub(crate) mod connection;
 mod connection_pool;
+pub mod errors;
+pub mod iterator;
 pub mod load_balancing;
+pub(crate) mod metrics;
 mod node;
 pub mod retry_policy;
 pub mod session;
 pub mod session_builder;
 pub mod speculative_execution;
 pub mod topology;
-pub use cluster::ClusterData;
 
-pub mod errors;
-pub mod iterator;
-pub(crate) mod metrics;
-
+#[cfg(test)]
 mod authenticate_test;
 #[cfg(test)]
 mod session_test;
+
+pub use cluster::ClusterData;
+pub use node::Node;
 
 // All of the Authenticators supported by Scylla
 #[derive(Debug, PartialEq)]
