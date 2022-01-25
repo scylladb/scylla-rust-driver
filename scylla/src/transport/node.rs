@@ -33,7 +33,7 @@ impl Node {
     /// `compression` - preferred compression to use
     /// `datacenter` - optional datacenter name
     /// `rack` - optional rack name
-    pub fn new(
+    pub(crate) fn new(
         address: SocketAddr,
         pool_config: PoolConfig,
         datacenter: Option<String>,
@@ -54,12 +54,15 @@ impl Node {
 
     /// Get connection which should be used to connect using given token
     /// If this connection is broken get any random connection to this Node
-    pub async fn connection_for_token(&self, token: Token) -> Result<Arc<Connection>, QueryError> {
+    pub(crate) async fn connection_for_token(
+        &self,
+        token: Token,
+    ) -> Result<Arc<Connection>, QueryError> {
         self.pool.connection_for_token(token)
     }
 
     /// Get random connection
-    pub async fn random_connection(&self) -> Result<Arc<Connection>, QueryError> {
+    pub(crate) async fn random_connection(&self) -> Result<Arc<Connection>, QueryError> {
         self.pool.random_connection()
     }
 
@@ -67,22 +70,22 @@ impl Node {
         self.down_marker.load(Ordering::Relaxed)
     }
 
-    pub fn change_down_marker(&self, is_down: bool) {
+    pub(crate) fn change_down_marker(&self, is_down: bool) {
         self.down_marker.store(is_down, Ordering::Relaxed);
     }
 
-    pub async fn use_keyspace(
+    pub(crate) async fn use_keyspace(
         &self,
         keyspace_name: VerifiedKeyspaceName,
     ) -> Result<(), QueryError> {
         self.pool.use_keyspace(keyspace_name).await
     }
 
-    pub fn get_working_connections(&self) -> Result<Vec<Arc<Connection>>, QueryError> {
+    pub(crate) fn get_working_connections(&self) -> Result<Vec<Arc<Connection>>, QueryError> {
         self.pool.get_working_connections()
     }
 
-    pub async fn wait_until_pool_initialized(&self) {
+    pub(crate) async fn wait_until_pool_initialized(&self) {
         self.pool.wait_until_initialized().await
     }
 }

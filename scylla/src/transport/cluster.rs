@@ -290,6 +290,22 @@ impl ClusterData {
     pub fn get_keyspace_info(&self) -> &HashMap<String, Keyspace> {
         &self.keyspaces
     }
+
+    /// Access datacenter details collected by the driver
+    /// Returned `HashMap` is indexed by names of datacenters
+    pub fn get_datacenters_info(&self) -> &HashMap<String, Datacenter> {
+        &self.datacenters
+    }
+
+    /// Access ring details collected by the driver
+    pub fn get_ring_info(&self) -> &BTreeMap<Token, Arc<Node>> {
+        &self.ring
+    }
+
+    /// Access details about nodes known to the driver
+    pub fn get_nodes_info(&self) -> &Vec<Arc<Node>> {
+        &self.all_nodes
+    }
 }
 
 impl ClusterWorker {
