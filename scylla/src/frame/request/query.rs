@@ -15,7 +15,7 @@ const FLAG_PAGE_SIZE: u8 = 0x04;
 const FLAG_WITH_PAGING_STATE: u8 = 0x08;
 const FLAG_WITH_SERIAL_CONSISTENCY: u8 = 0x10;
 const FLAG_WITH_DEFAULT_TIMESTAMP: u8 = 0x20;
-// const FLAG_WITH_NAMES_FOR_VALUES: u8 = 0x40;
+const FLAG_WITH_NAMES_FOR_VALUES: u8 = 0x40;
 
 pub struct Query<'a> {
     pub contents: &'a str,
@@ -77,6 +77,10 @@ impl QueryParameters<'_> {
 
         if self.timestamp.is_some() {
             flags |= FLAG_WITH_DEFAULT_TIMESTAMP;
+        }
+
+        if self.values.has_names() {
+            flags |= FLAG_WITH_NAMES_FOR_VALUES;
         }
 
         buf.put_u8(flags);

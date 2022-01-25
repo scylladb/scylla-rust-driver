@@ -12,8 +12,9 @@ or a custom struct which derives from `ValueList`.
 A few examples:
 ```rust
 # extern crate scylla;
-# use scylla::{Session, ValueList};
+# use scylla::{Session, ValueList, frame::response::result::CqlValue};
 # use std::error::Error;
+# use std::collections::HashMap;
 # async fn check_only_compiles(session: &Session) -> Result<(), Box<dyn Error>> {
 // Empty slice means that there are no values to send
 session.query("INSERT INTO ks.tab (a) VALUES(1)", &[]).await?;
@@ -55,6 +56,15 @@ session.query("INSERT INTO ks.tab (a) VALUES(?)", (2_i32,)).await?;
 session
     .query("INSERT INTO ks.tab (a, b) VALUES(?, ?)", &(&2_i32, &"Some text"))
     .await?;
+
+// A map of named values can also be provided:
+let mut vals: HashMap<&str, CqlValue> = HashMap::new();
+vals.insert("avalue", CqlValue::Text("hello".to_string()));
+vals.insert("bvalue", CqlValue::Int(17));
+session
+    .query("INSERT INTO ks.tab (a, b) VALUES(:avalue, :bvalue)", &vals)
+    .await?;
+
 # Ok(())
 # }
 ```
