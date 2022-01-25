@@ -66,7 +66,6 @@ pub struct Connection {
     _worker_handle: RemoteHandle<()>,
 
     connect_address: SocketAddr,
-    source_port: u16,
     shard_info: Option<ShardInfo>,
     shard_aware_port: Option<u16>,
     config: ConnectionConfig,
@@ -297,7 +296,6 @@ impl Connection {
                 return Err(QueryError::TimeoutError);
             }
         };
-        let source_port = stream.local_addr()?.port();
         stream.set_nodelay(config.tcp_nodelay)?;
 
         // TODO: What should be the size of the channel?
@@ -319,7 +317,6 @@ impl Connection {
             submit_channel: sender,
             _worker_handle,
             config,
-            source_port,
             connect_address: addr,
             shard_info: None,
             shard_aware_port: None,
@@ -402,17 +399,6 @@ impl Connection {
     ) -> Result<QueryResult, QueryError> {
         let query: Query = query.into();
         self.query(&query, &values, None).await?.into_query_result()
-    }
-
-    pub async fn query_single_page_by_ref(
-        &self,
-        query: &Query,
-        values: &impl ValueList,
-        paging_state: Option<Bytes>,
-    ) -> Result<QueryResult, QueryError> {
-        self.query(query, values, paging_state)
-            .await?
-            .into_query_result()
     }
 
     pub async fn query(
@@ -540,6 +526,7 @@ impl Connection {
     }
 
     /// Performs execute_single_page multiple times to fetch all available pages
+    #[allow(dead_code)]
     pub async fn execute_all(
         &self,
         prepared_statement: &PreparedStatement,
@@ -1095,18 +1082,8 @@ impl Connection {
         &self.shard_info
     }
 
-    /// Are we connected to Scylla's shard aware port?
-    // TODO: couple this with shard_info?
-    pub fn get_is_shard_aware(&self) -> bool {
-        Some(self.connect_address.port()) == self.shard_aware_port
-    }
-
     pub fn get_shard_aware_port(&self) -> Option<u16> {
         self.shard_aware_port
-    }
-
-    pub fn get_source_port(&self) -> u16 {
-        self.source_port
     }
 
     fn set_shard_info(&mut self, shard_info: Option<ShardInfo>) {
