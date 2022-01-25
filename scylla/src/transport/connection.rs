@@ -28,7 +28,6 @@ use std::{
 
 use super::errors::{BadKeyspaceName, BadQuery, DbError, QueryError};
 
-use super::query_result::QueryResult;
 use crate::batch::{Batch, BatchStatement};
 use crate::frame::{
     self,
@@ -49,6 +48,10 @@ use crate::transport::Authenticator::{
     PasswordAuthenticator, ScyllaTransitionalAuthenticator,
 };
 use crate::transport::Compression;
+
+// Existing code imports scylla::transport::connection::QueryResult because it used to be located in this file.
+// Reexport QueryResult to avoid breaking the existing code.
+pub use crate::QueryResult;
 
 // Queries for schema agreement
 const LOCAL_VERSION: &str = "SELECT schema_version FROM system.local WHERE key='local'";
