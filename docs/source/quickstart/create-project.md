@@ -8,7 +8,7 @@ cargo new myproject
 In `Cargo.toml` add useful dependencies:
 ```toml
 [dependencies]
-scylla = "0.3.1"
+scylla = "0.4.0"
 tokio = { version = "1.1.0", features = ["full"] }
 futures = "0.3.6"
 uuid = "0.8.1"
