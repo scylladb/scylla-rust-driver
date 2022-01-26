@@ -32,7 +32,7 @@ use crate::batch::{Batch, BatchStatement};
 use crate::frame::{
     self,
     request::{self, batch, execute, query, register, Request},
-    response::{event::Event, result, result::ColumnSpec, Response, ResponseOpcode},
+    response::{event::Event, result, Response, ResponseOpcode},
     server_event_type::EventType,
     value::{BatchValues, ValueList},
     FrameParams, SerializedRequest,
@@ -48,6 +48,10 @@ use crate::transport::Authenticator::{
     PasswordAuthenticator, ScyllaTransitionalAuthenticator,
 };
 use crate::transport::Compression;
+
+// Existing code imports scylla::transport::connection::QueryResult because it used to be located in this file.
+// Reexport QueryResult to avoid breaking the existing code.
+pub use crate::QueryResult;
 
 // Queries for schema agreement
 const LOCAL_VERSION: &str = "SELECT schema_version FROM system.local WHERE key='local'";
@@ -136,49 +140,6 @@ pub struct QueryResponse {
     pub response: Response,
     pub tracing_id: Option<Uuid>,
     pub warnings: Vec<String>,
-}
-
-/// Result of a single query\
-/// Contains all rows returned by the database and some more information
-#[derive(Default, Debug)]
-pub struct QueryResult {
-    /// Rows returned by the database
-    pub rows: Option<Vec<result::Row>>,
-    /// Warnings returned by the database
-    pub warnings: Vec<String>,
-    /// CQL Tracing uuid - can only be Some if tracing is enabled for this query
-    pub tracing_id: Option<Uuid>,
-    /// Paging state returned from the server
-    pub paging_state: Option<Bytes>,
-    /// Column specification returned from the server
-    pub col_specs: Vec<ColumnSpec>,
-}
-
-impl QueryResult {
-    // Returns a column specification for a column with given name, or None if not found
-    pub fn get_column_spec<'a>(&'a self, name: &str) -> Option<(usize, &'a ColumnSpec)> {
-        self.col_specs
-            .iter()
-            .enumerate()
-            .find(|(_id, spec)| spec.name == name)
-    }
-
-    /// This function is used to merge results of multiple paged queries into one.\
-    /// other is the result of a new paged query.\
-    /// It is merged with current result kept in self.\
-    pub(crate) fn merge_with_next_page_res(&mut self, other: QueryResult) {
-        if let Some(other_rows) = other.rows {
-            match &mut self.rows {
-                Some(self_rows) => self_rows.extend(other_rows),
-                None => self.rows = Some(other_rows),
-            }
-        };
-
-        self.warnings.extend(other.warnings);
-        self.tracing_id = other.tracing_id;
-        self.paging_state = other.paging_state;
-        self.col_specs = other.col_specs;
-    }
 }
 
 /// Result of Session::batch(). Contains no rows, only some useful information.
