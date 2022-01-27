@@ -11,12 +11,11 @@ async fn authenticate_superuser() {
         .build()
         .await
         .unwrap();
+    let ks = crate::transport::session_test::unique_name();
 
-    session.query("CREATE KEYSPACE IF NOT EXISTS ks WITH REPLICATION = {'class' : 'SimpleStrategy', 'replication_factor' : 1}", &[]).await.unwrap();
-    session
-        .query("DROP TABLE IF EXISTS ks.t;", &[])
-        .await
-        .unwrap();
+    session.query(format!("CREATE KEYSPACE IF NOT EXISTS {} WITH REPLICATION = {{'class' : 'SimpleStrategy', 'replication_factor' : 1}}", ks), &[]).await.unwrap();
+    session.use_keyspace(ks, false).await.unwrap();
+    session.query("DROP TABLE IF EXISTS t;", &[]).await.unwrap();
 
     println!("Ok.");
 }
