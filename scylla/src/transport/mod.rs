@@ -17,7 +17,7 @@ pub mod topology;
 #[cfg(test)]
 mod authenticate_test;
 #[cfg(test)]
-mod session_test;
+pub(crate) mod session_test;
 
 pub use cluster::ClusterData;
 pub use node::Node;
