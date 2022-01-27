@@ -9,7 +9,9 @@ use std::{
 async fn connect() -> Session {
     let uri = env::var("SCYLLA_URI").unwrap_or_else(|_| "127.0.0.1:9042".to_string());
     let session = SessionBuilder::new().known_node(uri).build().await.unwrap();
-    session.query("CREATE KEYSPACE IF NOT EXISTS ks WITH REPLICATION = {'class' : 'SimpleStrategy', 'replication_factor' : 1}", &[]).await.unwrap();
+    let ks = crate::transport::session_test::unique_name();
+    session.query(format!("CREATE KEYSPACE IF NOT EXISTS {} WITH REPLICATION = {{'class' : 'SimpleStrategy', 'replication_factor' : 1}}", ks), &[]).await.unwrap();
+    session.use_keyspace(ks, false).await.unwrap();
 
     session
 }
@@ -18,7 +20,7 @@ async fn create_table(session: &Session, table_name: &str, value_type: &str) {
     session
         .query(
             format!(
-                "CREATE TABLE IF NOT EXISTS ks.{} (p int PRIMARY KEY, val {})",
+                "CREATE TABLE IF NOT EXISTS {} (p int PRIMARY KEY, val {})",
                 table_name, value_type
             ),
             (),
@@ -38,14 +40,14 @@ async fn insert_and_select<InsertT, SelectT>(
 {
     session
         .query(
-            format!("INSERT INTO ks.{} (p, val) VALUES (0, ?)", table_name),
+            format!("INSERT INTO {} (p, val) VALUES (0, ?)", table_name),
             (&to_insert,),
         )
         .await
         .unwrap();
 
     let selected_value: SelectT = session
-        .query(format!("SELECT val FROM ks.{} WHERE p = 0", table_name), ())
+        .query(format!("SELECT val FROM {} WHERE p = 0", table_name), ())
         .await
         .unwrap()
         .rows
