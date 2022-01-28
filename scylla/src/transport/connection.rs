@@ -1464,23 +1464,27 @@ mod tests {
         let (connection, _) = super::open_connection(addr, None, ConnectionConfig::default())
             .await
             .unwrap();
+        let ks = crate::transport::session_test::unique_name();
 
-        connection.query_single_page("CREATE KEYSPACE IF NOT EXISTS ks WITH REPLICATION = {'class' : 'SimpleStrategy', 'replication_factor' : 1}", &[]).await.unwrap();
+        connection.query_single_page(format!("CREATE KEYSPACE IF NOT EXISTS {} WITH REPLICATION = {{'class' : 'SimpleStrategy', 'replication_factor' : 1}}", ks), &[]).await.unwrap();
         connection
-            .query_single_page("DROP TABLE IF EXISTS ks.connection_query_all_tab", &[])
+            .use_keyspace(&super::VerifiedKeyspaceName::new(ks, false).unwrap())
+            .await
+            .unwrap();
+        connection
+            .query_single_page("DROP TABLE IF EXISTS connection_query_all_tab", &[])
             .await
             .unwrap();
         connection
             .query_single_page(
-                "CREATE TABLE IF NOT EXISTS ks.connection_query_all_tab (p int primary key)",
+                "CREATE TABLE IF NOT EXISTS connection_query_all_tab (p int primary key)",
                 &[],
             )
             .await
             .unwrap();
 
         // 1. SELECT from an empty table returns query result where rows are Some(Vec::new())
-        let select_query =
-            Query::new("SELECT p FROM ks.connection_query_all_tab").with_page_size(7);
+        let select_query = Query::new("SELECT p FROM connection_query_all_tab").with_page_size(7);
         let empty_res = connection.query_all(&select_query, &[]).await.unwrap();
         assert!(empty_res.rows.unwrap().is_empty());
 
@@ -1493,7 +1497,7 @@ mod tests {
         let values: Vec<i32> = (0..100).collect();
         let mut insert_futures = Vec::new();
         let insert_query =
-            Query::new("INSERT INTO ks.connection_query_all_tab (p) VALUES (?)").with_page_size(7);
+            Query::new("INSERT INTO connection_query_all_tab (p) VALUES (?)").with_page_size(7);
         for v in &values {
             insert_futures.push(connection.query_single_page(insert_query.clone(), (v,)));
         }
@@ -1536,7 +1540,7 @@ mod tests {
         assert!(insert_res2.rows.is_none(),);
 
         // 4. Calling query_all with a Query that doesn't have page_size set should result in an error.
-        let no_page_size_query = Query::new("SELECT p FROM ks.connection_query_all_tab");
+        let no_page_size_query = Query::new("SELECT p FROM connection_query_all_tab");
         let no_page_res = connection.query_all(&no_page_size_query, &[]).await;
         assert!(matches!(no_page_res, Err(QueryError::ProtocolError(_))));
 

@@ -663,32 +663,37 @@ fn ref_batch_values() {
 async fn test_cqlvalue_udt() {
     let uri = env::var("SCYLLA_URI").unwrap_or_else(|_| "127.0.0.1:9042".to_string());
     let session: Session = SessionBuilder::new().known_node(uri).build().await.unwrap();
+    let ks = crate::transport::session_test::unique_name();
     session
         .query(
-            "CREATE KEYSPACE IF NOT EXISTS ks WITH REPLICATION = \
-            {'class' : 'SimpleStrategy', 'replication_factor' : 1}",
+            format!(
+                "CREATE KEYSPACE IF NOT EXISTS {} WITH REPLICATION = \
+            {{'class' : 'SimpleStrategy', 'replication_factor' : 1}}",
+                ks
+            ),
             &[],
         )
         .await
         .unwrap();
+    session.use_keyspace(&ks, false).await.unwrap();
 
     session
         .query(
-            "CREATE TYPE IF NOT EXISTS ks.cqlvalue_udt_type (int_val int, text_val text)",
+            "CREATE TYPE IF NOT EXISTS cqlvalue_udt_type (int_val int, text_val text)",
             &[],
         )
         .await
         .unwrap();
     session
         .query(
-            "CREATE TABLE IF NOT EXISTS ks.cqlvalue_udt_test (k int, my cqlvalue_udt_type, primary key (k))",
+            "CREATE TABLE IF NOT EXISTS cqlvalue_udt_test (k int, my cqlvalue_udt_type, primary key (k))",
             &[],
         )
         .await
         .unwrap();
 
     let udt_cql_value = CqlValue::UserDefinedType {
-        keyspace: "ks".to_string(),
+        keyspace: ks,
         type_name: "cqlvalue_udt_type".to_string(),
         fields: vec![
             ("int_val".to_string(), Some(CqlValue::Int(42))),
@@ -698,14 +703,14 @@ async fn test_cqlvalue_udt() {
 
     session
         .query(
-            "INSERT INTO ks.cqlvalue_udt_test (k, my) VALUES (5, ?)",
+            "INSERT INTO cqlvalue_udt_test (k, my) VALUES (5, ?)",
             (&udt_cql_value,),
         )
         .await
         .unwrap();
 
     let rows = session
-        .query("SELECT my FROM ks.cqlvalue_udt_test", &[])
+        .query("SELECT my FROM cqlvalue_udt_test", &[])
         .await
         .unwrap()
         .rows

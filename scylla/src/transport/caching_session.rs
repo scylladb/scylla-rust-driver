@@ -160,11 +160,44 @@ impl CachingSession {
 
 #[cfg(test)]
 mod tests {
-    use crate::{CachingSession, SessionBuilder};
+    use crate::{CachingSession, Session, SessionBuilder};
     use futures::TryStreamExt;
 
+    async fn new_for_test() -> Session {
+        let uri = std::env::var("SCYLLA_URI").unwrap_or_else(|_| "127.0.0.1:9042".to_string());
+        let session = SessionBuilder::new()
+            .known_node(uri)
+            .build()
+            .await
+            .expect("Could not create session");
+        let ks = crate::transport::session_test::unique_name();
+
+        session
+            .query(format!("CREATE KEYSPACE IF NOT EXISTS {} WITH REPLICATION = {{'class' : 'SimpleStrategy', 'replication_factor' : 1}}", ks), &[])
+            .await
+            .expect("Could not create keyspace");
+
+        session
+            .query(
+                format!(
+                    "CREATE TABLE IF NOT EXISTS {}.test_table (a int primary key, b int)",
+                    ks
+                ),
+                &[],
+            )
+            .await
+            .expect("Could not create table");
+
+        session
+            .use_keyspace(ks, false)
+            .await
+            .expect("Could not set keyspace");
+
+        session
+    }
+
     async fn create_caching_session() -> CachingSession {
-        let session = CachingSession::from(SessionBuilder::new_for_test().await, 2);
+        let session = CachingSession::from(new_for_test().await, 2);
 
         // Add a row, this makes it easier to check if the caching works combined with the regular execute fn on Session
         session

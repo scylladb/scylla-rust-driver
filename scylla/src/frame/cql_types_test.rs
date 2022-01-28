@@ -19,32 +19,37 @@ use std::str::FromStr;
 use uuid::Uuid;
 
 // Used to prepare a table for test
-// Creates keyspace ks
-// Drops and creates table ks.{table_name} (id int PRIMARY KEY, val {type_name})
+// Creates a new keyspace
+// Drops and creates table {table_name} (id int PRIMARY KEY, val {type_name})
 async fn init_test(table_name: &str, type_name: &str) -> Session {
     let uri = env::var("SCYLLA_URI").unwrap_or_else(|_| "127.0.0.1:9042".to_string());
 
     println!("Connecting to {} ...", uri);
     let session: Session = SessionBuilder::new().known_node(uri).build().await.unwrap();
+    let ks = crate::transport::session_test::unique_name();
 
     session
         .query(
-            "CREATE KEYSPACE IF NOT EXISTS ks WITH REPLICATION = \
-            {'class' : 'SimpleStrategy', 'replication_factor' : 1}",
+            format!(
+                "CREATE KEYSPACE IF NOT EXISTS {} WITH REPLICATION = \
+            {{'class' : 'SimpleStrategy', 'replication_factor' : 1}}",
+                ks
+            ),
             &[],
         )
         .await
         .unwrap();
+    session.use_keyspace(ks, false).await.unwrap();
 
     session
-        .query(format!("DROP TABLE IF EXISTS ks.{}", table_name), &[])
+        .query(format!("DROP TABLE IF EXISTS {}", table_name), &[])
         .await
         .unwrap();
 
     session
         .query(
             format!(
-                "CREATE TABLE IF NOT EXISTS ks.{} (id int PRIMARY KEY, val {})",
+                "CREATE TABLE IF NOT EXISTS {} (id int PRIMARY KEY, val {})",
                 table_name, type_name
             ),
             &[],
@@ -58,9 +63,9 @@ async fn init_test(table_name: &str, type_name: &str) -> Session {
 // This function tests serialization and deserialization mechanisms by sending insert and select
 // queries to running Scylla instance.
 // To do so, it:
-// Prepares a table for tests (by creating keyspace ks and table ks.{table_name} using init_test)
+// Prepares a table for tests (by creating test keyspace and table {table_name} using init_test)
 // Runs a test that, for every element of `tests`:
-// - inserts 2 values (one encoded as string and one as bound values) into table ks.{type_name}
+// - inserts 2 values (one encoded as string and one as bound values) into table {type_name}
 // - selects this 2 values and compares them with expected value
 // Expected values and bound values are computed using T::from_str
 async fn run_tests<T>(tests: &[&str], type_name: &str)
@@ -70,23 +75,21 @@ where
     let session: Session = init_test(type_name, type_name).await;
 
     for test in tests.iter() {
-        let insert_string_encoded_value = format!(
-            "INSERT INTO ks.{} (id, val) VALUES (0, {})",
-            type_name, test
-        );
+        let insert_string_encoded_value =
+            format!("INSERT INTO {} (id, val) VALUES (0, {})", type_name, test);
         session
             .query(insert_string_encoded_value, &[])
             .await
             .unwrap();
 
-        let insert_bound_value = format!("INSERT INTO ks.{} (id, val) VALUES (1, ?)", type_name);
+        let insert_bound_value = format!("INSERT INTO {} (id, val) VALUES (1, ?)", type_name);
         let value_to_bound = T::from_str(test).ok().unwrap();
         session
             .query(insert_bound_value, (value_to_bound,))
             .await
             .unwrap();
 
-        let select_values = format!("SELECT val from ks.{}", type_name);
+        let select_values = format!("SELECT val from {}", type_name);
         let read_values: Vec<T> = session
             .query(select_values, &[])
             .await
@@ -169,14 +172,14 @@ async fn test_counter() {
     let session: Session = init_test(type_name, type_name).await;
 
     for (i, test) in tests.iter().enumerate() {
-        let update_bound_value = format!("UPDATE ks.{} SET val = val + ? WHERE id = ?", type_name);
+        let update_bound_value = format!("UPDATE {} SET val = val + ? WHERE id = ?", type_name);
         let value_to_bound = Counter(i64::from_str(test).unwrap());
         session
             .query(update_bound_value, (value_to_bound, i as i32))
             .await
             .unwrap();
 
-        let select_values = format!("SELECT val FROM ks.{} WHERE id = ?", type_name);
+        let select_values = format!("SELECT val FROM {} WHERE id = ?", type_name);
         let read_values: Vec<Counter> = session
             .query(select_values, (i as i32,))
             .await
@@ -228,7 +231,7 @@ async fn test_naive_date() {
         session
             .query(
                 format!(
-                    "INSERT INTO ks.naive_date (id, val) VALUES (0, '{}')",
+                    "INSERT INTO naive_date (id, val) VALUES (0, '{}')",
                     date_text
                 ),
                 &[],
@@ -237,7 +240,7 @@ async fn test_naive_date() {
             .unwrap();
 
         let read_date: Option<NaiveDate> = session
-            .query("SELECT val from ks.naive_date", &[])
+            .query("SELECT val from naive_date", &[])
             .await
             .unwrap()
             .rows
@@ -254,14 +257,14 @@ async fn test_naive_date() {
         if let Some(naive_date) = date {
             session
                 .query(
-                    "INSERT INTO ks.naive_date (id, val) VALUES (0, ?)",
+                    "INSERT INTO naive_date (id, val) VALUES (0, ?)",
                     (naive_date,),
                 )
                 .await
                 .unwrap();
 
             let (read_date,): (NaiveDate,) = session
-                .query("SELECT val from ks.naive_date", &[])
+                .query("SELECT val from naive_date", &[])
                 .await
                 .unwrap()
                 .rows
@@ -277,7 +280,7 @@ async fn test_naive_date() {
     // 1 less/more than min/max values allowed by the database should cause error
     session
         .query(
-            "INSERT INTO ks.naive_date (id, val) VALUES (0, '-5877641-06-22')",
+            "INSERT INTO naive_date (id, val) VALUES (0, '-5877641-06-22')",
             &[],
         )
         .await
@@ -285,7 +288,7 @@ async fn test_naive_date() {
 
     session
         .query(
-            "INSERT INTO ks.naive_date (id, val) VALUES (0, '5881580-07-12')",
+            "INSERT INTO naive_date (id, val) VALUES (0, '5881580-07-12')",
             &[],
         )
         .await
@@ -311,7 +314,7 @@ async fn test_date() {
         session
             .query(
                 format!(
-                    "INSERT INTO ks.date_tests (id, val) VALUES (0, '{}')",
+                    "INSERT INTO date_tests (id, val) VALUES (0, '{}')",
                     date_text
                 ),
                 &[],
@@ -320,7 +323,7 @@ async fn test_date() {
             .unwrap();
 
         let read_date: Date = session
-            .query("SELECT val from ks.date_tests", &[])
+            .query("SELECT val from date_tests", &[])
             .await
             .unwrap()
             .rows
@@ -360,7 +363,7 @@ async fn test_time() {
         session
             .query(
                 format!(
-                    "INSERT INTO ks.time_tests (id, val) VALUES (0, '{}')",
+                    "INSERT INTO time_tests (id, val) VALUES (0, '{}')",
                     time_str
                 ),
                 &[],
@@ -369,7 +372,7 @@ async fn test_time() {
             .unwrap();
 
         let (read_time,): (Duration,) = session
-            .query("SELECT val from ks.time_tests", &[])
+            .query("SELECT val from time_tests", &[])
             .await
             .unwrap()
             .rows
@@ -384,14 +387,14 @@ async fn test_time() {
         // Insert time as a bound Time value and verify that it matches
         session
             .query(
-                "INSERT INTO ks.time_tests (id, val) VALUES (0, ?)",
+                "INSERT INTO time_tests (id, val) VALUES (0, ?)",
                 (Time(*time_duration),),
             )
             .await
             .unwrap();
 
         let (read_time,): (Duration,) = session
-            .query("SELECT val from ks.time_tests", &[])
+            .query("SELECT val from time_tests", &[])
             .await
             .unwrap()
             .rows
@@ -420,7 +423,7 @@ async fn test_time() {
         session
             .query(
                 format!(
-                    "INSERT INTO ks.time_tests (id, val) VALUES (0, '{}')",
+                    "INSERT INTO time_tests (id, val) VALUES (0, '{}')",
                     time_str
                 ),
                 &[],
@@ -470,7 +473,7 @@ async fn test_timestamp() {
         session
             .query(
                 format!(
-                    "INSERT INTO ks.timestamp_tests (id, val) VALUES (0, '{}')",
+                    "INSERT INTO timestamp_tests (id, val) VALUES (0, '{}')",
                     timestamp_str
                 ),
                 &[],
@@ -479,7 +482,7 @@ async fn test_timestamp() {
             .unwrap();
 
         let (read_timestamp,): (Duration,) = session
-            .query("SELECT val from ks.timestamp_tests", &[])
+            .query("SELECT val from timestamp_tests", &[])
             .await
             .unwrap()
             .rows
@@ -494,14 +497,14 @@ async fn test_timestamp() {
         // Insert timestamp as a bound Timestamp value and verify that it matches
         session
             .query(
-                "INSERT INTO ks.timestamp_tests (id, val) VALUES (0, ?)",
+                "INSERT INTO timestamp_tests (id, val) VALUES (0, ?)",
                 (Timestamp(*timestamp_duration),),
             )
             .await
             .unwrap();
 
         let (read_timestamp,): (Duration,) = session
-            .query("SELECT val from ks.timestamp_tests", &[])
+            .query("SELECT val from timestamp_tests", &[])
             .await
             .unwrap()
             .rows
@@ -546,7 +549,7 @@ async fn test_timeuuid() {
         session
             .query(
                 format!(
-                    "INSERT INTO ks.timeuuid_tests (id, val) VALUES (0, {})",
+                    "INSERT INTO timeuuid_tests (id, val) VALUES (0, {})",
                     timeuuid_str
                 ),
                 &[],
@@ -555,7 +558,7 @@ async fn test_timeuuid() {
             .unwrap();
 
         let (read_timeuuid,): (Uuid,) = session
-            .query("SELECT val from ks.timeuuid_tests", &[])
+            .query("SELECT val from timeuuid_tests", &[])
             .await
             .unwrap()
             .rows
@@ -571,14 +574,14 @@ async fn test_timeuuid() {
         let test_uuid: Uuid = Uuid::from_slice(timeuuid_bytes.as_ref()).unwrap();
         session
             .query(
-                "INSERT INTO ks.timeuuid_tests (id, val) VALUES (0, ?)",
+                "INSERT INTO timeuuid_tests (id, val) VALUES (0, ?)",
                 (test_uuid,),
             )
             .await
             .unwrap();
 
         let (read_timeuuid,): (Uuid,) = session
-            .query("SELECT val from ks.timeuuid_tests", &[])
+            .query("SELECT val from timeuuid_tests", &[])
             .await
             .unwrap()
             .rows
@@ -638,7 +641,7 @@ async fn test_inet() {
         session
             .query(
                 format!(
-                    "INSERT INTO ks.inet_tests (id, val) VALUES (0, '{}')",
+                    "INSERT INTO inet_tests (id, val) VALUES (0, '{}')",
                     inet_str
                 ),
                 &[],
@@ -647,7 +650,7 @@ async fn test_inet() {
             .unwrap();
 
         let (read_inet,): (IpAddr,) = session
-            .query("SELECT val from ks.inet_tests WHERE id = 0", &[])
+            .query("SELECT val from inet_tests WHERE id = 0", &[])
             .await
             .unwrap()
             .rows
@@ -661,12 +664,12 @@ async fn test_inet() {
 
         // Insert inet as a bound value and verify that it matches
         session
-            .query("INSERT INTO ks.inet_tests (id, val) VALUES (0, ?)", (inet,))
+            .query("INSERT INTO inet_tests (id, val) VALUES (0, ?)", (inet,))
             .await
             .unwrap();
 
         let (read_inet,): (IpAddr,) = session
-            .query("SELECT val from ks.inet_tests WHERE id = 0", &[])
+            .query("SELECT val from inet_tests WHERE id = 0", &[])
             .await
             .unwrap()
             .rows
@@ -713,17 +716,14 @@ async fn test_blob() {
         // Insert blob as a string and verify that it matches
         session
             .query(
-                format!(
-                    "INSERT INTO ks.blob_tests (id, val) VALUES (0, {})",
-                    blob_str
-                ),
+                format!("INSERT INTO blob_tests (id, val) VALUES (0, {})", blob_str),
                 &[],
             )
             .await
             .unwrap();
 
         let (read_blob,): (Vec<u8>,) = session
-            .query("SELECT val from ks.blob_tests WHERE id = 0", &[])
+            .query("SELECT val from blob_tests WHERE id = 0", &[])
             .await
             .unwrap()
             .rows
@@ -737,12 +737,12 @@ async fn test_blob() {
 
         // Insert blob as a bound value and verify that it matches
         session
-            .query("INSERT INTO ks.blob_tests (id, val) VALUES (0, ?)", (blob,))
+            .query("INSERT INTO blob_tests (id, val) VALUES (0, ?)", (blob,))
             .await
             .unwrap();
 
         let (read_blob,): (Vec<u8>,) = session
-            .query("SELECT val from ks.blob_tests WHERE id = 0", &[])
+            .query("SELECT val from blob_tests WHERE id = 0", &[])
             .await
             .unwrap()
             .rows
@@ -765,30 +765,35 @@ async fn test_udt_after_schema_update() {
 
     println!("Connecting to {} ...", uri);
     let session: Session = SessionBuilder::new().known_node(uri).build().await.unwrap();
+    let ks = crate::transport::session_test::unique_name();
 
     session
         .query(
-            "CREATE KEYSPACE IF NOT EXISTS ks WITH REPLICATION = \
-            {'class' : 'SimpleStrategy', 'replication_factor' : 1}",
+            format!(
+                "CREATE KEYSPACE IF NOT EXISTS {} WITH REPLICATION = \
+            {{'class' : 'SimpleStrategy', 'replication_factor' : 1}}",
+                ks
+            ),
             &[],
         )
         .await
         .unwrap();
+    session.use_keyspace(ks, false).await.unwrap();
 
     session
-        .query(format!("DROP TABLE IF EXISTS ks.{}", table_name), &[])
+        .query(format!("DROP TABLE IF EXISTS {}", table_name), &[])
         .await
         .unwrap();
 
     session
-        .query(format!("DROP TYPE IF EXISTS ks.{}", type_name), &[])
+        .query(format!("DROP TYPE IF EXISTS {}", type_name), &[])
         .await
         .unwrap();
 
     session
         .query(
             format!(
-                "CREATE TYPE IF NOT EXISTS ks.{} (first int, second boolean)",
+                "CREATE TYPE IF NOT EXISTS {} (first int, second boolean)",
                 type_name
             ),
             &[],
@@ -799,7 +804,7 @@ async fn test_udt_after_schema_update() {
     session
         .query(
             format!(
-                "CREATE TABLE IF NOT EXISTS ks.{} (id int PRIMARY KEY, val ks.{})",
+                "CREATE TABLE IF NOT EXISTS {} (id int PRIMARY KEY, val {})",
                 table_name, type_name
             ),
             &[],
@@ -821,7 +826,7 @@ async fn test_udt_after_schema_update() {
     session
         .query(
             format!(
-                "INSERT INTO ks.{}(id,val) VALUES (0, {})",
+                "INSERT INTO {}(id,val) VALUES (0, {})",
                 table_name, "{first: 123, second: true}"
             ),
             &[],
@@ -830,10 +835,7 @@ async fn test_udt_after_schema_update() {
         .unwrap();
 
     let (read_udt,): (UdtV1,) = session
-        .query(
-            format!("SELECT val from ks.{} WHERE id = 0", table_name),
-            &[],
-        )
+        .query(format!("SELECT val from {} WHERE id = 0", table_name), &[])
         .await
         .unwrap()
         .rows
@@ -847,17 +849,14 @@ async fn test_udt_after_schema_update() {
 
     session
         .query(
-            format!("INSERT INTO ks.{}(id,val) VALUES (0, ?)", table_name),
+            format!("INSERT INTO {}(id,val) VALUES (0, ?)", table_name),
             &(&v1,),
         )
         .await
         .unwrap();
 
     let (read_udt,): (UdtV1,) = session
-        .query(
-            format!("SELECT val from ks.{} WHERE id = 0", table_name),
-            &[],
-        )
+        .query(format!("SELECT val from {} WHERE id = 0", table_name), &[])
         .await
         .unwrap()
         .rows
@@ -870,7 +869,7 @@ async fn test_udt_after_schema_update() {
     assert_eq!(read_udt, v1);
 
     session
-        .query(format!("ALTER TYPE ks.{} ADD third text;", type_name), &[])
+        .query(format!("ALTER TYPE {} ADD third text;", type_name), &[])
         .await
         .unwrap();
 
@@ -882,10 +881,7 @@ async fn test_udt_after_schema_update() {
     }
 
     let (read_udt,): (UdtV2,) = session
-        .query(
-            format!("SELECT val from ks.{} WHERE id = 0", table_name),
-            &[],
-        )
+        .query(format!("SELECT val from {} WHERE id = 0", table_name), &[])
         .await
         .unwrap()
         .rows

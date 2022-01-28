@@ -16,21 +16,38 @@ use bytes::Bytes;
 use futures::StreamExt;
 use itertools::Itertools;
 use std::collections::{BTreeMap, HashMap};
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::time::{SystemTime, UNIX_EPOCH};
 use uuid::Uuid;
+
+static UNIQUE_COUNTER: AtomicUsize = AtomicUsize::new(0);
+pub(crate) fn unique_name() -> String {
+    let cnt = UNIQUE_COUNTER.fetch_add(1, Ordering::SeqCst);
+    let name = format!(
+        "test_rust_{}_{}",
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs(),
+        cnt
+    );
+    println!("Unique name: {}", name);
+    name
+}
 
 #[tokio::test]
 async fn test_unprepared_statement() {
     let uri = std::env::var("SCYLLA_URI").unwrap_or_else(|_| "127.0.0.1:9042".to_string());
     let session = SessionBuilder::new().known_node(uri).build().await.unwrap();
+    let ks = unique_name();
 
-    session.query("CREATE KEYSPACE IF NOT EXISTS ks WITH REPLICATION = {'class' : 'SimpleStrategy', 'replication_factor' : 1}", &[]).await.unwrap();
-    session
-        .query("DROP TABLE IF EXISTS ks.t;", &[])
-        .await
-        .unwrap();
+    session.query(format!("CREATE KEYSPACE IF NOT EXISTS {} WITH REPLICATION = {{'class' : 'SimpleStrategy', 'replication_factor' : 1}}", ks), &[]).await.unwrap();
     session
         .query(
-            "CREATE TABLE IF NOT EXISTS ks.t (a int, b int, c text, primary key (a, b))",
+            format!(
+                "CREATE TABLE IF NOT EXISTS {}.t (a int, b int, c text, primary key (a, b))",
+                ks
+            ),
             &[],
         )
         .await
@@ -38,20 +55,29 @@ async fn test_unprepared_statement() {
     // Wait for schema agreement
     std::thread::sleep(std::time::Duration::from_millis(300));
     session
-        .query("INSERT INTO ks.t (a, b, c) VALUES (1, 2, 'abc')", &[])
+        .query(
+            format!("INSERT INTO {}.t (a, b, c) VALUES (1, 2, 'abc')", ks),
+            &[],
+        )
         .await
         .unwrap();
     session
-        .query("INSERT INTO ks.t (a, b, c) VALUES (7, 11, '')", &[])
+        .query(
+            format!("INSERT INTO {}.t (a, b, c) VALUES (7, 11, '')", ks),
+            &[],
+        )
         .await
         .unwrap();
     session
-        .query("INSERT INTO ks.t (a, b, c) VALUES (1, 4, 'hello')", &[])
+        .query(
+            format!("INSERT INTO {}.t (a, b, c) VALUES (1, 4, 'hello')", ks),
+            &[],
+        )
         .await
         .unwrap();
 
     let query_result = session
-        .query("SELECT a, b, c FROM ks.t", &[])
+        .query(format!("SELECT a, b, c FROM {}.t", ks), &[])
         .await
         .unwrap();
 
@@ -81,17 +107,17 @@ async fn test_unprepared_statement() {
         ]
     );
     let query_result = session
-        .query_iter("SELECT a, b, c FROM ks.t", &[])
+        .query_iter(format!("SELECT a, b, c FROM {}.t", ks), &[])
         .await
         .unwrap();
     let specs = query_result.get_column_specs();
     assert_eq!(specs.len(), 3);
     for (spec, name) in specs.iter().zip(["a", "b", "c"]) {
         assert_eq!(spec.name, name); // Check column name.
-        assert_eq!(spec.table_spec.ks_name, "ks");
+        assert_eq!(spec.table_spec.ks_name, ks);
     }
     let mut results_from_manual_paging: Vec<Row> = vec![];
-    let query = Query::new("SELECT a, b, c FROM ks.t").with_page_size(1);
+    let query = Query::new(format!("SELECT a, b, c FROM {}.t", ks)).with_page_size(1);
     let mut paging_state: Option<Bytes> = None;
     let mut watchdog = 0;
     loop {
@@ -113,45 +139,47 @@ async fn test_unprepared_statement() {
 async fn test_prepared_statement() {
     let uri = std::env::var("SCYLLA_URI").unwrap_or_else(|_| "127.0.0.1:9042".to_string());
     let session = SessionBuilder::new().known_node(uri).build().await.unwrap();
+    let ks = unique_name();
 
-    session.query("CREATE KEYSPACE IF NOT EXISTS ks WITH REPLICATION = {'class' : 'SimpleStrategy', 'replication_factor' : 1}", &[]).await.unwrap();
-    session
-        .query("DROP TABLE IF EXISTS ks.t2;", &[])
-        .await
-        .unwrap();
-    session
-        .query("DROP TABLE IF EXISTS ks.complex_pk;", &[])
-        .await
-        .unwrap();
+    session.query(format!("CREATE KEYSPACE IF NOT EXISTS {} WITH REPLICATION = {{'class' : 'SimpleStrategy', 'replication_factor' : 1}}", ks), &[]).await.unwrap();
     session
         .query(
-            "CREATE TABLE IF NOT EXISTS ks.t2 (a int, b int, c text, primary key (a, b))",
+            format!(
+                "CREATE TABLE IF NOT EXISTS {}.t2 (a int, b int, c text, primary key (a, b))",
+                ks
+            ),
             &[],
         )
         .await
         .unwrap();
     session
-        .query("CREATE TABLE IF NOT EXISTS ks.complex_pk (a int, b int, c text, d int, e int, primary key ((a,b,c),d))", &[])
+        .query(format!("CREATE TABLE IF NOT EXISTS {}.complex_pk (a int, b int, c text, d int, e int, primary key ((a,b,c),d))", ks), &[])
         .await
         .unwrap();
     // Wait for schema agreement
     std::thread::sleep(std::time::Duration::from_millis(300));
 
-    let prepared_statement = session.prepare("SELECT a, b, c FROM ks.t2").await.unwrap();
+    let prepared_statement = session
+        .prepare(format!("SELECT a, b, c FROM {}.t2", ks))
+        .await
+        .unwrap();
     let query_result = session.execute_iter(prepared_statement, &[]).await.unwrap();
     let specs = query_result.get_column_specs();
     assert_eq!(specs.len(), 3);
     for (spec, name) in specs.iter().zip(["a", "b", "c"]) {
         assert_eq!(spec.name, name); // Check column name.
-        assert_eq!(spec.table_spec.ks_name, "ks");
+        assert_eq!(spec.table_spec.ks_name, ks);
     }
 
     let prepared_statement = session
-        .prepare("INSERT INTO ks.t2 (a, b, c) VALUES (?, ?, ?)")
+        .prepare(format!("INSERT INTO {}.t2 (a, b, c) VALUES (?, ?, ?)", ks))
         .await
         .unwrap();
     let prepared_complex_pk_statement = session
-        .prepare("INSERT INTO ks.complex_pk (a, b, c, d) VALUES (?, ?, ?, 7)")
+        .prepare(format!(
+            "INSERT INTO {}.complex_pk (a, b, c, d) VALUES (?, ?, ?, 7)",
+            ks
+        ))
         .await
         .unwrap();
 
@@ -167,7 +195,7 @@ async fn test_prepared_statement() {
     // Verify that token calculation is compatible with Scylla
     {
         let rs = session
-            .query("SELECT token(a) FROM ks.t2", &[])
+            .query(format!("SELECT token(a) FROM {}.t2", ks), &[])
             .await
             .unwrap()
             .rows
@@ -187,7 +215,7 @@ async fn test_prepared_statement() {
     }
     {
         let rs = session
-            .query("SELECT token(a,b,c) FROM ks.complex_pk", &[])
+            .query(format!("SELECT token(a,b,c) FROM {}.complex_pk", ks), &[])
             .await
             .unwrap()
             .rows
@@ -209,7 +237,7 @@ async fn test_prepared_statement() {
     // Verify that correct data was insertd
     {
         let rs = session
-            .query("SELECT a,b,c FROM ks.t2", &[])
+            .query(format!("SELECT a,b,c FROM {}.t2", ks), &[])
             .await
             .unwrap()
             .rows
@@ -221,7 +249,7 @@ async fn test_prepared_statement() {
         assert_eq!((a, b, c), (17, 16, &String::from("I'm prepared!!!")));
 
         let mut results_from_manual_paging: Vec<Row> = vec![];
-        let query = Query::new("SELECT a, b, c FROM ks.t2").with_page_size(1);
+        let query = Query::new(format!("SELECT a, b, c FROM {}.t2", ks)).with_page_size(1);
         let prepared_paged = session.prepare(query).await.unwrap();
         let mut paging_state: Option<Bytes> = None;
         let mut watchdog = 0;
@@ -241,7 +269,7 @@ async fn test_prepared_statement() {
     }
     {
         let rs = session
-            .query("SELECT a,b,c,d,e FROM ks.complex_pk", &[])
+            .query(format!("SELECT a,b,c,d,e FROM {}.complex_pk", ks), &[])
             .await
             .unwrap()
             .rows
@@ -274,14 +302,20 @@ async fn test_prepared_statement() {
         };
         session
             .query(
-                "INSERT INTO ks.complex_pk (a,b,c,d,e) VALUES (?,?,?,?,?)",
+                format!(
+                    "INSERT INTO {}.complex_pk (a,b,c,d,e) VALUES (?,?,?,?,?)",
+                    ks
+                ),
                 input.clone(),
             )
             .await
             .unwrap();
         let mut rs = session
             .query(
-                "SELECT * FROM ks.complex_pk WHERE a = 9 and b = 8 and c = 'seven'",
+                format!(
+                    "SELECT * FROM {}.complex_pk WHERE a = 9 and b = 8 and c = 'seven'",
+                    ks
+                ),
                 &[],
             )
             .await
@@ -298,15 +332,15 @@ async fn test_prepared_statement() {
 async fn test_batch() {
     let uri = std::env::var("SCYLLA_URI").unwrap_or_else(|_| "127.0.0.1:9042".to_string());
     let session = SessionBuilder::new().known_node(uri).build().await.unwrap();
+    let ks = unique_name();
 
-    session.query("CREATE KEYSPACE IF NOT EXISTS ks WITH REPLICATION = {'class' : 'SimpleStrategy', 'replication_factor' : 1}", &[]).await.unwrap();
-    session
-        .query("DROP TABLE IF EXISTS ks.t_batch;", &[])
-        .await
-        .unwrap();
+    session.query(format!("CREATE KEYSPACE IF NOT EXISTS {} WITH REPLICATION = {{'class' : 'SimpleStrategy', 'replication_factor' : 1}}", ks), &[]).await.unwrap();
     session
         .query(
-            "CREATE TABLE IF NOT EXISTS ks.t_batch (a int, b int, c text, primary key (a, b))",
+            format!(
+                "CREATE TABLE IF NOT EXISTS {}.t_batch (a int, b int, c text, primary key (a, b))",
+                ks
+            ),
             &[],
         )
         .await
@@ -316,7 +350,10 @@ async fn test_batch() {
     std::thread::sleep(std::time::Duration::from_millis(300));
 
     let prepared_statement = session
-        .prepare("INSERT INTO ks.t_batch (a, b, c) VALUES (?, ?, ?)")
+        .prepare(format!(
+            "INSERT INTO {}.t_batch (a, b, c) VALUES (?, ?, ?)",
+            ks
+        ))
         .await
         .unwrap();
 
@@ -324,8 +361,8 @@ async fn test_batch() {
     // to avoid problem of statements/values count mismatch
     use crate::batch::Batch;
     let mut batch: Batch = Default::default();
-    batch.append_statement("INSERT INTO ks.t_batch (a, b, c) VALUES (?, ?, ?)");
-    batch.append_statement("INSERT INTO ks.t_batch (a, b, c) VALUES (7, 11, '')");
+    batch.append_statement(&format!("INSERT INTO {}.t_batch (a, b, c) VALUES (?, ?, ?)", ks)[..]);
+    batch.append_statement(&format!("INSERT INTO {}.t_batch (a, b, c) VALUES (7, 11, '')", ks)[..]);
     batch.append_statement(prepared_statement.clone());
 
     let values = ((1_i32, 2_i32, "abc"), (), (1_i32, 4_i32, "hello"));
@@ -333,7 +370,7 @@ async fn test_batch() {
     session.batch(&batch, values).await.unwrap();
 
     let rs = session
-        .query("SELECT a, b, c FROM ks.t_batch", &[])
+        .query(format!("SELECT a, b, c FROM {}.t_batch", ks), &[])
         .await
         .unwrap()
         .rows
@@ -365,13 +402,19 @@ async fn test_batch() {
 
     // This statement flushes the prepared statement cache
     session
-        .query("ALTER TABLE ks.t_batch WITH gc_grace_seconds = 42", &[])
+        .query(
+            format!("ALTER TABLE {}.t_batch WITH gc_grace_seconds = 42", ks),
+            &[],
+        )
         .await
         .unwrap();
     session.batch(&batch, values).await.unwrap();
 
     let rs = session
-        .query("SELECT a, b, c FROM ks.t_batch WHERE a = 4", &[])
+        .query(
+            format!("SELECT a, b, c FROM {}.t_batch WHERE a = 4", ks),
+            &[],
+        )
         .await
         .unwrap()
         .rows
@@ -393,20 +436,20 @@ async fn test_batch() {
 async fn test_token_calculation() {
     let uri = std::env::var("SCYLLA_URI").unwrap_or_else(|_| "127.0.0.1:9042".to_string());
     let session = SessionBuilder::new().known_node(uri).build().await.unwrap();
+    let ks = unique_name();
 
-    session.query("CREATE KEYSPACE IF NOT EXISTS ks WITH REPLICATION = {'class' : 'SimpleStrategy', 'replication_factor' : 1}", &[]).await.unwrap();
+    session.query(format!("CREATE KEYSPACE IF NOT EXISTS {} WITH REPLICATION = {{'class' : 'SimpleStrategy', 'replication_factor' : 1}}", ks), &[]).await.unwrap();
     session
-        .query("DROP TABLE IF EXISTS ks.t3;", &[])
-        .await
-        .unwrap();
-    session
-        .query("CREATE TABLE IF NOT EXISTS ks.t3 (a text primary key)", &[])
+        .query(
+            format!("CREATE TABLE IF NOT EXISTS {}.t3 (a text primary key)", ks),
+            &[],
+        )
         .await
         .unwrap();
     // Wait for schema agreement
     std::thread::sleep(std::time::Duration::from_millis(300));
     let prepared_statement = session
-        .prepare("INSERT INTO ks.t3 (a) VALUES (?)")
+        .prepare(format!("INSERT INTO {}.t3 (a) VALUES (?)", ks))
         .await
         .unwrap();
 
@@ -422,7 +465,10 @@ async fn test_token_calculation() {
         session.execute(&prepared_statement, &values).await.unwrap();
 
         let rs = session
-            .query("SELECT token(a) FROM ks.t3 WHERE a = ?", &values)
+            .query(
+                format!("SELECT token(a) FROM {}.t3 WHERE a = ?", ks),
+                &values,
+            )
             .await
             .unwrap()
             .rows
@@ -449,28 +495,24 @@ async fn test_use_keyspace() {
         .build()
         .await
         .unwrap();
+    let ks = unique_name();
 
-    session.query("CREATE KEYSPACE IF NOT EXISTS use_ks_test WITH REPLICATION = {'class' : 'SimpleStrategy', 'replication_factor' : 1}", &[]).await.unwrap();
-
-    session
-        .query("DROP TABLE IF EXISTS use_ks_test.tab", &[])
-        .await
-        .unwrap();
+    session.query(format!("CREATE KEYSPACE IF NOT EXISTS {} WITH REPLICATION = {{'class' : 'SimpleStrategy', 'replication_factor' : 1}}", ks), &[]).await.unwrap();
 
     session
         .query(
-            "CREATE TABLE IF NOT EXISTS use_ks_test.tab (a text primary key)",
+            format!("CREATE TABLE IF NOT EXISTS {}.tab (a text primary key)", ks),
             &[],
         )
         .await
         .unwrap();
 
     session
-        .query("INSERT INTO use_ks_test.tab (a) VALUES ('test1')", &[])
+        .query(format!("INSERT INTO {}.tab (a) VALUES ('test1')", ks), &[])
         .await
         .unwrap();
 
-    session.use_keyspace("use_ks_test", false).await.unwrap();
+    session.use_keyspace(ks.clone(), false).await.unwrap();
 
     session
         .query("INSERT INTO tab (a) VALUES ('test2')", &[])
@@ -523,7 +565,7 @@ async fn test_use_keyspace() {
     // Make sure that use_keyspace on SessionBuiler works
     let session2: Session = SessionBuilder::new()
         .known_node(uri)
-        .use_keyspace("use_ks_test", false)
+        .use_keyspace(ks.clone(), false)
         .build()
         .await
         .unwrap();
@@ -551,41 +593,39 @@ async fn test_use_keyspace_case_sensitivity() {
         .build()
         .await
         .unwrap();
+    let ks_lower = unique_name().to_lowercase();
+    let ks_upper = ks_lower.to_uppercase();
 
-    session.query("CREATE KEYSPACE IF NOT EXISTS \"ks_case_test\" WITH REPLICATION = {'class' : 'SimpleStrategy', 'replication_factor' : 1}", &[]).await.unwrap();
-    session.query("CREATE KEYSPACE IF NOT EXISTS \"KS_CASE_TEST\" WITH REPLICATION = {'class' : 'SimpleStrategy', 'replication_factor' : 1}", &[]).await.unwrap();
-
-    session
-        .query("DROP TABLE IF EXISTS ks_case_test.tab", &[])
-        .await
-        .unwrap();
-
-    session
-        .query("DROP TABLE IF EXISTS \"KS_CASE_TEST\".tab", &[])
-        .await
-        .unwrap();
-
-    session
-        .query("CREATE TABLE ks_case_test.tab (a text primary key)", &[])
-        .await
-        .unwrap();
+    session.query(format!("CREATE KEYSPACE IF NOT EXISTS \"{}\" WITH REPLICATION = {{'class' : 'SimpleStrategy', 'replication_factor' : 1}}", ks_lower), &[]).await.unwrap();
+    session.query(format!("CREATE KEYSPACE IF NOT EXISTS \"{}\" WITH REPLICATION = {{'class' : 'SimpleStrategy', 'replication_factor' : 1}}", ks_upper), &[]).await.unwrap();
 
     session
         .query(
-            "CREATE TABLE \"KS_CASE_TEST\".tab (a text primary key)",
+            format!("CREATE TABLE {}.tab (a text primary key)", ks_lower),
             &[],
         )
         .await
         .unwrap();
 
     session
-        .query("INSERT INTO ks_case_test.tab (a) VALUES ('lowercase')", &[])
+        .query(
+            format!("CREATE TABLE \"{}\".tab (a text primary key)", ks_upper),
+            &[],
+        )
         .await
         .unwrap();
 
     session
         .query(
-            "INSERT INTO \"KS_CASE_TEST\".tab (a) VALUES ('uppercase')",
+            format!("INSERT INTO {}.tab (a) VALUES ('lowercase')", ks_lower),
+            &[],
+        )
+        .await
+        .unwrap();
+
+    session
+        .query(
+            format!("INSERT INTO \"{}\".tab (a) VALUES ('uppercase')", ks_upper),
             &[],
         )
         .await
@@ -593,7 +633,7 @@ async fn test_use_keyspace_case_sensitivity() {
 
     // Use uppercase keyspace without case sesitivity
     // Should select the lowercase one
-    session.use_keyspace("KS_CASE_TEST", false).await.unwrap();
+    session.use_keyspace(ks_upper.clone(), false).await.unwrap();
 
     let rows: Vec<String> = session
         .query("SELECT * from tab", &[])
@@ -609,7 +649,7 @@ async fn test_use_keyspace_case_sensitivity() {
 
     // Use uppercase keyspace with case sesitivity
     // Should select the uppercase one
-    session.use_keyspace("KS_CASE_TEST", true).await.unwrap();
+    session.use_keyspace(ks_upper, true).await.unwrap();
 
     let rows: Vec<String> = session
         .query("SELECT * from tab", &[])
@@ -632,17 +672,13 @@ async fn test_raw_use_keyspace() {
         .build()
         .await
         .unwrap();
+    let ks = unique_name();
 
-    session.query("CREATE KEYSPACE IF NOT EXISTS raw_use_ks_test WITH REPLICATION = {'class' : 'SimpleStrategy', 'replication_factor' : 1}", &[]).await.unwrap();
-
-    session
-        .query("DROP TABLE IF EXISTS raw_use_ks_test.tab", &[])
-        .await
-        .unwrap();
+    session.query(format!("CREATE KEYSPACE IF NOT EXISTS {} WITH REPLICATION = {{'class' : 'SimpleStrategy', 'replication_factor' : 1}}", ks), &[]).await.unwrap();
 
     session
         .query(
-            "CREATE TABLE IF NOT EXISTS raw_use_ks_test.tab (a text primary key)",
+            format!("CREATE TABLE IF NOT EXISTS {}.tab (a text primary key)", ks),
             &[],
         )
         .await
@@ -650,14 +686,14 @@ async fn test_raw_use_keyspace() {
 
     session
         .query(
-            "INSERT INTO raw_use_ks_test.tab (a) VALUES ('raw_test')",
+            format!("INSERT INTO {}.tab (a) VALUES ('raw_test')", ks),
             &[],
         )
         .await
         .unwrap();
 
     session
-        .query("use    \"raw_use_ks_test\"    ;", &[])
+        .query(format!("use    \"{}\"    ;", ks), &[])
         .await
         .unwrap();
 
@@ -675,12 +711,12 @@ async fn test_raw_use_keyspace() {
 
     // Check if case sensitivity is correctly detected
     assert!(session
-        .query("use    \"RAW_USE_KS_TEST\"    ;", &[])
+        .query(format!("use    \"{}\"    ;", ks.to_uppercase()), &[])
         .await
         .is_err());
 
     assert!(session
-        .query("use    RAW_USE_KS_TEST    ;", &[])
+        .query(format!("use    {}    ;", ks.to_uppercase()), &[])
         .await
         .is_ok());
 }
@@ -703,6 +739,7 @@ async fn test_fetch_system_keyspace() {
 async fn test_db_errors() {
     let uri = std::env::var("SCYLLA_URI").unwrap_or_else(|_| "127.0.0.1:9042".to_string());
     let session = SessionBuilder::new().known_node(uri).build().await.unwrap();
+    let ks = unique_name();
 
     // SyntaxError on bad query
     assert!(matches!(
@@ -711,9 +748,9 @@ async fn test_db_errors() {
     ));
 
     // AlreadyExists when creating a keyspace for the second time
-    session.query("CREATE KEYSPACE IF NOT EXISTS db_errors_ks WITH REPLICATION = {'class' : 'SimpleStrategy', 'replication_factor' : 1}", &[]).await.unwrap();
+    session.query(format!("CREATE KEYSPACE IF NOT EXISTS {} WITH REPLICATION = {{'class' : 'SimpleStrategy', 'replication_factor' : 1}}", ks), &[]).await.unwrap();
 
-    let create_keyspace_res = session.query("CREATE KEYSPACE db_errors_ks WITH REPLICATION = {'class' : 'SimpleStrategy', 'replication_factor' : 1}", &[]).await;
+    let create_keyspace_res = session.query(format!("CREATE KEYSPACE {} WITH REPLICATION = {{'class' : 'SimpleStrategy', 'replication_factor' : 1}}", ks), &[]).await;
     let keyspace_exists_error: DbError = match create_keyspace_res {
         Err(QueryError::DbError(e, _)) => e,
         _ => panic!("Second CREATE KEYSPACE didn't return an error!"),
@@ -722,7 +759,7 @@ async fn test_db_errors() {
     assert_eq!(
         keyspace_exists_error,
         DbError::AlreadyExists {
-            keyspace: "db_errors_ks".to_string(),
+            keyspace: ks.clone(),
             table: "".to_string()
         }
     );
@@ -730,14 +767,14 @@ async fn test_db_errors() {
     // AlreadyExists when creating a table for the second time
     session
         .query(
-            "CREATE TABLE IF NOT EXISTS db_errors_ks.tab (a text primary key)",
+            format!("CREATE TABLE IF NOT EXISTS {}.tab (a text primary key)", ks),
             &[],
         )
         .await
         .unwrap();
 
     let create_table_res = session
-        .query("CREATE TABLE db_errors_ks.tab (a text primary key)", &[])
+        .query(format!("CREATE TABLE {}.tab (a text primary key)", ks), &[])
         .await;
     let create_tab_error: DbError = match create_table_res {
         Err(QueryError::DbError(e, _)) => e,
@@ -747,7 +784,7 @@ async fn test_db_errors() {
     assert_eq!(
         create_tab_error,
         DbError::AlreadyExists {
-            keyspace: "db_errors_ks".to_string(),
+            keyspace: ks.clone(),
             table: "tab".to_string()
         }
     );
@@ -757,35 +794,36 @@ async fn test_db_errors() {
 async fn test_tracing() {
     let uri = std::env::var("SCYLLA_URI").unwrap_or_else(|_| "127.0.0.1:9042".to_string());
     let session = SessionBuilder::new().known_node(uri).build().await.unwrap();
+    let ks = unique_name();
 
-    session.query("CREATE KEYSPACE IF NOT EXISTS test_tracing_ks WITH REPLICATION = {'class' : 'SimpleStrategy', 'replication_factor' : 1}", &[]).await.unwrap();
+    session.query(format!("CREATE KEYSPACE IF NOT EXISTS {} WITH REPLICATION = {{'class' : 'SimpleStrategy', 'replication_factor' : 1}}", ks), &[]).await.unwrap();
 
     session
         .query(
-            "CREATE TABLE IF NOT EXISTS test_tracing_ks.tab (a text primary key)",
+            format!("CREATE TABLE IF NOT EXISTS {}.tab (a text primary key)", ks),
             &[],
         )
         .await
         .unwrap();
 
-    test_tracing_query(&session).await;
-    test_tracing_execute(&session).await;
-    test_tracing_prepare(&session).await;
-    test_get_tracing_info(&session).await;
-    test_tracing_query_iter(&session).await;
-    test_tracing_execute_iter(&session).await;
-    test_tracing_batch(&session).await;
+    test_tracing_query(&session, ks.clone()).await;
+    test_tracing_execute(&session, ks.clone()).await;
+    test_tracing_prepare(&session, ks.clone()).await;
+    test_get_tracing_info(&session, ks.clone()).await;
+    test_tracing_query_iter(&session, ks.clone()).await;
+    test_tracing_execute_iter(&session, ks.clone()).await;
+    test_tracing_batch(&session, ks.clone()).await;
 }
 
-async fn test_tracing_query(session: &Session) {
+async fn test_tracing_query(session: &Session, ks: String) {
     // A query without tracing enabled has no tracing uuid in result
-    let untraced_query: Query = Query::new("SELECT * FROM test_tracing_ks.tab");
+    let untraced_query: Query = Query::new(format!("SELECT * FROM {}.tab", ks));
     let untraced_query_result: QueryResult = session.query(untraced_query, &[]).await.unwrap();
 
     assert!(untraced_query_result.tracing_id.is_none());
 
     // A query with tracing enabled has a tracing uuid in result
-    let mut traced_query: Query = Query::new("SELECT * FROM test_tracing_ks.tab");
+    let mut traced_query: Query = Query::new(format!("SELECT * FROM {}.tab", ks));
     traced_query.config.tracing = true;
 
     let traced_query_result: QueryResult = session.query(traced_query, &[]).await.unwrap();
@@ -795,10 +833,10 @@ async fn test_tracing_query(session: &Session) {
     assert_in_tracing_table(session, traced_query_result.tracing_id.unwrap()).await;
 }
 
-async fn test_tracing_execute(session: &Session) {
+async fn test_tracing_execute(session: &Session, ks: String) {
     // Executing a prepared statement without tracing enabled has no tracing uuid in result
     let untraced_prepared = session
-        .prepare("SELECT * FROM test_tracing_ks.tab")
+        .prepare(format!("SELECT * FROM {}.tab", ks))
         .await
         .unwrap();
 
@@ -809,7 +847,7 @@ async fn test_tracing_execute(session: &Session) {
 
     // Executing a prepared statement with tracing enabled has a tracing uuid in result
     let mut traced_prepared = session
-        .prepare("SELECT * FROM test_tracing_ks.tab")
+        .prepare(format!("SELECT * FROM {}.tab", ks))
         .await
         .unwrap();
 
@@ -822,17 +860,17 @@ async fn test_tracing_execute(session: &Session) {
     assert_in_tracing_table(session, traced_prepared_result.tracing_id.unwrap()).await;
 }
 
-async fn test_tracing_prepare(session: &Session) {
+async fn test_tracing_prepare(session: &Session, ks: String) {
     // Preparing a statement without tracing enabled has no tracing uuids in result
     let untraced_prepared = session
-        .prepare("SELECT * FROM test_tracing_ks.tab")
+        .prepare(format!("SELECT * FROM {}.tab", ks))
         .await
         .unwrap();
 
     assert!(untraced_prepared.prepare_tracing_ids.is_empty());
 
     // Preparing a statement with tracing enabled has tracing uuids in result
-    let mut to_prepare_traced = Query::new("SELECT * FROM test_tracing_ks.tab");
+    let mut to_prepare_traced = Query::new(format!("SELECT * FROM {}.tab", ks));
     to_prepare_traced.config.tracing = true;
 
     let traced_prepared = session.prepare(to_prepare_traced).await.unwrap();
@@ -844,9 +882,9 @@ async fn test_tracing_prepare(session: &Session) {
     }
 }
 
-async fn test_get_tracing_info(session: &Session) {
+async fn test_get_tracing_info(session: &Session, ks: String) {
     // A query with tracing enabled has a tracing uuid in result
-    let mut traced_query: Query = Query::new("SELECT * FROM test_tracing_ks.tab");
+    let mut traced_query: Query = Query::new(format!("SELECT * FROM {}.tab", ks));
     traced_query.config.tracing = true;
 
     let traced_query_result: QueryResult = session.query(traced_query, &[]).await.unwrap();
@@ -857,9 +895,9 @@ async fn test_get_tracing_info(session: &Session) {
     assert!(!tracing_info.events.is_empty());
 }
 
-async fn test_tracing_query_iter(session: &Session) {
+async fn test_tracing_query_iter(session: &Session, ks: String) {
     // A query without tracing enabled has no tracing ids
-    let untraced_query: Query = Query::new("SELECT * FROM test_tracing_ks.tab");
+    let untraced_query: Query = Query::new(format!("SELECT * FROM {}.tab", ks));
 
     let mut untraced_row_iter = session.query_iter(untraced_query, &[]).await.unwrap();
     while let Some(_row) = untraced_row_iter.next().await {
@@ -873,7 +911,7 @@ async fn test_tracing_query_iter(session: &Session) {
     assert!(untraced_typed_row_iter.get_tracing_ids().is_empty());
 
     // A query with tracing enabled has a tracing ids in result
-    let mut traced_query: Query = Query::new("SELECT * FROM test_tracing_ks.tab");
+    let mut traced_query: Query = Query::new(format!("SELECT * FROM {}.tab", ks));
     traced_query.config.tracing = true;
 
     let mut traced_row_iter = session.query_iter(traced_query, &[]).await.unwrap();
@@ -892,10 +930,10 @@ async fn test_tracing_query_iter(session: &Session) {
     }
 }
 
-async fn test_tracing_execute_iter(session: &Session) {
+async fn test_tracing_execute_iter(session: &Session, ks: String) {
     // A prepared statement without tracing enabled has no tracing ids
     let untraced_prepared = session
-        .prepare("SELECT * FROM test_tracing_ks.tab")
+        .prepare(format!("SELECT * FROM {}.tab", ks))
         .await
         .unwrap();
 
@@ -912,7 +950,7 @@ async fn test_tracing_execute_iter(session: &Session) {
 
     // A prepared statement with tracing enabled has a tracing ids in result
     let mut traced_prepared = session
-        .prepare("SELECT * FROM test_tracing_ks.tab")
+        .prepare(format!("SELECT * FROM {}.tab", ks))
         .await
         .unwrap();
     traced_prepared.config.tracing = true;
@@ -933,17 +971,17 @@ async fn test_tracing_execute_iter(session: &Session) {
     }
 }
 
-async fn test_tracing_batch(session: &Session) {
+async fn test_tracing_batch(session: &Session, ks: String) {
     // A batch without tracing enabled has no tracing id
     let mut untraced_batch: Batch = Default::default();
-    untraced_batch.append_statement("INSERT INTO test_tracing_ks.tab (a) VALUES('a')");
+    untraced_batch.append_statement(&format!("INSERT INTO {}.tab (a) VALUES('a')", ks)[..]);
 
     let untraced_batch_result: BatchResult = session.batch(&untraced_batch, ((),)).await.unwrap();
     assert!(untraced_batch_result.tracing_id.is_none());
 
     // Batch with tracing enabled has a tracing uuid in result
     let mut traced_batch: Batch = Default::default();
-    traced_batch.append_statement("INSERT INTO test_tracing_ks.tab (a) VALUES('a')");
+    traced_batch.append_statement(&format!("INSERT INTO {}.tab (a) VALUES('a')", ks)[..]);
     traced_batch.config.tracing = true;
 
     let traced_batch_result: BatchResult = session.batch(&traced_batch, ((),)).await.unwrap();
@@ -1010,15 +1048,15 @@ async fn test_await_timed_schema_agreement() {
 async fn test_timestamp() {
     let uri = std::env::var("SCYLLA_URI").unwrap_or_else(|_| "127.0.0.1:9042".to_string());
     let session = SessionBuilder::new().known_node(uri).build().await.unwrap();
+    let ks = unique_name();
 
-    session.query("CREATE KEYSPACE IF NOT EXISTS ks WITH REPLICATION = {'class' : 'SimpleStrategy', 'replication_factor' : 1}", &[]).await.unwrap();
-    session
-        .query("DROP TABLE IF EXISTS ks.t_timestamp;", &[])
-        .await
-        .unwrap();
+    session.query(format!("CREATE KEYSPACE IF NOT EXISTS {} WITH REPLICATION = {{'class' : 'SimpleStrategy', 'replication_factor' : 1}}", ks), &[]).await.unwrap();
     session
         .query(
-            "CREATE TABLE IF NOT EXISTS ks.t_timestamp (a text, b text, primary key (a))",
+            format!(
+                "CREATE TABLE IF NOT EXISTS {}.t_timestamp (a text, b text, primary key (a))",
+                ks
+            ),
             &[],
         )
         .await
@@ -1026,7 +1064,7 @@ async fn test_timestamp() {
 
     session.await_schema_agreement().await.unwrap();
 
-    let query_str = "INSERT INTO ks.t_timestamp (a, b) VALUES (?, ?)";
+    let query_str = format!("INSERT INTO {}.t_timestamp (a, b) VALUES (?, ?)", ks);
 
     // test regular query timestamps
 
@@ -1091,7 +1129,10 @@ async fn test_timestamp() {
         .unwrap();
 
     let mut results = session
-        .query("SELECT a, b, WRITETIME(b) FROM ks.t_timestamp", &[])
+        .query(
+            format!("SELECT a, b, WRITETIME(b) FROM {}.t_timestamp", ks),
+            &[],
+        )
         .await
         .unwrap()
         .rows
@@ -1133,18 +1174,14 @@ async fn test_prepared_config() {
 async fn test_schema_types_in_metadata() {
     let uri = std::env::var("SCYLLA_URI").unwrap_or_else(|_| "127.0.0.1:9042".to_string());
     let session = SessionBuilder::new().known_node(uri).build().await.unwrap();
+    let ks = unique_name();
 
     session
-        .query("DROP KEYSPACE IF EXISTS test_metadata_ks", &[])
+        .query(format!("CREATE KEYSPACE {} WITH REPLICATION = {{'class' : 'SimpleStrategy', 'replication_factor' : 1}}", ks), &[])
         .await
         .unwrap();
 
-    session
-        .query("CREATE KEYSPACE test_metadata_ks WITH REPLICATION = {'class' : 'SimpleStrategy', 'replication_factor' : 1}", &[])
-        .await
-        .unwrap();
-
-    session.query("USE test_metadata_ks", &[]).await.unwrap();
+    session.query(format!("USE {}", ks), &[]).await.unwrap();
 
     session
         .query(
@@ -1199,7 +1236,7 @@ async fn test_schema_types_in_metadata() {
     session.refresh_metadata().await.unwrap();
 
     let cluster_data = session.get_cluster_data();
-    let tables = &cluster_data.get_keyspace_info()["test_metadata_ks"].tables;
+    let tables = &cluster_data.get_keyspace_info()[&ks].tables;
 
     assert_eq!(
         tables.keys().sorted().collect::<Vec<_>>(),
@@ -1293,18 +1330,14 @@ async fn test_schema_types_in_metadata() {
 async fn test_user_defined_types_in_metadata() {
     let uri = std::env::var("SCYLLA_URI").unwrap_or_else(|_| "127.0.0.1:9042".to_string());
     let session = SessionBuilder::new().known_node(uri).build().await.unwrap();
+    let ks = unique_name();
 
     session
-        .query("DROP KEYSPACE IF EXISTS test_metadata_ks", &[])
+        .query(format!("CREATE KEYSPACE {} WITH REPLICATION = {{'class' : 'SimpleStrategy', 'replication_factor' : 1}}", ks), &[])
         .await
         .unwrap();
 
-    session
-        .query("CREATE KEYSPACE test_metadata_ks WITH REPLICATION = {'class' : 'SimpleStrategy', 'replication_factor' : 1}", &[])
-        .await
-        .unwrap();
-
-    session.query("USE test_metadata_ks", &[]).await.unwrap();
+    session.query(format!("USE {}", ks), &[]).await.unwrap();
 
     session
         .query(
@@ -1334,8 +1367,7 @@ async fn test_user_defined_types_in_metadata() {
     session.refresh_metadata().await.unwrap();
 
     let cluster_data = session.get_cluster_data();
-    let user_defined_types =
-        &cluster_data.get_keyspace_info()["test_metadata_ks"].user_defined_types;
+    let user_defined_types = &cluster_data.get_keyspace_info()[&ks].user_defined_types;
 
     assert_eq!(
         user_defined_types.keys().sorted().collect::<Vec<_>>(),
@@ -1416,18 +1448,14 @@ async fn test_user_defined_types_in_metadata() {
 async fn test_column_kinds_in_metadata() {
     let uri = std::env::var("SCYLLA_URI").unwrap_or_else(|_| "127.0.0.1:9042".to_string());
     let session = SessionBuilder::new().known_node(uri).build().await.unwrap();
+    let ks = unique_name();
 
     session
-        .query("DROP KEYSPACE IF EXISTS test_metadata_ks", &[])
+        .query(format!("CREATE KEYSPACE {} WITH REPLICATION = {{'class' : 'SimpleStrategy', 'replication_factor' : 1}}", ks), &[])
         .await
         .unwrap();
 
-    session
-        .query("CREATE KEYSPACE test_metadata_ks WITH REPLICATION = {'class' : 'SimpleStrategy', 'replication_factor' : 1}", &[])
-        .await
-        .unwrap();
-
-    session.query("USE test_metadata_ks", &[]).await.unwrap();
+    session.query(format!("USE {}", ks), &[]).await.unwrap();
 
     session
         .query(
@@ -1449,7 +1477,7 @@ async fn test_column_kinds_in_metadata() {
     session.refresh_metadata().await.unwrap();
 
     let cluster_data = session.get_cluster_data();
-    let columns = &cluster_data.get_keyspace_info()["test_metadata_ks"].tables["t"].columns;
+    let columns = &cluster_data.get_keyspace_info()[&ks].tables["t"].columns;
 
     assert_eq!(columns["a"].kind, ColumnKind::Clustering);
     assert_eq!(columns["b"].kind, ColumnKind::Clustering);
@@ -1463,18 +1491,14 @@ async fn test_column_kinds_in_metadata() {
 async fn test_primary_key_ordering_in_metadata() {
     let uri = std::env::var("SCYLLA_URI").unwrap_or_else(|_| "127.0.0.1:9042".to_string());
     let session = SessionBuilder::new().known_node(uri).build().await.unwrap();
+    let ks = unique_name();
 
     session
-        .query("DROP KEYSPACE IF EXISTS test_metadata_ks", &[])
+        .query(format!("CREATE KEYSPACE {} WITH REPLICATION = {{'class' : 'SimpleStrategy', 'replication_factor' : 1}}", ks), &[])
         .await
         .unwrap();
 
-    session
-        .query("CREATE KEYSPACE test_metadata_ks WITH REPLICATION = {'class' : 'SimpleStrategy', 'replication_factor' : 1}", &[])
-        .await
-        .unwrap();
-
-    session.query("USE test_metadata_ks", &[]).await.unwrap();
+    session.query(format!("USE {}", ks), &[]).await.unwrap();
 
     session
         .query(
@@ -1499,7 +1523,7 @@ async fn test_primary_key_ordering_in_metadata() {
     session.refresh_metadata().await.unwrap();
 
     let cluster_data = session.get_cluster_data();
-    let table = &cluster_data.get_keyspace_info()["test_metadata_ks"].tables["t"];
+    let table = &cluster_data.get_keyspace_info()[&ks].tables["t"];
 
     assert_eq!(table.partition_key, vec!["c", "e"]);
     assert_eq!(table.clustering_key, vec!["b", "a"]);
@@ -1513,18 +1537,14 @@ async fn test_table_partitioner_in_metadata() {
 
     let uri = std::env::var("SCYLLA_URI").unwrap_or_else(|_| "127.0.0.1:9042".to_string());
     let session = SessionBuilder::new().known_node(uri).build().await.unwrap();
+    let ks = unique_name();
 
     session
-        .query("DROP KEYSPACE IF EXISTS test_metadata_ks", &[])
+        .query(format!("CREATE KEYSPACE {} WITH REPLICATION = {{'class' : 'SimpleStrategy', 'replication_factor' : 1}}", ks), &[])
         .await
         .unwrap();
 
-    session
-        .query("CREATE KEYSPACE test_metadata_ks WITH REPLICATION = {'class' : 'SimpleStrategy', 'replication_factor' : 1}", &[])
-        .await
-        .unwrap();
-
-    session.query("USE test_metadata_ks", &[]).await.unwrap();
+    session.query(format!("USE {}", ks), &[]).await.unwrap();
 
     session
         .query(
@@ -1538,7 +1558,7 @@ async fn test_table_partitioner_in_metadata() {
     session.refresh_metadata().await.unwrap();
 
     let cluster_data = session.get_cluster_data();
-    let tables = &cluster_data.get_keyspace_info()["test_metadata_ks"].tables;
+    let tables = &cluster_data.get_keyspace_info()[&ks].tables;
     let table = &tables["t"];
     let cdc_table = &tables["t_scylla_cdc_log"];
 
@@ -1558,13 +1578,14 @@ async fn test_turning_off_schema_fetching() {
         .build()
         .await
         .unwrap();
+    let ks = unique_name();
 
     session
-        .query("CREATE KEYSPACE IF NOT EXISTS test_metadata_ks WITH REPLICATION = {'class' : 'SimpleStrategy', 'replication_factor' : 1}", &[])
+        .query(format!("CREATE KEYSPACE IF NOT EXISTS {} WITH REPLICATION = {{'class' : 'SimpleStrategy', 'replication_factor' : 1}}", ks), &[])
         .await
         .unwrap();
 
-    session.query("USE test_metadata_ks", &[]).await.unwrap();
+    session.query(format!("USE {}", ks), &[]).await.unwrap();
 
     session
         .query(
@@ -1604,8 +1625,9 @@ async fn test_turning_off_schema_fetching() {
         .await
         .unwrap();
 
+    session.refresh_metadata().await.unwrap();
     let cluster_data = &session.get_cluster_data();
-    let keyspace = &cluster_data.get_keyspace_info()["test_metadata_ks"];
+    let keyspace = &cluster_data.get_keyspace_info()[&ks];
 
     assert_eq!(
         keyspace.strategy,
@@ -1621,21 +1643,14 @@ async fn test_turning_off_schema_fetching() {
 async fn test_named_bind_markers() {
     let uri = std::env::var("SCYLLA_URI").unwrap_or_else(|_| "127.0.0.1:9042".to_string());
     let session = SessionBuilder::new().known_node(uri).build().await.unwrap();
+    let ks = unique_name();
 
     session
-        .query("DROP KEYSPACE IF EXISTS test_named_bind_markers", &[])
+        .query(format!("CREATE KEYSPACE {} WITH REPLICATION = {{'class' : 'SimpleStrategy', 'replication_factor' : 1}}", ks), &[])
         .await
         .unwrap();
 
-    session
-        .query("CREATE KEYSPACE test_named_bind_markers WITH REPLICATION = {'class' : 'SimpleStrategy', 'replication_factor' : 1}", &[])
-        .await
-        .unwrap();
-
-    session
-        .query("USE test_named_bind_markers", &[])
-        .await
-        .unwrap();
+    session.query(format!("USE {}", ks), &[]).await.unwrap();
 
     session
         .query(
