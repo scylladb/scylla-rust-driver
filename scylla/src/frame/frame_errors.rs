@@ -19,7 +19,7 @@ pub enum FrameError {
     FrameDecompression,
     #[error("Frame compression failed.")]
     FrameCompression,
-    #[error("std io error encountered while processing")]
+    #[error(transparent)]
     StdIoError(#[from] std::io::Error),
     #[error("Unrecognized opcode{0}")]
     TryFromPrimitiveError(#[from] num_enum::TryFromPrimitiveError<response::ResponseOpcode>),
