@@ -101,6 +101,7 @@ impl Cluster {
             metadata_reader: MetadataReader::new(
                 initial_peers,
                 pool_config.connection_config.clone(),
+                pool_config.keepalive_interval,
                 server_events_sender,
                 fetch_schema_metadata,
             ),

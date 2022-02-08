@@ -47,6 +47,7 @@ pub struct PoolConfig {
     pub connection_config: ConnectionConfig,
     pub pool_size: PoolSize,
     pub can_use_shard_aware_port: bool,
+    pub keepalive_interval: Option<Duration>,
 }
 
 impl Default for PoolConfig {
@@ -55,6 +56,7 @@ impl Default for PoolConfig {
             connection_config: Default::default(),
             pool_size: Default::default(),
             can_use_shard_aware_port: true,
+            keepalive_interval: None,
         }
     }
 }

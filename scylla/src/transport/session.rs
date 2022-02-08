@@ -107,12 +107,9 @@ pub struct SessionConfig {
 
     /// If true, full schema is fetched with every metadata refresh.
     pub fetch_schema_metadata: bool,
-    /*
-    These configuration options will be added in the future:
 
-
-    pub tcp_keepalive: bool,
-    */
+    /// Interval of sending keepalive requests
+    pub keepalive_interval: Option<Duration>,
 }
 
 /// Describes database server known on Session startup.
@@ -153,6 +150,7 @@ impl SessionConfig {
             disallow_shard_aware_port: false,
             default_consistency: Consistency::LocalQuorum,
             fetch_schema_metadata: true,
+            keepalive_interval: None,
         }
     }
 
@@ -220,6 +218,7 @@ impl SessionConfig {
             connection_config: self.get_connection_config(),
             pool_size: self.connection_pool_size.clone(),
             can_use_shard_aware_port: !self.disallow_shard_aware_port,
+            keepalive_interval: self.keepalive_interval,
         }
     }
 

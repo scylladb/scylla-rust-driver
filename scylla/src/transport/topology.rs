@@ -15,6 +15,7 @@ use std::fmt::Formatter;
 use std::net::{IpAddr, SocketAddr};
 use std::num::NonZeroUsize;
 use std::str::FromStr;
+use std::time::Duration;
 use strum_macros::EnumString;
 use tokio::sync::mpsc;
 use tracing::{debug, error, trace, warn};
@@ -22,6 +23,8 @@ use tracing::{debug, error, trace, warn};
 /// Allows to read current metadata from the cluster
 pub(crate) struct MetadataReader {
     connection_config: ConnectionConfig,
+    keepalive_interval: Option<Duration>,
+
     control_connection_address: SocketAddr,
     control_connection: NodeConnectionPool,
 
@@ -153,6 +156,7 @@ impl MetadataReader {
     pub fn new(
         known_peers: &[SocketAddr],
         mut connection_config: ConnectionConfig,
+        keepalive_interval: Option<Duration>,
         server_event_sender: mpsc::Sender<Event>,
         fetch_schema: bool,
     ) -> Self {
@@ -168,11 +172,13 @@ impl MetadataReader {
         let control_connection = Self::make_control_connection_pool(
             control_connection_address,
             connection_config.clone(),
+            keepalive_interval,
         );
 
         MetadataReader {
             control_connection_address,
             control_connection,
+            keepalive_interval,
             connection_config,
             known_peers: known_peers.into(),
             fetch_schema,
@@ -214,6 +220,7 @@ impl MetadataReader {
             self.control_connection = Self::make_control_connection_pool(
                 self.control_connection_address,
                 self.connection_config.clone(),
+                self.keepalive_interval,
             );
 
             result = self.fetch_metadata().await;
@@ -251,9 +258,11 @@ impl MetadataReader {
     fn make_control_connection_pool(
         addr: SocketAddr,
         connection_config: ConnectionConfig,
+        keepalive_interval: Option<Duration>,
     ) -> NodeConnectionPool {
         let pool_config = PoolConfig {
             connection_config,
+            keepalive_interval,
 
             // We want to have only one connection to receive events from
             pool_size: PoolSize::PerHost(NonZeroUsize::new(1).unwrap()),

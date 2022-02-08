@@ -13,6 +13,7 @@ use std::time::Duration;
 use crate::statement::Consistency;
 #[cfg(feature = "ssl")]
 use openssl::ssl::SslContext;
+use tracing::warn;
 
 /// SessionBuilder is used to create new Session instances
 /// # Example
@@ -470,6 +471,33 @@ impl SessionBuilder {
     /// ```
     pub fn fetch_schema_metadata(mut self, fetch: bool) -> Self {
         self.config.fetch_schema_metadata = fetch;
+        self
+    }
+
+    /// Set the keepalive interval.
+    /// The default is `None`, it corresponds to no keepalive messages being send.
+    ///
+    /// # Example
+    /// ```
+    /// # use scylla::{Session, SessionBuilder};
+    /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
+    /// let session: Session = SessionBuilder::new()
+    ///     .known_node("127.0.0.1:9042")
+    ///     .keepalive_interval(std::time::Duration::from_secs(42))
+    ///     .build()
+    ///     .await?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn keepalive_interval(mut self, interval: Duration) -> Self {
+        if interval <= Duration::from_secs(1) {
+            warn!(
+                "Setting the keepalive interval to low values ({:?}) is not recommended as it can have a negative impact on performance. Consider setting it above 1 second.",
+                interval
+            );
+        }
+
+        self.config.keepalive_interval = Some(interval);
         self
     }
 }
