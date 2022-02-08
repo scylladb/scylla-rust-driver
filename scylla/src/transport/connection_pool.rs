@@ -86,6 +86,7 @@ pub struct NodeConnectionPool {
     conns: Arc<ArcSwap<MaybePoolConnections>>,
     use_keyspace_request_sender: mpsc::Sender<UseKeyspaceRequest>,
     _refiller_handle: RemoteHandle<()>,
+    _keepaliver_handle: Option<RemoteHandle<()>>,
     pool_updated_notify: Arc<Notify>,
 }
 
@@ -99,6 +100,8 @@ impl NodeConnectionPool {
         let (use_keyspace_request_sender, use_keyspace_request_receiver) = mpsc::channel(1);
         let pool_updated_notify = Arc::new(Notify::new());
 
+        let keepalive_interval = pool_config.keepalive_interval;
+
         let refiller = PoolRefiller::new(
             address,
             port,
@@ -108,13 +111,29 @@ impl NodeConnectionPool {
         );
 
         let conns = refiller.get_shared_connections();
-        let (fut, handle) = refiller.run(use_keyspace_request_receiver).remote_handle();
+        let (fut, refiller_handle) = refiller.run(use_keyspace_request_receiver).remote_handle();
         tokio::spawn(fut);
+
+        let keepaliver_handle = if let Some(interval) = keepalive_interval {
+            let keepaliver = Keepaliver {
+                connections: conns.clone(),
+                keepalive_interval: interval,
+                node_address: address,
+            };
+
+            let (fut, keepaliver_handle) = keepaliver.work().remote_handle();
+            tokio::spawn(fut);
+
+            Some(keepaliver_handle)
+        } else {
+            None
+        };
 
         Self {
             conns,
             use_keyspace_request_sender,
-            _refiller_handle: handle,
+            _refiller_handle: refiller_handle,
+            _keepaliver_handle: keepaliver_handle,
             pool_updated_notify,
         }
     }
@@ -241,6 +260,82 @@ impl NodeConnectionPool {
                 ErrorKind::Other,
                 "No connections in the pool",
             )))),
+        }
+    }
+}
+
+struct Keepaliver {
+    connections: Arc<ArcSwap<MaybePoolConnections>>,
+    node_address: IpAddr, // This address is only used to enrich the log messages
+    keepalive_interval: Duration,
+}
+
+impl Keepaliver {
+    pub fn load_connections(&self) -> Vec<Arc<Connection>> {
+        use MaybePoolConnections::*;
+        use PoolConnections::*;
+
+        let pool = self.connections.load_full();
+        match &*pool {
+            Ready(NotSharded(conns)) => conns.clone(),
+            Ready(Sharded { connections, .. }) => connections.iter().flatten().cloned().collect(),
+            Initializing => vec![],
+            Broken => {
+                debug!("Cannot send connection keepalives for node {} as there are no alive connections in the pool", self.node_address);
+                vec![]
+            }
+        }
+    }
+
+    async fn work(self) {
+        let mut interval = tokio::time::interval(self.keepalive_interval);
+        interval.tick().await; // Use up the first, instant tick.
+
+        // Default behaviour (Burst) is not suitable for sending keepalives.
+        interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+
+        // Wait for the second tick (so that `self.keepalive_interval` time passes since entering
+        // this function)
+        interval.tick().await;
+
+        loop {
+            let send_keepalives = self.send_keepalives();
+
+            tokio::select! {
+                _ = send_keepalives => {
+                    // Sending keepalives finished before receiving new tick.
+                    // Wait for the new tick and start over.
+                    interval.tick().await;
+                }
+                _ = interval.tick() => {
+                    // New tick arrived before `send_keepalives` was finished.
+                    // Stop polling `send_keepalives` and start over.
+                    //
+                    // `Interval::tick()` is cancellation safe, so it's ok to use it like that.
+                }
+            }
+        }
+    }
+
+    async fn send_keepalives(&self) {
+        let connections = self.load_connections();
+        let mut futures = connections
+            .into_iter()
+            .map(Self::send_keepalive_query)
+            .collect::<FuturesUnordered<_>>();
+
+        while futures.next().await.is_some() {}
+    }
+
+    async fn send_keepalive_query(connection: Arc<Connection>) {
+        if let Err(err) = connection
+            .query_single_page("select key from system.local where key = 'local'", &[])
+            .await
+        {
+            warn!(
+                "Failed to execute keepalive request on a connection {:p} - {}",
+                connection, err
+            );
         }
     }
 }

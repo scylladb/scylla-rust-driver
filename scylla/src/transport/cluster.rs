@@ -14,6 +14,7 @@ use itertools::Itertools;
 use std::collections::{BTreeMap, HashMap};
 use std::net::SocketAddr;
 use std::sync::Arc;
+use std::time::Duration;
 use tracing::{debug, warn};
 
 /// Cluster manages up to date information and connections to database nodes.
@@ -311,7 +312,7 @@ impl ClusterData {
 
 impl ClusterWorker {
     pub async fn work(mut self) {
-        use tokio::time::{Duration, Instant};
+        use tokio::time::Instant;
 
         let refresh_duration = Duration::from_secs(60); // Refresh topology every 60 seconds
         let mut last_refresh_time = Instant::now();
