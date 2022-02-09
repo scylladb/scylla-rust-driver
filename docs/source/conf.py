@@ -5,6 +5,7 @@ from datetime import date
 
 import recommonmark
 from recommonmark.transform import AutoStructify
+from pygments.lexers.configs import TOMLLexer
 from pygments.lexers.rust import RustLexer
 from sphinx.highlighting import lexers
 
@@ -49,9 +50,6 @@ exclude_patterns = ['_build', 'Thumbs.db', '.DS_Store', '_utils', 'SUMMARY.md']
 # The name of the Pygments (syntax highlighting) style to use.
 pygments_style = 'sphinx'
 
-# If true, `todo` and `todoList` produce output, else they produce nothing.
-todo_include_todos = True
-
 # Setup Sphinx
 def setup(sphinx):
     sphinx.add_config_value('recommonmark_config', {
@@ -60,6 +58,7 @@ def setup(sphinx):
     }, True)
     sphinx.add_transform(AutoStructify)
     lexers['rust'] = RustLexer()
+    lexers['toml'] = TOMLLexer()
 
 
 # -- Options for not found extension -------------------------------------------
@@ -110,7 +109,6 @@ html_theme_options = {
     'default_branch': 'main',
     'github_repository': 'scylladb/scylla-rust-driver',
     'github_issues_repository': 'scylladb/scylla-rust-driver',
-    'hide_sidebar_index': 'false',
     'hide_banner': 'true',
     'site_description': 'Scylla Driver for Rust.',
     'hide_edit_this_page_button': 'false'
