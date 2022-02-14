@@ -35,7 +35,7 @@
 //! All configuration options for a `Session` can be specified while building.
 //!
 //! ### Making queries
-//! After succesfully connecting to the cluster we can make queries.\
+//! After successfully connecting to the cluster we can make queries.\
 //! The driver supports multiple query types:
 //! * [Simple](crate::Session::query)
 //! * [Simple paged](crate::Session::query_iter)

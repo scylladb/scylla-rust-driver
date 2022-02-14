@@ -50,7 +50,7 @@ impl Metrics {
         }
     }
 
-    /// Increments counter for errors that occured in nonpaged queries.
+    /// Increments counter for errors that occurred in nonpaged queries.
     pub(crate) fn inc_failed_nonpaged_queries(&self) {
         self.errors_num.fetch_add(1, ORDER_TYPE);
     }
@@ -60,7 +60,7 @@ impl Metrics {
         self.queries_num.fetch_add(1, ORDER_TYPE);
     }
 
-    /// Increments counter for errors that occured in paged queries.
+    /// Increments counter for errors that occurred in paged queries.
     pub(crate) fn inc_failed_paged_queries(&self) {
         self.errors_iter_num.fetch_add(1, ORDER_TYPE);
     }
@@ -103,7 +103,7 @@ impl Metrics {
         Ok(histogram_unlocked.percentile(percentile)?)
     }
 
-    /// Returns counter for errors occured in nonpaged queries
+    /// Returns counter for errors occurred in nonpaged queries
     pub fn get_errors_num(&self) -> u64 {
         self.errors_num.load(ORDER_TYPE)
     }
@@ -113,7 +113,7 @@ impl Metrics {
         self.queries_num.load(ORDER_TYPE)
     }
 
-    /// Returns counter for errors occured in paged queries
+    /// Returns counter for errors occurred in paged queries
     pub fn get_errors_iter_num(&self) -> u64 {
         self.errors_iter_num.load(ORDER_TYPE)
     }

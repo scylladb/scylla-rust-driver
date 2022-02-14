@@ -22,8 +22,8 @@ let metrics = session.get_metrics();
 
 println!("Queries requested: {}", metrics.get_queries_num());
 println!("Iter queries requested: {}", metrics.get_queries_iter_num());
-println!("Errors occured: {}", metrics.get_errors_num());
-println!("Iter errors occured: {}", metrics.get_errors_iter_num());
+println!("Errors occurred: {}", metrics.get_errors_num());
+println!("Iter errors occurred: {}", metrics.get_errors_iter_num());
 println!("Average latency: {}", metrics.get_latency_avg_ms().unwrap());
 println!(
     "99.9 latency percentile: {}",

@@ -1,4 +1,4 @@
-//! This module contains various erros which can be returned by [`Session`](crate::Session)
+//! This module contains various errors which can be returned by [`Session`](crate::Session)
 
 use crate::frame::frame_errors::{FrameError, ParseError};
 use crate::frame::types::LegacyConsistency;
@@ -8,7 +8,7 @@ use std::io::ErrorKind;
 use std::sync::Arc;
 use thiserror::Error;
 
-/// Error that occured during query execution
+/// Error that occurred during query execution
 #[derive(Error, Debug, Clone)]
 pub enum QueryError {
     /// Database sent a response containing some error with a message
@@ -19,7 +19,7 @@ pub enum QueryError {
     #[error(transparent)]
     BadQuery(#[from] BadQuery),
 
-    /// Input/Output error has occured, connection broken etc.
+    /// Input/Output error has occurred, connection broken etc.
     #[error("IO Error: {0}")]
     IoError(Arc<std::io::Error>),
 
@@ -31,7 +31,7 @@ pub enum QueryError {
     #[error("Invalid message: {0}")]
     InvalidMessage(String),
 
-    /// Timeout error has occured, function didn't complete in time.
+    /// Timeout error has occurred, function didn't complete in time.
     #[error("Timeout Error")]
     TimeoutError,
 
@@ -184,9 +184,9 @@ pub enum DbError {
         write_type: WriteType,
     },
 
-    /// Tried to execute a prepared statement that is not prepared. Driver shoud prepare it again
+    /// Tried to execute a prepared statement that is not prepared. Driver should prepare it again
     #[error(
-        "Tried to execute a prepared statement that is not prepared. Driver shoud prepare it again"
+        "Tried to execute a prepared statement that is not prepared. Driver should prepare it again"
     )]
     Unprepared {
         /// Statement id of the requested prepared query
@@ -211,20 +211,20 @@ pub enum DbError {
 pub enum WriteType {
     /// Non-batched non-counter write
     Simple,
-    /// Logged batch write. If this type is received, it means the batch log has been succesfully written
+    /// Logged batch write. If this type is received, it means the batch log has been successfully written
     /// (otherwise BatchLog type would be present)
     Batch,
     /// Unlogged batch. No batch log write has been attempted.
     UnloggedBatch,
     /// Counter write (batched or not)
     Counter,
-    /// Timeout occured during the write to the batch log when a logged batch was requested
+    /// Timeout occurred during the write to the batch log when a logged batch was requested
     BatchLog,
-    /// Timeout occured during Compare And Set write/update
+    /// Timeout occurred during Compare And Set write/update
     Cas,
     /// Write involves VIEW update and failure to acquire local view(MV) lock for key within timeout
     View,
-    /// Timeout occured  when a cdc_total_space_in_mb is exceeded when doing a write to data tracked by cdc
+    /// Timeout occurred  when a cdc_total_space_in_mb is exceeded when doing a write to data tracked by cdc
     Cdc,
     /// Other type not specified in the specification
     Other(String),
@@ -242,8 +242,8 @@ pub enum BadQuery {
     #[error("Length of provided values ({0}) must be equal to number of batch statements ({1})")]
     ValueLenMismatch(usize, usize),
 
-    /// Serialized values are too long to compute parition key
-    #[error("Serialized values are too long to compute parition key! Length: {0}, Max allowed length: {1}")]
+    /// Serialized values are too long to compute partition key
+    #[error("Serialized values are too long to compute partition key! Length: {0}, Max allowed length: {1}")]
     ValuesTooLongForKey(usize, usize),
 
     /// Passed invalid keyspace name to use
@@ -251,7 +251,7 @@ pub enum BadQuery {
     BadKeyspaceName(#[from] BadKeyspaceName),
 }
 
-/// Error that occured during session creation
+/// Error that occurred during session creation
 #[derive(Error, Debug, Clone)]
 pub enum NewSessionError {
     /// Failed to resolve hostname passed in Session creation
@@ -271,7 +271,7 @@ pub enum NewSessionError {
     #[error(transparent)]
     BadQuery(#[from] BadQuery),
 
-    /// Input/Output error has occured, connection broken etc.
+    /// Input/Output error has occurred, connection broken etc.
     #[error("IO Error: {0}")]
     IoError(Arc<std::io::Error>),
 
@@ -283,7 +283,7 @@ pub enum NewSessionError {
     #[error("Invalid message: {0}")]
     InvalidMessage(String),
 
-    /// Timeout error has occured, couldn't connect to node in time.
+    /// Timeout error has occurred, couldn't connect to node in time.
     #[error("Timeout Error")]
     TimeoutError,
 
@@ -305,8 +305,8 @@ pub enum BadKeyspaceName {
     #[error("Keyspace name too long, must be up to 48 characters, found {1} characters. Bad keyspace name: '{0}'")]
     TooLong(String, usize),
 
-    /// Illegal character - only alpha-numeric and underscores allowed.
-    #[error("Illegal character found: '{1}', only alpha-numeric and underscores allowed. Bad keyspace name: '{0}'")]
+    /// Illegal character - only alphanumeric and underscores allowed.
+    #[error("Illegal character found: '{1}', only alphanumeric and underscores allowed. Bad keyspace name: '{0}'")]
     IllegalCharacter(String, char),
 }
 

@@ -918,7 +918,7 @@ impl Connection {
                         params.stream
                     );
                     return Err(QueryError::ProtocolError(
-                        "Received reponse with unexpected StreamId",
+                        "Received response with unexpected StreamId",
                     ));
                 }
                 Orphaned => {
@@ -1391,7 +1391,7 @@ impl VerifiedKeyspaceName {
         self.name.as_str()
     }
 
-    // "Keyspace names can have up to 48 alpha-numeric characters and contain underscores;
+    // "Keyspace names can have up to 48 alphanumeric characters and contain underscores;
     // only letters and numbers are supported as the first character."
     // https://docs.datastax.com/en/cql-oss/3.3/cql/cql_reference/cqlCreateKeyspace.html
     // Despite that cassandra accepts underscore as first character so we do too
@@ -1411,7 +1411,7 @@ impl VerifiedKeyspaceName {
             ));
         }
 
-        // Verify all chars are alpha-numeric or underscore
+        // Verify all chars are alphanumeric or underscore
         for character in keyspace_name.chars() {
             match character {
                 'a'..='z' | 'A'..='Z' | '0'..='9' | '_' => {}

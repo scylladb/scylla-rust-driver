@@ -27,7 +27,7 @@ use openssl::ssl::{SslContextBuilder, SslMethod, SslVerifyMode};
 // Set verification mode
 // if SslVerifyMode::PEER with self-signed certificate you have to
 // use set_ca_file method with path to your ca.crt file as an argument
-// if SslVerifyMode::NONE you don't need to use any aditional methods
+// if SslVerifyMode::NONE you don't need to use any additional methods
 //
 // Build it and add to scylla-rust-driver's SessionBuilder
 

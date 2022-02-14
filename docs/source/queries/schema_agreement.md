@@ -32,7 +32,7 @@ session.await_schema_agreement().await?;
 ```
 
 ### Awaiting with timeout
-We can also set timeout in miliseconds with `Session::await_timed_schema_agreement`.
+We can also set timeout in milliseconds with `Session::await_timed_schema_agreement`.
 It takes one argument, an `std::time::Duration` value that tells how long our driver should await for schema agreement. If the timeout is met the return value is `false` otherwise it is `true`.
 
 ```rust
@@ -51,7 +51,7 @@ if session.await_timed_schema_agreement(Duration::from_secs(5)).await? { // wait
 ```
 
 ### Checking for schema interval
-If schema is not agreed driver sleeps for a duration before checking it again. Default value is 200 miliseconds but it can be changed with `SessionBuilder::schema_agreement_interval`.
+If schema is not agreed driver sleeps for a duration before checking it again. Default value is 200 milliseconds but it can be changed with `SessionBuilder::schema_agreement_interval`.
 
 
 ```rust

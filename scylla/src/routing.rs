@@ -93,7 +93,7 @@ impl Sharder {
 
     /// Returns iterator over source ports `p` such that `shard == shard_of_source_port(p)`.
     /// Starts at a random port and goes forward by `nr_shards`. After reaching maximum wraps back around.
-    /// Stops once all possibile ports have been returned
+    /// Stops once all possible ports have been returned
     pub fn iter_source_ports_for_shard(&self, shard: Shard) -> impl Iterator<Item = u16> {
         assert!(shard < self.nr_shards.get() as u32);
 

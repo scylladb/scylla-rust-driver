@@ -564,7 +564,7 @@ impl Session {
         let handles = connections.iter().map(|c| c.prepare(&query));
         let mut results = join_all(handles).await;
 
-        // If at least one prepare was succesfull prepare returns Ok
+        // If at least one prepare was successful prepare returns Ok
 
         // Find first result that is Ok, or Err if all failed
         let mut first_ok: Option<Result<PreparedStatement, QueryError>> = None;
@@ -823,7 +823,7 @@ impl Session {
     /// # Arguments
     ///
     /// * `keyspace_name` - keyspace name to use,
-    /// keyspace names can have up to 48 alpha-numeric characters and contain underscores
+    /// keyspace names can have up to 48 alphanumeric characters and contain underscores
     /// * `case_sensitive` - if set to true the generated query will put keyspace name in quotes
     /// # Example
     /// ```rust
@@ -914,7 +914,7 @@ impl Session {
 
         Err(QueryError::ProtocolError(
             "All tracing queries returned an empty result, \
-            maybe information didnt reach this node yet. \
+            maybe information didn't reach this node yet. \
             Consider using get_tracing_info_custom with \
             bigger interval in GetTracingConfig",
         ))
