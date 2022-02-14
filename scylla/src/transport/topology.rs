@@ -189,6 +189,14 @@ impl MetadataReader {
 
         // shuffle known_peers to iterate through them in random order later
         self.known_peers.shuffle(&mut thread_rng());
+        debug!(
+            "Known peers: {}",
+            self.known_peers
+                .iter()
+                .map(std::net::SocketAddr::to_string)
+                .collect::<Vec<String>>()
+                .join(", ")
+        );
 
         // if fetching metadata on current control connection failed,
         // try to fetch metadata from other known peer
@@ -210,6 +218,10 @@ impl MetadataReader {
                 self.connection_config.clone(),
             );
 
+            debug!(
+                "Retrying to establish the control connection on {}",
+                self.control_connection_address
+            );
             result = self.fetch_metadata().await;
         }
 
