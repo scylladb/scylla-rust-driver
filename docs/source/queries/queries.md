@@ -4,7 +4,7 @@ This driver supports all query types available in Scylla:
 * [Simple queries](simple.md)
     * Easy to use
     * Poor performance
-    * Primitve load balancing
+    * Primitive load balancing
 * [Prepared queries](prepared.md)
     * Need to be prepared before use
     * Fast
@@ -16,7 +16,7 @@ This driver supports all query types available in Scylla:
     * Allows to read result in multiple pages when it doesn't fit in a single response
     * Can be prepared for better performance and load balancing
 
-Additionaly there is special functionality to enable `USE KEYSPACE` queries:
+Additionally there is special functionality to enable `USE KEYSPACE` queries:
 [USE keyspace](usekeyspace.md)
 
 Queries are fully asynchronous - you can run as many of them in parallel as you wish.

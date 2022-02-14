@@ -96,8 +96,8 @@ See [Query result](result.md) for more information about handling query results
 
 ### Performance
 Simple queries should not be used in places where performance matters.\
-If perfomance matters use a [Prepared query](prepared.md) instead.
+If performance matters use a [Prepared query](prepared.md) instead.
 
 With simple query the database has to parse query text each time it's executed, which worsens performance.\
 
-Additionaly token and shard aware load balancing does not work with simple queries. They are sent to random nodes.
+Additionally token and shard aware load balancing does not work with simple queries. They are sent to random nodes.

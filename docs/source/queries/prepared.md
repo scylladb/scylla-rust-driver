@@ -35,7 +35,7 @@ session.execute(&prepared, (to_insert,)).await?;
 
 ### `Session::prepare`
 `Session::prepare` takes query text and prepares the query on all nodes and shards.
-If at least one succeds returns success.
+If at least one succeeds returns success.
 
 ### `Session::execute`
 `Session::execute` takes a prepared query and bound values and runs the query.
