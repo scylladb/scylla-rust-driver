@@ -190,15 +190,9 @@ impl MetadataReader {
         // shuffle known_peers to iterate through them in random order later
         self.known_peers.shuffle(&mut thread_rng());
 
-        let address_of_failed_control_connection = self.control_connection_address;
-        let filtered_known_peers = self
-            .known_peers
-            .iter()
-            .filter(|&peer| peer != &address_of_failed_control_connection);
-
         // if fetching metadata on current control connection failed,
         // try to fetch metadata from other known peer
-        for peer in filtered_known_peers {
+        for peer in self.known_peers.iter().cycle() {
             let err = match result {
                 Ok(_) => break,
                 Err(err) => err,

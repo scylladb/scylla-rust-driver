@@ -14,7 +14,7 @@ use itertools::Itertools;
 use std::collections::{BTreeMap, HashMap};
 use std::net::SocketAddr;
 use std::sync::Arc;
-use tracing::{debug, warn};
+use tracing::{debug, error, warn};
 
 /// Cluster manages up to date information and connections to database nodes.
 /// All data can be accessed by cloning Arc<ClusterData> in the `data` field
@@ -376,7 +376,17 @@ impl ClusterWorker {
             // Perform the refresh
             debug!("Requesting topology refresh");
             last_refresh_time = Instant::now();
-            let refresh_res = self.perform_refresh().await;
+            let refresh_res =
+                match tokio::time::timeout(refresh_duration, self.perform_refresh()).await {
+                    Err(_) => {
+                        error!(
+                            refresh_duration_seconds = refresh_duration.as_secs(),
+                            "Failed to refresh topology within the time limit"
+                        );
+                        Err(QueryError::TimeoutError)
+                    }
+                    Ok(res) => res,
+                };
 
             // Send refresh result if there was a request
             if let Some(request) = cur_request {
