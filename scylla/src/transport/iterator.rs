@@ -352,7 +352,7 @@ where
                         return Ok(());
                     }
 
-                    // Query succeded, reset retry policy for future retries
+                    // Query succeeded, reset retry policy for future retries
                     self.retry_session.reset();
                 }
                 Response::Error(err) => {

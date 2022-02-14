@@ -206,7 +206,7 @@ fn serialized_values() {
         );
     }
 
-    // Add a value thats too big, recover gracefully
+    // Add a value that's too big, recover gracefully
     struct TooBigValue;
     impl Value for TooBigValue {
         fn serialize(&self, buf: &mut Vec<u8>) -> Result<(), ValueTooBig> {

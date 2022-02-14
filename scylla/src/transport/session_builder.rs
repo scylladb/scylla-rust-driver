@@ -67,7 +67,7 @@ impl SessionBuilder {
     }
 
     /// Specify a default consistency to be used for queries.
-    /// It's possible to override it by explictly setting a consistency on the chosen query.
+    /// It's possible to override it by explicitly setting a consistency on the chosen query.
     pub fn default_consistency(mut self, consistency: Consistency) -> Self {
         self.config.default_consistency = consistency;
         self
@@ -218,7 +218,7 @@ impl SessionBuilder {
     }
 
     /// Set the delay for schema agreement check. How often driver should ask if schema is in agreement
-    /// The default is 200 miliseconds.
+    /// The default is 200 milliseconds.
     ///
     /// # Example
     /// ```

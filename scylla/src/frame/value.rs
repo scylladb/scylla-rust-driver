@@ -719,7 +719,7 @@ impl_value_list_for_map!(BTreeMap, &str);
 
 // Implement ValueList for tuples of Values of size up to 16
 
-// Here is an example implemetation for (T0, )
+// Here is an example implementation for (T0, )
 // Further variants are done using a macro
 impl<T0: Value> ValueList for (T0,) {
     fn serialized(&self) -> SerializedResult<'_> {
@@ -824,7 +824,7 @@ impl<T: ValueList> BatchValues for Vec<T> {
     }
 }
 
-// Here is an example implemetation for (T0, )
+// Here is an example implementation for (T0, )
 // Further variants are done using a macro
 impl<T0: ValueList> BatchValues for (T0,) {
     fn len(&self) -> usize {

@@ -27,7 +27,7 @@ num_tokens: 256
 
 # Directory where Scylla should store all its files, which are commitlog,
 # data, hints, view_hints and saved_caches subdirectories. All of these
-# subs can be overriden by the respective options below.
+# subs can be overridden by the respective options below.
 # If unset, the value defaults to /var/lib/scylla
 # workdir: /var/lib/scylla
 
@@ -373,7 +373,7 @@ commitlog_total_space_in_mb: -1
 # Increase if your rows are large, or if you have a very large
 # number of rows per partition.  The competing goals are these:
 #   1) a smaller granularity means more index entries are generated
-#      and looking up rows withing the partition by collation column
+#      and looking up rows within the partition by collation column
 #      is faster
 #   2) but, Scylla will keep the collation index in memory for hot
 #      rows (as part of the key cache), so a larger granularity means
