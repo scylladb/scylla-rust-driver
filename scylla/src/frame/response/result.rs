@@ -1221,6 +1221,18 @@ mod tests {
             );
         }
     }
+
+    #[test]
+    fn test_serialize_empty() {
+        use crate::frame::value::Value;
+
+        let empty = CqlValue::Empty;
+        let mut v = Vec::new();
+        empty.serialize(&mut v).unwrap();
+
+        assert_eq!(v, vec![0, 0, 0, 0]);
+    }
+
     #[test]
     fn test_deserialize_empty_payload() {
         for (test_type, res_cql) in [

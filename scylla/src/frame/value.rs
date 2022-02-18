@@ -568,6 +568,11 @@ fn serialize_tuple<V: Value>(
     Ok(())
 }
 
+fn serialize_empty(buf: &mut Vec<u8>) -> Result<(), ValueTooBig> {
+    buf.put_i32(0);
+    Ok(())
+}
+
 impl Value for CqlValue {
     fn serialize(&self, buf: &mut Vec<u8>) -> Result<(), ValueTooBig> {
         match self {
@@ -602,7 +607,7 @@ impl Value for CqlValue {
             CqlValue::Uuid(u) => u.serialize(buf),
             CqlValue::Varint(v) => v.serialize(buf),
 
-            CqlValue::Empty => Ok(()),
+            CqlValue::Empty => serialize_empty(buf),
         }
     }
 }
