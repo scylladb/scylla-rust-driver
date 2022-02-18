@@ -12,7 +12,6 @@ env:
 
 jobs:
   build:
-    container: scylladb/rust-mdbook
     runs-on: ubuntu-latest
     services:
       scylladb:
@@ -24,6 +23,8 @@ jobs:
           - ${{ github.workspace }}:/workspace
     steps:
     - uses: actions/checkout@v2
+    - name: Install mdbook
+      run: cargo install mdbook --no-default-features
     - name: Build the project
       run: cargo build --verbose --examples
     - name: Build the book
@@ -31,4 +32,4 @@ jobs:
     - name: Build the book using the script
       run: python3 docs/build_book.py
     - name: Run book tests
-      run: SCYLLA_URI=scylladb:9042 mdbook test -L target/debug/deps docs
+      run: mdbook test -L target/debug/deps docs
