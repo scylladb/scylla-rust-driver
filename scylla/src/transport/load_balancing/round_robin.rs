@@ -1,10 +1,10 @@
 use super::{ChildLoadBalancingPolicy, LoadBalancingPolicy, Statement};
 use crate::transport::{cluster::ClusterData, node::Node};
-
 use std::sync::{
     atomic::{AtomicUsize, Ordering},
     Arc,
 };
+use tracing::trace;
 
 /// A Round-robin load balancing policy.
 pub struct RoundRobinPolicy {
@@ -38,6 +38,15 @@ impl LoadBalancingPolicy for RoundRobinPolicy {
         let nodes_count = cluster.all_nodes.len();
         let rotation = super::compute_rotation(index, nodes_count);
         let rotated_nodes = super::slice_rotated_left(&cluster.all_nodes, rotation).cloned();
+        trace!(
+            nodes = rotated_nodes
+                .clone()
+                .map(|node| node.address.to_string())
+                .collect::<Vec<String>>()
+                .join(",")
+                .as_str(),
+            "RoundRobin"
+        );
 
         Box::new(rotated_nodes)
     }

@@ -11,7 +11,7 @@ use std::sync::Arc;
 use std::time::Duration;
 use tokio::net::lookup_host;
 use tokio::time::timeout;
-use tracing::debug;
+use tracing::{debug, trace, trace_span, Instrument};
 use uuid::Uuid;
 
 use super::connection::QueryResponse;
@@ -422,6 +422,7 @@ impl Session {
         let query: Query = query.into();
         let serialized_values = values.serialized()?;
 
+        let span = trace_span!("Request", query = query.contents.as_str());
         let response = self
             .run_query(
                 Statement::default(),
@@ -440,6 +441,7 @@ impl Session {
                     }
                 },
             )
+            .instrument(span)
             .await?;
         self.handle_set_keyspace_response(&response).await?;
 
@@ -508,6 +510,7 @@ impl Session {
             None => self.retry_policy.new_session(),
         };
 
+        let span = trace_span!("Request", query = query.contents.as_str());
         RowIterator::new_for_query(
             query,
             serialized_values.into_owned(),
@@ -517,6 +520,7 @@ impl Session {
             self.cluster.get_data(),
             self.metrics.clone(),
         )
+        .instrument(span)
         .await
     }
 
@@ -666,6 +670,10 @@ impl Session {
             keyspace: prepared.get_keyspace_name(),
         };
 
+        let span = trace_span!(
+            "Request",
+            prepared_id = format!("{:X}", prepared.get_id()).as_str()
+        );
         let response = self
             .run_query(
                 statement_info,
@@ -677,6 +685,7 @@ impl Session {
                         .await
                 },
             )
+            .instrument(span)
             .await?;
         self.handle_set_keyspace_response(&response).await?;
 
@@ -739,6 +748,10 @@ impl Session {
             None => self.retry_policy.new_session(),
         };
 
+        let span = trace_span!(
+            "Request",
+            prepared_id = format!("{:X}", prepared.get_id()).as_str()
+        );
         RowIterator::new_for_prepared_statement(PreparedIteratorConfig {
             prepared,
             values: serialized_values.into_owned(),
@@ -749,6 +762,7 @@ impl Session {
             cluster_data: self.cluster.get_data(),
             metrics: self.metrics.clone(),
         })
+        .instrument(span)
         .await
     }
 
@@ -805,6 +819,7 @@ impl Session {
             |node: Arc<Node>| async move { node.random_connection().await },
             |connection: Arc<Connection>| async move { connection.batch(batch, values_ref).await },
         )
+        .instrument(trace_span!("Batch"))
         .await
     }
 
@@ -1103,10 +1118,20 @@ impl Session {
         let mut last_error: Option<QueryError> = None;
 
         'nodes_in_plan: for node in query_plan {
+            let span = trace_span!("Executing query", node = node.address.to_string().as_str());
             'same_node_retries: loop {
-                let connection: Arc<Connection> = match choose_connection(node.clone()).await {
+                trace!(parent: &span, "Execution started");
+                let connection: Arc<Connection> = match choose_connection(node.clone())
+                    .instrument(span.clone())
+                    .await
+                {
                     Ok(connection) => connection,
                     Err(e) => {
+                        trace!(
+                            parent: &span,
+                            error = e.to_string().as_str(),
+                            "Choosing connection failed"
+                        );
                         last_error = Some(e);
                         // Broken connection doesn't count as a failed query, don't log in metrics
                         continue 'nodes_in_plan;
@@ -1116,16 +1141,28 @@ impl Session {
                 self.metrics.inc_total_nonpaged_queries();
                 let query_start = std::time::Instant::now();
 
-                let query_result: Result<ResT, QueryError> = do_query(connection).await;
+                trace!(
+                    parent: &span,
+                    connection = connection.get_connect_address().to_string().as_str(),
+                    "Sending"
+                );
+                let query_result: Result<ResT, QueryError> =
+                    do_query(connection).instrument(span.clone()).await;
 
                 last_error = match query_result {
                     Ok(response) => {
+                        trace!(parent: &span, "Query succeeded");
                         let _ = self
                             .metrics
                             .log_query_latency(query_start.elapsed().as_millis() as u64);
                         return Some(Ok(response));
                     }
                     Err(e) => {
+                        trace!(
+                            parent: &span,
+                            last_error = e.to_string().as_str(),
+                            "Query failed"
+                        );
                         self.metrics.inc_failed_nonpaged_queries();
                         Some(e)
                     }
@@ -1140,7 +1177,12 @@ impl Session {
                     ),
                 };
 
-                match retry_session.decide_should_retry(query_info) {
+                let retry_decision = retry_session.decide_should_retry(query_info);
+                trace!(
+                    parent: &span,
+                    retry_decision = format!("{:?}", retry_decision).as_str()
+                );
+                match retry_decision {
                     RetryDecision::RetrySameNode => {
                         self.metrics.inc_retries_num();
                         continue 'same_node_retries;

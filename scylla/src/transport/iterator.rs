@@ -33,6 +33,7 @@ use crate::transport::load_balancing::{LoadBalancingPolicy, Statement};
 use crate::transport::metrics::Metrics;
 use crate::transport::node::Node;
 use crate::transport::retry_policy::{QueryInfo, RetryDecision, RetrySession};
+use tracing::{trace, trace_span, Instrument};
 use uuid::Uuid;
 
 /// Iterator over rows returned by paged queries\
@@ -274,11 +275,20 @@ where
             QueryError::ProtocolError("Empty query plan - driver bug!");
 
         'nodes_in_plan: for node in query_plan {
+            let span = trace_span!("Executing query", node = node.address.to_string().as_str());
             // For each node in the plan choose a connection to use
             // This connection will be reused for same node retries to preserve paging cache on the shard
-            let connection: Arc<Connection> = match (self.choose_connection)(node).await {
+            let connection: Arc<Connection> = match (self.choose_connection)(node)
+                .instrument(span.clone())
+                .await
+            {
                 Ok(connection) => connection,
                 Err(e) => {
+                    trace!(
+                        parent: &span,
+                        error = e.to_string().as_str(),
+                        "Choosing connection failed"
+                    );
                     last_error = e;
                     // Broken connection doesn't count as a failed query, don't log in metrics
                     continue 'nodes_in_plan;
@@ -286,12 +296,24 @@ where
             };
 
             'same_node_retries: loop {
+                trace!(parent: &span, "Execution started");
                 // Query pages until an error occurs
-                let queries_result: Result<(), QueryError> = self.query_pages(&connection).await;
+                let queries_result: Result<(), QueryError> =
+                    self.query_pages(&connection).instrument(span.clone()).await;
 
                 last_error = match queries_result {
-                    Ok(()) => return,
-                    Err(error) => error,
+                    Ok(()) => {
+                        trace!(parent: &span, "Query succeeded");
+                        return;
+                    }
+                    Err(error) => {
+                        trace!(
+                            parent: &span,
+                            error = error.to_string().as_str(),
+                            "Query failed"
+                        );
+                        error
+                    }
                 };
 
                 // Use retry policy to decide what to do next
@@ -301,7 +323,12 @@ where
                     consistency: LegacyConsistency::Regular(self.query_consistency),
                 };
 
-                match self.retry_session.decide_should_retry(query_info) {
+                let retry_decision = self.retry_session.decide_should_retry(query_info);
+                trace!(
+                    parent: &span,
+                    retry_decision = format!("{:?}", retry_decision).as_str()
+                );
+                match retry_decision {
                     RetryDecision::RetrySameNode => {
                         self.metrics.inc_retries_num();
                         continue 'same_node_retries;
@@ -325,6 +352,10 @@ where
             self.metrics.inc_total_paged_queries();
             let query_start = std::time::Instant::now();
 
+            trace!(
+                connection = connection.get_connect_address().to_string().as_str(),
+                "Sending"
+            );
             let query_response: QueryResponse =
                 (self.page_query)(connection.clone(), self.paging_state.clone()).await?;
 

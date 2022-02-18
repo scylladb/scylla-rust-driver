@@ -1,10 +1,10 @@
 use super::{ChildLoadBalancingPolicy, LoadBalancingPolicy, Statement};
 use crate::transport::{cluster::ClusterData, node::Node};
-
 use std::sync::{
     atomic::{AtomicUsize, Ordering},
     Arc,
 };
+use tracing::trace;
 
 /// A data-center aware Round-robin load balancing policy.
 pub struct DcAwareRoundRobinPolicy {
@@ -67,6 +67,21 @@ impl LoadBalancingPolicy for DcAwareRoundRobinPolicy {
         let remote_nodes_count = cluster.all_nodes.len() - local_nodes.len();
         let remote_nodes_rotation = super::compute_rotation(index, remote_nodes_count);
         let rotated_remote_nodes = super::iter_rotated_left(remote_nodes, remote_nodes_rotation);
+        trace!(
+            local_nodes = rotated_local_nodes
+                .clone()
+                .map(|node| node.address.to_string())
+                .collect::<Vec<String>>()
+                .join(",")
+                .as_str(),
+            remote_nodes = rotated_remote_nodes
+                .clone()
+                .map(|node| node.address.to_string())
+                .collect::<Vec<String>>()
+                .join(",")
+                .as_str(),
+            "DC Aware"
+        );
 
         let plan = rotated_local_nodes.chain(rotated_remote_nodes);
         Box::new(plan)
