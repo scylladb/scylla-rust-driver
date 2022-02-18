@@ -900,3 +900,42 @@ async fn test_udt_after_schema_update() {
         }
     );
 }
+
+#[tokio::test]
+async fn test_empty() {
+    let session: Session = init_test("empty_tests", "int").await;
+
+    session
+        .query(
+            "INSERT INTO empty_tests (id, val) VALUES (0, blobasint(0x))",
+            (),
+        )
+        .await
+        .unwrap();
+
+    let (empty,) = session
+        .query("SELECT val FROM empty_tests WHERE id = 0", ())
+        .await
+        .unwrap()
+        .first_row_typed::<(CqlValue,)>()
+        .unwrap();
+
+    assert_eq!(empty, CqlValue::Empty);
+
+    session
+        .query(
+            "INSERT INTO empty_tests (id, val) VALUES (1, ?)",
+            (CqlValue::Empty,),
+        )
+        .await
+        .unwrap();
+
+    let (empty,) = session
+        .query("SELECT val FROM empty_tests WHERE id = 1", ())
+        .await
+        .unwrap()
+        .first_row_typed::<(CqlValue,)>()
+        .unwrap();
+
+    assert_eq!(empty, CqlValue::Empty);
+}
