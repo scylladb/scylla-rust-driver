@@ -262,6 +262,13 @@ impl CqlValue {
         }
     }
 
+    pub fn as_map(&self) -> Option<&Vec<(CqlValue, CqlValue)>> {
+        match self {
+            Self::Map(s) => Some(s),
+            _ => None,
+        }
+    }
+
     pub fn into_vec(self) -> Option<Vec<CqlValue>> {
         match self {
             Self::List(s) => Some(s),
@@ -1077,6 +1084,16 @@ mod tests {
 
         let cql: CqlValue = CqlValue::Map(my_vec);
 
+        // Test borrowing.
+        let decoded = cql.as_map().unwrap();
+
+        assert_eq!(CqlValue::Int(20), decoded[0].0);
+        assert_eq!(CqlValue::Int(21), decoded[0].1);
+
+        assert_eq!(CqlValue::Int(2), decoded[1].0);
+        assert_eq!(CqlValue::Int(3), decoded[1].1);
+
+        // Test taking the ownership.
         let decoded = cql.into_pair_vec().unwrap();
 
         assert_eq!(CqlValue::Int(20), decoded[0].0);
