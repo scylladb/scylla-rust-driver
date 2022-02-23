@@ -3,7 +3,7 @@ use futures::{
     stream::{FuturesUnordered, StreamExt},
 };
 use std::{future::Future, sync::Arc, time::Duration};
-use tracing::warn;
+use tracing::{trace_span, warn, Instrument};
 
 use super::{errors::QueryError, metrics::Metrics};
 
@@ -103,7 +103,9 @@ where
     let retry_interval = policy.retry_interval(context);
 
     let mut async_tasks = FuturesUnordered::new();
-    async_tasks.push(query_runner_generator());
+    async_tasks.push(
+        query_runner_generator().instrument(trace_span!("Speculative execution: original query")),
+    );
 
     let sleep = tokio::time::sleep(retry_interval).fuse();
     tokio::pin!(sleep);
@@ -113,7 +115,7 @@ where
         futures::select! {
             _ = &mut sleep => {
                 if retries_remaining > 0 {
-                    async_tasks.push(query_runner_generator());
+                    async_tasks.push(query_runner_generator().instrument(trace_span!("Speculative execution", retries_remaining = retries_remaining)));
                     retries_remaining -= 1;
 
                     // reset the timeout

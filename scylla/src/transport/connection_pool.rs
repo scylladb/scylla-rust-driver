@@ -71,6 +71,16 @@ enum MaybePoolConnections {
     Ready(PoolConnections),
 }
 
+impl std::fmt::Debug for MaybePoolConnections {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            MaybePoolConnections::Initializing => write!(f, "Initializing"),
+            MaybePoolConnections::Broken => write!(f, "Broken"),
+            MaybePoolConnections::Ready(conns) => write!(f, "{:?}", conns),
+        }
+    }
+}
+
 #[derive(Clone)]
 enum PoolConnections {
     NotSharded(Vec<Arc<Connection>>),
@@ -78,6 +88,49 @@ enum PoolConnections {
         sharder: Sharder,
         connections: Vec<Vec<Arc<Connection>>>,
     },
+}
+
+struct ConnectionVectorWrapper<'a>(&'a Vec<Arc<Connection>>);
+impl std::fmt::Debug for ConnectionVectorWrapper<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_list()
+            .entries(self.0.iter().map(|conn| conn.get_connect_address()))
+            .finish()
+    }
+}
+
+struct ShardedConnectionVectorWrapper<'a>(&'a Vec<Vec<Arc<Connection>>>);
+impl std::fmt::Debug for ShardedConnectionVectorWrapper<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_list()
+            .entries(
+                self.0
+                    .iter()
+                    .enumerate()
+                    .map(|(shard_no, conn_vec)| (shard_no, ConnectionVectorWrapper(conn_vec))),
+            )
+            .finish()
+    }
+}
+
+impl std::fmt::Debug for PoolConnections {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            PoolConnections::NotSharded(conns) => {
+                write!(f, "non-sharded: {:?}", ConnectionVectorWrapper(conns))
+            }
+            PoolConnections::Sharded {
+                sharder,
+                connections,
+            } => write!(
+                f,
+                "sharded(nr_shards:{}, msb_ignore_bits:{}): {:?}",
+                sharder.nr_shards,
+                sharder.msb_ignore,
+                ShardedConnectionVectorWrapper(connections)
+            ),
+        }
+    }
 }
 
 pub struct NodeConnectionPool {
@@ -118,6 +171,7 @@ impl NodeConnectionPool {
     }
 
     pub fn connection_for_token(&self, token: Token) -> Result<Arc<Connection>, QueryError> {
+        trace!(token = token.value, "Selecting connection for token");
         self.with_connections(|pool_conns| match pool_conns {
             PoolConnections::NotSharded(conns) => {
                 Self::choose_random_connection_from_slice(conns).unwrap()
@@ -130,12 +184,14 @@ impl NodeConnectionPool {
                     .shard_of(token)
                     .try_into()
                     .expect("Shard number doesn't fit in u16");
+                trace!(shard = shard, "Selecting connection for token");
                 Self::connection_for_shard(shard, sharder.nr_shards, connections.as_slice())
             }
         })
     }
 
     pub fn random_connection(&self) -> Result<Arc<Connection>, QueryError> {
+        trace!("Selecting random connection");
         self.with_connections(|pool_conns| match pool_conns {
             PoolConnections::NotSharded(conns) => {
                 Self::choose_random_connection_from_slice(conns).unwrap()
@@ -159,12 +215,14 @@ impl NodeConnectionPool {
         // Try getting the desired connection
         if let Some(conn) = Self::choose_random_connection_from_slice(&shard_conns[shard as usize])
         {
+            trace!(shard = shard, "Found connection for the target shard");
             return conn;
         }
 
         // If this fails try getting any other in random order
         let mut shards_to_try: Vec<u16> = (0..shard).chain(shard + 1..nr_shards.get()).collect();
 
+        let orig_shard = shard;
         while !shards_to_try.is_empty() {
             let idx = rand::thread_rng().gen_range(0..shards_to_try.len());
             let shard = shards_to_try.swap_remove(idx);
@@ -172,6 +230,11 @@ impl NodeConnectionPool {
             if let Some(conn) =
                 Self::choose_random_connection_from_slice(&shard_conns[shard as usize])
             {
+                trace!(
+                    orig_shard = orig_shard,
+                    shard = shard,
+                    "Choosing connection for a different shard"
+                );
                 return conn;
             }
         }
@@ -221,6 +284,15 @@ impl NodeConnectionPool {
     }
 
     fn choose_random_connection_from_slice(v: &[Arc<Connection>]) -> Option<Arc<Connection>> {
+        trace!(
+            connections = v
+                .iter()
+                .map(|conn| conn.get_connect_address().to_string())
+                .collect::<Vec<String>>()
+                .join(",")
+                .as_str(),
+            "Available"
+        );
         if v.is_empty() {
             None
         } else if v.len() == 1 {
@@ -237,7 +309,7 @@ impl NodeConnectionPool {
             MaybePoolConnections::Ready(pool_connections) => Ok(f(pool_connections)),
             _ => Err(QueryError::IoError(Arc::new(std::io::Error::new(
                 ErrorKind::Other,
-                "No connections in the pool",
+                format!("No connections in the pool. Pool status: {:?}", *conns),
             )))),
         }
     }
@@ -427,6 +499,9 @@ impl PoolRefiller {
                     }
                 }
             }
+            trace!(
+                pool_state = format!("{:?}", ShardedConnectionVectorWrapper(&self.conns)).as_str()
+            );
 
             // Schedule refilling here
             if !refill_scheduled && self.need_filling() {

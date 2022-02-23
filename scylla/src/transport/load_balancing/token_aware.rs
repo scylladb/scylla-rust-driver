@@ -2,9 +2,9 @@ use super::{ChildLoadBalancingPolicy, LoadBalancingPolicy, Statement};
 use crate::routing::Token;
 use crate::transport::topology::Strategy;
 use crate::transport::{cluster::ClusterData, node::Node};
-
 use itertools::Itertools;
 use std::{collections::HashMap, sync::Arc};
+use tracing::trace;
 
 /// A wrapper load balancing policy that adds token awareness to a child policy.
 pub struct TokenAwarePolicy {
@@ -131,11 +131,24 @@ impl LoadBalancingPolicy for TokenAwarePolicy {
                         Self::simple_strategy_replicas(cluster, &token, replication_factor)
                     }
                 };
+                trace!(
+                    token = token.value,
+                    replicas = replicas
+                        .iter()
+                        .map(|node| node.address.to_string())
+                        .collect::<Vec<String>>()
+                        .join(",")
+                        .as_str(),
+                    "TokenAware"
+                );
 
                 self.child_policy.apply_child_policy(replicas)
             }
             // fallback to child policy
-            None => self.child_policy.plan(statement, cluster),
+            None => {
+                trace!("TokenAware: falling back to child policy, no token present");
+                self.child_policy.plan(statement, cluster)
+            }
         }
     }
 
