@@ -1,4 +1,4 @@
-use super::{ChildLoadBalancingPolicy, LoadBalancingPolicy, Statement};
+use super::{ChildLoadBalancingPolicy, LoadBalancingPolicy, Plan, Statement};
 use crate::transport::{cluster::ClusterData, node::Node};
 use std::sync::{
     atomic::{AtomicUsize, Ordering},
@@ -51,11 +51,7 @@ const EMPTY_NODE_LIST: &Vec<Arc<Node>> = &vec![];
 const ORDER_TYPE: Ordering = Ordering::Relaxed;
 
 impl LoadBalancingPolicy for DcAwareRoundRobinPolicy {
-    fn plan<'a>(
-        &self,
-        _statement: &Statement,
-        cluster: &'a ClusterData,
-    ) -> Box<dyn Iterator<Item = Arc<Node>> + Send + Sync + 'a> {
+    fn plan<'a>(&self, _statement: &Statement, cluster: &'a ClusterData) -> Plan<'a> {
         let index = self.index.fetch_add(1, ORDER_TYPE);
 
         let local_nodes = self.retrieve_local_nodes(cluster);

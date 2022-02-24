@@ -23,14 +23,12 @@ pub struct Statement<'a> {
     pub keyspace: Option<&'a str>,
 }
 
+pub type Plan<'a> = Box<dyn Iterator<Item = Arc<Node>> + Send + Sync + 'a>;
+
 /// Policy that decides which nodes to contact for each query
 pub trait LoadBalancingPolicy: Send + Sync {
     /// It is used for each query to find which nodes to query first
-    fn plan<'a>(
-        &self,
-        statement: &Statement,
-        cluster: &'a ClusterData,
-    ) -> Box<dyn Iterator<Item = Arc<Node>> + Send + Sync + 'a>;
+    fn plan<'a>(&self, statement: &Statement, cluster: &'a ClusterData) -> Plan<'a>;
 
     /// Returns name of load balancing policy
     fn name(&self) -> String;

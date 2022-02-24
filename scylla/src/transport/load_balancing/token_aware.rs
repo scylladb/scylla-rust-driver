@@ -1,4 +1,4 @@
-use super::{ChildLoadBalancingPolicy, LoadBalancingPolicy, Statement};
+use super::{ChildLoadBalancingPolicy, LoadBalancingPolicy, Plan, Statement};
 use crate::routing::Token;
 use crate::transport::topology::Strategy;
 use crate::transport::{cluster::ClusterData, node::Node};
@@ -103,11 +103,7 @@ impl TokenAwarePolicy {
 }
 
 impl LoadBalancingPolicy for TokenAwarePolicy {
-    fn plan<'a>(
-        &self,
-        statement: &Statement,
-        cluster: &'a ClusterData,
-    ) -> Box<dyn Iterator<Item = Arc<Node>> + Send + Sync + 'a> {
+    fn plan<'a>(&self, statement: &Statement, cluster: &'a ClusterData) -> Plan<'a> {
         match statement.token {
             Some(token) => {
                 let keyspace = statement.keyspace.and_then(|k| cluster.keyspaces.get(k));
@@ -422,11 +418,7 @@ mod tests {
     struct DumbPolicy {}
 
     impl LoadBalancingPolicy for DumbPolicy {
-        fn plan<'a>(
-            &self,
-            _: &Statement,
-            _: &'a ClusterData,
-        ) -> Box<dyn Iterator<Item = Arc<Node>> + Send + Sync + 'a> {
+        fn plan<'a>(&self, _: &Statement, _: &'a ClusterData) -> Plan<'a> {
             let empty_node_list: Vec<Arc<Node>> = Vec::new();
 
             Box::new(empty_node_list.into_iter())
