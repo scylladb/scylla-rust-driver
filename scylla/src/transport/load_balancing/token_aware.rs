@@ -3,6 +3,8 @@ use crate::routing::Token;
 use crate::transport::topology::Strategy;
 use crate::transport::{cluster::ClusterData, node::Node};
 use itertools::Itertools;
+use std::collections::HashSet;
+use std::net::SocketAddr;
 use std::{collections::HashMap, sync::Arc};
 use tracing::trace;
 
@@ -138,7 +140,20 @@ impl LoadBalancingPolicy for TokenAwarePolicy {
                     "TokenAware"
                 );
 
-                self.child_policy.apply_child_policy(replicas)
+                let fallback_plan = {
+                    let replicas_set: HashSet<SocketAddr> =
+                        replicas.iter().map(|node| node.address).collect();
+
+                    self.child_policy
+                        .plan(&Statement::empty(), cluster)
+                        .filter(move |node| !replicas_set.contains(&node.address))
+                };
+
+                let plan = self
+                    .child_policy
+                    .apply_child_policy(replicas)
+                    .chain(fallback_plan);
+                Box::new(plan)
             }
             // fallback to child policy
             None => {

@@ -23,6 +23,15 @@ pub struct Statement<'a> {
     pub keyspace: Option<&'a str>,
 }
 
+impl<'a> Statement<'a> {
+    fn empty() -> Self {
+        Self {
+            token: None,
+            keyspace: None,
+        }
+    }
+}
+
 pub type Plan<'a> = Box<dyn Iterator<Item = Arc<Node>> + Send + Sync + 'a>;
 
 /// Policy that decides which nodes to contact for each query
