@@ -1094,14 +1094,11 @@ pub async fn open_named_connection(
     let (shard_info, supported_compression, shard_aware_port) = match options_result {
         Response::Supported(mut supported) => {
             let shard_info = ShardInfo::try_from(&supported.options).ok();
-            let supported_compression = supported
-                .options
-                .remove("COMPRESSION")
-                .unwrap_or_else(Vec::new);
+            let supported_compression = supported.options.remove("COMPRESSION").unwrap_or_default();
             let shard_aware_port = supported
                 .options
                 .remove(shard_aware_port_key)
-                .unwrap_or_else(Vec::new)
+                .unwrap_or_default()
                 .into_iter()
                 .next()
                 .and_then(|p| p.parse::<u16>().ok());
