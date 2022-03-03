@@ -358,7 +358,7 @@ impl Session {
     ///
     /// This is the easiest way to make a query, but performance is worse than that of prepared queries.
     ///
-    /// See [the book](https://cvybhu.github.io/scyllabook/queries/simple.html) for more information
+    /// See [the book](https://rust-driver.docs.scylladb.com/stable/queries/simple.html) for more information
     /// # Arguments
     /// * `query` - query to perform, can be just a `&str` or the [Query](crate::query::Query) struct.
     /// * `values` - values bound to the query, easiest way is to use a tuple of bound values
@@ -470,7 +470,7 @@ impl Session {
     /// Returns an async iterator (stream) over all received rows\
     /// Page size can be specified in the [Query](crate::query::Query) passed to the function
     ///
-    /// See [the book](https://cvybhu.github.io/scyllabook/queries/paged.html) for more information
+    /// See [the book](https://rust-driver.docs.scylladb.com/stable/queries/paged.html) for more information
     ///
     /// # Arguments
     /// * `query` - query to perform, can be just a `&str` or the [Query](crate::query::Query) struct.
@@ -534,9 +534,9 @@ impl Session {
     /// > ***Warning***\
     /// > For token/shard aware load balancing to work properly, all partition key values
     /// > must be sent as bound values
-    /// > (see [performance section](https://cvybhu.github.io/scyllabook/queries/prepared.html#performance))
+    /// > (see [performance section](https://rust-driver.docs.scylladb.com/stable/queries/prepared.html#performance))
     ///
-    /// See [the book](https://cvybhu.github.io/scyllabook/queries/prepared.html) for more information
+    /// See [the book](https://rust-driver.docs.scylladb.com/stable/queries/prepared.html) for more information
     ///
     /// # Arguments
     /// * `query` - query to prepare, can be just a `&str` or the [Query](crate::query::Query) struct.
@@ -613,9 +613,9 @@ impl Session {
     /// > ***Warning***\
     /// > For token/shard aware load balancing to work properly, all partition key values
     /// > must be sent as bound values
-    /// > (see [performance section](https://cvybhu.github.io/scyllabook/queries/prepared.html#performance))
+    /// > (see [performance section](https://rust-driver.docs.scylladb.com/stable/queries/prepared.html#performance))
     ///
-    /// See [the book](https://cvybhu.github.io/scyllabook/queries/prepared.html) for more information
+    /// See [the book](https://rust-driver.docs.scylladb.com/stable/queries/prepared.html) for more information
     ///
     /// # Arguments
     /// * `prepared` - the prepared statement to execute, generated using [`Session::prepare`](Session::prepare)
@@ -699,7 +699,7 @@ impl Session {
     /// Page size can be specified in the [PreparedStatement](crate::prepared_statement::PreparedStatement)
     /// passed to the function
     ///
-    /// See [the book](https://cvybhu.github.io/scyllabook/queries/paged.html) for more information
+    /// See [the book](https://rust-driver.docs.scylladb.com/stable/queries/paged.html) for more information
     ///
     /// # Arguments
     /// * `prepared` - the prepared statement to execute, generated using [`Session::prepare`](Session::prepare)
@@ -772,7 +772,7 @@ impl Session {
     ///
     /// Batch values must contain values for each of the queries
     ///
-    /// See [the book](https://cvybhu.github.io/scyllabook/queries/batch.html) for more information
+    /// See [the book](https://rust-driver.docs.scylladb.com/stable/queries/batch.html) for more information
     ///
     /// # Arguments
     /// * `batch` - [Batch](crate::batch::Batch) to be performed
@@ -833,7 +833,7 @@ impl Session {
     /// Trying to do two `use_keyspace` requests simultaneously with different names
     /// can end with some connections using one keyspace and the rest using the other.
     ///
-    /// See [the book](https://cvybhu.github.io/scyllabook/queries/usekeyspace.html) for more information
+    /// See [the book](https://rust-driver.docs.scylladb.com/stable/queries/usekeyspace.html) for more information
     ///
     /// # Arguments
     ///
@@ -899,7 +899,7 @@ impl Session {
 
     /// Get [`TracingInfo`] of a traced query performed earlier
     ///
-    /// See [the book](https://cvybhu.github.io/scyllabook/tracing/tracing.html)
+    /// See [the book](https://rust-driver.docs.scylladb.com/stable/tracing/tracing.html)
     /// for more information about query tracing
     pub async fn get_tracing_info(&self, tracing_id: &Uuid) -> Result<TracingInfo, QueryError> {
         self.get_tracing_info_custom(tracing_id, &GetTracingConfig::default())
