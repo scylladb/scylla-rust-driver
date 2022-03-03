@@ -550,6 +550,12 @@ impl<T: Value> Value for Vec<T> {
     }
 }
 
+impl<T: Value> Value for &[T] {
+    fn serialize(&self, buf: &mut Vec<u8>) -> Result<(), ValueTooBig> {
+        serialize_list_or_set(self.iter(), self.len(), buf)
+    }
+}
+
 fn serialize_tuple<V: Value>(
     elem_iter: impl Iterator<Item = V>,
     buf: &mut Vec<u8>,
