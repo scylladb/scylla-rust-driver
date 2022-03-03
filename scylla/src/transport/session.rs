@@ -1053,6 +1053,7 @@ impl Session {
             None => &self.retry_policy,
         };
 
+        #[allow(clippy::unnecessary_lazy_evaluations)]
         let speculative_policy = statement_config
             .speculative_execution_policy
             .as_ref()
