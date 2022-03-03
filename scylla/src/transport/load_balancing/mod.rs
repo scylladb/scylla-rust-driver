@@ -6,7 +6,7 @@
 use super::{cluster::ClusterData, node::Node};
 use crate::routing::Token;
 
-use std::sync::Arc;
+use std::{collections::hash_map::DefaultHasher, hash::Hasher, sync::Arc};
 
 mod dc_aware_round_robin;
 mod round_robin;
@@ -23,14 +23,21 @@ pub struct Statement<'a> {
     pub keyspace: Option<&'a str>,
 }
 
+impl<'a> Statement<'a> {
+    fn empty() -> Self {
+        Self {
+            token: None,
+            keyspace: None,
+        }
+    }
+}
+
+pub type Plan<'a> = Box<dyn Iterator<Item = Arc<Node>> + Send + Sync + 'a>;
+
 /// Policy that decides which nodes to contact for each query
 pub trait LoadBalancingPolicy: Send + Sync {
     /// It is used for each query to find which nodes to query first
-    fn plan<'a>(
-        &self,
-        statement: &Statement,
-        cluster: &'a ClusterData,
-    ) -> Box<dyn Iterator<Item = Arc<Node>> + Send + Sync + 'a>;
+    fn plan<'a>(&self, statement: &Statement, cluster: &'a ClusterData) -> Plan<'a>;
 
     /// Returns name of load balancing policy
     fn name(&self) -> String;
@@ -46,10 +53,21 @@ pub trait ChildLoadBalancingPolicy: LoadBalancingPolicy {
     ) -> Box<dyn Iterator<Item = Arc<Node>> + Send + Sync>;
 }
 
-// Does safe modulo
-fn compute_rotation(index: usize, count: usize) -> usize {
-    if count != 0 {
-        index % count
+// Hashing round robin's index is a mitigation to problems that occur when a
+// `RoundRobin::apply_child_policy()` is called twice by a parent policy.
+fn round_robin_index_hash(index: usize) -> u64 {
+    let mut hasher = DefaultHasher::new();
+    hasher.write_usize(index);
+
+    hasher.finish()
+}
+
+// Does safe modulo and additionally hashes the index
+fn compute_rotation(round_robin_index: usize, sequence_length: usize) -> usize {
+    if sequence_length > 1 {
+        let hash = round_robin_index_hash(round_robin_index);
+
+        (hash % sequence_length as u64) as usize
     } else {
         0
     }

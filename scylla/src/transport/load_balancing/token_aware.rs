@@ -1,8 +1,10 @@
-use super::{ChildLoadBalancingPolicy, LoadBalancingPolicy, Statement};
+use super::{ChildLoadBalancingPolicy, LoadBalancingPolicy, Plan, Statement};
 use crate::routing::Token;
 use crate::transport::topology::Strategy;
 use crate::transport::{cluster::ClusterData, node::Node};
 use itertools::Itertools;
+use std::collections::HashSet;
+use std::net::SocketAddr;
 use std::{collections::HashMap, sync::Arc};
 use tracing::trace;
 
@@ -103,11 +105,7 @@ impl TokenAwarePolicy {
 }
 
 impl LoadBalancingPolicy for TokenAwarePolicy {
-    fn plan<'a>(
-        &self,
-        statement: &Statement,
-        cluster: &'a ClusterData,
-    ) -> Box<dyn Iterator<Item = Arc<Node>> + Send + Sync + 'a> {
+    fn plan<'a>(&self, statement: &Statement, cluster: &'a ClusterData) -> Plan<'a> {
         match statement.token {
             Some(token) => {
                 let keyspace = statement.keyspace.and_then(|k| cluster.keyspaces.get(k));
@@ -142,7 +140,20 @@ impl LoadBalancingPolicy for TokenAwarePolicy {
                     "TokenAware"
                 );
 
-                self.child_policy.apply_child_policy(replicas)
+                let fallback_plan = {
+                    let replicas_set: HashSet<SocketAddr> =
+                        replicas.iter().map(|node| node.address).collect();
+
+                    self.child_policy
+                        .plan(&Statement::empty(), cluster)
+                        .filter(move |node| !replicas_set.contains(&node.address))
+                };
+
+                let plan = self
+                    .child_policy
+                    .apply_child_policy(replicas)
+                    .chain(fallback_plan);
+                Box::new(plan)
             }
             // fallback to child policy
             None => {
@@ -422,11 +433,7 @@ mod tests {
     struct DumbPolicy {}
 
     impl LoadBalancingPolicy for DumbPolicy {
-        fn plan<'a>(
-            &self,
-            _: &Statement,
-            _: &'a ClusterData,
-        ) -> Box<dyn Iterator<Item = Arc<Node>> + Send + Sync + 'a> {
+        fn plan<'a>(&self, _: &Statement, _: &'a ClusterData) -> Plan<'a> {
             let empty_node_list: Vec<Arc<Node>> = Vec::new();
 
             Box::new(empty_node_list.into_iter())

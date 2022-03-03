@@ -1,4 +1,4 @@
-use super::{ChildLoadBalancingPolicy, LoadBalancingPolicy, Statement};
+use super::{ChildLoadBalancingPolicy, LoadBalancingPolicy, Plan, Statement};
 use crate::transport::{cluster::ClusterData, node::Node};
 use std::sync::{
     atomic::{AtomicUsize, Ordering},
@@ -51,11 +51,7 @@ const EMPTY_NODE_LIST: &Vec<Arc<Node>> = &vec![];
 const ORDER_TYPE: Ordering = Ordering::Relaxed;
 
 impl LoadBalancingPolicy for DcAwareRoundRobinPolicy {
-    fn plan<'a>(
-        &self,
-        _statement: &Statement,
-        cluster: &'a ClusterData,
-    ) -> Box<dyn Iterator<Item = Arc<Node>> + Send + Sync + 'a> {
+    fn plan<'a>(&self, _statement: &Statement, cluster: &'a ClusterData) -> Plan<'a> {
         let index = self.index.fetch_add(1, ORDER_TYPE);
 
         let local_nodes = self.retrieve_local_nodes(cluster);
@@ -123,6 +119,7 @@ mod tests {
     use super::*;
 
     use crate::transport::load_balancing::tests;
+    use std::collections::HashSet;
 
     #[tokio::test]
     async fn test_dc_aware_round_robin_policy() {
@@ -131,7 +128,7 @@ mod tests {
         let local_dc = "eu".to_string();
         let policy = DcAwareRoundRobinPolicy::new(local_dc);
 
-        let plans = (0..4)
+        let plans = (0..32)
             .map(|_| {
                 tests::get_plan_and_collect_node_identifiers(
                     &policy,
@@ -139,15 +136,19 @@ mod tests {
                     &cluster,
                 )
             })
-            .collect::<Vec<_>>();
+            .collect::<HashSet<_>>();
 
         let expected_plans = vec![
             vec![1, 2, 3, 4, 5],
-            vec![2, 3, 1, 5, 4],
-            vec![3, 1, 2, 4, 5],
             vec![1, 2, 3, 5, 4],
-        ];
+            vec![2, 3, 1, 5, 4],
+            vec![2, 3, 1, 4, 5],
+            vec![3, 1, 2, 4, 5],
+            vec![3, 1, 2, 5, 4],
+        ]
+        .into_iter()
+        .collect::<HashSet<_>>();
 
-        assert_eq!(plans, expected_plans);
+        assert_eq!(expected_plans, plans);
     }
 }

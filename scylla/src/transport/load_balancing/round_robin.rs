@@ -1,4 +1,4 @@
-use super::{ChildLoadBalancingPolicy, LoadBalancingPolicy, Statement};
+use super::{ChildLoadBalancingPolicy, LoadBalancingPolicy, Plan, Statement};
 use crate::transport::{cluster::ClusterData, node::Node};
 use std::sync::{
     atomic::{AtomicUsize, Ordering},
@@ -28,11 +28,7 @@ impl Default for RoundRobinPolicy {
 const ORDER_TYPE: Ordering = Ordering::Relaxed;
 
 impl LoadBalancingPolicy for RoundRobinPolicy {
-    fn plan<'a>(
-        &self,
-        _statement: &Statement,
-        cluster: &'a ClusterData,
-    ) -> Box<dyn Iterator<Item = Arc<Node>> + Send + Sync + 'a> {
+    fn plan<'a>(&self, _statement: &Statement, cluster: &'a ClusterData) -> Plan<'a> {
         let index = self.index.fetch_add(1, ORDER_TYPE);
 
         let nodes_count = cluster.all_nodes.len();
@@ -75,6 +71,7 @@ mod tests {
     use super::*;
 
     use crate::transport::load_balancing::tests;
+    use std::collections::HashSet;
 
     // ConnectionKeeper (which lives in Node) requires context of Tokio runtime
     #[tokio::test]
@@ -83,7 +80,7 @@ mod tests {
 
         let policy = RoundRobinPolicy::new();
 
-        let plans = (0..6)
+        let plans = (0..16)
             .map(|_| {
                 tests::get_plan_and_collect_node_identifiers(
                     &policy,
@@ -91,17 +88,19 @@ mod tests {
                     &cluster,
                 )
             })
-            .collect::<Vec<_>>();
+            .collect::<HashSet<_>>();
 
+        // Check if `plans` contains all possible round robin plans
         let expected_plans = vec![
             vec![1, 2, 3, 4, 5],
             vec![2, 3, 4, 5, 1],
             vec![3, 4, 5, 1, 2],
             vec![4, 5, 1, 2, 3],
             vec![5, 1, 2, 3, 4],
-            vec![1, 2, 3, 4, 5],
-        ];
+        ]
+        .into_iter()
+        .collect::<HashSet<Vec<_>>>();
 
-        assert_eq!(plans, expected_plans);
+        assert_eq!(expected_plans, plans);
     }
 }
