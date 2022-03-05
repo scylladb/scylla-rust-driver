@@ -179,7 +179,6 @@ impl SerializedValues {
     pub fn iter(&self) -> impl Iterator<Item = Option<&[u8]>> {
         SerializedValuesIterator {
             serialized_values: &self.serialized_values,
-            next_offset: 0,
             contains_names: self.contains_names,
         }
     }
@@ -201,7 +200,6 @@ impl SerializedValues {
 #[derive(Clone, Copy)]
 pub struct SerializedValuesIterator<'a> {
     serialized_values: &'a [u8],
-    next_offset: usize,
     contains_names: bool,
 }
 
@@ -209,40 +207,16 @@ impl<'a> Iterator for SerializedValuesIterator<'a> {
     type Item = Option<&'a [u8]>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        // Read next value's 4 byte size, return it, advance.
-        // In case of named values, skip names
-        if self.contains_names {
-            if self.next_offset + 2 > self.serialized_values.len() {
-                return None;
-            }
-            let mut len_bytes = &self.serialized_values[self.next_offset..(self.next_offset + 2)];
-            let next_name_len: usize = types::read_short_length(&mut len_bytes).ok()?;
-            self.next_offset += 2 + next_name_len;
-        }
-
-        if self.next_offset + 4 > self.serialized_values.len() {
-            // Reached the end - nothing more to read
+        if self.serialized_values.is_empty() {
             return None;
         }
 
-        let len_bytes: [u8; 4] = self.serialized_values[self.next_offset..(self.next_offset + 4)]
-            .try_into()
-            .unwrap();
-
-        let next_val_len: i32 = i32::from_be_bytes(len_bytes);
-
-        if next_val_len < 0 {
-            // Next value was NULL
-            self.next_offset += 4;
-            return Some(None);
+        // In case of named values, skip names
+        if self.contains_names {
+            types::read_short_bytes(&mut self.serialized_values).expect("badly encoded value name");
         }
 
-        // Found next value - get the slice and return it
-        let val_len: usize = next_val_len.try_into().unwrap();
-        let result: &[u8] =
-            &self.serialized_values[(self.next_offset + 4)..(self.next_offset + 4 + val_len)];
-        self.next_offset += 4 + val_len;
-        Some(Some(result))
+        Some(types::read_bytes_opt(&mut self.serialized_values).expect("badly encoded value"))
     }
 }
 
