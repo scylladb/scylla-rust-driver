@@ -269,6 +269,13 @@ impl CqlValue {
         }
     }
 
+    pub fn as_udt(&self) -> Option<&Vec<(String, Option<CqlValue>)>> {
+        match self {
+            Self::UserDefinedType { fields, .. } => Some(fields),
+            _ => None,
+        }
+    }
+
     pub fn into_vec(self) -> Option<Vec<CqlValue>> {
         match self {
             Self::List(s) => Some(s),
@@ -280,6 +287,13 @@ impl CqlValue {
     pub fn into_pair_vec(self) -> Option<Vec<(CqlValue, CqlValue)>> {
         match self {
             Self::Map(s) => Some(s),
+            _ => None,
+        }
+    }
+
+    pub fn into_udt_pair_vec(self) -> Option<Vec<(String, Option<CqlValue>)>> {
+        match self {
+            Self::UserDefinedType { fields, .. } => Some(fields),
             _ => None,
         }
     }
@@ -1101,6 +1115,37 @@ mod tests {
 
         assert_eq!(CqlValue::Int(2), decoded[1].0);
         assert_eq!(CqlValue::Int(3), decoded[1].1);
+    }
+
+    #[test]
+    fn test_udt_from_cql() {
+        let my_fields: Vec<(String, Option<CqlValue>)> = vec![
+            ("fst".to_string(), Some(CqlValue::Int(10))),
+            ("snd".to_string(), Some(CqlValue::Boolean(true))),
+        ];
+
+        let cql: CqlValue = CqlValue::UserDefinedType {
+            keyspace: "".to_string(),
+            type_name: "".to_string(),
+            fields: my_fields,
+        };
+
+        // Test borrowing.
+        let decoded = cql.as_udt().unwrap();
+
+        assert_eq!("fst".to_string(), decoded[0].0);
+        assert_eq!(Some(CqlValue::Int(10)), decoded[0].1);
+
+        assert_eq!("snd".to_string(), decoded[1].0);
+        assert_eq!(Some(CqlValue::Boolean(true)), decoded[1].1);
+
+        let decoded = cql.into_udt_pair_vec().unwrap();
+
+        assert_eq!("fst".to_string(), decoded[0].0);
+        assert_eq!(Some(CqlValue::Int(10)), decoded[0].1);
+
+        assert_eq!("snd".to_string(), decoded[1].0);
+        assert_eq!(Some(CqlValue::Boolean(true)), decoded[1].1);
     }
 
     #[test]
