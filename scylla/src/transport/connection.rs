@@ -196,14 +196,6 @@ pub struct ConnectionConfig {
     // should be Some only in control connections,
     pub event_sender: Option<mpsc::Sender<Event>>,
     pub default_consistency: Consistency,
-    /*
-    These configuration options will be added in the future:
-
-    pub tcp_keepalive: bool,
-
-    pub load_balancing: Option<String>,
-    pub retry_policy: Option<String>,
-    */
 }
 
 impl Default for ConnectionConfig {
