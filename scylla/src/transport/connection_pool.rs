@@ -1017,6 +1017,7 @@ impl PoolRefiller {
         let mut conns = self.conns.clone();
         let keyspace_name = keyspace_name.clone();
         let address = self.address;
+        let connect_timeout = self.pool_config.connection_config.connect_timeout;
 
         let fut = async move {
             let mut use_keyspace_futures = Vec::new();
@@ -1032,8 +1033,12 @@ impl PoolRefiller {
                 return Ok(());
             }
 
-            let use_keyspace_results: Vec<Result<(), QueryError>> =
-                futures::future::join_all(use_keyspace_futures).await;
+            let use_keyspace_results: Vec<Result<(), QueryError>> = tokio::time::timeout(
+                connect_timeout,
+                futures::future::join_all(use_keyspace_futures),
+            )
+            .await
+            .map_err(|_| QueryError::TimeoutError)?;
 
             // If there was at least one Ok and the rest were IoErrors we can return Ok
             // keyspace name is correct and will be used on broken connection on the next reconnect
