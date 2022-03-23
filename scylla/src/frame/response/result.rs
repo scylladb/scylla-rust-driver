@@ -188,6 +188,7 @@ impl CqlValue {
     pub fn as_bigint(&self) -> Option<i64> {
         match self {
             Self::BigInt(i) => Some(*i),
+            Self::Timestamp(d) => Some(d.num_milliseconds()),
             _ => None,
         }
     }

@@ -395,6 +395,12 @@ mod tests {
             timestamp_duration,
             Duration::from_cql(CqlValue::Timestamp(timestamp_duration)).unwrap(),
         );
+
+        let timestamp_i64 = 997;
+        assert_eq!(
+            timestamp_i64,
+            i64::from_cql(CqlValue::Timestamp(Duration::milliseconds(timestamp_i64))).unwrap()
+        )
     }
 
     #[test]
