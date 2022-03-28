@@ -97,6 +97,15 @@ impl_from_cql_val!(Uuid, as_uuid); // Uuid::from_cql<CqlValue>
 impl_from_cql_val!(BigDecimal, into_decimal); // BigDecimal::from_cql<CqlValue>
 impl_from_cql_val!(Duration, as_duration); // Duration::from_cql<CqlValue>
 
+impl FromCqlVal<CqlValue> for crate::frame::value::Time {
+    fn from_cql(cql_val: CqlValue) -> Result<Self, FromCqlValError> {
+        match cql_val {
+            CqlValue::Time(d) => Ok(Self(d)),
+            _ => Err(FromCqlValError::BadCqlType),
+        }
+    }
+}
+
 // Vec<T>::from_cql<CqlValue>
 impl<T: FromCqlVal<CqlValue>> FromCqlVal<CqlValue> for Vec<T> {
     fn from_cql(cql_val: CqlValue) -> Result<Self, FromCqlValError> {
@@ -401,6 +410,16 @@ mod tests {
             timestamp_i64,
             i64::from_cql(CqlValue::Timestamp(Duration::milliseconds(timestamp_i64))).unwrap()
         )
+    }
+
+    #[test]
+    fn time_from_cql() {
+        use crate::frame::value::Time;
+        let time_duration = Duration::nanoseconds(86399999999999);
+        assert_eq!(
+            time_duration,
+            Time::from_cql(CqlValue::Time(time_duration)).unwrap().0,
+        );
     }
 
     #[test]
