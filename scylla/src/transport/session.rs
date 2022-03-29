@@ -36,7 +36,9 @@ use crate::transport::load_balancing::{
 };
 use crate::transport::metrics::Metrics;
 use crate::transport::node::Node;
-use crate::transport::partitioner::{Murmur3Partitioner, Partitioner};
+use crate::transport::partitioner::{
+    CDCPartitioner, Murmur3Partitioner, Partitioner, PartitionerName,
+};
 use crate::transport::query_result::QueryResult;
 use crate::transport::retry_policy::{
     DefaultRetryPolicy, QueryInfo, RetryDecision, RetryPolicy, RetrySession,
@@ -599,7 +601,25 @@ impl Session {
                 .extend(statement.prepare_tracing_ids);
         }
 
+        prepared.set_partitioner_name(
+            self.extract_partitioner_name(&prepared, &self.cluster.get_data()),
+        );
+
         Ok(prepared)
+    }
+
+    fn extract_partitioner_name<'a>(
+        &self,
+        prepared: &PreparedStatement,
+        cluster_data: &'a ClusterData,
+    ) -> Option<&'a str> {
+        cluster_data
+            .keyspaces
+            .get(prepared.get_keyspace_name()?)?
+            .tables
+            .get(prepared.get_table_name()?)?
+            .partitioner
+            .as_deref()
     }
 
     /// Execute a prepared query. Requires a [PreparedStatement](crate::prepared_statement::PreparedStatement)
@@ -1262,8 +1282,14 @@ impl Session {
         prepared: &PreparedStatement,
         serialized_values: &SerializedValues,
     ) -> Result<Token, QueryError> {
+        let partitioner_name = prepared.get_partitioner_name();
+
         let partition_key = calculate_partition_key(prepared, serialized_values)?;
-        Ok(Murmur3Partitioner::hash(partition_key))
+
+        Ok(match partitioner_name {
+            PartitionerName::Murmur3 => Murmur3Partitioner::hash(partition_key),
+            PartitionerName::CDC => CDCPartitioner::hash(partition_key),
+        })
     }
 }
 

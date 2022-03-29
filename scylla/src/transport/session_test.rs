@@ -8,7 +8,7 @@ use crate::statement::Consistency;
 use crate::tracing::TracingInfo;
 use crate::transport::connection::BatchResult;
 use crate::transport::errors::{BadKeyspaceName, BadQuery, DbError, QueryError};
-use crate::transport::partitioner::{Murmur3Partitioner, Partitioner};
+use crate::transport::partitioner::{Murmur3Partitioner, Partitioner, PartitionerName};
 use crate::transport::topology::Strategy::SimpleStrategy;
 use crate::transport::topology::{CollectionType, ColumnKind, CqlType, NativeType};
 use crate::QueryResult;
@@ -1700,4 +1700,57 @@ async fn test_named_bind_markers() {
     for wrongmap in wrongmaps {
         assert!(session.execute(&prepared, &wrongmap).await.is_err());
     }
+}
+
+#[tokio::test]
+async fn test_prepared_partitioner() {
+    let uri = std::env::var("SCYLLA_URI").unwrap_or_else(|_| "127.0.0.1:9042".to_string());
+    let session = SessionBuilder::new().known_node(uri).build().await.unwrap();
+    let ks = unique_name();
+
+    session.query(format!("CREATE KEYSPACE IF NOT EXISTS {} WITH REPLICATION = {{'class' : 'SimpleStrategy', 'replication_factor' : 1}}", ks), &[]).await.unwrap();
+    session.use_keyspace(ks, false).await.unwrap();
+
+    session
+        .query("CREATE TABLE IF NOT EXISTS t1 (a int primary key)", &[])
+        .await
+        .unwrap();
+
+    session.await_schema_agreement().await.unwrap();
+    session.refresh_metadata().await.unwrap();
+
+    let prepared_statement_for_main_table = session
+        .prepare("INSERT INTO t1 (a) VALUES (?)")
+        .await
+        .unwrap();
+
+    assert_eq!(
+        prepared_statement_for_main_table.get_partitioner_name(),
+        &PartitionerName::Murmur3
+    );
+
+    if option_env!("CDC") == Some("disabled") {
+        return;
+    }
+
+    session
+        .query(
+            "CREATE TABLE IF NOT EXISTS t2 (a int primary key) WITH cdc = {'enabled':true}",
+            &[],
+        )
+        .await
+        .unwrap();
+
+    session.await_schema_agreement().await.unwrap();
+    session.refresh_metadata().await.unwrap();
+
+    let prepared_statement_for_cdc_log = session
+        .prepare("SELECT a FROM t2_scylla_cdc_log WHERE \"cdc$stream_id\" = ?")
+        .await
+        .unwrap();
+
+    assert_eq!(
+        prepared_statement_for_cdc_log.get_partitioner_name(),
+        &PartitionerName::CDC
+    );
 }

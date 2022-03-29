@@ -3,11 +3,25 @@ use std::num::Wrapping;
 
 use crate::routing::Token;
 
+#[allow(clippy::upper_case_acronyms)]
+#[derive(Clone, PartialEq, Debug)]
+pub(crate) enum PartitionerName {
+    Murmur3,
+    CDC,
+}
+
+impl Default for PartitionerName {
+    fn default() -> Self {
+        PartitionerName::Murmur3
+    }
+}
+
 pub trait Partitioner {
     fn hash(pk: Bytes) -> Token;
 }
 
 pub struct Murmur3Partitioner;
+pub struct CDCPartitioner;
 
 impl Murmur3Partitioner {
     // An implementation of MurmurHash3 ported from Scylla. Please note that this
@@ -112,9 +126,16 @@ impl Partitioner for Murmur3Partitioner {
     }
 }
 
+impl Partitioner for CDCPartitioner {
+    fn hash(mut pk: Bytes) -> Token {
+        let value = if pk.len() < 8 { i64::MIN } else { pk.get_i64() };
+        Token { value }
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{Murmur3Partitioner, Partitioner};
+    use super::{CDCPartitioner, Murmur3Partitioner, Partitioner};
     use bytes::Bytes;
 
     fn assert_correct_murmur3_hash(pk: &'static str, expected_hash: i64) {
@@ -132,6 +153,24 @@ mod tests {
             ("kremówki", 4354931215268080151),
         ] {
             assert_correct_murmur3_hash(s.0, s.1);
+        }
+    }
+
+    fn assert_correct_cdc_hash(pk: &'static str, expected_hash: i64) {
+        let pk = Bytes::from(pk);
+        let hash = CDCPartitioner::hash(pk).value;
+        assert_eq!(hash, expected_hash);
+    }
+
+    #[test]
+    fn test_cdc_partitioner() {
+        for s in [
+            ("test", -9223372036854775808),
+            ("xd", -9223372036854775808),
+            ("primary_key", 8102654598100187487),
+            ("kremówki", 7742362231512463211),
+        ] {
+            assert_correct_cdc_hash(s.0, s.1);
         }
     }
 }

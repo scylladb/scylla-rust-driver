@@ -7,6 +7,7 @@ use super::StatementConfig;
 use crate::frame::response::result::PreparedMetadata;
 use crate::frame::types::{Consistency, SerialConsistency};
 use crate::frame::value::SerializedValues;
+use crate::transport::partitioner::PartitionerName;
 use crate::transport::retry_policy::RetryPolicy;
 
 /// Represents a statement prepared on the server.
@@ -19,6 +20,7 @@ pub struct PreparedStatement {
     metadata: PreparedMetadata,
     statement: String,
     page_size: Option<i32>,
+    partitioner_name: PartitionerName,
 }
 
 impl PreparedStatement {
@@ -36,6 +38,7 @@ impl PreparedStatement {
             prepare_tracing_ids: Vec::new(),
             page_size,
             config,
+            partitioner_name: Default::default(),
         }
     }
 
@@ -131,6 +134,14 @@ impl PreparedStatement {
             .map(|col_spec| col_spec.table_spec.ks_name.as_str())
     }
 
+    /// Returns the name of the table this statement is operating on.
+    pub fn get_table_name(&self) -> Option<&str> {
+        self.metadata
+            .col_specs
+            .first()
+            .map(|col_spec| col_spec.table_spec.table_name.as_str())
+    }
+
     /// Sets the consistency to be used when executing this statement.
     pub fn set_consistency(&mut self, c: Consistency) {
         self.config.consistency = Some(c);
@@ -202,6 +213,21 @@ impl PreparedStatement {
     /// Gets the default timestamp for this statement in microseconds.
     pub fn get_timestamp(&self) -> Option<i64> {
         self.config.timestamp
+    }
+
+    /// Sets the name of the partitioner used for this statement.
+    pub(crate) fn set_partitioner_name(&mut self, partitioner_name: Option<&str>) {
+        self.partitioner_name = match partitioner_name {
+            Some(partitioner_name) if partitioner_name.ends_with("CDCPartitioner") => {
+                PartitionerName::CDC
+            }
+            _ => PartitionerName::Murmur3,
+        }
+    }
+
+    /// Get the name of the partitioner used for this statement.
+    pub(crate) fn get_partitioner_name(&self) -> &PartitionerName {
+        &self.partitioner_name
     }
 }
 
