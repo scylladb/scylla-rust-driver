@@ -22,7 +22,7 @@ use crate::frame::response::result;
 use crate::frame::value::{BatchValues, SerializedValues, ValueList};
 use crate::prepared_statement::{PartitionKeyError, PreparedStatement};
 use crate::query::Query;
-use crate::routing::{murmur3_token, Token};
+use crate::routing::Token;
 use crate::statement::{Consistency, SerialConsistency};
 use crate::tracing::{GetTracingConfig, TracingEvent, TracingInfo};
 use crate::transport::cluster::{Cluster, ClusterData};
@@ -36,6 +36,7 @@ use crate::transport::load_balancing::{
 };
 use crate::transport::metrics::Metrics;
 use crate::transport::node::Node;
+use crate::transport::partitioner::{Murmur3Partitioner, Partitioner};
 use crate::transport::query_result::QueryResult;
 use crate::transport::retry_policy::{
     DefaultRetryPolicy, QueryInfo, RetryDecision, RetryPolicy, RetrySession,
@@ -662,7 +663,7 @@ impl Session {
         let values_ref = &serialized_values;
         let paging_state_ref = &paging_state;
 
-        let token = calculate_token(prepared, &serialized_values)?;
+        let token = self.calculate_token(prepared, &serialized_values)?;
 
         let statement_info = Statement {
             token: Some(token),
@@ -740,7 +741,7 @@ impl Session {
         let prepared = prepared.into();
         let serialized_values = values.serialized()?;
 
-        let token = calculate_token(&prepared, &serialized_values)?;
+        let token = self.calculate_token(&prepared, &serialized_values)?;
 
         let retry_session = match &prepared.config.retry_policy {
             Some(policy) => policy.new_session(),
@@ -1255,30 +1256,30 @@ impl Session {
         })
         .await
     }
+
+    fn calculate_token(
+        &self,
+        prepared: &PreparedStatement,
+        serialized_values: &SerializedValues,
+    ) -> Result<Token, QueryError> {
+        let partition_key = calculate_partition_key(prepared, serialized_values)?;
+        Ok(Murmur3Partitioner::hash(partition_key))
+    }
 }
 
-fn calculate_token(
+fn calculate_partition_key(
     stmt: &PreparedStatement,
     values: &SerializedValues,
-) -> Result<Token, QueryError> {
-    // TODO: take the partitioner of the table that is being queried and calculate the token using
-    // that partitioner. The below logic gives correct token only for murmur3partitioner
-    let partition_key = match stmt.compute_partition_key(values) {
-        Ok(key) => key,
-        Err(PartitionKeyError::NoPkIndexValue(_, _)) => {
-            return Err(QueryError::ProtocolError(
-                "No pk indexes - can't calculate token",
-            ))
-        }
-        Err(PartitionKeyError::ValueTooLong(values_len)) => {
-            return Err(QueryError::BadQuery(BadQuery::ValuesTooLongForKey(
-                values_len,
-                u16::MAX.into(),
-            )))
-        }
-    };
-
-    Ok(murmur3_token(partition_key))
+) -> Result<Bytes, QueryError> {
+    match stmt.compute_partition_key(values) {
+        Ok(key) => Ok(key),
+        Err(PartitionKeyError::NoPkIndexValue(_, _)) => Err(QueryError::ProtocolError(
+            "No pk indexes - can't calculate token",
+        )),
+        Err(PartitionKeyError::ValueTooLong(values_len)) => Err(QueryError::BadQuery(
+            BadQuery::ValuesTooLongForKey(values_len, u16::MAX.into()),
+        )),
+    }
 }
 
 // Resolve the given hostname using a DNS lookup if necessary.

@@ -3,11 +3,12 @@ use crate::batch::Batch;
 use crate::frame::response::result::Row;
 use crate::frame::value::ValueList;
 use crate::query::Query;
-use crate::routing::hash3_x64_128;
+use crate::routing::Token;
 use crate::statement::Consistency;
 use crate::tracing::TracingInfo;
 use crate::transport::connection::BatchResult;
 use crate::transport::errors::{BadKeyspaceName, BadQuery, DbError, QueryError};
+use crate::transport::partitioner::{Murmur3Partitioner, Partitioner};
 use crate::transport::topology::Strategy::SimpleStrategy;
 use crate::transport::topology::{CollectionType, ColumnKind, CqlType, NativeType};
 use crate::QueryResult;
@@ -200,16 +201,18 @@ async fn test_prepared_statement() {
             .unwrap()
             .rows
             .unwrap();
-        let token: i64 = rs.first().unwrap().columns[0]
-            .as_ref()
-            .unwrap()
-            .as_bigint()
-            .unwrap();
-        let expected_token = hash3_x64_128(
-            &prepared_statement
+        let token = Token {
+            value: rs.first().unwrap().columns[0]
+                .as_ref()
+                .unwrap()
+                .as_bigint()
+                .unwrap(),
+        };
+        let expected_token = Murmur3Partitioner::hash(
+            prepared_statement
                 .compute_partition_key(&serialized_values)
                 .unwrap(),
-        ) as i64;
+        );
 
         assert_eq!(token, expected_token)
     }
@@ -220,16 +223,18 @@ async fn test_prepared_statement() {
             .unwrap()
             .rows
             .unwrap();
-        let token: i64 = rs.first().unwrap().columns[0]
-            .as_ref()
-            .unwrap()
-            .as_bigint()
-            .unwrap();
-        let expected_token = hash3_x64_128(
-            &prepared_complex_pk_statement
+        let token = Token {
+            value: rs.first().unwrap().columns[0]
+                .as_ref()
+                .unwrap()
+                .as_bigint()
+                .unwrap(),
+        };
+        let expected_token = Murmur3Partitioner::hash(
+            prepared_complex_pk_statement
                 .compute_partition_key(&serialized_values)
                 .unwrap(),
-        ) as i64;
+        );
 
         assert_eq!(token, expected_token)
     }
@@ -473,16 +478,18 @@ async fn test_token_calculation() {
             .unwrap()
             .rows
             .unwrap();
-        let token: i64 = rs.first().unwrap().columns[0]
-            .as_ref()
-            .unwrap()
-            .as_bigint()
-            .unwrap();
-        let expected_token = hash3_x64_128(
-            &prepared_statement
+        let token = Token {
+            value: rs.first().unwrap().columns[0]
+                .as_ref()
+                .unwrap()
+                .as_bigint()
+                .unwrap(),
+        };
+        let expected_token = Murmur3Partitioner::hash(
+            prepared_statement
                 .compute_partition_key(&serialized_values)
                 .unwrap(),
-        ) as i64;
+        );
         assert_eq!(token, expected_token)
     }
 }

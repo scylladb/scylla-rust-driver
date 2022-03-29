@@ -7,6 +7,7 @@ pub mod iterator;
 pub mod load_balancing;
 pub(crate) mod metrics;
 mod node;
+pub mod partitioner;
 pub mod query_result;
 pub mod retry_policy;
 pub mod session;
