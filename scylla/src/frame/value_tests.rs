@@ -5,6 +5,7 @@ use super::{
         Unset, Value, ValueList, ValueTooBig,
     },
 };
+use crate::frame::value::CqlDuration;
 use crate::{Session, SessionBuilder};
 use bytes::BufMut;
 use chrono::{Duration, NaiveDate};
@@ -722,4 +723,84 @@ async fn test_cqlvalue_udt() {
     let received_udt_cql_value = rows[0].columns[0].as_ref().unwrap();
 
     assert_eq!(received_udt_cql_value, &udt_cql_value);
+}
+
+#[tokio::test]
+async fn test_cqlvalue_duration() {
+    let uri = env::var("SCYLLA_URI").unwrap_or_else(|_| "127.0.0.1:9042".to_string());
+    let session: Session = SessionBuilder::new().known_node(uri).build().await.unwrap();
+
+    let ks = crate::transport::session_test::unique_name();
+    session
+        .query(
+            format!(
+                "CREATE KEYSPACE IF NOT EXISTS {} WITH REPLICATION = \
+                {{'class' : 'SimpleStrategy', 'replication_factor' : 1}}",
+                ks
+            ),
+            &[],
+        )
+        .await
+        .unwrap();
+    session.use_keyspace(&ks, false).await.unwrap();
+
+    let duration_cql_value = CqlValue::Duration(CqlDuration {
+        months: 6,
+        days: 9,
+        nanoseconds: 21372137,
+    });
+
+    let fixture_queries = vec![
+        ("CREATE TABLE IF NOT EXISTS cqlvalue_duration_test (pk int, ck int, v duration, primary key (pk, ck))", vec![],),
+        ("INSERT INTO cqlvalue_duration_test (pk, ck, v) VALUES (0, 0, ?)", vec![&duration_cql_value,],),
+        ("INSERT INTO cqlvalue_duration_test (pk, ck, v) VALUES (0, 1, 89h4m48s)", vec![],),
+        ("INSERT INTO cqlvalue_duration_test (pk, ck, v) VALUES (0, 2, PT89H8M53S)", vec![],),
+        ("INSERT INTO cqlvalue_duration_test (pk, ck, v) VALUES (0, 3, P0000-00-00T89:09:09)", vec![],),
+    ];
+
+    for query in fixture_queries {
+        session.query(query.0, query.1).await.unwrap();
+    }
+
+    let rows = session
+        .query(
+            "SELECT v FROM cqlvalue_duration_test WHERE pk = ?",
+            (CqlValue::Int(0),),
+        )
+        .await
+        .unwrap()
+        .rows
+        .unwrap();
+
+    assert_eq!(rows.len(), 4);
+    assert_eq!(rows[0].columns.len(), 1);
+
+    assert_eq!(rows[0].columns[0].as_ref().unwrap(), &duration_cql_value);
+
+    assert_eq!(
+        rows[1].columns[0].as_ref().unwrap(),
+        &CqlValue::Duration(CqlDuration {
+            months: 0,
+            days: 0,
+            nanoseconds: 320_688_000_000_000,
+        })
+    );
+
+    assert_eq!(
+        rows[2].columns[0].as_ref().unwrap(),
+        &CqlValue::Duration(CqlDuration {
+            months: 0,
+            days: 0,
+            nanoseconds: 320_933_000_000_000,
+        })
+    );
+
+    assert_eq!(
+        rows[3].columns[0].as_ref().unwrap(),
+        &CqlValue::Duration(CqlDuration {
+            months: 0,
+            days: 0,
+            nanoseconds: 320_949_000_000_000,
+        })
+    );
 }
