@@ -12,6 +12,7 @@ use thiserror::Error;
 use uuid::Uuid;
 
 use super::response::result::CqlValue;
+use super::types::vint_encode;
 
 /// Every value being sent in a query must implement this trait
 /// serialize() should write the Value as [bytes] to the provided buffer
@@ -58,6 +59,14 @@ pub struct SerializedValues {
     serialized_values: Vec<u8>,
     values_num: i16,
     contains_names: bool,
+}
+
+/// Represents a CQL Duration value
+#[derive(Clone, Debug, Copy, PartialEq)]
+pub struct CqlDuration {
+    pub months: i32,
+    pub days: i32,
+    pub nanoseconds: i64,
 }
 
 #[derive(Debug, Error, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -437,6 +446,23 @@ impl Value for Counter {
     }
 }
 
+impl Value for CqlDuration {
+    fn serialize(&self, buf: &mut Vec<u8>) -> Result<(), ValueTooBig> {
+        let bytes_num_pos: usize = buf.len();
+        buf.put_i32(0);
+
+        vint_encode(self.months as i64, buf);
+        vint_encode(self.days as i64, buf);
+        vint_encode(self.nanoseconds, buf);
+
+        let written_bytes: usize = buf.len() - bytes_num_pos - 4;
+        let written_bytes_i32: i32 = written_bytes.try_into().map_err(|_| ValueTooBig)?;
+        buf[bytes_num_pos..(bytes_num_pos + 4)].copy_from_slice(&written_bytes_i32.to_be_bytes());
+
+        Ok(())
+    }
+}
+
 impl<V: Value> Value for MaybeUnset<V> {
     fn serialize(&self, buf: &mut Vec<u8>) -> Result<(), ValueTooBig> {
         match self {
@@ -566,6 +592,7 @@ impl Value for CqlValue {
             }
 
             CqlValue::Date(d) => Date(*d).serialize(buf),
+            CqlValue::Duration(d) => d.serialize(buf),
             CqlValue::Timestamp(t) => Timestamp(*t).serialize(buf),
             CqlValue::Time(t) => Time(*t).serialize(buf),
 
