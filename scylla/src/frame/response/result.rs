@@ -5,8 +5,8 @@ use crate::frame::{frame_errors::ParseError, types};
 use bigdecimal::BigDecimal;
 use byteorder::{BigEndian, ReadBytesExt};
 use bytes::{Buf, Bytes};
+use chrono;
 use chrono::prelude::*;
-use chrono::Duration;
 use num_bigint::BigInt;
 use std::{
     convert::{TryFrom, TryInto},
@@ -89,7 +89,7 @@ pub enum CqlValue {
     BigInt(i64),
     Text(String),
     /// Milliseconds since unix epoch
-    Timestamp(Duration),
+    Timestamp(chrono::Duration),
     Inet(IpAddr),
     List(Vec<CqlValue>),
     Map(Vec<(CqlValue, CqlValue)>),
@@ -105,7 +105,7 @@ pub enum CqlValue {
     SmallInt(i16),
     TinyInt(i8),
     /// Nanoseconds since midnight
-    Time(Duration),
+    Time(chrono::Duration),
     Timeuuid(Uuid),
     Tuple(Vec<Option<CqlValue>>),
     Uuid(Uuid),
@@ -129,12 +129,13 @@ impl CqlValue {
 
         // date_days is u32 then converted to i64
         // then we substract 2^31 - this can't panic
-        let days_since_epoch = Duration::days(date_days.into()) - Duration::days(1 << 31);
+        let days_since_epoch =
+            chrono::Duration::days(date_days.into()) - chrono::Duration::days(1 << 31);
 
         NaiveDate::from_ymd(1970, 1, 1).checked_add_signed(days_since_epoch)
     }
 
-    pub fn as_duration(&self) -> Option<Duration> {
+    pub fn as_duration(&self) -> Option<chrono::Duration> {
         match self {
             Self::Timestamp(i) => Some(*i),
             Self::Time(i) => Some(*i),
@@ -654,7 +655,7 @@ fn deser_cql_value(typ: &ColumnType, buf: &mut &[u8]) -> StdResult<CqlValue, Par
             }
             let millis = buf.read_i64::<BigEndian>()?;
 
-            CqlValue::Timestamp(Duration::milliseconds(millis))
+            CqlValue::Timestamp(chrono::Duration::milliseconds(millis))
         }
         Time => {
             if buf.len() != 8 {
@@ -672,7 +673,7 @@ fn deser_cql_value(typ: &ColumnType, buf: &mut &[u8]) -> StdResult<CqlValue, Par
                 }));
             }
 
-            CqlValue::Time(Duration::nanoseconds(nanoseconds))
+            CqlValue::Time(chrono::Duration::nanoseconds(nanoseconds))
         }
         Timeuuid => {
             if buf.len() != 16 {
