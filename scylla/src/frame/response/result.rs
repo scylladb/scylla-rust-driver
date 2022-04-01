@@ -1194,13 +1194,11 @@ mod tests {
             super::deser_cql_value(&ColumnType::Date, &mut four_bytes.as_ref()).unwrap();
         assert_eq!(date, CqlValue::Date(u32::from_be_bytes(four_bytes)));
 
-        // Date is parsed as u32 not i32, u32::max_value() is u32::max_value()
-        let date: CqlValue = super::deser_cql_value(
-            &ColumnType::Date,
-            &mut u32::max_value().to_be_bytes().as_ref(),
-        )
-        .unwrap();
-        assert_eq!(date, CqlValue::Date(u32::max_value()));
+        // Date is parsed as u32 not i32, u32::MAX is u32::MAX
+        let date: CqlValue =
+            super::deser_cql_value(&ColumnType::Date, &mut u32::MAX.to_be_bytes().as_ref())
+                .unwrap();
+        assert_eq!(date, CqlValue::Date(u32::MAX));
 
         // Trying to parse a 0, 3 or 5 byte array fails
         super::deser_cql_value(&ColumnType::Date, &mut [].as_ref()).unwrap();
@@ -1235,7 +1233,7 @@ mod tests {
 
         assert_eq!(date.as_date().unwrap(), after_epoch);
 
-        // 0 and u32::max_value() is out of NaiveDate range, fails with an error, not panics
+        // 0 and u32::MAX is out of NaiveDate range, fails with an error, not panics
         assert!(
             super::deser_cql_value(&ColumnType::Date, &mut 0_u32.to_be_bytes().as_ref())
                 .unwrap()
@@ -1243,13 +1241,12 @@ mod tests {
                 .is_none()
         );
 
-        assert!(super::deser_cql_value(
-            &ColumnType::Date,
-            &mut u32::max_value().to_be_bytes().as_ref()
-        )
-        .unwrap()
-        .as_date()
-        .is_none());
+        assert!(
+            super::deser_cql_value(&ColumnType::Date, &mut u32::MAX.to_be_bytes().as_ref())
+                .unwrap()
+                .as_date()
+                .is_none()
+        );
 
         // It's hard to test NaiveDate more because it involves calculating days between calendar dates
         // There are more tests using database queries that should cover it
@@ -1273,7 +1270,7 @@ mod tests {
 
         // Negative values cause an error
         // Values bigger than 86399999999999 cause an error
-        for test_val in [-1, i64::min_value(), max_time + 1, i64::max_value()].iter() {
+        for test_val in [-1, i64::MIN, max_time + 1, i64::MAX].iter() {
             let bytes: [u8; 8] = test_val.to_be_bytes();
             super::deser_cql_value(&ColumnType::Time, &mut &bytes[..]).unwrap_err();
         }
@@ -1297,15 +1294,7 @@ mod tests {
         // Timestamp is an i64 - milliseconds since unix epoch
 
         // Check that test values are deserialized correctly
-        for test_val in &[
-            0,
-            -1,
-            1,
-            74568745,
-            -4584658,
-            i64::min_value(),
-            i64::max_value(),
-        ] {
+        for test_val in &[0, -1, 1, 74568745, -4584658, i64::MIN, i64::MAX] {
             let bytes: [u8; 8] = test_val.to_be_bytes();
             let cql_value: CqlValue =
                 super::deser_cql_value(&ColumnType::Timestamp, &mut &bytes[..]).unwrap();

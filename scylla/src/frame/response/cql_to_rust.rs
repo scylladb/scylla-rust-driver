@@ -387,7 +387,7 @@ mod tests {
         let min_date: CqlValue = CqlValue::Date(0);
         assert!(NaiveDate::from_cql(min_date).is_err());
 
-        let max_date: CqlValue = CqlValue::Date(u32::max_value());
+        let max_date: CqlValue = CqlValue::Date(u32::MAX);
         assert!(NaiveDate::from_cql(max_date).is_err());
     }
 
@@ -399,7 +399,7 @@ mod tests {
             Duration::from_cql(CqlValue::Time(time_duration)).unwrap(),
         );
 
-        let timestamp_duration = Duration::milliseconds(i64::min_value());
+        let timestamp_duration = Duration::milliseconds(i64::MIN);
         assert_eq!(
             timestamp_duration,
             Duration::from_cql(CqlValue::Timestamp(timestamp_duration)).unwrap(),

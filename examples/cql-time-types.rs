@@ -48,7 +48,7 @@ async fn main() -> Result<()> {
     }
 
     // Dates outside this range must be represented in the raw form - an u32 describing days since -5877641-06-23
-    let example_big_date: Date = Date(u32::max_value());
+    let example_big_date: Date = Date(u32::MAX);
     session
         .query("INSERT INTO ks.dates (d) VALUES (?)", (example_big_date,))
         .await?;

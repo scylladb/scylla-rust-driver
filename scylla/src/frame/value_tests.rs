@@ -57,7 +57,7 @@ fn naive_date_serialization() {
 fn date_serialization() {
     assert_eq!(serialized(Date(0)), vec![0, 0, 0, 4, 0, 0, 0, 0]);
     assert_eq!(
-        serialized(Date(u32::max_value())),
+        serialized(Date(u32::MAX)),
         vec![0, 0, 0, 4, 255, 255, 255, 255]
     );
 }
@@ -84,7 +84,7 @@ fn time_serialization() {
     }
 
     // Durations so long that nanoseconds don't fit in i64 cause an error
-    let long_time = Time(Duration::milliseconds(i64::max_value()));
+    let long_time = Time(Duration::milliseconds(i64::MAX));
     assert_eq!(long_time.serialize(&mut Vec::new()), Err(ValueTooBig));
 }
 
@@ -92,15 +92,7 @@ fn time_serialization() {
 fn timestamp_serialization() {
     // Timestamp is milliseconds since unix epoch represented as i64
 
-    for test_val in &[
-        0,
-        -1,
-        1,
-        -45345346,
-        453451,
-        i64::min_value(),
-        i64::max_value(),
-    ] {
+    for test_val in &[0, -1, 1, -45345346, 453451, i64::MIN, i64::MAX] {
         let test_timestamp: Timestamp = Timestamp(Duration::milliseconds(*test_val));
         let bytes: Vec<u8> = serialized(test_timestamp);
 
