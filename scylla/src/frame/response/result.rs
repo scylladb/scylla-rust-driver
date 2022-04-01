@@ -1,12 +1,13 @@
 use crate::cql_to_rust::{FromRow, FromRowError};
 use crate::frame::response::event::SchemaChangeEvent;
-use crate::frame::value::Counter;
+use crate::frame::types::vint_decode;
+use crate::frame::value::{Counter, CqlDuration};
 use crate::frame::{frame_errors::ParseError, types};
 use bigdecimal::BigDecimal;
 use byteorder::{BigEndian, ReadBytesExt};
 use bytes::{Buf, Bytes};
+use chrono;
 use chrono::prelude::*;
-use chrono::Duration;
 use num_bigint::BigInt;
 use std::{
     convert::{TryFrom, TryInto},
@@ -49,6 +50,7 @@ pub enum ColumnType {
     Date,
     Decimal,
     Double,
+    Duration,
     Float,
     Int,
     BigInt,
@@ -83,13 +85,14 @@ pub enum CqlValue {
     /// Can be converted to chrono::NaiveDate (-262145-1-1 to 262143-12-31) using as_date
     Date(u32),
     Double(f64),
+    Duration(CqlDuration),
     Empty,
     Float(f32),
     Int(i32),
     BigInt(i64),
     Text(String),
     /// Milliseconds since unix epoch
-    Timestamp(Duration),
+    Timestamp(chrono::Duration),
     Inet(IpAddr),
     List(Vec<CqlValue>),
     Map(Vec<(CqlValue, CqlValue)>),
@@ -105,7 +108,7 @@ pub enum CqlValue {
     SmallInt(i16),
     TinyInt(i8),
     /// Nanoseconds since midnight
-    Time(Duration),
+    Time(chrono::Duration),
     Timeuuid(Uuid),
     Tuple(Vec<Option<CqlValue>>),
     Uuid(Uuid),
@@ -129,15 +132,23 @@ impl CqlValue {
 
         // date_days is u32 then converted to i64
         // then we substract 2^31 - this can't panic
-        let days_since_epoch = Duration::days(date_days.into()) - Duration::days(1 << 31);
+        let days_since_epoch =
+            chrono::Duration::days(date_days.into()) - chrono::Duration::days(1 << 31);
 
         NaiveDate::from_ymd(1970, 1, 1).checked_add_signed(days_since_epoch)
     }
 
-    pub fn as_duration(&self) -> Option<Duration> {
+    pub fn as_duration(&self) -> Option<chrono::Duration> {
         match self {
             Self::Timestamp(i) => Some(*i),
             Self::Time(i) => Some(*i),
+            _ => None,
+        }
+    }
+
+    pub fn as_cql_duration(&self) -> Option<CqlDuration> {
+        match self {
+            Self::Duration(i) => Some(*i),
             _ => None,
         }
     }
@@ -380,7 +391,10 @@ fn deser_type(buf: &mut &[u8]) -> StdResult<ColumnType, ParseError> {
     Ok(match id {
         0x0000 => {
             let type_str: String = types::read_string(buf)?.to_string();
-            Custom(type_str)
+            match type_str.as_str() {
+                "org.apache.cassandra.db.marshal.DurationType" => Duration,
+                _ => Custom(type_str),
+            }
         }
         0x0001 => Ascii,
         0x0002 => BigInt,
@@ -401,6 +415,7 @@ fn deser_type(buf: &mut &[u8]) -> StdResult<ColumnType, ParseError> {
         0x0012 => Time,
         0x0013 => SmallInt,
         0x0014 => TinyInt,
+        0x0015 => Duration,
         0x0020 => List(Box::new(deser_type(buf)?)),
         0x0021 => Map(Box::new(deser_type(buf)?), Box::new(deser_type(buf)?)),
         0x0022 => Set(Box::new(deser_type(buf)?)),
@@ -654,7 +669,7 @@ fn deser_cql_value(typ: &ColumnType, buf: &mut &[u8]) -> StdResult<CqlValue, Par
             }
             let millis = buf.read_i64::<BigEndian>()?;
 
-            CqlValue::Timestamp(Duration::milliseconds(millis))
+            CqlValue::Timestamp(chrono::Duration::milliseconds(millis))
         }
         Time => {
             if buf.len() != 8 {
@@ -672,7 +687,7 @@ fn deser_cql_value(typ: &ColumnType, buf: &mut &[u8]) -> StdResult<CqlValue, Par
                 }));
             }
 
-            CqlValue::Time(Duration::nanoseconds(nanoseconds))
+            CqlValue::Time(chrono::Duration::nanoseconds(nanoseconds))
         }
         Timeuuid => {
             if buf.len() != 16 {
@@ -683,6 +698,17 @@ fn deser_cql_value(typ: &ColumnType, buf: &mut &[u8]) -> StdResult<CqlValue, Par
             }
             let uuid = uuid::Uuid::from_slice(buf).expect("Deserializing Uuid failed.");
             CqlValue::Timeuuid(uuid)
+        }
+        Duration => {
+            let months = i32::try_from(vint_decode(buf)?)?;
+            let days = i32::try_from(vint_decode(buf)?)?;
+            let nanoseconds = vint_decode(buf)?;
+
+            CqlValue::Duration(CqlDuration {
+                months,
+                days,
+                nanoseconds,
+            })
         }
         Inet => CqlValue::Inet(match buf.len() {
             4 => {
@@ -864,7 +890,7 @@ pub fn deserialize(buf: &mut &[u8]) -> StdResult<Result, ParseError> {
 #[cfg(test)]
 mod tests {
     use crate as scylla;
-    use crate::frame::value::Counter;
+    use crate::frame::value::{Counter, CqlDuration};
     use bigdecimal::BigDecimal;
     use chrono::Duration;
     use chrono::NaiveDate;
@@ -1305,6 +1331,21 @@ mod tests {
         empty.serialize(&mut v).unwrap();
 
         assert_eq!(v, vec![0, 0, 0, 0]);
+    }
+
+    #[test]
+    fn test_duration_deserialize() {
+        let bytes = [0xc, 0x12, 0xe2, 0x8c, 0x39, 0xd2];
+        let cql_value: CqlValue =
+            super::deser_cql_value(&ColumnType::Duration, &mut &bytes[..]).unwrap();
+        assert_eq!(
+            cql_value,
+            CqlValue::Duration(CqlDuration {
+                months: 6,
+                days: 9,
+                nanoseconds: 21372137
+            })
+        );
     }
 
     #[test]
