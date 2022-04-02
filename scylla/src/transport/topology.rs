@@ -255,12 +255,367 @@ impl MetadataReader {
     async fn fetch_metadata(&self) -> Result<Metadata, QueryError> {
         // TODO: Timeouts?
 
-        query_metadata(
-            &self.control_connection,
-            self.control_connection_address.port(),
-            self.fetch_schema,
-        )
-        .await
+        self.control_connection.wait_until_initialized().await;
+        let conn: &Connection = &*self.control_connection.random_connection()?;
+
+        let peers_query = self.query_peers(conn);
+        let keyspaces_query = self.query_keyspaces(conn);
+
+        let (peers, keyspaces) = tokio::try_join!(peers_query, keyspaces_query)?;
+
+        // There must be at least one peer
+        if peers.is_empty() {
+            return Err(QueryError::ProtocolError(
+                "Bad Metadata: peers list is empty",
+            ));
+        }
+
+        // At least one peer has to have some tokens
+        if peers.iter().all(|peer| peer.tokens.is_empty()) {
+            return Err(QueryError::ProtocolError(
+                "Bad Metadata: All peers have empty token list",
+            ));
+        }
+
+        Ok(Metadata { peers, keyspaces })
+    }
+
+    async fn query_peers(&self, conn: &Connection) -> Result<Vec<Peer>, QueryError> {
+        let mut peers_query =
+            Query::new("select peer, data_center, rack, tokens from system.peers");
+        peers_query.set_page_size(1024);
+        let peers_query_future = conn.query_all(&peers_query, &[]);
+
+        let mut local_query =
+            Query::new("select rpc_address, data_center, rack, tokens from system.local");
+        local_query.set_page_size(1024);
+        let local_query_future = conn.query_all(&local_query, &[]);
+
+        let (peers_res, local_res) = tokio::try_join!(peers_query_future, local_query_future)?;
+
+        let peers_rows = peers_res.rows.ok_or(QueryError::ProtocolError(
+            "system.peers query response was not Rows",
+        ))?;
+
+        let local_rows = local_res.rows.ok_or(QueryError::ProtocolError(
+            "system.local query response was not Rows",
+        ))?;
+
+        let mut result: Vec<Peer> = Vec::with_capacity(peers_rows.len() + 1);
+
+        let typed_peers_rows =
+            peers_rows
+                .into_typed::<(IpAddr, Option<String>, Option<String>, Option<Vec<String>>)>();
+
+        // For the local node we should use connection's address instead of rpc_address unless SNI is enabled (TODO)
+        // Replace address in local_rows with connection's address
+        let local_address: IpAddr = conn.get_connect_address().ip();
+        let typed_local_rows = local_rows
+            .into_typed::<(IpAddr, Option<String>, Option<String>, Option<Vec<String>>)>()
+            .map(|res| res.map(|(_addr, dc, rack, tokens)| (local_address, dc, rack, tokens)));
+
+        let connect_port = self.control_connection_address.port();
+
+        for row in typed_peers_rows.chain(typed_local_rows) {
+            let (ip_address, datacenter, rack, tokens) = row.map_err(|_| {
+                QueryError::ProtocolError("system.peers or system.local has invalid column type")
+            })?;
+
+            let tokens_str: Vec<String> = tokens.unwrap_or_default();
+
+            let address = SocketAddr::new(ip_address, connect_port);
+
+            // Parse string representation of tokens as integer values
+            let tokens: Vec<Token> = match tokens_str
+                .iter()
+                .map(|s| Token::from_str(s))
+                .collect::<Result<Vec<Token>, _>>()
+            {
+                Ok(parsed) => parsed,
+                Err(e) => {
+                    // FIXME: we could allow the users to provide custom partitioning information
+                    // in order for it to work with non-standard token sizes.
+                    // Also, we could implement support for Cassandra's other standard partitioners
+                    // like RandomPartitioner or ByteOrderedPartitioner.
+                    trace!("Couldn't parse tokens as 64-bit integers: {}, proceeding with a dummy token. If you're using a partitioner with different token size, consider migrating to murmur3", e);
+                    vec![Token {
+                        value: rand::thread_rng().gen::<i64>(),
+                    }]
+                }
+            };
+            result.push(Peer {
+                address,
+                tokens,
+                datacenter,
+                rack,
+            });
+        }
+
+        Ok(result)
+    }
+
+    async fn query_keyspaces(
+        &self,
+        conn: &Connection,
+    ) -> Result<HashMap<String, Keyspace>, QueryError> {
+        let mut keyspaces_query =
+            Query::new("select keyspace_name, replication from system_schema.keyspaces");
+        keyspaces_query.set_page_size(1024);
+
+        let rows =
+            conn.query_all(&keyspaces_query, &[])
+                .await?
+                .rows
+                .ok_or(QueryError::ProtocolError(
+                    "system_schema.keyspaces query response was not Rows",
+                ))?;
+
+        let mut result = HashMap::with_capacity(rows.len());
+        let (mut all_tables, mut all_user_defined_types) = if self.fetch_schema {
+            (
+                self.query_tables(conn).await?,
+                self.query_user_defined_types(conn).await?,
+            )
+        } else {
+            (HashMap::new(), HashMap::new())
+        };
+
+        for row in rows.into_typed::<(String, HashMap<String, String>)>() {
+            let (keyspace_name, strategy_map) = row.map_err(|_| {
+                QueryError::ProtocolError("system_schema.keyspaces has invalid column type")
+            })?;
+
+            let strategy: Strategy = strategy_from_string_map(strategy_map)?;
+            let tables = all_tables.remove(&keyspace_name).unwrap_or_default();
+            let user_defined_types = all_user_defined_types
+                .remove(&keyspace_name)
+                .unwrap_or_default();
+
+            result.insert(
+                keyspace_name,
+                Keyspace {
+                    strategy,
+                    tables,
+                    user_defined_types,
+                },
+            );
+        }
+
+        Ok(result)
+    }
+
+    async fn query_user_defined_types(
+        &self,
+        conn: &Connection,
+    ) -> Result<HashMap<String, HashMap<String, Vec<(String, CqlType)>>>, QueryError> {
+        let mut user_defined_types_query = Query::new(
+            "select keyspace_name, type_name, field_names, field_types from system_schema.types",
+        );
+        user_defined_types_query.set_page_size(1024);
+
+        let rows = conn
+            .query_all(&user_defined_types_query, &[])
+            .await?
+            .rows
+            .ok_or(QueryError::ProtocolError(
+                "system_schema.types query response was not Rows",
+            ))?;
+
+        let mut result = HashMap::with_capacity(rows.len());
+
+        for row in rows.into_typed::<(String, String, Vec<String>, Vec<String>)>() {
+            let (keyspace_name, type_name, field_names, field_types) = row.map_err(|_| {
+                QueryError::ProtocolError("system_schema.types has invalid column type")
+            })?;
+
+            let mut fields = Vec::with_capacity(field_names.len());
+
+            for (field_name, field_type) in field_names.into_iter().zip(field_types.iter()) {
+                fields.push((field_name, map_string_to_cql_type(field_type)?));
+            }
+
+            result
+                .entry(keyspace_name)
+                .or_insert_with(HashMap::new)
+                .insert(type_name, fields);
+        }
+
+        Ok(result)
+    }
+
+    async fn query_tables(
+        &self,
+        conn: &Connection,
+    ) -> Result<HashMap<String, HashMap<String, Table>>, QueryError> {
+        let mut tables_query =
+            Query::new("select keyspace_name, table_name from system_schema.tables");
+        tables_query.set_page_size(1024);
+
+        let rows =
+            conn.query_all(&tables_query, &[])
+                .await?
+                .rows
+                .ok_or(QueryError::ProtocolError(
+                    "system_schema.tables query response was not Rows",
+                ))?;
+
+        let mut result = HashMap::with_capacity(rows.len());
+        let mut tables = self.query_tables_schema(conn).await?;
+
+        for row in rows.into_typed::<(String, String)>() {
+            let (keyspace_name, table_name) = row.map_err(|_| {
+                QueryError::ProtocolError("system_schema.tables has invalid column type")
+            })?;
+
+            let keyspace_and_table_name = (keyspace_name, table_name);
+
+            let table = tables.remove(&keyspace_and_table_name).unwrap_or(Table {
+                columns: HashMap::new(),
+                partition_key: vec![],
+                clustering_key: vec![],
+                partitioner: None,
+            });
+
+            result
+                .entry(keyspace_and_table_name.0)
+                .or_insert_with(HashMap::new)
+                .insert(keyspace_and_table_name.1, table);
+        }
+
+        Ok(result)
+    }
+
+    async fn query_tables_schema(
+        &self,
+        conn: &Connection,
+    ) -> Result<HashMap<(String, String), Table>, QueryError> {
+        // Upon migration from thrift to CQL, Cassandra internally creates a surrogate column "value" of
+        // type EmptyType for dense tables. This resolves into this CQL type name.
+        // This column shouldn't be exposed to the user but is currently exposed in system tables.
+        const THRIFT_EMPTY_TYPE: &str = "empty";
+
+        let mut columns_query = Query::new(
+            "select keyspace_name, table_name, column_name, kind, position, type from system_schema.columns",
+        );
+        columns_query.set_page_size(1024);
+
+        let rows =
+            conn.query_all(&columns_query, &[])
+                .await?
+                .rows
+                .ok_or(QueryError::ProtocolError(
+                    "system_schema.columns query response was not Rows",
+                ))?;
+
+        let mut tables_schema = HashMap::with_capacity(rows.len());
+
+        for row in rows.into_typed::<(String, String, String, String, i32, String)>() {
+            let (keyspace_name, table_name, column_name, kind, position, type_) =
+                row.map_err(|_| {
+                    QueryError::ProtocolError("system_schema.columns has invalid column type")
+                })?;
+
+            if type_ == THRIFT_EMPTY_TYPE {
+                continue;
+            }
+
+            let entry = tables_schema.entry((keyspace_name, table_name)).or_insert((
+                HashMap::new(), // columns
+                HashMap::new(), // partition key
+                HashMap::new(), // clustering key
+            ));
+
+            let cql_type = map_string_to_cql_type(&type_)?;
+
+            let kind = ColumnKind::from_str(&kind)
+                // FIXME: The correct error type is QueryError:ProtocolError but at the moment it accepts only &'static str
+                .map_err(|_| QueryError::InvalidMessage(format!("invalid column kind {}", kind)))?;
+
+            if kind == ColumnKind::PartitionKey || kind == ColumnKind::Clustering {
+                let key_map = if kind == ColumnKind::PartitionKey {
+                    entry.1.borrow_mut()
+                } else {
+                    entry.2.borrow_mut()
+                };
+                key_map.insert(position, column_name.clone());
+            }
+
+            entry.0.insert(
+                column_name,
+                Column {
+                    type_: cql_type,
+                    kind,
+                },
+            );
+        }
+
+        let mut all_partitioners = self.query_table_partitioners(conn).await?;
+        let mut result = HashMap::new();
+
+        for (
+            (keyspace_name, table_name),
+            (columns, partition_key_columns, clustering_key_columns),
+        ) in tables_schema
+        {
+            let mut partition_key = vec!["".to_string(); partition_key_columns.len()];
+            for (position, column_name) in partition_key_columns {
+                partition_key[position as usize] = column_name;
+            }
+
+            let mut clustering_key = vec!["".to_string(); clustering_key_columns.len()];
+            for (position, column_name) in clustering_key_columns {
+                clustering_key[position as usize] = column_name;
+            }
+
+            let keyspace_and_table_name = (keyspace_name, table_name);
+
+            let partitioner = all_partitioners
+                .remove(&keyspace_and_table_name)
+                .unwrap_or_default();
+
+            result.insert(
+                keyspace_and_table_name,
+                Table {
+                    columns,
+                    partition_key,
+                    clustering_key,
+                    partitioner,
+                },
+            );
+        }
+
+        Ok(result)
+    }
+
+    async fn query_table_partitioners(
+        &self,
+        conn: &Connection,
+    ) -> Result<HashMap<(String, String), Option<String>>, QueryError> {
+        let mut partitioner_query = Query::new(
+            "select keyspace_name, table_name, partitioner from system_schema.scylla_tables",
+        );
+        partitioner_query.set_page_size(1024);
+
+        let rows = match conn.query_all(&partitioner_query, &[]).await {
+            // FIXME: This match catches all database errors with this error code despite the fact
+            // that we are only interested in the ones resulting from non-existent table
+            // system_schema.scylla_tables.
+            // For more information please refer to https://github.com/scylladb/scylla-rust-driver/pull/349#discussion_r762050262
+            Err(QueryError::DbError(DbError::Invalid, _)) => return Ok(HashMap::new()),
+            query_result => query_result?.rows.ok_or(QueryError::ProtocolError(
+                "system_schema.scylla_tables query response was not Rows",
+            ))?,
+        };
+
+        let mut result = HashMap::with_capacity(rows.len());
+
+        for row in rows.into_typed::<(String, String, Option<String>)>() {
+            let (keyspace_name, table_name, partitioner) = row.map_err(|_| {
+                QueryError::ProtocolError("system_schema.tables has invalid column type")
+            })?;
+            result.insert((keyspace_name, table_name), partitioner);
+        }
+        Ok(result)
     }
 
     fn update_known_peers(&mut self, metadata: &Metadata) {
@@ -286,333 +641,6 @@ impl MetadataReader {
 
         NodeConnectionPool::new(addr.ip(), addr.port(), pool_config, None)
     }
-}
-
-async fn query_metadata(
-    pool: &NodeConnectionPool,
-    connect_port: u16,
-    fetch_schema: bool,
-) -> Result<Metadata, QueryError> {
-    pool.wait_until_initialized().await;
-    let conn: &Connection = &*pool.random_connection()?;
-
-    let peers_query = query_peers(conn, connect_port);
-    let keyspaces_query = query_keyspaces(conn, fetch_schema);
-
-    let (peers, keyspaces) = tokio::try_join!(peers_query, keyspaces_query)?;
-
-    // There must be at least one peer
-    if peers.is_empty() {
-        return Err(QueryError::ProtocolError(
-            "Bad Metadata: peers list is empty",
-        ));
-    }
-
-    // At least one peer has to have some tokens
-    if peers.iter().all(|peer| peer.tokens.is_empty()) {
-        return Err(QueryError::ProtocolError(
-            "Bad Metadata: All peers have empty token list",
-        ));
-    }
-
-    Ok(Metadata { peers, keyspaces })
-}
-
-async fn query_peers(conn: &Connection, connect_port: u16) -> Result<Vec<Peer>, QueryError> {
-    let mut peers_query = Query::new("select peer, data_center, rack, tokens from system.peers");
-    peers_query.set_page_size(1024);
-    let peers_query_future = conn.query_all(&peers_query, &[]);
-
-    let mut local_query =
-        Query::new("select rpc_address, data_center, rack, tokens from system.local");
-    local_query.set_page_size(1024);
-    let local_query_future = conn.query_all(&local_query, &[]);
-
-    let (peers_res, local_res) = tokio::try_join!(peers_query_future, local_query_future)?;
-
-    let peers_rows = peers_res.rows.ok_or(QueryError::ProtocolError(
-        "system.peers query response was not Rows",
-    ))?;
-
-    let local_rows = local_res.rows.ok_or(QueryError::ProtocolError(
-        "system.local query response was not Rows",
-    ))?;
-
-    let mut result: Vec<Peer> = Vec::with_capacity(peers_rows.len() + 1);
-
-    let typed_peers_rows =
-        peers_rows.into_typed::<(IpAddr, Option<String>, Option<String>, Option<Vec<String>>)>();
-
-    // For the local node we should use connection's address instead of rpc_address unless SNI is enabled (TODO)
-    // Replace address in local_rows with connection's address
-    let local_address: IpAddr = conn.get_connect_address().ip();
-    let typed_local_rows = local_rows
-        .into_typed::<(IpAddr, Option<String>, Option<String>, Option<Vec<String>>)>()
-        .map(|res| res.map(|(_addr, dc, rack, tokens)| (local_address, dc, rack, tokens)));
-
-    for row in typed_peers_rows.chain(typed_local_rows) {
-        let (ip_address, datacenter, rack, tokens) = row.map_err(|_| {
-            QueryError::ProtocolError("system.peers or system.local has invalid column type")
-        })?;
-
-        let tokens_str: Vec<String> = tokens.unwrap_or_default();
-
-        let address = SocketAddr::new(ip_address, connect_port);
-
-        // Parse string representation of tokens as integer values
-        let tokens: Vec<Token> = match tokens_str
-            .iter()
-            .map(|s| Token::from_str(s))
-            .collect::<Result<Vec<Token>, _>>()
-        {
-            Ok(parsed) => parsed,
-            Err(e) => {
-                // FIXME: we could allow the users to provide custom partitioning information
-                // in order for it to work with non-standard token sizes.
-                // Also, we could implement support for Cassandra's other standard partitioners
-                // like RandomPartitioner or ByteOrderedPartitioner.
-                trace!("Couldn't parse tokens as 64-bit integers: {}, proceeding with a dummy token. If you're using a partitioner with different token size, consider migrating to murmur3", e);
-                vec![Token {
-                    value: rand::thread_rng().gen::<i64>(),
-                }]
-            }
-        };
-        result.push(Peer {
-            address,
-            tokens,
-            datacenter,
-            rack,
-        });
-    }
-
-    Ok(result)
-}
-
-async fn query_keyspaces(
-    conn: &Connection,
-    fetch_schema: bool,
-) -> Result<HashMap<String, Keyspace>, QueryError> {
-    let mut keyspaces_query =
-        Query::new("select keyspace_name, replication from system_schema.keyspaces");
-    keyspaces_query.set_page_size(1024);
-
-    let rows =
-        conn.query_all(&keyspaces_query, &[])
-            .await?
-            .rows
-            .ok_or(QueryError::ProtocolError(
-                "system_schema.keyspaces query response was not Rows",
-            ))?;
-
-    let mut result = HashMap::with_capacity(rows.len());
-    let (mut all_tables, mut all_user_defined_types) = if fetch_schema {
-        (
-            query_tables(conn).await?,
-            query_user_defined_types(conn).await?,
-        )
-    } else {
-        (HashMap::new(), HashMap::new())
-    };
-
-    for row in rows.into_typed::<(String, HashMap<String, String>)>() {
-        let (keyspace_name, strategy_map) = row.map_err(|_| {
-            QueryError::ProtocolError("system_schema.keyspaces has invalid column type")
-        })?;
-
-        let strategy: Strategy = strategy_from_string_map(strategy_map)?;
-        let tables = all_tables.remove(&keyspace_name).unwrap_or_default();
-        let user_defined_types = all_user_defined_types
-            .remove(&keyspace_name)
-            .unwrap_or_default();
-
-        result.insert(
-            keyspace_name,
-            Keyspace {
-                strategy,
-                tables,
-                user_defined_types,
-            },
-        );
-    }
-
-    Ok(result)
-}
-
-async fn query_user_defined_types(
-    conn: &Connection,
-) -> Result<HashMap<String, HashMap<String, Vec<(String, CqlType)>>>, QueryError> {
-    let mut user_defined_types_query = Query::new(
-        "select keyspace_name, type_name, field_names, field_types from system_schema.types",
-    );
-    user_defined_types_query.set_page_size(1024);
-
-    let rows = conn
-        .query_all(&user_defined_types_query, &[])
-        .await?
-        .rows
-        .ok_or(QueryError::ProtocolError(
-            "system_schema.types query response was not Rows",
-        ))?;
-
-    let mut result = HashMap::with_capacity(rows.len());
-
-    for row in rows.into_typed::<(String, String, Vec<String>, Vec<String>)>() {
-        let (keyspace_name, type_name, field_names, field_types) = row.map_err(|_| {
-            QueryError::ProtocolError("system_schema.types has invalid column type")
-        })?;
-
-        let mut fields = Vec::with_capacity(field_names.len());
-
-        for (field_name, field_type) in field_names.into_iter().zip(field_types.iter()) {
-            fields.push((field_name, map_string_to_cql_type(field_type)?));
-        }
-
-        result
-            .entry(keyspace_name)
-            .or_insert_with(HashMap::new)
-            .insert(type_name, fields);
-    }
-
-    Ok(result)
-}
-
-async fn query_tables(
-    conn: &Connection,
-) -> Result<HashMap<String, HashMap<String, Table>>, QueryError> {
-    let mut tables_query = Query::new("select keyspace_name, table_name from system_schema.tables");
-    tables_query.set_page_size(1024);
-
-    let rows = conn
-        .query_all(&tables_query, &[])
-        .await?
-        .rows
-        .ok_or(QueryError::ProtocolError(
-            "system_schema.tables query response was not Rows",
-        ))?;
-
-    let mut result = HashMap::with_capacity(rows.len());
-    let mut tables = query_tables_schema(conn).await?;
-
-    for row in rows.into_typed::<(String, String)>() {
-        let (keyspace_name, table_name) = row.map_err(|_| {
-            QueryError::ProtocolError("system_schema.tables has invalid column type")
-        })?;
-
-        let keyspace_and_table_name = (keyspace_name, table_name);
-
-        let table = tables.remove(&keyspace_and_table_name).unwrap_or(Table {
-            columns: HashMap::new(),
-            partition_key: vec![],
-            clustering_key: vec![],
-            partitioner: None,
-        });
-
-        result
-            .entry(keyspace_and_table_name.0)
-            .or_insert_with(HashMap::new)
-            .insert(keyspace_and_table_name.1, table);
-    }
-
-    Ok(result)
-}
-
-async fn query_tables_schema(
-    conn: &Connection,
-) -> Result<HashMap<(String, String), Table>, QueryError> {
-    // Upon migration from thrift to CQL, Cassandra internally creates a surrogate column "value" of
-    // type EmptyType for dense tables. This resolves into this CQL type name.
-    // This column shouldn't be exposed to the user but is currently exposed in system tables.
-    const THRIFT_EMPTY_TYPE: &str = "empty";
-
-    let mut columns_query = Query::new(
-        "select keyspace_name, table_name, column_name, kind, position, type from system_schema.columns",
-    );
-    columns_query.set_page_size(1024);
-
-    let rows = conn
-        .query_all(&columns_query, &[])
-        .await?
-        .rows
-        .ok_or(QueryError::ProtocolError(
-            "system_schema.columns query response was not Rows",
-        ))?;
-
-    let mut tables_schema = HashMap::with_capacity(rows.len());
-
-    for row in rows.into_typed::<(String, String, String, String, i32, String)>() {
-        let (keyspace_name, table_name, column_name, kind, position, type_) =
-            row.map_err(|_| {
-                QueryError::ProtocolError("system_schema.columns has invalid column type")
-            })?;
-
-        if type_ == THRIFT_EMPTY_TYPE {
-            continue;
-        }
-
-        let entry = tables_schema.entry((keyspace_name, table_name)).or_insert((
-            HashMap::new(), // columns
-            HashMap::new(), // partition key
-            HashMap::new(), // clustering key
-        ));
-
-        let cql_type = map_string_to_cql_type(&type_)?;
-
-        let kind = ColumnKind::from_str(&kind)
-            // FIXME: The correct error type is QueryError:ProtocolError but at the moment it accepts only &'static str
-            .map_err(|_| QueryError::InvalidMessage(format!("invalid column kind {}", kind)))?;
-
-        if kind == ColumnKind::PartitionKey || kind == ColumnKind::Clustering {
-            let key_map = if kind == ColumnKind::PartitionKey {
-                entry.1.borrow_mut()
-            } else {
-                entry.2.borrow_mut()
-            };
-            key_map.insert(position, column_name.clone());
-        }
-
-        entry.0.insert(
-            column_name,
-            Column {
-                type_: cql_type,
-                kind,
-            },
-        );
-    }
-
-    let mut all_partitioners = query_table_partitioners(conn).await?;
-    let mut result = HashMap::new();
-
-    for ((keyspace_name, table_name), (columns, partition_key_columns, clustering_key_columns)) in
-        tables_schema
-    {
-        let mut partition_key = vec!["".to_string(); partition_key_columns.len()];
-        for (position, column_name) in partition_key_columns {
-            partition_key[position as usize] = column_name;
-        }
-
-        let mut clustering_key = vec!["".to_string(); clustering_key_columns.len()];
-        for (position, column_name) in clustering_key_columns {
-            clustering_key[position as usize] = column_name;
-        }
-
-        let keyspace_and_table_name = (keyspace_name, table_name);
-
-        let partitioner = all_partitioners
-            .remove(&keyspace_and_table_name)
-            .unwrap_or_default();
-
-        result.insert(
-            keyspace_and_table_name,
-            Table {
-                columns,
-                partition_key,
-                clustering_key,
-                partitioner,
-            },
-        );
-    }
-
-    Ok(result)
 }
 
 fn map_string_to_cql_type(type_: &str) -> Result<CqlType, InvalidCqlType> {
@@ -667,36 +695,6 @@ fn map_string_to_cql_type(type_: &str) -> Result<CqlType, InvalidCqlType> {
             name: type_.to_string(),
         },
     })
-}
-
-async fn query_table_partitioners(
-    conn: &Connection,
-) -> Result<HashMap<(String, String), Option<String>>, QueryError> {
-    let mut partitioner_query = Query::new(
-        "select keyspace_name, table_name, partitioner from system_schema.scylla_tables",
-    );
-    partitioner_query.set_page_size(1024);
-
-    let rows = match conn.query_all(&partitioner_query, &[]).await {
-        // FIXME: This match catches all database errors with this error code despite the fact
-        // that we are only interested in the ones resulting from non-existent table
-        // system_schema.scylla_tables.
-        // For more information please refer to https://github.com/scylladb/scylla-rust-driver/pull/349#discussion_r762050262
-        Err(QueryError::DbError(DbError::Invalid, _)) => return Ok(HashMap::new()),
-        query_result => query_result?.rows.ok_or(QueryError::ProtocolError(
-            "system_schema.scylla_tables query response was not Rows",
-        ))?,
-    };
-
-    let mut result = HashMap::with_capacity(rows.len());
-
-    for row in rows.into_typed::<(String, String, Option<String>)>() {
-        let (keyspace_name, table_name, partitioner) = row.map_err(|_| {
-            QueryError::ProtocolError("system_schema.tables has invalid column type")
-        })?;
-        result.insert((keyspace_name, table_name), partitioner);
-    }
-    Ok(result)
 }
 
 fn strategy_from_string_map(
