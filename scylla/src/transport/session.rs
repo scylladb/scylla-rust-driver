@@ -917,7 +917,7 @@ impl Session {
         // config.attempts is NonZeroU32 so at least one attempt will be made
         for _ in 0..config.attempts.get() {
             let current_try: Option<TracingInfo> = self
-                .try_getting_tracing_info(tracing_id, Some(config.consistency))
+                .try_getting_tracing_info(tracing_id, config.consistency)
                 .await?;
 
             match current_try {
@@ -940,16 +940,16 @@ impl Session {
     async fn try_getting_tracing_info(
         &self,
         tracing_id: &Uuid,
-        consistency: Option<Consistency>,
+        consistency: Consistency,
     ) -> Result<Option<TracingInfo>, QueryError> {
         // Query system_traces.sessions for TracingInfo
         let mut traces_session_query = Query::new(crate::tracing::TRACES_SESSION_QUERY_STR);
-        traces_session_query.config.consistency = consistency;
+        traces_session_query.set_consistency(consistency);
         traces_session_query.set_page_size(1024);
 
         // Query system_traces.events for TracingEvents
         let mut traces_events_query = Query::new(crate::tracing::TRACES_EVENTS_QUERY_STR);
-        traces_events_query.config.consistency = consistency;
+        traces_events_query.set_consistency(consistency);
         traces_events_query.set_page_size(1024);
 
         let (traces_session_res, traces_events_res) = tokio::try_join!(
