@@ -14,6 +14,16 @@ sys.path.insert(0, os.path.abspath('..'))
 
 # -- General configuration ------------------------------------------------
 
+# Build documentation for the following tags and branches
+TAGS = []
+BRANCHES = ['main']
+# Set the latest version.
+LATEST_VERSION = 'main'
+# Set which versions are not released yet.
+UNSTABLE_VERSIONS = ['']
+# Set which versions are deprecated
+DEPRECATED_VERSIONS = ['']
+
 # Add any Sphinx extension module names here, as strings. They can be
 # extensions coming with Sphinx (named 'sphinx.ext.*') or your custom
 # ones.
@@ -23,9 +33,10 @@ extensions = [
     'sphinx.ext.mathjax',
     'sphinx.ext.githubpages',
     'sphinx.ext.extlinks',
+    'sphinx_sitemap',
     'sphinx_scylladb_theme',
-    'sphinx_multiversion',
-    'recommonmark'
+    'sphinx_multiversion',  # optional
+    'recommonmark',  # optional
 ]
 
 # The suffix(es) of source filenames.
@@ -72,28 +83,29 @@ notfound_urls_prefix = ''
 # -- Options for redirect extension ---------------------------------------
 
 # Read a YAML dictionary of redirections and generate an HTML file for each
-redirects_file = "_utils/redirections.yaml"
+redirects_file = '_utils/redirections.yaml'
 
 # -- Options for multiversion extension ----------------------------------
 
 # Whitelist pattern for tags (set to None to ignore all tags)
-TAGS = []
 smv_tag_whitelist = multiversion_regex_builder(TAGS)
-# Whitelist pattern for branches (set to None to ignore all branches)
-BRANCHES = ['main']
+# Whitelist pattern for branches
 smv_branch_whitelist = multiversion_regex_builder(BRANCHES)
 # Defines which version is considered to be the latest stable version.
-# Must be listed in smv_tag_whitelist or smv_branch_whitelist.
-smv_latest_version = 'main'
+smv_latest_version = LATEST_VERSION
 smv_rename_latest_version = 'stable'
 # Whitelist pattern for remotes (set to None to use local branches only)
-smv_remote_whitelist = r"^origin$"
+smv_remote_whitelist = r'^origin$'
 # Pattern for released versions
 smv_released_pattern = r'^tags/.*$'
 # Format for versioned output directories inside the build directory
 smv_outputdir_format = '{ref.name}'
 
-# -- Options for HTML output ----------------------------------------------
+# -- Options for sitemap extension ---------------------------------------
+
+sitemap_url_scheme = "stable/{link}"
+
+# -- Options for HTML output ---------------------------------------------
 
 # The theme to use for HTML and HTML Help pages.  See the documentation for
 # a list of builtin themes.
@@ -111,7 +123,9 @@ html_theme_options = {
     'github_issues_repository': 'scylladb/scylla-rust-driver',
     'hide_banner': 'true',
     'site_description': 'Scylla Driver for Rust.',
-    'hide_edit_this_page_button': 'false'
+    'hide_edit_this_page_button': 'false',
+    'versions_unstable': UNSTABLE_VERSIONS,
+    'versions_deprecated': DEPRECATED_VERSIONS,
 }
 
 # If not None, a 'Last updated on:' timestamp is inserted at every page
