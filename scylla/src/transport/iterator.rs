@@ -36,6 +36,22 @@ use crate::transport::retry_policy::{QueryInfo, RetryDecision, RetrySession};
 use tracing::{trace, trace_span, Instrument};
 use uuid::Uuid;
 
+// #424
+//
+// Both `Query` and `PreparedStatement` have page size set to `None` as default,
+// which means unlimited page size. This is a problem for `query_iter`
+// and `execute_iter` because using them with such queries causes everything
+// to be fetched in one page, despite them being meant to fetch data
+// page-by-page.
+//
+// We can't really change the default page size for `Query`
+// and `PreparedStatement` because it also affects `Session::{query,execute}`
+// and this could break existing code.
+//
+// In order to work around the problem we just set the page size to a default
+// value at the beginning of `query_iter` and `execute_iter`.
+const DEFAULT_ITER_PAGE_SIZE: i32 = 5000;
+
 /// Iterator over rows returned by paged queries\
 /// Allows to easily access rows without worrying about handling multiple pages
 pub struct RowIterator {
@@ -109,7 +125,7 @@ impl RowIterator {
     }
 
     pub(crate) async fn new_for_query(
-        query: Query,
+        mut query: Query,
         values: SerializedValues,
         default_consistency: Consistency,
         retry_session: Box<dyn RetrySession>,
@@ -117,6 +133,9 @@ impl RowIterator {
         cluster_data: Arc<ClusterData>,
         metrics: Arc<Metrics>,
     ) -> Result<RowIterator, QueryError> {
+        if query.get_page_size().is_none() {
+            query.set_page_size(DEFAULT_ITER_PAGE_SIZE);
+        }
         let (sender, mut receiver) = mpsc::channel(1);
         let consistency = query.config.determine_consistency(default_consistency);
 
@@ -163,8 +182,11 @@ impl RowIterator {
     }
 
     pub(crate) async fn new_for_prepared_statement(
-        config: PreparedIteratorConfig,
+        mut config: PreparedIteratorConfig,
     ) -> Result<RowIterator, QueryError> {
+        if config.prepared.get_page_size().is_none() {
+            config.prepared.set_page_size(DEFAULT_ITER_PAGE_SIZE);
+        }
         let (sender, mut receiver) = mpsc::channel(1);
         let consistency = config
             .prepared
