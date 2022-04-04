@@ -1273,7 +1273,7 @@ fn calculate_token(
         Err(PartitionKeyError::ValueTooLong(values_len)) => {
             return Err(QueryError::BadQuery(BadQuery::ValuesTooLongForKey(
                 values_len,
-                u16::max_value().into(),
+                u16::MAX.into(),
             )))
         }
     };

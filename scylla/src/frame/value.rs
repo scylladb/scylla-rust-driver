@@ -143,7 +143,7 @@ impl SerializedValues {
         if self.contains_names {
             return Err(SerializeValuesError::MixingNamedAndNotNamedValues);
         }
-        if self.values_num == i16::max_value() {
+        if self.values_num == i16::MAX {
             return Err(SerializeValuesError::TooManyValues);
         }
 
@@ -167,7 +167,7 @@ impl SerializedValues {
             return Err(SerializeValuesError::MixingNamedAndNotNamedValues);
         }
         self.contains_names = true;
-        if self.values_num == i16::max_value() {
+        if self.values_num == i16::MAX {
             return Err(SerializeValuesError::TooManyValues);
         }
 

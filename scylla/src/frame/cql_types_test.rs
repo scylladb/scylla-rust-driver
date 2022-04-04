@@ -307,7 +307,7 @@ async fn test_date() {
         ("1970-01-31", Date(2_u32.pow(31) + 30)),
         ("-5877641-06-23", Date(0)),
         // NOTICE: dropped for Cassandra 4 compatibility
-        //("5881580-07-11", Date(u32::max_value())),
+        //("5881580-07-11", Date(u32::MAX)),
     ];
 
     for (date_text, date) in &tests {
@@ -447,14 +447,8 @@ async fn test_timestamp() {
 
     let tests = [
         ("0", Duration::milliseconds(0)),
-        (
-            "9223372036854775807",
-            Duration::milliseconds(i64::max_value()),
-        ),
-        (
-            "-9223372036854775808",
-            Duration::milliseconds(i64::min_value()),
-        ),
+        ("9223372036854775807", Duration::milliseconds(i64::MAX)),
+        ("-9223372036854775808", Duration::milliseconds(i64::MIN)),
         // NOTICE: dropped for Cassandra 4 compatibility
         //("1970-01-01", Duration::milliseconds(0)),
         //("2020-03-08", after_epoch_offset),
