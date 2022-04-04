@@ -198,6 +198,8 @@ impl RetrySession for DefaultRetrySession {
             }
             // The node is still bootstrapping it can't execute the query, we should try another one
             QueryError::DbError(DbError::IsBootstrapping, _) => RetryDecision::RetryNextNode,
+            // Connection to the contacted node is overloaded, try another one
+            QueryError::UnableToAllocStreamId => RetryDecision::RetryNextNode,
             // In all other cases propagate the error to the user
             _ => RetryDecision::DontRetry,
         }
