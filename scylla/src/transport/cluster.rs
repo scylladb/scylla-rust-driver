@@ -105,7 +105,8 @@ impl Cluster {
                 pool_config.keepalive_interval,
                 server_events_sender,
                 fetch_schema_metadata,
-            ),
+            )
+            .await?,
             pool_config,
 
             refresh_channel: refresh_receiver,

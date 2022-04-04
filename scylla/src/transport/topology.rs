@@ -1,4 +1,5 @@
 use crate::frame::response::event::Event;
+use crate::prepared_statement::PreparedStatement;
 use crate::routing::Token;
 use crate::statement::query::Query;
 use crate::transport::connection::{Connection, ConnectionConfig};
@@ -31,6 +32,10 @@ pub(crate) struct MetadataReader {
     // when control connection fails, MetadataReader tries to connect to one of known_peers
     known_peers: Vec<SocketAddr>,
     fetch_schema: bool,
+
+    peers_query: PreparedStatement,
+    local_query: PreparedStatement,
+    keyspaces_query: PreparedStatement,
 }
 
 /// Describes all metadata retrieved from the cluster
@@ -153,13 +158,13 @@ impl From<InvalidCqlType> for QueryError {
 
 impl MetadataReader {
     /// Creates new MetadataReader, which connects to known_peers in the background
-    pub fn new(
+    pub async fn new(
         known_peers: &[SocketAddr],
         mut connection_config: ConnectionConfig,
         keepalive_interval: Option<Duration>,
         server_event_sender: mpsc::Sender<Event>,
         fetch_schema: bool,
-    ) -> Self {
+    ) -> Result<Self, QueryError> {
         let control_connection_address = *known_peers
             .choose(&mut thread_rng())
             .expect("Tried to initialize MetadataReader with empty known_peers list!");
@@ -175,14 +180,35 @@ impl MetadataReader {
             keepalive_interval,
         );
 
-        MetadataReader {
+        control_connection.wait_until_initialized().await;
+        let conn = control_connection.random_connection()?;
+
+        let peers_query =
+            Query::new("select peer, rpc_address, data_center, rack, tokens from system.peers");
+        let mut peers_query = conn.prepare(&peers_query).await?;
+        peers_query.set_page_size(1024);
+
+        let local_query =
+            Query::new("select rpc_address, data_center, rack, tokens from system.local");
+        let mut local_query = conn.prepare(&local_query).await?;
+        local_query.set_page_size(1024);
+
+        let keyspaces_query =
+            Query::new("select keyspace_name, replication from system_schema.keyspaces");
+        let mut keyspaces_query = conn.prepare(&keyspaces_query).await?;
+        keyspaces_query.set_page_size(1024);
+
+        Ok(MetadataReader {
             control_connection_address,
             control_connection,
             keepalive_interval,
             connection_config,
             known_peers: known_peers.into(),
             fetch_schema,
-        }
+            peers_query,
+            local_query,
+            keyspaces_query,
+        })
     }
 
     /// Fetches current metadata from the cluster
@@ -255,7 +281,6 @@ impl MetadataReader {
     async fn fetch_metadata(&self) -> Result<Metadata, QueryError> {
         // TODO: Timeouts?
 
-        self.control_connection.wait_until_initialized().await;
         let conn: &Connection = &*self.control_connection.random_connection()?;
 
         let peers_query = self.query_peers(conn);
@@ -281,15 +306,8 @@ impl MetadataReader {
     }
 
     async fn query_peers(&self, conn: &Connection) -> Result<Vec<Peer>, QueryError> {
-        let mut peers_query =
-            Query::new("select peer, data_center, rack, tokens from system.peers");
-        peers_query.set_page_size(1024);
-        let peers_query_future = conn.query_all(&peers_query, &[]);
-
-        let mut local_query =
-            Query::new("select rpc_address, data_center, rack, tokens from system.local");
-        local_query.set_page_size(1024);
-        let local_query_future = conn.query_all(&local_query, &[]);
+        let peers_query_future = conn.execute_all(&self.peers_query, &[]);
+        let local_query_future = conn.execute_all(&self.local_query, &[]);
 
         let (peers_res, local_res) = tokio::try_join!(peers_query_future, local_query_future)?;
 
@@ -358,17 +376,13 @@ impl MetadataReader {
         &self,
         conn: &Connection,
     ) -> Result<HashMap<String, Keyspace>, QueryError> {
-        let mut keyspaces_query =
-            Query::new("select keyspace_name, replication from system_schema.keyspaces");
-        keyspaces_query.set_page_size(1024);
-
-        let rows =
-            conn.query_all(&keyspaces_query, &[])
-                .await?
-                .rows
-                .ok_or(QueryError::ProtocolError(
-                    "system_schema.keyspaces query response was not Rows",
-                ))?;
+        let rows = conn
+            .execute_all(&self.keyspaces_query, &[])
+            .await?
+            .rows
+            .ok_or(QueryError::ProtocolError(
+                "system_schema.keyspaces query response was not Rows",
+            ))?;
 
         let mut result = HashMap::with_capacity(rows.len());
         let (mut all_tables, mut all_user_defined_types) = if self.fetch_schema {
