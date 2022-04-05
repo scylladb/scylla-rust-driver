@@ -1,6 +1,6 @@
 use anyhow::Result;
 use scylla::frame::value::ValueList;
-use scylla::routing::murmur3_token;
+use scylla::transport::partitioner::{Murmur3Partitioner, Partitioner};
 use scylla::{Session, SessionBuilder};
 use std::env;
 
@@ -29,7 +29,7 @@ async fn main() -> Result<()> {
             .await?;
 
         let serialized_pk = (pk,).serialized()?.into_owned();
-        let t = murmur3_token(prepared.compute_partition_key(&serialized_pk)?).value;
+        let t = Murmur3Partitioner::hash(prepared.compute_partition_key(&serialized_pk)?).value;
 
         let qt = session
             .query(format!("SELECT token(pk) FROM ks.t where pk = {}", pk), &[])
