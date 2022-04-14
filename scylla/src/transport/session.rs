@@ -59,6 +59,8 @@ pub struct Session {
     speculative_execution_policy: Option<Arc<dyn SpeculativeExecutionPolicy>>,
     metrics: Arc<Metrics>,
     default_consistency: Consistency,
+    traces_session_query: Option<PreparedStatement>,
+    traces_events_query: Option<PreparedStatement>,
 }
 
 /// Configuration options for [`Session`].
@@ -333,7 +335,7 @@ impl Session {
         )
         .await?;
 
-        let session = Session {
+        let mut session = Session {
             cluster,
             load_balancer: config.load_balancing,
             retry_policy: config.retry_policy,
@@ -341,6 +343,8 @@ impl Session {
             speculative_execution_policy: config.speculative_execution_policy,
             metrics: Arc::new(Metrics::new()),
             default_consistency: config.default_consistency,
+            traces_session_query: None,
+            traces_events_query: None,
         };
 
         if let Some(keyspace_name) = config.used_keyspace {
@@ -348,6 +352,18 @@ impl Session {
                 .use_keyspace(keyspace_name, config.keyspace_case_sensitive)
                 .await?;
         }
+
+        let mut traces_session_query = session
+            .prepare(crate::tracing::TRACES_SESSION_QUERY_STR)
+            .await?;
+        traces_session_query.set_page_size(1024);
+        session.traces_session_query = Some(traces_session_query);
+
+        let mut traces_events_query = session
+            .prepare(crate::tracing::TRACES_EVENTS_QUERY_STR)
+            .await?;
+        traces_events_query.set_page_size(1024);
+        session.traces_events_query = Some(traces_events_query);
 
         Ok(session)
     }
@@ -942,19 +958,18 @@ impl Session {
         tracing_id: &Uuid,
         consistency: Consistency,
     ) -> Result<Option<TracingInfo>, QueryError> {
+        // TODO handle errors from unwraps
         // Query system_traces.sessions for TracingInfo
-        let mut traces_session_query = Query::new(crate::tracing::TRACES_SESSION_QUERY_STR);
+        let mut traces_session_query = self.traces_session_query.clone().unwrap();
         traces_session_query.set_consistency(consistency);
-        traces_session_query.set_page_size(1024);
 
         // Query system_traces.events for TracingEvents
-        let mut traces_events_query = Query::new(crate::tracing::TRACES_EVENTS_QUERY_STR);
+        let mut traces_events_query = self.traces_events_query.clone().unwrap();
         traces_events_query.set_consistency(consistency);
-        traces_events_query.set_page_size(1024);
 
         let (traces_session_res, traces_events_res) = tokio::try_join!(
-            self.query(traces_session_query, (tracing_id,)),
-            self.query(traces_events_query, (tracing_id,))
+            self.execute(&traces_session_query, (tracing_id,)),
+            self.execute(&traces_events_query, (tracing_id,)),
         )?;
 
         // Get tracing info
