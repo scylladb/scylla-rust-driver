@@ -685,14 +685,10 @@ async fn test_cqlvalue_udt() {
         .await
         .unwrap();
 
-    let udt_cql_value = CqlValue::UserDefinedType {
-        keyspace: ks,
-        type_name: "cqlvalue_udt_type".to_string(),
-        fields: vec![
-            ("int_val".to_string(), Some(CqlValue::Int(42))),
-            ("text_val".to_string(), Some(CqlValue::Text("hi".into()))),
-        ],
-    };
+    let udt_cql_value = CqlValue::UserDefinedType(vec![
+        ("int_val".to_string(), Some(CqlValue::Int(42))),
+        ("text_val".to_string(), Some(CqlValue::Text("hi".into()))),
+    ]);
 
     session
         .query(

@@ -50,7 +50,7 @@ pub fn from_user_type_derive(tokens_input: TokenStream) -> TokenStream {
 
                 // Interpret CqlValue as CQlValue::UserDefinedType
                 let mut fields_iter = match cql_val {
-                    CqlValue::UserDefinedType{fields, ..} => fields.into_iter().peekable(),
+                    CqlValue::UserDefinedType(fields) => fields.into_iter().peekable(),
                     _ => return Err(FromCqlValError::BadCqlType),
                 };
 

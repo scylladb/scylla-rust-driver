@@ -97,14 +97,9 @@ pub enum CqlValue {
     List(Vec<CqlValue>),
     Map(Vec<(CqlValue, CqlValue)>),
     Set(Vec<CqlValue>),
-    UserDefinedType {
-        keyspace: String,
-        type_name: String,
-        /// Order of `fields` vector must match the order of fields as defined in the UDT. The
-        /// driver does not check it by itself, so incorrect data will be written if the order is
-        /// wrong.
-        fields: Vec<(String, Option<CqlValue>)>,
-    },
+    /// Order of `fields` vector must match the order of fields as defined in the UDT. The driver
+    /// does not check it by itself, so incorrect data will be written if the order is wrong.
+    UserDefinedType(Vec<(String, Option<CqlValue>)>),
     SmallInt(i16),
     TinyInt(i8),
     /// Nanoseconds since midnight
@@ -284,7 +279,7 @@ impl CqlValue {
 
     pub fn as_udt(&self) -> Option<&Vec<(String, Option<CqlValue>)>> {
         match self {
-            Self::UserDefinedType { fields, .. } => Some(fields),
+            Self::UserDefinedType(fields) => Some(fields),
             _ => None,
         }
     }
@@ -306,7 +301,7 @@ impl CqlValue {
 
     pub fn into_udt_pair_vec(self) -> Option<Vec<(String, Option<CqlValue>)>> {
         match self {
-            Self::UserDefinedType { fields, .. } => Some(fields),
+            Self::UserDefinedType(fields) => Some(fields),
             _ => None,
         }
     }
@@ -770,11 +765,7 @@ fn deser_cql_value(typ: &ColumnType, buf: &mut &[u8]) -> StdResult<CqlValue, Par
             }
             CqlValue::Set(res)
         }
-        UserDefinedType {
-            type_name,
-            keyspace,
-            field_types,
-        } => {
+        UserDefinedType { field_types, .. } => {
             let mut fields: Vec<(String, Option<CqlValue>)> = Vec::new();
 
             for (field_name, field_type) in field_types {
@@ -793,11 +784,7 @@ fn deser_cql_value(typ: &ColumnType, buf: &mut &[u8]) -> StdResult<CqlValue, Par
                 fields.push((field_name.clone(), field_value));
             }
 
-            CqlValue::UserDefinedType {
-                keyspace: keyspace.clone(),
-                type_name: type_name.clone(),
-                fields,
-            }
+            CqlValue::UserDefinedType(fields)
         }
         Tuple(type_names) => {
             let mut res = Vec::with_capacity(type_names.len());
@@ -1162,11 +1149,7 @@ mod tests {
             ("snd".to_string(), Some(CqlValue::Boolean(true))),
         ];
 
-        let cql: CqlValue = CqlValue::UserDefinedType {
-            keyspace: "".to_string(),
-            type_name: "".to_string(),
-            fields: my_fields,
-        };
+        let cql: CqlValue = CqlValue::UserDefinedType(my_fields);
 
         // Test borrowing.
         let decoded = cql.as_udt().unwrap();

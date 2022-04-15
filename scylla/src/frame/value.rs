@@ -587,7 +587,7 @@ impl Value for CqlValue {
 
             // A UDT value is composed of successive [bytes] values, one for each field of the UDT
             // value (in the order defined by the type), so they serialize in a same way tuples do.
-            CqlValue::UserDefinedType { fields, .. } => {
+            CqlValue::UserDefinedType(fields) => {
                 serialize_tuple(fields.iter().map(|(_, value)| value), buf)
             }
 
