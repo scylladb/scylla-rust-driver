@@ -437,7 +437,9 @@ mod tests {
         let timestamp_duration = Duration::milliseconds(86399999999999);
         assert_eq!(
             timestamp_duration,
-            Timestamp::from_cql(CqlValue::Timestamp(timestamp_duration)).unwrap().0,
+            Timestamp::from_cql(CqlValue::Timestamp(timestamp_duration))
+                .unwrap()
+                .0,
         );
     }
 
