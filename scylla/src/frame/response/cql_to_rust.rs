@@ -106,6 +106,15 @@ impl FromCqlVal<CqlValue> for crate::frame::value::Time {
     }
 }
 
+impl FromCqlVal<CqlValue> for crate::frame::value::Timestamp {
+    fn from_cql(cql_val: CqlValue) -> Result<Self, FromCqlValError> {
+        match cql_val {
+            CqlValue::Timestamp(d) => Ok(Self(d)),
+            _ => Err(FromCqlValError::BadCqlType),
+        }
+    }
+}
+
 // Vec<T>::from_cql<CqlValue>
 impl<T: FromCqlVal<CqlValue>> FromCqlVal<CqlValue> for Vec<T> {
     fn from_cql(cql_val: CqlValue) -> Result<Self, FromCqlValError> {
@@ -419,6 +428,18 @@ mod tests {
         assert_eq!(
             time_duration,
             Time::from_cql(CqlValue::Time(time_duration)).unwrap().0,
+        );
+    }
+
+    #[test]
+    fn timestamp_from_cql() {
+        use crate::frame::value::Timestamp;
+        let timestamp_duration = Duration::milliseconds(86399999999999);
+        assert_eq!(
+            timestamp_duration,
+            Timestamp::from_cql(CqlValue::Timestamp(timestamp_duration))
+                .unwrap()
+                .0,
         );
     }
 
