@@ -16,6 +16,7 @@ tracing = "0.1.25"
 tracing-subscriber = "0.2.16"
 chrono = "0.4"
 uuid = "0.8.1"
+tower = "0.4"
 
 [[example]]
 name = "auth"
@@ -88,3 +89,7 @@ path = "value_list.rs"
 [[example]]
 name = "custom_load_balancing_policy"
 path = "custom_load_balancing_policy.rs"
+
+[[example]]
+name = "tower"
+path = "tower.rs"
