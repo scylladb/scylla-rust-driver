@@ -341,10 +341,16 @@ pub struct ResultMetadata {
     pub col_specs: Vec<ColumnSpec>,
 }
 
+#[derive(Debug, Copy, Clone)]
+pub struct PKIndex {
+    pub index: u16,
+    pub sequence: u16,
+}
+
 #[derive(Debug, Clone)]
 pub struct PreparedMetadata {
     pub col_count: usize,
-    pub pk_indexes: Vec<u16>,
+    pub pk_indexes: Vec<PKIndex>,
     pub col_specs: Vec<ColumnSpec>,
 }
 
@@ -521,11 +527,16 @@ fn deser_prepared_metadata(buf: &mut &[u8]) -> StdResult<PreparedMetadata, Parse
     let col_count = types::read_int_length(buf)? as usize;
 
     let pk_count: usize = types::read_int(buf)?.try_into()?;
+    assert!(pk_count <= u16::MAX as usize);
 
     let mut pk_indexes = Vec::with_capacity(pk_count);
-    for _ in 0..pk_count {
-        pk_indexes.push(types::read_short(buf)? as u16);
+    for i in 0..pk_count {
+        pk_indexes.push(PKIndex {
+            index: types::read_short(buf)? as u16,
+            sequence: i as u16,
+        });
     }
+    pk_indexes.sort_unstable_by_key(|pki| pki.index);
 
     let global_table_spec = if global_tables_spec {
         Some(deser_table_spec(buf)?)

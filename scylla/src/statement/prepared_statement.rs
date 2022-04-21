@@ -74,19 +74,19 @@ impl PreparedStatement {
     /// Computes the partition key of the target table from given values
     /// Partition keys have a specific serialization rules.
     /// Ref: https://github.com/scylladb/scylla/blob/40adf38915b6d8f5314c621a94d694d172360833/compound_compat.hh#L33-L47
-    pub fn compute_partition_key(
+    pub fn compute_partition_key<'a>(
         &self,
-        bound_values: &SerializedValues,
+        bound_values: &'a SerializedValues,
     ) -> Result<Bytes, PartitionKeyError> {
         let mut buf = BytesMut::new();
 
         if self.metadata.pk_indexes.len() == 1 {
             if let Some(v) = bound_values
                 .iter()
-                .nth(self.metadata.pk_indexes[0] as usize)
+                .nth(self.metadata.pk_indexes[0].index as usize)
                 .ok_or_else(|| {
                     PartitionKeyError::NoPkIndexValue(
-                        self.metadata.pk_indexes[0],
+                        self.metadata.pk_indexes[0].index,
                         bound_values.len(),
                     )
                 })?
@@ -103,15 +103,29 @@ impl PreparedStatement {
         // We can't just sort them because the hash will break:
         // https://github.com/apache/cassandra/blob/caeecf6456b87886a79f47a2954788e6c856697c/doc/native_protocol_v4.spec#L673
 
-        let values: Vec<Option<&[u8]>> = bound_values.iter().collect();
-        for pk_index in &self.metadata.pk_indexes {
-            // Find value matching current pk_index
-            let next_val: &Option<&[u8]> = values
-                .get(*pk_index as usize)
-                .ok_or_else(|| PartitionKeyError::NoPkIndexValue(*pk_index, bound_values.len()))?;
+        let mut add_values_to_buffer = |pk_values: &mut [Option<&'a [u8]>]| {
+            let mut values_iter = bound_values.iter();
+            let mut offset = 0;
+            let mut buf_size = 0;
+            for pk_index in &self.metadata.pk_indexes {
+                let next_val = values_iter
+                    .nth((pk_index.index - offset) as usize)
+                    .ok_or_else(|| {
+                        PartitionKeyError::NoPkIndexValue(pk_index.index, bound_values.len())
+                    })?;
+                if let Some(v) = next_val {
+                    pk_values[pk_index.sequence as usize] = Some(v);
+                    buf_size += std::mem::size_of::<u16>() + v.len() + std::mem::size_of::<u8>()
+                }
+                offset = pk_index.index + 1;
+            }
+            buf.reserve(buf_size);
 
-            // Add value's bytes
-            if let Some(v) = next_val {
+            for v in pk_values
+                .iter()
+                .take(self.metadata.pk_indexes.len())
+                .flatten()
+            {
                 let v_len_u16: u16 = v
                     .len()
                     .try_into()
@@ -121,6 +135,13 @@ impl PreparedStatement {
                 buf.extend_from_slice(v);
                 buf.put_u8(0);
             }
+            Ok(())
+        };
+        const ON_STACK_LIMIT: usize = 8;
+        if self.metadata.pk_indexes.len() > ON_STACK_LIMIT {
+            add_values_to_buffer(&mut vec![None; self.metadata.pk_indexes.len()])?;
+        } else {
+            add_values_to_buffer(&mut [None; ON_STACK_LIMIT])?;
         }
 
         Ok(buf.into())
