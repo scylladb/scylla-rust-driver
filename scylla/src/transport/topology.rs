@@ -5,6 +5,7 @@ use crate::transport::connection::{Connection, ConnectionConfig};
 use crate::transport::connection_pool::{NodeConnectionPool, PoolConfig, PoolSize};
 use crate::transport::errors::{DbError, QueryError};
 use crate::transport::session::IntoTypedRows;
+use crate::utils::parse::{ParseErrorCause, ParseResult, ParserState};
 
 use rand::seq::SliceRandom;
 use rand::{thread_rng, Rng};
@@ -136,7 +137,11 @@ pub enum Strategy {
 }
 
 #[derive(Clone, Debug)]
-struct InvalidCqlType(String);
+struct InvalidCqlType {
+    type_: String,
+    position: usize,
+    reason: String,
+}
 
 impl fmt::Display for InvalidCqlType {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
@@ -147,7 +152,10 @@ impl fmt::Display for InvalidCqlType {
 impl From<InvalidCqlType> for QueryError {
     fn from(e: InvalidCqlType) -> Self {
         // FIXME: The correct error type is QueryError:ProtocolError but at the moment it accepts only &'static str
-        QueryError::InvalidMessage(format!("type {} is not implemented", e.0))
+        QueryError::InvalidMessage(format!(
+            "error parsing type \"{:?}\" at position {}: {}",
+            e.type_, e.position, e.reason
+        ))
     }
 }
 
@@ -616,57 +624,118 @@ async fn query_tables_schema(
 }
 
 fn map_string_to_cql_type(type_: &str) -> Result<CqlType, InvalidCqlType> {
-    use CollectionType::*;
-
-    let frozen = type_.starts_with("frozen<");
-
-    let type_ = if frozen {
-        let langle_position = type_.find('<').unwrap();
-        &type_[langle_position + 1..type_.len() - 1]
-    } else {
-        type_
-    };
-
-    if type_.ends_with('>') && type_.contains('<') {
-        let langle_position = type_.find('<').unwrap();
-        let inner_type = &type_[langle_position + 1..type_.len() - 1];
-        let outer_type = &type_[..langle_position];
-        let type_ = match outer_type {
-            "map" | "tuple" => {
-                let types = inner_type.split(", ").collect::<Vec<_>>();
-                if outer_type == "map" {
-                    if types.len() != 2 {
-                        return Err(InvalidCqlType(type_.to_string()));
-                    }
-                    Map(
-                        Box::new(map_string_to_cql_type(types[0])?),
-                        Box::new(map_string_to_cql_type(types[1])?),
-                    )
-                } else {
-                    return Ok(CqlType::Tuple(
-                        types
-                            .iter()
-                            .map(|type_| map_string_to_cql_type(type_))
-                            .collect::<Result<Vec<_>, _>>()?,
-                    ));
-                }
-            }
-            "set" => Set(Box::new(map_string_to_cql_type(inner_type)?)),
-            "list" => List(Box::new(map_string_to_cql_type(inner_type)?)),
-            _ => {
-                return Err(InvalidCqlType(type_.to_string()));
-            }
-        };
-        return Ok(CqlType::Collection { frozen, type_ });
+    match parse_cql_type(ParserState::new(type_)) {
+        Err(err) => Err(InvalidCqlType {
+            type_: type_.to_string(),
+            position: err.calculate_position(type_).unwrap_or(0),
+            reason: err.get_cause().to_string(),
+        }),
+        Ok((_, p)) if !p.is_at_eof() => Err(InvalidCqlType {
+            type_: type_.to_string(),
+            position: p.calculate_position(type_).unwrap_or(0),
+            reason: "leftover characters".to_string(),
+        }),
+        Ok((typ, _)) => Ok(typ),
     }
+}
 
-    Ok(match NativeType::from_str(type_) {
-        Ok(type_) => CqlType::Native(type_),
-        _ => CqlType::UserDefinedType {
-            frozen,
-            name: type_.to_string(),
+fn parse_cql_type(p: ParserState) -> ParseResult<(CqlType, ParserState)> {
+    if let Ok(p) = p.accept("frozen<") {
+        let (inner_type, p) = parse_cql_type(p)?;
+        let p = p.accept(">")?;
+
+        let frozen_type = freeze_type(inner_type);
+
+        Ok((frozen_type, p))
+    } else if let Ok(p) = p.accept("map<") {
+        let (key, p) = parse_cql_type(p)?;
+        let p = p.accept(",")?.skip_white();
+        let (value, p) = parse_cql_type(p)?;
+        let p = p.accept(">")?;
+
+        let typ = CqlType::Collection {
+            frozen: false,
+            type_: CollectionType::Map(Box::new(key), Box::new(value)),
+        };
+
+        Ok((typ, p))
+    } else if let Ok(p) = p.accept("list<") {
+        let (inner_type, p) = parse_cql_type(p)?;
+        let p = p.accept(">")?;
+
+        let typ = CqlType::Collection {
+            frozen: false,
+            type_: CollectionType::List(Box::new(inner_type)),
+        };
+
+        Ok((typ, p))
+    } else if let Ok(p) = p.accept("set<") {
+        let (inner_type, p) = parse_cql_type(p)?;
+        let p = p.accept(">")?;
+
+        let typ = CqlType::Collection {
+            frozen: false,
+            type_: CollectionType::Set(Box::new(inner_type)),
+        };
+
+        Ok((typ, p))
+    } else if let Ok(p) = p.accept("tuple<") {
+        let mut types = Vec::new();
+        let p = p.parse_while(|p| {
+            let (inner_type, p) = parse_cql_type(p)?;
+            types.push(inner_type);
+
+            if let Ok(p) = p.accept(",") {
+                let p = p.skip_white();
+                Ok((true, p))
+            } else if let Ok(p) = p.accept(">") {
+                Ok((false, p))
+            } else {
+                Err(p.error(ParseErrorCause::Other("expected \",\" or \">\"")))
+            }
+        })?;
+
+        Ok((CqlType::Tuple(types), p))
+    } else if let Ok((typ, p)) = parse_native_type(p) {
+        Ok((CqlType::Native(typ), p))
+    } else if let Ok((name, p)) = parse_user_defined_type(p) {
+        let typ = CqlType::UserDefinedType {
+            frozen: false,
+            name: name.to_string(),
+        };
+        Ok((typ, p))
+    } else {
+        Err(p.error(ParseErrorCause::Other("invalid cql type")))
+    }
+}
+
+fn parse_native_type(p: ParserState) -> ParseResult<(NativeType, ParserState)> {
+    let (tok, p) = p.take_while(|c| c.is_alphanumeric() || c == '_');
+    let typ = NativeType::from_str(tok)
+        .map_err(|_| p.error(ParseErrorCause::Other("invalid native type")))?;
+    Ok((typ, p))
+}
+
+fn parse_user_defined_type(p: ParserState) -> ParseResult<(&str, ParserState)> {
+    // Java identifiers allow letters, underscores and dollar signs at any position
+    // and digits in non-first position. Dots are accepted here because the names
+    // are usually fully qualified.
+    let (tok, p) = p.take_while(|c| c.is_alphanumeric() || c == '.' || c == '_' || c == '$');
+    if tok.is_empty() {
+        return Err(p.error(ParseErrorCause::Other("invalid user defined type")));
+    }
+    Ok((tok, p))
+}
+
+fn freeze_type(type_: CqlType) -> CqlType {
+    match type_ {
+        CqlType::Collection { type_, .. } => CqlType::Collection {
+            frozen: true,
+            type_,
         },
-    })
+        CqlType::UserDefinedType { name, .. } => CqlType::UserDefinedType { frozen: true, name },
+        other => other,
+    }
 }
 
 async fn query_table_partitioners(
@@ -748,4 +817,169 @@ fn strategy_from_string_map(
     };
 
     Ok(strategy)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_cql_type_parsing() {
+        let test_cases = [
+            ("bigint", CqlType::Native(NativeType::BigInt)),
+            (
+                "list<int>",
+                CqlType::Collection {
+                    frozen: false,
+                    type_: CollectionType::List(Box::new(CqlType::Native(NativeType::Int))),
+                },
+            ),
+            (
+                "set<ascii>",
+                CqlType::Collection {
+                    frozen: false,
+                    type_: CollectionType::Set(Box::new(CqlType::Native(NativeType::Ascii))),
+                },
+            ),
+            (
+                "map<blob, boolean>",
+                CqlType::Collection {
+                    frozen: false,
+                    type_: CollectionType::Map(
+                        Box::new(CqlType::Native(NativeType::Blob)),
+                        Box::new(CqlType::Native(NativeType::Boolean)),
+                    ),
+                },
+            ),
+            (
+                "frozen<map<text, text>>",
+                CqlType::Collection {
+                    frozen: true,
+                    type_: CollectionType::Map(
+                        Box::new(CqlType::Native(NativeType::Text)),
+                        Box::new(CqlType::Native(NativeType::Text)),
+                    ),
+                },
+            ),
+            (
+                "tuple<tinyint, smallint, int, bigint, varint>",
+                CqlType::Tuple(vec![
+                    CqlType::Native(NativeType::TinyInt),
+                    CqlType::Native(NativeType::SmallInt),
+                    CqlType::Native(NativeType::Int),
+                    CqlType::Native(NativeType::BigInt),
+                    CqlType::Native(NativeType::Varint),
+                ]),
+            ),
+            (
+                "com.scylladb.types.AwesomeType",
+                CqlType::UserDefinedType {
+                    frozen: false,
+                    name: "com.scylladb.types.AwesomeType".to_string(),
+                },
+            ),
+            (
+                "frozen<ks.my_udt>",
+                CqlType::UserDefinedType {
+                    frozen: true,
+                    name: "ks.my_udt".to_string(),
+                },
+            ),
+            (
+                "map<text, frozen<map<text, text>>>",
+                CqlType::Collection {
+                    frozen: false,
+                    type_: CollectionType::Map(
+                        Box::new(CqlType::Native(NativeType::Text)),
+                        Box::new(CqlType::Collection {
+                            frozen: true,
+                            type_: CollectionType::Map(
+                                Box::new(CqlType::Native(NativeType::Text)),
+                                Box::new(CqlType::Native(NativeType::Text)),
+                            ),
+                        }),
+                    ),
+                },
+            ),
+            (
+                "map<\
+                    frozen<list<int>>, \
+                    set<\
+                        list<\
+                            tuple<\
+                                list<list<text>>, \
+                                map<text, map<ks.my_type, blob>>, \
+                                frozen<set<set<int>>>\
+                            >\
+                        >\
+                    >\
+                >",
+                // map<...>
+                CqlType::Collection {
+                    frozen: false,
+                    type_: CollectionType::Map(
+                        Box::new(CqlType::Collection {
+                            // frozen<list<int>>
+                            frozen: true,
+                            type_: CollectionType::List(Box::new(CqlType::Native(NativeType::Int))),
+                        }),
+                        Box::new(CqlType::Collection {
+                            // set<...>
+                            frozen: false,
+                            type_: CollectionType::Set(Box::new(CqlType::Collection {
+                                // list<tuple<...>>
+                                frozen: false,
+                                type_: CollectionType::List(Box::new(CqlType::Tuple(vec![
+                                    CqlType::Collection {
+                                        // list<list<text>>
+                                        frozen: false,
+                                        type_: CollectionType::List(Box::new(
+                                            CqlType::Collection {
+                                                frozen: false,
+                                                type_: CollectionType::List(Box::new(
+                                                    CqlType::Native(NativeType::Text),
+                                                )),
+                                            },
+                                        )),
+                                    },
+                                    CqlType::Collection {
+                                        // map<text, map<ks.my_type, blob>>
+                                        frozen: false,
+                                        type_: CollectionType::Map(
+                                            Box::new(CqlType::Native(NativeType::Text)),
+                                            Box::new(CqlType::Collection {
+                                                frozen: false,
+                                                type_: CollectionType::Map(
+                                                    Box::new(CqlType::UserDefinedType {
+                                                        frozen: false,
+                                                        name: "ks.my_type".to_string(),
+                                                    }),
+                                                    Box::new(CqlType::Native(NativeType::Blob)),
+                                                ),
+                                            }),
+                                        ),
+                                    },
+                                    CqlType::Collection {
+                                        // frozen<set<set<int>>>
+                                        frozen: true,
+                                        type_: CollectionType::Set(Box::new(CqlType::Collection {
+                                            frozen: false,
+                                            type_: CollectionType::Set(Box::new(CqlType::Native(
+                                                NativeType::Int,
+                                            ))),
+                                        })),
+                                    },
+                                ]))),
+                            })),
+                        }),
+                    ),
+                },
+            ),
+        ];
+
+        for (s, expected) in test_cases {
+            let parsed = map_string_to_cql_type(s).unwrap();
+            assert_eq!(parsed, expected);
+        }
+    }
 }
