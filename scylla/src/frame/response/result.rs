@@ -342,15 +342,15 @@ pub struct ResultMetadata {
 }
 
 #[derive(Debug, Copy, Clone)]
-pub struct PKIndex {
-    pub index: u16,
-    pub sequence: u16,
+pub struct PartitionKeyIndex {
+    pub index: u16,    // index in the serialized values
+    pub sequence: u16, // sequence number in partition key
 }
 
 #[derive(Debug, Clone)]
 pub struct PreparedMetadata {
     pub col_count: usize,
-    pub pk_indexes: Vec<PKIndex>,
+    pub pk_indexes: Vec<PartitionKeyIndex>,
     pub col_specs: Vec<ColumnSpec>,
 }
 
@@ -527,11 +527,10 @@ fn deser_prepared_metadata(buf: &mut &[u8]) -> StdResult<PreparedMetadata, Parse
     let col_count = types::read_int_length(buf)? as usize;
 
     let pk_count: usize = types::read_int(buf)?.try_into()?;
-    assert!(pk_count <= u16::MAX as usize);
 
     let mut pk_indexes = Vec::with_capacity(pk_count);
     for i in 0..pk_count {
-        pk_indexes.push(PKIndex {
+        pk_indexes.push(PartitionKeyIndex {
             index: types::read_short(buf)? as u16,
             sequence: i as u16,
         });

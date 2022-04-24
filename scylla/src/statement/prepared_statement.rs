@@ -1,4 +1,5 @@
 use bytes::{BufMut, Bytes, BytesMut};
+use smallvec::{smallvec, SmallVec};
 use std::convert::TryInto;
 use thiserror::Error;
 use uuid::Uuid;
@@ -71,12 +72,13 @@ impl PreparedStatement {
         &self.prepare_tracing_ids
     }
 
-    /// Computes the partition key of the target table from given values
+    /// Computes the partition key of the target table from given values —
+    /// it assumes that all partition key columns are passed in values.
     /// Partition keys have a specific serialization rules.
     /// Ref: https://github.com/scylladb/scylla/blob/40adf38915b6d8f5314c621a94d694d172360833/compound_compat.hh#L33-L47
-    pub fn compute_partition_key<'a>(
+    pub fn compute_partition_key(
         &self,
-        bound_values: &'a SerializedValues,
+        bound_values: &SerializedValues,
     ) -> Result<Bytes, PartitionKeyError> {
         let mut buf = BytesMut::new();
 
@@ -95,55 +97,36 @@ impl PreparedStatement {
             }
             return Ok(buf.into());
         }
-        // TODO: consider what happens if a prepared statement is of type (?, something, ?),
-        // where all three parameters form a partition key. The middle one is not available
-        // in bound values.
-
-        // TODO: Optimize - maybe we could check if pk_indexes are sorted and do an allocation-free two-pointer sweep algorithm then?
-        // We can't just sort them because the hash will break:
-        // https://github.com/apache/cassandra/blob/caeecf6456b87886a79f47a2954788e6c856697c/doc/native_protocol_v4.spec#L673
-
-        let mut add_values_to_buffer = |pk_values: &mut [Option<&'a [u8]>]| {
-            let mut values_iter = bound_values.iter();
-            let mut offset = 0;
-            let mut buf_size = 0;
-            for pk_index in &self.metadata.pk_indexes {
-                let next_val = values_iter
-                    .nth((pk_index.index - offset) as usize)
-                    .ok_or_else(|| {
-                        PartitionKeyError::NoPkIndexValue(pk_index.index, bound_values.len())
-                    })?;
-                if let Some(v) = next_val {
-                    pk_values[pk_index.sequence as usize] = Some(v);
-                    buf_size += std::mem::size_of::<u16>() + v.len() + std::mem::size_of::<u8>()
-                }
-                offset = pk_index.index + 1;
+        let mut pk_values: SmallVec<[_; 8]> = smallvec![None; self.metadata.pk_indexes.len()];
+        let mut values_iter = bound_values.iter();
+        let mut offset = 0;
+        let mut buf_size = 0;
+        for pk_index in &self.metadata.pk_indexes {
+            // Find value matching current pk_index
+            let next_val = values_iter
+                .nth((pk_index.index - offset) as usize)
+                .ok_or_else(|| {
+                    PartitionKeyError::NoPkIndexValue(pk_index.index, bound_values.len())
+                })?;
+            // Add it in sequence order to pk_values
+            if let Some(v) = next_val {
+                pk_values[pk_index.sequence as usize] = Some(v);
+                buf_size += std::mem::size_of::<u16>() + v.len() + std::mem::size_of::<u8>();
             }
-            buf.reserve(buf_size);
-
-            for v in pk_values
-                .iter()
-                .take(self.metadata.pk_indexes.len())
-                .flatten()
-            {
-                let v_len_u16: u16 = v
-                    .len()
-                    .try_into()
-                    .map_err(|_| PartitionKeyError::ValueTooLong(v.len()))?;
-
-                buf.put_u16(v_len_u16);
-                buf.extend_from_slice(v);
-                buf.put_u8(0);
-            }
-            Ok(())
-        };
-        const ON_STACK_LIMIT: usize = 8;
-        if self.metadata.pk_indexes.len() > ON_STACK_LIMIT {
-            add_values_to_buffer(&mut vec![None; self.metadata.pk_indexes.len()])?;
-        } else {
-            add_values_to_buffer(&mut [None; ON_STACK_LIMIT])?;
+            offset = pk_index.index + 1;
         }
+        // Add values' bytes
+        buf.reserve(buf_size);
+        for v in pk_values.iter().flatten() {
+            let v_len_u16: u16 = v
+                .len()
+                .try_into()
+                .map_err(|_| PartitionKeyError::ValueTooLong(v.len()))?;
 
+            buf.put_u16(v_len_u16);
+            buf.extend_from_slice(v);
+            buf.put_u8(0);
+        }
         Ok(buf.into())
     }
 
