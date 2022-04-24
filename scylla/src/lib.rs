@@ -100,6 +100,8 @@ pub mod statement;
 pub mod tracing;
 pub mod transport;
 
+pub(crate) mod utils;
+
 pub use macros::*;
 pub use statement::batch;
 pub use statement::prepared_statement;
