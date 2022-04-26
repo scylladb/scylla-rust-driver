@@ -1,6 +1,5 @@
 //! Load balancing configurations\
 //! `Session` can use any load balancing policy which implements the `LoadBalancingPolicy` trait\
-//! Policies which implement the `ChildLoadBalancingPolicy` can be wrapped in some other policies\
 //! See [the book](https://rust-driver.docs.scylladb.com/stable/load-balancing/load-balancing.html) for more information
 
 use super::{cluster::ClusterData, node::Node};
@@ -35,14 +34,4 @@ pub trait LoadBalancingPolicy: Send + Sync + std::fmt::Debug {
 
     /// Returns name of load balancing policy
     fn name(&self) -> String;
-}
-
-/// This trait is used to apply policy to plan made by parent policy.
-///
-/// For example, this enables RoundRobinPolicy to process plan made by TokenAwarePolicy.
-pub trait ChildLoadBalancingPolicy: LoadBalancingPolicy {
-    fn apply_child_policy(
-        &self,
-        plan: Vec<Arc<Node>>,
-    ) -> Box<dyn Iterator<Item = Arc<Node>> + Send + Sync>;
 }
