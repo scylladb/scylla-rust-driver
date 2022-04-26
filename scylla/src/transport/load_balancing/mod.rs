@@ -29,13 +29,3 @@ pub trait LoadBalancingPolicy: Send + Sync {
     /// Returns name of load balancing policy
     fn name(&self) -> String;
 }
-
-/// This trait is used to apply policy to plan made by parent policy.
-///
-/// For example, this enables RoundRobinPolicy to process plan made by TokenAwarePolicy.
-pub trait ChildLoadBalancingPolicy: LoadBalancingPolicy {
-    fn apply_child_policy(
-        &self,
-        plan: Vec<Arc<Node>>,
-    ) -> Box<dyn Iterator<Item = Arc<Node>> + Send + Sync>;
-}
