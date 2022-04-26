@@ -12,9 +12,9 @@ mod default;
 
 pub use default::DefaultPolicy;
 
-/// Represents info about statement that can be used by load balancing policies.
+/// Represents info about a query that can be used by load balancing policies.
 #[derive(Default)]
-pub struct Statement<'a> {
+pub struct QueryInfo<'a> {
     pub token: Option<Token>,
     pub keyspace: Option<&'a str>,
 }
@@ -24,5 +24,5 @@ pub type Plan<'a> = Box<dyn Iterator<Item = Arc<Node>> + Send + Sync + 'a>;
 /// Policy that decides which nodes to contact for each query
 pub trait LoadBalancingPolicy: Send + Sync {
     /// It is used for each query to find which nodes to query first
-    fn plan<'a>(&self, statement: &Statement, cluster: &'a ClusterData) -> Plan<'a>;
+    fn plan<'a>(&self, info: &QueryInfo, cluster: &'a ClusterData) -> Plan<'a>;
 }

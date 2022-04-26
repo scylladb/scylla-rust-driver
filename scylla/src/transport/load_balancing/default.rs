@@ -1,4 +1,4 @@
-use super::{LoadBalancingPolicy, Plan, Statement};
+use super::{LoadBalancingPolicy, Plan, QueryInfo};
 use crate::transport::cluster::ClusterData;
 
 pub struct DefaultPolicy {}
@@ -10,7 +10,7 @@ impl DefaultPolicy {
 }
 
 impl LoadBalancingPolicy for DefaultPolicy {
-    fn plan<'a>(&self, _statement: &Statement, _cluster: &'a ClusterData) -> Plan<'a> {
+    fn plan<'a>(&self, _info: &QueryInfo, _cluster: &'a ClusterData) -> Plan<'a> {
         todo!();
     }
 }

@@ -29,10 +29,10 @@ use crate::statement::Consistency;
 use crate::statement::{prepared_statement::PreparedStatement, query::Query};
 use crate::transport::cluster::ClusterData;
 use crate::transport::connection::{Connection, QueryResponse};
-use crate::transport::load_balancing::{LoadBalancingPolicy, Statement};
+use crate::transport::load_balancing::{self, LoadBalancingPolicy};
 use crate::transport::metrics::Metrics;
 use crate::transport::node::Node;
-use crate::transport::retry_policy::{QueryInfo, RetryDecision, RetrySession};
+use crate::transport::retry_policy::{self, RetryDecision, RetrySession};
 use tracing::{trace, trace_span, Instrument};
 use uuid::Uuid;
 
@@ -153,7 +153,7 @@ impl RowIterator {
                 sender,
                 choose_connection,
                 page_query,
-                statement_info: Statement::default(),
+                query_info: load_balancing::QueryInfo::default(),
                 query_is_idempotent: query.config.is_idempotent,
                 query_consistency: consistency,
                 retry_session,
@@ -193,7 +193,7 @@ impl RowIterator {
             .config
             .determine_consistency(config.default_consistency);
 
-        let statement_info = Statement {
+        let statement_info = load_balancing::QueryInfo {
             token: Some(config.token),
             keyspace: None,
         };
@@ -216,7 +216,7 @@ impl RowIterator {
                 sender,
                 choose_connection,
                 page_query,
-                statement_info,
+                query_info: statement_info,
                 query_is_idempotent: config.prepared.config.is_idempotent,
                 query_consistency: consistency,
                 retry_session: config.retry_session,
@@ -272,7 +272,7 @@ struct RowIteratorWorker<'a, ConnFunc, QueryFunc> {
     // AsyncFn(Arc<Connection>, Option<Bytes>) -> Result<QueryResponse, QueryError>
     page_query: QueryFunc,
 
-    statement_info: Statement<'a>,
+    query_info: load_balancing::QueryInfo<'a>,
     query_is_idempotent: bool,
     query_consistency: Consistency,
 
@@ -291,7 +291,7 @@ where
     QueryFut: Future<Output = Result<QueryResponse, QueryError>>,
 {
     async fn work(mut self, cluster_data: Arc<ClusterData>) {
-        let query_plan = self.load_balancer.plan(&self.statement_info, &cluster_data);
+        let query_plan = self.load_balancer.plan(&self.query_info, &cluster_data);
 
         let mut last_error: QueryError =
             QueryError::ProtocolError("Empty query plan - driver bug!");
@@ -339,7 +339,7 @@ where
                 };
 
                 // Use retry policy to decide what to do next
-                let query_info = QueryInfo {
+                let query_info = retry_policy::QueryInfo {
                     error: &last_error,
                     is_idempotent: self.query_is_idempotent,
                     consistency: LegacyConsistency::Regular(self.query_consistency),

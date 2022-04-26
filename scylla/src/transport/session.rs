@@ -31,7 +31,7 @@ use crate::transport::connection::{
 };
 use crate::transport::connection_pool::PoolConfig;
 use crate::transport::iterator::{PreparedIteratorConfig, RowIterator};
-use crate::transport::load_balancing::{DefaultPolicy, LoadBalancingPolicy, Statement};
+use crate::transport::load_balancing::{self, DefaultPolicy, LoadBalancingPolicy};
 use crate::transport::metrics::Metrics;
 use crate::transport::node::Node;
 use crate::transport::partitioner::{
@@ -39,7 +39,7 @@ use crate::transport::partitioner::{
 };
 use crate::transport::query_result::QueryResult;
 use crate::transport::retry_policy::{
-    DefaultRetryPolicy, QueryInfo, RetryDecision, RetryPolicy, RetrySession,
+    self, DefaultRetryPolicy, RetryDecision, RetryPolicy, RetrySession,
 };
 use crate::transport::speculative_execution;
 use crate::transport::speculative_execution::SpeculativeExecutionPolicy;
@@ -425,7 +425,7 @@ impl Session {
         let span = trace_span!("Request", query = query.contents.as_str());
         let response = self
             .run_query(
-                Statement::default(),
+                load_balancing::QueryInfo::default(),
                 &query.config,
                 |node: Arc<Node>| async move { node.random_connection().await },
                 |connection: Arc<Connection>| {
@@ -683,7 +683,7 @@ impl Session {
 
         let token = self.calculate_token(prepared, &serialized_values)?;
 
-        let statement_info = Statement {
+        let query_info = load_balancing::QueryInfo {
             token: Some(token),
             keyspace: prepared.get_keyspace_name(),
         };
@@ -694,7 +694,7 @@ impl Session {
         );
         let response = self
             .run_query(
-                statement_info,
+                query_info,
                 &prepared.config,
                 |node: Arc<Node>| async move { node.connection_for_token(token).await },
                 |connection: Arc<Connection>| async move {
@@ -832,7 +832,7 @@ impl Session {
         let values_ref = &values;
 
         self.run_query(
-            Statement::default(),
+            load_balancing::QueryInfo::default(),
             &batch.config,
             |node: Arc<Node>| async move { node.random_connection().await },
             |connection: Arc<Connection>| async move { connection.batch(batch, values_ref).await },
@@ -1033,7 +1033,7 @@ impl Session {
     // maybe once async closures get stabilized this can be fixed
     async fn run_query<'a, ConnFut, QueryFut, ResT>(
         &'a self,
-        statement_info: Statement<'a>,
+        query_info: load_balancing::QueryInfo<'a>,
         statement_config: &StatementConfig,
         choose_connection: impl Fn(Arc<Node>) -> ConnFut,
         do_query: impl Fn(Arc<Connection>) -> QueryFut,
@@ -1043,7 +1043,7 @@ impl Session {
         QueryFut: Future<Output = Result<ResT, QueryError>>,
     {
         let cluster_data = self.cluster.get_data();
-        let query_plan = self.load_balancer.plan(&statement_info, &cluster_data);
+        let query_plan = self.load_balancer.plan(&query_info, &cluster_data);
 
         // If a speculative execution policy is used to run query, query_plan has to be shared
         // between different async functions. This struct helps to wrap query_plan in mutex so it
@@ -1188,7 +1188,7 @@ impl Session {
                 };
 
                 // Use retry policy to decide what to do next
-                let query_info = QueryInfo {
+                let query_info = retry_policy::QueryInfo {
                     error: last_error.as_ref().unwrap(),
                     is_idempotent,
                     consistency: LegacyConsistency::Regular(
@@ -1241,7 +1241,7 @@ impl Session {
     where
         QueryFut: Future<Output = Result<ResT, QueryError>>,
     {
-        let info = Statement::default();
+        let info = load_balancing::QueryInfo::default();
         let config = StatementConfig {
             is_idempotent: true,
             serial_consistency: Some(SerialConsistency::LocalSerial),

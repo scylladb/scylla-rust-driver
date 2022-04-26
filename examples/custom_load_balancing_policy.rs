@@ -1,6 +1,6 @@
 use anyhow::Result;
 use scylla::{
-    load_balancing::{LoadBalancingPolicy, Statement},
+    load_balancing::{LoadBalancingPolicy, QueryInfo},
     transport::{ClusterData, Node},
     Session, SessionBuilder,
 };
@@ -14,7 +14,7 @@ struct CustomLoadBalancingPolicy {
 impl LoadBalancingPolicy for CustomLoadBalancingPolicy {
     fn plan<'a>(
         &self,
-        _statement: &Statement,
+        _statement: &QueryInfo,
         cluster: &'a ClusterData,
     ) -> Box<dyn Iterator<Item = Arc<Node>> + Send + Sync + 'a> {
         let fav_dc_info = cluster
