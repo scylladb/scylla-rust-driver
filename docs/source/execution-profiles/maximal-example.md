@@ -10,7 +10,7 @@ use scylla::query::Query;
 use scylla::speculative_execution::SimpleSpeculativeExecutionPolicy;
 use scylla::statement::{Consistency, SerialConsistency};
 use scylla::transport::ExecutionProfile;
-use scylla::transport::load_balancing::{DcAwareRoundRobinPolicy, TokenAwarePolicy};
+use scylla::transport::load_balancing::DefaultPolicy;
 use scylla::transport::retry_policy::FallthroughRetryPolicy;
 use std::{sync::Arc, time::Duration};
 
@@ -19,15 +19,7 @@ let profile = ExecutionProfile::builder()
     .serial_consistency(Some(SerialConsistency::Serial))
     .request_timeout(Some(Duration::from_secs(30)))
     .retry_policy(Box::new(FallthroughRetryPolicy::new()))
-    .load_balancing_policy(
-        Arc::new(
-            TokenAwarePolicy::new(
-                Box::new(
-                    DcAwareRoundRobinPolicy::new("us_east".to_string())
-                )
-            )
-        )
-    )
+    .load_balancing_policy(Arc::new(DefaultPolicy::default()))
     .speculative_execution_policy(
         Some(
             Arc::new(
