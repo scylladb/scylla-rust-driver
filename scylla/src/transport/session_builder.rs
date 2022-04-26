@@ -245,12 +245,12 @@ impl SessionBuilder {
     /// # Example
     /// ```
     /// # use scylla::{Session, SessionBuilder};
-    /// # use scylla::transport::load_balancing::RoundRobinPolicy;
+    /// # use scylla::transport::load_balancing::DefaultPolicy;
     /// # use std::sync::Arc;
     /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
     /// let session: Session = SessionBuilder::new()
     ///     .known_node("127.0.0.1:9042")
-    ///     .load_balancing(Arc::new(RoundRobinPolicy::new()))
+    ///     .load_balancing(Arc::new(DefaultPolicy::new()))
     ///     .build()
     ///     .await?;
     /// # Ok(())
@@ -512,11 +512,9 @@ impl Default for SessionBuilder {
 #[cfg(test)]
 mod tests {
     use super::SessionBuilder;
-    use crate::transport::load_balancing::RoundRobinPolicy;
     use crate::transport::session::KnownNode;
     use crate::transport::Compression;
     use std::net::{IpAddr, Ipv4Addr, SocketAddr};
-    use std::sync::Arc;
 
     #[test]
     fn default_session_builder() {
@@ -610,21 +608,6 @@ mod tests {
     }
 
     #[test]
-    fn load_balancing() {
-        let mut builder = SessionBuilder::new();
-        assert_eq!(
-            builder.config.load_balancing.name(),
-            "TokenAwarePolicy{child_policy: RoundRobinPolicy}".to_string()
-        );
-
-        builder = builder.load_balancing(Arc::new(RoundRobinPolicy::new()));
-        assert_eq!(
-            builder.config.load_balancing.name(),
-            "RoundRobinPolicy".to_string()
-        );
-    }
-
-    #[test]
     fn use_keyspace() {
         let mut builder = SessionBuilder::new();
         assert_eq!(builder.config.used_keyspace, None);
@@ -680,7 +663,6 @@ mod tests {
         builder = builder.known_nodes_addr(&[addr1, addr2]);
         builder = builder.compression(Some(Compression::Snappy));
         builder = builder.tcp_nodelay(true);
-        builder = builder.load_balancing(Arc::new(RoundRobinPolicy::new()));
         builder = builder.use_keyspace("ks_name", true);
         builder = builder.fetch_schema_metadata(false);
 
@@ -698,10 +680,6 @@ mod tests {
 
         assert_eq!(builder.config.compression, Some(Compression::Snappy));
         assert!(builder.config.tcp_nodelay);
-        assert_eq!(
-            builder.config.load_balancing.name(),
-            "RoundRobinPolicy".to_string()
-        );
 
         assert_eq!(builder.config.used_keyspace, Some("ks_name".to_string()));
 
