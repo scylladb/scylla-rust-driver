@@ -9,10 +9,12 @@ use crate::routing::Token;
 use std::{collections::hash_map::DefaultHasher, hash::Hasher, sync::Arc};
 
 mod dc_aware_round_robin;
+mod default;
 mod round_robin;
 mod token_aware;
 
 pub use dc_aware_round_robin::DcAwareRoundRobinPolicy;
+pub use default::DefaultPolicy;
 pub use round_robin::RoundRobinPolicy;
 pub use token_aware::TokenAwarePolicy;
 
