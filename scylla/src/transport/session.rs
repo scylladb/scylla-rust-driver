@@ -49,7 +49,7 @@ use crate::transport::connection::{Connection, ConnectionConfig, VerifiedKeyspac
 use crate::transport::connection_pool::PoolConfig;
 use crate::transport::host_filter::HostFilter;
 use crate::transport::iterator::{PreparedIteratorConfig, RowIterator};
-use crate::transport::load_balancing::{Statement, TokenAwarePolicy};
+use crate::transport::load_balancing::Statement;
 use crate::transport::metrics::Metrics;
 use crate::transport::node::Node;
 use crate::transport::query_result::QueryResult;
@@ -1352,7 +1352,8 @@ impl Session {
         let cluster_data = self.cluster.get_data();
         match statement.token {
             Some(token) => {
-                TokenAwarePolicy::replicas_for_token(&cluster_data, &token, statement.keyspace)
+                let cluster_data = self.cluster.get_data();
+                cluster_data.get_token_endpoints(statement.keyspace.unwrap_or(""), token)
             }
             None => cluster_data.get_nodes_info().to_owned(),
         }

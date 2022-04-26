@@ -262,12 +262,6 @@ impl Cluster {
 }
 
 impl ClusterData {
-    /// Returns an iterator to the sequence of ends of vnodes, starting at the vnode in which t
-    /// lies and going clockwise. Returned sequence has the same length as ring.
-    pub(crate) fn ring_range<'a>(&'a self, t: &Token) -> impl Iterator<Item = Arc<Node>> + 'a {
-        self.replica_locator().ring().ring_range(*t).cloned()
-    }
-
     // Updates information about rack count in each datacenter
     fn update_rack_count(datacenters: &mut HashMap<String, Datacenter>) {
         for datacenter in datacenters.values_mut() {
