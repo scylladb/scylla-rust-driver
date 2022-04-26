@@ -84,28 +84,40 @@ impl Cluster {
         pool_config: PoolConfig,
         fetch_schema_metadata: bool,
     ) -> Result<Cluster, QueryError> {
-        let cluster_data = Arc::new(ArcSwap::from(Arc::new(ClusterData {
-            known_peers: HashMap::new(),
-            ring: BTreeMap::new(),
-            keyspaces: HashMap::new(),
-            all_nodes: Vec::new(),
-            datacenters: HashMap::new(),
-        })));
-
         let (refresh_sender, refresh_receiver) = tokio::sync::mpsc::channel(32);
         let (use_keyspace_sender, use_keyspace_receiver) = tokio::sync::mpsc::channel(32);
         let (server_events_sender, server_events_receiver) = tokio::sync::mpsc::channel(32);
 
+        let mut metadata_reader = MetadataReader::new(
+            initial_peers,
+            pool_config.connection_config.clone(),
+            pool_config.keepalive_interval,
+            server_events_sender,
+            fetch_schema_metadata,
+        );
+
+        let metadata = match metadata_reader.read_metadata().await {
+            Ok(data) => data,
+            Err(err) => {
+                warn!(
+                    error = ?err,
+                    "Initial metadata read failed, proceeding with metadata \
+                    consisting only of the initial peer list and dummy tokens. \
+                    This might result in suboptimal performance and schema \
+                    information not being available."
+                );
+                Metadata::new_dummy(initial_peers)
+            }
+        };
+        let cluster_data = ClusterData::new(metadata, &pool_config, &HashMap::new(), &None);
+        cluster_data.wait_until_all_pools_are_initialized().await;
+        let cluster_data: Arc<ArcSwap<ClusterData>> =
+            Arc::new(ArcSwap::from(Arc::new(cluster_data)));
+
         let worker = ClusterWorker {
             cluster_data: cluster_data.clone(),
 
-            metadata_reader: MetadataReader::new(
-                initial_peers,
-                pool_config.connection_config.clone(),
-                pool_config.keepalive_interval,
-                server_events_sender,
-                fetch_schema_metadata,
-            ),
+            metadata_reader,
             pool_config,
 
             refresh_channel: refresh_receiver,
@@ -124,8 +136,6 @@ impl Cluster {
             use_keyspace_channel: use_keyspace_sender,
             _worker_handle: worker_handle,
         };
-
-        result.refresh_metadata().await?;
 
         Ok(result)
     }

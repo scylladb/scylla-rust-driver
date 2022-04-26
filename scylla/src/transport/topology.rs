@@ -159,6 +159,38 @@ impl From<InvalidCqlType> for QueryError {
     }
 }
 
+impl Metadata {
+    /// Creates new, dummy metadata from a given list of peers.
+    ///
+    /// It can be used as a replacement for real metadata when initial
+    /// metadata read fails.
+    pub fn new_dummy(initial_peers: &[SocketAddr]) -> Self {
+        let peers = initial_peers
+            .iter()
+            .enumerate()
+            .map(|(id, addr)| {
+                // Given N nodes, divide the ring into N roughly equal parts
+                // and assign them to each node.
+                let token = ((id as u128) << 64) / initial_peers.len() as u128;
+
+                Peer {
+                    address: *addr,
+                    tokens: vec![Token {
+                        value: token as i64,
+                    }],
+                    datacenter: None,
+                    rack: None,
+                }
+            })
+            .collect();
+
+        Metadata {
+            peers,
+            keyspaces: HashMap::new(),
+        }
+    }
+}
+
 impl MetadataReader {
     /// Creates new MetadataReader, which connects to known_peers in the background
     pub fn new(
