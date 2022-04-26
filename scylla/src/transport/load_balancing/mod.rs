@@ -25,7 +25,4 @@ pub type Plan<'a> = Box<dyn Iterator<Item = Arc<Node>> + Send + Sync + 'a>;
 pub trait LoadBalancingPolicy: Send + Sync {
     /// It is used for each query to find which nodes to query first
     fn plan<'a>(&self, statement: &Statement, cluster: &'a ClusterData) -> Plan<'a>;
-
-    /// Returns name of load balancing policy
-    fn name(&self) -> String;
 }

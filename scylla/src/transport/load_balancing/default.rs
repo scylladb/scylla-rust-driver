@@ -13,8 +13,4 @@ impl LoadBalancingPolicy for DefaultPolicy {
     fn plan<'a>(&self, _statement: &Statement, _cluster: &'a ClusterData) -> Plan<'a> {
         todo!();
     }
-
-    fn name(&self) -> String {
-        "DefaultPolicy".to_string()
-    }
 }
