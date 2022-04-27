@@ -15,7 +15,7 @@ tokio = {version = "1.1.0", features = ["full"]}
 tracing = "0.1.25"
 tracing-subscriber = "0.2.16"
 chrono = "0.4"
-uuid = "1.0.0"
+uuid = "1.0"
 tower = "0.4"
 
 [[example]]
