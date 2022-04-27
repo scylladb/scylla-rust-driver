@@ -10,7 +10,6 @@ use crate::transport::topology::{Keyspace, Metadata, MetadataReader};
 use arc_swap::ArcSwap;
 use futures::future::join_all;
 use futures::{future::RemoteHandle, FutureExt};
-use itertools::Itertools;
 use std::collections::{BTreeMap, HashMap};
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -31,18 +30,10 @@ pub struct Cluster {
 }
 
 #[derive(Clone)]
-pub struct Datacenter {
-    pub nodes: Vec<Arc<Node>>,
-    pub rack_count: usize,
-}
-
-#[derive(Clone)]
 pub struct ClusterData {
     pub(crate) known_peers: HashMap<SocketAddr, Arc<Node>>, // Invariant: nonempty after Cluster::new()
     pub(crate) ring: BTreeMap<Token, Arc<Node>>, // Invariant: nonempty after Cluster::new()
     pub(crate) keyspaces: HashMap<String, Keyspace>,
-    pub(crate) all_nodes: Vec<Arc<Node>>,
-    pub(crate) datacenters: HashMap<String, Datacenter>,
 }
 
 // Works in the background to keep the cluster updated
@@ -88,8 +79,6 @@ impl Cluster {
             known_peers: HashMap::new(),
             ring: BTreeMap::new(),
             keyspaces: HashMap::new(),
-            all_nodes: Vec::new(),
-            datacenters: HashMap::new(),
         })));
 
         let (refresh_sender, refresh_receiver) = tokio::sync::mpsc::channel(32);
@@ -194,20 +183,8 @@ impl Cluster {
 }
 
 impl ClusterData {
-    // Updates information about rack count in each datacenter
-    fn update_rack_count(datacenters: &mut HashMap<String, Datacenter>) {
-        for datacenter in datacenters.values_mut() {
-            datacenter.rack_count = datacenter
-                .nodes
-                .iter()
-                .filter_map(|node| node.rack.clone())
-                .unique()
-                .count();
-        }
-    }
-
     pub(crate) async fn wait_until_all_pools_are_initialized(&self) {
-        for node in self.all_nodes.iter() {
+        for node in self.known_peers.values() {
             node.wait_until_pool_initialized().await;
         }
     }
@@ -224,8 +201,6 @@ impl ClusterData {
         let mut new_known_peers: HashMap<SocketAddr, Arc<Node>> =
             HashMap::with_capacity(metadata.peers.len());
         let mut ring: BTreeMap<Token, Arc<Node>> = BTreeMap::new();
-        let mut datacenters: HashMap<String, Datacenter> = HashMap::new();
-        let mut all_nodes: Vec<Arc<Node>> = Vec::with_capacity(metadata.peers.len());
 
         for peer in metadata.peers {
             // Take existing Arc<Node> if possible, otherwise create new one
@@ -246,34 +221,15 @@ impl ClusterData {
 
             new_known_peers.insert(peer.address, node.clone());
 
-            if let Some(dc) = &node.datacenter {
-                match datacenters.get_mut(dc) {
-                    Some(v) => v.nodes.push(node.clone()),
-                    None => {
-                        let v = Datacenter {
-                            nodes: vec![node.clone()],
-                            rack_count: 0,
-                        };
-                        datacenters.insert(dc.clone(), v);
-                    }
-                }
-            }
-
             for token in peer.tokens {
                 ring.insert(token, node.clone());
             }
-
-            all_nodes.push(node);
         }
-
-        Self::update_rack_count(&mut datacenters);
 
         ClusterData {
             known_peers: new_known_peers,
             ring,
             keyspaces: metadata.keyspaces,
-            all_nodes,
-            datacenters,
         }
     }
 
@@ -284,20 +240,9 @@ impl ClusterData {
         &self.keyspaces
     }
 
-    /// Access datacenter details collected by the driver
-    /// Returned `HashMap` is indexed by names of datacenters
-    pub fn get_datacenters_info(&self) -> &HashMap<String, Datacenter> {
-        &self.datacenters
-    }
-
     /// Access ring details collected by the driver
     pub fn get_ring_info(&self) -> &BTreeMap<Token, Arc<Node>> {
         &self.ring
-    }
-
-    /// Access details about nodes known to the driver
-    pub fn get_nodes_info(&self) -> &Vec<Arc<Node>> {
-        &self.all_nodes
     }
 }
 
