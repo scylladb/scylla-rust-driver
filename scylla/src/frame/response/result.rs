@@ -341,10 +341,20 @@ pub struct ResultMetadata {
     pub col_specs: Vec<ColumnSpec>,
 }
 
+#[derive(Debug, Copy, Clone)]
+pub struct PartitionKeyIndex {
+    /// index in the serialized values
+    pub index: u16,
+    /// sequence number in partition key
+    pub sequence: u16,
+}
+
 #[derive(Debug, Clone)]
 pub struct PreparedMetadata {
     pub col_count: usize,
-    pub pk_indexes: Vec<u16>,
+    /// pk_indexes are sorted by `index` and can be reordered in partition key order
+    /// using `sequence` field
+    pub pk_indexes: Vec<PartitionKeyIndex>,
     pub col_specs: Vec<ColumnSpec>,
 }
 
@@ -523,9 +533,13 @@ fn deser_prepared_metadata(buf: &mut &[u8]) -> StdResult<PreparedMetadata, Parse
     let pk_count: usize = types::read_int(buf)?.try_into()?;
 
     let mut pk_indexes = Vec::with_capacity(pk_count);
-    for _ in 0..pk_count {
-        pk_indexes.push(types::read_short(buf)? as u16);
+    for i in 0..pk_count {
+        pk_indexes.push(PartitionKeyIndex {
+            index: types::read_short(buf)? as u16,
+            sequence: i as u16,
+        });
     }
+    pk_indexes.sort_unstable_by_key(|pki| pki.index);
 
     let global_table_spec = if global_tables_spec {
         Some(deser_table_spec(buf)?)
