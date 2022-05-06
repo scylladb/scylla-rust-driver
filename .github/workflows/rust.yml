@@ -8,6 +8,8 @@ on:
 
 env:
   CARGO_TERM_COLOR: always
+  RUSTFLAGS: -Dwarnings
+  rust_min: 1.59.0 # <- Update this when bumping up MSRV
 
 jobs:
   build:
@@ -25,10 +27,27 @@ jobs:
     - name: Format check
       run: cargo fmt --verbose --all -- --check
     - name: Clippy check
-      run: cargo clippy --verbose --examples --tests -- -D warnings
+      run: cargo clippy --verbose --examples --tests
     - name: Cargo check without features
       run: cargo check --manifest-path "scylla/Cargo.toml" --features ""
     - name: Build
       run: cargo build --verbose --examples
     - name: Run tests
       run: cargo test --verbose
+
+  # Tests that our current minimum supported rust version compiles everything sucessfully
+  min_rust:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v2
+    - name: Install Rust ${{ env.rust_min }}
+      uses: actions-rs/toolchain@v1
+      with:
+        toolchain: ${{ env.rust_min }}
+        override: true
+    - name: Print Rust version
+      run: rustc --version
+    - name: MSRV cargo check with features
+      run: cargo check --verbose --examples --tests
+    - name: MSRV cargo check without features
+      run: cargo check --verbose --manifest-path "scylla/Cargo.toml"
