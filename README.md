@@ -3,6 +3,7 @@
 # ScyllaDB Rust Driver
 
 [![Crates.io](https://img.shields.io/crates/v/scylla.svg)](https://crates.io/crates/scylla) [![docs.rs](https://docs.rs/scylla/badge.svg)](https://docs.rs/scylla)
+[![minimum rustc version](https://img.shields.io/badge/rustc-1.59-orange.svg)](https://crates.io/crates/scylla)
 
 This is a client-side driver for [ScyllaDB] written in pure Rust with a fully async API using [Tokio].
 Although optimized for ScyllaDB, the driver is also compatible with [Apache Cassandra®].
@@ -62,6 +63,9 @@ Ongoing efforts:
 ## Getting Help
 
 Please join the `#rust-driver` channel on [ScyllaDB Slack] to discuss any issues or questions you might have.
+
+## Supported Rust Versions
+Our driver's minimum supported Rust version (MSRV) is 1.59.0. Any changes will be explicitly published and will only happen during major releases.
 
 ## Reference Documentation
 
