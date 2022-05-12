@@ -2,6 +2,7 @@
 //! It manages all connections to the cluster and allows to perform queries.
 
 use crate::frame::types::LegacyConsistency;
+use crate::load_balancing::Event;
 use bytes::Bytes;
 use futures::future::join_all;
 use futures::future::try_join_all;
@@ -14,6 +15,7 @@ use tokio::time::timeout;
 use tracing::{debug, trace, trace_span, Instrument};
 use uuid::Uuid;
 
+use super::cluster::EventConsumer;
 use super::connection::QueryResponse;
 use super::errors::{BadQuery, NewSessionError, QueryError};
 use crate::cql_to_rust::FromRow;
@@ -278,6 +280,18 @@ impl<RowT: FromRow> Iterator for TypedRowIter<RowT> {
     }
 }
 
+/// Trait upcasting coercion is experimental, this wrapper is a workaround of this problem
+/// (it allows using `LoadBalancingPolicy` as an `EventConsumer`).
+struct EventConsumerUpcastWrapper {
+    policy: Arc<dyn LoadBalancingPolicy>,
+}
+
+impl EventConsumer for EventConsumerUpcastWrapper {
+    fn consume(&self, events: &[Event], cluster: &ClusterData) {
+        self.policy.consume(events, cluster)
+    }
+}
+
 /// Represents a CQL session, which can be used to communicate
 /// with the database
 impl Session {
@@ -329,6 +343,9 @@ impl Session {
 
         let cluster = Cluster::new(
             &node_addresses,
+            vec![Arc::new(EventConsumerUpcastWrapper {
+                policy: config.load_balancing.clone(),
+            })],
             config.get_pool_config(),
             config.fetch_schema_metadata,
         )

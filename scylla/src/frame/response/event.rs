@@ -3,26 +3,26 @@ use crate::frame::server_event_type::EventType;
 use crate::frame::types;
 use std::net::SocketAddr;
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum Event {
     TopologyChange(TopologyChangeEvent),
     StatusChange(StatusChangeEvent),
     SchemaChange(SchemaChangeEvent),
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum TopologyChangeEvent {
     NewNode(SocketAddr),
     RemovedNode(SocketAddr),
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum StatusChangeEvent {
     Up(SocketAddr),
     Down(SocketAddr),
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum SchemaChangeEvent {
     KeyspaceChange {
         change_type: SchemaChangeType,
@@ -52,7 +52,7 @@ pub enum SchemaChangeEvent {
     },
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum SchemaChangeType {
     Created,
     Updated,

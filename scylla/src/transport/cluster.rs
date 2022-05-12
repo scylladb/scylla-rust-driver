@@ -16,6 +16,10 @@ use std::sync::Arc;
 use std::time::Duration;
 use tracing::{debug, warn};
 
+pub trait EventConsumer: Send + Sync {
+    fn consume(&self, events: &[Event], cluster: &ClusterData);
+}
+
 /// Cluster manages up to date information and connections to database nodes.
 /// All data can be accessed by cloning Arc<ClusterData> in the `data` field
 pub struct Cluster {
@@ -54,6 +58,8 @@ struct ClusterWorker {
     // Channel used to receive server events
     server_events_channel: tokio::sync::mpsc::Receiver<Event>,
 
+    event_consumers: Vec<Arc<dyn EventConsumer>>,
+
     // Keyspace send in "USE <keyspace name>" when opening each connection
     used_keyspace: Option<VerifiedKeyspaceName>,
 }
@@ -72,6 +78,7 @@ struct UseKeyspaceRequest {
 impl Cluster {
     pub async fn new(
         initial_peers: &[SocketAddr],
+        initial_event_consumers: Vec<Arc<dyn EventConsumer>>,
         pool_config: PoolConfig,
         fetch_schema_metadata: bool,
     ) -> Result<Cluster, QueryError> {
@@ -99,6 +106,8 @@ impl Cluster {
 
             refresh_channel: refresh_receiver,
             server_events_channel: server_events_receiver,
+
+            event_consumers: initial_event_consumers,
 
             use_keyspace_channel: use_keyspace_receiver,
             used_keyspace: None,
@@ -275,19 +284,33 @@ impl ClusterWorker {
                 recv_res = self.server_events_channel.recv() => {
                     if let Some(event) = recv_res {
                         debug!("Received server event: {:?}", event);
-                        match event {
-                            Event::TopologyChange(_) => (), // Refresh immediately
+
+                        let mut is_refresh_needed = false;
+
+                        match &event {
+                            Event::TopologyChange(_) => {
+                                // Refresh immediately
+                                is_refresh_needed = true;
+                            },
                             Event::StatusChange(status) => {
                                 // If some node went down/up, update it's marker and refresh
                                 // later as planned.
 
                                 match status {
-                                    StatusChangeEvent::Down(addr) => self.change_node_down_marker(addr, true),
-                                    StatusChangeEvent::Up(addr) => self.change_node_down_marker(addr, false),
+                                    StatusChangeEvent::Down(addr) => self.change_node_down_marker(*addr, true),
+                                    StatusChangeEvent::Up(addr) => self.change_node_down_marker(*addr, false),
                                 }
-                                continue;
                             },
-                            _ => continue, // Don't go to refreshing
+                            Event::SchemaChange(_) => {},
+                        }
+
+                        let cluster_data = self.cluster_data.load_full();
+                        for consumer in self.event_consumers.iter() {
+                            consumer.consume(&[event.clone()], &cluster_data);
+                        }
+
+                        if !is_refresh_needed {
+                            continue;
                         }
                     } else {
                         // If server_events_channel was closed, than TopologyReader was dropped,
@@ -405,7 +428,7 @@ impl ClusterWorker {
             .wait_until_all_pools_are_initialized()
             .await;
 
-        self.update_cluster_data(new_cluster_data);
+        self.update_cluster_data(new_cluster_data.clone());
 
         Ok(())
     }
