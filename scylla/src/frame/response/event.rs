@@ -164,6 +164,15 @@ impl TopologyChangeEvent {
             ))),
         }
     }
+
+    pub fn address(&self) -> &SocketAddr {
+        use TopologyChangeEvent::*;
+
+        match self {
+            NewNode(a) => a,
+            RemovedNode(a) => a,
+        }
+    }
 }
 
 impl StatusChangeEvent {
@@ -178,6 +187,15 @@ impl StatusChangeEvent {
                 "Invalid type of status change ({}) in StatusChangeEvent",
                 type_of_change
             ))),
+        }
+    }
+
+    pub fn address(&self) -> &SocketAddr {
+        use StatusChangeEvent::*;
+
+        match self {
+            Up(a) => a,
+            Down(a) => a,
         }
     }
 }

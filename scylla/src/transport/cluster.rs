@@ -1,4 +1,4 @@
-use crate::frame::response::event::{Event, StatusChangeEvent};
+use crate::frame::response::event::{Event, StatusChangeEvent, TopologyChangeEvent};
 /// Cluster manages up to date information and connections to database nodes
 use crate::routing::Token;
 use crate::transport::connection::{Connection, VerifiedKeyspaceName};
@@ -10,7 +10,7 @@ use crate::transport::topology::{Keyspace, Metadata, MetadataReader};
 use arc_swap::ArcSwap;
 use futures::future::join_all;
 use futures::{future::RemoteHandle, FutureExt};
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration;
@@ -61,6 +61,7 @@ struct ClusterWorker {
 
     event_consumer_registration_requests: tokio::sync::mpsc::Receiver<Arc<dyn EventConsumer>>,
     event_consumers: Vec<Arc<dyn EventConsumer>>,
+    events_received_before_refresh: Vec<Event>,
 
     // Keyspace send in "USE <keyspace name>" when opening each connection
     used_keyspace: Option<VerifiedKeyspaceName>,
@@ -112,6 +113,7 @@ impl Cluster {
 
             event_consumer_registration_requests: event_consumer_receiver,
             event_consumers: initial_event_consumers,
+            events_received_before_refresh: Vec::new(),
 
             use_keyspace_channel: use_keyspace_receiver,
             used_keyspace: None,
@@ -205,6 +207,50 @@ impl Cluster {
 }
 
 impl ClusterData {
+    pub(crate) fn event_difference(
+        &self,
+        previous: &ClusterData,
+        already_send: Vec<Event>,
+    ) -> Vec<Event> {
+        let mut events = Vec::new();
+
+        let last_topology_event_per_node: HashMap<SocketAddr, TopologyChangeEvent> = already_send
+            .into_iter()
+            .filter_map(|e| match e {
+                Event::TopologyChange(t) => Some((*t.address(), t)),
+                _ => None,
+            })
+            .collect();
+
+        let present_addrs = self.known_peers.keys().collect::<BTreeSet<_>>();
+        let past_addrs = previous.known_peers.keys().collect::<BTreeSet<_>>();
+
+        for new_node_addr in present_addrs.difference(&past_addrs) {
+            match last_topology_event_per_node.get(&new_node_addr) {
+                Some(TopologyChangeEvent::NewNode(_)) => continue,
+                _ => {
+                    let new_node =
+                        Event::TopologyChange(TopologyChangeEvent::NewNode(**new_node_addr));
+                    events.push(new_node);
+                }
+            }
+        }
+
+        for removed_node_addr in past_addrs.difference(&present_addrs) {
+            match last_topology_event_per_node.get(&removed_node_addr) {
+                Some(TopologyChangeEvent::RemovedNode(_)) => continue,
+                _ => {
+                    let removed_node = Event::TopologyChange(TopologyChangeEvent::RemovedNode(
+                        **removed_node_addr,
+                    ));
+                    events.push(removed_node);
+                }
+            }
+        }
+
+        events
+    }
+
     pub(crate) async fn wait_until_all_pools_are_initialized(&self) {
         for node in self.known_peers.values() {
             node.wait_until_pool_initialized().await;
@@ -324,6 +370,7 @@ impl ClusterWorker {
                         for consumer in self.event_consumers.iter() {
                             consumer.consume(&[event.clone()], &cluster_data);
                         }
+                        self.events_received_before_refresh.push(event);
 
                         if !is_refresh_needed {
                             continue;
@@ -440,11 +487,18 @@ impl ClusterWorker {
             &self.used_keyspace,
         ));
 
+        let received_before = self.events_received_before_refresh.drain(..).collect();
+        let event_difference = new_cluster_data.event_difference(&cluster_data, received_before);
+
         new_cluster_data
             .wait_until_all_pools_are_initialized()
             .await;
 
         self.update_cluster_data(new_cluster_data.clone());
+
+        for consumer in self.event_consumers.iter() {
+            consumer.consume(&event_difference, &new_cluster_data);
+        }
 
         Ok(())
     }
