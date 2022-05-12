@@ -1306,6 +1306,12 @@ impl Session {
             PartitionerName::CDC => CDCPartitioner::hash(partition_key),
         })
     }
+
+    /// Event consumers are called when a cluster event is received, and are provided with a view
+    /// to the newly updated `ClusterData`.
+    pub async fn register_event_consumer(&self, event_consumer: Arc<dyn EventConsumer>) {
+        self.cluster.register_event_consumer(event_consumer).await;
+    }
 }
 
 fn calculate_partition_key(

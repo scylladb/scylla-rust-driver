@@ -29,6 +29,7 @@ pub struct Cluster {
 
     refresh_channel: tokio::sync::mpsc::Sender<RefreshRequest>,
     use_keyspace_channel: tokio::sync::mpsc::Sender<UseKeyspaceRequest>,
+    event_consumer_registrar: tokio::sync::mpsc::Sender<Arc<dyn EventConsumer>>,
 
     _worker_handle: RemoteHandle<()>,
 }
@@ -58,6 +59,7 @@ struct ClusterWorker {
     // Channel used to receive server events
     server_events_channel: tokio::sync::mpsc::Receiver<Event>,
 
+    event_consumer_registration_requests: tokio::sync::mpsc::Receiver<Arc<dyn EventConsumer>>,
     event_consumers: Vec<Arc<dyn EventConsumer>>,
 
     // Keyspace send in "USE <keyspace name>" when opening each connection
@@ -91,6 +93,7 @@ impl Cluster {
         let (refresh_sender, refresh_receiver) = tokio::sync::mpsc::channel(32);
         let (use_keyspace_sender, use_keyspace_receiver) = tokio::sync::mpsc::channel(32);
         let (server_events_sender, server_events_receiver) = tokio::sync::mpsc::channel(32);
+        let (event_consumer_sender, event_consumer_receiver) = tokio::sync::mpsc::channel(32);
 
         let worker = ClusterWorker {
             cluster_data: cluster_data.clone(),
@@ -107,6 +110,7 @@ impl Cluster {
             refresh_channel: refresh_receiver,
             server_events_channel: server_events_receiver,
 
+            event_consumer_registration_requests: event_consumer_receiver,
             event_consumers: initial_event_consumers,
 
             use_keyspace_channel: use_keyspace_receiver,
@@ -120,6 +124,7 @@ impl Cluster {
             data: cluster_data,
             refresh_channel: refresh_sender,
             use_keyspace_channel: use_keyspace_sender,
+            event_consumer_registrar: event_consumer_sender,
             _worker_handle: worker_handle,
         };
 
@@ -188,6 +193,14 @@ impl Cluster {
         }
 
         Ok(result)
+    }
+
+    pub async fn register_event_consumer(&self, event_consumer: Arc<dyn EventConsumer>) {
+        self.event_consumer_registrar
+            .send(event_consumer)
+            .await
+            .ok()
+            .unwrap();
     }
 }
 
@@ -275,6 +288,9 @@ impl ClusterWorker {
 
             tokio::select! {
                 _ = sleep_future => {},
+                Some(event_consumer) = self.event_consumer_registration_requests.recv() => {
+                    self.event_consumers.push(event_consumer);
+                }
                 recv_res = self.refresh_channel.recv() => {
                     match recv_res {
                         Some(request) => cur_request = Some(request),
