@@ -14,7 +14,7 @@ use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration;
-use tracing::{debug, warn};
+use tracing::{debug, trace, warn};
 
 pub trait EventConsumer: Send + Sync {
     fn consume(&self, events: &[Event], cluster: &ClusterData);
@@ -207,50 +207,6 @@ impl Cluster {
 }
 
 impl ClusterData {
-    pub(crate) fn event_difference(
-        &self,
-        previous: &ClusterData,
-        already_send: Vec<Event>,
-    ) -> Vec<Event> {
-        let mut events = Vec::new();
-
-        let last_topology_event_per_node: HashMap<SocketAddr, TopologyChangeEvent> = already_send
-            .into_iter()
-            .filter_map(|e| match e {
-                Event::TopologyChange(t) => Some((*t.address(), t)),
-                _ => None,
-            })
-            .collect();
-
-        let present_addrs = self.known_peers.keys().collect::<BTreeSet<_>>();
-        let past_addrs = previous.known_peers.keys().collect::<BTreeSet<_>>();
-
-        for new_node_addr in present_addrs.difference(&past_addrs) {
-            match last_topology_event_per_node.get(&new_node_addr) {
-                Some(TopologyChangeEvent::NewNode(_)) => continue,
-                _ => {
-                    let new_node =
-                        Event::TopologyChange(TopologyChangeEvent::NewNode(**new_node_addr));
-                    events.push(new_node);
-                }
-            }
-        }
-
-        for removed_node_addr in past_addrs.difference(&present_addrs) {
-            match last_topology_event_per_node.get(&removed_node_addr) {
-                Some(TopologyChangeEvent::RemovedNode(_)) => continue,
-                _ => {
-                    let removed_node = Event::TopologyChange(TopologyChangeEvent::RemovedNode(
-                        **removed_node_addr,
-                    ));
-                    events.push(removed_node);
-                }
-            }
-        }
-
-        events
-    }
-
     pub(crate) async fn wait_until_all_pools_are_initialized(&self) {
         for node in self.known_peers.values() {
             node.wait_until_pool_initialized().await;
@@ -286,6 +242,8 @@ impl ClusterData {
                     used_keyspace.clone(),
                 )),
             };
+
+            node.change_up_marker(peer.up);
 
             new_known_peers.insert(peer.address, node.clone());
 
@@ -480,15 +438,19 @@ impl ClusterWorker {
         let metadata = self.metadata_reader.read_metadata().await?;
         let cluster_data: Arc<ClusterData> = self.cluster_data.load_full();
 
+        let received_before = self.events_received_before_refresh.drain(..).collect();
+        let event_difference = Self::generate_events(&metadata, &cluster_data, received_before);
+        trace!(
+            "Events generated between refresh points: {:?}",
+            event_difference
+        );
+
         let new_cluster_data = Arc::new(ClusterData::new(
             metadata,
             &self.pool_config,
             &cluster_data.known_peers,
             &self.used_keyspace,
         ));
-
-        let received_before = self.events_received_before_refresh.drain(..).collect();
-        let event_difference = new_cluster_data.event_difference(&cluster_data, received_before);
 
         new_cluster_data
             .wait_until_all_pools_are_initialized()
@@ -501,6 +463,68 @@ impl ClusterWorker {
         }
 
         Ok(())
+    }
+
+    pub(crate) fn generate_events(
+        new_metadata: &Metadata,
+        old_clusterdata: &ClusterData,
+        already_sent: Vec<Event>,
+    ) -> Vec<Event> {
+        let mut events = Vec::new();
+
+        let last_topology_event_per_node: HashMap<SocketAddr, TopologyChangeEvent> = already_sent
+            .into_iter()
+            .filter_map(|e| match e {
+                Event::TopologyChange(t) => Some((*t.address(), t)),
+                _ => None,
+            })
+            .collect();
+
+        let present_addrs = new_metadata
+            .peers
+            .iter()
+            .map(|p| &p.address)
+            .collect::<BTreeSet<_>>();
+        let past_addrs = old_clusterdata.known_peers.keys().collect::<BTreeSet<_>>();
+
+        for new_node_addr in present_addrs.difference(&past_addrs) {
+            match last_topology_event_per_node.get(&new_node_addr) {
+                Some(TopologyChangeEvent::NewNode(_)) => continue,
+                _ => {
+                    let new_node =
+                        Event::TopologyChange(TopologyChangeEvent::NewNode(**new_node_addr));
+                    events.push(new_node);
+                }
+            }
+        }
+
+        for removed_node_addr in past_addrs.difference(&present_addrs) {
+            match last_topology_event_per_node.get(&removed_node_addr) {
+                Some(TopologyChangeEvent::RemovedNode(_)) => continue,
+                _ => {
+                    let removed_node = Event::TopologyChange(TopologyChangeEvent::RemovedNode(
+                        **removed_node_addr,
+                    ));
+                    events.push(removed_node);
+                }
+            }
+        }
+
+        for peer in new_metadata.peers.iter() {
+            if let Some(node) = old_clusterdata.known_peers.get(&peer.address) {
+                if peer.up != node.is_up() {
+                    let event = Event::StatusChange(if peer.up {
+                        StatusChangeEvent::Up(peer.address.clone())
+                    } else {
+                        StatusChangeEvent::Down(peer.address.clone())
+                    });
+
+                    events.push(event);
+                }
+            }
+        }
+
+        events
     }
 
     fn update_cluster_data(&mut self, new_cluster_data: Arc<ClusterData>) {
