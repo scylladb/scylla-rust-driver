@@ -10,10 +10,12 @@ use crate::transport::topology::{Keyspace, Metadata, MetadataReader};
 use arc_swap::ArcSwap;
 use futures::future::join_all;
 use futures::{future::RemoteHandle, FutureExt};
+use itertools::Itertools;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration;
+use thiserror::Error;
 use tracing::{debug, trace, warn};
 
 pub trait EventConsumer: Send + Sync {
@@ -39,6 +41,12 @@ pub struct ClusterData {
     pub(crate) known_peers: HashMap<SocketAddr, Arc<Node>>, // Invariant: nonempty after Cluster::new()
     pub(crate) ring: BTreeMap<Token, Arc<Node>>, // Invariant: nonempty after Cluster::new()
     pub(crate) keyspaces: HashMap<String, Keyspace>,
+}
+
+#[derive(Error, Debug, Clone)]
+pub enum ReplicaSetError {
+    #[error("Keyspace {0} does not exist")]
+    NoSuchKeyspace(String),
 }
 
 // Works in the background to keep the cluster updated
@@ -257,6 +265,56 @@ impl ClusterData {
             ring,
             keyspaces: metadata.keyspaces,
         }
+    }
+
+    /// Returns thel first token in the ring that is not lower than the given one. In the absence
+    /// of one, this function returns the first token from the ring.
+    /// Satisfies following equation:
+    /// `self.ring_range(self.first_token(some_token)) = self.ring_range(some_token)`
+    pub fn first_token(&self, t: &Token) -> Token {
+        let mut lower_bound = self.ring.range(t..).map(|(token, _)| token.clone());
+
+        lower_bound
+            .next()
+            .or_else(|| self.ring.keys().cloned().next()) // Wrap
+            .unwrap() // Token ring is never empty
+    }
+
+    /// Returns an iterator to the sequence of ends of vnodes, starting at the vnode in which t lies
+    /// and going clockwise. Returned sequence has the same length as ring.
+    pub fn ring_range<'a>(&'a self, t: &Token) -> impl Iterator<Item = Arc<Node>> + 'a {
+        let before_wrap = self.ring.range(t..).map(|(_token, node)| node.clone());
+        let after_wrap = self.ring.values().cloned();
+
+        before_wrap.chain(after_wrap).take(self.ring.len())
+    }
+
+    /// Computes a replica set for a given token
+    pub fn replicas_for_token(
+        &self,
+        token: &Token,
+        keyspace: &str,
+    ) -> Result<Vec<Arc<Node>>, ReplicaSetError> {
+        let strategy = &self
+            .keyspaces
+            .get(keyspace)
+            .ok_or(ReplicaSetError::NoSuchKeyspace(keyspace.into()))?
+            .strategy;
+
+        use super::topology::Strategy::*;
+
+        let replicas = match strategy {
+            SimpleStrategy { replication_factor } => self
+                .ring_range(token)
+                .unique()
+                .take(*replication_factor)
+                .collect(),
+            NetworkTopologyStrategy { .. } => todo!(),
+            // Default to the owner
+            _ => self.ring_range(token).take(1).collect(),
+        };
+
+        Ok(replicas)
     }
 
     /// Access keyspaces details collected by the driver
