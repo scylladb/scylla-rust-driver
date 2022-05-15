@@ -45,6 +45,7 @@ pub struct Peer {
     pub tokens: Vec<Token>,
     pub datacenter: Option<String>,
     pub rack: Option<String>,
+    pub up: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -336,15 +337,30 @@ async fn query_peers(conn: &Connection, connect_port: u16) -> Result<Vec<Peer>, 
     local_query.set_page_size(1024);
     let local_query_future = conn.query_all(&local_query, &[]);
 
-    let (peers_res, local_res) = tokio::try_join!(peers_query_future, local_query_future)?;
+    let mut up_status_query = Query::new("select peer, up from system.cluster_status");
+    up_status_query.set_page_size(1024);
+    let up_status_query_future = conn.query_all(&up_status_query, &[]);
+
+    let (peers_res, local_res, up_status_res) = tokio::try_join!(
+        peers_query_future,
+        local_query_future,
+        up_status_query_future
+    )?;
 
     let peers_rows = peers_res.rows.ok_or(QueryError::ProtocolError(
         "system.peers query response was not Rows",
     ))?;
-
     let local_rows = local_res.rows.ok_or(QueryError::ProtocolError(
         "system.local query response was not Rows",
     ))?;
+    let up_status_rows = up_status_res.rows.ok_or(QueryError::ProtocolError(
+        "system.cluster_status query response was not Rows",
+    ))?;
+
+    let up_status: HashMap<IpAddr, bool> = up_status_rows
+        .into_typed::<(IpAddr, bool)>()
+        .collect::<Result<HashMap<IpAddr, bool>, _>>()
+        .map_err(|_| QueryError::ProtocolError("system.cluster_status has invalid column type"))?;
 
     let mut result: Vec<Peer> = Vec::with_capacity(peers_rows.len() + 1);
 
@@ -385,11 +401,24 @@ async fn query_peers(conn: &Connection, connect_port: u16) -> Result<Vec<Peer>, 
                 }]
             }
         };
+
+        let up = if let Some(up) = up_status.get(&address.ip()) {
+            *up
+        } else {
+            warn!(
+                "Couldn't find cluster status for node {}, marking it as UP",
+                address.ip()
+            );
+
+            true
+        };
+
         result.push(Peer {
             address,
             tokens,
             datacenter,
             rack,
+            up,
         });
     }
 
