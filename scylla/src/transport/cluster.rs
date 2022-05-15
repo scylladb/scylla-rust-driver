@@ -472,8 +472,8 @@ impl ClusterWorker {
                                 // later as planned.
 
                                 match status {
-                                    StatusChangeEvent::Down(addr) => self.change_node_down_marker(addr, true),
-                                    StatusChangeEvent::Up(addr) => self.change_node_down_marker(addr, false),
+                                    StatusChangeEvent::Down(addr) => self.change_node_up_marker(addr, false),
+                                    StatusChangeEvent::Up(addr) => self.change_node_up_marker(addr, true),
                                 }
                                 continue;
                             },
@@ -514,7 +514,7 @@ impl ClusterWorker {
         }
     }
 
-    fn change_node_down_marker(&mut self, addr: SocketAddr, is_down: bool) {
+    fn change_node_up_marker(&mut self, addr: SocketAddr, is_up: bool) {
         let cluster_data = self.cluster_data.load_full();
 
         let node = match cluster_data.known_peers.get(&addr) {
@@ -525,7 +525,7 @@ impl ClusterWorker {
             }
         };
 
-        node.change_down_marker(is_down);
+        node.change_up_marker(is_up);
     }
 
     async fn handle_use_keyspace_request(
