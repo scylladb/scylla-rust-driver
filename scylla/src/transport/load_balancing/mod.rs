@@ -17,7 +17,7 @@ pub use crate::frame::response::event::Event;
 pub use default::DefaultPolicy;
 
 /// Represents info about a query that can be used by load balancing policies.
-#[derive(Default)]
+#[derive(Default, Debug)]
 pub struct QueryInfo<'a> {
     pub token: Option<Token>,
     pub keyspace: Option<&'a str>,
