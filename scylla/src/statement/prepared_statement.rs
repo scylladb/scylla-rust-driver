@@ -236,6 +236,11 @@ impl PreparedStatement {
         }
     }
 
+    /// Access metadata about this prepared statement as returned by the database
+    pub fn get_prepared_metadata(&self) -> &PreparedMetadata {
+        &self.metadata
+    }
+
     /// Get the name of the partitioner used for this statement.
     pub(crate) fn get_partitioner_name(&self) -> &PartitionerName {
         &self.partitioner_name
