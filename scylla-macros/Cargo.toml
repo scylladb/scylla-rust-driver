@@ -1,7 +1,7 @@
 [package]
 name = "scylla-macros"
 version = "0.1.1"
-edition = "2018"
+edition = "2021"
 description = "proc macros for scylla async CQL driver"
 repository = "https://github.com/scylladb/scylla-rust-driver"
 readme = "../README.md"
