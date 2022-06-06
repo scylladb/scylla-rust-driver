@@ -226,8 +226,8 @@ impl MetadataReader {
     }
 
     /// Fetches current metadata from the cluster
-    pub async fn read_metadata(&mut self) -> Result<Metadata, QueryError> {
-        let mut result = self.fetch_metadata().await;
+    pub async fn read_metadata(&mut self, initial: bool) -> Result<Metadata, QueryError> {
+        let mut result = self.fetch_metadata(initial).await;
         if let Ok(metadata) = result {
             self.update_known_peers(&metadata);
             return Ok(metadata);
@@ -275,7 +275,7 @@ impl MetadataReader {
                 "Retrying to establish the control connection on {}",
                 self.control_connection_address
             );
-            result = self.fetch_metadata().await;
+            result = self.fetch_metadata(initial).await;
         }
 
         match &result {
@@ -292,15 +292,32 @@ impl MetadataReader {
         result
     }
 
-    async fn fetch_metadata(&self) -> Result<Metadata, QueryError> {
+    async fn fetch_metadata(&self, initial: bool) -> Result<Metadata, QueryError> {
         // TODO: Timeouts?
+        self.control_connection.wait_until_initialized().await;
+        let conn = &*self.control_connection.random_connection()?;
 
-        query_metadata(
-            &self.control_connection,
+        let res = query_metadata(
+            conn,
             self.control_connection_address.port(),
             self.fetch_schema,
         )
-        .await
+        .await;
+
+        if initial {
+            if let Err(err) = res {
+                warn!(
+                    error = ?err,
+                    "Initial metadata read failed, proceeding with metadata \
+                    consisting only of the initial peer list and dummy tokens. \
+                    This might result in suboptimal performance and schema \
+                    information not being available."
+                );
+                return Ok(Metadata::new_dummy(&self.known_peers));
+            }
+        }
+
+        res
     }
 
     fn update_known_peers(&mut self, metadata: &Metadata) {
@@ -329,13 +346,10 @@ impl MetadataReader {
 }
 
 async fn query_metadata(
-    pool: &NodeConnectionPool,
+    conn: &Connection,
     connect_port: u16,
     fetch_schema: bool,
 ) -> Result<Metadata, QueryError> {
-    pool.wait_until_initialized().await;
-    let conn: &Connection = &*pool.random_connection()?;
-
     let peers_query = query_peers(conn, connect_port);
     let keyspaces_query = query_keyspaces(conn, fetch_schema);
 
