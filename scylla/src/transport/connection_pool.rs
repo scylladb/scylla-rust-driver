@@ -66,8 +66,9 @@ enum MaybePoolConnections {
     Initializing,
 
     // The pool is empty because either initial filling failed or all connections
-    // became broken; will be asynchronously refilled
-    Broken,
+    // became broken; will be asynchronously refilled. Contains an error
+    // from the last connection attempt.
+    Broken(QueryError),
 
     // The pool has some connections which are usable (or will be removed soon)
     Ready(PoolConnections),
@@ -77,7 +78,7 @@ impl std::fmt::Debug for MaybePoolConnections {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             MaybePoolConnections::Initializing => write!(f, "Initializing"),
-            MaybePoolConnections::Broken => write!(f, "Broken"),
+            MaybePoolConnections::Broken(err) => write!(f, "Broken({:?})", err),
             MaybePoolConnections::Ready(conns) => write!(f, "{:?}", conns),
         }
     }
@@ -328,10 +329,21 @@ impl NodeConnectionPool {
         let conns = self.conns.load_full();
         match &*conns {
             MaybePoolConnections::Ready(pool_connections) => Ok(f(pool_connections)),
-            _ => Err(QueryError::IoError(Arc::new(std::io::Error::new(
-                ErrorKind::Other,
-                format!("No connections in the pool. Pool status: {:?}", *conns),
-            )))),
+            MaybePoolConnections::Broken(err) => {
+                Err(QueryError::IoError(Arc::new(std::io::Error::new(
+                    ErrorKind::Other,
+                    format!(
+                        "No connections in the pool; last connection failed with: {}",
+                        err
+                    ),
+                ))))
+            }
+            MaybePoolConnections::Initializing => {
+                Err(QueryError::IoError(Arc::new(std::io::Error::new(
+                    ErrorKind::Other,
+                    "No connections in the pool, pool is still being initialized",
+                ))))
+            }
         }
     }
 }
@@ -352,8 +364,12 @@ impl Keepaliver {
             Ready(NotSharded(conns)) => conns.clone(),
             Ready(Sharded { connections, .. }) => connections.iter().flatten().cloned().collect(),
             Initializing => vec![],
-            Broken => {
-                debug!("Cannot send connection keepalives for node {} as there are no alive connections in the pool", self.node_address);
+            Broken(err) => {
+                debug!(
+                    "Cannot send connection keepalives for node {} as there are \
+                    no alive connections in the pool; last error: {}",
+                    self.node_address, err
+                );
                 vec![]
             }
         }
@@ -579,7 +595,7 @@ impl PoolRefiller {
                 evt = self.connection_errors.select_next_some(), if !self.connection_errors.is_empty() => {
                     if let Some(conn) = evt.connection.upgrade() {
                         debug!("[{}] Got error for connection {:p}: {:?}", self.address, Arc::as_ptr(&conn), evt.error);
-                        self.remove_connection(conn);
+                        self.remove_connection(conn, evt.error);
                     }
                 }
 
@@ -602,9 +618,6 @@ impl PoolRefiller {
 
             // Schedule refilling here
             if !refill_scheduled && self.need_filling() {
-                // Update shared_conns here even if there are no connections.
-                // This will signal the waiters in `wait_until_initialized`.
-                self.update_shared_conns();
                 if self.had_error_since_last_refill {
                     self.refill_delay_strategy.on_fill_error();
                 } else {
@@ -746,6 +759,12 @@ impl PoolRefiller {
                         "[{}] Failed to open connection to the non-shard-aware port: {:?}",
                         self.address, err,
                     );
+
+                    // If all connection attempts in this fill attempt failed
+                    // and the pool is empty, report this error.
+                    if !self.is_filling() && self.is_empty() {
+                        self.update_shared_conns(Some(err));
+                    }
                 }
             }
             Ok((connection, error_receiver)) => {
@@ -809,7 +828,7 @@ impl PoolRefiller {
                         .push(wait_for_error(Arc::downgrade(&conn), error_receiver).boxed());
                     self.conns[shard_id].push(conn);
 
-                    self.update_shared_conns();
+                    self.update_shared_conns(None);
                 } else if evt.requested_shard.is_some() {
                     // This indicates that some shard-aware connections
                     // missed the target shard (probably due to NAT).
@@ -922,9 +941,11 @@ impl PoolRefiller {
     }
 
     // Updates `shared_conns` based on `conns`.
-    fn update_shared_conns(&mut self) {
+    // `last_error` must not be `None` if there is a possibility of the pool
+    // being empty.
+    fn update_shared_conns(&mut self, last_error: Option<QueryError>) {
         let new_conns = if !self.has_connections() {
-            Arc::new(MaybePoolConnections::Broken)
+            Arc::new(MaybePoolConnections::Broken(last_error.unwrap()))
         } else {
             let new_conns = if let Some(sharder) = self.sharder.as_ref() {
                 debug_assert_eq!(self.conns.len(), sharder.nr_shards.get() as usize);
@@ -948,7 +969,7 @@ impl PoolRefiller {
 
     // Removes given connection from the pool. It looks both into active
     // connections and excess connections.
-    fn remove_connection(&mut self, connection: Arc<Connection>) {
+    fn remove_connection(&mut self, connection: Arc<Connection>, last_error: QueryError) {
         let ptr = Arc::as_ptr(&connection);
 
         let maybe_remove_in_vec = |v: &mut Vec<Arc<Connection>>| -> bool {
@@ -981,7 +1002,7 @@ impl PoolRefiller {
                 self.conns[shard_id].len(),
                 self.active_connection_count(),
             );
-            self.update_shared_conns();
+            self.update_shared_conns(Some(last_error));
             return;
         }
 
