@@ -70,7 +70,7 @@ pub(crate) struct PreparedIteratorConfig {
     pub prepared: PreparedStatement,
     pub values: SerializedValues,
     pub default_consistency: Consistency,
-    pub token: Token,
+    pub token: Option<Token>,
     pub retry_session: Box<dyn RetrySession>,
     pub load_balancer: Arc<dyn LoadBalancingPolicy>,
     pub cluster_data: Arc<ClusterData>,
@@ -194,7 +194,7 @@ impl RowIterator {
             .determine_consistency(config.default_consistency);
 
         let statement_info = Statement {
-            token: Some(config.token),
+            token: config.token,
             keyspace: None,
         };
 
@@ -203,8 +203,12 @@ impl RowIterator {
             let values_ref = &config.values;
             let token = config.token;
 
-            let choose_connection =
-                |node: Arc<Node>| async move { node.connection_for_token(token).await };
+            let choose_connection = |node: Arc<Node>| async move {
+                match token {
+                    Some(token) => node.connection_for_token(token).await,
+                    None => node.random_connection().await,
+                }
+            };
 
             let page_query = |connection: Arc<Connection>, paging_state: Option<Bytes>| async move {
                 connection
