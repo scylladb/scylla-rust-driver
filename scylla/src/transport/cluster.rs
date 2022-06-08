@@ -96,19 +96,7 @@ impl Cluster {
             fetch_schema_metadata,
         );
 
-        let metadata = match metadata_reader.read_metadata().await {
-            Ok(data) => data,
-            Err(err) => {
-                warn!(
-                    error = ?err,
-                    "Initial metadata read failed, proceeding with metadata \
-                    consisting only of the initial peer list and dummy tokens. \
-                    This might result in suboptimal performance and schema \
-                    information not being available."
-                );
-                Metadata::new_dummy(initial_peers)
-            }
-        };
+        let metadata = metadata_reader.read_metadata(true).await?;
         let cluster_data = ClusterData::new(metadata, &pool_config, &HashMap::new(), &None);
         cluster_data.wait_until_all_pools_are_initialized().await;
         let cluster_data: Arc<ArcSwap<ClusterData>> =
@@ -465,7 +453,7 @@ impl ClusterWorker {
 
     async fn perform_refresh(&mut self) -> Result<(), QueryError> {
         // Read latest Metadata
-        let metadata = self.metadata_reader.read_metadata().await?;
+        let metadata = self.metadata_reader.read_metadata(false).await?;
         let cluster_data: Arc<ClusterData> = self.cluster_data.load_full();
 
         let new_cluster_data = Arc::new(ClusterData::new(

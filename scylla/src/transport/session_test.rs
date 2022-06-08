@@ -14,11 +14,12 @@ use crate::transport::topology::{CollectionType, ColumnKind, CqlType, NativeType
 use crate::QueryResult;
 use crate::{IntoTypedRows, Session, SessionBuilder};
 use bytes::Bytes;
-use futures::StreamExt;
+use futures::{FutureExt, StreamExt};
 use itertools::Itertools;
 use std::collections::{BTreeMap, HashMap};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
+use tokio::net::TcpListener;
 use uuid::Uuid;
 
 static UNIQUE_COUNTER: AtomicUsize = AtomicUsize::new(0);
@@ -34,6 +35,30 @@ pub(crate) fn unique_name() -> String {
     );
     println!("Unique name: {}", name);
     name
+}
+
+#[tokio::test]
+async fn test_connection_failure() {
+    // Make sure that Session::create fails when the control connection
+    // fails to connect.
+
+    // Create a dummy server which immediately closes the connection.
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+
+    let (fut, _handle) = async move {
+        loop {
+            let _ = listener.accept().await;
+        }
+    }
+    .remote_handle();
+    tokio::spawn(fut);
+
+    let res = SessionBuilder::new().known_node_addr(addr).build().await;
+    match res {
+        Ok(_) => panic!("Unexpected success"),
+        Err(err) => println!("Connection error (it was expected): {:?}", err),
+    }
 }
 
 #[tokio::test]
