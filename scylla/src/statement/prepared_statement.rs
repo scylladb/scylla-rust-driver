@@ -72,6 +72,13 @@ impl PreparedStatement {
         &self.prepare_tracing_ids
     }
 
+    /// Returns true if the prepared statement has necessary information
+    /// to be routed in a token-aware manner. If false, the query
+    /// will always be sent to a random node/shard.
+    pub fn is_token_aware(&self) -> bool {
+        !self.metadata.pk_indexes.is_empty()
+    }
+
     /// Computes the partition key of the target table from given values —
     /// it assumes that all partition key columns are passed in values.
     /// Partition keys have a specific serialization rules.

@@ -686,7 +686,7 @@ impl Session {
         let token = self.calculate_token(prepared, &serialized_values)?;
 
         let statement_info = Statement {
-            token: Some(token),
+            token,
             keyspace: prepared.get_keyspace_name(),
         };
 
@@ -698,7 +698,12 @@ impl Session {
             .run_query(
                 statement_info,
                 &prepared.config,
-                |node: Arc<Node>| async move { node.connection_for_token(token).await },
+                |node: Arc<Node>| async move {
+                    match token {
+                        Some(token) => node.connection_for_token(token).await,
+                        None => node.random_connection().await,
+                    }
+                },
                 |connection: Arc<Connection>| async move {
                     connection
                         .execute(prepared, values_ref, paging_state_ref.clone())
@@ -1281,15 +1286,19 @@ impl Session {
         &self,
         prepared: &PreparedStatement,
         serialized_values: &SerializedValues,
-    ) -> Result<Token, QueryError> {
+    ) -> Result<Option<Token>, QueryError> {
+        if !prepared.is_token_aware() {
+            return Ok(None);
+        }
+
         let partitioner_name = prepared.get_partitioner_name();
 
         let partition_key = calculate_partition_key(prepared, serialized_values)?;
 
-        Ok(match partitioner_name {
+        Ok(Some(match partitioner_name {
             PartitionerName::Murmur3 => Murmur3Partitioner::hash(partition_key),
             PartitionerName::CDC => CDCPartitioner::hash(partition_key),
-        })
+        }))
     }
 }
 
