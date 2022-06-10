@@ -1,5 +1,6 @@
 use std::sync::Arc;
 
+use crate::transport::load_balancing::LoadBalancingPolicy;
 use crate::transport::retry_policy::RetryPolicy;
 use crate::transport::speculative_execution::SpeculativeExecutionPolicy;
 
@@ -17,6 +18,7 @@ pub struct StatementConfig {
 
     pub retry_policy: Option<Box<dyn RetryPolicy>>,
     pub speculative_execution_policy: Option<Arc<dyn SpeculativeExecutionPolicy>>,
+    pub load_balancing_policy: Option<Arc<dyn LoadBalancingPolicy>>,
 
     pub tracing: bool,
     pub timestamp: Option<i64>,
@@ -30,6 +32,7 @@ impl Default for StatementConfig {
             is_idempotent: false,
             retry_policy: None,
             speculative_execution_policy: None,
+            load_balancing_policy: None,
             tracing: false,
             timestamp: None,
         }
@@ -47,6 +50,7 @@ impl Clone for StatementConfig {
                 .as_ref()
                 .map(|policy| policy.clone_boxed()),
             speculative_execution_policy: self.speculative_execution_policy.clone(),
+            load_balancing_policy: self.load_balancing_policy.clone(),
             tracing: self.tracing,
             timestamp: self.timestamp,
         }

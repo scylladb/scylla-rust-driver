@@ -513,12 +513,18 @@ impl Session {
         };
 
         let span = trace_span!("Request", query = query.contents.as_str());
+        let load_balancer = query
+            .config
+            .load_balancing_policy
+            .as_ref()
+            .unwrap_or(&self.load_balancer)
+            .clone();
         RowIterator::new_for_query(
             query,
             serialized_values.into_owned(),
             self.default_consistency,
             retry_session,
-            self.load_balancer.clone(),
+            load_balancer,
             self.cluster.get_data(),
             self.metrics.clone(),
         )
@@ -777,13 +783,19 @@ impl Session {
             "Request",
             prepared_id = format!("{:X}", prepared.get_id()).as_str()
         );
+        let load_balancer = prepared
+            .config
+            .load_balancing_policy
+            .as_ref()
+            .unwrap_or(&self.load_balancer)
+            .clone();
         RowIterator::new_for_prepared_statement(PreparedIteratorConfig {
             prepared,
             values: serialized_values.into_owned(),
             default_consistency: self.default_consistency,
             token,
             retry_session,
-            load_balancer: self.load_balancer.clone(),
+            load_balancer,
             cluster_data: self.cluster.get_data(),
             metrics: self.metrics.clone(),
         })
@@ -1050,7 +1062,11 @@ impl Session {
         QueryFut: Future<Output = Result<ResT, QueryError>>,
     {
         let cluster_data = self.cluster.get_data();
-        let query_plan = self.load_balancer.plan(&statement_info, &cluster_data);
+        let load_balancer = statement_config
+            .load_balancing_policy
+            .as_ref()
+            .unwrap_or(&self.load_balancer);
+        let query_plan = load_balancer.plan(&statement_info, &cluster_data);
 
         // If a speculative execution policy is used to run query, query_plan has to be shared
         // between different async functions. This struct helps to wrap query_plan in mutex so it
