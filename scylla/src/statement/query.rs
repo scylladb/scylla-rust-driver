@@ -23,6 +23,15 @@ impl Query {
         }
     }
 
+    /// Creates a new `Query` from a CQL query string and custom config
+    pub fn with_config(query_text: impl Into<String>, config: StatementConfig) -> Self {
+        Self {
+            contents: query_text.into(),
+            page_size: None,
+            config,
+        }
+    }
+
     /// Returns self with page size set to the given value
     pub fn with_page_size(mut self, page_size: i32) -> Self {
         self.page_size = Some(page_size);
