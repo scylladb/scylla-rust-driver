@@ -500,6 +500,46 @@ impl SessionBuilder {
         self.config.keepalive_interval = Some(interval);
         self
     }
+
+    /// Enables automatic wait for schema agreement and sets the timeout for it.
+    /// By default, it is enabled and the timeout is 60 seconds.
+    ///
+    /// # Example
+    /// ```
+    /// # use scylla::{Session, SessionBuilder};
+    /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
+    /// let session: Session = SessionBuilder::new()
+    ///     .known_node("127.0.0.1:9042")
+    ///     .auto_schema_agreement_timeout(std::time::Duration::from_secs(120))
+    ///     .build()
+    ///     .await?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn auto_schema_agreement_timeout(mut self, timeout: Duration) -> Self {
+        self.config.auto_await_schema_agreement_timeout = Some(timeout);
+        self
+    }
+
+    /// Disables automatic wait for schema agreement.
+    /// By default, it is enabled and the timeout is 60 seconds.
+    ///
+    /// # Example
+    /// ```
+    /// # use scylla::{Session, SessionBuilder};
+    /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
+    /// let session: Session = SessionBuilder::new()
+    ///     .known_node("127.0.0.1:9042")
+    ///     .no_auto_schema_agreement()
+    ///     .build()
+    ///     .await?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn no_auto_schema_agreement(mut self) -> Self {
+        self.config.auto_await_schema_agreement_timeout = None;
+        self
+    }
 }
 
 /// Creates a [`SessionBuilder`] with default configuration, same as [`SessionBuilder::new`]
