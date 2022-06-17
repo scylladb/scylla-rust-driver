@@ -11,7 +11,7 @@ use std::sync::Arc;
 use std::time::Duration;
 use tokio::net::lookup_host;
 use tokio::time::timeout;
-use tracing::{debug, trace, trace_span, Instrument};
+use tracing::{debug, error, trace, trace_span, Instrument};
 use uuid::Uuid;
 
 use super::connection::QueryResponse;
@@ -62,6 +62,7 @@ pub struct Session {
     speculative_execution_policy: Option<Arc<dyn SpeculativeExecutionPolicy>>,
     metrics: Arc<Metrics>,
     default_consistency: Consistency,
+    auto_await_schema_agreement_timeout: Option<Duration>,
 }
 
 /// Configuration options for [`Session`].
@@ -113,6 +114,10 @@ pub struct SessionConfig {
 
     /// Interval of sending keepalive requests
     pub keepalive_interval: Option<Duration>,
+
+    /// Controls the timeout for the automatic wait for schema agreement after sending a schema-altering statement.
+    /// If `None`, the automatic schema agreement is disabled.
+    pub auto_await_schema_agreement_timeout: Option<Duration>,
 }
 
 /// Describes database server known on Session startup.
@@ -154,6 +159,7 @@ impl SessionConfig {
             default_consistency: Consistency::LocalQuorum,
             fetch_schema_metadata: true,
             keepalive_interval: None,
+            auto_await_schema_agreement_timeout: Some(std::time::Duration::from_secs(60)),
         }
     }
 
@@ -344,6 +350,7 @@ impl Session {
             speculative_execution_policy: config.speculative_execution_policy,
             metrics: Arc::new(Metrics::new()),
             default_consistency: config.default_consistency,
+            auto_await_schema_agreement_timeout: config.auto_await_schema_agreement_timeout,
         };
 
         if let Some(keyspace_name) = config.used_keyspace {
@@ -446,6 +453,8 @@ impl Session {
             .instrument(span)
             .await?;
         self.handle_set_keyspace_response(&response).await?;
+        self.handle_auto_await_schema_agreement(&query.contents, &response)
+            .await?;
 
         response.into_query_result()
     }
@@ -461,6 +470,28 @@ impl Session {
             );
             self.use_keyspace(set_keyspace.keyspace_name.clone(), true)
                 .await?;
+        }
+
+        Ok(())
+    }
+
+    async fn handle_auto_await_schema_agreement(
+        &self,
+        contents: &str,
+        response: &QueryResponse,
+    ) -> Result<(), QueryError> {
+        if let Some(timeout) = self.auto_await_schema_agreement_timeout {
+            if response.as_schema_change().is_some()
+                && !self.await_timed_schema_agreement(timeout).await?
+            {
+                // TODO: The TimeoutError should allow to provide more context.
+                // For now, print an error to the logs
+                error!(
+                    "Failed to reach schema agreement after a schema-altering statement: {}",
+                    contents,
+                );
+                return Err(QueryError::TimeoutError);
+            }
         }
 
         Ok(())
@@ -713,6 +744,8 @@ impl Session {
             .instrument(span)
             .await?;
         self.handle_set_keyspace_response(&response).await?;
+        self.handle_auto_await_schema_agreement(prepared.get_statement(), &response)
+            .await?;
 
         response.into_query_result()
     }

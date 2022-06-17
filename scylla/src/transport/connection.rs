@@ -158,6 +158,13 @@ impl QueryResponse {
         }
     }
 
+    pub fn as_schema_change(&self) -> Option<&result::SchemaChange> {
+        match &self.response {
+            Response::Result(result::Result::SchemaChange(sc)) => Some(sc),
+            _ => None,
+        }
+    }
+
     pub fn into_query_result(self) -> Result<QueryResult, QueryError> {
         let (rows, paging_state, col_specs) = match self.response {
             Response::Error(err) => return Err(err.into()),
