@@ -1,9 +1,10 @@
 use anyhow::Result;
 use scylla::{statement::prepared_statement::PreparedStatement, Session, SessionBuilder};
 use std::io::Write;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 
-use tokio::sync::Semaphore;
+use tokio::sync::Barrier;
 
 use stats_alloc::{Stats, StatsAlloc, INSTRUMENTED_SYSTEM};
 use std::alloc::System;
@@ -66,38 +67,58 @@ fn print_stats(stats: &stats_alloc::Stats, reqs: f64) {
 async fn measure(
     session: Arc<Session>,
     prepared: Arc<PreparedStatement>,
-    sem: Arc<Semaphore>,
     reqs: usize,
     parallelism: usize,
 ) -> Stats {
-    let initial_stats = GLOBAL.stats();
+    let barrier = Arc::new(Barrier::new(parallelism + 1));
+    let counter = Arc::new(AtomicUsize::new(0));
 
-    for i in 0..reqs {
-        if i % 10000 == 0 {
-            print!(".");
-            std::io::stdout().flush().unwrap();
-        }
+    let mut tasks = Vec::with_capacity(parallelism);
+    for _ in 0..parallelism {
         let session = session.clone();
         let prepared = prepared.clone();
-        let permit = sem.clone().acquire_owned().await;
-        tokio::task::spawn(async move {
-            let i = i;
-            session
-                .execute(&prepared, (i as i32, 2 * i as i32))
-                .await
-                .unwrap();
+        let barrier = barrier.clone();
+        let counter = counter.clone();
+        tasks.push(tokio::task::spawn(async move {
+            barrier.wait().await;
+            barrier.wait().await;
 
-            let _permit = permit;
-        });
+            loop {
+                let i = counter.fetch_add(1, Ordering::Relaxed);
+                if i >= reqs {
+                    break;
+                }
+                if i % 10000 == 0 {
+                    print!(".");
+                    std::io::stdout().flush().unwrap();
+                }
+                session
+                    .execute(&prepared, (i as i32, 2 * i as i32))
+                    .await
+                    .unwrap();
+            }
+
+            barrier.wait().await;
+            barrier.wait().await;
+        }));
     }
+
+    barrier.wait().await;
+    let initial_stats = GLOBAL.stats();
+    barrier.wait().await;
+
+    barrier.wait().await;
+    let final_stats = GLOBAL.stats();
+    barrier.wait().await;
+
+    // Wait until all tasks are cleaned up
+    for t in tasks {
+        t.await.unwrap();
+    }
+
     println!();
 
-    // Wait for all in-flight requests to finish
-    for _ in 0..parallelism {
-        sem.acquire().await.unwrap().forget();
-    }
-
-    GLOBAL.stats() - initial_stats
+    final_stats - initial_stats
 }
 
 #[tokio::main]
@@ -134,14 +155,11 @@ async fn main() -> Result<()> {
             .await?,
     );
 
-    let sem = Arc::new(Semaphore::new(args.parallelism));
-
     if args.mode == Mode::All || args.mode == Mode::Insert {
         print!("Sending {} inserts, hold tight ", args.requests);
         let write_stats = measure(
             session.clone(),
             prepared_inserts.clone(),
-            sem.clone(),
             args.requests,
             args.parallelism,
         )
@@ -151,7 +169,6 @@ async fn main() -> Result<()> {
         println!("----------");
         print_stats(&write_stats, args.requests as f64);
         println!("----------");
-        sem.add_permits(args.parallelism);
     }
 
     if args.mode == Mode::All || args.mode == Mode::Select {
@@ -159,7 +176,6 @@ async fn main() -> Result<()> {
         let read_stats = measure(
             session.clone(),
             prepared_selects.clone(),
-            sem.clone(),
             args.requests,
             args.parallelism,
         )
