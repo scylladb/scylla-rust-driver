@@ -78,8 +78,7 @@ async fn test_unprepared_statement() {
         )
         .await
         .unwrap();
-    // Wait for schema agreement
-    std::thread::sleep(std::time::Duration::from_millis(300));
+
     session
         .query(
             format!("INSERT INTO {}.t (a, b, c) VALUES (1, 2, 'abc')", ks),
@@ -182,8 +181,6 @@ async fn test_prepared_statement() {
         .query(format!("CREATE TABLE IF NOT EXISTS {}.complex_pk (a int, b int, c text, d int, e int, primary key ((a,b,c),d))", ks), &[])
         .await
         .unwrap();
-    // Wait for schema agreement
-    std::thread::sleep(std::time::Duration::from_millis(300));
 
     let prepared_statement = session
         .prepare(format!("SELECT a, b, c FROM {}.t2", ks))
@@ -376,9 +373,6 @@ async fn test_batch() {
         .await
         .unwrap();
 
-    // Wait for schema agreement
-    std::thread::sleep(std::time::Duration::from_millis(300));
-
     let prepared_statement = session
         .prepare(format!(
             "INSERT INTO {}.t_batch (a, b, c) VALUES (?, ?, ?)",
@@ -476,8 +470,7 @@ async fn test_token_calculation() {
         )
         .await
         .unwrap();
-    // Wait for schema agreement
-    std::thread::sleep(std::time::Duration::from_millis(300));
+
     let prepared_statement = session
         .prepare(format!("INSERT INTO {}.t3 (a) VALUES (?)", ks))
         .await
