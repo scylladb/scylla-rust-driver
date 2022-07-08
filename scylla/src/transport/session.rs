@@ -2,11 +2,14 @@
 //! It manages all connections to the cluster and allows to perform queries.
 
 use crate::frame::types::LegacyConsistency;
+use async_trait::async_trait;
 use bytes::Bytes;
 use futures::future::join_all;
 use futures::future::try_join_all;
+use std::collections::HashMap;
 use std::future::Future;
 use std::net::SocketAddr;
+use std::str::FromStr;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::net::lookup_host;
@@ -16,6 +19,7 @@ use uuid::Uuid;
 
 use super::connection::QueryResponse;
 use super::errors::{BadQuery, NewSessionError, QueryError};
+use super::topology::Peer;
 use crate::cql_to_rust::FromRow;
 use crate::frame::response::cql_to_rust::FromRowError;
 use crate::frame::response::result;
@@ -52,6 +56,44 @@ pub use crate::transport::connection_pool::PoolSize;
 
 #[cfg(feature = "ssl")]
 use openssl::ssl::SslContext;
+
+#[derive(Debug, Copy, Clone)]
+pub enum TranslationError {
+    NoRuleForAddress,
+    InvalidAddressInRule,
+}
+
+#[async_trait]
+pub trait AddressTranslator: Send + Sync {
+    async fn translate_address(&self, peer: &Peer) -> Result<SocketAddr, TranslationError>;
+}
+
+#[async_trait]
+impl AddressTranslator for HashMap<SocketAddr, SocketAddr> {
+    async fn translate_address(&self, peer: &Peer) -> Result<SocketAddr, TranslationError> {
+        match self.get(&peer.address) {
+            Some(&translated_addr) => Ok(translated_addr),
+            None => Err(TranslationError::NoRuleForAddress),
+        }
+    }
+}
+
+#[async_trait]
+// Notice: this is unefficient, but what else can we do with such poor representation as str?
+// After all, the cluster size is small enough to make this irrelevant.
+impl AddressTranslator for HashMap<&'static str, &'static str> {
+    async fn translate_address(&self, peer: &Peer) -> Result<SocketAddr, TranslationError> {
+        for (&rule_addr_str, &translated_addr_str) in self.iter() {
+            if let Ok(rule_addr) = SocketAddr::from_str(rule_addr_str) {
+                if rule_addr == peer.address {
+                    return SocketAddr::from_str(translated_addr_str)
+                        .map_err(|_| TranslationError::InvalidAddressInRule);
+                }
+            }
+        }
+        Err(TranslationError::NoRuleForAddress)
+    }
+}
 
 /// `Session` manages connections to the cluster and allows to perform queries
 pub struct Session {
@@ -118,6 +160,8 @@ pub struct SessionConfig {
     /// Controls the timeout for the automatic wait for schema agreement after sending a schema-altering statement.
     /// If `None`, the automatic schema agreement is disabled.
     pub auto_await_schema_agreement_timeout: Option<Duration>,
+
+    pub address_translator: Option<Arc<dyn AddressTranslator>>,
 }
 
 /// Describes database server known on Session startup.
@@ -160,6 +204,7 @@ impl SessionConfig {
             fetch_schema_metadata: true,
             keepalive_interval: None,
             auto_await_schema_agreement_timeout: Some(std::time::Duration::from_secs(60)),
+            address_translator: None,
         }
     }
 
@@ -339,6 +384,7 @@ impl Session {
             &node_addresses,
             config.get_pool_config(),
             config.fetch_schema_metadata,
+            &config.address_translator,
         )
         .await?;
 

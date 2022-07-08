@@ -16,6 +16,7 @@ use std::{
 
 /// Node represents a cluster node along with it's data and connections
 pub struct Node {
+    pub untranslated_address: SocketAddr,
     pub address: SocketAddr,
     pub datacenter: Option<String>,
     pub rack: Option<String>,
@@ -28,12 +29,14 @@ pub struct Node {
 impl Node {
     /// Creates new node which starts connecting in the background
     /// # Arguments
-    ///
+    /// `untranslated_address` - address received with topology metadata;
+    ///                          may be different than `address`
     /// `address` - address to connect to
     /// `compression` - preferred compression to use
     /// `datacenter` - optional datacenter name
     /// `rack` - optional rack name
     pub(crate) fn new(
+        untranslated_address: SocketAddr,
         address: SocketAddr,
         pool_config: PoolConfig,
         datacenter: Option<String>,
@@ -44,6 +47,7 @@ impl Node {
             NodeConnectionPool::new(address.ip(), address.port(), pool_config, keyspace_name);
 
         Node {
+            untranslated_address,
             address,
             datacenter,
             rack,
