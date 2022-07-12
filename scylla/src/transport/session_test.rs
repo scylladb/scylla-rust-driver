@@ -1772,3 +1772,67 @@ async fn test_prepared_partitioner() {
         &PartitionerName::CDC
     );
 }
+
+async fn rename(session: &Session, rename_str: &str) {
+    session
+        .query(format!("ALTER TABLE tab RENAME {}", rename_str), ())
+        .await
+        .unwrap();
+}
+
+// A tests which checks that Session::execute automatically reprepares PreparedStatemtns if they become unprepared.
+// Doing an ALTER TABLE statement clears prepared statement cache and all prepared statements need
+// to be prepared again.
+// To verify that this indeed happens you can run:
+// RUST_LOG=debug cargo test test_unprepared_reprepare_in_execute -- --nocapture
+// And look for this line in the logs:
+// Connection::execute: Got DbError::Unprepared - repreparing statement with id ...
+#[tokio::test]
+async fn test_unprepared_reprepare_in_execute() {
+    let _ = tracing_subscriber::fmt::try_init();
+
+    let uri = std::env::var("SCYLLA_URI").unwrap_or_else(|_| "127.0.0.1:9042".to_string());
+    let session = SessionBuilder::new().known_node(uri).build().await.unwrap();
+    let ks = unique_name();
+
+    session.query(format!("CREATE KEYSPACE IF NOT EXISTS {} WITH REPLICATION = {{'class' : 'SimpleStrategy', 'replication_factor' : 1}}", ks), &[]).await.unwrap();
+    session.use_keyspace(ks, false).await.unwrap();
+
+    session
+        .query(
+            "CREATE TABLE IF NOT EXISTS tab (a int, b int, c int, primary key (a, b, c))",
+            &[],
+        )
+        .await
+        .unwrap();
+
+    let insert_a_b_c = session
+        .prepare("INSERT INTO tab (a, b, c) VALUES (?, ?, ?)")
+        .await
+        .unwrap();
+
+    session.execute(&insert_a_b_c, (1, 2, 3)).await.unwrap();
+
+    // Swap names of columns b and c
+    rename(&session, "b TO tmp_name").await;
+
+    // During rename the query should fail
+    assert!(session.execute(&insert_a_b_c, (1, 2, 3)).await.is_err());
+    rename(&session, "c TO b").await;
+    assert!(session.execute(&insert_a_b_c, (1, 2, 3)).await.is_err());
+    rename(&session, "tmp_name TO c").await;
+
+    // Insert values again (b and c are swapped so those are different inserts)
+    session.execute(&insert_a_b_c, (1, 2, 3)).await.unwrap();
+
+    let mut all_rows: Vec<(i32, i32, i32)> = session
+        .query("SELECT a, b, c FROM tab", ())
+        .await
+        .unwrap()
+        .rows_typed::<(i32, i32, i32)>()
+        .unwrap()
+        .map(|r| r.unwrap())
+        .collect();
+    all_rows.sort();
+    assert_eq!(all_rows, vec![(1, 2, 3), (1, 3, 2)]);
+}
