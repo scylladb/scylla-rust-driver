@@ -464,7 +464,8 @@ impl Connection {
             .await?;
 
         if let Response::Error(err) = &query_response.response {
-            if let DbError::Unprepared { .. } = err.error {
+            if let DbError::Unprepared { statement_id } = &err.error {
+                debug!("Connection::execute: Got DbError::Unprepared - repreparing statement with id {:?}", statement_id);
                 // Repreparation of a statement is needed
                 let reprepare_query: Query = prepared_statement.get_statement().into();
                 let reprepared = self.prepare(&reprepare_query).await?;
@@ -563,6 +564,7 @@ impl Connection {
             return match query_response.response {
                 Response::Error(err) => match err.error {
                     DbError::Unprepared { statement_id } => {
+                        debug!("Connection::batch: got DbError::Unprepared - repreparing statement with id {:?}", statement_id);
                         let prepared_statement = batch.statements.iter().find_map(|s| match s {
                             BatchStatement::PreparedStatement(s) if *s.get_id() == statement_id => {
                                 Some(s)
