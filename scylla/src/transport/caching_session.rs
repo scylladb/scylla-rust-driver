@@ -31,7 +31,7 @@ impl CachingSession {
     pub async fn execute(
         &self,
         query: impl Into<Query>,
-        values: &impl ValueList,
+        values: impl ValueList,
     ) -> Result<QueryResult, QueryError> {
         let query = query.into();
         let prepared = self.add_prepared_statement(&query).await?;
