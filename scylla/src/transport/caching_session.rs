@@ -6,6 +6,7 @@ use crate::transport::iterator::RowIterator;
 use crate::{BatchResult, QueryResult, Session};
 use bytes::Bytes;
 use dashmap::DashMap;
+use futures::future::try_join_all;
 use itertools::Either;
 use crate::batch::{Batch, BatchStatement};
 
@@ -99,51 +100,20 @@ impl CachingSession {
         mut batch: Batch,
         values: impl BatchValues,
     ) -> Result<BatchResult, QueryError> {
-        // Replace all of the `Query`s with `PreparedStatement`s
-        for statement in batch.statements.iter_mut() {
-            if let BatchStatement::Query(query) = statement {
-                let prepared = self.add_prepared_statement(&*query).await?;
-                *statement = BatchStatement::PreparedStatement(prepared);
+        try_join_all(batch.statements.iter_mut().map(|statement| {
+            async move {
+                if let BatchStatement::Query(query) = statement {
+                    let prepared = self.add_prepared_statement(&*query).await?;
+                    *statement = BatchStatement::PreparedStatement(prepared);
+                }
+                Ok::<(), QueryError>(())
             }
-        }
+        })).await?;
 
-        let result = self
+        self
             .session
             .batch(&batch, &values)
-            .await;
-
-        // If one of the statements is Unprepared, we need to remove it from the cache,
-        // re-prepare it, and retry the batch execution
-        match result {
-            r @ Ok(_) => r,
-            Err( QueryError::DbError(DbError::Unprepared { ref statement_id }, _message)) => {
-                let unprepared_statement = batch.statements.iter_mut().find_map(|statement| {
-                    if let BatchStatement::PreparedStatement(statement) = statement {
-                        if statement.get_id() == statement_id {
-                            return Some(statement)
-                        }
-                    }
-                    None
-                });
-                // Remove the query from the cache, re-prepare the statement, and
-                // overwrite the previous unprepared_statement with the newly prepared
-                // statement.
-                match unprepared_statement {
-                    Some(unprepared_statement) => {
-                        self.cache.remove(unprepared_statement.get_statement());
-                        let prepared = self.add_prepared_statement(
-                            &Query::new(unprepared_statement.get_statement())
-                        ).await?;
-                        *unprepared_statement = prepared;
-                        self.session.batch(&batch, values).await
-                    }
-                    None => Err(QueryError::ProtocolError(
-                        "Prepared statement Id did not match any known statement Id",
-                    ))
-                }
-            },
-            e @ Err(_) => e,
-        }
+            .await
     }
 
     /// Adds a prepared statement to the cache
