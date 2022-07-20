@@ -31,7 +31,7 @@ Currently, we require new PRs to compile without warnings, pass `cargo fmt` and 
 ## Testing
 
 The easiest way to setup a running Scylla instance is to use the [Scylla Docker image](https://hub.docker.com/r/scylladb/scylla/):
-You need a running Scylla instance for the tests. 
+You need a running Scylla instance for the tests.
 
 Execute the commands below to run the tests:
 
@@ -42,6 +42,10 @@ docker run --name scylla-ci -d scylladb/scylla
 # Run all tests
 SCYLLA_URI="$(docker inspect --format='{{ .NetworkSettings.IPAddress }}' scylla-ci):19042" cargo test
 ```
+
+When on non-Linux machine, however, it can be impossible to connect to containerized Scylla instance from outside Docker.\
+In that case, we provide scripts for running tests inside another Docker container, located at `scripts/tests_in_docker`.\
+Please refer to README there.
 
 ## Contributing to the book
 
