@@ -1,0 +1,22 @@
+version: "3.7"
+
+services:
+  node:
+    cpuset: "0-3"
+    image: ${SCYLLA_IMAGE}:${SCYLLA_VERSION}
+    command: ${SCYLLA_ARGS}
+    ports:
+      - "9042:9042"
+      - "19042:19042"
+    networks:
+      public:
+        ipv4_address: 192.168.100.100
+
+networks:
+  public:
+    name: scylla_rust_driver_public
+    driver: bridge
+    ipam:
+      driver: default
+      config:
+        - subnet: 192.168.100.0/24
