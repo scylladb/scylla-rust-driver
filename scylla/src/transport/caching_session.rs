@@ -32,6 +32,18 @@ impl<S> CachingSession<S>
             cache: Default::default(),
         }
     }
+
+    /// Builds a [`CachingCaching::session`] from a [`Session`] and a cache size,
+    /// reserving `capacity` space in the cache upfront. Truncates `capacity` to `cache_size`.
+    pub fn with_capacity(session: Session, cache_size: usize, capacity: usize) -> Self {
+        // Don't reserve more capacity than the cache size
+        let capacity = std::cmp::min(capacity, cache_size);
+        Self {
+            session,
+            max_capacity: cache_size,
+            cache: DashMap::with_capacity_and_hasher(capacity, S::default()),
+        }
+    }
 }
 
 impl<S> CachingSession<S>
@@ -44,6 +56,18 @@ impl<S> CachingSession<S>
             session,
             max_capacity: cache_size,
             cache: DashMap::with_hasher(hasher),
+        }
+    }
+
+    /// Builds a [`CachingCaching::session`] from a [`Session`] and a cache size,
+    /// using a customer hasher and reserving `capacity` space in the cache upfront.
+    pub fn with_capacity_and_hasher(session: Session, cache_size: usize, capacity: usize, hasher: S) -> Self {
+        // Don't reserve more capacity than the cache size
+        let capacity = std::cmp::min(capacity, cache_size);
+        Self {
+            session,
+            max_capacity: cache_size,
+            cache: DashMap::with_capacity_and_hasher(capacity, hasher),
         }
     }
 
@@ -350,7 +374,9 @@ mod tests {
     #[tokio::test]
     async fn test_custom_hasher() {
         let _session: CachingSession::<std::collections::hash_map::RandomState> = CachingSession::from(new_for_test().await, 2);
+        let _session: CachingSession::<std::collections::hash_map::RandomState> = CachingSession::with_capacity(new_for_test().await, 2, 2);
         let _session: CachingSession::<FxBuildHasher> = CachingSession::from(new_for_test().await, 2);
         let _session: CachingSession::<FxBuildHasher> = CachingSession::with_hasher(new_for_test().await, 2, FxBuildHasher::default());
+        let _session: CachingSession::<FxBuildHasher> = CachingSession::with_capacity_and_hasher(new_for_test().await, 2, 2, FxBuildHasher::default());
     }
 }
