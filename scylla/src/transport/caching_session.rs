@@ -1,3 +1,5 @@
+use std::collections::hash_map::RandomState;
+use std::hash::BuildHasher;
 use crate::frame::value::{BatchValues, ValueList};
 use crate::prepared_statement::PreparedStatement;
 use crate::query::Query;
@@ -11,21 +13,37 @@ use itertools::Either;
 use crate::batch::{Batch, BatchStatement};
 
 /// Provides auto caching while executing queries
-pub struct CachingSession {
+pub struct CachingSession<S = RandomState> {
     pub session: Session,
     /// The prepared statement cache size
     /// If a prepared statement is added while the limit is reached, the oldest prepared statement
     /// is removed from the cache
     pub max_capacity: usize,
-    pub cache: DashMap<String, PreparedStatement>,
+    pub cache: DashMap<String, PreparedStatement, S>,
 }
 
-impl CachingSession {
+impl<S> CachingSession<S>
+    where S: Default + BuildHasher + Clone
+{
     pub fn from(session: Session, cache_size: usize) -> Self {
         Self {
             session,
             max_capacity: cache_size,
             cache: Default::default(),
+        }
+    }
+}
+
+impl<S> CachingSession<S>
+    where S: BuildHasher + Clone
+{
+    /// Builds a [`CachingCaching::session`] from a [`Session`] and a cache size,
+    /// using a customer hasher.
+    pub fn with_hasher(session: Session, cache_size: usize, hasher: S) -> Self {
+        Self {
+            session,
+            max_capacity: cache_size,
+            cache: DashMap::with_hasher(hasher),
         }
     }
 
