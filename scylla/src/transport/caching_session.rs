@@ -204,6 +204,7 @@ impl<S> CachingSession<S>
 mod tests {
     use crate::{CachingSession, Session, SessionBuilder};
     use futures::TryStreamExt;
+    use fxhash::FxBuildHasher;
 
     async fn new_for_test() -> Session {
         let uri = std::env::var("SCYLLA_URI").unwrap_or_else(|_| "127.0.0.1:9042".to_string());
@@ -343,5 +344,13 @@ mod tests {
 
         assert_eq!(1, session.cache.len());
         assert_eq!(1, result.rows.unwrap().len());
+    }
+
+    /// This test checks that we can construct a CachingSession with custom HashBuilder implementations
+    #[tokio::test]
+    async fn test_custom_hasher() {
+        let _session: CachingSession::<std::collections::hash_map::RandomState> = CachingSession::from(new_for_test().await, 2);
+        let _session: CachingSession::<FxBuildHasher> = CachingSession::from(new_for_test().await, 2);
+        let _session: CachingSession::<FxBuildHasher> = CachingSession::with_hasher(new_for_test().await, 2, FxBuildHasher::default());
     }
 }
