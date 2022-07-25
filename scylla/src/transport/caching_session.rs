@@ -1,11 +1,13 @@
-use crate::frame::value::ValueList;
+use crate::batch::{Batch, BatchStatement};
+use crate::frame::value::{BatchValues, ValueList};
 use crate::prepared_statement::PreparedStatement;
 use crate::query::Query;
 use crate::transport::errors::QueryError;
 use crate::transport::iterator::RowIterator;
-use crate::{QueryResult, Session};
+use crate::{BatchResult, QueryResult, Session};
 use bytes::Bytes;
 use dashmap::DashMap;
+use futures::future::try_join_all;
 
 /// Provides auto caching while executing queries
 #[derive(Debug)]
@@ -64,6 +66,50 @@ impl CachingSession {
         self.session
             .execute_paged(&prepared, values.clone(), paging_state.clone())
             .await
+    }
+
+    /// Does the same thing as [`Session::batch`] but uses the prepared statement cache\
+    /// Prepares batch using CachingSession::prepare_batch if needed and then executes it
+    pub async fn batch(
+        &self,
+        batch: &Batch,
+        values: impl BatchValues,
+    ) -> Result<BatchResult, QueryError> {
+        let all_prepared: bool = batch
+            .statements
+            .iter()
+            .all(|stmt| matches!(stmt, BatchStatement::PreparedStatement(_)));
+
+        if all_prepared {
+            self.session.batch(batch, &values).await
+        } else {
+            let prepared_batch: Batch = self.prepare_batch(batch).await?;
+
+            self.session.batch(&prepared_batch, &values).await
+        }
+    }
+
+    /// Prepares all statements within the batch and returns a new batch where every
+    /// statement is prepared.
+    /// Uses the prepared statements cache.
+    pub async fn prepare_batch(&self, batch: &Batch) -> Result<Batch, QueryError> {
+        let mut prepared_batch = batch.clone();
+
+        try_join_all(
+            prepared_batch
+                .statements
+                .iter_mut()
+                .map(|statement| async move {
+                    if let BatchStatement::Query(query) = statement {
+                        let prepared = self.add_prepared_statement(&*query).await?;
+                        *statement = BatchStatement::PreparedStatement(prepared);
+                    }
+                    Ok::<(), QueryError>(())
+                }),
+        )
+        .await?;
+
+        Ok(prepared_batch)
     }
 
     /// Adds a prepared statement to the cache
