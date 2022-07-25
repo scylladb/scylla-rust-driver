@@ -2,7 +2,7 @@
 
 use super::errors::NewSessionError;
 use super::load_balancing::LoadBalancingPolicy;
-use super::session::{Session, SessionConfig};
+use super::session::{AddressTranslator, Session, SessionConfig};
 use super::speculative_execution::SpeculativeExecutionPolicy;
 use super::Compression;
 use crate::transport::{connection_pool::PoolSize, retry_policy::RetryPolicy};
@@ -538,6 +538,62 @@ impl SessionBuilder {
     /// ```
     pub fn no_auto_schema_agreement(mut self) -> Self {
         self.config.auto_await_schema_agreement_timeout = None;
+        self
+    }
+
+    /// Uses a custom address translator for peer addresses retrieved from the cluster.
+    /// By default, no translation is performed.
+    ///
+    /// # Example
+    /// ```
+    /// # use async_trait::async_trait;
+    /// # use std::net::SocketAddr;
+    /// # use std::sync::Arc;
+    /// # use scylla::{Session, SessionBuilder};
+    /// # use scylla::transport::session::{AddressTranslator, TranslationError};
+    /// # use scylla::transport::topology::Peer;
+    /// struct IdentityTranslator;
+    ///
+    /// #[async_trait]
+    /// impl AddressTranslator for IdentityTranslator {
+    ///     async fn translate_address(&self, peer: &Peer) -> Result<SocketAddr, TranslationError> {
+    ///         Ok(peer.address)
+    ///     }
+    /// }
+    ///
+    /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
+    /// let session: Session = SessionBuilder::new()
+    ///     .known_node("127.0.0.1:9042")
+    ///     .address_translator(Arc::new(IdentityTranslator))
+    ///     .build()
+    ///     .await?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    /// /// # Example
+    /// ```
+    /// # use std::net::SocketAddr;
+    /// # use std::sync::Arc;
+    /// # use std::collections::HashMap;
+    /// # use std::str::FromStr;
+    /// # use scylla::{Session, SessionBuilder};
+    /// # use scylla::transport::session::{AddressTranslator, TranslationError};
+    ///
+    /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
+    ///     let mut translation_rules = HashMap::new();
+    ///     let addr_before_translation = SocketAddr::from_str("192.168.0.42").unwrap();
+    ///     let addr_after_translation = SocketAddr::from_str("157.123.12.42").unwrap();
+    ///     translation_rules.insert(addr_before_translation, addr_after_translation);
+    ///     let session: Session = SessionBuilder::new()
+    ///         .known_node("127.0.0.1:9042")
+    ///         .address_translator(Arc::new(translation_rules))
+    ///         .build()
+    ///         .await?;
+    /// #    Ok(())
+    /// # }
+    /// ```
+    pub fn address_translator(mut self, translator: Arc<dyn AddressTranslator>) -> Self {
+        self.config.address_translator = Some(translator);
         self
     }
 }
