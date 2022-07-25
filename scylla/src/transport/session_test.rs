@@ -170,6 +170,10 @@ async fn test_prepared_statement() {
         .await
         .unwrap();
 
+    // Refresh metadata as `ClusterData::compute_token` use them
+    session.await_schema_agreement().await.unwrap();
+    session.refresh_metadata().await.unwrap();
+
     let prepared_statement = session
         .prepare(format!("SELECT a, b, c FROM {}.t2", ks))
         .await
@@ -218,13 +222,17 @@ async fn test_prepared_statement() {
                 .as_bigint()
                 .unwrap(),
         };
-        let expected_token = Murmur3Partitioner::hash(
+        let prepared_token = Murmur3Partitioner::hash(
             prepared_statement
                 .compute_partition_key(&serialized_values)
                 .unwrap(),
         );
-
-        assert_eq!(token, expected_token)
+        assert_eq!(token, prepared_token);
+        let cluster_data_token = session
+            .get_cluster_data()
+            .compute_token(&ks, "t2", (17_i32,))
+            .unwrap();
+        assert_eq!(token, cluster_data_token);
     }
     {
         let rs = session
@@ -240,16 +248,20 @@ async fn test_prepared_statement() {
                 .as_bigint()
                 .unwrap(),
         };
-        let expected_token = Murmur3Partitioner::hash(
+        let prepared_token = Murmur3Partitioner::hash(
             prepared_complex_pk_statement
                 .compute_partition_key(&serialized_values)
                 .unwrap(),
         );
-
-        assert_eq!(token, expected_token)
+        assert_eq!(token, prepared_token);
+        let cluster_data_token = session
+            .get_cluster_data()
+            .compute_token(&ks, "complex_pk", &serialized_values)
+            .unwrap();
+        assert_eq!(token, cluster_data_token);
     }
 
-    // Verify that correct data was insertd
+    // Verify that correct data was inserted
     {
         let rs = session
             .query(format!("SELECT a,b,c FROM {}.t2", ks), &[])
@@ -459,6 +471,10 @@ async fn test_token_calculation() {
         .await
         .unwrap();
 
+    // Refresh metadata as `ClusterData::compute_token` use them
+    session.await_schema_agreement().await.unwrap();
+    session.refresh_metadata().await.unwrap();
+
     let prepared_statement = session
         .prepare(format!("INSERT INTO {}.t3 (a) VALUES (?)", ks))
         .await
@@ -491,12 +507,17 @@ async fn test_token_calculation() {
                 .as_bigint()
                 .unwrap(),
         };
-        let expected_token = Murmur3Partitioner::hash(
+        let prepared_token = Murmur3Partitioner::hash(
             prepared_statement
                 .compute_partition_key(&serialized_values)
                 .unwrap(),
         );
-        assert_eq!(token, expected_token)
+        assert_eq!(token, prepared_token);
+        let cluster_data_token = session
+            .get_cluster_data()
+            .compute_token(&ks, "t3", &serialized_values)
+            .unwrap();
+        assert_eq!(token, cluster_data_token);
     }
 }
 
