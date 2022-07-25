@@ -40,6 +40,34 @@ session.batch(&batch, batch_values).await?;
 # }
 ```
 
+### Preparing a batch
+Instead of preparing each query individually, it's possible to prepare a whole batch at once:
+
+```rust
+# extern crate scylla;
+# use scylla::Session;
+# use std::error::Error;
+# async fn check_only_compiles(session: &Session) -> Result<(), Box<dyn Error>> {
+use scylla::batch::Batch;
+
+// Create a batch statement with unprepared statements
+let mut batch: Batch = Default::default();
+batch.append_statement("INSERT INTO ks.simple_unprepared1 VALUES(?, ?)");
+batch.append_statement("INSERT INTO ks.simple_unprepared2 VALUES(?, ?)");
+
+// Prepare all statements in the batch at once
+let prepared_batch: Batch = session.prepare_batch(&batch).await?;
+
+// Specify bound values to use with each query
+let batch_values = ((1_i32, 2_i32),
+                    (3_i32, 4_i32));
+
+// Run the prepared batch
+session.batch(&prepared_batch, batch_values).await?;
+# Ok(())
+# }
+```
+
 ### Batch options
 You can set various options by operating on the `Batch` object.\
 For example to change consistency:
