@@ -30,6 +30,7 @@ use tracing::warn;
 /// # Ok(())
 /// # }
 /// ```
+#[derive(Clone)]
 pub struct SessionBuilder {
     pub config: SessionConfig,
 }
