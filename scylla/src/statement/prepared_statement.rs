@@ -265,12 +265,9 @@ impl PreparedStatement {
 
     /// Sets the name of the partitioner used for this statement.
     pub(crate) fn set_partitioner_name(&mut self, partitioner_name: Option<&str>) {
-        self.partitioner_name = match partitioner_name {
-            Some(partitioner_name) if partitioner_name.ends_with("CDCPartitioner") => {
-                PartitionerName::CDC
-            }
-            _ => PartitionerName::Murmur3,
-        }
+        self.partitioner_name = partitioner_name
+            .and_then(PartitionerName::from_str)
+            .unwrap_or_default();
     }
 
     /// Access metadata about this prepared statement as returned by the database
