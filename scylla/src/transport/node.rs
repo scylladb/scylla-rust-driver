@@ -1,5 +1,5 @@
 /// Node represents a cluster node along with it's data and connections
-use crate::routing::Token;
+use crate::routing::{Sharder, Token};
 use crate::transport::connection::Connection;
 use crate::transport::connection::VerifiedKeyspaceName;
 use crate::transport::connection_pool::{NodeConnectionPool, PoolConfig};
@@ -50,6 +50,10 @@ impl Node {
             pool,
             down_marker: false.into(),
         }
+    }
+
+    pub fn sharder(&self) -> Option<Sharder> {
+        self.pool.sharder()
     }
 
     /// Get connection which should be used to connect using given token

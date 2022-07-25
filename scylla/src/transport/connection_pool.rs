@@ -192,6 +192,14 @@ impl NodeConnectionPool {
         }
     }
 
+    pub fn sharder(&self) -> Option<Sharder> {
+        self.with_connections(|pool_conns| match pool_conns {
+            PoolConnections::NotSharded(_) => None,
+            PoolConnections::Sharded { sharder, .. } => Some(sharder.clone()),
+        })
+        .unwrap_or(None)
+    }
+
     pub fn connection_for_token(&self, token: Token) -> Result<Arc<Connection>, QueryError> {
         trace!(token = token.value, "Selecting connection for token");
         self.with_connections(|pool_conns| match pool_conns {
