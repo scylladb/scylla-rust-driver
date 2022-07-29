@@ -89,10 +89,6 @@ name = "value_list"
 path = "value_list.rs"
 
 [[example]]
-name = "custom_load_balancing_policy"
-path = "custom_load_balancing_policy.rs"
-
-[[example]]
 name = "tower"
 path = "tower.rs"
 
