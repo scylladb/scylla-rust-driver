@@ -31,9 +31,7 @@ use crate::transport::connection::{
 };
 use crate::transport::connection_pool::PoolConfig;
 use crate::transport::iterator::{PreparedIteratorConfig, RowIterator};
-use crate::transport::load_balancing::{
-    LoadBalancingPolicy, RoundRobinPolicy, Statement, TokenAwarePolicy,
-};
+use crate::transport::load_balancing::{DumbPolicy, LoadBalancingPolicy, Statement};
 use crate::transport::metrics::Metrics;
 use crate::transport::node::Node;
 use crate::transport::partitioner::{
@@ -144,7 +142,7 @@ impl SessionConfig {
             compression: None,
             tcp_nodelay: true,
             schema_agreement_interval: Duration::from_millis(200),
-            load_balancing: Arc::new(TokenAwarePolicy::new(Box::new(RoundRobinPolicy::new()))),
+            load_balancing: Arc::new(DumbPolicy),
             used_keyspace: None,
             keyspace_case_sensitive: false,
             retry_policy: Box::new(DefaultRetryPolicy),
