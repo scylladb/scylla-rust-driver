@@ -29,7 +29,7 @@ use crate::statement::Consistency;
 use crate::statement::{prepared_statement::PreparedStatement, query::Query};
 use crate::transport::cluster::ClusterData;
 use crate::transport::connection::{Connection, QueryResponse};
-use crate::transport::load_balancing::{LoadBalancingPolicy, Statement};
+use crate::transport::load_balancing::{LoadBalancingPolicy, StatementInfo};
 use crate::transport::metrics::Metrics;
 use crate::transport::node::Node;
 use crate::transport::retry_policy::{QueryInfo, RetryDecision, RetrySession};
@@ -153,7 +153,7 @@ impl RowIterator {
                 sender,
                 choose_connection,
                 page_query,
-                statement_info: Statement::default(),
+                statement_info: StatementInfo::default(),
                 query_is_idempotent: query.config.is_idempotent,
                 query_consistency: consistency,
                 retry_session,
@@ -193,7 +193,7 @@ impl RowIterator {
             .config
             .determine_consistency(config.default_consistency);
 
-        let statement_info = Statement {
+        let statement_info = StatementInfo {
             token: config.token,
             keyspace: None,
         };
@@ -276,7 +276,7 @@ struct RowIteratorWorker<'a, ConnFunc, QueryFunc> {
     // AsyncFn(Arc<Connection>, Option<Bytes>) -> Result<QueryResponse, QueryError>
     page_query: QueryFunc,
 
-    statement_info: Statement<'a>,
+    statement_info: StatementInfo<'a>,
     query_is_idempotent: bool,
     query_consistency: Consistency,
 

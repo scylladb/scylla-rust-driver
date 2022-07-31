@@ -31,7 +31,7 @@ use crate::transport::connection::{
 };
 use crate::transport::connection_pool::PoolConfig;
 use crate::transport::iterator::{PreparedIteratorConfig, RowIterator};
-use crate::transport::load_balancing::{DumbPolicy, LoadBalancingPolicy, Statement};
+use crate::transport::load_balancing::{DumbPolicy, LoadBalancingPolicy, StatementInfo};
 use crate::transport::metrics::Metrics;
 use crate::transport::node::Node;
 use crate::transport::partitioner::{
@@ -432,7 +432,7 @@ impl Session {
         let span = trace_span!("Request", query = query.contents.as_str());
         let response = self
             .run_query(
-                Statement::default(),
+                StatementInfo::default(),
                 &query.config,
                 |node: Arc<Node>| async move { node.random_connection().await },
                 |connection: Arc<Connection>| {
@@ -714,7 +714,7 @@ impl Session {
 
         let token = self.calculate_token(prepared, &serialized_values)?;
 
-        let statement_info = Statement {
+        let statement_info = StatementInfo {
             token,
             keyspace: prepared.get_keyspace_name(),
         };
@@ -870,7 +870,7 @@ impl Session {
         let values_ref = &values;
 
         self.run_query(
-            Statement::default(),
+            StatementInfo::default(),
             &batch.config,
             |node: Arc<Node>| async move { node.random_connection().await },
             |connection: Arc<Connection>| async move { connection.batch(batch, values_ref).await },
@@ -1071,7 +1071,7 @@ impl Session {
     // maybe once async closures get stabilized this can be fixed
     async fn run_query<'a, ConnFut, QueryFut, ResT>(
         &'a self,
-        statement_info: Statement<'a>,
+        statement_info: StatementInfo<'a>,
         statement_config: &StatementConfig,
         choose_connection: impl Fn(Arc<Node>) -> ConnFut,
         do_query: impl Fn(Arc<Connection>) -> QueryFut,
@@ -1279,7 +1279,7 @@ impl Session {
     where
         QueryFut: Future<Output = Result<ResT, QueryError>>,
     {
-        let info = Statement::default();
+        let info = StatementInfo::default();
         let config = StatementConfig {
             is_idempotent: true,
             serial_consistency: Some(SerialConsistency::LocalSerial),
