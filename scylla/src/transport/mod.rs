@@ -7,6 +7,7 @@ pub mod execution_profile;
 pub mod host_filter;
 pub mod iterator;
 pub mod load_balancing;
+pub mod locator;
 pub(crate) mod metrics;
 mod node;
 pub mod partitioner;
