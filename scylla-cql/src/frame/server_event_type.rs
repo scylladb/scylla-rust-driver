@@ -28,7 +28,7 @@ impl FromStr for EventType {
             "TOPOLOGY_CHANGE" => Ok(Self::TopologyChange),
             "STATUS_CHANGE" => Ok(Self::StatusChange),
             "SCHEMA_CHANGE" => Ok(Self::SchemaChange),
-            _ => Err(ParseError::BadData(format!(
+            _ => Err(ParseError::BadIncomingData(format!(
                 "Invalid type event type: {}",
                 s
             ))),

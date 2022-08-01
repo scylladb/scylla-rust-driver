@@ -142,7 +142,7 @@ impl SchemaChangeEvent {
                 })
             }
 
-            _ => Err(ParseError::BadData(format!(
+            _ => Err(ParseError::BadIncomingData(format!(
                 "Invalid type of schema change ({}) in SchemaChangeEvent",
                 target
             ))),
@@ -158,7 +158,7 @@ impl TopologyChangeEvent {
         match type_of_change {
             "NEW_NODE" => Ok(Self::NewNode(addr)),
             "REMOVED_NODE" => Ok(Self::RemovedNode(addr)),
-            _ => Err(ParseError::BadData(format!(
+            _ => Err(ParseError::BadIncomingData(format!(
                 "Invalid type of change ({}) in TopologyChangeEvent",
                 type_of_change
             ))),
@@ -174,7 +174,7 @@ impl StatusChangeEvent {
         match type_of_change {
             "UP" => Ok(Self::Up(addr)),
             "DOWN" => Ok(Self::Down(addr)),
-            _ => Err(ParseError::BadData(format!(
+            _ => Err(ParseError::BadIncomingData(format!(
                 "Invalid type of status change ({}) in StatusChangeEvent",
                 type_of_change
             ))),

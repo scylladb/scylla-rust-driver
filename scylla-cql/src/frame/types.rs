@@ -71,25 +71,25 @@ impl std::fmt::Display for LegacyConsistency {
 
 impl From<std::num::TryFromIntError> for ParseError {
     fn from(_err: std::num::TryFromIntError) -> Self {
-        ParseError::BadData("Integer conversion out of range".to_string())
+        ParseError::BadIncomingData("Integer conversion out of range".to_string())
     }
 }
 
 impl From<std::str::Utf8Error> for ParseError {
     fn from(_err: std::str::Utf8Error) -> Self {
-        ParseError::BadData("UTF8 serialization failed".to_string())
+        ParseError::BadIncomingData("UTF8 serialization failed".to_string())
     }
 }
 
 impl From<std::array::TryFromSliceError> for ParseError {
     fn from(_err: std::array::TryFromSliceError) -> Self {
-        ParseError::BadData("array try from slice failed".to_string())
+        ParseError::BadIncomingData("array try from slice failed".to_string())
     }
 }
 
 fn read_raw_bytes<'a>(count: usize, buf: &mut &'a [u8]) -> Result<&'a [u8], ParseError> {
     if buf.len() < count {
-        return Err(ParseError::BadData(format!(
+        return Err(ParseError::BadIncomingData(format!(
             "Not enough bytes! expected: {} received: {}",
             count,
             buf.len(),
@@ -433,8 +433,9 @@ pub fn read_consistency(buf: &mut &[u8]) -> Result<LegacyConsistency, ParseError
     let parsed = match Consistency::try_from(raw) {
         Ok(c) => LegacyConsistency::Regular(c),
         Err(_) => {
-            let parsed_serial = SerialConsistency::try_from(raw)
-                .map_err(|_| ParseError::BadData(format!("unknown consistency: {}", raw)))?;
+            let parsed_serial = SerialConsistency::try_from(raw).map_err(|_| {
+                ParseError::BadIncomingData(format!("unknown consistency: {}", raw))
+            })?;
             LegacyConsistency::Serial(parsed_serial)
         }
     };
@@ -482,7 +483,7 @@ pub fn read_inet(buf: &mut &[u8]) -> Result<SocketAddr, ParseError> {
             ret
         }
         v => {
-            return Err(ParseError::BadData(format!(
+            return Err(ParseError::BadIncomingData(format!(
                 "Invalid inet bytes length: {}",
                 v
             )))

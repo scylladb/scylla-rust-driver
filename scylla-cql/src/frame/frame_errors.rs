@@ -32,7 +32,9 @@ pub enum FrameError {
 #[derive(Error, Debug)]
 pub enum ParseError {
     #[error("Could not serialize frame: {0}")]
-    BadData(String),
+    BadDataToSerialize(String),
+    #[error("Could not deserialize frame: {0}")]
+    BadIncomingData(String),
     #[error(transparent)]
     IoError(#[from] std::io::Error),
     #[error("type not yet implemented, id: {0}")]
