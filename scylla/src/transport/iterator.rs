@@ -24,6 +24,7 @@ use crate::frame::{
     },
     value::SerializedValues,
 };
+use crate::load_balancing::LoadBalancingPlan;
 use crate::routing::Token;
 use crate::statement::Consistency;
 use crate::statement::{prepared_statement::PreparedStatement, query::Query};
@@ -298,16 +299,16 @@ where
         statement_info: StatementInfo<'_>,
         cluster_data: Arc<ClusterData>,
     ) {
-        let query_plan = load_balancer.plan(&statement_info, &cluster_data);
+        let mut query_plan = load_balancer.plan(&statement_info, &cluster_data);
 
         let mut last_error: QueryError =
             QueryError::ProtocolError("Empty query plan - driver bug!");
 
-        'nodes_in_plan: for node in query_plan {
+        'nodes_in_plan: while let Some(node) = query_plan.next() {
             let span = trace_span!("Executing query", node = node.address.to_string().as_str());
             // For each node in the plan choose a connection to use
             // This connection will be reused for same node retries to preserve paging cache on the shard
-            let connection: Arc<Connection> = match (self.choose_connection)(node)
+            let connection: Arc<Connection> = match (self.choose_connection)(node.clone())
                 .instrument(span.clone())
                 .await
             {

@@ -2,6 +2,8 @@
 //! It manages all connections to the cluster and allows to perform queries.
 
 use crate::frame::types::LegacyConsistency;
+use crate::load_balancing::LoadBalancingPlan;
+use crate::load_balancing::SharedLBPlan;
 use bytes::Bytes;
 use futures::future::join_all;
 use futures::future::try_join_all;
@@ -1083,27 +1085,6 @@ impl Session {
         let cluster_data = self.cluster.get_data();
         let query_plan = self.load_balancer.plan(&statement_info, &cluster_data);
 
-        // If a speculative execution policy is used to run query, query_plan has to be shared
-        // between different async functions. This struct helps to wrap query_plan in mutex so it
-        // can be shared safely.
-        struct SharedPlan<I>
-        where
-            I: Iterator<Item = Arc<Node>>,
-        {
-            iter: std::sync::Mutex<I>,
-        }
-
-        impl<I> Iterator for &SharedPlan<I>
-        where
-            I: Iterator<Item = Arc<Node>>,
-        {
-            type Item = Arc<Node>;
-
-            fn next(&mut self) -> Option<Self::Item> {
-                self.iter.lock().unwrap().next()
-            }
-        }
-
         let retry_policy = match &statement_config.retry_policy {
             Some(policy) => policy,
             None => &self.retry_policy,
@@ -1117,9 +1098,7 @@ impl Session {
 
         match speculative_policy {
             Some(speculative) if statement_config.is_idempotent => {
-                let shared_query_plan = SharedPlan {
-                    iter: std::sync::Mutex::new(query_plan),
-                };
+                let shared_query_plan = SharedLBPlan::from(query_plan);
 
                 let execute_query_generator = || {
                     self.execute_query(
@@ -1159,9 +1138,9 @@ impl Session {
         }
     }
 
-    async fn execute_query<ConnFut, QueryFut, ResT>(
-        &self,
-        query_plan: impl Iterator<Item = Arc<Node>>,
+    async fn execute_query<'a, ConnFut, QueryFut, ResT>(
+        &'a self,
+        mut query_plan: impl LoadBalancingPlan<'a>,
         is_idempotent: bool,
         consistency: Option<Consistency>,
         mut retry_session: Box<dyn RetrySession>,
@@ -1174,7 +1153,7 @@ impl Session {
     {
         let mut last_error: Option<QueryError> = None;
 
-        'nodes_in_plan: for node in query_plan {
+        'nodes_in_plan: while let Some(node) = query_plan.next() {
             let span = trace_span!("Executing query", node = node.address.to_string().as_str());
             'same_node_retries: loop {
                 trace!(parent: &span, "Execution started");
