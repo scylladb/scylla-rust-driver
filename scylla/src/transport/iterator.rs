@@ -153,16 +153,16 @@ impl RowIterator {
                 sender,
                 choose_connection,
                 page_query,
-                statement_info: StatementInfo::default(),
                 query_is_idempotent: query.config.is_idempotent,
                 query_consistency: consistency,
                 retry_session,
-                load_balancer,
                 metrics,
                 paging_state: None,
             };
 
-            worker.work(cluster_data).await;
+            worker
+                .work(load_balancer, StatementInfo::default(), cluster_data)
+                .await;
         };
 
         tokio::task::spawn(worker_task);
@@ -220,16 +220,16 @@ impl RowIterator {
                 sender,
                 choose_connection,
                 page_query,
-                statement_info,
                 query_is_idempotent: config.prepared.config.is_idempotent,
                 query_consistency: consistency,
                 retry_session: config.retry_session,
-                load_balancer: config.load_balancer,
                 metrics: config.metrics,
                 paging_state: None,
             };
 
-            worker.work(config.cluster_data).await;
+            worker
+                .work(config.load_balancer, statement_info, config.cluster_data)
+                .await;
         };
 
         tokio::task::spawn(worker_task);
@@ -265,7 +265,7 @@ impl RowIterator {
 
 // RowIteratorWorker works in the background to fetch pages
 // RowIterator receives them through a channel
-struct RowIteratorWorker<'a, ConnFunc, QueryFunc> {
+struct RowIteratorWorker<ConnFunc, QueryFunc> {
     sender: mpsc::Sender<Result<ReceivedPage, QueryError>>,
 
     // Closure used to choose a connection from a node
@@ -276,26 +276,29 @@ struct RowIteratorWorker<'a, ConnFunc, QueryFunc> {
     // AsyncFn(Arc<Connection>, Option<Bytes>) -> Result<QueryResponse, QueryError>
     page_query: QueryFunc,
 
-    statement_info: StatementInfo<'a>,
     query_is_idempotent: bool,
     query_consistency: Consistency,
 
     retry_session: Box<dyn RetrySession>,
-    load_balancer: Arc<dyn LoadBalancingPolicy>,
     metrics: Arc<Metrics>,
 
     paging_state: Option<Bytes>,
 }
 
-impl<ConnFunc, ConnFut, QueryFunc, QueryFut> RowIteratorWorker<'_, ConnFunc, QueryFunc>
+impl<ConnFunc, ConnFut, QueryFunc, QueryFut> RowIteratorWorker<ConnFunc, QueryFunc>
 where
     ConnFunc: Fn(Arc<Node>) -> ConnFut,
     ConnFut: Future<Output = Result<Arc<Connection>, QueryError>>,
     QueryFunc: Fn(Arc<Connection>, Option<Bytes>) -> QueryFut,
     QueryFut: Future<Output = Result<QueryResponse, QueryError>>,
 {
-    async fn work(mut self, cluster_data: Arc<ClusterData>) {
-        let query_plan = self.load_balancer.plan(&self.statement_info, &cluster_data);
+    async fn work(
+        mut self,
+        load_balancer: Arc<dyn LoadBalancingPolicy>,
+        statement_info: StatementInfo<'_>,
+        cluster_data: Arc<ClusterData>,
+    ) {
+        let query_plan = load_balancer.plan(&statement_info, &cluster_data);
 
         let mut last_error: QueryError =
             QueryError::ProtocolError("Empty query plan - driver bug!");
