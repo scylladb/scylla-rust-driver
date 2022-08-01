@@ -28,6 +28,10 @@ impl DatacenterNodes {
     pub(crate) fn get_dc_ring(&self) -> &TokenRing<Arc<Node>> {
         &self.dc_ring
     }
+
+    pub(crate) fn get_rack_count(&self) -> usize {
+        self.rack_count
+    }
 }
 
 /// ReplicationInfo keeps information about the token ring
