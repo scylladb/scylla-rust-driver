@@ -11,6 +11,7 @@ use std::sync::{Arc, Mutex};
 
 mod dumb;
 pub mod load_balancing_data;
+pub mod main_policy;
 pub mod network_strategy_plan;
 pub mod no_token_network_strategy_plan;
 pub mod precomputed_replicas;
@@ -22,6 +23,7 @@ pub mod tried_nodes_set;
 
 pub use dumb::{DumbPlan, DumbPolicy};
 pub use load_balancing_data::LoadBalancingData;
+pub use main_policy::MainPolicy;
 pub use network_strategy_plan::NetworkStrategyPlan;
 pub use no_token_network_strategy_plan::NoTokenNetworkStrategyPlan;
 pub use precomputed_replicas::PrecomputedReplicas;
