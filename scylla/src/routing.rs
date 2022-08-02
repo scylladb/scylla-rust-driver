@@ -33,6 +33,14 @@ pub struct Sharder {
     pub msb_ignore: u8,
 }
 
+impl Token {
+    pub fn random() -> Token {
+        Token {
+            value: rand::thread_rng().gen(),
+        }
+    }
+}
+
 impl std::str::FromStr for Token {
     type Err = std::num::ParseIntError;
     fn from_str(s: &str) -> Result<Token, std::num::ParseIntError> {
