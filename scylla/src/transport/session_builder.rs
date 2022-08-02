@@ -654,7 +654,7 @@ mod tests {
         let mut builder = SessionBuilder::new();
         assert_eq!(
             builder.config.load_balancing.name(),
-            "DumbPolicy".to_string()
+            "MainPolicy { local_dc = None }".to_string()
         );
 
         builder = builder.load_balancing(Arc::new(DumbPolicy));
