@@ -11,6 +11,7 @@ use std::sync::{Arc, Mutex};
 
 mod dumb;
 pub mod load_balancing_data;
+pub mod no_token_network_strategy_plan;
 pub mod precomputed_replicas;
 pub mod random_order_iter;
 pub mod random_order_plan;
@@ -20,6 +21,7 @@ pub mod tried_nodes_set;
 
 pub use dumb::{DumbPlan, DumbPolicy};
 pub use load_balancing_data::LoadBalancingData;
+pub use no_token_network_strategy_plan::NoTokenNetworkStrategyPlan;
 pub use precomputed_replicas::PrecomputedReplicas;
 pub use random_order_iter::RandomOrderIter;
 pub use random_order_plan::RandomOrderPlan;
@@ -54,6 +56,7 @@ pub trait LoadBalancingPolicy: Send + Sync {
 pub enum LBPlan<'a> {
     Dumb(DumbPlan<'a>),
     SimpleStrategyPlan(SimpleStrategyPlan<'a>),
+    NoTokenNetworkStrategyPlan(NoTokenNetworkStrategyPlan<'a>),
     Custom(Box<dyn LoadBalancingPlan<'a> + Send + 'a>),
 }
 
@@ -68,6 +71,9 @@ impl<'a> LoadBalancingPlan<'a> for LBPlan<'a> {
         match self {
             LBPlan::Dumb(dumb_plan) => dumb_plan.next(),
             LBPlan::SimpleStrategyPlan(simple_strategy_plan) => simple_strategy_plan.next(),
+            LBPlan::NoTokenNetworkStrategyPlan(no_token_network_strategy_plan) => {
+                no_token_network_strategy_plan.next()
+            }
             LBPlan::Custom(custom_plan) => custom_plan.next(),
         }
     }
