@@ -185,7 +185,7 @@ mod tests {
 
     // creates ClusterData with info about 5 nodes living in 2 different datacenters
     // ring field is empty
-    pub fn mock_cluster_data_for_round_robin_and_latency_aware_tests() -> ClusterData {
+    pub async fn mock_cluster_data_for_round_robin_and_latency_aware_tests() -> ClusterData {
         let peers = [("eu", 1), ("eu", 2), ("eu", 3), ("us", 4), ("us", 5)]
             .iter()
             .map(|(dc, id)| Peer {
@@ -202,7 +202,7 @@ mod tests {
             keyspaces: HashMap::new(),
         };
 
-        ClusterData::new(info, &Default::default(), &HashMap::new(), &None, None)
+        ClusterData::new(info, &Default::default(), &HashMap::new(), &None, None).await
     }
 
     pub const EMPTY_STATEMENT: Statement = Statement {
@@ -240,7 +240,7 @@ mod tests {
     // ring field is populated as follows:
     // ring tokens:            50 100 150 200 250 300 400 500
     // corresponding node ids: 2  1   2   3   1   2   3   1
-    pub fn mock_cluster_data_for_token_aware_tests() -> ClusterData {
+    pub async fn mock_cluster_data_for_token_aware_tests() -> ClusterData {
         let peers = [
             Peer {
                 datacenter: Some("eu".into()),
@@ -306,6 +306,6 @@ mod tests {
             keyspaces,
         };
 
-        ClusterData::new(info, &Default::default(), &HashMap::new(), &None, None)
+        ClusterData::new(info, &Default::default(), &HashMap::new(), &None, None).await
     }
 }

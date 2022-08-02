@@ -148,7 +148,7 @@ mod tests {
         policy: DcAwareRoundRobinPolicy,
         expected_plans: HashSet<Vec<u16>>,
     ) {
-        let cluster = tests::mock_cluster_data_for_round_robin_and_latency_aware_tests();
+        let cluster = tests::mock_cluster_data_for_round_robin_and_latency_aware_tests().await;
 
         let plans = (0..32)
             .map(|_| {

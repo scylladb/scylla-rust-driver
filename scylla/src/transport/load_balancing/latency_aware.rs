@@ -319,7 +319,7 @@ mod tests {
     #[tokio::test]
     async fn latency_aware_policy_is_noop_if_no_latency_info_available_yet() {
         let policy = latency_aware_without_round_robin();
-        let cluster = tests::mock_cluster_data_for_round_robin_and_latency_aware_tests();
+        let cluster = tests::mock_cluster_data_for_round_robin_and_latency_aware_tests().await;
 
         let plans = (0..16)
             .map(|_| {
@@ -341,7 +341,7 @@ mod tests {
     #[tokio::test]
     async fn latency_aware_policy_does_not_penalise_if_not_enough_measurements() {
         let policy = latency_aware_without_round_robin();
-        let mut cluster = tests::mock_cluster_data_for_round_robin_and_latency_aware_tests();
+        let mut cluster = tests::mock_cluster_data_for_round_robin_and_latency_aware_tests().await;
 
         let min_avg = Duration::from_millis(10);
 
@@ -389,7 +389,7 @@ mod tests {
     #[tokio::test]
     async fn latency_aware_policy_does_not_penalise_if_exclusion_threshold_not_crossed() {
         let policy = latency_aware_without_round_robin();
-        let mut cluster = tests::mock_cluster_data_for_round_robin_and_latency_aware_tests();
+        let mut cluster = tests::mock_cluster_data_for_round_robin_and_latency_aware_tests().await;
 
         let min_avg = Duration::from_millis(10);
 
@@ -443,7 +443,7 @@ mod tests {
             20,
             Box::new(DumbPolicy {}),
         );
-        let mut cluster = tests::mock_cluster_data_for_round_robin_and_latency_aware_tests();
+        let mut cluster = tests::mock_cluster_data_for_round_robin_and_latency_aware_tests().await;
 
         let min_avg = Duration::from_millis(10);
 
@@ -493,7 +493,7 @@ mod tests {
     #[tokio::test]
     async fn latency_aware_policy_penalises_if_conditions_met() {
         let policy = latency_aware_without_round_robin();
-        let mut cluster = tests::mock_cluster_data_for_round_robin_and_latency_aware_tests();
+        let mut cluster = tests::mock_cluster_data_for_round_robin_and_latency_aware_tests().await;
 
         let min_avg = Duration::from_millis(10);
 
@@ -545,7 +545,7 @@ mod tests {
     #[tokio::test]
     async fn latency_aware_policy_by_default_performs_round_robin() {
         let policy = LatencyAwarePolicy::default();
-        let mut cluster = tests::mock_cluster_data_for_round_robin_and_latency_aware_tests();
+        let mut cluster = tests::mock_cluster_data_for_round_robin_and_latency_aware_tests().await;
 
         let min_avg = Duration::from_millis(10);
 
@@ -603,7 +603,7 @@ mod tests {
     async fn latency_aware_policy_stops_penalising_after_min_average_increases_enough_only_after_update_rate_elapses(
     ) {
         let policy = latency_aware_without_round_robin();
-        let mut cluster = tests::mock_cluster_data_for_round_robin_and_latency_aware_tests();
+        let mut cluster = tests::mock_cluster_data_for_round_robin_and_latency_aware_tests().await;
 
         let min_avg = Duration::from_millis(10);
 
@@ -711,7 +711,7 @@ mod tests {
     #[tokio::test]
     async fn test_token_and_latency_aware_policy() {
         let _ = tracing_subscriber::fmt::try_init();
-        let cluster = tests::mock_cluster_data_for_token_aware_tests();
+        let cluster = tests::mock_cluster_data_for_token_aware_tests().await;
 
         struct Test<'a, 'b> {
             statement: Statement<'a>,
