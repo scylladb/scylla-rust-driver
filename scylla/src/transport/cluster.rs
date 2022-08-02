@@ -1,4 +1,5 @@
 use crate::frame::response::event::{Event, StatusChangeEvent};
+use crate::load_balancing::{LoadBalancingData, PrecomputedReplicas};
 /// Cluster manages up to date information and connections to database nodes
 use crate::routing::Token;
 use crate::transport::connection::{Connection, VerifiedKeyspaceName};
@@ -11,11 +12,13 @@ use arc_swap::ArcSwap;
 use futures::future::join_all;
 use futures::{future::RemoteHandle, FutureExt};
 use itertools::Itertools;
-use std::collections::{BTreeMap, HashMap};
+use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration;
 use tracing::{debug, warn};
+
+use super::topology::Strategy;
 
 /// Cluster manages up to date information and connections to database nodes.
 /// All data can be accessed by cloning Arc<ClusterData> in the `data` field
@@ -39,10 +42,11 @@ pub struct Datacenter {
 #[derive(Clone)]
 pub struct ClusterData {
     pub(crate) known_peers: HashMap<SocketAddr, Arc<Node>>, // Invariant: nonempty after Cluster::new()
-    pub(crate) ring: BTreeMap<Token, Arc<Node>>, // Invariant: nonempty after Cluster::new()
     pub(crate) keyspaces: HashMap<String, Keyspace>,
     pub(crate) all_nodes: Vec<Arc<Node>>,
     pub(crate) datacenters: HashMap<String, Datacenter>,
+    pub(crate) lb_data: LoadBalancingData,
+    pub(crate) precomputed_replicas: PrecomputedReplicas,
 }
 
 // Works in the background to keep the cluster updated
@@ -97,7 +101,7 @@ impl Cluster {
         );
 
         let metadata = metadata_reader.read_metadata(true).await?;
-        let cluster_data = ClusterData::new(metadata, &pool_config, &HashMap::new(), &None);
+        let cluster_data = ClusterData::new(metadata, &pool_config, &HashMap::new(), &None).await;
         cluster_data.wait_until_all_pools_are_initialized().await;
         let cluster_data: Arc<ArcSwap<ClusterData>> =
             Arc::new(ArcSwap::from(Arc::new(cluster_data)));
@@ -212,7 +216,7 @@ impl ClusterData {
 
     /// Creates new ClusterData using information about topology held in `metadata`.
     /// Uses provided `known_peers` hashmap to recycle nodes if possible.
-    pub(crate) fn new(
+    pub(crate) async fn new(
         metadata: Metadata,
         pool_config: &PoolConfig,
         known_peers: &HashMap<SocketAddr, Arc<Node>>,
@@ -221,7 +225,7 @@ impl ClusterData {
         // Create new updated known_peers and ring
         let mut new_known_peers: HashMap<SocketAddr, Arc<Node>> =
             HashMap::with_capacity(metadata.peers.len());
-        let mut ring: BTreeMap<Token, Arc<Node>> = BTreeMap::new();
+        let mut ring: Vec<(Token, Arc<Node>)> = Vec::new();
         let mut datacenters: HashMap<String, Datacenter> = HashMap::new();
         let mut all_nodes: Vec<Arc<Node>> = Vec::with_capacity(metadata.peers.len());
 
@@ -258,7 +262,7 @@ impl ClusterData {
             }
 
             for token in peer.tokens {
-                ring.insert(token, node.clone());
+                ring.push((token, node.clone()));
             }
 
             all_nodes.push(node);
@@ -266,12 +270,28 @@ impl ClusterData {
 
         Self::update_rack_count(&mut datacenters);
 
+        let keyspace_strategies: Vec<Strategy> = metadata
+            .keyspaces
+            .iter()
+            .map(|(_ks_name, ks)| ks.strategy.clone())
+            .collect();
+
+        let (lb_data, precomputed_replicas) = tokio::task::spawn_blocking(move || {
+            let lb_data = LoadBalancingData::new(ring.into_iter());
+            let precomputed_replicas =
+                PrecomputedReplicas::compute(&lb_data, keyspace_strategies.iter());
+            (lb_data, precomputed_replicas)
+        })
+        .await
+        .unwrap();
+
         ClusterData {
             known_peers: new_known_peers,
-            ring,
             keyspaces: metadata.keyspaces,
             all_nodes,
             datacenters,
+            lb_data,
+            precomputed_replicas,
         }
     }
 
@@ -288,14 +308,19 @@ impl ClusterData {
         &self.datacenters
     }
 
-    /// Access ring details collected by the driver
-    pub fn get_ring_info(&self) -> &BTreeMap<Token, Arc<Node>> {
-        &self.ring
-    }
-
     /// Access details about nodes known to the driver
     pub fn get_nodes_info(&self) -> &Vec<Arc<Node>> {
         &self.all_nodes
+    }
+
+    /// Acess load balancing data
+    pub fn get_load_balancing_data(&self) -> &LoadBalancingData {
+        &self.lb_data
+    }
+
+    /// Access precomputed load balancing replicas
+    pub fn get_precomputed_replicas(&self) -> &PrecomputedReplicas {
+        &self.precomputed_replicas
     }
 }
 
@@ -447,12 +472,15 @@ impl ClusterWorker {
         let metadata = self.metadata_reader.read_metadata(false).await?;
         let cluster_data: Arc<ClusterData> = self.cluster_data.load_full();
 
-        let new_cluster_data = Arc::new(ClusterData::new(
-            metadata,
-            &self.pool_config,
-            &cluster_data.known_peers,
-            &self.used_keyspace,
-        ));
+        let new_cluster_data = Arc::new(
+            ClusterData::new(
+                metadata,
+                &self.pool_config,
+                &cluster_data.known_peers,
+                &self.used_keyspace,
+            )
+            .await,
+        );
 
         new_cluster_data
             .wait_until_all_pools_are_initialized()
