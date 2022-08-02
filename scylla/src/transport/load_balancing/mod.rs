@@ -12,12 +12,14 @@ use std::sync::{Arc, Mutex};
 mod dumb;
 pub mod load_balancing_data;
 pub mod precomputed_replicas;
+pub mod random_order_iter;
 pub mod token_ring;
 pub mod tried_nodes_set;
 
 pub use dumb::{DumbPlan, DumbPolicy};
 pub use load_balancing_data::LoadBalancingData;
 pub use precomputed_replicas::PrecomputedReplicas;
+pub use random_order_iter::RandomOrderIter;
 pub use token_ring::TokenRing;
 pub use tried_nodes_set::TriedNodesSet;
 
