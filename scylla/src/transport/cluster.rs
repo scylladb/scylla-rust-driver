@@ -12,6 +12,7 @@ use arc_swap::ArcSwap;
 use futures::future::join_all;
 use futures::{future::RemoteHandle, FutureExt};
 use itertools::Itertools;
+use std::borrow::Borrow;
 use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -321,6 +322,49 @@ impl ClusterData {
     /// Access precomputed load balancing replicas
     pub fn get_precomputed_replicas(&self) -> &PrecomputedReplicas {
         &self.precomputed_replicas
+    }
+
+    pub fn get_simple_strategy_replicas(
+        &self,
+        token: impl Borrow<Token>,
+        replication_factor: usize,
+    ) -> impl Iterator<Item = &Arc<Node>> {
+        if let Some(precomputed_replicas) = self
+            .precomputed_replicas
+            .get_precomputed_simple_strategy_replicas(token.borrow(), replication_factor)
+        {
+            let precomputed_replicas_iter = precomputed_replicas.iter();
+            return itertools::Either::Left(precomputed_replicas_iter);
+        }
+
+        let generated_replicas_iter = self
+            .lb_data
+            .get_global_replicas_for_token(token, replication_factor);
+        itertools::Either::Right(generated_replicas_iter)
+    }
+
+    pub fn get_network_strategy_replicas(
+        &self,
+        token: impl Borrow<Token>,
+        dc_name: &str,
+        dc_replication_factor: usize,
+    ) -> impl Iterator<Item = &Arc<Node>> {
+        if let Some(precomputed_replicas) = self
+            .precomputed_replicas
+            .get_precomputed_network_strategy_replicas(
+                token.borrow(),
+                dc_name,
+                dc_replication_factor,
+            )
+        {
+            let precomputed_replicas_iter = precomputed_replicas.iter();
+            return itertools::Either::Left(precomputed_replicas_iter);
+        }
+
+        let generated_replicas_iter =
+            self.lb_data
+                .get_datacenter_replicas_for_token(token, dc_name, dc_replication_factor);
+        itertools::Either::Right(generated_replicas_iter)
     }
 }
 
