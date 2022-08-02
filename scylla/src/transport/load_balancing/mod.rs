@@ -14,6 +14,7 @@ pub mod load_balancing_data;
 pub mod precomputed_replicas;
 pub mod random_order_iter;
 pub mod random_order_plan;
+pub mod simple_strategy_plan;
 pub mod token_ring;
 pub mod tried_nodes_set;
 
@@ -22,6 +23,7 @@ pub use load_balancing_data::LoadBalancingData;
 pub use precomputed_replicas::PrecomputedReplicas;
 pub use random_order_iter::RandomOrderIter;
 pub use random_order_plan::RandomOrderPlan;
+pub use simple_strategy_plan::SimpleStrategyPlan;
 pub use token_ring::TokenRing;
 pub use tried_nodes_set::TriedNodesSet;
 
@@ -51,6 +53,7 @@ pub trait LoadBalancingPolicy: Send + Sync {
 /// In case of a custom policy it has to allocate a Box with its plan inside.
 pub enum LBPlan<'a> {
     Dumb(DumbPlan<'a>),
+    SimpleStrategyPlan(SimpleStrategyPlan<'a>),
     Custom(Box<dyn LoadBalancingPlan<'a> + Send + 'a>),
 }
 
@@ -64,6 +67,7 @@ impl<'a> LoadBalancingPlan<'a> for LBPlan<'a> {
     fn next(&mut self) -> Option<&'a Arc<Node>> {
         match self {
             LBPlan::Dumb(dumb_plan) => dumb_plan.next(),
+            LBPlan::SimpleStrategyPlan(simple_strategy_plan) => simple_strategy_plan.next(),
             LBPlan::Custom(custom_plan) => custom_plan.next(),
         }
     }
