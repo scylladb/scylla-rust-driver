@@ -373,7 +373,8 @@ async fn query_metadata(
 }
 
 async fn query_peers(conn: &Connection, connect_port: u16) -> Result<Vec<Peer>, QueryError> {
-    let mut peers_query = Query::new("select peer, data_center, rack, tokens from system.peers");
+    let mut peers_query =
+        Query::new("select rpc_address, data_center, rack, tokens from system.peers");
     peers_query.set_page_size(1024);
     let peers_query_future = conn.query_all(&peers_query, &[]);
 
