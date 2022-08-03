@@ -17,8 +17,6 @@ use std::sync::Arc;
 use std::time::Duration;
 use tracing::{debug, warn};
 
-use super::session::AddressTranslator;
-
 /// Cluster manages up to date information and connections to database nodes.
 /// All data can be accessed by cloning Arc<ClusterData> in the `data` field
 pub struct Cluster {
@@ -45,7 +43,6 @@ pub struct ClusterData {
     pub(crate) keyspaces: HashMap<String, Keyspace>,
     pub(crate) all_nodes: Vec<Arc<Node>>,
     pub(crate) datacenters: HashMap<String, Datacenter>,
-    pub(crate) address_translator: Option<Arc<dyn AddressTranslator>>,
 }
 
 // Works in the background to keep the cluster updated
@@ -86,7 +83,6 @@ impl Cluster {
         initial_peers: &[SocketAddr],
         pool_config: PoolConfig,
         fetch_schema_metadata: bool,
-        address_translator: &Option<Arc<dyn AddressTranslator>>,
     ) -> Result<Cluster, QueryError> {
         let (refresh_sender, refresh_receiver) = tokio::sync::mpsc::channel(32);
         let (use_keyspace_sender, use_keyspace_receiver) = tokio::sync::mpsc::channel(32);
@@ -98,18 +94,10 @@ impl Cluster {
             pool_config.keepalive_interval,
             server_events_sender,
             fetch_schema_metadata,
-            address_translator,
         );
 
         let metadata = metadata_reader.read_metadata(true).await?;
-        let cluster_data = ClusterData::new(
-            metadata,
-            &pool_config,
-            &HashMap::new(),
-            &None,
-            address_translator,
-        )
-        .await;
+        let cluster_data = ClusterData::new(metadata, &pool_config, &HashMap::new(), &None);
         cluster_data.wait_until_all_pools_are_initialized().await;
         let cluster_data: Arc<ArcSwap<ClusterData>> =
             Arc::new(ArcSwap::from(Arc::new(cluster_data)));
@@ -233,12 +221,11 @@ impl ClusterData {
 
     /// Creates new ClusterData using information about topology held in `metadata`.
     /// Uses provided `known_peers` hashmap to recycle nodes if possible.
-    pub(crate) async fn new(
+    pub(crate) fn new(
         metadata: Metadata,
         pool_config: &PoolConfig,
         known_peers: &HashMap<SocketAddr, Arc<Node>>,
         used_keyspace: &Option<VerifiedKeyspaceName>,
-        address_translator: &Option<Arc<dyn AddressTranslator>>,
     ) -> Self {
         // Create new updated known_peers and ring
         let mut new_known_peers: HashMap<SocketAddr, Arc<Node>> =
@@ -248,26 +235,15 @@ impl ClusterData {
         let mut all_nodes: Vec<Arc<Node>> = Vec::with_capacity(metadata.peers.len());
 
         for peer in metadata.peers {
-            let translated_peer_address = match address_translator {
-                Some(ref translator) => match translator.translate_address(&peer).await {
-                    Ok(addr) => addr,
-                    Err(err) => {
-                        warn!("Could not translate address; TranslationError: {:?}; node therefore skipped.", err);
-                        continue;
-                    }
-                },
-                None => peer.address,
-            };
             // Take existing Arc<Node> if possible, otherwise create new one
             // Changing rack/datacenter but not ip address seems improbable
             // so we can just create new node and connections then
-            let node: Arc<Node> = match known_peers.get(&translated_peer_address) {
+            let node: Arc<Node> = match known_peers.get(&peer.address) {
                 Some(node) if node.datacenter == peer.datacenter && node.rack == peer.rack => {
                     node.clone()
                 }
                 _ => Arc::new(Node::new(
                     peer.address,
-                    translated_peer_address,
                     pool_config.clone(),
                     peer.datacenter,
                     peer.rack,
@@ -275,7 +251,7 @@ impl ClusterData {
                 )),
             };
 
-            new_known_peers.insert(translated_peer_address, node.clone());
+            new_known_peers.insert(peer.address, node.clone());
 
             if let Some(dc) = &node.datacenter {
                 match datacenters.get_mut(dc) {
@@ -305,7 +281,6 @@ impl ClusterData {
             keyspaces: metadata.keyspaces,
             all_nodes,
             datacenters,
-            address_translator: address_translator.clone(),
         }
     }
 
@@ -414,12 +389,7 @@ impl ClusterWorker {
     fn change_node_down_marker(&mut self, addr: SocketAddr, is_down: bool) {
         let cluster_data = self.cluster_data.load_full();
 
-        let node = match cluster_data
-            .known_peers
-            .iter()
-            .filter_map(|(_addr, node)| (node.untranslated_address == addr).then(|| node))
-            .next()
-        {
+        let node = match cluster_data.known_peers.get(&addr) {
             Some(node) => node,
             None => {
                 warn!("Unknown node address {}", addr);
@@ -486,16 +456,12 @@ impl ClusterWorker {
         let metadata = self.metadata_reader.read_metadata(false).await?;
         let cluster_data: Arc<ClusterData> = self.cluster_data.load_full();
 
-        let new_cluster_data = Arc::new(
-            ClusterData::new(
-                metadata,
-                &self.pool_config,
-                &cluster_data.known_peers,
-                &self.used_keyspace,
-                &cluster_data.address_translator,
-            )
-            .await,
-        );
+        let new_cluster_data = Arc::new(ClusterData::new(
+            metadata,
+            &self.pool_config,
+            &cluster_data.known_peers,
+            &self.used_keyspace,
+        ));
 
         new_cluster_data
             .wait_until_all_pools_are_initialized()

@@ -123,7 +123,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_dc_aware_round_robin_policy() {
-        let cluster = tests::mock_cluster_data_for_round_robin_tests().await;
+        let cluster = tests::mock_cluster_data_for_round_robin_tests();
 
         let local_dc = "eu".to_string();
         let policy = DcAwareRoundRobinPolicy::new(local_dc);

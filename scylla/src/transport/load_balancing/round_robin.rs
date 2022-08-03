@@ -76,7 +76,7 @@ mod tests {
     // ConnectionKeeper (which lives in Node) requires context of Tokio runtime
     #[tokio::test]
     async fn test_round_robin_policy() {
-        let cluster = tests::mock_cluster_data_for_round_robin_tests().await;
+        let cluster = tests::mock_cluster_data_for_round_robin_tests();
 
         let policy = RoundRobinPolicy::new();
 

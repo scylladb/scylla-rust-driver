@@ -4,10 +4,9 @@ use crate::statement::query::Query;
 use crate::transport::connection::{Connection, ConnectionConfig};
 use crate::transport::connection_pool::{NodeConnectionPool, PoolConfig, PoolSize};
 use crate::transport::errors::{DbError, QueryError};
-use crate::transport::session::{AddressTranslator, IntoTypedRows};
+use crate::transport::session::IntoTypedRows;
 use crate::utils::parse::{ParseErrorCause, ParseResult, ParserState};
 
-use futures::future::join_all;
 use rand::seq::SliceRandom;
 use rand::{thread_rng, Rng};
 use std::borrow::BorrowMut;
@@ -17,7 +16,6 @@ use std::fmt::Formatter;
 use std::net::{IpAddr, SocketAddr};
 use std::num::NonZeroUsize;
 use std::str::FromStr;
-use std::sync::Arc;
 use std::time::Duration;
 use strum_macros::EnumString;
 use tokio::sync::mpsc;
@@ -34,8 +32,6 @@ pub(crate) struct MetadataReader {
     // when control connection fails, MetadataReader tries to connect to one of known_peers
     known_peers: Vec<SocketAddr>,
     fetch_schema: bool,
-
-    address_translator: Option<Arc<dyn AddressTranslator>>,
 }
 
 /// Describes all metadata retrieved from the cluster
@@ -203,7 +199,6 @@ impl MetadataReader {
         keepalive_interval: Option<Duration>,
         server_event_sender: mpsc::Sender<Event>,
         fetch_schema: bool,
-        address_translator: &Option<Arc<dyn AddressTranslator>>,
     ) -> Self {
         let control_connection_address = *known_peers
             .choose(&mut thread_rng())
@@ -227,7 +222,6 @@ impl MetadataReader {
             connection_config,
             known_peers: known_peers.into(),
             fetch_schema,
-            address_translator: address_translator.clone(),
         }
     }
 
@@ -235,7 +229,7 @@ impl MetadataReader {
     pub async fn read_metadata(&mut self, initial: bool) -> Result<Metadata, QueryError> {
         let mut result = self.fetch_metadata(initial).await;
         if let Ok(metadata) = result {
-            self.update_known_peers(&metadata).await;
+            self.update_known_peers(&metadata);
             return Ok(metadata);
         }
 
@@ -286,7 +280,7 @@ impl MetadataReader {
 
         match &result {
             Ok(metadata) => {
-                self.update_known_peers(metadata).await;
+                self.update_known_peers(metadata);
                 debug!("Fetched new metadata");
             }
             Err(error) => error!(
@@ -326,25 +320,8 @@ impl MetadataReader {
         res
     }
 
-    async fn update_known_peers(&mut self, metadata: &Metadata) {
-        self.known_peers = join_all(metadata.peers.iter().map(|peer| async {
-            let res: Result<Option<SocketAddr>, ()> = match self.address_translator {
-                Some(ref translator) => match translator.translate_address(peer).await {
-                    Ok(translated_addr) => Ok(Some(translated_addr)),
-                    Err(err) => {
-                        warn!("Could not translate address; TranslationError: {:?}", err);
-                        Ok(None)
-                    }
-                },
-                None => Ok(Some(peer.address)),
-            };
-            res
-        }))
-        .await
-        .into_iter()
-        .flatten()
-        .flatten()
-        .collect();
+    fn update_known_peers(&mut self, metadata: &Metadata) {
+        self.known_peers = metadata.peers.iter().map(|peer| peer.address).collect();
     }
 
     fn make_control_connection_pool(
@@ -420,8 +397,12 @@ async fn query_peers(conn: &Connection, connect_port: u16) -> Result<Vec<Peer>, 
     let typed_peers_rows =
         peers_rows.into_typed::<(IpAddr, Option<String>, Option<String>, Option<Vec<String>>)>();
 
-    let typed_local_rows =
-        local_rows.into_typed::<(IpAddr, Option<String>, Option<String>, Option<Vec<String>>)>();
+    // For the local node we should use connection's address instead of rpc_address unless SNI is enabled (TODO)
+    // Replace address in local_rows with connection's address
+    let local_address: IpAddr = conn.get_connect_address().ip();
+    let typed_local_rows = local_rows
+        .into_typed::<(IpAddr, Option<String>, Option<String>, Option<Vec<String>>)>()
+        .map(|res| res.map(|(_addr, dc, rack, tokens)| (local_address, dc, rack, tokens)));
 
     for row in typed_peers_rows.chain(typed_local_rows) {
         let (ip_address, datacenter, rack, tokens) = row.map_err(|_| {

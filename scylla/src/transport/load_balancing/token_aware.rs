@@ -185,7 +185,7 @@ mod tests {
     // ConnectionKeeper (which lives in Node) requires context of Tokio runtime
     #[tokio::test]
     async fn test_token_aware_policy() {
-        let cluster = mock_cluster_data_for_token_aware_tests().await;
+        let cluster = mock_cluster_data_for_token_aware_tests();
 
         struct Test<'a> {
             statement: Statement<'a>,
@@ -241,7 +241,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_token_aware_policy_with_nts() {
-        let cluster = mock_cluster_data_for_nts_token_aware_tests().await;
+        let cluster = mock_cluster_data_for_nts_token_aware_tests();
 
         let policy = TokenAwarePolicy::new(Box::new(DumbPolicy {}));
 
@@ -257,7 +257,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_token_aware_fallback_policy() {
-        let cluster = mock_cluster_data_for_token_aware_tests().await;
+        let cluster = mock_cluster_data_for_token_aware_tests();
 
         let policy = TokenAwarePolicy::new(Box::new(DumbPolicy {}));
 
@@ -274,7 +274,7 @@ mod tests {
     // ring field is populated as follows:
     // ring tokens:            50 100 150 200 250 300 400 500
     // corresponding node ids: 2  1   2   3   1   2   3   1
-    async fn mock_cluster_data_for_token_aware_tests() -> ClusterData {
+    fn mock_cluster_data_for_token_aware_tests() -> ClusterData {
         let peers = [
             Peer {
                 datacenter: Some("eu".into()),
@@ -335,7 +335,7 @@ mod tests {
             keyspaces,
         };
 
-        ClusterData::new(info, &Default::default(), &HashMap::new(), &None, &None).await
+        ClusterData::new(info, &Default::default(), &HashMap::new(), &None)
     }
 
     // creates ClusterData with info about 8 nodes living in two different datacenters
@@ -351,7 +351,7 @@ mod tests {
     // datacenter:       her
     // nodes in rack r3: 5 6
     // nodes in rack r4: 7 8
-    async fn mock_cluster_data_for_nts_token_aware_tests() -> ClusterData {
+    fn mock_cluster_data_for_nts_token_aware_tests() -> ClusterData {
         let peers = [
             Peer {
                 datacenter: Some("waw".into()),
@@ -425,7 +425,7 @@ mod tests {
             keyspaces,
         };
 
-        ClusterData::new(info, &Default::default(), &HashMap::new(), &None, &None).await
+        ClusterData::new(info, &Default::default(), &HashMap::new(), &None)
     }
 
     // Used as child policy for TokenAwarePolicy tests

@@ -133,7 +133,7 @@ mod tests {
 
     // creates ClusterData with info about 5 nodes living in 2 different datacenters
     // ring field is empty
-    pub async fn mock_cluster_data_for_round_robin_tests() -> ClusterData {
+    pub fn mock_cluster_data_for_round_robin_tests() -> ClusterData {
         let peers = [("eu", 1), ("eu", 2), ("eu", 3), ("us", 4), ("us", 5)]
             .iter()
             .map(|(dc, id)| Peer {
@@ -149,7 +149,7 @@ mod tests {
             keyspaces: HashMap::new(),
         };
 
-        ClusterData::new(info, &Default::default(), &HashMap::new(), &None, &None).await
+        ClusterData::new(info, &Default::default(), &HashMap::new(), &None)
     }
 
     pub const EMPTY_STATEMENT: Statement = Statement {
