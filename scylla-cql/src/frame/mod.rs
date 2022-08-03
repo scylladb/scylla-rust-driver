@@ -8,14 +8,7 @@ pub mod value;
 #[cfg(test)]
 mod value_tests;
 
-#[cfg(test)]
-mod cql_collections_test;
-
-#[cfg(test)]
-mod cql_types_test;
-
 use crate::frame::frame_errors::FrameError;
-use crate::transport::Compression;
 use bytes::{Buf, BufMut, Bytes};
 use tokio::io::{AsyncRead, AsyncReadExt};
 use uuid::Uuid;
@@ -32,6 +25,34 @@ pub const FLAG_COMPRESSION: u8 = 0x01;
 pub const FLAG_TRACING: u8 = 0x02;
 pub const FLAG_CUSTOM_PAYLOAD: u8 = 0x04;
 pub const FLAG_WARNING: u8 = 0x08;
+
+// All of the Authenticators supported by Scylla
+#[derive(Debug, PartialEq)]
+pub enum Authenticator {
+    AllowAllAuthenticator,
+    PasswordAuthenticator,
+    CassandraPasswordAuthenticator,
+    CassandraAllowAllAuthenticator,
+    ScyllaTransitionalAuthenticator,
+}
+
+/// The wire protocol compression algorithm.
+#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Debug)]
+pub enum Compression {
+    /// LZ4 compression algorithm.
+    Lz4,
+    /// Snappy compression algorithm.
+    Snappy,
+}
+
+impl ToString for Compression {
+    fn to_string(&self) -> String {
+        match self {
+            Compression::Lz4 => "lz4".to_owned(),
+            Compression::Snappy => "snappy".to_owned(),
+        }
+    }
+}
 
 pub struct SerializedRequest {
     data: Vec<u8>,

@@ -2,7 +2,6 @@ pub(crate) mod caching_session;
 mod cluster;
 pub(crate) mod connection;
 mod connection_pool;
-pub mod errors;
 pub mod iterator;
 pub mod load_balancing;
 pub(crate) mod metrics;
@@ -14,39 +13,20 @@ pub mod session;
 pub mod session_builder;
 pub mod speculative_execution;
 pub mod topology;
+pub use crate::frame::{Authenticator, Compression};
+pub use scylla_cql::errors;
 
 #[cfg(test)]
 mod authenticate_test;
 #[cfg(test)]
-pub(crate) mod session_test;
+mod cql_collections_test;
+#[cfg(test)]
+mod session_test;
+
+#[cfg(test)]
+mod cql_types_test;
+#[cfg(test)]
+mod cql_value_test;
 
 pub use cluster::ClusterData;
 pub use node::Node;
-
-// All of the Authenticators supported by Scylla
-#[derive(Debug, PartialEq)]
-pub enum Authenticator {
-    AllowAllAuthenticator,
-    PasswordAuthenticator,
-    CassandraPasswordAuthenticator,
-    CassandraAllowAllAuthenticator,
-    ScyllaTransitionalAuthenticator,
-}
-
-/// The wire protocol compression algorithm.
-#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Debug)]
-pub enum Compression {
-    /// LZ4 compression algorithm.
-    Lz4,
-    /// Snappy compression algorithm.
-    Snappy,
-}
-
-impl ToString for Compression {
-    fn to_string(&self) -> String {
-        match self {
-            Compression::Lz4 => "lz4".to_owned(),
-            Compression::Snappy => "snappy".to_owned(),
-        }
-    }
-}
