@@ -14,16 +14,12 @@ env:
 jobs:
   build:
     runs-on: ubuntu-latest
-    services:
-      scylladb:
-        image: scylladb/scylla
-        ports:
-          - 9042:9042
-        options: --health-cmd "cqlsh --debug" --health-interval 5s --health-retries 10
-        volumes:
-          - ${{ github.workspace }}:/workspace
     steps:
     - uses: actions/checkout@v2
+    - name: Setup 3-node Scylla cluster
+      run: |
+        sudo sh -c "echo 2097152 >> /proc/sys/fs/aio-max-nr"
+        GITHUB_WORKSPACE=${{ github.workspace }} docker-compose -f test/docker-compose.yml up -d
     - name: Format check
       run: cargo fmt --verbose --all -- --check
     - name: Clippy check
@@ -33,7 +29,9 @@ jobs:
     - name: Build
       run: cargo build --verbose --examples
     - name: Run tests
-      run: cargo test --verbose
+      run: SCYLLA_URI=172.42.0.2:9042 SCYLLA_URI2=172.42.0.3:9042 SCYLLA_URI3=172.42.0.4:9042 cargo test --verbose
+    - name: Stop cluster
+      run: GITHUB_WORKSPACE=${{ github.workspace }} docker-compose -f test/docker-compose.yml down
 
   # Tests that our current minimum supported rust version compiles everything sucessfully
   min_rust:
