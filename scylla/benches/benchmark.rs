@@ -29,7 +29,7 @@ fn types_benchmark(c: &mut Criterion) {
     c.bench_function("string", |b| {
         b.iter(|| {
             buf.clear();
-            types::write_string("hello, world", &mut buf);
+            types::write_string("hello, world", &mut buf).unwrap();
             types::read_string(&mut &buf[..]).unwrap();
         })
     });
