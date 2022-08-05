@@ -3,7 +3,7 @@ use bytes::BufMut;
 use std::convert::TryInto;
 
 use crate::frame::request::{Request, RequestOpcode};
-use crate::transport::Authenticator;
+use crate::frame::Authenticator;
 
 // Implements Authenticate Response
 pub struct AuthResponse {

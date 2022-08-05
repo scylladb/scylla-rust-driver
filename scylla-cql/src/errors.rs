@@ -374,7 +374,7 @@ impl QueryError {
     /// This is caused by one of the following:
     /// - The source address is already used by another socket,
     /// - The source address is reserved and the process does not have sufficient privileges to use it.
-    pub(crate) fn is_address_unavailable_for_use(&self) -> bool {
+    pub fn is_address_unavailable_for_use(&self) -> bool {
         if let QueryError::IoError(io_error) = self {
             match io_error.kind() {
                 ErrorKind::AddrInUse | ErrorKind::PermissionDenied => return true,
@@ -405,8 +405,7 @@ impl From<&str> for WriteType {
 #[cfg(test)]
 mod tests {
     use super::{DbError, QueryError, WriteType};
-    use crate::frame::types::LegacyConsistency;
-    use crate::statement::Consistency;
+    use crate::frame::types::{Consistency, LegacyConsistency};
 
     #[test]
     fn write_type_from_str() {

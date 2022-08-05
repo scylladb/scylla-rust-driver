@@ -91,10 +91,9 @@
 //! ```
 //! See the [book](https://rust-driver.docs.scylladb.com/stable/queries/result.html) for more receiving methods
 
-#[macro_use]
-pub mod macros;
+pub use scylla_cql::frame;
+pub use scylla_cql::macros::{self, *};
 
-pub mod frame;
 pub mod routing;
 pub mod statement;
 pub mod tracing;
@@ -102,7 +101,6 @@ pub mod transport;
 
 pub(crate) mod utils;
 
-pub use macros::*;
 pub use statement::batch;
 pub use statement::prepared_statement;
 pub use statement::query;

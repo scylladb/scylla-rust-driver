@@ -200,10 +200,10 @@ async fn test_counter() {
 async fn test_naive_date() {
     let session: Session = init_test("naive_date", "date").await;
 
-    let min_naive_date: NaiveDate = chrono::naive::MIN_DATE;
+    let min_naive_date: NaiveDate = NaiveDate::MIN;
     assert_eq!(min_naive_date, NaiveDate::from_ymd(-262144, 1, 1));
 
-    let max_naive_date: NaiveDate = chrono::naive::MAX_DATE;
+    let max_naive_date: NaiveDate = NaiveDate::MAX;
     assert_eq!(max_naive_date, NaiveDate::from_ymd(262143, 12, 31));
 
     let tests = [

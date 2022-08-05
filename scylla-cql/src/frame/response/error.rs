@@ -1,6 +1,6 @@
+use crate::errors::{DbError, QueryError, WriteType};
 use crate::frame::frame_errors::ParseError;
 use crate::frame::types;
-use crate::transport::errors::{DbError, QueryError, WriteType};
 use byteorder::ReadBytesExt;
 use bytes::Bytes;
 
@@ -85,9 +85,9 @@ impl From<Error> for QueryError {
 #[cfg(test)]
 mod tests {
     use super::Error;
+    use crate::errors::{DbError, WriteType};
     use crate::frame::types::LegacyConsistency;
-    use crate::statement::Consistency;
-    use crate::transport::errors::{DbError, WriteType};
+    use crate::Consistency;
     use bytes::Bytes;
     use std::convert::TryInto;
 
