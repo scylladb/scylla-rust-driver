@@ -30,7 +30,7 @@ itertools = "0.10.0"
 bigdecimal = "0.2.0"
 num-bigint = "0.3"
 tracing = "0.1.25"
-chrono = "0.4"
+chrono = "0.4.20"
 openssl = { version = "0.10.32", optional = true }
 tokio-openssl = { version = "0.6.1", optional = true }
 arc-swap = "1.3.0"
