@@ -570,20 +570,22 @@ fn deser_cql_value(typ: &ColumnType, buf: &mut &[u8]) -> StdResult<CqlValue, Par
 
     Ok(match typ {
         Custom(type_str) => {
-            return Err(ParseError::BadData(format!(
+            return Err(ParseError::BadIncomingData(format!(
                 "Support for custom types is not yet implemented: {}",
                 type_str
             )));
         }
         Ascii => {
             if !buf.is_ascii() {
-                return Err(ParseError::BadData("String is not ascii!".to_string()));
+                return Err(ParseError::BadIncomingData(
+                    "String is not ascii!".to_string(),
+                ));
             }
             CqlValue::Ascii(str::from_utf8(buf)?.to_owned())
         }
         Boolean => {
             if buf.len() != 1 {
-                return Err(ParseError::BadData(format!(
+                return Err(ParseError::BadIncomingData(format!(
                     "Buffer length should be 1 not {}",
                     buf.len()
                 )));
@@ -593,7 +595,7 @@ fn deser_cql_value(typ: &ColumnType, buf: &mut &[u8]) -> StdResult<CqlValue, Par
         Blob => CqlValue::Blob(buf.to_vec()),
         Date => {
             if buf.len() != 4 {
-                return Err(ParseError::BadData(format!(
+                return Err(ParseError::BadIncomingData(format!(
                     "Buffer length should be 4 not {}",
                     buf.len()
                 )));
@@ -604,7 +606,7 @@ fn deser_cql_value(typ: &ColumnType, buf: &mut &[u8]) -> StdResult<CqlValue, Par
         }
         Counter => {
             if buf.len() != 8 {
-                return Err(ParseError::BadData(format!(
+                return Err(ParseError::BadIncomingData(format!(
                     "Buffer length should be 8 not {}",
                     buf.len()
                 )));
@@ -620,7 +622,7 @@ fn deser_cql_value(typ: &ColumnType, buf: &mut &[u8]) -> StdResult<CqlValue, Par
         }
         Double => {
             if buf.len() != 8 {
-                return Err(ParseError::BadData(format!(
+                return Err(ParseError::BadIncomingData(format!(
                     "Buffer length should be 8 not {}",
                     buf.len()
                 )));
@@ -629,7 +631,7 @@ fn deser_cql_value(typ: &ColumnType, buf: &mut &[u8]) -> StdResult<CqlValue, Par
         }
         Float => {
             if buf.len() != 4 {
-                return Err(ParseError::BadData(format!(
+                return Err(ParseError::BadIncomingData(format!(
                     "Buffer length should be 4 not {}",
                     buf.len()
                 )));
@@ -638,7 +640,7 @@ fn deser_cql_value(typ: &ColumnType, buf: &mut &[u8]) -> StdResult<CqlValue, Par
         }
         Int => {
             if buf.len() != 4 {
-                return Err(ParseError::BadData(format!(
+                return Err(ParseError::BadIncomingData(format!(
                     "Buffer length should be 4 not {}",
                     buf.len()
                 )));
@@ -647,7 +649,7 @@ fn deser_cql_value(typ: &ColumnType, buf: &mut &[u8]) -> StdResult<CqlValue, Par
         }
         SmallInt => {
             if buf.len() != 2 {
-                return Err(ParseError::BadData(format!(
+                return Err(ParseError::BadIncomingData(format!(
                     "Buffer length should be 2 not {}",
                     buf.len()
                 )));
@@ -657,7 +659,7 @@ fn deser_cql_value(typ: &ColumnType, buf: &mut &[u8]) -> StdResult<CqlValue, Par
         }
         TinyInt => {
             if buf.len() != 1 {
-                return Err(ParseError::BadData(format!(
+                return Err(ParseError::BadIncomingData(format!(
                     "Buffer length should be 1 not {}",
                     buf.len()
                 )));
@@ -666,7 +668,7 @@ fn deser_cql_value(typ: &ColumnType, buf: &mut &[u8]) -> StdResult<CqlValue, Par
         }
         BigInt => {
             if buf.len() != 8 {
-                return Err(ParseError::BadData(format!(
+                return Err(ParseError::BadIncomingData(format!(
                     "Buffer length should be 8 not {}",
                     buf.len()
                 )));
@@ -676,7 +678,7 @@ fn deser_cql_value(typ: &ColumnType, buf: &mut &[u8]) -> StdResult<CqlValue, Par
         Text => CqlValue::Text(str::from_utf8(buf)?.to_owned()),
         Timestamp => {
             if buf.len() != 8 {
-                return Err(ParseError::BadData(format!(
+                return Err(ParseError::BadIncomingData(format!(
                     "Buffer length should be 8 not {}",
                     buf.len()
                 )));
@@ -687,7 +689,7 @@ fn deser_cql_value(typ: &ColumnType, buf: &mut &[u8]) -> StdResult<CqlValue, Par
         }
         Time => {
             if buf.len() != 8 {
-                return Err(ParseError::BadData(format!(
+                return Err(ParseError::BadIncomingData(format!(
                     "Buffer length should be 8 not {}",
                     buf.len()
                 )));
@@ -696,7 +698,7 @@ fn deser_cql_value(typ: &ColumnType, buf: &mut &[u8]) -> StdResult<CqlValue, Par
 
             // Valid values are in the range 0 to 86399999999999
             if !(0..=86399999999999).contains(&nanoseconds) {
-                return Err(ParseError::BadData(format! {
+                return Err(ParseError::BadIncomingData(format! {
                     "Invalid time value only 0 to 86399999999999 allowed: {}.", nanoseconds
                 }));
             }
@@ -705,7 +707,7 @@ fn deser_cql_value(typ: &ColumnType, buf: &mut &[u8]) -> StdResult<CqlValue, Par
         }
         Timeuuid => {
             if buf.len() != 16 {
-                return Err(ParseError::BadData(format!(
+                return Err(ParseError::BadIncomingData(format!(
                     "Buffer length should be 16 not {}",
                     buf.len()
                 )));
@@ -736,7 +738,7 @@ fn deser_cql_value(typ: &ColumnType, buf: &mut &[u8]) -> StdResult<CqlValue, Par
                 ret
             }
             v => {
-                return Err(ParseError::BadData(format!(
+                return Err(ParseError::BadIncomingData(format!(
                     "Invalid inet bytes length: {}",
                     v
                 )));
@@ -744,7 +746,7 @@ fn deser_cql_value(typ: &ColumnType, buf: &mut &[u8]) -> StdResult<CqlValue, Par
         }),
         Uuid => {
             if buf.len() != 16 {
-                return Err(ParseError::BadData(format!(
+                return Err(ParseError::BadIncomingData(format!(
                     "Buffer length should be 16 not {}",
                     buf.len()
                 )));
@@ -893,7 +895,7 @@ pub fn deserialize(buf: &mut &[u8]) -> StdResult<Result, ParseError> {
         0x0004 => Prepared(deser_prepared(buf)?),
         0x0005 => SchemaChange(deser_schema_change(buf)?),
         k => {
-            return Err(ParseError::BadData(format!(
+            return Err(ParseError::BadIncomingData(format!(
                 "Unknown query result id: {}",
                 k
             )))
