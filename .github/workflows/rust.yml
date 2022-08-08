@@ -26,6 +26,8 @@ jobs:
       run: cargo clippy --verbose --examples --tests
     - name: Cargo check without features
       run: cargo check --manifest-path "scylla/Cargo.toml" --features ""
+    - name: Build scylla-cql
+      run: cargo build --verbose --all-targets --manifest-path "scylla-cql/Cargo.toml"
     - name: Build
       run: cargo build --verbose --examples
     - name: Run tests
@@ -49,3 +51,5 @@ jobs:
       run: cargo check --verbose --examples --tests
     - name: MSRV cargo check without features
       run: cargo check --verbose --manifest-path "scylla/Cargo.toml"
+    - name: MSRV cargo check scylla-cql
+      run: cargo check --verbose --all-targets --manifest-path "scylla-cql/Cargo.toml"
