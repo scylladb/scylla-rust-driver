@@ -3,4 +3,5 @@ members = [
     "examples",
     "scylla",
     "scylla-macros",
+    "scylla-cql",
 ]
