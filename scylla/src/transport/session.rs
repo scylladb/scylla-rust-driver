@@ -1274,7 +1274,7 @@ impl Session {
             .map_or(Ok(false), |res| res.and(Ok(true)))
     }
 
-    async fn schema_agreement_auxilary<ResT, QueryFut>(
+    async fn schema_agreement_auxiliary<ResT, QueryFut>(
         &self,
         do_query: impl Fn(Arc<Connection>) -> QueryFut,
     ) -> Result<ResT, QueryError>
@@ -1309,7 +1309,7 @@ impl Session {
     }
 
     pub async fn fetch_schema_version(&self) -> Result<Uuid, QueryError> {
-        self.schema_agreement_auxilary(|connection: Arc<Connection>| async move {
+        self.schema_agreement_auxiliary(|connection: Arc<Connection>| async move {
             connection.fetch_schema_version().await
         })
         .await
