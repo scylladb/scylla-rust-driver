@@ -26,7 +26,6 @@ pub enum ResponseOpcode {
 
 #[derive(Debug)]
 pub enum Response {
-    Error(Error),
     Ready,
     Result(result::Result),
     Authenticate(authenticate::Authenticate),
@@ -37,22 +36,25 @@ pub enum Response {
 }
 
 impl Response {
-    pub fn deserialize(opcode: ResponseOpcode, buf: &mut &[u8]) -> Result<Response, ParseError> {
+    pub fn deserialize(
+        opcode: ResponseOpcode,
+        buf: &mut &[u8],
+    ) -> Result<Result<Response, Error>, ParseError> {
         let response = match opcode {
-            ResponseOpcode::Error => Response::Error(Error::deserialize(buf)?),
-            ResponseOpcode::Ready => Response::Ready,
-            ResponseOpcode::Authenticate => {
-                Response::Authenticate(authenticate::Authenticate::deserialize(buf)?)
-            }
-            ResponseOpcode::Supported => Response::Supported(Supported::deserialize(buf)?),
-            ResponseOpcode::Result => Response::Result(result::deserialize(buf)?),
-            ResponseOpcode::Event => Response::Event(event::Event::deserialize(buf)?),
-            ResponseOpcode::AuthChallenge => {
-                Response::AuthChallenge(authenticate::AuthChallenge::deserialize(buf)?)
-            }
-            ResponseOpcode::AuthSuccess => {
-                Response::AuthSuccess(authenticate::AuthSuccess::deserialize(buf)?)
-            }
+            ResponseOpcode::Error => Err(Error::deserialize(buf)?),
+            ResponseOpcode::Ready => Ok(Response::Ready),
+            ResponseOpcode::Authenticate => Ok(Response::Authenticate(
+                authenticate::Authenticate::deserialize(buf)?,
+            )),
+            ResponseOpcode::Supported => Ok(Response::Supported(Supported::deserialize(buf)?)),
+            ResponseOpcode::Result => Ok(Response::Result(result::deserialize(buf)?)),
+            ResponseOpcode::Event => Ok(Response::Event(event::Event::deserialize(buf)?)),
+            ResponseOpcode::AuthChallenge => Ok(Response::AuthChallenge(
+                authenticate::AuthChallenge::deserialize(buf)?,
+            )),
+            ResponseOpcode::AuthSuccess => Ok(Response::AuthSuccess(
+                authenticate::AuthSuccess::deserialize(buf)?,
+            )),
         };
 
         Ok(response)

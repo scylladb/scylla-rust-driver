@@ -167,7 +167,6 @@ impl QueryResponse {
 
     pub fn into_query_result(self) -> Result<QueryResult, QueryError> {
         let (rows, paging_state, col_specs) = match self.response {
-            Response::Error(err) => return Err(err.into()),
             Response::Result(result::Result::Rows(rs)) => (
                 Some(rs.rows),
                 rs.metadata.paging_state,
@@ -313,7 +312,6 @@ impl Connection {
             .await?;
 
         let mut prepared_statement = match query_response.response {
-            Response::Error(err) => return Err(err.into()),
             Response::Result(result::Result::Prepared(p)) => PreparedStatement::new(
                 p.id,
                 p.prepared_metadata,
@@ -459,31 +457,34 @@ impl Connection {
             },
         };
 
-        let query_response = self
+        let query_response_result = self
             .send_request(&execute_frame, true, prepared_statement.config.tracing)
-            .await?;
+            .await;
 
-        if let Response::Error(err) = &query_response.response {
-            if let DbError::Unprepared { statement_id } = &err.error {
-                debug!("Connection::execute: Got DbError::Unprepared - repreparing statement with id {:?}", statement_id);
-                // Repreparation of a statement is needed
-                let reprepare_query: Query = prepared_statement.get_statement().into();
-                let reprepared = self.prepare(&reprepare_query).await?;
-                // Reprepared statement should keep its id - it's the md5 sum
-                // of statement contents
-                if reprepared.get_id() != prepared_statement.get_id() {
-                    return Err(QueryError::ProtocolError(
-                        "Prepared statement Id changed, md5 sum should stay the same",
-                    ));
-                }
-
-                return self
-                    .send_request(&execute_frame, true, prepared_statement.config.tracing)
-                    .await;
+        if let Err(QueryError::DbError(DbError::Unprepared { statement_id }, _)) =
+            &query_response_result
+        {
+            debug!(
+                "Connection::execute: Got DbError::Unprepared - repreparing statement with id {:?}",
+                statement_id
+            );
+            // Repreparation of a statement is needed
+            let reprepare_query: Query = prepared_statement.get_statement().into();
+            let reprepared = self.prepare(&reprepare_query).await?;
+            // Reprepared statement should keep its id - it's the md5 sum
+            // of statement contents
+            if reprepared.get_id() != prepared_statement.get_id() {
+                return Err(QueryError::ProtocolError(
+                    "Prepared statement Id changed, md5 sum should stay the same",
+                ));
             }
+
+            return self
+                .send_request(&execute_frame, true, prepared_statement.config.tracing)
+                .await;
         }
 
-        Ok(query_response)
+        query_response_result
     }
 
     /// Performs execute_single_page multiple times to fetch all available pages
@@ -557,13 +558,13 @@ impl Connection {
         };
 
         loop {
-            let query_response = self
+            let query_response_result = self
                 .send_request(&batch_frame, true, batch.config.tracing)
-                .await?;
+                .await;
 
-            return match query_response.response {
-                Response::Error(err) => match err.error {
-                    DbError::Unprepared { statement_id } => {
+            return match query_response_result {
+                Err(err) => match err {
+                    QueryError::DbError(DbError::Unprepared { statement_id }, _) => {
                         debug!("Connection::batch: got DbError::Unprepared - repreparing statement with id {:?}", statement_id);
                         let prepared_statement = batch.statements.iter().find_map(|s| match s {
                             BatchStatement::PreparedStatement(s) if *s.get_id() == statement_id => {
@@ -586,13 +587,18 @@ impl Connection {
                             ));
                         }
                     }
-                    _ => Err(err.into()),
+                    _ => Err(err),
                 },
-                Response::Result(_) => Ok(BatchResult {
+                Ok(
+                    query_response @ QueryResponse {
+                        response: Response::Result(_),
+                        ..
+                    },
+                ) => Ok(BatchResult {
                     warnings: query_response.warnings,
                     tracing_id: query_response.tracing_id,
                 }),
-                _ => Err(QueryError::ProtocolError(
+                Ok(_) => Err(QueryError::ProtocolError(
                     "BATCH: Unexpected server response",
                 )),
             };
@@ -624,7 +630,6 @@ impl Connection {
 
                 Ok(())
             }
-            Response::Error(err) => Err(err.into()),
             _ => Err(QueryError::ProtocolError(
                 "USE <keyspace_name> returned unexpected response",
             )),
@@ -645,7 +650,6 @@ impl Connection {
             .response
         {
             Response::Ready => Ok(()),
-            Response::Error(err) => Err(err.into()),
             _ => Err(QueryError::ProtocolError(
                 "Unexpected response to REGISTER message",
             )),
@@ -736,7 +740,7 @@ impl Connection {
             warn!(warning = warn_description.as_str());
         }
 
-        let response = Response::deserialize(task_response.opcode, &mut &*body_with_ext.body)?;
+        let response = Response::deserialize(task_response.opcode, &mut &*body_with_ext.body)??;
 
         Ok(QueryResponse {
             response,
@@ -1158,9 +1162,6 @@ pub async fn open_named_connection(
                 }
                 Response::AuthSuccess(_authenticate_success) => {
                     // OK, continue
-                }
-                Response::Error(err) => {
-                    return Err(err.into());
                 }
                 _ => {
                     return Err(QueryError::ProtocolError(

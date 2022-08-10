@@ -412,10 +412,6 @@ where
                     // Query succeeded, reset retry policy for future retries
                     self.retry_session.reset();
                 }
-                Response::Error(err) => {
-                    self.metrics.inc_failed_paged_queries();
-                    return Err(err.into());
-                }
                 _ => {
                     self.metrics.inc_failed_paged_queries();
 
