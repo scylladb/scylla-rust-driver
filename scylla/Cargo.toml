@@ -11,6 +11,7 @@ license = "MIT OR Apache-2.0"
 
 [package.metadata.docs.rs]
 all-features = true
+rustdoc-args = ["--cfg", "docsrs"]
 
 [features]
 defaults = []

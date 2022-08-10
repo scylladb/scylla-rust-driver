@@ -91,6 +91,8 @@
 //! ```
 //! See the [book](https://rust-driver.docs.scylladb.com/stable/queries/result.html) for more receiving methods
 
+#![cfg_attr(docsrs, feature(doc_auto_cfg))]
+
 pub use scylla_cql::frame;
 pub use scylla_cql::macros::{self, *};
 
