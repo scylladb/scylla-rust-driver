@@ -208,7 +208,7 @@ impl SerializedValues {
 }
 
 #[derive(Clone, Copy)]
-pub struct SerializedValuesIterator<'a> {
+struct SerializedValuesIterator<'a> {
     serialized_values: &'a [u8],
     contains_names: bool,
 }
