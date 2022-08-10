@@ -5,6 +5,7 @@ use chrono::prelude::*;
 use chrono::Duration;
 use num_bigint::BigInt;
 use std::borrow::Cow;
+use std::cell::RefCell;
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::convert::TryInto;
 use std::net::IpAddr;
@@ -833,6 +834,68 @@ impl<T: ValueList> BatchValues for Vec<T> {
         buf: &mut impl BufMut,
     ) -> Result<(), SerializeValuesError> {
         self[n].write_to_request(buf)?;
+        Ok(())
+    }
+}
+
+/// Implements `BatchValues` from an `IntoIterator` over things that implement `ValueList`
+///
+/// This is to avoid requiring allocating a new `Vec` containing all the `ValueList`s directly:
+/// with this, one can write:
+/// `session.batch(&batch, BatchValuesFromIter::new(lines_to_insert.iter().map(|l| &l.value_list)))`
+/// where `lines_to_insert` may also contain e.g. data to pick the statement...
+///
+/// The underlying iterator will always be cloned at least once, once to compute the length if it can't be known
+/// in advance, and be re-cloned at every retry.
+/// It is consequently expected that the provided iterator is cheap to clone (e.g. `slice.iter().map(...)`).
+pub struct BatchValuesFromIter<IT> {
+    original_iterator: IT,
+    iterator: RefCell<(IT, usize)>,
+    len: usize,
+}
+
+impl<IT: Iterator + Clone> BatchValuesFromIter<IT> {
+    pub fn new(into_iterator: impl IntoIterator<IntoIter = IT>) -> Self {
+        let original_iterator = into_iterator.into_iter();
+        BatchValuesFromIter {
+            iterator: RefCell::new((original_iterator.clone(), 0)),
+            len: match original_iterator.size_hint() {
+                (l, Some(h)) if l == h => l,
+                _ => original_iterator.clone().count(),
+            },
+            original_iterator,
+        }
+    }
+}
+
+impl<IT> BatchValues for BatchValuesFromIter<IT>
+where
+    IT: Iterator + Clone,
+    IT::Item: ValueList,
+{
+    fn len(&self) -> usize {
+        self.len
+    }
+
+    fn write_nth_to_request(
+        &self,
+        n: usize,
+        buf: &mut impl BufMut,
+    ) -> Result<(), SerializeValuesError> {
+        let el_to_write;
+        {
+            let (iter, current_pos) = &mut *self.iterator.borrow_mut();
+            el_to_write = match n.checked_sub(*current_pos) {
+                Some(pos) => iter.nth(pos),
+                None => {
+                    *iter = self.original_iterator.clone();
+                    iter.nth(n)
+                }
+            }
+            .expect("n is out of bounds for BatchValuesFromIter's inner iterator");
+            *current_pos = n + 1;
+        }
+        el_to_write.write_to_request(buf)?;
         Ok(())
     }
 }

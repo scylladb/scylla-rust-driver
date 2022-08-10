@@ -1,7 +1,7 @@
 use crate as scylla;
 use crate::batch::Batch;
 use crate::frame::response::result::Row;
-use crate::frame::value::ValueList;
+use crate::frame::value::{BatchValuesFromIter, ValueList};
 use crate::query::Query;
 use crate::routing::Token;
 use crate::statement::Consistency;
@@ -394,6 +394,16 @@ async fn test_batch() {
 
     session.batch(&batch, values).await.unwrap();
 
+    // also test BatchValuesFromIter
+    batch.statements = std::iter::repeat(prepared_statement.clone())
+        .take(3)
+        .map(|ps| ps.into())
+        .collect();
+    session
+        .batch(&batch, BatchValuesFromIter::new((0..3).map(|i| (9, i, ""))))
+        .await
+        .unwrap();
+
     let rs = session
         .query(format!("SELECT a, b, c FROM {}.t_batch", ks), &[])
         .await
@@ -416,7 +426,10 @@ async fn test_batch() {
         vec![
             (1, 2, &String::from("abc")),
             (1, 4, &String::from("hello")),
-            (7, 11, &String::from(""))
+            (7, 11, &String::from("")),
+            (9, 0, &String::new()),
+            (9, 1, &String::new()),
+            (9, 2, &String::new()),
         ]
     );
 
