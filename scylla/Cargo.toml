@@ -9,6 +9,10 @@ keywords = ["database", "scylla", "cql", "cassandra"]
 categories = ["database"]
 license = "MIT OR Apache-2.0"
 
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]
+
 [features]
 defaults = []
 ssl = ["tokio-openssl", "openssl"]
