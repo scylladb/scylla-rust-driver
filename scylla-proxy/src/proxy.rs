@@ -748,13 +748,21 @@ impl ProxyWorker {
                         let mut guard = request_rules.lock().await;
                         '_ruleloop: for (i, request_rule) in guard.iter_mut().enumerate() {
                             if request_rule.0.eval(&ctx) {
-                                    info!("Applying rule no={} to request ({} -> {}).", i, driver_addr, real_addr);
-                                    debug!("-> Applied rule: {:?}", request_rule);
-                                    debug!("-> To request: {:?}", ctx.opcode);
-                                    trace!("{:?}", request);
+                                info!("Applying rule no={} to request ({} -> {}).", i, driver_addr, real_addr);
+                                debug!("-> Applied rule: {:?}", request_rule);
+                                debug!("-> To request: {:?}", ctx.opcode);
+                                trace!("{:?}", request);
+
+                                let request_rule = &*request_rule; // downgrading to shared reference
+
+                                if let Some(ref tx) = request_rule.1.feedback_channel {
+                                    tx.send(request.clone()).unwrap_or_else(|err|
+                                        warn!("Could not send received request as feedback: {}", err)
+                                    );
+                                }
+
                                 let cluster_tx_clone = cluster_tx.clone();
                                 let request_clone = request.clone();
-                                    let request_rule = &*request_rule; // downgrading to shared reference
                                 let pass_action = async move {
                                     if let Some(ref pass_action) = request_rule.1.to_addressee {
                                         if let Some(time) = pass_action.delay {
@@ -768,20 +776,21 @@ impl ProxyWorker {
                                     };
                                 };
 
-                                    let driver_tx_clone = driver_tx.clone();
-                                    let request_clone = request.clone();
-                                    let forge_action = async move {
-                                        if let Some(ref forge_action) = request_rule.1.to_sender {
-                                            if let Some(time) = forge_action.delay {
-                                                tokio::time::sleep(time).await;
-                                            }
-                                            let forged_frame = {
-                                                let processor = forge_action.msg_processor.as_ref().expect("Frame processor is required to forge a frame.");
-                                                processor(request_clone)
-                                            };
-                                            let _ = driver_tx_clone.send(forged_frame);
+                                let driver_tx_clone = driver_tx.clone();
+                                let request_clone = request.clone();
+                                let forge_action = async move {
+                                    if let Some(ref forge_action) = request_rule.1.to_sender {
+                                        if let Some(time) = forge_action.delay {
+                                            tokio::time::sleep(time).await;
+                                        }
+                                        let forged_frame = {
+                                            let processor = forge_action.msg_processor.as_ref()
+                                                .expect("Frame processor is required to forge a frame.");
+                                            processor(request_clone)
                                         };
+                                        let _ = driver_tx_clone.send(forged_frame);
                                     };
+                                };
 
                                 let connection_close_signaler_clone =
                                     connection_close_signaler.clone();
@@ -832,12 +841,19 @@ impl ProxyWorker {
                         };
                         let mut guard = response_rules.lock().await;
                         '_ruleloop: for (i, response_rule) in guard.iter_mut().enumerate() {
-                                if response_rule.0.eval(&ctx) {
-                                    info!("Applying rule no={} to request ({} -> {}).", i, real_addr, driver_addr);
-                                    debug!("-> Applied rule: {:?}", response_rule);
-                                    debug!("-> To response: {:?}", ctx.opcode);
+                            if response_rule.0.eval(&ctx) {
+                                info!("Applying rule no={} to request ({} -> {}).", i, real_addr, driver_addr);
+                                debug!("-> Applied rule: {:?}", response_rule);
+                                debug!("-> To response: {:?}", ctx.opcode);
                                 trace!("{:?}", response);
-                                    let response_rule = &*response_rule; // downgrading to shared reference
+                                let response_rule = &*response_rule; // downgrading to shared reference
+
+                                if let Some(ref tx) = response_rule.1.feedback_channel {
+                                    tx.send(response.clone()).unwrap_or_else(|err| warn!(
+                                        "Could not send received response as feedback: {}", err
+                                    ));
+                                }
+
                                 let response_clone = response.clone();
                                 let driver_tx_clone = driver_tx.clone();
                                 let pass_action = async move {
@@ -853,20 +869,21 @@ impl ProxyWorker {
                                     };
                                 };
 
-                                    let response_clone = response.clone();
-                                    let cluster_tx_clone = cluster_tx.clone();
-                                    let forge_action = async move {
-                                        if let Some(ref forge_action) = response_rule.1.to_sender {
-                                            if let Some(time) = forge_action.delay {
-                                                tokio::time::sleep(time).await;
-                                            }
-                                            let forged_frame = {
-                                                let processor = forge_action.msg_processor.as_ref().expect("Frame processor is required to forge a frame.");
-                                                processor(response_clone)
-                                            };
-                                            let _ = cluster_tx_clone.send(forged_frame);
+                                let response_clone = response.clone();
+                                let cluster_tx_clone = cluster_tx.clone();
+                                let forge_action = async move {
+                                    if let Some(ref forge_action) = response_rule.1.to_sender {
+                                        if let Some(time) = forge_action.delay {
+                                            tokio::time::sleep(time).await;
+                                        }
+                                        let forged_frame = {
+                                            let processor = forge_action.msg_processor.as_ref()
+                                                .expect("Frame processor is required to forge a frame.");
+                                            processor(response_clone)
                                         };
+                                        let _ = cluster_tx_clone.send(forged_frame);
                                     };
+                                };
 
                                 let connection_close_signaler_clone =
                                     connection_close_signaler.clone();
@@ -902,7 +919,7 @@ impl ProxyWorker {
 mod tests {
     use super::*;
     use crate::frame::read_request_frame;
-    use crate::{Condition, Reaction as _, RequestReaction, ResponseOpcode};
+    use crate::{Condition, Reaction as _, RequestReaction, ResponseOpcode, ResponseReaction};
     use assert_matches::assert_matches;
     use bytes::{BufMut, BytesMut};
     use futures::future::join;
@@ -1370,7 +1387,6 @@ mod tests {
     #[tokio::test]
     #[ntest::timeout(2000)]
     async fn limited_times_condition_expires() {
-        init_logger();
         const FAILING_TRIES: usize = 4;
         const PASSING_TRIES: usize = 5;
 
@@ -1465,6 +1481,78 @@ mod tests {
                 _ = tokio::time::sleep(std::time::Duration::from_millis(10)) => (),
             };
         }
+
+        running_proxy.finish().await.unwrap();
+    }
+
+    #[tokio::test]
+    #[ntest::timeout(1000)]
+    async fn proxy_reports_requests_and_responses_as_feedback() {
+        let node1_real_addr = next_local_address_with_port(9876);
+        let node1_proxy_addr = next_local_address_with_port(9876);
+
+        let (request_feedback_tx, mut request_feedback_rx) = mpsc::unbounded_channel();
+        let (response_feedback_tx, mut response_feedback_rx) = mpsc::unbounded_channel();
+        let proxy = Proxy::new([Node::new(
+            node1_real_addr,
+            node1_proxy_addr,
+            ShardAwareness::Unaware,
+            Some(vec![RequestRule(
+                Condition::True,
+                RequestReaction::drop_frame().with_feedback_when_performed(request_feedback_tx),
+            )]),
+            Some(vec![ResponseRule(
+                Condition::True,
+                ResponseReaction::drop_frame().with_feedback_when_performed(response_feedback_tx),
+            )]),
+        )]);
+        let running_proxy = proxy.run().await.unwrap();
+
+        let mock_node_listener = TcpListener::bind(node1_real_addr).await.unwrap();
+
+        let params = FrameParams {
+            flags: 0,
+            version: 0x04,
+            stream: 0,
+        };
+        let request_opcode = FrameOpcode::Request(RequestOpcode::Options);
+        let response_opcode = FrameOpcode::Response(ResponseOpcode::Ready);
+
+        let body = random_body();
+
+        let mock_driver_action = async {
+            let mut conn = TcpStream::connect(node1_proxy_addr).await.unwrap();
+            write_frame(params, request_opcode, &body, &mut conn)
+                .await
+                .unwrap();
+            conn
+        };
+
+        let mock_node_action = async {
+            let (mut conn, _) = mock_node_listener.accept().await.unwrap();
+            write_frame(params.for_response(), response_opcode, &body, &mut conn)
+                .await
+                .unwrap();
+            conn
+        };
+
+        // we keep the connections open until proxy finishes to let it perform clean exit with no disconnects
+        let (_node_conn, _driver_conn) = join(mock_node_action, mock_driver_action).await;
+
+        let feedback_request = request_feedback_rx.recv().await.unwrap();
+        assert_eq!(feedback_request.params, params);
+        assert_eq!(
+            FrameOpcode::Request(feedback_request.opcode),
+            request_opcode
+        );
+        assert_eq!(feedback_request.body, body);
+        let feedback_response = response_feedback_rx.recv().await.unwrap();
+        assert_eq!(feedback_response.params, params.for_response());
+        assert_eq!(
+            FrameOpcode::Response(feedback_response.opcode),
+            response_opcode
+        );
+        assert_eq!(feedback_response.body, body);
 
         running_proxy.finish().await.unwrap();
     }

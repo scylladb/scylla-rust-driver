@@ -2,6 +2,7 @@ use std::{sync::Arc, time::Duration};
 
 use bytes::Bytes;
 use rand::{Rng, RngCore};
+use tokio::sync::mpsc;
 
 use crate::frame::{
     FrameOpcode, FrameParams, RequestFrame, RequestOpcode, ResponseFrame, ResponseOpcode,
@@ -136,6 +137,8 @@ impl Condition {
 ///   towards the frame's intended receiver and sender, respectively.
 /// - `drop_connection`'s outer `Option` denotes whether proxy should drop connection after
 ///   performing the remaining actions, and its inner `Option` contains the delay of the drop.
+/// - `feedback_channel` is a channel to which proxy shall send any frame that matches the rule.
+///   It can be useful for testing that a particular node was the intended adressee of the frame.
 ///
 /// `Reaction` contains useful constructors of common-case Reactions. The names should be
 /// self-explanatory.
@@ -166,6 +169,10 @@ pub trait Reaction: Sized {
 
     /// The same as [drop_connection](Self::drop_connection), but with specified delay.
     fn drop_connection_with_delay(time: Duration) -> Self;
+
+    /// Adds sending the matching frame as feedback using the provided channel.
+    /// Modifies the existing `Reaction`.
+    fn with_feedback_when_performed(self, tx: mpsc::UnboundedSender<Self::Incoming>) -> Self;
 }
 
 #[derive(Clone, Debug)]
@@ -173,6 +180,7 @@ pub struct RequestReaction {
     pub to_addressee: Option<Action<RequestFrame, RequestFrame>>,
     pub to_sender: Option<Action<RequestFrame, ResponseFrame>>,
     pub drop_connection: Option<Option<Duration>>,
+    pub feedback_channel: Option<mpsc::UnboundedSender<RequestFrame>>,
 }
 
 #[derive(Clone, Debug)]
@@ -180,6 +188,7 @@ pub struct ResponseReaction {
     pub to_addressee: Option<Action<ResponseFrame, ResponseFrame>>,
     pub to_sender: Option<Action<ResponseFrame, RequestFrame>>,
     pub drop_connection: Option<Option<Duration>>,
+    pub feedback_channel: Option<mpsc::UnboundedSender<ResponseFrame>>,
 }
 
 impl Reaction for RequestReaction {
@@ -194,6 +203,7 @@ impl Reaction for RequestReaction {
             }),
             to_sender: None,
             drop_connection: None,
+            feedback_channel: None,
         }
     }
 
@@ -202,6 +212,7 @@ impl Reaction for RequestReaction {
             to_addressee: None,
             to_sender: None,
             drop_connection: None,
+            feedback_channel: None,
         }
     }
 
@@ -213,6 +224,7 @@ impl Reaction for RequestReaction {
             }),
             to_sender: None,
             drop_connection: None,
+            feedback_channel: None,
         }
     }
 
@@ -224,6 +236,7 @@ impl Reaction for RequestReaction {
                 msg_processor: Some(f),
             }),
             drop_connection: None,
+            feedback_channel: None,
         }
     }
 
@@ -238,6 +251,7 @@ impl Reaction for RequestReaction {
                 msg_processor: Some(f),
             }),
             drop_connection: None,
+            feedback_channel: None,
         }
     }
 
@@ -246,6 +260,7 @@ impl Reaction for RequestReaction {
             to_addressee: None,
             to_sender: None,
             drop_connection: Some(None),
+            feedback_channel: None,
         }
     }
 
@@ -254,6 +269,14 @@ impl Reaction for RequestReaction {
             to_addressee: None,
             to_sender: None,
             drop_connection: Some(Some(time)),
+            feedback_channel: None,
+        }
+    }
+
+    fn with_feedback_when_performed(self, tx: mpsc::UnboundedSender<Self::Incoming>) -> Self {
+        Self {
+            feedback_channel: Some(tx),
+            ..self
         }
     }
 }
@@ -278,6 +301,7 @@ impl RequestReaction {
                 })),
             }),
             drop_connection: None,
+            feedback_channel: None,
         }
     }
 
@@ -313,6 +337,7 @@ impl RequestReaction {
                 })),
             }),
             drop_connection: None,
+            feedback_channel: None,
         }
     }
 
@@ -519,6 +544,7 @@ impl Reaction for ResponseReaction {
             }),
             to_sender: None,
             drop_connection: None,
+            feedback_channel: None,
         }
     }
 
@@ -527,6 +553,7 @@ impl Reaction for ResponseReaction {
             to_addressee: None,
             to_sender: None,
             drop_connection: None,
+            feedback_channel: None,
         }
     }
 
@@ -538,6 +565,7 @@ impl Reaction for ResponseReaction {
             }),
             to_sender: None,
             drop_connection: None,
+            feedback_channel: None,
         }
     }
 
@@ -549,6 +577,7 @@ impl Reaction for ResponseReaction {
                 msg_processor: Some(f),
             }),
             drop_connection: None,
+            feedback_channel: None,
         }
     }
 
@@ -563,6 +592,7 @@ impl Reaction for ResponseReaction {
                 msg_processor: Some(f),
             }),
             drop_connection: None,
+            feedback_channel: None,
         }
     }
 
@@ -571,6 +601,7 @@ impl Reaction for ResponseReaction {
             to_addressee: None,
             to_sender: None,
             drop_connection: Some(None),
+            feedback_channel: None,
         }
     }
 
@@ -579,6 +610,14 @@ impl Reaction for ResponseReaction {
             to_addressee: None,
             to_sender: None,
             drop_connection: Some(Some(time)),
+            feedback_channel: None,
+        }
+    }
+
+    fn with_feedback_when_performed(self, tx: mpsc::UnboundedSender<Self::Incoming>) -> Self {
+        Self {
+            feedback_channel: Some(tx),
+            ..self
         }
     }
 }
@@ -608,6 +647,8 @@ impl<TFrom, TTo> std::fmt::Debug for Action<TFrom, TTo> {
     }
 }
 
+/// A rule describing what actions should the proxy perform
+/// with the received request frame and on what conditions.
 #[derive(Clone, Debug)]
 pub struct RequestRule(pub Condition, pub RequestReaction);
 
