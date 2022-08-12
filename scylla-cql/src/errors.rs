@@ -205,9 +205,30 @@ pub enum DbError {
     #[error("Invalid protocol message received from the driver")]
     ProtocolError,
 
+    /// Rate limit was exceeded for a partition affected by the request.
+    /// (Scylla-specific)
+    /// TODO: Should this have a "Scylla" prefix?
+    #[error("Rate limit was exceeded for a partition affected by the request")]
+    RateLimitReached {
+        /// Type of the operation rejected by rate limiting.
+        op_type: OperationType,
+        /// Whether the operation was rate limited on the coordinator or not.
+        /// Writes rejected on the coordinator are guaranteed not to be applied
+        /// on any replica.
+        rejected_by_coordinator: bool,
+    },
+
     /// Other error code not specified in the specification
     #[error("Other error not specified in the specification. Error code: {0}")]
     Other(i32),
+}
+
+/// Type of the operation rejected by rate limiting
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum OperationType {
+    Read,
+    Write,
+    Other(u8),
 }
 
 /// Type of write operation requested
@@ -403,6 +424,16 @@ impl QueryError {
         }
 
         false
+    }
+}
+
+impl From<u8> for OperationType {
+    fn from(operation_type: u8) -> OperationType {
+        match operation_type {
+            0 => OperationType::Read,
+            1 => OperationType::Write,
+            other => OperationType::Other(other),
+        }
     }
 }
 

@@ -1,4 +1,4 @@
-use crate::errors::{DbError, QueryError, WriteType};
+use crate::errors::{DbError, OperationType, QueryError, WriteType};
 use crate::frame::frame_errors::ParseError;
 use crate::frame::protocol_features::ProtocolFeatures;
 use crate::frame::types;
@@ -12,7 +12,7 @@ pub struct Error {
 }
 
 impl Error {
-    pub fn deserialize(_features: &ProtocolFeatures, buf: &mut &[u8]) -> Result<Self, ParseError> {
+    pub fn deserialize(features: &ProtocolFeatures, buf: &mut &[u8]) -> Result<Self, ParseError> {
         let code = types::read_int(buf)?;
         let reason = types::read_string(buf)?.to_owned();
 
@@ -70,6 +70,10 @@ impl Error {
             0x2500 => DbError::Unprepared {
                 statement_id: Bytes::from(types::read_short_bytes(buf)?.to_owned()),
             },
+            code if Some(code) == features.rate_limit_error => DbError::RateLimitReached {
+                op_type: OperationType::from(buf.read_u8()?),
+                rejected_by_coordinator: buf.read_u8()? != 0,
+            },
             _ => DbError::Other(code),
         };
 
@@ -86,7 +90,7 @@ impl From<Error> for QueryError {
 #[cfg(test)]
 mod tests {
     use super::Error;
-    use crate::errors::{DbError, WriteType};
+    use crate::errors::{DbError, OperationType, WriteType};
     use crate::frame::protocol_features::ProtocolFeatures;
     use crate::frame::types::LegacyConsistency;
     use crate::Consistency;
@@ -352,5 +356,44 @@ mod tests {
             }
         );
         assert_eq!(error.reason, "message 3");
+    }
+
+    #[test]
+    fn deserialize_rate_limit_error() {
+        let features = ProtocolFeatures {
+            rate_limit_error: Some(0x4321),
+            ..Default::default()
+        };
+        let mut bytes = make_error_request_bytes(0x4321, "message 1");
+        bytes.extend([0u8]); // Read type
+        bytes.extend([1u8]); // Rejected by coordinator
+        let error = Error::deserialize(&features, &mut bytes.as_slice()).unwrap();
+
+        assert_eq!(
+            error.error,
+            DbError::RateLimitReached {
+                op_type: OperationType::Read,
+                rejected_by_coordinator: true,
+            }
+        );
+        assert_eq!(error.reason, "message 1");
+
+        let features = ProtocolFeatures {
+            rate_limit_error: Some(0x8765),
+            ..Default::default()
+        };
+        let mut bytes = make_error_request_bytes(0x8765, "message 2");
+        bytes.extend([1u8]); // Write type
+        bytes.extend([0u8]); // Not rejected by coordinator
+        let error = Error::deserialize(&features, &mut bytes.as_slice()).unwrap();
+
+        assert_eq!(
+            error.error,
+            DbError::RateLimitReached {
+                op_type: OperationType::Write,
+                rejected_by_coordinator: false,
+            }
+        );
+        assert_eq!(error.reason, "message 2");
     }
 }
