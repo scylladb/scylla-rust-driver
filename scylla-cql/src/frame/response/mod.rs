@@ -8,6 +8,7 @@ pub mod supported;
 use crate::{errors::QueryError, frame::frame_errors::ParseError};
 use num_enum::TryFromPrimitive;
 
+use crate::frame::protocol_features::ProtocolFeatures;
 pub use error::Error;
 pub use supported::Supported;
 
@@ -37,9 +38,13 @@ pub enum Response {
 }
 
 impl Response {
-    pub fn deserialize(opcode: ResponseOpcode, buf: &mut &[u8]) -> Result<Response, ParseError> {
+    pub fn deserialize(
+        features: &ProtocolFeatures,
+        opcode: ResponseOpcode,
+        buf: &mut &[u8],
+    ) -> Result<Response, ParseError> {
         let response = match opcode {
-            ResponseOpcode::Error => Response::Error(Error::deserialize(buf)?),
+            ResponseOpcode::Error => Response::Error(Error::deserialize(features, buf)?),
             ResponseOpcode::Ready => Response::Ready,
             ResponseOpcode::Authenticate => {
                 Response::Authenticate(authenticate::Authenticate::deserialize(buf)?)

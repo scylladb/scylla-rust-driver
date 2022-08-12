@@ -29,6 +29,7 @@ use std::{
 use super::errors::{BadKeyspaceName, BadQuery, DbError, QueryError};
 
 use crate::batch::{Batch, BatchStatement};
+use crate::frame::protocol_features::ProtocolFeatures;
 use crate::frame::{
     self,
     request::{self, batch, execute, query, register, Request},
@@ -842,7 +843,10 @@ impl Connection {
             warn!(warning = warn_description.as_str());
         }
 
-        let response = Response::deserialize(task_response.opcode, &mut &*body_with_ext.body)?;
+        // TODO: Placeholder
+        let features = ProtocolFeatures::default();
+        let response =
+            Response::deserialize(&features, task_response.opcode, &mut &*body_with_ext.body)?;
 
         Ok(QueryResponse {
             response,

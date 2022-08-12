@@ -1,5 +1,6 @@
 use crate::errors::{DbError, QueryError, WriteType};
 use crate::frame::frame_errors::ParseError;
+use crate::frame::protocol_features::ProtocolFeatures;
 use crate::frame::types;
 use byteorder::ReadBytesExt;
 use bytes::Bytes;
@@ -11,7 +12,7 @@ pub struct Error {
 }
 
 impl Error {
-    pub fn deserialize(buf: &mut &[u8]) -> Result<Self, ParseError> {
+    pub fn deserialize(_features: &ProtocolFeatures, buf: &mut &[u8]) -> Result<Self, ParseError> {
         let code = types::read_int(buf)?;
         let reason = types::read_string(buf)?.to_owned();
 
@@ -86,6 +87,7 @@ impl From<Error> for QueryError {
 mod tests {
     use super::Error;
     use crate::errors::{DbError, WriteType};
+    use crate::frame::protocol_features::ProtocolFeatures;
     use crate::frame::types::LegacyConsistency;
     use crate::Consistency;
     use bytes::Bytes;
@@ -121,9 +123,11 @@ mod tests {
             (0x1234, DbError::Other(0x1234)),
         ];
 
+        let features = ProtocolFeatures::default();
+
         for (error_code, expected_error) in &simple_error_mappings {
             let bytes: Vec<u8> = make_error_request_bytes(*error_code, "simple message");
-            let error: Error = Error::deserialize(&mut bytes.as_slice()).unwrap();
+            let error: Error = Error::deserialize(&features, &mut bytes.as_slice()).unwrap();
             assert_eq!(error.error, *expected_error);
             assert_eq!(error.reason, "simple message");
         }
@@ -131,12 +135,14 @@ mod tests {
 
     #[test]
     fn deserialize_unavailable() {
+        let features = ProtocolFeatures::default();
+
         let mut bytes = make_error_request_bytes(0x1000, "message 2");
         bytes.extend(&1_i16.to_be_bytes());
         bytes.extend(&2_i32.to_be_bytes());
         bytes.extend(&3_i32.to_be_bytes());
 
-        let error: Error = Error::deserialize(&mut bytes.as_slice()).unwrap();
+        let error: Error = Error::deserialize(&features, &mut bytes.as_slice()).unwrap();
 
         assert_eq!(
             error.error,
@@ -151,6 +157,8 @@ mod tests {
 
     #[test]
     fn deserialize_write_timeout() {
+        let features = ProtocolFeatures::default();
+
         let mut bytes = make_error_request_bytes(0x1100, "message 2");
         bytes.extend(&0x0004_i16.to_be_bytes());
         bytes.extend(&(-5_i32).to_be_bytes());
@@ -161,7 +169,7 @@ mod tests {
         bytes.extend(&write_type_str_len.to_be_bytes());
         bytes.extend(write_type_str.as_bytes());
 
-        let error: Error = Error::deserialize(&mut bytes.as_slice()).unwrap();
+        let error: Error = Error::deserialize(&features, &mut bytes.as_slice()).unwrap();
 
         assert_eq!(
             error.error,
@@ -177,13 +185,15 @@ mod tests {
 
     #[test]
     fn deserialize_read_timeout() {
+        let features = ProtocolFeatures::default();
+
         let mut bytes = make_error_request_bytes(0x1200, "message 2");
         bytes.extend(&0x0002_i16.to_be_bytes());
         bytes.extend(&8_i32.to_be_bytes());
         bytes.extend(&32_i32.to_be_bytes());
         bytes.push(0_u8);
 
-        let error: Error = Error::deserialize(&mut bytes.as_slice()).unwrap();
+        let error: Error = Error::deserialize(&features, &mut bytes.as_slice()).unwrap();
 
         assert_eq!(
             error.error,
@@ -199,6 +209,8 @@ mod tests {
 
     #[test]
     fn deserialize_read_failure() {
+        let features = ProtocolFeatures::default();
+
         let mut bytes = make_error_request_bytes(0x1300, "message 2");
         bytes.extend(&0x0003_i16.to_be_bytes());
         bytes.extend(&4_i32.to_be_bytes());
@@ -206,7 +218,7 @@ mod tests {
         bytes.extend(&6_i32.to_be_bytes());
         bytes.push(123_u8); // Any non-zero value means data_present is true
 
-        let error: Error = Error::deserialize(&mut bytes.as_slice()).unwrap();
+        let error: Error = Error::deserialize(&features, &mut bytes.as_slice()).unwrap();
 
         assert_eq!(
             error.error,
@@ -223,6 +235,8 @@ mod tests {
 
     #[test]
     fn deserialize_function_failure() {
+        let features = ProtocolFeatures::default();
+
         let mut bytes = make_error_request_bytes(0x1400, "message 2");
 
         let keyspace_name: &str = "keyspace_name";
@@ -247,7 +261,7 @@ mod tests {
         bytes.extend(&type2_len.to_be_bytes());
         bytes.extend(type2.as_bytes());
 
-        let error: Error = Error::deserialize(&mut bytes.as_slice()).unwrap();
+        let error: Error = Error::deserialize(&features, &mut bytes.as_slice()).unwrap();
 
         assert_eq!(
             error.error,
@@ -262,6 +276,8 @@ mod tests {
 
     #[test]
     fn deserialize_write_failure() {
+        let features = ProtocolFeatures::default();
+
         let mut bytes = make_error_request_bytes(0x1500, "message 2");
 
         bytes.extend(&0x0000_i16.to_be_bytes());
@@ -274,7 +290,7 @@ mod tests {
         bytes.extend(&write_type_str_len.to_be_bytes());
         bytes.extend(write_type_str.as_bytes());
 
-        let error: Error = Error::deserialize(&mut bytes.as_slice()).unwrap();
+        let error: Error = Error::deserialize(&features, &mut bytes.as_slice()).unwrap();
 
         assert_eq!(
             error.error,
@@ -291,6 +307,8 @@ mod tests {
 
     #[test]
     fn deserialize_already_exists() {
+        let features = ProtocolFeatures::default();
+
         let mut bytes = make_error_request_bytes(0x2400, "message 2");
 
         let keyspace_name: &str = "keyspace_name";
@@ -304,7 +322,7 @@ mod tests {
         bytes.extend(&table_name_len.to_be_bytes());
         bytes.extend(table_name.as_bytes());
 
-        let error: Error = Error::deserialize(&mut bytes.as_slice()).unwrap();
+        let error: Error = Error::deserialize(&features, &mut bytes.as_slice()).unwrap();
 
         assert_eq!(
             error.error,
@@ -318,12 +336,14 @@ mod tests {
 
     #[test]
     fn deserialize_unprepared() {
+        let features = ProtocolFeatures::default();
+
         let mut bytes = make_error_request_bytes(0x2500, "message 3");
         let statement_id = b"deadbeef";
         bytes.extend((statement_id.len() as i16).to_be_bytes());
         bytes.extend(statement_id);
 
-        let error: Error = Error::deserialize(&mut bytes.as_slice()).unwrap();
+        let error: Error = Error::deserialize(&features, &mut bytes.as_slice()).unwrap();
 
         assert_eq!(
             error.error,
