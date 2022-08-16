@@ -1084,6 +1084,7 @@ impl Session {
     where
         ConnFut: Future<Output = Result<Arc<Connection>, QueryError>>,
         QueryFut: Future<Output = Result<ResT, QueryError>>,
+        ResT: AllowedRunQueryResTType,
     {
         let cluster_data = self.cluster.get_data();
         let query_plan = self.load_balancer.plan(&statement_info, &cluster_data);
@@ -1176,6 +1177,7 @@ impl Session {
     where
         ConnFut: Future<Output = Result<Arc<Connection>, QueryError>>,
         QueryFut: Future<Output = Result<ResT, QueryError>>,
+        ResT: AllowedRunQueryResTType,
     {
         let mut last_error: Option<QueryError> = None;
 
@@ -1283,6 +1285,7 @@ impl Session {
     ) -> Result<ResT, QueryError>
     where
         QueryFut: Future<Output = Result<ResT, QueryError>>,
+        ResT: AllowedRunQueryResTType,
     {
         let info = Statement::default();
         let config = StatementConfig {
@@ -1375,3 +1378,18 @@ async fn resolve_hostname(hostname: &str) -> Result<SocketAddr, NewSessionError>
 
     ret.ok_or(failed_err)
 }
+
+// run_query, execute_query, etc have a template type called ResT.
+// There was a bug where ResT was set to QueryResponse, which could
+// be an error response. This was not caught by retry policy which
+// assumed all errors would come from analyzing Result<ResT, QueryError>.
+// This trait is a guard to make sure that this mistake doesn't
+// happen again.
+// When using run_query make sure that the ResT type is NOT able
+// to contain any errors.
+// See https://github.com/scylladb/scylla-rust-driver/issues/501
+pub trait AllowedRunQueryResTType {}
+
+impl AllowedRunQueryResTType for Uuid {}
+impl AllowedRunQueryResTType for BatchResult {}
+impl AllowedRunQueryResTType for NonErrorQueryResponse {}
