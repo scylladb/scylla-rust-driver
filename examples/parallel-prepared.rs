@@ -28,6 +28,7 @@ async fn main() -> Result<()> {
             .prepare("INSERT INTO ks.t2 (a, b, c) VALUES (?, ?, 'abc')")
             .await?,
     );
+    println!("Prepared statement: {:#?}", prepared);
 
     let parallelism = 256;
     let sem = Arc::new(Semaphore::new(parallelism));

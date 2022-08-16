@@ -9,6 +9,7 @@ pub mod query;
 
 pub use crate::frame::types::{Consistency, SerialConsistency};
 
+#[derive(Debug)]
 pub struct StatementConfig {
     pub consistency: Option<Consistency>,
     pub serial_consistency: Option<SerialConsistency>,
