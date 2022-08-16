@@ -25,7 +25,7 @@ pub enum RetryDecision {
 }
 
 /// Specifies a policy used to decide when to retry a query
-pub trait RetryPolicy: Send + Sync {
+pub trait RetryPolicy: std::fmt::Debug + Send + Sync {
     /// Called for each new query, starts a session of deciding about retries
     fn new_session(&self) -> Box<dyn RetrySession>;
 
@@ -50,6 +50,7 @@ pub trait RetrySession: Send + Sync {
 }
 
 /// Forwards all errors directly to the user, never retries
+#[derive(Debug)]
 pub struct FallthroughRetryPolicy;
 pub struct FallthroughRetrySession;
 
@@ -85,6 +86,7 @@ impl RetrySession for FallthroughRetrySession {
 
 /// Default retry policy - retries when there is a high chance that a retry might help.\
 /// Behaviour based on [DataStax Java Driver](https://docs.datastax.com/en/developer/java-driver/4.10/manual/core/retries/)
+#[derive(Debug)]
 pub struct DefaultRetryPolicy;
 
 impl DefaultRetryPolicy {

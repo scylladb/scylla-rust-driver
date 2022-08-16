@@ -12,6 +12,7 @@ use crate::transport::partitioner::PartitionerName;
 use crate::transport::retry_policy::RetryPolicy;
 
 /// Represents a statement prepared on the server.
+#[derive(Debug)]
 pub struct PreparedStatement {
     pub(crate) config: StatementConfig,
     pub prepare_tracing_ids: Vec<Uuid>,

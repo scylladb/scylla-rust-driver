@@ -14,7 +14,7 @@ pub struct Context {
 
 /// The policy that decides if the driver will send speculative queries to the
 /// next hosts when the current host takes too long to respond.
-pub trait SpeculativeExecutionPolicy: Send + Sync {
+pub trait SpeculativeExecutionPolicy: std::fmt::Debug + Send + Sync {
     /// The maximum number of speculative executions that will be triggered
     /// for a given request (does not include the initial request)
     fn max_retry_count(&self, context: &Context) -> usize;
