@@ -63,7 +63,7 @@ pub struct SerializedValues {
 }
 
 /// Represents a CQL Duration value
-#[derive(Clone, Debug, Copy, PartialEq)]
+#[derive(Clone, Debug, Copy, PartialEq, Eq)]
 pub struct CqlDuration {
     pub months: i32,
     pub days: i32,
