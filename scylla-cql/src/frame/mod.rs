@@ -27,7 +27,7 @@ pub const FLAG_CUSTOM_PAYLOAD: u8 = 0x04;
 pub const FLAG_WARNING: u8 = 0x08;
 
 // All of the Authenticators supported by Scylla
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Eq)]
 pub enum Authenticator {
     AllowAllAuthenticator,
     PasswordAuthenticator,
