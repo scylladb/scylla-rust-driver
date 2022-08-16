@@ -14,6 +14,7 @@ use tokio::time::timeout;
 use tracing::{debug, error, trace, trace_span, Instrument};
 use uuid::Uuid;
 
+use super::connection::NonErrorQueryResponse;
 use super::connection::QueryResponse;
 use super::errors::{BadQuery, NewSessionError, QueryError};
 use crate::cql_to_rust::FromRow;
@@ -447,6 +448,7 @@ impl Session {
                         connection
                             .query(query_ref, values_ref, paging_state_ref.clone())
                             .await
+                            .and_then(QueryResponse::into_non_error_query_response)
                     }
                 },
             )
@@ -461,7 +463,7 @@ impl Session {
 
     async fn handle_set_keyspace_response(
         &self,
-        response: &QueryResponse,
+        response: &NonErrorQueryResponse,
     ) -> Result<(), QueryError> {
         if let Some(set_keyspace) = response.as_set_keyspace() {
             debug!(
@@ -478,7 +480,7 @@ impl Session {
     async fn handle_auto_await_schema_agreement(
         &self,
         contents: &str,
-        response: &QueryResponse,
+        response: &NonErrorQueryResponse,
     ) -> Result<(), QueryError> {
         if let Some(timeout) = self.auto_await_schema_agreement_timeout {
             if response.as_schema_change().is_some()
@@ -725,7 +727,7 @@ impl Session {
             "Request",
             prepared_id = format!("{:X}", prepared.get_id()).as_str()
         );
-        let response = self
+        let response: NonErrorQueryResponse = self
             .run_query(
                 statement_info,
                 &prepared.config,
@@ -739,6 +741,7 @@ impl Session {
                     connection
                         .execute(prepared, values_ref, paging_state_ref.clone())
                         .await
+                        .and_then(QueryResponse::into_non_error_query_response)
                 },
             )
             .instrument(span)

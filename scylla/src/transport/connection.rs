@@ -158,20 +158,6 @@ pub struct BatchResult {
 }
 
 impl QueryResponse {
-    pub fn as_set_keyspace(&self) -> Option<&result::SetKeyspace> {
-        match &self.response {
-            Response::Result(result::Result::SetKeyspace(sk)) => Some(sk),
-            _ => None,
-        }
-    }
-
-    pub fn as_schema_change(&self) -> Option<&result::SchemaChange> {
-        match &self.response {
-            Response::Result(result::Result::SchemaChange(sc)) => Some(sc),
-            _ => None,
-        }
-    }
-
     pub fn into_non_error_query_response(self) -> Result<NonErrorQueryResponse, QueryError> {
         Ok(NonErrorQueryResponse {
             response: self.response.into_non_error_response()?,
@@ -186,6 +172,20 @@ impl QueryResponse {
 }
 
 impl NonErrorQueryResponse {
+    pub fn as_set_keyspace(&self) -> Option<&result::SetKeyspace> {
+        match &self.response {
+            NonErrorResponse::Result(result::Result::SetKeyspace(sk)) => Some(sk),
+            _ => None,
+        }
+    }
+
+    pub fn as_schema_change(&self) -> Option<&result::SchemaChange> {
+        match &self.response {
+            NonErrorResponse::Result(result::Result::SchemaChange(sc)) => Some(sc),
+            _ => None,
+        }
+    }
+
     pub fn into_query_result(self) -> Result<QueryResult, QueryError> {
         let (rows, paging_state, col_specs) = match self.response {
             NonErrorResponse::Result(result::Result::Rows(rs)) => (
