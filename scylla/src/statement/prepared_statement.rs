@@ -12,7 +12,6 @@ use crate::transport::partitioner::PartitionerName;
 use crate::transport::retry_policy::RetryPolicy;
 
 /// Represents a statement prepared on the server.
-#[derive(Clone)]
 pub struct PreparedStatement {
     pub(crate) config: StatementConfig,
     pub prepare_tracing_ids: Vec<Uuid>,
@@ -22,6 +21,20 @@ pub struct PreparedStatement {
     statement: String,
     page_size: Option<i32>,
     partitioner_name: PartitionerName,
+}
+
+impl Clone for PreparedStatement {
+    fn clone(&self) -> Self {
+        Self {
+            config: self.config.clone(),
+            prepare_tracing_ids: Vec::new(),
+            id: self.id.clone(),
+            metadata: self.metadata.clone(),
+            statement: self.statement.clone(),
+            page_size: self.page_size,
+            partitioner_name: self.partitioner_name.clone(),
+        }
+    }
 }
 
 impl PreparedStatement {
