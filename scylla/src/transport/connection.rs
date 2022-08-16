@@ -32,7 +32,7 @@ use crate::batch::{Batch, BatchStatement};
 use crate::frame::{
     self,
     request::{self, batch, execute, query, register, Request},
-    response::{event::Event, result, Response, ResponseOpcode},
+    response::{event::Event, result, NonErrorResponse, Response, ResponseOpcode},
     server_event_type::EventType,
     value::{BatchValues, ValueList},
     FrameParams, SerializedRequest,
@@ -142,6 +142,13 @@ pub struct QueryResponse {
     pub warnings: Vec<String>,
 }
 
+// A QueryResponse in which response can not be Response::Error
+pub struct NonErrorQueryResponse {
+    pub response: NonErrorResponse,
+    pub tracing_id: Option<Uuid>,
+    pub warnings: Vec<String>,
+}
+
 /// Result of Session::batch(). Contains no rows, only some useful information.
 pub struct BatchResult {
     /// Warnings returned by the database
@@ -165,15 +172,28 @@ impl QueryResponse {
         }
     }
 
+    pub fn into_non_error_query_response(self) -> Result<NonErrorQueryResponse, QueryError> {
+        Ok(NonErrorQueryResponse {
+            response: self.response.into_non_error_response()?,
+            tracing_id: self.tracing_id,
+            warnings: self.warnings,
+        })
+    }
+
+    pub fn into_query_result(self) -> Result<QueryResult, QueryError> {
+        self.into_non_error_query_response()?.into_query_result()
+    }
+}
+
+impl NonErrorQueryResponse {
     pub fn into_query_result(self) -> Result<QueryResult, QueryError> {
         let (rows, paging_state, col_specs) = match self.response {
-            Response::Error(err) => return Err(err.into()),
-            Response::Result(result::Result::Rows(rs)) => (
+            NonErrorResponse::Result(result::Result::Rows(rs)) => (
                 Some(rs.rows),
                 rs.metadata.paging_state,
                 rs.metadata.col_specs,
             ),
-            Response::Result(_) => (None, None, vec![]),
+            NonErrorResponse::Result(_) => (None, None, vec![]),
             _ => {
                 return Err(QueryError::ProtocolError(
                     "Unexpected server response, expected Result or Error",
