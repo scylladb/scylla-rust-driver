@@ -1978,3 +1978,49 @@ async fn test_unprepared_reprepare_in_caching_session_execute() {
     all_rows.sort();
     assert_eq!(all_rows, vec![(1, 2, 3), (1, 3, 2)]);
 }
+
+#[tokio::test]
+async fn test_views_in_schema_info() {
+    let _ = tracing_subscriber::fmt::try_init();
+
+    let uri = std::env::var("SCYLLA_URI").unwrap_or_else(|_| "127.0.0.1:9042".to_string());
+    let session = SessionBuilder::new().known_node(uri).build().await.unwrap();
+    let ks = unique_name();
+
+    session.query(format!("CREATE KEYSPACE IF NOT EXISTS {} WITH REPLICATION = {{'class' : 'SimpleStrategy', 'replication_factor' : 1}}", ks), &[]).await.unwrap();
+    session.use_keyspace(ks.clone(), false).await.unwrap();
+
+    session
+        .query("CREATE TABLE t(id int PRIMARY KEY, v int)", &[])
+        .await
+        .unwrap();
+
+    session.query("CREATE MATERIALIZED VIEW mv1 AS SELECT * FROM t WHERE v IS NOT NULL PRIMARY KEY (v, id)", &[]).await.unwrap();
+    session.query("CREATE MATERIALIZED VIEW mv2 AS SELECT id, v FROM t WHERE v IS NOT NULL PRIMARY KEY (v, id)", &[]).await.unwrap();
+
+    session.await_schema_agreement().await.unwrap();
+    session.refresh_metadata().await.unwrap();
+
+    let keyspace_meta = session
+        .get_cluster_data()
+        .get_keyspace_info()
+        .get(&ks)
+        .unwrap()
+        .clone();
+
+    let tables = keyspace_meta
+        .tables
+        .keys()
+        .collect::<std::collections::HashSet<&String>>();
+
+    let views = keyspace_meta
+        .views
+        .keys()
+        .collect::<std::collections::HashSet<&String>>();
+
+    assert_eq!(tables, std::collections::HashSet::from([&"t".to_string()]));
+    assert_eq!(
+        views,
+        std::collections::HashSet::from([&"mv1".to_string(), &"mv2".to_string()])
+    );
+}
