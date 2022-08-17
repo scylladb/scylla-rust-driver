@@ -163,7 +163,7 @@ impl RetrySession for DefaultRetrySession {
             }
             // ReadTimeout - coordinator didn't receive enough replies in time.
             // Retry at most once and only if there were actually enough replies
-            // to satisfy consistency but they were all just checksums (data_present == true).
+            // to satisfy consistency but they were all just checksums (data_present == false).
             // This happens when the coordinator picked replicas that were overloaded/dying.
             // Retried request should have some useful response because the node will detect
             // that these replicas are dead.
@@ -176,7 +176,7 @@ impl RetrySession for DefaultRetrySession {
                 },
                 _,
             ) => {
-                if !self.was_read_timeout_retry && received >= required && *data_present {
+                if !self.was_read_timeout_retry && received >= required && !*data_present {
                     self.was_read_timeout_retry = true;
                     RetryDecision::RetrySameNode
                 } else {
@@ -374,40 +374,7 @@ mod tests {
     // On ReadTimeout we retry one time if there were enough responses and the data was present no matter the idempotence
     #[test]
     fn default_read_timeout() {
-        // Enough responses and data_present == true
-        let enough_responses_with_data = QueryError::DbError(
-            DbError::ReadTimeout {
-                consistency: LegacyConsistency::Regular(Consistency::Two),
-                received: 2,
-                required: 2,
-                data_present: true,
-            },
-            String::new(),
-        );
-
-        // Not idempotent
-        let mut policy = DefaultRetryPolicy::new().new_session();
-        assert_eq!(
-            policy.decide_should_retry(make_query_info(&enough_responses_with_data, false)),
-            RetryDecision::RetrySameNode
-        );
-        assert_eq!(
-            policy.decide_should_retry(make_query_info(&enough_responses_with_data, false)),
-            RetryDecision::DontRetry
-        );
-
-        // Idempotent
-        let mut policy = DefaultRetryPolicy::new().new_session();
-        assert_eq!(
-            policy.decide_should_retry(make_query_info(&enough_responses_with_data, true)),
-            RetryDecision::RetrySameNode
-        );
-        assert_eq!(
-            policy.decide_should_retry(make_query_info(&enough_responses_with_data, true)),
-            RetryDecision::DontRetry
-        );
-
-        // Enough responses but data_present == false
+        // Enough responses and data_present == false - coordinator received only checksums
         let enough_responses_no_data = QueryError::DbError(
             DbError::ReadTimeout {
                 consistency: LegacyConsistency::Regular(Consistency::Two),
@@ -422,6 +389,10 @@ mod tests {
         let mut policy = DefaultRetryPolicy::new().new_session();
         assert_eq!(
             policy.decide_should_retry(make_query_info(&enough_responses_no_data, false)),
+            RetryDecision::RetrySameNode
+        );
+        assert_eq!(
+            policy.decide_should_retry(make_query_info(&enough_responses_no_data, false)),
             RetryDecision::DontRetry
         );
 
@@ -429,6 +400,36 @@ mod tests {
         let mut policy = DefaultRetryPolicy::new().new_session();
         assert_eq!(
             policy.decide_should_retry(make_query_info(&enough_responses_no_data, true)),
+            RetryDecision::RetrySameNode
+        );
+        assert_eq!(
+            policy.decide_should_retry(make_query_info(&enough_responses_no_data, true)),
+            RetryDecision::DontRetry
+        );
+
+        // Enough responses but data_present == true - coordinator probably timed out
+        // waiting for read-repair acknowledgement.
+        let enough_responses_with_data = QueryError::DbError(
+            DbError::ReadTimeout {
+                consistency: LegacyConsistency::Regular(Consistency::Two),
+                received: 2,
+                required: 2,
+                data_present: true,
+            },
+            String::new(),
+        );
+
+        // Not idempotent
+        let mut policy = DefaultRetryPolicy::new().new_session();
+        assert_eq!(
+            policy.decide_should_retry(make_query_info(&enough_responses_with_data, false)),
+            RetryDecision::DontRetry
+        );
+
+        // Idempotent
+        let mut policy = DefaultRetryPolicy::new().new_session();
+        assert_eq!(
+            policy.decide_should_retry(make_query_info(&enough_responses_with_data, true)),
             RetryDecision::DontRetry
         );
 
