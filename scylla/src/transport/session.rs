@@ -25,7 +25,7 @@ use crate::query::Query;
 use crate::routing::Token;
 use crate::statement::{Consistency, SerialConsistency};
 use crate::tracing::{GetTracingConfig, TracingEvent, TracingInfo};
-use crate::transport::cluster::{Cluster, ClusterData};
+use crate::transport::cluster::{Cluster, ClusterData, ClusterNeatDebug};
 use crate::transport::connection::{
     BatchResult, Connection, ConnectionConfig, VerifiedKeyspaceName,
 };
@@ -63,6 +63,29 @@ pub struct Session {
     metrics: Arc<Metrics>,
     default_consistency: Consistency,
     auto_await_schema_agreement_timeout: Option<Duration>,
+}
+
+/// This implementation deliberately omits some details from Cluster in order
+/// to avoid cluttering the print with much information of little usability.
+impl std::fmt::Debug for Session {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Session")
+            .field("cluster", &ClusterNeatDebug(&self.cluster))
+            .field("load_balancer", &self.load_balancer)
+            .field("schema_agreement_interval", &self.schema_agreement_interval)
+            .field("retry_policy", &self.retry_policy)
+            .field(
+                "speculative_execution_policy",
+                &self.speculative_execution_policy,
+            )
+            .field("metrics", &self.metrics)
+            .field("default_consistency", &self.default_consistency)
+            .field(
+                "auto_await_schema_agreement_timeout",
+                &self.auto_await_schema_agreement_timeout,
+            )
+            .finish()
+    }
 }
 
 /// Configuration options for [`Session`].

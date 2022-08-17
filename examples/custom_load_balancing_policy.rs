@@ -7,6 +7,7 @@ use scylla::{
 use std::{env, sync::Arc};
 
 /// Example load balancing policy that prefers nodes from favorite datacenter
+#[derive(Debug)]
 struct CustomLoadBalancingPolicy {
     fav_datacenter_name: String,
 }

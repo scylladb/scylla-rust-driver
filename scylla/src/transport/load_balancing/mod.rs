@@ -35,7 +35,7 @@ impl<'a> Statement<'a> {
 pub type Plan<'a> = Box<dyn Iterator<Item = Arc<Node>> + Send + Sync + 'a>;
 
 /// Policy that decides which nodes to contact for each query
-pub trait LoadBalancingPolicy: Send + Sync {
+pub trait LoadBalancingPolicy: Send + Sync + std::fmt::Debug {
     /// It is used for each query to find which nodes to query first
     fn plan<'a>(&self, statement: &Statement, cluster: &'a ClusterData) -> Plan<'a>;
 

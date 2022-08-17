@@ -7,6 +7,7 @@ use std::sync::{
 use tracing::trace;
 
 /// A Round-robin load balancing policy.
+#[derive(Debug)]
 pub struct RoundRobinPolicy {
     index: AtomicUsize,
 }

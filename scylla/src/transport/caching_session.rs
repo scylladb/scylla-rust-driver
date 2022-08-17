@@ -8,6 +8,7 @@ use bytes::Bytes;
 use dashmap::DashMap;
 
 /// Provides auto caching while executing queries
+#[derive(Debug)]
 pub struct CachingSession {
     pub session: Session,
     /// The prepared statement cache size

@@ -9,6 +9,7 @@ use std::{collections::HashMap, sync::Arc};
 use tracing::trace;
 
 /// A wrapper load balancing policy that adds token awareness to a child policy.
+#[derive(Debug)]
 pub struct TokenAwarePolicy {
     child_policy: Box<dyn ChildLoadBalancingPolicy>,
 }
@@ -433,6 +434,7 @@ mod tests {
 
     // Used as child policy for TokenAwarePolicy tests
     // Forwards plan passed to it in apply_child_policy() method
+    #[derive(Debug)]
     struct DumbPolicy {}
 
     impl LoadBalancingPolicy for DumbPolicy {
