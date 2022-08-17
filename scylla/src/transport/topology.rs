@@ -53,6 +53,8 @@ pub struct Keyspace {
     /// Empty HashMap may as well mean that the client disabled schema fetching in SessionConfig
     pub tables: HashMap<String, Table>,
     /// Empty HashMap may as well mean that the client disabled schema fetching in SessionConfig
+    pub views: HashMap<String, Table>,
+    /// Empty HashMap may as well mean that the client disabled schema fetching in SessionConfig
     pub user_defined_types: HashMap<String, Vec<(String, CqlType)>>,
 }
 
@@ -460,13 +462,22 @@ async fn query_keyspaces(
             ))?;
 
     let mut result = HashMap::with_capacity(rows.len());
-    let (mut all_tables, mut all_user_defined_types) = if fetch_schema {
+    let (mut all_tables, mut all_views, mut all_user_defined_types) = if fetch_schema {
         (
-            query_tables(conn).await?,
+            query_tables(
+                conn,
+                "SELECT keyspace_name, table_name FROM system_schema.tables",
+            )
+            .await?,
+            query_tables(
+                conn,
+                "SELECT keyspace_name, view_name FROM system_schema.views",
+            )
+            .await?,
             query_user_defined_types(conn).await?,
         )
     } else {
-        (HashMap::new(), HashMap::new())
+        (HashMap::new(), HashMap::new(), HashMap::new())
     };
 
     for row in rows.into_typed::<(String, HashMap<String, String>)>() {
@@ -476,6 +487,7 @@ async fn query_keyspaces(
 
         let strategy: Strategy = strategy_from_string_map(strategy_map)?;
         let tables = all_tables.remove(&keyspace_name).unwrap_or_default();
+        let views = all_views.remove(&keyspace_name).unwrap_or_default();
         let user_defined_types = all_user_defined_types
             .remove(&keyspace_name)
             .unwrap_or_default();
@@ -485,6 +497,7 @@ async fn query_keyspaces(
             Keyspace {
                 strategy,
                 tables,
+                views,
                 user_defined_types,
             },
         );
@@ -533,8 +546,9 @@ async fn query_user_defined_types(
 
 async fn query_tables(
     conn: &Connection,
+    query_str: impl Into<String>,
 ) -> Result<HashMap<String, HashMap<String, Table>>, QueryError> {
-    let mut tables_query = Query::new("select keyspace_name, table_name from system_schema.tables");
+    let mut tables_query = Query::new(query_str.into());
     tables_query.set_page_size(1024);
 
     let rows = conn
