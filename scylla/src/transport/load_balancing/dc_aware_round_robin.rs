@@ -7,6 +7,7 @@ use std::sync::{
 use tracing::trace;
 
 /// A data-center aware Round-robin load balancing policy.
+#[derive(Debug)]
 pub struct DcAwareRoundRobinPolicy {
     index: AtomicUsize,
     local_dc: String,
