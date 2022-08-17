@@ -145,8 +145,12 @@ impl RowIterator {
 
             let choose_connection = |node: Arc<Node>| async move { node.random_connection().await };
 
-            let page_query = |connection: Arc<Connection>, paging_state: Option<Bytes>| async move {
-                connection.query(query_ref, values_ref, paging_state).await
+            let page_query = |connection: Arc<Connection>,
+                              consistency: Consistency,
+                              paging_state: Option<Bytes>| async move {
+                connection
+                    .query_with_consistency(query_ref, values_ref, consistency, paging_state)
+                    .await
             };
 
             let worker = RowIteratorWorker {
@@ -210,9 +214,11 @@ impl RowIterator {
                 }
             };
 
-            let page_query = |connection: Arc<Connection>, paging_state: Option<Bytes>| async move {
+            let page_query = |connection: Arc<Connection>,
+                              consistency: Consistency,
+                              paging_state: Option<Bytes>| async move {
                 connection
-                    .execute(prepared_ref, values_ref, paging_state)
+                    .execute_with_consistency(prepared_ref, values_ref, consistency, paging_state)
                     .await
             };
 
@@ -291,7 +297,7 @@ impl<ConnFunc, ConnFut, QueryFunc, QueryFut> RowIteratorWorker<'_, ConnFunc, Que
 where
     ConnFunc: Fn(Arc<Node>) -> ConnFut,
     ConnFut: Future<Output = Result<Arc<Connection>, QueryError>>,
-    QueryFunc: Fn(Arc<Connection>, Option<Bytes>) -> QueryFut,
+    QueryFunc: Fn(Arc<Connection>, Consistency, Option<Bytes>) -> QueryFut,
     QueryFut: Future<Output = Result<QueryResponse, QueryError>>,
 {
     async fn work(mut self, cluster_data: Arc<ClusterData>) {
@@ -299,6 +305,7 @@ where
 
         let mut last_error: QueryError =
             QueryError::ProtocolError("Empty query plan - driver bug!");
+        let mut current_consistency: Consistency = self.query_consistency;
 
         'nodes_in_plan: for node in query_plan {
             let span = trace_span!("Executing query", node = node.address.to_string().as_str());
@@ -324,8 +331,10 @@ where
             'same_node_retries: loop {
                 trace!(parent: &span, "Execution started");
                 // Query pages until an error occurs
-                let queries_result: Result<(), QueryError> =
-                    self.query_pages(&connection).instrument(span.clone()).await;
+                let queries_result: Result<(), QueryError> = self
+                    .query_pages(&connection, current_consistency)
+                    .instrument(span.clone())
+                    .await;
 
                 last_error = match queries_result {
                     Ok(()) => {
@@ -355,12 +364,14 @@ where
                     retry_decision = format!("{:?}", retry_decision).as_str()
                 );
                 match retry_decision {
-                    RetryDecision::RetrySameNode => {
+                    RetryDecision::RetrySameNode(cl) => {
                         self.metrics.inc_retries_num();
+                        current_consistency = cl;
                         continue 'same_node_retries;
                     }
-                    RetryDecision::RetryNextNode => {
+                    RetryDecision::RetryNextNode(cl) => {
                         self.metrics.inc_retries_num();
+                        current_consistency = cl;
                         continue 'nodes_in_plan;
                     }
                     RetryDecision::DontRetry => break 'nodes_in_plan,
@@ -373,7 +384,11 @@ where
     }
 
     // Given a working connection query as many pages as possible until the first error
-    async fn query_pages(&mut self, connection: &Arc<Connection>) -> Result<(), QueryError> {
+    async fn query_pages(
+        &mut self,
+        connection: &Arc<Connection>,
+        consistency: Consistency,
+    ) -> Result<(), QueryError> {
         loop {
             self.metrics.inc_total_paged_queries();
             let query_start = std::time::Instant::now();
@@ -383,7 +398,8 @@ where
                 "Sending"
             );
             let query_response: QueryResponse =
-                (self.page_query)(connection.clone(), self.paging_state.clone()).await?;
+                (self.page_query)(connection.clone(), consistency, self.paging_state.clone())
+                    .await?;
 
             match query_response.response {
                 Response::Result(result::Result::Rows(mut rows)) => {

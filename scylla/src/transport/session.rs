@@ -468,15 +468,19 @@ impl Session {
                 Statement::default(),
                 &query.config,
                 |node: Arc<Node>| async move { node.random_connection().await },
-                |connection: Arc<Connection>| {
+                |connection: Arc<Connection>, consistency: Consistency| {
                     // Needed to avoid moving query and values into async move block
                     let query_ref = &query;
                     let values_ref = &serialized_values;
                     let paging_state_ref = &paging_state;
-
                     async move {
                         connection
-                            .query(query_ref, values_ref, paging_state_ref.clone())
+                            .query_with_consistency(
+                                query_ref,
+                                values_ref,
+                                consistency,
+                                paging_state_ref.clone(),
+                            )
                             .await
                             .and_then(QueryResponse::into_non_error_query_response)
                     }
@@ -767,9 +771,14 @@ impl Session {
                         None => node.random_connection().await,
                     }
                 },
-                |connection: Arc<Connection>| async move {
+                |connection: Arc<Connection>, consistency: Consistency| async move {
                     connection
-                        .execute(prepared, values_ref, paging_state_ref.clone())
+                        .execute_with_consistency(
+                            prepared,
+                            values_ref,
+                            consistency,
+                            paging_state_ref.clone(),
+                        )
                         .await
                         .and_then(QueryResponse::into_non_error_query_response)
                 },
@@ -904,14 +913,19 @@ impl Session {
     ) -> Result<BatchResult, QueryError> {
         let values_ref = &values;
 
-        self.run_query(
-            Statement::default(),
-            &batch.config,
-            |node: Arc<Node>| async move { node.random_connection().await },
-            |connection: Arc<Connection>| async move { connection.batch(batch, values_ref).await },
-        )
-        .instrument(trace_span!("Batch"))
-        .await
+        self
+            .run_query(
+                Statement::default(),
+                &batch.config,
+                |node: Arc<Node>| async move { node.random_connection().await },
+                |connection: Arc<Connection>, consistency: Consistency| async move {
+                    connection
+                        .batch_with_consistency(batch, values_ref, consistency)
+                        .await
+                },
+            )
+            .instrument(trace_span!("Batch"))
+            .await
     }
 
     /// Sends `USE <keyspace_name>` request on all connections\
@@ -1109,7 +1123,7 @@ impl Session {
         statement_info: Statement<'a>,
         statement_config: &StatementConfig,
         choose_connection: impl Fn(Arc<Node>) -> ConnFut,
-        do_query: impl Fn(Arc<Connection>) -> QueryFut,
+        do_query: impl Fn(Arc<Connection>, Consistency) -> QueryFut,
     ) -> Result<ResT, QueryError>
     where
         ConnFut: Future<Output = Result<Arc<Connection>, QueryError>>,
@@ -1218,7 +1232,7 @@ impl Session {
         consistency: Option<Consistency>,
         mut retry_session: Box<dyn RetrySession>,
         choose_connection: impl Fn(Arc<Node>) -> ConnFut,
-        do_query: impl Fn(Arc<Connection>) -> QueryFut,
+        do_query: impl Fn(Arc<Connection>, Consistency) -> QueryFut,
     ) -> Option<Result<ResT, QueryError>>
     where
         ConnFut: Future<Output = Result<Arc<Connection>, QueryError>>,
@@ -1226,6 +1240,7 @@ impl Session {
         ResT: AllowedRunQueryResTType,
     {
         let mut last_error: Option<QueryError> = None;
+        let mut current_consistency: Consistency = consistency.unwrap_or(self.default_consistency);
 
         'nodes_in_plan: for node in query_plan {
             let span = trace_span!("Executing query", node = node.address.to_string().as_str());
@@ -1257,7 +1272,9 @@ impl Session {
                     "Sending"
                 );
                 let query_result: Result<ResT, QueryError> =
-                    do_query(connection).instrument(span.clone()).await;
+                    do_query(connection, current_consistency)
+                        .instrument(span.clone())
+                        .await;
 
                 last_error = match query_result {
                     Ok(response) => {
@@ -1293,12 +1310,14 @@ impl Session {
                     retry_decision = format!("{:?}", retry_decision).as_str()
                 );
                 match retry_decision {
-                    RetryDecision::RetrySameNode => {
+                    RetryDecision::RetrySameNode(cl) => {
                         self.metrics.inc_retries_num();
+                        current_consistency = cl;
                         continue 'same_node_retries;
                     }
-                    RetryDecision::RetryNextNode => {
+                    RetryDecision::RetryNextNode(cl) => {
                         self.metrics.inc_retries_num();
+                        current_consistency = cl;
                         continue 'nodes_in_plan;
                     }
                     RetryDecision::DontRetry => return last_error.map(Result::Err),
@@ -1327,7 +1346,7 @@ impl Session {
 
     async fn schema_agreement_auxilary<ResT, QueryFut>(
         &self,
-        do_query: impl Fn(Arc<Connection>) -> QueryFut,
+        do_query: impl Fn(Arc<Connection>, Consistency) -> QueryFut,
     ) -> Result<ResT, QueryError>
     where
         QueryFut: Future<Output = Result<ResT, QueryError>>,
@@ -1361,9 +1380,12 @@ impl Session {
     }
 
     pub async fn fetch_schema_version(&self) -> Result<Uuid, QueryError> {
-        self.schema_agreement_auxilary(|connection: Arc<Connection>| async move {
-            connection.fetch_schema_version().await
-        })
+        // We ignore custom Consistency that a retry policy could decide to put here, using the default instead.
+        self.schema_agreement_auxilary(
+            |connection: Arc<Connection>, _ignored: Consistency| async move {
+                connection.fetch_schema_version().await
+            },
+        )
         .await
     }
 
