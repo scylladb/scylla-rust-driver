@@ -15,6 +15,7 @@ use std::{
 };
 
 /// Node represents a cluster node along with it's data and connections
+#[derive(Debug)]
 pub struct Node {
     pub address: SocketAddr,
     pub datacenter: Option<String>,
