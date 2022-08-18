@@ -253,6 +253,10 @@ pub enum BadQuery {
     /// Passed invalid keyspace name to use
     #[error("Passed invalid keyspace name to use: {0}")]
     BadKeyspaceName(#[from] BadKeyspaceName),
+
+    /// Other reasons of bad query
+    #[error("{0}")]
+    Other(String),
 }
 
 /// Error that occurred during session creation

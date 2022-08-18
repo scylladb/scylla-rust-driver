@@ -463,10 +463,9 @@ impl Connection {
     ) -> Result<QueryResult, QueryError> {
         if query.get_page_size().is_none() {
             // Page size should be set when someone wants to use paging
-            // This is an internal function, we can use ProtocolError even if it's not technically desigen for this
-            return Err(QueryError::ProtocolError(
-                "Called Connection::query_all without page size set!",
-            ));
+            return Err(QueryError::BadQuery(BadQuery::Other(
+                "Called Connection::query_all without page size set!".to_string(),
+            )));
         }
 
         let mut final_result = QueryResult::default();
@@ -582,10 +581,9 @@ impl Connection {
         values: impl ValueList,
     ) -> Result<QueryResult, QueryError> {
         if prepared_statement.get_page_size().is_none() {
-            // This is an internal function, we can use ProtocolError even if it's not technically desigen for this
-            return Err(QueryError::ProtocolError(
-                "Called Connection::execute_all without page size set!",
-            ));
+            return Err(QueryError::BadQuery(BadQuery::Other(
+                "Called Connection::execute_all without page size set!".to_string(),
+            )));
         }
 
         let mut final_result = QueryResult::default();
@@ -1531,6 +1529,8 @@ impl VerifiedKeyspaceName {
 
 #[cfg(test)]
 mod tests {
+    use scylla_cql::errors::BadQuery;
+
     use super::super::errors::QueryError;
     use super::ConnectionConfig;
     use crate::query::Query;
@@ -1643,7 +1643,10 @@ mod tests {
         // 4. Calling query_all with a Query that doesn't have page_size set should result in an error.
         let no_page_size_query = Query::new("SELECT p FROM connection_query_all_tab");
         let no_page_res = connection.query_all(&no_page_size_query, &[]).await;
-        assert!(matches!(no_page_res, Err(QueryError::ProtocolError(_))));
+        assert!(matches!(
+            no_page_res,
+            Err(QueryError::BadQuery(BadQuery::Other(_)))
+        ));
 
         let prepared_no_page_size_query = connection.prepare(&no_page_size_query).await.unwrap();
         let prepared_no_page_res = connection
@@ -1651,7 +1654,7 @@ mod tests {
             .await;
         assert!(matches!(
             prepared_no_page_res,
-            Err(QueryError::ProtocolError(_))
+            Err(QueryError::BadQuery(BadQuery::Other(_)))
         ));
     }
 }
