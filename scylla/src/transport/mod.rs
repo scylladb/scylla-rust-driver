@@ -2,6 +2,7 @@ pub(crate) mod caching_session;
 mod cluster;
 pub(crate) mod connection;
 mod connection_pool;
+pub mod downgrading_consistency_retry_policy;
 pub mod iterator;
 pub mod load_balancing;
 pub(crate) mod metrics;
