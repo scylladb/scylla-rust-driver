@@ -47,6 +47,8 @@ pub enum ProxyError {
     Worker(WorkerError),
     #[error("Could not await proxy finish: {0}")]
     AwaitFinishFailure(String),
+    #[error("All error reporting channels have already been closed")]
+    SanityCheckFailure,
 }
 
 impl From<WorkerError> for ProxyError {

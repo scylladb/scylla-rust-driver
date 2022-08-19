@@ -286,6 +286,26 @@ impl RunningProxy {
         }
     }
 
+    /// Attempts to fetch the first error that has occured in proxy since last check.
+    /// If no errors occured, returns Ok(()).
+    pub fn sanity_check(&mut self) -> Result<(), ProxyError> {
+        match self.error_sink.try_recv() {
+            Ok(err) => Err(err),
+            Err(TryRecvError::Empty) => Ok(()),
+            Err(TryRecvError::Disconnected) => {
+                // As we haven't awaited finish of all workers yet, there must be a faulty case without proper error handling.
+                Err(ProxyError::SanityCheckFailure)
+            }
+        }
+    }
+
+    /// Waits until an error occurs in proxy. If proxy finishes with no errors occured, returns Err(()).
+    pub async fn wait_for_error(&mut self) -> Option<ProxyError> {
+        self.error_sink.recv().await
+    }
+
+    /// Requests termination of all proxy workers and awaits its completion.
+    /// Returns the first error that occured in proxy.
     pub async fn finish(mut self) -> Result<(), ProxyError> {
         self.terminate_signaler.send(()).map_err(|err| {
             ProxyError::AwaitFinishFailure(format!(
@@ -927,9 +947,10 @@ mod tests {
     use scylla_cql::frame::frame_errors::FrameError;
     use scylla_cql::frame::types::write_string_multimap;
     use std::collections::HashMap;
+    use std::mem;
     use std::str::FromStr;
     use std::sync::atomic::{AtomicU16, Ordering};
-    use tokio::io::AsyncReadExt as _;
+    use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
     use tokio::sync::oneshot;
 
     // This is for convenient logs from failing tests. Just call it at the beginning of a test.
@@ -1555,5 +1576,55 @@ mod tests {
         assert_eq!(feedback_response.body, body);
 
         running_proxy.finish().await.unwrap();
+    }
+
+    #[tokio::test]
+    #[ntest::timeout(1000)]
+    async fn sanity_check_reports_errors() {
+        let node1_real_addr = next_local_address_with_port(9876);
+        let node1_proxy_addr = next_local_address_with_port(9876);
+        let proxy = Proxy::new([Node::new(
+            node1_real_addr,
+            node1_proxy_addr,
+            ShardAwareness::Unaware,
+            None,
+            None,
+        )]);
+        let mut running_proxy = proxy.run().await.unwrap();
+
+        let mock_node_listener = TcpListener::bind(node1_real_addr).await.unwrap();
+
+        let mock_driver_action = async {
+            let mut conn = TcpStream::connect(node1_proxy_addr).await.unwrap();
+
+            conn.write_all(b"uselessJunk").await.unwrap();
+            conn
+        };
+
+        let mock_node_action = async {
+            let (conn, _) = mock_node_listener.accept().await.unwrap();
+            conn
+        };
+
+        let (node_conn, driver_conn) = join(mock_node_action, mock_driver_action).await;
+
+        running_proxy.sanity_check().unwrap();
+
+        mem::drop(driver_conn);
+        assert_matches!(
+            running_proxy.wait_for_error().await,
+            Some(ProxyError::Worker(WorkerError::DriverDisconnected(_)))
+        );
+        running_proxy.sanity_check().unwrap();
+
+        mem::drop(node_conn);
+        assert_matches!(
+            running_proxy.wait_for_error().await,
+            Some(ProxyError::Worker(WorkerError::NodeDisconnected(_)))
+        );
+        running_proxy.sanity_check().unwrap();
+
+        // we keep the connections open until proxy finishes to let it perform clean exit with no disconnects
+        let _ = running_proxy.finish().await;
     }
 }
