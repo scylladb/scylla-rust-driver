@@ -26,8 +26,12 @@ all: dirhtml
 setupenv:
 	pip install -q poetry
 
+.PHONY: setupsource
+setupsource:
+	python3 prepare_sphinx_source.py
+
 .PHONY: setup
-setup:
+setup: setupsource
 	$(POETRY) install
 	$(POETRY) update
 

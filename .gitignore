@@ -5,7 +5,8 @@ Cargo.lock
 /book/book
 /docs/_build
 /docs/book
-/docs/source/.doctrees
-/docs/poetry.lock
+/docs/source/
+/docs/sphinx/poetry.lock
+/docs/sphinx/source
 .idea
 .idea/workspace.xml

@@ -111,7 +111,7 @@ html_theme = 'sphinx_scylladb_theme'
 # documentation.
 #
 html_theme_options = {
-    'conf_py_path': 'docs/source/',
+    'conf_py_path': 'docs/sphinx/source/',
     'default_branch': 'main',
     'github_repository': 'scylladb/scylla-rust-driver',
     'github_issues_repository': 'scylladb/scylla-rust-driver',

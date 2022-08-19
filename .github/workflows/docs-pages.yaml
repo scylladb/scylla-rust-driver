@@ -24,11 +24,11 @@ jobs:
         with:
           python-version: 3.7
       - name: Set up env
-        run: make -C docs setupenv
+        run: make -C docs/sphinx setupenv
       - name: Build docs
-        run: make -C docs multiversion
+        run: make -C docs/sphinx dirhtml
       - name: Build redirects
-        run: make -C docs redirects
+        run: make -C docs/sphinx/ redirects
       - name: Deploy docs to GitHub Pages
         run: ./docs/_utils/deploy.sh
         env:

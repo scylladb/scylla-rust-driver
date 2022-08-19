@@ -2,7 +2,7 @@
 
 # Copy contents
 mkdir gh-pages
-cp -r ./docs/_build/dirhtml/. gh-pages
+cp -r ./docs/sphinx/_build/dirhtml/. gh-pages
 
 # Create gh-pages branch
 cd gh-pages
