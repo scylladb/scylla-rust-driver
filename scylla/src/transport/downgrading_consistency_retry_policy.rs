@@ -168,3 +168,495 @@ impl RetrySession for DowngradingConsistencyRetrySession {
         *self = DowngradingConsistencyRetrySession::new();
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use std::{io::ErrorKind, sync::Arc};
+
+    use bytes::Bytes;
+    use scylla_cql::errors::BadQuery;
+
+    use super::*;
+
+    const CONSISTENCY_LEVELS: &[Consistency] = &[
+        Consistency::All,
+        Consistency::Any,
+        Consistency::EachQuorum,
+        Consistency::LocalOne,
+        Consistency::LocalQuorum,
+        Consistency::One,
+        Consistency::Quorum,
+        Consistency::Three,
+        Consistency::Two,
+    ];
+
+    fn make_query_info_with_cl(
+        error: &QueryError,
+        is_idempotent: bool,
+        cl: Consistency,
+    ) -> QueryInfo<'_> {
+        QueryInfo {
+            error,
+            is_idempotent,
+            consistency: LegacyConsistency::Regular(cl),
+        }
+    }
+
+    // Asserts that downgrading consistency policy never retries for this Error
+    fn downgrading_consistency_policy_assert_never_retries(error: QueryError, cl: Consistency) {
+        let mut policy = DowngradingConsistencyRetryPolicy::new().new_session();
+        assert_eq!(
+            policy.decide_should_retry(make_query_info_with_cl(&error, false, cl)),
+            RetryDecision::DontRetry
+        );
+
+        let mut policy = DowngradingConsistencyRetryPolicy::new().new_session();
+        assert_eq!(
+            policy.decide_should_retry(make_query_info_with_cl(&error, true, cl)),
+            RetryDecision::DontRetry
+        );
+    }
+
+    #[test]
+    fn downgrading_consistency_never_retries() {
+        let never_retried_dberrors = vec![
+            DbError::SyntaxError,
+            DbError::Invalid,
+            DbError::AlreadyExists {
+                keyspace: String::new(),
+                table: String::new(),
+            },
+            DbError::FunctionFailure {
+                keyspace: String::new(),
+                function: String::new(),
+                arg_types: vec![],
+            },
+            DbError::AuthenticationError,
+            DbError::Unauthorized,
+            DbError::ConfigError,
+            DbError::ReadFailure {
+                consistency: LegacyConsistency::Regular(Consistency::Two),
+                received: 1,
+                required: 2,
+                numfailures: 1,
+                data_present: false,
+            },
+            DbError::WriteFailure {
+                consistency: LegacyConsistency::Regular(Consistency::Two),
+                received: 1,
+                required: 2,
+                numfailures: 1,
+                write_type: WriteType::BatchLog,
+            },
+            DbError::Unprepared {
+                statement_id: Bytes::from_static(b"deadbeef"),
+            },
+            DbError::ProtocolError,
+            DbError::Other(0x124816),
+        ];
+
+        for &cl in CONSISTENCY_LEVELS {
+            for dberror in never_retried_dberrors.clone() {
+                downgrading_consistency_policy_assert_never_retries(
+                    QueryError::DbError(dberror, String::new()),
+                    cl,
+                );
+            }
+
+            downgrading_consistency_policy_assert_never_retries(
+                QueryError::BadQuery(BadQuery::ValueLenMismatch(1, 2)),
+                cl,
+            );
+            downgrading_consistency_policy_assert_never_retries(
+                QueryError::ProtocolError("test"),
+                cl,
+            );
+        }
+    }
+
+    // Asserts that for this error policy retries on next on idempotent queries only
+    fn downgrading_consistency_policy_assert_idempotent_next(error: QueryError, cl: Consistency) {
+        let mut policy = DowngradingConsistencyRetryPolicy::new().new_session();
+        assert_eq!(
+            policy.decide_should_retry(make_query_info_with_cl(&error, false, cl)),
+            RetryDecision::DontRetry
+        );
+
+        let mut policy = DowngradingConsistencyRetryPolicy::new().new_session();
+        assert_eq!(
+            policy.decide_should_retry(make_query_info_with_cl(&error, true, cl)),
+            RetryDecision::RetryNextNode(cl)
+        );
+    }
+
+    fn max_likely_to_work_cl(known_ok: i32, current_cl: Consistency) -> RetryDecision {
+        if known_ok >= 3 {
+            RetryDecision::RetrySameNode(Consistency::Three)
+        } else if known_ok == 2 {
+            RetryDecision::RetrySameNode(Consistency::Two)
+        } else if known_ok == 1 || current_cl == Consistency::EachQuorum {
+            // JAVA-1005: EACH_QUORUM does not report a global number of alive replicas
+            // so even if we get 0 alive replicas, there might be
+            // a node up in some other datacenter
+            RetryDecision::RetrySameNode(Consistency::One)
+        } else {
+            RetryDecision::DontRetry
+        }
+    }
+
+    #[test]
+    fn downgrading_consistency_idempotent_next_retries() {
+        let idempotent_next_errors = vec![
+            QueryError::DbError(DbError::Overloaded, String::new()),
+            QueryError::DbError(DbError::TruncateError, String::new()),
+            QueryError::DbError(DbError::ServerError, String::new()),
+            QueryError::IoError(Arc::new(std::io::Error::new(ErrorKind::Other, "test"))),
+        ];
+
+        for &cl in CONSISTENCY_LEVELS {
+            for error in idempotent_next_errors.clone() {
+                downgrading_consistency_policy_assert_idempotent_next(error, cl);
+            }
+        }
+    }
+
+    // Always retry on next node if current one is bootstrapping
+    #[test]
+    fn downgrading_consistency_bootstrapping() {
+        let error = QueryError::DbError(DbError::IsBootstrapping, String::new());
+
+        for &cl in CONSISTENCY_LEVELS {
+            let mut policy = DowngradingConsistencyRetryPolicy::new().new_session();
+            assert_eq!(
+                policy.decide_should_retry(make_query_info_with_cl(&error, false, cl)),
+                RetryDecision::RetryNextNode(cl)
+            );
+
+            let mut policy = DowngradingConsistencyRetryPolicy::new().new_session();
+            assert_eq!(
+                policy.decide_should_retry(make_query_info_with_cl(&error, true, cl)),
+                RetryDecision::RetryNextNode(cl)
+            );
+        }
+    }
+
+    // On Unavailable error we retry one time no matter the idempotence
+    #[test]
+    fn downgrading_consistency_unavailable() {
+        let alive = 1;
+        let error = QueryError::DbError(
+            DbError::Unavailable {
+                consistency: LegacyConsistency::Regular(Consistency::Two),
+                required: 2,
+                alive,
+            },
+            String::new(),
+        );
+
+        for &cl in CONSISTENCY_LEVELS {
+            let mut policy_not_idempotent = DowngradingConsistencyRetryPolicy::new().new_session();
+            assert_eq!(
+                policy_not_idempotent
+                    .decide_should_retry(make_query_info_with_cl(&error, false, cl)),
+                max_likely_to_work_cl(alive, cl)
+            );
+            assert_eq!(
+                policy_not_idempotent
+                    .decide_should_retry(make_query_info_with_cl(&error, false, cl)),
+                RetryDecision::DontRetry
+            );
+
+            let mut policy_idempotent = DowngradingConsistencyRetryPolicy::new().new_session();
+            assert_eq!(
+                policy_idempotent.decide_should_retry(make_query_info_with_cl(&error, true, cl)),
+                max_likely_to_work_cl(alive, cl)
+            );
+            assert_eq!(
+                policy_idempotent.decide_should_retry(make_query_info_with_cl(&error, true, cl)),
+                RetryDecision::DontRetry
+            );
+        }
+    }
+
+    // On ReadTimeout we retry one time if there were enough responses and the data was present no matter the idempotence
+    #[test]
+    fn downgrading_consistency_read_timeout() {
+        // Enough responses and data_present == false - coordinator received only checksums
+        let enough_responses_no_data = QueryError::DbError(
+            DbError::ReadTimeout {
+                consistency: LegacyConsistency::Regular(Consistency::Two),
+                received: 2,
+                required: 2,
+                data_present: false,
+            },
+            String::new(),
+        );
+
+        for &cl in CONSISTENCY_LEVELS {
+            // Not idempotent
+            let mut policy = DowngradingConsistencyRetryPolicy::new().new_session();
+            assert_eq!(
+                policy.decide_should_retry(make_query_info_with_cl(
+                    &enough_responses_no_data,
+                    false,
+                    cl
+                )),
+                RetryDecision::RetrySameNode(cl)
+            );
+            assert_eq!(
+                policy.decide_should_retry(make_query_info_with_cl(
+                    &enough_responses_no_data,
+                    false,
+                    cl
+                )),
+                RetryDecision::DontRetry
+            );
+
+            // Idempotent
+            let mut policy = DowngradingConsistencyRetryPolicy::new().new_session();
+            assert_eq!(
+                policy.decide_should_retry(make_query_info_with_cl(
+                    &enough_responses_no_data,
+                    true,
+                    cl
+                )),
+                RetryDecision::RetrySameNode(cl)
+            );
+            assert_eq!(
+                policy.decide_should_retry(make_query_info_with_cl(
+                    &enough_responses_no_data,
+                    true,
+                    cl
+                )),
+                RetryDecision::DontRetry
+            );
+        }
+        // Enough responses but data_present == true - coordinator probably timed out
+        // waiting for read-repair acknowledgement.
+        let enough_responses_with_data = QueryError::DbError(
+            DbError::ReadTimeout {
+                consistency: LegacyConsistency::Regular(Consistency::Two),
+                received: 2,
+                required: 2,
+                data_present: true,
+            },
+            String::new(),
+        );
+
+        for &cl in CONSISTENCY_LEVELS {
+            // Not idempotent
+            let mut policy = DowngradingConsistencyRetryPolicy::new().new_session();
+            assert_eq!(
+                policy.decide_should_retry(make_query_info_with_cl(
+                    &enough_responses_with_data,
+                    false,
+                    cl
+                )),
+                RetryDecision::DontRetry
+            );
+
+            // Idempotent
+            let mut policy = DowngradingConsistencyRetryPolicy::new().new_session();
+            assert_eq!(
+                policy.decide_should_retry(make_query_info_with_cl(
+                    &enough_responses_with_data,
+                    true,
+                    cl
+                )),
+                RetryDecision::DontRetry
+            );
+        }
+
+        // Not enough responses, data_present == true
+        let received = 1;
+        let not_enough_responses_with_data = QueryError::DbError(
+            DbError::ReadTimeout {
+                consistency: LegacyConsistency::Regular(Consistency::Two),
+                received,
+                required: 2,
+                data_present: true,
+            },
+            String::new(),
+        );
+        for &cl in CONSISTENCY_LEVELS {
+            let expected_decision = max_likely_to_work_cl(received, cl);
+
+            // Not idempotent
+            let mut policy = DowngradingConsistencyRetryPolicy::new().new_session();
+            assert_eq!(
+                policy.decide_should_retry(make_query_info_with_cl(
+                    &not_enough_responses_with_data,
+                    false,
+                    cl
+                )),
+                expected_decision
+            );
+            if let RetryDecision::RetrySameNode(new_cl) = expected_decision {
+                assert_eq!(
+                    policy.decide_should_retry(make_query_info_with_cl(
+                        &not_enough_responses_with_data,
+                        false,
+                        new_cl
+                    )),
+                    RetryDecision::DontRetry
+                );
+            }
+
+            // Idempotent
+            let mut policy = DowngradingConsistencyRetryPolicy::new().new_session();
+            assert_eq!(
+                policy.decide_should_retry(make_query_info_with_cl(
+                    &not_enough_responses_with_data,
+                    true,
+                    cl
+                )),
+                expected_decision
+            );
+            if let RetryDecision::RetrySameNode(new_cl) = expected_decision {
+                assert_eq!(
+                    policy.decide_should_retry(make_query_info_with_cl(
+                        &not_enough_responses_with_data,
+                        true,
+                        new_cl
+                    )),
+                    RetryDecision::DontRetry
+                );
+            }
+        }
+    }
+
+    // WriteTimeout will retry once when the query is idempotent and write_type == BatchLog
+    #[test]
+    fn downgrading_consistency_write_timeout() {
+        for (received, required) in (1..=5).zip(2..=6) {
+            // WriteType == BatchLog
+            let write_type_batchlog = QueryError::DbError(
+                DbError::WriteTimeout {
+                    consistency: LegacyConsistency::Regular(Consistency::Two),
+                    received,
+                    required,
+                    write_type: WriteType::BatchLog,
+                },
+                String::new(),
+            );
+
+            for &cl in CONSISTENCY_LEVELS {
+                // Not idempotent
+                let mut policy = DowngradingConsistencyRetryPolicy::new().new_session();
+                assert_eq!(
+                    policy.decide_should_retry(make_query_info_with_cl(
+                        &write_type_batchlog,
+                        false,
+                        cl
+                    )),
+                    RetryDecision::DontRetry
+                );
+
+                // Idempotent
+                let mut policy = DowngradingConsistencyRetryPolicy::new().new_session();
+                assert_eq!(
+                    policy.decide_should_retry(make_query_info_with_cl(
+                        &write_type_batchlog,
+                        true,
+                        cl
+                    )),
+                    RetryDecision::RetrySameNode(cl)
+                );
+                assert_eq!(
+                    policy.decide_should_retry(make_query_info_with_cl(
+                        &write_type_batchlog,
+                        true,
+                        cl
+                    )),
+                    RetryDecision::DontRetry
+                );
+            }
+
+            // WriteType == UnloggedBatch
+            let write_type_unlogged_batch = QueryError::DbError(
+                DbError::WriteTimeout {
+                    consistency: LegacyConsistency::Regular(Consistency::Two),
+                    received,
+                    required,
+                    write_type: WriteType::UnloggedBatch,
+                },
+                String::new(),
+            );
+
+            for &cl in CONSISTENCY_LEVELS {
+                // Not idempotent
+                let mut policy = DowngradingConsistencyRetryPolicy::new().new_session();
+                assert_eq!(
+                    policy.decide_should_retry(make_query_info_with_cl(
+                        &write_type_unlogged_batch,
+                        false,
+                        cl
+                    )),
+                    RetryDecision::DontRetry
+                );
+
+                // Idempotent
+                let mut policy = DowngradingConsistencyRetryPolicy::new().new_session();
+                assert_eq!(
+                    policy.decide_should_retry(make_query_info_with_cl(
+                        &write_type_unlogged_batch,
+                        true,
+                        cl
+                    )),
+                    max_likely_to_work_cl(received, cl)
+                );
+                assert_eq!(
+                    policy.decide_should_retry(make_query_info_with_cl(
+                        &write_type_unlogged_batch,
+                        true,
+                        cl
+                    )),
+                    RetryDecision::DontRetry
+                );
+            }
+
+            // WriteType == other
+            let write_type_other = QueryError::DbError(
+                DbError::WriteTimeout {
+                    consistency: LegacyConsistency::Regular(Consistency::Two),
+                    received,
+                    required,
+                    write_type: WriteType::Simple,
+                },
+                String::new(),
+            );
+
+            for &cl in CONSISTENCY_LEVELS {
+                // Not idempotent
+                let mut policy = DowngradingConsistencyRetryPolicy::new().new_session();
+                assert_eq!(
+                    policy.decide_should_retry(make_query_info_with_cl(
+                        &write_type_other,
+                        false,
+                        cl
+                    )),
+                    RetryDecision::DontRetry
+                );
+
+                // Idempotent
+                let mut policy = DowngradingConsistencyRetryPolicy::new().new_session();
+                assert_eq!(
+                    policy.decide_should_retry(make_query_info_with_cl(
+                        &write_type_other,
+                        true,
+                        cl
+                    )),
+                    RetryDecision::IgnoreWriteError
+                );
+                assert_eq!(
+                    policy.decide_should_retry(make_query_info_with_cl(
+                        &write_type_other,
+                        true,
+                        cl
+                    )),
+                    RetryDecision::DontRetry
+                );
+            }
+        }
+    }
+}
