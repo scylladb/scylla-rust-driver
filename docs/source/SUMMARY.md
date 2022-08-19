@@ -48,6 +48,7 @@
 - [Retry policy configuration](retry-policy/retry-policy.md)
     - [Fallthrough retry policy](retry-policy/fallthrough.md)
     - [Default retry policy](retry-policy/default.md)
+    - [Downgrading consistency policy](retry-policy/downgrading_consistency.md)
 
 - [Speculative execution](speculative-execution/speculative.md)
     - [Simple](speculative-execution/simple.md)
