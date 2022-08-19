@@ -33,7 +33,7 @@ use crate::transport::load_balancing::{LoadBalancingPolicy, Statement};
 use crate::transport::metrics::Metrics;
 use crate::transport::node::Node;
 use crate::transport::retry_policy::{QueryInfo, RetryDecision, RetrySession};
-use tracing::{trace, trace_span, Instrument};
+use tracing::{trace, trace_span, warn, Instrument};
 use uuid::Uuid;
 
 // #424
@@ -375,6 +375,10 @@ where
                         continue 'nodes_in_plan;
                     }
                     RetryDecision::DontRetry => break 'nodes_in_plan,
+                    RetryDecision::IgnoreWriteError => {
+                        warn!("Ignoring error during fetching pages; stopping fetching.");
+                        return;
+                    }
                 };
             }
         }

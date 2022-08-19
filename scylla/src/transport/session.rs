@@ -5,6 +5,7 @@ use crate::frame::types::LegacyConsistency;
 use bytes::Bytes;
 use futures::future::join_all;
 use futures::future::try_join_all;
+use scylla_cql::frame::response::NonErrorResponse;
 use std::future::Future;
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -316,6 +317,11 @@ impl<RowT: FromRow> Iterator for TypedRowIter<RowT> {
     }
 }
 
+pub enum RunQueryResult<ResT> {
+    IgnoredWriteError,
+    Completed(ResT),
+}
+
 /// Represents a CQL session, which can be used to communicate
 /// with the database
 impl Session {
@@ -463,7 +469,7 @@ impl Session {
         let serialized_values = values.serialized()?;
 
         let span = trace_span!("Request", query = query.contents.as_str());
-        let response = self
+        let run_query_result = self
             .run_query(
                 Statement::default(),
                 &query.config,
@@ -488,6 +494,16 @@ impl Session {
             )
             .instrument(span)
             .await?;
+
+        let response = match run_query_result {
+            RunQueryResult::IgnoredWriteError => NonErrorQueryResponse {
+                response: NonErrorResponse::Result(result::Result::Void),
+                tracing_id: None,
+                warnings: Vec::new(),
+            },
+            RunQueryResult::Completed(response) => response,
+        };
+
         self.handle_set_keyspace_response(&response).await?;
         self.handle_auto_await_schema_agreement(&query.contents, &response)
             .await?;
@@ -761,7 +777,7 @@ impl Session {
             "Request",
             prepared_id = format!("{:X}", prepared.get_id()).as_str()
         );
-        let response: NonErrorQueryResponse = self
+        let run_query_result: RunQueryResult<NonErrorQueryResponse> = self
             .run_query(
                 statement_info,
                 &prepared.config,
@@ -785,6 +801,16 @@ impl Session {
             )
             .instrument(span)
             .await?;
+
+        let response = match run_query_result {
+            RunQueryResult::IgnoredWriteError => NonErrorQueryResponse {
+                response: NonErrorResponse::Result(result::Result::Void),
+                tracing_id: None,
+                warnings: Vec::new(),
+            },
+            RunQueryResult::Completed(response) => response,
+        };
+
         self.handle_set_keyspace_response(&response).await?;
         self.handle_auto_await_schema_agreement(prepared.get_statement(), &response)
             .await?;
@@ -913,7 +939,7 @@ impl Session {
     ) -> Result<BatchResult, QueryError> {
         let values_ref = &values;
 
-        self
+        let run_query_result = self
             .run_query(
                 Statement::default(),
                 &batch.config,
@@ -925,7 +951,15 @@ impl Session {
                 },
             )
             .instrument(trace_span!("Batch"))
-            .await
+            .await?;
+
+        Ok(match run_query_result {
+            RunQueryResult::IgnoredWriteError => BatchResult {
+                tracing_id: None,
+                warnings: Vec::new(),
+            },
+            RunQueryResult::Completed(response) => response,
+        })
     }
 
     /// Sends `USE <keyspace_name>` request on all connections\
@@ -1124,7 +1158,7 @@ impl Session {
         statement_config: &StatementConfig,
         choose_connection: impl Fn(Arc<Node>) -> ConnFut,
         do_query: impl Fn(Arc<Connection>, Consistency) -> QueryFut,
-    ) -> Result<ResT, QueryError>
+    ) -> Result<RunQueryResult<ResT>, QueryError>
     where
         ConnFut: Future<Output = Result<Arc<Connection>, QueryError>>,
         QueryFut: Future<Output = Result<ResT, QueryError>>,
@@ -1233,7 +1267,7 @@ impl Session {
         mut retry_session: Box<dyn RetrySession>,
         choose_connection: impl Fn(Arc<Node>) -> ConnFut,
         do_query: impl Fn(Arc<Connection>, Consistency) -> QueryFut,
-    ) -> Option<Result<ResT, QueryError>>
+    ) -> Option<Result<RunQueryResult<ResT>, QueryError>>
     where
         ConnFut: Future<Output = Result<Arc<Connection>, QueryError>>,
         QueryFut: Future<Output = Result<ResT, QueryError>>,
@@ -1282,7 +1316,7 @@ impl Session {
                         let _ = self
                             .metrics
                             .log_query_latency(query_start.elapsed().as_millis() as u64);
-                        return Some(Ok(response));
+                        return Some(Ok(RunQueryResult::Completed(response)));
                     }
                     Err(e) => {
                         trace!(
@@ -1320,7 +1354,11 @@ impl Session {
                         current_consistency = cl;
                         continue 'nodes_in_plan;
                     }
-                    RetryDecision::DontRetry => return last_error.map(Result::Err),
+                    RetryDecision::DontRetry => break 'nodes_in_plan,
+
+                    RetryDecision::IgnoreWriteError => {
+                        return Some(Ok(RunQueryResult::IgnoredWriteError))
+                    }
                 };
             }
         }
@@ -1359,13 +1397,20 @@ impl Session {
             ..Default::default()
         };
 
-        self.run_query(
-            info,
-            &config,
-            |node: Arc<Node>| async move { node.random_connection().await },
-            do_query,
-        )
-        .await
+        match self
+            .run_query(
+                info,
+                &config,
+                |node: Arc<Node>| async move { node.random_connection().await },
+                do_query,
+            )
+            .await?
+        {
+            RunQueryResult::IgnoredWriteError => Err(QueryError::ProtocolError(
+                "Retry policy has made the driver ignore schema's agreement query.",
+            )),
+            RunQueryResult::Completed(result) => Ok(result),
+        }
     }
 
     pub async fn check_schema_agreement(&self) -> Result<bool, QueryError> {

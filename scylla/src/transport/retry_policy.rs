@@ -22,6 +22,7 @@ pub enum RetryDecision {
     RetrySameNode(Consistency),
     RetryNextNode(Consistency),
     DontRetry,
+    IgnoreWriteError,
 }
 
 /// Specifies a policy used to decide when to retry a query
