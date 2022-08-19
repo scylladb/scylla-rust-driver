@@ -773,18 +773,21 @@ impl ProxyWorker {
                                 debug!("-> To request: {:?}", ctx.opcode);
                                 trace!("{:?}", request);
 
-                                let request_rule = &*request_rule; // downgrading to shared reference
-
                                 if let Some(ref tx) = request_rule.1.feedback_channel {
                                     tx.send(request.clone()).unwrap_or_else(|err|
                                         warn!("Could not send received request as feedback: {}", err)
                                     );
                                 }
 
+                                let request_rule = request_rule.clone();
+                                let to_addressee_action = request_rule.1.to_addressee;
+                                let to_sender_action = request_rule.1.to_sender;
+                                let drop_connection_action = request_rule.1.drop_connection;
+
                                 let cluster_tx_clone = cluster_tx.clone();
                                 let request_clone = request.clone();
                                 let pass_action = async move {
-                                    if let Some(ref pass_action) = request_rule.1.to_addressee {
+                                    if let Some(ref pass_action) = to_addressee_action {
                                         if let Some(time) = pass_action.delay {
                                             tokio::time::sleep(time).await;
                                         }
@@ -799,7 +802,7 @@ impl ProxyWorker {
                                 let driver_tx_clone = driver_tx.clone();
                                 let request_clone = request.clone();
                                 let forge_action = async move {
-                                    if let Some(ref forge_action) = request_rule.1.to_sender {
+                                    if let Some(ref forge_action) = to_sender_action {
                                         if let Some(time) = forge_action.delay {
                                             tokio::time::sleep(time).await;
                                         }
@@ -815,7 +818,7 @@ impl ProxyWorker {
                                 let connection_close_signaler_clone =
                                     connection_close_signaler.clone();
                                 let drop_action = async move {
-                                    if let Some(ref delay) = request_rule.1.drop_connection {
+                                    if let Some(ref delay) = drop_connection_action {
                                         if let Some(ref time) = delay {
                                             tokio::time::sleep(*time).await;
                                         }
@@ -827,7 +830,9 @@ impl ProxyWorker {
                                     }
                                 };
 
-                                futures::join!(pass_action, forge_action, drop_action);
+                                tokio::task::spawn(async {
+                                    futures::join!(pass_action, forge_action, drop_action);
+                                });
 
                                 continue 'mainloop; // only one rule can be applied to one frame
                             }
@@ -866,7 +871,6 @@ impl ProxyWorker {
                                 debug!("-> Applied rule: {:?}", response_rule);
                                 debug!("-> To response: {:?}", ctx.opcode);
                                 trace!("{:?}", response);
-                                let response_rule = &*response_rule; // downgrading to shared reference
 
                                 if let Some(ref tx) = response_rule.1.feedback_channel {
                                     tx.send(response.clone()).unwrap_or_else(|err| warn!(
@@ -874,10 +878,15 @@ impl ProxyWorker {
                                     ));
                                 }
 
+                                let response_rule = response_rule.clone();
+                                let to_addressee_action = response_rule.1.to_addressee;
+                                let to_sender_action = response_rule.1.to_sender;
+                                let drop_connection_action = response_rule.1.drop_connection;
+
                                 let response_clone = response.clone();
                                 let driver_tx_clone = driver_tx.clone();
                                 let pass_action = async move {
-                                    if let Some(ref pass_action) = response_rule.1.to_addressee {
+                                    if let Some(ref pass_action) = to_addressee_action {
                                         if let Some(time) = pass_action.delay {
                                             tokio::time::sleep(time).await;
                                         }
@@ -892,7 +901,7 @@ impl ProxyWorker {
                                 let response_clone = response.clone();
                                 let cluster_tx_clone = cluster_tx.clone();
                                 let forge_action = async move {
-                                    if let Some(ref forge_action) = response_rule.1.to_sender {
+                                    if let Some(ref forge_action) = to_sender_action {
                                         if let Some(time) = forge_action.delay {
                                             tokio::time::sleep(time).await;
                                         }
@@ -908,7 +917,7 @@ impl ProxyWorker {
                                 let connection_close_signaler_clone =
                                     connection_close_signaler.clone();
                                 let drop_action = async move {
-                                    if let Some(ref delay) = response_rule.1.drop_connection {
+                                    if let Some(ref delay) = drop_connection_action {
                                         if let Some(ref time) = delay {
                                             tokio::time::sleep(*time).await;
                                         }
@@ -920,7 +929,9 @@ impl ProxyWorker {
                                     }
                                 };
 
-                                futures::join!(pass_action, forge_action, drop_action);
+                                tokio::task::spawn(async {
+                                    futures::join!(pass_action, forge_action, drop_action);
+                                });
 
                                 continue 'mainloop;
                             }
@@ -950,6 +961,7 @@ mod tests {
     use std::mem;
     use std::str::FromStr;
     use std::sync::atomic::{AtomicU16, Ordering};
+    use std::time::Duration;
     use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
     use tokio::sync::oneshot;
 
@@ -1626,5 +1638,79 @@ mod tests {
 
         // we keep the connections open until proxy finishes to let it perform clean exit with no disconnects
         let _ = running_proxy.finish().await;
+    }
+
+    #[tokio::test]
+    #[ntest::timeout(1000)]
+    async fn proxy_processes_requests_concurrently() {
+        init_logger();
+        let node1_real_addr = next_local_address_with_port(9876);
+        let node1_proxy_addr = next_local_address_with_port(9876);
+
+        let delay = Duration::from_millis(30);
+
+        let proxy = Proxy::new([Node::new(
+            node1_real_addr,
+            node1_proxy_addr,
+            ShardAwareness::Unaware,
+            Some(vec![RequestRule(
+                Condition::TrueForLimitedTimes(1),
+                RequestReaction::delay(delay),
+            )]),
+            None,
+        )]);
+        let running_proxy = proxy.run().await.unwrap();
+
+        let mock_node_listener = TcpListener::bind(node1_real_addr).await.unwrap();
+
+        let params1 = FrameParams {
+            flags: 0,
+            version: 0x04,
+            stream: 0,
+        };
+        let opcode1 = FrameOpcode::Request(RequestOpcode::Options);
+
+        let body1 = random_body();
+
+        let params2 = FrameParams {
+            flags: 0,
+            version: 0x04,
+            stream: 0,
+        };
+        let opcode2 = FrameOpcode::Request(RequestOpcode::Register);
+
+        let body2 = random_body();
+
+        let mock_driver_action = async {
+            let mut conn = TcpStream::connect(node1_proxy_addr).await.unwrap();
+
+            write_frame(params1, opcode1, &body1, &mut conn)
+                .await
+                .unwrap();
+            write_frame(params2, opcode2, &body2, &mut conn)
+                .await
+                .unwrap();
+            conn
+        };
+
+        let mock_node_action = async {
+            let (mut conn, _) = mock_node_listener.accept().await.unwrap();
+            let RequestFrame {
+                params: recvd_params,
+                opcode: recvd_opcode,
+                body: recvd_body,
+            } = read_request_frame(&mut conn).await.unwrap();
+            assert_eq!(recvd_params, params2);
+            assert_eq!(FrameOpcode::Request(recvd_opcode), opcode2);
+            assert_eq!(recvd_body, body2);
+            conn
+        };
+
+        // we keep the connections open until proxy finishes to let it perform clean exit with no disconnects
+        let (_node_conn, _driver_conn) =
+            tokio::time::timeout(delay, join(mock_node_action, mock_driver_action))
+                .await
+                .expect("Request processing was not concurrent");
+        running_proxy.finish().await.unwrap();
     }
 }
