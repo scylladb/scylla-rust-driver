@@ -2,7 +2,6 @@
 
 # Copy contents
 mkdir gh-pages
-python ./docs/_utils/drop_hashes.py
 cp -r ./docs/_build/dirhtml/. gh-pages
 
 # Create gh-pages branch
