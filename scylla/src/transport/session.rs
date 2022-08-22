@@ -63,6 +63,8 @@ pub struct Session {
     metrics: Arc<Metrics>,
     default_consistency: Consistency,
     auto_await_schema_agreement_timeout: Option<Duration>,
+    #[allow(dead_code)]
+    request_timeout: Option<Duration>,
 }
 
 /// This implementation deliberately omits some details from Cluster in order
@@ -120,7 +122,7 @@ pub struct SessionConfig {
     pub auth_password: Option<String>,
 
     pub schema_agreement_interval: Duration,
-    pub connect_timeout: std::time::Duration,
+    pub connect_timeout: Duration,
 
     /// Size of the per-node connection pool, i.e. how many connections the driver should keep to each node.
     /// The default is `PerShard(1)`, which is the recommended setting for Scylla clusters.
@@ -141,6 +143,10 @@ pub struct SessionConfig {
     /// Controls the timeout for the automatic wait for schema agreement after sending a schema-altering statement.
     /// If `None`, the automatic schema agreement is disabled.
     pub auto_await_schema_agreement_timeout: Option<Duration>,
+
+    /// Controls the client-side timeout for queries.
+    /// If `None`, the queries have no timeout (the driver will block indefinitely).
+    pub request_timeout: Option<Duration>,
 }
 
 /// Describes database server known on Session startup.
@@ -176,13 +182,14 @@ impl SessionConfig {
             ssl_context: None,
             auth_username: None,
             auth_password: None,
-            connect_timeout: std::time::Duration::from_secs(5),
+            connect_timeout: Duration::from_secs(5),
             connection_pool_size: Default::default(),
             disallow_shard_aware_port: false,
             default_consistency: Consistency::LocalQuorum,
             fetch_schema_metadata: true,
             keepalive_interval: None,
             auto_await_schema_agreement_timeout: Some(std::time::Duration::from_secs(60)),
+            request_timeout: Some(Duration::from_secs(30)),
         }
     }
 
@@ -374,6 +381,7 @@ impl Session {
             metrics: Arc::new(Metrics::new()),
             default_consistency: config.default_consistency,
             auto_await_schema_agreement_timeout: config.auto_await_schema_agreement_timeout,
+            request_timeout: config.request_timeout,
         };
 
         if let Some(keyspace_name) = config.used_keyspace {
