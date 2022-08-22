@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::{sync::Arc, time::Duration};
 
 use crate::transport::retry_policy::RetryPolicy;
 use crate::transport::speculative_execution::SpeculativeExecutionPolicy;
@@ -21,6 +21,7 @@ pub struct StatementConfig {
 
     pub tracing: bool,
     pub timestamp: Option<i64>,
+    pub request_timeout: Option<Duration>,
 }
 
 impl Default for StatementConfig {
@@ -33,6 +34,7 @@ impl Default for StatementConfig {
             speculative_execution_policy: None,
             tracing: false,
             timestamp: None,
+            request_timeout: None,
         }
     }
 }
@@ -40,16 +42,12 @@ impl Default for StatementConfig {
 impl Clone for StatementConfig {
     fn clone(&self) -> Self {
         Self {
-            consistency: self.consistency,
-            serial_consistency: self.serial_consistency,
-            is_idempotent: self.is_idempotent,
             retry_policy: self
                 .retry_policy
                 .as_ref()
                 .map(|policy| policy.clone_boxed()),
             speculative_execution_policy: self.speculative_execution_policy.clone(),
-            tracing: self.tracing,
-            timestamp: self.timestamp,
+            ..*self
         }
     }
 }
