@@ -1,4 +1,5 @@
 use crate::statement::Consistency;
+use itertools::Itertools;
 use std::collections::HashMap;
 use std::net::IpAddr;
 use std::num::NonZeroU32;
@@ -46,6 +47,17 @@ pub struct GetTracingConfig {
     /// Consistency to use in queries that read TracingInfo.
     /// Default value: One
     pub consistency: Consistency,
+}
+
+impl TracingInfo {
+    /// Returns a list of unique nodes involved in the query
+    pub fn nodes(&self) -> Vec<IpAddr> {
+        self.events
+            .iter()
+            .filter_map(|e| e.source)
+            .unique()
+            .collect()
+    }
 }
 
 impl Default for GetTracingConfig {
