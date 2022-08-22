@@ -63,7 +63,6 @@ pub struct Session {
     metrics: Arc<Metrics>,
     default_consistency: Consistency,
     auto_await_schema_agreement_timeout: Option<Duration>,
-    #[allow(dead_code)]
     request_timeout: Option<Duration>,
 }
 
@@ -1113,82 +1112,98 @@ impl Session {
         ConnFut: Future<Output = Result<Arc<Connection>, QueryError>>,
         QueryFut: Future<Output = Result<ResT, QueryError>>,
     {
-        let cluster_data = self.cluster.get_data();
-        let query_plan = self.load_balancer.plan(&statement_info, &cluster_data);
+        let runner = async {
+            let cluster_data = self.cluster.get_data();
+            let query_plan = self.load_balancer.plan(&statement_info, &cluster_data);
 
-        // If a speculative execution policy is used to run query, query_plan has to be shared
-        // between different async functions. This struct helps to wrap query_plan in mutex so it
-        // can be shared safely.
-        struct SharedPlan<I>
-        where
-            I: Iterator<Item = Arc<Node>>,
-        {
-            iter: std::sync::Mutex<I>,
-        }
-
-        impl<I> Iterator for &SharedPlan<I>
-        where
-            I: Iterator<Item = Arc<Node>>,
-        {
-            type Item = Arc<Node>;
-
-            fn next(&mut self) -> Option<Self::Item> {
-                self.iter.lock().unwrap().next()
+            // If a speculative execution policy is used to run query, query_plan has to be shared
+            // between different async functions. This struct helps to wrap query_plan in mutex so it
+            // can be shared safely.
+            struct SharedPlan<I>
+            where
+                I: Iterator<Item = Arc<Node>>,
+            {
+                iter: std::sync::Mutex<I>,
             }
-        }
 
-        let retry_policy = match &statement_config.retry_policy {
-            Some(policy) => policy,
-            None => &self.retry_policy,
-        };
+            impl<I> Iterator for &SharedPlan<I>
+            where
+                I: Iterator<Item = Arc<Node>>,
+            {
+                type Item = Arc<Node>;
 
-        #[allow(clippy::unnecessary_lazy_evaluations)]
-        let speculative_policy = statement_config
-            .speculative_execution_policy
-            .as_ref()
-            .or_else(|| self.speculative_execution_policy.as_ref());
+                fn next(&mut self) -> Option<Self::Item> {
+                    self.iter.lock().unwrap().next()
+                }
+            }
 
-        match speculative_policy {
-            Some(speculative) if statement_config.is_idempotent => {
-                let shared_query_plan = SharedPlan {
-                    iter: std::sync::Mutex::new(query_plan),
-                };
+            let retry_policy = match &statement_config.retry_policy {
+                Some(policy) => policy,
+                None => &self.retry_policy,
+            };
 
-                let execute_query_generator = || {
-                    self.execute_query(
-                        &shared_query_plan,
+            #[allow(clippy::unnecessary_lazy_evaluations)]
+            let speculative_policy = statement_config
+                .speculative_execution_policy
+                .as_ref()
+                .or_else(|| self.speculative_execution_policy.as_ref());
+
+            match speculative_policy {
+                Some(speculative) if statement_config.is_idempotent => {
+                    let shared_query_plan = SharedPlan {
+                        iter: std::sync::Mutex::new(query_plan),
+                    };
+
+                    let execute_query_generator = || {
+                        self.execute_query(
+                            &shared_query_plan,
+                            statement_config.is_idempotent,
+                            statement_config.consistency,
+                            retry_policy.new_session(),
+                            &choose_connection,
+                            &do_query,
+                        )
+                    };
+
+                    let context = speculative_execution::Context {
+                        metrics: self.metrics.clone(),
+                    };
+
+                    speculative_execution::execute(
+                        speculative.as_ref(),
+                        &context,
+                        execute_query_generator,
+                    )
+                    .await
+                }
+                _ => self
+                    .execute_query(
+                        query_plan,
                         statement_config.is_idempotent,
                         statement_config.consistency,
                         retry_policy.new_session(),
                         &choose_connection,
                         &do_query,
                     )
-                };
-
-                let context = speculative_execution::Context {
-                    metrics: self.metrics.clone(),
-                };
-
-                speculative_execution::execute(
-                    speculative.as_ref(),
-                    &context,
-                    execute_query_generator,
-                )
-                .await
+                    .await
+                    .unwrap_or(Err(QueryError::ProtocolError(
+                        "Empty query plan - driver bug!",
+                    ))),
             }
-            _ => self
-                .execute_query(
-                    query_plan,
-                    statement_config.is_idempotent,
-                    statement_config.consistency,
-                    retry_policy.new_session(),
-                    &choose_connection,
-                    &do_query,
-                )
+        };
+
+        let effective_timeout = statement_config.request_timeout.or(self.request_timeout);
+        match effective_timeout {
+            Some(timeout) => tokio::time::timeout(timeout, runner)
                 .await
-                .unwrap_or(Err(QueryError::ProtocolError(
-                    "Empty query plan - driver bug!",
-                ))),
+                .unwrap_or_else(|e| {
+                    Err(QueryError::RequestTimeout(format!(
+                        "Request took longer than {}ms: {}",
+                        timeout.as_millis(),
+                        e
+                    )))
+                }),
+            None => runner.await,
         }
     }
 
