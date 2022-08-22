@@ -919,6 +919,7 @@ async fn test_get_tracing_info(session: &Session, ks: String) {
     // Getting tracing info from session using this uuid works
     let tracing_info: TracingInfo = session.get_tracing_info(&tracing_id).await.unwrap();
     assert!(!tracing_info.events.is_empty());
+    assert!(!tracing_info.nodes().is_empty());
 }
 
 async fn test_tracing_query_iter(session: &Session, ks: String) {
