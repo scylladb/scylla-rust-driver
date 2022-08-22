@@ -5,7 +5,7 @@ pub mod event;
 pub mod result;
 pub mod supported;
 
-use crate::frame::frame_errors::ParseError;
+use crate::{errors::QueryError, frame::frame_errors::ParseError};
 use num_enum::TryFromPrimitive;
 
 pub use error::Error;
@@ -57,4 +57,29 @@ impl Response {
 
         Ok(response)
     }
+
+    pub fn into_non_error_response(self) -> Result<NonErrorResponse, QueryError> {
+        Ok(match self {
+            Response::Error(err) => return Err(QueryError::from(err)),
+            Response::Ready => NonErrorResponse::Ready,
+            Response::Result(res) => NonErrorResponse::Result(res),
+            Response::Authenticate(auth) => NonErrorResponse::Authenticate(auth),
+            Response::AuthSuccess(auth_succ) => NonErrorResponse::AuthSuccess(auth_succ),
+            Response::AuthChallenge(auth_chal) => NonErrorResponse::AuthChallenge(auth_chal),
+            Response::Supported(sup) => NonErrorResponse::Supported(sup),
+            Response::Event(eve) => NonErrorResponse::Event(eve),
+        })
+    }
+}
+
+// A Response which can not be Response::Error
+#[derive(Debug)]
+pub enum NonErrorResponse {
+    Ready,
+    Result(result::Result),
+    Authenticate(authenticate::Authenticate),
+    AuthSuccess(authenticate::AuthSuccess),
+    AuthChallenge(authenticate::AuthChallenge),
+    Supported(Supported),
+    Event(event::Event),
 }
