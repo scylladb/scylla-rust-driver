@@ -354,6 +354,20 @@ impl Connection {
         Ok(prepared_statement)
     }
 
+    async fn reprepare(&self, query: impl Into<Query>, previous_prepared: &PreparedStatement) -> Result<(), QueryError> {
+        let reprepare_query: Query = query.into();
+        let reprepared = self.prepare(&reprepare_query).await?;
+        // Reprepared statement should keep its id - it's the md5 sum
+        // of statement contents
+        if reprepared.get_id() != previous_prepared.get_id() {
+            Err(QueryError::ProtocolError(
+                "Prepared statement Id changed, md5 sum should stay the same",
+            ))
+        } else {
+            Ok(())
+        }
+    }
+
     pub async fn authenticate_response(
         &self,
         username: Option<String>,
@@ -483,27 +497,17 @@ impl Connection {
             .send_request(&execute_frame, true, prepared_statement.config.tracing)
             .await?;
 
-        if let Response::Error(err) = &query_response.response {
-            if let DbError::Unprepared { statement_id } = &err.error {
+        match &query_response.response {
+            Response::Error(frame::response::Error {error: DbError::Unprepared { statement_id }, ..}) => {
                 debug!("Connection::execute: Got DbError::Unprepared - repreparing statement with id {:?}", statement_id);
                 // Repreparation of a statement is needed
-                let reprepare_query: Query = prepared_statement.get_statement().into();
-                let reprepared = self.prepare(&reprepare_query).await?;
-                // Reprepared statement should keep its id - it's the md5 sum
-                // of statement contents
-                if reprepared.get_id() != prepared_statement.get_id() {
-                    return Err(QueryError::ProtocolError(
-                        "Prepared statement Id changed, md5 sum should stay the same",
-                    ));
-                }
-
-                return self
+                self.reprepare(prepared_statement.get_statement(), prepared_statement).await?;
+                self
                     .send_request(&execute_frame, true, prepared_statement.config.tracing)
-                    .await;
-            }
+                    .await
+            },
+            _ => Ok(query_response)
         }
-
-        Ok(query_response)
     }
 
     /// Performs execute_single_page multiple times to fetch all available pages
@@ -592,13 +596,7 @@ impl Connection {
                             _ => None,
                         });
                         if let Some(p) = prepared_statement {
-                            let reprepare_query: Query = p.get_statement().into();
-                            let reprepared = self.prepare(&reprepare_query).await?;
-                            if reprepared.get_id() != p.get_id() {
-                                return Err(QueryError::ProtocolError(
-                                    "Prepared statement Id changed, md5 sum should stay the same",
-                                ));
-                            }
+                            self.reprepare(p.get_statement(), p).await?;
                             continue;
                         } else {
                             return Err(QueryError::ProtocolError(
