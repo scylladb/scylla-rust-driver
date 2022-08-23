@@ -2,7 +2,7 @@
 //! To decide when to retry a query the `Session` can use any object which implements
 //! the `RetryPolicy` trait
 
-use crate::frame::types::LegacyConsistency;
+use crate::frame::types::{Consistency, LegacyConsistency};
 use crate::transport::errors::{DbError, QueryError, WriteType};
 
 /// Information about a failed query
@@ -19,9 +19,10 @@ pub struct QueryInfo<'a> {
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum RetryDecision {
-    RetrySameNode,
-    RetryNextNode,
+    RetrySameNode(Consistency),
+    RetryNextNode(Consistency),
     DontRetry,
+    IgnoreWriteError,
 }
 
 /// Specifies a policy used to decide when to retry a query
@@ -135,6 +136,10 @@ impl Default for DefaultRetrySession {
 
 impl RetrySession for DefaultRetrySession {
     fn decide_should_retry(&mut self, query_info: QueryInfo) -> RetryDecision {
+        let cl = match query_info.consistency {
+            LegacyConsistency::Serial(_) => return RetryDecision::DontRetry,
+            LegacyConsistency::Regular(cl) => cl,
+        };
         match query_info.error {
             // Basic errors - there are some problems on this node
             // Retry on a different one if possible
@@ -143,7 +148,7 @@ impl RetrySession for DefaultRetrySession {
             | QueryError::DbError(DbError::ServerError, _)
             | QueryError::DbError(DbError::TruncateError, _) => {
                 if query_info.is_idempotent {
-                    RetryDecision::RetryNextNode
+                    RetryDecision::RetryNextNode(cl)
                 } else {
                     RetryDecision::DontRetry
                 }
@@ -156,7 +161,7 @@ impl RetrySession for DefaultRetrySession {
             QueryError::DbError(DbError::Unavailable { .. }, _) => {
                 if !self.was_unavailable_retry {
                     self.was_unavailable_retry = true;
-                    RetryDecision::RetryNextNode
+                    RetryDecision::RetryNextNode(cl)
                 } else {
                     RetryDecision::DontRetry
                 }
@@ -178,7 +183,7 @@ impl RetrySession for DefaultRetrySession {
             ) => {
                 if !self.was_read_timeout_retry && received >= required && !*data_present {
                     self.was_read_timeout_retry = true;
-                    RetryDecision::RetrySameNode
+                    RetryDecision::RetrySameNode(cl)
                 } else {
                     RetryDecision::DontRetry
                 }
@@ -193,15 +198,15 @@ impl RetrySession for DefaultRetrySession {
                     && *write_type == WriteType::BatchLog
                 {
                     self.was_write_timeout_retry = true;
-                    RetryDecision::RetrySameNode
+                    RetryDecision::RetrySameNode(cl)
                 } else {
                     RetryDecision::DontRetry
                 }
             }
             // The node is still bootstrapping it can't execute the query, we should try another one
-            QueryError::DbError(DbError::IsBootstrapping, _) => RetryDecision::RetryNextNode,
+            QueryError::DbError(DbError::IsBootstrapping, _) => RetryDecision::RetryNextNode(cl),
             // Connection to the contacted node is overloaded, try another one
-            QueryError::UnableToAllocStreamId => RetryDecision::RetryNextNode,
+            QueryError::UnableToAllocStreamId => RetryDecision::RetryNextNode(cl),
             // In all other cases propagate the error to the user
             _ => RetryDecision::DontRetry,
         }
@@ -302,7 +307,7 @@ mod tests {
         let mut policy = DefaultRetryPolicy::new().new_session();
         assert_eq!(
             policy.decide_should_retry(make_query_info(&error, true)),
-            RetryDecision::RetryNextNode
+            RetryDecision::RetryNextNode(Consistency::One)
         );
     }
 
@@ -328,13 +333,13 @@ mod tests {
         let mut policy = DefaultRetryPolicy::new().new_session();
         assert_eq!(
             policy.decide_should_retry(make_query_info(&error, false)),
-            RetryDecision::RetryNextNode
+            RetryDecision::RetryNextNode(Consistency::One)
         );
 
         let mut policy = DefaultRetryPolicy::new().new_session();
         assert_eq!(
             policy.decide_should_retry(make_query_info(&error, true)),
-            RetryDecision::RetryNextNode
+            RetryDecision::RetryNextNode(Consistency::One)
         );
     }
 
@@ -353,7 +358,7 @@ mod tests {
         let mut policy_not_idempotent = DefaultRetryPolicy::new().new_session();
         assert_eq!(
             policy_not_idempotent.decide_should_retry(make_query_info(&error, false)),
-            RetryDecision::RetryNextNode
+            RetryDecision::RetryNextNode(Consistency::One)
         );
         assert_eq!(
             policy_not_idempotent.decide_should_retry(make_query_info(&error, false)),
@@ -363,7 +368,7 @@ mod tests {
         let mut policy_idempotent = DefaultRetryPolicy::new().new_session();
         assert_eq!(
             policy_idempotent.decide_should_retry(make_query_info(&error, true)),
-            RetryDecision::RetryNextNode
+            RetryDecision::RetryNextNode(Consistency::One)
         );
         assert_eq!(
             policy_idempotent.decide_should_retry(make_query_info(&error, true)),
@@ -389,7 +394,7 @@ mod tests {
         let mut policy = DefaultRetryPolicy::new().new_session();
         assert_eq!(
             policy.decide_should_retry(make_query_info(&enough_responses_no_data, false)),
-            RetryDecision::RetrySameNode
+            RetryDecision::RetrySameNode(Consistency::One)
         );
         assert_eq!(
             policy.decide_should_retry(make_query_info(&enough_responses_no_data, false)),
@@ -400,7 +405,7 @@ mod tests {
         let mut policy = DefaultRetryPolicy::new().new_session();
         assert_eq!(
             policy.decide_should_retry(make_query_info(&enough_responses_no_data, true)),
-            RetryDecision::RetrySameNode
+            RetryDecision::RetrySameNode(Consistency::One)
         );
         assert_eq!(
             policy.decide_should_retry(make_query_info(&enough_responses_no_data, true)),
@@ -484,7 +489,7 @@ mod tests {
         let mut policy = DefaultRetryPolicy::new().new_session();
         assert_eq!(
             policy.decide_should_retry(make_query_info(&good_write_type, true)),
-            RetryDecision::RetrySameNode
+            RetryDecision::RetrySameNode(Consistency::One)
         );
         assert_eq!(
             policy.decide_should_retry(make_query_info(&good_write_type, true)),

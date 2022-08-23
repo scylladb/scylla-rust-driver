@@ -378,7 +378,23 @@ impl Connection {
         values: impl ValueList,
     ) -> Result<QueryResult, QueryError> {
         let query: Query = query.into();
-        self.query(&query, &values, None).await?.into_query_result()
+        let consistency = query
+            .config
+            .determine_consistency(self.config.default_consistency);
+        self.query_single_page_with_consistency(query, &values, consistency)
+            .await
+    }
+
+    pub async fn query_single_page_with_consistency(
+        &self,
+        query: impl Into<Query>,
+        values: impl ValueList,
+        consistency: Consistency,
+    ) -> Result<QueryResult, QueryError> {
+        let query: Query = query.into();
+        self.query_with_consistency(&query, &values, consistency, None)
+            .await?
+            .into_query_result()
     }
 
     pub async fn query(
@@ -387,14 +403,30 @@ impl Connection {
         values: impl ValueList,
         paging_state: Option<Bytes>,
     ) -> Result<QueryResponse, QueryError> {
+        self.query_with_consistency(
+            query,
+            values,
+            query
+                .config
+                .determine_consistency(self.config.default_consistency),
+            paging_state,
+        )
+        .await
+    }
+
+    pub async fn query_with_consistency(
+        &self,
+        query: &Query,
+        values: impl ValueList,
+        consistency: Consistency,
+        paging_state: Option<Bytes>,
+    ) -> Result<QueryResponse, QueryError> {
         let serialized_values = values.serialized()?;
 
         let query_frame = query::Query {
             contents: &query.contents,
             parameters: query::QueryParameters {
-                consistency: query
-                    .config
-                    .determine_consistency(self.config.default_consistency),
+                consistency,
                 serial_consistency: query.get_serial_consistency(),
                 values: &serialized_values,
                 page_size: query.get_page_size(),
@@ -413,12 +445,27 @@ impl Connection {
         query: &Query,
         values: impl ValueList,
     ) -> Result<QueryResult, QueryError> {
+        self.query_all_with_consistency(
+            query,
+            values,
+            query
+                .config
+                .determine_consistency(self.config.default_consistency),
+        )
+        .await
+    }
+
+    pub async fn query_all_with_consistency(
+        &self,
+        query: &Query,
+        values: impl ValueList,
+        consistency: Consistency,
+    ) -> Result<QueryResult, QueryError> {
         if query.get_page_size().is_none() {
             // Page size should be set when someone wants to use paging
-            // This is an internal function, we can use ProtocolError even if it's not technically desigen for this
-            return Err(QueryError::ProtocolError(
-                "Called Connection::query_all without page size set!",
-            ));
+            return Err(QueryError::BadQuery(BadQuery::Other(
+                "Called Connection::query_all without page size set!".to_string(),
+            )));
         }
 
         let mut final_result = QueryResult::default();
@@ -426,10 +473,14 @@ impl Connection {
         let serialized_values = values.serialized()?;
         let mut paging_state: Option<Bytes> = None;
 
+        query
+            .config
+            .determine_consistency(self.config.default_consistency);
+
         loop {
             // Send next paged query
             let mut cur_result: QueryResult = self
-                .query(query, &serialized_values, paging_state)
+                .query_with_consistency(query, &serialized_values, consistency, paging_state)
                 .await?
                 .into_query_result()?;
 
@@ -463,14 +514,30 @@ impl Connection {
         values: impl ValueList,
         paging_state: Option<Bytes>,
     ) -> Result<QueryResponse, QueryError> {
+        self.execute_with_consistency(
+            prepared_statement,
+            values,
+            prepared_statement
+                .config
+                .determine_consistency(self.config.default_consistency),
+            paging_state,
+        )
+        .await
+    }
+
+    pub async fn execute_with_consistency(
+        &self,
+        prepared_statement: &PreparedStatement,
+        values: impl ValueList,
+        consistency: Consistency,
+        paging_state: Option<Bytes>,
+    ) -> Result<QueryResponse, QueryError> {
         let serialized_values = values.serialized()?;
 
         let execute_frame = execute::Execute {
             id: prepared_statement.get_id().to_owned(),
             parameters: query::QueryParameters {
-                consistency: prepared_statement
-                    .config
-                    .determine_consistency(self.config.default_consistency),
+                consistency,
                 serial_consistency: prepared_statement.get_serial_consistency(),
                 values: &serialized_values,
                 page_size: prepared_statement.get_page_size(),
@@ -514,10 +581,9 @@ impl Connection {
         values: impl ValueList,
     ) -> Result<QueryResult, QueryError> {
         if prepared_statement.get_page_size().is_none() {
-            // This is an internal function, we can use ProtocolError even if it's not technically desigen for this
-            return Err(QueryError::ProtocolError(
-                "Called Connection::execute_all without page size set!",
-            ));
+            return Err(QueryError::BadQuery(BadQuery::Other(
+                "Called Connection::execute_all without page size set!".to_string(),
+            )));
         }
 
         let mut final_result = QueryResult::default();
@@ -544,10 +610,27 @@ impl Connection {
         }
     }
 
+    #[allow(dead_code)]
     pub async fn batch(
         &self,
         batch: &Batch,
         values: impl BatchValues,
+    ) -> Result<BatchResult, QueryError> {
+        self.batch_with_consistency(
+            batch,
+            values,
+            batch
+                .config
+                .determine_consistency(self.config.default_consistency),
+        )
+        .await
+    }
+
+    pub async fn batch_with_consistency(
+        &self,
+        batch: &Batch,
+        values: impl BatchValues,
+        consistency: Consistency,
     ) -> Result<BatchResult, QueryError> {
         let statements_count = batch.statements.len();
         if statements_count != values.len() {
@@ -569,9 +652,7 @@ impl Connection {
             statements_count,
             values,
             batch_type: batch.get_type(),
-            consistency: batch
-                .config
-                .determine_consistency(self.config.default_consistency),
+            consistency,
             serial_consistency: batch.get_serial_consistency(),
             timestamp: batch.get_timestamp(),
         };
@@ -1448,6 +1529,8 @@ impl VerifiedKeyspaceName {
 
 #[cfg(test)]
 mod tests {
+    use scylla_cql::errors::BadQuery;
+
     use super::super::errors::QueryError;
     use super::ConnectionConfig;
     use crate::query::Query;
@@ -1560,7 +1643,10 @@ mod tests {
         // 4. Calling query_all with a Query that doesn't have page_size set should result in an error.
         let no_page_size_query = Query::new("SELECT p FROM connection_query_all_tab");
         let no_page_res = connection.query_all(&no_page_size_query, &[]).await;
-        assert!(matches!(no_page_res, Err(QueryError::ProtocolError(_))));
+        assert!(matches!(
+            no_page_res,
+            Err(QueryError::BadQuery(BadQuery::Other(_)))
+        ));
 
         let prepared_no_page_size_query = connection.prepare(&no_page_size_query).await.unwrap();
         let prepared_no_page_res = connection
@@ -1568,7 +1654,7 @@ mod tests {
             .await;
         assert!(matches!(
             prepared_no_page_res,
-            Err(QueryError::ProtocolError(_))
+            Err(QueryError::BadQuery(BadQuery::Other(_)))
         ));
     }
 }

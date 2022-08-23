@@ -4,9 +4,11 @@ After a query fails the driver might decide to retry it based on its `Retry Poli
 Retry policy can be configured for `Session` or just for a single query.
 
 ### Retry policies
-By default there are two retry policies:
+By default there are three retry policies:
 * [Fallthrough Retry Policy](fallthrough.md) - never retries, returns all errors straight to the user
 * [Default Retry Policy](default.md) - used by default, might retry if there is a high chance of success
+* [Downgrading Consistency Retry Policy](downgrading_consistency.md) - behaves as [Default Retry Policy](default.md), but also,
+    in some more cases, it retries **with lower `Consistency`**.
 
 It's possible to implement a custom `Retry Policy` by implementing the traits `RetryPolicy` and `RetrySession`.
 
@@ -47,5 +49,6 @@ prepared.set_is_idempotent(true);
 
    fallthrough
    default
+   downgrading_consistency
 
 ```

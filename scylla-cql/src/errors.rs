@@ -54,8 +54,8 @@ pub enum DbError {
     #[error("The submitted query has a syntax error")]
     SyntaxError,
 
-    /// The query is syntatically correct but invalid
-    #[error("The query is syntatically correct but invalid")]
+    /// The query is syntactically correct but invalid
+    #[error("The query is syntactically correct but invalid")]
     Invalid,
 
     /// Attempted to create a keyspace or a table that was already existing
@@ -178,7 +178,7 @@ pub enum DbError {
     WriteFailure {
         /// Consistency level of the query
         consistency: LegacyConsistency,
-        /// Number of ndoes that responded to the read request
+        /// Number of nodes that responded to the read request
         received: i32,
         /// Number of nodes required to respond to satisfy required consistency level
         required: i32,
@@ -253,6 +253,10 @@ pub enum BadQuery {
     /// Passed invalid keyspace name to use
     #[error("Passed invalid keyspace name to use: {0}")]
     BadKeyspaceName(#[from] BadKeyspaceName),
+
+    /// Other reasons of bad query
+    #[error("{0}")]
+    Other(String),
 }
 
 /// Error that occurred during session creation
@@ -447,7 +451,7 @@ mod tests {
     // - displays error description
     // - displays error parameters
     // - displays error message
-    // - indented multiline strings dont cause whitespace gaps
+    // - indented multiline strings don't cause whitespace gaps
     #[test]
     fn dberror_full_info() {
         // Test that DbError::Unavailable is displayed correctly
