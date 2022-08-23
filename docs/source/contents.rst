@@ -14,7 +14,4 @@
    metrics/metrics
    logging/logging
    tracing/tracing
-
-
-
-
+   schema/schema

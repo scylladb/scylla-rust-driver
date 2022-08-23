@@ -21,3 +21,4 @@ Although optimized for Scylla, the driver is also compatible with [Apache Cassan
 * [Driver metrics](metrics/metrics.md) - Statistics about the driver - number of queries, latency etc.
 * [Logging](logging/logging.md) - Viewing and integrating logs produced by the driver
 * [Query tracing](tracing/tracing.md) - Tracing query execution
+* [Database schema](schema/schema.md) - Fetching and inspecting database schema
