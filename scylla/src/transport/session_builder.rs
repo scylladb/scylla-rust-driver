@@ -541,6 +541,27 @@ impl SessionBuilder {
         self.config.auto_await_schema_agreement_timeout = None;
         self
     }
+
+    /// Changes client-side timeout
+    /// The default is 30 seconds.
+    ///
+    /// # Example
+    /// ```
+    /// # use scylla::{Session, SessionBuilder};
+    /// # use std::time::Duration;
+    /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
+    /// let session: Session = SessionBuilder::new()
+    ///     .known_node("127.0.0.1:9042")
+    ///     .request_timeout(Some(Duration::from_millis(500)))
+    ///     .build() // Turns SessionBuilder into Session
+    ///     .await?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn request_timeout(mut self, duration: Option<std::time::Duration>) -> Self {
+        self.config.request_timeout = duration;
+        self
+    }
 }
 
 /// Creates a [`SessionBuilder`] with default configuration, same as [`SessionBuilder::new`]
@@ -705,6 +726,21 @@ mod tests {
 
         builder = builder.fetch_schema_metadata(true);
         assert!(builder.config.fetch_schema_metadata);
+    }
+
+    #[test]
+    fn request_timeout() {
+        let mut builder = SessionBuilder::new();
+        assert_eq!(
+            builder.config.request_timeout,
+            Some(std::time::Duration::from_secs(30))
+        );
+
+        builder = builder.request_timeout(Some(std::time::Duration::from_secs(10)));
+        assert_eq!(
+            builder.config.request_timeout,
+            Some(std::time::Duration::from_secs(10))
+        );
     }
 
     #[test]

@@ -40,6 +40,10 @@ pub enum QueryError {
 
     #[error("Unable to allocate stream id")]
     UnableToAllocStreamId,
+
+    /// Client timeout occurred before any response arrived
+    #[error("Request timeout: {0}")]
+    RequestTimeout(String),
 }
 
 /// An error sent from the database in response to a query
@@ -292,6 +296,11 @@ pub enum NewSessionError {
 
     #[error("Unable to allocate stream id")]
     UnableToAllocStreamId,
+
+    /// Client timeout occurred before a response arrived for some query
+    /// during `Session` creation.
+    #[error("Client timeout: {0}")]
+    RequestTimeout(String),
 }
 
 /// Invalid keyspace name given to `Session::use_keyspace()`
@@ -340,6 +349,12 @@ impl From<FrameError> for QueryError {
     }
 }
 
+impl From<tokio::time::error::Elapsed> for QueryError {
+    fn from(timer_error: tokio::time::error::Elapsed) -> QueryError {
+        QueryError::RequestTimeout(format!("{}", timer_error))
+    }
+}
+
 impl From<std::io::Error> for NewSessionError {
     fn from(io_error: std::io::Error) -> NewSessionError {
         NewSessionError::IoError(Arc::new(io_error))
@@ -359,6 +374,7 @@ impl From<QueryError> for NewSessionError {
                 NewSessionError::TooManyOrphanedStreamIds(ids)
             }
             QueryError::UnableToAllocStreamId => NewSessionError::UnableToAllocStreamId,
+            QueryError::RequestTimeout(msg) => NewSessionError::RequestTimeout(msg),
         }
     }
 }

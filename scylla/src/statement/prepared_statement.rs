@@ -1,6 +1,7 @@
 use bytes::{BufMut, Bytes, BytesMut};
 use smallvec::{smallvec, SmallVec};
 use std::convert::TryInto;
+use std::time::Duration;
 use thiserror::Error;
 use uuid::Uuid;
 
@@ -245,6 +246,19 @@ impl PreparedStatement {
     /// Gets the default timestamp for this statement in microseconds.
     pub fn get_timestamp(&self) -> Option<i64> {
         self.config.timestamp
+    }
+
+    /// Sets the client-side timeout for this statement.
+    /// If not None, the driver will stop waiting for the request
+    /// to finish after `timeout` passed.
+    /// Otherwise, default session client timeout will be applied.
+    pub fn set_request_timeout(&mut self, timeout: Option<Duration>) {
+        self.config.request_timeout = timeout
+    }
+
+    /// Gets client timeout associated with this query
+    pub fn get_request_timeout(&self) -> Option<Duration> {
+        self.config.request_timeout
     }
 
     /// Sets the name of the partitioner used for this statement.

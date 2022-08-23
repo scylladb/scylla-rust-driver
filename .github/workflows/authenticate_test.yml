@@ -24,4 +24,4 @@ jobs:
     steps:
     - uses: actions/checkout@v2
     - name: Run tests
-      run: cargo test --verbose --  --ignored
+      run: cargo test --verbose authenticate_superuser --  --ignored

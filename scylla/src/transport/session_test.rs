@@ -14,6 +14,7 @@ use crate::transport::topology::{CollectionType, ColumnKind, CqlType, NativeType
 use crate::CachingSession;
 use crate::QueryResult;
 use crate::{IntoTypedRows, Session, SessionBuilder};
+use assert_matches::assert_matches;
 use bytes::Bytes;
 use futures::{FutureExt, StreamExt};
 use itertools::Itertools;
@@ -1180,6 +1181,74 @@ async fn test_timestamp() {
     .collect::<Vec<_>>();
 
     assert_eq!(results, expected_results);
+}
+
+#[ignore = "works on remote Scylla instances only (local ones are too fast)"]
+#[tokio::test]
+async fn test_request_timeout() {
+    use std::time::Duration;
+    let uri = std::env::var("SCYLLA_URI").unwrap_or_else(|_| "127.0.0.1:9042".to_string());
+
+    {
+        let session = SessionBuilder::new()
+            .known_node(uri.as_str())
+            .build()
+            .await
+            .unwrap();
+
+        let mut query: Query = Query::new("SELECT * FROM system_schema.tables");
+        query.set_request_timeout(Some(Duration::from_millis(1)));
+        match session.query(query, &[]).await {
+            Ok(_) => panic!("the query should have failed due to a client-side timeout"),
+            Err(e) => assert_matches!(e, QueryError::RequestTimeout(_)),
+        }
+
+        let mut prepared = session
+            .prepare("SELECT * FROM system_schema.tables")
+            .await
+            .unwrap();
+
+        prepared.set_request_timeout(Some(Duration::from_millis(1)));
+        match session.execute(&prepared, &[]).await {
+            Ok(_) => panic!("the prepared query should have failed due to a client-side timeout"),
+            Err(e) => assert_matches!(e, QueryError::RequestTimeout(_)),
+        };
+    }
+    {
+        let timeouting_session = SessionBuilder::new()
+            .known_node(uri)
+            .request_timeout(Some(Duration::from_millis(1)))
+            .build()
+            .await
+            .unwrap();
+
+        let mut query = Query::new("SELECT * FROM system_schema.tables");
+
+        match timeouting_session.query(query.clone(), &[]).await {
+            Ok(_) => panic!("the query should have failed due to a client-side timeout"),
+            Err(e) => assert_matches!(e, QueryError::RequestTimeout(_)),
+        };
+
+        query.set_request_timeout(Some(Duration::from_secs(10000)));
+
+        timeouting_session.query(query, &[]).await.expect(
+            "the query should have not failed, because no client-side timeout was specified",
+        );
+
+        let mut prepared = timeouting_session
+            .prepare("SELECT * FROM system_schema.tables")
+            .await
+            .unwrap();
+
+        match timeouting_session.execute(&prepared, &[]).await {
+            Ok(_) => panic!("the prepared query should have failed due to a client-side timeout"),
+            Err(e) => assert_matches!(e, QueryError::RequestTimeout(_)),
+        };
+
+        prepared.set_request_timeout(Some(Duration::from_secs(10000)));
+
+        timeouting_session.execute(&prepared, &[]).await.expect("the prepared query should have not failed, because no client-side timeout was specified");
+    }
 }
 
 #[tokio::test]
