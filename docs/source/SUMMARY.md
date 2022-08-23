@@ -63,3 +63,5 @@
     - [Tracing a batch query](tracing/batch.md)
     - [Tracing a paged query](tracing/paged.md)
     - [Tracing `Session::prepare`](tracing/prepare.md)
+
+- [Database schema](schema/schema.md)
