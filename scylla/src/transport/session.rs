@@ -1140,6 +1140,17 @@ impl Session {
         Ok(Some(tracing_info))
     }
 
+    // Returns which replicas are likely to take part in handling the query.
+    // If a list of replicas cannot be easily narrowed down, all available replicas
+    // will be returned.
+    pub fn estimate_replicas_for_query(&self, statement: &Statement) -> Vec<Arc<Node>> {
+        let cluster_data = self.cluster.get_data();
+        match statement.token {
+            Some(token) => TokenAwarePolicy::replicas_for_token(&token, statement, &cluster_data),
+            None => cluster_data.all_nodes.clone(),
+        }
+    }
+
     // This method allows to easily run a query using load balancing, retry policy etc.
     // Requires some information about the query and two closures
     // First closure is used to choose a connection
