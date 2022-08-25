@@ -94,7 +94,7 @@ const EMPTY_PLAN_ERROR: QueryError = QueryError::ProtocolError("Empty query plan
 pub async fn execute<QueryFut, ResT>(
     policy: &dyn SpeculativeExecutionPolicy,
     context: &Context,
-    query_runner_generator: impl Fn() -> QueryFut,
+    query_runner_generator: impl Fn(bool) -> QueryFut,
 ) -> Result<ResT, QueryError>
 where
     QueryFut: Future<Output = Option<Result<ResT, QueryError>>>,
@@ -104,7 +104,8 @@ where
 
     let mut async_tasks = FuturesUnordered::new();
     async_tasks.push(
-        query_runner_generator().instrument(trace_span!("Speculative execution: original query")),
+        query_runner_generator(false)
+            .instrument(trace_span!("Speculative execution: original query")),
     );
 
     let sleep = tokio::time::sleep(retry_interval).fuse();
@@ -115,7 +116,7 @@ where
         futures::select! {
             _ = &mut sleep => {
                 if retries_remaining > 0 {
-                    async_tasks.push(query_runner_generator().instrument(trace_span!("Speculative execution", retries_remaining = retries_remaining)));
+                    async_tasks.push(query_runner_generator(true).instrument(trace_span!("Speculative execution", retries_remaining = retries_remaining)));
                     retries_remaining -= 1;
 
                     // reset the timeout
