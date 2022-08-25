@@ -1,6 +1,7 @@
 use bytes::{BufMut, Bytes, BytesMut};
 use smallvec::{smallvec, SmallVec};
 use std::convert::TryInto;
+use std::sync::Arc;
 use std::time::Duration;
 use thiserror::Error;
 use uuid::Uuid;
@@ -9,6 +10,7 @@ use super::StatementConfig;
 use crate::frame::response::result::PreparedMetadata;
 use crate::frame::types::{Consistency, SerialConsistency};
 use crate::frame::value::SerializedValues;
+use crate::history::HistoryListener;
 use crate::transport::partitioner::PartitionerName;
 use crate::transport::retry_policy::RetryPolicy;
 
@@ -279,6 +281,16 @@ impl PreparedStatement {
     /// Get the name of the partitioner used for this statement.
     pub(crate) fn get_partitioner_name(&self) -> &PartitionerName {
         &self.partitioner_name
+    }
+
+    /// Sets the listener capable of listening what happens during query execution.
+    pub fn set_history_listener(&mut self, history_listener: Arc<dyn HistoryListener>) {
+        self.config.history_listener = Some(history_listener);
+    }
+
+    /// Removes the listener set by `set_history_listener`.
+    pub fn remove_history_listener(&mut self) -> Option<Arc<dyn HistoryListener>> {
+        self.config.history_listener.take()
     }
 }
 

@@ -1,7 +1,7 @@
 use std::{sync::Arc, time::Duration};
 
-use crate::transport::retry_policy::RetryPolicy;
 use crate::transport::speculative_execution::SpeculativeExecutionPolicy;
+use crate::{history::HistoryListener, transport::retry_policy::RetryPolicy};
 
 pub mod batch;
 pub mod prepared_statement;
@@ -22,6 +22,8 @@ pub struct StatementConfig {
     pub tracing: bool,
     pub timestamp: Option<i64>,
     pub request_timeout: Option<Duration>,
+
+    pub history_listener: Option<Arc<dyn HistoryListener>>,
 }
 
 impl Default for StatementConfig {
@@ -35,6 +37,7 @@ impl Default for StatementConfig {
             tracing: false,
             timestamp: None,
             request_timeout: None,
+            history_listener: None,
         }
     }
 }
@@ -47,6 +50,7 @@ impl Clone for StatementConfig {
                 .as_ref()
                 .map(|policy| policy.clone_boxed()),
             speculative_execution_policy: self.speculative_execution_policy.clone(),
+            history_listener: self.history_listener.clone(),
             ..*self
         }
     }

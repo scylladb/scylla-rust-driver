@@ -1,6 +1,8 @@
 use super::StatementConfig;
 use crate::frame::types::{Consistency, SerialConsistency};
+use crate::history::HistoryListener;
 use crate::transport::retry_policy::RetryPolicy;
+use std::sync::Arc;
 use std::time::Duration;
 
 /// CQL query statement.
@@ -130,6 +132,16 @@ impl Query {
     /// Gets client timeout associated with this query
     pub fn get_request_timeout(&self) -> Option<Duration> {
         self.config.request_timeout
+    }
+
+    /// Sets the listener capable of listening what happens during query execution.
+    pub fn set_history_listener(&mut self, history_listener: Arc<dyn HistoryListener>) {
+        self.config.history_listener = Some(history_listener);
+    }
+
+    /// Removes the listener set by `set_history_listener`.
+    pub fn remove_history_listener(&mut self) -> Option<Arc<dyn HistoryListener>> {
+        self.config.history_listener.take()
     }
 }
 

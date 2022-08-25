@@ -1,3 +1,6 @@
+use std::sync::Arc;
+
+use crate::history::HistoryListener;
 use crate::statement::{prepared_statement::PreparedStatement, query::Query};
 use crate::transport::retry_policy::RetryPolicy;
 
@@ -114,6 +117,16 @@ impl Batch {
     /// Gets the default timestamp for this batch in microseconds.
     pub fn get_timestamp(&self) -> Option<i64> {
         self.config.timestamp
+    }
+
+    /// Sets the listener capable of listening what happens during query execution.
+    pub fn set_history_listener(&mut self, history_listener: Arc<dyn HistoryListener>) {
+        self.config.history_listener = Some(history_listener);
+    }
+
+    /// Removes the listener set by `set_history_listener`.
+    pub fn remove_history_listener(&mut self) -> Option<Arc<dyn HistoryListener>> {
+        self.config.history_listener.take()
     }
 }
 
