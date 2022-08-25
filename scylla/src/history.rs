@@ -1,5 +1,11 @@
 //! Collecting history of query executions - retries, speculative, etc.
-use std::{fmt::Debug, net::SocketAddr, sync::Mutex, time::SystemTime};
+use std::{
+    collections::BTreeMap,
+    fmt::{Debug, Display},
+    net::SocketAddr,
+    sync::Mutex,
+    time::SystemTime,
+};
 
 use crate::retry_policy::RetryDecision;
 use chrono::{DateTime, Utc};
@@ -139,6 +145,16 @@ impl HistoryCollector {
         })
     }
 
+    /// Clone the collected events and convert them to StructuredHistory.
+    pub fn clone_structured_history(&self) -> StructuredHistory {
+        StructuredHistory::from(&self.clone_collected())
+    }
+
+    /// Take the collected events out, just like in `take_collected` and convert them to StructuredHistory.
+    pub fn take_structured_history(&self) -> StructuredHistory {
+        StructuredHistory::from(&self.take_collected())
+    }
+
     /// Lock the data mutex and perform an operation on it.
     fn do_with_data<OpRetType>(
         &self,
@@ -225,5 +241,165 @@ impl HistoryListener for HistoryCollector {
                 retry_decision.clone(),
             ))
         })
+    }
+}
+
+/// Structured representation of queries history.\
+/// HistoryCollector collects raw events which later can be converted
+/// to this pretty representation.\
+/// It has a `Display` impl which can be used for printing pretty query history.
+#[derive(Debug, Clone)]
+pub struct StructuredHistory {
+    pub queries: Vec<QueryHistory>,
+}
+
+#[derive(Debug, Clone)]
+pub struct QueryHistory {
+    pub start_time: TimePoint,
+    pub non_speculative_fiber: FiberHistory,
+    pub speculative_fibers: Vec<FiberHistory>,
+    pub result: Option<QueryHistoryResult>,
+}
+
+#[derive(Debug, Clone)]
+pub enum QueryHistoryResult {
+    Success(TimePoint),
+    Error(TimePoint, QueryError),
+}
+
+#[derive(Debug, Clone)]
+pub struct FiberHistory {
+    pub start_time: TimePoint,
+    pub attempts: Vec<AttemptHistory>,
+}
+
+#[derive(Debug, Clone)]
+pub struct AttemptHistory {
+    pub send_time: TimePoint,
+    pub node_addr: SocketAddr,
+    pub result: Option<AttemptResult>,
+}
+
+#[derive(Debug, Clone)]
+pub enum AttemptResult {
+    Success(TimePoint),
+    Error(TimePoint, QueryError, RetryDecision),
+}
+
+impl From<&HistoryCollectorData> for StructuredHistory {
+    fn from(data: &HistoryCollectorData) -> StructuredHistory {
+        let mut attempts: BTreeMap<AttemptId, AttemptHistory> = BTreeMap::new();
+        let mut queries: BTreeMap<QueryId, QueryHistory> = BTreeMap::new();
+        let mut fibers: BTreeMap<SpeculativeId, FiberHistory> = BTreeMap::new();
+
+        // Collect basic data about queries, attempts and speculative fibers
+        for (event, event_time) in &data.events {
+            match event {
+                HistoryEvent::NewAttempt(attempt_id, _, _, node_addr) => {
+                    attempts.insert(
+                        *attempt_id,
+                        AttemptHistory {
+                            send_time: *event_time,
+                            node_addr: *node_addr,
+                            result: None,
+                        },
+                    );
+                }
+                HistoryEvent::AttemptSuccess(attempt_id) => {
+                    if let Some(attempt) = attempts.get_mut(attempt_id) {
+                        attempt.result = Some(AttemptResult::Success(*event_time));
+                    }
+                }
+                HistoryEvent::AttemptError(attempt_id, error, retry_decision) => {
+                    match attempts.get_mut(attempt_id) {
+                        Some(attempt) => {
+                            if attempt.result.is_some() {
+                                warn!("StructuredHistory - attempt with id {:?} has multiple results", attempt_id);
+                            }
+                            attempt.result = Some(AttemptResult::Error(*event_time, error.clone(), retry_decision.clone()));
+                        },
+                        None => warn!("StructuredHistory - attempt with id {:?} finished with an error but not created", attempt_id)
+                    }
+                }
+                HistoryEvent::NewQuery(query_id) => {
+                    queries.insert(
+                        *query_id,
+                        QueryHistory {
+                            start_time: *event_time,
+                            non_speculative_fiber: FiberHistory {
+                                start_time: *event_time,
+                                attempts: Vec::new(),
+                            },
+                            speculative_fibers: Vec::new(),
+                            result: None,
+                        },
+                    );
+                }
+                HistoryEvent::QuerySuccess(query_id) => {
+                    if let Some(query) = queries.get_mut(query_id) {
+                        query.result = Some(QueryHistoryResult::Success(*event_time));
+                    }
+                }
+                HistoryEvent::QueryError(query_id, error) => {
+                    if let Some(query) = queries.get_mut(query_id) {
+                        query.result = Some(QueryHistoryResult::Error(*event_time, error.clone()));
+                    }
+                }
+                HistoryEvent::NewSpeculativeFiber(speculative_id, _) => {
+                    fibers.insert(
+                        *speculative_id,
+                        FiberHistory {
+                            start_time: *event_time,
+                            attempts: Vec::new(),
+                        },
+                    );
+                }
+            }
+        }
+
+        // Move attempts to their speculative fibers
+        for (event, _) in &data.events {
+            if let HistoryEvent::NewAttempt(attempt_id, query_id, speculative_id, _) = event {
+                if let Some(attempt) = attempts.remove(attempt_id) {
+                    match speculative_id {
+                        Some(spec_id) => {
+                            if let Some(spec_fiber) = fibers.get_mut(spec_id) {
+                                spec_fiber.attempts.push(attempt);
+                            }
+                        }
+                        None => {
+                            if let Some(query) = queries.get_mut(query_id) {
+                                query.non_speculative_fiber.attempts.push(attempt);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // Move speculative fibers to their queries
+        for (event, _) in &data.events {
+            if let HistoryEvent::NewSpeculativeFiber(speculative_id, query_id) = event {
+                if let Some(fiber) = fibers.remove(speculative_id) {
+                    if let Some(query) = queries.get_mut(query_id) {
+                        query.speculative_fibers.push(fiber);
+                    }
+                }
+            }
+        }
+
+        StructuredHistory {
+            queries: queries
+                .into_iter()
+                .map(|(_id, query_history)| query_history)
+                .collect(),
+        }
+    }
+}
+
+/// StructuredHistory should be used for printing query history.
+impl Display for StructuredHistory {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{:#?}", self)
     }
 }
