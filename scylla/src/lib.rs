@@ -96,6 +96,7 @@
 pub use scylla_cql::frame;
 pub use scylla_cql::macros::{self, *};
 
+pub mod history;
 pub mod routing;
 pub mod statement;
 pub mod tracing;
