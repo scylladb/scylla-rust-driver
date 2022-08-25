@@ -99,3 +99,7 @@ path = "tower.rs"
 [[example]]
 name = "allocations"
 path = "allocations.rs"
+
+[[example]]
+name = "query_history"
+path = "query_history.rs"
