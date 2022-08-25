@@ -174,6 +174,14 @@ impl LoadBalancingPolicy for TokenAwarePolicy {
             self.child_policy.name()
         )
     }
+
+    fn requires_latency_measurements(&self) -> bool {
+        self.child_policy.requires_latency_measurements()
+    }
+
+    fn update_cluster_data(&self, cluster_data: &ClusterData) {
+        self.child_policy.update_cluster_data(cluster_data);
+    }
 }
 
 #[cfg(test)]

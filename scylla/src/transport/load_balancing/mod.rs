@@ -41,6 +41,13 @@ pub trait LoadBalancingPolicy: Send + Sync + std::fmt::Debug {
 
     /// Returns name of load balancing policy
     fn name(&self) -> String;
+
+    /// Informs whether latency measurements should be done when the policy is active.
+    fn requires_latency_measurements(&self) -> bool {
+        false
+    }
+
+    fn update_cluster_data(&self, _cluster_data: &ClusterData) {}
 }
 
 /// This trait is used to apply policy to plan made by parent policy.
