@@ -1,0 +1,294 @@
+use futures::{future::RemoteHandle, FutureExt};
+use tracing::{error, trace};
+
+use super::{ChildLoadBalancingPolicy, LoadBalancingPolicy, Plan, RoundRobinPolicy, Statement};
+use crate::transport::{cluster::ClusterData, node::Node};
+use std::{
+    sync::{
+        atomic::{AtomicBool, AtomicU64, Ordering},
+        Arc, Mutex,
+    },
+    time::Duration,
+};
+
+#[derive(Debug)]
+struct AtomicDuration(AtomicU64);
+
+impl AtomicDuration {
+    pub fn new() -> Self {
+        Self(AtomicU64::new(u64::MAX))
+    }
+
+    pub fn store(&self, duration: Duration) {
+        self.0.store(duration.as_micros() as u64, Ordering::Relaxed)
+    }
+
+    pub fn load(&self) -> Option<Duration> {
+        let micros = self.0.load(Ordering::Relaxed);
+        if micros == u64::MAX {
+            None
+        } else {
+            Some(Duration::from_micros(micros))
+        }
+    }
+}
+
+/// A latency-aware load balancing policy.
+#[derive(Debug)]
+pub struct LatencyAwarePolicy {
+    /// The exclusion threshold controls how much worse the average latency of a node must be
+    /// compared to the fastest performing node for it to be penalised by the policy.
+    /// For example, if set to 2, the resulting policy excludes nodes that are more than twice
+    /// slower than the fastest node.
+    pub exclusion_threshold: f64,
+
+    /// The retry period defines how long a node may be penalised by the policy before it is given
+    /// a 2nd chance. More precisely, a node is excluded from query plans if both his calculated
+    /// average latency is [exclusion_threshold](Self::exclusion_threshold) times slower than
+    /// the fastest node average latency (at the time the query plan is computed) **and** his
+    /// calculated average latency has been updated since less than [retry_period](Self::retry_period).
+    /// Since penalised nodes will likely not see their latency updated, this is basically how long
+    /// the policy will exclude a node.
+    pub retry_period: Duration,
+
+    /// The update rate defines how often the minimum average latency is recomputed. While the
+    /// average latency score of each node is computed iteratively (updated each time a new latency
+    /// is collected), the minimum score needs to be recomputed from scratch every time, which is
+    /// slightly more costly. For this reason, the minimum is only re-calculated at the given fixed
+    /// rate and cached between re-calculation.
+    /// The default update rate if **100 milliseconds**, which should be appropriate for most
+    /// applications. In particular, note that while we want to avoid to recompute the minimum for
+    /// every query, that computation is not particularly intensive either and there is no reason to
+    /// use a very slow rate (more than second is probably unnecessarily slow for instance).
+    pub update_rate: Duration,
+
+    /// Penalising nodes is based on an average of their recently measured average latency.
+    /// This average is only meaningful if a minimum of measurements have been collected.
+    /// This is what this option controls. If fewer than [minimum_measurements](Self::minimum_measurements)
+    /// data points have been collected for a given host, the policy will never penalise that host.
+    /// Note that the number of collected measurements for a given host is reset if the node
+    /// is restarted.
+    /// The default for this option is **50**.
+    pub minimum_measurements: usize,
+
+    /// Last minimum average latency that was noted among the nodes. It is updated every
+    /// [update_rate](Self::update_rate).
+    last_min_latency: Arc<AtomicDuration>,
+
+    child_policy: Box<dyn ChildLoadBalancingPolicy>,
+
+    nodes: Arc<Mutex<Option<Vec<Arc<Node>>>>>,
+    ask_for_nodes: Arc<AtomicBool>,
+
+    _updater_handle: RemoteHandle<()>,
+}
+
+impl LatencyAwarePolicy {
+    pub fn new(
+        exclusion_threshold: f64,
+        retry_period: Duration,
+        update_rate: Duration,
+        minimum_measurements: usize,
+        child_policy: Box<dyn ChildLoadBalancingPolicy>,
+    ) -> Self {
+        let min_latency = Arc::new(AtomicDuration::new());
+        let mut update_scheduler = tokio::time::interval(update_rate);
+        let ask_for_nodes = Arc::new(AtomicBool::new(true));
+
+        let ask_for_nodes_clone = ask_for_nodes.clone();
+        let min_latency_clone = min_latency.clone();
+        let nodes = Arc::new(Mutex::new(None));
+        let nodes_clone = nodes.clone();
+
+        let (updater_fut, updater_handle) = async move {
+            loop {
+                ask_for_nodes.store(true, Ordering::Relaxed);
+                update_scheduler.tick().await;
+                let nodes: Option<Vec<Arc<Node>>> = nodes.lock().unwrap().clone();
+                if let Some(nodes) = nodes {
+                    if nodes.is_empty() {
+                        error!("Empty node list - driver/policy bug!");
+                        return;
+                    }
+
+                    let min_avg = nodes
+                        .iter()
+                        .filter_map(|node| {
+                            node.average_latency
+                                .read()
+                                .unwrap()
+                                .map(|timestamped_average| timestamped_average.average)
+                        })
+                        .min();
+                    if let Some(min_avg) = min_avg {
+                        min_latency.store(min_avg);
+                        trace!(
+                            "LatencyAwarePolicy: updated min average latency to {} ms",
+                            min_avg.as_secs_f64() * 1000.
+                        );
+                    }
+                }
+            }
+        }
+        .remote_handle();
+        tokio::task::spawn(updater_fut);
+
+        Self {
+            exclusion_threshold,
+            retry_period,
+            update_rate,
+            minimum_measurements,
+            last_min_latency: min_latency_clone,
+            child_policy,
+            nodes: nodes_clone,
+            ask_for_nodes: ask_for_nodes_clone,
+            _updater_handle: updater_handle,
+        }
+    }
+
+    fn refresh_last_min_avg_nodes(&self, nodes: &[Arc<Node>]) {
+        if self.ask_for_nodes.load(Ordering::Relaxed)
+            && self.ask_for_nodes.swap(false, Ordering::Relaxed)
+        {
+            *self.nodes.lock().unwrap() = Some(nodes.to_owned());
+            trace!("LatencyAwarePolicy: updating nodes list for the min average updater");
+        }
+    }
+
+    fn make_plan<'a>(&self, plan: Vec<Arc<Node>>) -> Plan<'a> {
+        let min_avg_latency = match self.last_min_latency.load() {
+            Some(min_avg) => min_avg,
+            None => return self.child_policy.apply_child_policy(plan), // noop, as no latency data has been collected yet
+        };
+
+        Box::new(IteratorWithSkippedNodes::new(
+            Box::new(plan.into_iter()),
+            self.exclusion_threshold,
+            self.retry_period,
+            self.minimum_measurements,
+            min_avg_latency,
+            &*self.child_policy,
+        ))
+    }
+}
+
+impl Default for LatencyAwarePolicy {
+    /// Default configuration of the [LatencyAwarePolicy] cycles through both lists
+    /// (of fast and slow nodes) using round robin.
+    fn default() -> Self {
+        Self::new(
+            2_f64,
+            Duration::from_secs(10),
+            Duration::from_millis(100),
+            50,
+            Box::new(RoundRobinPolicy::default()),
+        )
+    }
+}
+
+impl LoadBalancingPolicy for LatencyAwarePolicy {
+    fn plan<'a>(&self, _statement: &Statement, cluster: &'a ClusterData) -> Plan<'a> {
+        self.make_plan(cluster.all_nodes.clone())
+    }
+
+    fn name(&self) -> String {
+        "LatencyAwarePolicy".to_string()
+    }
+
+    fn requires_latency_measurements(&self) -> bool {
+        true
+    }
+
+    fn update_cluster_data(&self, cluster_data: &ClusterData) {
+        self.refresh_last_min_avg_nodes(&cluster_data.all_nodes);
+        self.child_policy.update_cluster_data(cluster_data);
+    }
+}
+
+impl ChildLoadBalancingPolicy for LatencyAwarePolicy {
+    fn apply_child_policy(
+        &self,
+        plan: Vec<Arc<Node>>,
+    ) -> Box<dyn Iterator<Item = Arc<Node>> + Send + Sync> {
+        self.make_plan(plan)
+    }
+}
+
+struct IteratorWithSkippedNodes<'a> {
+    fast_nodes: Plan<'a>,
+    penalised_nodes: Plan<'a>,
+}
+
+impl<'a> IteratorWithSkippedNodes<'a> {
+    fn new(
+        nodes: Plan<'a>,
+        exclusion_threshold: f64,
+        retry_period: Duration,
+        minimum_measurements: usize,
+        min_avg: Duration,
+        child_policy: &dyn ChildLoadBalancingPolicy,
+    ) -> Self {
+        enum FastEnough {
+            Yes,
+            No { average: Duration },
+        }
+
+        fn fast_enough(
+            node: &Node,
+            exclusion_threshold: f64,
+            retry_period: Duration,
+            minimum_measurements: usize,
+            min_avg: Duration,
+        ) -> FastEnough {
+            let avg = match *node.average_latency.read().unwrap() {
+                Some(avg) => avg,
+                None => return FastEnough::Yes,
+            };
+            if avg.num_measures >= minimum_measurements
+                && avg.timestamp.elapsed() < retry_period
+                && avg.average.as_micros() as f64 > exclusion_threshold * min_avg.as_micros() as f64
+            {
+                FastEnough::No {
+                    average: avg.average,
+                }
+            } else {
+                FastEnough::Yes
+            }
+        }
+
+        let mut fast_nodes = vec![];
+        let mut penalised_nodes = vec![];
+
+        for node in nodes {
+            match fast_enough(
+                &node,
+                exclusion_threshold,
+                retry_period,
+                minimum_measurements,
+                min_avg,
+            ) {
+                FastEnough::Yes => fast_nodes.push(node),
+                FastEnough::No { average } => {
+                    trace!("Penalising node {{address={}, datacenter={:?}, rack={:?}}} for being on average at least {} times slower (latency: {}ms) than the fastest ({}ms).",
+                            node.address, node.datacenter, node.rack, exclusion_threshold, average.as_millis(), min_avg.as_millis());
+                    penalised_nodes.push(node);
+                }
+            }
+        }
+
+        Self {
+            fast_nodes: child_policy.apply_child_policy(fast_nodes),
+            penalised_nodes: child_policy.apply_child_policy(penalised_nodes),
+        }
+    }
+}
+
+impl<'a> Iterator for IteratorWithSkippedNodes<'a> {
+    type Item = Arc<Node>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        self.fast_nodes
+            .next()
+            .or_else(|| self.penalised_nodes.next())
+    }
+}

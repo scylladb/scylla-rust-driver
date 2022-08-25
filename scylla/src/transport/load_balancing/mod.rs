@@ -16,6 +16,10 @@ pub use dc_aware_round_robin::DcAwareRoundRobinPolicy;
 pub use round_robin::RoundRobinPolicy;
 pub use token_aware::TokenAwarePolicy;
 
+mod latency_aware;
+
+pub use latency_aware::LatencyAwarePolicy;
+
 /// Represents info about statement that can be used by load balancing policies.
 #[derive(Default)]
 pub struct Statement<'a> {
