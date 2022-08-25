@@ -5,7 +5,7 @@ SPHINXOPTS    =
 SPHINXBUILD   = $(POETRY) run sphinx-build
 PAPER         =
 BUILDDIR      = _build
-SOURCEDIR     = source
+SOURCEDIR     = _source
 
 # Internal variables
 PAPEROPT_a4     = -D latex_paper_size=a4
@@ -30,6 +30,7 @@ setupenv:
 setup:
 	$(POETRY) install
 	$(POETRY) update
+	cp -TLr source $(SOURCEDIR)
 
 # Clean commands
 .PHONY: pristine
