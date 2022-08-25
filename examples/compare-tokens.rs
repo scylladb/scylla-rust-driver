@@ -31,6 +31,19 @@ async fn main() -> Result<()> {
         let serialized_pk = (pk,).serialized()?.into_owned();
         let t = Murmur3Partitioner::hash(prepared.compute_partition_key(&serialized_pk)?).value;
 
+        let statement_info = scylla::transport::load_balancing::Statement {
+            token: Some(scylla::routing::Token { value: t }),
+            keyspace: Some("ks"),
+        };
+        println!(
+            "Estimated replicas for query: {:?}",
+            session
+                .estimate_replicas_for_query(&statement_info)
+                .iter()
+                .map(|n| n.address)
+                .collect::<Vec<std::net::SocketAddr>>()
+        );
+
         let qt = session
             .query(format!("SELECT token(pk) FROM ks.t where pk = {}", pk), &[])
             .await?
