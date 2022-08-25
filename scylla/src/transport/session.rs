@@ -1209,11 +1209,13 @@ impl Session {
                     let execute_query_generator = || {
                         self.execute_query(
                             &shared_query_plan,
-                            statement_config.is_idempotent,
-                            statement_config.consistency,
-                            retry_policy.new_session(),
                             &choose_connection,
                             &do_query,
+                            ExecuteQueryContext {
+                                is_idempotent: statement_config.is_idempotent,
+                                consistency: statement_config.consistency,
+                                retry_session: retry_policy.new_session(),
+                            },
                         )
                     };
 
@@ -1231,11 +1233,13 @@ impl Session {
                 _ => self
                     .execute_query(
                         query_plan,
-                        statement_config.is_idempotent,
-                        statement_config.consistency,
-                        retry_policy.new_session(),
                         &choose_connection,
                         &do_query,
+                        ExecuteQueryContext {
+                            is_idempotent: statement_config.is_idempotent,
+                            consistency: statement_config.consistency,
+                            retry_session: retry_policy.new_session(),
+                        },
                     )
                     .await
                     .unwrap_or(Err(QueryError::ProtocolError(
@@ -1262,11 +1266,9 @@ impl Session {
     async fn execute_query<ConnFut, QueryFut, ResT>(
         &self,
         query_plan: impl Iterator<Item = Arc<Node>>,
-        is_idempotent: bool,
-        consistency: Option<Consistency>,
-        mut retry_session: Box<dyn RetrySession>,
         choose_connection: impl Fn(Arc<Node>) -> ConnFut,
         do_query: impl Fn(Arc<Connection>, Consistency) -> QueryFut,
+        mut context: ExecuteQueryContext,
     ) -> Option<Result<RunQueryResult<ResT>, QueryError>>
     where
         ConnFut: Future<Output = Result<Arc<Connection>, QueryError>>,
@@ -1274,7 +1276,8 @@ impl Session {
         ResT: AllowedRunQueryResTType,
     {
         let mut last_error: Option<QueryError> = None;
-        let mut current_consistency: Consistency = consistency.unwrap_or(self.default_consistency);
+        let mut current_consistency: Consistency =
+            context.consistency.unwrap_or(self.default_consistency);
 
         'nodes_in_plan: for node in query_plan {
             let span = trace_span!("Executing query", node = node.address.to_string().as_str());
@@ -1332,13 +1335,13 @@ impl Session {
                 // Use retry policy to decide what to do next
                 let query_info = QueryInfo {
                     error: last_error.as_ref().unwrap(),
-                    is_idempotent,
+                    is_idempotent: context.is_idempotent,
                     consistency: LegacyConsistency::Regular(
-                        consistency.unwrap_or(self.default_consistency),
+                        context.consistency.unwrap_or(self.default_consistency),
                     ),
                 };
 
-                let retry_decision = retry_session.decide_should_retry(query_info);
+                let retry_decision = context.retry_session.decide_should_retry(query_info);
                 trace!(
                     parent: &span,
                     retry_decision = format!("{:?}", retry_decision).as_str()
@@ -1506,3 +1509,9 @@ pub trait AllowedRunQueryResTType {}
 impl AllowedRunQueryResTType for Uuid {}
 impl AllowedRunQueryResTType for BatchResult {}
 impl AllowedRunQueryResTType for NonErrorQueryResponse {}
+
+struct ExecuteQueryContext {
+    is_idempotent: bool,
+    consistency: Option<Consistency>,
+    retry_session: Box<dyn RetrySession>,
+}
