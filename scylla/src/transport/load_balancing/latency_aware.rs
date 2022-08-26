@@ -300,7 +300,8 @@ mod tests {
     use super::*;
 
     use crate::{
-        load_balancing::tests::DumbPolicy,
+        load_balancing::{tests::DumbPolicy, TokenAwarePolicy},
+        routing::Token,
         transport::{load_balancing::tests, node::TimestampedAverage},
     };
     use std::{collections::HashSet, time::Instant};
@@ -703,6 +704,233 @@ mod tests {
                 .collect::<HashSet<Vec<_>>>();
 
             assert_eq!(expected_plans, plans);
+        }
+    }
+
+    // ConnectionKeeper (which lives in Node) requires context of Tokio runtime
+    #[tokio::test]
+    async fn test_token_and_latency_aware_policy() {
+        let _ = tracing_subscriber::fmt::try_init();
+        let cluster = tests::mock_cluster_data_for_token_aware_tests();
+
+        struct Test<'a, 'b> {
+            statement: Statement<'a>,
+            expected_plan: Vec<u16>,
+            preset_min_avg: Option<Duration>,
+            latency_stats: &'b [(u16, Option<TimestampedAverage>)],
+        }
+
+        let latency_aware_policy_defaults = LatencyAwarePolicy::default();
+        let min_avg = Duration::from_millis(10);
+        let tests = [
+            Test {
+                // Latency-aware policy fires up and moves 3 past 1.
+                statement: Statement {
+                    token: Some(Token { value: 160 }),
+                    keyspace: Some("keyspace_with_simple_strategy_replication_factor_2"),
+                },
+                latency_stats: &[
+                    (
+                        1,
+                        Some(TimestampedAverage {
+                            timestamp: Instant::now(),
+                            average: min_avg,
+                            num_measures: latency_aware_policy_defaults.minimum_measurements,
+                        }),
+                    ),
+                    (
+                        3,
+                        Some(TimestampedAverage {
+                            timestamp: Instant::now(),
+                            average: Duration::from_secs_f64(
+                                latency_aware_policy_defaults.exclusion_threshold
+                                    * 1.05
+                                    * min_avg.as_secs_f64(),
+                            ),
+                            num_measures: latency_aware_policy_defaults.minimum_measurements,
+                        }),
+                    ),
+                ],
+                preset_min_avg: None,
+                expected_plan: vec![1, 3, 2],
+            },
+            Test {
+                // Latency-aware policy has old minimum average cached, so does not fire.
+                statement: Statement {
+                    token: Some(Token { value: 160 }),
+                    keyspace: Some("keyspace_with_simple_strategy_replication_factor_2"),
+                },
+                latency_stats: &[
+                    (
+                        1,
+                        Some(TimestampedAverage {
+                            timestamp: Instant::now(),
+                            average: min_avg,
+                            num_measures: latency_aware_policy_defaults.minimum_measurements,
+                        }),
+                    ),
+                    (
+                        3,
+                        Some(TimestampedAverage {
+                            timestamp: Instant::now(),
+                            average: Duration::from_secs_f64(
+                                latency_aware_policy_defaults.exclusion_threshold
+                                    * 1.05
+                                    * min_avg.as_secs_f64(),
+                            ),
+                            num_measures: latency_aware_policy_defaults.minimum_measurements,
+                        }),
+                    ),
+                ],
+                preset_min_avg: Some(100 * min_avg),
+                expected_plan: vec![3, 1, 2],
+            },
+            Test {
+                // Both 1 and 2 are way slower than 3, but only 2 has enough measurements collected, and 2, 3 do not replicate data for this token.
+                statement: Statement {
+                    token: Some(Token { value: 60 }),
+                    keyspace: Some("keyspace_with_simple_strategy_replication_factor_1"),
+                },
+                latency_stats: &[
+                    (
+                        1,
+                        Some(TimestampedAverage {
+                            timestamp: Instant::now(),
+                            average: min_avg * 20,
+                            num_measures: latency_aware_policy_defaults.minimum_measurements,
+                        }),
+                    ),
+                    (
+                        2,
+                        Some(TimestampedAverage {
+                            timestamp: Instant::now(),
+                            average: min_avg * 10,
+                            num_measures: latency_aware_policy_defaults.minimum_measurements,
+                        }),
+                    ),
+                    (
+                        3,
+                        Some(TimestampedAverage {
+                            timestamp: Instant::now(),
+                            average: min_avg,
+                            num_measures: latency_aware_policy_defaults.minimum_measurements,
+                        }),
+                    ),
+                ],
+                preset_min_avg: None,
+                expected_plan: vec![1, 3, 2],
+            },
+            Test {
+                // Both 1 and 2 are way slower than 3, and both have enough measurements collected,
+                // but because 3 does not replicate data for this token, they are placed first.
+                statement: Statement {
+                    token: Some(Token { value: 60 }),
+                    keyspace: Some("keyspace_with_simple_strategy_replication_factor_2"),
+                },
+                latency_stats: &[
+                    (
+                        1,
+                        Some(TimestampedAverage {
+                            timestamp: Instant::now(),
+                            average: min_avg * 20,
+                            num_measures: latency_aware_policy_defaults.minimum_measurements,
+                        }),
+                    ),
+                    (
+                        2,
+                        Some(TimestampedAverage {
+                            timestamp: Instant::now(),
+                            average: min_avg * 10,
+                            num_measures: latency_aware_policy_defaults.minimum_measurements,
+                        }),
+                    ),
+                    (
+                        3,
+                        Some(TimestampedAverage {
+                            timestamp: Instant::now(),
+                            average: min_avg,
+                            num_measures: latency_aware_policy_defaults.minimum_measurements,
+                        }),
+                    ),
+                ],
+                preset_min_avg: None,
+                expected_plan: vec![1, 2, 3],
+            },
+            Test {
+                // No latency stats, so latency-aware policy is a no-op.
+                statement: Statement {
+                    token: Some(Token { value: 60 }),
+                    keyspace: Some("invalid"),
+                },
+                latency_stats: &[],
+                preset_min_avg: None,
+                expected_plan: vec![1, 3, 2],
+            },
+            Test {
+                // 3 is penalised over 2 (in token-aware policy fallback plan) as being much slower than 1.
+                statement: Statement {
+                    token: Some(Token { value: 60 }),
+                    keyspace: None,
+                },
+                latency_stats: &[
+                    (
+                        1,
+                        Some(TimestampedAverage {
+                            timestamp: Instant::now(),
+                            average: min_avg,
+                            num_measures: latency_aware_policy_defaults.minimum_measurements,
+                        }),
+                    ),
+                    (
+                        3,
+                        Some(TimestampedAverage {
+                            timestamp: Instant::now(),
+                            average: Duration::from_secs_f64(
+                                latency_aware_policy_defaults.exclusion_threshold
+                                    * 1.05
+                                    * min_avg.as_secs_f64(),
+                            ),
+                            num_measures: latency_aware_policy_defaults.minimum_measurements,
+                        }),
+                    ),
+                ],
+                preset_min_avg: None,
+                expected_plan: vec![1, 2, 3],
+            },
+        ];
+
+        for test in &tests {
+            let policy = TokenAwarePolicy::new(Box::new(latency_aware_without_round_robin()));
+            let mut cluster = cluster.clone();
+
+            if let Some(preset_min_avg) = test.preset_min_avg {
+                tests::set_nodes_latency_stats(
+                    &mut cluster,
+                    &[(
+                        1,
+                        Some(TimestampedAverage {
+                            timestamp: Instant::now(),
+                            average: preset_min_avg,
+                            num_measures: latency_aware_policy_defaults.minimum_measurements,
+                        }),
+                    )],
+                );
+                policy.update_cluster_data(&cluster);
+                // Await last min average updater.
+                tokio::time::sleep(latency_aware_policy_defaults.update_rate).await;
+                tests::set_nodes_latency_stats(&mut cluster, &[(1, None)]);
+            }
+            tests::set_nodes_latency_stats(&mut cluster, test.latency_stats);
+
+            if test.preset_min_avg.is_none() {
+                policy.update_cluster_data(&cluster);
+                // Await last min average updater.
+                tokio::time::sleep(latency_aware_policy_defaults.update_rate).await;
+            }
+
+            let plan =
+                tests::get_plan_and_collect_node_identifiers(&policy, &test.statement, &cluster);
+            assert_eq!(plan, test.expected_plan);
         }
     }
 }
