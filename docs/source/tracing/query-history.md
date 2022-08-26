@@ -48,6 +48,34 @@ Sample output for a query that didn't encounter any difficulties:
 =================
 ```
 
+Here's output for a query that had some trouble - nodes didn't respond and speculative execution decided to query others in parallel.
+Finally the third node provided a response.
+```none
+=== Query #0 ===
+| start_time: 2022-08-26 15:08:28.525367409 UTC
+| Non-speculative attempts:
+| - Attempt #0 sent to 127.0.0.219:9042
+|   request send time: 2022-08-26 15:08:28.525409294 UTC
+|   No result yet
+|
+|
+| > Speculative fiber #0
+| fiber start time: 2022-08-26 15:08:28.537074167 UTC
+| - Attempt #0 sent to 127.0.0.217:9042
+|   request send time: 2022-08-26 15:08:28.537126083 UTC
+|   No result yet
+|
+|
+| > Speculative fiber #1
+| fiber start time: 2022-08-26 15:08:28.548050242 UTC
+| - Attempt #0 sent to 127.0.0.218:9042
+|   request send time: 2022-08-26 15:08:28.548089083 UTC
+|   Success at 2022-08-26 15:08:28.590052778 UTC
+|
+| Query successful at 2022-08-26 15:08:28.590078119 UTC
+=================
+```
+
 ## How the driver executes queries
 
 To read the output it's useful to understand more about how the driver executes queries.
