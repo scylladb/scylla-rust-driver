@@ -1,3 +1,5 @@
+use crate::utils::test_utils::unique_keyspace_name;
+
 #[tokio::test]
 #[ignore]
 async fn authenticate_superuser() {
@@ -11,7 +13,7 @@ async fn authenticate_superuser() {
         .build()
         .await
         .unwrap();
-    let ks = crate::transport::session_test::unique_name();
+    let ks = unique_keyspace_name();
 
     session.query(format!("CREATE KEYSPACE IF NOT EXISTS {} WITH REPLICATION = {{'class' : 'SimpleStrategy', 'replication_factor' : 1}}", ks), &[]).await.unwrap();
     session.use_keyspace(ks, false).await.unwrap();

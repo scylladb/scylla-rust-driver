@@ -7,6 +7,7 @@ use crate::frame::value::{Date, Time, Timestamp};
 use crate::macros::{FromUserType, IntoUserType};
 use crate::transport::session::IntoTypedRows;
 use crate::transport::session::Session;
+use crate::utils::test_utils::unique_keyspace_name;
 use crate::SessionBuilder;
 use bigdecimal::BigDecimal;
 use chrono::{Duration, NaiveDate};
@@ -26,7 +27,7 @@ async fn init_test(table_name: &str, type_name: &str) -> Session {
 
     println!("Connecting to {} ...", uri);
     let session: Session = SessionBuilder::new().known_node(uri).build().await.unwrap();
-    let ks = crate::transport::session_test::unique_name();
+    let ks = unique_keyspace_name();
 
     session
         .query(
@@ -759,7 +760,7 @@ async fn test_udt_after_schema_update() {
 
     println!("Connecting to {} ...", uri);
     let session: Session = SessionBuilder::new().known_node(uri).build().await.unwrap();
-    let ks = crate::transport::session_test::unique_name();
+    let ks = unique_keyspace_name();
 
     session
         .query(
