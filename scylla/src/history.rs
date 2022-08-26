@@ -450,3 +450,649 @@ fn write_fiber_attempts(fiber: &FiberHistory, f: &mut std::fmt::Formatter<'_>) -
 
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use std::{
+        net::{IpAddr, Ipv4Addr, SocketAddr},
+        sync::Arc,
+    };
+
+    use crate::{
+        query::Query, retry_policy::RetryDecision, utils::test_utils::unique_keyspace_name,
+        SessionBuilder,
+    };
+
+    use super::{
+        AttemptId, AttemptResult, HistoryCollector, HistoryListener, QueryHistoryResult, QueryId,
+        SpeculativeId, StructuredHistory, TimePoint,
+    };
+    use chrono::{DateTime, NaiveDate, NaiveDateTime, NaiveTime, Utc};
+    use futures::StreamExt;
+    use scylla_cql::{
+        errors::{DbError, QueryError},
+        frame::types::LegacyConsistency,
+        Consistency,
+    };
+
+    // Set a single time for all timestamps within StructuredHistory.
+    // HistoryCollector sets the timestamp to current time which changes with each test.
+    // Setting it to one makes it possible to test displaying consistently.
+    fn set_one_time(mut history: StructuredHistory) -> StructuredHistory {
+        let the_time: TimePoint = DateTime::<Utc>::from_utc(
+            NaiveDateTime::new(
+                NaiveDate::from_ymd(2022, 2, 22),
+                NaiveTime::from_hms(20, 22, 22),
+            ),
+            Utc,
+        );
+
+        for query in &mut history.queries {
+            query.start_time = the_time;
+            match &mut query.result {
+                Some(QueryHistoryResult::Success(succ_time)) => *succ_time = the_time,
+                Some(QueryHistoryResult::Error(err_time, _)) => *err_time = the_time,
+                None => {}
+            };
+
+            for fiber in std::iter::once(&mut query.non_speculative_fiber)
+                .chain(query.speculative_fibers.iter_mut())
+            {
+                fiber.start_time = the_time;
+                for attempt in &mut fiber.attempts {
+                    attempt.send_time = the_time;
+                    match &mut attempt.result {
+                        Some(AttemptResult::Success(succ_time)) => *succ_time = the_time,
+                        Some(AttemptResult::Error(err_time, _, _)) => *err_time = the_time,
+                        None => {}
+                    }
+                }
+            }
+        }
+
+        history
+    }
+
+    // Set a single node for all attempts within StructuredHistory.
+    // When running against real life nodes this address may change,
+    // setting it to one value makes it possible to run tests consistently.
+    fn set_one_node(mut history: StructuredHistory) -> StructuredHistory {
+        let the_node: SocketAddr = node1_addr();
+
+        for query in &mut history.queries {
+            for fiber in std::iter::once(&mut query.non_speculative_fiber)
+                .chain(query.speculative_fibers.iter_mut())
+            {
+                for attempt in &mut fiber.attempts {
+                    attempt.node_addr = the_node;
+                }
+            }
+        }
+
+        history
+    }
+
+    // Set a single error message for all DbErrors within StructuredHistory.
+    // The error message changes between Scylla/Cassandra/their versions.
+    // Setting it to one value makes it possible to run tests consistently.
+    fn set_one_db_error_message(mut history: StructuredHistory) -> StructuredHistory {
+        let set_msg = |err: &mut QueryError| {
+            if let QueryError::DbError(_, msg) = err {
+                *msg = "Error message from database".to_string();
+            }
+        };
+
+        for query in &mut history.queries {
+            if let Some(QueryHistoryResult::Error(_, err)) = &mut query.result {
+                set_msg(err);
+            }
+            for fiber in std::iter::once(&mut query.non_speculative_fiber)
+                .chain(query.speculative_fibers.iter_mut())
+            {
+                for attempt in &mut fiber.attempts {
+                    if let Some(AttemptResult::Error(_, err, _)) = &mut attempt.result {
+                        set_msg(err);
+                    }
+                }
+            }
+        }
+
+        history
+    }
+
+    fn node1_addr() -> SocketAddr {
+        SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), 19042)
+    }
+
+    fn node2_addr() -> SocketAddr {
+        SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 2)), 19042)
+    }
+
+    fn node3_addr() -> SocketAddr {
+        SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 3)), 19042)
+    }
+
+    fn timeout_error() -> QueryError {
+        QueryError::TimeoutError
+    }
+
+    fn unavailable_error() -> QueryError {
+        QueryError::DbError(
+            DbError::Unavailable {
+                consistency: LegacyConsistency::Regular(Consistency::Quorum),
+                required: 2,
+                alive: 1,
+            },
+            "Not enough nodes to satisfy consistency".to_string(),
+        )
+    }
+
+    fn no_stream_id_error() -> QueryError {
+        QueryError::UnableToAllocStreamId
+    }
+
+    #[test]
+    fn empty_history() {
+        let history_collector = HistoryCollector::new();
+        let history: StructuredHistory = history_collector.clone_structured_history();
+
+        assert!(history.queries.is_empty());
+
+        let displayed = "Queries History:
+";
+        assert_eq!(displayed, format!("{}", history));
+    }
+
+    #[test]
+    fn empty_query() {
+        let history_collector = HistoryCollector::new();
+
+        let _query_id: QueryId = history_collector.log_query_start();
+
+        let history: StructuredHistory = history_collector.clone_structured_history();
+
+        assert_eq!(history.queries.len(), 1);
+        assert!(history.queries[0].non_speculative_fiber.attempts.is_empty());
+        assert!(history.queries[0].speculative_fibers.is_empty());
+
+        let displayed = "Queries History:
+=== Query #0 ===
+| start_time: 2022-02-22 20:22:22 UTC
+| Non-speculative attempts:
+|
+| Query still running - no final result yet
+=================
+";
+
+        assert_eq!(displayed, format!("{}", set_one_time(history)));
+    }
+
+    #[test]
+    fn one_attempt() {
+        let history_collector = HistoryCollector::new();
+
+        let query_id: QueryId = history_collector.log_query_start();
+        let attempt_id: AttemptId =
+            history_collector.log_attempt_start(query_id, None, node1_addr());
+        history_collector.log_attempt_success(attempt_id);
+        history_collector.log_query_success(query_id);
+
+        let history: StructuredHistory = history_collector.clone_structured_history();
+
+        assert_eq!(history.queries.len(), 1);
+        assert_eq!(history.queries[0].non_speculative_fiber.attempts.len(), 1);
+        assert!(history.queries[0].speculative_fibers.is_empty());
+        assert!(matches!(
+            history.queries[0].non_speculative_fiber.attempts[0].result,
+            Some(AttemptResult::Success(_))
+        ));
+
+        let displayed = "Queries History:
+=== Query #0 ===
+| start_time: 2022-02-22 20:22:22 UTC
+| Non-speculative attempts:
+| - Attempt #0 sent to 127.0.0.1:19042
+|   request send time: 2022-02-22 20:22:22 UTC
+|   Success at 2022-02-22 20:22:22 UTC
+|
+| Query successful at 2022-02-22 20:22:22 UTC
+=================
+";
+        assert_eq!(displayed, format!("{}", set_one_time(history)));
+    }
+
+    #[test]
+    fn two_error_atempts() {
+        let history_collector = HistoryCollector::new();
+
+        let query_id: QueryId = history_collector.log_query_start();
+
+        let attempt_id: AttemptId =
+            history_collector.log_attempt_start(query_id, None, node1_addr());
+        history_collector.log_attempt_error(
+            attempt_id,
+            &QueryError::TimeoutError,
+            &RetryDecision::RetrySameNode(Consistency::Quorum),
+        );
+
+        let second_attempt_id: AttemptId =
+            history_collector.log_attempt_start(query_id, None, node1_addr());
+        history_collector.log_attempt_error(
+            second_attempt_id,
+            &unavailable_error(),
+            &RetryDecision::DontRetry,
+        );
+
+        history_collector.log_query_error(query_id, &unavailable_error());
+
+        let history: StructuredHistory = history_collector.clone_structured_history();
+
+        let displayed =
+"Queries History:
+=== Query #0 ===
+| start_time: 2022-02-22 20:22:22 UTC
+| Non-speculative attempts:
+| - Attempt #0 sent to 127.0.0.1:19042
+|   request send time: 2022-02-22 20:22:22 UTC
+|   Error at 2022-02-22 20:22:22 UTC
+|   Error: Timeout Error
+|   Retry decision: RetrySameNode(Quorum)
+|
+| - Attempt #1 sent to 127.0.0.1:19042
+|   request send time: 2022-02-22 20:22:22 UTC
+|   Error at 2022-02-22 20:22:22 UTC
+|   Error: Database returned an error: Not enough nodes are alive to satisfy required consistency level (consistency: Quorum, required: 2, alive: 1), Error message: Not enough nodes to satisfy consistency
+|   Retry decision: DontRetry
+|
+| Query failed at 2022-02-22 20:22:22 UTC
+| Error: Database returned an error: Not enough nodes are alive to satisfy required consistency level (consistency: Quorum, required: 2, alive: 1), Error message: Not enough nodes to satisfy consistency
+=================
+";
+        assert_eq!(displayed, format!("{}", set_one_time(history)));
+    }
+
+    #[test]
+    fn empty_fibers() {
+        let history_collector = HistoryCollector::new();
+
+        let query_id: QueryId = history_collector.log_query_start();
+        history_collector.log_new_speculative_fiber(query_id);
+        history_collector.log_new_speculative_fiber(query_id);
+        history_collector.log_new_speculative_fiber(query_id);
+
+        let history: StructuredHistory = history_collector.clone_structured_history();
+
+        assert_eq!(history.queries.len(), 1);
+        assert!(history.queries[0].non_speculative_fiber.attempts.is_empty());
+        assert_eq!(history.queries[0].speculative_fibers.len(), 3);
+        assert!(history.queries[0].speculative_fibers[0].attempts.is_empty());
+        assert!(history.queries[0].speculative_fibers[1].attempts.is_empty());
+        assert!(history.queries[0].speculative_fibers[2].attempts.is_empty());
+
+        let displayed = "Queries History:
+=== Query #0 ===
+| start_time: 2022-02-22 20:22:22 UTC
+| Non-speculative attempts:
+|
+|
+| > Speculative fiber #0
+| fiber start time: 2022-02-22 20:22:22 UTC
+|
+|
+| > Speculative fiber #1
+| fiber start time: 2022-02-22 20:22:22 UTC
+|
+|
+| > Speculative fiber #2
+| fiber start time: 2022-02-22 20:22:22 UTC
+|
+| Query still running - no final result yet
+=================
+";
+        assert_eq!(displayed, format!("{}", set_one_time(history)));
+    }
+
+    #[test]
+    fn complex() {
+        let history_collector = HistoryCollector::new();
+
+        let query_id: QueryId = history_collector.log_query_start();
+
+        let attempt1: AttemptId = history_collector.log_attempt_start(query_id, None, node1_addr());
+
+        let speculative1: SpeculativeId = history_collector.log_new_speculative_fiber(query_id);
+
+        let spec1_attempt1: AttemptId =
+            history_collector.log_attempt_start(query_id, Some(speculative1), node2_addr());
+
+        history_collector.log_attempt_error(
+            attempt1,
+            &timeout_error(),
+            &RetryDecision::RetryNextNode(Consistency::Quorum),
+        );
+        let _attempt2: AttemptId =
+            history_collector.log_attempt_start(query_id, None, node3_addr());
+
+        let speculative2: SpeculativeId = history_collector.log_new_speculative_fiber(query_id);
+
+        let spec2_attempt1: AttemptId =
+            history_collector.log_attempt_start(query_id, Some(speculative2), node1_addr());
+        history_collector.log_attempt_error(
+            spec2_attempt1,
+            &no_stream_id_error(),
+            &RetryDecision::RetrySameNode(Consistency::Quorum),
+        );
+
+        let spec2_attempt2: AttemptId =
+            history_collector.log_attempt_start(query_id, Some(speculative2), node1_addr());
+
+        let _speculative3: SpeculativeId = history_collector.log_new_speculative_fiber(query_id);
+        let speculative4: SpeculativeId = history_collector.log_new_speculative_fiber(query_id);
+
+        history_collector.log_attempt_error(
+            spec1_attempt1,
+            &unavailable_error(),
+            &RetryDecision::RetryNextNode(Consistency::Quorum),
+        );
+
+        let _spec4_attempt1: AttemptId =
+            history_collector.log_attempt_start(query_id, Some(speculative4), node2_addr());
+
+        history_collector.log_attempt_success(spec2_attempt2);
+        history_collector.log_query_success(query_id);
+
+        let history: StructuredHistory = history_collector.clone_structured_history();
+
+        let displayed = "Queries History:
+=== Query #0 ===
+| start_time: 2022-02-22 20:22:22 UTC
+| Non-speculative attempts:
+| - Attempt #0 sent to 127.0.0.1:19042
+|   request send time: 2022-02-22 20:22:22 UTC
+|   Error at 2022-02-22 20:22:22 UTC
+|   Error: Timeout Error
+|   Retry decision: RetryNextNode(Quorum)
+|
+| - Attempt #1 sent to 127.0.0.3:19042
+|   request send time: 2022-02-22 20:22:22 UTC
+|   No result yet
+|
+|
+| > Speculative fiber #0
+| fiber start time: 2022-02-22 20:22:22 UTC
+| - Attempt #0 sent to 127.0.0.2:19042
+|   request send time: 2022-02-22 20:22:22 UTC
+|   Error at 2022-02-22 20:22:22 UTC
+|   Error: Database returned an error: Not enough nodes are alive to satisfy required consistency level (consistency: Quorum, required: 2, alive: 1), Error message: Not enough nodes to satisfy consistency
+|   Retry decision: RetryNextNode(Quorum)
+|
+|
+| > Speculative fiber #1
+| fiber start time: 2022-02-22 20:22:22 UTC
+| - Attempt #0 sent to 127.0.0.1:19042
+|   request send time: 2022-02-22 20:22:22 UTC
+|   Error at 2022-02-22 20:22:22 UTC
+|   Error: Unable to allocate stream id
+|   Retry decision: RetrySameNode(Quorum)
+|
+| - Attempt #1 sent to 127.0.0.1:19042
+|   request send time: 2022-02-22 20:22:22 UTC
+|   Success at 2022-02-22 20:22:22 UTC
+|
+|
+| > Speculative fiber #2
+| fiber start time: 2022-02-22 20:22:22 UTC
+|
+|
+| > Speculative fiber #3
+| fiber start time: 2022-02-22 20:22:22 UTC
+| - Attempt #0 sent to 127.0.0.2:19042
+|   request send time: 2022-02-22 20:22:22 UTC
+|   No result yet
+|
+| Query successful at 2022-02-22 20:22:22 UTC
+=================
+";
+        assert_eq!(displayed, format!("{}", set_one_time(history)));
+    }
+
+    #[test]
+    fn multiple_queries() {
+        let history_collector = HistoryCollector::new();
+
+        let query1_id: QueryId = history_collector.log_query_start();
+        let query1_attempt1: AttemptId =
+            history_collector.log_attempt_start(query1_id, None, node1_addr());
+        history_collector.log_attempt_error(
+            query1_attempt1,
+            &timeout_error(),
+            &RetryDecision::RetryNextNode(Consistency::Quorum),
+        );
+        let query1_attempt2: AttemptId =
+            history_collector.log_attempt_start(query1_id, None, node2_addr());
+        history_collector.log_attempt_success(query1_attempt2);
+        history_collector.log_query_success(query1_id);
+
+        let query2_id: QueryId = history_collector.log_query_start();
+        let query2_attempt1: AttemptId =
+            history_collector.log_attempt_start(query2_id, None, node1_addr());
+        history_collector.log_attempt_success(query2_attempt1);
+        history_collector.log_query_success(query2_id);
+
+        let history: StructuredHistory = history_collector.clone_structured_history();
+
+        let displayed = "Queries History:
+=== Query #0 ===
+| start_time: 2022-02-22 20:22:22 UTC
+| Non-speculative attempts:
+| - Attempt #0 sent to 127.0.0.1:19042
+|   request send time: 2022-02-22 20:22:22 UTC
+|   Error at 2022-02-22 20:22:22 UTC
+|   Error: Timeout Error
+|   Retry decision: RetryNextNode(Quorum)
+|
+| - Attempt #1 sent to 127.0.0.2:19042
+|   request send time: 2022-02-22 20:22:22 UTC
+|   Success at 2022-02-22 20:22:22 UTC
+|
+| Query successful at 2022-02-22 20:22:22 UTC
+=================
+=== Query #1 ===
+| start_time: 2022-02-22 20:22:22 UTC
+| Non-speculative attempts:
+| - Attempt #0 sent to 127.0.0.1:19042
+|   request send time: 2022-02-22 20:22:22 UTC
+|   Success at 2022-02-22 20:22:22 UTC
+|
+| Query successful at 2022-02-22 20:22:22 UTC
+=================
+";
+        assert_eq!(displayed, format!("{}", set_one_time(history)));
+    }
+
+    #[tokio::test]
+    async fn successful_query_history() {
+        let uri = std::env::var("SCYLLA_URI").unwrap_or_else(|_| "127.0.0.1:9042".to_string());
+        let session = SessionBuilder::new().known_node(uri).build().await.unwrap();
+
+        let mut query = Query::new("SELECT * FROM system.local");
+        let history_collector = Arc::new(HistoryCollector::new());
+        query.set_history_listener(history_collector.clone());
+
+        session.query(query.clone(), ()).await.unwrap();
+
+        let history: StructuredHistory = history_collector.clone_structured_history();
+
+        let displayed = "Queries History:
+=== Query #0 ===
+| start_time: 2022-02-22 20:22:22 UTC
+| Non-speculative attempts:
+| - Attempt #0 sent to 127.0.0.1:19042
+|   request send time: 2022-02-22 20:22:22 UTC
+|   Success at 2022-02-22 20:22:22 UTC
+|
+| Query successful at 2022-02-22 20:22:22 UTC
+=================
+";
+        assert_eq!(
+            displayed,
+            format!(
+                "{}",
+                set_one_db_error_message(set_one_node(set_one_time(history)))
+            )
+        );
+
+        // Prepared queries retain the history listener set in Query.
+        let prepared = session.prepare(query).await.unwrap();
+        session.execute(&prepared, ()).await.unwrap();
+
+        let history2: StructuredHistory = history_collector.clone_structured_history();
+
+        let displayed2 = "Queries History:
+=== Query #0 ===
+| start_time: 2022-02-22 20:22:22 UTC
+| Non-speculative attempts:
+| - Attempt #0 sent to 127.0.0.1:19042
+|   request send time: 2022-02-22 20:22:22 UTC
+|   Success at 2022-02-22 20:22:22 UTC
+|
+| Query successful at 2022-02-22 20:22:22 UTC
+=================
+=== Query #1 ===
+| start_time: 2022-02-22 20:22:22 UTC
+| Non-speculative attempts:
+| - Attempt #0 sent to 127.0.0.1:19042
+|   request send time: 2022-02-22 20:22:22 UTC
+|   Success at 2022-02-22 20:22:22 UTC
+|
+| Query successful at 2022-02-22 20:22:22 UTC
+=================
+";
+        assert_eq!(
+            displayed2,
+            format!(
+                "{}",
+                set_one_db_error_message(set_one_node(set_one_time(history2)))
+            )
+        );
+    }
+
+    #[tokio::test]
+    async fn failed_query_history() {
+        let uri = std::env::var("SCYLLA_URI").unwrap_or_else(|_| "127.0.0.1:9042".to_string());
+        let session = SessionBuilder::new().known_node(uri).build().await.unwrap();
+
+        let mut query = Query::new("This isnt even CQL");
+        let history_collector = Arc::new(HistoryCollector::new());
+        query.set_history_listener(history_collector.clone());
+
+        assert!(session.query(query.clone(), ()).await.is_err());
+
+        let history: StructuredHistory = history_collector.clone_structured_history();
+
+        let displayed =
+"Queries History:
+=== Query #0 ===
+| start_time: 2022-02-22 20:22:22 UTC
+| Non-speculative attempts:
+| - Attempt #0 sent to 127.0.0.1:19042
+|   request send time: 2022-02-22 20:22:22 UTC
+|   Error at 2022-02-22 20:22:22 UTC
+|   Error: Database returned an error: The submitted query has a syntax error, Error message: Error message from database
+|   Retry decision: DontRetry
+|
+| Query failed at 2022-02-22 20:22:22 UTC
+| Error: Database returned an error: The submitted query has a syntax error, Error message: Error message from database
+=================
+";
+        assert_eq!(
+            displayed,
+            format!(
+                "{}",
+                set_one_db_error_message(set_one_node(set_one_time(history)))
+            )
+        );
+    }
+
+    #[tokio::test]
+    async fn iterator_query_history() {
+        let uri = std::env::var("SCYLLA_URI").unwrap_or_else(|_| "127.0.0.1:9042".to_string());
+        let session = SessionBuilder::new().known_node(uri).build().await.unwrap();
+        let ks = unique_keyspace_name();
+        session
+        .query(format!("CREATE KEYSPACE {} WITH REPLICATION = {{'class' : 'SimpleStrategy', 'replication_factor' : 1}}", ks), &[])
+        .await
+        .unwrap();
+        session.use_keyspace(ks, true).await.unwrap();
+
+        session
+            .query("CREATE TABLE t (p int primary key)", ())
+            .await
+            .unwrap();
+        for i in 0..32 {
+            session
+                .query("INSERT INTO t (p) VALUES (?)", (i,))
+                .await
+                .unwrap();
+        }
+
+        let mut iter_query: Query = Query::new("SELECT * FROM t");
+        iter_query.set_page_size(8);
+        let history_collector = Arc::new(HistoryCollector::new());
+        iter_query.set_history_listener(history_collector.clone());
+
+        let mut rows_iterator = session.query_iter(iter_query, ()).await.unwrap();
+        while let Some(_row) = rows_iterator.next().await {
+            // Receive rows...
+        }
+
+        let history = history_collector.clone_structured_history();
+
+        assert!(history.queries.len() >= 4);
+
+        let displayed_prefix = "Queries History:
+=== Query #0 ===
+| start_time: 2022-02-22 20:22:22 UTC
+| Non-speculative attempts:
+| - Attempt #0 sent to 127.0.0.1:19042
+|   request send time: 2022-02-22 20:22:22 UTC
+|   Success at 2022-02-22 20:22:22 UTC
+|
+| Query successful at 2022-02-22 20:22:22 UTC
+=================
+=== Query #1 ===
+| start_time: 2022-02-22 20:22:22 UTC
+| Non-speculative attempts:
+| - Attempt #0 sent to 127.0.0.1:19042
+|   request send time: 2022-02-22 20:22:22 UTC
+|   Success at 2022-02-22 20:22:22 UTC
+|
+| Query successful at 2022-02-22 20:22:22 UTC
+=================
+=== Query #2 ===
+| start_time: 2022-02-22 20:22:22 UTC
+| Non-speculative attempts:
+| - Attempt #0 sent to 127.0.0.1:19042
+|   request send time: 2022-02-22 20:22:22 UTC
+|   Success at 2022-02-22 20:22:22 UTC
+|
+| Query successful at 2022-02-22 20:22:22 UTC
+=================
+=== Query #3 ===
+| start_time: 2022-02-22 20:22:22 UTC
+| Non-speculative attempts:
+| - Attempt #0 sent to 127.0.0.1:19042
+|   request send time: 2022-02-22 20:22:22 UTC
+|   Success at 2022-02-22 20:22:22 UTC
+|
+| Query successful at 2022-02-22 20:22:22 UTC
+=================
+";
+        let displayed_str = format!(
+            "{}",
+            set_one_db_error_message(set_one_node(set_one_time(history)))
+        );
+
+        assert!(displayed_str.starts_with(displayed_prefix),);
+    }
+}
