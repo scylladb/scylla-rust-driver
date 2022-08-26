@@ -1264,7 +1264,9 @@ impl Session {
     pub fn estimate_replicas_for_query(&self, statement: &Statement) -> Vec<Arc<Node>> {
         let cluster_data = self.cluster.get_data();
         match statement.token {
-            Some(token) => TokenAwarePolicy::replicas_for_token(&token, statement, &cluster_data),
+            Some(token) => {
+                TokenAwarePolicy::replicas_for_token(&cluster_data, &token, statement.keyspace)
+            }
             None => cluster_data.all_nodes.clone(),
         }
     }

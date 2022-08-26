@@ -1,7 +1,7 @@
 /// Cluster manages up to date information and connections to database nodes
 use crate::frame::response::event::{Event, StatusChangeEvent};
 use crate::frame::value::ValueList;
-use crate::load_balancing::{Statement, TokenAwarePolicy};
+use crate::load_balancing::TokenAwarePolicy;
 use crate::routing::Token;
 use crate::transport::{
     connection::{Connection, VerifiedKeyspaceName},
@@ -397,14 +397,7 @@ impl ClusterData {
 
     /// Access to replicas owning a given token
     pub fn get_token_endpoints(&self, keyspace: &str, token: Token) -> Vec<Arc<Node>> {
-        TokenAwarePolicy::replicas_for_token(
-            &token,
-            &Statement {
-                keyspace: Some(keyspace),
-                token: Some(token),
-            },
-            self,
-        )
+        TokenAwarePolicy::replicas_for_token(self, &token, Some(keyspace))
     }
 
     /// Access to replicas owning a given partition key (similar to `nodetool getendpoints`)
