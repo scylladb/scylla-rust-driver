@@ -292,3 +292,417 @@ impl<'a> Iterator for IteratorWithSkippedNodes<'a> {
             .or_else(|| self.penalised_nodes.next())
     }
 }
+
+#[cfg(test)]
+pub use tests::latency_aware_without_round_robin;
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    use crate::{
+        load_balancing::tests::DumbPolicy,
+        transport::{load_balancing::tests, node::TimestampedAverage},
+    };
+    use std::{collections::HashSet, time::Instant};
+
+    pub fn latency_aware_without_round_robin() -> LatencyAwarePolicy {
+        LatencyAwarePolicy::new(
+            2_f64,
+            Duration::from_secs(10),
+            Duration::from_millis(100),
+            50,
+            Box::new(DumbPolicy {}),
+        )
+    }
+
+    #[tokio::test]
+    async fn latency_aware_policy_is_noop_if_no_latency_info_available_yet() {
+        let policy = latency_aware_without_round_robin();
+        let cluster = tests::mock_cluster_data_for_round_robin_and_latency_aware_tests();
+
+        let plans = (0..16)
+            .map(|_| {
+                tests::get_plan_and_collect_node_identifiers(
+                    &policy,
+                    &tests::EMPTY_STATEMENT,
+                    &cluster,
+                )
+            })
+            .collect::<HashSet<_>>();
+
+        let expected_plans = vec![vec![1, 2, 3, 4, 5]]
+            .into_iter()
+            .collect::<HashSet<Vec<_>>>();
+
+        assert_eq!(expected_plans, plans);
+    }
+
+    #[tokio::test]
+    async fn latency_aware_policy_does_not_penalise_if_not_enough_measurements() {
+        let policy = latency_aware_without_round_robin();
+        let mut cluster = tests::mock_cluster_data_for_round_robin_and_latency_aware_tests();
+
+        let min_avg = Duration::from_millis(10);
+
+        tests::set_nodes_latency_stats(
+            &mut cluster,
+            &[
+                (
+                    1,
+                    Some(TimestampedAverage {
+                        timestamp: Instant::now(),
+                        average: Duration::from_secs_f64(
+                            policy.exclusion_threshold * 1.5 * min_avg.as_secs_f64(),
+                        ),
+                        num_measures: policy.minimum_measurements - 1,
+                    }),
+                ),
+                (
+                    3,
+                    Some(TimestampedAverage {
+                        timestamp: Instant::now(),
+                        average: min_avg,
+                        num_measures: policy.minimum_measurements,
+                    }),
+                ),
+            ],
+        );
+
+        let plans = (0..16)
+            .map(|_| {
+                tests::get_plan_and_collect_node_identifiers(
+                    &policy,
+                    &tests::EMPTY_STATEMENT,
+                    &cluster,
+                )
+            })
+            .collect::<HashSet<_>>();
+
+        let expected_plans = vec![vec![1, 2, 3, 4, 5]]
+            .into_iter()
+            .collect::<HashSet<Vec<_>>>();
+
+        assert_eq!(expected_plans, plans);
+    }
+
+    #[tokio::test]
+    async fn latency_aware_policy_does_not_penalise_if_exclusion_threshold_not_crossed() {
+        let policy = latency_aware_without_round_robin();
+        let mut cluster = tests::mock_cluster_data_for_round_robin_and_latency_aware_tests();
+
+        let min_avg = Duration::from_millis(10);
+
+        tests::set_nodes_latency_stats(
+            &mut cluster,
+            &[
+                (
+                    1,
+                    Some(TimestampedAverage {
+                        timestamp: Instant::now(),
+                        average: Duration::from_secs_f64(
+                            policy.exclusion_threshold * 0.95 * min_avg.as_secs_f64(),
+                        ),
+                        num_measures: policy.minimum_measurements,
+                    }),
+                ),
+                (
+                    3,
+                    Some(TimestampedAverage {
+                        timestamp: Instant::now(),
+                        average: min_avg,
+                        num_measures: policy.minimum_measurements,
+                    }),
+                ),
+            ],
+        );
+
+        let plans = (0..16)
+            .map(|_| {
+                tests::get_plan_and_collect_node_identifiers(
+                    &policy,
+                    &tests::EMPTY_STATEMENT,
+                    &cluster,
+                )
+            })
+            .collect::<HashSet<_>>();
+
+        let expected_plans = vec![vec![1, 2, 3, 4, 5]]
+            .into_iter()
+            .collect::<HashSet<Vec<_>>>();
+
+        assert_eq!(expected_plans, plans);
+    }
+
+    #[tokio::test]
+    async fn latency_aware_policy_does_not_penalise_if_retry_period_expired() {
+        let policy = LatencyAwarePolicy::new(
+            2.,
+            Duration::from_millis(10),
+            Duration::from_millis(10),
+            20,
+            Box::new(DumbPolicy {}),
+        );
+        let mut cluster = tests::mock_cluster_data_for_round_robin_and_latency_aware_tests();
+
+        let min_avg = Duration::from_millis(10);
+
+        tests::set_nodes_latency_stats(
+            &mut cluster,
+            &[
+                (
+                    1,
+                    Some(TimestampedAverage {
+                        timestamp: Instant::now(),
+                        average: Duration::from_secs_f64(
+                            policy.exclusion_threshold * 1.5 * min_avg.as_secs_f64(),
+                        ),
+                        num_measures: policy.minimum_measurements,
+                    }),
+                ),
+                (
+                    3,
+                    Some(TimestampedAverage {
+                        timestamp: Instant::now(),
+                        average: min_avg,
+                        num_measures: policy.minimum_measurements,
+                    }),
+                ),
+            ],
+        );
+
+        tokio::time::sleep(2 * policy.retry_period).await;
+
+        let plans = (0..16)
+            .map(|_| {
+                tests::get_plan_and_collect_node_identifiers(
+                    &policy,
+                    &tests::EMPTY_STATEMENT,
+                    &cluster,
+                )
+            })
+            .collect::<HashSet<_>>();
+
+        let expected_plans = vec![vec![1, 2, 3, 4, 5]]
+            .into_iter()
+            .collect::<HashSet<Vec<_>>>();
+
+        assert_eq!(expected_plans, plans);
+    }
+
+    #[tokio::test]
+    async fn latency_aware_policy_penalises_if_conditions_met() {
+        let policy = latency_aware_without_round_robin();
+        let mut cluster = tests::mock_cluster_data_for_round_robin_and_latency_aware_tests();
+
+        let min_avg = Duration::from_millis(10);
+
+        tests::set_nodes_latency_stats(
+            &mut cluster,
+            &[
+                (
+                    1,
+                    Some(TimestampedAverage {
+                        timestamp: Instant::now(),
+                        average: Duration::from_secs_f64(
+                            policy.exclusion_threshold * 1.05 * min_avg.as_secs_f64(),
+                        ),
+                        num_measures: policy.minimum_measurements,
+                    }),
+                ),
+                (
+                    3,
+                    Some(TimestampedAverage {
+                        timestamp: Instant::now(),
+                        average: min_avg,
+                        num_measures: policy.minimum_measurements,
+                    }),
+                ),
+            ],
+        );
+
+        // Await last min average updater.
+        policy.refresh_last_min_avg_nodes(&cluster.all_nodes);
+        tokio::time::sleep(policy.update_rate).await;
+
+        let plans = (0..16)
+            .map(|_| {
+                tests::get_plan_and_collect_node_identifiers(
+                    &policy,
+                    &tests::EMPTY_STATEMENT,
+                    &cluster,
+                )
+            })
+            .collect::<HashSet<_>>();
+
+        let expected_plans = vec![vec![2, 3, 4, 5, 1]]
+            .into_iter()
+            .collect::<HashSet<Vec<_>>>();
+
+        assert_eq!(expected_plans, plans);
+    }
+
+    #[tokio::test]
+    async fn latency_aware_policy_by_default_performs_round_robin() {
+        let policy = LatencyAwarePolicy::default();
+        let mut cluster = tests::mock_cluster_data_for_round_robin_and_latency_aware_tests();
+
+        let min_avg = Duration::from_millis(10);
+
+        tests::set_nodes_latency_stats(
+            &mut cluster,
+            &[
+                (
+                    1,
+                    Some(TimestampedAverage {
+                        timestamp: Instant::now(),
+                        average: Duration::from_secs_f64(
+                            policy.exclusion_threshold * 1.05 * min_avg.as_secs_f64(),
+                        ),
+                        num_measures: policy.minimum_measurements,
+                    }),
+                ),
+                (
+                    3,
+                    Some(TimestampedAverage {
+                        timestamp: Instant::now(),
+                        average: min_avg,
+                        num_measures: policy.minimum_measurements,
+                    }),
+                ),
+            ],
+        );
+
+        // Await last min average updater.
+        policy.refresh_last_min_avg_nodes(&cluster.all_nodes);
+        tokio::time::sleep(policy.update_rate).await;
+
+        let plans = (0..16)
+            .map(|_| {
+                tests::get_plan_and_collect_node_identifiers(
+                    &policy,
+                    &tests::EMPTY_STATEMENT,
+                    &cluster,
+                )
+            })
+            .collect::<HashSet<_>>();
+
+        let expected_plans = vec![
+            vec![2, 3, 4, 5, 1],
+            vec![3, 4, 5, 2, 1],
+            vec![4, 5, 2, 3, 1],
+            vec![5, 2, 3, 4, 1],
+        ]
+        .into_iter()
+        .collect::<HashSet<Vec<_>>>();
+
+        assert_eq!(expected_plans, plans);
+    }
+
+    #[tokio::test]
+    async fn latency_aware_policy_stops_penalising_after_min_average_increases_enough_only_after_update_rate_elapses(
+    ) {
+        let policy = latency_aware_without_round_robin();
+        let mut cluster = tests::mock_cluster_data_for_round_robin_and_latency_aware_tests();
+
+        let min_avg = Duration::from_millis(10);
+
+        {
+            // min_avg is low enough to penalise node 1
+            tests::set_nodes_latency_stats(
+                &mut cluster,
+                &[
+                    (
+                        1,
+                        Some(TimestampedAverage {
+                            timestamp: Instant::now(),
+                            average: Duration::from_secs_f64(
+                                policy.exclusion_threshold * 1.05 * min_avg.as_secs_f64(),
+                            ),
+                            num_measures: policy.minimum_measurements,
+                        }),
+                    ),
+                    (
+                        3,
+                        Some(TimestampedAverage {
+                            timestamp: Instant::now(),
+                            average: min_avg,
+                            num_measures: policy.minimum_measurements,
+                        }),
+                    ),
+                ],
+            );
+
+            // Await last min average updater.
+            policy.refresh_last_min_avg_nodes(&cluster.all_nodes);
+            tokio::time::sleep(policy.update_rate).await;
+
+            let plans = (0..16)
+                .map(|_| {
+                    tests::get_plan_and_collect_node_identifiers(
+                        &policy,
+                        &tests::EMPTY_STATEMENT,
+                        &cluster,
+                    )
+                })
+                .collect::<HashSet<_>>();
+
+            let expected_plans = vec![vec![2, 3, 4, 5, 1]]
+                .into_iter()
+                .collect::<HashSet<Vec<_>>>();
+
+            assert_eq!(expected_plans, plans);
+        }
+        // node 3 becomes as slow as node 1
+        tests::set_nodes_latency_stats(
+            &mut cluster,
+            &[(
+                3,
+                Some(TimestampedAverage {
+                    timestamp: Instant::now(),
+                    average: Duration::from_secs_f64(
+                        policy.exclusion_threshold * min_avg.as_secs_f64(),
+                    ),
+                    num_measures: policy.minimum_measurements,
+                }),
+            )],
+        );
+        {
+            // min_avg is still low, because update_rate has not elapsed yet
+            let plans = (0..16)
+                .map(|_| {
+                    tests::get_plan_and_collect_node_identifiers(
+                        &policy,
+                        &tests::EMPTY_STATEMENT,
+                        &cluster,
+                    )
+                })
+                .collect::<HashSet<_>>();
+
+            let expected_plans = vec![vec![2, 3, 4, 5, 1]]
+                .into_iter()
+                .collect::<HashSet<Vec<_>>>();
+
+            assert_eq!(expected_plans, plans);
+        }
+
+        tokio::time::sleep(policy.update_rate).await;
+        {
+            // min_avg has been updated and is already high enough to stop penalising node 1
+            let plans = (0..16)
+                .map(|_| {
+                    tests::get_plan_and_collect_node_identifiers(
+                        &policy,
+                        &tests::EMPTY_STATEMENT,
+                        &cluster,
+                    )
+                })
+                .collect::<HashSet<_>>();
+
+            let expected_plans = vec![vec![1, 2, 3, 4, 5]]
+                .into_iter()
+                .collect::<HashSet<Vec<_>>>();
+
+            assert_eq!(expected_plans, plans);
+        }
+    }
+}

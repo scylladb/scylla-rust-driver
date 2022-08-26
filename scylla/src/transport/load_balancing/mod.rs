@@ -105,8 +105,11 @@ fn slice_rotated_left<T>(slice: &[T], mid: usize) -> impl Iterator<Item = &T> + 
 mod tests {
     use super::*;
 
+    use crate::transport::node::TimestampedAverage;
+    use crate::transport::topology::Keyspace;
     use crate::transport::topology::Metadata;
     use crate::transport::topology::Peer;
+    use crate::transport::topology::Strategy;
     use std::collections::HashMap;
     use std::net::SocketAddr;
 
@@ -170,7 +173,7 @@ mod tests {
 
     // creates ClusterData with info about 5 nodes living in 2 different datacenters
     // ring field is empty
-    pub fn mock_cluster_data_for_round_robin_tests() -> ClusterData {
+    pub fn mock_cluster_data_for_round_robin_and_latency_aware_tests() -> ClusterData {
         let peers = [("eu", 1), ("eu", 2), ("eu", 3), ("us", 4), ("us", 5)]
             .iter()
             .map(|(dc, id)| Peer {
@@ -202,5 +205,93 @@ mod tests {
     ) -> Vec<u16> {
         let plan = policy.plan(statement, cluster);
         plan.map(|node| node.address.port()).collect::<Vec<_>>()
+    }
+
+    pub fn set_nodes_latency_stats(
+        cluster: &mut ClusterData,
+        averages: &[(u16, Option<TimestampedAverage>)],
+    ) {
+        for (id, average) in averages {
+            *cluster
+                .known_peers
+                .get_mut(&tests::id_to_invalid_addr(*id))
+                .unwrap()
+                .average_latency
+                .write()
+                .unwrap() = *average;
+        }
+    }
+
+    // creates ClusterData with info about 3 nodes living in the same datacenter
+    // ring field is populated as follows:
+    // ring tokens:            50 100 150 200 250 300 400 500
+    // corresponding node ids: 2  1   2   3   1   2   3   1
+    pub fn mock_cluster_data_for_token_aware_tests() -> ClusterData {
+        let peers = [
+            Peer {
+                datacenter: Some("eu".into()),
+                rack: None,
+                address: tests::id_to_invalid_addr(1),
+                tokens: vec![
+                    Token { value: 100 },
+                    Token { value: 250 },
+                    Token { value: 500 },
+                ],
+                untranslated_address: None,
+            },
+            Peer {
+                datacenter: Some("eu".into()),
+                rack: None,
+                address: tests::id_to_invalid_addr(2),
+                tokens: vec![
+                    Token { value: 50 },
+                    Token { value: 150 },
+                    Token { value: 300 },
+                ],
+                untranslated_address: None,
+            },
+            Peer {
+                datacenter: Some("us".into()),
+                rack: None,
+                address: tests::id_to_invalid_addr(3),
+                tokens: vec![Token { value: 200 }, Token { value: 400 }],
+                untranslated_address: None,
+            },
+        ];
+
+        let keyspaces = [
+            (
+                "keyspace_with_simple_strategy_replication_factor_2".into(),
+                Keyspace {
+                    strategy: Strategy::SimpleStrategy {
+                        replication_factor: 2,
+                    },
+                    tables: HashMap::new(),
+                    views: HashMap::new(),
+                    user_defined_types: HashMap::new(),
+                },
+            ),
+            (
+                "keyspace_with_simple_strategy_replication_factor_3".into(),
+                Keyspace {
+                    strategy: Strategy::SimpleStrategy {
+                        replication_factor: 3,
+                    },
+                    tables: HashMap::new(),
+                    views: HashMap::new(),
+                    user_defined_types: HashMap::new(),
+                },
+            ),
+        ]
+        .iter()
+        .cloned()
+        .collect();
+
+        let info = Metadata {
+            peers: Vec::from(peers),
+            keyspaces,
+        };
+
+        ClusterData::new(info, &Default::default(), &HashMap::new(), &None, None)
     }
 }
