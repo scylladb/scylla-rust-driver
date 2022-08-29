@@ -435,12 +435,8 @@ impl Connection {
         Ok(prepared_statement)
     }
 
-    async fn reprepare(
-        &self,
-        query: impl Into<Query>,
-        previous_prepared: &PreparedStatement,
-    ) -> Result<(), QueryError> {
-        let reprepare_query: Query = query.into();
+    async fn reprepare(&self, previous_prepared: &PreparedStatement) -> Result<(), QueryError> {
+        let reprepare_query: Query = previous_prepared.get_statement().into();
         let reprepared = self.prepare(&reprepare_query).await?;
         // Reprepared statement should keep its id - it's the md5 sum
         // of statement contents
@@ -574,8 +570,7 @@ impl Connection {
             }) => {
                 debug!("Connection::execute: Got DbError::Unprepared - repreparing statement with id {:?}", statement_id);
                 // Repreparation of a statement is needed
-                self.reprepare(prepared_statement.get_statement(), prepared_statement)
-                    .await?;
+                self.reprepare(prepared_statement).await?;
                 self.send_request(&execute_frame, true, prepared_statement.config.tracing)
                     .await
             }
@@ -664,7 +659,7 @@ impl Connection {
                             _ => None,
                         });
                         if let Some(p) = prepared_statement {
-                            self.reprepare(p.get_statement(), p).await?;
+                            self.reprepare(p).await?;
                             continue;
                         } else {
                             return Err(QueryError::ProtocolError(
