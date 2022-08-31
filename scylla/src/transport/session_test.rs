@@ -2087,10 +2087,19 @@ async fn test_views_in_schema_info() {
         .views
         .keys()
         .collect::<std::collections::HashSet<&String>>();
+    let views_base_table = keyspace_meta
+        .views
+        .values()
+        .map(|view_meta| &view_meta.base_table_name)
+        .collect::<std::collections::HashSet<&String>>();
 
     assert_eq!(tables, std::collections::HashSet::from([&"t".to_string()]));
     assert_eq!(
         views,
         std::collections::HashSet::from([&"mv1".to_string(), &"mv2".to_string()])
     );
+    assert_eq!(
+        views_base_table,
+        std::collections::HashSet::from([&"t".to_string()])
+    )
 }

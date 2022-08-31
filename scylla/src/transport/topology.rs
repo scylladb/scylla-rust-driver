@@ -53,7 +53,7 @@ pub struct Keyspace {
     /// Empty HashMap may as well mean that the client disabled schema fetching in SessionConfig
     pub tables: HashMap<String, Table>,
     /// Empty HashMap may as well mean that the client disabled schema fetching in SessionConfig
-    pub views: HashMap<String, Table>,
+    pub views: HashMap<String, MaterializedView>,
     /// Empty HashMap may as well mean that the client disabled schema fetching in SessionConfig
     pub user_defined_types: HashMap<String, Vec<(String, CqlType)>>,
 }
@@ -64,6 +64,12 @@ pub struct Table {
     pub partition_key: Vec<String>,
     pub clustering_key: Vec<String>,
     pub partitioner: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct MaterializedView {
+    pub view_metadata: Table,
+    pub base_table_name: String,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -464,16 +470,8 @@ async fn query_keyspaces(
     let mut result = HashMap::with_capacity(rows.len());
     let (mut all_tables, mut all_views, mut all_user_defined_types) = if fetch_schema {
         (
-            query_tables(
-                conn,
-                "SELECT keyspace_name, table_name FROM system_schema.tables",
-            )
-            .await?,
-            query_tables(
-                conn,
-                "SELECT keyspace_name, view_name FROM system_schema.views",
-            )
-            .await?,
+            query_tables(conn).await?,
+            query_views(conn).await?,
             query_user_defined_types(conn).await?,
         )
     } else {
@@ -546,9 +544,8 @@ async fn query_user_defined_types(
 
 async fn query_tables(
     conn: &Connection,
-    query_str: impl Into<String>,
 ) -> Result<HashMap<String, HashMap<String, Table>>, QueryError> {
-    let mut tables_query = Query::new(query_str.into());
+    let mut tables_query = Query::new("SELECT keyspace_name, table_name FROM system_schema.tables");
     tables_query.set_page_size(1024);
 
     let rows = conn
@@ -580,6 +577,51 @@ async fn query_tables(
             .entry(keyspace_and_table_name.0)
             .or_insert_with(HashMap::new)
             .insert(keyspace_and_table_name.1, table);
+    }
+
+    Ok(result)
+}
+
+async fn query_views(
+    conn: &Connection,
+) -> Result<HashMap<String, HashMap<String, MaterializedView>>, QueryError> {
+    let mut views_query =
+        Query::new("SELECT keyspace_name, view_name, base_table_name FROM system_schema.views");
+    views_query.set_page_size(1024);
+
+    let rows = conn
+        .query_all(&views_query, &[])
+        .await?
+        .rows
+        .ok_or(QueryError::ProtocolError(
+            "system_schema.views query response was not Rows",
+        ))?;
+
+    let mut result = HashMap::with_capacity(rows.len());
+    let mut tables = query_tables_schema(conn).await?;
+
+    for row in rows.into_typed::<(String, String, String)>() {
+        let (keyspace_name, view_name, base_table_name) = row.map_err(|_| {
+            QueryError::ProtocolError("system_schema.views has invalid column type")
+        })?;
+
+        let keyspace_and_view_name = (keyspace_name, view_name);
+
+        let table = tables.remove(&keyspace_and_view_name).unwrap_or(Table {
+            columns: HashMap::new(),
+            partition_key: vec![],
+            clustering_key: vec![],
+            partitioner: None,
+        });
+        let materialized_view = MaterializedView {
+            view_metadata: table,
+            base_table_name,
+        };
+
+        result
+            .entry(keyspace_and_view_name.0)
+            .or_insert_with(HashMap::new)
+            .insert(keyspace_and_view_name.1, materialized_view);
     }
 
     Ok(result)
