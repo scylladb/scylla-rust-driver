@@ -453,6 +453,22 @@ impl From<&str> for WriteType {
     }
 }
 
+impl WriteType {
+    pub fn as_str(&self) -> &str {
+        match self {
+            WriteType::Simple => "SIMPLE",
+            WriteType::Batch => "BATCH",
+            WriteType::UnloggedBatch => "UNLOGGED_BATCH",
+            WriteType::Counter => "COUNTER",
+            WriteType::BatchLog => "BATCH_LOG",
+            WriteType::Cas => "CAS",
+            WriteType::View => "VIEW",
+            WriteType::Cdc => "CDC",
+            WriteType::Other(write_type) => write_type.as_str(),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::{DbError, QueryError, WriteType};
