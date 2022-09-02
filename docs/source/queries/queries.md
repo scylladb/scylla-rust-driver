@@ -35,4 +35,5 @@ Queries are fully asynchronous - you can run as many of them in parallel as you 
    usekeyspace
    schema_agreement
    lwt
+   timeouts
 ```
