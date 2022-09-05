@@ -1,4 +1,5 @@
 use bytes::Bytes;
+use futures::future::try_join_all;
 use futures::{future::RemoteHandle, FutureExt};
 use tokio::io::{split, AsyncRead, AsyncWrite, AsyncWriteExt, BufReader, BufWriter};
 use tokio::net::{TcpSocket, TcpStream};
@@ -354,6 +355,24 @@ impl Connection {
         Ok(prepared_statement)
     }
 
+    async fn reprepare(
+        &self,
+        query: impl Into<Query>,
+        previous_prepared: &PreparedStatement,
+    ) -> Result<(), QueryError> {
+        let reprepare_query: Query = query.into();
+        let reprepared = self.prepare(&reprepare_query).await?;
+        // Reprepared statement should keep its id - it's the md5 sum
+        // of statement contents
+        if reprepared.get_id() != previous_prepared.get_id() {
+            Err(QueryError::ProtocolError(
+                "Prepared statement Id changed, md5 sum should stay the same",
+            ))
+        } else {
+            Ok(())
+        }
+    }
+
     pub async fn authenticate_response(
         &self,
         username: Option<String>,
@@ -550,27 +569,20 @@ impl Connection {
             .send_request(&execute_frame, true, prepared_statement.config.tracing)
             .await?;
 
-        if let Response::Error(err) = &query_response.response {
-            if let DbError::Unprepared { statement_id } = &err.error {
+        match &query_response.response {
+            Response::Error(frame::response::Error {
+                error: DbError::Unprepared { statement_id },
+                ..
+            }) => {
                 debug!("Connection::execute: Got DbError::Unprepared - repreparing statement with id {:?}", statement_id);
                 // Repreparation of a statement is needed
-                let reprepare_query: Query = prepared_statement.get_statement().into();
-                let reprepared = self.prepare(&reprepare_query).await?;
-                // Reprepared statement should keep its id - it's the md5 sum
-                // of statement contents
-                if reprepared.get_id() != prepared_statement.get_id() {
-                    return Err(QueryError::ProtocolError(
-                        "Prepared statement Id changed, md5 sum should stay the same",
-                    ));
-                }
-
-                return self
-                    .send_request(&execute_frame, true, prepared_statement.config.tracing)
-                    .await;
+                self.reprepare(prepared_statement.get_statement(), prepared_statement)
+                    .await?;
+                self.send_request(&execute_frame, true, prepared_statement.config.tracing)
+                    .await
             }
+            _ => Ok(query_response),
         }
-
-        Ok(query_response)
     }
 
     /// Performs execute_single_page multiple times to fetch all available pages
@@ -657,46 +669,54 @@ impl Connection {
             timestamp: batch.get_timestamp(),
         };
 
-        loop {
-            let query_response = self
-                .send_request(&batch_frame, true, batch.config.tracing)
-                .await?;
+        let query_response = self
+            .send_request(&batch_frame, true, batch.config.tracing)
+            .await?;
 
-            return match query_response.response {
-                Response::Error(err) => match err.error {
-                    DbError::Unprepared { statement_id } => {
-                        debug!("Connection::batch: got DbError::Unprepared - repreparing statement with id {:?}", statement_id);
-                        let prepared_statement = batch.statements.iter().find_map(|s| match s {
-                            BatchStatement::PreparedStatement(s) if *s.get_id() == statement_id => {
-                                Some(s)
-                            }
+        match query_response.response {
+            Response::Result(_) => Ok(BatchResult {
+                warnings: query_response.warnings,
+                tracing_id: query_response.tracing_id,
+            }),
+            Response::Error(err) => match err.error {
+                DbError::Unprepared { .. } => {
+                    debug!("Connection::batch: got DbError::Unprepared - repreparing all statements in the batch");
+
+                    let reprepares_futures = batch
+                        .statements
+                        .iter()
+                        .filter_map(|s| match s {
+                            BatchStatement::PreparedStatement(s) => Some(s),
                             _ => None,
+                        })
+                        .map(|prepared_statement| {
+                            // Speculatively reprepare all prepared statements in the batch, as it is likely that once
+                            // one of them got unprepared, the other got unprepared too (e.g. due to a schema change).
+                            self.reprepare(prepared_statement.get_statement(), prepared_statement)
                         });
-                        if let Some(p) = prepared_statement {
-                            let reprepare_query: Query = p.get_statement().into();
-                            let reprepared = self.prepare(&reprepare_query).await?;
-                            if reprepared.get_id() != p.get_id() {
-                                return Err(QueryError::ProtocolError(
-                                    "Prepared statement Id changed, md5 sum should stay the same",
-                                ));
-                            }
-                            continue;
-                        } else {
-                            return Err(QueryError::ProtocolError(
-                                "The server returned a prepared statement Id that did not exist in the batch",
-                            ));
-                        }
+
+                    try_join_all(reprepares_futures).await?;
+
+                    // Second try - now all statements ought to be prepared.
+                    let query_response = self
+                        .send_request(&batch_frame, true, batch.config.tracing)
+                        .await?;
+                    match query_response.response {
+                        Response::Result(_) => Ok(BatchResult {
+                            warnings: query_response.warnings,
+                            tracing_id: query_response.tracing_id,
+                        }),
+                        Response::Error(err) => Err(err.into()),
+                        _ => Err(QueryError::ProtocolError(
+                            "BATCH: Unexpected server response",
+                        )),
                     }
-                    _ => Err(err.into()),
-                },
-                Response::Result(_) => Ok(BatchResult {
-                    warnings: query_response.warnings,
-                    tracing_id: query_response.tracing_id,
-                }),
-                _ => Err(QueryError::ProtocolError(
-                    "BATCH: Unexpected server response",
-                )),
-            };
+                }
+                _ => Err(err.into()),
+            },
+            _ => Err(QueryError::ProtocolError(
+                "BATCH: Unexpected server response",
+            )),
         }
     }
 
