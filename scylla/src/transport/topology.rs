@@ -42,9 +42,15 @@ pub struct Metadata {
 
 pub struct Peer {
     pub address: SocketAddr,
+    pub untranslated_address: Option<SocketAddr>,
     pub tokens: Vec<Token>,
     pub datacenter: Option<String>,
     pub rack: Option<String>,
+}
+
+#[non_exhaustive] // <- so that we can add more fields in a backwards-compatible way
+pub struct UntranslatedPeer {
+    pub untranslated_address: SocketAddr,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -188,6 +194,7 @@ impl Metadata {
                     }],
                     datacenter: None,
                     rack: None,
+                    untranslated_address: None,
                 }
             })
             .collect();
@@ -445,6 +452,7 @@ async fn query_peers(conn: &Connection, connect_port: u16) -> Result<Vec<Peer>, 
             tokens,
             datacenter,
             rack,
+            untranslated_address: Some(address),
         });
     }
 
