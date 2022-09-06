@@ -4,12 +4,15 @@
 use crate::frame::types::LegacyConsistency;
 use crate::history;
 use crate::history::HistoryListener;
+use async_trait::async_trait;
 use bytes::Bytes;
 use futures::future::join_all;
 use futures::future::try_join_all;
 use scylla_cql::frame::response::NonErrorResponse;
+use std::collections::HashMap;
 use std::future::Future;
 use std::net::SocketAddr;
+use std::str::FromStr;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::net::lookup_host;
@@ -20,6 +23,7 @@ use uuid::Uuid;
 use super::connection::NonErrorQueryResponse;
 use super::connection::QueryResponse;
 use super::errors::{BadQuery, NewSessionError, QueryError};
+use super::topology::UntranslatedPeer;
 use crate::cql_to_rust::FromRow;
 use crate::frame::response::cql_to_rust::FromRowError;
 use crate::frame::response::result;
@@ -56,6 +60,53 @@ pub use crate::transport::connection_pool::PoolSize;
 
 #[cfg(feature = "ssl")]
 use openssl::ssl::SslContext;
+
+#[derive(Debug, Copy, Clone)]
+pub enum TranslationError {
+    NoRuleForAddress,
+    InvalidAddressInRule,
+}
+
+#[async_trait]
+pub trait AddressTranslator: Send + Sync {
+    async fn translate_address(
+        &self,
+        untranslated_peer: &UntranslatedPeer,
+    ) -> Result<SocketAddr, TranslationError>;
+}
+
+#[async_trait]
+impl AddressTranslator for HashMap<SocketAddr, SocketAddr> {
+    async fn translate_address(
+        &self,
+        untranslated_peer: &UntranslatedPeer,
+    ) -> Result<SocketAddr, TranslationError> {
+        match self.get(&untranslated_peer.untranslated_address) {
+            Some(&translated_addr) => Ok(translated_addr),
+            None => Err(TranslationError::NoRuleForAddress),
+        }
+    }
+}
+
+#[async_trait]
+// Notice: this is unefficient, but what else can we do with such poor representation as str?
+// After all, the cluster size is small enough to make this irrelevant.
+impl AddressTranslator for HashMap<&'static str, &'static str> {
+    async fn translate_address(
+        &self,
+        untranslated_peer: &UntranslatedPeer,
+    ) -> Result<SocketAddr, TranslationError> {
+        for (&rule_addr_str, &translated_addr_str) in self.iter() {
+            if let Ok(rule_addr) = SocketAddr::from_str(rule_addr_str) {
+                if rule_addr == untranslated_peer.untranslated_address {
+                    return SocketAddr::from_str(translated_addr_str)
+                        .map_err(|_| TranslationError::InvalidAddressInRule);
+                }
+            }
+        }
+        Err(TranslationError::NoRuleForAddress)
+    }
+}
 
 /// `Session` manages connections to the cluster and allows to perform queries
 pub struct Session {
