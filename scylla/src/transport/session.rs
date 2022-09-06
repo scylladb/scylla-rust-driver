@@ -50,7 +50,10 @@ use crate::transport::retry_policy::{
 use crate::transport::speculative_execution;
 use crate::transport::speculative_execution::SpeculativeExecutionPolicy;
 use crate::transport::Compression;
-use crate::{batch::Batch, statement::StatementConfig};
+use crate::{
+    batch::{Batch, BatchStatement},
+    statement::StatementConfig,
+};
 
 pub use crate::transport::connection_pool::PoolSize;
 
@@ -962,6 +965,53 @@ impl Session {
             },
             RunQueryResult::Completed(response) => response,
         })
+    }
+
+    /// Prepares all statements within the batch and returns a new batch where every
+    /// statement is prepared.
+    /// /// # Example
+    /// ```rust
+    /// # extern crate scylla;
+    /// # use scylla::Session;
+    /// # use std::error::Error;
+    /// # async fn check_only_compiles(session: &Session) -> Result<(), Box<dyn Error>> {
+    /// use scylla::batch::Batch;
+    ///
+    /// // Create a batch statement with unprepared statements
+    /// let mut batch: Batch = Default::default();
+    /// batch.append_statement("INSERT INTO ks.simple_unprepared1 VALUES(?, ?)");
+    /// batch.append_statement("INSERT INTO ks.simple_unprepared2 VALUES(?, ?)");
+    ///
+    /// // Prepare all statements in the batch at once
+    /// let prepared_batch: Batch = session.prepare_batch(&batch).await?;
+    ///
+    /// // Specify bound values to use with each query
+    /// let batch_values = ((1_i32, 2_i32),
+    ///                     (3_i32, 4_i32));
+    ///
+    /// // Run the prepared batch
+    /// session.batch(&prepared_batch, batch_values).await?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub async fn prepare_batch(&self, batch: &Batch) -> Result<Batch, QueryError> {
+        let mut prepared_batch = batch.clone();
+
+        try_join_all(
+            prepared_batch
+                .statements
+                .iter_mut()
+                .map(|statement| async move {
+                    if let BatchStatement::Query(query) = statement {
+                        let prepared = self.prepare(query.clone()).await?;
+                        *statement = BatchStatement::PreparedStatement(prepared);
+                    }
+                    Ok::<(), QueryError>(())
+                }),
+        )
+        .await?;
+
+        Ok(prepared_batch)
     }
 
     /// Sends `USE <keyspace_name>` request on all connections\
