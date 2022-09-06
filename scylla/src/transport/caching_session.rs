@@ -101,6 +101,7 @@ impl CachingSession {
 
 #[cfg(test)]
 mod tests {
+    use crate::utils::test_utils::unique_keyspace_name;
     use crate::{CachingSession, Session, SessionBuilder};
     use futures::TryStreamExt;
 
@@ -111,7 +112,7 @@ mod tests {
             .build()
             .await
             .expect("Could not create session");
-        let ks = crate::transport::session_test::unique_name();
+        let ks = unique_keyspace_name();
 
         session
             .query(format!("CREATE KEYSPACE IF NOT EXISTS {} WITH REPLICATION = {{'class' : 'SimpleStrategy', 'replication_factor' : 1}}", ks), &[])

@@ -2,6 +2,7 @@
 
 use std::future::Future;
 use std::mem;
+use std::net::SocketAddr;
 use std::pin::Pin;
 use std::sync::Arc;
 use std::task::{Context, Poll};
@@ -24,6 +25,7 @@ use crate::frame::{
     },
     value::SerializedValues,
 };
+use crate::history::{self, HistoryListener};
 use crate::routing::Token;
 use crate::statement::Consistency;
 use crate::statement::{prepared_statement::PreparedStatement, query::Query};
@@ -164,6 +166,9 @@ impl RowIterator {
                 load_balancer,
                 metrics,
                 paging_state: None,
+                history_listener: query.config.history_listener.clone(),
+                current_query_id: None,
+                current_attempt_id: None,
             };
 
             worker.work(cluster_data).await;
@@ -233,6 +238,9 @@ impl RowIterator {
                 load_balancer: config.load_balancer,
                 metrics: config.metrics,
                 paging_state: None,
+                history_listener: config.prepared.config.history_listener.clone(),
+                current_query_id: None,
+                current_attempt_id: None,
             };
 
             worker.work(config.cluster_data).await;
@@ -291,6 +299,10 @@ struct RowIteratorWorker<'a, ConnFunc, QueryFunc> {
     metrics: Arc<Metrics>,
 
     paging_state: Option<Bytes>,
+
+    history_listener: Option<Arc<dyn HistoryListener>>,
+    current_query_id: Option<history::QueryId>,
+    current_attempt_id: Option<history::AttemptId>,
 }
 
 impl<ConnFunc, ConnFut, QueryFunc, QueryFut> RowIteratorWorker<'_, ConnFunc, QueryFunc>
@@ -306,6 +318,8 @@ where
         let mut last_error: QueryError =
             QueryError::ProtocolError("Empty query plan - driver bug!");
         let mut current_consistency: Consistency = self.query_consistency;
+
+        self.log_query_start();
 
         'nodes_in_plan: for node in query_plan {
             let span = trace_span!("Executing query", node = node.address.to_string().as_str());
@@ -363,6 +377,7 @@ where
                     parent: &span,
                     retry_decision = format!("{:?}", retry_decision).as_str()
                 );
+                self.log_attempt_error(&last_error, &retry_decision);
                 match retry_decision {
                     RetryDecision::RetrySameNode(cl) => {
                         self.metrics.inc_retries_num();
@@ -384,6 +399,7 @@ where
         }
 
         // Send last_error to RowIterator - query failed fully
+        self.log_query_error(&last_error);
         let _ = self.sender.send(Err(last_error)).await;
     }
 
@@ -401,6 +417,7 @@ where
                 connection = connection.get_connect_address().to_string().as_str(),
                 "Sending"
             );
+            self.log_attempt_start(connection.get_connect_address());
             let query_response: QueryResponse =
                 (self.page_query)(connection.clone(), consistency, self.paging_state.clone())
                     .await?;
@@ -410,6 +427,8 @@ where
                     let _ = self
                         .metrics
                         .log_query_latency(query_start.elapsed().as_millis() as u64);
+                    self.log_attempt_success();
+                    self.log_query_success();
 
                     self.paging_state = rows.metadata.paging_state.take();
 
@@ -431,6 +450,7 @@ where
 
                     // Query succeeded, reset retry policy for future retries
                     self.retry_session.reset();
+                    self.log_query_start();
                 }
                 Response::Error(err) => {
                     self.metrics.inc_failed_paged_queries();
@@ -445,6 +465,86 @@ where
                 }
             }
         }
+    }
+
+    fn log_query_start(&mut self) {
+        let history_listener: &dyn HistoryListener = match &self.history_listener {
+            Some(hl) => &**hl,
+            None => return,
+        };
+
+        self.current_query_id = Some(history_listener.log_query_start());
+    }
+
+    fn log_query_success(&mut self) {
+        let history_listener: &dyn HistoryListener = match &self.history_listener {
+            Some(hl) => &**hl,
+            None => return,
+        };
+
+        let query_id: history::QueryId = match &self.current_query_id {
+            Some(id) => *id,
+            None => return,
+        };
+
+        history_listener.log_query_success(query_id);
+    }
+
+    fn log_query_error(&mut self, error: &QueryError) {
+        let history_listener: &dyn HistoryListener = match &self.history_listener {
+            Some(hl) => &**hl,
+            None => return,
+        };
+
+        let query_id: history::QueryId = match &self.current_query_id {
+            Some(id) => *id,
+            None => return,
+        };
+
+        history_listener.log_query_error(query_id, error);
+    }
+
+    fn log_attempt_start(&mut self, node_addr: SocketAddr) {
+        let history_listener: &dyn HistoryListener = match &self.history_listener {
+            Some(hl) => &**hl,
+            None => return,
+        };
+
+        let query_id: history::QueryId = match &self.current_query_id {
+            Some(id) => *id,
+            None => return,
+        };
+
+        self.current_attempt_id =
+            Some(history_listener.log_attempt_start(query_id, None, node_addr));
+    }
+
+    fn log_attempt_success(&mut self) {
+        let history_listener: &dyn HistoryListener = match &self.history_listener {
+            Some(hl) => &**hl,
+            None => return,
+        };
+
+        let attempt_id: history::AttemptId = match &self.current_attempt_id {
+            Some(id) => *id,
+            None => return,
+        };
+
+        history_listener.log_attempt_success(attempt_id);
+    }
+
+    fn log_attempt_error(&mut self, error: &QueryError, retry_decision: &RetryDecision) {
+        let history_listener: &dyn HistoryListener = match &self.history_listener {
+            Some(hl) => &**hl,
+            None => return,
+        };
+
+        let attempt_id: history::AttemptId = match &self.current_attempt_id {
+            Some(id) => *id,
+            None => return,
+        };
+
+        history_listener.log_attempt_error(attempt_id, error, retry_decision);
     }
 }
 

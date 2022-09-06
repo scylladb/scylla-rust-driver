@@ -17,7 +17,7 @@ pub struct QueryInfo<'a> {
     pub consistency: LegacyConsistency,
 }
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum RetryDecision {
     RetrySameNode(Consistency),
     RetryNextNode(Consistency),

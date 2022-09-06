@@ -11,6 +11,7 @@ use crate::transport::errors::{BadKeyspaceName, BadQuery, DbError, QueryError};
 use crate::transport::partitioner::{Murmur3Partitioner, Partitioner, PartitionerName};
 use crate::transport::topology::Strategy::SimpleStrategy;
 use crate::transport::topology::{CollectionType, ColumnKind, CqlType, NativeType};
+use crate::utils::test_utils::unique_keyspace_name;
 use crate::CachingSession;
 use crate::QueryResult;
 use crate::{IntoTypedRows, Session, SessionBuilder};
@@ -19,25 +20,8 @@ use bytes::Bytes;
 use futures::{FutureExt, StreamExt};
 use itertools::Itertools;
 use std::collections::{BTreeMap, HashMap};
-use std::sync::atomic::{AtomicUsize, Ordering};
-use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::net::TcpListener;
 use uuid::Uuid;
-
-static UNIQUE_COUNTER: AtomicUsize = AtomicUsize::new(0);
-pub(crate) fn unique_name() -> String {
-    let cnt = UNIQUE_COUNTER.fetch_add(1, Ordering::SeqCst);
-    let name = format!(
-        "test_rust_{}_{}",
-        SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_secs(),
-        cnt
-    );
-    println!("Unique name: {}", name);
-    name
-}
 
 #[tokio::test]
 async fn test_connection_failure() {
@@ -67,7 +51,7 @@ async fn test_connection_failure() {
 async fn test_unprepared_statement() {
     let uri = std::env::var("SCYLLA_URI").unwrap_or_else(|_| "127.0.0.1:9042".to_string());
     let session = SessionBuilder::new().known_node(uri).build().await.unwrap();
-    let ks = unique_name();
+    let ks = unique_keyspace_name();
 
     session.query(format!("CREATE KEYSPACE IF NOT EXISTS {} WITH REPLICATION = {{'class' : 'SimpleStrategy', 'replication_factor' : 1}}", ks), &[]).await.unwrap();
     session
@@ -166,7 +150,7 @@ async fn test_unprepared_statement() {
 async fn test_prepared_statement() {
     let uri = std::env::var("SCYLLA_URI").unwrap_or_else(|_| "127.0.0.1:9042".to_string());
     let session = SessionBuilder::new().known_node(uri).build().await.unwrap();
-    let ks = unique_name();
+    let ks = unique_keyspace_name();
 
     session.query(format!("CREATE KEYSPACE IF NOT EXISTS {} WITH REPLICATION = {{'class' : 'SimpleStrategy', 'replication_factor' : 1}}", ks), &[]).await.unwrap();
     session
@@ -361,7 +345,7 @@ async fn test_prepared_statement() {
 async fn test_batch() {
     let uri = std::env::var("SCYLLA_URI").unwrap_or_else(|_| "127.0.0.1:9042".to_string());
     let session = SessionBuilder::new().known_node(uri).build().await.unwrap();
-    let ks = unique_name();
+    let ks = unique_keyspace_name();
 
     session.query(format!("CREATE KEYSPACE IF NOT EXISTS {} WITH REPLICATION = {{'class' : 'SimpleStrategy', 'replication_factor' : 1}}", ks), &[]).await.unwrap();
     session
@@ -462,7 +446,7 @@ async fn test_batch() {
 async fn test_token_calculation() {
     let uri = std::env::var("SCYLLA_URI").unwrap_or_else(|_| "127.0.0.1:9042".to_string());
     let session = SessionBuilder::new().known_node(uri).build().await.unwrap();
-    let ks = unique_name();
+    let ks = unique_keyspace_name();
 
     session.query(format!("CREATE KEYSPACE IF NOT EXISTS {} WITH REPLICATION = {{'class' : 'SimpleStrategy', 'replication_factor' : 1}}", ks), &[]).await.unwrap();
     session
@@ -522,7 +506,7 @@ async fn test_use_keyspace() {
         .build()
         .await
         .unwrap();
-    let ks = unique_name();
+    let ks = unique_keyspace_name();
 
     session.query(format!("CREATE KEYSPACE IF NOT EXISTS {} WITH REPLICATION = {{'class' : 'SimpleStrategy', 'replication_factor' : 1}}", ks), &[]).await.unwrap();
 
@@ -620,7 +604,7 @@ async fn test_use_keyspace_case_sensitivity() {
         .build()
         .await
         .unwrap();
-    let ks_lower = unique_name().to_lowercase();
+    let ks_lower = unique_keyspace_name().to_lowercase();
     let ks_upper = ks_lower.to_uppercase();
 
     session.query(format!("CREATE KEYSPACE IF NOT EXISTS \"{}\" WITH REPLICATION = {{'class' : 'SimpleStrategy', 'replication_factor' : 1}}", ks_lower), &[]).await.unwrap();
@@ -699,7 +683,7 @@ async fn test_raw_use_keyspace() {
         .build()
         .await
         .unwrap();
-    let ks = unique_name();
+    let ks = unique_keyspace_name();
 
     session.query(format!("CREATE KEYSPACE IF NOT EXISTS {} WITH REPLICATION = {{'class' : 'SimpleStrategy', 'replication_factor' : 1}}", ks), &[]).await.unwrap();
 
@@ -766,7 +750,7 @@ async fn test_fetch_system_keyspace() {
 async fn test_db_errors() {
     let uri = std::env::var("SCYLLA_URI").unwrap_or_else(|_| "127.0.0.1:9042".to_string());
     let session = SessionBuilder::new().known_node(uri).build().await.unwrap();
-    let ks = unique_name();
+    let ks = unique_keyspace_name();
 
     // SyntaxError on bad query
     assert!(matches!(
@@ -821,7 +805,7 @@ async fn test_db_errors() {
 async fn test_tracing() {
     let uri = std::env::var("SCYLLA_URI").unwrap_or_else(|_| "127.0.0.1:9042".to_string());
     let session = SessionBuilder::new().known_node(uri).build().await.unwrap();
-    let ks = unique_name();
+    let ks = unique_keyspace_name();
 
     session.query(format!("CREATE KEYSPACE IF NOT EXISTS {} WITH REPLICATION = {{'class' : 'SimpleStrategy', 'replication_factor' : 1}}", ks), &[]).await.unwrap();
 
@@ -1076,7 +1060,7 @@ async fn test_await_timed_schema_agreement() {
 async fn test_timestamp() {
     let uri = std::env::var("SCYLLA_URI").unwrap_or_else(|_| "127.0.0.1:9042".to_string());
     let session = SessionBuilder::new().known_node(uri).build().await.unwrap();
-    let ks = unique_name();
+    let ks = unique_keyspace_name();
 
     session.query(format!("CREATE KEYSPACE IF NOT EXISTS {} WITH REPLICATION = {{'class' : 'SimpleStrategy', 'replication_factor' : 1}}", ks), &[]).await.unwrap();
     session
@@ -1270,7 +1254,7 @@ async fn test_prepared_config() {
 async fn test_schema_types_in_metadata() {
     let uri = std::env::var("SCYLLA_URI").unwrap_or_else(|_| "127.0.0.1:9042".to_string());
     let session = SessionBuilder::new().known_node(uri).build().await.unwrap();
-    let ks = unique_name();
+    let ks = unique_keyspace_name();
 
     session
         .query(format!("CREATE KEYSPACE {} WITH REPLICATION = {{'class' : 'SimpleStrategy', 'replication_factor' : 1}}", ks), &[])
@@ -1426,7 +1410,7 @@ async fn test_schema_types_in_metadata() {
 async fn test_user_defined_types_in_metadata() {
     let uri = std::env::var("SCYLLA_URI").unwrap_or_else(|_| "127.0.0.1:9042".to_string());
     let session = SessionBuilder::new().known_node(uri).build().await.unwrap();
-    let ks = unique_name();
+    let ks = unique_keyspace_name();
 
     session
         .query(format!("CREATE KEYSPACE {} WITH REPLICATION = {{'class' : 'SimpleStrategy', 'replication_factor' : 1}}", ks), &[])
@@ -1544,7 +1528,7 @@ async fn test_user_defined_types_in_metadata() {
 async fn test_column_kinds_in_metadata() {
     let uri = std::env::var("SCYLLA_URI").unwrap_or_else(|_| "127.0.0.1:9042".to_string());
     let session = SessionBuilder::new().known_node(uri).build().await.unwrap();
-    let ks = unique_name();
+    let ks = unique_keyspace_name();
 
     session
         .query(format!("CREATE KEYSPACE {} WITH REPLICATION = {{'class' : 'SimpleStrategy', 'replication_factor' : 1}}", ks), &[])
@@ -1587,7 +1571,7 @@ async fn test_column_kinds_in_metadata() {
 async fn test_primary_key_ordering_in_metadata() {
     let uri = std::env::var("SCYLLA_URI").unwrap_or_else(|_| "127.0.0.1:9042".to_string());
     let session = SessionBuilder::new().known_node(uri).build().await.unwrap();
-    let ks = unique_name();
+    let ks = unique_keyspace_name();
 
     session
         .query(format!("CREATE KEYSPACE {} WITH REPLICATION = {{'class' : 'SimpleStrategy', 'replication_factor' : 1}}", ks), &[])
@@ -1633,7 +1617,7 @@ async fn test_table_partitioner_in_metadata() {
 
     let uri = std::env::var("SCYLLA_URI").unwrap_or_else(|_| "127.0.0.1:9042".to_string());
     let session = SessionBuilder::new().known_node(uri).build().await.unwrap();
-    let ks = unique_name();
+    let ks = unique_keyspace_name();
 
     session
         .query(format!("CREATE KEYSPACE {} WITH REPLICATION = {{'class' : 'SimpleStrategy', 'replication_factor' : 1}}", ks), &[])
@@ -1674,7 +1658,7 @@ async fn test_turning_off_schema_fetching() {
         .build()
         .await
         .unwrap();
-    let ks = unique_name();
+    let ks = unique_keyspace_name();
 
     session
         .query(format!("CREATE KEYSPACE IF NOT EXISTS {} WITH REPLICATION = {{'class' : 'SimpleStrategy', 'replication_factor' : 1}}", ks), &[])
@@ -1739,7 +1723,7 @@ async fn test_turning_off_schema_fetching() {
 async fn test_named_bind_markers() {
     let uri = std::env::var("SCYLLA_URI").unwrap_or_else(|_| "127.0.0.1:9042".to_string());
     let session = SessionBuilder::new().known_node(uri).build().await.unwrap();
-    let ks = unique_name();
+    let ks = unique_keyspace_name();
 
     session
         .query(format!("CREATE KEYSPACE {} WITH REPLICATION = {{'class' : 'SimpleStrategy', 'replication_factor' : 1}}", ks), &[])
@@ -1795,7 +1779,7 @@ async fn test_named_bind_markers() {
 async fn test_prepared_partitioner() {
     let uri = std::env::var("SCYLLA_URI").unwrap_or_else(|_| "127.0.0.1:9042".to_string());
     let session = SessionBuilder::new().known_node(uri).build().await.unwrap();
-    let ks = unique_name();
+    let ks = unique_keyspace_name();
 
     session.query(format!("CREATE KEYSPACE IF NOT EXISTS {} WITH REPLICATION = {{'class' : 'SimpleStrategy', 'replication_factor' : 1}}", ks), &[]).await.unwrap();
     session.use_keyspace(ks, false).await.unwrap();
@@ -1871,7 +1855,7 @@ async fn test_unprepared_reprepare_in_execute() {
 
     let uri = std::env::var("SCYLLA_URI").unwrap_or_else(|_| "127.0.0.1:9042".to_string());
     let session = SessionBuilder::new().known_node(uri).build().await.unwrap();
-    let ks = unique_name();
+    let ks = unique_keyspace_name();
 
     session.query(format!("CREATE KEYSPACE IF NOT EXISTS {} WITH REPLICATION = {{'class' : 'SimpleStrategy', 'replication_factor' : 1}}", ks), &[]).await.unwrap();
     session.use_keyspace(ks, false).await.unwrap();
@@ -1928,7 +1912,7 @@ async fn test_unprepared_reprepare_in_batch() {
 
     let uri = std::env::var("SCYLLA_URI").unwrap_or_else(|_| "127.0.0.1:9042".to_string());
     let session = SessionBuilder::new().known_node(uri).build().await.unwrap();
-    let ks = unique_name();
+    let ks = unique_keyspace_name();
 
     session.query(format!("CREATE KEYSPACE IF NOT EXISTS {} WITH REPLICATION = {{'class' : 'SimpleStrategy', 'replication_factor' : 1}}", ks), &[]).await.unwrap();
     session.use_keyspace(ks, false).await.unwrap();
@@ -1994,7 +1978,7 @@ async fn test_unprepared_reprepare_in_caching_session_execute() {
 
     let uri = std::env::var("SCYLLA_URI").unwrap_or_else(|_| "127.0.0.1:9042".to_string());
     let session = SessionBuilder::new().known_node(uri).build().await.unwrap();
-    let ks = unique_name();
+    let ks = unique_keyspace_name();
 
     session.query(format!("CREATE KEYSPACE IF NOT EXISTS {} WITH REPLICATION = {{'class' : 'SimpleStrategy', 'replication_factor' : 1}}", ks), &[]).await.unwrap();
     session.use_keyspace(ks, false).await.unwrap();
@@ -2055,7 +2039,7 @@ async fn test_views_in_schema_info() {
 
     let uri = std::env::var("SCYLLA_URI").unwrap_or_else(|_| "127.0.0.1:9042".to_string());
     let session = SessionBuilder::new().known_node(uri).build().await.unwrap();
-    let ks = unique_name();
+    let ks = unique_keyspace_name();
 
     session.query(format!("CREATE KEYSPACE IF NOT EXISTS {} WITH REPLICATION = {{'class' : 'SimpleStrategy', 'replication_factor' : 1}}", ks), &[]).await.unwrap();
     session.use_keyspace(ks.clone(), false).await.unwrap();

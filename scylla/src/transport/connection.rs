@@ -1539,6 +1539,7 @@ mod tests {
     use super::super::errors::QueryError;
     use super::ConnectionConfig;
     use crate::query::Query;
+    use crate::utils::test_utils::unique_keyspace_name;
     use crate::IntoTypedRows;
     use std::net::SocketAddr;
 
@@ -1570,7 +1571,7 @@ mod tests {
         let (connection, _) = super::open_connection(addr, None, ConnectionConfig::default())
             .await
             .unwrap();
-        let ks = crate::transport::session_test::unique_name();
+        let ks = unique_keyspace_name();
 
         connection.query_single_page(format!("CREATE KEYSPACE IF NOT EXISTS {} WITH REPLICATION = {{'class' : 'SimpleStrategy', 'replication_factor' : 1}}", ks), &[]).await.unwrap();
         connection

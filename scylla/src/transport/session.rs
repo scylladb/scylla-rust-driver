@@ -2,6 +2,8 @@
 //! It manages all connections to the cluster and allows to perform queries.
 
 use crate::frame::types::LegacyConsistency;
+use crate::history;
+use crate::history::HistoryListener;
 use bytes::Bytes;
 use futures::future::join_all;
 use futures::future::try_join_all;
@@ -1166,7 +1168,7 @@ impl Session {
     async fn run_query<'a, ConnFut, QueryFut, ResT>(
         &'a self,
         statement_info: Statement<'a>,
-        statement_config: &StatementConfig,
+        statement_config: &'a StatementConfig,
         choose_connection: impl Fn(Arc<Node>) -> ConnFut,
         do_query: impl Fn(Arc<Connection>, Consistency) -> QueryFut,
     ) -> Result<RunQueryResult<ResT>, QueryError>
@@ -1175,6 +1177,12 @@ impl Session {
         QueryFut: Future<Output = Result<ResT, QueryError>>,
         ResT: AllowedRunQueryResTType,
     {
+        let history_listener_and_id: Option<(&'a dyn HistoryListener, history::QueryId)> =
+            statement_config
+                .history_listener
+                .as_ref()
+                .map(|hl| (&**hl, hl.log_query_start()));
+
         let runner = async {
             let cluster_data = self.cluster.get_data();
             let query_plan = self.load_balancer.plan(&statement_info, &cluster_data);
@@ -1217,14 +1225,33 @@ impl Session {
                         iter: std::sync::Mutex::new(query_plan),
                     };
 
-                    let execute_query_generator = || {
+                    let execute_query_generator = |is_speculative: bool| {
+                        let history_data: Option<HistoryData> = history_listener_and_id
+                            .as_ref()
+                            .map(|(history_listener, query_id)| {
+                                let speculative_id: Option<history::SpeculativeId> =
+                                    if is_speculative {
+                                        Some(history_listener.log_new_speculative_fiber(*query_id))
+                                    } else {
+                                        None
+                                    };
+                                HistoryData {
+                                    listener: *history_listener,
+                                    query_id: *query_id,
+                                    speculative_id,
+                                }
+                            });
+
                         self.execute_query(
                             &shared_query_plan,
-                            statement_config.is_idempotent,
-                            statement_config.consistency,
-                            retry_policy.new_session(),
                             &choose_connection,
                             &do_query,
+                            ExecuteQueryContext {
+                                is_idempotent: statement_config.is_idempotent,
+                                consistency: statement_config.consistency,
+                                retry_session: retry_policy.new_session(),
+                                history_data,
+                            },
                         )
                     };
 
@@ -1239,24 +1266,36 @@ impl Session {
                     )
                     .await
                 }
-                _ => self
-                    .execute_query(
+                _ => {
+                    let history_data: Option<HistoryData> =
+                        history_listener_and_id
+                            .as_ref()
+                            .map(|(history_listener, query_id)| HistoryData {
+                                listener: *history_listener,
+                                query_id: *query_id,
+                                speculative_id: None,
+                            });
+                    self.execute_query(
                         query_plan,
-                        statement_config.is_idempotent,
-                        statement_config.consistency,
-                        retry_policy.new_session(),
                         &choose_connection,
                         &do_query,
+                        ExecuteQueryContext {
+                            is_idempotent: statement_config.is_idempotent,
+                            consistency: statement_config.consistency,
+                            retry_session: retry_policy.new_session(),
+                            history_data,
+                        },
                     )
                     .await
                     .unwrap_or(Err(QueryError::ProtocolError(
                         "Empty query plan - driver bug!",
-                    ))),
+                    )))
+                }
             }
         };
 
         let effective_timeout = statement_config.request_timeout.or(self.request_timeout);
-        match effective_timeout {
+        let result = match effective_timeout {
             Some(timeout) => tokio::time::timeout(timeout, runner)
                 .await
                 .unwrap_or_else(|e| {
@@ -1267,17 +1306,24 @@ impl Session {
                     )))
                 }),
             None => runner.await,
+        };
+
+        if let Some((history_listener, query_id)) = history_listener_and_id {
+            match &result {
+                Ok(_) => history_listener.log_query_success(query_id),
+                Err(e) => history_listener.log_query_error(query_id, e),
+            }
         }
+
+        result
     }
 
-    async fn execute_query<ConnFut, QueryFut, ResT>(
-        &self,
+    async fn execute_query<'a, ConnFut, QueryFut, ResT>(
+        &'a self,
         query_plan: impl Iterator<Item = Arc<Node>>,
-        is_idempotent: bool,
-        consistency: Option<Consistency>,
-        mut retry_session: Box<dyn RetrySession>,
         choose_connection: impl Fn(Arc<Node>) -> ConnFut,
         do_query: impl Fn(Arc<Connection>, Consistency) -> QueryFut,
+        mut context: ExecuteQueryContext<'a>,
     ) -> Option<Result<RunQueryResult<ResT>, QueryError>>
     where
         ConnFut: Future<Output = Result<Arc<Connection>, QueryError>>,
@@ -1285,7 +1331,8 @@ impl Session {
         ResT: AllowedRunQueryResTType,
     {
         let mut last_error: Option<QueryError> = None;
-        let mut current_consistency: Consistency = consistency.unwrap_or(self.default_consistency);
+        let mut current_consistency: Consistency =
+            context.consistency.unwrap_or(self.default_consistency);
 
         'nodes_in_plan: for node in query_plan {
             let span = trace_span!("Executing query", node = node.address.to_string().as_str());
@@ -1316,6 +1363,8 @@ impl Session {
                     connection = connection.get_connect_address().to_string().as_str(),
                     "Sending"
                 );
+                let attempt_id: Option<history::AttemptId> =
+                    context.log_attempt_start(connection.get_connect_address());
                 let query_result: Result<ResT, QueryError> =
                     do_query(connection, current_consistency)
                         .instrument(span.clone())
@@ -1327,6 +1376,7 @@ impl Session {
                         let _ = self
                             .metrics
                             .log_query_latency(query_start.elapsed().as_millis() as u64);
+                        context.log_attempt_success(&attempt_id);
                         return Some(Ok(RunQueryResult::Completed(response)));
                     }
                     Err(e) => {
@@ -1340,20 +1390,22 @@ impl Session {
                     }
                 };
 
+                let the_error: &QueryError = last_error.as_ref().unwrap();
                 // Use retry policy to decide what to do next
                 let query_info = QueryInfo {
-                    error: last_error.as_ref().unwrap(),
-                    is_idempotent,
+                    error: the_error,
+                    is_idempotent: context.is_idempotent,
                     consistency: LegacyConsistency::Regular(
-                        consistency.unwrap_or(self.default_consistency),
+                        context.consistency.unwrap_or(self.default_consistency),
                     ),
                 };
 
-                let retry_decision = retry_session.decide_should_retry(query_info);
+                let retry_decision = context.retry_session.decide_should_retry(query_info);
                 trace!(
                     parent: &span,
                     retry_decision = format!("{:?}", retry_decision).as_str()
                 );
+                context.log_attempt_error(&attempt_id, the_error, &retry_decision);
                 match retry_decision {
                     RetryDecision::RetrySameNode(cl) => {
                         self.metrics.inc_retries_num();
@@ -1517,3 +1569,60 @@ pub trait AllowedRunQueryResTType {}
 impl AllowedRunQueryResTType for Uuid {}
 impl AllowedRunQueryResTType for BatchResult {}
 impl AllowedRunQueryResTType for NonErrorQueryResponse {}
+
+struct ExecuteQueryContext<'a> {
+    is_idempotent: bool,
+    consistency: Option<Consistency>,
+    retry_session: Box<dyn RetrySession>,
+    history_data: Option<HistoryData<'a>>,
+}
+
+struct HistoryData<'a> {
+    listener: &'a dyn HistoryListener,
+    query_id: history::QueryId,
+    speculative_id: Option<history::SpeculativeId>,
+}
+
+impl<'a> ExecuteQueryContext<'a> {
+    fn log_attempt_start(&self, node_addr: SocketAddr) -> Option<history::AttemptId> {
+        self.history_data.as_ref().map(|hd| {
+            hd.listener
+                .log_attempt_start(hd.query_id, hd.speculative_id, node_addr)
+        })
+    }
+
+    fn log_attempt_success(&self, attempt_id_opt: &Option<history::AttemptId>) {
+        let attempt_id: &history::AttemptId = match attempt_id_opt {
+            Some(id) => id,
+            None => return,
+        };
+
+        let history_data: &HistoryData = match &self.history_data {
+            Some(data) => data,
+            None => return,
+        };
+
+        history_data.listener.log_attempt_success(*attempt_id);
+    }
+
+    fn log_attempt_error(
+        &self,
+        attempt_id_opt: &Option<history::AttemptId>,
+        error: &QueryError,
+        retry_decision: &RetryDecision,
+    ) {
+        let attempt_id: &history::AttemptId = match attempt_id_opt {
+            Some(id) => id,
+            None => return,
+        };
+
+        let history_data: &HistoryData = match &self.history_data {
+            Some(data) => data,
+            None => return,
+        };
+
+        history_data
+            .listener
+            .log_attempt_error(*attempt_id, error, retry_decision);
+    }
+}
