@@ -201,6 +201,8 @@ pub struct SessionConfig {
     /// Controls the client-side timeout for queries.
     /// If `None`, the queries have no timeout (the driver will block indefinitely).
     pub request_timeout: Option<Duration>,
+
+    pub address_translator: Option<Arc<dyn AddressTranslator>>,
 }
 
 /// Describes database server known on Session startup.
@@ -244,6 +246,7 @@ impl SessionConfig {
             keepalive_interval: None,
             auto_await_schema_agreement_timeout: Some(std::time::Duration::from_secs(60)),
             request_timeout: Some(Duration::from_secs(30)),
+            address_translator: None,
         }
     }
 
