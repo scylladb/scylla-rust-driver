@@ -431,6 +431,7 @@ impl Session {
             &node_addresses,
             config.get_pool_config(),
             config.fetch_schema_metadata,
+            &config.address_translator,
         )
         .await?;
 
