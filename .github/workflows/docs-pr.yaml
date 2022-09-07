@@ -26,3 +26,5 @@ jobs:
         run: make -C docs setupenv
       - name: Build docs
         run: make -C docs test
+      - name: Show preprocessing changes
+        run: diff -r docs/source docs/_source || true
