@@ -46,6 +46,7 @@ smallvec = "1.8.0"
 async-trait = "0.1.56"
 
 [dev-dependencies]
+scylla-proxy = { version = "0.0.1", path = "../scylla-proxy"}
 criterion = "0.3"
 tracing-subscriber = { version = "0.3.14", features = ["env-filter"] }
 assert_matches = "1.5.0"
