@@ -1,7 +1,11 @@
-use bytes::{Buf, BufMut, Bytes};
-use scylla_cql::frame::frame_errors::FrameError;
+use bytes::{Buf, BufMut, Bytes, BytesMut};
+use scylla_cql::frame::frame_errors::{FrameError, ParseError};
+use scylla_cql::frame::protocol_features::ProtocolFeatures;
 pub use scylla_cql::frame::request::RequestOpcode;
 pub use scylla_cql::frame::response::ResponseOpcode;
+use scylla_cql::frame::types::LegacyConsistency;
+use scylla_cql::Consistency;
+use scylla_cql::{errors::DbError, frame::types};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 
 use tracing::warn;
@@ -72,6 +76,32 @@ pub struct ResponseFrame {
 }
 
 impl ResponseFrame {
+    /// Creates a response frame that signifies the given DbError type.
+    /// Useful for testing server-side error handling in drivers.
+    pub fn forged_error(
+        request_params: FrameParams,
+        error: DbError,
+        msg: Option<&str>,
+    ) -> Result<Self, ParseError> {
+        let msg = msg.unwrap_or("Proxy-triggered error.");
+        let len_bytes = (msg.len() as u16).to_be_bytes(); // string len is a short in CQL protocol
+        let code_bytes = error.code(&ProtocolFeatures::default()).to_be_bytes(); // TODO: configurable features
+        let body_len = msg.len() + code_bytes.len() + len_bytes.len();
+        let mut buf = BytesMut::with_capacity(body_len);
+
+        buf.extend_from_slice(&code_bytes);
+        buf.extend_from_slice(&len_bytes);
+        buf.extend_from_slice(msg.as_bytes());
+
+        serialize_error_specific_fields(&mut buf, error)?;
+
+        Ok(ResponseFrame {
+            params: request_params.for_response(),
+            opcode: ResponseOpcode::Error,
+            body: buf.freeze(),
+        })
+    }
+
     pub(crate) async fn write(
         &self,
         writer: &mut (impl AsyncWrite + Unpin),
@@ -84,6 +114,92 @@ impl ResponseFrame {
         )
         .await
     }
+}
+
+fn serialize_error_specific_fields(buf: &mut BytesMut, error: DbError) -> Result<(), ParseError> {
+    fn unwrap_cl(c: LegacyConsistency) -> Consistency {
+        match c {
+            types::LegacyConsistency::Regular(c) => c,
+            types::LegacyConsistency::Serial(_) => unreachable!(),
+        }
+    }
+    match error {
+        DbError::Unavailable {
+            consistency,
+            required,
+            alive,
+        } => {
+            types::write_consistency(unwrap_cl(consistency), buf);
+            types::write_int(required, buf);
+            types::write_int(alive, buf);
+        }
+        DbError::WriteTimeout {
+            consistency,
+            received,
+            required,
+            write_type,
+        } => {
+            types::write_consistency(unwrap_cl(consistency), buf);
+            types::write_int(received, buf);
+            types::write_int(required, buf);
+            types::write_string(write_type.as_str(), buf)?;
+        }
+        DbError::ReadTimeout {
+            consistency,
+            received,
+            required,
+            data_present,
+        } => {
+            types::write_consistency(unwrap_cl(consistency), buf);
+            types::write_int(received, buf);
+            types::write_int(required, buf);
+            buf.put_u8(if data_present { 1 } else { 0 });
+        }
+        DbError::ReadFailure {
+            consistency,
+            received,
+            required,
+            numfailures,
+            data_present,
+        } => {
+            types::write_consistency(unwrap_cl(consistency), buf);
+            types::write_int(received, buf);
+            types::write_int(required, buf);
+            types::write_int(numfailures, buf);
+            buf.put_u8(if data_present { 1 } else { 0 });
+        }
+        DbError::WriteFailure {
+            consistency,
+            received,
+            required,
+            numfailures,
+            write_type,
+        } => {
+            types::write_consistency(unwrap_cl(consistency), buf);
+            types::write_int(received, buf);
+            types::write_int(required, buf);
+            types::write_int(numfailures, buf);
+            types::write_string(write_type.as_str(), buf)?;
+        }
+        DbError::FunctionFailure {
+            keyspace,
+            function,
+            arg_types,
+        } => {
+            types::write_string(keyspace.as_str(), buf)?;
+            types::write_string(function.as_str(), buf)?;
+            types::write_string_list(&arg_types, buf)?;
+        }
+        DbError::AlreadyExists { keyspace, table } => {
+            types::write_string(keyspace.as_str(), buf)?;
+            types::write_string(table.as_str(), buf)?;
+        }
+        DbError::Unprepared { statement_id } => {
+            types::write_short_bytes(statement_id.as_ref(), buf)?;
+        }
+        _ => (),
+    }
+    Ok(())
 }
 
 pub(crate) async fn write_frame(

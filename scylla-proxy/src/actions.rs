@@ -1,11 +1,15 @@
 use std::{sync::Arc, time::Duration};
 
 use bytes::Bytes;
-use rand::Rng;
+use rand::{Rng, RngCore};
 
-use crate::{
-    frame::{FrameOpcode, RequestOpcode, ResponseOpcode},
-    RequestFrame, ResponseFrame,
+use crate::frame::{
+    FrameOpcode, FrameParams, RequestFrame, RequestOpcode, ResponseFrame, ResponseOpcode,
+};
+use scylla_cql::{
+    errors::{DbError, WriteType},
+    frame::types::LegacyConsistency,
+    Consistency,
 };
 
 /// Specifies when an associated [Reaction] will be performed.
@@ -240,6 +244,255 @@ impl Reaction for RequestReaction {
             to_sender: None,
             drop_connection: Some(Some(time)),
         }
+    }
+}
+
+impl RequestReaction {
+    pub fn forge_with_error_lazy(gen_error: Box<dyn Fn() -> DbError + Send + Sync>) -> Self {
+        Self::forge_with_error_lazy_delay(gen_error, None)
+    }
+    /// A convenient shortcut for forging a various error-type responses, useful e.g. for testing retries.
+    /// Errors are computed on-demand by the provided closure.
+    pub fn forge_with_error_lazy_delay(
+        gen_error: Box<dyn Fn() -> DbError + Send + Sync>,
+        delay: Option<Duration>,
+    ) -> Self {
+        RequestReaction {
+            to_addressee: None,
+            to_sender: Some(Action {
+                delay,
+                msg_processor: Some(Arc::new(move |request: RequestFrame| {
+                    ResponseFrame::forged_error(request.params.for_response(), gen_error(), None)
+                        .unwrap()
+                })),
+            }),
+            drop_connection: None,
+        }
+    }
+
+    pub fn forge_with_error(error: DbError) -> Self {
+        Self::forge_with_error_and_message(error, Some("Proxy-triggered error.".into()))
+    }
+
+    /// A convenient shortcut for forging a various error-type responses, useful e.g. for testing retries.
+    pub fn forge_with_error_and_message(error: DbError, msg: Option<String>) -> Self {
+        // sanity create-time check
+        ResponseFrame::forged_error(
+            FrameParams {
+                version: 0,
+                flags: 0,
+                stream: 0,
+            },
+            error.clone(),
+            None,
+        )
+        .unwrap_or_else(|_| panic!("Invalid DbError provided: {:#?}", error));
+
+        RequestReaction {
+            to_addressee: None,
+            to_sender: Some(Action {
+                delay: None,
+                msg_processor: Some(Arc::new(move |request: RequestFrame| {
+                    ResponseFrame::forged_error(
+                        request.params.for_response(),
+                        error.clone(),
+                        msg.as_deref(),
+                    )
+                    .unwrap()
+                })),
+            }),
+            drop_connection: None,
+        }
+    }
+
+    pub fn forge() -> ResponseForger {
+        ResponseForger
+    }
+}
+
+struct ExampleDbErrors;
+impl ExampleDbErrors {
+    pub fn syntax_error() -> DbError {
+        DbError::SyntaxError
+    }
+    pub fn invalid() -> DbError {
+        DbError::Invalid
+    }
+    pub fn already_exists() -> DbError {
+        DbError::AlreadyExists {
+            keyspace: "proxy".into(),
+            table: "worker".into(),
+        }
+    }
+    pub fn function_failure() -> DbError {
+        DbError::FunctionFailure {
+            keyspace: "proxy".into(),
+            function: "fibonacci".into(),
+            arg_types: vec!["n".into()],
+        }
+    }
+    pub fn authentication_error() -> DbError {
+        DbError::AuthenticationError
+    }
+    pub fn unauthorized() -> DbError {
+        DbError::Unauthorized
+    }
+    pub fn config_error() -> DbError {
+        DbError::ConfigError
+    }
+    pub fn unavailable() -> DbError {
+        DbError::Unavailable {
+            consistency: LegacyConsistency::Regular(Consistency::One),
+            required: 2,
+            alive: 1,
+        }
+    }
+    pub fn overloaded() -> DbError {
+        DbError::Overloaded
+    }
+    pub fn is_bootstrapping() -> DbError {
+        DbError::IsBootstrapping
+    }
+    pub fn truncate_error() -> DbError {
+        DbError::TruncateError
+    }
+    pub fn read_timeout() -> DbError {
+        DbError::ReadTimeout {
+            consistency: LegacyConsistency::Regular(Consistency::One),
+            received: 2,
+            required: 3,
+            data_present: true,
+        }
+    }
+    pub fn write_timeout() -> DbError {
+        DbError::WriteTimeout {
+            consistency: LegacyConsistency::Regular(Consistency::One),
+            received: 2,
+            required: 3,
+            write_type: WriteType::UnloggedBatch,
+        }
+    }
+    pub fn read_failure() -> DbError {
+        DbError::ReadFailure {
+            consistency: LegacyConsistency::Regular(Consistency::One),
+            received: 2,
+            required: 3,
+            data_present: true,
+            numfailures: 1,
+        }
+    }
+    pub fn write_failure() -> DbError {
+        DbError::WriteFailure {
+            consistency: LegacyConsistency::Regular(Consistency::One),
+            received: 2,
+            required: 3,
+            write_type: WriteType::UnloggedBatch,
+            numfailures: 1,
+        }
+    }
+    pub fn unprepared() -> DbError {
+        DbError::Unprepared {
+            statement_id: Bytes::from_static(b"21372137"),
+        }
+    }
+    pub fn server_error() -> DbError {
+        DbError::ServerError
+    }
+    pub fn protocol_error() -> DbError {
+        DbError::ProtocolError
+    }
+    pub fn other(num: i32) -> DbError {
+        DbError::Other(num)
+    }
+}
+
+pub struct ResponseForger;
+
+impl ResponseForger {
+    pub fn syntax_error(&self) -> RequestReaction {
+        RequestReaction::forge_with_error(ExampleDbErrors::syntax_error())
+    }
+    pub fn invalid(&self) -> RequestReaction {
+        RequestReaction::forge_with_error(ExampleDbErrors::invalid())
+    }
+    pub fn already_exists(&self) -> RequestReaction {
+        RequestReaction::forge_with_error(ExampleDbErrors::already_exists())
+    }
+    pub fn function_failure(&self) -> RequestReaction {
+        RequestReaction::forge_with_error(ExampleDbErrors::function_failure())
+    }
+    pub fn authentication_error(&self) -> RequestReaction {
+        RequestReaction::forge_with_error(ExampleDbErrors::authentication_error())
+    }
+    pub fn unauthorized(&self) -> RequestReaction {
+        RequestReaction::forge_with_error(ExampleDbErrors::unauthorized())
+    }
+    pub fn config_error(&self) -> RequestReaction {
+        RequestReaction::forge_with_error(ExampleDbErrors::config_error())
+    }
+    pub fn unavailable(&self) -> RequestReaction {
+        RequestReaction::forge_with_error(ExampleDbErrors::unavailable())
+    }
+    pub fn overloaded(&self) -> RequestReaction {
+        RequestReaction::forge_with_error(ExampleDbErrors::overloaded())
+    }
+    pub fn is_bootstrapping(&self) -> RequestReaction {
+        RequestReaction::forge_with_error(ExampleDbErrors::is_bootstrapping())
+    }
+    pub fn truncate_error(&self) -> RequestReaction {
+        RequestReaction::forge_with_error(ExampleDbErrors::truncate_error())
+    }
+    pub fn read_timeout(&self) -> RequestReaction {
+        RequestReaction::forge_with_error(ExampleDbErrors::read_timeout())
+    }
+    pub fn write_timeout(&self) -> RequestReaction {
+        RequestReaction::forge_with_error(ExampleDbErrors::write_timeout())
+    }
+    pub fn read_failure(&self) -> RequestReaction {
+        RequestReaction::forge_with_error(ExampleDbErrors::read_failure())
+    }
+    pub fn write_failure(&self) -> RequestReaction {
+        RequestReaction::forge_with_error(ExampleDbErrors::write_failure())
+    }
+    pub fn unprepared(&self) -> RequestReaction {
+        RequestReaction::forge_with_error(ExampleDbErrors::unprepared())
+    }
+    pub fn server_error(&self) -> RequestReaction {
+        RequestReaction::forge_with_error(ExampleDbErrors::server_error())
+    }
+    pub fn protocol_error(&self) -> RequestReaction {
+        RequestReaction::forge_with_error(ExampleDbErrors::protocol_error())
+    }
+    pub fn other(&self, num: i32) -> RequestReaction {
+        RequestReaction::forge_with_error(ExampleDbErrors::other(num))
+    }
+    pub fn random_error(&self) -> RequestReaction {
+        self.random_error_with_delay(None)
+    }
+    pub fn random_error_with_delay(&self, delay: Option<Duration>) -> RequestReaction {
+        static ERRORS: &[fn() -> DbError] = &[
+            ExampleDbErrors::invalid,
+            ExampleDbErrors::already_exists,
+            ExampleDbErrors::function_failure,
+            ExampleDbErrors::authentication_error,
+            ExampleDbErrors::unauthorized,
+            ExampleDbErrors::config_error,
+            ExampleDbErrors::unavailable,
+            ExampleDbErrors::overloaded,
+            ExampleDbErrors::is_bootstrapping,
+            ExampleDbErrors::truncate_error,
+            ExampleDbErrors::read_timeout,
+            ExampleDbErrors::write_timeout,
+            ExampleDbErrors::write_failure,
+            ExampleDbErrors::unprepared,
+            ExampleDbErrors::server_error,
+            ExampleDbErrors::protocol_error,
+            || ExampleDbErrors::other(2137),
+        ];
+        RequestReaction::forge_with_error_lazy_delay(
+            Box::new(|| ERRORS[rand::thread_rng().next_u32() as usize % ERRORS.len()]()),
+            delay,
+        )
     }
 }
 
