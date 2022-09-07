@@ -9,13 +9,13 @@ In `Cargo.toml` add useful dependencies:
 ```toml
 [dependencies]
 scylla = "0.4"
-tokio = { version = "1.1.0", features = ["full"] }
+tokio = { version = "1.12", features = ["full"] }
 futures = "0.3.6"
-uuid = "0.8.1"
+uuid = "1.0"
 bigdecimal = "0.2.0"
 num-bigint = "0.3"
 tracing = "0.1.25"
-tracing-subscriber = "0.2.16"
+tracing-subscriber = { version = "0.3.14", features = ["env-filter"] }
 ```
 
 In `main.rs` put:

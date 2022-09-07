@@ -13,7 +13,7 @@ rustyline-derive = "0.6"
 scylla = {path = "../scylla", features = ["ssl"]}
 tokio = {version = "1.1.0", features = ["full"]}
 tracing = "0.1.25"
-tracing-subscriber = "0.3.14"
+tracing-subscriber = { version = "0.3.14", features = ["env-filter"] }
 chrono = "0.4"
 uuid = "1.0"
 tower = "0.4"
