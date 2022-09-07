@@ -3,7 +3,7 @@ mod errors;
 mod frame;
 mod proxy;
 pub use actions::{
-    Action, Condition, RequestReaction, RequestRule, ResponseReaction, ResponseRule,
+    Action, Condition, Reaction, RequestReaction, RequestRule, ResponseReaction, ResponseRule,
 };
 pub use errors::{DoorkeeperError, ProxyError, WorkerError};
 pub use frame::{RequestFrame, RequestOpcode, ResponseFrame, ResponseOpcode};

@@ -8,7 +8,7 @@ use crate::{
     RequestFrame, ResponseFrame,
 };
 
-/// Specifies when an associated `Reaction` will be performed.
+/// Specifies when an associated [Reaction] will be performed.
 /// Conditions are subject to logic, with `not()`, `and()` and `or()`
 /// convenience functions.
 #[derive(Debug, Clone)]
@@ -115,6 +115,44 @@ impl Condition {
     }
 }
 
+/// Just a trait to unify API of both [RequestReaction] and [ResponseReaction].
+/// As they are both analogous, I will describe them here.
+/// - `to_addressee` and `to_sender` field correspond to actions that the proxy should perform
+///   towards the frame's intended receiver and sender, respectively.
+/// - `drop_connection`'s outer `Option` denotes whether proxy should drop connection after
+///   performing the remaining actions, and its inner `Option` contains the delay of the drop.
+///
+/// `Reaction` contains useful constructors of common-case Reactions. The names should be
+/// self-explanatory.
+pub trait Reaction: Sized {
+    type Incoming;
+    type Returning;
+
+    /// Does nothing extraordinary, i.e. passes the frame with no changes to it.
+    fn noop() -> Self;
+
+    /// Drops frame, i.e. passes it into void.
+    fn drop_frame() -> Self;
+
+    /// Passes the frame only after specified delay.
+    fn delay(time: Duration) -> Self;
+
+    /// Instead of passing the frame to the addressee, returns the forged frame back to the addresser.
+    fn forge_response(f: Arc<dyn Fn(Self::Incoming) -> Self::Returning + Send + Sync>) -> Self;
+
+    /// The same as [forge_response](Self::forge_response), but with specified delay.
+    fn forge_response_with_delay(
+        time: Duration,
+        f: Arc<dyn Fn(Self::Incoming) -> Self::Returning + Send + Sync>,
+    ) -> Self;
+
+    /// Drops the frame AND drops the connection with both the driver and the cluster.
+    fn drop_connection() -> Self;
+
+    /// The same as [drop_connection](Self::drop_connection), but with specified delay.
+    fn drop_connection_with_delay(time: Duration) -> Self;
+}
+
 #[derive(Clone)]
 pub struct RequestReaction {
     pub to_addressee: Option<Action<RequestFrame, RequestFrame>>,
@@ -127,6 +165,158 @@ pub struct ResponseReaction {
     pub to_addressee: Option<Action<ResponseFrame, ResponseFrame>>,
     pub to_sender: Option<Action<ResponseFrame, RequestFrame>>,
     pub drop_connection: Option<Option<Duration>>,
+}
+
+impl Reaction for RequestReaction {
+    type Incoming = RequestFrame;
+    type Returning = ResponseFrame;
+
+    fn noop() -> Self {
+        RequestReaction {
+            to_addressee: Some(Action {
+                delay: None,
+                msg_processor: None,
+            }),
+            to_sender: None,
+            drop_connection: None,
+        }
+    }
+
+    fn drop_frame() -> Self {
+        RequestReaction {
+            to_addressee: None,
+            to_sender: None,
+            drop_connection: None,
+        }
+    }
+
+    fn delay(time: Duration) -> Self {
+        RequestReaction {
+            to_addressee: Some(Action {
+                delay: Some(time),
+                msg_processor: None,
+            }),
+            to_sender: None,
+            drop_connection: None,
+        }
+    }
+
+    fn forge_response(f: Arc<dyn Fn(Self::Incoming) -> Self::Returning + Send + Sync>) -> Self {
+        RequestReaction {
+            to_addressee: None,
+            to_sender: Some(Action {
+                delay: None,
+                msg_processor: Some(f),
+            }),
+            drop_connection: None,
+        }
+    }
+
+    fn forge_response_with_delay(
+        time: Duration,
+        f: Arc<dyn Fn(Self::Incoming) -> Self::Returning + Send + Sync>,
+    ) -> Self {
+        RequestReaction {
+            to_addressee: None,
+            to_sender: Some(Action {
+                delay: Some(time),
+                msg_processor: Some(f),
+            }),
+            drop_connection: None,
+        }
+    }
+
+    fn drop_connection() -> Self {
+        RequestReaction {
+            to_addressee: None,
+            to_sender: None,
+            drop_connection: Some(None),
+        }
+    }
+
+    fn drop_connection_with_delay(time: Duration) -> Self {
+        RequestReaction {
+            to_addressee: None,
+            to_sender: None,
+            drop_connection: Some(Some(time)),
+        }
+    }
+}
+
+impl Reaction for ResponseReaction {
+    type Incoming = ResponseFrame;
+    type Returning = RequestFrame;
+
+    fn noop() -> Self {
+        ResponseReaction {
+            to_addressee: Some(Action {
+                delay: None,
+                msg_processor: None,
+            }),
+            to_sender: None,
+            drop_connection: None,
+        }
+    }
+
+    fn drop_frame() -> Self {
+        ResponseReaction {
+            to_addressee: None,
+            to_sender: None,
+            drop_connection: None,
+        }
+    }
+
+    fn delay(time: Duration) -> Self {
+        ResponseReaction {
+            to_addressee: Some(Action {
+                delay: Some(time),
+                msg_processor: None,
+            }),
+            to_sender: None,
+            drop_connection: None,
+        }
+    }
+
+    fn forge_response(f: Arc<dyn Fn(Self::Incoming) -> Self::Returning + Send + Sync>) -> Self {
+        ResponseReaction {
+            to_addressee: None,
+            to_sender: Some(Action {
+                delay: None,
+                msg_processor: Some(f),
+            }),
+            drop_connection: None,
+        }
+    }
+
+    fn forge_response_with_delay(
+        time: Duration,
+        f: Arc<dyn Fn(Self::Incoming) -> Self::Returning + Send + Sync>,
+    ) -> Self {
+        ResponseReaction {
+            to_addressee: None,
+            to_sender: Some(Action {
+                delay: Some(time),
+                msg_processor: Some(f),
+            }),
+            drop_connection: None,
+        }
+    }
+
+    fn drop_connection() -> Self {
+        ResponseReaction {
+            to_addressee: None,
+            to_sender: None,
+            drop_connection: Some(None),
+        }
+    }
+
+    fn drop_connection_with_delay(time: Duration) -> Self {
+        ResponseReaction {
+            to_addressee: None,
+            to_sender: None,
+            drop_connection: Some(Some(time)),
+        }
+    }
 }
 
 /// Describes what to with the given <something> (frame),
