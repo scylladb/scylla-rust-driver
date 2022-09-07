@@ -2206,3 +2206,38 @@ async fn test_prepare_batch() {
         assert!(session.prepare_batch(&bad_batch).await.is_err());
     }
 }
+
+#[tokio::test]
+async fn test_refresh_metadata_after_schema_agreement() {
+    let uri = std::env::var("SCYLLA_URI").unwrap_or_else(|_| "127.0.0.1:9042".to_string());
+    let session = SessionBuilder::new().known_node(uri).build().await.unwrap();
+
+    let ks = unique_keyspace_name();
+    session.query(format!("CREATE KEYSPACE IF NOT EXISTS {} WITH REPLICATION = {{'class' : 'SimpleStrategy', 'replication_factor' : 1}}", ks), &[]).await.unwrap();
+    session.use_keyspace(ks.clone(), false).await.unwrap();
+
+    session
+        .query(
+            "CREATE TYPE udt (field1 int, field2 uuid, field3 text)",
+            &[],
+        )
+        .await
+        .unwrap();
+
+    let cluster_data = session.get_cluster_data();
+    let metadata = cluster_data.get_keyspace_info();
+    let keyspace_metadata = metadata.get(ks.as_str());
+    assert_ne!(keyspace_metadata, None);
+
+    let udt = keyspace_metadata.unwrap().user_defined_types.get("udt");
+    assert_ne!(udt, None);
+
+    assert_eq!(
+        udt.unwrap(),
+        &Vec::from([
+            ("field1".to_string(), CqlType::Native(NativeType::Int)),
+            ("field2".to_string(), CqlType::Native(NativeType::Uuid)),
+            ("field3".to_string(), CqlType::Native(NativeType::Text))
+        ])
+    );
+}
