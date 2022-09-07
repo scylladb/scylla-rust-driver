@@ -290,6 +290,7 @@ mod tests {
                     Token { value: 250 },
                     Token { value: 500 },
                 ],
+                untranslated_address: Some(tests::id_to_invalid_addr(1)),
             },
             Peer {
                 datacenter: Some("eu".into()),
@@ -300,12 +301,14 @@ mod tests {
                     Token { value: 150 },
                     Token { value: 300 },
                 ],
+                untranslated_address: Some(tests::id_to_invalid_addr(2)),
             },
             Peer {
                 datacenter: Some("us".into()),
                 rack: None,
                 address: tests::id_to_invalid_addr(3),
                 tokens: vec![Token { value: 200 }, Token { value: 400 }],
+                untranslated_address: Some(tests::id_to_invalid_addr(3)),
             },
         ];
 
@@ -365,48 +368,56 @@ mod tests {
                 rack: Some("r1".into()),
                 address: tests::id_to_invalid_addr(1),
                 tokens: vec![Token { value: 50 }, Token { value: 200 }],
+                untranslated_address: Some(tests::id_to_invalid_addr(1)),
             },
             Peer {
                 datacenter: Some("waw".into()),
                 rack: Some("r1".into()),
                 address: tests::id_to_invalid_addr(2),
                 tokens: vec![Token { value: 150 }],
+                untranslated_address: Some(tests::id_to_invalid_addr(2)),
             },
             Peer {
                 datacenter: Some("waw".into()),
                 rack: Some("r2".into()),
                 address: tests::id_to_invalid_addr(3),
                 tokens: vec![Token { value: 510 }],
+                untranslated_address: Some(tests::id_to_invalid_addr(3)),
             },
             Peer {
                 datacenter: Some("waw".into()),
                 rack: Some("r2".into()),
                 address: tests::id_to_invalid_addr(4),
                 tokens: vec![Token { value: 300 }],
+                untranslated_address: Some(tests::id_to_invalid_addr(4)),
             },
             Peer {
                 datacenter: Some("her".into()),
                 rack: Some("r3".into()),
                 address: tests::id_to_invalid_addr(5),
                 tokens: vec![Token { value: 100 }],
+                untranslated_address: Some(tests::id_to_invalid_addr(5)),
             },
             Peer {
                 datacenter: Some("her".into()),
                 rack: Some("r3".into()),
                 address: tests::id_to_invalid_addr(6),
                 tokens: vec![Token { value: 250 }],
+                untranslated_address: Some(tests::id_to_invalid_addr(6)),
             },
             Peer {
                 datacenter: Some("her".into()),
                 rack: Some("r4".into()),
                 address: tests::id_to_invalid_addr(7),
                 tokens: vec![Token { value: 500 }],
+                untranslated_address: Some(tests::id_to_invalid_addr(7)),
             },
             Peer {
                 datacenter: Some("her".into()),
                 rack: Some("r4".into()),
                 address: tests::id_to_invalid_addr(8),
                 tokens: vec![Token { value: 400 }],
+                untranslated_address: Some(tests::id_to_invalid_addr(8)),
             },
         ];
 

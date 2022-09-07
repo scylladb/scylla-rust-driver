@@ -1,11 +1,14 @@
 use crate::frame::response::event::{Event, StatusChangeEvent};
 /// Cluster manages up to date information and connections to database nodes
 use crate::routing::Token;
-use crate::transport::connection::{Connection, VerifiedKeyspaceName};
-use crate::transport::connection_pool::PoolConfig;
-use crate::transport::errors::QueryError;
-use crate::transport::node::Node;
-use crate::transport::topology::{Keyspace, Metadata, MetadataReader};
+use crate::transport::{
+    connection::{Connection, VerifiedKeyspaceName},
+    connection_pool::PoolConfig,
+    errors::QueryError,
+    node::Node,
+    session::AddressTranslator,
+    topology::{Keyspace, Metadata, MetadataReader},
+};
 
 use arc_swap::ArcSwap;
 use futures::future::join_all;
@@ -120,6 +123,7 @@ impl Cluster {
         initial_peers: &[SocketAddr],
         pool_config: PoolConfig,
         fetch_schema_metadata: bool,
+        address_translator: &Option<Arc<dyn AddressTranslator>>,
     ) -> Result<Cluster, QueryError> {
         let (refresh_sender, refresh_receiver) = tokio::sync::mpsc::channel(32);
         let (use_keyspace_sender, use_keyspace_receiver) = tokio::sync::mpsc::channel(32);
@@ -131,6 +135,7 @@ impl Cluster {
             pool_config.keepalive_interval,
             server_events_sender,
             fetch_schema_metadata,
+            address_translator,
         );
 
         let metadata = metadata_reader.read_metadata(true).await?;

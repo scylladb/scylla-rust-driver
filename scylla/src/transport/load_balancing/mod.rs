@@ -141,6 +141,7 @@ mod tests {
                 rack: None,
                 address: tests::id_to_invalid_addr(*id),
                 tokens: Vec::new(),
+                untranslated_address: Some(tests::id_to_invalid_addr(*id)),
             })
             .collect::<Vec<_>>();
 
