@@ -373,7 +373,8 @@ pub enum RunQueryResult<ResT> {
 }
 
 mod spans {
-    use std::ops::Deref;
+    use scylla_cql::frame::value::SerializedValues;
+    use std::{borrow::Cow, ops::Deref};
 
     use crate::{
         batch::Batch,
@@ -446,11 +447,13 @@ mod spans {
         pub(super) fn new(
             execution_profile: &ExecutionProfileInner,
             query: &Query,
+            bound_values: &Cow<SerializedValues>,
         ) -> tracing::Span {
             let span = make_request_span(execution_profile, &query.config);
             span.record(scylladb_tag!("statement_type"), "regular");
             span.record(scylladb_tag!("statement"), query.contents.as_str());
             span.record_none_explicitly(scylladb_tag!("page_size"), query.get_page_size());
+            span.record(scylladb_tag!("bound_values"), &bound_values.for_debug());
             span
         }
     }
@@ -461,6 +464,7 @@ mod spans {
         pub(super) fn new(
             execution_profile: &ExecutionProfileInner,
             prepared: &PreparedStatement,
+            bound_values: &Cow<SerializedValues>,
         ) -> tracing::Span {
             let span = make_request_span(execution_profile, &prepared.config);
             span.record(scylladb_tag!("statement_type"), "prepared");
@@ -472,6 +476,33 @@ mod spans {
             );
             span.record_none_explicitly(scylladb_tag!("table"), prepared.get_table_name());
             span.record_none_explicitly(scylladb_tag!("keyspace"), prepared.get_keyspace_name());
+            span.record(scylladb_tag!("bound_values"), &bound_values.for_debug());
+
+            let metadata = prepared.get_prepared_metadata();
+
+            let gen_bound_values_repr = |columns: &mut dyn Iterator<Item = usize>| {
+                let mut s = String::new();
+                for i in columns {
+                    s.push_str(&metadata.col_specs[i].name);
+                    s.push('=');
+                    bound_values.for_debug_append_nth(&mut s, i).ok()?;
+                    s.push_str(", ");
+                }
+                if metadata.col_count > 0 {
+                    s.pop();
+                    s.pop();
+                }
+                Some(s)
+            };
+
+            let bound_values_repr = gen_bound_values_repr(&mut (0..metadata.col_count))
+                .unwrap_or_else(|| bound_values.for_debug());
+            span.record(scylladb_tag!("bound_values"), &bound_values_repr);
+            let partition_key_repr =
+                gen_bound_values_repr(&mut metadata.pk_indexes.iter().map(|pk| pk.index as usize));
+            span.record(scylladb_tag!("partition_key"), &partition_key_repr);
+            span.record_none_explicitly(scylladb_tag!("page_size"), prepared_stmt.get_page_size());
+
             span
         }
     }
@@ -1099,7 +1130,7 @@ impl Session {
             .get_execution_profile_handle()
             .unwrap_or_else(|| self.get_default_execution_profile_handle())
             .access();
-        let span = PreparedSpan::new(&execution_profile, prepared);
+        let span = PreparedSpan::new(&execution_profile, prepared, values_ref);
 
         let token = self.calculate_token(prepared, &serialized_values)?;
 
@@ -1224,7 +1255,7 @@ impl Session {
             .unwrap_or_else(|| self.get_default_execution_profile_handle())
             .access();
 
-        let span = PreparedSpan::new(&execution_profile, &prepared);
+        let span = PreparedSpan::new(&execution_profile, &prepared, &serialized_values);
 
         RowIterator::new_for_prepared_statement(PreparedIteratorConfig {
             prepared,
