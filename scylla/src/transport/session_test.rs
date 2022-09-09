@@ -12,7 +12,7 @@ use crate::transport::errors::{BadKeyspaceName, BadQuery, DbError, QueryError};
 use crate::transport::partitioner::{Murmur3Partitioner, Partitioner, PartitionerName};
 use crate::transport::topology::Strategy::SimpleStrategy;
 use crate::transport::topology::{CollectionType, ColumnKind, CqlType, NativeType};
-use crate::utils::test_utils::unique_keyspace_name;
+use crate::utils::test_utils::{supports_feature, unique_keyspace_name};
 use crate::CachingSession;
 use crate::QueryResult;
 use crate::{IntoTypedRows, Session, SessionBuilder};
@@ -2240,4 +2240,52 @@ async fn test_refresh_metadata_after_schema_agreement() {
             ("field3".to_string(), CqlType::Native(NativeType::Text))
         ])
     );
+}
+
+#[tokio::test]
+async fn test_rate_limit_exceeded_exception() {
+    let uri = std::env::var("SCYLLA_URI").unwrap_or_else(|_| "127.0.0.1:9042".to_string());
+    let session = SessionBuilder::new().known_node(uri).build().await.unwrap();
+
+    // Typed errors in RPC were introduced along with per-partition rate limiting.
+    // There is no dedicated feature for per-partition rate limiting, so we are
+    // looking at the other one.
+    if !supports_feature(&session, "TYPED_ERRORS_IN_READ_RPC").await {
+        println!("Skipping because the cluster doesn't support per partition rate limiting");
+        return;
+    }
+
+    let ks = unique_keyspace_name();
+    session.query(format!("CREATE KEYSPACE IF NOT EXISTS {} WITH REPLICATION = {{'class' : 'SimpleStrategy', 'replication_factor' : 1}}", ks), &[]).await.unwrap();
+    session.use_keyspace(ks.clone(), false).await.unwrap();
+    session.query("CREATE TABLE tbl (pk int PRIMARY KEY, v int) WITH per_partition_rate_limit = {'max_writes_per_second': 1}", ()).await.unwrap();
+
+    let stmt = session
+        .prepare("INSERT INTO tbl (pk, v) VALUES (?, ?)")
+        .await
+        .unwrap();
+
+    // The rate limit is 1 write/s, so repeat the same query
+    // until an error occurs, it should happen quickly
+
+    let mut maybe_err = None;
+
+    for _ in 0..1000 {
+        match session.execute(&stmt, (123, 456)).await {
+            Ok(_) => {} // Try again
+            Err(err) => {
+                maybe_err = Some(err);
+                break;
+            }
+        }
+    }
+
+    use scylla_cql::errors::OperationType;
+
+    match maybe_err.expect("Rate limit error didn't occur") {
+        QueryError::DbError(DbError::RateLimitReached { op_type, .. }, _) => {
+            assert_eq!(op_type, OperationType::Write);
+        }
+        err => panic!("Unexpected error type received: {:?}", err),
+    }
 }
