@@ -122,6 +122,7 @@ pub struct Session {
     default_consistency: Consistency,
     auto_await_schema_agreement_timeout: Option<Duration>,
     request_timeout: Option<Duration>,
+    refresh_metadata_on_auto_schema_agreement: bool,
 }
 
 /// This implementation deliberately omits some details from Cluster in order
@@ -206,6 +207,10 @@ pub struct SessionConfig {
     pub request_timeout: Option<Duration>,
 
     pub address_translator: Option<Arc<dyn AddressTranslator>>,
+
+    /// If true, full schema metadata is fetched after successfully reaching a schema agreement.
+    /// It is true by default but can be disabled if successive schema-altering statements should be performed.
+    pub refresh_metadata_on_auto_schema_agreement: bool,
 }
 
 /// Describes database server known on Session startup.
@@ -250,6 +255,7 @@ impl SessionConfig {
             auto_await_schema_agreement_timeout: Some(std::time::Duration::from_secs(60)),
             request_timeout: Some(Duration::from_secs(30)),
             address_translator: None,
+            refresh_metadata_on_auto_schema_agreement: true,
         }
     }
 
@@ -448,6 +454,8 @@ impl Session {
             default_consistency: config.default_consistency,
             auto_await_schema_agreement_timeout: config.auto_await_schema_agreement_timeout,
             request_timeout: config.request_timeout,
+            refresh_metadata_on_auto_schema_agreement: config
+                .refresh_metadata_on_auto_schema_agreement,
         };
 
         if let Some(keyspace_name) = config.used_keyspace {
@@ -603,6 +611,12 @@ impl Session {
                     contents,
                 );
                 return Err(QueryError::TimeoutError);
+            }
+
+            if self.refresh_metadata_on_auto_schema_agreement
+                && response.as_schema_change().is_some()
+            {
+                self.refresh_metadata().await?;
             }
         }
 

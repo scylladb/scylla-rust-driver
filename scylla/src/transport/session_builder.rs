@@ -621,6 +621,26 @@ impl SessionBuilder {
         self.config.address_translator = Some(translator);
         self
     }
+
+    /// Set the refresh metadata on schema agreement flag.
+    /// The default is true.
+    ///
+    /// # Example
+    /// ```
+    /// # use scylla::{Session, SessionBuilder};
+    /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
+    /// let session: Session = SessionBuilder::new()
+    ///     .known_node("127.0.0.1:9042")
+    ///     .refresh_metadata_on_auto_schema_agreement(true)
+    ///     .build()
+    ///     .await?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn refresh_metadata_on_auto_schema_agreement(mut self, refresh_metadata: bool) -> Self {
+        self.config.refresh_metadata_on_auto_schema_agreement = refresh_metadata;
+        self
+    }
 }
 
 /// Creates a [`SessionBuilder`] with default configuration, same as [`SessionBuilder::new`]
