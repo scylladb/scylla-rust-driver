@@ -89,6 +89,7 @@ pub struct Connection {
 pub(crate) struct ConnectionFeatures {
     shard_info: Option<ShardInfo>,
     shard_aware_port: Option<u16>,
+    protocol_features: ProtocolFeatures,
 }
 
 type RequestId = u64;
@@ -830,12 +831,17 @@ impl Connection {
         // notification about orphaning.
         notifier.disable();
 
-        Self::parse_response(task_response?, self.config.compression)
+        Self::parse_response(
+            task_response?,
+            self.config.compression,
+            &self.features.protocol_features,
+        )
     }
 
     fn parse_response(
         task_response: TaskResponse,
         compression: Option<Compression>,
+        features: &ProtocolFeatures,
     ) -> Result<QueryResponse, QueryError> {
         let body_with_ext = frame::parse_response_body_extensions(
             task_response.params.flags,
@@ -847,10 +853,8 @@ impl Connection {
             warn!(warning = warn_description.as_str());
         }
 
-        // TODO: Placeholder
-        let features = ProtocolFeatures::default();
         let response =
-            Response::deserialize(&features, task_response.opcode, &mut &*body_with_ext.body)?;
+            Response::deserialize(features, task_response.opcode, &mut &*body_with_ext.body)?;
 
         Ok(QueryResponse {
             response,
@@ -1115,7 +1119,18 @@ impl Connection {
         compression: Option<Compression>,
         event_sender: &mpsc::Sender<Event>,
     ) -> Result<(), QueryError> {
-        let response = Self::parse_response(task_response, compression)?.response;
+        // Protocol features are negotiated during connection handshake.
+        // However, the router is already created and sent to a different tokio
+        // task before the handshake begins, therefore it's hard to cleanly
+        // update the protocol features in the router at this point.
+        // Making it possible would require restructuring the handshake process,
+        // or passing the negotiated features via a channel/mutex/etc.
+        // Fortunately, events do not need information about protocol features
+        // to be serialized (yet), therefore I'm leaving this problem for
+        // future implementors.
+        let features = ProtocolFeatures::default(); // TODO: Use the right features
+
+        let response = Self::parse_response(task_response, compression, &features)?.response;
         let event = match response {
             Response::Event(e) => e,
             _ => {
@@ -1199,13 +1214,18 @@ pub async fn open_named_connection(
         .next()
         .and_then(|p| p.parse::<u16>().ok());
 
+    let protocol_features = ProtocolFeatures::parse_from_supported(&supported.options);
+
+    let mut options = HashMap::new();
+    protocol_features.add_startup_options(&mut options);
+
     let features = ConnectionFeatures {
         shard_info,
         shard_aware_port,
+        protocol_features,
     };
     connection.set_features(features);
 
-    let mut options = HashMap::new();
     options.insert("CQL_VERSION".to_string(), "4.0.0".to_string()); // FIXME: hardcoded values
     if let Some(name) = driver_name {
         options.insert("DRIVER_NAME".to_string(), name);
