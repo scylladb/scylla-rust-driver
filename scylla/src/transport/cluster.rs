@@ -1,19 +1,24 @@
-use crate::frame::response::event::{Event, StatusChangeEvent};
 /// Cluster manages up to date information and connections to database nodes
+use crate::frame::response::event::{Event, StatusChangeEvent};
+use crate::frame::value::ValueList;
+use crate::load_balancing::TokenAwarePolicy;
 use crate::routing::Token;
 use crate::transport::{
     connection::{Connection, VerifiedKeyspaceName},
     connection_pool::PoolConfig,
     errors::QueryError,
     node::Node,
+    partitioner::PartitionerName,
     session::AddressTranslator,
     topology::{Keyspace, Metadata, MetadataReader},
 };
 
 use arc_swap::ArcSwap;
+use bytes::{BufMut, Bytes, BytesMut};
 use futures::future::join_all;
 use futures::{future::RemoteHandle, FutureExt};
 use itertools::Itertools;
+use scylla_cql::errors::BadQuery;
 use std::collections::{BTreeMap, HashMap};
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -347,6 +352,65 @@ impl ClusterData {
     /// Access details about nodes known to the driver
     pub fn get_nodes_info(&self) -> &Vec<Arc<Node>> {
         &self.all_nodes
+    }
+
+    /// Compute token of a table partition key
+    pub fn compute_token(
+        &self,
+        keyspace: &str,
+        table: &str,
+        partition_key: impl ValueList,
+    ) -> Result<Token, BadQuery> {
+        let partitioner = self
+            .keyspaces
+            .get(keyspace)
+            .and_then(|k| k.tables.get(table))
+            .and_then(|t| t.partitioner.as_deref())
+            .and_then(PartitionerName::from_str)
+            .unwrap_or_default();
+        let serialized_values = partition_key.serialized()?;
+        // Null values are skipped in computation; null values in partition key are unsound,
+        // but it is consistent with computation of prepared statements token.
+        let serialized_pk = match serialized_values.len() {
+            0 => None,
+            1 => serialized_values
+                .iter()
+                .next()
+                .unwrap()
+                .map(Bytes::copy_from_slice),
+            _ => {
+                let mut buf = BytesMut::new();
+                for value in serialized_values.iter().flatten() {
+                    let value_size = value
+                        .len()
+                        .try_into()
+                        .map_err(|_| BadQuery::ValuesTooLongForKey(value.len(), u16::MAX.into()))?;
+                    buf.put_u16(value_size);
+                    buf.extend_from_slice(value);
+                    buf.put_u8(0);
+                }
+                Some(buf.into())
+            }
+        };
+        Ok(partitioner.hash(serialized_pk.unwrap_or_default()))
+    }
+
+    /// Access to replicas owning a given token
+    pub fn get_token_endpoints(&self, keyspace: &str, token: Token) -> Vec<Arc<Node>> {
+        TokenAwarePolicy::replicas_for_token(self, &token, Some(keyspace))
+    }
+
+    /// Access to replicas owning a given partition key (similar to `nodetool getendpoints`)
+    pub fn get_endpoints(
+        &self,
+        keyspace: &str,
+        table: &str,
+        partition_key: impl ValueList,
+    ) -> Result<Vec<Arc<Node>>, BadQuery> {
+        Ok(self.get_token_endpoints(
+            keyspace,
+            self.compute_token(keyspace, table, partition_key)?,
+        ))
     }
 }
 

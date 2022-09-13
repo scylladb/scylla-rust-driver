@@ -105,11 +105,11 @@ impl TokenAwarePolicy {
     }
 
     pub(crate) fn replicas_for_token(
-        token: &Token,
-        statement: &Statement,
         cluster: &ClusterData,
+        token: &Token,
+        keyspace_name: Option<&str>,
     ) -> Vec<Arc<Node>> {
-        let keyspace = statement.keyspace.and_then(|k| cluster.keyspaces.get(k));
+        let keyspace = keyspace_name.and_then(|k| cluster.keyspaces.get(k));
 
         let strategy = keyspace.map(|k| &k.strategy);
 
@@ -133,7 +133,7 @@ impl LoadBalancingPolicy for TokenAwarePolicy {
     fn plan<'a>(&self, statement: &Statement, cluster: &'a ClusterData) -> Plan<'a> {
         match statement.token {
             Some(token) => {
-                let replicas = Self::replicas_for_token(&token, statement, cluster);
+                let replicas = Self::replicas_for_token(cluster, &token, statement.keyspace);
                 trace!(
                     token = token.value,
                     replicas = replicas

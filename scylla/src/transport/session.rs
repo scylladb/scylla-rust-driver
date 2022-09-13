@@ -44,9 +44,6 @@ use crate::transport::load_balancing::{
 };
 use crate::transport::metrics::Metrics;
 use crate::transport::node::Node;
-use crate::transport::partitioner::{
-    CDCPartitioner, Murmur3Partitioner, Partitioner, PartitionerName,
-};
 use crate::transport::query_result::QueryResult;
 use crate::transport::retry_policy::{
     DefaultRetryPolicy, QueryInfo, RetryDecision, RetryPolicy, RetrySession,
@@ -1267,7 +1264,9 @@ impl Session {
     pub fn estimate_replicas_for_query(&self, statement: &Statement) -> Vec<Arc<Node>> {
         let cluster_data = self.cluster.get_data();
         match statement.token {
-            Some(token) => TokenAwarePolicy::replicas_for_token(&token, statement, &cluster_data),
+            Some(token) => {
+                TokenAwarePolicy::replicas_for_token(&cluster_data, &token, statement.keyspace)
+            }
             None => cluster_data.all_nodes.clone(),
         }
     }
@@ -1629,10 +1628,7 @@ impl Session {
 
         let partition_key = calculate_partition_key(prepared, serialized_values)?;
 
-        Ok(Some(match partitioner_name {
-            PartitionerName::Murmur3 => Murmur3Partitioner::hash(partition_key),
-            PartitionerName::CDC => CDCPartitioner::hash(partition_key),
-        }))
+        Ok(Some(partitioner_name.hash(partition_key)))
     }
 }
 

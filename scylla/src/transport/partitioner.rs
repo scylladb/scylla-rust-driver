@@ -10,6 +10,25 @@ pub(crate) enum PartitionerName {
     CDC,
 }
 
+impl PartitionerName {
+    pub(crate) fn from_str(name: &str) -> Option<Self> {
+        if name.ends_with("Murmur3Partitioner") {
+            Some(PartitionerName::Murmur3)
+        } else if name.ends_with("CDCPartitioner") {
+            Some(PartitionerName::CDC)
+        } else {
+            None
+        }
+    }
+
+    pub(crate) fn hash(&self, pk: Bytes) -> Token {
+        match self {
+            PartitionerName::Murmur3 => Murmur3Partitioner::hash(pk),
+            PartitionerName::CDC => CDCPartitioner::hash(pk),
+        }
+    }
+}
+
 impl Default for PartitionerName {
     fn default() -> Self {
         PartitionerName::Murmur3
