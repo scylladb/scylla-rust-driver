@@ -29,6 +29,7 @@ use std::{
 use super::errors::{BadKeyspaceName, BadQuery, DbError, QueryError};
 
 use crate::batch::{Batch, BatchStatement};
+use crate::frame::protocol_features::ProtocolFeatures;
 use crate::frame::{
     self,
     request::{self, batch, execute, query, register, Request},
@@ -70,9 +71,8 @@ pub struct Connection {
     _worker_handle: RemoteHandle<()>,
 
     connect_address: SocketAddr,
-    shard_info: Option<ShardInfo>,
-    shard_aware_port: Option<u16>,
     config: ConnectionConfig,
+    features: ConnectionFeatures,
 
     // Each request send by `Connection::send_request` needs a unique request id.
     // This field is a monotonic generator of such ids.
@@ -83,6 +83,13 @@ pub struct Connection {
     // pushing values in a synchronous way (without an `.await`), which is
     // needed for pushing values in `Drop` implementations.
     orphan_notification_sender: mpsc::UnboundedSender<RequestId>,
+}
+
+#[derive(Default)]
+pub(crate) struct ConnectionFeatures {
+    shard_info: Option<ShardInfo>,
+    shard_aware_port: Option<u16>,
+    protocol_features: ProtocolFeatures,
 }
 
 type RequestId = u64;
@@ -297,9 +304,8 @@ impl Connection {
             submit_channel: sender,
             _worker_handle,
             config,
+            features: Default::default(),
             connect_address: addr,
-            shard_info: None,
-            shard_aware_port: None,
             request_id_generator: AtomicU64::new(0),
             orphan_notification_sender,
         };
@@ -825,12 +831,17 @@ impl Connection {
         // notification about orphaning.
         notifier.disable();
 
-        Self::parse_response(task_response?, self.config.compression)
+        Self::parse_response(
+            task_response?,
+            self.config.compression,
+            &self.features.protocol_features,
+        )
     }
 
     fn parse_response(
         task_response: TaskResponse,
         compression: Option<Compression>,
+        features: &ProtocolFeatures,
     ) -> Result<QueryResponse, QueryError> {
         let body_with_ext = frame::parse_response_body_extensions(
             task_response.params.flags,
@@ -842,7 +853,8 @@ impl Connection {
             warn!(warning = warn_description.as_str());
         }
 
-        let response = Response::deserialize(task_response.opcode, &mut &*body_with_ext.body)?;
+        let response =
+            Response::deserialize(features, task_response.opcode, &mut &*body_with_ext.body)?;
 
         Ok(QueryResponse {
             response,
@@ -1107,7 +1119,18 @@ impl Connection {
         compression: Option<Compression>,
         event_sender: &mpsc::Sender<Event>,
     ) -> Result<(), QueryError> {
-        let response = Self::parse_response(task_response, compression)?.response;
+        // Protocol features are negotiated during connection handshake.
+        // However, the router is already created and sent to a different tokio
+        // task before the handshake begins, therefore it's hard to cleanly
+        // update the protocol features in the router at this point.
+        // Making it possible would require restructuring the handshake process,
+        // or passing the negotiated features via a channel/mutex/etc.
+        // Fortunately, events do not need information about protocol features
+        // to be serialized (yet), therefore I'm leaving this problem for
+        // future implementors.
+        let features = ProtocolFeatures::default(); // TODO: Use the right features
+
+        let response = Self::parse_response(task_response, compression, &features)?.response;
         let event = match response {
             Response::Event(e) => e,
             _ => {
@@ -1125,19 +1148,15 @@ impl Connection {
     }
 
     pub fn get_shard_info(&self) -> &Option<ShardInfo> {
-        &self.shard_info
+        &self.features.shard_info
     }
 
     pub fn get_shard_aware_port(&self) -> Option<u16> {
-        self.shard_aware_port
+        self.features.shard_aware_port
     }
 
-    fn set_shard_info(&mut self, shard_info: Option<ShardInfo>) {
-        self.shard_info = shard_info
-    }
-
-    fn set_shard_aware_port(&mut self, shard_aware_port: Option<u16>) {
-        self.shard_aware_port = shard_aware_port;
+    fn set_features(&mut self, features: ConnectionFeatures) {
+        self.features = features;
     }
 
     pub fn get_connect_address(&self) -> SocketAddr {
@@ -1176,25 +1195,37 @@ pub async fn open_named_connection(
         false => "SCYLLA_SHARD_AWARE_PORT",
     };
 
-    let (shard_info, supported_compression, shard_aware_port) = match options_result {
-        Response::Supported(mut supported) => {
-            let shard_info = ShardInfo::try_from(&supported.options).ok();
-            let supported_compression = supported.options.remove("COMPRESSION").unwrap_or_default();
-            let shard_aware_port = supported
-                .options
-                .remove(shard_aware_port_key)
-                .unwrap_or_default()
-                .into_iter()
-                .next()
-                .and_then(|p| p.parse::<u16>().ok());
-            (shard_info, supported_compression, shard_aware_port)
+    let mut supported = match options_result {
+        Response::Supported(supported) => supported,
+        _ => {
+            return Err(QueryError::ProtocolError(
+                "Wrong response to OPTIONS message was received",
+            ));
         }
-        _ => (None, Vec::new(), None),
     };
-    connection.set_shard_info(shard_info);
-    connection.set_shard_aware_port(shard_aware_port);
+
+    let shard_info = ShardInfo::try_from(&supported.options).ok();
+    let supported_compression = supported.options.remove("COMPRESSION").unwrap_or_default();
+    let shard_aware_port = supported
+        .options
+        .remove(shard_aware_port_key)
+        .unwrap_or_default()
+        .into_iter()
+        .next()
+        .and_then(|p| p.parse::<u16>().ok());
+
+    let protocol_features = ProtocolFeatures::parse_from_supported(&supported.options);
 
     let mut options = HashMap::new();
+    protocol_features.add_startup_options(&mut options);
+
+    let features = ConnectionFeatures {
+        shard_info,
+        shard_aware_port,
+        protocol_features,
+    };
+    connection.set_features(features);
+
     options.insert("CQL_VERSION".to_string(), "4.0.0".to_string()); // FIXME: hardcoded values
     if let Some(name) = driver_name {
         options.insert("DRIVER_NAME".to_string(), name);
