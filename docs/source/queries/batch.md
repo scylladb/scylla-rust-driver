@@ -2,7 +2,7 @@
 
 A batch statement allows to run many queries at once.\
 These queries can be [simple queries](simple.md) or [prepared queries](prepared.md).\
-Only queries like `INSERT` or `UPDATE` can be in a batch, batch doesn't return any rows.
+Only queries like `INSERT` or `UPDATE` can be in a batch.
 
 ```rust
 # extern crate scylla;
@@ -34,7 +34,7 @@ let batch_values = ((1_i32, 2_i32),
                     (),
                     (5_i32,));
 
-// Run the batch, doesn't return any rows
+// Run the batch
 session.batch(&batch, batch_values).await?;
 # Ok(())
 # }

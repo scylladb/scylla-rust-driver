@@ -4,7 +4,7 @@ use crate::prepared_statement::PreparedStatement;
 use crate::query::Query;
 use crate::transport::errors::QueryError;
 use crate::transport::iterator::RowIterator;
-use crate::{BatchResult, QueryResult, Session};
+use crate::{QueryResult, Session};
 use bytes::Bytes;
 use dashmap::DashMap;
 use futures::future::try_join_all;
@@ -74,7 +74,7 @@ impl CachingSession {
         &self,
         batch: &Batch,
         values: impl BatchValues,
-    ) -> Result<BatchResult, QueryError> {
+    ) -> Result<QueryResult, QueryError> {
         let all_prepared: bool = batch
             .statements
             .iter()

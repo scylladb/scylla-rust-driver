@@ -156,14 +156,6 @@ pub struct NonErrorQueryResponse {
     pub warnings: Vec<String>,
 }
 
-/// Result of Session::batch(). Contains no rows, only some useful information.
-pub struct BatchResult {
-    /// Warnings returned by the database
-    pub warnings: Vec<String>,
-    /// CQL Tracing uuid - can only be Some if tracing is enabled for this batch
-    pub tracing_id: Option<Uuid>,
-}
-
 impl QueryResponse {
     pub fn into_non_error_query_response(self) -> Result<NonErrorQueryResponse, QueryError> {
         Ok(NonErrorQueryResponse {
@@ -632,7 +624,7 @@ impl Connection {
         &self,
         batch: &Batch,
         values: impl BatchValues,
-    ) -> Result<BatchResult, QueryError> {
+    ) -> Result<QueryResult, QueryError> {
         self.batch_with_consistency(
             batch,
             values,
@@ -648,7 +640,7 @@ impl Connection {
         batch: &Batch,
         values: impl BatchValues,
         consistency: Consistency,
-    ) -> Result<BatchResult, QueryError> {
+    ) -> Result<QueryResult, QueryError> {
         let statements_count = batch.statements.len();
         if statements_count != values.len() {
             return Err(QueryError::BadQuery(BadQuery::ValueLenMismatch(
@@ -700,10 +692,7 @@ impl Connection {
                     }
                     _ => Err(err.into()),
                 },
-                Response::Result(_) => Ok(BatchResult {
-                    warnings: query_response.warnings,
-                    tracing_id: query_response.tracing_id,
-                }),
+                Response::Result(_) => Ok(query_response.into_query_result()?),
                 _ => Err(QueryError::ProtocolError(
                     "BATCH: Unexpected server response",
                 )),

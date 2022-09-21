@@ -7,7 +7,6 @@ use crate::query::Query;
 use crate::routing::Token;
 use crate::statement::Consistency;
 use crate::tracing::TracingInfo;
-use crate::transport::connection::BatchResult;
 use crate::transport::errors::{BadKeyspaceName, BadQuery, DbError, QueryError};
 use crate::transport::partitioner::{Murmur3Partitioner, Partitioner, PartitionerName};
 use crate::transport::topology::Strategy::SimpleStrategy;
@@ -1011,7 +1010,7 @@ async fn test_tracing_batch(session: &Session, ks: String) {
     let mut untraced_batch: Batch = Default::default();
     untraced_batch.append_statement(&format!("INSERT INTO {}.tab (a) VALUES('a')", ks)[..]);
 
-    let untraced_batch_result: BatchResult = session.batch(&untraced_batch, ((),)).await.unwrap();
+    let untraced_batch_result: QueryResult = session.batch(&untraced_batch, ((),)).await.unwrap();
     assert!(untraced_batch_result.tracing_id.is_none());
 
     // Batch with tracing enabled has a tracing uuid in result
@@ -1019,7 +1018,7 @@ async fn test_tracing_batch(session: &Session, ks: String) {
     traced_batch.append_statement(&format!("INSERT INTO {}.tab (a) VALUES('a')", ks)[..]);
     traced_batch.config.tracing = true;
 
-    let traced_batch_result: BatchResult = session.batch(&traced_batch, ((),)).await.unwrap();
+    let traced_batch_result: QueryResult = session.batch(&traced_batch, ((),)).await.unwrap();
     assert!(traced_batch_result.tracing_id.is_some());
 
     assert_in_tracing_table(session, traced_batch_result.tracing_id.unwrap()).await;

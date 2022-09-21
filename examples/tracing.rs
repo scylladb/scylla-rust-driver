@@ -9,7 +9,7 @@ use scylla::statement::{
 };
 use scylla::tracing::{GetTracingConfig, TracingInfo};
 use scylla::transport::iterator::RowIterator;
-use scylla::{BatchResult, QueryResult};
+use scylla::QueryResult;
 use scylla::{Session, SessionBuilder};
 use std::env;
 use std::num::NonZeroU32;
@@ -102,7 +102,7 @@ async fn main() -> Result<()> {
     batch.set_tracing(true);
 
     // Run the batch and print its tracing_id
-    let batch_result: BatchResult = session.batch(&batch, ((),)).await?;
+    let batch_result: QueryResult = session.batch(&batch, ((),)).await?;
     println!("Batch tracing id: {:?}\n", batch_result.tracing_id);
 
     // CUSTOM
