@@ -2309,3 +2309,117 @@ async fn test_rate_limit_exceeded_exception() {
         err => panic!("Unexpected error type received: {:?}", err),
     }
 }
+
+// Batches containing LWT queries (IF col = som) return rows with information whether the queries were applied.
+#[tokio::test]
+async fn test_batch_lwts() {
+    let uri = std::env::var("SCYLLA_URI").unwrap_or_else(|_| "127.0.0.1:9042".to_string());
+    let session = SessionBuilder::new().known_node(uri).build().await.unwrap();
+
+    let ks = unique_keyspace_name();
+    session.query(format!("CREATE KEYSPACE IF NOT EXISTS {} WITH REPLICATION = {{'class' : 'SimpleStrategy', 'replication_factor' : 1}}", ks), &[]).await.unwrap();
+    session.use_keyspace(ks.clone(), false).await.unwrap();
+
+    session
+        .query(
+            "CREATE TABLE tab (p1 int, c1 int, r1 int, r2 int, primary key (p1, c1))",
+            (),
+        )
+        .await
+        .unwrap();
+
+    session
+        .query("INSERT INTO tab (p1, c1, r1, r2) VALUES (0, 0, 0, 0)", ())
+        .await
+        .unwrap();
+
+    let mut batch: Batch = Batch::default();
+    batch.append_statement("UPDATE tab SET r2 = 1 WHERE p1 = 0 AND c1 = 0 IF r1 = 0");
+    batch.append_statement("INSERT INTO tab (p1, c1, r1, r2) VALUES (0, 123, 321, 312)");
+    batch.append_statement("UPDATE tab SET r1 = 1 WHERE p1 = 0 AND c1 = 0 IF r2 = 0");
+
+    let batch_res: QueryResult = session.batch(&batch, ((), (), ())).await.unwrap();
+
+    // Scylla returns 5 columns, but Cassandra returns only 1
+    let is_scylla: bool = batch_res.col_specs.len() == 5;
+
+    if is_scylla {
+        test_batch_lwts_for_scylla(&session, &batch, batch_res).await;
+    } else {
+        test_batch_lwts_for_cassandra(&session, &batch, batch_res).await;
+    }
+}
+
+async fn test_batch_lwts_for_scylla(session: &Session, batch: &Batch, batch_res: QueryResult) {
+    // Alias required by clippy
+    type IntOrNull = Option<i32>;
+
+    // Returned columns are:
+    // [applied], p1, c1, r1, r2
+    let batch_res_rows: Vec<(bool, IntOrNull, IntOrNull, IntOrNull, IntOrNull)> = batch_res
+        .rows_typed()
+        .unwrap()
+        .map(|r| r.unwrap())
+        .collect();
+
+    let expected_batch_res_rows = vec![
+        (true, Some(0), Some(0), Some(0), Some(0)),
+        (true, None, None, None, None),
+        (true, Some(0), Some(0), Some(0), Some(0)),
+    ];
+
+    assert_eq!(batch_res_rows, expected_batch_res_rows);
+
+    let prepared_batch: Batch = session.prepare_batch(batch).await.unwrap();
+    let prepared_batch_res: QueryResult =
+        session.batch(&prepared_batch, ((), (), ())).await.unwrap();
+
+    let prepared_batch_res_rows: Vec<(bool, IntOrNull, IntOrNull, IntOrNull, IntOrNull)> =
+        prepared_batch_res
+            .rows_typed()
+            .unwrap()
+            .map(|r| r.unwrap())
+            .collect();
+
+    let expected_prepared_batch_res_rows = vec![
+        (false, Some(0), Some(0), Some(1), Some(1)),
+        (false, None, None, None, None),
+        (false, Some(0), Some(0), Some(1), Some(1)),
+    ];
+
+    assert_eq!(prepared_batch_res_rows, expected_prepared_batch_res_rows);
+}
+
+async fn test_batch_lwts_for_cassandra(session: &Session, batch: &Batch, batch_res: QueryResult) {
+    // Alias required by clippy
+    type IntOrNull = Option<i32>;
+
+    // Returned columns are:
+    // [applied]
+    let batch_res_rows: Vec<(bool,)> = batch_res
+        .rows_typed()
+        .unwrap()
+        .map(|r| r.unwrap())
+        .collect();
+
+    let expected_batch_res_rows = vec![(true,)];
+
+    assert_eq!(batch_res_rows, expected_batch_res_rows);
+
+    let prepared_batch: Batch = session.prepare_batch(batch).await.unwrap();
+    let prepared_batch_res: QueryResult =
+        session.batch(&prepared_batch, ((), (), ())).await.unwrap();
+
+    // Returned columns are:
+    // [applied], p1, c1, r1, r2
+    let prepared_batch_res_rows: Vec<(bool, IntOrNull, IntOrNull, IntOrNull, IntOrNull)> =
+        prepared_batch_res
+            .rows_typed()
+            .unwrap()
+            .map(|r| r.unwrap())
+            .collect();
+
+    let expected_prepared_batch_res_rows = vec![(false, Some(0), Some(0), Some(1), Some(1))];
+
+    assert_eq!(prepared_batch_res_rows, expected_prepared_batch_res_rows);
+}
