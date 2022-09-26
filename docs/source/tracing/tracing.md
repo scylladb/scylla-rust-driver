@@ -9,11 +9,11 @@ Tracing is a feature provided by Scylla. When sending a query we can set a flag 
 After completing the query Scylla provides a `tracing_id` which can be used to fetch information about it - which nodes it was sent to, what operations were performed etc.
 
 Queries that support tracing:
-* [`Session::query()`](simple-prepared.md)
+* [`Session::query()`](basic.md)
 * [`Session::query_iter()`](paged.md)
-* [`Session::execute()`](simple-prepared.md)
+* [`Session::execute()`](basic.md)
 * [`Session::execute_iter()`](paged.md)
-* [`Session::batch()`](batch.md)
+* [`Session::batch()`](basic.md)
 * [`Session::prepare()`](prepare.md)
 
 After obtaining the tracing id you can use `Session::get_tracing_info()` to query tracing information.\
@@ -34,8 +34,7 @@ More information is available in the [Query Execution History](query-history.md)
    :hidden:
    :glob:
 
-   simple-prepared
-   batch
+   basic
    paged
    prepare
    query-history

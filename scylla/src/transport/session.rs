@@ -34,9 +34,7 @@ use crate::routing::Token;
 use crate::statement::{Consistency, SerialConsistency};
 use crate::tracing::{GetTracingConfig, TracingEvent, TracingInfo};
 use crate::transport::cluster::{Cluster, ClusterData, ClusterNeatDebug};
-use crate::transport::connection::{
-    BatchResult, Connection, ConnectionConfig, VerifiedKeyspaceName,
-};
+use crate::transport::connection::{Connection, ConnectionConfig, VerifiedKeyspaceName};
 use crate::transport::connection_pool::PoolConfig;
 use crate::transport::iterator::{PreparedIteratorConfig, RowIterator};
 use crate::transport::load_balancing::{
@@ -1007,7 +1005,7 @@ impl Session {
         &self,
         batch: &Batch,
         values: impl BatchValues,
-    ) -> Result<BatchResult, QueryError> {
+    ) -> Result<QueryResult, QueryError> {
         let values_ref = &values;
 
         let run_query_result = self
@@ -1025,10 +1023,7 @@ impl Session {
             .await?;
 
         Ok(match run_query_result {
-            RunQueryResult::IgnoredWriteError => BatchResult {
-                tracing_id: None,
-                warnings: Vec::new(),
-            },
+            RunQueryResult::IgnoredWriteError => QueryResult::default(),
             RunQueryResult::Completed(response) => response,
         })
     }
@@ -1682,7 +1677,7 @@ async fn resolve_hostname(hostname: &str) -> Result<SocketAddr, NewSessionError>
 pub trait AllowedRunQueryResTType {}
 
 impl AllowedRunQueryResTType for Uuid {}
-impl AllowedRunQueryResTType for BatchResult {}
+impl AllowedRunQueryResTType for QueryResult {}
 impl AllowedRunQueryResTType for NonErrorQueryResponse {}
 
 struct ExecuteQueryContext<'a> {
