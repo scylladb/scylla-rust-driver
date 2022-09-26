@@ -84,7 +84,7 @@ fn iter_rotated_left<'a, T>(
 }
 
 // similar to slice::rotate_left, but it returns an iterator, doesn't mutate input
-fn slice_rotated_left<'a, T>(slice: &'a [T], mid: usize) -> impl Iterator<Item = &T> + Clone + 'a {
+fn slice_rotated_left<T>(slice: &[T], mid: usize) -> impl Iterator<Item = &T> + Clone {
     let begin = &slice[mid..];
     let end = &slice[..mid];
     begin.iter().chain(end.iter())
