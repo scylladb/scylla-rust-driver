@@ -310,19 +310,27 @@ impl Connection {
 
     pub async fn startup(&self, options: HashMap<String, String>) -> Result<Response, QueryError> {
         Ok(self
-            .send_request(&request::Startup { options }, false, false)
+            .send_request(&request::Startup { options }, false, false, None)
             .await?
             .response)
     }
 
     pub async fn get_options(&self) -> Result<Response, QueryError> {
         Ok(self
-            .send_request(&request::Options {}, false, false)
+            .send_request(&request::Options {}, false, false, None)
             .await?
             .response)
     }
 
     pub async fn prepare(&self, query: &Query) -> Result<PreparedStatement, QueryError> {
+        self.prepare_with_deadline(query, None).await
+    }
+
+    pub(crate) async fn prepare_with_deadline(
+        &self,
+        query: &Query,
+        deadline: Option<Instant>,
+    ) -> Result<PreparedStatement, QueryError> {
         let query_response = self
             .send_request(
                 &request::Prepare {
@@ -330,6 +338,7 @@ impl Connection {
                 },
                 true,
                 query.config.tracing,
+                deadline,
             )
             .await?;
 
@@ -359,9 +368,12 @@ impl Connection {
         &self,
         query: impl Into<Query>,
         previous_prepared: &PreparedStatement,
+        deadline: Option<Instant>,
     ) -> Result<(), QueryError> {
         let reprepare_query: Query = query.into();
-        let reprepared = self.prepare(&reprepare_query).await?;
+        let reprepared = self
+            .prepare_with_deadline(&reprepare_query, deadline)
+            .await?;
         // Reprepared statement should keep its id - it's the md5 sum
         // of statement contents
         if reprepared.get_id() != previous_prepared.get_id() {
@@ -387,6 +399,7 @@ impl Connection {
             },
             false,
             false,
+            None,
         )
         .await
     }
@@ -440,6 +453,18 @@ impl Connection {
         consistency: Consistency,
         paging_state: Option<Bytes>,
     ) -> Result<QueryResponse, QueryError> {
+        self.query_with_consistency_and_deadline(query, values, consistency, paging_state, None)
+            .await
+    }
+
+    pub(crate) async fn query_with_consistency_and_deadline(
+        &self,
+        query: &Query,
+        values: impl ValueList,
+        consistency: Consistency,
+        paging_state: Option<Bytes>,
+        deadline: Option<Instant>,
+    ) -> Result<QueryResponse, QueryError> {
         let serialized_values = values.serialized()?;
 
         let query_frame = query::Query {
@@ -454,7 +479,7 @@ impl Connection {
             },
         };
 
-        self.send_request(&query_frame, true, query.config.tracing)
+        self.send_request(&query_frame, true, query.config.tracing, deadline)
             .await
     }
 
@@ -551,6 +576,24 @@ impl Connection {
         consistency: Consistency,
         paging_state: Option<Bytes>,
     ) -> Result<QueryResponse, QueryError> {
+        self.execute_with_consistency_and_deadline(
+            prepared_statement,
+            values,
+            consistency,
+            paging_state,
+            None,
+        )
+        .await
+    }
+
+    pub(crate) async fn execute_with_consistency_and_deadline(
+        &self,
+        prepared_statement: &PreparedStatement,
+        values: impl ValueList,
+        consistency: Consistency,
+        paging_state: Option<Bytes>,
+        deadline: Option<Instant>,
+    ) -> Result<QueryResponse, QueryError> {
         let serialized_values = values.serialized()?;
 
         let execute_frame = execute::Execute {
@@ -566,7 +609,12 @@ impl Connection {
         };
 
         let query_response = self
-            .send_request(&execute_frame, true, prepared_statement.config.tracing)
+            .send_request(
+                &execute_frame,
+                true,
+                prepared_statement.config.tracing,
+                deadline,
+            )
             .await?;
 
         match &query_response.response {
@@ -576,10 +624,19 @@ impl Connection {
             }) => {
                 debug!("Connection::execute: Got DbError::Unprepared - repreparing statement with id {:?}", statement_id);
                 // Repreparation of a statement is needed
-                self.reprepare(prepared_statement.get_statement(), prepared_statement)
-                    .await?;
-                self.send_request(&execute_frame, true, prepared_statement.config.tracing)
-                    .await
+                self.reprepare(
+                    prepared_statement.get_statement(),
+                    prepared_statement,
+                    deadline,
+                )
+                .await?;
+                self.send_request(
+                    &execute_frame,
+                    true,
+                    prepared_statement.config.tracing,
+                    deadline,
+                )
+                .await
             }
             _ => Ok(query_response),
         }
@@ -644,6 +701,17 @@ impl Connection {
         values: impl BatchValues,
         consistency: Consistency,
     ) -> Result<QueryResult, QueryError> {
+        self.batch_with_consistency_and_deadline(batch, values, consistency, None)
+            .await
+    }
+
+    pub(crate) async fn batch_with_consistency_and_deadline(
+        &self,
+        batch: &Batch,
+        values: impl BatchValues,
+        consistency: Consistency,
+        deadline: Option<Instant>,
+    ) -> Result<QueryResult, QueryError> {
         let statements_count = batch.statements.len();
         if statements_count != values.len() {
             return Err(QueryError::BadQuery(BadQuery::ValueLenMismatch(
@@ -671,7 +739,7 @@ impl Connection {
 
         loop {
             let query_response = self
-                .send_request(&batch_frame, true, batch.config.tracing)
+                .send_request(&batch_frame, true, batch.config.tracing, deadline)
                 .await?;
 
             return match query_response.response {
@@ -685,7 +753,7 @@ impl Connection {
                             _ => None,
                         });
                         if let Some(p) = prepared_statement {
-                            self.reprepare(p.get_statement(), p).await?;
+                            self.reprepare(p.get_statement(), p, deadline).await?;
                             continue;
                         } else {
                             return Err(QueryError::ProtocolError(
@@ -744,7 +812,7 @@ impl Connection {
         };
 
         match self
-            .send_request(&register_frame, true, false)
+            .send_request(&register_frame, true, false, None)
             .await?
             .response
         {
@@ -779,6 +847,7 @@ impl Connection {
         request: &R,
         compress: bool,
         tracing: bool,
+        deadline: Option<Instant>,
     ) -> Result<QueryResponse, QueryError> {
         let compression = if compress {
             self.config.compression
@@ -792,7 +861,7 @@ impl Connection {
         let response_handler = ResponseHandler {
             response_sender,
             request_id,
-            deadline: None, // TODO
+            deadline,
         };
 
         // Dropping `notifier` (before calling `notifier.disable()`) will send a notification to
