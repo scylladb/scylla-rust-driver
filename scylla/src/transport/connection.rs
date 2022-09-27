@@ -21,6 +21,7 @@ use std::io::ErrorKind;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::sync::Mutex as StdMutex;
+use std::task::{Context, Poll};
 use std::{
     cmp::Ordering,
     net::{Ipv4Addr, Ipv6Addr},
@@ -49,6 +50,7 @@ use crate::transport::Authenticator::{
     PasswordAuthenticator, ScyllaTransitionalAuthenticator,
 };
 use crate::transport::Compression;
+use crate::utils::timer::ArmableTimer;
 
 // Existing code imports scylla::transport::connection::QueryResult because it used to be located in this file.
 // Reexport QueryResult to avoid breaking the existing code.
@@ -97,6 +99,7 @@ type RequestId = u64;
 struct ResponseHandler {
     response_sender: oneshot::Sender<Result<TaskResponse, QueryError>>,
     request_id: RequestId,
+    deadline: Option<Instant>,
 }
 
 // Used to notify `Connection::orphaner` about `Connection::send_request`
@@ -789,6 +792,7 @@ impl Connection {
         let response_handler = ResponseHandler {
             response_sender,
             request_id,
+            deadline: None, // TODO
         };
 
         // Dropping `notifier` (before calling `notifier.disable()`) will send a notification to
@@ -925,8 +929,9 @@ impl Connection {
             receiver,
         );
         let o = Self::orphaner(&handler_map, orphan_notification_receiver);
+        let t = Self::timeouter(&handler_map);
 
-        let result = futures::try_join!(r, w, o);
+        let result = futures::try_join!(r, w, o, t);
 
         let error: QueryError = match result {
             Ok(_) => return, // Connection was dropped, we can return
@@ -1065,6 +1070,47 @@ impl Connection {
         }
 
         Ok(())
+    }
+
+    // This future enforces driver-side timeouts. It wakes as soon as some
+    // requests expire due to the timeout and sends a timeout error
+    // to the corresponding response handlers.
+    //
+    // The task sometimes wakes spuriously, but infrequently.
+    // See the comments in DeadlineTracker for more information.
+    async fn timeouter(handler_map: &StdMutex<ResponseHandlerMap>) -> Result<(), QueryError> {
+        loop {
+            // A propos handler_map_guard: we have a guarantee that the locks
+            // will succeed because the mutex is only locked on the current
+            // task.
+
+            // We are using poll_fn here in order to be able to poll the expiry
+            // timer inside the deadline tracker, as we cannot hold the mutex
+            // across suspension points.
+            futures::future::poll_fn(|cx| -> Poll<()> {
+                // Wait until the deadline of the first request in the queue elapses
+                let mut handler_map_guard = handler_map.try_lock().unwrap();
+                handler_map_guard.deadline_tracker.poll_expiry_timer(cx)
+            })
+            .await;
+
+            let mut handler_map_guard = handler_map.try_lock().unwrap();
+
+            // Elapse some of the requests
+            let to_elapse = handler_map_guard
+                .deadline_tracker
+                .elapse_some(Instant::now());
+            tracing::debug!("Timing out {} requests", to_elapse.len());
+
+            for request_id in to_elapse {
+                if let Some(handler) = handler_map_guard.orphan(request_id) {
+                    // Ignore sending error, request was dropped
+                    let _ = handler.response_sender.send(Err(QueryError::RequestTimeout(
+                        "request timed out".to_string(), // TODO: include information about deadline?
+                    )));
+                }
+            }
+        }
     }
 
     // This task receives notifications from `OrphanhoodNotifier`s and tries to
@@ -1319,6 +1365,120 @@ async fn connect_with_source_port(
     }
 }
 
+struct DeadlineTracker {
+    /// A queue of in-flight requests which have not expired yet.
+    deadlines: BTreeSet<(Instant, RequestId)>,
+
+    /// When it resolves, the deadline tracker should inspect the `deadlines`
+    /// queue and expire some timers.
+    ///
+    /// The timer is armed to expire at the moment of the earliest deadline
+    /// of any of the in-flight requests, but arming is actually done
+    /// only in the following cases:
+    ///
+    /// - The request which was just sent has an earlier deadline than
+    ///   the timer, or the timer was unset,
+    /// - The timer has expired and there are still some unexpired requests.
+    ///
+    /// The goal of this is to limit the amount of internal Tokio timer
+    /// scheduling/rescheduling/canceling. We found out that under very high
+    /// concurrency doing those operations limit scalability and it was
+    /// a problem when we tried to use tokio::time::timeout for every single
+    /// request.
+    ///
+    /// The above scheme works well in the optimistic scenario where timeouts
+    /// are rare - on average, it should schedule a timer every with a period
+    /// of the request timeout minus request latency - this is because when
+    /// the timer expires, it will reschedule itself at the earliest non-expired
+    /// request which should be around `timeout - latency` from now.
+    expiry_timer: ArmableTimer,
+}
+
+impl DeadlineTracker {
+    /// Creates an empty deadline tracker.
+    pub fn new() -> Self {
+        Self {
+            deadlines: BTreeSet::new(),
+            expiry_timer: ArmableTimer::new(),
+        }
+    }
+
+    /// Resolves at some point of time between now and right after the first
+    /// deadline. If there are no requests queued, it will resolve right after
+    /// the earliest yet-to-be-added deadline.
+    ///
+    /// The function is not a future but rather a poll function so that
+    /// it is possible to await for this event when the DeadlineTracker
+    /// is behind a mutex, without having to keep the mutex held.
+    pub fn poll_expiry_timer(&mut self, cx: &mut Context<'_>) -> Poll<()> {
+        use std::future::Future;
+        std::pin::Pin::new(&mut self.expiry_timer).poll(cx)
+    }
+
+    /// Returns a vector of IDs of requests that have elapsed and should be
+    /// notified about timing out. Updates the expiry timer.
+    pub fn elapse_some(&mut self, now: Instant) -> Vec<RequestId> {
+        // For simplicity, we are using Vec. Optimistically, it will be empty
+        // most of the time and incur no allocations. Moreover, doing it
+        // like this lets us avoid lifetime issues and lets us update
+        // the expire timer here only once after dismissing all
+        // expired requests.
+        let mut ret = Vec::new();
+        loop {
+            match self.deadlines.iter().next().cloned() {
+                Some(p @ (deadline, request_id)) if deadline <= now => {
+                    ret.push(request_id);
+                    self.deadlines.remove(&p);
+                }
+                Some((deadline, _)) => {
+                    // Set the expiry timer to the earliest deadline
+                    self.set_expiry_timer(deadline);
+                    break;
+                }
+                None => {
+                    // No requests in the queue, so no deadline to set
+                    break;
+                }
+            }
+        }
+        ret
+    }
+
+    /// Adds a request to the queue. May update the expiry time if needed.
+    pub fn add_request(&mut self, response_handler: &ResponseHandler) {
+        if let Some(request_deadline) = response_handler.deadline {
+            self.deadlines
+                .insert((request_deadline, response_handler.request_id));
+
+            // If the new deadline is earlier than the timer, we need to update
+            // the expiry timer
+            let current_deadline = self.expiry_timer.deadline();
+            if current_deadline.map_or(true, |current| current > request_deadline) {
+                self.set_expiry_timer(request_deadline);
+            }
+        }
+    }
+
+    /// Removes the request from the queue.
+    pub fn remove_request(&mut self, response_handler: &ResponseHandler) {
+        if let Some(deadline) = response_handler.deadline {
+            self.deadlines
+                .remove(&(deadline, response_handler.request_id));
+
+            // No need to update the deadline here
+        }
+    }
+
+    fn set_expiry_timer(&mut self, new_deadline: Instant) {
+        tracing::trace!(
+            "Setting new timeouter wakeup time to {:?}, previous was {:?}",
+            new_deadline,
+            self.expiry_timer.deadline(),
+        );
+        self.expiry_timer.arm(new_deadline);
+    }
+}
+
 struct OrphanageTracker {
     orphans: HashMap<i16, Instant>,
     by_orphaning_times: BTreeSet<(Instant, i16)>,
@@ -1364,6 +1524,7 @@ struct ResponseHandlerMap {
     handlers: HashMap<i16, ResponseHandler>,
 
     request_to_stream: HashMap<RequestId, i16>,
+    deadline_tracker: DeadlineTracker,
     orphanage_tracker: OrphanageTracker,
 }
 
@@ -1379,6 +1540,7 @@ impl ResponseHandlerMap {
             stream_set: StreamIdSet::new(),
             handlers: HashMap::new(),
             request_to_stream: HashMap::new(),
+            deadline_tracker: DeadlineTracker::new(),
             orphanage_tracker: OrphanageTracker::new(),
         }
     }
@@ -1387,6 +1549,7 @@ impl ResponseHandlerMap {
         if let Some(stream_id) = self.stream_set.allocate() {
             self.request_to_stream
                 .insert(response_handler.request_id, stream_id);
+            self.deadline_tracker.add_request(&response_handler);
             let prev_handler = self.handlers.insert(stream_id, response_handler);
             assert!(prev_handler.is_none());
 
@@ -1398,16 +1561,20 @@ impl ResponseHandlerMap {
 
     // Orphan stream_id (associated with this request_id) by moving it to
     // `orphanage_tracker`, and freeing its handler
-    pub fn orphan(&mut self, request_id: RequestId) {
-        if let Some(stream_id) = self.request_to_stream.get(&request_id) {
+    pub fn orphan(&mut self, request_id: RequestId) -> Option<ResponseHandler> {
+        if let Some(stream_id) = self.request_to_stream.get(&request_id).cloned() {
             debug!(
                 "Orphaning stream_id = {} associated with request_id = {}",
                 stream_id, request_id
             );
-            self.orphanage_tracker.insert(*stream_id);
-            self.handlers.remove(stream_id);
+            self.orphanage_tracker.insert(stream_id);
             self.request_to_stream.remove(&request_id);
+            if let Some(handler) = self.handlers.remove(&stream_id) {
+                self.deadline_tracker.remove_request(&handler);
+                return Some(handler);
+            }
         }
+        None
     }
 
     pub fn old_orphans_count(&self) -> usize {
@@ -1430,6 +1597,7 @@ impl ResponseHandlerMap {
             // prevent marking this `stream_id` as orphaned by some late
             // orphan notification.
             self.request_to_stream.remove(&handler.request_id);
+            self.deadline_tracker.remove_request(&handler);
 
             HandlerLookupResult::Handler(handler)
         } else {
