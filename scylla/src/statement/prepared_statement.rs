@@ -99,7 +99,7 @@ impl PreparedStatement {
     /// Computes the partition key of the target table from given values —
     /// it assumes that all partition key columns are passed in values.
     /// Partition keys have a specific serialization rules.
-    /// Ref: https://github.com/scylladb/scylla/blob/40adf38915b6d8f5314c621a94d694d172360833/compound_compat.hh#L33-L47
+    /// Ref: <https://github.com/scylladb/scylla/blob/40adf38915b6d8f5314c621a94d694d172360833/compound_compat.hh#L33-L47>
     pub fn compute_partition_key(
         &self,
         bound_values: &SerializedValues,

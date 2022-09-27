@@ -53,3 +53,11 @@ jobs:
       run: cargo check --verbose --manifest-path "scylla/Cargo.toml"
     - name: MSRV cargo check scylla-cql
       run: cargo check --verbose --all-targets --manifest-path "scylla-cql/Cargo.toml"
+
+  # Tests that docstrings generate docs without warnings
+  cargo_docs:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v2
+    - name: Compile docs
+      run: RUSTDOCFLAGS=-Dwarnings cargo doc

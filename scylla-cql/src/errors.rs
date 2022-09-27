@@ -1,4 +1,4 @@
-//! This module contains various errors which can be returned by [`Session`](crate::Session)
+//! This module contains various errors which can be returned by `scylla::Session`
 
 use crate::frame::frame_errors::{FrameError, ParseError};
 use crate::frame::types::LegacyConsistency;
