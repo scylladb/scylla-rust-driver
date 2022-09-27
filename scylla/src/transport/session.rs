@@ -27,7 +27,9 @@ use super::topology::UntranslatedPeer;
 use crate::cql_to_rust::FromRow;
 use crate::frame::response::cql_to_rust::FromRowError;
 use crate::frame::response::result;
-use crate::frame::value::{BatchValues, SerializedValues, ValueList};
+use crate::frame::value::{
+    BatchValues, BatchValuesFirstSerialized, BatchValuesIterator, SerializedValues, ValueList,
+};
 use crate::prepared_statement::{PartitionKeyError, PreparedStatement};
 use crate::query::Query;
 use crate::routing::Token;
@@ -1006,13 +1008,43 @@ impl Session {
         batch: &Batch,
         values: impl BatchValues,
     ) -> Result<QueryResult, QueryError> {
+        // Shard-awareness behavior for batch will be to pick shard based on first batch statement's shard
+        // If users batch statements by shard, they will be rewarded with full shard awareness
+
+        // Extract first serialized_value
+        let mut batch_values_iter_for_first_serialized_value = values.batch_values_iter();
+        let first_serialized_value = batch_values_iter_for_first_serialized_value
+            .next_serialized()
+            .transpose()?;
+        let first_serialized_value = first_serialized_value.as_deref();
+        let statement_info = match (first_serialized_value, batch.statements.first()) {
+            (Some(first_serialized_value), Some(BatchStatement::PreparedStatement(ps))) => {
+                Statement {
+                    token: self.calculate_token(ps, first_serialized_value)?,
+                    keyspace: ps.get_keyspace_name(),
+                }
+            }
+            _ => Statement::default(),
+        };
+        let first_value_token = statement_info.token;
+
+        // Reuse first serialized value when serializing query, and delegate to `BatchValues::write_next_to_request`
+        // directly for others (if they weren't already serialized, possibly don't even allocate the `SerializedValues`)
+        let values = BatchValuesFirstSerialized::new(&values, first_serialized_value);
         let values_ref = &values;
 
         let run_query_result = self
             .run_query(
-                Statement::default(),
+                statement_info,
                 &batch.config,
-                |node: Arc<Node>| async move { node.random_connection().await },
+                |node: Arc<Node>| async move {
+                    match first_value_token {
+                        Some(first_value_token) => {
+                            node.connection_for_token(first_value_token).await
+                        }
+                        None => node.random_connection().await,
+                    }
+                },
                 |connection: Arc<Connection>, consistency: Consistency| async move {
                     connection
                         .batch_with_consistency(batch, values_ref, consistency)
