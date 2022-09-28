@@ -18,7 +18,7 @@ use std::str::FromStr;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::net::lookup_host;
-use tokio::time::timeout;
+use tokio::time::{timeout, Instant};
 use tracing::{debug, error, trace, trace_span, Instrument};
 use uuid::Uuid;
 
@@ -541,6 +541,9 @@ impl Session {
         let query: Query = query.into();
         let serialized_values = values.serialized()?;
 
+        let timeout = query.config.request_timeout.or(self.request_timeout);
+        let deadline = timeout.map(|t| Instant::now() + t);
+
         let span = trace_span!("Request", query = query.contents.as_str());
         let run_query_result = self
             .run_query(
@@ -554,11 +557,12 @@ impl Session {
                     let paging_state_ref = &paging_state;
                     async move {
                         connection
-                            .query_with_consistency(
+                            .query_with_consistency_and_deadline(
                                 query_ref,
                                 values_ref,
                                 consistency,
                                 paging_state_ref.clone(),
+                                deadline,
                             )
                             .await
                             .and_then(QueryResponse::into_non_error_query_response)
@@ -845,6 +849,9 @@ impl Session {
         let values_ref = &serialized_values;
         let paging_state_ref = &paging_state;
 
+        let timeout = prepared.config.request_timeout.or(self.request_timeout);
+        let deadline = timeout.map(|t| Instant::now() + t);
+
         let token = self.calculate_token(prepared, &serialized_values)?;
 
         let statement_info = Statement {
@@ -868,11 +875,12 @@ impl Session {
                 },
                 |connection: Arc<Connection>, consistency: Consistency| async move {
                     connection
-                        .execute_with_consistency(
+                        .execute_with_consistency_and_deadline(
                             prepared,
                             values_ref,
                             consistency,
                             paging_state_ref.clone(),
+                            deadline,
                         )
                         .await
                         .and_then(QueryResponse::into_non_error_query_response)
@@ -1018,6 +1026,9 @@ impl Session {
     ) -> Result<QueryResult, QueryError> {
         let values_ref = &values;
 
+        let timeout = batch.config.request_timeout.or(self.request_timeout);
+        let deadline = timeout.map(|t| Instant::now() + t);
+
         let run_query_result = self
             .run_query(
                 Statement::default(),
@@ -1025,7 +1036,12 @@ impl Session {
                 |node: Arc<Node>| async move { node.random_connection().await },
                 |connection: Arc<Connection>, consistency: Consistency| async move {
                     connection
-                        .batch_with_consistency(batch, values_ref, consistency)
+                        .batch_with_consistency_and_deadline(
+                            batch,
+                            values_ref,
+                            consistency,
+                            deadline,
+                        )
                         .await
                 },
             )
@@ -1446,19 +1462,7 @@ impl Session {
             }
         };
 
-        let effective_timeout = statement_config.request_timeout.or(self.request_timeout);
-        let result = match effective_timeout {
-            Some(timeout) => tokio::time::timeout(timeout, runner)
-                .await
-                .unwrap_or_else(|e| {
-                    Err(QueryError::RequestTimeout(format!(
-                        "Request took longer than {}ms: {}",
-                        timeout.as_millis(),
-                        e
-                    )))
-                }),
-            None => runner.await,
-        };
+        let result = runner.await;
 
         if let Some((history_listener, query_id)) = history_listener_and_id {
             match &result {
@@ -1550,6 +1554,14 @@ impl Session {
                 };
 
                 let the_error: &QueryError = last_error.as_ref().unwrap();
+
+                // If the query was a driver-side timeout, there is no use
+                // in retrying anymore
+                if matches!(the_error, QueryError::RequestTimeout(_)) {
+                    trace!(parent: &span, "Query timed out driver-side");
+                    break 'nodes_in_plan;
+                }
+
                 // Use retry policy to decide what to do next
                 let query_info = QueryInfo {
                     error: the_error,
