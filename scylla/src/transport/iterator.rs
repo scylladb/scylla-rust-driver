@@ -69,11 +69,9 @@ struct ReceivedPage {
     pub tracing_id: Option<Uuid>,
 }
 
-pub(crate) struct PreparedIteratorConfig {
-    pub prepared: PreparedStatement,
+pub(crate) struct IteratorConfig {
     pub values: SerializedValues,
     pub default_consistency: Consistency,
-    pub token: Option<Token>,
     pub retry_session: Box<dyn RetrySession>,
     pub load_balancer: Arc<dyn LoadBalancingPolicy>,
     pub cluster_data: Arc<ClusterData>,
@@ -129,22 +127,19 @@ impl RowIterator {
 
     pub(crate) async fn new_for_query(
         mut query: Query,
-        values: SerializedValues,
-        default_consistency: Consistency,
-        retry_session: Box<dyn RetrySession>,
-        load_balancer: Arc<dyn LoadBalancingPolicy>,
-        cluster_data: Arc<ClusterData>,
-        metrics: Arc<Metrics>,
+        config: IteratorConfig,
     ) -> Result<RowIterator, QueryError> {
         if query.get_page_size().is_none() {
             query.set_page_size(DEFAULT_ITER_PAGE_SIZE);
         }
         let (sender, mut receiver) = mpsc::channel(1);
-        let consistency = query.config.determine_consistency(default_consistency);
+        let consistency = query
+            .config
+            .determine_consistency(config.default_consistency);
 
         let worker_task = async move {
             let query_ref = &query;
-            let values_ref = &values;
+            let values_ref = &config.values;
 
             let choose_connection = |node: Arc<Node>| async move { node.random_connection().await };
 
@@ -163,16 +158,16 @@ impl RowIterator {
                 statement_info: Statement::default(),
                 query_is_idempotent: query.config.is_idempotent,
                 query_consistency: consistency,
-                retry_session,
-                load_balancer,
-                metrics,
+                retry_session: config.retry_session,
+                load_balancer: config.load_balancer,
+                metrics: config.metrics,
                 paging_state: None,
                 history_listener: query.config.history_listener.clone(),
                 current_query_id: None,
                 current_attempt_id: None,
             };
 
-            worker.work(cluster_data).await;
+            worker.work(config.cluster_data).await;
         };
 
         tokio::task::spawn(worker_task);
@@ -192,26 +187,27 @@ impl RowIterator {
     }
 
     pub(crate) async fn new_for_prepared_statement(
-        mut config: PreparedIteratorConfig,
+        mut prepared: PreparedStatement,
+        token: Option<Token>,
+        config: IteratorConfig,
     ) -> Result<RowIterator, QueryError> {
-        if config.prepared.get_page_size().is_none() {
-            config.prepared.set_page_size(DEFAULT_ITER_PAGE_SIZE);
+        if prepared.get_page_size().is_none() {
+            prepared.set_page_size(DEFAULT_ITER_PAGE_SIZE);
         }
         let (sender, mut receiver) = mpsc::channel(1);
-        let consistency = config
-            .prepared
+        let consistency = prepared
             .config
             .determine_consistency(config.default_consistency);
 
         let statement_info = Statement {
-            token: config.token,
+            token,
             keyspace: None,
         };
 
         let worker_task = async move {
-            let prepared_ref = &config.prepared;
+            let prepared_ref = &prepared;
             let values_ref = &config.values;
-            let token = config.token;
+            let token = token;
 
             let choose_connection = |node: Arc<Node>| async move {
                 match token {
@@ -233,13 +229,13 @@ impl RowIterator {
                 choose_connection,
                 page_query,
                 statement_info,
-                query_is_idempotent: config.prepared.config.is_idempotent,
+                query_is_idempotent: prepared.config.is_idempotent,
                 query_consistency: consistency,
                 retry_session: config.retry_session,
                 load_balancer: config.load_balancer,
                 metrics: config.metrics,
                 paging_state: None,
-                history_listener: config.prepared.config.history_listener.clone(),
+                history_listener: prepared.config.history_listener.clone(),
                 current_query_id: None,
                 current_attempt_id: None,
             };

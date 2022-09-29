@@ -39,7 +39,7 @@ use crate::transport::cluster::{Cluster, ClusterData, ClusterNeatDebug};
 use crate::transport::connection::{Connection, ConnectionConfig, VerifiedKeyspaceName};
 use crate::transport::connection_pool::PoolConfig;
 use crate::transport::host_filter::HostFilter;
-use crate::transport::iterator::{PreparedIteratorConfig, RowIterator};
+use crate::transport::iterator::{IteratorConfig, RowIterator};
 use crate::transport::load_balancing::{
     LoadBalancingPolicy, RoundRobinPolicy, Statement, TokenAwarePolicy,
 };
@@ -681,12 +681,14 @@ impl Session {
         let span = trace_span!("Request", query = query.contents.as_str());
         RowIterator::new_for_query(
             query,
-            serialized_values.into_owned(),
-            self.default_consistency,
-            retry_session,
-            self.load_balancer.clone(),
-            self.cluster.get_data(),
-            self.metrics.clone(),
+            IteratorConfig {
+                values: serialized_values.into_owned(),
+                default_consistency: self.default_consistency,
+                retry_session,
+                load_balancer: self.load_balancer.clone(),
+                cluster_data: self.cluster.get_data(),
+                metrics: self.metrics.clone(),
+            },
         )
         .instrument(span)
         .await
@@ -965,16 +967,18 @@ impl Session {
             "Request",
             prepared_id = format!("{:X}", prepared.get_id()).as_str()
         );
-        RowIterator::new_for_prepared_statement(PreparedIteratorConfig {
+        RowIterator::new_for_prepared_statement(
             prepared,
-            values: serialized_values.into_owned(),
-            default_consistency: self.default_consistency,
             token,
-            retry_session,
-            load_balancer: self.load_balancer.clone(),
-            cluster_data: self.cluster.get_data(),
-            metrics: self.metrics.clone(),
-        })
+            IteratorConfig {
+                values: serialized_values.into_owned(),
+                default_consistency: self.default_consistency,
+                retry_session,
+                load_balancer: self.load_balancer.clone(),
+                cluster_data: self.cluster.get_data(),
+                metrics: self.metrics.clone(),
+            },
+        )
         .instrument(span)
         .await
     }
