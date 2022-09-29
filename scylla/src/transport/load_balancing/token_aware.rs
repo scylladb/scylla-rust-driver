@@ -188,6 +188,7 @@ impl LoadBalancingPolicy for TokenAwarePolicy {
 mod tests {
     use super::*;
 
+    use crate::load_balancing::tests::DumbPolicy;
     use crate::transport::load_balancing::tests;
     use crate::transport::topology::Keyspace;
     use crate::transport::topology::Metadata;
@@ -453,31 +454,5 @@ mod tests {
         };
 
         ClusterData::new(info, &Default::default(), &HashMap::new(), &None, None)
-    }
-
-    // Used as child policy for TokenAwarePolicy tests
-    // Forwards plan passed to it in apply_child_policy() method
-    #[derive(Debug)]
-    struct DumbPolicy {}
-
-    impl LoadBalancingPolicy for DumbPolicy {
-        fn plan<'a>(&self, _: &Statement, _: &'a ClusterData) -> Plan<'a> {
-            let empty_node_list: Vec<Arc<Node>> = Vec::new();
-
-            Box::new(empty_node_list.into_iter())
-        }
-
-        fn name(&self) -> String {
-            "".into()
-        }
-    }
-
-    impl ChildLoadBalancingPolicy for DumbPolicy {
-        fn apply_child_policy(
-            &self,
-            plan: Vec<Arc<Node>>,
-        ) -> Box<dyn Iterator<Item = Arc<Node>> + Send + Sync> {
-            Box::new(plan.into_iter())
-        }
     }
 }

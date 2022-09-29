@@ -106,6 +106,32 @@ mod tests {
     use std::collections::HashMap;
     use std::net::SocketAddr;
 
+    // Used as child policy for load balancing policy tests
+    // Forwards plan passed to it in apply_child_policy() method
+    #[derive(Debug)]
+    pub struct DumbPolicy {}
+
+    impl LoadBalancingPolicy for DumbPolicy {
+        fn plan<'a>(&self, _: &Statement, _: &'a ClusterData) -> Plan<'a> {
+            let empty_node_list: Vec<Arc<Node>> = Vec::new();
+
+            Box::new(empty_node_list.into_iter())
+        }
+
+        fn name(&self) -> String {
+            "".into()
+        }
+    }
+
+    impl ChildLoadBalancingPolicy for DumbPolicy {
+        fn apply_child_policy(
+            &self,
+            plan: Vec<Arc<Node>>,
+        ) -> Box<dyn Iterator<Item = Arc<Node>> + Send + Sync> {
+            Box::new(plan.into_iter())
+        }
+    }
+
     #[test]
     fn test_slice_rotation() {
         let a = [1, 2, 3, 4, 5];
