@@ -21,7 +21,7 @@ After submitting a PR which meets all criteria from the previous section, it wil
 
 Currently, the list of people maintaining the fork include:
 
-- Piotr Sarna (@psarna)
+- Jan Ciołek (@cvybhu)
 - Piotr Dulikowski (@piodul)
 
 ## Static checks
