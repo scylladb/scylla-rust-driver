@@ -6,12 +6,14 @@ use std::net::SocketAddr;
 use std::pin::Pin;
 use std::sync::Arc;
 use std::task::{Context, Poll};
+use std::time::Duration;
 
 use bytes::Bytes;
 use futures::Stream;
 use std::result::Result;
 use thiserror::Error;
 use tokio::sync::mpsc;
+use tokio::time::Instant;
 
 use super::errors::QueryError;
 use crate::cql_to_rust::{FromRow, FromRowError};
@@ -76,6 +78,7 @@ pub(crate) struct IteratorConfig {
     pub load_balancer: Arc<dyn LoadBalancingPolicy>,
     pub cluster_data: Arc<ClusterData>,
     pub metrics: Arc<Metrics>,
+    pub timeout: Option<Duration>,
 }
 
 /// Fetching pages is asynchronous so `RowIterator` does not implement the `Iterator` trait.\
@@ -145,9 +148,16 @@ impl RowIterator {
 
             let page_query = |connection: Arc<Connection>,
                               consistency: Consistency,
-                              paging_state: Option<Bytes>| async move {
+                              paging_state: Option<Bytes>,
+                              deadline: Option<Instant>| async move {
                 connection
-                    .query_with_consistency(query_ref, values_ref, consistency, paging_state)
+                    .query_with_consistency_and_deadline(
+                        query_ref,
+                        values_ref,
+                        consistency,
+                        paging_state,
+                        deadline,
+                    )
                     .await
             };
 
@@ -161,6 +171,8 @@ impl RowIterator {
                 retry_session: config.retry_session,
                 load_balancer: config.load_balancer,
                 metrics: config.metrics,
+                timeout: config.timeout,
+                current_deadline: None,
                 paging_state: None,
                 history_listener: query.config.history_listener.clone(),
                 current_query_id: None,
@@ -218,9 +230,16 @@ impl RowIterator {
 
             let page_query = |connection: Arc<Connection>,
                               consistency: Consistency,
-                              paging_state: Option<Bytes>| async move {
+                              paging_state: Option<Bytes>,
+                              deadline: Option<Instant>| async move {
                 connection
-                    .execute_with_consistency(prepared_ref, values_ref, consistency, paging_state)
+                    .execute_with_consistency_and_deadline(
+                        prepared_ref,
+                        values_ref,
+                        consistency,
+                        paging_state,
+                        deadline,
+                    )
                     .await
             };
 
@@ -234,6 +253,8 @@ impl RowIterator {
                 retry_session: config.retry_session,
                 load_balancer: config.load_balancer,
                 metrics: config.metrics,
+                timeout: config.timeout,
+                current_deadline: None,
                 paging_state: None,
                 history_listener: prepared.config.history_listener.clone(),
                 current_query_id: None,
@@ -294,6 +315,8 @@ struct RowIteratorWorker<'a, ConnFunc, QueryFunc> {
     retry_session: Box<dyn RetrySession>,
     load_balancer: Arc<dyn LoadBalancingPolicy>,
     metrics: Arc<Metrics>,
+    timeout: Option<Duration>,
+    current_deadline: Option<Instant>,
 
     paging_state: Option<Bytes>,
 
@@ -306,7 +329,7 @@ impl<ConnFunc, ConnFut, QueryFunc, QueryFut> RowIteratorWorker<'_, ConnFunc, Que
 where
     ConnFunc: Fn(Arc<Node>) -> ConnFut,
     ConnFut: Future<Output = Result<Arc<Connection>, QueryError>>,
-    QueryFunc: Fn(Arc<Connection>, Consistency, Option<Bytes>) -> QueryFut,
+    QueryFunc: Fn(Arc<Connection>, Consistency, Option<Bytes>, Option<Instant>) -> QueryFut,
     QueryFut: Future<Output = Result<QueryResponse, QueryError>>,
 {
     async fn work(mut self, cluster_data: Arc<ClusterData>) {
@@ -317,6 +340,7 @@ where
             QueryError::ProtocolError("Empty query plan - driver bug!");
         let mut current_consistency: Consistency = self.query_consistency;
 
+        self.reset_deadline();
         self.log_query_start();
 
         'nodes_in_plan: for node in query_plan {
@@ -362,6 +386,13 @@ where
                         error
                     }
                 };
+
+                // If the query was a driver-side timeout, there is no use
+                // in retrying anymore
+                if matches!(last_error, QueryError::RequestTimeout(_)) {
+                    trace!(parent: &span, "Query timed out driver-side");
+                    break 'nodes_in_plan;
+                }
 
                 // Use retry policy to decide what to do next
                 let query_info = QueryInfo {
@@ -417,10 +448,14 @@ where
                 "Sending"
             );
             self.log_attempt_start(connection.get_connect_address());
-            let query_response =
-                (self.page_query)(connection.clone(), consistency, self.paging_state.clone())
-                    .await?
-                    .into_non_error_query_response();
+            let query_response = (self.page_query)(
+                connection.clone(),
+                consistency,
+                self.paging_state.clone(),
+                self.current_deadline,
+            )
+            .await?
+            .into_non_error_query_response();
 
             let elapsed = query_start.elapsed();
             if Session::should_consider_query_for_latency_measurements(
@@ -458,6 +493,10 @@ where
 
                     // Query succeeded, reset retry policy for future retries
                     self.retry_session.reset();
+
+                    // We will fetch a new page, so reset the deadline
+                    self.reset_deadline();
+
                     self.log_query_start();
                 }
                 Err(err) => {
@@ -473,6 +512,10 @@ where
                 }
             }
         }
+    }
+
+    fn reset_deadline(&mut self) {
+        self.current_deadline = self.timeout.map(|t| Instant::now() + t);
     }
 
     fn log_query_start(&mut self) {

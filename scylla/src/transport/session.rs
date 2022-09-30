@@ -673,6 +673,8 @@ impl Session {
         let query: Query = query.into();
         let serialized_values = values.serialized()?;
 
+        let timeout = query.config.request_timeout.or(self.request_timeout);
+
         let retry_session = match &query.config.retry_policy {
             Some(policy) => policy.new_session(),
             None => self.retry_policy.new_session(),
@@ -688,6 +690,7 @@ impl Session {
                 load_balancer: self.load_balancer.clone(),
                 cluster_data: self.cluster.get_data(),
                 metrics: self.metrics.clone(),
+                timeout,
             },
         )
         .instrument(span)
@@ -956,6 +959,8 @@ impl Session {
         let prepared = prepared.into();
         let serialized_values = values.serialized()?;
 
+        let timeout = prepared.config.request_timeout.or(self.request_timeout);
+
         let token = self.calculate_token(&prepared, &serialized_values)?;
 
         let retry_session = match &prepared.config.retry_policy {
@@ -977,6 +982,7 @@ impl Session {
                 load_balancer: self.load_balancer.clone(),
                 cluster_data: self.cluster.get_data(),
                 metrics: self.metrics.clone(),
+                timeout,
             },
         )
         .instrument(span)
