@@ -10,6 +10,11 @@ For example if there are two datacenters:
 
 this policy when set to `us_east` will only use `A`, `B`, `C`, `A`, `B`, ...
 
+The policy may still return nodes in remote datacenters in the created plan as a fallback.
+This behaviour is configurable by the flag with a setter. By default the flag is set.
+In the example below, the flag is manually unset, which means that remote nodes
+are not present as a fallback at the end of the plan.
+
 ### Example
 To use this policy in `Session`:
 ```rust
@@ -23,9 +28,12 @@ use std::sync::Arc;
 
 let local_dc_name: String = "us_east".to_string();
 
+let mut policy = DcAwareRoundRobinPolicy::new(local_dc_name);
+policy.set_include_remote_nodes(false);
+
 let session: Session = SessionBuilder::new()
     .known_node("127.0.0.1:9042")
-    .load_balancing(Arc::new(DcAwareRoundRobinPolicy::new(local_dc_name)))
+    .load_balancing(Arc::new(policy))
     .build()
     .await?;
 # Ok(())

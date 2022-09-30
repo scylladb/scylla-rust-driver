@@ -11,6 +11,7 @@ use tracing::trace;
 pub struct DcAwareRoundRobinPolicy {
     index: AtomicUsize,
     local_dc: String,
+    include_remote_nodes: bool,
 }
 
 impl DcAwareRoundRobinPolicy {
@@ -18,7 +19,12 @@ impl DcAwareRoundRobinPolicy {
         Self {
             index: AtomicUsize::new(0),
             local_dc,
+            include_remote_nodes: true,
         }
+    }
+
+    pub fn set_include_remote_nodes(&mut self, val: bool) {
+        self.include_remote_nodes = val;
     }
 
     fn is_local_node(node: &Node, local_dc: &str) -> bool {
@@ -60,28 +66,40 @@ impl LoadBalancingPolicy for DcAwareRoundRobinPolicy {
         let rotated_local_nodes =
             super::slice_rotated_left(local_nodes, local_nodes_rotation).cloned();
 
-        let remote_nodes = self.retrieve_remote_nodes(cluster);
-        let remote_nodes_count = cluster.all_nodes.len() - local_nodes.len();
-        let remote_nodes_rotation = super::compute_rotation(index, remote_nodes_count);
-        let rotated_remote_nodes = super::iter_rotated_left(remote_nodes, remote_nodes_rotation);
-        trace!(
-            local_nodes = rotated_local_nodes
-                .clone()
-                .map(|node| node.address.to_string())
-                .collect::<Vec<String>>()
-                .join(",")
-                .as_str(),
-            remote_nodes = rotated_remote_nodes
-                .clone()
-                .map(|node| node.address.to_string())
-                .collect::<Vec<String>>()
-                .join(",")
-                .as_str(),
-            "DC Aware"
-        );
-
-        let plan = rotated_local_nodes.chain(rotated_remote_nodes);
-        Box::new(plan)
+        if self.include_remote_nodes {
+            let remote_nodes = self.retrieve_remote_nodes(cluster);
+            let remote_nodes_count = cluster.all_nodes.len() - local_nodes.len();
+            let remote_nodes_rotation = super::compute_rotation(index, remote_nodes_count);
+            let rotated_remote_nodes =
+                super::iter_rotated_left(remote_nodes, remote_nodes_rotation);
+            trace!(
+                local_nodes = rotated_local_nodes
+                    .clone()
+                    .map(|node| node.address.to_string())
+                    .collect::<Vec<String>>()
+                    .join(",")
+                    .as_str(),
+                remote_nodes = rotated_remote_nodes
+                    .clone()
+                    .map(|node| node.address.to_string())
+                    .collect::<Vec<String>>()
+                    .join(",")
+                    .as_str(),
+                "DC Aware"
+            );
+            Box::new(rotated_local_nodes.chain(rotated_remote_nodes))
+        } else {
+            trace!(
+                local_nodes = rotated_local_nodes
+                    .clone()
+                    .map(|node| node.address.to_string())
+                    .collect::<Vec<String>>()
+                    .join(",")
+                    .as_str(),
+                "DC Aware"
+            );
+            Box::new(rotated_local_nodes)
+        }
     }
 
     fn name(&self) -> String {
@@ -103,15 +121,19 @@ impl ChildLoadBalancingPolicy for DcAwareRoundRobinPolicy {
         let local_nodes_rotation = super::compute_rotation(index, local_nodes.len());
         let rotated_local_nodes = super::slice_rotated_left(&local_nodes, local_nodes_rotation);
 
-        let remote_nodes_rotation = super::compute_rotation(index, remote_nodes.len());
-        let rotated_remote_nodes = super::slice_rotated_left(&remote_nodes, remote_nodes_rotation);
+        let plan = if self.include_remote_nodes {
+            let remote_nodes_rotation = super::compute_rotation(index, remote_nodes.len());
+            let rotated_remote_nodes =
+                super::slice_rotated_left(&remote_nodes, remote_nodes_rotation);
 
-        let plan = rotated_local_nodes
-            .chain(rotated_remote_nodes)
-            .cloned()
-            .collect::<Vec<_>>()
-            .into_iter();
-        Box::new(plan)
+            rotated_local_nodes
+                .chain(rotated_remote_nodes)
+                .cloned()
+                .collect::<Vec<_>>()
+        } else {
+            rotated_local_nodes.cloned().collect()
+        };
+        Box::new(plan.into_iter())
     }
 }
 
@@ -122,12 +144,11 @@ mod tests {
     use crate::transport::load_balancing::tests;
     use std::collections::HashSet;
 
-    #[tokio::test]
-    async fn test_dc_aware_round_robin_policy() {
+    async fn test_dc_aware_round_robin_policy(
+        policy: DcAwareRoundRobinPolicy,
+        expected_plans: HashSet<Vec<u16>>,
+    ) {
         let cluster = tests::mock_cluster_data_for_round_robin_tests();
-
-        let local_dc = "eu".to_string();
-        let policy = DcAwareRoundRobinPolicy::new(local_dc);
 
         let plans = (0..32)
             .map(|_| {
@@ -138,6 +159,14 @@ mod tests {
                 )
             })
             .collect::<HashSet<_>>();
+
+        assert_eq!(expected_plans, plans);
+    }
+
+    #[tokio::test]
+    async fn test_dc_aware_round_robin_policy_with_remote_nodes() {
+        let local_dc = "eu".to_string();
+        let policy = DcAwareRoundRobinPolicy::new(local_dc);
 
         let expected_plans = vec![
             vec![1, 2, 3, 4, 5],
@@ -150,6 +179,19 @@ mod tests {
         .into_iter()
         .collect::<HashSet<_>>();
 
-        assert_eq!(expected_plans, plans);
+        test_dc_aware_round_robin_policy(policy, expected_plans).await;
+    }
+
+    #[tokio::test]
+    async fn test_dc_aware_round_robin_policy_without_remote_nodes() {
+        let local_dc = "eu".to_string();
+        let mut policy = DcAwareRoundRobinPolicy::new(local_dc);
+        policy.set_include_remote_nodes(false);
+
+        let expected_plans = vec![vec![1, 2, 3], vec![2, 3, 1], vec![3, 1, 2]]
+            .into_iter()
+            .collect::<HashSet<_>>();
+
+        test_dc_aware_round_robin_policy(policy, expected_plans).await;
     }
 }
