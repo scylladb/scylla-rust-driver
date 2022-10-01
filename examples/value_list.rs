@@ -20,14 +20,14 @@ async fn main() {
         .unwrap();
 
     #[derive(scylla::ValueList)]
-    struct MyType {
+    struct MyType<'a> {
         k: i32,
-        my: Option<String>,
+        my: Option<&'a str>,
     }
 
     let to_insert = MyType {
         k: 17,
-        my: Some("Some string".to_string()),
+        my: Some("Some str"),
     };
 
     session

@@ -1,12 +1,14 @@
 use proc_macro::TokenStream;
 use quote::{quote, quote_spanned};
-use syn::spanned::Spanned;
+use syn::{spanned::Spanned, DeriveInput};
 
 /// #[derive(FromUserType)] allows to parse a struct as User Defined Type
-/// Works only on simple structs without generics etc
 pub fn from_user_type_derive(tokens_input: TokenStream) -> TokenStream {
-    let (struct_name, struct_fields) =
-        crate::parser::parse_struct_with_named_fields(tokens_input, "FromUserType");
+    let item = syn::parse::<DeriveInput>(tokens_input).expect("No DeriveInput");
+    let struct_fields = crate::parser::parse_named_fields(&item, "FromUserType");
+
+    let struct_name = &item.ident;
+    let (impl_generics, ty_generics, where_clause) = item.generics.split_for_impl();
 
     // Generates tokens for field_name: field_type::from_cql(fields.remove(stringify!(#field_name)).unwrap_or(None)) ?, ...
     let set_fields_code = struct_fields.named.iter().map(|field| {
@@ -41,7 +43,7 @@ pub fn from_user_type_derive(tokens_input: TokenStream) -> TokenStream {
     });
 
     let generated = quote! {
-        impl FromCqlVal<scylla::frame::response::result::CqlValue> for #struct_name {
+        impl #impl_generics FromCqlVal<scylla::frame::response::result::CqlValue> for #struct_name #ty_generics #where_clause {
             fn from_cql(cql_val: scylla::frame::response::result::CqlValue)
             -> Result<Self, scylla::cql_to_rust::FromCqlValError> {
                 use std::collections::BTreeMap;
