@@ -150,7 +150,7 @@ mod tests {
             keyspaces: HashMap::new(),
         };
 
-        ClusterData::new(info, &Default::default(), &HashMap::new(), &None)
+        ClusterData::new(info, &Default::default(), &HashMap::new(), &None, None)
     }
 
     pub const EMPTY_STATEMENT: Statement = Statement {

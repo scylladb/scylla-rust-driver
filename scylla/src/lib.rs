@@ -116,6 +116,7 @@ pub use transport::query_result::QueryResult;
 pub use transport::session::{IntoTypedRows, Session, SessionConfig};
 pub use transport::session_builder::SessionBuilder;
 
+pub use transport::host_filter;
 pub use transport::load_balancing;
 pub use transport::retry_policy;
 pub use transport::speculative_execution;

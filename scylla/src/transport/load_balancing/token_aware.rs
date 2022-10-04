@@ -345,7 +345,7 @@ mod tests {
             keyspaces,
         };
 
-        ClusterData::new(info, &Default::default(), &HashMap::new(), &None)
+        ClusterData::new(info, &Default::default(), &HashMap::new(), &None, None)
     }
 
     // creates ClusterData with info about 8 nodes living in two different datacenters
@@ -444,7 +444,7 @@ mod tests {
             keyspaces,
         };
 
-        ClusterData::new(info, &Default::default(), &HashMap::new(), &None)
+        ClusterData::new(info, &Default::default(), &HashMap::new(), &None, None)
     }
 
     // Used as child policy for TokenAwarePolicy tests

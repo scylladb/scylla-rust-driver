@@ -3,6 +3,7 @@ use crate::frame::response::event::{Event, StatusChangeEvent};
 use crate::frame::value::ValueList;
 use crate::load_balancing::TokenAwarePolicy;
 use crate::routing::Token;
+use crate::transport::host_filter::HostFilter;
 use crate::transport::{
     connection::{Connection, VerifiedKeyspaceName},
     connection_pool::PoolConfig,
@@ -110,6 +111,10 @@ struct ClusterWorker {
 
     // Keyspace send in "USE <keyspace name>" when opening each connection
     used_keyspace: Option<VerifiedKeyspaceName>,
+
+    // The host filter determines towards which nodes we should open
+    // connections
+    host_filter: Option<Arc<dyn HostFilter>>,
 }
 
 #[derive(Debug)]
@@ -129,6 +134,7 @@ impl Cluster {
         pool_config: PoolConfig,
         fetch_schema_metadata: bool,
         address_translator: &Option<Arc<dyn AddressTranslator>>,
+        host_filter: &Option<Arc<dyn HostFilter>>,
     ) -> Result<Cluster, QueryError> {
         let (refresh_sender, refresh_receiver) = tokio::sync::mpsc::channel(32);
         let (use_keyspace_sender, use_keyspace_receiver) = tokio::sync::mpsc::channel(32);
@@ -141,10 +147,17 @@ impl Cluster {
             server_events_sender,
             fetch_schema_metadata,
             address_translator,
+            host_filter,
         );
 
         let metadata = metadata_reader.read_metadata(true).await?;
-        let cluster_data = ClusterData::new(metadata, &pool_config, &HashMap::new(), &None);
+        let cluster_data = ClusterData::new(
+            metadata,
+            &pool_config,
+            &HashMap::new(),
+            &None,
+            host_filter.as_deref(),
+        );
         cluster_data.wait_until_all_pools_are_initialized().await;
         let cluster_data: Arc<ArcSwap<ClusterData>> =
             Arc::new(ArcSwap::from(Arc::new(cluster_data)));
@@ -160,6 +173,8 @@ impl Cluster {
 
             use_keyspace_channel: use_keyspace_receiver,
             used_keyspace: None,
+
+            host_filter: host_filter.clone(),
         };
 
         let (fut, worker_handle) = worker.work().remote_handle();
@@ -273,6 +288,7 @@ impl ClusterData {
         pool_config: &PoolConfig,
         known_peers: &HashMap<SocketAddr, Arc<Node>>,
         used_keyspace: &Option<VerifiedKeyspaceName>,
+        host_filter: Option<&dyn HostFilter>,
     ) -> Self {
         // Create new updated known_peers and ring
         let mut new_known_peers: HashMap<SocketAddr, Arc<Node>> =
@@ -289,13 +305,17 @@ impl ClusterData {
                 Some(node) if node.datacenter == peer.datacenter && node.rack == peer.rack => {
                     node.clone()
                 }
-                _ => Arc::new(Node::new(
-                    peer.address,
-                    pool_config.clone(),
-                    peer.datacenter,
-                    peer.rack,
-                    used_keyspace.clone(),
-                )),
+                _ => {
+                    let is_enabled = host_filter.map_or(true, |f| f.accept(&peer));
+                    Arc::new(Node::new(
+                        peer.address,
+                        pool_config.clone(),
+                        peer.datacenter,
+                        peer.rack,
+                        used_keyspace.clone(),
+                        is_enabled,
+                    ))
+                }
             };
 
             new_known_peers.insert(peer.address, node.clone());
@@ -567,6 +587,7 @@ impl ClusterWorker {
             &self.pool_config,
             &cluster_data.known_peers,
             &self.used_keyspace,
+            self.host_filter.as_deref(),
         ));
 
         new_cluster_data

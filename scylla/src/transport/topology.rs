@@ -4,6 +4,7 @@ use crate::statement::query::Query;
 use crate::transport::connection::{Connection, ConnectionConfig};
 use crate::transport::connection_pool::{NodeConnectionPool, PoolConfig, PoolSize};
 use crate::transport::errors::{DbError, QueryError};
+use crate::transport::host_filter::HostFilter;
 use crate::transport::session::{AddressTranslator, IntoTypedRows};
 use crate::utils::parse::{ParseErrorCause, ParseResult, ParserState};
 
@@ -36,6 +37,7 @@ pub(crate) struct MetadataReader {
     fetch_schema: bool,
 
     address_translator: Option<Arc<dyn AddressTranslator>>,
+    host_filter: Option<Arc<dyn HostFilter>>,
 }
 
 /// Describes all metadata retrieved from the cluster
@@ -219,6 +221,7 @@ impl MetadataReader {
         server_event_sender: mpsc::Sender<Event>,
         fetch_schema: bool,
         address_translator: &Option<Arc<dyn AddressTranslator>>,
+        host_filter: &Option<Arc<dyn HostFilter>>,
     ) -> Self {
         let control_connection_address = *known_peers
             .choose(&mut thread_rng())
@@ -243,6 +246,7 @@ impl MetadataReader {
             known_peers: known_peers.into(),
             fetch_schema,
             address_translator: address_translator.clone(),
+            host_filter: host_filter.clone(),
         }
     }
 
@@ -251,6 +255,9 @@ impl MetadataReader {
         let mut result = self.fetch_metadata(initial).await;
         if let Ok(metadata) = result {
             self.update_known_peers(&metadata);
+            if initial {
+                self.handle_unaccepted_host_in_control_connection(&metadata);
+            }
             return Ok(metadata);
         }
 
@@ -302,6 +309,7 @@ impl MetadataReader {
         match &result {
             Ok(metadata) => {
                 self.update_known_peers(metadata);
+                self.handle_unaccepted_host_in_control_connection(metadata);
                 debug!("Fetched new metadata");
             }
             Err(error) => error!(
@@ -343,7 +351,67 @@ impl MetadataReader {
     }
 
     fn update_known_peers(&mut self, metadata: &Metadata) {
-        self.known_peers = metadata.peers.iter().map(|peer| peer.address).collect();
+        let host_filter = self.host_filter.as_ref();
+        self.known_peers = metadata
+            .peers
+            .iter()
+            .filter(|peer| host_filter.map_or(true, |f| f.accept(peer)))
+            .map(|peer| peer.address)
+            .collect();
+
+        // Check if the host filter isn't accidentally too restrictive,
+        // and print an error message about this fact
+        if !metadata.peers.is_empty() && self.known_peers.is_empty() {
+            error!(
+                node_ips = ?metadata
+                    .peers
+                    .iter()
+                    .map(|peer| peer.address)
+                    .collect::<Vec<_>>(),
+                "The host filter rejected all nodes in the cluster, \
+                no connections that can serve user queries have been \
+                established. The session cannot serve any queries!"
+            )
+        }
+    }
+
+    fn handle_unaccepted_host_in_control_connection(&mut self, metadata: &Metadata) {
+        let control_connection_peer = metadata
+            .peers
+            .iter()
+            .find(|peer| peer.address == self.control_connection_address);
+        if let Some(peer) = control_connection_peer {
+            if !self.host_filter.as_ref().map_or(true, |f| f.accept(peer)) {
+                warn!(
+                    filtered_node_ips = ?metadata
+                        .peers
+                        .iter()
+                        .filter(|peer| self.host_filter.as_ref().map_or(true, |p| p.accept(peer)))
+                        .map(|peer| peer.address)
+                        .collect::<Vec<_>>(),
+                    control_connection_address = ?self.control_connection_address,
+                    "The node that the control connection is established to \
+                    is not accepted by the host filter. Please verify that \
+                    the nodes in your initial peers list are accepted by the \
+                    host filter. The driver will try to re-establish the \
+                    control connection to a different node."
+                );
+
+                // Assuming here that known_peers are up-to-date
+                if !self.known_peers.is_empty() {
+                    self.control_connection_address = *self
+                        .known_peers
+                        .choose(&mut thread_rng())
+                        .expect("known_peers is empty - should be impossible");
+
+                    self.control_connection = Self::make_control_connection_pool(
+                        self.control_connection_address,
+                        self.connection_config.clone(),
+                        self.keepalive_interval,
+                    );
+                }
+            }
+        }
     }
 
     fn make_control_connection_pool(
