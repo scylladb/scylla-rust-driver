@@ -295,6 +295,7 @@ impl ClusterData {
                     peer.datacenter,
                     peer.rack,
                     used_keyspace.clone(),
+                    true,
                 )),
             };
 

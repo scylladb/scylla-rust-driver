@@ -21,7 +21,8 @@ pub struct Node {
     pub datacenter: Option<String>,
     pub rack: Option<String>,
 
-    pool: NodeConnectionPool,
+    // If the node is filtered out by the host filter, this will be None
+    pool: Option<NodeConnectionPool>,
 
     down_marker: AtomicBool,
 }
@@ -40,9 +41,11 @@ impl Node {
         datacenter: Option<String>,
         rack: Option<String>,
         keyspace_name: Option<VerifiedKeyspaceName>,
+        enabled: bool,
     ) -> Self {
-        let pool =
-            NodeConnectionPool::new(address.ip(), address.port(), pool_config, keyspace_name);
+        let pool = enabled.then(|| {
+            NodeConnectionPool::new(address.ip(), address.port(), pool_config, keyspace_name)
+        });
 
         Node {
             address,
@@ -54,7 +57,7 @@ impl Node {
     }
 
     pub fn sharder(&self) -> Option<Sharder> {
-        self.pool.sharder()
+        self.pool.as_ref()?.sharder()
     }
 
     /// Get connection which should be used to connect using given token
@@ -63,16 +66,23 @@ impl Node {
         &self,
         token: Token,
     ) -> Result<Arc<Connection>, QueryError> {
-        self.pool.connection_for_token(token)
+        self.get_pool()?.connection_for_token(token)
     }
 
     /// Get random connection
     pub(crate) async fn random_connection(&self) -> Result<Arc<Connection>, QueryError> {
-        self.pool.random_connection()
+        self.get_pool()?.random_connection()
     }
 
     pub fn is_down(&self) -> bool {
         self.down_marker.load(Ordering::Relaxed)
+    }
+
+    /// Returns a boolean which indicates whether this node was is enabled.
+    /// Only enabled nodes will have connections open. For disabled nodes,
+    /// no connections will be opened.
+    pub fn is_enabled(&self) -> bool {
+        self.pool.is_some()
     }
 
     pub(crate) fn change_down_marker(&self, is_down: bool) {
@@ -83,15 +93,30 @@ impl Node {
         &self,
         keyspace_name: VerifiedKeyspaceName,
     ) -> Result<(), QueryError> {
-        self.pool.use_keyspace(keyspace_name).await
+        if let Some(pool) = &self.pool {
+            pool.use_keyspace(keyspace_name).await?;
+        }
+        Ok(())
     }
 
     pub(crate) fn get_working_connections(&self) -> Result<Vec<Arc<Connection>>, QueryError> {
-        self.pool.get_working_connections()
+        self.get_pool()?.get_working_connections()
     }
 
     pub(crate) async fn wait_until_pool_initialized(&self) {
-        self.pool.wait_until_initialized().await
+        if let Some(pool) = &self.pool {
+            pool.wait_until_initialized().await;
+        }
+    }
+
+    fn get_pool(&self) -> Result<&NodeConnectionPool, QueryError> {
+        self.pool.as_ref().ok_or_else(|| {
+            QueryError::IoError(Arc::new(std::io::Error::new(
+                std::io::ErrorKind::Other,
+                "No connections in the pool: the node has been disabled \
+                by the host filter",
+            )))
+        })
     }
 }
 
