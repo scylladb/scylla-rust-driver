@@ -5,6 +5,7 @@ use super::load_balancing::LoadBalancingPolicy;
 use super::session::{AddressTranslator, Session, SessionConfig};
 use super::speculative_execution::SpeculativeExecutionPolicy;
 use super::Compression;
+use crate::transport::host_filter::HostFilter;
 use crate::transport::{connection_pool::PoolSize, retry_policy::RetryPolicy};
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -619,6 +620,38 @@ impl SessionBuilder {
     /// ```
     pub fn address_translator(mut self, translator: Arc<dyn AddressTranslator>) -> Self {
         self.config.address_translator = Some(translator);
+        self
+    }
+
+    /// Sets the host filter. The host filter decides whether any connections
+    /// should be opened to the node or not. The driver will also avoid
+    /// those nodes when re-establishing the control connection.
+    ///
+    /// See the [host filter](crate::transport::host_filter) module for a list
+    /// of pre-defined filters. It is also possible to provide a custom filter
+    /// by implementing the HostFilter trait.
+    ///
+    /// # Example
+    /// ```
+    /// # use async_trait::async_trait;
+    /// # use std::net::SocketAddr;
+    /// # use std::sync::Arc;
+    /// # use scylla::{Session, SessionBuilder};
+    /// # use scylla::transport::session::{AddressTranslator, TranslationError};
+    /// # use scylla::transport::host_filter::DcHostFilter;
+    ///
+    /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
+    /// // The session will only connect to nodes from "my-local-dc"
+    /// let session: Session = SessionBuilder::new()
+    ///     .known_node("127.0.0.1:9042")
+    ///     .host_filter(Arc::new(DcHostFilter::new("my-local-dc".to_string())))
+    ///     .build()
+    ///     .await?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn host_filter(mut self, filter: Arc<dyn HostFilter>) -> Self {
+        self.config.host_filter = Some(filter);
         self
     }
 

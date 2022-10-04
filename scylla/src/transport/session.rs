@@ -38,6 +38,7 @@ use crate::tracing::{GetTracingConfig, TracingEvent, TracingInfo};
 use crate::transport::cluster::{Cluster, ClusterData, ClusterNeatDebug};
 use crate::transport::connection::{Connection, ConnectionConfig, VerifiedKeyspaceName};
 use crate::transport::connection_pool::PoolConfig;
+use crate::transport::host_filter::HostFilter;
 use crate::transport::iterator::{PreparedIteratorConfig, RowIterator};
 use crate::transport::load_balancing::{
     LoadBalancingPolicy, RoundRobinPolicy, Statement, TokenAwarePolicy,
@@ -205,6 +206,11 @@ pub struct SessionConfig {
 
     pub address_translator: Option<Arc<dyn AddressTranslator>>,
 
+    /// The host filter decides whether any connections should be opened
+    /// to the node or not. The driver will also avoid filtered out nodes when
+    /// re-establishing the control connection.
+    pub host_filter: Option<Arc<dyn HostFilter>>,
+
     /// If true, full schema metadata is fetched after successfully reaching a schema agreement.
     /// It is true by default but can be disabled if successive schema-altering statements should be performed.
     pub refresh_metadata_on_auto_schema_agreement: bool,
@@ -252,6 +258,7 @@ impl SessionConfig {
             auto_await_schema_agreement_timeout: Some(std::time::Duration::from_secs(60)),
             request_timeout: Some(Duration::from_secs(30)),
             address_translator: None,
+            host_filter: None,
             refresh_metadata_on_auto_schema_agreement: true,
         }
     }
