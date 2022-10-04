@@ -147,6 +147,7 @@ impl Cluster {
             server_events_sender,
             fetch_schema_metadata,
             address_translator,
+            host_filter,
         );
 
         let metadata = metadata_reader.read_metadata(true).await?;
