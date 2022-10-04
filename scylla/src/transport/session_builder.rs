@@ -595,7 +595,7 @@ impl SessionBuilder {
     /// # Ok(())
     /// # }
     /// ```
-    /// /// # Example
+    /// # Example
     /// ```
     /// # use std::net::SocketAddr;
     /// # use std::sync::Arc;
@@ -603,17 +603,17 @@ impl SessionBuilder {
     /// # use std::str::FromStr;
     /// # use scylla::{Session, SessionBuilder};
     /// # use scylla::transport::session::{AddressTranslator, TranslationError};
-    ///
+    /// #
     /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
-    ///     let mut translation_rules = HashMap::new();
-    ///     let addr_before_translation = SocketAddr::from_str("192.168.0.42").unwrap();
-    ///     let addr_after_translation = SocketAddr::from_str("157.123.12.42").unwrap();
-    ///     translation_rules.insert(addr_before_translation, addr_after_translation);
-    ///     let session: Session = SessionBuilder::new()
-    ///         .known_node("127.0.0.1:9042")
-    ///         .address_translator(Arc::new(translation_rules))
-    ///         .build()
-    ///         .await?;
+    /// let mut translation_rules = HashMap::new();
+    /// let addr_before_translation = SocketAddr::from_str("192.168.0.42:19042").unwrap();
+    /// let addr_after_translation = SocketAddr::from_str("157.123.12.42:23203").unwrap();
+    /// translation_rules.insert(addr_before_translation, addr_after_translation);
+    /// let session: Session = SessionBuilder::new()
+    ///     .known_node("127.0.0.1:9042")
+    ///     .address_translator(Arc::new(translation_rules))
+    ///     .build()
+    ///     .await?;
     /// #    Ok(())
     /// # }
     /// ```
