@@ -388,7 +388,8 @@ async fn test_batch() {
     batch.append_statement(&format!("INSERT INTO {}.t_batch (a, b, c) VALUES (7, 11, '')", ks)[..]);
     batch.append_statement(prepared_statement.clone());
 
-    let values = ((1_i32, 2_i32, "abc"), (), (1_i32, 4_i32, "hello"));
+    let four_value: i32 = 4;
+    let values = ((1_i32, 2_i32, "abc"), (), (1_i32, &four_value, "hello"));
 
     session.batch(&batch, values).await.unwrap();
 
