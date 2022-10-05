@@ -15,6 +15,8 @@ use std::sync::atomic::AtomicU64;
 #[cfg(feature = "ssl")]
 use tokio_openssl::SslStream;
 
+use crate::authentication::AuthenticatorProvider;
+use scylla_cql::frame::response::authenticate::Authenticate;
 use std::collections::{BTreeSet, HashMap};
 use std::convert::TryFrom;
 use std::io::ErrorKind;
@@ -43,11 +45,6 @@ use crate::routing::ShardInfo;
 use crate::statement::prepared_statement::PreparedStatement;
 use crate::statement::Consistency;
 use crate::transport::session::IntoTypedRows;
-use crate::transport::Authenticator;
-use crate::transport::Authenticator::{
-    AllowAllAuthenticator, CassandraAllowAllAuthenticator, CassandraPasswordAuthenticator,
-    PasswordAuthenticator, ScyllaTransitionalAuthenticator,
-};
 use crate::transport::Compression;
 
 // Existing code imports scylla::transport::connection::QueryResult because it used to be located in this file.
@@ -216,12 +213,11 @@ pub struct ConnectionConfig {
     pub tcp_nodelay: bool,
     #[cfg(feature = "ssl")]
     pub ssl_context: Option<SslContext>,
-    pub auth_username: Option<String>,
-    pub auth_password: Option<String>,
     pub connect_timeout: std::time::Duration,
     // should be Some only in control connections,
     pub event_sender: Option<mpsc::Sender<Event>>,
     pub default_consistency: Consistency,
+    pub authenticator: Option<Arc<dyn AuthenticatorProvider>>,
 }
 
 impl Default for ConnectionConfig {
@@ -232,10 +228,9 @@ impl Default for ConnectionConfig {
             event_sender: None,
             #[cfg(feature = "ssl")]
             ssl_context: None,
-            auth_username: None,
-            auth_password: None,
             connect_timeout: std::time::Duration::from_secs(5),
             default_consistency: Default::default(),
+            authenticator: None,
         }
     }
 }
@@ -372,20 +367,10 @@ impl Connection {
 
     pub async fn authenticate_response(
         &self,
-        username: Option<String>,
-        password: Option<String>,
-        authenticator: Authenticator,
+        response: Option<Vec<u8>>,
     ) -> Result<QueryResponse, QueryError> {
-        self.send_request(
-            &request::AuthResponse {
-                username,
-                password,
-                authenticator,
-            },
-            false,
-            false,
-        )
-        .await
+        self.send_request(&request::AuthResponse { response }, false, false)
+            .await
     }
 
     pub async fn query_single_page(
@@ -1229,44 +1214,7 @@ pub async fn open_named_connection(
     match result {
         Response::Ready => {}
         Response::Authenticate(authenticate) => {
-            let authenticator: Authenticator = match &authenticate.authenticator_name as &str {
-                "AllowAllAuthenticator" => AllowAllAuthenticator,
-                "PasswordAuthenticator" => PasswordAuthenticator,
-                "org.apache.cassandra.auth.PasswordAuthenticator" => CassandraPasswordAuthenticator,
-                "org.apache.cassandra.auth.AllowAllAuthenticator" => CassandraAllowAllAuthenticator,
-                "com.scylladb.auth.TransitionalAuthenticator" => ScyllaTransitionalAuthenticator,
-                _ => unimplemented!(
-                    "Authenticator not supported, {}",
-                    authenticate.authenticator_name
-                ),
-            };
-
-            let username = connection.config.auth_username.to_owned();
-            let password = connection.config.auth_password.to_owned();
-
-            let auth_result = connection
-                .authenticate_response(username, password, authenticator)
-                .await?;
-            match auth_result.response {
-                Response::AuthChallenge(authenticate_challenge) => {
-                    let challenge_message = authenticate_challenge.authenticate_message;
-                    unimplemented!(
-                        "Auth Challenge not implemented yet, {:?}",
-                        challenge_message
-                    )
-                }
-                Response::AuthSuccess(_authenticate_success) => {
-                    // OK, continue
-                }
-                Response::Error(err) => {
-                    return Err(err.into());
-                }
-                _ => {
-                    return Err(QueryError::ProtocolError(
-                        "Unexpected response to Authenticate Response message",
-                    ))
-                }
-            }
+            perform_authenticate(&mut connection, &authenticate).await?;
         }
         _ => {
             return Err(QueryError::ProtocolError(
@@ -1285,6 +1233,59 @@ pub async fn open_named_connection(
     }
 
     Ok((connection, error_receiver))
+}
+
+async fn perform_authenticate(
+    connection: &mut Connection,
+    authenticate: &Authenticate,
+) -> Result<(), QueryError> {
+    let authenticator = &authenticate.authenticator_name as &str;
+
+    match connection.config.authenticator {
+        Some(ref authenticator_provider) => {
+            let (mut response, mut auth_session) = authenticator_provider
+                .start_authentication_session(authenticator)
+                .await
+                .map_err(QueryError::InvalidMessage)?;
+
+            loop {
+                match connection
+                    .authenticate_response(response)
+                    .await?.response
+                {
+                    Response::AuthChallenge(challenge) => {
+                        response = auth_session
+                            .evaluate_challenge(
+                                challenge.authenticate_message.as_deref(),
+                            )
+                            .await
+                            .map_err(QueryError::InvalidMessage)?;
+                    }
+                    Response::AuthSuccess(success) => {
+                        auth_session
+                            .success(success.success_message.as_deref())
+                            .await
+                            .map_err(QueryError::InvalidMessage)?;
+                        break;
+                    }
+                    Response::Error(err) => {
+                        return Err(err.into());
+                    }
+                    _ => {
+                        return Err(QueryError::ProtocolError(
+                            "Unexpected response to Authenticate Response message",
+                        ))
+                    }
+                }
+            }
+        },
+        None => return Err(QueryError::InvalidMessage(
+            "Authentication is required. You can use SessionBuilder::user(\"user\", \"pass\") to provide credentials \
+                    or SessionBuilder::authenticator_provider to provide custom authenticator".to_string(),
+        )),
+    }
+
+    Ok(())
 }
 
 async fn connect_with_source_port(

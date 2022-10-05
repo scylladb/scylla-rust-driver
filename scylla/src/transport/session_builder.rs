@@ -11,6 +11,7 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration;
 
+use crate::authentication::{AuthenticatorProvider, PlainTextAuthenticator};
 use crate::statement::Consistency;
 #[cfg(feature = "ssl")]
 use openssl::ssl::SslContext;
@@ -197,7 +198,7 @@ impl SessionBuilder {
         self
     }
 
-    /// Set username and password for authentication.\
+    /// Set username and password for plain text authentication.\
     /// If the database server will require authentication\
     ///
     /// # Example
@@ -215,8 +216,62 @@ impl SessionBuilder {
     /// # }
     /// ```
     pub fn user(mut self, username: impl Into<String>, passwd: impl Into<String>) -> Self {
-        self.config.auth_username = Some(username.into());
-        self.config.auth_password = Some(passwd.into());
+        self.config.authenticator = Some(Arc::new(PlainTextAuthenticator::new(
+            username.into(),
+            passwd.into(),
+        )));
+        self
+    }
+
+    /// Set custom authenticator provider to create an authenticator instance during a session creation.
+    ///
+    /// # Example
+    /// ```
+    /// # use std::sync::Arc;
+    /// use bytes::Bytes;
+    /// use scylla::{Session, SessionBuilder};
+    /// use async_trait::async_trait;
+    /// use scylla::authentication::{AuthenticatorProvider, AuthenticatorSession, AuthError};
+    /// # use scylla::transport::Compression;
+    ///
+    /// struct CustomAuthenticator;
+    ///
+    /// #[async_trait]
+    /// impl AuthenticatorSession for CustomAuthenticator {
+    ///     async fn evaluate_challenge(&mut self, token: Option<&[u8]>) -> Result<Option<Vec<u8>>, AuthError> {
+    ///         Ok(None)
+    ///     }
+    ///
+    ///     async fn success(&mut self, token: Option<&[u8]>) -> Result<(), AuthError> {
+    ///         Ok(())
+    ///     }
+    /// }
+    ///
+    /// struct CustomAuthenticatorProvider;
+    ///
+    /// #[async_trait]
+    /// impl AuthenticatorProvider for CustomAuthenticatorProvider {
+    ///     async fn start_authentication_session(&self, _authenticator_name: &str) -> Result<(Option<Vec<u8>>, Box<dyn AuthenticatorSession>), AuthError> {
+    ///         Ok((None, Box::new(CustomAuthenticator)))
+    ///     }
+    /// }
+    ///
+    /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
+    /// let session: Session = SessionBuilder::new()
+    ///     .known_node("127.0.0.1:9042")
+    ///     .use_keyspace("my_keyspace_name", false)
+    ///     .user("cassandra", "cassandra")
+    ///     .authenticator_provider(Arc::new(CustomAuthenticatorProvider))
+    ///     .build()
+    ///     .await?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn authenticator_provider(
+        mut self,
+        authenticator_provider: Arc<dyn AuthenticatorProvider>,
+    ) -> Self {
+        self.config.authenticator = Some(authenticator_provider);
         self
     }
 
