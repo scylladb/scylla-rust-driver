@@ -650,13 +650,47 @@ fn tuple_batch_values() {
 fn ref_batch_values() {
     let batch_values: &[&[i8]] = &[&[1, 2], &[2, 3, 4, 5], &[6]];
 
-    assert_eq!(
-        <&&&&[&[i8]] as BatchValuesGatWorkaround<'_>>::len(&&&&batch_values),
-        3
-    );
-    let mut it = <&&&&[&[i8]] as BatchValuesGatWorkaround<'_>>::batch_values_iter(&&&&batch_values);
+    return check_ref_bv::<&&&&&[&[i8]]>(&&&&batch_values);
+    fn check_ref_bv<B: BatchValues>(batch_values: B) {
+        assert_eq!(<B as BatchValuesGatWorkaround<'_>>::len(&batch_values), 3);
+        let mut it = <B as BatchValuesGatWorkaround<'_>>::batch_values_iter(&batch_values);
 
-    let mut request: Vec<u8> = Vec::new();
-    it.write_next_to_request(&mut request).unwrap().unwrap();
-    assert_eq!(request, vec![0, 2, 0, 0, 0, 1, 1, 0, 0, 0, 1, 2]);
+        let mut request: Vec<u8> = Vec::new();
+        it.write_next_to_request(&mut request).unwrap().unwrap();
+        assert_eq!(request, vec![0, 2, 0, 0, 0, 1, 1, 0, 0, 0, 1, 2]);
+    }
+}
+
+#[test]
+fn check_ref_tuple() {
+    fn assert_has_batch_values<BV: BatchValues>(bv: BV) {
+        let mut it = bv.batch_values_iter();
+        let mut request: Vec<u8> = Vec::new();
+        while let Some(res) = it.write_next_to_request(&mut request) {
+            res.unwrap()
+        }
+    }
+    let s = String::from("hello");
+    let tuple: ((&str,),) = ((&s,),);
+    assert_has_batch_values(&tuple);
+    let tuple2: ((&str, &str), (&str, &str)) = ((&s, &s), (&s, &s));
+    assert_has_batch_values(&tuple2);
+}
+
+#[test]
+fn check_batch_values_iterator_is_not_lending() {
+    // This is an interesting property if we want to improve the batch shard selection heuristic
+    fn f(bv: impl BatchValues) {
+        let mut it = bv.batch_values_iter();
+        let mut it2 = bv.batch_values_iter();
+        // Make sure we can hold all these at the same time
+        let v = vec![
+            it.next_serialized().unwrap().unwrap(),
+            it2.next_serialized().unwrap().unwrap(),
+            it.next_serialized().unwrap().unwrap(),
+            it2.next_serialized().unwrap().unwrap(),
+        ];
+        let _ = v;
+    }
+    f(((10,), (11,)))
 }
