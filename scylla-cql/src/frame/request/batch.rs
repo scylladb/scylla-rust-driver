@@ -1,4 +1,4 @@
-use crate::frame::frame_errors::ParseError;
+use crate::frame::{frame_errors::ParseError, value::BatchValuesIterator};
 use bytes::{BufMut, Bytes};
 use std::convert::TryInto;
 
@@ -54,9 +54,21 @@ where
         // Serializing queries
         types::write_short(self.statements_count.try_into()?, buf);
 
-        for (statement_num, statement) in self.statements.clone().enumerate() {
+        let mut n_serialized_statements = 0usize;
+        let mut value_lists = self.values.batch_values_iter();
+        for statement in self.statements.clone() {
             statement.serialize(buf)?;
-            self.values.write_nth_to_request(statement_num, buf)?;
+            value_lists.write_next_to_request(buf).ok_or_else(|| {
+                ParseError::BadDataToSerialize(
+                    "Mismatch between statement counts for batch query".to_owned(),
+                )
+            })??;
+            n_serialized_statements += 1;
+        }
+        if n_serialized_statements != self.statements_count {
+            return Err(ParseError::BadDataToSerialize(
+                "Mismatch between statement counts for batch query".to_owned(),
+            ));
         }
 
         // Serializing consistency
