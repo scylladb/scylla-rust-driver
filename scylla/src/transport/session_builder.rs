@@ -455,6 +455,29 @@ impl SessionBuilder {
         self
     }
 
+    /// Set the keyspaces to be fetched, to retrieve their strategy, and schema metadata if enabled
+    /// No keyspaces, the default value, means all the keyspaces will be fetched.
+    ///
+    /// # Example
+    /// ```
+    /// # use scylla::{Session, SessionBuilder};
+    /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
+    /// let session: Session = SessionBuilder::new()
+    ///     .known_node("127.0.0.1:9042")
+    ///     .keyspaces_to_fetch(["my_keyspace"])
+    ///     .build()
+    ///     .await?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn keyspaces_to_fetch(
+        mut self,
+        keyspaces: impl IntoIterator<Item = impl Into<String>>,
+    ) -> Self {
+        self.config.keyspaces_to_fetch = keyspaces.into_iter().map(Into::into).collect();
+        self
+    }
+
     /// Set the fetch schema metadata flag.
     /// The default is true.
     ///

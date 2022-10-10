@@ -7,6 +7,7 @@ use crate::transport::errors::{DbError, QueryError};
 use crate::transport::session::{AddressTranslator, IntoTypedRows};
 use crate::utils::parse::{ParseErrorCause, ParseResult, ParserState};
 
+use crate::QueryResult;
 use futures::future::try_join_all;
 use rand::seq::SliceRandom;
 use rand::{thread_rng, Rng};
@@ -33,6 +34,7 @@ pub(crate) struct MetadataReader {
 
     // when control connection fails, MetadataReader tries to connect to one of known_peers
     known_peers: Vec<SocketAddr>,
+    keyspaces_to_fetch: Vec<String>,
     fetch_schema: bool,
 
     address_translator: Option<Arc<dyn AddressTranslator>>,
@@ -212,11 +214,13 @@ impl Metadata {
 
 impl MetadataReader {
     /// Creates new MetadataReader, which connects to known_peers in the background
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         known_peers: &[SocketAddr],
         mut connection_config: ConnectionConfig,
         keepalive_interval: Option<Duration>,
         server_event_sender: mpsc::Sender<Event>,
+        keyspaces_to_fetch: Vec<String>,
         fetch_schema: bool,
         address_translator: &Option<Arc<dyn AddressTranslator>>,
     ) -> Self {
@@ -241,6 +245,7 @@ impl MetadataReader {
             keepalive_interval,
             connection_config,
             known_peers: known_peers.into(),
+            keyspaces_to_fetch,
             fetch_schema,
             address_translator: address_translator.clone(),
         }
@@ -322,6 +327,7 @@ impl MetadataReader {
             conn,
             self.control_connection_address.port(),
             self.address_translator.as_deref(),
+            &self.keyspaces_to_fetch,
             self.fetch_schema,
         )
         .await;
@@ -371,10 +377,11 @@ async fn query_metadata(
     conn: &Connection,
     connect_port: u16,
     address_translator: Option<&dyn AddressTranslator>,
+    keyspace_to_fetch: &[String],
     fetch_schema: bool,
 ) -> Result<Metadata, QueryError> {
     let peers_query = query_peers(conn, connect_port, address_translator);
-    let keyspaces_query = query_keyspaces(conn, fetch_schema);
+    let keyspaces_query = query_keyspaces(conn, keyspace_to_fetch, fetch_schema);
 
     let (peers, keyspaces) = tokio::try_join!(peers_query, keyspaces_query)?;
 
@@ -501,28 +508,44 @@ async fn query_peers(
     Ok(peers.into_iter().flatten().collect())
 }
 
+async fn query_filter_keyspace_name(
+    conn: &Connection,
+    query_str: &str,
+    keyspaces_to_fetch: &[String],
+) -> Result<QueryResult, QueryError> {
+    let keyspaces = &[keyspaces_to_fetch] as &[&[String]];
+    let (query_str, query_values) = if !keyspaces_to_fetch.is_empty() {
+        (format!("{query_str} where keyspace_name in ?"), keyspaces)
+    } else {
+        (query_str.into(), &[] as &[&[String]])
+    };
+    let mut query = Query::new(query_str);
+    query.set_page_size(1024);
+    conn.query_all(&query, query_values).await
+}
+
 async fn query_keyspaces(
     conn: &Connection,
+    keyspaces_to_fetch: &[String],
     fetch_schema: bool,
 ) -> Result<HashMap<String, Keyspace>, QueryError> {
-    let mut keyspaces_query =
-        Query::new("select keyspace_name, replication from system_schema.keyspaces");
-    keyspaces_query.set_page_size(1024);
-
-    let rows =
-        conn.query_all(&keyspaces_query, &[])
-            .await?
-            .rows
-            .ok_or(QueryError::ProtocolError(
-                "system_schema.keyspaces query response was not Rows",
-            ))?;
+    let rows = query_filter_keyspace_name(
+        conn,
+        "select keyspace_name, replication from system_schema.keyspaces",
+        keyspaces_to_fetch,
+    )
+    .await?
+    .rows
+    .ok_or(QueryError::ProtocolError(
+        "system_schema.keyspaces query response was not Rows",
+    ))?;
 
     let mut result = HashMap::with_capacity(rows.len());
     let (mut all_tables, mut all_views, mut all_user_defined_types) = if fetch_schema {
         (
-            query_tables(conn).await?,
-            query_views(conn).await?,
-            query_user_defined_types(conn).await?,
+            query_tables(conn, keyspaces_to_fetch).await?,
+            query_views(conn, keyspaces_to_fetch).await?,
+            query_user_defined_types(conn, keyspaces_to_fetch).await?,
         )
     } else {
         (HashMap::new(), HashMap::new(), HashMap::new())
@@ -556,19 +579,18 @@ async fn query_keyspaces(
 
 async fn query_user_defined_types(
     conn: &Connection,
+    keyspaces_to_fetch: &[String],
 ) -> Result<HashMap<String, HashMap<String, Vec<(String, CqlType)>>>, QueryError> {
-    let mut user_defined_types_query = Query::new(
+    let rows = query_filter_keyspace_name(
+        conn,
         "select keyspace_name, type_name, field_names, field_types from system_schema.types",
-    );
-    user_defined_types_query.set_page_size(1024);
-
-    let rows = conn
-        .query_all(&user_defined_types_query, &[])
-        .await?
-        .rows
-        .ok_or(QueryError::ProtocolError(
-            "system_schema.types query response was not Rows",
-        ))?;
+        keyspaces_to_fetch,
+    )
+    .await?
+    .rows
+    .ok_or(QueryError::ProtocolError(
+        "system_schema.types query response was not Rows",
+    ))?;
 
     let mut result = HashMap::with_capacity(rows.len());
 
@@ -594,20 +616,21 @@ async fn query_user_defined_types(
 
 async fn query_tables(
     conn: &Connection,
+    keyspaces_to_fetch: &[String],
 ) -> Result<HashMap<String, HashMap<String, Table>>, QueryError> {
-    let mut tables_query = Query::new("SELECT keyspace_name, table_name FROM system_schema.tables");
-    tables_query.set_page_size(1024);
-
-    let rows = conn
-        .query_all(&tables_query, &[])
-        .await?
-        .rows
-        .ok_or(QueryError::ProtocolError(
-            "system_schema.tables query response was not Rows",
-        ))?;
+    let rows = query_filter_keyspace_name(
+        conn,
+        "SELECT keyspace_name, table_name FROM system_schema.tables",
+        keyspaces_to_fetch,
+    )
+    .await?
+    .rows
+    .ok_or(QueryError::ProtocolError(
+        "system_schema.tables query response was not Rows",
+    ))?;
 
     let mut result = HashMap::with_capacity(rows.len());
-    let mut tables = query_tables_schema(conn).await?;
+    let mut tables = query_tables_schema(conn, keyspaces_to_fetch).await?;
 
     for row in rows.into_typed::<(String, String)>() {
         let (keyspace_name, table_name) = row.map_err(|_| {
@@ -634,21 +657,21 @@ async fn query_tables(
 
 async fn query_views(
     conn: &Connection,
+    keyspaces_to_fetch: &[String],
 ) -> Result<HashMap<String, HashMap<String, MaterializedView>>, QueryError> {
-    let mut views_query =
-        Query::new("SELECT keyspace_name, view_name, base_table_name FROM system_schema.views");
-    views_query.set_page_size(1024);
-
-    let rows = conn
-        .query_all(&views_query, &[])
-        .await?
-        .rows
-        .ok_or(QueryError::ProtocolError(
-            "system_schema.views query response was not Rows",
-        ))?;
+    let rows = query_filter_keyspace_name(
+        conn,
+        "SELECT keyspace_name, view_name, base_table_name FROM system_schema.views",
+        keyspaces_to_fetch,
+    )
+    .await?
+    .rows
+    .ok_or(QueryError::ProtocolError(
+        "system_schema.views query response was not Rows",
+    ))?;
 
     let mut result = HashMap::with_capacity(rows.len());
-    let mut tables = query_tables_schema(conn).await?;
+    let mut tables = query_tables_schema(conn, keyspaces_to_fetch).await?;
 
     for row in rows.into_typed::<(String, String, String)>() {
         let (keyspace_name, view_name, base_table_name) = row.map_err(|_| {
@@ -679,19 +702,16 @@ async fn query_views(
 
 async fn query_tables_schema(
     conn: &Connection,
+    keyspaces_to_fetch: &[String],
 ) -> Result<HashMap<(String, String), Table>, QueryError> {
     // Upon migration from thrift to CQL, Cassandra internally creates a surrogate column "value" of
     // type EmptyType for dense tables. This resolves into this CQL type name.
     // This column shouldn't be exposed to the user but is currently exposed in system tables.
     const THRIFT_EMPTY_TYPE: &str = "empty";
 
-    let mut columns_query = Query::new(
-        "select keyspace_name, table_name, column_name, kind, position, type from system_schema.columns",
-    );
-    columns_query.set_page_size(1024);
-
-    let rows = conn
-        .query_all(&columns_query, &[])
+    let rows = query_filter_keyspace_name(conn,
+        "select keyspace_name, table_name, column_name, kind, position, type from system_schema.columns", keyspaces_to_fetch
+    )
         .await?
         .rows
         .ok_or(QueryError::ProtocolError(

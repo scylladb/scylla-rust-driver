@@ -2423,3 +2423,49 @@ async fn test_batch_lwts_for_cassandra(session: &Session, batch: &Batch, batch_r
 
     assert_eq!(prepared_batch_res_rows, expected_prepared_batch_res_rows);
 }
+
+#[tokio::test]
+async fn test_keyspaces_to_fetch() {
+    let uri = std::env::var("SCYLLA_URI").unwrap_or_else(|_| "127.0.0.1:9042".to_string());
+    let ks1 = unique_keyspace_name();
+    let ks2 = unique_keyspace_name();
+
+    let session_default = SessionBuilder::new()
+        .known_node(&uri)
+        .build()
+        .await
+        .unwrap();
+    for ks in [&ks1, &ks2] {
+        session_default
+            .query(format!("CREATE KEYSPACE {} WITH REPLICATION = {{'class' : 'SimpleStrategy', 'replication_factor' : 1}}", ks), &[])
+            .await
+            .unwrap();
+    }
+    session_default.await_schema_agreement().await.unwrap();
+    assert!(session_default
+        .get_cluster_data()
+        .keyspaces
+        .contains_key(&ks1));
+    assert!(session_default
+        .get_cluster_data()
+        .keyspaces
+        .contains_key(&ks2));
+
+    let session1 = SessionBuilder::new()
+        .known_node(&uri)
+        .keyspaces_to_fetch([&ks1])
+        .build()
+        .await
+        .unwrap();
+    assert!(session1.get_cluster_data().keyspaces.contains_key(&ks1));
+    assert!(!session1.get_cluster_data().keyspaces.contains_key(&ks2));
+
+    let session_all = SessionBuilder::new()
+        .known_node(&uri)
+        .keyspaces_to_fetch([] as [String; 0])
+        .build()
+        .await
+        .unwrap();
+    assert!(session_all.get_cluster_data().keyspaces.contains_key(&ks1));
+    assert!(session_all.get_cluster_data().keyspaces.contains_key(&ks2));
+}

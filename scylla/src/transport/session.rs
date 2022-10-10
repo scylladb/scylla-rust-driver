@@ -189,6 +189,9 @@ pub struct SessionConfig {
 
     pub default_consistency: Consistency,
 
+    /// If empty, fetch all keyspaces
+    pub keyspaces_to_fetch: Vec<String>,
+
     /// If true, full schema is fetched with every metadata refresh.
     pub fetch_schema_metadata: bool,
 
@@ -247,6 +250,7 @@ impl SessionConfig {
             connection_pool_size: Default::default(),
             disallow_shard_aware_port: false,
             default_consistency: Consistency::LocalQuorum,
+            keyspaces_to_fetch: Vec::new(),
             fetch_schema_metadata: true,
             keepalive_interval: None,
             auto_await_schema_agreement_timeout: Some(std::time::Duration::from_secs(60)),
@@ -436,6 +440,7 @@ impl Session {
         let cluster = Cluster::new(
             &node_addresses,
             config.get_pool_config(),
+            config.keyspaces_to_fetch,
             config.fetch_schema_metadata,
             &config.address_translator,
         )
