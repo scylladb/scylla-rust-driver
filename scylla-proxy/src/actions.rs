@@ -157,14 +157,14 @@ pub trait Reaction: Sized {
     fn drop_connection_with_delay(time: Duration) -> Self;
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct RequestReaction {
     pub to_addressee: Option<Action<RequestFrame, RequestFrame>>,
     pub to_sender: Option<Action<RequestFrame, ResponseFrame>>,
     pub drop_connection: Option<Option<Duration>>,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct ResponseReaction {
     pub to_addressee: Option<Action<ResponseFrame, ResponseFrame>>,
     pub to_sender: Option<Action<ResponseFrame, RequestFrame>>,
@@ -582,12 +582,27 @@ pub struct Action<TFrom, TTo> {
 
 /// A rule describing what actions should the proxy perform
 /// with the received request frame and on what conditions.
-#[derive(Clone)]
+impl<TFrom, TTo> std::fmt::Debug for Action<TFrom, TTo> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Action")
+            .field("delay", &self.delay)
+            .field(
+                "msg_processor",
+                match self.msg_processor {
+                    Some(_) => &"Some(<closure>)",
+                    None => &"None",
+                },
+            )
+            .finish()
+    }
+}
+
+#[derive(Clone, Debug)]
 pub struct RequestRule(pub Condition, pub RequestReaction);
 
 /// A rule describing what actions should the proxy perform
 /// with the received response frame and on what conditions.
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct ResponseRule(pub Condition, pub ResponseReaction);
 
 #[test]
