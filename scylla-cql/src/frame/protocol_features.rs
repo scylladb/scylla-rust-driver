@@ -1,11 +1,13 @@
 use std::collections::HashMap;
 
 const RATE_LIMIT_ERROR_EXTENSION: &str = "SCYLLA_RATE_LIMIT_ERROR";
-
+pub const SCYLLA_LWT_ADD_METADATA_MARK_EXTENSION: &str = "SCYLLA_LWT_ADD_METADATA_MARK";
+pub const LWT_OPTIMIZATION_META_BIT_MASK_KEY: &str = "LWT_OPTIMIZATION_META_BIT_MASK";
 #[derive(Default, Clone, Copy, Debug, PartialEq, Eq)]
 #[non_exhaustive]
 pub struct ProtocolFeatures {
     pub rate_limit_error: Option<i32>,
+    pub lwt_optimization_meta_bit_mask: Option<u32>,
 }
 
 // TODO: Log information about options which failed to parse
@@ -14,6 +16,9 @@ impl ProtocolFeatures {
     pub fn parse_from_supported(supported: &HashMap<String, Vec<String>>) -> Self {
         Self {
             rate_limit_error: Self::maybe_parse_rate_limit_error(supported),
+            lwt_optimization_meta_bit_mask: Self::maybe_parse_lwt_optimization_meta_bit_mask(
+                supported,
+            ),
         }
     }
 
@@ -21,6 +26,15 @@ impl ProtocolFeatures {
         let vals = supported.get(RATE_LIMIT_ERROR_EXTENSION)?;
         let code_str = Self::get_cql_extension_field(vals.as_slice(), "ERROR_CODE")?;
         code_str.parse::<i32>().ok()
+    }
+
+    fn maybe_parse_lwt_optimization_meta_bit_mask(
+        supported: &HashMap<String, Vec<String>>,
+    ) -> Option<u32> {
+        let vals = supported.get(SCYLLA_LWT_ADD_METADATA_MARK_EXTENSION)?;
+        let mask_str =
+            Self::get_cql_extension_field(vals.as_slice(), LWT_OPTIMIZATION_META_BIT_MASK_KEY)?;
+        mask_str.parse::<u32>().ok()
     }
 
     // Looks up a field which starts with `key=` and returns the rest
@@ -33,5 +47,17 @@ impl ProtocolFeatures {
         if self.rate_limit_error.is_some() {
             options.insert(RATE_LIMIT_ERROR_EXTENSION.to_string(), String::new());
         }
+        if let Some(mask) = self.lwt_optimization_meta_bit_mask {
+            options.insert(
+                SCYLLA_LWT_ADD_METADATA_MARK_EXTENSION.to_string(),
+                format!("{}={}", LWT_OPTIMIZATION_META_BIT_MASK_KEY, mask),
+            );
+        }
+    }
+
+    pub fn prepared_flags_contain_lwt_mark(&self, flags: u32) -> bool {
+        self.lwt_optimization_meta_bit_mask
+            .map(|mask| (flags & mask) == mask)
+            .unwrap_or(false)
     }
 }
