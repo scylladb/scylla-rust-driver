@@ -44,6 +44,9 @@ pub enum Condition {
 
     /// True with the given probability.
     RandomWithProbability(f64),
+
+    /// True for predefined number of evaluations, then always false.
+    TrueForLimitedTimes(usize),
 }
 
 /// The context in which [`Conditions`](Condition) are evaluated.
@@ -54,7 +57,7 @@ pub(crate) struct EvaluationContext {
 }
 
 impl Condition {
-    pub(crate) fn eval(&self, ctx: &EvaluationContext) -> bool {
+    pub(crate) fn eval(&mut self, ctx: &EvaluationContext) -> bool {
         match self {
             Condition::True => true,
 
@@ -98,6 +101,14 @@ impl Condition {
                 .unwrap_or(false),
             Condition::RandomWithProbability(probability) => {
                 rand::thread_rng().gen_bool(*probability)
+            }
+
+            Condition::TrueForLimitedTimes(times) => {
+                let val = *times > 0;
+                if val {
+                    *times -= 1;
+                }
+                val
             }
         }
     }
@@ -607,9 +618,9 @@ pub struct ResponseRule(pub Condition, pub ResponseReaction);
 
 #[test]
 fn condition_case_insensitive_matching() {
-    let condition_matching =
+    let mut condition_matching =
         Condition::BodyContainsCaseInsensitive(Box::new(*b"cassandra'sInefficiency"));
-    let condition_nonmatching =
+    let mut condition_nonmatching =
         Condition::BodyContainsCaseInsensitive(Box::new(*b"cassandrasInefficiency"));
     let ctx = EvaluationContext {
         connection_seq_no: 42,

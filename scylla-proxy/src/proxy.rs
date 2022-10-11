@@ -13,8 +13,8 @@ use std::sync::Arc;
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::net::{TcpListener, TcpSocket, TcpStream};
 use tokio::sync::mpsc::error::TryRecvError;
-use tokio::sync::{broadcast, mpsc, RwLock};
-use tracing::{debug, error, info, warn};
+use tokio::sync::{broadcast, mpsc, Mutex};
+use tracing::{debug, error, info, trace, warn};
 
 // Used to notify the user that the proxy finished - this happens when all Senders are dropped.
 type FinishWaiter = mpsc::Receiver<()>;
@@ -144,8 +144,8 @@ struct InternalNode {
     real_addr: SocketAddr,
     proxy_addr: SocketAddr,
     shard_awareness: ShardAwareness,
-    request_rules: Arc<RwLock<Vec<RequestRule>>>,
-    response_rules: Arc<RwLock<Vec<ResponseRule>>>,
+    request_rules: Arc<Mutex<Vec<RequestRule>>>,
+    response_rules: Arc<Mutex<Vec<ResponseRule>>>,
 }
 pub struct ProxyBuilder {
     nodes: Vec<Node>,
@@ -185,11 +185,11 @@ impl Proxy {
                     shard_awareness: node.shard_awareness,
                     request_rules: node
                         .request_rules
-                        .map(|rules| Arc::new(RwLock::new(rules)))
+                        .map(|rules| Arc::new(Mutex::new(rules)))
                         .unwrap_or_default(),
                     response_rules: node
                         .response_rules
-                        .map(|rules| Arc::new(RwLock::new(rules)))
+                        .map(|rules| Arc::new(Mutex::new(rules)))
                         .unwrap_or_default(),
                 })
                 .collect(),
@@ -249,19 +249,19 @@ impl Proxy {
 
 /// A handle that can be used to change the rules regarding the particular node.
 pub struct RunningNode {
-    request_rules: Arc<RwLock<Vec<RequestRule>>>,
-    response_rules: Arc<RwLock<Vec<ResponseRule>>>,
+    request_rules: Arc<Mutex<Vec<RequestRule>>>,
+    response_rules: Arc<Mutex<Vec<ResponseRule>>>,
 }
 
 impl RunningNode {
     /// Replaces the previous request rules with the new ones.
     pub async fn change_request_rules(&mut self, rules: Option<Vec<RequestRule>>) {
-        *self.request_rules.write().await = rules.unwrap_or_default();
+        *self.request_rules.lock().await = rules.unwrap_or_default();
     }
 
     /// Replaces the previous response rules with the new ones.
     pub async fn change_response_rules(&mut self, rules: Option<Vec<ResponseRule>>) {
-        *self.response_rules.write().await = rules.unwrap_or_default();
+        *self.response_rules.lock().await = rules.unwrap_or_default();
     }
 }
 
@@ -281,8 +281,8 @@ impl RunningProxy {
             .iter_mut()
             .map(|node| (&node.request_rules, &node.response_rules))
         {
-            request_rules.write().await.clear();
-            response_rules.write().await.clear();
+            request_rules.lock().await.clear();
+            response_rules.lock().await.clear();
         }
     }
 
@@ -733,10 +733,10 @@ impl ProxyWorker {
         driver_tx: mpsc::UnboundedSender<ResponseFrame>,
         cluster_tx: mpsc::UnboundedSender<RequestFrame>,
         connection_no: usize,
-        request_rules: Arc<RwLock<Vec<RequestRule>>>,
+        request_rules: Arc<Mutex<Vec<RequestRule>>>,
         connection_close_signaler: ConnectionCloseSignaler,
     ) {
-        self.run_until_interrupted("request_processor", |_, _, _| async move {
+        self.run_until_interrupted("request_processor", |driver_addr, _, real_addr| async move {
             'mainloop: loop {
                 match requests_rx.recv().await {
                     Some(request) => {
@@ -745,13 +745,18 @@ impl ProxyWorker {
                             opcode: FrameOpcode::Request(request.opcode),
                             frame_body: request.body.clone(),
                         };
-                        let guard = request_rules.read().await;
-                        '_ruleloop: for RequestRule(condition, reaction) in guard.iter() {
-                            if condition.eval(&ctx) {
+                        let mut guard = request_rules.lock().await;
+                        '_ruleloop: for (i, request_rule) in guard.iter_mut().enumerate() {
+                            if request_rule.0.eval(&ctx) {
+                                    info!("Applying rule no={} to request ({} -> {}).", i, driver_addr, real_addr);
+                                    debug!("-> Applied rule: {:?}", request_rule);
+                                    debug!("-> To request: {:?}", ctx.opcode);
+                                    trace!("{:?}", request);
                                 let cluster_tx_clone = cluster_tx.clone();
                                 let request_clone = request.clone();
+                                    let request_rule = &*request_rule; // downgrading to shared reference
                                 let pass_action = async move {
-                                    if let Some(ref pass_action) = reaction.to_addressee {
+                                    if let Some(ref pass_action) = request_rule.1.to_addressee {
                                         if let Some(time) = pass_action.delay {
                                             tokio::time::sleep(time).await;
                                         }
@@ -763,35 +768,32 @@ impl ProxyWorker {
                                     };
                                 };
 
-                                let driver_tx_clone = driver_tx.clone();
-                                let request_clone = request.clone();
-                                let forge_action = async move {
-                                    if let Some(ref forge_action) = reaction.to_sender {
-                                        if let Some(time) = forge_action.delay {
-                                            tokio::time::sleep(time).await;
-                                        }
-                                        let forged_frame = {
-                                            let processor =
-                                                forge_action.msg_processor.as_ref().expect(
-                                                    "Frame processor is required to forge a frame.",
-                                                );
-                                            processor(request_clone)
+                                    let driver_tx_clone = driver_tx.clone();
+                                    let request_clone = request.clone();
+                                    let forge_action = async move {
+                                        if let Some(ref forge_action) = request_rule.1.to_sender {
+                                            if let Some(time) = forge_action.delay {
+                                                tokio::time::sleep(time).await;
+                                            }
+                                            let forged_frame = {
+                                                let processor = forge_action.msg_processor.as_ref().expect("Frame processor is required to forge a frame.");
+                                                processor(request_clone)
+                                            };
+                                            let _ = driver_tx_clone.send(forged_frame);
                                         };
-                                        let _ = driver_tx_clone.send(forged_frame);
                                     };
-                                };
 
                                 let connection_close_signaler_clone =
                                     connection_close_signaler.clone();
                                 let drop_action = async move {
-                                    if let Some(ref delay) = reaction.drop_connection {
+                                    if let Some(ref delay) = request_rule.1.drop_connection {
                                         if let Some(ref time) = delay {
                                             tokio::time::sleep(*time).await;
                                         }
                                         // close connection.
                                         info!(
-                                            "Dropping connection (as requested by a proxy rule)!"
-                                        );
+                                            "Dropping connection between {} and {} (as requested by a proxy rule)!"
+                                        , driver_addr, real_addr);
                                         let _ = connection_close_signaler_clone.send(());
                                     }
                                 };
@@ -816,10 +818,10 @@ impl ProxyWorker {
         driver_tx: mpsc::UnboundedSender<ResponseFrame>,
         cluster_tx: mpsc::UnboundedSender<RequestFrame>,
         connection_no: usize,
-        response_rules: Arc<RwLock<Vec<ResponseRule>>>,
+        response_rules: Arc<Mutex<Vec<ResponseRule>>>,
         connection_close_signaler: ConnectionCloseSignaler,
     ) {
-        self.run_until_interrupted("request_processor", |_, _, _| async move {
+        self.run_until_interrupted("request_processor", |driver_addr, _, real_addr| async move {
             'mainloop: loop {
                 match responses_rx.recv().await {
                     Some(response) => {
@@ -828,13 +830,18 @@ impl ProxyWorker {
                             opcode: FrameOpcode::Response(response.opcode),
                             frame_body: response.body.clone(),
                         };
-                        let guard = response_rules.read().await;
-                        '_ruleloop: for ResponseRule(condition, reaction) in guard.iter() {
-                            if condition.eval(&ctx) {
+                        let mut guard = response_rules.lock().await;
+                        '_ruleloop: for (i, response_rule) in guard.iter_mut().enumerate() {
+                                if response_rule.0.eval(&ctx) {
+                                    info!("Applying rule no={} to request ({} -> {}).", i, real_addr, driver_addr);
+                                    debug!("-> Applied rule: {:?}", response_rule);
+                                    debug!("-> To response: {:?}", ctx.opcode);
+                                trace!("{:?}", response);
+                                    let response_rule = &*response_rule; // downgrading to shared reference
                                 let response_clone = response.clone();
                                 let driver_tx_clone = driver_tx.clone();
                                 let pass_action = async move {
-                                    if let Some(ref pass_action) = reaction.to_addressee {
+                                    if let Some(ref pass_action) = response_rule.1.to_addressee {
                                         if let Some(time) = pass_action.delay {
                                             tokio::time::sleep(time).await;
                                         }
@@ -846,35 +853,32 @@ impl ProxyWorker {
                                     };
                                 };
 
-                                let response_clone = response.clone();
-                                let cluster_tx_clone = cluster_tx.clone();
-                                let forge_action = async move {
-                                    if let Some(ref forge_action) = reaction.to_sender {
-                                        if let Some(time) = forge_action.delay {
-                                            tokio::time::sleep(time).await;
-                                        }
-                                        let forged_frame = {
-                                            let processor =
-                                                forge_action.msg_processor.as_ref().expect(
-                                                    "Frame processor is required to forge a frame.",
-                                                );
-                                            processor(response_clone)
+                                    let response_clone = response.clone();
+                                    let cluster_tx_clone = cluster_tx.clone();
+                                    let forge_action = async move {
+                                        if let Some(ref forge_action) = response_rule.1.to_sender {
+                                            if let Some(time) = forge_action.delay {
+                                                tokio::time::sleep(time).await;
+                                            }
+                                            let forged_frame = {
+                                                let processor = forge_action.msg_processor.as_ref().expect("Frame processor is required to forge a frame.");
+                                                processor(response_clone)
+                                            };
+                                            let _ = cluster_tx_clone.send(forged_frame);
                                         };
-                                        let _ = cluster_tx_clone.send(forged_frame);
                                     };
-                                };
 
                                 let connection_close_signaler_clone =
                                     connection_close_signaler.clone();
                                 let drop_action = async move {
-                                    if let Some(ref delay) = reaction.drop_connection {
+                                    if let Some(ref delay) = response_rule.1.drop_connection {
                                         if let Some(ref time) = delay {
                                             tokio::time::sleep(*time).await;
                                         }
                                         // close connection.
                                         info!(
-                                            "Dropping connection (as requested by a proxy rule)!"
-                                        );
+                                            "Dropping connection between {} and {} (as requested by a proxy rule)!"
+                                        , driver_addr, real_addr);
                                         let _ = connection_close_signaler_clone.send(());
                                     }
                                 };
@@ -911,7 +915,7 @@ mod tests {
     use tokio::io::AsyncReadExt as _;
     use tokio::sync::oneshot;
 
-    // This is for convenient logs from failing tests. Just call at the beginning of a test.
+    // This is for convenient logs from failing tests. Just call it at the beginning of a test.
     #[allow(unused)]
     fn init_logger() {
         let _ = tracing_subscriber::fmt::fmt()
@@ -1339,7 +1343,7 @@ mod tests {
         {
             // one run with custom rules
             tokio::select! {
-                _ = request(&mut driver, &mut node, params, opcode, &body) => panic!("Rules did not work"),
+                res = request(&mut driver, &mut node, params, opcode, &body) => panic!("Rules did not work: received response {:?}", res),
                 _ = tokio::time::sleep(std::time::Duration::from_millis(20)) => (),
             };
         }
@@ -1358,6 +1362,108 @@ mod tests {
             assert_eq!(recvd_params, params);
             assert_eq!(FrameOpcode::Request(recvd_opcode), opcode);
             assert_eq!(recvd_body, body);
+        }
+
+        running_proxy.finish().await.unwrap();
+    }
+
+    #[tokio::test]
+    #[ntest::timeout(2000)]
+    async fn limited_times_condition_expires() {
+        init_logger();
+        const FAILING_TRIES: usize = 4;
+        const PASSING_TRIES: usize = 5;
+
+        let node1_real_addr = next_local_address_with_port(9876);
+        let node1_proxy_addr = next_local_address_with_port(9876);
+        let proxy = Proxy::new([Node::new(
+            node1_real_addr,
+            node1_proxy_addr,
+            ShardAwareness::Unaware,
+            Some(vec![
+                RequestRule(
+                    // this will be always fired after first PASSING_TRIES + FAILING_TRIES
+                    Condition::not(Condition::TrueForLimitedTimes(
+                        FAILING_TRIES + PASSING_TRIES,
+                    )),
+                    RequestReaction::drop_frame(),
+                ),
+                RequestRule(
+                    // this will be fired for PASSING_TRIES after first FAILING_TRIES
+                    Condition::not(Condition::TrueForLimitedTimes(FAILING_TRIES)),
+                    RequestReaction::noop(),
+                ),
+                RequestRule(
+                    // this will be fired for first FAILING_TRIES
+                    Condition::True,
+                    RequestReaction::drop_frame(),
+                ),
+            ]),
+            None,
+        )]);
+        let running_proxy = proxy.run().await.unwrap();
+
+        let mock_node_listener = TcpListener::bind(node1_real_addr).await.unwrap();
+
+        let params = FrameParams {
+            flags: 0,
+            version: 0x04,
+            stream: 0,
+        };
+        let opcode = FrameOpcode::Request(RequestOpcode::Options);
+        let body = random_body();
+
+        let (mut driver, mut node) = {
+            let results = join(
+                TcpStream::connect(node1_proxy_addr),
+                mock_node_listener.accept(),
+            )
+            .await;
+            (results.0.unwrap(), results.1.unwrap().0)
+        };
+
+        async fn request(
+            driver: &mut TcpStream,
+            node: &mut TcpStream,
+            params: FrameParams,
+            opcode: FrameOpcode,
+            body: &Bytes,
+        ) -> Result<RequestFrame, FrameError> {
+            let (send_res, recv_res) = join(
+                write_frame(params, opcode, &body.clone(), driver),
+                read_request_frame(node),
+            )
+            .await;
+            send_res.unwrap();
+            recv_res
+        }
+
+        for _ in 0..FAILING_TRIES {
+            tokio::select! {
+                res = request(&mut driver, &mut node, params, opcode, &body) => panic!("Rules did not work: received response {:?}", res),
+                _ = tokio::time::sleep(std::time::Duration::from_millis(10)) => (),
+            };
+        }
+
+        for _ in 0..PASSING_TRIES {
+            let RequestFrame {
+                params: recvd_params,
+                opcode: recvd_opcode,
+                body: recvd_body,
+            } = request(&mut driver, &mut node, params, opcode, &body)
+                .await
+                .unwrap();
+            assert_eq!(recvd_params, params);
+            assert_eq!(FrameOpcode::Request(recvd_opcode), opcode);
+            assert_eq!(recvd_body, body);
+        }
+
+        for _ in 0..3 {
+            // any further number of requests should fail
+            tokio::select! {
+                res = request(&mut driver, &mut node, params, opcode, &body) => panic!("Rules did not work: received response {:?}", res),
+                _ = tokio::time::sleep(std::time::Duration::from_millis(10)) => (),
+            };
         }
 
         running_proxy.finish().await.unwrap();
