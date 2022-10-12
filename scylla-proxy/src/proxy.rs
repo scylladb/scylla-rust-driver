@@ -83,6 +83,61 @@ impl Node {
             response_rules,
         }
     }
+
+    pub fn builder() -> NodeBuilder {
+        NodeBuilder {
+            real_addr: None,
+            proxy_addr: None,
+            shard_awareness: None,
+            request_rules: None,
+            response_rules: None,
+        }
+    }
+}
+
+pub struct NodeBuilder {
+    real_addr: Option<SocketAddr>,
+    proxy_addr: Option<SocketAddr>,
+    shard_awareness: Option<ShardAwareness>,
+    request_rules: Option<Vec<RequestRule>>,
+    response_rules: Option<Vec<ResponseRule>>,
+}
+
+impl NodeBuilder {
+    pub fn real_address(mut self, real_addr: SocketAddr) -> Self {
+        self.real_addr = Some(real_addr);
+        self
+    }
+
+    pub fn proxy_address(mut self, proxy_addr: SocketAddr) -> Self {
+        self.proxy_addr = Some(proxy_addr);
+        self
+    }
+
+    pub fn shard_awareness(mut self, shard_awareness: ShardAwareness) -> Self {
+        self.shard_awareness = Some(shard_awareness);
+        self
+    }
+
+    pub fn request_rules(mut self, request_rules: Vec<RequestRule>) -> Self {
+        self.request_rules = Some(request_rules);
+        self
+    }
+
+    pub fn response_rules(mut self, response_rules: Vec<ResponseRule>) -> Self {
+        self.response_rules = Some(response_rules);
+        self
+    }
+
+    pub fn build(self) -> Node {
+        Node {
+            real_addr: self.real_addr.expect("Real addr is required!"),
+            proxy_addr: self.proxy_addr.expect("Proxy addr is required!"),
+            shard_awareness: self.shard_awareness.expect("Shard awareness is required!"),
+            request_rules: self.request_rules,
+            response_rules: self.response_rules,
+        }
+    }
 }
 
 struct InternalNode {
@@ -92,9 +147,31 @@ struct InternalNode {
     request_rules: Arc<RwLock<Vec<RequestRule>>>,
     response_rules: Arc<RwLock<Vec<ResponseRule>>>,
 }
+pub struct ProxyBuilder {
+    nodes: Vec<Node>,
+}
+
+impl ProxyBuilder {
+    pub fn with_node(mut self, node: Node) -> ProxyBuilder {
+        self.nodes.push(node);
+        self
+    }
+
+    pub fn build(self) -> Proxy {
+        Proxy::new(self.nodes)
+    }
+}
 
 pub struct Proxy {
     nodes: Vec<InternalNode>,
+}
+
+/* This specialization is needed to avoid inference problem.
+The exact number is irrelevant. */
+impl Proxy {
+    pub fn builder() -> ProxyBuilder {
+        ProxyBuilder { nodes: vec![] }
+    }
 }
 
 impl Proxy {
