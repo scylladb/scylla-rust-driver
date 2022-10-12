@@ -816,3 +816,473 @@ impl ProxyWorker {
         .await
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::frame::read_request_frame;
+    use crate::{Condition, Reaction as _, RequestReaction, ResponseOpcode};
+    use assert_matches::assert_matches;
+    use bytes::{BufMut, BytesMut};
+    use futures::future::join;
+    use rand::RngCore;
+    use scylla_cql::frame::frame_errors::FrameError;
+    use scylla_cql::frame::types::write_string_multimap;
+    use std::collections::HashMap;
+    use std::str::FromStr;
+    use std::sync::atomic::{AtomicU16, Ordering};
+    use tokio::io::AsyncReadExt as _;
+    use tokio::sync::oneshot;
+
+    // This is for convenient logs from failing tests. Just call at the beginning of a test.
+    #[allow(unused)]
+    fn init_logger() {
+        let _ = tracing_subscriber::fmt::fmt()
+            .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+            .without_time()
+            .try_init();
+    }
+
+    fn random_body() -> Bytes {
+        let body_len = (rand::random::<u32>() % 1000) as usize;
+        let mut body = BytesMut::zeroed(body_len);
+        rand::thread_rng().fill_bytes(body.as_mut());
+        body.freeze()
+    }
+
+    async fn respond_with_shards_number(mut conn: TcpStream, shards_num: u16) {
+        let RequestFrame {
+            params: recvd_params,
+            opcode: recvd_opcode,
+            body: recvd_body,
+        } = read_request_frame(&mut conn).await.unwrap();
+        assert_eq!(recvd_params, HARDCODED_OPTIONS_PARAMS);
+        assert_eq!(recvd_opcode, RequestOpcode::Options);
+        assert_eq!(recvd_body, Bytes::new()); // body should be empty
+
+        let mut body = BytesMut::new();
+        let mut sharded_info = HashMap::new();
+        sharded_info.insert(
+            String::from("SCYLLA_NR_SHARDS"),
+            vec![shards_num.to_string()],
+        );
+        write_string_multimap(&sharded_info, &mut body).unwrap();
+
+        let body = body.freeze();
+
+        write_frame(
+            HARDCODED_OPTIONS_PARAMS.for_response(),
+            FrameOpcode::Response(ResponseOpcode::Supported),
+            &body,
+            &mut conn,
+        )
+        .await
+        .unwrap();
+    }
+
+    fn next_local_address_with_port(port: u16) -> SocketAddr {
+        static ADDRESS_LAST_OCTET: AtomicU16 = AtomicU16::new(42);
+        let next_octet = ADDRESS_LAST_OCTET.fetch_add(1, Ordering::Relaxed);
+        let next_octet = if next_octet < u8::MAX as u16 {
+            next_octet as u8
+        } else {
+            panic!("Loopback address pool for tests depleted")
+        };
+        SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, next_octet)), port)
+    }
+
+    async fn identity_proxy_does_not_mutate_frames(shard_awareness: ShardAwareness) {
+        let node1_real_addr = next_local_address_with_port(9876);
+        let node1_proxy_addr = next_local_address_with_port(9876);
+        let proxy = Proxy::new([Node::new(
+            node1_real_addr,
+            node1_proxy_addr,
+            shard_awareness,
+            None,
+            None,
+        )]);
+        let running_proxy = proxy.run().await.unwrap();
+
+        let mock_node_listener = TcpListener::bind(node1_real_addr).await.unwrap();
+
+        let params = FrameParams {
+            flags: 0,
+            version: 0x04,
+            stream: 0,
+        };
+        let opcode = FrameOpcode::Request(RequestOpcode::Options);
+
+        let body = random_body();
+
+        let mock_driver_action = async {
+            let mut conn = TcpStream::connect(node1_proxy_addr).await.unwrap();
+
+            write_frame(params, opcode, &body, &mut conn).await.unwrap();
+            conn
+        };
+
+        let mock_node_action = async {
+            if let ShardAwareness::QueryNode = shard_awareness {
+                respond_with_shards_number(mock_node_listener.accept().await.unwrap().0, 1).await;
+            }
+            let (mut conn, _) = mock_node_listener.accept().await.unwrap();
+            let RequestFrame {
+                params: recvd_params,
+                opcode: recvd_opcode,
+                body: recvd_body,
+            } = read_request_frame(&mut conn).await.unwrap();
+            assert_eq!(recvd_params, params);
+            assert_eq!(FrameOpcode::Request(recvd_opcode), opcode);
+            assert_eq!(recvd_body, body);
+            conn
+        };
+
+        // we keep the connections open until proxy finishes to let it perform clean exit with no disconnects
+        let (_node_conn, _driver_conn) = join(mock_node_action, mock_driver_action).await;
+        running_proxy.finish().await.unwrap();
+    }
+
+    #[tokio::test]
+    #[ntest::timeout(1000)]
+    async fn identity_shard_unaware_proxy_does_not_mutate_frames() {
+        identity_proxy_does_not_mutate_frames(ShardAwareness::Unaware).await
+    }
+
+    #[tokio::test]
+    #[ntest::timeout(1000)]
+    async fn identity_shard_aware_proxy_does_not_mutate_frames() {
+        init_logger();
+        identity_proxy_does_not_mutate_frames(ShardAwareness::QueryNode).await
+    }
+
+    #[tokio::test]
+    #[ntest::timeout(1000)]
+    async fn shard_aware_proxy_is_transparent_for_connection_to_shards() {
+        async fn test_for_shards_num(shards_num: u16) {
+            let node1_real_addr = next_local_address_with_port(9876);
+            let node1_proxy_addr = next_local_address_with_port(9876);
+            let proxy = Proxy::new([Node::new(
+                node1_real_addr,
+                node1_proxy_addr,
+                ShardAwareness::FixedNum(shards_num),
+                None,
+                None,
+            )]);
+            let running_proxy = proxy.run().await.unwrap();
+
+            let mock_node_listener = TcpListener::bind(node1_real_addr).await.unwrap();
+
+            let (driver_addr_tx, driver_addr_rx) = oneshot::channel::<SocketAddr>();
+
+            let mock_driver_action = async {
+                let socket = TcpSocket::new_v4().unwrap();
+                socket
+                    .bind(SocketAddr::from_str("0.0.0.0:0").unwrap())
+                    .unwrap();
+                let conn = socket.connect(node1_proxy_addr).await.unwrap();
+                driver_addr_tx.send(conn.local_addr().unwrap()).unwrap();
+                conn
+            };
+
+            let mock_node_action = async {
+                let (conn, remote_addr) = mock_node_listener.accept().await.unwrap();
+                let driver_addr = driver_addr_rx.await.unwrap();
+                assert_eq!(
+                    driver_addr.port() % shards_num,
+                    remote_addr.port() % shards_num
+                );
+                conn
+            };
+
+            // we keep the connections open until proxy finishes to let it perform clean exit with no disconnects
+            let (_node_conn, _driver_conn) = join(mock_node_action, mock_driver_action).await;
+            running_proxy.finish().await.unwrap();
+        }
+
+        for shard_num in 1..6 {
+            test_for_shards_num(shard_num).await;
+        }
+    }
+
+    #[tokio::test]
+    #[ntest::timeout(1000)]
+    async fn shard_aware_proxy_queries_shards_number() {
+        async fn test_for_shards_num(shards_num: u16) {
+            for shard_num in 0..shards_num {
+                let node1_real_addr = next_local_address_with_port(9876);
+                let node1_proxy_addr = next_local_address_with_port(9876);
+                let proxy = Proxy::new([Node::new(
+                    node1_real_addr,
+                    node1_proxy_addr,
+                    ShardAwareness::QueryNode,
+                    None,
+                    None,
+                )]);
+                let running_proxy = proxy.run().await.unwrap();
+
+                let mock_node_listener = TcpListener::bind(node1_real_addr).await.unwrap();
+
+                let (driver_addr_tx, driver_addr_rx) = oneshot::channel::<SocketAddr>();
+
+                let mock_driver_addr = next_local_address_with_port(shards_num * 1234 + shard_num);
+                let mock_driver_action = async {
+                    let socket = TcpSocket::new_v4().unwrap();
+                    socket
+                        .bind(mock_driver_addr)
+                        .unwrap_or_else(|_| panic!("driver_addr failed: {}", mock_driver_addr));
+                    driver_addr_tx.send(socket.local_addr().unwrap()).unwrap();
+                    socket.connect(node1_proxy_addr).await.unwrap()
+                };
+
+                let mock_node_action = async {
+                    respond_with_shards_number(
+                        mock_node_listener.accept().await.unwrap().0,
+                        shards_num,
+                    )
+                    .await;
+                    let (conn, remote_addr) = mock_node_listener.accept().await.unwrap();
+                    let driver_addr = driver_addr_rx.await.unwrap();
+                    assert_eq!(
+                        driver_addr.port() % shards_num,
+                        remote_addr.port() % shards_num
+                    );
+                    conn
+                };
+
+                let (_node_conn, _driver_conn) = join(mock_node_action, mock_driver_action).await;
+                running_proxy.finish().await.unwrap();
+            }
+        }
+
+        for shard_num in 1..6 {
+            test_for_shards_num(shard_num).await;
+        }
+    }
+
+    #[tokio::test]
+    #[ntest::timeout(1000)]
+    async fn forger_proxy_forges_response() {
+        let node1_real_addr = next_local_address_with_port(9876);
+        let node1_proxy_addr = next_local_address_with_port(9876);
+
+        let this_shall_pass = b"This.Shall.Pass.";
+        let test_msg = b"Test";
+
+        let proxy = Proxy::new([Node::new(
+            node1_real_addr,
+            node1_proxy_addr,
+            ShardAwareness::Unaware,
+            Some(vec![
+                RequestRule(
+                    Condition::RequestOpcode(RequestOpcode::Register),
+                    RequestReaction::forge_response(Arc::new(|RequestFrame { params, .. }| {
+                        ResponseFrame {
+                            params: params.for_response(),
+                            opcode: ResponseOpcode::Event,
+                            body: Bytes::from_static(test_msg),
+                        }
+                    })),
+                ),
+                RequestRule(
+                    Condition::BodyContainsCaseSensitive(Box::new(*this_shall_pass)),
+                    RequestReaction::noop(),
+                ),
+                RequestRule(
+                    Condition::True, // only the first matching rule is applied, so "True" covers all remaining cases
+                    RequestReaction::forge_response(Arc::new(|RequestFrame { params, .. }| {
+                        ResponseFrame {
+                            params: params.for_response(),
+                            opcode: ResponseOpcode::Ready,
+                            body: Bytes::new(),
+                        }
+                    })),
+                ),
+            ]),
+            None,
+        )]);
+        let running_proxy = proxy.run().await.unwrap();
+
+        let mock_node_listener = TcpListener::bind(node1_real_addr).await.unwrap();
+
+        let params1 = FrameParams {
+            flags: 3,
+            version: 0x42,
+            stream: 42,
+        };
+        let opcode1 = FrameOpcode::Request(RequestOpcode::Startup);
+
+        let params2 = FrameParams {
+            flags: 4,
+            version: 0x04,
+            stream: 17,
+        };
+        let opcode2 = FrameOpcode::Request(RequestOpcode::Register);
+
+        let params3 = FrameParams {
+            flags: 8,
+            version: 0x04,
+            stream: 11,
+        };
+        let opcode3 = FrameOpcode::Request(RequestOpcode::Execute);
+
+        let body1 = random_body();
+        let body2 = random_body();
+        let body3 = {
+            let mut body = BytesMut::new();
+            body.put(&b"uSeLeSs JuNk"[..]);
+            body.put(&this_shall_pass[..]);
+            body.freeze()
+        };
+
+        let mock_driver_action = async {
+            let mut conn = TcpStream::connect(node1_proxy_addr).await.unwrap();
+
+            write_frame(params1, opcode1, &body1, &mut conn)
+                .await
+                .unwrap();
+            write_frame(params2, opcode2, &body2, &mut conn)
+                .await
+                .unwrap();
+            write_frame(params3, opcode3, &body3, &mut conn)
+                .await
+                .unwrap();
+
+            let ResponseFrame {
+                params: recvd_params,
+                opcode: recvd_opcode,
+                body: recvd_body,
+            } = read_response_frame(&mut conn).await.unwrap();
+            assert_eq!(recvd_params, params1.for_response());
+            assert_eq!(recvd_opcode, ResponseOpcode::Ready);
+            assert_eq!(recvd_body, Bytes::new());
+
+            let ResponseFrame {
+                params: recvd_params,
+                opcode: recvd_opcode,
+                body: recvd_body,
+            } = read_response_frame(&mut conn).await.unwrap();
+            assert_eq!(recvd_params, params2.for_response());
+            assert_eq!(recvd_opcode, ResponseOpcode::Event);
+            assert_eq!(recvd_body, Bytes::from_static(test_msg));
+
+            conn
+        };
+
+        let mock_node_action = async {
+            let (mut conn, _) = mock_node_listener.accept().await.unwrap();
+            let RequestFrame {
+                params: recvd_params,
+                opcode: recvd_opcode,
+                body: recvd_body,
+            } = read_request_frame(&mut conn).await.unwrap();
+            assert_eq!(recvd_params, params3);
+            assert_eq!(FrameOpcode::Request(recvd_opcode), opcode3);
+            assert_eq!(recvd_body, body3);
+
+            conn
+        };
+
+        let (mut node_conn, mut driver_conn) = join(mock_node_action, mock_driver_action).await;
+
+        running_proxy.finish().await.unwrap();
+
+        assert_matches!(driver_conn.read(&mut [0u8; 1]).await, Ok(0));
+        assert_matches!(node_conn.read(&mut [0u8; 1]).await, Ok(0));
+    }
+
+    #[tokio::test]
+    #[ntest::timeout(1000)]
+    async fn ad_hoc_rules_changing() {
+        let node1_real_addr = next_local_address_with_port(9876);
+        let node1_proxy_addr = next_local_address_with_port(9876);
+        let proxy = Proxy::new([Node::new(
+            node1_real_addr,
+            node1_proxy_addr,
+            ShardAwareness::Unaware,
+            None,
+            None,
+        )]);
+        let mut running_proxy = proxy.run().await.unwrap();
+
+        let mock_node_listener = TcpListener::bind(node1_real_addr).await.unwrap();
+
+        let params = FrameParams {
+            flags: 0,
+            version: 0x04,
+            stream: 0,
+        };
+        let opcode = FrameOpcode::Request(RequestOpcode::Options);
+
+        let body = random_body();
+
+        let (mut driver, mut node) = {
+            let results = join(
+                TcpStream::connect(node1_proxy_addr),
+                mock_node_listener.accept(),
+            )
+            .await;
+            (results.0.unwrap(), results.1.unwrap().0)
+        };
+
+        async fn request(
+            driver: &mut TcpStream,
+            node: &mut TcpStream,
+            params: FrameParams,
+            opcode: FrameOpcode,
+            body: &Bytes,
+        ) -> Result<RequestFrame, FrameError> {
+            let (send_res, recv_res) = join(
+                write_frame(params, opcode, &body.clone(), driver),
+                read_request_frame(node),
+            )
+            .await;
+            send_res.unwrap();
+            recv_res
+        }
+        {
+            // one run still without custom rules
+            let RequestFrame {
+                params: recvd_params,
+                opcode: recvd_opcode,
+                body: recvd_body,
+            } = request(&mut driver, &mut node, params, opcode, &body)
+                .await
+                .unwrap();
+            assert_eq!(recvd_params, params);
+            assert_eq!(FrameOpcode::Request(recvd_opcode), opcode);
+            assert_eq!(recvd_body, body);
+        }
+        running_proxy.running_nodes[0]
+            .change_request_rules(Some(vec![RequestRule(
+                Condition::True,
+                RequestReaction::drop_frame(),
+            )]))
+            .await;
+
+        {
+            // one run with custom rules
+            tokio::select! {
+                _ = request(&mut driver, &mut node, params, opcode, &body) => panic!("Rules did not work"),
+                _ = tokio::time::sleep(std::time::Duration::from_millis(20)) => (),
+            };
+        }
+
+        running_proxy.turn_off_rules().await;
+
+        {
+            // one run already without custom rules
+            let RequestFrame {
+                params: recvd_params,
+                opcode: recvd_opcode,
+                body: recvd_body,
+            } = request(&mut driver, &mut node, params, opcode, &body)
+                .await
+                .unwrap();
+            assert_eq!(recvd_params, params);
+            assert_eq!(FrameOpcode::Request(recvd_opcode), opcode);
+            assert_eq!(recvd_body, body);
+        }
+
+        running_proxy.finish().await.unwrap();
+    }
+}
