@@ -206,6 +206,7 @@ impl RowIterator {
         let statement_info = Statement {
             token: config.token,
             keyspace: None,
+            is_confirmed_lwt: config.prepared.is_confirmed_lwt(),
         };
 
         let worker_task = async move {

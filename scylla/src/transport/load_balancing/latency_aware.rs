@@ -728,6 +728,7 @@ mod tests {
                 statement: Statement {
                     token: Some(Token { value: 160 }),
                     keyspace: Some("keyspace_with_simple_strategy_replication_factor_2"),
+                    is_confirmed_lwt: false,
                 },
                 latency_stats: &[
                     (
@@ -759,6 +760,7 @@ mod tests {
                 statement: Statement {
                     token: Some(Token { value: 160 }),
                     keyspace: Some("keyspace_with_simple_strategy_replication_factor_2"),
+                    is_confirmed_lwt: false,
                 },
                 latency_stats: &[
                     (
@@ -790,6 +792,7 @@ mod tests {
                 statement: Statement {
                     token: Some(Token { value: 60 }),
                     keyspace: Some("keyspace_with_simple_strategy_replication_factor_1"),
+                    is_confirmed_lwt: false,
                 },
                 latency_stats: &[
                     (
@@ -826,6 +829,7 @@ mod tests {
                 statement: Statement {
                     token: Some(Token { value: 60 }),
                     keyspace: Some("keyspace_with_simple_strategy_replication_factor_2"),
+                    is_confirmed_lwt: false,
                 },
                 latency_stats: &[
                     (
@@ -861,6 +865,7 @@ mod tests {
                 statement: Statement {
                     token: Some(Token { value: 60 }),
                     keyspace: Some("invalid"),
+                    is_confirmed_lwt: false,
                 },
                 latency_stats: &[],
                 preset_min_avg: None,
@@ -871,6 +876,7 @@ mod tests {
                 statement: Statement {
                     token: Some(Token { value: 60 }),
                     keyspace: None,
+                    is_confirmed_lwt: false,
                 },
                 latency_stats: &[
                     (

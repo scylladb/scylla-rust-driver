@@ -211,6 +211,7 @@ mod tests {
                 statement: Statement {
                     token: Some(Token { value: 160 }),
                     keyspace: Some("keyspace_with_simple_strategy_replication_factor_2"),
+                    is_confirmed_lwt: false,
                 },
                 expected_plan: vec![3, 1],
             },
@@ -218,6 +219,7 @@ mod tests {
                 statement: Statement {
                     token: Some(Token { value: 60 }),
                     keyspace: Some("keyspace_with_simple_strategy_replication_factor_3"),
+                    is_confirmed_lwt: false,
                 },
                 expected_plan: vec![1, 2, 3],
             },
@@ -225,6 +227,7 @@ mod tests {
                 statement: Statement {
                     token: Some(Token { value: 500 }),
                     keyspace: Some("keyspace_with_simple_strategy_replication_factor_3"),
+                    is_confirmed_lwt: false,
                 },
                 expected_plan: vec![1, 2, 3],
             },
@@ -232,6 +235,7 @@ mod tests {
                 statement: Statement {
                     token: Some(Token { value: 60 }),
                     keyspace: Some("invalid"),
+                    is_confirmed_lwt: false,
                 },
                 expected_plan: vec![1],
             },
@@ -239,6 +243,7 @@ mod tests {
                 statement: Statement {
                     token: Some(Token { value: 60 }),
                     keyspace: None,
+                    is_confirmed_lwt: false,
                 },
                 expected_plan: vec![1],
             },
@@ -262,6 +267,7 @@ mod tests {
         let statement = Statement {
             token: Some(Token { value: 0 }),
             keyspace: Some("keyspace_with_nts"),
+            is_confirmed_lwt: false,
         };
 
         let plan = tests::get_plan_and_collect_node_identifiers(&policy, &statement, &cluster);
