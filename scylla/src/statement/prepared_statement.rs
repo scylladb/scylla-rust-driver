@@ -25,6 +25,7 @@ pub struct PreparedStatement {
     statement: String,
     page_size: Option<i32>,
     partitioner_name: PartitionerName,
+    is_confirmed_lwt: bool,
 }
 
 impl Clone for PreparedStatement {
@@ -37,6 +38,7 @@ impl Clone for PreparedStatement {
             statement: self.statement.clone(),
             page_size: self.page_size,
             partitioner_name: self.partitioner_name.clone(),
+            is_confirmed_lwt: self.is_confirmed_lwt,
         }
     }
 }
@@ -44,6 +46,7 @@ impl Clone for PreparedStatement {
 impl PreparedStatement {
     pub(crate) fn new(
         id: Bytes,
+        is_lwt: bool,
         metadata: PreparedMetadata,
         statement: String,
         page_size: Option<i32>,
@@ -57,6 +60,7 @@ impl PreparedStatement {
             page_size,
             config,
             partitioner_name: Default::default(),
+            is_confirmed_lwt: is_lwt,
         }
     }
 
@@ -94,6 +98,17 @@ impl PreparedStatement {
     /// will always be sent to a random node/shard.
     pub fn is_token_aware(&self) -> bool {
         !self.metadata.pk_indexes.is_empty()
+    }
+
+    /// Returns true if it is known that the prepared statement contains
+    /// a Lightweight Transaction. If so, the optimisation can be performed:
+    /// the query should be routed to the replicas in a predefined order
+    /// (i. e. always try first to contact replica A, then B if it fails,
+    /// then C, etc.). If false, the query should be routed normally.
+    /// Note: this a Scylla-specific optimisation. Therefore, the result
+    /// will be always false for Cassandra.
+    pub fn is_confirmed_lwt(&self) -> bool {
+        self.is_confirmed_lwt
     }
 
     /// Computes the partition key of the target table from given values —

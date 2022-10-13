@@ -334,6 +334,9 @@ impl Connection {
             Response::Error(err) => return Err(err.into()),
             Response::Result(result::Result::Prepared(p)) => PreparedStatement::new(
                 p.id,
+                self.features
+                    .protocol_features
+                    .prepared_flags_contain_lwt_mark(p.prepared_metadata.flags as u32),
                 p.prepared_metadata,
                 query.contents.clone(),
                 query.get_page_size(),

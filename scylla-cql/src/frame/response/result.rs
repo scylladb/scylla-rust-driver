@@ -353,6 +353,7 @@ pub struct PartitionKeyIndex {
 
 #[derive(Debug, Clone)]
 pub struct PreparedMetadata {
+    pub flags: i32,
     pub col_count: usize,
     /// pk_indexes are sorted by `index` and can be reordered in partition key order
     /// using `sequence` field
@@ -552,6 +553,7 @@ fn deser_prepared_metadata(buf: &mut &[u8]) -> StdResult<PreparedMetadata, Parse
     let col_specs = deser_col_specs(buf, &global_table_spec, col_count)?;
 
     Ok(PreparedMetadata {
+        flags,
         col_count,
         pk_indexes,
         col_specs,
