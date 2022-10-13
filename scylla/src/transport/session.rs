@@ -1566,7 +1566,7 @@ impl Session {
             .map_or(Ok(false), |res| res.and(Ok(true)))
     }
 
-    async fn schema_agreement_auxilary<ResT, QueryFut>(
+    async fn schema_agreement_auxiliary<ResT, QueryFut>(
         &self,
         do_query: impl Fn(Arc<Connection>, Consistency) -> QueryFut,
     ) -> Result<ResT, QueryError>
@@ -1610,7 +1610,7 @@ impl Session {
 
     pub async fn fetch_schema_version(&self) -> Result<Uuid, QueryError> {
         // We ignore custom Consistency that a retry policy could decide to put here, using the default instead.
-        self.schema_agreement_auxilary(
+        self.schema_agreement_auxiliary(
             |connection: Arc<Connection>, _ignored: Consistency| async move {
                 connection.fetch_schema_version().await
             },

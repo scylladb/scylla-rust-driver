@@ -1,6 +1,7 @@
 //! This module contains various errors which can be returned by `scylla::Session`
 
 use crate::frame::frame_errors::{FrameError, ParseError};
+use crate::frame::protocol_features::ProtocolFeatures;
 use crate::frame::types::LegacyConsistency;
 use crate::frame::value::SerializeValuesError;
 use bytes::Bytes;
@@ -221,6 +222,69 @@ pub enum DbError {
     /// Other error code not specified in the specification
     #[error("Other error not specified in the specification. Error code: {0}")]
     Other(i32),
+}
+
+impl DbError {
+    pub fn code(&self, protocol_features: &ProtocolFeatures) -> i32 {
+        match self {
+            DbError::ServerError => 0x0000,
+            DbError::ProtocolError => 0x000A,
+            DbError::AuthenticationError => 0x0100,
+            DbError::Unavailable {
+                consistency: _,
+                required: _,
+                alive: _,
+            } => 0x1000,
+            DbError::Overloaded => 0x1001,
+            DbError::IsBootstrapping => 0x1002,
+            DbError::TruncateError => 0x1003,
+            DbError::WriteTimeout {
+                consistency: _,
+                received: _,
+                required: _,
+                write_type: _,
+            } => 0x1100,
+            DbError::ReadTimeout {
+                consistency: _,
+                received: _,
+                required: _,
+                data_present: _,
+            } => 0x1200,
+            DbError::ReadFailure {
+                consistency: _,
+                received: _,
+                required: _,
+                numfailures: _,
+                data_present: _,
+            } => 0x1300,
+            DbError::FunctionFailure {
+                keyspace: _,
+                function: _,
+                arg_types: _,
+            } => 0x1400,
+            DbError::WriteFailure {
+                consistency: _,
+                received: _,
+                required: _,
+                numfailures: _,
+                write_type: _,
+            } => 0x1500,
+            DbError::SyntaxError => 0x2000,
+            DbError::Unauthorized => 0x2100,
+            DbError::Invalid => 0x2200,
+            DbError::ConfigError => 0x2300,
+            DbError::AlreadyExists {
+                keyspace: _,
+                table: _,
+            } => 0x2400,
+            DbError::Unprepared { statement_id: _ } => 0x2500,
+            DbError::Other(code) => *code,
+            DbError::RateLimitReached {
+                op_type: _,
+                rejected_by_coordinator: _,
+            } => protocol_features.rate_limit_error.unwrap(),
+        }
+    }
 }
 
 /// Type of the operation rejected by rate limiting
@@ -449,6 +513,22 @@ impl From<&str> for WriteType {
             "VIEW" => WriteType::View,
             "CDC" => WriteType::Cdc,
             _ => WriteType::Other(write_type_str.to_string()),
+        }
+    }
+}
+
+impl WriteType {
+    pub fn as_str(&self) -> &str {
+        match self {
+            WriteType::Simple => "SIMPLE",
+            WriteType::Batch => "BATCH",
+            WriteType::UnloggedBatch => "UNLOGGED_BATCH",
+            WriteType::Counter => "COUNTER",
+            WriteType::BatchLog => "BATCH_LOG",
+            WriteType::Cas => "CAS",
+            WriteType::View => "VIEW",
+            WriteType::Cdc => "CDC",
+            WriteType::Other(write_type) => write_type.as_str(),
         }
     }
 }
