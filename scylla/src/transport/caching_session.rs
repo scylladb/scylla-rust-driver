@@ -1,3 +1,5 @@
+use std::collections::hash_map::RandomState;
+use std::hash::BuildHasher;
 use crate::batch::{Batch, BatchStatement};
 use crate::frame::value::{BatchValues, ValueList};
 use crate::prepared_statement::PreparedStatement;
@@ -11,21 +13,39 @@ use futures::future::try_join_all;
 
 /// Provides auto caching while executing queries
 #[derive(Debug)]
-pub struct CachingSession {
+pub struct CachingSession<S = RandomState>
+    where S: Clone + BuildHasher
+{
     pub session: Session,
     /// The prepared statement cache size
     /// If a prepared statement is added while the limit is reached, the oldest prepared statement
     /// is removed from the cache
     pub max_capacity: usize,
-    pub cache: DashMap<String, PreparedStatement>,
+    pub cache: DashMap<String, PreparedStatement, S>,
 }
 
-impl CachingSession {
+impl<S> CachingSession<S>
+    where S: Default + BuildHasher + Clone
+{
     pub fn from(session: Session, cache_size: usize) -> Self {
         Self {
             session,
             max_capacity: cache_size,
             cache: Default::default(),
+        }
+    }
+}
+
+impl<S> CachingSession<S>
+    where S: Default + BuildHasher + Clone
+{
+    /// Builds a [`CachingCaching::session`] from a [`Session`] and a cache size,
+    /// using a customer hasher.
+    pub fn with_hasher(session: Session, cache_size: usize, hasher: S) -> Self {
+        Self {
+            session,
+            max_capacity: cache_size,
+            cache: DashMap::with_hasher(hasher),
         }
     }
 
@@ -107,7 +127,7 @@ impl CachingSession {
                     Ok::<(), QueryError>(())
                 }),
         )
-        .await?;
+            .await?;
 
         Ok(prepared_batch)
     }
@@ -318,6 +338,14 @@ mod tests {
         }
     }
 
+    /// This test checks that we can construct a CachingSession with custom HashBuilder implementations
+    #[tokio::test]
+    async fn test_custom_hasher() {
+        let _session: CachingSession::<std::collections::hash_map::RandomState> = CachingSession::from(new_for_test().await, 2);
+        let _session: CachingSession::<ahash::RandomState> = CachingSession::from(new_for_test().await, 2);
+        let _session: CachingSession::<ahash::RandomState> = CachingSession::with_hasher(new_for_test().await, 2, Default::default());
+    }
+
     #[tokio::test]
     async fn test_batch() {
         let session: CachingSession = create_caching_session().await;
@@ -362,7 +390,7 @@ mod tests {
             unprepared_batch.append_statement(unprepared_insert_8_b);
 
             session
-                .batch(&unprepared_batch, ((10, 20), (10,), (20,)))
+                .batch(&unprepared_batch, ((10, 20), (10, ), (20, )))
                 .await
                 .unwrap();
             assert_test_batch_table_rows_contain(&session, &[(10, 20), (10, 7), (8, 20)]).await;
@@ -371,7 +399,7 @@ mod tests {
             assert_batch_prepared(&prepared_batch);
 
             session
-                .batch(&prepared_batch, ((15, 25), (15,), (25,)))
+                .batch(&prepared_batch, ((15, 25), (15, ), (25, )))
                 .await
                 .unwrap();
             assert_test_batch_table_rows_contain(&session, &[(15, 25), (15, 7), (8, 25)]).await;
@@ -384,7 +412,7 @@ mod tests {
             partially_prepared_batch.append_statement(unprepared_insert_8_b);
 
             session
-                .batch(&partially_prepared_batch, ((30, 40), (30,), (40,)))
+                .batch(&partially_prepared_batch, ((30, 40), (30, ), (40, )))
                 .await
                 .unwrap();
             assert_test_batch_table_rows_contain(&session, &[(30, 40), (30, 7), (8, 40)]).await;
@@ -396,7 +424,7 @@ mod tests {
             assert_batch_prepared(&prepared_batch);
 
             session
-                .batch(&prepared_batch, ((35, 45), (35,), (45,)))
+                .batch(&prepared_batch, ((35, 45), (35, ), (45, )))
                 .await
                 .unwrap();
             assert_test_batch_table_rows_contain(&session, &[(35, 45), (35, 7), (8, 45)]).await;
@@ -409,7 +437,7 @@ mod tests {
             fully_prepared_batch.append_statement(prepared_insert_8_b);
 
             session
-                .batch(&fully_prepared_batch, ((50, 60), (50,), (60,)))
+                .batch(&fully_prepared_batch, ((50, 60), (50, ), (60, )))
                 .await
                 .unwrap();
             assert_test_batch_table_rows_contain(&session, &[(50, 60), (50, 7), (8, 60)]).await;
@@ -418,7 +446,7 @@ mod tests {
             assert_batch_prepared(&prepared_batch);
 
             session
-                .batch(&prepared_batch, ((55, 65), (55,), (65,)))
+                .batch(&prepared_batch, ((55, 65), (55, ), (65, )))
                 .await
                 .unwrap();
 
@@ -431,7 +459,7 @@ mod tests {
             bad_batch.append_statement("This isnt even CQL");
             bad_batch.append_statement(unprepared_insert_8_b);
 
-            assert!(session.batch(&bad_batch, ((1, 2), (), (2,))).await.is_err());
+            assert!(session.batch(&bad_batch, ((1, 2), (), (2, ))).await.is_err());
             assert!(session.prepare_batch(&bad_batch).await.is_err());
         }
     }
