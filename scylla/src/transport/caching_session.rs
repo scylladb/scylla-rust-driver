@@ -37,7 +37,7 @@ impl<S> CachingSession<S>
 }
 
 impl<S> CachingSession<S>
-    where S: Default + BuildHasher + Clone
+    where S: BuildHasher + Clone
 {
     /// Builds a [`CachingCaching::session`] from a [`Session`] and a cache size,
     /// using a customer hasher.
