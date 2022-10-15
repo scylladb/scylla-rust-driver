@@ -42,7 +42,7 @@ impl<S> CachingSession<S>
 where
     S: BuildHasher + Clone,
 {
-    /// Builds a [`CachingCaching::session`] from a [`Session`] and a cache size,
+    /// Builds a [`CachingSession`] from a [`Session`], a cache size, and a [`BuildHasher`].,
     /// using a customer hasher.
     pub fn with_hasher(session: Session, cache_size: usize, hasher: S) -> Self {
         Self {
