@@ -8,24 +8,47 @@ use crate::{QueryResult, Session};
 use bytes::Bytes;
 use dashmap::DashMap;
 use futures::future::try_join_all;
+use std::collections::hash_map::RandomState;
+use std::hash::BuildHasher;
 
 /// Provides auto caching while executing queries
 #[derive(Debug)]
-pub struct CachingSession {
+pub struct CachingSession<S = RandomState>
+where
+    S: Clone + BuildHasher,
+{
     pub session: Session,
     /// The prepared statement cache size
     /// If a prepared statement is added while the limit is reached, the oldest prepared statement
     /// is removed from the cache
     pub max_capacity: usize,
-    pub cache: DashMap<String, PreparedStatement>,
+    pub cache: DashMap<String, PreparedStatement, S>,
 }
 
-impl CachingSession {
+impl<S> CachingSession<S>
+where
+    S: Default + BuildHasher + Clone,
+{
     pub fn from(session: Session, cache_size: usize) -> Self {
         Self {
             session,
             max_capacity: cache_size,
             cache: Default::default(),
+        }
+    }
+}
+
+impl<S> CachingSession<S>
+where
+    S: BuildHasher + Clone,
+{
+    /// Builds a [`CachingSession`] from a [`Session`], a cache size, and a [`BuildHasher`].,
+    /// using a customer hasher.
+    pub fn with_hasher(session: Session, cache_size: usize, hasher: S) -> Self {
+        Self {
+            session,
+            max_capacity: cache_size,
+            cache: DashMap::with_hasher(hasher),
         }
     }
 
@@ -316,6 +339,17 @@ mod tests {
                 );
             }
         }
+    }
+
+    /// This test checks that we can construct a CachingSession with custom HashBuilder implementations
+    #[tokio::test]
+    async fn test_custom_hasher() {
+        let _session: CachingSession<std::collections::hash_map::RandomState> =
+            CachingSession::from(new_for_test().await, 2);
+        let _session: CachingSession<ahash::RandomState> =
+            CachingSession::from(new_for_test().await, 2);
+        let _session: CachingSession<ahash::RandomState> =
+            CachingSession::with_hasher(new_for_test().await, 2, Default::default());
     }
 
     #[tokio::test]
