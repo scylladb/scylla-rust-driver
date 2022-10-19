@@ -5,7 +5,6 @@ use scylla_cql::frame::value::SerializedValues;
 use scylla_cql::frame::value::ValueList;
 use scylla_cql::frame::{request::query, Compression, SerializedRequest};
 
-// Macro to avoid lifetime issues
 fn make_query<'a>(contents: &'a str, values: &'a SerializedValues) -> query::Query<'a> {
     query::Query {
         contents,
