@@ -154,11 +154,17 @@ impl LoadBalancingPolicy for TokenAwarePolicy {
                         .filter(move |node| !replicas_set.contains(&node.address))
                 };
 
-                let plan = self
-                    .child_policy
-                    .apply_child_policy(replicas)
-                    .chain(fallback_plan);
-                Box::new(plan)
+                if statement.is_confirmed_lwt {
+                    // As optimisation, in order to reduce contention caused by Paxos conflicts, we always try
+                    // to query replicas in the same order. Therefore, we bypass child load balancing policy.
+                    Box::new(replicas.into_iter().chain(fallback_plan))
+                } else {
+                    Box::new(
+                        self.child_policy
+                            .apply_child_policy(replicas)
+                            .chain(fallback_plan),
+                    )
+                }
             }
             // fallback to child policy
             None => {
