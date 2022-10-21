@@ -27,7 +27,7 @@ clippy:
 	RUSTFLAGS=-Dwarnings cargo clippy --examples --tests
 
 .PHONY: test
-test:
+test: up wait-for-cluster
 	SCYLLA_URI=172.42.0.2:9042 \
 	 SCYLLA_URI2=172.42.0.3:9042 \
 	 SCYLLA_URI3=172.42.0.4:9042 \
@@ -68,3 +68,7 @@ shell:
 clean: down
 	cargo clean
 	rm -rf docs/book
+
+.PHONY: wait-for-cluster
+wait-for-cluster:
+	@scripts/wait_for_cluster.sh
