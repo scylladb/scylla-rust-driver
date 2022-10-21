@@ -1,4 +1,4 @@
-#!/bin/python3
+#!/usr/bin/env python3
 
 # A script which removes sphinx markdown and builds the documentation book
 # It copies all files to working directory, modifies the .md files
