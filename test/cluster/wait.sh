@@ -5,7 +5,7 @@ set -e
 echo "Waiting for the cluster to become ready."
 echo " Inspect 'make logs' output if this step takes too long."
 
-DOCKER_COMPOSE='docker-compose -f test/docker-compose.yml'
+DOCKER_COMPOSE='docker-compose -f test/cluster/docker-compose.yml'
 TEST_QUERY='select * from system.local'
 
 for NODE in 'scylla1' 'scylla2' 'scylla3'; do

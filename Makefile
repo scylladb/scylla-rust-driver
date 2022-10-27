@@ -1,4 +1,4 @@
-COMPOSE := docker-compose -f test/docker-compose.yml
+COMPOSE := docker-compose -f test/cluster/docker-compose.yml
 
 .PHONY: all
 all: test
@@ -71,4 +71,4 @@ clean: down
 
 .PHONY: wait-for-cluster
 wait-for-cluster:
-	@scripts/wait_for_cluster.sh
+	@test/cluster/wait.sh
