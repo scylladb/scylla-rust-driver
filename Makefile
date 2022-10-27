@@ -6,6 +6,9 @@ all: test
 .PHONY: ci
 ci: fmt-check check check-without-features clippy test build
 
+.PHONY: dockerized-ci
+dockerized-ci: fmt-check check check-without-features clippy dockerized-test build
+
 .PHONY: fmt
 fmt:
 	cargo fmt --all
@@ -32,6 +35,10 @@ test: up wait-for-cluster
 	 SCYLLA_URI2=172.42.0.3:9042 \
 	 SCYLLA_URI3=172.42.0.4:9042 \
 	 cargo test
+
+.PHONY: dockerized-test
+dockerized-test: up wait-for-cluster
+	test/dockerized/run.sh
 
 .PHONY: build
 build:
