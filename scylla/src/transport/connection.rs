@@ -1531,13 +1531,28 @@ impl VerifiedKeyspaceName {
 #[cfg(test)]
 mod tests {
     use scylla_cql::errors::BadQuery;
+    use scylla_cql::frame::protocol_features::{
+        LWT_OPTIMIZATION_META_BIT_MASK_KEY, SCYLLA_LWT_ADD_METADATA_MARK_EXTENSION,
+    };
+    use scylla_cql::frame::types;
+    use scylla_proxy::{
+        Condition, Node, Proxy, Reaction, RequestFrame, RequestOpcode, RequestReaction,
+        RequestRule, ResponseFrame,
+    };
+
+    use tokio::select;
+    use tokio::sync::mpsc;
 
     use super::super::errors::QueryError;
     use super::ConnectionConfig;
     use crate::query::Query;
+    use crate::transport::connection::open_connection;
     use crate::utils::test_utils::unique_keyspace_name;
     use crate::{IntoTypedRows, SessionBuilder};
+    use std::collections::HashMap;
     use std::net::SocketAddr;
+    use std::str::FromStr;
+    use std::sync::Arc;
 
     // Just like resolve_hostname in session.rs
     async fn resolve_hostname(hostname: &str) -> SocketAddr {
@@ -1669,5 +1684,83 @@ mod tests {
             prepared_no_page_res,
             Err(QueryError::BadQuery(BadQuery::Other(_)))
         ));
+    }
+
+    #[tokio::test]
+    async fn test_lwt_optimisation_mark_negotiation() {
+        const MASK: &str = "2137";
+
+        let lwt_optimisation_entry = format!("{}={}", LWT_OPTIMIZATION_META_BIT_MASK_KEY, MASK);
+
+        let proxy_addr = SocketAddr::from_str("127.0.0.54:9042").unwrap();
+
+        let config = ConnectionConfig::default();
+
+        let (startup_tx, mut startup_rx) = mpsc::unbounded_channel();
+
+        let options_without_lwt_optimisation_support = HashMap::<String, Vec<String>>::new();
+        let options_with_lwt_optimisation_support = [(
+            SCYLLA_LWT_ADD_METADATA_MARK_EXTENSION.into(),
+            vec![lwt_optimisation_entry.clone()],
+        )]
+        .into_iter()
+        .collect::<HashMap<String, Vec<String>>>();
+
+        let make_rules = |options| {
+            vec![
+                RequestRule(
+                    Condition::RequestOpcode(RequestOpcode::Options),
+                    RequestReaction::forge_response(Arc::new(move |frame: RequestFrame| {
+                        ResponseFrame::forged_supported(frame.params, &options).unwrap()
+                    })),
+                ),
+                RequestRule(
+                    Condition::RequestOpcode(RequestOpcode::Startup),
+                    RequestReaction::drop_frame().with_feedback_when_performed(startup_tx.clone()),
+                ),
+            ]
+        };
+
+        let mut proxy = Proxy::builder()
+            .with_node(
+                Node::builder()
+                    .proxy_address(proxy_addr)
+                    .request_rules(make_rules(options_without_lwt_optimisation_support))
+                    .build_dry_mode(),
+            )
+            .build()
+            .run()
+            .await
+            .unwrap();
+
+        // We must interrupt the driver's full connection opening, because our proxy does not interact further after Startup.
+        let startup_without_lwt_optimisation = select! {
+            _ = open_connection(proxy_addr, None, config.clone()) => unreachable!(),
+            startup = startup_rx.recv() => startup.unwrap(),
+        };
+
+        proxy.running_nodes[0]
+            .change_request_rules(Some(make_rules(options_with_lwt_optimisation_support)));
+
+        let startup_with_lwt_optimisation = select! {
+            _ = open_connection(proxy_addr, None, config.clone()) => unreachable!(),
+            startup = startup_rx.recv() => startup.unwrap(),
+        };
+
+        let _ = proxy.finish().await;
+
+        let chosen_options =
+            types::read_string_map(&mut &*startup_without_lwt_optimisation.body).unwrap();
+        assert!(!chosen_options.contains_key(SCYLLA_LWT_ADD_METADATA_MARK_EXTENSION));
+
+        let chosen_options =
+            types::read_string_map(&mut &startup_with_lwt_optimisation.body[..]).unwrap();
+        assert!(chosen_options.contains_key(SCYLLA_LWT_ADD_METADATA_MARK_EXTENSION));
+        assert_eq!(
+            chosen_options
+                .get(SCYLLA_LWT_ADD_METADATA_MARK_EXTENSION)
+                .unwrap(),
+            &lwt_optimisation_entry
+        )
     }
 }
