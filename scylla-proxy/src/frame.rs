@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use bytes::{Buf, BufMut, Bytes, BytesMut};
 use scylla_cql::frame::frame_errors::{FrameError, ParseError};
 use scylla_cql::frame::protocol_features::ProtocolFeatures;
@@ -98,6 +100,21 @@ impl ResponseFrame {
         Ok(ResponseFrame {
             params: request_params.for_response(),
             opcode: ResponseOpcode::Error,
+            body: buf.freeze(),
+        })
+    }
+
+    /// Creates a Supported response frame with given supported options.
+    pub fn forged_supported(
+        request_params: FrameParams,
+        options: &HashMap<String, Vec<String>>,
+    ) -> Result<Self, ParseError> {
+        let mut buf = BytesMut::new();
+        types::write_string_multimap(options, &mut buf)?;
+
+        Ok(ResponseFrame {
+            params: request_params.for_response(),
+            opcode: ResponseOpcode::Supported,
             body: buf.freeze(),
         })
     }
