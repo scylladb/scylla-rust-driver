@@ -10,11 +10,11 @@ use std::collections::HashMap;
 use std::fmt::Display;
 use std::future::Future;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::net::{TcpListener, TcpSocket, TcpStream};
 use tokio::sync::mpsc::error::TryRecvError;
-use tokio::sync::{broadcast, mpsc, Mutex};
+use tokio::sync::{broadcast, mpsc};
 use tracing::{debug, error, info, trace, warn};
 
 // Used to notify the user that the proxy finished - this happens when all Senders are dropped.
@@ -376,18 +376,18 @@ pub struct RunningNode {
 
 impl RunningNode {
     /// Replaces the previous request rules with the new ones.
-    pub async fn change_request_rules(&mut self, rules: Option<Vec<RequestRule>>) {
-        *self.request_rules.lock().await = rules.unwrap_or_default();
+    pub fn change_request_rules(&mut self, rules: Option<Vec<RequestRule>>) {
+        *self.request_rules.lock().unwrap() = rules.unwrap_or_default();
     }
 
     /// Replaces the previous response rules with the new ones.
-    pub async fn change_response_rules(&mut self, rules: Option<Vec<ResponseRule>>) {
+    pub fn change_response_rules(&mut self, rules: Option<Vec<ResponseRule>>) {
         *self
             .response_rules
             .as_ref()
             .expect("No response rules on a simulated node!")
             .lock()
-            .await = rules.unwrap_or_default();
+            .unwrap() = rules.unwrap_or_default();
     }
 }
 
@@ -401,15 +401,15 @@ pub struct RunningProxy {
 
 impl RunningProxy {
     /// Disables all the rules in the proxy, effectively making it a pass-through-only proxy.
-    pub async fn turn_off_rules(&mut self) {
+    pub fn turn_off_rules(&mut self) {
         for (request_rules, response_rules) in self
             .running_nodes
             .iter_mut()
             .map(|node| (&node.request_rules, &node.response_rules))
         {
-            request_rules.lock().await.clear();
+            request_rules.lock().unwrap().clear();
             if let Some(response_rules) = response_rules {
-                response_rules.lock().await.clear();
+                response_rules.lock().unwrap().clear();
             }
         }
     }
@@ -985,7 +985,7 @@ impl ProxyWorker {
                             opcode: FrameOpcode::Request(request.opcode),
                             frame_body: request.body.clone(),
                         };
-                        let mut guard = request_rules.lock().await;
+                        let mut guard = request_rules.lock().unwrap();
                         '_ruleloop: for (i, request_rule) in guard.iter_mut().enumerate() {
                             if request_rule.0.eval(&ctx) {
                                 info!("Applying rule no={} to request ({} -> {}).", i, driver_addr, DisplayableRealAddrOption(real_addr));
@@ -1084,7 +1084,7 @@ impl ProxyWorker {
                             opcode: FrameOpcode::Response(response.opcode),
                             frame_body: response.body.clone(),
                         };
-                        let mut guard = response_rules.lock().await;
+                        let mut guard = response_rules.lock().unwrap();
                         '_ruleloop: for (i, response_rule) in guard.iter_mut().enumerate() {
                             if response_rule.0.eval(&ctx) {
                                 info!("Applying rule no={} to request ({} -> {}).", i, DisplayableRealAddrOption(real_addr), driver_addr);
@@ -1603,12 +1603,10 @@ mod tests {
             assert_eq!(FrameOpcode::Request(recvd_opcode), opcode);
             assert_eq!(recvd_body, body);
         }
-        running_proxy.running_nodes[0]
-            .change_request_rules(Some(vec![RequestRule(
-                Condition::True,
-                RequestReaction::drop_frame(),
-            )]))
-            .await;
+        running_proxy.running_nodes[0].change_request_rules(Some(vec![RequestRule(
+            Condition::True,
+            RequestReaction::drop_frame(),
+        )]));
 
         {
             // one run with custom rules
@@ -1618,7 +1616,7 @@ mod tests {
             };
         }
 
-        running_proxy.turn_off_rules().await;
+        running_proxy.turn_off_rules();
 
         {
             // one run already without custom rules

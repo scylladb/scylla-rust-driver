@@ -144,29 +144,24 @@ async fn speculative_execution_is_fired() {
 
         info!("--------------------- second query - 0 and 2 nodes not responding  ----------------");
         running_proxy.running_nodes[0]
-            .change_request_rules(Some(vec![drop_frame_rule.clone()]))
-            .await;
+            .change_request_rules(Some(vec![drop_frame_rule.clone()]));
         running_proxy.running_nodes[2]
-            .change_request_rules(Some(vec![drop_frame_rule.clone()]))
-            .await;
+            .change_request_rules(Some(vec![drop_frame_rule.clone()]));
 
         session.query(q.clone(), (2,)).await.unwrap();
 
         info!("--------------------- third query - 0 and 1 nodes not responding  ----------------");
         running_proxy.running_nodes[2]
-            .change_request_rules(None)
-            .await;
+            .change_request_rules(None);
         running_proxy.running_nodes[1]
-            .change_request_rules(Some(vec![drop_frame_rule.clone()]))
-            .await;
+            .change_request_rules(Some(vec![drop_frame_rule.clone()]));
 
         session.query(q.clone(), (1,)).await.unwrap();
 
 
         info!("--------------------- fourth query - all nodes not responding  ----------------");
         running_proxy.running_nodes[2]
-        .change_request_rules(Some(vec![drop_frame_rule]))
-        .await;
+        .change_request_rules(Some(vec![drop_frame_rule]));
 
         tokio::select! {
             res = session.query(q, (0,)) => panic!("Rules did not work: received response {:?}", res),
@@ -224,25 +219,21 @@ async fn retries_occur() {
 
         info!("--------------------- second query - 0 and 2 nodes not responding  ----------------");
         running_proxy.running_nodes[0]
-            .change_request_rules(Some(vec![forge_error_rule.clone()]))
-            .await;
+            .change_request_rules(Some(vec![forge_error_rule.clone()]));
         running_proxy.running_nodes[2]
-            .change_request_rules(Some(vec![forge_error_rule.clone()]))
-            .await;
+            .change_request_rules(Some(vec![forge_error_rule.clone()]));
 
         session.query(q.clone(), (2,)).await.unwrap();
 
         info!("--------------------- third query - all nodes not responding  ----------------");
         running_proxy.running_nodes[1]
-            .change_request_rules(Some(vec![forge_error_rule]))
-            .await;
+            .change_request_rules(Some(vec![forge_error_rule]));
 
         session.query(q.clone(), (1,)).await.unwrap_err();
 
         info!("--------------------- fourth query - 0 and 1 nodes not responding  ----------------");
         running_proxy.running_nodes[2]
-        .change_request_rules(None)
-        .await;
+        .change_request_rules(None);
 
         session.query(q, (1,)).await.unwrap();
 
