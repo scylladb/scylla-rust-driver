@@ -1,10 +1,10 @@
 mod utils;
 
-use scylla::query::Query;
 use scylla::retry_policy::FallthroughRetryPolicy;
 use scylla::speculative_execution::SimpleSpeculativeExecutionPolicy;
 use scylla::transport::session::Session;
 use scylla::SessionBuilder;
+use scylla::{query::Query, test_utils::unique_keyspace_name};
 use std::sync::Arc;
 use std::time::Duration;
 use tracing::info;
@@ -32,22 +32,20 @@ async fn speculative_execution_is_fired() {
             .await
             .unwrap();
 
+        let ks = unique_keyspace_name();
+        session.query(format!("CREATE KEYSPACE IF NOT EXISTS {} WITH REPLICATION = {{'class' : 'SimpleStrategy', 'replication_factor' : 3}}", ks), &[]).await.unwrap();
+        session.use_keyspace(ks, false).await.unwrap();
         session
-            .query("DROP KEYSPACE IF EXISTS ks2", &[])
-            .await
-            .unwrap();
-        session.query("CREATE KEYSPACE IF NOT EXISTS ks2 WITH REPLICATION = {'class' : 'SimpleStrategy', 'replication_factor' : 3}", &[]).await.unwrap();
-        session
-            .query("CREATE TABLE ks2.t (a int primary key)", &[])
+            .query("CREATE TABLE t (a int primary key)", &[])
             .await
             .unwrap();
 
-        let mut q = Query::from("INSERT INTO ks2.t (a) VALUES (?)");
+        let mut q = Query::from("INSERT INTO t (a) VALUES (?)");
         q.set_is_idempotent(true); // this is to allow speculative execution to fire
 
         let drop_frame_rule = RequestRule(
             Condition::RequestOpcode(RequestOpcode::Query)
-                .and(Condition::BodyContainsCaseSensitive(Box::new(*b"ks2.t"))),
+                .and(Condition::BodyContainsCaseSensitive(Box::new(*b"t"))),
             RequestReaction::drop_frame(),
         );
 
@@ -108,22 +106,20 @@ async fn retries_occur() {
             .await
             .unwrap();
 
+        let ks = unique_keyspace_name();
+        session.query(format!("CREATE KEYSPACE IF NOT EXISTS {} WITH REPLICATION = {{'class' : 'SimpleStrategy', 'replication_factor' : 3}}", ks), &[]).await.unwrap();
+        session.use_keyspace(ks, false).await.unwrap();
         session
-            .query("DROP KEYSPACE IF EXISTS ks1", &[])
-            .await
-            .unwrap();
-        session.query("CREATE KEYSPACE IF NOT EXISTS ks1 WITH REPLICATION = {'class' : 'SimpleStrategy', 'replication_factor' : 3}", &[]).await.unwrap();
-        session
-            .query("CREATE TABLE ks1.t (a int primary key)", &[])
+            .query("CREATE TABLE t (a int primary key)", &[])
             .await
             .unwrap();
 
-        let mut q = Query::from("INSERT INTO ks1.t (a) VALUES (?)");
+        let mut q = Query::from("INSERT INTO t (a) VALUES (?)");
         q.set_is_idempotent(true); // this is to allow retry to fire
 
         let forge_error_rule = RequestRule(
             Condition::RequestOpcode(RequestOpcode::Query)
-                .and(Condition::BodyContainsCaseSensitive(Box::new(*b"INTO ks1.t"))),
+                .and(Condition::BodyContainsCaseSensitive(Box::new(*b"INTO t"))),
             RequestReaction::forge().server_error(),
         );
 
