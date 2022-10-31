@@ -672,7 +672,7 @@ mod tests {
         history_collector.log_attempt_error(
             attempt_id,
             &QueryError::TimeoutError,
-            &RetryDecision::RetrySameNode(Consistency::Quorum),
+            &RetryDecision::RetrySameNode(Some(Consistency::Quorum)),
         );
 
         let second_attempt_id: AttemptId =
@@ -696,7 +696,7 @@ mod tests {
 |   request send time: 2022-02-22 20:22:22 UTC
 |   Error at 2022-02-22 20:22:22 UTC
 |   Error: Timeout Error
-|   Retry decision: RetrySameNode(Quorum)
+|   Retry decision: RetrySameNode(Some(Quorum))
 |
 | - Attempt #1 sent to 127.0.0.1:19042
 |   request send time: 2022-02-22 20:22:22 UTC
@@ -768,7 +768,7 @@ mod tests {
         history_collector.log_attempt_error(
             attempt1,
             &timeout_error(),
-            &RetryDecision::RetryNextNode(Consistency::Quorum),
+            &RetryDecision::RetryNextNode(Some(Consistency::Quorum)),
         );
         let _attempt2: AttemptId =
             history_collector.log_attempt_start(query_id, None, node3_addr());
@@ -780,7 +780,7 @@ mod tests {
         history_collector.log_attempt_error(
             spec2_attempt1,
             &no_stream_id_error(),
-            &RetryDecision::RetrySameNode(Consistency::Quorum),
+            &RetryDecision::RetrySameNode(Some(Consistency::Quorum)),
         );
 
         let spec2_attempt2: AttemptId =
@@ -792,7 +792,7 @@ mod tests {
         history_collector.log_attempt_error(
             spec1_attempt1,
             &unavailable_error(),
-            &RetryDecision::RetryNextNode(Consistency::Quorum),
+            &RetryDecision::RetryNextNode(Some(Consistency::Quorum)),
         );
 
         let _spec4_attempt1: AttemptId =
@@ -811,7 +811,7 @@ mod tests {
 |   request send time: 2022-02-22 20:22:22 UTC
 |   Error at 2022-02-22 20:22:22 UTC
 |   Error: Timeout Error
-|   Retry decision: RetryNextNode(Quorum)
+|   Retry decision: RetryNextNode(Some(Quorum))
 |
 | - Attempt #1 sent to 127.0.0.3:19042
 |   request send time: 2022-02-22 20:22:22 UTC
@@ -824,7 +824,7 @@ mod tests {
 |   request send time: 2022-02-22 20:22:22 UTC
 |   Error at 2022-02-22 20:22:22 UTC
 |   Error: Database returned an error: Not enough nodes are alive to satisfy required consistency level (consistency: Quorum, required: 2, alive: 1), Error message: Not enough nodes to satisfy consistency
-|   Retry decision: RetryNextNode(Quorum)
+|   Retry decision: RetryNextNode(Some(Quorum))
 |
 |
 | > Speculative fiber #1
@@ -833,7 +833,7 @@ mod tests {
 |   request send time: 2022-02-22 20:22:22 UTC
 |   Error at 2022-02-22 20:22:22 UTC
 |   Error: Unable to allocate stream id
-|   Retry decision: RetrySameNode(Quorum)
+|   Retry decision: RetrySameNode(Some(Quorum))
 |
 | - Attempt #1 sent to 127.0.0.1:19042
 |   request send time: 2022-02-22 20:22:22 UTC
@@ -866,7 +866,7 @@ mod tests {
         history_collector.log_attempt_error(
             query1_attempt1,
             &timeout_error(),
-            &RetryDecision::RetryNextNode(Consistency::Quorum),
+            &RetryDecision::RetryNextNode(Some(Consistency::Quorum)),
         );
         let query1_attempt2: AttemptId =
             history_collector.log_attempt_start(query1_id, None, node2_addr());
@@ -889,7 +889,7 @@ mod tests {
 |   request send time: 2022-02-22 20:22:22 UTC
 |   Error at 2022-02-22 20:22:22 UTC
 |   Error: Timeout Error
-|   Retry decision: RetryNextNode(Quorum)
+|   Retry decision: RetryNextNode(Some(Quorum))
 |
 | - Attempt #1 sent to 127.0.0.2:19042
 |   request send time: 2022-02-22 20:22:22 UTC
