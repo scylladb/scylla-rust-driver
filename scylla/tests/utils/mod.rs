@@ -39,6 +39,7 @@ impl LoadBalancingPolicy for FixedOrderLoadBalancer {
 }
 
 pub async fn test_with_3_node_cluster<F, Fut>(
+    shard_awareness: ShardAwareness,
     first_proxy_node_addr_last_octet: u16,
     test: F,
 ) -> Result<(), ProxyError>
@@ -71,7 +72,7 @@ where
             Node::builder()
                 .real_address(real_addr)
                 .proxy_address(proxy_addr)
-                .shard_awareness(ShardAwareness::QueryNode)
+                .shard_awareness(shard_awareness)
                 .build()
         }),
     );

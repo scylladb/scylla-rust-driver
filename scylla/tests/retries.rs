@@ -11,14 +11,17 @@ use tracing::info;
 use utils::test_with_3_node_cluster;
 
 use scylla_proxy::{
-    Condition, ProxyError, Reaction, RequestOpcode, RequestReaction, RequestRule, WorkerError,
+    Condition, ProxyError, Reaction, RequestOpcode, RequestReaction, RequestRule, ShardAwareness,
+    WorkerError,
 };
 
 #[tokio::test]
 #[ntest::timeout(5000)]
 async fn speculative_execution_is_fired() {
     const TIMEOUT_PER_REQUEST: Duration = Duration::from_millis(1000);
-    let res = test_with_3_node_cluster(217, |proxy_uris, translation_map, mut running_proxy| async move {
+
+    // We choose Unaware to support testing Cassandra
+    let res = test_with_3_node_cluster(ShardAwareness::Unaware, 217, |proxy_uris, translation_map, mut running_proxy| async move {
         // DB preparation phase
         let session: Session = SessionBuilder::new()
             .known_node(proxy_uris[0].as_str())
@@ -96,7 +99,8 @@ async fn speculative_execution_is_fired() {
 #[tokio::test]
 #[ntest::timeout(10000)]
 async fn retries_occur() {
-    let res = test_with_3_node_cluster(210, |proxy_uris, translation_map, mut running_proxy| async move {
+    // We choose Unaware to support testing Cassandra
+    let res = test_with_3_node_cluster(ShardAwareness::Unaware, 210, |proxy_uris, translation_map, mut running_proxy| async move {
 
         // DB preparation phase
         let session: Session = SessionBuilder::new()
