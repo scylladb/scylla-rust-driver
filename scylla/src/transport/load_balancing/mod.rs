@@ -16,6 +16,10 @@ pub use dc_aware_round_robin::DcAwareRoundRobinPolicy;
 pub use round_robin::RoundRobinPolicy;
 pub use token_aware::TokenAwarePolicy;
 
+mod latency_aware;
+
+pub use latency_aware::LatencyAwarePolicy;
+
 /// Represents info about statement that can be used by load balancing policies.
 #[derive(Default)]
 pub struct Statement<'a> {
@@ -41,6 +45,13 @@ pub trait LoadBalancingPolicy: Send + Sync + std::fmt::Debug {
 
     /// Returns name of load balancing policy
     fn name(&self) -> String;
+
+    /// Informs whether latency measurements should be done when the policy is active.
+    fn requires_latency_measurements(&self) -> bool {
+        false
+    }
+
+    fn update_cluster_data(&self, _cluster_data: &ClusterData) {}
 }
 
 /// This trait is used to apply policy to plan made by parent policy.
@@ -94,10 +105,39 @@ fn slice_rotated_left<T>(slice: &[T], mid: usize) -> impl Iterator<Item = &T> + 
 mod tests {
     use super::*;
 
+    use crate::transport::node::TimestampedAverage;
+    use crate::transport::topology::Keyspace;
     use crate::transport::topology::Metadata;
     use crate::transport::topology::Peer;
+    use crate::transport::topology::Strategy;
     use std::collections::HashMap;
     use std::net::SocketAddr;
+
+    // Used as child policy for load balancing policy tests
+    // Forwards plan passed to it in apply_child_policy() method
+    #[derive(Debug)]
+    pub struct DumbPolicy {}
+
+    impl LoadBalancingPolicy for DumbPolicy {
+        fn plan<'a>(&self, _: &Statement, _: &'a ClusterData) -> Plan<'a> {
+            let empty_node_list: Vec<Arc<Node>> = Vec::new();
+
+            Box::new(empty_node_list.into_iter())
+        }
+
+        fn name(&self) -> String {
+            "".into()
+        }
+    }
+
+    impl ChildLoadBalancingPolicy for DumbPolicy {
+        fn apply_child_policy(
+            &self,
+            plan: Vec<Arc<Node>>,
+        ) -> Box<dyn Iterator<Item = Arc<Node>> + Send + Sync> {
+            Box::new(plan.into_iter())
+        }
+    }
 
     #[test]
     fn test_slice_rotation() {
@@ -133,7 +173,7 @@ mod tests {
 
     // creates ClusterData with info about 5 nodes living in 2 different datacenters
     // ring field is empty
-    pub fn mock_cluster_data_for_round_robin_tests() -> ClusterData {
+    pub fn mock_cluster_data_for_round_robin_and_latency_aware_tests() -> ClusterData {
         let peers = [("eu", 1), ("eu", 2), ("eu", 3), ("us", 4), ("us", 5)]
             .iter()
             .map(|(dc, id)| Peer {
@@ -165,5 +205,93 @@ mod tests {
     ) -> Vec<u16> {
         let plan = policy.plan(statement, cluster);
         plan.map(|node| node.address.port()).collect::<Vec<_>>()
+    }
+
+    pub fn set_nodes_latency_stats(
+        cluster: &mut ClusterData,
+        averages: &[(u16, Option<TimestampedAverage>)],
+    ) {
+        for (id, average) in averages {
+            *cluster
+                .known_peers
+                .get_mut(&tests::id_to_invalid_addr(*id))
+                .unwrap()
+                .average_latency
+                .write()
+                .unwrap() = *average;
+        }
+    }
+
+    // creates ClusterData with info about 3 nodes living in the same datacenter
+    // ring field is populated as follows:
+    // ring tokens:            50 100 150 200 250 300 400 500
+    // corresponding node ids: 2  1   2   3   1   2   3   1
+    pub fn mock_cluster_data_for_token_aware_tests() -> ClusterData {
+        let peers = [
+            Peer {
+                datacenter: Some("eu".into()),
+                rack: None,
+                address: tests::id_to_invalid_addr(1),
+                tokens: vec![
+                    Token { value: 100 },
+                    Token { value: 250 },
+                    Token { value: 500 },
+                ],
+                untranslated_address: None,
+            },
+            Peer {
+                datacenter: Some("eu".into()),
+                rack: None,
+                address: tests::id_to_invalid_addr(2),
+                tokens: vec![
+                    Token { value: 50 },
+                    Token { value: 150 },
+                    Token { value: 300 },
+                ],
+                untranslated_address: None,
+            },
+            Peer {
+                datacenter: Some("us".into()),
+                rack: None,
+                address: tests::id_to_invalid_addr(3),
+                tokens: vec![Token { value: 200 }, Token { value: 400 }],
+                untranslated_address: None,
+            },
+        ];
+
+        let keyspaces = [
+            (
+                "keyspace_with_simple_strategy_replication_factor_2".into(),
+                Keyspace {
+                    strategy: Strategy::SimpleStrategy {
+                        replication_factor: 2,
+                    },
+                    tables: HashMap::new(),
+                    views: HashMap::new(),
+                    user_defined_types: HashMap::new(),
+                },
+            ),
+            (
+                "keyspace_with_simple_strategy_replication_factor_3".into(),
+                Keyspace {
+                    strategy: Strategy::SimpleStrategy {
+                        replication_factor: 3,
+                    },
+                    tables: HashMap::new(),
+                    views: HashMap::new(),
+                    user_defined_types: HashMap::new(),
+                },
+            ),
+        ]
+        .iter()
+        .cloned()
+        .collect();
+
+        let info = Metadata {
+            peers: Vec::from(peers),
+            keyspaces,
+        };
+
+        ClusterData::new(info, &Default::default(), &HashMap::new(), &None, None)
     }
 }

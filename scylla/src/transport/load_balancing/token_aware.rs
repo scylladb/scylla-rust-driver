@@ -174,12 +174,21 @@ impl LoadBalancingPolicy for TokenAwarePolicy {
             self.child_policy.name()
         )
     }
+
+    fn requires_latency_measurements(&self) -> bool {
+        self.child_policy.requires_latency_measurements()
+    }
+
+    fn update_cluster_data(&self, cluster_data: &ClusterData) {
+        self.child_policy.update_cluster_data(cluster_data);
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
+    use crate::load_balancing::tests::DumbPolicy;
     use crate::transport::load_balancing::tests;
     use crate::transport::topology::Keyspace;
     use crate::transport::topology::Metadata;
@@ -190,7 +199,7 @@ mod tests {
     // ConnectionKeeper (which lives in Node) requires context of Tokio runtime
     #[tokio::test]
     async fn test_token_aware_policy() {
-        let cluster = mock_cluster_data_for_token_aware_tests();
+        let cluster = tests::mock_cluster_data_for_token_aware_tests();
 
         struct Test<'a> {
             statement: Statement<'a>,
@@ -262,7 +271,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_token_aware_fallback_policy() {
-        let cluster = mock_cluster_data_for_token_aware_tests();
+        let cluster = tests::mock_cluster_data_for_token_aware_tests();
 
         let policy = TokenAwarePolicy::new(Box::new(DumbPolicy {}));
 
@@ -273,79 +282,6 @@ mod tests {
             &cluster,
         );
         assert_eq!(plan.len(), 0);
-    }
-
-    // creates ClusterData with info about 3 nodes living in the same datacenter
-    // ring field is populated as follows:
-    // ring tokens:            50 100 150 200 250 300 400 500
-    // corresponding node ids: 2  1   2   3   1   2   3   1
-    fn mock_cluster_data_for_token_aware_tests() -> ClusterData {
-        let peers = [
-            Peer {
-                datacenter: Some("eu".into()),
-                rack: None,
-                address: tests::id_to_invalid_addr(1),
-                tokens: vec![
-                    Token { value: 100 },
-                    Token { value: 250 },
-                    Token { value: 500 },
-                ],
-                untranslated_address: Some(tests::id_to_invalid_addr(1)),
-            },
-            Peer {
-                datacenter: Some("eu".into()),
-                rack: None,
-                address: tests::id_to_invalid_addr(2),
-                tokens: vec![
-                    Token { value: 50 },
-                    Token { value: 150 },
-                    Token { value: 300 },
-                ],
-                untranslated_address: Some(tests::id_to_invalid_addr(2)),
-            },
-            Peer {
-                datacenter: Some("us".into()),
-                rack: None,
-                address: tests::id_to_invalid_addr(3),
-                tokens: vec![Token { value: 200 }, Token { value: 400 }],
-                untranslated_address: Some(tests::id_to_invalid_addr(3)),
-            },
-        ];
-
-        let keyspaces = [
-            (
-                "keyspace_with_simple_strategy_replication_factor_2".into(),
-                Keyspace {
-                    strategy: Strategy::SimpleStrategy {
-                        replication_factor: 2,
-                    },
-                    tables: HashMap::new(),
-                    views: HashMap::new(),
-                    user_defined_types: HashMap::new(),
-                },
-            ),
-            (
-                "keyspace_with_simple_strategy_replication_factor_3".into(),
-                Keyspace {
-                    strategy: Strategy::SimpleStrategy {
-                        replication_factor: 3,
-                    },
-                    tables: HashMap::new(),
-                    views: HashMap::new(),
-                    user_defined_types: HashMap::new(),
-                },
-            ),
-        ]
-        .iter()
-        .cloned()
-        .collect();
-
-        let info = Metadata {
-            peers: Vec::from(peers),
-            keyspaces,
-        };
-
-        ClusterData::new(info, &Default::default(), &HashMap::new(), &None, None)
     }
 
     // creates ClusterData with info about 8 nodes living in two different datacenters
@@ -445,31 +381,5 @@ mod tests {
         };
 
         ClusterData::new(info, &Default::default(), &HashMap::new(), &None, None)
-    }
-
-    // Used as child policy for TokenAwarePolicy tests
-    // Forwards plan passed to it in apply_child_policy() method
-    #[derive(Debug)]
-    struct DumbPolicy {}
-
-    impl LoadBalancingPolicy for DumbPolicy {
-        fn plan<'a>(&self, _: &Statement, _: &'a ClusterData) -> Plan<'a> {
-            let empty_node_list: Vec<Arc<Node>> = Vec::new();
-
-            Box::new(empty_node_list.into_iter())
-        }
-
-        fn name(&self) -> String {
-            "".into()
-        }
-    }
-
-    impl ChildLoadBalancingPolicy for DumbPolicy {
-        fn apply_child_policy(
-            &self,
-            plan: Vec<Arc<Node>>,
-        ) -> Box<dyn Iterator<Item = Arc<Node>> + Send + Sync> {
-            Box::new(plan.into_iter())
-        }
     }
 }
