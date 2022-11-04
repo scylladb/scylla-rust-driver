@@ -383,12 +383,12 @@ where
                 match retry_decision {
                     RetryDecision::RetrySameNode(cl) => {
                         self.metrics.inc_retries_num();
-                        current_consistency = cl;
+                        current_consistency = cl.unwrap_or(current_consistency);
                         continue 'same_node_retries;
                     }
                     RetryDecision::RetryNextNode(cl) => {
                         self.metrics.inc_retries_num();
-                        current_consistency = cl;
+                        current_consistency = cl.unwrap_or(current_consistency);
                         continue 'nodes_in_plan;
                     }
                     RetryDecision::DontRetry => break 'nodes_in_plan,

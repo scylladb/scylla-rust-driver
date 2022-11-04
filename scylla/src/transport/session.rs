@@ -1360,10 +1360,10 @@ impl Session {
                 }
             }
 
-            let retry_policy = match &statement_config.retry_policy {
-                Some(policy) => policy,
-                None => &self.retry_policy,
-            };
+            let retry_policy = statement_config
+                .retry_policy
+                .as_ref()
+                .unwrap_or(&self.retry_policy);
 
             #[allow(clippy::unnecessary_lazy_evaluations)]
             let speculative_policy = statement_config
@@ -1566,14 +1566,14 @@ impl Session {
                 );
                 context.log_attempt_error(&attempt_id, the_error, &retry_decision);
                 match retry_decision {
-                    RetryDecision::RetrySameNode(cl) => {
+                    RetryDecision::RetrySameNode(new_cl) => {
                         self.metrics.inc_retries_num();
-                        current_consistency = cl;
+                        current_consistency = new_cl.unwrap_or(current_consistency);
                         continue 'same_node_retries;
                     }
-                    RetryDecision::RetryNextNode(cl) => {
+                    RetryDecision::RetryNextNode(new_cl) => {
                         self.metrics.inc_retries_num();
-                        current_consistency = cl;
+                        current_consistency = new_cl.unwrap_or(current_consistency);
                         continue 'nodes_in_plan;
                     }
                     RetryDecision::DontRetry => break 'nodes_in_plan,
