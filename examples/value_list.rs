@@ -35,6 +35,23 @@ async fn main() {
         .await
         .unwrap();
 
+    // You can also use type generics:
+    #[derive(scylla::ValueList)]
+    struct MyTypeWithGenerics<S: scylla::frame::value::Value> {
+        k: i32,
+        my: Option<S>,
+    }
+
+    let to_insert_2 = MyTypeWithGenerics {
+        k: 18,
+        my: Some("Some string".to_owned()),
+    };
+
+    session
+        .query("INSERT INTO ks.my_type (k, my) VALUES (?, ?)", to_insert_2)
+        .await
+        .unwrap();
+
     let q = session
         .query("SELECT * FROM ks.my_type", &[])
         .await
