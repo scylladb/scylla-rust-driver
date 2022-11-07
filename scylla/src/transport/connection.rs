@@ -839,7 +839,10 @@ impl Connection {
         )?;
 
         for warn_description in &body_with_ext.warnings {
-            warn!(warning = warn_description.as_str());
+            warn!(
+                warning = warn_description.as_str(),
+                "Response from the database contains a warning",
+            );
         }
 
         let response =
