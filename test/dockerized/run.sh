@@ -1,31 +1,28 @@
 #!/usr/bin/env bash
 
-cd "$(dirname "$0")"
+cd "$(dirname "$0")"/../../
 
 if [[ -z $(docker container ls | grep cluster_scylla) ]]; then
     echo "Scylla container must be running to execute tests (use 'make up')."
     exit 1
 fi
 
-if ! [[ $(docker image ls -q scylla_rust_driver_testing) ]]; then
-    docker build -t scylla_rust_driver_testing .
-fi
+IMAGE_NAME="scylla_rust_driver_testing"
 
-if [ -z "$CARGO_HOME" ]; then
-    CARGO_REGISTRY=$HOME/.cargo/registry
+# Build a new image with embeded driver source files and deletes the
+# previously built image
+docker tag "$IMAGE_NAME:latest" "$IMAGE_NAME:previous" &>/dev/null
+if docker build -f test/dockerized/Dockerfile -t "$IMAGE_NAME:latest" . ; then
+    docker rmi "$IMAGE_NAME:previous" &>/dev/null
 else
-    CARGO_REGISTRY=$CARGO_HOME/registry
+    docker tag "$IMAGE_NAME:previous" "$IMAGE_NAME:latest" &>/dev/null
 fi
 
 docker run --name "scylla-rust-driver-testing" \
     --network scylla_rust_driver_public \
-    -v "$(pwd)/../..:/scylla_driver:Z" \
-    -v "$CARGO_REGISTRY:/usr/local/cargo/registry:z" \
     -it --rm \
-    --env CARGO_HOME=/scylla_driver/.cargo_home \
     --env SCYLLA_URI=172.42.0.2:9042 \
     --env SCYLLA_URI2=172.42.0.3:9042 \
     --env SCYLLA_URI3=172.42.0.4:9042 \
-    -w /scylla_driver \
-    scylla_rust_driver_testing \
+    "$IMAGE_NAME:latest" \
     cargo test
