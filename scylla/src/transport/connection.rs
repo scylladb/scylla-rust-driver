@@ -477,10 +477,6 @@ impl Connection {
         let serialized_values = values.serialized()?;
         let mut paging_state: Option<Bytes> = None;
 
-        query
-            .config
-            .determine_consistency(self.config.default_consistency);
-
         loop {
             // Send next paged query
             let mut cur_result: QueryResult = self

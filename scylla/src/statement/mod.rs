@@ -58,6 +58,7 @@ impl Clone for StatementConfig {
 
 impl StatementConfig {
     /// Determines the consistency of a query
+    #[must_use]
     pub fn determine_consistency(&self, default_consistency: Consistency) -> Consistency {
         self.consistency.unwrap_or(default_consistency)
     }
