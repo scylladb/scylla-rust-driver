@@ -2,6 +2,7 @@ use std::sync::Arc;
 
 use crate::history::HistoryListener;
 use crate::statement::{prepared_statement::PreparedStatement, query::Query};
+use crate::transport::execution_profile::ExecutionProfileHandle;
 
 use super::StatementConfig;
 pub use super::{Consistency, SerialConsistency};
@@ -115,6 +116,17 @@ impl Batch {
     /// Removes the listener set by `set_history_listener`.
     pub fn remove_history_listener(&mut self) -> Option<Arc<dyn HistoryListener>> {
         self.config.history_listener.take()
+    }
+
+    /// Associates the batch with execution profile referred by the provided handle.
+    /// Handle may be later remapped to another profile, and batch will reflect those changes.
+    pub fn set_execution_profile_handle(&mut self, profile_handle: Option<ExecutionProfileHandle>) {
+        self.config.execution_profile_handle = profile_handle;
+    }
+
+    /// Borrows the execution profile handle associated with this batch.
+    pub fn get_execution_profile_handle(&self) -> Option<&ExecutionProfileHandle> {
+        self.config.execution_profile_handle.as_ref()
     }
 }
 
