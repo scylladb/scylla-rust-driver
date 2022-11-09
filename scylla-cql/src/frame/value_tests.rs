@@ -145,7 +145,20 @@ fn unset_value() {
 
 #[test]
 fn ref_value() {
-    assert_eq!(serialized(&1_i32), serialized(1_i32));
+    fn serialized_generic<T: Value>(val: T) -> Vec<u8> {
+        let mut result: Vec<u8> = Vec::new();
+        val.serialize(&mut result).unwrap();
+        result
+    }
+
+    // This trickery is needed to prevent the compiler from performing deref coercions on refs
+    // and effectively defeating the purpose of this test. With specialisations provided
+    // in such an explicit way, the compiler is not allowed to coerce.
+    fn check<T: Value>(x: &T, y: T) {
+        assert_eq!(serialized_generic::<&T>(x), serialized_generic::<T>(y));
+    }
+
+    check(&1_i32, 1_i32);
 }
 
 #[test]

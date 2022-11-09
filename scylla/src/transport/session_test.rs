@@ -138,7 +138,7 @@ async fn test_unprepared_statement() {
             .await
             .unwrap();
         results_from_manual_paging.append(&mut rs_manual.rows.unwrap());
-        if watchdog > 30 || rs_manual.paging_state == None {
+        if watchdog > 30 || rs_manual.paging_state.is_none() {
             break;
         }
         watchdog += 1;
@@ -285,7 +285,7 @@ async fn test_prepared_statement() {
                 .await
                 .unwrap();
             results_from_manual_paging.append(&mut rs_manual.rows.unwrap());
-            if watchdog > 30 || rs_manual.paging_state == None {
+            if watchdog > 30 || rs_manual.paging_state.is_none() {
                 break;
             }
             watchdog += 1;
