@@ -153,7 +153,7 @@ fn serialize_error_specific_fields(buf: &mut BytesMut, error: DbError) -> Result
             types::write_consistency(unwrap_cl(consistency), buf);
             types::write_int(received, buf);
             types::write_int(required, buf);
-            buf.put_u8(if data_present { 1 } else { 0 });
+            buf.put_u8(u8::from(data_present));
         }
         DbError::ReadFailure {
             consistency,
@@ -166,7 +166,7 @@ fn serialize_error_specific_fields(buf: &mut BytesMut, error: DbError) -> Result
             types::write_int(received, buf);
             types::write_int(required, buf);
             types::write_int(numfailures, buf);
-            buf.put_u8(if data_present { 1 } else { 0 });
+            buf.put_u8(u8::from(data_present));
         }
         DbError::WriteFailure {
             consistency,

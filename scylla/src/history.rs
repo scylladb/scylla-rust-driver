@@ -161,7 +161,7 @@ impl HistoryCollector {
         do_fn: impl Fn(&mut HistoryCollectorData) -> OpRetType,
     ) -> OpRetType {
         match self.data.lock() {
-            Ok(mut data) => do_fn(&mut *data),
+            Ok(mut data) => do_fn(&mut data),
             Err(poison_error) => {
                 // Avoid panicking on poisoned mutex - HistoryCollector isn't that important.
                 // Print a warning and do the operation on dummy data so that the code compiles.

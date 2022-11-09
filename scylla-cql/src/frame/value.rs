@@ -808,7 +808,7 @@ impl<'b> ValueList for Cow<'b, SerializedValues> {
 // Implement BatchValues for slices of ValueList types
 impl<T: ValueList> BatchValues for &[T] {
     fn len(&self) -> usize {
-        <[T]>::len(*self)
+        <[T]>::len(self)
     }
 
     fn write_nth_to_request(
