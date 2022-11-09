@@ -1,6 +1,7 @@
 use std::{sync::Arc, time::Duration};
 
 use crate::history::HistoryListener;
+use crate::transport::execution_profile::ExecutionProfileHandle;
 
 pub mod batch;
 pub mod prepared_statement;
@@ -20,6 +21,8 @@ pub struct StatementConfig {
     pub request_timeout: Option<Duration>,
 
     pub history_listener: Option<Arc<dyn HistoryListener>>,
+
+    pub execution_profile_handle: Option<ExecutionProfileHandle>,
 }
 
 #[allow(clippy::derivable_impls)]
@@ -33,6 +36,7 @@ impl Default for StatementConfig {
             timestamp: None,
             request_timeout: None,
             history_listener: None,
+            execution_profile_handle: None,
         }
     }
 }
@@ -41,6 +45,7 @@ impl Clone for StatementConfig {
     fn clone(&self) -> Self {
         Self {
             history_listener: self.history_listener.clone(),
+            execution_profile_handle: self.execution_profile_handle.clone(),
             ..*self
         }
     }
