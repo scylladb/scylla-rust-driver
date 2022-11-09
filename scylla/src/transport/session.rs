@@ -599,6 +599,7 @@ impl Session {
                                 query_ref,
                                 values_ref,
                                 consistency,
+                                query.config.serial_consistency,
                                 paging_state_ref.clone(),
                             )
                             .await
@@ -916,6 +917,7 @@ impl Session {
                             prepared,
                             values_ref,
                             consistency,
+                            prepared.config.serial_consistency,
                             paging_state_ref.clone(),
                         )
                         .await
@@ -1097,7 +1099,12 @@ impl Session {
                 },
                 |connection: Arc<Connection>, consistency: Consistency| async move {
                     connection
-                        .batch_with_consistency(batch, values_ref, consistency)
+                        .batch_with_consistency(
+                            batch,
+                            values_ref,
+                            consistency,
+                            batch.config.serial_consistency,
+                        )
                         .await
                 },
             )

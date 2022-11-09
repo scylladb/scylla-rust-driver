@@ -152,7 +152,13 @@ impl RowIterator {
                               consistency: Consistency,
                               paging_state: Option<Bytes>| async move {
                 connection
-                    .query_with_consistency(query_ref, values_ref, consistency, paging_state)
+                    .query_with_consistency(
+                        query_ref,
+                        values_ref,
+                        consistency,
+                        query.config.serial_consistency,
+                        paging_state,
+                    )
                     .await
             };
 
@@ -230,7 +236,13 @@ impl RowIterator {
                               consistency: Consistency,
                               paging_state: Option<Bytes>| async move {
                 connection
-                    .execute_with_consistency(prepared_ref, values_ref, consistency, paging_state)
+                    .execute_with_consistency(
+                        prepared_ref,
+                        values_ref,
+                        consistency,
+                        config.prepared.config.serial_consistency,
+                        paging_state,
+                    )
                     .await
             };
 

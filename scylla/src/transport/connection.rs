@@ -1,5 +1,6 @@
 use bytes::Bytes;
 use futures::{future::RemoteHandle, FutureExt};
+use scylla_cql::frame::types::SerialConsistency;
 use tokio::io::{split, AsyncRead, AsyncWrite, AsyncWriteExt, BufReader, BufWriter};
 use tokio::net::{TcpSocket, TcpStream};
 use tokio::sync::{mpsc, oneshot};
@@ -382,10 +383,14 @@ impl Connection {
         values: impl ValueList,
     ) -> Result<QueryResult, QueryError> {
         let query: Query = query.into();
+
+        // This method is used only for driver internal queries, so no need to consult execution profile here.
         let consistency = query
             .config
             .determine_consistency(self.config.default_consistency);
-        self.query_single_page_with_consistency(query, &values, consistency)
+        let serial_consistency = query.config.serial_consistency;
+
+        self.query_single_page_with_consistency(query, &values, consistency, serial_consistency)
             .await
     }
 
@@ -394,9 +399,10 @@ impl Connection {
         query: impl Into<Query>,
         values: impl ValueList,
         consistency: Consistency,
+        serial_consistency: Option<SerialConsistency>,
     ) -> Result<QueryResult, QueryError> {
         let query: Query = query.into();
-        self.query_with_consistency(&query, &values, consistency, None)
+        self.query_with_consistency(&query, &values, consistency, serial_consistency, None)
             .await?
             .into_query_result()
     }
@@ -407,12 +413,14 @@ impl Connection {
         values: impl ValueList,
         paging_state: Option<Bytes>,
     ) -> Result<QueryResponse, QueryError> {
+        // This method is used only for driver internal queries, so no need to consult execution profile here.
         self.query_with_consistency(
             query,
             values,
             query
                 .config
                 .determine_consistency(self.config.default_consistency),
+            query.config.serial_consistency,
             paging_state,
         )
         .await
@@ -423,6 +431,7 @@ impl Connection {
         query: &Query,
         values: impl ValueList,
         consistency: Consistency,
+        serial_consistency: Option<SerialConsistency>,
         paging_state: Option<Bytes>,
     ) -> Result<QueryResponse, QueryError> {
         let serialized_values = values.serialized()?;
@@ -431,7 +440,7 @@ impl Connection {
             contents: &query.contents,
             parameters: query::QueryParameters {
                 consistency,
-                serial_consistency: query.get_serial_consistency(),
+                serial_consistency,
                 values: &serialized_values,
                 page_size: query.get_page_size(),
                 paging_state,
@@ -449,12 +458,14 @@ impl Connection {
         query: &Query,
         values: impl ValueList,
     ) -> Result<QueryResult, QueryError> {
+        // This method is used only for driver internal queries, so no need to consult execution profile here.
         self.query_all_with_consistency(
             query,
             values,
             query
                 .config
                 .determine_consistency(self.config.default_consistency),
+            query.get_serial_consistency(),
         )
         .await
     }
@@ -464,6 +475,7 @@ impl Connection {
         query: &Query,
         values: impl ValueList,
         consistency: Consistency,
+        serial_consistency: Option<SerialConsistency>,
     ) -> Result<QueryResult, QueryError> {
         if query.get_page_size().is_none() {
             // Page size should be set when someone wants to use paging
@@ -480,7 +492,13 @@ impl Connection {
         loop {
             // Send next paged query
             let mut cur_result: QueryResult = self
-                .query_with_consistency(query, &serialized_values, consistency, paging_state)
+                .query_with_consistency(
+                    query,
+                    &serialized_values,
+                    consistency,
+                    serial_consistency,
+                    paging_state,
+                )
                 .await?
                 .into_query_result()?;
 
@@ -520,6 +538,7 @@ impl Connection {
             prepared_statement
                 .config
                 .determine_consistency(self.config.default_consistency),
+            prepared_statement.config.serial_consistency,
             paging_state,
         )
         .await
@@ -530,6 +549,7 @@ impl Connection {
         prepared_statement: &PreparedStatement,
         values: impl ValueList,
         consistency: Consistency,
+        serial_consistency: Option<SerialConsistency>,
         paging_state: Option<Bytes>,
     ) -> Result<QueryResponse, QueryError> {
         let serialized_values = values.serialized()?;
@@ -538,7 +558,7 @@ impl Connection {
             id: prepared_statement.get_id().to_owned(),
             parameters: query::QueryParameters {
                 consistency,
-                serial_consistency: prepared_statement.get_serial_consistency(),
+                serial_consistency,
                 values: &serialized_values,
                 page_size: prepared_statement.get_page_size(),
                 timestamp: prepared_statement.get_timestamp(),
@@ -615,6 +635,7 @@ impl Connection {
             batch
                 .config
                 .determine_consistency(self.config.default_consistency),
+            batch.config.serial_consistency,
         )
         .await
     }
@@ -624,6 +645,7 @@ impl Connection {
         batch: &Batch,
         values: impl BatchValues,
         consistency: Consistency,
+        serial_consistency: Option<SerialConsistency>,
     ) -> Result<QueryResult, QueryError> {
         let statements_iter = batch.statements.iter().map(|s| match s {
             BatchStatement::Query(q) => batch::BatchStatement::Query { text: &q.contents },
@@ -638,7 +660,7 @@ impl Connection {
             values,
             batch_type: batch.get_type(),
             consistency,
-            serial_consistency: batch.get_serial_consistency(),
+            serial_consistency,
             timestamp: batch.get_timestamp(),
         };
 
