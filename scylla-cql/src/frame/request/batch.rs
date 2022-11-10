@@ -54,21 +54,22 @@ where
         // Serializing queries
         types::write_short(self.statements_count.try_into()?, buf);
 
+        let counts_mismatch_err = || {
+            ParseError::BadDataToSerialize(
+                "Length of provided values must be equal to number of batch statements".to_owned(),
+            )
+        };
         let mut n_serialized_statements = 0usize;
         let mut value_lists = self.values.batch_values_iter();
         for statement in self.statements.clone() {
             statement.serialize(buf)?;
-            value_lists.write_next_to_request(buf).ok_or_else(|| {
-                ParseError::BadDataToSerialize(
-                    "Mismatch between statement counts for batch query".to_owned(),
-                )
-            })??;
+            value_lists
+                .write_next_to_request(buf)
+                .ok_or_else(counts_mismatch_err)??;
             n_serialized_statements += 1;
         }
-        if n_serialized_statements != self.statements_count {
-            return Err(ParseError::BadDataToSerialize(
-                "Mismatch between statement counts for batch query".to_owned(),
-            ));
+        if n_serialized_statements != self.statements_count || value_lists.skip_next().is_some() {
+            return Err(counts_mismatch_err());
         }
 
         // Serializing consistency
