@@ -103,8 +103,8 @@ mod tests {
         let mut bytes: Vec<u8> = Vec::new();
         let message_len: u16 = message.len().try_into().unwrap();
 
-        bytes.extend(&error_code.to_be_bytes());
-        bytes.extend(&message_len.to_be_bytes());
+        bytes.extend(error_code.to_be_bytes());
+        bytes.extend(message_len.to_be_bytes());
         bytes.extend(message.as_bytes());
 
         bytes
@@ -142,9 +142,9 @@ mod tests {
         let features = ProtocolFeatures::default();
 
         let mut bytes = make_error_request_bytes(0x1000, "message 2");
-        bytes.extend(&1_i16.to_be_bytes());
-        bytes.extend(&2_i32.to_be_bytes());
-        bytes.extend(&3_i32.to_be_bytes());
+        bytes.extend(1_i16.to_be_bytes());
+        bytes.extend(2_i32.to_be_bytes());
+        bytes.extend(3_i32.to_be_bytes());
 
         let error: Error = Error::deserialize(&features, &mut bytes.as_slice()).unwrap();
 
@@ -164,13 +164,13 @@ mod tests {
         let features = ProtocolFeatures::default();
 
         let mut bytes = make_error_request_bytes(0x1100, "message 2");
-        bytes.extend(&0x0004_i16.to_be_bytes());
-        bytes.extend(&(-5_i32).to_be_bytes());
-        bytes.extend(&100_i32.to_be_bytes());
+        bytes.extend(0x0004_i16.to_be_bytes());
+        bytes.extend((-5_i32).to_be_bytes());
+        bytes.extend(100_i32.to_be_bytes());
 
         let write_type_str = "SIMPLE";
         let write_type_str_len: u16 = write_type_str.len().try_into().unwrap();
-        bytes.extend(&write_type_str_len.to_be_bytes());
+        bytes.extend(write_type_str_len.to_be_bytes());
         bytes.extend(write_type_str.as_bytes());
 
         let error: Error = Error::deserialize(&features, &mut bytes.as_slice()).unwrap();
@@ -192,9 +192,9 @@ mod tests {
         let features = ProtocolFeatures::default();
 
         let mut bytes = make_error_request_bytes(0x1200, "message 2");
-        bytes.extend(&0x0002_i16.to_be_bytes());
-        bytes.extend(&8_i32.to_be_bytes());
-        bytes.extend(&32_i32.to_be_bytes());
+        bytes.extend(0x0002_i16.to_be_bytes());
+        bytes.extend(8_i32.to_be_bytes());
+        bytes.extend(32_i32.to_be_bytes());
         bytes.push(0_u8);
 
         let error: Error = Error::deserialize(&features, &mut bytes.as_slice()).unwrap();
@@ -216,10 +216,10 @@ mod tests {
         let features = ProtocolFeatures::default();
 
         let mut bytes = make_error_request_bytes(0x1300, "message 2");
-        bytes.extend(&0x0003_i16.to_be_bytes());
-        bytes.extend(&4_i32.to_be_bytes());
-        bytes.extend(&5_i32.to_be_bytes());
-        bytes.extend(&6_i32.to_be_bytes());
+        bytes.extend(0x0003_i16.to_be_bytes());
+        bytes.extend(4_i32.to_be_bytes());
+        bytes.extend(5_i32.to_be_bytes());
+        bytes.extend(6_i32.to_be_bytes());
         bytes.push(123_u8); // Any non-zero value means data_present is true
 
         let error: Error = Error::deserialize(&features, &mut bytes.as_slice()).unwrap();
@@ -255,14 +255,14 @@ mod tests {
         let type2: &str = "type2";
         let type2_len: u16 = type1.len().try_into().unwrap();
 
-        bytes.extend(&keyspace_name_len.to_be_bytes());
+        bytes.extend(keyspace_name_len.to_be_bytes());
         bytes.extend(keyspace_name.as_bytes());
-        bytes.extend(&function_name_len.to_be_bytes());
+        bytes.extend(function_name_len.to_be_bytes());
         bytes.extend(function_name.as_bytes());
-        bytes.extend(&2_i16.to_be_bytes());
-        bytes.extend(&type1_len.to_be_bytes());
+        bytes.extend(2_i16.to_be_bytes());
+        bytes.extend(type1_len.to_be_bytes());
         bytes.extend(type1.as_bytes());
-        bytes.extend(&type2_len.to_be_bytes());
+        bytes.extend(type2_len.to_be_bytes());
         bytes.extend(type2.as_bytes());
 
         let error: Error = Error::deserialize(&features, &mut bytes.as_slice()).unwrap();
@@ -284,14 +284,14 @@ mod tests {
 
         let mut bytes = make_error_request_bytes(0x1500, "message 2");
 
-        bytes.extend(&0x0000_i16.to_be_bytes());
-        bytes.extend(&2_i32.to_be_bytes());
-        bytes.extend(&4_i32.to_be_bytes());
-        bytes.extend(&8_i32.to_be_bytes());
+        bytes.extend(0x0000_i16.to_be_bytes());
+        bytes.extend(2_i32.to_be_bytes());
+        bytes.extend(4_i32.to_be_bytes());
+        bytes.extend(8_i32.to_be_bytes());
 
         let write_type_str = "COUNTER";
         let write_type_str_len: u16 = write_type_str.len().try_into().unwrap();
-        bytes.extend(&write_type_str_len.to_be_bytes());
+        bytes.extend(write_type_str_len.to_be_bytes());
         bytes.extend(write_type_str.as_bytes());
 
         let error: Error = Error::deserialize(&features, &mut bytes.as_slice()).unwrap();
@@ -321,9 +321,9 @@ mod tests {
         let table_name: &str = "table_name";
         let table_name_len: u16 = table_name.len().try_into().unwrap();
 
-        bytes.extend(&keyspace_name_len.to_be_bytes());
+        bytes.extend(keyspace_name_len.to_be_bytes());
         bytes.extend(keyspace_name.as_bytes());
-        bytes.extend(&table_name_len.to_be_bytes());
+        bytes.extend(table_name_len.to_be_bytes());
         bytes.extend(table_name.as_bytes());
 
         let error: Error = Error::deserialize(&features, &mut bytes.as_slice()).unwrap();

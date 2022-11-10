@@ -11,6 +11,8 @@ pub enum FrameError {
     NoCompressionNegotiated,
     #[error("Received frame marked as coming from a client")]
     FrameFromClient,
+    #[error("Received frame marked as coming from the server")]
+    FrameFromServer,
     #[error("Received a frame from version {0}, but only 4 is supported")]
     VersionNotSupported(u8),
     #[error("Connection was closed before body was read: missing {0} out of {1}")]

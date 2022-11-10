@@ -1,12 +1,14 @@
 use proc_macro::TokenStream;
 use quote::{quote, quote_spanned};
-use syn::spanned::Spanned;
+use syn::{spanned::Spanned, DeriveInput};
 
 /// #[derive(FromRow)] derives FromRow for struct
-/// Works only on simple structs without generics etc
 pub fn from_row_derive(tokens_input: TokenStream) -> TokenStream {
-    let (struct_name, struct_fields) =
-        crate::parser::parse_struct_with_named_fields(tokens_input, "FromRow");
+    let item = syn::parse::<DeriveInput>(tokens_input).expect("No DeriveInput");
+    let struct_fields = crate::parser::parse_named_fields(&item, "FromRow");
+
+    let struct_name = &item.ident;
+    let (impl_generics, ty_generics, where_clause) = item.generics.split_for_impl();
 
     // Generates tokens for field_name: field_type::from_cql(vals_iter.next().ok_or(...)?), ...
     let set_fields_code = struct_fields.named.iter().map(|field| {
@@ -31,7 +33,7 @@ pub fn from_row_derive(tokens_input: TokenStream) -> TokenStream {
 
     let fields_count = struct_fields.named.len();
     let generated = quote! {
-        impl scylla::cql_to_rust::FromRow for #struct_name {
+        impl #impl_generics scylla::cql_to_rust::FromRow for #struct_name #ty_generics #where_clause {
             fn from_row(row: scylla::frame::response::result::Row)
             -> Result<Self, scylla::cql_to_rust::FromRowError> {
                 use scylla::frame::response::result::CqlValue;

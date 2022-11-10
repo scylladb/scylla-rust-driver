@@ -4,10 +4,12 @@
 use crate::frame::types::LegacyConsistency;
 use crate::history;
 use crate::history::HistoryListener;
+use crate::transport::node::TimestampedAverage;
 use async_trait::async_trait;
 use bytes::Bytes;
 use futures::future::join_all;
 use futures::future::try_join_all;
+use scylla_cql::errors::DbError;
 use scylla_cql::frame::response::NonErrorResponse;
 use std::collections::HashMap;
 use std::future::Future;
@@ -1306,6 +1308,34 @@ impl Session {
         }
     }
 
+    pub fn should_consider_query_for_latency_measurements(
+        load_balancer: &dyn LoadBalancingPolicy,
+        result: &Result<impl AllowedRunQueryResTType, QueryError>,
+    ) -> bool {
+        load_balancer.requires_latency_measurements()
+            && match result {
+                Ok(_) => true,
+                Err(err) => match err {
+                    // "fast" errors, i.e. ones that are returned quickly after the query begins
+                    QueryError::BadQuery(_)
+                    | QueryError::TooManyOrphanedStreamIds(_)
+                    | QueryError::UnableToAllocStreamId
+                    | QueryError::DbError(DbError::IsBootstrapping, _)
+                    | QueryError::DbError(DbError::Unavailable { .. }, _)
+                    | QueryError::DbError(DbError::Unprepared { .. }, _)
+                    | QueryError::DbError(DbError::Overloaded { .. }, _) => false,
+
+                    // "slow" errors, i.e. ones that are returned after considerable time of query being run
+                    QueryError::DbError(_, _)
+                    | QueryError::InvalidMessage(_)
+                    | QueryError::IoError(_)
+                    | QueryError::ProtocolError(_)
+                    | QueryError::TimeoutError
+                    | QueryError::RequestTimeout(_) => true,
+                },
+            }
+    }
+
     // This method allows to easily run a query using load balancing, retry policy etc.
     // Requires some information about the query and two closures
     // First closure is used to choose a connection
@@ -1338,6 +1368,7 @@ impl Session {
 
         let runner = async {
             let cluster_data = self.cluster.get_data();
+            self.load_balancer.update_cluster_data(&cluster_data);
             let query_plan = self.load_balancer.plan(&statement_info, &cluster_data);
 
             // If a speculative execution policy is used to run query, query_plan has to be shared
@@ -1361,10 +1392,10 @@ impl Session {
                 }
             }
 
-            let retry_policy = match &statement_config.retry_policy {
-                Some(policy) => policy,
-                None => &self.retry_policy,
-            };
+            let retry_policy = statement_config
+                .retry_policy
+                .as_ref()
+                .unwrap_or(&self.retry_policy);
 
             #[allow(clippy::unnecessary_lazy_evaluations)]
             let speculative_policy = statement_config
@@ -1523,12 +1554,19 @@ impl Session {
                         .instrument(span.clone())
                         .await;
 
+                let elapsed = query_start.elapsed();
+                if Self::should_consider_query_for_latency_measurements(
+                    &*self.load_balancer,
+                    &query_result,
+                ) {
+                    let mut average_latency_guard = node.average_latency.write().unwrap();
+                    *average_latency_guard =
+                        TimestampedAverage::compute_next(*average_latency_guard, elapsed);
+                }
                 last_error = match query_result {
                     Ok(response) => {
                         trace!(parent: &span, "Query succeeded");
-                        let _ = self
-                            .metrics
-                            .log_query_latency(query_start.elapsed().as_millis() as u64);
+                        let _ = self.metrics.log_query_latency(elapsed.as_millis() as u64);
                         context.log_attempt_success(&attempt_id);
                         return Some(Ok(RunQueryResult::Completed(response)));
                     }
@@ -1560,14 +1598,14 @@ impl Session {
                 );
                 context.log_attempt_error(&attempt_id, the_error, &retry_decision);
                 match retry_decision {
-                    RetryDecision::RetrySameNode(cl) => {
+                    RetryDecision::RetrySameNode(new_cl) => {
                         self.metrics.inc_retries_num();
-                        current_consistency = cl;
+                        current_consistency = new_cl.unwrap_or(current_consistency);
                         continue 'same_node_retries;
                     }
-                    RetryDecision::RetryNextNode(cl) => {
+                    RetryDecision::RetryNextNode(new_cl) => {
                         self.metrics.inc_retries_num();
-                        current_consistency = cl;
+                        current_consistency = new_cl.unwrap_or(current_consistency);
                         continue 'nodes_in_plan;
                     }
                     RetryDecision::DontRetry => break 'nodes_in_plan,
@@ -1598,7 +1636,7 @@ impl Session {
             .map_or(Ok(false), |res| res.and(Ok(true)))
     }
 
-    async fn schema_agreement_auxilary<ResT, QueryFut>(
+    async fn schema_agreement_auxiliary<ResT, QueryFut>(
         &self,
         do_query: impl Fn(Arc<Connection>, Consistency) -> QueryFut,
     ) -> Result<ResT, QueryError>
@@ -1642,7 +1680,7 @@ impl Session {
 
     pub async fn fetch_schema_version(&self) -> Result<Uuid, QueryError> {
         // We ignore custom Consistency that a retry policy could decide to put here, using the default instead.
-        self.schema_agreement_auxilary(
+        self.schema_agreement_auxiliary(
             |connection: Arc<Connection>, _ignored: Consistency| async move {
                 connection.fetch_schema_version().await
             },

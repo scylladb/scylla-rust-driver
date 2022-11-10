@@ -1,12 +1,14 @@
 use proc_macro::TokenStream;
 use quote::{quote, quote_spanned};
-use syn::spanned::Spanned;
+use syn::{spanned::Spanned, DeriveInput};
 
 /// #[derive(IntoUserType)] allows to parse a struct as User Defined Type
-/// Works only on simple structs without generics etc
 pub fn into_user_type_derive(tokens_input: TokenStream) -> TokenStream {
-    let (struct_name, struct_fields) =
-        crate::parser::parse_struct_with_named_fields(tokens_input, "IntoUserType");
+    let item = syn::parse::<DeriveInput>(tokens_input).expect("No DeriveInput");
+    let struct_fields = crate::parser::parse_named_fields(&item, "IntoUserType");
+
+    let struct_name = &item.ident;
+    let (impl_generics, ty_generics, where_clause) = item.generics.split_for_impl();
 
     let serialize_code = struct_fields.named.iter().map(|field| {
         let field_name = &field.ident;
@@ -17,7 +19,7 @@ pub fn into_user_type_derive(tokens_input: TokenStream) -> TokenStream {
     });
 
     let generated = quote! {
-        impl scylla::frame::value::Value for #struct_name {
+        impl #impl_generics scylla::frame::value::Value for #struct_name #ty_generics #where_clause {
             fn serialize(&self, buf: &mut Vec<u8>) -> std::result::Result<(), scylla::frame::value::ValueTooBig> {
                 use scylla::frame::value::{Value, ValueTooBig};
                 use scylla::macros::BufMut;

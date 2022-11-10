@@ -526,10 +526,17 @@ impl<V: Value> Value for MaybeUnset<V> {
     }
 }
 
-// Every &impl Value should also implement Value
-impl<T: Value> Value for &T {
+// Every &impl Value and &dyn Value should also implement Value
+impl<T: Value + ?Sized> Value for &T {
     fn serialize(&self, buf: &mut Vec<u8>) -> Result<(), ValueTooBig> {
         <T as Value>::serialize(*self, buf)
+    }
+}
+
+// Every Boxed Value should also implement Value
+impl<T: Value + ?Sized> Value for Box<T> {
+    fn serialize(&self, buf: &mut Vec<u8>) -> Result<(), ValueTooBig> {
+        <T as Value>::serialize(self.as_ref(), buf)
     }
 }
 

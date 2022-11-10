@@ -15,13 +15,14 @@ use tokio::sync::mpsc;
 
 use super::errors::QueryError;
 use crate::cql_to_rust::{FromRow, FromRowError};
+use crate::Session;
 
 use crate::frame::types::LegacyConsistency;
 use crate::frame::{
     response::{
         result,
         result::{ColumnSpec, Row, Rows},
-        Response,
+        NonErrorResponse,
     },
     value::SerializedValues,
 };
@@ -30,10 +31,10 @@ use crate::routing::Token;
 use crate::statement::Consistency;
 use crate::statement::{prepared_statement::PreparedStatement, query::Query};
 use crate::transport::cluster::ClusterData;
-use crate::transport::connection::{Connection, QueryResponse};
+use crate::transport::connection::{Connection, NonErrorQueryResponse, QueryResponse};
 use crate::transport::load_balancing::{LoadBalancingPolicy, Statement};
 use crate::transport::metrics::Metrics;
-use crate::transport::node::Node;
+use crate::transport::node::{Node, TimestampedAverage};
 use crate::transport::retry_policy::{QueryInfo, RetryDecision, RetrySession};
 use tracing::{trace, trace_span, warn, Instrument};
 use uuid::Uuid;
@@ -313,6 +314,7 @@ where
     QueryFut: Future<Output = Result<QueryResponse, QueryError>>,
 {
     async fn work(mut self, cluster_data: Arc<ClusterData>) {
+        self.load_balancer.update_cluster_data(&cluster_data);
         let query_plan = self.load_balancer.plan(&self.statement_info, &cluster_data);
 
         let mut last_error: QueryError =
@@ -325,7 +327,7 @@ where
             let span = trace_span!("Executing query", node = node.address.to_string().as_str());
             // For each node in the plan choose a connection to use
             // This connection will be reused for same node retries to preserve paging cache on the shard
-            let connection: Arc<Connection> = match (self.choose_connection)(node)
+            let connection: Arc<Connection> = match (self.choose_connection)(node.clone())
                 .instrument(span.clone())
                 .await
             {
@@ -346,7 +348,7 @@ where
                 trace!(parent: &span, "Execution started");
                 // Query pages until an error occurs
                 let queries_result: Result<(), QueryError> = self
-                    .query_pages(&connection, current_consistency)
+                    .query_pages(&connection, current_consistency, &node)
                     .instrument(span.clone())
                     .await;
 
@@ -381,12 +383,12 @@ where
                 match retry_decision {
                     RetryDecision::RetrySameNode(cl) => {
                         self.metrics.inc_retries_num();
-                        current_consistency = cl;
+                        current_consistency = cl.unwrap_or(current_consistency);
                         continue 'same_node_retries;
                     }
                     RetryDecision::RetryNextNode(cl) => {
                         self.metrics.inc_retries_num();
-                        current_consistency = cl;
+                        current_consistency = cl.unwrap_or(current_consistency);
                         continue 'nodes_in_plan;
                     }
                     RetryDecision::DontRetry => break 'nodes_in_plan,
@@ -408,6 +410,7 @@ where
         &mut self,
         connection: &Arc<Connection>,
         consistency: Consistency,
+        node: &Node,
     ) -> Result<(), QueryError> {
         loop {
             self.metrics.inc_total_paged_queries();
@@ -418,24 +421,33 @@ where
                 "Sending"
             );
             self.log_attempt_start(connection.get_connect_address());
-            let query_response: QueryResponse =
+            let query_response =
                 (self.page_query)(connection.clone(), consistency, self.paging_state.clone())
-                    .await?;
+                    .await?
+                    .into_non_error_query_response();
 
-            match query_response.response {
-                Response::Result(result::Result::Rows(mut rows)) => {
-                    let _ = self
-                        .metrics
-                        .log_query_latency(query_start.elapsed().as_millis() as u64);
+            let elapsed = query_start.elapsed();
+            if Session::should_consider_query_for_latency_measurements(
+                &*self.load_balancer,
+                &query_response,
+            ) {
+                let mut average_latency_guard = node.average_latency.write().unwrap();
+                *average_latency_guard =
+                    TimestampedAverage::compute_next(*average_latency_guard, elapsed);
+            }
+            match query_response {
+                Ok(NonErrorQueryResponse {
+                    response: NonErrorResponse::Result(result::Result::Rows(mut rows)),
+                    tracing_id,
+                    ..
+                }) => {
+                    let _ = self.metrics.log_query_latency(elapsed.as_millis() as u64);
                     self.log_attempt_success();
                     self.log_query_success();
 
                     self.paging_state = rows.metadata.paging_state.take();
 
-                    let received_page = ReceivedPage {
-                        rows,
-                        tracing_id: query_response.tracing_id,
-                    };
+                    let received_page = ReceivedPage { rows, tracing_id };
 
                     // Send next page to RowIterator
                     if self.sender.send(Ok(received_page)).await.is_err() {
@@ -452,11 +464,11 @@ where
                     self.retry_session.reset();
                     self.log_query_start();
                 }
-                Response::Error(err) => {
+                Err(err) => {
                     self.metrics.inc_failed_paged_queries();
-                    return Err(err.into());
+                    return Err(err);
                 }
-                _ => {
+                Ok(_) => {
                     self.metrics.inc_failed_paged_queries();
 
                     return Err(QueryError::ProtocolError(
