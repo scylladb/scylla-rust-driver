@@ -1933,4 +1933,132 @@ mod tests {
                 .expect("Request processing was not concurrent");
         running_proxy.finish().await.unwrap();
     }
+
+    #[tokio::test]
+    #[ntest::timeout(1000)]
+    async fn dry_mode_proxy_drops_incoming_frames() {
+        let node1_proxy_addr = next_local_address_with_port(9876);
+        let proxy = Proxy::new([Node::new_dry_mode(node1_proxy_addr, None)]);
+        let running_proxy = proxy.run().await.unwrap();
+
+        let params = FrameParams {
+            flags: 0,
+            version: 0x04,
+            stream: 0,
+        };
+        let opcode = FrameOpcode::Request(RequestOpcode::Options);
+
+        let body = random_body();
+
+        let mut conn = TcpStream::connect(node1_proxy_addr).await.unwrap();
+
+        write_frame(params, opcode, &body, &mut conn).await.unwrap();
+        // We assert that after sufficiently long time, no error happens inside proxy.
+        tokio::time::sleep(Duration::from_millis(3)).await;
+        running_proxy.finish().await.unwrap();
+    }
+
+    #[tokio::test]
+    #[ntest::timeout(1000)]
+    async fn dry_mode_forger_proxy_forges_response() {
+        let node1_proxy_addr = next_local_address_with_port(9876);
+
+        let this_shall_pass = b"This.Shall.Pass.";
+        let test_msg = b"Test";
+
+        let proxy = Proxy::new([Node::new_dry_mode(
+            node1_proxy_addr,
+            Some(vec![
+                RequestRule(
+                    Condition::RequestOpcode(RequestOpcode::Register),
+                    RequestReaction::forge_response(Arc::new(|RequestFrame { params, .. }| {
+                        ResponseFrame {
+                            params: params.for_response(),
+                            opcode: ResponseOpcode::Event,
+                            body: Bytes::from_static(test_msg),
+                        }
+                    })),
+                ),
+                RequestRule(
+                    Condition::BodyContainsCaseSensitive(Box::new(*this_shall_pass)),
+                    RequestReaction::noop(),
+                ),
+                RequestRule(
+                    Condition::True, // only the first matching rule is applied, so "True" covers all remaining cases
+                    RequestReaction::forge_response(Arc::new(|RequestFrame { params, .. }| {
+                        ResponseFrame {
+                            params: params.for_response(),
+                            opcode: ResponseOpcode::Ready,
+                            body: Bytes::new(),
+                        }
+                    })),
+                ),
+            ]),
+        )]);
+        let running_proxy = proxy.run().await.unwrap();
+
+        let params1 = FrameParams {
+            flags: 3,
+            version: 0x42,
+            stream: 42,
+        };
+        let opcode1 = FrameOpcode::Request(RequestOpcode::Startup);
+
+        let params2 = FrameParams {
+            flags: 4,
+            version: 0x04,
+            stream: 17,
+        };
+        let opcode2 = FrameOpcode::Request(RequestOpcode::Register);
+
+        let params3 = FrameParams {
+            flags: 8,
+            version: 0x04,
+            stream: 11,
+        };
+        let opcode3 = FrameOpcode::Request(RequestOpcode::Execute);
+
+        let body1 = random_body();
+        let body2 = random_body();
+        let body3 = {
+            let mut body = BytesMut::new();
+            body.put(&b"uSeLeSs JuNk"[..]);
+            body.put(&this_shall_pass[..]);
+            body.freeze()
+        };
+
+        let mut conn = TcpStream::connect(node1_proxy_addr).await.unwrap();
+
+        write_frame(params1, opcode1, &body1, &mut conn)
+            .await
+            .unwrap();
+        write_frame(params2, opcode2, &body2, &mut conn)
+            .await
+            .unwrap();
+        write_frame(params3, opcode3, &body3, &mut conn)
+            .await
+            .unwrap();
+
+        let ResponseFrame {
+            params: recvd_params,
+            opcode: recvd_opcode,
+            body: recvd_body,
+        } = read_response_frame(&mut conn).await.unwrap();
+        assert_eq!(recvd_params, params1.for_response());
+        assert_eq!(recvd_opcode, ResponseOpcode::Ready);
+        assert_eq!(recvd_body, Bytes::new());
+
+        let ResponseFrame {
+            params: recvd_params,
+            opcode: recvd_opcode,
+            body: recvd_body,
+        } = read_response_frame(&mut conn).await.unwrap();
+        assert_eq!(recvd_params, params2.for_response());
+        assert_eq!(recvd_opcode, ResponseOpcode::Event);
+        assert_eq!(recvd_body, Bytes::from_static(test_msg));
+
+        running_proxy.finish().await.unwrap();
+
+        assert_matches!(conn.read(&mut [0u8; 1]).await, Ok(0));
+    }
 }
