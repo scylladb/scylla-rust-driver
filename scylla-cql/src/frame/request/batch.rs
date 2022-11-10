@@ -66,7 +66,7 @@ where
             statement.serialize(buf)?;
             value_lists
                 .write_next_to_request(buf)
-                .ok_or_else(|| counts_mismatch_err(idx, self.statements_count))??;
+                .ok_or_else(|| counts_mismatch_err(idx, self.statements.clone().count()))??;
             n_serialized_statements += 1;
         }
         if value_lists.skip_next().is_some() {
