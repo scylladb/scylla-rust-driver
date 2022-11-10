@@ -19,6 +19,7 @@ use assert_matches::assert_matches;
 use bytes::Bytes;
 use futures::{FutureExt, StreamExt};
 use itertools::Itertools;
+use scylla_cql::frame::value::Value;
 use std::collections::BTreeSet;
 use std::collections::{BTreeMap, HashMap};
 use tokio::net::TcpListener;
@@ -1920,6 +1921,62 @@ async fn test_unprepared_reprepare_in_execute() {
         .collect();
     all_rows.sort();
     assert_eq!(all_rows, vec![(1, 2, 3), (1, 3, 2)]);
+}
+
+#[tokio::test]
+async fn test_unusual_valuelists() {
+    let _ = tracing_subscriber::fmt::try_init();
+
+    let uri = std::env::var("SCYLLA_URI").unwrap_or_else(|_| "127.0.0.1:9042".to_string());
+    let session = SessionBuilder::new().known_node(uri).build().await.unwrap();
+    let ks = unique_keyspace_name();
+
+    session.query(format!("CREATE KEYSPACE IF NOT EXISTS {} WITH REPLICATION = {{'class' : 'SimpleStrategy', 'replication_factor' : 1}}", ks), &[]).await.unwrap();
+    session.use_keyspace(ks, false).await.unwrap();
+
+    session
+        .query(
+            "CREATE TABLE IF NOT EXISTS tab (a int, b int, c varchar, primary key (a, b, c))",
+            &[],
+        )
+        .await
+        .unwrap();
+
+    let insert_a_b_c = session
+        .prepare("INSERT INTO tab (a, b, c) VALUES (?, ?, ?)")
+        .await
+        .unwrap();
+
+    let values_dyn: Vec<&dyn Value> =
+        vec![&1 as &dyn Value, &2 as &dyn Value, &"&dyn" as &dyn Value];
+    session.execute(&insert_a_b_c, values_dyn).await.unwrap();
+
+    let values_box_dyn: Vec<Box<dyn Value>> = vec![
+        Box::new(1) as Box<dyn Value>,
+        Box::new(3) as Box<dyn Value>,
+        Box::new("Box dyn") as Box<dyn Value>,
+    ];
+    session
+        .execute(&insert_a_b_c, values_box_dyn)
+        .await
+        .unwrap();
+
+    let mut all_rows: Vec<(i32, i32, String)> = session
+        .query("SELECT a, b, c FROM tab", ())
+        .await
+        .unwrap()
+        .rows_typed::<(i32, i32, String)>()
+        .unwrap()
+        .map(|r| r.unwrap())
+        .collect();
+    all_rows.sort();
+    assert_eq!(
+        all_rows,
+        vec![
+            (1i32, 2i32, "&dyn".to_owned()),
+            (1, 3, "Box dyn".to_owned())
+        ]
+    );
 }
 
 // A tests which checks that Session::batch automatically reprepares PreparedStatemtns if they become unprepared.
