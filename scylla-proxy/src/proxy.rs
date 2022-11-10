@@ -166,14 +166,6 @@ pub struct Proxy {
     nodes: Vec<InternalNode>,
 }
 
-/* This specialization is needed to avoid inference problem.
-The exact number is irrelevant. */
-impl Proxy {
-    pub fn builder() -> ProxyBuilder {
-        ProxyBuilder { nodes: vec![] }
-    }
-}
-
 impl Proxy {
     pub fn new(nodes: impl IntoIterator<Item = Node>) -> Self {
         Proxy {
@@ -194,6 +186,10 @@ impl Proxy {
                 })
                 .collect(),
         }
+    }
+
+    pub fn builder() -> ProxyBuilder {
+        ProxyBuilder { nodes: vec![] }
     }
 
     /// Build a translation map based on provided proxy and node addresses.
@@ -382,6 +378,7 @@ impl Doorkeeper {
         tokio::task::spawn(doorkeeper.run());
         Ok(())
     }
+
     async fn run(mut self) {
         let mut own_terminate_notifier = self.terminate_signaler.subscribe();
         let (connection_close_tx, _connection_close_rx) = broadcast::channel::<()>(2);
