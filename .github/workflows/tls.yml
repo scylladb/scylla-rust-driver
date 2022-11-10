@@ -22,8 +22,6 @@ jobs:
           --health-cmd "cqlsh --debug" 
           --health-interval 5s 
           --health-retries 10
-        volumes:
-          - ${{ github.workspace }}:/workspace
     env: 
       working-directory: ./scylla
     steps:

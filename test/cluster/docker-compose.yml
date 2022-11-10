@@ -11,24 +11,18 @@ networks:
 services:
   scylla1:
     image: scylladb/scylla
-    volumes:
-      - ${GITHUB_WORKSPACE}:/workspace
     networks:
       public:
         ipv4_address: 172.42.0.2
     command: --rpc-address 172.42.0.2 --listen-address 172.42.0.2 --seeds 172.42.0.2 --skip-wait-for-gossip-to-settle 0
   scylla2:
     image: scylladb/scylla
-    volumes:
-      - ${GITHUB_WORKSPACE}:/workspace
     networks:
       public:
         ipv4_address: 172.42.0.3
     command: --rpc-address 172.42.0.3 --listen-address 172.42.0.3 --seeds 172.42.0.2 --skip-wait-for-gossip-to-settle 0
   scylla3:
     image: scylladb/scylla
-    volumes:
-      - ${GITHUB_WORKSPACE}:/workspace
     networks:
       public:
         ipv4_address: 172.42.0.4

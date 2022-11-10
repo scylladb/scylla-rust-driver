@@ -19,7 +19,7 @@ jobs:
     - name: Setup 3-node Scylla cluster
       run: |
         sudo sh -c "echo 2097152 >> /proc/sys/fs/aio-max-nr"
-        GITHUB_WORKSPACE=${{ github.workspace }} docker-compose -f test/docker-compose.yml up -d
+        docker-compose -f test/cluster/docker-compose.yml up -d
     - name: Format check
       run: cargo fmt --verbose --all -- --check
     - name: Clippy check
@@ -33,7 +33,7 @@ jobs:
     - name: Run tests
       run: SCYLLA_URI=172.42.0.2:9042 SCYLLA_URI2=172.42.0.3:9042 SCYLLA_URI3=172.42.0.4:9042 cargo test --verbose
     - name: Stop cluster
-      run: GITHUB_WORKSPACE=${{ github.workspace }} docker-compose -f test/docker-compose.yml down
+      run: docker-compose -f test/cluster/docker-compose.yml down
 
   # Tests that our current minimum supported rust version compiles everything sucessfully
   min_rust:
