@@ -392,12 +392,6 @@ fn cow_serialized_values_value_list() {
 #[test]
 fn slice_batch_values() {
     let batch_values: &[&[i8]] = &[&[1, 2], &[2, 3, 4, 5], &[6]];
-
-    assert_eq!(
-        <&[&[i8]] as BatchValuesGatWorkaround<'_>>::len(&batch_values),
-        3
-    );
-
     let mut it = batch_values.batch_values_iter();
     {
         let mut request: Vec<u8> = Vec::new();
@@ -427,11 +421,6 @@ fn slice_batch_values() {
 fn vec_batch_values() {
     let batch_values: Vec<Vec<i8>> = vec![vec![1, 2], vec![2, 3, 4, 5], vec![6]];
 
-    assert_eq!(
-        <Vec<Vec<i8>> as BatchValuesGatWorkaround<'_>>::len(&batch_values),
-        3
-    );
-
     let mut it = batch_values.batch_values_iter();
     {
         let mut request: Vec<u8> = Vec::new();
@@ -458,8 +447,6 @@ fn vec_batch_values() {
 #[test]
 fn tuple_batch_values() {
     fn check_twoi32_tuple(tuple: impl BatchValues, size: usize) {
-        assert_eq!(tuple.len(), size);
-
         let mut it = tuple.batch_values_iter();
         for i in 0..size {
             let mut request: Vec<u8> = Vec::new();
@@ -652,7 +639,6 @@ fn ref_batch_values() {
 
     return check_ref_bv::<&&&&&[&[i8]]>(&&&&batch_values);
     fn check_ref_bv<B: BatchValues>(batch_values: B) {
-        assert_eq!(<B as BatchValuesGatWorkaround<'_>>::len(&batch_values), 3);
         let mut it = <B as BatchValuesGatWorkaround<'_>>::batch_values_iter(&batch_values);
 
         let mut request: Vec<u8> = Vec::new();

@@ -54,22 +54,35 @@ where
         // Serializing queries
         types::write_short(self.statements_count.try_into()?, buf);
 
-        let counts_mismatch_err = || {
-            ParseError::BadDataToSerialize(
-                "Length of provided values must be equal to number of batch statements".to_owned(),
-            )
+        let counts_mismatch_err = |n_values: usize, n_statements: usize| {
+            ParseError::BadDataToSerialize(format!(
+                "Length of provided values must be equal to number of batch statements \
+                    (got {n_values} values, {n_statements} statements)"
+            ))
         };
         let mut n_serialized_statements = 0usize;
         let mut value_lists = self.values.batch_values_iter();
-        for statement in self.statements.clone() {
+        for (idx, statement) in self.statements.clone().enumerate() {
             statement.serialize(buf)?;
             value_lists
                 .write_next_to_request(buf)
-                .ok_or_else(counts_mismatch_err)??;
+                .ok_or_else(|| counts_mismatch_err(idx, self.statements_count))??;
             n_serialized_statements += 1;
         }
-        if n_serialized_statements != self.statements_count || value_lists.skip_next().is_some() {
-            return Err(counts_mismatch_err());
+        if value_lists.skip_next().is_some() {
+            return Err(counts_mismatch_err(
+                std::iter::from_fn(|| value_lists.skip_next()).count() + 1,
+                n_serialized_statements,
+            ));
+        }
+        if n_serialized_statements != self.statements_count {
+            // We want to check this to avoid propagating an invalid construction of self.statements_count as a
+            // hard-to-debug silent fail
+            return Err(ParseError::BadDataToSerialize(format!(
+                "Invalid Batch constructed: not as many statements serialized as announced \
+                    (batch.statement_count: {announced_statement_count}, {n_serialized_statements}",
+                announced_statement_count = self.statements_count
+            )));
         }
 
         // Serializing consistency

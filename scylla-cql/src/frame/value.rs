@@ -225,10 +225,6 @@ impl<T: for<'r> BatchValuesGatWorkaround<'r> + ?Sized> BatchValues for T {}
 pub trait BatchValuesGatWorkaround<'r, ImplicitBounds = &'r Self> {
     type BatchValuesIter: BatchValuesIterator<'r>;
     fn batch_values_iter(&'r self) -> Self::BatchValuesIter;
-    fn len(&'r self) -> usize;
-    fn is_empty(&'r self) -> bool {
-        self.len() == 0
-    }
 }
 
 /// An iterator-like for `ValueList`
@@ -907,12 +903,6 @@ where
     fn batch_values_iter(&'r self) -> Self::BatchValuesIter {
         self.it.clone().into()
     }
-    fn len(&'r self) -> usize {
-        match self.it.size_hint() {
-            (l, Some(h)) if l == h => l,
-            _ => self.it.clone().count(),
-        }
-    }
 }
 
 // Implement BatchValues for slices of ValueList types
@@ -920,9 +910,6 @@ impl<'r, T: ValueList> BatchValuesGatWorkaround<'r> for [T] {
     type BatchValuesIter = BatchValuesIteratorFromIterator<std::slice::Iter<'r, T>>;
     fn batch_values_iter(&'r self) -> Self::BatchValuesIter {
         self.iter().into()
-    }
-    fn len(&'r self) -> usize {
-        <[_]>::len(self)
     }
 }
 
@@ -932,9 +919,6 @@ impl<'r, T: ValueList> BatchValuesGatWorkaround<'r> for Vec<T> {
     fn batch_values_iter(&'r self) -> Self::BatchValuesIter {
         BatchValuesGatWorkaround::batch_values_iter(self.as_slice())
     }
-    fn len(&'r self) -> usize {
-        Vec::len(self)
-    }
 }
 
 // Here is an example implementation for (T0, )
@@ -943,9 +927,6 @@ impl<'r, T0: ValueList> BatchValuesGatWorkaround<'r> for (T0,) {
     type BatchValuesIter = BatchValuesIteratorFromIterator<std::iter::Once<&'r T0>>;
     fn batch_values_iter(&'r self) -> Self::BatchValuesIter {
         std::iter::once(&self.0).into()
-    }
-    fn len(&'r self) -> usize {
-        1
     }
 }
 
@@ -966,9 +947,6 @@ macro_rules! impl_batch_values_for_tuple {
                     tuple: self,
                     idx: 0,
                 }
-            }
-            fn len(&self) -> usize{
-                $TupleSize
             }
         }
         impl<'r, $($Ti),+> BatchValuesIterator<'r> for TupleValuesIter<'r, ($($Ti,)+)>
@@ -1039,9 +1017,6 @@ impl<'a, 'r, T: BatchValues + ?Sized> BatchValuesGatWorkaround<'r> for &'a T {
     fn batch_values_iter(&'r self) -> Self::BatchValuesIter {
         <T as BatchValuesGatWorkaround<'r>>::batch_values_iter(*self)
     }
-    fn len(&'r self) -> usize {
-        <T as BatchValuesGatWorkaround<'r>>::len(*self)
-    }
 }
 
 /// Allows reusing already-serialized first value
@@ -1072,9 +1047,6 @@ impl<'r, 'f, BV: BatchValues> BatchValuesGatWorkaround<'r> for BatchValuesFirstS
             first: self.first,
             rest: self.rest.batch_values_iter(),
         }
-    }
-    fn len(&'r self) -> usize {
-        self.rest.len()
     }
 }
 

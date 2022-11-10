@@ -641,14 +641,6 @@ impl Connection {
         values: impl BatchValues,
         consistency: Consistency,
     ) -> Result<QueryResult, QueryError> {
-        let statements_count = batch.statements.len();
-        if statements_count != values.len() {
-            return Err(QueryError::BadQuery(BadQuery::ValueLenMismatch(
-                values.len(),
-                statements_count,
-            )));
-        }
-
         let statements_iter = batch.statements.iter().map(|s| match s {
             BatchStatement::Query(q) => batch::BatchStatement::Query { text: &q.contents },
             BatchStatement::PreparedStatement(s) => {
@@ -657,8 +649,8 @@ impl Connection {
         });
 
         let batch_frame = batch::Batch {
+            statements_count: statements_iter.len(),
             statements: statements_iter,
-            statements_count,
             values,
             batch_type: batch.get_type(),
             consistency,

@@ -263,10 +263,6 @@ pub enum BadQuery {
     #[error("Serializing values failed: {0} ")]
     SerializeValuesError(#[from] SerializeValuesError),
 
-    /// Number of values provided doesn't match number of statements in a batch
-    #[error("Length of provided values ({0}) must be equal to number of batch statements ({1})")]
-    ValueLenMismatch(usize, usize),
-
     /// Serialized values are too long to compute partition key
     #[error("Serialized values are too long to compute partition key! Length: {0}, Max allowed length: {1}")]
     ValuesTooLongForKey(usize, usize),

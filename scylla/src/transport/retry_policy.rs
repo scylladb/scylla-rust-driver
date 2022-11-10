@@ -292,7 +292,11 @@ mod tests {
             default_policy_assert_never_retries(QueryError::DbError(dberror, String::new()));
         }
 
-        default_policy_assert_never_retries(QueryError::BadQuery(BadQuery::ValueLenMismatch(1, 2)));
+        default_policy_assert_never_retries(QueryError::BadQuery(BadQuery::Other(
+            "Length of provided values must be equal to number of batch statements \
+                        (got 1 values, 2 statements)"
+                .to_owned(),
+        )));
         default_policy_assert_never_retries(QueryError::ProtocolError("test"));
     }
 
