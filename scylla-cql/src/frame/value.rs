@@ -285,7 +285,7 @@ impl Value for BigDecimal {
 impl Value for NaiveDate {
     fn serialize(&self, buf: &mut Vec<u8>) -> Result<(), ValueTooBig> {
         buf.put_i32(4);
-        let unix_epoch = NaiveDate::from_ymd(1970, 1, 1);
+        let unix_epoch = NaiveDate::from_ymd_opt(1970, 1, 1).unwrap();
 
         let days: u32 = self
             .signed_duration_since(unix_epoch)

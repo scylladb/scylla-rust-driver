@@ -377,19 +377,19 @@ mod tests {
     fn naive_date_from_cql() {
         let unix_epoch: CqlValue = CqlValue::Date(2_u32.pow(31));
         assert_eq!(
-            Ok(NaiveDate::from_ymd(1970, 1, 1)),
+            Ok(NaiveDate::from_ymd_opt(1970, 1, 1).unwrap()),
             NaiveDate::from_cql(unix_epoch)
         );
 
         let before_epoch: CqlValue = CqlValue::Date(2_u32.pow(31) - 30);
         assert_eq!(
-            Ok(NaiveDate::from_ymd(1969, 12, 2)),
+            Ok(NaiveDate::from_ymd_opt(1969, 12, 2).unwrap()),
             NaiveDate::from_cql(before_epoch)
         );
 
         let after_epoch: CqlValue = CqlValue::Date(2_u32.pow(31) + 30);
         assert_eq!(
-            Ok(NaiveDate::from_ymd(1970, 1, 31)),
+            Ok(NaiveDate::from_ymd_opt(1970, 1, 31).unwrap()),
             NaiveDate::from_cql(after_epoch)
         );
 

@@ -202,18 +202,39 @@ async fn test_naive_date() {
     let session: Session = init_test("naive_date", "date").await;
 
     let min_naive_date: NaiveDate = NaiveDate::MIN;
-    assert_eq!(min_naive_date, NaiveDate::from_ymd(-262144, 1, 1));
+    assert_eq!(
+        min_naive_date,
+        NaiveDate::from_ymd_opt(-262144, 1, 1).unwrap()
+    );
 
     let max_naive_date: NaiveDate = NaiveDate::MAX;
-    assert_eq!(max_naive_date, NaiveDate::from_ymd(262143, 12, 31));
+    assert_eq!(
+        max_naive_date,
+        NaiveDate::from_ymd_opt(262143, 12, 31).unwrap()
+    );
 
     let tests = [
         // Basic test values
-        ("0000-01-01", Some(NaiveDate::from_ymd(0000, 1, 1))),
-        ("1970-01-01", Some(NaiveDate::from_ymd(1970, 1, 1))),
-        ("2020-03-07", Some(NaiveDate::from_ymd(2020, 3, 7))),
-        ("1337-04-05", Some(NaiveDate::from_ymd(1337, 4, 5))),
-        ("-0001-12-31", Some(NaiveDate::from_ymd(-1, 12, 31))),
+        (
+            "0000-01-01",
+            Some(NaiveDate::from_ymd_opt(0000, 1, 1).unwrap()),
+        ),
+        (
+            "1970-01-01",
+            Some(NaiveDate::from_ymd_opt(1970, 1, 1).unwrap()),
+        ),
+        (
+            "2020-03-07",
+            Some(NaiveDate::from_ymd_opt(2020, 3, 7).unwrap()),
+        ),
+        (
+            "1337-04-05",
+            Some(NaiveDate::from_ymd_opt(1337, 4, 5).unwrap()),
+        ),
+        (
+            "-0001-12-31",
+            Some(NaiveDate::from_ymd_opt(-1, 12, 31).unwrap()),
+        ),
         // min/max values allowed by NaiveDate
         ("-262144-01-01", Some(min_naive_date)),
         // NOTICE: dropped for Cassandra 4 compatibility
@@ -438,12 +459,12 @@ async fn test_time() {
 async fn test_timestamp() {
     let session: Session = init_test("timestamp_tests", "timestamp").await;
 
-    //let epoch_date = NaiveDate::from_ymd(1970, 1, 1);
+    //let epoch_date = NaiveDate::from_ymd_opt(1970, 1, 1).unwrap();
 
-    //let before_epoch = NaiveDate::from_ymd(1333, 4, 30);
+    //let before_epoch = NaiveDate::from_ymd_opt(1333, 4, 30).unwrap();
     //let before_epoch_offset = before_epoch.signed_duration_since(epoch_date);
 
-    //let after_epoch = NaiveDate::from_ymd(2020, 3, 8);
+    //let after_epoch = NaiveDate::from_ymd_opt(2020, 3, 8).unwrap();
     //let after_epoch_offset = after_epoch.signed_duration_since(epoch_date);
 
     let tests = [

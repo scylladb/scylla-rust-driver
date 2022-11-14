@@ -135,7 +135,9 @@ impl CqlValue {
         let days_since_epoch =
             chrono::Duration::days(date_days.into()) - chrono::Duration::days(1 << 31);
 
-        NaiveDate::from_ymd(1970, 1, 1).checked_add_signed(days_since_epoch)
+        NaiveDate::from_ymd_opt(1970, 1, 1)
+            .unwrap()
+            .checked_add_signed(days_since_epoch)
     }
 
     pub fn as_duration(&self) -> Option<chrono::Duration> {
@@ -1222,7 +1224,7 @@ mod tests {
         super::deser_cql_value(&ColumnType::Date, &mut [1, 2, 3, 4, 5].as_ref()).unwrap_err();
 
         // 2^31 when converted to NaiveDate is 1970-01-01
-        let unix_epoch: NaiveDate = NaiveDate::from_ymd(1970, 1, 1);
+        let unix_epoch: NaiveDate = NaiveDate::from_ymd_opt(1970, 1, 1).unwrap();
         let date: CqlValue =
             super::deser_cql_value(&ColumnType::Date, &mut 2_u32.pow(31).to_be_bytes().as_ref())
                 .unwrap();
@@ -1230,7 +1232,7 @@ mod tests {
         assert_eq!(date.as_date().unwrap(), unix_epoch);
 
         // 2^31 - 30 when converted to NaiveDate is 1969-12-02
-        let before_epoch: NaiveDate = NaiveDate::from_ymd(1969, 12, 2);
+        let before_epoch: NaiveDate = NaiveDate::from_ymd_opt(1969, 12, 2).unwrap();
         let date: CqlValue = super::deser_cql_value(
             &ColumnType::Date,
             &mut (2_u32.pow(31) - 30).to_be_bytes().as_ref(),
@@ -1240,7 +1242,7 @@ mod tests {
         assert_eq!(date.as_date().unwrap(), before_epoch);
 
         // 2^31 + 30 when converted to NaiveDate is 1970-01-31
-        let after_epoch: NaiveDate = NaiveDate::from_ymd(1970, 1, 31);
+        let after_epoch: NaiveDate = NaiveDate::from_ymd_opt(1970, 1, 31).unwrap();
         let date: CqlValue = super::deser_cql_value(
             &ColumnType::Date,
             &mut (2_u32.pow(31) + 30).to_be_bytes().as_ref(),

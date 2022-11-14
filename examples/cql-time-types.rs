@@ -30,7 +30,7 @@ async fn main() -> Result<()> {
         .await?;
 
     // Dates in the range -262145-1-1 to 262143-12-31 can be represented using chrono::NaiveDate
-    let example_date: NaiveDate = NaiveDate::from_ymd(2020, 2, 20);
+    let example_date: NaiveDate = NaiveDate::from_ymd_opt(2020, 2, 20).unwrap();
 
     session
         .query("INSERT INTO ks.dates (d) VALUES (?)", (example_date,))
