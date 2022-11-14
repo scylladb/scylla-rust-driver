@@ -59,28 +59,37 @@ impl ShardAwareness {
     }
 }
 
+enum NodeType {
+    Real {
+        real_addr: SocketAddr,
+        shard_awareness: ShardAwareness,
+        response_rules: Option<Vec<ResponseRule>>,
+    },
+}
+
 pub struct Node {
-    real_addr: SocketAddr,
     proxy_addr: SocketAddr,
-    shard_awareness: ShardAwareness,
     request_rules: Option<Vec<RequestRule>>,
-    response_rules: Option<Vec<ResponseRule>>,
+    node_type: NodeType,
 }
 
 impl Node {
+    /// Creates an abstract node that is backed by a real Scylla node.
     pub fn new(
         real_addr: SocketAddr,
         proxy_addr: SocketAddr,
         shard_awareness: ShardAwareness,
         request_rules: Option<Vec<RequestRule>>,
         response_rules: Option<Vec<ResponseRule>>,
-    ) -> Node {
-        Node {
-            real_addr,
+    ) -> Self {
+        Self {
             proxy_addr,
-            shard_awareness,
             request_rules,
-            response_rules,
+            node_type: NodeType::Real {
+                real_addr,
+                shard_awareness,
+                response_rules,
+            },
         }
     }
 
@@ -129,13 +138,16 @@ impl NodeBuilder {
         self
     }
 
+    /// Creates an abstract node that is backed by a real Scylla node.
     pub fn build(self) -> Node {
         Node {
-            real_addr: self.real_addr.expect("Real addr is required!"),
             proxy_addr: self.proxy_addr.expect("Proxy addr is required!"),
-            shard_awareness: self.shard_awareness.expect("Shard awareness is required!"),
             request_rules: self.request_rules,
-            response_rules: self.response_rules,
+            node_type: NodeType::Real {
+                real_addr: self.real_addr.expect("Real addr is required!"),
+                shard_awareness: self.shard_awareness.expect("Shard awareness is required!"),
+                response_rules: self.response_rules,
+            },
         }
     }
 }
@@ -150,18 +162,23 @@ struct InternalNode {
 
 impl From<Node> for InternalNode {
     fn from(node: Node) -> Self {
-        InternalNode {
-            real_addr: node.real_addr,
-            proxy_addr: node.proxy_addr,
-            shard_awareness: node.shard_awareness,
-            request_rules: node
-                .request_rules
-                .map(|rules| Arc::new(Mutex::new(rules)))
-                .unwrap_or_default(),
-            response_rules: node
-                .response_rules
-                .map(|rules| Arc::new(Mutex::new(rules)))
-                .unwrap_or_default(),
+        match node.node_type {
+            NodeType::Real {
+                real_addr,
+                shard_awareness,
+                response_rules,
+            } => InternalNode {
+                real_addr,
+                proxy_addr: node.proxy_addr,
+                shard_awareness,
+                request_rules: node
+                    .request_rules
+                    .map(|rules| Arc::new(Mutex::new(rules)))
+                    .unwrap_or_default(),
+                response_rules: response_rules
+                    .map(|rules| Arc::new(Mutex::new(rules)))
+                    .unwrap_or_default(),
+            },
         }
     }
 }
