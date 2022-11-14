@@ -147,6 +147,25 @@ struct InternalNode {
     request_rules: Arc<Mutex<Vec<RequestRule>>>,
     response_rules: Arc<Mutex<Vec<ResponseRule>>>,
 }
+
+impl From<Node> for InternalNode {
+    fn from(node: Node) -> Self {
+        InternalNode {
+            real_addr: node.real_addr,
+            proxy_addr: node.proxy_addr,
+            shard_awareness: node.shard_awareness,
+            request_rules: node
+                .request_rules
+                .map(|rules| Arc::new(Mutex::new(rules)))
+                .unwrap_or_default(),
+            response_rules: node
+                .response_rules
+                .map(|rules| Arc::new(Mutex::new(rules)))
+                .unwrap_or_default(),
+        }
+    }
+}
+
 pub struct ProxyBuilder {
     nodes: Vec<Node>,
 }
@@ -169,22 +188,7 @@ pub struct Proxy {
 impl Proxy {
     pub fn new(nodes: impl IntoIterator<Item = Node>) -> Self {
         Proxy {
-            nodes: nodes
-                .into_iter()
-                .map(|node| InternalNode {
-                    real_addr: node.real_addr,
-                    proxy_addr: node.proxy_addr,
-                    shard_awareness: node.shard_awareness,
-                    request_rules: node
-                        .request_rules
-                        .map(|rules| Arc::new(Mutex::new(rules)))
-                        .unwrap_or_default(),
-                    response_rules: node
-                        .response_rules
-                        .map(|rules| Arc::new(Mutex::new(rules)))
-                        .unwrap_or_default(),
-                })
-                .collect(),
+            nodes: nodes.into_iter().map(|node| node.into()).collect(),
         }
     }
 
