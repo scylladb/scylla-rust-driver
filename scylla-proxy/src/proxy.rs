@@ -216,7 +216,7 @@ impl Proxy {
             .map(|node| {
                 let running = RunningNode {
                     request_rules: node.request_rules.clone(),
-                    response_rules: node.response_rules.clone(),
+                    response_rules: Some(node.response_rules.clone()),
                 };
                 (
                     Doorkeeper::spawn(
@@ -246,7 +246,7 @@ impl Proxy {
 /// A handle that can be used to change the rules regarding the particular node.
 pub struct RunningNode {
     request_rules: Arc<Mutex<Vec<RequestRule>>>,
-    response_rules: Arc<Mutex<Vec<ResponseRule>>>,
+    response_rules: Option<Arc<Mutex<Vec<ResponseRule>>>>,
 }
 
 impl RunningNode {
@@ -257,7 +257,12 @@ impl RunningNode {
 
     /// Replaces the previous response rules with the new ones.
     pub async fn change_response_rules(&mut self, rules: Option<Vec<ResponseRule>>) {
-        *self.response_rules.lock().await = rules.unwrap_or_default();
+        *self
+            .response_rules
+            .as_ref()
+            .expect("No response rules on a simulated node!")
+            .lock()
+            .await = rules.unwrap_or_default();
     }
 }
 
@@ -278,7 +283,9 @@ impl RunningProxy {
             .map(|node| (&node.request_rules, &node.response_rules))
         {
             request_rules.lock().await.clear();
-            response_rules.lock().await.clear();
+            if let Some(response_rules) = response_rules {
+                response_rules.lock().await.clear();
+            }
         }
     }
 
