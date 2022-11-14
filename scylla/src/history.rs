@@ -481,8 +481,8 @@ mod tests {
     fn set_one_time(mut history: StructuredHistory) -> StructuredHistory {
         let the_time: TimePoint = DateTime::<Utc>::from_utc(
             NaiveDateTime::new(
-                NaiveDate::from_ymd(2022, 2, 22),
-                NaiveTime::from_hms(20, 22, 22),
+                NaiveDate::from_ymd_opt(2022, 2, 22).unwrap(),
+                NaiveTime::from_hms_opt(20, 22, 22).unwrap(),
             ),
             Utc,
         );

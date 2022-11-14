@@ -17,7 +17,7 @@ use scylla::IntoTypedRows;
 use chrono::naive::NaiveDate;
 
 // Insert some date into the table
-let to_insert: NaiveDate = NaiveDate::from_ymd(2021, 3, 24);
+let to_insert: NaiveDate = NaiveDate::from_ymd_opt(2021, 3, 24).unwrap();
 session
     .query("INSERT INTO keyspace.table (a) VALUES(?)", (to_insert,))
     .await?;
