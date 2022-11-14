@@ -476,7 +476,9 @@ impl Doorkeeper {
                             .map_err(|err| {
                                 DoorkeeperError::NodeConnectionAttempt(self.node.real_addr, err)
                             })?;
-                    let shards = self.obtain_shards_number(temporary_stream).await?;
+                    let shards = self
+                        .obtain_shards_number(temporary_stream, self.node.real_addr)
+                        .await?;
                     self.shards_number = Some(shards);
 
                     shards
@@ -531,6 +533,7 @@ impl Doorkeeper {
     async fn obtain_shards_number(
         &self,
         mut connection: TcpStream,
+        real_addr: SocketAddr,
     ) -> Result<u16, DoorkeeperError> {
         write_frame(
             HARDCODED_OPTIONS_PARAMS,
@@ -557,10 +560,7 @@ impl Doorkeeper {
             0u16 => Err(DoorkeeperError::ObtainingShardNumberGotZero),
             num => Ok(num),
         }?;
-        info!(
-            "Obtained shards number on node {}: {}",
-            self.node.real_addr, shards
-        );
+        info!("Obtained shards number on node {}: {}", real_addr, shards);
         Ok(shards)
     }
 }
