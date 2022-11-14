@@ -42,7 +42,7 @@ dockerized-test: up wait-for-cluster
 
 .PHONY: build
 build:
-	cargo build --verbose --examples
+	cargo build --examples
 
 .PHONY: docs
 docs:
