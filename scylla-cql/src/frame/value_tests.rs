@@ -647,6 +647,7 @@ fn tuple_batch_values() {
 }
 
 #[test]
+#[allow(clippy::needless_borrow)]
 fn ref_batch_values() {
     let batch_values: &[&[i8]] = &[&[1, 2], &[2, 3, 4, 5], &[6]];
 
@@ -661,6 +662,7 @@ fn ref_batch_values() {
 }
 
 #[test]
+#[allow(clippy::needless_borrow)]
 fn check_ref_tuple() {
     fn assert_has_batch_values<BV: BatchValues>(bv: BV) {
         let mut it = bv.batch_values_iter();
