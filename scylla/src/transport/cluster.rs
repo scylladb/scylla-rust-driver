@@ -132,6 +132,7 @@ impl Cluster {
     pub async fn new(
         initial_peers: &[SocketAddr],
         pool_config: PoolConfig,
+        keyspaces_to_fetch: Vec<String>,
         fetch_schema_metadata: bool,
         address_translator: &Option<Arc<dyn AddressTranslator>>,
         host_filter: &Option<Arc<dyn HostFilter>>,
@@ -145,6 +146,7 @@ impl Cluster {
             pool_config.connection_config.clone(),
             pool_config.keepalive_interval,
             server_events_sender,
+            keyspaces_to_fetch,
             fetch_schema_metadata,
             address_translator,
             host_filter,
