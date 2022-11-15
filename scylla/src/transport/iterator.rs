@@ -6,12 +6,14 @@ use std::net::SocketAddr;
 use std::pin::Pin;
 use std::sync::Arc;
 use std::task::{Context, Poll};
+use std::time::Duration;
 
 use bytes::Bytes;
 use futures::Stream;
 use std::result::Result;
 use thiserror::Error;
 use tokio::sync::mpsc;
+use tokio::time::Instant;
 
 use super::errors::QueryError;
 use crate::cql_to_rust::{FromRow, FromRowError};
@@ -69,15 +71,14 @@ struct ReceivedPage {
     pub tracing_id: Option<Uuid>,
 }
 
-pub(crate) struct PreparedIteratorConfig {
-    pub prepared: PreparedStatement,
+pub(crate) struct IteratorConfig {
     pub values: SerializedValues,
     pub default_consistency: Consistency,
-    pub token: Option<Token>,
     pub retry_session: Box<dyn RetrySession>,
     pub load_balancer: Arc<dyn LoadBalancingPolicy>,
     pub cluster_data: Arc<ClusterData>,
     pub metrics: Arc<Metrics>,
+    pub timeout: Option<Duration>,
 }
 
 /// Fetching pages is asynchronous so `RowIterator` does not implement the `Iterator` trait.\
@@ -129,30 +130,34 @@ impl RowIterator {
 
     pub(crate) async fn new_for_query(
         mut query: Query,
-        values: SerializedValues,
-        default_consistency: Consistency,
-        retry_session: Box<dyn RetrySession>,
-        load_balancer: Arc<dyn LoadBalancingPolicy>,
-        cluster_data: Arc<ClusterData>,
-        metrics: Arc<Metrics>,
+        config: IteratorConfig,
     ) -> Result<RowIterator, QueryError> {
         if query.get_page_size().is_none() {
             query.set_page_size(DEFAULT_ITER_PAGE_SIZE);
         }
         let (sender, mut receiver) = mpsc::channel(1);
-        let consistency = query.config.determine_consistency(default_consistency);
+        let consistency = query
+            .config
+            .determine_consistency(config.default_consistency);
 
         let worker_task = async move {
             let query_ref = &query;
-            let values_ref = &values;
+            let values_ref = &config.values;
 
             let choose_connection = |node: Arc<Node>| async move { node.random_connection().await };
 
             let page_query = |connection: Arc<Connection>,
                               consistency: Consistency,
-                              paging_state: Option<Bytes>| async move {
+                              paging_state: Option<Bytes>,
+                              deadline: Option<Instant>| async move {
                 connection
-                    .query_with_consistency(query_ref, values_ref, consistency, paging_state)
+                    .query_with_consistency_and_deadline(
+                        query_ref,
+                        values_ref,
+                        consistency,
+                        paging_state,
+                        deadline,
+                    )
                     .await
             };
 
@@ -163,16 +168,18 @@ impl RowIterator {
                 statement_info: Statement::default(),
                 query_is_idempotent: query.config.is_idempotent,
                 query_consistency: consistency,
-                retry_session,
-                load_balancer,
-                metrics,
+                retry_session: config.retry_session,
+                load_balancer: config.load_balancer,
+                metrics: config.metrics,
+                timeout: config.timeout,
+                current_deadline: None,
                 paging_state: None,
                 history_listener: query.config.history_listener.clone(),
                 current_query_id: None,
                 current_attempt_id: None,
             };
 
-            worker.work(cluster_data).await;
+            worker.work(config.cluster_data).await;
         };
 
         tokio::task::spawn(worker_task);
@@ -192,26 +199,27 @@ impl RowIterator {
     }
 
     pub(crate) async fn new_for_prepared_statement(
-        mut config: PreparedIteratorConfig,
+        mut prepared: PreparedStatement,
+        token: Option<Token>,
+        config: IteratorConfig,
     ) -> Result<RowIterator, QueryError> {
-        if config.prepared.get_page_size().is_none() {
-            config.prepared.set_page_size(DEFAULT_ITER_PAGE_SIZE);
+        if prepared.get_page_size().is_none() {
+            prepared.set_page_size(DEFAULT_ITER_PAGE_SIZE);
         }
         let (sender, mut receiver) = mpsc::channel(1);
-        let consistency = config
-            .prepared
+        let consistency = prepared
             .config
             .determine_consistency(config.default_consistency);
 
         let statement_info = Statement {
-            token: config.token,
+            token,
             keyspace: None,
         };
 
         let worker_task = async move {
-            let prepared_ref = &config.prepared;
+            let prepared_ref = &prepared;
             let values_ref = &config.values;
-            let token = config.token;
+            let token = token;
 
             let choose_connection = |node: Arc<Node>| async move {
                 match token {
@@ -222,9 +230,16 @@ impl RowIterator {
 
             let page_query = |connection: Arc<Connection>,
                               consistency: Consistency,
-                              paging_state: Option<Bytes>| async move {
+                              paging_state: Option<Bytes>,
+                              deadline: Option<Instant>| async move {
                 connection
-                    .execute_with_consistency(prepared_ref, values_ref, consistency, paging_state)
+                    .execute_with_consistency_and_deadline(
+                        prepared_ref,
+                        values_ref,
+                        consistency,
+                        paging_state,
+                        deadline,
+                    )
                     .await
             };
 
@@ -233,13 +248,15 @@ impl RowIterator {
                 choose_connection,
                 page_query,
                 statement_info,
-                query_is_idempotent: config.prepared.config.is_idempotent,
+                query_is_idempotent: prepared.config.is_idempotent,
                 query_consistency: consistency,
                 retry_session: config.retry_session,
                 load_balancer: config.load_balancer,
                 metrics: config.metrics,
+                timeout: config.timeout,
+                current_deadline: None,
                 paging_state: None,
-                history_listener: config.prepared.config.history_listener.clone(),
+                history_listener: prepared.config.history_listener.clone(),
                 current_query_id: None,
                 current_attempt_id: None,
             };
@@ -298,6 +315,8 @@ struct RowIteratorWorker<'a, ConnFunc, QueryFunc> {
     retry_session: Box<dyn RetrySession>,
     load_balancer: Arc<dyn LoadBalancingPolicy>,
     metrics: Arc<Metrics>,
+    timeout: Option<Duration>,
+    current_deadline: Option<Instant>,
 
     paging_state: Option<Bytes>,
 
@@ -310,7 +329,7 @@ impl<ConnFunc, ConnFut, QueryFunc, QueryFut> RowIteratorWorker<'_, ConnFunc, Que
 where
     ConnFunc: Fn(Arc<Node>) -> ConnFut,
     ConnFut: Future<Output = Result<Arc<Connection>, QueryError>>,
-    QueryFunc: Fn(Arc<Connection>, Consistency, Option<Bytes>) -> QueryFut,
+    QueryFunc: Fn(Arc<Connection>, Consistency, Option<Bytes>, Option<Instant>) -> QueryFut,
     QueryFut: Future<Output = Result<QueryResponse, QueryError>>,
 {
     async fn work(mut self, cluster_data: Arc<ClusterData>) {
@@ -321,6 +340,7 @@ where
             QueryError::ProtocolError("Empty query plan - driver bug!");
         let mut current_consistency: Consistency = self.query_consistency;
 
+        self.reset_deadline();
         self.log_query_start();
 
         'nodes_in_plan: for node in query_plan {
@@ -366,6 +386,13 @@ where
                         error
                     }
                 };
+
+                // If the query was a driver-side timeout, there is no use
+                // in retrying anymore
+                if matches!(last_error, QueryError::RequestTimeout(_)) {
+                    trace!(parent: &span, "Query timed out driver-side");
+                    break 'nodes_in_plan;
+                }
 
                 // Use retry policy to decide what to do next
                 let query_info = QueryInfo {
@@ -421,10 +448,14 @@ where
                 "Sending"
             );
             self.log_attempt_start(connection.get_connect_address());
-            let query_response =
-                (self.page_query)(connection.clone(), consistency, self.paging_state.clone())
-                    .await?
-                    .into_non_error_query_response();
+            let query_response = (self.page_query)(
+                connection.clone(),
+                consistency,
+                self.paging_state.clone(),
+                self.current_deadline,
+            )
+            .await?
+            .into_non_error_query_response();
 
             let elapsed = query_start.elapsed();
             if Session::should_consider_query_for_latency_measurements(
@@ -462,6 +493,10 @@ where
 
                     // Query succeeded, reset retry policy for future retries
                     self.retry_session.reset();
+
+                    // We will fetch a new page, so reset the deadline
+                    self.reset_deadline();
+
                     self.log_query_start();
                 }
                 Err(err) => {
@@ -477,6 +512,10 @@ where
                 }
             }
         }
+    }
+
+    fn reset_deadline(&mut self) {
+        self.current_deadline = self.timeout.map(|t| Instant::now() + t);
     }
 
     fn log_query_start(&mut self) {

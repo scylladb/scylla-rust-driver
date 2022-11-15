@@ -21,6 +21,7 @@ use std::io::ErrorKind;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::sync::Mutex as StdMutex;
+use std::task::{Context, Poll};
 use std::{
     cmp::Ordering,
     net::{Ipv4Addr, Ipv6Addr},
@@ -49,6 +50,7 @@ use crate::transport::Authenticator::{
     PasswordAuthenticator, ScyllaTransitionalAuthenticator,
 };
 use crate::transport::Compression;
+use crate::utils::timer::ArmableTimer;
 
 // Existing code imports scylla::transport::connection::QueryResult because it used to be located in this file.
 // Reexport QueryResult to avoid breaking the existing code.
@@ -97,6 +99,7 @@ type RequestId = u64;
 struct ResponseHandler {
     response_sender: oneshot::Sender<Result<TaskResponse, QueryError>>,
     request_id: RequestId,
+    deadline: Option<Instant>,
 }
 
 // Used to notify `Connection::orphaner` about `Connection::send_request`
@@ -307,19 +310,27 @@ impl Connection {
 
     pub async fn startup(&self, options: HashMap<String, String>) -> Result<Response, QueryError> {
         Ok(self
-            .send_request(&request::Startup { options }, false, false)
+            .send_request(&request::Startup { options }, false, false, None)
             .await?
             .response)
     }
 
     pub async fn get_options(&self) -> Result<Response, QueryError> {
         Ok(self
-            .send_request(&request::Options {}, false, false)
+            .send_request(&request::Options {}, false, false, None)
             .await?
             .response)
     }
 
     pub async fn prepare(&self, query: &Query) -> Result<PreparedStatement, QueryError> {
+        self.prepare_with_deadline(query, None).await
+    }
+
+    pub(crate) async fn prepare_with_deadline(
+        &self,
+        query: &Query,
+        deadline: Option<Instant>,
+    ) -> Result<PreparedStatement, QueryError> {
         let query_response = self
             .send_request(
                 &request::Prepare {
@@ -327,6 +338,7 @@ impl Connection {
                 },
                 true,
                 query.config.tracing,
+                deadline,
             )
             .await?;
 
@@ -356,9 +368,12 @@ impl Connection {
         &self,
         query: impl Into<Query>,
         previous_prepared: &PreparedStatement,
+        deadline: Option<Instant>,
     ) -> Result<(), QueryError> {
         let reprepare_query: Query = query.into();
-        let reprepared = self.prepare(&reprepare_query).await?;
+        let reprepared = self
+            .prepare_with_deadline(&reprepare_query, deadline)
+            .await?;
         // Reprepared statement should keep its id - it's the md5 sum
         // of statement contents
         if reprepared.get_id() != previous_prepared.get_id() {
@@ -384,6 +399,7 @@ impl Connection {
             },
             false,
             false,
+            None,
         )
         .await
     }
@@ -437,6 +453,18 @@ impl Connection {
         consistency: Consistency,
         paging_state: Option<Bytes>,
     ) -> Result<QueryResponse, QueryError> {
+        self.query_with_consistency_and_deadline(query, values, consistency, paging_state, None)
+            .await
+    }
+
+    pub(crate) async fn query_with_consistency_and_deadline(
+        &self,
+        query: &Query,
+        values: impl ValueList,
+        consistency: Consistency,
+        paging_state: Option<Bytes>,
+        deadline: Option<Instant>,
+    ) -> Result<QueryResponse, QueryError> {
         let serialized_values = values.serialized()?;
 
         let query_frame = query::Query {
@@ -451,7 +479,7 @@ impl Connection {
             },
         };
 
-        self.send_request(&query_frame, true, query.config.tracing)
+        self.send_request(&query_frame, true, query.config.tracing, deadline)
             .await
     }
 
@@ -548,6 +576,24 @@ impl Connection {
         consistency: Consistency,
         paging_state: Option<Bytes>,
     ) -> Result<QueryResponse, QueryError> {
+        self.execute_with_consistency_and_deadline(
+            prepared_statement,
+            values,
+            consistency,
+            paging_state,
+            None,
+        )
+        .await
+    }
+
+    pub(crate) async fn execute_with_consistency_and_deadline(
+        &self,
+        prepared_statement: &PreparedStatement,
+        values: impl ValueList,
+        consistency: Consistency,
+        paging_state: Option<Bytes>,
+        deadline: Option<Instant>,
+    ) -> Result<QueryResponse, QueryError> {
         let serialized_values = values.serialized()?;
 
         let execute_frame = execute::Execute {
@@ -563,7 +609,12 @@ impl Connection {
         };
 
         let query_response = self
-            .send_request(&execute_frame, true, prepared_statement.config.tracing)
+            .send_request(
+                &execute_frame,
+                true,
+                prepared_statement.config.tracing,
+                deadline,
+            )
             .await?;
 
         match &query_response.response {
@@ -573,10 +624,19 @@ impl Connection {
             }) => {
                 debug!("Connection::execute: Got DbError::Unprepared - repreparing statement with id {:?}", statement_id);
                 // Repreparation of a statement is needed
-                self.reprepare(prepared_statement.get_statement(), prepared_statement)
-                    .await?;
-                self.send_request(&execute_frame, true, prepared_statement.config.tracing)
-                    .await
+                self.reprepare(
+                    prepared_statement.get_statement(),
+                    prepared_statement,
+                    deadline,
+                )
+                .await?;
+                self.send_request(
+                    &execute_frame,
+                    true,
+                    prepared_statement.config.tracing,
+                    deadline,
+                )
+                .await
             }
             _ => Ok(query_response),
         }
@@ -641,6 +701,17 @@ impl Connection {
         values: impl BatchValues,
         consistency: Consistency,
     ) -> Result<QueryResult, QueryError> {
+        self.batch_with_consistency_and_deadline(batch, values, consistency, None)
+            .await
+    }
+
+    pub(crate) async fn batch_with_consistency_and_deadline(
+        &self,
+        batch: &Batch,
+        values: impl BatchValues,
+        consistency: Consistency,
+        deadline: Option<Instant>,
+    ) -> Result<QueryResult, QueryError> {
         let statements_count = batch.statements.len();
         if statements_count != values.len() {
             return Err(QueryError::BadQuery(BadQuery::ValueLenMismatch(
@@ -668,7 +739,7 @@ impl Connection {
 
         loop {
             let query_response = self
-                .send_request(&batch_frame, true, batch.config.tracing)
+                .send_request(&batch_frame, true, batch.config.tracing, deadline)
                 .await?;
 
             return match query_response.response {
@@ -682,7 +753,7 @@ impl Connection {
                             _ => None,
                         });
                         if let Some(p) = prepared_statement {
-                            self.reprepare(p.get_statement(), p).await?;
+                            self.reprepare(p.get_statement(), p, deadline).await?;
                             continue;
                         } else {
                             return Err(QueryError::ProtocolError(
@@ -741,7 +812,7 @@ impl Connection {
         };
 
         match self
-            .send_request(&register_frame, true, false)
+            .send_request(&register_frame, true, false, None)
             .await?
             .response
         {
@@ -776,6 +847,7 @@ impl Connection {
         request: &R,
         compress: bool,
         tracing: bool,
+        deadline: Option<Instant>,
     ) -> Result<QueryResponse, QueryError> {
         let compression = if compress {
             self.config.compression
@@ -789,6 +861,7 @@ impl Connection {
         let response_handler = ResponseHandler {
             response_sender,
             request_id,
+            deadline,
         };
 
         // Dropping `notifier` (before calling `notifier.disable()`) will send a notification to
@@ -925,8 +998,9 @@ impl Connection {
             receiver,
         );
         let o = Self::orphaner(&handler_map, orphan_notification_receiver);
+        let t = Self::timeouter(&handler_map);
 
-        let result = futures::try_join!(r, w, o);
+        let result = futures::try_join!(r, w, o, t);
 
         let error: QueryError = match result {
             Ok(_) => return, // Connection was dropped, we can return
@@ -1065,6 +1139,47 @@ impl Connection {
         }
 
         Ok(())
+    }
+
+    // This future enforces driver-side timeouts. It wakes as soon as some
+    // requests expire due to the timeout and sends a timeout error
+    // to the corresponding response handlers.
+    //
+    // The task sometimes wakes spuriously, but infrequently.
+    // See the comments in DeadlineTracker for more information.
+    async fn timeouter(handler_map: &StdMutex<ResponseHandlerMap>) -> Result<(), QueryError> {
+        loop {
+            // A propos handler_map_guard: we have a guarantee that the locks
+            // will succeed because the mutex is only locked on the current
+            // task.
+
+            // We are using poll_fn here in order to be able to poll the expiry
+            // timer inside the deadline tracker, as we cannot hold the mutex
+            // across suspension points.
+            futures::future::poll_fn(|cx| -> Poll<()> {
+                // Wait until the deadline of the first request in the queue elapses
+                let mut handler_map_guard = handler_map.try_lock().unwrap();
+                handler_map_guard.deadline_tracker.poll_expiry_timer(cx)
+            })
+            .await;
+
+            let mut handler_map_guard = handler_map.try_lock().unwrap();
+
+            // Elapse some of the requests
+            let to_elapse = handler_map_guard
+                .deadline_tracker
+                .elapse_some(Instant::now());
+            tracing::debug!("Timing out {} requests", to_elapse.len());
+
+            for request_id in to_elapse {
+                if let Some(handler) = handler_map_guard.orphan(request_id) {
+                    // Ignore sending error, request was dropped
+                    let _ = handler.response_sender.send(Err(QueryError::RequestTimeout(
+                        "request timed out".to_string(), // TODO: include information about deadline?
+                    )));
+                }
+            }
+        }
     }
 
     // This task receives notifications from `OrphanhoodNotifier`s and tries to
@@ -1319,6 +1434,120 @@ async fn connect_with_source_port(
     }
 }
 
+struct DeadlineTracker {
+    /// A queue of in-flight requests which have not expired yet.
+    deadlines: BTreeSet<(Instant, RequestId)>,
+
+    /// When it resolves, the deadline tracker should inspect the `deadlines`
+    /// queue and expire some timers.
+    ///
+    /// The timer is armed to expire at the moment of the earliest deadline
+    /// of any of the in-flight requests, but arming is actually done
+    /// only in the following cases:
+    ///
+    /// - The request which was just sent has an earlier deadline than
+    ///   the timer, or the timer was unset,
+    /// - The timer has expired and there are still some unexpired requests.
+    ///
+    /// The goal of this is to limit the amount of internal Tokio timer
+    /// scheduling/rescheduling/canceling. We found out that under very high
+    /// concurrency doing those operations limit scalability and it was
+    /// a problem when we tried to use tokio::time::timeout for every single
+    /// request.
+    ///
+    /// The above scheme works well in the optimistic scenario where timeouts
+    /// are rare - on average, it should schedule a timer every with a period
+    /// of the request timeout minus request latency - this is because when
+    /// the timer expires, it will reschedule itself at the earliest non-expired
+    /// request which should be around `timeout - latency` from now.
+    expiry_timer: ArmableTimer,
+}
+
+impl DeadlineTracker {
+    /// Creates an empty deadline tracker.
+    pub fn new() -> Self {
+        Self {
+            deadlines: BTreeSet::new(),
+            expiry_timer: ArmableTimer::new(),
+        }
+    }
+
+    /// Resolves at some point of time between now and right after the first
+    /// deadline. If there are no requests queued, it will resolve right after
+    /// the earliest yet-to-be-added deadline.
+    ///
+    /// The function is not a future but rather a poll function so that
+    /// it is possible to await for this event when the DeadlineTracker
+    /// is behind a mutex, without having to keep the mutex held.
+    pub fn poll_expiry_timer(&mut self, cx: &mut Context<'_>) -> Poll<()> {
+        use std::future::Future;
+        std::pin::Pin::new(&mut self.expiry_timer).poll(cx)
+    }
+
+    /// Returns a vector of IDs of requests that have elapsed and should be
+    /// notified about timing out. Updates the expiry timer.
+    pub fn elapse_some(&mut self, now: Instant) -> Vec<RequestId> {
+        // For simplicity, we are using Vec. Optimistically, it will be empty
+        // most of the time and incur no allocations. Moreover, doing it
+        // like this lets us avoid lifetime issues and lets us update
+        // the expire timer here only once after dismissing all
+        // expired requests.
+        let mut ret = Vec::new();
+        loop {
+            match self.deadlines.iter().next().cloned() {
+                Some(p @ (deadline, request_id)) if deadline <= now => {
+                    ret.push(request_id);
+                    self.deadlines.remove(&p);
+                }
+                Some((deadline, _)) => {
+                    // Set the expiry timer to the earliest deadline
+                    self.set_expiry_timer(deadline);
+                    break;
+                }
+                None => {
+                    // No requests in the queue, so no deadline to set
+                    break;
+                }
+            }
+        }
+        ret
+    }
+
+    /// Adds a request to the queue. May update the expiry time if needed.
+    pub fn add_request(&mut self, response_handler: &ResponseHandler) {
+        if let Some(request_deadline) = response_handler.deadline {
+            self.deadlines
+                .insert((request_deadline, response_handler.request_id));
+
+            // If the new deadline is earlier than the timer, we need to update
+            // the expiry timer
+            let current_deadline = self.expiry_timer.deadline();
+            if current_deadline.map_or(true, |current| current > request_deadline) {
+                self.set_expiry_timer(request_deadline);
+            }
+        }
+    }
+
+    /// Removes the request from the queue.
+    pub fn remove_request(&mut self, response_handler: &ResponseHandler) {
+        if let Some(deadline) = response_handler.deadline {
+            self.deadlines
+                .remove(&(deadline, response_handler.request_id));
+
+            // No need to update the deadline here
+        }
+    }
+
+    fn set_expiry_timer(&mut self, new_deadline: Instant) {
+        tracing::trace!(
+            "Setting new timeouter wakeup time to {:?}, previous was {:?}",
+            new_deadline,
+            self.expiry_timer.deadline(),
+        );
+        self.expiry_timer.arm(new_deadline);
+    }
+}
+
 struct OrphanageTracker {
     orphans: HashMap<i16, Instant>,
     by_orphaning_times: BTreeSet<(Instant, i16)>,
@@ -1364,6 +1593,7 @@ struct ResponseHandlerMap {
     handlers: HashMap<i16, ResponseHandler>,
 
     request_to_stream: HashMap<RequestId, i16>,
+    deadline_tracker: DeadlineTracker,
     orphanage_tracker: OrphanageTracker,
 }
 
@@ -1379,6 +1609,7 @@ impl ResponseHandlerMap {
             stream_set: StreamIdSet::new(),
             handlers: HashMap::new(),
             request_to_stream: HashMap::new(),
+            deadline_tracker: DeadlineTracker::new(),
             orphanage_tracker: OrphanageTracker::new(),
         }
     }
@@ -1387,6 +1618,7 @@ impl ResponseHandlerMap {
         if let Some(stream_id) = self.stream_set.allocate() {
             self.request_to_stream
                 .insert(response_handler.request_id, stream_id);
+            self.deadline_tracker.add_request(&response_handler);
             let prev_handler = self.handlers.insert(stream_id, response_handler);
             assert!(prev_handler.is_none());
 
@@ -1398,16 +1630,20 @@ impl ResponseHandlerMap {
 
     // Orphan stream_id (associated with this request_id) by moving it to
     // `orphanage_tracker`, and freeing its handler
-    pub fn orphan(&mut self, request_id: RequestId) {
-        if let Some(stream_id) = self.request_to_stream.get(&request_id) {
+    pub fn orphan(&mut self, request_id: RequestId) -> Option<ResponseHandler> {
+        if let Some(stream_id) = self.request_to_stream.get(&request_id).cloned() {
             debug!(
                 "Orphaning stream_id = {} associated with request_id = {}",
                 stream_id, request_id
             );
-            self.orphanage_tracker.insert(*stream_id);
-            self.handlers.remove(stream_id);
+            self.orphanage_tracker.insert(stream_id);
             self.request_to_stream.remove(&request_id);
+            if let Some(handler) = self.handlers.remove(&stream_id) {
+                self.deadline_tracker.remove_request(&handler);
+                return Some(handler);
+            }
         }
+        None
     }
 
     pub fn old_orphans_count(&self) -> usize {
@@ -1430,6 +1666,7 @@ impl ResponseHandlerMap {
             // prevent marking this `stream_id` as orphaned by some late
             // orphan notification.
             self.request_to_stream.remove(&handler.request_id);
+            self.deadline_tracker.remove_request(&handler);
 
             HandlerLookupResult::Handler(handler)
         } else {
