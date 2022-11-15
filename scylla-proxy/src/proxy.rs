@@ -60,12 +60,32 @@ impl ShardAwareness {
     }
 }
 
+/// Node can be either Real (truly backed by a Scylla node) or Simulated
+/// (driver believes it's real, but we merely simulate it with the proxy).
+/// In Simulated mode, no node address is provided and proxy does not attempt
+/// to establish connection with a Scylla node.
+///
+/// For Real node, all workers are created, so such frame flow is possible:
+/// [driver] -> receiver_from_driver -> requests_processor -> sender_to_cluster -> [node] (ordinary request flow)
+///                                        |                    /\
+///     (forging response) ++--------------+      +-------------++ (forging request)
+///                        \/                     |
+/// [driver] <- sender_to_driver <- response_processor <- receiver_from_cluster <- [node] (ordinary response flow)
+///
+/// For Simulated node, it looks like this:
+/// [driver] -> receiver_from_driver -> requests_processor -+
+///                                                         |   (forging response)
+/// [driver] <- sender_to_driver <--------------------------+
+///
+/// For Real node, the default reaction to a frame is to pass it to its intended addresse.
+/// For Simulated node, the default reaction to a request is to drop it.
 enum NodeType {
     Real {
         real_addr: SocketAddr,
         shard_awareness: ShardAwareness,
         response_rules: Option<Vec<ResponseRule>>,
     },
+    Simulated,
 }
 
 pub struct Node {
@@ -91,6 +111,15 @@ impl Node {
                 shard_awareness,
                 response_rules,
             },
+        }
+    }
+
+    /// Creates a simulated node that is not backed by any real Scylla node.
+    pub fn new_dry_mode(proxy_addr: SocketAddr, request_rules: Option<Vec<RequestRule>>) -> Self {
+        Self {
+            proxy_addr,
+            request_rules,
+            node_type: NodeType::Simulated,
         }
     }
 
@@ -151,6 +180,15 @@ impl NodeBuilder {
             },
         }
     }
+
+    /// Creates a simulated node that is not backed by any real Scylla node.
+    pub fn build_dry_mode(self) -> Node {
+        Node {
+            proxy_addr: self.proxy_addr.expect("Proxy addr is required!"),
+            request_rules: self.request_rules,
+            node_type: NodeType::Simulated,
+        }
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -160,7 +198,7 @@ impl Display for DisplayableRealAddrOption {
         if let Some(addr) = self.0 {
             write!(f, "{}", addr)
         } else {
-            unimplemented!()
+            write!(f, "<dry mode>")
         }
     }
 }
@@ -173,22 +211,29 @@ enum InternalNode {
         request_rules: Arc<Mutex<Vec<RequestRule>>>,
         response_rules: Arc<Mutex<Vec<ResponseRule>>>,
     },
+    Simulated {
+        proxy_addr: SocketAddr,
+        request_rules: Arc<Mutex<Vec<RequestRule>>>,
+    },
 }
 
 impl InternalNode {
     fn proxy_addr(&self) -> SocketAddr {
         match *self {
             InternalNode::Real { proxy_addr, .. } => proxy_addr,
+            InternalNode::Simulated { proxy_addr, .. } => proxy_addr,
         }
     }
     fn real_addr(&self) -> Option<SocketAddr> {
         match *self {
             InternalNode::Real { real_addr, .. } => Some(real_addr),
+            InternalNode::Simulated { .. } => None,
         }
     }
     fn request_rules(&self) -> &Arc<Mutex<Vec<RequestRule>>> {
         match self {
             InternalNode::Real { request_rules, .. } => request_rules,
+            InternalNode::Simulated { request_rules, .. } => request_rules,
         }
     }
 }
@@ -209,6 +254,13 @@ impl From<Node> for InternalNode {
                     .map(|rules| Arc::new(Mutex::new(rules)))
                     .unwrap_or_default(),
                 response_rules: response_rules
+                    .map(|rules| Arc::new(Mutex::new(rules)))
+                    .unwrap_or_default(),
+            },
+            NodeType::Simulated => InternalNode::Simulated {
+                proxy_addr: node.proxy_addr,
+                request_rules: node
+                    .request_rules
                     .map(|rules| Arc::new(Mutex::new(rules)))
                     .unwrap_or_default(),
             },
@@ -252,7 +304,6 @@ impl Proxy {
     pub fn translation_map(&self) -> HashMap<SocketAddr, SocketAddr> {
         let mut translation_map = HashMap::new();
         for node in self.nodes.iter() {
-            #[allow(irrefutable_let_patterns)]
             if let &InternalNode::Real {
                 real_addr,
                 proxy_addr,
@@ -283,6 +334,9 @@ impl Proxy {
                             ref response_rules,
                             ..
                         } => (request_rules, Some(response_rules)),
+                        InternalNode::Simulated {
+                            ref request_rules, ..
+                        } => (request_rules, None),
                     };
                     RunningNode {
                         request_rules: request_rules.clone(),
@@ -432,24 +486,27 @@ impl Doorkeeper {
             .await
             .map_err(|err| DoorkeeperError::DriverConnectionAttempt(node.proxy_addr(), err))?;
 
-        #[allow(irrefutable_let_patterns)]
         if let InternalNode::Real {
             shard_awareness,
             real_addr,
             ..
         } = node
         {
-            let doorkeeper_type = if shard_awareness.is_aware() {
-                "shard-aware"
-            } else {
-                "shard-unaware"
-            };
             info!(
                 "Spawned a {} doorkeeper for pair real:{} - proxy:{}.",
-                doorkeeper_type,
+                if shard_awareness.is_aware() {
+                    "shard-aware"
+                } else {
+                    "shard-unaware"
+                },
                 real_addr,
                 node.proxy_addr(),
             );
+        } else {
+            info!(
+                "Spawned a dry-mode doorkeeper for proxy:{}.",
+                node.proxy_addr(),
+            )
         };
 
         let doorkeeper = Doorkeeper {
@@ -543,8 +600,6 @@ impl Doorkeeper {
             self.node.request_rules().clone(),
             connection_close_tx.clone(),
         ));
-
-        #[allow(irrefutable_let_patterns)]
         if let InternalNode::Real {
             ref response_rules, ..
         } = self.node
@@ -588,6 +643,7 @@ impl Doorkeeper {
                 self.make_cluster_stream(driver_addr, real_addr, shard_awareness)
                     .await?,
             ),
+            InternalNode::Simulated { .. } => None,
         };
 
         self.spawn_workers(
@@ -1088,7 +1144,7 @@ impl ProxyWorker {
                                         // close connection.
                                         info!(
                                             "Dropping connection between {} and {} (as requested by a proxy rule)!"
-                                        , driver_addr, DisplayableRealAddrOption(real_addr));
+                                        , driver_addr, real_addr.expect("BUG: response rules are unavailable for dry-mode proxy!"));
                                         let _ = connection_close_signaler_clone.send(());
                                     }
                                 };
