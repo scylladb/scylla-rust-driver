@@ -17,12 +17,12 @@ pub struct CachingSession<S = RandomState>
 where
     S: Clone + BuildHasher,
 {
-    pub session: Session,
+    session: Session,
     /// The prepared statement cache size
     /// If a prepared statement is added while the limit is reached, the oldest prepared statement
     /// is removed from the cache
-    pub max_capacity: usize,
-    pub cache: DashMap<String, PreparedStatement, S>,
+    max_capacity: usize,
+    cache: DashMap<String, PreparedStatement, S>,
 }
 
 impl<S> CachingSession<S>
@@ -165,6 +165,14 @@ where
 
             Ok(prepared)
         }
+    }
+
+    pub fn get_max_capacity(&self) -> usize {
+        self.max_capacity
+    }
+
+    pub fn get_session(&self) -> &Session {
+        &self.session
     }
 }
 
