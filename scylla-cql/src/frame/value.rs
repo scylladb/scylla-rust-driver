@@ -99,21 +99,6 @@ pub trait ValueList {
     }
 }
 
-/// Represents List of ValueList for Batch statement
-pub trait BatchValues {
-    fn len(&self) -> usize;
-
-    fn write_nth_to_request(
-        &self,
-        n: usize,
-        buf: &mut impl BufMut,
-    ) -> Result<(), SerializeValuesError>;
-
-    fn is_empty(&self) -> bool {
-        self.len() == 0
-    }
-}
-
 impl SerializedValues {
     /// Creates empty value list
     pub const fn new() -> Self {
@@ -227,6 +212,74 @@ impl<'a> Iterator for SerializedValuesIterator<'a> {
         }
 
         Some(types::read_bytes_opt(&mut self.serialized_values).expect("badly encoded value"))
+    }
+}
+
+/// Represents List of ValueList for Batch statement
+///
+/// This trait is not implemented directly, but rather implemented through `BatchValuesGatWorkaround`
+/// (until GATs are made available in Rust)
+pub trait BatchValues: for<'r> BatchValuesGatWorkaround<'r> {}
+impl<T: for<'r> BatchValuesGatWorkaround<'r> + ?Sized> BatchValues for T {}
+
+pub trait BatchValuesGatWorkaround<'r, ImplicitBounds = &'r Self> {
+    type BatchValuesIter: BatchValuesIterator<'r>;
+    fn batch_values_iter(&'r self) -> Self::BatchValuesIter;
+}
+
+/// An iterator-like for `ValueList`
+///
+/// An instance of this can be easily obtained from `IT: Iterator<Item: ValueList>`: that would be
+/// `BatchValuesIteratorFromIterator<IT>`
+///
+/// It's just essentially making methods from `ValueList` accessible instead of being an actual iterator because of
+/// several compiler limitations that would otherwise be very complex to overcome.\
+/// (specifically, types being different would require yielding enums for tuple impls, and the trait
+/// bound of `for<'r> <BatchValuesGatWorkaround<'r>::BatchValuesIter as Iterator>::Item: ValueList` is very
+/// hard to express considering several compiler limitations)
+pub trait BatchValuesIterator<'a> {
+    fn next_serialized(&mut self) -> Option<SerializedResult<'a>>;
+    fn write_next_to_request(
+        &mut self,
+        buf: &mut impl BufMut,
+    ) -> Option<Result<(), SerializeValuesError>>;
+    fn skip_next(&mut self) -> Option<()>;
+}
+
+/// Implements `BatchValuesIterator` from an `Iterator` over things that implement `ValueList`
+///
+/// Essentially used internally by this lib to provide implementors of `BatchValuesIterator` for cases
+/// that always serialize the same concrete `ValueList` type
+pub struct BatchValuesIteratorFromIterator<IT: Iterator> {
+    it: IT,
+}
+
+impl<'r, 'a: 'r, IT, VL> BatchValuesIterator<'r> for BatchValuesIteratorFromIterator<IT>
+where
+    IT: Iterator<Item = &'a VL>,
+    VL: ValueList + 'a,
+{
+    fn next_serialized(&mut self) -> Option<SerializedResult<'r>> {
+        self.it.next().map(|vl| vl.serialized())
+    }
+    fn write_next_to_request(
+        &mut self,
+        buf: &mut impl BufMut,
+    ) -> Option<Result<(), SerializeValuesError>> {
+        self.it.next().map(|vl| vl.write_to_request(buf))
+    }
+    fn skip_next(&mut self) -> Option<()> {
+        self.it.next().map(|_| ())
+    }
+}
+
+impl<IT> From<IT> for BatchValuesIteratorFromIterator<IT>
+where
+    IT: Iterator,
+    IT::Item: ValueList,
+{
+    fn from(it: IT) -> Self {
+        BatchValuesIteratorFromIterator { it }
     }
 }
 
@@ -812,78 +865,131 @@ impl<'b> ValueList for Cow<'b, SerializedValues> {
 // BatchValues impls
 //
 
-// Implement BatchValues for slices of ValueList types
-impl<T: ValueList> BatchValues for &[T] {
-    fn len(&self) -> usize {
-        <[T]>::len(self)
-    }
+/// Implements `BatchValues` from an `Iterator` over references to things that implement `ValueList`
+///
+/// This is to avoid requiring allocating a new `Vec` containing all the `ValueList`s directly:
+/// with this, one can write:
+/// `session.batch(&batch, BatchValuesFromIterator::from(lines_to_insert.iter().map(|l| &l.value_list)))`
+/// where `lines_to_insert` may also contain e.g. data to pick the statement...
+///
+/// The underlying iterator will always be cloned at least once, once to compute the length if it can't be known
+/// in advance, and be re-cloned at every retry.
+/// It is consequently expected that the provided iterator is cheap to clone (e.g. `slice.iter().map(...)`).
+pub struct BatchValuesFromIter<IT> {
+    it: IT,
+}
 
-    fn write_nth_to_request(
-        &self,
-        n: usize,
-        buf: &mut impl BufMut,
-    ) -> Result<(), SerializeValuesError> {
-        self[n].write_to_request(buf)?;
-        Ok(())
+impl<'a, IT, VL> BatchValuesFromIter<IT>
+where
+    IT: Iterator<Item = &'a VL> + Clone,
+    VL: ValueList + 'a,
+{
+    pub fn new(into_iter: impl IntoIterator<IntoIter = IT>) -> Self {
+        Self {
+            it: into_iter.into_iter(),
+        }
+    }
+}
+
+impl<IT> From<IT> for BatchValuesFromIter<IT>
+where
+    IT: Iterator + Clone,
+    IT::Item: ValueList,
+{
+    fn from(it: IT) -> Self {
+        Self { it }
+    }
+}
+
+impl<'r, 'a: 'r, IT, VL> BatchValuesGatWorkaround<'r> for BatchValuesFromIter<IT>
+where
+    IT: Iterator<Item = &'a VL> + Clone,
+    VL: ValueList + 'a,
+{
+    type BatchValuesIter = BatchValuesIteratorFromIterator<IT>;
+    fn batch_values_iter(&'r self) -> Self::BatchValuesIter {
+        self.it.clone().into()
+    }
+}
+
+// Implement BatchValues for slices of ValueList types
+impl<'r, T: ValueList> BatchValuesGatWorkaround<'r> for [T] {
+    type BatchValuesIter = BatchValuesIteratorFromIterator<std::slice::Iter<'r, T>>;
+    fn batch_values_iter(&'r self) -> Self::BatchValuesIter {
+        self.iter().into()
     }
 }
 
 // Implement BatchValues for Vec<ValueList>
-impl<T: ValueList> BatchValues for Vec<T> {
-    fn len(&self) -> usize {
-        Vec::<T>::len(self)
-    }
-
-    fn write_nth_to_request(
-        &self,
-        n: usize,
-        buf: &mut impl BufMut,
-    ) -> Result<(), SerializeValuesError> {
-        self[n].write_to_request(buf)?;
-        Ok(())
+impl<'r, T: ValueList> BatchValuesGatWorkaround<'r> for Vec<T> {
+    type BatchValuesIter = BatchValuesIteratorFromIterator<std::slice::Iter<'r, T>>;
+    fn batch_values_iter(&'r self) -> Self::BatchValuesIter {
+        BatchValuesGatWorkaround::batch_values_iter(self.as_slice())
     }
 }
 
 // Here is an example implementation for (T0, )
 // Further variants are done using a macro
-impl<T0: ValueList> BatchValues for (T0,) {
-    fn len(&self) -> usize {
-        1
-    }
-
-    fn write_nth_to_request(
-        &self,
-        n: usize,
-        buf: &mut impl BufMut,
-    ) -> Result<(), SerializeValuesError> {
-        match n {
-            0 => self.0.write_to_request(buf)?,
-            _ => panic!("Tried to serialize ValueList with an out of range index! index: {}, ValueList len: {}", n, 1),
-        };
-
-        Ok(())
+impl<'r, T0: ValueList> BatchValuesGatWorkaround<'r> for (T0,) {
+    type BatchValuesIter = BatchValuesIteratorFromIterator<std::iter::Once<&'r T0>>;
+    fn batch_values_iter(&'r self) -> Self::BatchValuesIter {
+        std::iter::once(&self.0).into()
     }
 }
 
+pub struct TupleValuesIter<'a, T> {
+    tuple: &'a T,
+    idx: usize,
+}
+
 macro_rules! impl_batch_values_for_tuple {
-    ( $($Ti:ident),* ; $($FieldI:tt),* ; $TupleSize:tt ) => {
-        impl<$($Ti),+> BatchValues for ($($Ti,)+)
+    ( $($Ti:ident),* ; $($FieldI:tt),* ; $TupleSize:tt) => {
+        impl<'r, $($Ti),+> BatchValuesGatWorkaround<'r> for ($($Ti,)+)
         where
-        $($Ti: ValueList),+
+            $($Ti: ValueList),+
         {
-            fn len(&self) -> usize{
-                $TupleSize
-            }
-
-            fn write_nth_to_request(&self, n: usize, buf: &mut impl BufMut) -> Result<(), SerializeValuesError> {
-                match n {
-                    $(
-                        $FieldI => self.$FieldI.write_to_request(buf) ?,
-                    )*
-                    _ => panic!("Tried to serialize ValueList with an out of range index! index: {}, ValueList len: {}", n, $TupleSize),
+            type BatchValuesIter = TupleValuesIter<'r, ($($Ti,)+)>;
+            fn batch_values_iter(&'r self) -> Self::BatchValuesIter {
+                TupleValuesIter {
+                    tuple: self,
+                    idx: 0,
                 }
-
-                Ok(())
+            }
+        }
+        impl<'r, $($Ti),+> BatchValuesIterator<'r> for TupleValuesIter<'r, ($($Ti,)+)>
+        where
+            $($Ti: ValueList),+
+        {
+            fn next_serialized(&mut self) -> Option<SerializedResult<'r>> {
+                let serialized_value_res = match self.idx {
+                    $(
+                        $FieldI => self.tuple.$FieldI.serialized(),
+                    )*
+                    _ => return None,
+                };
+                self.idx += 1;
+                Some(serialized_value_res)
+            }
+            fn write_next_to_request(
+                &mut self,
+                buf: &mut impl BufMut,
+            ) -> Option<Result<(), SerializeValuesError>> {
+                let ret = match self.idx {
+                    $(
+                        $FieldI => self.tuple.$FieldI.write_to_request(buf),
+                    )*
+                    _ => return None,
+                };
+                self.idx += 1;
+                Some(ret)
+            }
+            fn skip_next(&mut self) -> Option<()> {
+                if self.idx < $TupleSize {
+                    self.idx += 1;
+                    Some(())
+                } else {
+                    None
+                }
             }
         }
     }
@@ -913,17 +1019,71 @@ impl_batch_values_for_tuple!(T0, T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, T
                              0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15; 16);
 
 // Every &impl BatchValues should also implement BatchValues
-impl<T: BatchValues> BatchValues for &T {
-    fn len(&self) -> usize {
-        <T as BatchValues>::len(*self)
+impl<'a, 'r, T: BatchValues + ?Sized> BatchValuesGatWorkaround<'r> for &'a T {
+    type BatchValuesIter = <T as BatchValuesGatWorkaround<'r>>::BatchValuesIter;
+    fn batch_values_iter(&'r self) -> Self::BatchValuesIter {
+        <T as BatchValuesGatWorkaround<'r>>::batch_values_iter(*self)
     }
+}
 
-    fn write_nth_to_request(
-        &self,
-        n: usize,
+/// Allows reusing already-serialized first value
+///
+/// We'll need to build a `SerializedValues` for the first ~`ValueList` of a batch to figure out the shard (#448).
+/// Once that is done, we can use that instead of re-serializing.
+///
+/// This struct implements both `BatchValues` and `BatchValuesIterator` for that purpose
+pub struct BatchValuesFirstSerialized<'f, T> {
+    first: Option<&'f SerializedValues>,
+    rest: T,
+}
+
+impl<'f, T: BatchValues> BatchValuesFirstSerialized<'f, T> {
+    pub fn new(batch_values: T, already_serialized_first: Option<&'f SerializedValues>) -> Self {
+        Self {
+            first: already_serialized_first,
+            rest: batch_values,
+        }
+    }
+}
+
+impl<'r, 'f, BV: BatchValues> BatchValuesGatWorkaround<'r> for BatchValuesFirstSerialized<'f, BV> {
+    type BatchValuesIter =
+        BatchValuesFirstSerialized<'f, <BV as BatchValuesGatWorkaround<'r>>::BatchValuesIter>;
+    fn batch_values_iter(&'r self) -> Self::BatchValuesIter {
+        BatchValuesFirstSerialized {
+            first: self.first,
+            rest: self.rest.batch_values_iter(),
+        }
+    }
+}
+
+impl<'a, 'f: 'a, IT: BatchValuesIterator<'a>> BatchValuesIterator<'a>
+    for BatchValuesFirstSerialized<'f, IT>
+{
+    fn next_serialized(&mut self) -> Option<SerializedResult<'a>> {
+        match self.first.take() {
+            Some(first) => {
+                self.rest.skip_next();
+                Some(Ok(Cow::Borrowed(first)))
+            }
+            None => self.rest.next_serialized(),
+        }
+    }
+    fn write_next_to_request(
+        &mut self,
         buf: &mut impl BufMut,
-    ) -> Result<(), SerializeValuesError> {
-        <T as BatchValues>::write_nth_to_request(*self, n, buf)?;
-        Ok(())
+    ) -> Option<Result<(), SerializeValuesError>> {
+        match self.first.take() {
+            Some(first) => {
+                self.rest.skip_next();
+                first.write_to_request(buf);
+                Some(Ok(()))
+            }
+            None => self.rest.write_next_to_request(buf),
+        }
+    }
+    fn skip_next(&mut self) -> Option<()> {
+        self.rest.skip_next();
+        self.first.take().map(|_| ())
     }
 }

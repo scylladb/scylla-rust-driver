@@ -1,4 +1,4 @@
-use crate::frame::frame_errors::ParseError;
+use crate::frame::{frame_errors::ParseError, value::BatchValuesIterator};
 use bytes::{BufMut, Bytes};
 use std::convert::TryInto;
 
@@ -54,9 +54,35 @@ where
         // Serializing queries
         types::write_short(self.statements_count.try_into()?, buf);
 
-        for (statement_num, statement) in self.statements.clone().enumerate() {
+        let counts_mismatch_err = |n_values: usize, n_statements: usize| {
+            ParseError::BadDataToSerialize(format!(
+                "Length of provided values must be equal to number of batch statements \
+                    (got {n_values} values, {n_statements} statements)"
+            ))
+        };
+        let mut n_serialized_statements = 0usize;
+        let mut value_lists = self.values.batch_values_iter();
+        for (idx, statement) in self.statements.clone().enumerate() {
             statement.serialize(buf)?;
-            self.values.write_nth_to_request(statement_num, buf)?;
+            value_lists
+                .write_next_to_request(buf)
+                .ok_or_else(|| counts_mismatch_err(idx, self.statements.clone().count()))??;
+            n_serialized_statements += 1;
+        }
+        if value_lists.skip_next().is_some() {
+            return Err(counts_mismatch_err(
+                std::iter::from_fn(|| value_lists.skip_next()).count() + 1,
+                n_serialized_statements,
+            ));
+        }
+        if n_serialized_statements != self.statements_count {
+            // We want to check this to avoid propagating an invalid construction of self.statements_count as a
+            // hard-to-debug silent fail
+            return Err(ParseError::BadDataToSerialize(format!(
+                "Invalid Batch constructed: not as many statements serialized as announced \
+                    (batch.statement_count: {announced_statement_count}, {n_serialized_statements}",
+                announced_statement_count = self.statements_count
+            )));
         }
 
         // Serializing consistency

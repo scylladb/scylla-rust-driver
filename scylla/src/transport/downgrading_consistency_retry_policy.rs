@@ -275,7 +275,11 @@ mod tests {
             }
 
             downgrading_consistency_policy_assert_never_retries(
-                QueryError::BadQuery(BadQuery::ValueLenMismatch(1, 2)),
+                QueryError::BadQuery(BadQuery::Other(
+                    "Length of provided values must be equal to number of batch statements \
+                        (got 1 values, 2 statements)"
+                        .to_owned(),
+                )),
                 cl,
             );
             downgrading_consistency_policy_assert_never_retries(

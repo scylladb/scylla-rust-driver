@@ -1,3 +1,5 @@
+use crate::frame::value::{BatchValuesGatWorkaround, BatchValuesIterator};
+
 use super::value::{
     BatchValues, Date, MaybeUnset, SerializeValuesError, SerializedValues, Time, Timestamp, Unset,
     Value, ValueList, ValueTooBig,
@@ -403,18 +405,16 @@ fn cow_serialized_values_value_list() {
 #[test]
 fn slice_batch_values() {
     let batch_values: &[&[i8]] = &[&[1, 2], &[2, 3, 4, 5], &[6]];
-
-    assert_eq!(<&[&[i8]] as BatchValues>::len(&batch_values), 3);
-
+    let mut it = batch_values.batch_values_iter();
     {
         let mut request: Vec<u8> = Vec::new();
-        batch_values.write_nth_to_request(0, &mut request).unwrap();
+        it.write_next_to_request(&mut request).unwrap().unwrap();
         assert_eq!(request, vec![0, 2, 0, 0, 0, 1, 1, 0, 0, 0, 1, 2]);
     }
 
     {
         let mut request: Vec<u8> = Vec::new();
-        batch_values.write_nth_to_request(1, &mut request).unwrap();
+        it.write_next_to_request(&mut request).unwrap().unwrap();
         assert_eq!(
             request,
             vec![0, 4, 0, 0, 0, 1, 2, 0, 0, 0, 1, 3, 0, 0, 0, 1, 4, 0, 0, 0, 1, 5]
@@ -423,26 +423,27 @@ fn slice_batch_values() {
 
     {
         let mut request: Vec<u8> = Vec::new();
-        batch_values.write_nth_to_request(2, &mut request).unwrap();
+        it.write_next_to_request(&mut request).unwrap().unwrap();
         assert_eq!(request, vec![0, 1, 0, 0, 0, 1, 6]);
     }
+
+    assert_eq!(it.write_next_to_request(&mut Vec::new()), None);
 }
 
 #[test]
 fn vec_batch_values() {
     let batch_values: Vec<Vec<i8>> = vec![vec![1, 2], vec![2, 3, 4, 5], vec![6]];
 
-    assert_eq!(<Vec<Vec<i8>> as BatchValues>::len(&batch_values), 3);
-
+    let mut it = batch_values.batch_values_iter();
     {
         let mut request: Vec<u8> = Vec::new();
-        batch_values.write_nth_to_request(0, &mut request).unwrap();
+        it.write_next_to_request(&mut request).unwrap().unwrap();
         assert_eq!(request, vec![0, 2, 0, 0, 0, 1, 1, 0, 0, 0, 1, 2]);
     }
 
     {
         let mut request: Vec<u8> = Vec::new();
-        batch_values.write_nth_to_request(1, &mut request).unwrap();
+        it.write_next_to_request(&mut request).unwrap().unwrap();
         assert_eq!(
             request,
             vec![0, 4, 0, 0, 0, 1, 2, 0, 0, 0, 1, 3, 0, 0, 0, 1, 4, 0, 0, 0, 1, 5]
@@ -451,7 +452,7 @@ fn vec_batch_values() {
 
     {
         let mut request: Vec<u8> = Vec::new();
-        batch_values.write_nth_to_request(2, &mut request).unwrap();
+        it.write_next_to_request(&mut request).unwrap().unwrap();
         assert_eq!(request, vec![0, 1, 0, 0, 0, 1, 6]);
     }
 }
@@ -459,11 +460,10 @@ fn vec_batch_values() {
 #[test]
 fn tuple_batch_values() {
     fn check_twoi32_tuple(tuple: impl BatchValues, size: usize) {
-        assert_eq!(tuple.len(), size);
-
+        let mut it = tuple.batch_values_iter();
         for i in 0..size {
             let mut request: Vec<u8> = Vec::new();
-            tuple.write_nth_to_request(i, &mut request).unwrap();
+            it.write_next_to_request(&mut request).unwrap().unwrap();
 
             let mut expected: Vec<u8> = Vec::new();
             let i: i32 = i.try_into().unwrap();
@@ -647,15 +647,51 @@ fn tuple_batch_values() {
 }
 
 #[test]
+#[allow(clippy::needless_borrow)]
 fn ref_batch_values() {
     let batch_values: &[&[i8]] = &[&[1, 2], &[2, 3, 4, 5], &[6]];
 
-    assert_eq!(<&&&&[&[i8]] as BatchValues>::len(&&&&batch_values), 3);
+    return check_ref_bv::<&&&&&[&[i8]]>(&&&&batch_values);
+    fn check_ref_bv<B: BatchValues>(batch_values: B) {
+        let mut it = <B as BatchValuesGatWorkaround<'_>>::batch_values_iter(&batch_values);
 
-    {
         let mut request: Vec<u8> = Vec::new();
-        <&&&&[&[i8]] as BatchValues>::write_nth_to_request(&&&&batch_values, 0, &mut request)
-            .unwrap();
+        it.write_next_to_request(&mut request).unwrap().unwrap();
         assert_eq!(request, vec![0, 2, 0, 0, 0, 1, 1, 0, 0, 0, 1, 2]);
     }
+}
+
+#[test]
+#[allow(clippy::needless_borrow)]
+fn check_ref_tuple() {
+    fn assert_has_batch_values<BV: BatchValues>(bv: BV) {
+        let mut it = bv.batch_values_iter();
+        let mut request: Vec<u8> = Vec::new();
+        while let Some(res) = it.write_next_to_request(&mut request) {
+            res.unwrap()
+        }
+    }
+    let s = String::from("hello");
+    let tuple: ((&str,),) = ((&s,),);
+    assert_has_batch_values(&tuple);
+    let tuple2: ((&str, &str), (&str, &str)) = ((&s, &s), (&s, &s));
+    assert_has_batch_values(&tuple2);
+}
+
+#[test]
+fn check_batch_values_iterator_is_not_lending() {
+    // This is an interesting property if we want to improve the batch shard selection heuristic
+    fn f(bv: impl BatchValues) {
+        let mut it = bv.batch_values_iter();
+        let mut it2 = bv.batch_values_iter();
+        // Make sure we can hold all these at the same time
+        let v = vec![
+            it.next_serialized().unwrap().unwrap(),
+            it2.next_serialized().unwrap().unwrap(),
+            it.next_serialized().unwrap().unwrap(),
+            it2.next_serialized().unwrap().unwrap(),
+        ];
+        let _ = v;
+    }
+    f(((10,), (11,)))
 }
