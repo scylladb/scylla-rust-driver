@@ -4,12 +4,25 @@ use crate::prepared_statement::PreparedStatement;
 use crate::query::Query;
 use crate::transport::errors::QueryError;
 use crate::transport::iterator::RowIterator;
+use crate::transport::partitioner::PartitionerName;
 use crate::{QueryResult, Session};
 use bytes::Bytes;
 use dashmap::DashMap;
 use futures::future::try_join_all;
+use scylla_cql::frame::response::result::PreparedMetadata;
 use std::collections::hash_map::RandomState;
 use std::hash::BuildHasher;
+
+/// Contains just the parts of a prepared statement that were returned
+/// from the database. All remaining parts (query string, page size,
+/// consistency, etc.) are taken from the Query passed
+/// to the `CachingSession::execute` family of methods.
+#[derive(Debug)]
+struct RawPreparedStatementData {
+    pub id: Bytes,
+    pub metadata: PreparedMetadata,
+    pub partitioner_name: PartitionerName,
+}
 
 /// Provides auto caching while executing queries
 #[derive(Debug)]
@@ -22,7 +35,7 @@ where
     /// If a prepared statement is added while the limit is reached, the oldest prepared statement
     /// is removed from the cache
     max_capacity: usize,
-    cache: DashMap<String, PreparedStatement, S>,
+    cache: DashMap<String, RawPreparedStatementData, S>,
 }
 
 impl<S> CachingSession<S>
@@ -142,9 +155,16 @@ where
     ) -> Result<PreparedStatement, QueryError> {
         let query = query.into();
 
-        if let Some(prepared) = self.cache.get(&query.contents) {
-            // Clone, because else the value is mutably borrowed and the execute method gives a compile error
-            Ok(prepared.clone())
+        if let Some(raw) = self.cache.get(&query.contents) {
+            let mut stmt = PreparedStatement::new(
+                raw.id.clone(),
+                raw.metadata.clone(),
+                query.contents.clone(),
+                query.get_page_size(),
+                query.config.clone(),
+            );
+            stmt.set_partitioner_name(raw.partitioner_name.clone());
+            Ok(stmt)
         } else {
             let prepared = self.session.prepare(query.clone()).await?;
 
@@ -161,7 +181,12 @@ where
                 }
             }
 
-            self.cache.insert(query.contents.clone(), prepared.clone());
+            let raw = RawPreparedStatementData {
+                id: prepared.get_id().clone(),
+                metadata: prepared.get_prepared_metadata().clone(),
+                partitioner_name: prepared.get_partitioner_name().clone(),
+            };
+            self.cache.insert(query.contents.clone(), raw);
 
             Ok(prepared)
         }
@@ -178,6 +203,8 @@ where
 
 #[cfg(test)]
 mod tests {
+    use crate::query::Query;
+    use crate::transport::partitioner::PartitionerName;
     use crate::utils::test_utils::unique_keyspace_name;
     use crate::{
         batch::{Batch, BatchStatement},
@@ -476,5 +503,94 @@ mod tests {
             assert!(session.batch(&bad_batch, ((1, 2), (), (2,))).await.is_err());
             assert!(session.prepare_batch(&bad_batch).await.is_err());
         }
+    }
+
+    // The CachingSession::execute and friends should have the same StatementConfig
+    // and the page size as the Query provided as a parameter. It must not cache
+    // those parameters internally.
+    // Reproduces #597
+    #[tokio::test]
+    async fn test_parameters_caching() {
+        let session: CachingSession = CachingSession::from(new_for_test().await, 100);
+
+        session
+            .execute("CREATE TABLE tbl (a int PRIMARY KEY, b int)", ())
+            .await
+            .unwrap();
+
+        let q = Query::new("INSERT INTO tbl (a, b) VALUES (?, ?)");
+
+        // Insert one row with timestamp 1000
+        let mut q1 = q.clone();
+        q1.set_timestamp(Some(1000));
+
+        session
+            .execute(q1, (1, 1))
+            .await
+            .unwrap()
+            .result_not_rows()
+            .unwrap();
+
+        // Insert another row with timestamp 2000
+        let mut q2 = q.clone();
+        q2.set_timestamp(Some(2000));
+
+        session
+            .execute(q2, (2, 2))
+            .await
+            .unwrap()
+            .result_not_rows()
+            .unwrap();
+
+        // Fetch both rows with their timestamps
+        let mut rows = session
+            .execute("SELECT b, WRITETIME(b) FROM tbl", ())
+            .await
+            .unwrap()
+            .rows_typed_or_empty::<(i32, i64)>()
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
+
+        rows.sort();
+        assert_eq!(rows, vec![(1, 1000), (2, 2000)]);
+    }
+
+    // Checks whether the PartitionerName is cached properly.
+    #[tokio::test]
+    async fn test_partitioner_name_caching() {
+        if option_env!("CDC") == Some("disabled") {
+            return;
+        }
+
+        let session: CachingSession = CachingSession::from(new_for_test().await, 100);
+
+        session
+            .execute(
+                "CREATE TABLE tbl (a int PRIMARY KEY) with cdc = {'enabled': true}",
+                (),
+            )
+            .await
+            .unwrap();
+
+        session
+            .get_session()
+            .await_schema_agreement()
+            .await
+            .unwrap();
+
+        // This creates a query with default partitioner name (murmur hash),
+        // but after adding the statement it should be changed to the cdc
+        // partitioner. It should happen when the query is prepared
+        // and after it is fetched from the cache.
+        let verify_partitioner = || async {
+            let query = Query::new("SELECT * FROM tbl_scylla_cdc_log WHERE \"cdc$stream_id\" = ?");
+            let prepared = session.add_prepared_statement(&query).await.unwrap();
+            assert_eq!(prepared.get_partitioner_name(), &PartitionerName::CDC);
+        };
+
+        // Using a closure here instead of a loop so that, when the test fails,
+        // one can see which case failed by looking at the full backtrace
+        verify_partitioner().await;
+        verify_partitioner().await;
     }
 }
