@@ -72,7 +72,7 @@ where
         values: impl ValueList,
     ) -> Result<QueryResult, QueryError> {
         let query = query.into();
-        let prepared = self.add_prepared_statement(&query).await?;
+        let prepared = self.add_prepared_statement_owned(query).await?;
         let values = values.serialized()?;
         self.session.execute(&prepared, values.clone()).await
     }
@@ -84,7 +84,7 @@ where
         values: impl ValueList,
     ) -> Result<RowIterator, QueryError> {
         let query = query.into();
-        let prepared = self.add_prepared_statement(&query).await?;
+        let prepared = self.add_prepared_statement_owned(query).await?;
         let values = values.serialized()?;
         self.session.execute_iter(prepared, values.clone()).await
     }
@@ -97,7 +97,7 @@ where
         paging_state: Option<Bytes>,
     ) -> Result<QueryResult, QueryError> {
         let query = query.into();
-        let prepared = self.add_prepared_statement(&query).await?;
+        let prepared = self.add_prepared_statement_owned(query).await?;
         let values = values.serialized()?;
         self.session
             .execute_paged(&prepared, values.clone(), paging_state.clone())
@@ -153,20 +153,30 @@ where
         &self,
         query: impl Into<&Query>,
     ) -> Result<PreparedStatement, QueryError> {
+        self.add_prepared_statement_owned(query.into().clone())
+            .await
+    }
+
+    async fn add_prepared_statement_owned(
+        &self,
+        query: impl Into<Query>,
+    ) -> Result<PreparedStatement, QueryError> {
         let query = query.into();
 
         if let Some(raw) = self.cache.get(&query.contents) {
+            let page_size = query.get_page_size();
             let mut stmt = PreparedStatement::new(
                 raw.id.clone(),
                 raw.metadata.clone(),
-                query.contents.clone(),
-                query.get_page_size(),
-                query.config.clone(),
+                query.contents,
+                page_size,
+                query.config,
             );
             stmt.set_partitioner_name(raw.partitioner_name.clone());
             Ok(stmt)
         } else {
-            let prepared = self.session.prepare(query.clone()).await?;
+            let query_contents = query.contents.clone();
+            let prepared = self.session.prepare(query).await?;
 
             if self.max_capacity == self.cache.len() {
                 // Cache is full, remove the first entry
@@ -186,7 +196,7 @@ where
                 metadata: prepared.get_prepared_metadata().clone(),
                 partitioner_name: prepared.get_partitioner_name().clone(),
             };
-            self.cache.insert(query.contents.clone(), raw);
+            self.cache.insert(query_contents, raw);
 
             Ok(prepared)
         }
