@@ -399,52 +399,7 @@ impl Doorkeeper {
             tokio::select! {
                 res = self.make_streams(connection_no) => { match res {
                     Ok((driver_addr, driver_stream, cluster_stream)) => {
-                        let (cluster_read, cluster_write) = cluster_stream.into_split();
-                        let (driver_read, driver_write) = driver_stream.into_split();
-
-                        let new_worker = || ProxyWorker {
-                            terminate_notifier: self.terminate_signaler.subscribe(),
-                            finish_guard: self.finish_guard.clone(),
-                            connection_close_notifier: connection_close_tx.subscribe(),
-                            error_propagator: self.error_propagator.clone(),
-                            driver_addr,
-                            real_addr: self.node.real_addr,
-                            proxy_addr: self.node.proxy_addr,
-                        };
-
-                        let (tx_request, rx_request) = mpsc::unbounded_channel::<RequestFrame>();
-                        let (tx_response, rx_response) = mpsc::unbounded_channel::<ResponseFrame>();
-                        let (tx_cluster, rx_cluster) = mpsc::unbounded_channel::<RequestFrame>();
-                        let (tx_driver, rx_driver) = mpsc::unbounded_channel::<ResponseFrame>();
-
-                        tokio::task::spawn(new_worker()
-                            .receiver_from_driver(driver_read, tx_request));
-                        tokio::task::spawn(new_worker()
-                            .receiver_from_cluster(cluster_read, tx_response));
-                        tokio::task::spawn(new_worker()
-                            .sender_to_cluster(cluster_write, rx_cluster, connection_close_tx.subscribe(), self.terminate_signaler.subscribe()));
-                        tokio::task::spawn(new_worker()
-                            .sender_to_driver(driver_write, rx_driver, connection_close_tx.subscribe(), self.terminate_signaler.subscribe()));
-                        tokio::task::spawn(new_worker().request_processor(
-                            rx_request,
-                            tx_driver.clone(),
-                            tx_cluster.clone(),
-                            connection_no,
-                            self.node.request_rules.clone(),
-                            connection_close_tx.clone()
-                        ));
-                        tokio::task::spawn(new_worker().response_processor(
-                            rx_response,
-                            tx_driver,
-                            tx_cluster,
-                            connection_no,
-                            self.node.response_rules.clone(),
-                            connection_close_tx.clone()
-                        ));
-                        debug!(
-                            "Doorkeeper with addr {} of node {} spawned workers.",
-                            self.node.proxy_addr, self.node.real_addr
-                        );
+                        self.spawn_workers(driver_addr, &connection_close_tx, connection_no, driver_stream, cluster_stream).await;
                         connection_no += 1;
                     }
                     Err(err) => {
@@ -458,6 +413,69 @@ impl Doorkeeper {
         }
         debug!(
             "Doorkeeper exits: proxy {}, node {}.",
+            self.node.proxy_addr, self.node.real_addr
+        );
+    }
+
+    async fn spawn_workers(
+        &mut self,
+        driver_addr: SocketAddr,
+        connection_close_tx: &ConnectionCloseSignaler,
+        connection_no: usize,
+        driver_stream: TcpStream,
+        cluster_stream: TcpStream,
+    ) {
+        let (driver_read, driver_write) = driver_stream.into_split();
+        let (cluster_read, cluster_write) = cluster_stream.into_split();
+
+        let new_worker = || ProxyWorker {
+            terminate_notifier: self.terminate_signaler.subscribe(),
+            finish_guard: self.finish_guard.clone(),
+            connection_close_notifier: connection_close_tx.subscribe(),
+            error_propagator: self.error_propagator.clone(),
+            driver_addr,
+            real_addr: self.node.real_addr,
+            proxy_addr: self.node.proxy_addr,
+        };
+
+        let (tx_request, rx_request) = mpsc::unbounded_channel::<RequestFrame>();
+        let (tx_response, rx_response) = mpsc::unbounded_channel::<ResponseFrame>();
+        let (tx_cluster, rx_cluster) = mpsc::unbounded_channel::<RequestFrame>();
+        let (tx_driver, rx_driver) = mpsc::unbounded_channel::<ResponseFrame>();
+
+        tokio::task::spawn(new_worker().receiver_from_driver(driver_read, tx_request));
+        tokio::task::spawn(new_worker().receiver_from_cluster(cluster_read, tx_response));
+        tokio::task::spawn(new_worker().sender_to_cluster(
+            cluster_write,
+            rx_cluster,
+            connection_close_tx.subscribe(),
+            self.terminate_signaler.subscribe(),
+        ));
+        tokio::task::spawn(new_worker().sender_to_driver(
+            driver_write,
+            rx_driver,
+            connection_close_tx.subscribe(),
+            self.terminate_signaler.subscribe(),
+        ));
+        tokio::task::spawn(new_worker().request_processor(
+            rx_request,
+            tx_driver.clone(),
+            tx_cluster.clone(),
+            connection_no,
+            self.node.request_rules.clone(),
+            connection_close_tx.clone(),
+        ));
+        tokio::task::spawn(new_worker().response_processor(
+            rx_response,
+            tx_driver,
+            tx_cluster,
+            connection_no,
+            self.node.response_rules.clone(),
+            connection_close_tx.clone(),
+        ));
+
+        debug!(
+            "Doorkeeper with addr {} of node {} spawned workers.",
             self.node.proxy_addr, self.node.real_addr
         );
     }
