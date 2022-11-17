@@ -468,7 +468,7 @@ impl Doorkeeper {
     ) -> Result<(SocketAddr, TcpStream, TcpStream), DoorkeeperError> {
         let (driver_stream, driver_addr) =
             self.listener.accept().await.map_err(|err| {
-                DoorkeeperError::DriverConnectionAttempt(self.node.real_addr, err)
+                DoorkeeperError::DriverConnectionAttempt(self.node.proxy_addr, err)
             })?;
         info!(
             "Connected driver from {} to {}, connection no={}.",
