@@ -25,6 +25,7 @@ use uuid::Uuid;
 use super::connection::NonErrorQueryResponse;
 use super::connection::QueryResponse;
 use super::errors::{BadQuery, NewSessionError, QueryError};
+use super::partitioner::PartitionerName;
 use super::topology::UntranslatedPeer;
 use crate::cql_to_rust::FromRow;
 use crate::frame::response::cql_to_rust::FromRowError;
@@ -771,7 +772,9 @@ impl Session {
         }
 
         prepared.set_partitioner_name(
-            self.extract_partitioner_name(&prepared, &self.cluster.get_data()),
+            self.extract_partitioner_name(&prepared, &self.cluster.get_data())
+                .and_then(PartitionerName::from_str)
+                .unwrap_or_default(),
         );
 
         Ok(prepared)

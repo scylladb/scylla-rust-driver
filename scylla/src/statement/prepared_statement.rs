@@ -264,10 +264,8 @@ impl PreparedStatement {
     }
 
     /// Sets the name of the partitioner used for this statement.
-    pub(crate) fn set_partitioner_name(&mut self, partitioner_name: Option<&str>) {
-        self.partitioner_name = partitioner_name
-            .and_then(PartitionerName::from_str)
-            .unwrap_or_default();
+    pub(crate) fn set_partitioner_name(&mut self, partitioner_name: PartitionerName) {
+        self.partitioner_name = partitioner_name;
     }
 
     /// Access metadata about this prepared statement as returned by the database
