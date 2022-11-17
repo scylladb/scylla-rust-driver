@@ -426,7 +426,6 @@ impl Doorkeeper {
         cluster_stream: TcpStream,
     ) {
         let (driver_read, driver_write) = driver_stream.into_split();
-        let (cluster_read, cluster_write) = cluster_stream.into_split();
 
         let new_worker = || ProxyWorker {
             terminate_notifier: self.terminate_signaler.subscribe(),
@@ -444,13 +443,6 @@ impl Doorkeeper {
         let (tx_driver, rx_driver) = mpsc::unbounded_channel::<ResponseFrame>();
 
         tokio::task::spawn(new_worker().receiver_from_driver(driver_read, tx_request));
-        tokio::task::spawn(new_worker().receiver_from_cluster(cluster_read, tx_response));
-        tokio::task::spawn(new_worker().sender_to_cluster(
-            cluster_write,
-            rx_cluster,
-            connection_close_tx.subscribe(),
-            self.terminate_signaler.subscribe(),
-        ));
         tokio::task::spawn(new_worker().sender_to_driver(
             driver_write,
             rx_driver,
@@ -465,6 +457,15 @@ impl Doorkeeper {
             self.node.request_rules.clone(),
             connection_close_tx.clone(),
         ));
+
+        let (cluster_read, cluster_write) = cluster_stream.into_split();
+        tokio::task::spawn(new_worker().sender_to_cluster(
+            cluster_write,
+            rx_cluster,
+            connection_close_tx.subscribe(),
+            self.terminate_signaler.subscribe(),
+        ));
+        tokio::task::spawn(new_worker().receiver_from_cluster(cluster_read, tx_response));
         tokio::task::spawn(new_worker().response_processor(
             rx_response,
             tx_driver,
