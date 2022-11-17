@@ -177,6 +177,9 @@ impl InternalNode {
     fn proxy_addr(&self) -> SocketAddr {
         self.proxy_addr
     }
+    fn real_addr(&self) -> Option<SocketAddr> {
+        Some(self.real_addr)
+    }
     fn request_rules(&self) -> &Arc<Mutex<Vec<RequestRule>>> {
         &self.request_rules
     }
@@ -241,7 +244,9 @@ impl Proxy {
     pub fn translation_map(&self) -> HashMap<SocketAddr, SocketAddr> {
         let mut translation_map = HashMap::new();
         for node in self.nodes.iter() {
-            translation_map.insert(node.real_addr, node.proxy_addr);
+            if let Some(real_addr) = node.real_addr() {
+                translation_map.insert(real_addr, node.proxy_addr());
+            }
         }
         translation_map
     }
@@ -411,7 +416,7 @@ impl Doorkeeper {
             } else {
                 "shard-unaware"
             },
-            node.real_addr,
+            DisplayableRealAddrOption(node.real_addr()),
             node.proxy_addr(),
         );
         let doorkeeper = Doorkeeper {
@@ -456,7 +461,7 @@ impl Doorkeeper {
         debug!(
             "Doorkeeper exits: proxy {}, node {}.",
             self.node.proxy_addr(),
-            self.node.real_addr
+            DisplayableRealAddrOption(self.node.real_addr())
         );
     }
 
@@ -476,7 +481,7 @@ impl Doorkeeper {
             connection_close_notifier: connection_close_tx.subscribe(),
             error_propagator: self.error_propagator.clone(),
             driver_addr,
-            real_addr: self.node.real_addr,
+            real_addr: self.node.real_addr(),
             proxy_addr: self.node.proxy_addr(),
         };
 
@@ -521,7 +526,7 @@ impl Doorkeeper {
         debug!(
             "Doorkeeper with addr {} of node {} spawned workers.",
             self.node.proxy_addr(),
-            self.node.real_addr
+            DisplayableRealAddrOption(self.node.real_addr())
         );
     }
 
@@ -532,7 +537,11 @@ impl Doorkeeper {
     ) -> Result<(), DoorkeeperError> {
         let (driver_stream, driver_addr) = self.make_driver_stream(connection_no).await?;
         let cluster_stream = self
-            .make_cluster_stream(driver_addr, self.node.real_addr, self.node.shard_awareness)
+            .make_cluster_stream(
+                driver_addr,
+                self.node.real_addr().unwrap(),
+                self.node.shard_awareness,
+            )
             .await?;
 
         self.spawn_workers(
@@ -671,7 +680,7 @@ struct ProxyWorker {
     connection_close_notifier: ConnectionCloseNotifier,
     error_propagator: ErrorPropagator,
     driver_addr: SocketAddr,
-    real_addr: SocketAddr,
+    real_addr: Option<SocketAddr>,
     proxy_addr: SocketAddr,
 }
 
@@ -679,14 +688,17 @@ impl ProxyWorker {
     fn exit(self, duty: &'static str) {
         debug!(
             "Worker exits: [driver: {}, proxy: {}, node: {}]::{}.",
-            self.driver_addr, self.proxy_addr, self.real_addr, duty
+            self.driver_addr,
+            self.proxy_addr,
+            DisplayableRealAddrOption(self.real_addr),
+            duty
         );
         std::mem::drop(self.finish_guard);
     }
 
     async fn run_until_interrupted<F, Fut>(mut self, worker_name: &'static str, f: F)
     where
-        F: FnOnce(SocketAddr, SocketAddr, SocketAddr) -> Fut,
+        F: FnOnce(SocketAddr, SocketAddr, Option<SocketAddr>) -> Fut,
         Fut: Future<Output = Result<(), ProxyError>>,
     {
         let fut = f(self.driver_addr, self.proxy_addr, self.real_addr);
@@ -742,6 +754,7 @@ impl ProxyWorker {
         self.run_until_interrupted(
             "receiver_from_cluster",
             |driver_addr, _proxy_addr, real_addr| async move {
+                let real_addr = real_addr.expect("BUG: no real_addr in cluster worker");
                 loop {
                     let frame =
                         frame::read_response_frame(&mut read_half)
@@ -818,6 +831,7 @@ impl ProxyWorker {
         self.run_until_interrupted(
             "sender_to_driver",
             |_driver_addr, proxy_addr, real_addr| async move {
+                let real_addr = real_addr.expect("BUG: no real_addr in cluster worker");
                 loop {
                     let request = match requests_rx.recv().await {
                         Some(request) => request,
@@ -872,7 +886,7 @@ impl ProxyWorker {
                         let mut guard = request_rules.lock().await;
                         '_ruleloop: for (i, request_rule) in guard.iter_mut().enumerate() {
                             if request_rule.0.eval(&ctx) {
-                                info!("Applying rule no={} to request ({} -> {}).", i, driver_addr, real_addr);
+                                info!("Applying rule no={} to request ({} -> {}).", i, driver_addr, DisplayableRealAddrOption(real_addr));
                                 debug!("-> Applied rule: {:?}", request_rule);
                                 debug!("-> To request: {:?}", ctx.opcode);
                                 trace!("{:?}", request);
@@ -929,7 +943,7 @@ impl ProxyWorker {
                                         // close connection.
                                         info!(
                                             "Dropping connection between {} and {} (as requested by a proxy rule)!"
-                                        , driver_addr, real_addr);
+                                        , driver_addr, DisplayableRealAddrOption(real_addr));
                                         let _ = connection_close_signaler_clone.send(());
                                     }
                                 };
@@ -971,7 +985,7 @@ impl ProxyWorker {
                         let mut guard = response_rules.lock().await;
                         '_ruleloop: for (i, response_rule) in guard.iter_mut().enumerate() {
                             if response_rule.0.eval(&ctx) {
-                                info!("Applying rule no={} to request ({} -> {}).", i, real_addr, driver_addr);
+                                info!("Applying rule no={} to request ({} -> {}).", i, DisplayableRealAddrOption(real_addr), driver_addr);
                                 debug!("-> Applied rule: {:?}", response_rule);
                                 debug!("-> To response: {:?}", ctx.opcode);
                                 trace!("{:?}", response);
@@ -1028,7 +1042,7 @@ impl ProxyWorker {
                                         // close connection.
                                         info!(
                                             "Dropping connection between {} and {} (as requested by a proxy rule)!"
-                                        , driver_addr, real_addr);
+                                        , driver_addr, DisplayableRealAddrOption(real_addr));
                                         let _ = connection_close_signaler_clone.send(());
                                     }
                                 };
