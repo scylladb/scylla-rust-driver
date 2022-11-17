@@ -7,6 +7,7 @@ use crate::RequestOpcode;
 use bytes::Bytes;
 use scylla_cql::frame::types::read_string_multimap;
 use std::collections::HashMap;
+use std::fmt::Display;
 use std::future::Future;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::sync::Arc;
@@ -148,6 +149,18 @@ impl NodeBuilder {
                 shard_awareness: self.shard_awareness.expect("Shard awareness is required!"),
                 response_rules: self.response_rules,
             },
+        }
+    }
+}
+
+#[derive(Clone, Copy)]
+struct DisplayableRealAddrOption(Option<SocketAddr>);
+impl Display for DisplayableRealAddrOption {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        if let Some(addr) = self.0 {
+            write!(f, "{}", addr)
+        } else {
+            unimplemented!()
         }
     }
 }
