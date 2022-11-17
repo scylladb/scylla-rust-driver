@@ -160,6 +160,15 @@ struct InternalNode {
     response_rules: Arc<Mutex<Vec<ResponseRule>>>,
 }
 
+impl InternalNode {
+    fn proxy_addr(&self) -> SocketAddr {
+        self.proxy_addr
+    }
+    fn request_rules(&self) -> &Arc<Mutex<Vec<RequestRule>>> {
+        &self.request_rules
+    }
+}
+
 impl From<Node> for InternalNode {
     fn from(node: Node) -> Self {
         match node.node_type {
@@ -236,7 +245,7 @@ impl Proxy {
             .into_iter()
             .map(|node| {
                 let running = RunningNode {
-                    request_rules: node.request_rules.clone(),
+                    request_rules: node.request_rules().clone(),
                     response_rules: Some(node.response_rules.clone()),
                 };
                 (
@@ -378,9 +387,9 @@ impl Doorkeeper {
         finish_guard: FinishGuard,
         error_propagator: ErrorPropagator,
     ) -> Result<(), DoorkeeperError> {
-        let listener = TcpListener::bind(node.proxy_addr)
+        let listener = TcpListener::bind(node.proxy_addr())
             .await
-            .map_err(|err| DoorkeeperError::DriverConnectionAttempt(node.proxy_addr, err))?;
+            .map_err(|err| DoorkeeperError::DriverConnectionAttempt(node.proxy_addr(), err))?;
 
         info!(
             "Spawned a {} doorkeeper for pair real:{} - proxy:{}.",
@@ -390,7 +399,7 @@ impl Doorkeeper {
                 "shard-unaware"
             },
             node.real_addr,
-            node.proxy_addr,
+            node.proxy_addr(),
         );
         let doorkeeper = Doorkeeper {
             shards_number: if let InternalNode {
@@ -433,7 +442,8 @@ impl Doorkeeper {
         }
         debug!(
             "Doorkeeper exits: proxy {}, node {}.",
-            self.node.proxy_addr, self.node.real_addr
+            self.node.proxy_addr(),
+            self.node.real_addr
         );
     }
 
@@ -454,7 +464,7 @@ impl Doorkeeper {
             error_propagator: self.error_propagator.clone(),
             driver_addr,
             real_addr: self.node.real_addr,
-            proxy_addr: self.node.proxy_addr,
+            proxy_addr: self.node.proxy_addr(),
         };
 
         let (tx_request, rx_request) = mpsc::unbounded_channel::<RequestFrame>();
@@ -474,7 +484,7 @@ impl Doorkeeper {
             tx_driver.clone(),
             tx_cluster.clone(),
             connection_no,
-            self.node.request_rules.clone(),
+            self.node.request_rules().clone(),
             connection_close_tx.clone(),
         ));
 
@@ -497,7 +507,8 @@ impl Doorkeeper {
 
         debug!(
             "Doorkeeper with addr {} of node {} spawned workers.",
-            self.node.proxy_addr, self.node.real_addr
+            self.node.proxy_addr(),
+            self.node.real_addr
         );
     }
 
@@ -529,11 +540,13 @@ impl Doorkeeper {
     ) -> Result<(TcpStream, SocketAddr), DoorkeeperError> {
         let (driver_stream, driver_addr) =
             self.listener.accept().await.map_err(|err| {
-                DoorkeeperError::DriverConnectionAttempt(self.node.proxy_addr, err)
+                DoorkeeperError::DriverConnectionAttempt(self.node.proxy_addr(), err)
             })?;
         info!(
             "Connected driver from {} to {}, connection no={}.",
-            driver_addr, self.node.proxy_addr, connection_no
+            driver_addr,
+            self.node.proxy_addr(),
+            connection_no
         );
         Ok((driver_stream, driver_addr))
     }
@@ -560,7 +573,7 @@ impl Doorkeeper {
                 Some(shards) => shards,
             };
 
-            let socket = match self.node.proxy_addr.ip() {
+            let socket = match self.node.proxy_addr().ip() {
                 std::net::IpAddr::V4(_) => TcpSocket::new_v4(),
                 std::net::IpAddr::V6(_) => TcpSocket::new_v6(),
             }
