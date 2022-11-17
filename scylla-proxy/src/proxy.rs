@@ -165,23 +165,31 @@ impl Display for DisplayableRealAddrOption {
     }
 }
 
-struct InternalNode {
-    real_addr: SocketAddr,
-    proxy_addr: SocketAddr,
-    shard_awareness: ShardAwareness,
-    request_rules: Arc<Mutex<Vec<RequestRule>>>,
-    response_rules: Arc<Mutex<Vec<ResponseRule>>>,
+enum InternalNode {
+    Real {
+        real_addr: SocketAddr,
+        proxy_addr: SocketAddr,
+        shard_awareness: ShardAwareness,
+        request_rules: Arc<Mutex<Vec<RequestRule>>>,
+        response_rules: Arc<Mutex<Vec<ResponseRule>>>,
+    },
 }
 
 impl InternalNode {
     fn proxy_addr(&self) -> SocketAddr {
-        self.proxy_addr
+        match *self {
+            InternalNode::Real { proxy_addr, .. } => proxy_addr,
+        }
     }
     fn real_addr(&self) -> Option<SocketAddr> {
-        Some(self.real_addr)
+        match *self {
+            InternalNode::Real { real_addr, .. } => Some(real_addr),
+        }
     }
     fn request_rules(&self) -> &Arc<Mutex<Vec<RequestRule>>> {
-        &self.request_rules
+        match self {
+            InternalNode::Real { request_rules, .. } => request_rules,
+        }
     }
 }
 
@@ -192,7 +200,7 @@ impl From<Node> for InternalNode {
                 real_addr,
                 shard_awareness,
                 response_rules,
-            } => InternalNode {
+            } => InternalNode::Real {
                 real_addr,
                 proxy_addr: node.proxy_addr,
                 shard_awareness,
@@ -244,8 +252,14 @@ impl Proxy {
     pub fn translation_map(&self) -> HashMap<SocketAddr, SocketAddr> {
         let mut translation_map = HashMap::new();
         for node in self.nodes.iter() {
-            if let Some(real_addr) = node.real_addr() {
-                translation_map.insert(real_addr, node.proxy_addr());
+            #[allow(irrefutable_let_patterns)]
+            if let &InternalNode::Real {
+                real_addr,
+                proxy_addr,
+                ..
+            } = node
+            {
+                translation_map.insert(real_addr, proxy_addr);
             }
         }
         translation_map
@@ -262,9 +276,18 @@ impl Proxy {
             .nodes
             .into_iter()
             .map(|node| {
-                let running = RunningNode {
-                    request_rules: node.request_rules().clone(),
-                    response_rules: Some(node.response_rules.clone()),
+                let running = {
+                    let (request_rules, response_rules) = match node {
+                        InternalNode::Real {
+                            ref request_rules,
+                            ref response_rules,
+                            ..
+                        } => (request_rules, Some(response_rules)),
+                    };
+                    RunningNode {
+                        request_rules: request_rules.clone(),
+                        response_rules: response_rules.cloned(),
+                    }
                 };
                 (
                     Doorkeeper::spawn(
@@ -409,18 +432,28 @@ impl Doorkeeper {
             .await
             .map_err(|err| DoorkeeperError::DriverConnectionAttempt(node.proxy_addr(), err))?;
 
-        info!(
-            "Spawned a {} doorkeeper for pair real:{} - proxy:{}.",
-            if node.shard_awareness.is_aware() {
+        #[allow(irrefutable_let_patterns)]
+        if let InternalNode::Real {
+            shard_awareness,
+            real_addr,
+            ..
+        } = node
+        {
+            let doorkeeper_type = if shard_awareness.is_aware() {
                 "shard-aware"
             } else {
                 "shard-unaware"
-            },
-            DisplayableRealAddrOption(node.real_addr()),
-            node.proxy_addr(),
-        );
+            };
+            info!(
+                "Spawned a {} doorkeeper for pair real:{} - proxy:{}.",
+                doorkeeper_type,
+                real_addr,
+                node.proxy_addr(),
+            );
+        };
+
         let doorkeeper = Doorkeeper {
-            shards_number: if let InternalNode {
+            shards_number: if let InternalNode::Real {
                 shard_awareness: ShardAwareness::FixedNum(shards_num),
                 ..
             } = node
@@ -449,7 +482,12 @@ impl Doorkeeper {
                     match res {
                         Ok(()) => connection_no += 1,
                         Err(err) => {
-                            error!("Error in doorkeeper with addr {} for node {}: {}", self.node.proxy_addr, self.node.real_addr, err);
+                            error!(
+                                "Error in doorkeeper with addr {} for node {}: {}",
+                                self.node.proxy_addr(),
+                                DisplayableRealAddrOption(self.node.real_addr()),
+                                err
+                            );
                             let _ = self.error_propagator.send(err.into());
                             break;
                         },
@@ -471,7 +509,7 @@ impl Doorkeeper {
         connection_close_tx: &ConnectionCloseSignaler,
         connection_no: usize,
         driver_stream: TcpStream,
-        cluster_stream: TcpStream,
+        cluster_stream: Option<TcpStream>,
     ) {
         let (driver_read, driver_write) = driver_stream.into_split();
 
@@ -506,23 +544,28 @@ impl Doorkeeper {
             connection_close_tx.clone(),
         ));
 
-        let (cluster_read, cluster_write) = cluster_stream.into_split();
-        tokio::task::spawn(new_worker().sender_to_cluster(
-            cluster_write,
-            rx_cluster,
-            connection_close_tx.subscribe(),
-            self.terminate_signaler.subscribe(),
-        ));
-        tokio::task::spawn(new_worker().receiver_from_cluster(cluster_read, tx_response));
-        tokio::task::spawn(new_worker().response_processor(
-            rx_response,
-            tx_driver,
-            tx_cluster,
-            connection_no,
-            self.node.response_rules.clone(),
-            connection_close_tx.clone(),
-        ));
-
+        #[allow(irrefutable_let_patterns)]
+        if let InternalNode::Real {
+            ref response_rules, ..
+        } = self.node
+        {
+            let (cluster_read, cluster_write) = cluster_stream.unwrap().into_split();
+            tokio::task::spawn(new_worker().sender_to_cluster(
+                cluster_write,
+                rx_cluster,
+                connection_close_tx.subscribe(),
+                self.terminate_signaler.subscribe(),
+            ));
+            tokio::task::spawn(new_worker().receiver_from_cluster(cluster_read, tx_response));
+            tokio::task::spawn(new_worker().response_processor(
+                rx_response,
+                tx_driver,
+                tx_cluster,
+                connection_no,
+                response_rules.clone(),
+                connection_close_tx.clone(),
+            ));
+        }
         debug!(
             "Doorkeeper with addr {} of node {} spawned workers.",
             self.node.proxy_addr(),
@@ -536,13 +579,16 @@ impl Doorkeeper {
         connection_no: usize,
     ) -> Result<(), DoorkeeperError> {
         let (driver_stream, driver_addr) = self.make_driver_stream(connection_no).await?;
-        let cluster_stream = self
-            .make_cluster_stream(
-                driver_addr,
-                self.node.real_addr().unwrap(),
-                self.node.shard_awareness,
-            )
-            .await?;
+        let cluster_stream = match self.node {
+            InternalNode::Real {
+                real_addr,
+                shard_awareness,
+                ..
+            } => Some(
+                self.make_cluster_stream(driver_addr, real_addr, shard_awareness)
+                    .await?,
+            ),
+        };
 
         self.spawn_workers(
             driver_addr,
