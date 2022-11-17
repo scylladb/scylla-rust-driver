@@ -33,6 +33,7 @@ use super::errors::{BadQuery, NewSessionError, QueryError};
 use super::execution_profile::{ExecutionProfile, ExecutionProfileHandle, ExecutionProfileInner};
 use super::partitioner::PartitionerName;
 use super::topology::UntranslatedPeer;
+use super::NodeRef;
 use crate::cql_to_rust::FromRow;
 use crate::frame::response::cql_to_rust::FromRowError;
 use crate::frame::response::result;
@@ -49,7 +50,7 @@ use crate::transport::connection::{Connection, ConnectionConfig, VerifiedKeyspac
 use crate::transport::connection_pool::PoolConfig;
 use crate::transport::host_filter::HostFilter;
 use crate::transport::iterator::{PreparedIteratorConfig, RowIterator};
-use crate::transport::load_balancing::RoutingInfo;
+use crate::transport::load_balancing::{self, RoutingInfo};
 use crate::transport::metrics::Metrics;
 use crate::transport::node::Node;
 use crate::transport::query_result::QueryResult;
@@ -881,6 +882,10 @@ impl Session {
         let token = self.calculate_token(prepared, &serialized_values)?;
 
         let statement_info = RoutingInfo {
+            consistency: prepared
+                .get_consistency()
+                .unwrap_or(self.default_execution_profile_handle.access().consistency),
+            serial_consistency: prepared.get_serial_consistency(),
             token,
             keyspace: prepared.get_keyspace_name(),
             is_confirmed_lwt: prepared.is_confirmed_lwt(),
@@ -1066,6 +1071,10 @@ impl Session {
         let statement_info = match (first_serialized_value, batch.statements.first()) {
             (Some(first_serialized_value), Some(BatchStatement::PreparedStatement(ps))) => {
                 RoutingInfo {
+                    consistency: batch
+                        .get_consistency()
+                        .unwrap_or(self.default_execution_profile_handle.access().consistency),
+                    serial_consistency: batch.get_serial_consistency(),
                     token: self.calculate_token(ps, first_serialized_value)?,
                     keyspace: ps.get_keyspace_name(),
                     is_confirmed_lwt: false,
@@ -1399,23 +1408,24 @@ impl Session {
 
         let runner = async {
             let cluster_data = self.cluster.get_data();
-            let query_plan = load_balancer.plan(&statement_info, &cluster_data);
+            let query_plan =
+                load_balancing::Plan::new(load_balancer.as_ref(), &statement_info, &cluster_data);
 
             // If a speculative execution policy is used to run query, query_plan has to be shared
             // between different async functions. This struct helps to wrap query_plan in mutex so it
             // can be shared safely.
-            struct SharedPlan<I>
+            struct SharedPlan<'a, I>
             where
-                I: Iterator<Item = Arc<Node>>,
+                I: Iterator<Item = NodeRef<'a>>,
             {
                 iter: std::sync::Mutex<I>,
             }
 
-            impl<I> Iterator for &SharedPlan<I>
+            impl<'a, I> Iterator for &SharedPlan<'a, I>
             where
-                I: Iterator<Item = Arc<Node>>,
+                I: Iterator<Item = NodeRef<'a>>,
             {
-                type Item = Arc<Node>;
+                type Item = NodeRef<'a>;
 
                 fn next(&mut self) -> Option<Self::Item> {
                     self.iter.lock().unwrap().next()
@@ -1531,7 +1541,7 @@ impl Session {
 
     async fn execute_query<'a, ConnFut, QueryFut, ResT>(
         &'a self,
-        query_plan: impl Iterator<Item = Arc<Node>>,
+        query_plan: impl Iterator<Item = NodeRef<'a>>,
         choose_connection: impl Fn(Arc<Node>) -> ConnFut,
         do_query: impl Fn(Arc<Connection>, Consistency, &ExecutionProfileInner) -> QueryFut,
         execution_profile: &ExecutionProfileInner,

@@ -36,6 +36,7 @@ async fn main() -> Result<()> {
             token: Some(scylla::routing::Token { value: t }),
             keyspace: Some("ks"),
             is_confirmed_lwt: false,
+            ..Default::default()
         };
         println!(
             "Estimated replicas for query: {:?}",

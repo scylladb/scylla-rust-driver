@@ -1,7 +1,7 @@
 use anyhow::Result;
 use scylla::{
     load_balancing::{LoadBalancingPolicy, RoutingInfo},
-    transport::{ClusterData, ExecutionProfile, Node},
+    transport::{ClusterData, ExecutionProfile},
     Session, SessionBuilder,
 };
 use std::{env, sync::Arc};
@@ -13,19 +13,27 @@ struct CustomLoadBalancingPolicy {
 }
 
 impl LoadBalancingPolicy for CustomLoadBalancingPolicy {
-    fn plan<'a>(
-        &self,
-        _info: &RoutingInfo,
+    fn pick<'a>(
+        &'a self,
+        _info: &'a RoutingInfo,
         cluster: &'a ClusterData,
-    ) -> Box<dyn Iterator<Item = Arc<Node>> + Send + Sync + 'a> {
+    ) -> Option<scylla::transport::NodeRef<'a>> {
+        self.fallback(_info, cluster).next()
+    }
+
+    fn fallback<'a>(
+        &'a self,
+        _info: &'a RoutingInfo,
+        cluster: &'a ClusterData,
+    ) -> scylla::load_balancing::FallbackPlan<'a> {
         let fav_dc_nodes = cluster
             .replica_locator()
             .unique_nodes_in_datacenter_ring(&self.fav_datacenter_name);
 
         match fav_dc_nodes {
-            Some(nodes) => Box::new(nodes.iter().cloned()),
+            Some(nodes) => Box::new(nodes.iter()),
             // If there is no dc with provided name, fallback to other datacenters
-            None => Box::new(cluster.get_nodes_info().iter().cloned()),
+            None => Box::new(cluster.get_nodes_info().iter()),
         }
     }
 

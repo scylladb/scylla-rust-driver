@@ -33,7 +33,7 @@ use crate::statement::Consistency;
 use crate::statement::{prepared_statement::PreparedStatement, query::Query};
 use crate::transport::cluster::ClusterData;
 use crate::transport::connection::{Connection, NonErrorQueryResponse, QueryResponse};
-use crate::transport::load_balancing::{LoadBalancingPolicy, RoutingInfo};
+use crate::transport::load_balancing::{self, RoutingInfo};
 use crate::transport::metrics::Metrics;
 use crate::transport::node::Node;
 use crate::transport::retry_policy::{QueryInfo, RetryDecision, RetrySession};
@@ -212,6 +212,8 @@ impl RowIterator {
         let retry_session = config.execution_profile.retry_policy.new_session();
 
         let statement_info = RoutingInfo {
+            consistency,
+            serial_consistency: config.prepared.get_serial_consistency(),
             token: config.token,
             keyspace: None,
             is_confirmed_lwt: config.prepared.is_confirmed_lwt(),
@@ -432,15 +434,12 @@ where
     QueryFunc: Fn(Arc<Connection>, Consistency, Option<Bytes>) -> QueryFut,
     QueryFut: Future<Output = Result<QueryResponse, QueryError>>,
 {
-    fn load_balancer(&self) -> &dyn LoadBalancingPolicy {
-        &*self.execution_profile.load_balancing_policy
-    }
-
     // Contract: this function MUST send at least one item through self.sender
     async fn work(mut self, cluster_data: Arc<ClusterData>) -> PageSendAttemptedProof {
-        let query_plan = self
-            .load_balancer()
-            .plan(&self.statement_info, &cluster_data);
+        let load_balancer = self.execution_profile.load_balancing_policy.clone();
+        let statement_info = self.statement_info.clone();
+        let query_plan =
+            load_balancing::Plan::new(load_balancer.as_ref(), &statement_info, &cluster_data);
 
         let mut last_error: QueryError =
             QueryError::ProtocolError("Empty query plan - driver bug!");

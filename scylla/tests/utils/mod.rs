@@ -19,16 +19,27 @@ pub fn init_logger() {
 #[derive(Debug)]
 pub struct FixedOrderLoadBalancer;
 impl LoadBalancingPolicy for FixedOrderLoadBalancer {
-    fn plan<'a>(
-        &self,
-        _statement: &scylla::load_balancing::RoutingInfo,
+    fn pick<'a>(
+        &'a self,
+        _info: &'a scylla::load_balancing::RoutingInfo,
         cluster: &'a scylla::transport::ClusterData,
-    ) -> scylla::load_balancing::Plan<'a> {
+    ) -> Option<scylla::transport::NodeRef<'a>> {
+        cluster
+            .get_nodes_info()
+            .iter()
+            .sorted_by(|node1, node2| Ord::cmp(&node1.address, &node2.address))
+            .next()
+    }
+
+    fn fallback<'a>(
+        &'a self,
+        _info: &'a scylla::load_balancing::RoutingInfo,
+        cluster: &'a scylla::transport::ClusterData,
+    ) -> scylla::load_balancing::FallbackPlan<'a> {
         Box::new(
             cluster
                 .get_nodes_info()
                 .iter()
-                .cloned()
                 .sorted_by(|node1, node2| Ord::cmp(&node1.address, &node2.address)),
         )
     }
