@@ -369,12 +369,17 @@ impl Doorkeeper {
                 "shard-unaware"
             },
             node.real_addr,
-            node.proxy_addr
+            node.proxy_addr,
         );
         let doorkeeper = Doorkeeper {
-            shards_number: match node.shard_awareness {
-                ShardAwareness::FixedNum(shards_num) => Some(shards_num),
-                _ => None,
+            shards_number: if let InternalNode {
+                shard_awareness: ShardAwareness::FixedNum(shards_num),
+                ..
+            } = node
+            {
+                Some(shards_num)
+            } else {
+                None
             },
             node,
             listener,
@@ -397,9 +402,9 @@ impl Doorkeeper {
                         let (cluster_read, cluster_write) = cluster_stream.into_split();
                         let (driver_read, driver_write) = driver_stream.into_split();
 
-                        let new_worker = || ProxyWorker{
+                        let new_worker = || ProxyWorker {
                             terminate_notifier: self.terminate_signaler.subscribe(),
-                            finish_guard:  self.finish_guard.clone(),
+                            finish_guard: self.finish_guard.clone(),
                             connection_close_notifier: connection_close_tx.subscribe(),
                             error_propagator: self.error_propagator.clone(),
                             driver_addr,
@@ -436,7 +441,10 @@ impl Doorkeeper {
                             self.node.response_rules.clone(),
                             connection_close_tx.clone()
                         ));
-                        debug!("Doorkeeper of node {} spawned workers.", self.node.real_addr);
+                        debug!(
+                            "Doorkeeper with addr {} of node {} spawned workers.",
+                            self.node.proxy_addr, self.node.real_addr
+                        );
                         connection_no += 1;
                     }
                     Err(err) => {
