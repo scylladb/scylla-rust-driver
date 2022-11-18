@@ -397,17 +397,16 @@ impl Doorkeeper {
         let mut connection_no: usize = 0;
         loop {
             tokio::select! {
-                res = self.make_streams(connection_no) => { match res {
-                    Ok((driver_addr, driver_stream, cluster_stream)) => {
-                        self.spawn_workers(driver_addr, &connection_close_tx, connection_no, driver_stream, cluster_stream).await;
-                        connection_no += 1;
+                res = self.accept_connection(&connection_close_tx, connection_no) => {
+                    match res {
+                        Ok(()) => connection_no += 1,
+                        Err(err) => {
+                            error!("Error in doorkeeper with addr {} for node {}: {}", self.node.proxy_addr, self.node.real_addr, err);
+                            let _ = self.error_propagator.send(err.into());
+                            break;
+                        },
                     }
-                    Err(err) => {
-                        error!("Error in doorkeeper for node {}: {}", self.node.real_addr, err);
-                        let _ = self.error_propagator.send(err.into());
-                        break;
-                    }
-                }}
+                },
                 _terminate = own_terminate_notifier.recv() => break
             }
         }
@@ -481,13 +480,24 @@ impl Doorkeeper {
         );
     }
 
-    async fn make_streams(
+    async fn accept_connection(
         &mut self,
+        connection_close_tx: &ConnectionCloseSignaler,
         connection_no: usize,
-    ) -> Result<(SocketAddr, TcpStream, TcpStream), DoorkeeperError> {
+    ) -> Result<(), DoorkeeperError> {
         let (driver_stream, driver_addr) = self.make_driver_stream(connection_no).await?;
         let cluster_stream = self.make_cluster_stream(driver_addr).await?;
-        Ok((driver_addr, driver_stream, cluster_stream))
+
+        self.spawn_workers(
+            driver_addr,
+            connection_close_tx,
+            connection_no,
+            driver_stream,
+            cluster_stream,
+        )
+        .await;
+
+        Ok(())
     }
 
     async fn make_driver_stream(
