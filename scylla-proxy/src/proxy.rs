@@ -485,6 +485,15 @@ impl Doorkeeper {
         &mut self,
         connection_no: usize,
     ) -> Result<(SocketAddr, TcpStream, TcpStream), DoorkeeperError> {
+        let (driver_stream, driver_addr) = self.make_driver_stream(connection_no).await?;
+        let cluster_stream = self.make_cluster_stream(driver_addr).await?;
+        Ok((driver_addr, driver_stream, cluster_stream))
+    }
+
+    async fn make_driver_stream(
+        &mut self,
+        connection_no: usize,
+    ) -> Result<(TcpStream, SocketAddr), DoorkeeperError> {
         let (driver_stream, driver_addr) =
             self.listener.accept().await.map_err(|err| {
                 DoorkeeperError::DriverConnectionAttempt(self.node.proxy_addr, err)
@@ -493,7 +502,13 @@ impl Doorkeeper {
             "Connected driver from {} to {}, connection no={}.",
             driver_addr, self.node.proxy_addr, connection_no
         );
+        Ok((driver_stream, driver_addr))
+    }
 
+    async fn make_cluster_stream(
+        &mut self,
+        driver_addr: SocketAddr,
+    ) -> Result<TcpStream, DoorkeeperError> {
         let cluster_stream = if self.node.shard_awareness.is_aware() {
             let shards = match self.shards_number {
                 None => {
@@ -550,7 +565,7 @@ impl Doorkeeper {
         }
         .map_err(|err| DoorkeeperError::NodeConnectionAttempt(self.node.real_addr, err))?;
 
-        Ok((driver_addr, driver_stream, cluster_stream))
+        Ok(cluster_stream)
     }
 
     fn next_port_to_same_shard(&self, port: u16) -> u16 {
