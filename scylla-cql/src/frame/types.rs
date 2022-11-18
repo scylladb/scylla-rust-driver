@@ -28,6 +28,22 @@ pub enum Consistency {
     LocalOne = 0x000A,
 }
 
+impl Consistency {
+    pub fn name(&self) -> &str {
+        match self {
+            Consistency::Any => "Any",
+            Consistency::One => "One",
+            Consistency::Two => "Two",
+            Consistency::Three => "Three",
+            Consistency::Quorum => "Quorum",
+            Consistency::All => "All",
+            Consistency::LocalQuorum => "LocalQuorum",
+            Consistency::EachQuorum => "EachQuorum",
+            Consistency::LocalOne => "LocalOne",
+        }
+    }
+}
+
 #[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord, TryFromPrimitive)]
 #[cfg_attr(feature = "serde", derive(serde::Deserialize))]
 #[cfg_attr(feature = "serde", serde(rename_all = "SCREAMING_SNAKE_CASE"))]
