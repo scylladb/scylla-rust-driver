@@ -7,6 +7,10 @@ use crate::cloud::CloudConfig;
 use crate::frame::types::LegacyConsistency;
 use crate::history;
 use crate::history::HistoryListener;
+use crate::scylladb_tag;
+use crate::transport::session::spans::PendingAttemptSpan;
+use crate::utils::RecordError;
+use crate::utils::SpanExt;
 use async_trait::async_trait;
 use bytes::Bytes;
 use futures::future::join_all;
@@ -21,14 +25,15 @@ use std::sync::Arc;
 use std::time::Duration;
 use tokio::net::lookup_host;
 use tokio::time::timeout;
-use tracing::{debug, error, trace, trace_span, Instrument};
+use tracing::{debug, error, trace, Instrument};
 use uuid::Uuid;
 
+use self::spans::{BatchSpan, PreparedSpan, QuerySpan};
+
 use super::cluster::ContactPoint;
-use super::connection::NonErrorQueryResponse;
-use super::connection::QueryResponse;
 #[cfg(feature = "ssl")]
 use super::connection::SslConfig;
+use super::connection::{NonErrorQueryResponse, QueryResponse};
 use super::errors::{BadQuery, NewSessionError, QueryError};
 use super::execution_profile::{ExecutionProfile, ExecutionProfileHandle, ExecutionProfileInner};
 use super::partitioner::PartitionerName;
@@ -366,6 +371,171 @@ pub enum RunQueryResult<ResT> {
     Completed(ResT),
 }
 
+mod spans {
+    use std::ops::Deref;
+
+    use crate::{
+        batch::Batch,
+        otel_span,
+        prepared_statement::PreparedStatement,
+        query::Query,
+        scylladb_tag,
+        statement::StatementConfig,
+        transport::{execution_profile::ExecutionProfileInner, Node},
+        utils::SpanExt,
+    };
+
+    fn make_request_span(
+        execution_profile: &ExecutionProfileInner,
+        config: &StatementConfig,
+    ) -> tracing::Span {
+        use tracing::field::Empty;
+
+        let span = otel_span!(
+            "Request",
+            db.scylladb.load_balancing_policy = Empty,
+            db.scylladb.speculative_execution_policy = Empty,
+            db.scylladb.consistency_level = Empty,
+            db.scylladb.retry_policy = Empty,
+            db.scylladb.statement_type = Empty,
+            db.scylladb.statement = Empty,
+            db.scylladb.page_size = Empty,
+            db.scylladb.prepared_id = Empty,
+            db.scylladb.keyspace = Empty,
+            db.scylladb.bound_values = Empty,
+            db.scylladb.partition_key = Empty,
+            db.scylladb.table = Empty,
+            db.scylladb.batch_size = Empty,
+            db.scylladb.shard_id = Empty,
+            db.scylladb.attempt_count = Empty,
+            db.scylladb.rows_count = Empty,
+        );
+
+        span.record(
+            scylladb_tag!("retry_policy"),
+            execution_profile.retry_policy.name(),
+        );
+
+        span.record(
+            scylladb_tag!("consistency_level"),
+            config
+                .determine_consistency(execution_profile.consistency)
+                .name(),
+        );
+
+        span.record(
+            scylladb_tag!("load_balancing_policy"),
+            execution_profile.load_balancing_policy.name(),
+        );
+
+        span.record_none_explicitly(
+            scylladb_tag!("speculative_execution_policy"),
+            execution_profile
+                .speculative_execution_policy
+                .as_ref()
+                .map(|policy| policy.name()),
+        );
+
+        span
+    }
+
+    pub(super) struct QuerySpan;
+    impl QuerySpan {
+        #[allow(clippy::new_ret_no_self)]
+        pub(super) fn new(
+            execution_profile: &ExecutionProfileInner,
+            query: &Query,
+        ) -> tracing::Span {
+            let span = make_request_span(execution_profile, &query.config);
+            span.record(scylladb_tag!("statement_type"), "regular");
+            span.record(scylladb_tag!("statement"), query.contents.as_str());
+            span.record_none_explicitly(scylladb_tag!("page_size"), query.get_page_size());
+            span
+        }
+    }
+
+    pub(super) struct PreparedSpan;
+    impl PreparedSpan {
+        #[allow(clippy::new_ret_no_self)]
+        pub(super) fn new(
+            execution_profile: &ExecutionProfileInner,
+            prepared: &PreparedStatement,
+        ) -> tracing::Span {
+            let span = make_request_span(execution_profile, &prepared.config);
+            span.record(scylladb_tag!("statement_type"), "prepared");
+            span.record(scylladb_tag!("statement"), prepared.get_statement());
+            span.record_none_explicitly(scylladb_tag!("page_size"), prepared.get_page_size());
+            span.record(
+                scylladb_tag!("prepared_id"),
+                format_args!("{:X}", prepared.get_id()),
+            );
+            span.record_none_explicitly(scylladb_tag!("table"), prepared.get_table_name());
+            span.record_none_explicitly(scylladb_tag!("keyspace"), prepared.get_keyspace_name());
+            span
+        }
+    }
+
+    pub(super) struct BatchSpan;
+    impl BatchSpan {
+        #[allow(clippy::new_ret_no_self)]
+        pub(super) fn new(
+            execution_profile: &ExecutionProfileInner,
+            batch: &Batch,
+        ) -> tracing::Span {
+            let span = make_request_span(execution_profile, &batch.config);
+            span.record(scylladb_tag!("statement_type"), "batch");
+            span.record(scylladb_tag!("batch_size"), batch.statements.len());
+            span
+        }
+    }
+
+    pub(super) struct PendingAttemptSpan(tracing::Span);
+
+    impl PendingAttemptSpan {
+        pub(super) fn new(node: &Node, attempt_count: usize) -> Self {
+            use tracing::field::Empty;
+
+            Self(otel_span!(
+                "Query attempt",
+                net.peer.name = format_args!(
+                    "datacenter: {}, rack: {}",
+                    node.datacenter.as_deref().unwrap_or("<None>"),
+                    node.rack.as_deref().unwrap_or("<None>")
+                ),
+                net.peer.port = node.address.port(),
+                net.peer.address = display(node.address.ip()),
+                db.scylladb.attempt_count = attempt_count,
+                db.scylladb.shard_id = Empty,
+                // this is the default, changes to `completed` when the query completes
+                db.scylladb.completion_status = "interrupted",
+            ))
+        }
+
+        pub(super) fn record_shard_id(&self, shard_id: Option<u16>) {
+            self.0
+                .record_none_explicitly(scylladb_tag!("shard_id"), shard_id);
+        }
+
+        pub(super) fn complete(&self) {
+            self.0.record("completion_status", "completed");
+        }
+    }
+
+    impl Deref for PendingAttemptSpan {
+        type Target = tracing::Span;
+
+        fn deref(&self) -> &Self::Target {
+            &self.0
+        }
+    }
+
+    impl AsRef<tracing::Span> for PendingAttemptSpan {
+        fn as_ref(&self) -> &tracing::Span {
+            &self.0
+        }
+    }
+}
+
 /// Represents a CQL session, which can be used to communicate
 /// with the database
 impl Session {
@@ -568,7 +738,12 @@ impl Session {
         let query: Query = query.into();
         let serialized_values = values.serialized()?;
 
-        let span = trace_span!("Request", query = %query.contents);
+        let execution_profile = query
+            .get_execution_profile_handle()
+            .unwrap_or_else(|| self.get_default_execution_profile_handle())
+            .access();
+        let span = QuerySpan::new(&execution_profile, &query);
+
         let run_query_result = self
             .run_query(
                 RoutingInfo::default(),
@@ -599,9 +774,9 @@ impl Session {
                     }
                 },
             )
-            .instrument(span)
-            .await?;
-
+            .instrument(span.clone())
+            .await
+            .record_error(&span)?;
         let response = match run_query_result {
             RunQueryResult::IgnoredWriteError => NonErrorQueryResponse {
                 response: NonErrorResponse::Result(result::Result::Void),
@@ -615,7 +790,11 @@ impl Session {
         self.handle_auto_await_schema_agreement(&query.contents, &response)
             .await?;
 
-        response.into_query_result()
+        let query_result = response.into_query_result().record_error(&span);
+        if let Ok(ref res) = query_result {
+            span.record_none_explicitly(scylladb_tag!("rows_count"), res.rows_num().ok());
+        }
+        query_result
     }
 
     async fn handle_set_keyspace_response(
@@ -708,7 +887,8 @@ impl Session {
             .unwrap_or_else(|| self.get_default_execution_profile_handle())
             .access();
 
-        let span = trace_span!("Request", query = %query.contents);
+        let span = QuerySpan::new(&execution_profile, &query);
+
         RowIterator::new_for_query(
             query,
             serialized_values.into_owned(),
@@ -879,6 +1059,12 @@ impl Session {
         let values_ref = &serialized_values;
         let paging_state_ref = &paging_state;
 
+        let execution_profile = prepared
+            .get_execution_profile_handle()
+            .unwrap_or_else(|| self.get_default_execution_profile_handle())
+            .access();
+        let span = PreparedSpan::new(&execution_profile, prepared);
+
         let token = self.calculate_token(prepared, &serialized_values)?;
 
         let statement_info = RoutingInfo {
@@ -891,10 +1077,6 @@ impl Session {
             is_confirmed_lwt: prepared.is_confirmed_lwt(),
         };
 
-        let span = trace_span!(
-            "Request",
-            prepared_id = %format_args!("{:X}", prepared.get_id())
-        );
         let run_query_result: RunQueryResult<NonErrorQueryResponse> = self
             .run_query(
                 statement_info,
@@ -926,8 +1108,9 @@ impl Session {
                     }
                 },
             )
-            .instrument(span)
-            .await?;
+            .instrument(span.clone())
+            .await
+            .record_error(&span)?;
 
         let response = match run_query_result {
             RunQueryResult::IgnoredWriteError => NonErrorQueryResponse {
@@ -942,7 +1125,11 @@ impl Session {
         self.handle_auto_await_schema_agreement(prepared.get_statement(), &response)
             .await?;
 
-        response.into_query_result()
+        let query_result = response.into_query_result().record_error(&span);
+        if let Ok(ref res) = query_result {
+            span.record_none_explicitly(scylladb_tag!("rows_count"), res.rows_num().ok());
+        }
+        query_result
     }
 
     /// Run a prepared query with paging\
@@ -1001,10 +1188,8 @@ impl Session {
             .unwrap_or_else(|| self.get_default_execution_profile_handle())
             .access();
 
-        let span = trace_span!(
-            "Request",
-            prepared_id = %format_args!("{:X}", prepared.get_id())
-        );
+        let span = PreparedSpan::new(&execution_profile, &prepared);
+
         RowIterator::new_for_prepared_statement(PreparedIteratorConfig {
             prepared,
             values: serialized_values.into_owned(),
@@ -1089,6 +1274,12 @@ impl Session {
         let values = BatchValuesFirstSerialized::new(&values, first_serialized_value);
         let values_ref = &values;
 
+        let execution_profile = batch
+            .get_execution_profile_handle()
+            .unwrap_or_else(|| self.get_default_execution_profile_handle())
+            .access();
+        let span = BatchSpan::new(&execution_profile, batch);
+
         let run_query_result = self
             .run_query(
                 statement_info,
@@ -1120,8 +1311,9 @@ impl Session {
                     }
                 },
             )
-            .instrument(trace_span!("Batch"))
-            .await?;
+            .instrument(span.clone())
+            .await
+            .record_error(&span)?;
 
         Ok(match run_query_result {
             RunQueryResult::IgnoredWriteError => QueryResult::default(),
@@ -1557,11 +1749,14 @@ impl Session {
         let mut last_error: Option<QueryError> = None;
         let mut current_consistency: Consistency =
             context.consistency.unwrap_or(execution_profile.consistency);
+        let mut attempt_count = 0_usize;
 
         'nodes_in_plan: for node in query_plan {
-            let span = trace_span!("Executing query", node = %node.address);
             'same_node_retries: loop {
-                trace!(parent: &span, "Execution started");
+                attempt_count += 1;
+                let span = PendingAttemptSpan::new(node, attempt_count);
+                trace!(parent: span.as_ref(), "Execution started");
+
                 let connection: Arc<Connection> = match choose_connection(node.clone())
                     .instrument(span.clone())
                     .await
@@ -1569,21 +1764,24 @@ impl Session {
                     Ok(connection) => connection,
                     Err(e) => {
                         trace!(
-                            parent: &span,
+                            parent: span.as_ref(),
                             error = %e,
                             "Choosing connection failed"
                         );
+                        span.complete();
+                        span.record_error(&e);
                         last_error = Some(e);
                         // Broken connection doesn't count as a failed query, don't log in metrics
                         continue 'nodes_in_plan;
                     }
                 };
 
+                span.record_shard_id(connection.get_shard_info().as_ref().map(|info| info.shard));
                 self.metrics.inc_total_nonpaged_queries();
                 let query_start = std::time::Instant::now();
 
                 trace!(
-                    parent: &span,
+                    parent: span.as_ref(),
                     connection = %connection.get_connect_address(),
                     "Sending"
                 );
@@ -1594,10 +1792,12 @@ impl Session {
                         .instrument(span.clone())
                         .await;
 
+                span.complete();
+
                 let elapsed = query_start.elapsed();
                 last_error = match query_result {
                     Ok(response) => {
-                        trace!(parent: &span, "Query succeeded");
+                        trace!(parent: span.as_ref(), "Query succeeded");
                         let _ = self.metrics.log_query_latency(elapsed.as_millis() as u64);
                         context.log_attempt_success(&attempt_id);
                         execution_profile.load_balancing_policy.on_query_success(
@@ -1609,7 +1809,7 @@ impl Session {
                     }
                     Err(e) => {
                         trace!(
-                            parent: &span,
+                            parent: span.as_ref(),
                             last_error = %e,
                             "Query failed"
                         );
@@ -1624,7 +1824,10 @@ impl Session {
                     }
                 };
 
+                // Safety: last_error must have been set, because else we would have returned.
                 let the_error: &QueryError = last_error.as_ref().unwrap();
+                span.record_error(the_error);
+
                 // Use retry policy to decide what to do next
                 let query_info = QueryInfo {
                     error: the_error,
@@ -1636,8 +1839,8 @@ impl Session {
 
                 let retry_decision = context.retry_session.decide_should_retry(query_info);
                 trace!(
-                    parent: &span,
-                    retry_decision = format!("{:?}", retry_decision).as_str()
+                    parent: span.as_ref(),
+                    retry_decision = format_args!("{:?}", retry_decision)
                 );
                 context.log_attempt_error(&attempt_id, the_error, &retry_decision);
                 match retry_decision {
