@@ -486,7 +486,9 @@ impl Doorkeeper {
         connection_no: usize,
     ) -> Result<(), DoorkeeperError> {
         let (driver_stream, driver_addr) = self.make_driver_stream(connection_no).await?;
-        let cluster_stream = self.make_cluster_stream(driver_addr).await?;
+        let cluster_stream = self
+            .make_cluster_stream(driver_addr, self.node.real_addr, self.node.shard_awareness)
+            .await?;
 
         self.spawn_workers(
             driver_addr,
@@ -518,18 +520,17 @@ impl Doorkeeper {
     async fn make_cluster_stream(
         &mut self,
         driver_addr: SocketAddr,
+        real_addr: SocketAddr,
+        shard_awareness: ShardAwareness,
     ) -> Result<TcpStream, DoorkeeperError> {
-        let cluster_stream = if self.node.shard_awareness.is_aware() {
+        let cluster_stream = if shard_awareness.is_aware() {
             let shards = match self.shards_number {
                 None => {
-                    let temporary_stream =
-                        TcpStream::connect(self.node.real_addr)
-                            .await
-                            .map_err(|err| {
-                                DoorkeeperError::NodeConnectionAttempt(self.node.real_addr, err)
-                            })?;
+                    let temporary_stream = TcpStream::connect(real_addr)
+                        .await
+                        .map_err(|err| DoorkeeperError::NodeConnectionAttempt(real_addr, err))?;
                     let shards = self
-                        .obtain_shards_number(temporary_stream, self.node.real_addr)
+                        .obtain_shards_number(temporary_stream, real_addr)
                         .await?;
                     self.shards_number = Some(shards);
 
@@ -558,22 +559,22 @@ impl Doorkeeper {
                 desired_addr
             };
 
-            socket.connect(self.node.real_addr).await.map(|ok| {
+            socket.connect(real_addr).await.map(|ok| {
                 info!(
                     "Connected to the cluster from {} at {}, shard {}.",
                     ok.local_addr().unwrap(),
-                    self.node.real_addr,
+                    real_addr,
                     shard_preserving_addr.port() % shards
                 );
                 ok
             })
         } else {
-            TcpStream::connect(self.node.real_addr).await.map(|ok| {
-                info!("Connected to the cluster at {}.", self.node.real_addr);
+            TcpStream::connect(real_addr).await.map(|ok| {
+                info!("Connected to the cluster at {}.", real_addr);
                 ok
             })
         }
-        .map_err(|err| DoorkeeperError::NodeConnectionAttempt(self.node.real_addr, err))?;
+        .map_err(|err| DoorkeeperError::NodeConnectionAttempt(real_addr, err))?;
 
         Ok(cluster_stream)
     }
