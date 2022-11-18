@@ -7,7 +7,7 @@ use thiserror::Error;
 pub enum DoorkeeperError {
     #[error("Listen on {0} failed with {1}")]
     Listen(SocketAddr, std::io::Error),
-    #[error("Connection attempt from driver to node {0} failed with {1}")]
+    #[error("Connection attempt from driver to proxy {0} failed with {1}")]
     DriverConnectionAttempt(SocketAddr, std::io::Error),
     #[error("Connection to node {0} failed with {1}")]
     NodeConnectionAttempt(SocketAddr, std::io::Error),

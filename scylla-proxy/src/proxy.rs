@@ -7,6 +7,7 @@ use crate::RequestOpcode;
 use bytes::Bytes;
 use scylla_cql::frame::types::read_string_multimap;
 use std::collections::HashMap;
+use std::fmt::Display;
 use std::future::Future;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::sync::Arc;
@@ -59,28 +60,66 @@ impl ShardAwareness {
     }
 }
 
+/// Node can be either Real (truly backed by a Scylla node) or Simulated
+/// (driver believes it's real, but we merely simulate it with the proxy).
+/// In Simulated mode, no node address is provided and proxy does not attempt
+/// to establish connection with a Scylla node.
+///
+/// For Real node, all workers are created, so such frame flow is possible:
+/// [driver] -> receiver_from_driver -> requests_processor -> sender_to_cluster -> [node] (ordinary request flow)
+///                                        |                    /\
+///     (forging response) ++--------------+      +-------------++ (forging request)
+///                        \/                     |
+/// [driver] <- sender_to_driver <- response_processor <- receiver_from_cluster <- [node] (ordinary response flow)
+///
+/// For Simulated node, it looks like this:
+/// [driver] -> receiver_from_driver -> requests_processor -+
+///                                                         |   (forging response)
+/// [driver] <- sender_to_driver <--------------------------+
+///
+/// For Real node, the default reaction to a frame is to pass it to its intended addresse.
+/// For Simulated node, the default reaction to a request is to drop it.
+enum NodeType {
+    Real {
+        real_addr: SocketAddr,
+        shard_awareness: ShardAwareness,
+        response_rules: Option<Vec<ResponseRule>>,
+    },
+    Simulated,
+}
+
 pub struct Node {
-    real_addr: SocketAddr,
     proxy_addr: SocketAddr,
-    shard_awareness: ShardAwareness,
     request_rules: Option<Vec<RequestRule>>,
-    response_rules: Option<Vec<ResponseRule>>,
+    node_type: NodeType,
 }
 
 impl Node {
+    /// Creates an abstract node that is backed by a real Scylla node.
     pub fn new(
         real_addr: SocketAddr,
         proxy_addr: SocketAddr,
         shard_awareness: ShardAwareness,
         request_rules: Option<Vec<RequestRule>>,
         response_rules: Option<Vec<ResponseRule>>,
-    ) -> Node {
-        Node {
-            real_addr,
+    ) -> Self {
+        Self {
             proxy_addr,
-            shard_awareness,
             request_rules,
-            response_rules,
+            node_type: NodeType::Real {
+                real_addr,
+                shard_awareness,
+                response_rules,
+            },
+        }
+    }
+
+    /// Creates a simulated node that is not backed by any real Scylla node.
+    pub fn new_dry_mode(proxy_addr: SocketAddr, request_rules: Option<Vec<RequestRule>>) -> Self {
+        Self {
+            proxy_addr,
+            request_rules,
+            node_type: NodeType::Simulated,
         }
     }
 
@@ -129,24 +168,106 @@ impl NodeBuilder {
         self
     }
 
+    /// Creates an abstract node that is backed by a real Scylla node.
     pub fn build(self) -> Node {
         Node {
-            real_addr: self.real_addr.expect("Real addr is required!"),
             proxy_addr: self.proxy_addr.expect("Proxy addr is required!"),
-            shard_awareness: self.shard_awareness.expect("Shard awareness is required!"),
             request_rules: self.request_rules,
-            response_rules: self.response_rules,
+            node_type: NodeType::Real {
+                real_addr: self.real_addr.expect("Real addr is required!"),
+                shard_awareness: self.shard_awareness.expect("Shard awareness is required!"),
+                response_rules: self.response_rules,
+            },
+        }
+    }
+
+    /// Creates a simulated node that is not backed by any real Scylla node.
+    pub fn build_dry_mode(self) -> Node {
+        Node {
+            proxy_addr: self.proxy_addr.expect("Proxy addr is required!"),
+            request_rules: self.request_rules,
+            node_type: NodeType::Simulated,
         }
     }
 }
 
-struct InternalNode {
-    real_addr: SocketAddr,
-    proxy_addr: SocketAddr,
-    shard_awareness: ShardAwareness,
-    request_rules: Arc<Mutex<Vec<RequestRule>>>,
-    response_rules: Arc<Mutex<Vec<ResponseRule>>>,
+#[derive(Clone, Copy)]
+struct DisplayableRealAddrOption(Option<SocketAddr>);
+impl Display for DisplayableRealAddrOption {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        if let Some(addr) = self.0 {
+            write!(f, "{}", addr)
+        } else {
+            write!(f, "<dry mode>")
+        }
+    }
 }
+
+enum InternalNode {
+    Real {
+        real_addr: SocketAddr,
+        proxy_addr: SocketAddr,
+        shard_awareness: ShardAwareness,
+        request_rules: Arc<Mutex<Vec<RequestRule>>>,
+        response_rules: Arc<Mutex<Vec<ResponseRule>>>,
+    },
+    Simulated {
+        proxy_addr: SocketAddr,
+        request_rules: Arc<Mutex<Vec<RequestRule>>>,
+    },
+}
+
+impl InternalNode {
+    fn proxy_addr(&self) -> SocketAddr {
+        match *self {
+            InternalNode::Real { proxy_addr, .. } => proxy_addr,
+            InternalNode::Simulated { proxy_addr, .. } => proxy_addr,
+        }
+    }
+    fn real_addr(&self) -> Option<SocketAddr> {
+        match *self {
+            InternalNode::Real { real_addr, .. } => Some(real_addr),
+            InternalNode::Simulated { .. } => None,
+        }
+    }
+    fn request_rules(&self) -> &Arc<Mutex<Vec<RequestRule>>> {
+        match self {
+            InternalNode::Real { request_rules, .. } => request_rules,
+            InternalNode::Simulated { request_rules, .. } => request_rules,
+        }
+    }
+}
+
+impl From<Node> for InternalNode {
+    fn from(node: Node) -> Self {
+        match node.node_type {
+            NodeType::Real {
+                real_addr,
+                shard_awareness,
+                response_rules,
+            } => InternalNode::Real {
+                real_addr,
+                proxy_addr: node.proxy_addr,
+                shard_awareness,
+                request_rules: node
+                    .request_rules
+                    .map(|rules| Arc::new(Mutex::new(rules)))
+                    .unwrap_or_default(),
+                response_rules: response_rules
+                    .map(|rules| Arc::new(Mutex::new(rules)))
+                    .unwrap_or_default(),
+            },
+            NodeType::Simulated => InternalNode::Simulated {
+                proxy_addr: node.proxy_addr,
+                request_rules: node
+                    .request_rules
+                    .map(|rules| Arc::new(Mutex::new(rules)))
+                    .unwrap_or_default(),
+            },
+        }
+    }
+}
+
 pub struct ProxyBuilder {
     nodes: Vec<Node>,
 }
@@ -166,34 +287,15 @@ pub struct Proxy {
     nodes: Vec<InternalNode>,
 }
 
-/* This specialization is needed to avoid inference problem.
-The exact number is irrelevant. */
-impl Proxy {
-    pub fn builder() -> ProxyBuilder {
-        ProxyBuilder { nodes: vec![] }
-    }
-}
-
 impl Proxy {
     pub fn new(nodes: impl IntoIterator<Item = Node>) -> Self {
         Proxy {
-            nodes: nodes
-                .into_iter()
-                .map(|node| InternalNode {
-                    real_addr: node.real_addr,
-                    proxy_addr: node.proxy_addr,
-                    shard_awareness: node.shard_awareness,
-                    request_rules: node
-                        .request_rules
-                        .map(|rules| Arc::new(Mutex::new(rules)))
-                        .unwrap_or_default(),
-                    response_rules: node
-                        .response_rules
-                        .map(|rules| Arc::new(Mutex::new(rules)))
-                        .unwrap_or_default(),
-                })
-                .collect(),
+            nodes: nodes.into_iter().map(|node| node.into()).collect(),
         }
+    }
+
+    pub fn builder() -> ProxyBuilder {
+        ProxyBuilder { nodes: vec![] }
     }
 
     /// Build a translation map based on provided proxy and node addresses.
@@ -202,7 +304,14 @@ impl Proxy {
     pub fn translation_map(&self) -> HashMap<SocketAddr, SocketAddr> {
         let mut translation_map = HashMap::new();
         for node in self.nodes.iter() {
-            translation_map.insert(node.real_addr, node.proxy_addr);
+            if let &InternalNode::Real {
+                real_addr,
+                proxy_addr,
+                ..
+            } = node
+            {
+                translation_map.insert(real_addr, proxy_addr);
+            }
         }
         translation_map
     }
@@ -218,9 +327,21 @@ impl Proxy {
             .nodes
             .into_iter()
             .map(|node| {
-                let running = RunningNode {
-                    request_rules: node.request_rules.clone(),
-                    response_rules: node.response_rules.clone(),
+                let running = {
+                    let (request_rules, response_rules) = match node {
+                        InternalNode::Real {
+                            ref request_rules,
+                            ref response_rules,
+                            ..
+                        } => (request_rules, Some(response_rules)),
+                        InternalNode::Simulated {
+                            ref request_rules, ..
+                        } => (request_rules, None),
+                    };
+                    RunningNode {
+                        request_rules: request_rules.clone(),
+                        response_rules: response_rules.cloned(),
+                    }
                 };
                 (
                     Doorkeeper::spawn(
@@ -250,7 +371,7 @@ impl Proxy {
 /// A handle that can be used to change the rules regarding the particular node.
 pub struct RunningNode {
     request_rules: Arc<Mutex<Vec<RequestRule>>>,
-    response_rules: Arc<Mutex<Vec<ResponseRule>>>,
+    response_rules: Option<Arc<Mutex<Vec<ResponseRule>>>>,
 }
 
 impl RunningNode {
@@ -261,7 +382,12 @@ impl RunningNode {
 
     /// Replaces the previous response rules with the new ones.
     pub async fn change_response_rules(&mut self, rules: Option<Vec<ResponseRule>>) {
-        *self.response_rules.lock().await = rules.unwrap_or_default();
+        *self
+            .response_rules
+            .as_ref()
+            .expect("No response rules on a simulated node!")
+            .lock()
+            .await = rules.unwrap_or_default();
     }
 }
 
@@ -282,7 +408,9 @@ impl RunningProxy {
             .map(|node| (&node.request_rules, &node.response_rules))
         {
             request_rules.lock().await.clear();
-            response_rules.lock().await.clear();
+            if let Some(response_rules) = response_rules {
+                response_rules.lock().await.clear();
+            }
         }
     }
 
@@ -354,24 +482,42 @@ impl Doorkeeper {
         finish_guard: FinishGuard,
         error_propagator: ErrorPropagator,
     ) -> Result<(), DoorkeeperError> {
-        let listener = TcpListener::bind(node.proxy_addr)
+        let listener = TcpListener::bind(node.proxy_addr())
             .await
-            .map_err(|err| DoorkeeperError::DriverConnectionAttempt(node.proxy_addr, err))?;
+            .map_err(|err| DoorkeeperError::DriverConnectionAttempt(node.proxy_addr(), err))?;
 
-        info!(
-            "Spawned a {} doorkeeper for pair real:{} - proxy:{}.",
-            if node.shard_awareness.is_aware() {
-                "shard-aware"
-            } else {
-                "shard-unaware"
-            },
-            node.real_addr,
-            node.proxy_addr
-        );
+        if let InternalNode::Real {
+            shard_awareness,
+            real_addr,
+            ..
+        } = node
+        {
+            info!(
+                "Spawned a {} doorkeeper for pair real:{} - proxy:{}.",
+                if shard_awareness.is_aware() {
+                    "shard-aware"
+                } else {
+                    "shard-unaware"
+                },
+                real_addr,
+                node.proxy_addr(),
+            );
+        } else {
+            info!(
+                "Spawned a dry-mode doorkeeper for proxy:{}.",
+                node.proxy_addr(),
+            )
+        };
+
         let doorkeeper = Doorkeeper {
-            shards_number: match node.shard_awareness {
-                ShardAwareness::FixedNum(shards_num) => Some(shards_num),
-                _ => None,
+            shards_number: if let InternalNode::Real {
+                shard_awareness: ShardAwareness::FixedNum(shards_num),
+                ..
+            } = node
+            {
+                Some(shards_num)
+            } else {
+                None
             },
             node,
             listener,
@@ -382,97 +528,168 @@ impl Doorkeeper {
         tokio::task::spawn(doorkeeper.run());
         Ok(())
     }
+
     async fn run(mut self) {
         let mut own_terminate_notifier = self.terminate_signaler.subscribe();
         let (connection_close_tx, _connection_close_rx) = broadcast::channel::<()>(2);
         let mut connection_no: usize = 0;
         loop {
             tokio::select! {
-                res = self.make_streams(connection_no) => { match res {
-                    Ok((driver_addr, driver_stream, cluster_stream)) => {
-                        let (cluster_read, cluster_write) = cluster_stream.into_split();
-                        let (driver_read, driver_write) = driver_stream.into_split();
-
-                        let new_worker = || ProxyWorker{
-                            terminate_notifier: self.terminate_signaler.subscribe(),
-                            finish_guard:  self.finish_guard.clone(),
-                            connection_close_notifier: connection_close_tx.subscribe(),
-                            error_propagator: self.error_propagator.clone(),
-                            driver_addr,
-                            real_addr: self.node.real_addr,
-                            proxy_addr: self.node.proxy_addr,
-                        };
-
-                        let (tx_request, rx_request) = mpsc::unbounded_channel::<RequestFrame>();
-                        let (tx_response, rx_response) = mpsc::unbounded_channel::<ResponseFrame>();
-                        let (tx_cluster, rx_cluster) = mpsc::unbounded_channel::<RequestFrame>();
-                        let (tx_driver, rx_driver) = mpsc::unbounded_channel::<ResponseFrame>();
-
-                        tokio::task::spawn(new_worker()
-                            .receiver_from_driver(driver_read, tx_request));
-                        tokio::task::spawn(new_worker()
-                            .receiver_from_cluster(cluster_read, tx_response));
-                        tokio::task::spawn(new_worker()
-                            .sender_to_cluster(cluster_write, rx_cluster, connection_close_tx.subscribe(), self.terminate_signaler.subscribe()));
-                        tokio::task::spawn(new_worker()
-                            .sender_to_driver(driver_write, rx_driver, connection_close_tx.subscribe(), self.terminate_signaler.subscribe()));
-                        tokio::task::spawn(new_worker().request_processor(
-                            rx_request,
-                            tx_driver.clone(),
-                            tx_cluster.clone(),
-                            connection_no,
-                            self.node.request_rules.clone(),
-                            connection_close_tx.clone()
-                        ));
-                        tokio::task::spawn(new_worker().response_processor(
-                            rx_response,
-                            tx_driver,
-                            tx_cluster,
-                            connection_no,
-                            self.node.response_rules.clone(),
-                            connection_close_tx.clone()
-                        ));
-                        debug!("Doorkeeper of node {} spawned workers.", self.node.real_addr);
-                        connection_no += 1;
+                res = self.accept_connection(&connection_close_tx, connection_no) => {
+                    match res {
+                        Ok(()) => connection_no += 1,
+                        Err(err) => {
+                            error!(
+                                "Error in doorkeeper with addr {} for node {}: {}",
+                                self.node.proxy_addr(),
+                                DisplayableRealAddrOption(self.node.real_addr()),
+                                err
+                            );
+                            let _ = self.error_propagator.send(err.into());
+                            break;
+                        },
                     }
-                    Err(err) => {
-                        error!("Error in doorkeeper for node {}: {}", self.node.real_addr, err);
-                        let _ = self.error_propagator.send(err.into());
-                        break;
-                    }
-                }}
+                },
                 _terminate = own_terminate_notifier.recv() => break
             }
         }
         debug!(
             "Doorkeeper exits: proxy {}, node {}.",
-            self.node.proxy_addr, self.node.real_addr
+            self.node.proxy_addr(),
+            DisplayableRealAddrOption(self.node.real_addr())
         );
     }
 
-    async fn make_streams(
+    async fn spawn_workers(
+        &mut self,
+        driver_addr: SocketAddr,
+        connection_close_tx: &ConnectionCloseSignaler,
+        connection_no: usize,
+        driver_stream: TcpStream,
+        cluster_stream: Option<TcpStream>,
+    ) {
+        let (driver_read, driver_write) = driver_stream.into_split();
+
+        let new_worker = || ProxyWorker {
+            terminate_notifier: self.terminate_signaler.subscribe(),
+            finish_guard: self.finish_guard.clone(),
+            connection_close_notifier: connection_close_tx.subscribe(),
+            error_propagator: self.error_propagator.clone(),
+            driver_addr,
+            real_addr: self.node.real_addr(),
+            proxy_addr: self.node.proxy_addr(),
+        };
+
+        let (tx_request, rx_request) = mpsc::unbounded_channel::<RequestFrame>();
+        let (tx_response, rx_response) = mpsc::unbounded_channel::<ResponseFrame>();
+        let (tx_cluster, rx_cluster) = mpsc::unbounded_channel::<RequestFrame>();
+        let (tx_driver, rx_driver) = mpsc::unbounded_channel::<ResponseFrame>();
+
+        tokio::task::spawn(new_worker().receiver_from_driver(driver_read, tx_request));
+        tokio::task::spawn(new_worker().sender_to_driver(
+            driver_write,
+            rx_driver,
+            connection_close_tx.subscribe(),
+            self.terminate_signaler.subscribe(),
+        ));
+        tokio::task::spawn(new_worker().request_processor(
+            rx_request,
+            tx_driver.clone(),
+            tx_cluster.clone(),
+            connection_no,
+            self.node.request_rules().clone(),
+            connection_close_tx.clone(),
+        ));
+        if let InternalNode::Real {
+            ref response_rules, ..
+        } = self.node
+        {
+            let (cluster_read, cluster_write) = cluster_stream.unwrap().into_split();
+            tokio::task::spawn(new_worker().sender_to_cluster(
+                cluster_write,
+                rx_cluster,
+                connection_close_tx.subscribe(),
+                self.terminate_signaler.subscribe(),
+            ));
+            tokio::task::spawn(new_worker().receiver_from_cluster(cluster_read, tx_response));
+            tokio::task::spawn(new_worker().response_processor(
+                rx_response,
+                tx_driver,
+                tx_cluster,
+                connection_no,
+                response_rules.clone(),
+                connection_close_tx.clone(),
+            ));
+        }
+        debug!(
+            "Doorkeeper with addr {} of node {} spawned workers.",
+            self.node.proxy_addr(),
+            DisplayableRealAddrOption(self.node.real_addr())
+        );
+    }
+
+    async fn accept_connection(
+        &mut self,
+        connection_close_tx: &ConnectionCloseSignaler,
+        connection_no: usize,
+    ) -> Result<(), DoorkeeperError> {
+        let (driver_stream, driver_addr) = self.make_driver_stream(connection_no).await?;
+        let cluster_stream = match self.node {
+            InternalNode::Real {
+                real_addr,
+                shard_awareness,
+                ..
+            } => Some(
+                self.make_cluster_stream(driver_addr, real_addr, shard_awareness)
+                    .await?,
+            ),
+            InternalNode::Simulated { .. } => None,
+        };
+
+        self.spawn_workers(
+            driver_addr,
+            connection_close_tx,
+            connection_no,
+            driver_stream,
+            cluster_stream,
+        )
+        .await;
+
+        Ok(())
+    }
+
+    async fn make_driver_stream(
         &mut self,
         connection_no: usize,
-    ) -> Result<(SocketAddr, TcpStream, TcpStream), DoorkeeperError> {
+    ) -> Result<(TcpStream, SocketAddr), DoorkeeperError> {
         let (driver_stream, driver_addr) =
             self.listener.accept().await.map_err(|err| {
-                DoorkeeperError::DriverConnectionAttempt(self.node.real_addr, err)
+                DoorkeeperError::DriverConnectionAttempt(self.node.proxy_addr(), err)
             })?;
         info!(
             "Connected driver from {} to {}, connection no={}.",
-            driver_addr, self.node.proxy_addr, connection_no
+            driver_addr,
+            self.node.proxy_addr(),
+            connection_no
         );
+        Ok((driver_stream, driver_addr))
+    }
 
-        let cluster_stream = if self.node.shard_awareness.is_aware() {
+    async fn make_cluster_stream(
+        &mut self,
+        driver_addr: SocketAddr,
+        real_addr: SocketAddr,
+        shard_awareness: ShardAwareness,
+    ) -> Result<TcpStream, DoorkeeperError> {
+        let cluster_stream = if shard_awareness.is_aware() {
             let shards = match self.shards_number {
                 None => {
-                    let temporary_stream =
-                        TcpStream::connect(self.node.real_addr)
-                            .await
-                            .map_err(|err| {
-                                DoorkeeperError::NodeConnectionAttempt(self.node.real_addr, err)
-                            })?;
-                    let shards = self.obtain_shards_number(temporary_stream).await?;
+                    let temporary_stream = TcpStream::connect(real_addr)
+                        .await
+                        .map_err(|err| DoorkeeperError::NodeConnectionAttempt(real_addr, err))?;
+                    let shards = self
+                        .obtain_shards_number(temporary_stream, real_addr)
+                        .await?;
                     self.shards_number = Some(shards);
 
                     shards
@@ -480,7 +697,7 @@ impl Doorkeeper {
                 Some(shards) => shards,
             };
 
-            let socket = match self.node.proxy_addr.ip() {
+            let socket = match self.node.proxy_addr().ip() {
                 std::net::IpAddr::V4(_) => TcpSocket::new_v4(),
                 std::net::IpAddr::V6(_) => TcpSocket::new_v6(),
             }
@@ -500,24 +717,24 @@ impl Doorkeeper {
                 desired_addr
             };
 
-            socket.connect(self.node.real_addr).await.map(|ok| {
+            socket.connect(real_addr).await.map(|ok| {
                 info!(
                     "Connected to the cluster from {} at {}, shard {}.",
                     ok.local_addr().unwrap(),
-                    self.node.real_addr,
+                    real_addr,
                     shard_preserving_addr.port() % shards
                 );
                 ok
             })
         } else {
-            TcpStream::connect(self.node.real_addr).await.map(|ok| {
-                info!("Connected to the cluster at {}.", self.node.real_addr);
+            TcpStream::connect(real_addr).await.map(|ok| {
+                info!("Connected to the cluster at {}.", real_addr);
                 ok
             })
         }
-        .map_err(|err| DoorkeeperError::NodeConnectionAttempt(self.node.real_addr, err))?;
+        .map_err(|err| DoorkeeperError::NodeConnectionAttempt(real_addr, err))?;
 
-        Ok((driver_addr, driver_stream, cluster_stream))
+        Ok(cluster_stream)
     }
 
     fn next_port_to_same_shard(&self, port: u16) -> u16 {
@@ -527,6 +744,7 @@ impl Doorkeeper {
     async fn obtain_shards_number(
         &self,
         mut connection: TcpStream,
+        real_addr: SocketAddr,
     ) -> Result<u16, DoorkeeperError> {
         write_frame(
             HARDCODED_OPTIONS_PARAMS,
@@ -553,10 +771,7 @@ impl Doorkeeper {
             0u16 => Err(DoorkeeperError::ObtainingShardNumberGotZero),
             num => Ok(num),
         }?;
-        info!(
-            "Obtained shards number on node {}: {}",
-            self.node.real_addr, shards
-        );
+        info!("Obtained shards number on node {}: {}", real_addr, shards);
         Ok(shards)
     }
 }
@@ -567,7 +782,7 @@ struct ProxyWorker {
     connection_close_notifier: ConnectionCloseNotifier,
     error_propagator: ErrorPropagator,
     driver_addr: SocketAddr,
-    real_addr: SocketAddr,
+    real_addr: Option<SocketAddr>,
     proxy_addr: SocketAddr,
 }
 
@@ -575,14 +790,17 @@ impl ProxyWorker {
     fn exit(self, duty: &'static str) {
         debug!(
             "Worker exits: [driver: {}, proxy: {}, node: {}]::{}.",
-            self.driver_addr, self.proxy_addr, self.real_addr, duty
+            self.driver_addr,
+            self.proxy_addr,
+            DisplayableRealAddrOption(self.real_addr),
+            duty
         );
         std::mem::drop(self.finish_guard);
     }
 
     async fn run_until_interrupted<F, Fut>(mut self, worker_name: &'static str, f: F)
     where
-        F: FnOnce(SocketAddr, SocketAddr, SocketAddr) -> Fut,
+        F: FnOnce(SocketAddr, SocketAddr, Option<SocketAddr>) -> Fut,
         Fut: Future<Output = Result<(), ProxyError>>,
     {
         let fut = f(self.driver_addr, self.proxy_addr, self.real_addr);
@@ -638,6 +856,7 @@ impl ProxyWorker {
         self.run_until_interrupted(
             "receiver_from_cluster",
             |driver_addr, _proxy_addr, real_addr| async move {
+                let real_addr = real_addr.expect("BUG: no real_addr in cluster worker");
                 loop {
                     let frame =
                         frame::read_response_frame(&mut read_half)
@@ -714,6 +933,7 @@ impl ProxyWorker {
         self.run_until_interrupted(
             "sender_to_driver",
             |_driver_addr, proxy_addr, real_addr| async move {
+                let real_addr = real_addr.expect("BUG: no real_addr in cluster worker");
                 loop {
                     let request = match requests_rx.recv().await {
                         Some(request) => request,
@@ -768,7 +988,7 @@ impl ProxyWorker {
                         let mut guard = request_rules.lock().await;
                         '_ruleloop: for (i, request_rule) in guard.iter_mut().enumerate() {
                             if request_rule.0.eval(&ctx) {
-                                info!("Applying rule no={} to request ({} -> {}).", i, driver_addr, real_addr);
+                                info!("Applying rule no={} to request ({} -> {}).", i, driver_addr, DisplayableRealAddrOption(real_addr));
                                 debug!("-> Applied rule: {:?}", request_rule);
                                 debug!("-> To request: {:?}", ctx.opcode);
                                 trace!("{:?}", request);
@@ -825,7 +1045,7 @@ impl ProxyWorker {
                                         // close connection.
                                         info!(
                                             "Dropping connection between {} and {} (as requested by a proxy rule)!"
-                                        , driver_addr, real_addr);
+                                        , driver_addr, DisplayableRealAddrOption(real_addr));
                                         let _ = connection_close_signaler_clone.send(());
                                     }
                                 };
@@ -867,7 +1087,7 @@ impl ProxyWorker {
                         let mut guard = response_rules.lock().await;
                         '_ruleloop: for (i, response_rule) in guard.iter_mut().enumerate() {
                             if response_rule.0.eval(&ctx) {
-                                info!("Applying rule no={} to request ({} -> {}).", i, real_addr, driver_addr);
+                                info!("Applying rule no={} to request ({} -> {}).", i, DisplayableRealAddrOption(real_addr), driver_addr);
                                 debug!("-> Applied rule: {:?}", response_rule);
                                 debug!("-> To response: {:?}", ctx.opcode);
                                 trace!("{:?}", response);
@@ -924,7 +1144,7 @@ impl ProxyWorker {
                                         // close connection.
                                         info!(
                                             "Dropping connection between {} and {} (as requested by a proxy rule)!"
-                                        , driver_addr, real_addr);
+                                        , driver_addr, real_addr.expect("BUG: response rules are unavailable for dry-mode proxy!"));
                                         let _ = connection_close_signaler_clone.send(());
                                     }
                                 };
@@ -1712,5 +1932,133 @@ mod tests {
                 .await
                 .expect("Request processing was not concurrent");
         running_proxy.finish().await.unwrap();
+    }
+
+    #[tokio::test]
+    #[ntest::timeout(1000)]
+    async fn dry_mode_proxy_drops_incoming_frames() {
+        let node1_proxy_addr = next_local_address_with_port(9876);
+        let proxy = Proxy::new([Node::new_dry_mode(node1_proxy_addr, None)]);
+        let running_proxy = proxy.run().await.unwrap();
+
+        let params = FrameParams {
+            flags: 0,
+            version: 0x04,
+            stream: 0,
+        };
+        let opcode = FrameOpcode::Request(RequestOpcode::Options);
+
+        let body = random_body();
+
+        let mut conn = TcpStream::connect(node1_proxy_addr).await.unwrap();
+
+        write_frame(params, opcode, &body, &mut conn).await.unwrap();
+        // We assert that after sufficiently long time, no error happens inside proxy.
+        tokio::time::sleep(Duration::from_millis(3)).await;
+        running_proxy.finish().await.unwrap();
+    }
+
+    #[tokio::test]
+    #[ntest::timeout(1000)]
+    async fn dry_mode_forger_proxy_forges_response() {
+        let node1_proxy_addr = next_local_address_with_port(9876);
+
+        let this_shall_pass = b"This.Shall.Pass.";
+        let test_msg = b"Test";
+
+        let proxy = Proxy::new([Node::new_dry_mode(
+            node1_proxy_addr,
+            Some(vec![
+                RequestRule(
+                    Condition::RequestOpcode(RequestOpcode::Register),
+                    RequestReaction::forge_response(Arc::new(|RequestFrame { params, .. }| {
+                        ResponseFrame {
+                            params: params.for_response(),
+                            opcode: ResponseOpcode::Event,
+                            body: Bytes::from_static(test_msg),
+                        }
+                    })),
+                ),
+                RequestRule(
+                    Condition::BodyContainsCaseSensitive(Box::new(*this_shall_pass)),
+                    RequestReaction::noop(),
+                ),
+                RequestRule(
+                    Condition::True, // only the first matching rule is applied, so "True" covers all remaining cases
+                    RequestReaction::forge_response(Arc::new(|RequestFrame { params, .. }| {
+                        ResponseFrame {
+                            params: params.for_response(),
+                            opcode: ResponseOpcode::Ready,
+                            body: Bytes::new(),
+                        }
+                    })),
+                ),
+            ]),
+        )]);
+        let running_proxy = proxy.run().await.unwrap();
+
+        let params1 = FrameParams {
+            flags: 3,
+            version: 0x42,
+            stream: 42,
+        };
+        let opcode1 = FrameOpcode::Request(RequestOpcode::Startup);
+
+        let params2 = FrameParams {
+            flags: 4,
+            version: 0x04,
+            stream: 17,
+        };
+        let opcode2 = FrameOpcode::Request(RequestOpcode::Register);
+
+        let params3 = FrameParams {
+            flags: 8,
+            version: 0x04,
+            stream: 11,
+        };
+        let opcode3 = FrameOpcode::Request(RequestOpcode::Execute);
+
+        let body1 = random_body();
+        let body2 = random_body();
+        let body3 = {
+            let mut body = BytesMut::new();
+            body.put(&b"uSeLeSs JuNk"[..]);
+            body.put(&this_shall_pass[..]);
+            body.freeze()
+        };
+
+        let mut conn = TcpStream::connect(node1_proxy_addr).await.unwrap();
+
+        write_frame(params1, opcode1, &body1, &mut conn)
+            .await
+            .unwrap();
+        write_frame(params2, opcode2, &body2, &mut conn)
+            .await
+            .unwrap();
+        write_frame(params3, opcode3, &body3, &mut conn)
+            .await
+            .unwrap();
+
+        let ResponseFrame {
+            params: recvd_params,
+            opcode: recvd_opcode,
+            body: recvd_body,
+        } = read_response_frame(&mut conn).await.unwrap();
+        assert_eq!(recvd_params, params1.for_response());
+        assert_eq!(recvd_opcode, ResponseOpcode::Ready);
+        assert_eq!(recvd_body, Bytes::new());
+
+        let ResponseFrame {
+            params: recvd_params,
+            opcode: recvd_opcode,
+            body: recvd_body,
+        } = read_response_frame(&mut conn).await.unwrap();
+        assert_eq!(recvd_params, params2.for_response());
+        assert_eq!(recvd_opcode, ResponseOpcode::Event);
+        assert_eq!(recvd_body, Bytes::from_static(test_msg));
+
+        running_proxy.finish().await.unwrap();
+
+        assert_matches!(conn.read(&mut [0u8; 1]).await, Ok(0));
     }
 }
