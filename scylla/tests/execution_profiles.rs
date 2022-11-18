@@ -120,6 +120,10 @@ impl<const NODE: u8> SpeculativeExecutionPolicy for BoundToPredefinedNodePolicy<
         self.report_node(Report::SpeculativeExecution);
         std::time::Duration::from_millis(200)
     }
+
+    fn name(&self) -> &'static str {
+        "BoundToPredefinedNodePolicy"
+    }
 }
 
 #[tokio::test]
