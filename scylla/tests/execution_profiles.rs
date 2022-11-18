@@ -93,6 +93,10 @@ impl<const NODE: u8> RetryPolicy for BoundToPredefinedNodePolicy<NODE> {
     fn clone_boxed(&self) -> Box<dyn RetryPolicy> {
         Box::new(self.clone())
     }
+
+    fn name(&self) -> &'static str {
+        "BoundToPredefinedNodePolicy"
+    }
 }
 
 impl<const NODE: u8> RetrySession for BoundToPredefinedNodePolicy<NODE> {
