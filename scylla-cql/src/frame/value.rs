@@ -223,6 +223,10 @@ pub trait BatchValues: for<'r> BatchValuesGatWorkaround<'r> {}
 impl<T: for<'r> BatchValuesGatWorkaround<'r> + ?Sized> BatchValues for T {}
 
 pub trait BatchValuesGatWorkaround<'r, ImplicitBounds = &'r Self> {
+    /// For some unknown reason, this type, when not resolved to a concrete type for a given async function,
+    /// cannot live across await boundaries while maintaining the corresponding future `Send`, unless `'r: 'static`
+    ///
+    /// See <https://github.com/scylladb/scylla-rust-driver/issues/599> for more details
     type BatchValuesIter: BatchValuesIterator<'r>;
     fn batch_values_iter(&'r self) -> Self::BatchValuesIter;
 }
