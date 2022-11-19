@@ -250,7 +250,7 @@ pub trait BatchValuesIterator<'a> {
     fn skip_next(&mut self) -> Option<()>;
 }
 
-/// Implements `BatchValuesIterator` from an `Iterator` over things that implement `ValueList`
+/// Implements `BatchValuesIterator` from an `Iterator` over references to things that implement `ValueList`
 ///
 /// Essentially used internally by this lib to provide implementors of `BatchValuesIterator` for cases
 /// that always serialize the same concrete `ValueList` type
