@@ -22,6 +22,7 @@ use itertools::Itertools;
 use scylla_cql::frame::value::Value;
 use std::collections::BTreeSet;
 use std::collections::{BTreeMap, HashMap};
+use std::sync::Arc;
 use tokio::net::TcpListener;
 use uuid::Uuid;
 
@@ -358,7 +359,7 @@ async fn test_prepared_statement() {
 #[tokio::test]
 async fn test_batch() {
     let uri = std::env::var("SCYLLA_URI").unwrap_or_else(|_| "127.0.0.1:9042".to_string());
-    let session = SessionBuilder::new().known_node(uri).build().await.unwrap();
+    let session = Arc::new(SessionBuilder::new().known_node(uri).build().await.unwrap());
     let ks = unique_keyspace_name();
 
     session.query(format!("CREATE KEYSPACE IF NOT EXISTS {} WITH REPLICATION = {{'class' : 'SimpleStrategy', 'replication_factor' : 1}}", ks), &[]).await.unwrap();
@@ -390,9 +391,23 @@ async fn test_batch() {
     batch.append_statement(prepared_statement.clone());
 
     let four_value: i32 = 4;
-    let values = ((1_i32, 2_i32, "abc"), (), (1_i32, &four_value, "hello"));
-
-    session.batch(&batch, values).await.unwrap();
+    let hello_value: String = String::from("hello");
+    let session_clone = session.clone();
+    // We're spawning to a separate task here to test that it works even in that case, because in some scenarios
+    // (specifically if the `BatchValuesIter` associated type is not dropped before await boundaries)
+    // the implicit auto trait propagation on batch will be such that the returned future is not Send (depending on
+    // some lifetime for some unknown reason), so can't be spawned on tokio.
+    // See https://github.com/scylladb/scylla-rust-driver/issues/599 for more details
+    tokio::spawn(async move {
+        let values = (
+            (1_i32, 2_i32, "abc"),
+            (),
+            (1_i32, &four_value, hello_value.as_str()),
+        );
+        session_clone.batch(&batch, values).await.unwrap();
+    })
+    .await
+    .unwrap();
 
     let rs = session
         .query(format!("SELECT a, b, c FROM {}.t_batch", ks), &[])

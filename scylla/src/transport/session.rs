@@ -1030,10 +1030,7 @@ impl Session {
         // If users batch statements by shard, they will be rewarded with full shard awareness
 
         // Extract first serialized_value
-        let mut batch_values_iter_for_first_serialized_value = values.batch_values_iter();
-        let first_serialized_value = batch_values_iter_for_first_serialized_value
-            .next_serialized()
-            .transpose()?;
+        let first_serialized_value = values.batch_values_iter().next_serialized().transpose()?;
         let first_serialized_value = first_serialized_value.as_deref();
         let statement_info = match (first_serialized_value, batch.statements.first()) {
             (Some(first_serialized_value), Some(BatchStatement::PreparedStatement(ps))) => {
