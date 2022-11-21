@@ -69,33 +69,67 @@ impl<T: FromCqlVal<CqlValue>> FromCqlVal<Option<CqlValue>> for Option<T> {
         }
     }
 }
-// This macro implements FromCqlVal given a type and method of CqlValue that returns this type
-macro_rules! impl_from_cql_val {
+/// This macro implements FromCqlVal given a type and method of CqlValue that returns this type.
+///
+/// It can be useful in client code in case you have an extension trait for CqlValue
+/// and you would like to convert one of its methods into a FromCqlVal impl.
+/// The conversion method must return an `Option<T>`. `None` values will be
+/// converted to `CqlValue::BadCqlType`.
+///
+/// # Example
+/// ```
+/// # use scylla_cql::frame::response::result::CqlValue;
+/// # use scylla_cql::impl_from_cql_value_from_method;
+/// struct MyBytes(Vec<u8>);
+///
+/// trait CqlValueExt {
+///     fn into_my_bytes(self) -> Option<MyBytes>;
+/// }
+///
+/// impl CqlValueExt for CqlValue {
+///     fn into_my_bytes(self) -> Option<MyBytes> {
+///         Some(MyBytes(self.into_blob()?))
+///     }
+/// }
+///
+/// impl_from_cql_value_from_method!(MyBytes, into_my_bytes);
+/// ```
+#[macro_export]
+macro_rules! impl_from_cql_value_from_method {
     ($T:ty, $convert_func:ident) => {
-        impl FromCqlVal<CqlValue> for $T {
-            fn from_cql(cql_val: CqlValue) -> Result<$T, FromCqlValError> {
-                cql_val.$convert_func().ok_or(FromCqlValError::BadCqlType)
+        impl
+            $crate::frame::response::cql_to_rust::FromCqlVal<
+                $crate::frame::response::result::CqlValue,
+            > for $T
+        {
+            fn from_cql(
+                cql_val: $crate::frame::response::result::CqlValue,
+            ) -> std::result::Result<$T, $crate::frame::response::cql_to_rust::FromCqlValError>
+            {
+                cql_val
+                    .$convert_func()
+                    .ok_or($crate::frame::response::cql_to_rust::FromCqlValError::BadCqlType)
             }
         }
     };
 }
 
-impl_from_cql_val!(i32, as_int); // i32::from_cql<CqlValue>
-impl_from_cql_val!(i64, as_bigint); // i64::from_cql<CqlValue>
-impl_from_cql_val!(Counter, as_counter); // Counter::from_cql<CqlValue>
-impl_from_cql_val!(i16, as_smallint); // i16::from_cql<CqlValue>
-impl_from_cql_val!(BigInt, into_varint); // BigInt::from_cql<CqlValue>
-impl_from_cql_val!(i8, as_tinyint); // i8::from_cql<CqlValue>
-impl_from_cql_val!(NaiveDate, as_date); // NaiveDate::from_cql<CqlValue>
-impl_from_cql_val!(f32, as_float); // f32::from_cql<CqlValue>
-impl_from_cql_val!(f64, as_double); // f64::from_cql<CqlValue>
-impl_from_cql_val!(bool, as_boolean); // bool::from_cql<CqlValue>
-impl_from_cql_val!(String, into_string); // String::from_cql<CqlValue>
-impl_from_cql_val!(Vec<u8>, into_blob); // Vec<u8>::from_cql<CqlValue>
-impl_from_cql_val!(IpAddr, as_inet); // IpAddr::from_cql<CqlValue>
-impl_from_cql_val!(Uuid, as_uuid); // Uuid::from_cql<CqlValue>
-impl_from_cql_val!(BigDecimal, into_decimal); // BigDecimal::from_cql<CqlValue>
-impl_from_cql_val!(Duration, as_duration); // Duration::from_cql<CqlValue>
+impl_from_cql_value_from_method!(i32, as_int); // i32::from_cql<CqlValue>
+impl_from_cql_value_from_method!(i64, as_bigint); // i64::from_cql<CqlValue>
+impl_from_cql_value_from_method!(Counter, as_counter); // Counter::from_cql<CqlValue>
+impl_from_cql_value_from_method!(i16, as_smallint); // i16::from_cql<CqlValue>
+impl_from_cql_value_from_method!(BigInt, into_varint); // BigInt::from_cql<CqlValue>
+impl_from_cql_value_from_method!(i8, as_tinyint); // i8::from_cql<CqlValue>
+impl_from_cql_value_from_method!(NaiveDate, as_date); // NaiveDate::from_cql<CqlValue>
+impl_from_cql_value_from_method!(f32, as_float); // f32::from_cql<CqlValue>
+impl_from_cql_value_from_method!(f64, as_double); // f64::from_cql<CqlValue>
+impl_from_cql_value_from_method!(bool, as_boolean); // bool::from_cql<CqlValue>
+impl_from_cql_value_from_method!(String, into_string); // String::from_cql<CqlValue>
+impl_from_cql_value_from_method!(Vec<u8>, into_blob); // Vec<u8>::from_cql<CqlValue>
+impl_from_cql_value_from_method!(IpAddr, as_inet); // IpAddr::from_cql<CqlValue>
+impl_from_cql_value_from_method!(Uuid, as_uuid); // Uuid::from_cql<CqlValue>
+impl_from_cql_value_from_method!(BigDecimal, into_decimal); // BigDecimal::from_cql<CqlValue>
+impl_from_cql_value_from_method!(Duration, as_duration); // Duration::from_cql<CqlValue>
 
 impl FromCqlVal<CqlValue> for crate::frame::value::Time {
     fn from_cql(cql_val: CqlValue) -> Result<Self, FromCqlValError> {

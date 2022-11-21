@@ -93,6 +93,10 @@ name = "custom_load_balancing_policy"
 path = "custom_load_balancing_policy.rs"
 
 [[example]]
+name = "custom_deserialization"
+path = "custom_deserialization.rs"
+
+[[example]]
 name = "tower"
 path = "tower.rs"
 

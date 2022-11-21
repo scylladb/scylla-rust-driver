@@ -15,3 +15,5 @@ pub use scylla_macros::ValueList;
 
 // Reexports for derive(IntoUserType)
 pub use bytes::{BufMut, Bytes, BytesMut};
+
+pub use crate::impl_from_cql_value_from_method;
