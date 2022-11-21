@@ -8,7 +8,7 @@ use scylla_cql::frame::types;
 
 mod default;
 mod plan;
-pub use default::DefaultPolicy;
+pub use default::{DefaultPolicy, DefaultPolicyBuilder};
 pub use plan::Plan;
 
 /// Represents info about statement that can be used by load balancing policies.
