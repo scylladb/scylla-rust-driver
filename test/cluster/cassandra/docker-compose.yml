@@ -1,0 +1,55 @@
+version: '2.4' # 2.4 is the last version that supports depends_on conditions for service health
+
+networks:
+  public:
+    name: scylla_rust_driver_public
+    driver: bridge
+    ipam:
+      driver: default
+      config:
+        - subnet: 172.42.0.0/16
+services:
+  cassandra1:
+    image: cassandra
+    healthcheck:
+        test: ["CMD", "cqlsh", "-e", "describe keyspaces" ]
+        interval: 5s
+        timeout: 5s
+        retries: 60
+    networks:
+      public:
+        ipv4_address: 172.42.0.2
+    environment:
+      - CASSANDRA_BROADCAST_ADDRESS=172.42.0.2
+  cassandra2:
+    image: cassandra
+    healthcheck:
+        test: ["CMD", "cqlsh", "-e", "describe keyspaces" ]
+        interval: 5s
+        timeout: 5s
+        retries: 60
+    networks:
+      public:
+        ipv4_address: 172.42.0.3
+    environment:
+      - CASSANDRA_BROADCAST_ADDRESS=172.42.0.3
+      - CASSANDRA_SEEDS=172.42.0.2
+    depends_on:
+      cassandra1:
+        condition: service_healthy
+  cassandra3:
+    image: cassandra
+    healthcheck:
+        test: ["CMD", "cqlsh", "-e", "describe keyspaces" ]
+        interval: 5s
+        timeout: 5s
+        retries: 60
+    networks:
+      public:
+        ipv4_address: 172.42.0.4
+    environment:
+      - CASSANDRA_BROADCAST_ADDRESS=172.42.0.4
+      - CASSANDRA_SEEDS=172.42.0.2,172.42.0.3
+    depends_on:
+      cassandra2:
+        condition: service_healthy

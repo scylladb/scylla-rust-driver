@@ -13,18 +13,16 @@ env:
 jobs:
   build:
     runs-on: ubuntu-latest
-    services:
-      cassandra:
-        image: cassandra
-        ports:
-          - 9042:9042
-    env:
-      CDC: 'disabled'
     steps:
     - uses: actions/checkout@v2
+    - name: Setup 3-node Cassandra cluster
+      run: |
+        docker-compose -f test/cluster/cassandra/docker-compose.yml up -d
       # A separate step for building to separate measuring time of compilation and testing
     - name: Build the project
       run: cargo build --verbose --tests
     - name: Run tests on cassandra
-      # test threads must be one because else database tests will run in parallel and will result in flaky tests
-      run: cargo test --verbose -- --test-threads=1 --skip test_views_in_schema_info --skip retries_occur --skip speculative_execution_is_fired
+      run: |
+        CDC='disabled' SCYLLA_URI=172.42.0.2:9042 SCYLLA_URI2=172.42.0.3:9042 SCYLLA_URI3=172.42.0.4:9042 cargo test --verbose -- --skip test_views_in_schema_info
+    - name: Stop cluster
+      run: docker-compose -f test/cluster/cassandra/docker-compose.yml down
