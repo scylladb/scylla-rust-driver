@@ -49,6 +49,8 @@ pub enum ShardAwareness {
     /// The first time the driver attempts to connect to the particular node (through proxy),
     /// the related node is first queried on a temporary connection for its number of shards,
     /// and only then establishes another connection for the driver's real communication with the node.
+    /// If the queried node does not provide sharding info (e.g. in case of a Cassandra node),
+    /// then this mode behaves as Unaware.
     QueryNode,
     /// Binds to the port that is the same as the driver's port modulo the provided number of shards.
     FixedNum(u16),
@@ -681,22 +683,27 @@ impl Doorkeeper {
         real_addr: SocketAddr,
         shard_awareness: ShardAwareness,
     ) -> Result<TcpStream, DoorkeeperError> {
-        let cluster_stream = if shard_awareness.is_aware() {
-            let shards = match self.shards_number {
-                None => {
-                    let temporary_stream = TcpStream::connect(real_addr)
-                        .await
-                        .map_err(|err| DoorkeeperError::NodeConnectionAttempt(real_addr, err))?;
-                    let shards = self
-                        .obtain_shards_number(temporary_stream, real_addr)
-                        .await?;
-                    self.shards_number = Some(shards);
+        let shards = if shard_awareness.is_aware() {
+            if self.shards_number.is_some() {
+                self.shards_number
+            } else {
+                let temporary_stream = TcpStream::connect(real_addr)
+                    .await
+                    .map_err(|err| DoorkeeperError::NodeConnectionAttempt(real_addr, err))?;
+                let shards = match self.obtain_shards_number(temporary_stream, real_addr).await {
+                    Ok(shards) => Some(shards),
+                    // If a node offers no sharding info, change proxy ShardAwareness to Unaware.
+                    Err(DoorkeeperError::ObtainingShardNumberNoShardInfo) => None,
+                    Err(e) => return Err(e),
+                };
+                self.shards_number = shards;
+                shards
+            }
+        } else {
+            None
+        };
 
-                    shards
-                }
-                Some(shards) => shards,
-            };
-
+        let cluster_stream = if let Some(shards) = shards {
             let socket = match self.node.proxy_addr().ip() {
                 std::net::IpAddr::V4(_) => TcpSocket::new_v4(),
                 std::net::IpAddr::V6(_) => TcpSocket::new_v6(),
