@@ -74,6 +74,7 @@ where
     T: Value + FromCqlVal<CqlValue> + FromStr + Debug + Clone + PartialEq,
 {
     let session: Session = init_test(type_name, type_name).await;
+    session.await_schema_agreement().await.unwrap();
 
     for test in tests.iter() {
         let insert_string_encoded_value =
