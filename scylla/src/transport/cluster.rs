@@ -320,6 +320,9 @@ impl ClusterData {
                 }
             };
 
+            // Reset the up marker to what the source of truth says.
+            node.change_up_marker(peer.up);
+
             new_known_peers.insert(peer.address, node.clone());
 
             if let Some(dc) = &node.datacenter {
