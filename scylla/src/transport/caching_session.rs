@@ -561,7 +561,7 @@ mod tests {
             .collect::<Result<Vec<_>, _>>()
             .unwrap();
 
-        rows.sort();
+        rows.sort_unstable();
         assert_eq!(rows, vec![(1, 1000), (2, 2000)]);
     }
 
