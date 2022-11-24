@@ -473,7 +473,7 @@ struct Doorkeeper {
     listener: TcpListener,
     terminate_signaler: TerminateSignaler,
     finish_guard: FinishGuard,
-    shards_number: Option<u16>,
+    shards_count: Option<u16>,
     error_propagator: ErrorPropagator,
 }
 
@@ -512,7 +512,7 @@ impl Doorkeeper {
         };
 
         let doorkeeper = Doorkeeper {
-            shards_number: if let InternalNode::Real {
+            shards_count: if let InternalNode::Real {
                 shard_awareness: ShardAwareness::FixedNum(shards_num),
                 ..
             } = node
@@ -684,19 +684,19 @@ impl Doorkeeper {
         shard_awareness: ShardAwareness,
     ) -> Result<TcpStream, DoorkeeperError> {
         let shards = if shard_awareness.is_aware() {
-            if self.shards_number.is_some() {
-                self.shards_number
+            if self.shards_count.is_some() {
+                self.shards_count
             } else {
                 let temporary_stream = TcpStream::connect(real_addr)
                     .await
                     .map_err(|err| DoorkeeperError::NodeConnectionAttempt(real_addr, err))?;
-                let shards = match self.obtain_shards_number(temporary_stream, real_addr).await {
+                let shards = match self.obtain_shards_count(temporary_stream, real_addr).await {
                     Ok(shards) => Some(shards),
                     // If a node offers no sharding info, change proxy ShardAwareness to Unaware.
                     Err(DoorkeeperError::ObtainingShardNumberNoShardInfo) => None,
                     Err(e) => return Err(e),
                 };
-                self.shards_number = shards;
+                self.shards_count = shards;
                 shards
             }
         } else {
@@ -745,10 +745,10 @@ impl Doorkeeper {
     }
 
     fn next_port_to_same_shard(&self, port: u16) -> u16 {
-        port.wrapping_add(self.shards_number.unwrap())
+        port.wrapping_add(self.shards_count.unwrap())
     }
 
-    async fn obtain_shards_number(
+    async fn obtain_shards_count(
         &self,
         mut connection: TcpStream,
         real_addr: SocketAddr,
