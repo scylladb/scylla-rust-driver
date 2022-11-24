@@ -18,12 +18,12 @@ impl LoadBalancingPolicy for CustomLoadBalancingPolicy {
         _statement: &Statement,
         cluster: &'a ClusterData,
     ) -> Box<dyn Iterator<Item = Arc<Node>> + Send + Sync + 'a> {
-        let fav_dc_info = cluster
-            .get_datacenters_info()
-            .get(&self.fav_datacenter_name);
+        let fav_dc_nodes = cluster
+            .replica_locator()
+            .unique_nodes_in_datacenter_ring(&self.fav_datacenter_name);
 
-        match fav_dc_info {
-            Some(info) => Box::new(info.nodes.iter().cloned()),
+        match fav_dc_nodes {
+            Some(nodes) => Box::new(nodes.iter().cloned()),
             // If there is no dc with provided name, fallback to other datacenters
             None => Box::new(cluster.get_nodes_info().iter().cloned()),
         }

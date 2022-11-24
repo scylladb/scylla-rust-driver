@@ -1356,7 +1356,7 @@ impl Session {
             Some(token) => {
                 TokenAwarePolicy::replicas_for_token(&cluster_data, &token, statement.keyspace)
             }
-            None => cluster_data.all_nodes.clone(),
+            None => cluster_data.get_nodes_info().to_owned(),
         }
     }
 

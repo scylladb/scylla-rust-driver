@@ -32,9 +32,16 @@ impl LoadBalancingPolicy for RoundRobinPolicy {
     fn plan<'a>(&self, _statement: &Statement, cluster: &'a ClusterData) -> Plan<'a> {
         let index = self.index.fetch_add(1, ORDER_TYPE);
 
-        let nodes_count = cluster.all_nodes.len();
+        let nodes_count = cluster
+            .replica_locator()
+            .unique_nodes_in_global_ring()
+            .len();
         let rotation = super::compute_rotation(index, nodes_count);
-        let rotated_nodes = super::slice_rotated_left(&cluster.all_nodes, rotation).cloned();
+        let rotated_nodes = super::slice_rotated_left(
+            cluster.replica_locator().unique_nodes_in_global_ring(),
+            rotation,
+        )
+        .cloned();
         trace!(
             nodes = rotated_nodes
                 .clone()

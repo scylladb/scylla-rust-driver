@@ -72,8 +72,6 @@ pub struct Datacenter {
 pub struct ClusterData {
     pub(crate) known_peers: HashMap<Uuid, Arc<Node>>, // Invariant: nonempty after Cluster::new()
     pub(crate) keyspaces: HashMap<String, Keyspace>,
-    pub(crate) all_nodes: Vec<Arc<Node>>,
-    pub(crate) datacenters: HashMap<String, Datacenter>,
     pub(crate) locator: ReplicaLocator,
 }
 
@@ -96,8 +94,6 @@ impl<'a> std::fmt::Debug for ClusterDataNeatDebug<'a> {
                 &RingSizePrinter(cluster_data.locator.ring().len())
             })
             .field("keyspaces", &cluster_data.keyspaces.keys())
-            .field("all_nodes", &cluster_data.all_nodes)
-            .field("datacenters", &cluster_data.datacenters)
             .finish_non_exhaustive()
     }
 }
@@ -285,7 +281,7 @@ impl ClusterData {
     }
 
     pub(crate) async fn wait_until_all_pools_are_initialized(&self) {
-        for node in self.all_nodes.iter() {
+        for node in self.locator.unique_nodes_in_global_ring().iter() {
             node.wait_until_pool_initialized().await;
         }
     }
@@ -369,8 +365,6 @@ impl ClusterData {
         ClusterData {
             known_peers: new_known_peers,
             keyspaces: metadata.keyspaces,
-            all_nodes,
-            datacenters,
             locator,
         }
     }
@@ -384,13 +378,26 @@ impl ClusterData {
 
     /// Access datacenter details collected by the driver
     /// Returned `HashMap` is indexed by names of datacenters
-    pub fn get_datacenters_info(&self) -> &HashMap<String, Datacenter> {
-        &self.datacenters
+    pub fn get_datacenters_info(&self) -> HashMap<String, Datacenter> {
+        self.locator
+            .datacenter_names()
+            .iter()
+            .map(|dc_name| {
+                let nodes = self
+                    .locator
+                    .unique_nodes_in_datacenter_ring(dc_name)
+                    .unwrap()
+                    .to_vec();
+                let rack_count = nodes.iter().map(|node| node.rack.as_ref()).unique().count();
+
+                (dc_name.clone(), Datacenter { nodes, rack_count })
+            })
+            .collect()
     }
 
     /// Access details about nodes known to the driver
-    pub fn get_nodes_info(&self) -> &Vec<Arc<Node>> {
-        &self.all_nodes
+    pub fn get_nodes_info(&self) -> &[Arc<Node>] {
+        self.locator.unique_nodes_in_global_ring()
     }
 
     /// Compute token of a table partition key

@@ -31,6 +31,20 @@ impl TokenAwarePolicy {
             .collect()
     }
 
+    fn rack_count_in_dc(dc_name: &str, cluster: &ClusterData) -> Option<usize> {
+        let nodes_in_that_dc = cluster
+            .replica_locator()
+            .unique_nodes_in_datacenter_ring(dc_name)?;
+
+        let count = nodes_in_that_dc
+            .iter()
+            .map(|node| &node.rack)
+            .unique()
+            .count();
+
+        Some(count)
+    }
+
     fn network_topology_strategy_replicas(
         cluster: &ClusterData,
         token: &Token,
@@ -39,11 +53,7 @@ impl TokenAwarePolicy {
         let mut acceptable_repeats = datacenter_repfactors
             .iter()
             .map(|(dc_name, repfactor)| {
-                let rack_count = cluster
-                    .datacenters
-                    .get(dc_name)
-                    .map(|dc| dc.rack_count)
-                    .unwrap_or(0);
+                let rack_count = Self::rack_count_in_dc(dc_name, cluster).unwrap_or(0);
 
                 (dc_name.as_str(), repfactor.saturating_sub(rack_count))
             })

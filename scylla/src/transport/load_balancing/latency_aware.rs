@@ -188,7 +188,12 @@ impl Default for LatencyAwarePolicy {
 
 impl LoadBalancingPolicy for LatencyAwarePolicy {
     fn plan<'a>(&self, _statement: &Statement, cluster: &'a ClusterData) -> Plan<'a> {
-        self.make_plan(cluster.all_nodes.clone())
+        self.make_plan(
+            cluster
+                .replica_locator()
+                .unique_nodes_in_global_ring()
+                .to_vec(),
+        )
     }
 
     fn name(&self) -> String {
@@ -200,7 +205,9 @@ impl LoadBalancingPolicy for LatencyAwarePolicy {
     }
 
     fn update_cluster_data(&self, cluster_data: &ClusterData) {
-        self.refresh_last_min_avg_nodes(&cluster_data.all_nodes);
+        self.refresh_last_min_avg_nodes(
+            cluster_data.replica_locator().unique_nodes_in_global_ring(),
+        );
         self.child_policy.update_cluster_data(cluster_data);
     }
 }
@@ -522,7 +529,7 @@ mod tests {
         );
 
         // Await last min average updater.
-        policy.refresh_last_min_avg_nodes(&cluster.all_nodes);
+        policy.refresh_last_min_avg_nodes(cluster.replica_locator().unique_nodes_in_global_ring());
         tokio::time::sleep(policy.update_rate).await;
 
         let plans = (0..16)
@@ -574,7 +581,7 @@ mod tests {
         );
 
         // Await last min average updater.
-        policy.refresh_last_min_avg_nodes(&cluster.all_nodes);
+        policy.refresh_last_min_avg_nodes(cluster.replica_locator().unique_nodes_in_global_ring());
         tokio::time::sleep(policy.update_rate).await;
 
         let plans = (0..16)
@@ -634,7 +641,9 @@ mod tests {
             );
 
             // Await last min average updater.
-            policy.refresh_last_min_avg_nodes(&cluster.all_nodes);
+            policy.refresh_last_min_avg_nodes(
+                cluster.replica_locator().unique_nodes_in_global_ring(),
+            );
             tokio::time::sleep(policy.update_rate).await;
 
             let plans = (0..16)

@@ -27,8 +27,8 @@ impl LoadBalancingPolicy for FixedOrderLoadBalancer {
         Box::new(
             cluster
                 .get_nodes_info()
-                .clone()
-                .into_iter()
+                .iter()
+                .cloned()
                 .sorted_by(|node1, node2| Ord::cmp(&node1.address, &node2.address)),
         )
     }

@@ -33,9 +33,8 @@ impl DcAwareRoundRobinPolicy {
 
     fn retrieve_local_nodes<'a>(&self, cluster: &'a ClusterData) -> &'a [Arc<Node>] {
         cluster
-            .datacenters
-            .get(&self.local_dc)
-            .map(|dc| &dc.nodes)
+            .replica_locator()
+            .unique_nodes_in_datacenter_ring(&self.local_dc)
             .unwrap_or(EMPTY_NODE_LIST)
     }
 
@@ -47,7 +46,8 @@ impl DcAwareRoundRobinPolicy {
         let local_dc = self.local_dc.clone();
 
         cluster
-            .all_nodes
+            .replica_locator()
+            .unique_nodes_in_global_ring()
             .iter()
             .cloned()
             .filter(move |node| !DcAwareRoundRobinPolicy::is_local_node(node, &local_dc))
@@ -68,7 +68,11 @@ impl LoadBalancingPolicy for DcAwareRoundRobinPolicy {
 
         if self.include_remote_nodes {
             let remote_nodes = self.retrieve_remote_nodes(cluster);
-            let remote_nodes_count = cluster.all_nodes.len() - local_nodes.len();
+            let remote_nodes_count = cluster
+                .replica_locator()
+                .unique_nodes_in_global_ring()
+                .len()
+                - local_nodes.len();
             let remote_nodes_rotation = super::compute_rotation(index, remote_nodes_count);
             let rotated_remote_nodes =
                 super::iter_rotated_left(remote_nodes, remote_nodes_rotation);
