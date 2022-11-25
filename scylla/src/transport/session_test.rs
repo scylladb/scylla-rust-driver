@@ -1934,7 +1934,7 @@ async fn test_unprepared_reprepare_in_execute() {
         .unwrap()
         .map(|r| r.unwrap())
         .collect();
-    all_rows.sort();
+    all_rows.sort_unstable();
     assert_eq!(all_rows, vec![(1, 2, 3), (1, 3, 2)]);
 }
 
@@ -2056,7 +2056,7 @@ async fn test_unprepared_reprepare_in_batch() {
         .unwrap()
         .map(|r| r.unwrap())
         .collect();
-    all_rows.sort();
+    all_rows.sort_unstable();
     assert_eq!(all_rows, vec![(1, 2, 3), (1, 3, 2), (4, 5, 6), (4, 6, 5)]);
 }
 
@@ -2124,7 +2124,7 @@ async fn test_unprepared_reprepare_in_caching_session_execute() {
         .unwrap()
         .map(|r| r.unwrap())
         .collect();
-    all_rows.sort();
+    all_rows.sort_unstable();
     assert_eq!(all_rows, vec![(1, 2, 3), (1, 3, 2)]);
 }
 
