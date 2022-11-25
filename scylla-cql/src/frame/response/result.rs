@@ -977,7 +977,8 @@ pub fn deser_cql_value(typ: &ColumnType, buf: &mut &[u8]) -> StdResult<CqlValue,
     })
 }
 
-fn deser_rows(buf: &mut &[u8]) -> StdResult<Rows, ParseError> {
+fn deser_rows(buf_bytes: Bytes) -> StdResult<Rows, ParseError> {
+    let buf = &mut &*buf_bytes;
     let metadata = deser_result_metadata(buf)?;
 
     let original_size = buf.len();
@@ -1037,11 +1038,12 @@ fn deser_schema_change(buf: &mut &[u8]) -> StdResult<SchemaChange, ParseError> {
     })
 }
 
-pub fn deserialize(buf: &mut &[u8]) -> StdResult<Result, ParseError> {
+pub fn deserialize(buf_bytes: Bytes) -> StdResult<Result, ParseError> {
+    let buf = &mut &*buf_bytes;
     use self::Result::*;
     Ok(match types::read_int(buf)? {
         0x0001 => Void,
-        0x0002 => Rows(deser_rows(buf)?),
+        0x0002 => Rows(deser_rows(buf_bytes.slice_ref(buf))?),
         0x0003 => SetKeyspace(deser_set_keyspace(buf)?),
         0x0004 => Prepared(deser_prepared(buf)?),
         0x0005 => SchemaChange(deser_schema_change(buf)?),

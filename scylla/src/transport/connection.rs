@@ -838,8 +838,7 @@ impl Connection {
             );
         }
 
-        let response =
-            Response::deserialize(features, task_response.opcode, &mut &*body_with_ext.body)?;
+        let response = Response::deserialize(features, task_response.opcode, body_with_ext.body)?;
 
         Ok(QueryResponse {
             response,
