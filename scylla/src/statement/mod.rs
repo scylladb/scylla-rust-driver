@@ -1,7 +1,6 @@
 use std::{sync::Arc, time::Duration};
 
-use crate::transport::speculative_execution::SpeculativeExecutionPolicy;
-use crate::{history::HistoryListener, transport::retry_policy::RetryPolicy};
+use crate::history::HistoryListener;
 
 pub mod batch;
 pub mod prepared_statement;
@@ -15,9 +14,6 @@ pub struct StatementConfig {
     pub serial_consistency: Option<Option<SerialConsistency>>,
 
     pub is_idempotent: bool,
-
-    pub retry_policy: Option<Box<dyn RetryPolicy>>,
-    pub speculative_execution_policy: Option<Arc<dyn SpeculativeExecutionPolicy>>,
 
     pub tracing: bool,
     pub timestamp: Option<i64>,
@@ -33,8 +29,6 @@ impl Default for StatementConfig {
             consistency: Default::default(),
             serial_consistency: None,
             is_idempotent: false,
-            retry_policy: None,
-            speculative_execution_policy: None,
             tracing: false,
             timestamp: None,
             request_timeout: None,
@@ -46,11 +40,6 @@ impl Default for StatementConfig {
 impl Clone for StatementConfig {
     fn clone(&self) -> Self {
         Self {
-            retry_policy: self
-                .retry_policy
-                .as_ref()
-                .map(|policy| policy.clone_boxed()),
-            speculative_execution_policy: self.speculative_execution_policy.clone(),
             history_listener: self.history_listener.clone(),
             ..*self
         }

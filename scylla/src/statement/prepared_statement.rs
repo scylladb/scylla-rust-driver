@@ -12,7 +12,6 @@ use crate::frame::types::{Consistency, SerialConsistency};
 use crate::frame::value::SerializedValues;
 use crate::history::HistoryListener;
 use crate::transport::partitioner::PartitionerName;
-use crate::transport::retry_policy::RetryPolicy;
 
 /// Represents a statement prepared on the server.
 #[derive(Debug)]
@@ -219,7 +218,7 @@ impl PreparedStatement {
     /// A query is idempotent if it can be applied multiple times without changing the result of the initial application
     /// If set to `true` we can be sure that it is idempotent
     /// If set to `false` it is unknown whether it is idempotent
-    /// This is used in [`RetryPolicy`] to decide if retrying a query is safe
+    /// This is used in [`RetryPolicy`](crate::retry_policy::RetryPolicy) to decide if retrying a query is safe
     pub fn set_is_idempotent(&mut self, is_idempotent: bool) {
         self.config.is_idempotent = is_idempotent;
     }
@@ -227,17 +226,6 @@ impl PreparedStatement {
     /// Gets the idempotence of this statement
     pub fn get_is_idempotent(&self) -> bool {
         self.config.is_idempotent
-    }
-
-    /// Sets a custom [`RetryPolicy`] to be used with this statement
-    /// By default Session's retry policy is used, this allows to use a custom retry policy
-    pub fn set_retry_policy(&mut self, retry_policy: Box<dyn RetryPolicy>) {
-        self.config.retry_policy = Some(retry_policy);
-    }
-
-    /// Gets custom [`RetryPolicy`] used by this statement
-    pub fn get_retry_policy(&self) -> &Option<Box<dyn RetryPolicy>> {
-        &self.config.retry_policy
     }
 
     /// Enable or disable CQL Tracing for this statement

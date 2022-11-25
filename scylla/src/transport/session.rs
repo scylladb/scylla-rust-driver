@@ -711,10 +711,7 @@ impl Session {
         let query: Query = query.into();
         let serialized_values = values.serialized()?;
 
-        let retry_session = match &query.config.retry_policy {
-            Some(policy) => policy.new_session(),
-            None => self.retry_policy.new_session(),
-        };
+        let retry_session = self.retry_policy.new_session();
 
         let span = trace_span!("Request", query = query.contents.as_str());
         RowIterator::new_for_query(
@@ -994,10 +991,7 @@ impl Session {
 
         let token = self.calculate_token(&prepared, &serialized_values)?;
 
-        let retry_session = match &prepared.config.retry_policy {
-            Some(policy) => policy.new_session(),
-            None => self.retry_policy.new_session(),
-        };
+        let retry_session = self.retry_policy.new_session();
 
         let span = trace_span!(
             "Request",
@@ -1439,16 +1433,9 @@ impl Session {
                 }
             }
 
-            let retry_policy = statement_config
-                .retry_policy
-                .as_ref()
-                .unwrap_or(&self.retry_policy);
+            let retry_policy = &self.retry_policy;
 
-            #[allow(clippy::unnecessary_lazy_evaluations)]
-            let speculative_policy = statement_config
-                .speculative_execution_policy
-                .as_ref()
-                .or_else(|| self.speculative_execution_policy.as_ref());
+            let speculative_policy = self.speculative_execution_policy.as_ref();
 
             match speculative_policy {
                 Some(speculative) if statement_config.is_idempotent => {
