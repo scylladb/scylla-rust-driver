@@ -687,10 +687,7 @@ impl Doorkeeper {
             if self.shards_count.is_some() {
                 self.shards_count
             } else {
-                let temporary_stream = TcpStream::connect(real_addr)
-                    .await
-                    .map_err(|err| DoorkeeperError::NodeConnectionAttempt(real_addr, err))?;
-                let shards = match self.obtain_shards_count(temporary_stream, real_addr).await {
+                let shards = match self.obtain_shards_count(real_addr).await {
                     Ok(shards) => Some(shards),
                     // If a node offers no sharding info, change proxy ShardAwareness to Unaware.
                     Err(DoorkeeperError::ObtainingShardNumberNoShardInfo) => None,
@@ -748,11 +745,10 @@ impl Doorkeeper {
         port.wrapping_add(self.shards_count.unwrap())
     }
 
-    async fn obtain_shards_count(
-        &self,
-        mut connection: TcpStream,
-        real_addr: SocketAddr,
-    ) -> Result<u16, DoorkeeperError> {
+    async fn obtain_shards_count(&self, real_addr: SocketAddr) -> Result<u16, DoorkeeperError> {
+        let mut connection = TcpStream::connect(real_addr)
+            .await
+            .map_err(|err| DoorkeeperError::NodeConnectionAttempt(real_addr, err))?;
         write_frame(
             HARDCODED_OPTIONS_PARAMS,
             FrameOpcode::Request(RequestOpcode::Options),
