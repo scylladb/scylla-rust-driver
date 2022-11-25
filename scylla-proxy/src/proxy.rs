@@ -512,15 +512,7 @@ impl Doorkeeper {
         };
 
         let doorkeeper = Doorkeeper {
-            shards_count: if let InternalNode::Real {
-                shard_awareness: ShardAwareness::FixedNum(shards_num),
-                ..
-            } = node
-            {
-                Some(shards_num)
-            } else {
-                None
-            },
+            shards_count: None, // temporarily, until Doorkeeper examines its ShardAwareness
             node,
             listener,
             terminate_signaler,
@@ -532,6 +524,7 @@ impl Doorkeeper {
     }
 
     async fn run(mut self) {
+        self.update_shards_count().await;
         let mut own_terminate_notifier = self.terminate_signaler.subscribe();
         let (connection_close_tx, _connection_close_rx) = broadcast::channel::<()>(2);
         let mut connection_no: usize = 0;
@@ -560,6 +553,41 @@ impl Doorkeeper {
             self.node.proxy_addr(),
             DisplayableRealAddrOption(self.node.real_addr())
         );
+    }
+
+    async fn update_shards_count(&mut self) {
+        if let InternalNode::Real {
+            real_addr,
+            shard_awareness,
+            ..
+        } = self.node
+        {
+            self.shards_count = match shard_awareness {
+                ShardAwareness::Unaware => None,
+                ShardAwareness::FixedNum(shards_num) => Some(shards_num),
+                ShardAwareness::QueryNode => match self.obtain_shards_count(real_addr).await {
+                    Ok(shards) => Some(shards),
+                    // If a node offers no sharding info, change proxy ShardAwareness to Unaware.
+                    Err(DoorkeeperError::ObtainingShardNumberNoShardInfo) => {
+                        info!(
+                            "Doorkeeper with addr {} found no shard info in node {}; falling back to ShardAwareness::Unaware",
+                            self.node.proxy_addr(),
+                            DisplayableRealAddrOption(self.node.real_addr()),
+                        );
+                        None
+                    }
+                    Err(e) => {
+                        error!(
+                            "Error in doorkeeper with addr {} while querying shard info from node {}: {}",
+                            self.node.proxy_addr(),
+                            DisplayableRealAddrOption(self.node.real_addr()),
+                            e
+                        );
+                        None
+                    }
+                },
+            }
+        }
     }
 
     async fn spawn_workers(
@@ -637,14 +665,9 @@ impl Doorkeeper {
     ) -> Result<(), DoorkeeperError> {
         let (driver_stream, driver_addr) = self.make_driver_stream(connection_no).await?;
         let cluster_stream = match self.node {
-            InternalNode::Real {
-                real_addr,
-                shard_awareness,
-                ..
-            } => Some(
-                self.make_cluster_stream(driver_addr, real_addr, shard_awareness)
-                    .await?,
-            ),
+            InternalNode::Real { real_addr, .. } => {
+                Some(self.make_cluster_stream(driver_addr, real_addr).await?)
+            }
             InternalNode::Simulated { .. } => None,
         };
 
@@ -681,26 +704,8 @@ impl Doorkeeper {
         &mut self,
         driver_addr: SocketAddr,
         real_addr: SocketAddr,
-        shard_awareness: ShardAwareness,
     ) -> Result<TcpStream, DoorkeeperError> {
-        let shards = if shard_awareness.is_aware() {
-            if self.shards_count.is_some() {
-                self.shards_count
-            } else {
-                let shards = match self.obtain_shards_count(real_addr).await {
-                    Ok(shards) => Some(shards),
-                    // If a node offers no sharding info, change proxy ShardAwareness to Unaware.
-                    Err(DoorkeeperError::ObtainingShardNumberNoShardInfo) => None,
-                    Err(e) => return Err(e),
-                };
-                self.shards_count = shards;
-                shards
-            }
-        } else {
-            None
-        };
-
-        let cluster_stream = if let Some(shards) = shards {
+        let cluster_stream = if let Some(shards) = self.shards_count {
             let socket = match self.node.proxy_addr().ip() {
                 std::net::IpAddr::V4(_) => TcpSocket::new_v4(),
                 std::net::IpAddr::V6(_) => TcpSocket::new_v6(),
