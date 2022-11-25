@@ -65,9 +65,10 @@ impl Response {
     pub fn deserialize(
         features: &ProtocolFeatures,
         opcode: ResponseOpcode,
-        buf: &mut &[u8],
+        buf_bytes: bytes::Bytes,
         cached_metadata: Option<&ResultMetadata>,
     ) -> Result<Response, CqlResponseParseError> {
+        let buf = &mut &*buf_bytes;
         let response = match opcode {
             ResponseOpcode::Error => Response::Error(Error::deserialize(features, buf)?),
             ResponseOpcode::Ready => Response::Ready,
@@ -75,7 +76,9 @@ impl Response {
                 Response::Authenticate(authenticate::Authenticate::deserialize(buf)?)
             }
             ResponseOpcode::Supported => Response::Supported(Supported::deserialize(buf)?),
-            ResponseOpcode::Result => Response::Result(result::deserialize(buf, cached_metadata)?),
+            ResponseOpcode::Result => {
+                Response::Result(result::deserialize(buf_bytes, cached_metadata)?)
+            }
             ResponseOpcode::Event => Response::Event(event::Event::deserialize(buf)?),
             ResponseOpcode::AuthChallenge => {
                 Response::AuthChallenge(authenticate::AuthChallenge::deserialize(buf)?)

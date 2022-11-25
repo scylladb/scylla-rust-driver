@@ -1316,7 +1316,7 @@ impl Connection {
         let response = Response::deserialize(
             features,
             task_response.opcode,
-            &mut &*body_with_ext.body,
+            body_with_ext.body,
             cached_metadata,
         )?;
 
