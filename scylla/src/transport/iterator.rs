@@ -394,6 +394,23 @@ where
                     RetryDecision::DontRetry => break 'nodes_in_plan,
                     RetryDecision::IgnoreWriteError => {
                         warn!("Ignoring error during fetching pages; stopping fetching.");
+                        // If we are here then, most likely, we didn't send
+                        // anything through the self.sender channel.
+                        // Although we are in an awkward situation (_iter
+                        // interface isn't meant for sending writes),
+                        // we must attempt to send something because
+                        // the iterator expects it.
+                        let _ = self
+                            .sender
+                            .send(Ok(ReceivedPage {
+                                rows: Rows {
+                                    metadata: Default::default(),
+                                    rows_count: 0,
+                                    rows: Vec::new(),
+                                },
+                                tracing_id: None,
+                            }))
+                            .await;
                         return;
                     }
                 };
