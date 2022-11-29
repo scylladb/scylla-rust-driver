@@ -157,7 +157,7 @@ impl RowIterator {
             };
 
             let worker = RowIteratorWorker {
-                sender,
+                sender: sender.into(),
                 choose_connection,
                 page_query,
                 statement_info: Statement::default(),
@@ -172,11 +172,16 @@ impl RowIterator {
                 current_attempt_id: None,
             };
 
-            worker.work(cluster_data).await;
+            let _: PageSendAttemptedProof = worker.work(cluster_data).await;
         };
 
         tokio::task::spawn(worker_task);
 
+        // This unwrap is safe because:
+        // - The future returned by worker.work sends at least one item
+        //   to the channel (the PageSendAttemptedProof helps enforce this)
+        // - That future is polled in a tokio::task which isn't going to be
+        //   cancelled
         let pages_received = receiver.recv().await.unwrap()?;
 
         Ok(RowIterator {
@@ -229,7 +234,7 @@ impl RowIterator {
             };
 
             let worker = RowIteratorWorker {
-                sender,
+                sender: sender.into(),
                 choose_connection,
                 page_query,
                 statement_info,
@@ -244,11 +249,16 @@ impl RowIterator {
                 current_attempt_id: None,
             };
 
-            worker.work(config.cluster_data).await;
+            let _: PageSendAttemptedProof = worker.work(config.cluster_data).await;
         };
 
         tokio::task::spawn(worker_task);
 
+        // This unwrap is safe because:
+        // - The future returned by worker.work sends at least one item
+        //   to the channel (the PageSendAttemptedProof helps enforce this)
+        // - That future is polled in a tokio::task which isn't going to be
+        //   cancelled
         let pages_received = receiver.recv().await.unwrap()?;
 
         Ok(RowIterator {
@@ -278,10 +288,44 @@ impl RowIterator {
     }
 }
 
+// A separate module is used here so that the parent module cannot construct
+// SendAttemptedProof directly.
+mod checked_channel_sender {
+    use std::marker::PhantomData;
+    use tokio::sync::mpsc;
+
+    /// A value whose existence proves that there was an attempt
+    /// to send an item of type T through a channel.
+    /// Can only be constructed by ProvingSender::send.
+    pub(crate) struct SendAttemptedProof<T>(PhantomData<T>);
+
+    /// An mpsc::Sender which returns proofs that it attempted to send items.
+    pub(crate) struct ProvingSender<T>(mpsc::Sender<T>);
+
+    impl<T> From<mpsc::Sender<T>> for ProvingSender<T> {
+        fn from(s: mpsc::Sender<T>) -> Self {
+            Self(s)
+        }
+    }
+
+    impl<T> ProvingSender<T> {
+        pub(crate) async fn send(
+            &self,
+            value: T,
+        ) -> (SendAttemptedProof<T>, Result<(), mpsc::error::SendError<T>>) {
+            (SendAttemptedProof(PhantomData), self.0.send(value).await)
+        }
+    }
+}
+
+use checked_channel_sender::{ProvingSender, SendAttemptedProof};
+
+type PageSendAttemptedProof = SendAttemptedProof<Result<ReceivedPage, QueryError>>;
+
 // RowIteratorWorker works in the background to fetch pages
 // RowIterator receives them through a channel
 struct RowIteratorWorker<'a, ConnFunc, QueryFunc> {
-    sender: mpsc::Sender<Result<ReceivedPage, QueryError>>,
+    sender: ProvingSender<Result<ReceivedPage, QueryError>>,
 
     // Closure used to choose a connection from a node
     // AsyncFn(Arc<Node>) -> Result<Arc<Connection>, QueryError>
@@ -313,7 +357,8 @@ where
     QueryFunc: Fn(Arc<Connection>, Consistency, Option<Bytes>) -> QueryFut,
     QueryFut: Future<Output = Result<QueryResponse, QueryError>>,
 {
-    async fn work(mut self, cluster_data: Arc<ClusterData>) {
+    // Contract: this function MUST send at least one item through self.sender
+    async fn work(mut self, cluster_data: Arc<ClusterData>) -> PageSendAttemptedProof {
         self.load_balancer.update_cluster_data(&cluster_data);
         let query_plan = self.load_balancer.plan(&self.statement_info, &cluster_data);
 
@@ -347,15 +392,18 @@ where
             'same_node_retries: loop {
                 trace!(parent: &span, "Execution started");
                 // Query pages until an error occurs
-                let queries_result: Result<(), QueryError> = self
+                let queries_result: Result<PageSendAttemptedProof, QueryError> = self
                     .query_pages(&connection, current_consistency, &node)
                     .instrument(span.clone())
                     .await;
 
                 last_error = match queries_result {
-                    Ok(()) => {
+                    Ok(proof) => {
                         trace!(parent: &span, "Query succeeded");
-                        return;
+                        // query_pages returned Ok, so we are guaranteed
+                        // that it attempted to send at least one page
+                        // through self.sender and we can safely return now.
+                        return proof;
                     }
                     Err(error) => {
                         trace!(
@@ -400,7 +448,7 @@ where
                         // interface isn't meant for sending writes),
                         // we must attempt to send something because
                         // the iterator expects it.
-                        let _ = self
+                        let (proof, _) = self
                             .sender
                             .send(Ok(ReceivedPage {
                                 rows: Rows {
@@ -411,7 +459,7 @@ where
                                 tracing_id: None,
                             }))
                             .await;
-                        return;
+                        return proof;
                     }
                 };
             }
@@ -419,16 +467,21 @@ where
 
         // Send last_error to RowIterator - query failed fully
         self.log_query_error(&last_error);
-        let _ = self.sender.send(Err(last_error)).await;
+        let (proof, _) = self.sender.send(Err(last_error)).await;
+        proof
     }
 
-    // Given a working connection query as many pages as possible until the first error
+    // Given a working connection query as many pages as possible until the first error.
+    //
+    // Contract: this function must either:
+    // - Return an error
+    // - Return Ok but have attempted to send a page via self.sender
     async fn query_pages(
         &mut self,
         connection: &Arc<Connection>,
         consistency: Consistency,
         node: &Node,
-    ) -> Result<(), QueryError> {
+    ) -> Result<PageSendAttemptedProof, QueryError> {
         loop {
             self.metrics.inc_total_paged_queries();
             let query_start = std::time::Instant::now();
@@ -467,14 +520,15 @@ where
                     let received_page = ReceivedPage { rows, tracing_id };
 
                     // Send next page to RowIterator
-                    if self.sender.send(Ok(received_page)).await.is_err() {
+                    let (proof, res) = self.sender.send(Ok(received_page)).await;
+                    if res.is_err() {
                         // channel was closed, RowIterator was dropped - should shutdown
-                        return Ok(());
+                        return Ok(proof);
                     }
 
                     if self.paging_state.is_none() {
                         // Reached the last query, shutdown
-                        return Ok(());
+                        return Ok(proof);
                     }
 
                     // Query succeeded, reset retry policy for future retries
