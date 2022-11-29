@@ -1,4 +1,4 @@
-use std::{sync::Arc, time::Duration};
+use std::{fmt, sync::Arc, time::Duration};
 
 use bytes::Bytes;
 use rand::{Rng, RngCore};
@@ -175,7 +175,30 @@ pub trait Reaction: Sized {
     fn with_feedback_when_performed(self, tx: mpsc::UnboundedSender<Self::Incoming>) -> Self;
 }
 
-#[derive(Clone, Debug)]
+fn fmt_reaction(
+    f: &mut std::fmt::Formatter<'_>,
+    reaction_type: &str,
+    to_addressee: &dyn fmt::Debug,
+    to_sender: &dyn fmt::Debug,
+    drop_connection: &dyn fmt::Debug,
+    has_feedback_channel: bool,
+) -> std::fmt::Result {
+    f.debug_struct(reaction_type)
+        .field("to_addressee", to_addressee)
+        .field("to_sender", to_sender)
+        .field("drop_connection", drop_connection)
+        .field(
+            "feedback_channel",
+            if has_feedback_channel {
+                &"Some(<feedback_channel>)"
+            } else {
+                &"None"
+            },
+        )
+        .finish()
+}
+
+#[derive(Clone)]
 pub struct RequestReaction {
     pub to_addressee: Option<Action<RequestFrame, RequestFrame>>,
     pub to_sender: Option<Action<RequestFrame, ResponseFrame>>,
@@ -183,12 +206,38 @@ pub struct RequestReaction {
     pub feedback_channel: Option<mpsc::UnboundedSender<RequestFrame>>,
 }
 
-#[derive(Clone, Debug)]
+impl fmt::Debug for RequestReaction {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        fmt_reaction(
+            f,
+            "RequestReaction",
+            &self.to_addressee,
+            &self.to_sender,
+            &self.drop_connection,
+            self.feedback_channel.is_some(),
+        )
+    }
+}
+
+#[derive(Clone)]
 pub struct ResponseReaction {
     pub to_addressee: Option<Action<ResponseFrame, ResponseFrame>>,
     pub to_sender: Option<Action<ResponseFrame, RequestFrame>>,
     pub drop_connection: Option<Option<Duration>>,
     pub feedback_channel: Option<mpsc::UnboundedSender<ResponseFrame>>,
+}
+
+impl fmt::Debug for ResponseReaction {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        fmt_reaction(
+            f,
+            "ResponseReaction",
+            &self.to_addressee,
+            &self.to_sender,
+            &self.drop_connection,
+            self.feedback_channel.is_some(),
+        )
+    }
 }
 
 impl Reaction for RequestReaction {

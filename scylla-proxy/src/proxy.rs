@@ -10,11 +10,11 @@ use std::collections::HashMap;
 use std::fmt::Display;
 use std::future::Future;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::net::{TcpListener, TcpSocket, TcpStream};
 use tokio::sync::mpsc::error::TryRecvError;
-use tokio::sync::{broadcast, mpsc, Mutex};
+use tokio::sync::{broadcast, mpsc};
 use tracing::{debug, error, info, trace, warn};
 
 // Used to notify the user that the proxy finished - this happens when all Senders are dropped.
@@ -49,6 +49,8 @@ pub enum ShardAwareness {
     /// The first time the driver attempts to connect to the particular node (through proxy),
     /// the related node is first queried on a temporary connection for its number of shards,
     /// and only then establishes another connection for the driver's real communication with the node.
+    /// If the queried node does not provide sharding info (e.g. in case of a Cassandra node),
+    /// then this mode behaves as Unaware.
     QueryNode,
     /// Binds to the port that is the same as the driver's port modulo the provided number of shards.
     FixedNum(u16),
@@ -376,18 +378,18 @@ pub struct RunningNode {
 
 impl RunningNode {
     /// Replaces the previous request rules with the new ones.
-    pub async fn change_request_rules(&mut self, rules: Option<Vec<RequestRule>>) {
-        *self.request_rules.lock().await = rules.unwrap_or_default();
+    pub fn change_request_rules(&mut self, rules: Option<Vec<RequestRule>>) {
+        *self.request_rules.lock().unwrap() = rules.unwrap_or_default();
     }
 
     /// Replaces the previous response rules with the new ones.
-    pub async fn change_response_rules(&mut self, rules: Option<Vec<ResponseRule>>) {
+    pub fn change_response_rules(&mut self, rules: Option<Vec<ResponseRule>>) {
         *self
             .response_rules
             .as_ref()
             .expect("No response rules on a simulated node!")
             .lock()
-            .await = rules.unwrap_or_default();
+            .unwrap() = rules.unwrap_or_default();
     }
 }
 
@@ -401,15 +403,15 @@ pub struct RunningProxy {
 
 impl RunningProxy {
     /// Disables all the rules in the proxy, effectively making it a pass-through-only proxy.
-    pub async fn turn_off_rules(&mut self) {
+    pub fn turn_off_rules(&mut self) {
         for (request_rules, response_rules) in self
             .running_nodes
             .iter_mut()
             .map(|node| (&node.request_rules, &node.response_rules))
         {
-            request_rules.lock().await.clear();
+            request_rules.lock().unwrap().clear();
             if let Some(response_rules) = response_rules {
-                response_rules.lock().await.clear();
+                response_rules.lock().unwrap().clear();
             }
         }
     }
@@ -471,7 +473,7 @@ struct Doorkeeper {
     listener: TcpListener,
     terminate_signaler: TerminateSignaler,
     finish_guard: FinishGuard,
-    shards_number: Option<u16>,
+    shards_count: Option<u16>,
     error_propagator: ErrorPropagator,
 }
 
@@ -510,15 +512,7 @@ impl Doorkeeper {
         };
 
         let doorkeeper = Doorkeeper {
-            shards_number: if let InternalNode::Real {
-                shard_awareness: ShardAwareness::FixedNum(shards_num),
-                ..
-            } = node
-            {
-                Some(shards_num)
-            } else {
-                None
-            },
+            shards_count: None, // temporarily, until Doorkeeper examines its ShardAwareness
             node,
             listener,
             terminate_signaler,
@@ -530,6 +524,7 @@ impl Doorkeeper {
     }
 
     async fn run(mut self) {
+        self.update_shards_count().await;
         let mut own_terminate_notifier = self.terminate_signaler.subscribe();
         let (connection_close_tx, _connection_close_rx) = broadcast::channel::<()>(2);
         let mut connection_no: usize = 0;
@@ -558,6 +553,41 @@ impl Doorkeeper {
             self.node.proxy_addr(),
             DisplayableRealAddrOption(self.node.real_addr())
         );
+    }
+
+    async fn update_shards_count(&mut self) {
+        if let InternalNode::Real {
+            real_addr,
+            shard_awareness,
+            ..
+        } = self.node
+        {
+            self.shards_count = match shard_awareness {
+                ShardAwareness::Unaware => None,
+                ShardAwareness::FixedNum(shards_num) => Some(shards_num),
+                ShardAwareness::QueryNode => match self.obtain_shards_count(real_addr).await {
+                    Ok(shards) => Some(shards),
+                    // If a node offers no sharding info, change proxy ShardAwareness to Unaware.
+                    Err(DoorkeeperError::ObtainingShardNumberNoShardInfo) => {
+                        info!(
+                            "Doorkeeper with addr {} found no shard info in node {}; falling back to ShardAwareness::Unaware",
+                            self.node.proxy_addr(),
+                            DisplayableRealAddrOption(self.node.real_addr()),
+                        );
+                        None
+                    }
+                    Err(e) => {
+                        error!(
+                            "Error in doorkeeper with addr {} while querying shard info from node {}: {}",
+                            self.node.proxy_addr(),
+                            DisplayableRealAddrOption(self.node.real_addr()),
+                            e
+                        );
+                        None
+                    }
+                },
+            }
+        }
     }
 
     async fn spawn_workers(
@@ -635,14 +665,9 @@ impl Doorkeeper {
     ) -> Result<(), DoorkeeperError> {
         let (driver_stream, driver_addr) = self.make_driver_stream(connection_no).await?;
         let cluster_stream = match self.node {
-            InternalNode::Real {
-                real_addr,
-                shard_awareness,
-                ..
-            } => Some(
-                self.make_cluster_stream(driver_addr, real_addr, shard_awareness)
-                    .await?,
-            ),
+            InternalNode::Real { real_addr, .. } => {
+                Some(self.make_cluster_stream(driver_addr, real_addr).await?)
+            }
             InternalNode::Simulated { .. } => None,
         };
 
@@ -679,24 +704,8 @@ impl Doorkeeper {
         &mut self,
         driver_addr: SocketAddr,
         real_addr: SocketAddr,
-        shard_awareness: ShardAwareness,
     ) -> Result<TcpStream, DoorkeeperError> {
-        let cluster_stream = if shard_awareness.is_aware() {
-            let shards = match self.shards_number {
-                None => {
-                    let temporary_stream = TcpStream::connect(real_addr)
-                        .await
-                        .map_err(|err| DoorkeeperError::NodeConnectionAttempt(real_addr, err))?;
-                    let shards = self
-                        .obtain_shards_number(temporary_stream, real_addr)
-                        .await?;
-                    self.shards_number = Some(shards);
-
-                    shards
-                }
-                Some(shards) => shards,
-            };
-
+        let cluster_stream = if let Some(shards) = self.shards_count {
             let socket = match self.node.proxy_addr().ip() {
                 std::net::IpAddr::V4(_) => TcpSocket::new_v4(),
                 std::net::IpAddr::V6(_) => TcpSocket::new_v6(),
@@ -738,14 +747,13 @@ impl Doorkeeper {
     }
 
     fn next_port_to_same_shard(&self, port: u16) -> u16 {
-        port.wrapping_add(self.shards_number.unwrap())
+        port.wrapping_add(self.shards_count.unwrap())
     }
 
-    async fn obtain_shards_number(
-        &self,
-        mut connection: TcpStream,
-        real_addr: SocketAddr,
-    ) -> Result<u16, DoorkeeperError> {
+    async fn obtain_shards_count(&self, real_addr: SocketAddr) -> Result<u16, DoorkeeperError> {
+        let mut connection = TcpStream::connect(real_addr)
+            .await
+            .map_err(|err| DoorkeeperError::NodeConnectionAttempt(real_addr, err))?;
         write_frame(
             HARDCODED_OPTIONS_PARAMS,
             FrameOpcode::Request(RequestOpcode::Options),
@@ -985,7 +993,7 @@ impl ProxyWorker {
                             opcode: FrameOpcode::Request(request.opcode),
                             frame_body: request.body.clone(),
                         };
-                        let mut guard = request_rules.lock().await;
+                        let mut guard = request_rules.lock().unwrap();
                         '_ruleloop: for (i, request_rule) in guard.iter_mut().enumerate() {
                             if request_rule.0.eval(&ctx) {
                                 info!("Applying rule no={} to request ({} -> {}).", i, driver_addr, DisplayableRealAddrOption(real_addr));
@@ -1084,7 +1092,7 @@ impl ProxyWorker {
                             opcode: FrameOpcode::Response(response.opcode),
                             frame_body: response.body.clone(),
                         };
-                        let mut guard = response_rules.lock().await;
+                        let mut guard = response_rules.lock().unwrap();
                         '_ruleloop: for (i, response_rule) in guard.iter_mut().enumerate() {
                             if response_rule.0.eval(&ctx) {
                                 info!("Applying rule no={} to request ({} -> {}).", i, DisplayableRealAddrOption(real_addr), driver_addr);
@@ -1603,12 +1611,10 @@ mod tests {
             assert_eq!(FrameOpcode::Request(recvd_opcode), opcode);
             assert_eq!(recvd_body, body);
         }
-        running_proxy.running_nodes[0]
-            .change_request_rules(Some(vec![RequestRule(
-                Condition::True,
-                RequestReaction::drop_frame(),
-            )]))
-            .await;
+        running_proxy.running_nodes[0].change_request_rules(Some(vec![RequestRule(
+            Condition::True,
+            RequestReaction::drop_frame(),
+        )]));
 
         {
             // one run with custom rules
@@ -1618,7 +1624,7 @@ mod tests {
             };
         }
 
-        running_proxy.turn_off_rules().await;
+        running_proxy.turn_off_rules();
 
         {
             // one run already without custom rules

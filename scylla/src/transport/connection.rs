@@ -1533,7 +1533,7 @@ mod tests {
     use super::ConnectionConfig;
     use crate::query::Query;
     use crate::utils::test_utils::unique_keyspace_name;
-    use crate::IntoTypedRows;
+    use crate::{IntoTypedRows, SessionBuilder};
     use std::net::SocketAddr;
 
     // Just like resolve_hostname in session.rs
@@ -1564,22 +1564,33 @@ mod tests {
         let (connection, _) = super::open_connection(addr, None, ConnectionConfig::default())
             .await
             .unwrap();
+
         let ks = unique_keyspace_name();
 
-        connection.query_single_page(format!("CREATE KEYSPACE IF NOT EXISTS {} WITH REPLICATION = {{'class' : 'SimpleStrategy', 'replication_factor' : 1}}", ks), &[]).await.unwrap();
+        {
+            // Preparation phase
+            let session = SessionBuilder::new()
+                .known_node_addr(addr)
+                .build()
+                .await
+                .unwrap();
+            session.query(format!("CREATE KEYSPACE IF NOT EXISTS {} WITH REPLICATION = {{'class' : 'SimpleStrategy', 'replication_factor' : 1}}", ks.clone()), &[]).await.unwrap();
+            session.use_keyspace(ks.clone(), false).await.unwrap();
+            session
+                .query("DROP TABLE IF EXISTS connection_query_all_tab", &[])
+                .await
+                .unwrap();
+            session
+                .query(
+                    "CREATE TABLE IF NOT EXISTS connection_query_all_tab (p int primary key)",
+                    &[],
+                )
+                .await
+                .unwrap();
+        }
+
         connection
             .use_keyspace(&super::VerifiedKeyspaceName::new(ks, false).unwrap())
-            .await
-            .unwrap();
-        connection
-            .query_single_page("DROP TABLE IF EXISTS connection_query_all_tab", &[])
-            .await
-            .unwrap();
-        connection
-            .query_single_page(
-                "CREATE TABLE IF NOT EXISTS connection_query_all_tab (p int primary key)",
-                &[],
-            )
             .await
             .unwrap();
 
