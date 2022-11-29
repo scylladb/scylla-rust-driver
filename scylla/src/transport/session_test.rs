@@ -4,6 +4,7 @@ use crate::frame::response::result::Row;
 use crate::frame::value::ValueList;
 use crate::prepared_statement::PreparedStatement;
 use crate::query::Query;
+use crate::retry_policy::{QueryInfo, RetryDecision, RetryPolicy, RetrySession};
 use crate::routing::Token;
 use crate::statement::Consistency;
 use crate::tracing::{GetTracingConfig, TracingInfo};
@@ -17,12 +18,13 @@ use crate::QueryResult;
 use crate::{IntoTypedRows, Session, SessionBuilder};
 use assert_matches::assert_matches;
 use bytes::Bytes;
-use futures::{FutureExt, StreamExt};
+use futures::{FutureExt, StreamExt, TryStreamExt};
 use itertools::Itertools;
 use scylla_cql::frame::value::Value;
 use std::collections::BTreeSet;
 use std::collections::{BTreeMap, HashMap};
 use std::num::NonZeroU32;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::net::TcpListener;
@@ -2556,4 +2558,75 @@ async fn test_keyspaces_to_fetch() {
         .unwrap();
     assert!(session_all.get_cluster_data().keyspaces.contains_key(&ks1));
     assert!(session_all.get_cluster_data().keyspaces.contains_key(&ks2));
+}
+
+// Reproduces the problem with execute_iter mentioned in #608.
+#[tokio::test]
+async fn test_iter_works_when_retry_policy_returns_ignore_write_error() {
+    // It's difficult to reproduce the issue with a real downgrading consistency policy,
+    // as it would require triggering a WriteTimeout. We just need the policy
+    // to return IgnoreWriteError, so we will trigger a different error
+    // and use a custom retry policy which returns IgnoreWriteError.
+    let retried_flag = Arc::new(AtomicBool::new(false));
+
+    #[derive(Debug)]
+    struct MyRetryPolicy(Arc<AtomicBool>);
+    impl RetryPolicy for MyRetryPolicy {
+        fn new_session(&self) -> Box<dyn RetrySession> {
+            Box::new(MyRetrySession(self.0.clone()))
+        }
+        fn clone_boxed(&self) -> Box<dyn RetryPolicy> {
+            Box::new(MyRetryPolicy(self.0.clone()))
+        }
+    }
+
+    struct MyRetrySession(Arc<AtomicBool>);
+    impl RetrySession for MyRetrySession {
+        fn decide_should_retry(&mut self, _: QueryInfo) -> RetryDecision {
+            self.0.store(true, Ordering::Relaxed);
+            RetryDecision::IgnoreWriteError
+        }
+        fn reset(&mut self) {}
+    }
+
+    let uri = std::env::var("SCYLLA_URI").unwrap_or_else(|_| "127.0.0.1:9042".to_string());
+    let session = SessionBuilder::new()
+        .known_node(&uri)
+        .retry_policy(Box::new(MyRetryPolicy(retried_flag.clone())))
+        .default_consistency(Consistency::All)
+        .build()
+        .await
+        .unwrap();
+
+    // Create a keyspace with replication factor that is larger than the cluster size
+    let cluster_size = session.get_cluster_data().get_nodes_info().len();
+    let ks = unique_keyspace_name();
+    session.query(format!("CREATE KEYSPACE {} WITH REPLICATION = {{'class': 'SimpleStrategy', 'replication_factor': {}}}", ks, cluster_size + 1), ()).await.unwrap();
+    session.use_keyspace(ks, true).await.unwrap();
+    session
+        .query("CREATE TABLE t (pk int PRIMARY KEY, v int)", ())
+        .await
+        .unwrap();
+
+    assert!(!retried_flag.load(Ordering::Relaxed));
+    // Try to write something to the new table - it should fail and the policy
+    // will tell us to ignore the error
+    let mut iter = session
+        .query_iter("INSERT INTO t (pk v) VALUES (1, 2)", ())
+        .await
+        .unwrap();
+
+    assert!(retried_flag.load(Ordering::Relaxed));
+    while iter.try_next().await.unwrap().is_some() {}
+
+    retried_flag.store(false, Ordering::Relaxed);
+    // Try the same with execute_iter()
+    let p = session
+        .prepare("INSERT INTO t (pk, v) VALUES (?, ?)")
+        .await
+        .unwrap();
+    let mut iter = session.execute_iter(p, (1, 2)).await.unwrap();
+
+    assert!(retried_flag.load(Ordering::Relaxed));
+    while iter.try_next().await.unwrap().is_some() {}
 }
