@@ -6,7 +6,7 @@ use crate::prepared_statement::PreparedStatement;
 use crate::query::Query;
 use crate::routing::Token;
 use crate::statement::Consistency;
-use crate::tracing::TracingInfo;
+use crate::tracing::{GetTracingConfig, TracingInfo};
 use crate::transport::errors::{BadKeyspaceName, BadQuery, DbError, QueryError};
 use crate::transport::partitioner::{Murmur3Partitioner, Partitioner, PartitionerName};
 use crate::transport::topology::Strategy::SimpleStrategy;
@@ -22,7 +22,9 @@ use itertools::Itertools;
 use scylla_cql::frame::value::Value;
 use std::collections::BTreeSet;
 use std::collections::{BTreeMap, HashMap};
+use std::num::NonZeroU32;
 use std::sync::Arc;
+use std::time::Duration;
 use tokio::net::TcpListener;
 use uuid::Uuid;
 
@@ -940,8 +942,21 @@ async fn test_get_tracing_info(session: &Session, ks: String) {
     let traced_query_result: QueryResult = session.query(traced_query, &[]).await.unwrap();
     let tracing_id: Uuid = traced_query_result.tracing_id.unwrap();
 
+    // The reason why we enable so long waiting for TracingInfo is... Cassandra. (Yes, again.)
+    // In Cassandra Java Driver, the wait time for tracing info is 10 seconds, so here we do the same.
+    // However, as Scylla usually gets TracingInfo ready really fast (our default interval is hence 3ms),
+    // we stick to a not-so-much-terribly-long interval here.
+    let get_tracing_config = GetTracingConfig {
+        attempts: NonZeroU32::new(50).unwrap(),
+        interval: Duration::from_millis(200),
+        consistency: Consistency::One,
+    };
+
     // Getting tracing info from session using this uuid works
-    let tracing_info: TracingInfo = session.get_tracing_info(&tracing_id).await.unwrap();
+    let tracing_info: TracingInfo = session
+        .get_tracing_info_custom(&tracing_id, &get_tracing_config)
+        .await
+        .unwrap();
     assert!(!tracing_info.events.is_empty());
     assert!(!tracing_info.nodes().is_empty());
 }
