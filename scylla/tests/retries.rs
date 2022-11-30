@@ -16,12 +16,11 @@ use scylla_proxy::{
 };
 
 #[tokio::test]
-#[ntest::timeout(5000)]
+#[ntest::timeout(30000)]
 async fn speculative_execution_is_fired() {
     const TIMEOUT_PER_REQUEST: Duration = Duration::from_millis(1000);
 
-    // We choose Unaware to support testing Cassandra
-    let res = test_with_3_node_cluster(ShardAwareness::Unaware, 217, |proxy_uris, translation_map, mut running_proxy| async move {
+    let res = test_with_3_node_cluster(ShardAwareness::QueryNode, 217, |proxy_uris, translation_map, mut running_proxy| async move {
         // DB preparation phase
         let session: Session = SessionBuilder::new()
             .known_node(proxy_uris[0].as_str())
@@ -97,10 +96,9 @@ async fn speculative_execution_is_fired() {
 }
 
 #[tokio::test]
-#[ntest::timeout(10000)]
+#[ntest::timeout(30000)]
 async fn retries_occur() {
-    // We choose Unaware to support testing Cassandra
-    let res = test_with_3_node_cluster(ShardAwareness::Unaware, 210, |proxy_uris, translation_map, mut running_proxy| async move {
+    let res = test_with_3_node_cluster(ShardAwareness::QueryNode, 210, |proxy_uris, translation_map, mut running_proxy| async move {
 
         // DB preparation phase
         let session: Session = SessionBuilder::new()
