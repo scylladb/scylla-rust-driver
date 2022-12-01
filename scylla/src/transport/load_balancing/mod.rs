@@ -25,6 +25,14 @@ pub use latency_aware::LatencyAwarePolicy;
 pub struct Statement<'a> {
     pub token: Option<Token>,
     pub keyspace: Option<&'a str>,
+
+    /// If, while preparing, we received from the cluster information that the statement is an LWT,
+    /// then we can use this information for routing optimisation. Namely, an optimisation
+    /// can be performed: the query should be routed to the replicas in a predefined order
+    /// (i. e. always try first to contact replica A, then B if it fails, then C, etc.).
+    /// If false, the query should be routed normally.
+    /// Note: this a Scylla-specific optimisation. Therefore, the flag will be always false for Cassandra.
+    pub is_confirmed_lwt: bool,
 }
 
 impl<'a> Statement<'a> {
@@ -32,6 +40,7 @@ impl<'a> Statement<'a> {
         Self {
             token: None,
             keyspace: None,
+            is_confirmed_lwt: false,
         }
     }
 }
@@ -196,6 +205,7 @@ mod tests {
     pub const EMPTY_STATEMENT: Statement = Statement {
         token: None,
         keyspace: None,
+        is_confirmed_lwt: false,
     };
 
     pub fn get_plan_and_collect_node_identifiers<L: LoadBalancingPolicy>(

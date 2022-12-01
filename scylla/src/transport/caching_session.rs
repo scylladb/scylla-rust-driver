@@ -20,6 +20,7 @@ use std::hash::BuildHasher;
 #[derive(Debug)]
 struct RawPreparedStatementData {
     pub id: Bytes,
+    pub is_confirmed_lwt: bool,
     pub metadata: PreparedMetadata,
     pub partitioner_name: PartitionerName,
 }
@@ -167,6 +168,7 @@ where
             let page_size = query.get_page_size();
             let mut stmt = PreparedStatement::new(
                 raw.id.clone(),
+                raw.is_confirmed_lwt,
                 raw.metadata.clone(),
                 query.contents,
                 page_size,
@@ -193,6 +195,7 @@ where
 
             let raw = RawPreparedStatementData {
                 id: prepared.get_id().clone(),
+                is_confirmed_lwt: prepared.is_confirmed_lwt(),
                 metadata: prepared.get_prepared_metadata().clone(),
                 partitioner_name: prepared.get_partitioner_name().clone(),
             };

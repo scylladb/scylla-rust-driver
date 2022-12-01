@@ -3,11 +3,12 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
+#[cfg(test)]
 use crate::Session;
 
 static UNIQUE_COUNTER: AtomicUsize = AtomicUsize::new(0);
 
-pub(crate) fn unique_keyspace_name() -> String {
+pub fn unique_keyspace_name() -> String {
     let cnt = UNIQUE_COUNTER.fetch_add(1, Ordering::SeqCst);
     let name = format!(
         "test_rust_{}_{}",
@@ -21,6 +22,7 @@ pub(crate) fn unique_keyspace_name() -> String {
     name
 }
 
+#[cfg(test)]
 pub(crate) async fn supports_feature(session: &Session, feature: &str) -> bool {
     // Cassandra doesn't have a concept of features, so first detect
     // if there is the `supported_features` column in system.local

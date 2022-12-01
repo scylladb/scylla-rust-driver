@@ -154,11 +154,17 @@ impl LoadBalancingPolicy for TokenAwarePolicy {
                         .filter(move |node| !replicas_set.contains(&node.address))
                 };
 
-                let plan = self
-                    .child_policy
-                    .apply_child_policy(replicas)
-                    .chain(fallback_plan);
-                Box::new(plan)
+                if statement.is_confirmed_lwt {
+                    // As optimisation, in order to reduce contention caused by Paxos conflicts, we always try
+                    // to query replicas in the same order. Therefore, we bypass child load balancing policy.
+                    Box::new(replicas.into_iter().chain(fallback_plan))
+                } else {
+                    Box::new(
+                        self.child_policy
+                            .apply_child_policy(replicas)
+                            .chain(fallback_plan),
+                    )
+                }
             }
             // fallback to child policy
             None => {
@@ -189,6 +195,7 @@ mod tests {
     use super::*;
 
     use crate::load_balancing::tests::DumbPolicy;
+    use crate::load_balancing::RoundRobinPolicy;
     use crate::transport::load_balancing::tests;
     use crate::transport::topology::Keyspace;
     use crate::transport::topology::Metadata;
@@ -211,6 +218,7 @@ mod tests {
                 statement: Statement {
                     token: Some(Token { value: 160 }),
                     keyspace: Some("keyspace_with_simple_strategy_replication_factor_2"),
+                    is_confirmed_lwt: false,
                 },
                 expected_plan: vec![3, 1],
             },
@@ -218,6 +226,7 @@ mod tests {
                 statement: Statement {
                     token: Some(Token { value: 60 }),
                     keyspace: Some("keyspace_with_simple_strategy_replication_factor_3"),
+                    is_confirmed_lwt: false,
                 },
                 expected_plan: vec![1, 2, 3],
             },
@@ -225,6 +234,7 @@ mod tests {
                 statement: Statement {
                     token: Some(Token { value: 500 }),
                     keyspace: Some("keyspace_with_simple_strategy_replication_factor_3"),
+                    is_confirmed_lwt: false,
                 },
                 expected_plan: vec![1, 2, 3],
             },
@@ -232,6 +242,7 @@ mod tests {
                 statement: Statement {
                     token: Some(Token { value: 60 }),
                     keyspace: Some("invalid"),
+                    is_confirmed_lwt: false,
                 },
                 expected_plan: vec![1],
             },
@@ -239,6 +250,7 @@ mod tests {
                 statement: Statement {
                     token: Some(Token { value: 60 }),
                     keyspace: None,
+                    is_confirmed_lwt: false,
                 },
                 expected_plan: vec![1],
             },
@@ -262,6 +274,7 @@ mod tests {
         let statement = Statement {
             token: Some(Token { value: 0 }),
             keyspace: Some("keyspace_with_nts"),
+            is_confirmed_lwt: false,
         };
 
         let plan = tests::get_plan_and_collect_node_identifiers(&policy, &statement, &cluster);
@@ -282,6 +295,125 @@ mod tests {
             &cluster,
         );
         assert_eq!(plan.len(), 0);
+    }
+
+    #[tokio::test]
+    async fn token_aware_policy_optimises_lwt_routing() {
+        let keyspace = Some("keyspace_with_simple_strategy_replication_factor_3");
+        let token = Some(Token { value: 60 });
+        let tests = [
+            Statement {
+                token,
+                keyspace,
+                is_confirmed_lwt: false,
+            },
+            Statement {
+                token,
+                keyspace,
+                is_confirmed_lwt: true,
+            },
+        ];
+
+        let policy = TokenAwarePolicy::new(Box::new(RoundRobinPolicy::default()));
+        let cluster = mock_cluster_data_for_token_aware_tests();
+
+        let plans = (0..15)
+            .map(|i| {
+                let plan =
+                    tests::get_plan_and_collect_node_identifiers(&policy, &tests[i % 2], &cluster);
+                if i % 2 == 0 {
+                    // non-LWT
+                    (Some(plan), None)
+                } else {
+                    // LWT
+                    (None, Some(plan)) // child policy not applied in case of LWT
+                }
+            })
+            .collect::<HashSet<_>>();
+
+        let expected_plans = [
+            (None, Some(vec![1, 2, 3])), // LWT case
+            (Some(vec![1, 2, 3]), None), // non-LWT cases
+            (Some(vec![2, 3, 1]), None),
+            (Some(vec![3, 1, 2]), None),
+        ]
+        .into_iter()
+        .collect();
+
+        assert_eq!(plans, expected_plans);
+    }
+
+    // creates ClusterData with info about 3 nodes living in the same datacenter
+    // ring field is populated as follows:
+    // ring tokens:            50 100 150 200 250 300 400 500
+    // corresponding node ids: 2  1   2   3   1   2   3   1
+    fn mock_cluster_data_for_token_aware_tests() -> ClusterData {
+        let peers = [
+            Peer {
+                datacenter: Some("eu".into()),
+                rack: None,
+                address: tests::id_to_invalid_addr(1),
+                tokens: vec![
+                    Token { value: 100 },
+                    Token { value: 250 },
+                    Token { value: 500 },
+                ],
+                untranslated_address: Some(tests::id_to_invalid_addr(1)),
+            },
+            Peer {
+                datacenter: Some("eu".into()),
+                rack: None,
+                address: tests::id_to_invalid_addr(2),
+                tokens: vec![
+                    Token { value: 50 },
+                    Token { value: 150 },
+                    Token { value: 300 },
+                ],
+                untranslated_address: Some(tests::id_to_invalid_addr(2)),
+            },
+            Peer {
+                datacenter: Some("us".into()),
+                rack: None,
+                address: tests::id_to_invalid_addr(3),
+                tokens: vec![Token { value: 200 }, Token { value: 400 }],
+                untranslated_address: Some(tests::id_to_invalid_addr(3)),
+            },
+        ];
+
+        let keyspaces = [
+            (
+                "keyspace_with_simple_strategy_replication_factor_2".into(),
+                Keyspace {
+                    strategy: Strategy::SimpleStrategy {
+                        replication_factor: 2,
+                    },
+                    tables: HashMap::new(),
+                    views: HashMap::new(),
+                    user_defined_types: HashMap::new(),
+                },
+            ),
+            (
+                "keyspace_with_simple_strategy_replication_factor_3".into(),
+                Keyspace {
+                    strategy: Strategy::SimpleStrategy {
+                        replication_factor: 3,
+                    },
+                    tables: HashMap::new(),
+                    views: HashMap::new(),
+                    user_defined_types: HashMap::new(),
+                },
+            ),
+        ]
+        .iter()
+        .cloned()
+        .collect();
+
+        let info = Metadata {
+            peers: Vec::from(peers),
+            keyspaces,
+        };
+
+        ClusterData::new(info, &Default::default(), &HashMap::new(), &None, None)
     }
 
     // creates ClusterData with info about 8 nodes living in two different datacenters

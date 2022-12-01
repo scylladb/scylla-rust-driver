@@ -34,6 +34,7 @@ async fn main() -> Result<()> {
         let statement_info = scylla::transport::load_balancing::Statement {
             token: Some(scylla::routing::Token { value: t }),
             keyspace: Some("ks"),
+            is_confirmed_lwt: false,
         };
         println!(
             "Estimated replicas for query: {:?}",

@@ -858,6 +858,7 @@ impl Session {
         let statement_info = Statement {
             token,
             keyspace: prepared.get_keyspace_name(),
+            is_confirmed_lwt: prepared.is_confirmed_lwt(),
         };
 
         let span = trace_span!(
@@ -1035,6 +1036,7 @@ impl Session {
                 Statement {
                     token: self.calculate_token(ps, first_serialized_value)?,
                     keyspace: ps.get_keyspace_name(),
+                    is_confirmed_lwt: false,
                 }
             }
             _ => Statement::default(),
