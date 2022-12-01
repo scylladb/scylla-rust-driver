@@ -62,6 +62,7 @@ use crate::{
 
 pub use crate::transport::connection_pool::PoolSize;
 
+use crate::authentication::AuthenticatorProvider;
 #[cfg(feature = "ssl")]
 use openssl::ssl::SslContext;
 
@@ -177,8 +178,7 @@ pub struct SessionConfig {
     #[cfg(feature = "ssl")]
     pub ssl_context: Option<SslContext>,
 
-    pub auth_username: Option<String>,
-    pub auth_password: Option<String>,
+    pub authenticator: Option<Arc<dyn AuthenticatorProvider>>,
 
     pub schema_agreement_interval: Duration,
     pub connect_timeout: Duration,
@@ -253,8 +253,7 @@ impl SessionConfig {
             speculative_execution_policy: None,
             #[cfg(feature = "ssl")]
             ssl_context: None,
-            auth_username: None,
-            auth_password: None,
+            authenticator: None,
             connect_timeout: Duration::from_secs(5),
             connection_pool_size: Default::default(),
             disallow_shard_aware_port: false,
@@ -345,8 +344,7 @@ impl SessionConfig {
             tcp_nodelay: self.tcp_nodelay,
             #[cfg(feature = "ssl")]
             ssl_context: self.ssl_context.clone(),
-            auth_username: self.auth_username.to_owned(),
-            auth_password: self.auth_password.to_owned(),
+            authenticator: self.authenticator.clone(),
             connect_timeout: self.connect_timeout,
             event_sender: None,
             default_consistency: self.default_consistency,
