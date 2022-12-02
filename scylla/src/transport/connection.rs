@@ -1146,6 +1146,7 @@ pub async fn open_connection(
         source_port,
         config,
         Some("scylla-rust-driver".to_string()),
+        option_env!("CARGO_PKG_VERSION").map(|v| v.to_string()),
     )
     .await
 }
@@ -1155,6 +1156,7 @@ pub async fn open_named_connection(
     source_port: Option<u16>,
     config: ConnectionConfig,
     driver_name: Option<String>,
+    driver_version: Option<String>,
 ) -> Result<(Connection, ErrorReceiver), QueryError> {
     // TODO: shouldn't all this logic be in Connection::new?
     let (mut connection, error_receiver) =
@@ -1201,6 +1203,9 @@ pub async fn open_named_connection(
     options.insert("CQL_VERSION".to_string(), "4.0.0".to_string()); // FIXME: hardcoded values
     if let Some(name) = driver_name {
         options.insert("DRIVER_NAME".to_string(), name);
+    }
+    if let Some(version) = driver_version {
+        options.insert("DRIVER_VERSION".to_string(), version);
     }
     if let Some(compression) = &config.compression {
         let compression_str = compression.to_string();
