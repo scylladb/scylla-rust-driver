@@ -1,6 +1,8 @@
 mod precomputed_replicas;
 mod replicas;
 mod replication_info;
+#[cfg(test)]
+pub(crate) mod test;
 mod token_ring;
 
 use rand::{seq::IteratorRandom, Rng};
