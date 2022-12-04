@@ -230,7 +230,7 @@ pub trait BatchValues {
     type BatchValuesIter<'r>: BatchValuesIterator<'r>
     where
         Self: 'r;
-    fn batch_values_iter<'r>(&'r self) -> Self::BatchValuesIter<'r>;
+    fn batch_values_iter(&self) -> Self::BatchValuesIter<'_>;
 }
 
 /// An iterator-like for `ValueList`
@@ -930,7 +930,7 @@ where
     VL: ValueList + 'a,
 {
     type BatchValuesIter<'r> = BatchValuesIteratorFromIterator<IT> where Self: 'r;
-    fn batch_values_iter<'r>(&'r self) -> Self::BatchValuesIter<'r> {
+    fn batch_values_iter(&self) -> Self::BatchValuesIter<'_> {
         self.it.clone().into()
     }
 }
@@ -938,7 +938,7 @@ where
 // Implement BatchValues for slices of ValueList types
 impl<T: ValueList> BatchValues for [T] {
     type BatchValuesIter<'r> = BatchValuesIteratorFromIterator<std::slice::Iter<'r, T>> where Self: 'r;
-    fn batch_values_iter<'r>(&'r self) -> Self::BatchValuesIter<'r> {
+    fn batch_values_iter(&self) -> Self::BatchValuesIter<'_> {
         self.iter().into()
     }
 }
@@ -946,7 +946,7 @@ impl<T: ValueList> BatchValues for [T] {
 // Implement BatchValues for Vec<ValueList>
 impl<T: ValueList> BatchValues for Vec<T> {
     type BatchValuesIter<'r> = BatchValuesIteratorFromIterator<std::slice::Iter<'r, T>> where Self: 'r;
-    fn batch_values_iter<'r>(&'r self) -> Self::BatchValuesIter<'r> {
+    fn batch_values_iter(&self) -> Self::BatchValuesIter<'_> {
         BatchValues::batch_values_iter(self.as_slice())
     }
 }
@@ -955,7 +955,7 @@ impl<T: ValueList> BatchValues for Vec<T> {
 // Further variants are done using a macro
 impl<T0: ValueList> BatchValues for (T0,) {
     type BatchValuesIter<'r> = BatchValuesIteratorFromIterator<std::iter::Once<&'r T0>> where Self: 'r;
-    fn batch_values_iter<'r>(&'r self) -> Self::BatchValuesIter<'r> {
+    fn batch_values_iter(&self) -> Self::BatchValuesIter<'_> {
         std::iter::once(&self.0).into()
     }
 }
@@ -972,7 +972,7 @@ macro_rules! impl_batch_values_for_tuple {
             $($Ti: ValueList),+
         {
             type BatchValuesIter<'r> = TupleValuesIter<'r, ($($Ti,)+)> where Self: 'r;
-            fn batch_values_iter<'r>(&'r self) -> Self::BatchValuesIter<'r> {
+            fn batch_values_iter(&self) -> Self::BatchValuesIter<'_> {
                 TupleValuesIter {
                     tuple: self,
                     idx: 0,
@@ -1044,7 +1044,7 @@ impl_batch_values_for_tuple!(T0, T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, T
 // Every &impl BatchValues should also implement BatchValues
 impl<'a, T: BatchValues + ?Sized> BatchValues for &'a T {
     type BatchValuesIter<'r> = <T as BatchValues>::BatchValuesIter<'r> where Self: 'r;
-    fn batch_values_iter<'r>(&'r self) -> Self::BatchValuesIter<'r> {
+    fn batch_values_iter(&self) -> Self::BatchValuesIter<'_> {
         <T as BatchValues>::batch_values_iter(*self)
     }
 }
@@ -1072,7 +1072,7 @@ impl<'f, T: BatchValues> BatchValuesFirstSerialized<'f, T> {
 impl<'f, BV: BatchValues> BatchValues for BatchValuesFirstSerialized<'f, BV> {
     type BatchValuesIter<'r> =
         BatchValuesFirstSerialized<'f, <BV as BatchValues>::BatchValuesIter<'r>> where Self: 'r;
-    fn batch_values_iter<'r>(&'r self) -> Self::BatchValuesIter<'r> {
+    fn batch_values_iter(&self) -> Self::BatchValuesIter<'_> {
         BatchValuesFirstSerialized {
             first: self.first,
             rest: self.rest.batch_values_iter(),
