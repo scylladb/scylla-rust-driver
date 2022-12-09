@@ -539,4 +539,299 @@ mod deserialize {
             Self::try_from(config)
         }
     }
+
+    #[cfg(test)]
+    mod tests {
+        use crate::cloud::config::deserialize::Parameters;
+
+        use super::super::CloudConfig;
+        use super::RawCloudConfig;
+        use assert_matches::assert_matches;
+        use openssl::x509::X509;
+        use scylla_cql::frame::types::SerialConsistency;
+        use scylla_cql::Consistency;
+
+        impl Clone for super::Datacenter {
+            fn clone(&self) -> Self {
+                Self {
+                    certificateAuthorityPath: self.certificateAuthorityPath.clone(),
+                    certificateAuthorityData: self.certificateAuthorityData.clone(),
+                    server: self.server.clone(),
+                    tlsServerName: self.tlsServerName.clone(),
+                    nodeDomain: self.nodeDomain.clone(),
+                    insecureSkipTlsVerify: self.insecureSkipTlsVerify,
+                    proxyUrl: self.proxyUrl.clone(),
+                }
+            }
+        }
+
+        impl TryFrom<&str> for RawCloudConfig {
+            type Error = serde_yaml::Error;
+            fn try_from(yaml: &str) -> Result<Self, Self::Error> {
+                serde_yaml::from_str(yaml)
+            }
+        }
+
+        const GOOD_PEM_PATH: &str = "../test/cloud/ca.pem"; // file with proper ca as pem
+        const NO_PEM_PATH: &str = "/tmp/MyREalCert.pem"; // a file that most probably does not exist
+        const BAD_PEM_PATH: &str = "Cargo.toml"; // any file that for sure exists in the repo
+
+        fn dc_valid() -> super::Datacenter {
+            super::Datacenter {
+                certificateAuthorityPath: Some(GOOD_PEM_PATH.into()),
+                certificateAuthorityData: Some(TEST_CA.into()),
+                server: "127.0.0.1:9142".into(),
+                tlsServerName: None,
+                proxyUrl: None,
+                nodeDomain: "cql.my-cluster-id.scylla.com".into(),
+                insecureSkipTlsVerify: Some(false),
+            }
+        }
+
+        #[test]
+        fn test_cloud_config_dc_validation_no_cert_provided() {
+            let dc_no_cert = super::Datacenter {
+                certificateAuthorityPath: None,
+                certificateAuthorityData: None,
+                ..dc_valid()
+            };
+            super::super::Datacenter::try_from(dc_no_cert).unwrap_err();
+        }
+
+        #[test]
+        fn test_cloud_config_dc_validation_cert_not_found() {
+            let dc_cert_nonfound = super::Datacenter {
+                certificateAuthorityPath: Some(NO_PEM_PATH.into()),
+                certificateAuthorityData: None,
+                ..dc_valid()
+            };
+            super::super::Datacenter::try_from(dc_cert_nonfound).unwrap_err();
+        }
+
+        #[test]
+        fn test_cloud_config_dc_validation_invalid_cert() {
+            let dc_invalid_cert = super::Datacenter {
+                certificateAuthorityData: Some("INVALID CERFITICATE".into()),
+                ..dc_valid()
+            };
+            super::super::Datacenter::try_from(dc_invalid_cert).unwrap_err();
+        }
+
+        #[test]
+        fn test_cloud_config_dc_validation_cert_found_bad() {
+            let dc_cert_found_bad = super::Datacenter {
+                certificateAuthorityPath: Some(BAD_PEM_PATH.into()),
+                certificateAuthorityData: None,
+                ..dc_valid()
+            };
+            super::super::Datacenter::try_from(dc_cert_found_bad).unwrap_err();
+        }
+
+        #[test]
+        fn test_cloud_config_dc_validation_cert_found_good() {
+            let dc_cert_found_good = super::Datacenter {
+                certificateAuthorityPath: Some(GOOD_PEM_PATH.into()),
+                certificateAuthorityData: None,
+                ..dc_valid()
+            };
+            super::super::Datacenter::try_from(dc_cert_found_good).unwrap();
+        }
+
+        #[test]
+        fn test_cloud_config_dc_validation_domain_empty() {
+            let dc_bad_domain_empty = super::Datacenter {
+                nodeDomain: "".into(),
+                ..dc_valid()
+            };
+            super::super::Datacenter::try_from(dc_bad_domain_empty).unwrap_err();
+        }
+
+        #[test]
+        fn test_cloud_config_dc_validation_domain_trailing_minus() {
+            let dc_bad_domain_trailing_minus = super::Datacenter {
+                nodeDomain: "cql.scylla-.com".into(),
+                ..dc_valid()
+            };
+            super::super::Datacenter::try_from(dc_bad_domain_trailing_minus).unwrap_err();
+        }
+
+        #[test]
+        fn test_cloud_config_dc_validation_domain_interior_minus() {
+            let dc_good_domain_interior_minus = super::Datacenter {
+                nodeDomain: "cql.scylla-cloud.com".into(),
+                ..dc_valid()
+            };
+            super::super::Datacenter::try_from(dc_good_domain_interior_minus).unwrap();
+        }
+
+        #[test]
+        fn test_cloud_config_dc_validation_domain_special_sign() {
+            let dc_bad_domain_special_sign = super::Datacenter {
+                nodeDomain: "cql.$cylla-cloud.com".into(),
+                ..dc_valid()
+            };
+            super::super::Datacenter::try_from(dc_bad_domain_special_sign).unwrap_err();
+        }
+
+        #[test]
+        fn test_cloud_config_dc_validation_bad_server_url() {
+            let dc_bad_server_not_url = super::Datacenter {
+                server: "NotAUrl".into(),
+                ..dc_valid()
+            };
+            super::super::Datacenter::try_from(dc_bad_server_not_url).unwrap_err();
+        }
+
+        static CCM_CONFIG: &str = include_str!("ccm_config.yaml");
+        static FULL_CONFIG: &str = include_str!("full_config.yaml");
+
+        static TEST_CA: &str = include_str!("test_ca");
+        static TEST_KEY: &str = include_str!("test_key");
+
+        #[test]
+        fn test_cloud_config_unsupported_api_version() {
+            let mut config = RawCloudConfig::try_from(CCM_CONFIG).unwrap();
+            config.apiVersion = Some("1.0".into());
+            // The mere unknown api version should not be considered an erroneous input, but a warning will be logged.
+            super::super::CloudConfig::try_from(config).unwrap();
+        }
+
+        #[test]
+        fn test_cloud_config_deserialisation() {
+            {
+                // CCM standard config
+                let config = RawCloudConfig::try_from(CCM_CONFIG).unwrap();
+                assert_eq!(config.apiVersion, None);
+                assert_eq!(config.kind, None);
+                assert_matches!(config.parameters, None);
+                assert_eq!(config.currentContext, "default");
+                assert_eq!(config.contexts.len(), 1);
+
+                let auth_info = config.authInfos.get("default").unwrap();
+                assert_eq!(auth_info.clientCertificateData.as_ref().unwrap(), TEST_CA);
+                assert_eq!(auth_info.clientKeyData.as_ref().unwrap(), TEST_KEY);
+                assert_eq!(auth_info.username, Some(String::from("cassandra")));
+                assert_eq!(auth_info.password, Some(String::from("cassandra")));
+
+                let datacenter = config.datacenters.get("eu-west-1").unwrap();
+                assert_eq!(datacenter.insecureSkipTlsVerify, Some(false));
+            }
+            {
+                // crafted fully-fledged config
+                let config = RawCloudConfig::try_from(FULL_CONFIG).unwrap();
+                assert_eq!(
+                    config.apiVersion,
+                    Some("cqlclient.scylla.scylladb.com/v1alpha1".into())
+                );
+                assert_eq!(config.kind, Some("CQLConnectionConfig".into()));
+                assert_matches!(
+                    config.parameters,
+                    Some(Parameters {
+                        defaultConsistency: Some(Consistency::LocalQuorum),
+                        defaultSerialConsistency: Some(SerialConsistency::Serial),
+                    })
+                );
+                assert_eq!(config.currentContext, "some");
+                assert_eq!(config.contexts.len(), 2);
+                assert_eq!(config.datacenters.len(), 2);
+                assert_eq!(config.authInfos.len(), 2);
+
+                let auth_info_one = config.authInfos.get("one").unwrap();
+
+                assert_eq!(
+                    auth_info_one.clientCertificateData.as_ref().unwrap(),
+                    TEST_CA
+                );
+                assert_eq!(
+                    auth_info_one.clientCertificatePath.as_ref().unwrap(),
+                    "/tmp/noNeXisTinG_diReCtory"
+                );
+                assert_eq!(auth_info_one.clientKeyData.as_ref().unwrap(), TEST_KEY);
+                assert_eq!(
+                    auth_info_one.clientKeyPath.as_ref().unwrap(),
+                    "/tmp/noNeXisTinG_diReCtory"
+                );
+                assert_eq!(auth_info_one.username, Some(String::from("cassandra1")));
+                assert_eq!(auth_info_one.password, Some(String::from("scylla1")));
+
+                let auth_info_two = config.authInfos.get("two").unwrap();
+                assert_eq!(auth_info_two.username, Some(String::from("cassandra2")));
+                assert_eq!(auth_info_two.password, Some(String::from("scylla2")));
+
+                let datacenter = config.datacenters.get("eu-west-1").unwrap();
+                assert_eq!(
+                    datacenter.certificateAuthorityData.as_ref().unwrap(),
+                    TEST_CA
+                );
+                assert_eq!(
+                    datacenter.certificateAuthorityPath.as_ref().unwrap(),
+                    "/tmp/noNeXisTinG_diReCtory"
+                );
+                assert_eq!(datacenter.server, "127.0.1.12:9142");
+                assert_eq!(datacenter.nodeDomain, "cql.my-cluster-id.scylla.com");
+                assert_eq!(datacenter.insecureSkipTlsVerify, Some(true));
+                assert_eq!(datacenter.proxyUrl, Some("proxy.example.com".into()));
+                assert_eq!(datacenter.tlsServerName, Some("tls_server".into()));
+            }
+        }
+
+        #[test]
+        fn test_cloud_config_validation() {
+            {
+                // CCM standard config
+                let config = RawCloudConfig::try_from(CCM_CONFIG).unwrap();
+                let validated_config: CloudConfig = config.try_into().unwrap();
+                assert_matches!(validated_config.default_consistency, None);
+                assert_matches!(validated_config.default_serial_consistency, None);
+                assert_eq!(validated_config.current_context, "default");
+                assert_eq!(validated_config.contexts.len(), 1);
+
+                let auth_info = validated_config.auth_infos.get("default").unwrap();
+                assert_eq!(auth_info.username, Some(String::from("cassandra")));
+                assert_eq!(auth_info.password, Some(String::from("cassandra")));
+
+                let datacenter = validated_config.datacenters.get("eu-west-1").unwrap();
+                assert!(!datacenter.insecure_skip_tls_verify);
+            }
+            {
+                // crafted fully-fledged config
+                let config = RawCloudConfig::try_from(FULL_CONFIG).unwrap();
+                let validated_config: CloudConfig = config.try_into().unwrap();
+                assert_eq!(
+                    validated_config.default_consistency,
+                    Some(Consistency::LocalQuorum)
+                );
+                assert_eq!(
+                    validated_config.default_serial_consistency,
+                    Some(SerialConsistency::Serial)
+                );
+                assert_eq!(validated_config.current_context, "some");
+                assert_eq!(validated_config.contexts.len(), 2);
+                assert_eq!(validated_config.datacenters.len(), 2);
+                assert_eq!(validated_config.auth_infos.len(), 2);
+
+                let auth_info = validated_config.auth_infos.get("one").unwrap();
+
+                assert_eq!(
+                    auth_info.cert,
+                    X509::from_pem(&base64::decode(TEST_CA.as_bytes()).unwrap()).unwrap()
+                );
+                // comparison of PKey<Private> is not possible, so auth_info.key won't be tested here.
+
+                assert_eq!(auth_info.username, Some(String::from("cassandra1")));
+                assert_eq!(auth_info.password, Some(String::from("scylla1")));
+
+                let datacenter = validated_config.datacenters.get("eu-west-1").unwrap();
+                assert_eq!(
+                    datacenter.certificate_authority,
+                    X509::from_pem(&base64::decode(TEST_CA.as_bytes()).unwrap()).unwrap()
+                );
+                assert_eq!(datacenter.server.as_str(), "127.0.1.12:9142");
+                assert_eq!(datacenter.node_domain, "cql.my-cluster-id.scylla.com");
+                assert!(datacenter.insecure_skip_tls_verify);
+                assert_eq!(datacenter.proxy_url, Some("proxy.example.com".into()));
+                assert_eq!(datacenter.tls_server_name, Some("tls_server".into()));
+            }
+        }
+    }
 }
