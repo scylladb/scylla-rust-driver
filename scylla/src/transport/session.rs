@@ -23,6 +23,7 @@ use tokio::time::timeout;
 use tracing::{debug, error, trace, trace_span, Instrument};
 use uuid::Uuid;
 
+use super::cluster::ContactPoint;
 use super::connection::NonErrorQueryResponse;
 use super::connection::QueryResponse;
 use super::errors::{BadQuery, NewSessionError, QueryError};
@@ -377,23 +378,23 @@ impl Session {
         }
 
         // Find IP addresses of all known nodes passed in the config
-        let mut node_addresses: Vec<SocketAddr> = Vec::with_capacity(known_nodes.len());
+        let mut initial_peers: Vec<ContactPoint> = Vec::with_capacity(known_nodes.len());
 
         let mut to_resolve: Vec<String> = Vec::new();
 
         for node in known_nodes {
             match node {
                 KnownNode::Hostname(hostname) => to_resolve.push(hostname),
-                KnownNode::Address(address) => node_addresses.push(address),
+                KnownNode::Address(address) => initial_peers.push(ContactPoint { address }),
             };
         }
-
-        let resolve_futures = to_resolve
-            .into_iter()
-            .map(|s| async move { resolve_hostname(&s).await });
-        let resolved: Vec<SocketAddr> = futures::future::try_join_all(resolve_futures).await?;
-
-        node_addresses.extend(resolved);
+        let resolve_futures = to_resolve.into_iter().map(|hostname| async move {
+            Ok::<_, NewSessionError>(ContactPoint {
+                address: resolve_hostname(&hostname).await?,
+            })
+        });
+        let resolved: Vec<ContactPoint> = futures::future::try_join_all(resolve_futures).await?;
+        initial_peers.extend(resolved);
 
         let connection_config = ConnectionConfig {
             compression: config.compression,
@@ -414,7 +415,7 @@ impl Session {
         };
 
         let cluster = Cluster::new(
-            node_addresses,
+            initial_peers,
             pool_config,
             config.keyspaces_to_fetch,
             config.fetch_schema_metadata,

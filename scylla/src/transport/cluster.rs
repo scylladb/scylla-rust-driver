@@ -26,6 +26,12 @@ use std::time::Duration;
 use tracing::{debug, warn};
 use uuid::Uuid;
 
+#[derive(Debug, Clone)]
+#[non_exhaustive]
+pub struct ContactPoint {
+    pub address: SocketAddr,
+}
+
 /// Cluster manages up to date information and connections to database nodes.
 /// All data can be accessed by cloning Arc<ClusterData> in the `data` field
 pub struct Cluster {
@@ -130,7 +136,7 @@ struct UseKeyspaceRequest {
 
 impl Cluster {
     pub async fn new(
-        initial_peers: Vec<SocketAddr>,
+        initial_peers: Vec<ContactPoint>,
         pool_config: PoolConfig,
         keyspaces_to_fetch: Vec<String>,
         fetch_schema_metadata: bool,
