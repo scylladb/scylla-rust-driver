@@ -103,7 +103,6 @@ pub use scylla_cql::macros::{self, *};
 
 pub mod authentication;
 #[cfg(feature = "cloud")]
-#[allow(unused)]
 pub mod cloud;
 
 pub mod history;

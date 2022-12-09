@@ -1,6 +1,9 @@
 //! `Session` is the main object used in the driver.\
 //! It manages all connections to the cluster and allows to perform queries.
 
+#[cfg(feature = "cloud")]
+use crate::cloud::CloudConfig;
+
 use crate::frame::types::LegacyConsistency;
 use crate::history;
 use crate::history::HistoryListener;
@@ -195,6 +198,10 @@ pub struct SessionConfig {
     /// If true, full schema metadata is fetched after successfully reaching a schema agreement.
     /// It is true by default but can be disabled if successive schema-altering statements should be performed.
     pub refresh_metadata_on_auto_schema_agreement: bool,
+
+    // If the driver is to connect to ScyllaCloud, there is a config for it.
+    #[cfg(feature = "cloud")]
+    pub(crate) cloud_config: Option<Arc<CloudConfig>>,
 }
 
 /// Describes database server known on Session startup.
@@ -238,6 +245,8 @@ impl SessionConfig {
             address_translator: None,
             host_filter: None,
             refresh_metadata_on_auto_schema_agreement: true,
+            #[cfg(feature = "cloud")]
+            cloud_config: None,
         }
     }
 
