@@ -302,30 +302,6 @@ impl SessionConfig {
             self.add_known_node_addr(*address);
         }
     }
-
-    /// Creates a PoolConfig which can be used to create NodeConnectionPools
-    fn get_pool_config(&self) -> PoolConfig {
-        PoolConfig {
-            connection_config: self.get_connection_config(),
-            pool_size: self.connection_pool_size.clone(),
-            can_use_shard_aware_port: !self.disallow_shard_aware_port,
-            keepalive_interval: self.keepalive_interval,
-        }
-    }
-
-    /// Makes a config that should be used in Connection
-    fn get_connection_config(&self) -> ConnectionConfig {
-        ConnectionConfig {
-            compression: self.compression,
-            tcp_nodelay: self.tcp_nodelay,
-            #[cfg(feature = "ssl")]
-            ssl_context: self.ssl_context.clone(),
-            authenticator: self.authenticator.clone(),
-            connect_timeout: self.connect_timeout,
-            event_sender: None,
-            default_consistency: self.default_execution_profile_handle.access().consistency,
-        }
-    }
 }
 
 /// Creates default [`SessionConfig`], same as [`SessionConfig::new`]
@@ -420,12 +396,30 @@ impl Session {
 
         node_addresses.extend(resolved);
 
+        let connection_config = ConnectionConfig {
+            compression: config.compression,
+            tcp_nodelay: config.tcp_nodelay,
+            #[cfg(feature = "ssl")]
+            ssl_context: config.ssl_context,
+            authenticator: config.authenticator.clone(),
+            connect_timeout: config.connect_timeout,
+            event_sender: None,
+            default_consistency: Default::default(),
+        };
+
+        let pool_config = PoolConfig {
+            connection_config,
+            pool_size: config.connection_pool_size,
+            can_use_shard_aware_port: !config.disallow_shard_aware_port,
+            keepalive_interval: config.keepalive_interval,
+        };
+
         let cluster = Cluster::new(
-            &node_addresses,
-            config.get_pool_config(),
+            node_addresses,
+            pool_config,
             config.keyspaces_to_fetch,
             config.fetch_schema_metadata,
-            &config.host_filter,
+            config.host_filter,
         )
         .await?;
 

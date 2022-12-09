@@ -129,11 +129,11 @@ struct UseKeyspaceRequest {
 
 impl Cluster {
     pub async fn new(
-        initial_peers: &[SocketAddr],
+        initial_peers: Vec<SocketAddr>,
         pool_config: PoolConfig,
         keyspaces_to_fetch: Vec<String>,
         fetch_schema_metadata: bool,
-        host_filter: &Option<Arc<dyn HostFilter>>,
+        host_filter: Option<Arc<dyn HostFilter>>,
     ) -> Result<Cluster, QueryError> {
         let (refresh_sender, refresh_receiver) = tokio::sync::mpsc::channel(32);
         let (use_keyspace_sender, use_keyspace_receiver) = tokio::sync::mpsc::channel(32);
@@ -146,7 +146,7 @@ impl Cluster {
             server_events_sender,
             keyspaces_to_fetch,
             fetch_schema_metadata,
-            host_filter,
+            &host_filter,
         );
 
         let metadata = metadata_reader.read_metadata(true).await?;
@@ -173,7 +173,7 @@ impl Cluster {
             use_keyspace_channel: use_keyspace_receiver,
             used_keyspace: None,
 
-            host_filter: host_filter.clone(),
+            host_filter,
         };
 
         let (fut, worker_handle) = worker.work().remote_handle();

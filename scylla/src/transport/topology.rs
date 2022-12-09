@@ -321,7 +321,7 @@ impl MetadataReader {
     /// Creates new MetadataReader, which connects to initially_known_peers in the background
     #[allow(clippy::too_many_arguments)]
     pub fn new(
-        initially_known_peers: &[SocketAddr],
+        initially_known_peers: Vec<SocketAddr>,
         mut connection_config: ConnectionConfig,
         keepalive_interval: Option<Duration>,
         server_event_sender: mpsc::Sender<Event>,
