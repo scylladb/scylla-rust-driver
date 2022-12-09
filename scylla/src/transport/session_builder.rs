@@ -6,6 +6,7 @@ use super::session::{AddressTranslator, Session, SessionConfig};
 use super::Compression;
 use crate::transport::connection_pool::PoolSize;
 use crate::transport::host_filter::HostFilter;
+use std::marker::PhantomData;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration;
@@ -14,6 +15,18 @@ use crate::authentication::{AuthenticatorProvider, PlainTextAuthenticator};
 #[cfg(feature = "ssl")]
 use openssl::ssl::SslContext;
 use tracing::warn;
+
+mod sealed {
+    pub trait Sealed {}
+}
+pub trait SessionBuilderKind: sealed::Sealed + Clone {}
+
+#[derive(Clone)]
+pub enum DefaultMode {}
+impl sealed::Sealed for DefaultMode {}
+impl SessionBuilderKind for DefaultMode {}
+
+pub type SessionBuilder = GenericSessionBuilder<DefaultMode>;
 
 /// SessionBuilder is used to create new Session instances
 /// # Example
@@ -31,8 +44,9 @@ use tracing::warn;
 /// # }
 /// ```
 #[derive(Clone)]
-pub struct SessionBuilder {
+pub struct GenericSessionBuilder<Kind: SessionBuilderKind> {
     pub config: SessionConfig,
+    kind: PhantomData<Kind>,
 }
 
 impl SessionBuilder {
@@ -43,6 +57,7 @@ impl SessionBuilder {
     pub fn new() -> Self {
         SessionBuilder {
             config: SessionConfig::new(),
+            kind: PhantomData,
         }
     }
 
