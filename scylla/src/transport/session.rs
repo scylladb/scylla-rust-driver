@@ -392,6 +392,25 @@ impl Session {
     pub async fn connect(config: SessionConfig) -> Result<Session, NewSessionError> {
         let known_nodes = config.known_nodes;
 
+        #[cfg(feature = "cloud")]
+        let known_nodes = if let Some(cloud_servers) =
+            config.cloud_config.as_ref().map(|cloud_config| {
+                cloud_config
+                    .get_datacenters()
+                    .iter()
+                    .map(|(dc_name, dc_data)| {
+                        KnownNode::CloudEndpoint(CloudEndpoint {
+                            hostname: dc_data.get_server().to_owned(),
+                            datacenter: dc_name.clone(),
+                        })
+                    })
+                    .collect()
+            }) {
+            cloud_servers
+        } else {
+            known_nodes
+        };
+
         // Ensure there is at least one known node
         if known_nodes.is_empty() {
             return Err(NewSessionError::EmptyKnownNodesList);
