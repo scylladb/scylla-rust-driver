@@ -374,24 +374,28 @@ impl Session {
     /// # }
     /// ```
     pub async fn connect(config: SessionConfig) -> Result<Session, NewSessionError> {
+        let known_nodes = config.known_nodes;
+
         // Ensure there is at least one known node
-        if config.known_nodes.is_empty() {
+        if known_nodes.is_empty() {
             return Err(NewSessionError::EmptyKnownNodesList);
         }
 
         // Find IP addresses of all known nodes passed in the config
-        let mut node_addresses: Vec<SocketAddr> = Vec::with_capacity(config.known_nodes.len());
+        let mut node_addresses: Vec<SocketAddr> = Vec::with_capacity(known_nodes.len());
 
-        let mut to_resolve: Vec<&str> = Vec::new();
+        let mut to_resolve: Vec<String> = Vec::new();
 
-        for node in &config.known_nodes {
+        for node in known_nodes {
             match node {
                 KnownNode::Hostname(hostname) => to_resolve.push(hostname),
-                KnownNode::Address(address) => node_addresses.push(*address),
+                KnownNode::Address(address) => node_addresses.push(address),
             };
         }
 
-        let resolve_futures = to_resolve.into_iter().map(resolve_hostname);
+        let resolve_futures = to_resolve
+            .into_iter()
+            .map(|s| async move { resolve_hostname(&s).await });
         let resolved: Vec<SocketAddr> = futures::future::try_join_all(resolve_futures).await?;
 
         node_addresses.extend(resolved);
