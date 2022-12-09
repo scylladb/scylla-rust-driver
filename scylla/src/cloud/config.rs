@@ -1,3 +1,128 @@
+use std::collections::HashMap;
+
+use openssl::{
+    pkey::{PKey, Private},
+    x509::X509,
+};
+use scylla_cql::{frame::types::SerialConsistency, Consistency};
+
+#[derive(Debug)]
+pub(crate) struct CloudConfig {
+    datacenters: HashMap<String, Datacenter>,
+    auth_infos: HashMap<String, AuthInfo>,
+
+    // contexts
+    contexts: HashMap<String, Context>,
+    current_context: String,
+
+    // parameters
+    default_consistency: Option<Consistency>,
+    default_serial_consistency: Option<SerialConsistency>,
+}
+
+impl CloudConfig {
+    pub(crate) fn get_datacenters(&self) -> &HashMap<String, Datacenter> {
+        &self.datacenters
+    }
+
+    pub(crate) fn get_default_consistency(&self) -> Option<Consistency> {
+        self.default_consistency
+    }
+
+    pub(crate) fn get_default_serial_consistency(&self) -> Option<SerialConsistency> {
+        self.default_serial_consistency
+    }
+
+    pub(crate) fn get_current_context(&self) -> &Context {
+        self.contexts.get(&self.current_context).expect(
+            "BUG: Validation should have prevented current_context pointing to unknown context",
+        )
+    }
+
+    pub(crate) fn get_current_auth_info(&self) -> &AuthInfo {
+        let auth_info_name = self.get_current_context().auth_info_name.as_str();
+        self.auth_infos.get(auth_info_name).expect(
+            "BUG: Validation should have prevented current context's auth info pointing to unknown auth_info",
+        )
+    }
+}
+
+#[derive(Debug)]
+pub(crate) struct AuthInfo {
+    key: PKey<Private>,
+    cert: X509,
+    #[allow(unused)]
+    username: Option<String>,
+    #[allow(unused)]
+    password: Option<String>,
+}
+
+impl AuthInfo {
+    pub(crate) fn get_key(&self) -> &PKey<Private> {
+        &self.key
+    }
+
+    pub(crate) fn get_cert(&self) -> &X509 {
+        &self.cert
+    }
+
+    #[allow(unused)]
+    pub(crate) fn get_username(&self) -> Option<&str> {
+        self.username.as_deref()
+    }
+
+    #[allow(unused)]
+    pub(crate) fn get_password(&self) -> Option<&str> {
+        self.password.as_deref()
+    }
+}
+
+#[derive(Debug)]
+pub(crate) struct Datacenter {
+    certificate_authority: X509,
+    server: String,
+    #[allow(unused)]
+    tls_server_name: Option<String>,
+    node_domain: String,
+    insecure_skip_tls_verify: bool,
+    #[allow(unused)]
+    proxy_url: Option<String>,
+}
+
+impl Datacenter {
+    pub(crate) fn get_certificate_authority(&self) -> &X509 {
+        &self.certificate_authority
+    }
+
+    pub(crate) fn get_server(&self) -> &str {
+        &self.server
+    }
+
+    #[allow(unused)]
+    pub(crate) fn get_tls_server_name(&self) -> Option<&str> {
+        self.tls_server_name.as_deref()
+    }
+
+    pub(crate) fn get_node_domain(&self) -> &str {
+        &self.node_domain
+    }
+
+    pub(crate) fn get_insecure_skip_tls_verify(&self) -> bool {
+        self.insecure_skip_tls_verify
+    }
+
+    #[allow(unused)]
+    pub(crate) fn get_proxy_url(&self) -> Option<&str> {
+        self.proxy_url.as_deref()
+    }
+}
+
+#[derive(Debug)]
+pub(crate) struct Context {
+    datacenter_name: String,
+    auth_info_name: String,
+}
+
 mod deserialize {
     use scylla_cql::{frame::types::SerialConsistency, Consistency};
     use std::{collections::HashMap, fs::File, io::Read, path::Path};

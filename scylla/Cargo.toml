@@ -21,6 +21,8 @@ cloud = [
     "scylla-cql/serde",
     "dep:serde_yaml",
     "dep:serde",
+    "dep:url",
+    "dep:base64",
 ]
 secret = ["scylla-cql/secret"]
 
@@ -53,6 +55,8 @@ smallvec = "1.8.0"
 async-trait = "0.1.56"
 serde = { version = "1.0", features = ["derive"], optional = true }
 serde_yaml = { version = "0.9.14", optional = true }
+url = { version = "2.3.1", optional = true }
+base64 = { version = "0.13.1", optional = true }
 
 [dev-dependencies]
 scylla-proxy = { version = "0.0.1", path = "../scylla-proxy"}
