@@ -1,3 +1,5 @@
+use uuid::Uuid;
+
 /// Node represents a cluster node along with it's data and connections
 use crate::routing::{Sharder, Token};
 use crate::transport::connection::Connection;
@@ -54,6 +56,7 @@ impl TimestampedAverage {
 /// Node represents a cluster node along with it's data and connections
 #[derive(Debug)]
 pub struct Node {
+    pub host_id: Uuid,
     pub address: SocketAddr,
     pub datacenter: Option<String>,
     pub rack: Option<String>,
@@ -75,6 +78,7 @@ impl Node {
     /// `datacenter` - optional datacenter name
     /// `rack` - optional rack name
     pub(crate) fn new(
+        host_id: Uuid,
         address: SocketAddr,
         pool_config: PoolConfig,
         datacenter: Option<String>,
@@ -87,6 +91,7 @@ impl Node {
         });
 
         Node {
+            host_id,
             address,
             datacenter,
             rack,
