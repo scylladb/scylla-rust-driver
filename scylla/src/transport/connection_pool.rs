@@ -21,7 +21,7 @@ use tokio::sync::{mpsc, Notify};
 use tracing::{debug, trace, warn};
 
 /// The target size of a per-node connection pool.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy)]
 pub enum PoolSize {
     /// Indicates that the pool should establish given number of connections to the node.
     ///
