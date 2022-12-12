@@ -212,6 +212,31 @@ impl NonErrorQueryResponse {
         })
     }
 }
+#[cfg(feature = "ssl")]
+#[allow(unused)]
+mod ssl_config {
+    use openssl::{
+        error::ErrorStack,
+        ssl::{Ssl, SslContext},
+    };
+
+    #[derive(Clone)]
+    pub struct SslConfig {
+        context: SslContext,
+    }
+
+    impl SslConfig {
+        pub fn new_with_global_context(context: SslContext) -> Self {
+            Self { context }
+        }
+
+        pub(crate) fn new_ssl(&self) -> Result<Ssl, ErrorStack> {
+            #[allow(unused_mut)]
+            let mut ssl = Ssl::new(&self.context)?;
+            Ok(ssl)
+        }
+    }
+}
 
 #[derive(Clone)]
 pub struct ConnectionConfig {
