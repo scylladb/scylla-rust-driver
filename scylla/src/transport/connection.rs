@@ -221,20 +221,62 @@ mod ssl_config {
         error::ErrorStack,
         ssl::{Ssl, SslContext},
     };
+    #[cfg(feature = "cloud")]
+    use uuid::Uuid;
 
+    /// This struct encapsulates all Ssl-regarding configuration and helps pass it tidily through the code.
+    //
+    // There are 3 possible options for SslConfig, whose behaviour is somewhat subtle.
+    // Option 1: No ssl configuration. Then it is None everytime.
+    // Option 2: User-provided global SslContext. Then, a SslConfig is created upon Session creation
+    // and henceforth stored in the ConnectionConfig.
+    // Option 3: Serverless Cloud. The Option<SslConfig> remains None in ConnectionConfig until it reaches
+    // NodeConnectionPool::new(). Inside that function, the field is mutated to contain SslConfig specific
+    // for the particular node. (The SslConfig must be different, because SNIs differ for different nodes.)
+    // Thenceforth, all connections to that node share the same SslConfig.
     #[derive(Clone)]
     pub struct SslConfig {
         context: SslContext,
+        #[cfg(feature = "cloud")]
+        sni: Option<String>,
     }
 
     impl SslConfig {
+        // Used in case when the user provided their own SslContext to be used in all connections.
         pub fn new_with_global_context(context: SslContext) -> Self {
-            Self { context }
+            Self {
+                context,
+                #[cfg(feature = "cloud")]
+                sni: None,
+            }
         }
 
+        // Used in case of Serverless Cloud connections.
+        #[cfg(feature = "cloud")]
+        pub(crate) fn new_for_sni(
+            context: SslContext,
+            domain_name: &str,
+            host_id: Option<Uuid>,
+        ) -> Self {
+            Self {
+                context,
+                #[cfg(feature = "cloud")]
+                sni: Some(if let Some(host_id) = host_id {
+                    format!("{}.{}", host_id, domain_name)
+                } else {
+                    domain_name.into()
+                }),
+            }
+        }
+
+        // Produces a new Ssl object that is able to wrap a TCP stream.
         pub(crate) fn new_ssl(&self) -> Result<Ssl, ErrorStack> {
             #[allow(unused_mut)]
             let mut ssl = Ssl::new(&self.context)?;
+            #[cfg(feature = "cloud")]
+            if let Some(sni) = self.sni.as_ref() {
+                ssl.set_hostname(sni)?;
+            }
             Ok(ssl)
         }
     }
@@ -277,6 +319,10 @@ impl Default for ConnectionConfig {
 impl ConnectionConfig {
     #[cfg(feature = "ssl")]
     pub fn is_ssl(&self) -> bool {
+        #[cfg(feature = "cloud")]
+        if self.cloud_config.is_some() {
+            return true;
+        }
         self.ssl_config.is_some()
     }
 

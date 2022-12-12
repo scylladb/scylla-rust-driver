@@ -1,3 +1,6 @@
+#[cfg(feature = "cloud")]
+use crate::cloud::set_ssl_config_for_scylla_cloud_host;
+
 use crate::routing::{Shard, ShardCount, Sharder, Token};
 use crate::transport::errors::QueryError;
 use crate::transport::{
@@ -5,8 +8,11 @@ use crate::transport::{
     connection::{Connection, ConnectionConfig, ErrorReceiver, VerifiedKeyspaceName},
 };
 
+#[cfg(feature = "cloud")]
+use super::cluster::ContactPoint;
 use super::topology::{PeerEndpoint, UntranslatedEndpoint};
 use super::NodeAddr;
+
 use arc_swap::ArcSwap;
 use futures::{future::RemoteHandle, stream::FuturesUnordered, Future, FutureExt, StreamExt};
 use rand::Rng;
@@ -158,13 +164,38 @@ impl std::fmt::Debug for NodeConnectionPool {
 impl NodeConnectionPool {
     pub fn new(
         endpoint: UntranslatedEndpoint,
-        pool_config: PoolConfig,
+        #[allow(unused_mut)] mut pool_config: PoolConfig, // `mut` needed only with "cloud" feature
         current_keyspace: Option<VerifiedKeyspaceName>,
     ) -> Self {
         let (use_keyspace_request_sender, use_keyspace_request_receiver) = mpsc::channel(1);
         let pool_updated_notify = Arc::new(Notify::new());
 
         let keepalive_interval = pool_config.keepalive_interval;
+
+        #[cfg(feature = "cloud")]
+        if pool_config.connection_config.cloud_config.is_some() {
+            let (host_id, address, dc) = match endpoint {
+                UntranslatedEndpoint::ContactPoint(ContactPoint {
+                    address,
+                    ref datacenter,
+                }) => (None, address, datacenter.as_deref()), // FIXME: Pass DC in ContactPoint
+                UntranslatedEndpoint::Peer(PeerEndpoint {
+                    host_id,
+                    address,
+                    ref datacenter,
+                    ..
+                }) => (Some(host_id), address.into_inner(), datacenter.as_deref()),
+            };
+            set_ssl_config_for_scylla_cloud_host(host_id, dc, address, &mut pool_config.connection_config)
+                .unwrap_or_else(|err| warn!(
+                    "SslContext for SNI connection to Scylla Cloud node {{ host_id={:?}, dc={:?} at {} }} could not be set up: {}\n Proceeding with attempting probably nonworking connection",
+                    host_id,
+                    dc,
+                    address,
+                    err
+                )
+            );
+        }
 
         let endpoint_ip = endpoint.address().ip();
         let arced_endpoint = Arc::new(RwLock::new(endpoint));
