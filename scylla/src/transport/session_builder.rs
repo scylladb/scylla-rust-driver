@@ -139,71 +139,6 @@ impl SessionBuilder {
         self
     }
 
-    /// Set preferred Compression algorithm.
-    /// The default is no compression.
-    /// If it is not supported by database server Session will fall back to no encryption.
-    ///
-    /// # Example
-    /// ```
-    /// # use scylla::{Session, SessionBuilder};
-    /// # use scylla::transport::Compression;
-    /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
-    /// let session: Session = SessionBuilder::new()
-    ///     .known_node("127.0.0.1:9042")
-    ///     .compression(Some(Compression::Snappy))
-    ///     .build()
-    ///     .await?;
-    /// # Ok(())
-    /// # }
-    /// ```
-    pub fn compression(mut self, compression: Option<Compression>) -> Self {
-        self.config.compression = compression;
-        self
-    }
-
-    /// Set the nodelay TCP flag.
-    /// The default is true.
-    ///
-    /// # Example
-    /// ```
-    /// # use scylla::{Session, SessionBuilder};
-    /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
-    /// let session: Session = SessionBuilder::new()
-    ///     .known_node("127.0.0.1:9042")
-    ///     .tcp_nodelay(true)
-    ///     .build()
-    ///     .await?;
-    /// # Ok(())
-    /// # }
-    /// ```
-    pub fn tcp_nodelay(mut self, nodelay: bool) -> Self {
-        self.config.tcp_nodelay = nodelay;
-        self
-    }
-
-    /// Set keyspace to be used on all connections.\
-    /// Each connection will send `"USE <keyspace_name>"` before sending any requests.\
-    /// This can be later changed with [`Session::use_keyspace`]
-    ///
-    /// # Example
-    /// ```
-    /// # use scylla::{Session, SessionBuilder};
-    /// # use scylla::transport::Compression;
-    /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
-    /// let session: Session = SessionBuilder::new()
-    ///     .known_node("127.0.0.1:9042")
-    ///     .use_keyspace("my_keyspace_name", false)
-    ///     .build()
-    ///     .await?;
-    /// # Ok(())
-    /// # }
-    /// ```
-    pub fn use_keyspace(mut self, keyspace_name: impl Into<String>, case_sensitive: bool) -> Self {
-        self.config.used_keyspace = Some(keyspace_name.into());
-        self.config.keyspace_case_sensitive = case_sensitive;
-        self
-    }
-
     /// Set username and password for plain text authentication.\
     /// If the database server will require authentication\
     ///
@@ -281,6 +216,87 @@ impl SessionBuilder {
         self
     }
 
+    /// Uses a custom address translator for peer addresses retrieved from the cluster.
+    /// By default, no translation is performed.
+    ///
+    /// # Example
+    /// ```
+    /// # use async_trait::async_trait;
+    /// # use std::net::SocketAddr;
+    /// # use std::sync::Arc;
+    /// # use scylla::{Session, SessionBuilder};
+    /// # use scylla::transport::session::{AddressTranslator, TranslationError};
+    /// # use scylla::transport::topology::UntranslatedPeer;
+    /// struct IdentityTranslator;
+    ///
+    /// #[async_trait]
+    /// impl AddressTranslator for IdentityTranslator {
+    ///     async fn translate_address(
+    ///         &self,
+    ///         untranslated_peer: &UntranslatedPeer
+    ///     ) -> Result<SocketAddr, TranslationError> {
+    ///         Ok(untranslated_peer.untranslated_address)
+    ///     }
+    /// }
+    ///
+    /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
+    /// let session: Session = SessionBuilder::new()
+    ///     .known_node("127.0.0.1:9042")
+    ///     .address_translator(Arc::new(IdentityTranslator))
+    ///     .build()
+    ///     .await?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    /// # Example
+    /// ```
+    /// # use std::net::SocketAddr;
+    /// # use std::sync::Arc;
+    /// # use std::collections::HashMap;
+    /// # use std::str::FromStr;
+    /// # use scylla::{Session, SessionBuilder};
+    /// # use scylla::transport::session::{AddressTranslator, TranslationError};
+    /// #
+    /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
+    /// let mut translation_rules = HashMap::new();
+    /// let addr_before_translation = SocketAddr::from_str("192.168.0.42:19042").unwrap();
+    /// let addr_after_translation = SocketAddr::from_str("157.123.12.42:23203").unwrap();
+    /// translation_rules.insert(addr_before_translation, addr_after_translation);
+    /// let session: Session = SessionBuilder::new()
+    ///     .known_node("127.0.0.1:9042")
+    ///     .address_translator(Arc::new(translation_rules))
+    ///     .build()
+    ///     .await?;
+    /// #    Ok(())
+    /// # }
+    /// ```
+    pub fn address_translator(mut self, translator: Arc<dyn AddressTranslator>) -> Self {
+        self.config.address_translator = Some(translator);
+        self
+    }
+
+    /// Set preferred Compression algorithm.
+    /// The default is no compression.
+    /// If it is not supported by database server Session will fall back to no encryption.
+    ///
+    /// # Example
+    /// ```
+    /// # use scylla::{Session, SessionBuilder};
+    /// # use scylla::transport::Compression;
+    /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
+    /// let session: Session = SessionBuilder::new()
+    ///     .known_node("127.0.0.1:9042")
+    ///     .compression(Some(Compression::Snappy))
+    ///     .build()
+    ///     .await?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn compression(mut self, compression: Option<Compression>) -> Self {
+        self.config.compression = compression;
+        self
+    }
+
     /// Set the delay for schema agreement check. How often driver should ask if schema is in agreement
     /// The default is 200 milliseconds.
     ///
@@ -326,6 +342,49 @@ impl SessionBuilder {
         profile_handle: ExecutionProfileHandle,
     ) -> Self {
         self.config.default_execution_profile_handle = profile_handle;
+        self
+    }
+
+    /// Set the nodelay TCP flag.
+    /// The default is true.
+    ///
+    /// # Example
+    /// ```
+    /// # use scylla::{Session, SessionBuilder};
+    /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
+    /// let session: Session = SessionBuilder::new()
+    ///     .known_node("127.0.0.1:9042")
+    ///     .tcp_nodelay(true)
+    ///     .build()
+    ///     .await?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn tcp_nodelay(mut self, nodelay: bool) -> Self {
+        self.config.tcp_nodelay = nodelay;
+        self
+    }
+
+    /// Set keyspace to be used on all connections.\
+    /// Each connection will send `"USE <keyspace_name>"` before sending any requests.\
+    /// This can be later changed with [`Session::use_keyspace`]
+    ///
+    /// # Example
+    /// ```
+    /// # use scylla::{Session, SessionBuilder};
+    /// # use scylla::transport::Compression;
+    /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
+    /// let session: Session = SessionBuilder::new()
+    ///     .known_node("127.0.0.1:9042")
+    ///     .use_keyspace("my_keyspace_name", false)
+    ///     .build()
+    ///     .await?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn use_keyspace(mut self, keyspace_name: impl Into<String>, case_sensitive: bool) -> Self {
+        self.config.used_keyspace = Some(keyspace_name.into());
+        self.config.keyspace_case_sensitive = case_sensitive;
         self
     }
 
@@ -573,65 +632,6 @@ impl SessionBuilder {
     /// ```
     pub fn no_auto_schema_agreement(mut self) -> Self {
         self.config.auto_await_schema_agreement_timeout = None;
-        self
-    }
-
-    /// Uses a custom address translator for peer addresses retrieved from the cluster.
-    /// By default, no translation is performed.
-    ///
-    /// # Example
-    /// ```
-    /// # use async_trait::async_trait;
-    /// # use std::net::SocketAddr;
-    /// # use std::sync::Arc;
-    /// # use scylla::{Session, SessionBuilder};
-    /// # use scylla::transport::session::{AddressTranslator, TranslationError};
-    /// # use scylla::transport::topology::UntranslatedPeer;
-    /// struct IdentityTranslator;
-    ///
-    /// #[async_trait]
-    /// impl AddressTranslator for IdentityTranslator {
-    ///     async fn translate_address(
-    ///         &self,
-    ///         untranslated_peer: &UntranslatedPeer
-    ///     ) -> Result<SocketAddr, TranslationError> {
-    ///         Ok(untranslated_peer.untranslated_address)
-    ///     }
-    /// }
-    ///
-    /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
-    /// let session: Session = SessionBuilder::new()
-    ///     .known_node("127.0.0.1:9042")
-    ///     .address_translator(Arc::new(IdentityTranslator))
-    ///     .build()
-    ///     .await?;
-    /// # Ok(())
-    /// # }
-    /// ```
-    /// # Example
-    /// ```
-    /// # use std::net::SocketAddr;
-    /// # use std::sync::Arc;
-    /// # use std::collections::HashMap;
-    /// # use std::str::FromStr;
-    /// # use scylla::{Session, SessionBuilder};
-    /// # use scylla::transport::session::{AddressTranslator, TranslationError};
-    /// #
-    /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
-    /// let mut translation_rules = HashMap::new();
-    /// let addr_before_translation = SocketAddr::from_str("192.168.0.42:19042").unwrap();
-    /// let addr_after_translation = SocketAddr::from_str("157.123.12.42:23203").unwrap();
-    /// translation_rules.insert(addr_before_translation, addr_after_translation);
-    /// let session: Session = SessionBuilder::new()
-    ///     .known_node("127.0.0.1:9042")
-    ///     .address_translator(Arc::new(translation_rules))
-    ///     .build()
-    ///     .await?;
-    /// #    Ok(())
-    /// # }
-    /// ```
-    pub fn address_translator(mut self, translator: Arc<dyn AddressTranslator>) -> Self {
-        self.config.address_translator = Some(translator);
         self
     }
 
