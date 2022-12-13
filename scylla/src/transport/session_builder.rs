@@ -4,10 +4,18 @@ use super::errors::NewSessionError;
 use super::execution_profile::ExecutionProfileHandle;
 use super::session::{AddressTranslator, Session, SessionConfig};
 use super::Compression;
+
+#[cfg(feature = "cloud")]
+use crate::cloud::{CloudConfig, CloudConfigError};
+#[cfg(feature = "cloud")]
+use crate::ExecutionProfile;
+
 use crate::transport::connection_pool::PoolSize;
 use crate::transport::host_filter::HostFilter;
 use std::marker::PhantomData;
 use std::net::SocketAddr;
+#[cfg(feature = "cloud")]
+use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -27,6 +35,17 @@ impl sealed::Sealed for DefaultMode {}
 impl SessionBuilderKind for DefaultMode {}
 
 pub type SessionBuilder = GenericSessionBuilder<DefaultMode>;
+
+#[cfg(feature = "cloud")]
+#[derive(Clone)]
+pub enum CloudMode {}
+#[cfg(feature = "cloud")]
+impl sealed::Sealed for CloudMode {}
+#[cfg(feature = "cloud")]
+impl SessionBuilderKind for CloudMode {}
+
+#[cfg(feature = "cloud")]
+pub type CloudSessionBuilder = GenericSessionBuilder<CloudMode>;
 
 /// SessionBuilder is used to create new Session instances
 /// # Example
@@ -274,7 +293,32 @@ impl SessionBuilder {
         self.config.address_translator = Some(translator);
         self
     }
+}
+#[cfg(feature = "cloud")]
+impl CloudSessionBuilder {
+    /// Creates a new SessionBuilder with default configuration,
+    /// based on provided path to Scylla Cloud Config yaml.
+    pub fn new(cloud_config: impl AsRef<Path>) -> Result<Self, CloudConfigError> {
+        let mut config = SessionConfig::new();
+        let cloud_config = CloudConfig::read_from_yaml(cloud_config)?;
+        let mut exec_profile_builder = ExecutionProfile::builder();
+        if let Some(default_consistency) = cloud_config.get_default_consistency() {
+            exec_profile_builder = exec_profile_builder.consistency(default_consistency);
+        }
+        if let Some(default_serial_consistency) = cloud_config.get_default_serial_consistency() {
+            exec_profile_builder =
+                exec_profile_builder.serial_consistency(Some(default_serial_consistency));
+        }
+        config.default_execution_profile_handle = exec_profile_builder.build().into_handle();
+        config.cloud_config = Some(Arc::new(cloud_config));
+        Ok(CloudSessionBuilder {
+            config,
+            kind: PhantomData,
+        })
+    }
+}
 
+impl<K: SessionBuilderKind> GenericSessionBuilder<K> {
     /// Set preferred Compression algorithm.
     /// The default is no compression.
     /// If it is not supported by database server Session will fall back to no encryption.
