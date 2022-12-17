@@ -30,4 +30,4 @@ jobs:
     - name: Build the book using the script
       run: python3 docs/build_book.py
     - name: Run book tests
-      run: mdbook test -L target/debug/deps docs
+      run: mdbook test docs -L target/debug/deps
