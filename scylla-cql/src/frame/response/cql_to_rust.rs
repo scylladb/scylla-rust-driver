@@ -1,8 +1,9 @@
 use super::result::{CqlValue, Row};
 use crate::frame::value::Counter;
 use bigdecimal::BigDecimal;
-use chrono::{Duration, NaiveDate};
+use chrono::{DateTime, Duration, NaiveDate, TimeZone, Utc};
 use num_bigint::BigInt;
+use secrecy::{Secret, Zeroize};
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::hash::Hash;
 use std::net::IpAddr;
@@ -146,6 +147,21 @@ impl FromCqlVal<CqlValue> for crate::frame::value::Timestamp {
             CqlValue::Timestamp(d) => Ok(Self(d)),
             _ => Err(FromCqlValError::BadCqlType),
         }
+    }
+}
+
+impl FromCqlVal<CqlValue> for DateTime<Utc> {
+    fn from_cql(cql_val: CqlValue) -> Result<Self, FromCqlValError> {
+        cql_val
+            .as_bigint()
+            .ok_or(FromCqlValError::BadCqlType)
+            .map(|timestamp| Utc.timestamp_millis_opt(timestamp).unwrap())
+    }
+}
+
+impl<V: FromCqlVal<CqlValue> + Zeroize> FromCqlVal<CqlValue> for Secret<V> {
+    fn from_cql(cql_val: CqlValue) -> Result<Self, FromCqlValError> {
+        Ok(Secret::new(FromCqlVal::from_cql(cql_val)?))
     }
 }
 

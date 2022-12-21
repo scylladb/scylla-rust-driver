@@ -4,6 +4,7 @@ use bytes::BufMut;
 use chrono::prelude::*;
 use chrono::Duration;
 use num_bigint::BigInt;
+use secrecy::{ExposeSecret, Secret, Zeroize};
 use std::borrow::Cow;
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::convert::TryInto;
@@ -377,6 +378,20 @@ impl Value for Time {
         buf.put_i32(8);
         buf.put_i64(self.0.num_nanoseconds().ok_or(ValueTooBig)?);
         Ok(())
+    }
+}
+
+impl Value for DateTime<Utc> {
+    fn serialize(&self, buf: &mut Vec<u8>) -> Result<(), ValueTooBig> {
+        buf.put_i32(8);
+        buf.put_i64(self.timestamp_millis());
+        Ok(())
+    }
+}
+
+impl<V: Value + Zeroize> Value for Secret<V> {
+    fn serialize(&self, buf: &mut Vec<u8>) -> Result<(), ValueTooBig> {
+        self.expose_secret().serialize(buf)
     }
 }
 
