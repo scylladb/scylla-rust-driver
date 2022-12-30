@@ -167,7 +167,7 @@ impl Node {
 
 impl PartialEq for Node {
     fn eq(&self, other: &Self) -> bool {
-        self.address == other.address
+        self.host_id == other.host_id
     }
 }
 
@@ -175,6 +175,6 @@ impl Eq for Node {}
 
 impl Hash for Node {
     fn hash<H: Hasher>(&self, state: &mut H) {
-        self.address.hash(state);
+        self.host_id.hash(state);
     }
 }
