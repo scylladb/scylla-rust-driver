@@ -18,14 +18,20 @@ However, setting per-statement timeout to `None` results in falling back to per-
 # use std::error::Error;
 # async fn timeouts() -> Result<(), Box<dyn Error>> {
 use scylla::{Session, SessionBuilder, query::Query};
+use scylla::transport::ExecutionProfile;
 use std::time::Duration;
 
 let uri = std::env::var("SCYLLA_URI")
     .unwrap_or_else(|_| "127.0.0.1:9042".to_string());
 
+let no_timeout_profile_handle = ExecutionProfile::builder()
+    .request_timeout(None) // no timeout
+    .build()
+    .into_handle();
+
 let session: Session = SessionBuilder::new()
     .known_node(uri)
-    .request_timeout(None) // no per-session timeout
+    .default_execution_profile_handle(no_timeout_profile_handle) // no per-session timeout
     .build()
     .await?;
 
@@ -34,10 +40,15 @@ session
     .query("TRUNCATE keyspace.table", ())
     .await?;
 
+let three_sec_timeout_profile_handle = ExecutionProfile::builder()
+    .request_timeout(Some(Duration::from_secs(3))) // no timeout
+    .build()
+    .into_handle();
+
 // The below query will last for no more than 3 seconds, yielding a RequestTimeout error
 // if no response arrives until then.
 let mut query: Query = "TRUNCATE keyspace.table".into();
-query.set_request_timeout(Some(Duration::from_secs(3)));
+query.set_execution_profile_handle(Some(three_sec_timeout_profile_handle));
 session
     .query(query, ())
     .await?;

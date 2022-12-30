@@ -24,6 +24,7 @@ To use this policy in `Session`:
 # async fn check_only_compiles() -> Result<(), Box<dyn Error>> {
 use scylla::{Session, SessionBuilder};
 use scylla::transport::load_balancing::DcAwareRoundRobinPolicy;
+use scylla::transport::ExecutionProfile;
 use std::sync::Arc;
 
 let local_dc_name: String = "us_east".to_string();
@@ -31,9 +32,14 @@ let local_dc_name: String = "us_east".to_string();
 let mut policy = DcAwareRoundRobinPolicy::new(local_dc_name);
 policy.set_include_remote_nodes(false);
 
+let handle = ExecutionProfile::builder()
+    .load_balancing_policy(Arc::new(policy))
+    .build()
+    .into_handle();
+
 let session: Session = SessionBuilder::new()
     .known_node("127.0.0.1:9042")
-    .load_balancing(Arc::new(policy))
+    .default_execution_profile_handle(handle)
     .build()
     .await?;
 # Ok(())

@@ -12,15 +12,21 @@ To use this policy in `Session`:
 # async fn check_only_compiles() -> Result<(), Box<dyn Error>> {
 use scylla::{Session, SessionBuilder};
 use scylla::transport::load_balancing::{DcAwareRoundRobinPolicy, TokenAwarePolicy};
+use scylla::transport::ExecutionProfile;
 use std::sync::Arc;
 
 let local_dc: String = "us_east".to_string();
 let dc_robin = Box::new(DcAwareRoundRobinPolicy::new(local_dc));
 let policy = Arc::new(TokenAwarePolicy::new(dc_robin));
 
+let handle = ExecutionProfile::builder()
+    .load_balancing_policy(policy)
+    .build()
+    .into_handle();
+
 let session: Session = SessionBuilder::new()
     .known_node("127.0.0.1:9042")
-    .load_balancing(policy)
+    .default_execution_profile_handle(handle)
     .build()
     .await?;
 # Ok(())
