@@ -206,9 +206,20 @@ pub struct SessionConfig {
 
 /// Describes database server known on Session startup.
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Debug)]
+#[non_exhaustive]
 pub enum KnownNode {
     Hostname(String),
     Address(SocketAddr),
+    #[cfg(feature = "cloud")]
+    CloudEndpoint(CloudEndpoint),
+}
+
+#[cfg(feature = "cloud")]
+#[non_exhaustive]
+#[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Debug)]
+pub struct CloudEndpoint {
+    pub hostname: String,
+    pub datacenter: String,
 }
 
 impl SessionConfig {
@@ -389,23 +400,30 @@ impl Session {
         // Find IP addresses of all known nodes passed in the config
         let mut initial_peers: Vec<ContactPoint> = Vec::with_capacity(known_nodes.len());
 
-        let mut to_resolve: Vec<String> = Vec::new();
+        let mut to_resolve: Vec<(String, Option<String>)> = Vec::new();
 
         for node in known_nodes {
             match node {
-                KnownNode::Hostname(hostname) => to_resolve.push(hostname),
+                KnownNode::Hostname(hostname) => to_resolve.push((hostname, None)),
                 KnownNode::Address(address) => initial_peers.push(ContactPoint {
                     address,
                     datacenter: None,
                 }),
+                #[cfg(feature = "cloud")]
+                KnownNode::CloudEndpoint(CloudEndpoint {
+                    hostname,
+                    datacenter,
+                }) => to_resolve.push((hostname, Some(datacenter))),
             };
         }
-        let resolve_futures = to_resolve.into_iter().map(|hostname| async move {
-            Ok::<_, NewSessionError>(ContactPoint {
-                address: resolve_hostname(&hostname).await?,
-                datacenter: None,
-            })
-        });
+        let resolve_futures = to_resolve
+            .into_iter()
+            .map(|(hostname, datacenter)| async move {
+                Ok::<_, NewSessionError>(ContactPoint {
+                    address: resolve_hostname(&hostname).await?,
+                    datacenter,
+                })
+            });
         let resolved: Vec<ContactPoint> = futures::future::try_join_all(resolve_futures).await?;
         initial_peers.extend(resolved);
 
