@@ -24,6 +24,12 @@
     - [Schema agreement](queries/schema_agreement.md)
     - [Query timeouts](queries/timeouts.md)
 
+- [Execution profiles](execution-profiles/execution-profiles.md)
+    - [Creating a profile and setting it](execution-profiles/create-and-use.md)
+    - [All options supported by a profile](execution-profiles/maximal-example.md)
+    - [Options priority](execution-profiles/priority.md)
+    - [Remapping a profile handle](execution-profiles/remap.md)
+
 - [Data Types](data-types/data-types.md)
     - [Bool, Tinyint, Smallint, Int, Bigint, Float, Double](data-types/primitive.md)
     - [Ascii, Text, Varchar](data-types/text.md)
