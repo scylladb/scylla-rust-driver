@@ -49,6 +49,7 @@ pub struct Metadata {
     pub keyspaces: HashMap<String, Keyspace>,
 }
 
+#[non_exhaustive] // <- so that we can add more fields in a backwards-compatible way
 pub struct Peer {
     pub host_id: Uuid,
     pub address: SocketAddr,
