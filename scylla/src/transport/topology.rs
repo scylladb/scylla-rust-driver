@@ -61,6 +61,7 @@ pub struct Peer {
 
 #[non_exhaustive] // <- so that we can add more fields in a backwards-compatible way
 pub struct UntranslatedPeer {
+    pub host_id: Uuid,
     pub untranslated_address: SocketAddr,
 }
 
@@ -544,7 +545,7 @@ async fn query_peers(
             (false, Some(translator)) => {
                 // We use the provided translator and skip the peer if there is no rule for translating it.
                 (Some(untranslated_address),
-                    match translator.translate_address(&UntranslatedPeer {untranslated_address}).await {
+                    match translator.translate_address(&UntranslatedPeer {host_id, untranslated_address}).await {
                         Ok(address) => address,
                         Err(err) => {
                             warn!("Could not translate address {}; TranslationError: {:?}; node therefore skipped.",
