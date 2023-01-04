@@ -4,7 +4,6 @@ use bytes::BufMut;
 use chrono::prelude::*;
 use chrono::Duration;
 use num_bigint::BigInt;
-use secrecy::{ExposeSecret, Secret, Zeroize};
 use std::borrow::Cow;
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::convert::TryInto;
@@ -14,6 +13,9 @@ use uuid::Uuid;
 
 use super::response::result::CqlValue;
 use super::types::vint_encode;
+
+#[cfg(feature = "secret")]
+use secrecy::{ExposeSecret, Secret, Zeroize};
 
 /// Every value being sent in a query must implement this trait
 /// serialize() should write the Value as [bytes] to the provided buffer

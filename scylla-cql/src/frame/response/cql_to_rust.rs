@@ -3,12 +3,14 @@ use crate::frame::value::Counter;
 use bigdecimal::BigDecimal;
 use chrono::{DateTime, Duration, NaiveDate, TimeZone, Utc};
 use num_bigint::BigInt;
-use secrecy::{Secret, Zeroize};
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::hash::Hash;
 use std::net::IpAddr;
 use thiserror::Error;
 use uuid::Uuid;
+
+#[cfg(feature = "secret")]
+use secrecy::{Secret, Zeroize};
 
 #[derive(Error, Debug, Clone, PartialEq, Eq)]
 pub enum FromRowError {
@@ -37,6 +39,8 @@ pub enum FromCqlValError {
     BadCqlType,
     #[error("Value is null")]
     ValIsNull,
+    #[error("Bad Value")]
+    BadVal,
 }
 
 /// This trait defines a way to convert CQL Row into some rust type
@@ -152,10 +156,11 @@ impl FromCqlVal<CqlValue> for crate::frame::value::Timestamp {
 
 impl FromCqlVal<CqlValue> for DateTime<Utc> {
     fn from_cql(cql_val: CqlValue) -> Result<Self, FromCqlValError> {
-        cql_val
-            .as_bigint()
-            .ok_or(FromCqlValError::BadCqlType)
-            .map(|timestamp| Utc.timestamp_millis_opt(timestamp).unwrap())
+        let timestamp = cql_val.as_bigint().ok_or(FromCqlValError::BadCqlType)?;
+        match Utc.timestamp_millis_opt(timestamp) {
+            chrono::LocalResult::Single(datetime) => Ok(datetime),
+            _ => Err(FromCqlValError::BadVal),
+        }
     }
 }
 
