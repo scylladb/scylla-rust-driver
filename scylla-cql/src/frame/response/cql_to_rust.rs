@@ -159,6 +159,7 @@ impl FromCqlVal<CqlValue> for DateTime<Utc> {
     }
 }
 
+#[cfg(feature = "secret")]
 impl<V: FromCqlVal<CqlValue> + Zeroize> FromCqlVal<CqlValue> for Secret<V> {
     fn from_cql(cql_val: CqlValue) -> Result<Self, FromCqlValError> {
         Ok(Secret::new(FromCqlVal::from_cql(cql_val)?))

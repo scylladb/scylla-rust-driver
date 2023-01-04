@@ -389,6 +389,7 @@ impl Value for DateTime<Utc> {
     }
 }
 
+#[cfg(feature = "secret")]
 impl<V: Value + Zeroize> Value for Secret<V> {
     fn serialize(&self, buf: &mut Vec<u8>) -> Result<(), ValueTooBig> {
         self.expose_secret().serialize(buf)
