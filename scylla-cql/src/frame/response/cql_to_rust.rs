@@ -500,6 +500,24 @@ mod tests {
     }
 
     #[test]
+    fn datetime_from_cql() {
+        use chrono::{DateTime, Duration, Utc};
+        let naivedatetime_utc = NaiveDate::from_ymd_opt(2022, 12, 31)
+            .unwrap()
+            .and_hms_opt(2, 0, 0)
+            .unwrap();
+        let datetime_utc = DateTime::<Utc>::from_utc(naivedatetime_utc, Utc);
+
+        assert_eq!(
+            datetime_utc,
+            DateTime::<Utc>::from_cql(CqlValue::Timestamp(Duration::milliseconds(
+                datetime_utc.timestamp_millis()
+            )))
+            .unwrap()
+        );
+    }
+
+    #[test]
     fn uuid_from_cql() {
         let test_uuid: Uuid = Uuid::parse_str("8e14e760-7fa8-11eb-bc66-000000000001").unwrap();
 
