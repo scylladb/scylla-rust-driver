@@ -10,6 +10,7 @@ use std::collections::HashMap;
 use std::fmt::Display;
 use std::future::Future;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
+use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::net::{TcpListener, TcpSocket, TcpStream};
@@ -1174,6 +1175,25 @@ impl ProxyWorker {
     }
 }
 
+// Returns next free last IP address octet for another proxy instance.
+// Useful for concurrent testing.
+#[doc(hidden)]
+pub fn get_exclusive_local_address() -> IpAddr {
+    // A big enough number reduces possibility of clashes with user-taken addresses:
+    static ADDRESS_LOWER_THREE_OCTETS: AtomicU32 = AtomicU32::new(4242);
+    let next_addr = ADDRESS_LOWER_THREE_OCTETS.fetch_add(1, Ordering::Relaxed);
+    if next_addr > (u32::MAX >> 8) {
+        panic!("Loopback address pool for tests depleted");
+    }
+    let next_addr_bytes = next_addr.to_le_bytes();
+    IpAddr::V4(Ipv4Addr::new(
+        127,
+        next_addr_bytes[2],
+        next_addr_bytes[1],
+        next_addr_bytes[0],
+    ))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1188,7 +1208,6 @@ mod tests {
     use std::collections::HashMap;
     use std::mem;
     use std::str::FromStr;
-    use std::sync::atomic::{AtomicU16, Ordering};
     use std::time::Duration;
     use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
     use tokio::sync::oneshot;
@@ -1240,14 +1259,7 @@ mod tests {
     }
 
     fn next_local_address_with_port(port: u16) -> SocketAddr {
-        static ADDRESS_LAST_OCTET: AtomicU16 = AtomicU16::new(42);
-        let next_octet = ADDRESS_LAST_OCTET.fetch_add(1, Ordering::Relaxed);
-        let next_octet = if next_octet < u8::MAX as u16 {
-            next_octet as u8
-        } else {
-            panic!("Loopback address pool for tests depleted")
-        };
-        SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, next_octet)), port)
+        SocketAddr::new(get_exclusive_local_address(), port)
     }
 
     async fn identity_proxy_does_not_mutate_frames(shard_awareness: ShardAwareness) {
