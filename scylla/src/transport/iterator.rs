@@ -9,6 +9,7 @@ use std::task::{Context, Poll};
 
 use bytes::Bytes;
 use futures::Stream;
+use scylla_cql::frame::response::NonErrorResponse;
 use scylla_cql::frame::types::SerialConsistency;
 use std::result::Result;
 use thiserror::Error;
@@ -17,14 +18,12 @@ use tokio::sync::mpsc;
 use super::errors::QueryError;
 use super::execution_profile::ExecutionProfileInner;
 use crate::cql_to_rust::{FromRow, FromRowError};
-use crate::Session;
 
 use crate::frame::types::LegacyConsistency;
 use crate::frame::{
     response::{
         result,
         result::{ColumnSpec, Row, Rows},
-        NonErrorResponse,
     },
     value::SerializedValues,
 };
@@ -36,7 +35,7 @@ use crate::transport::cluster::ClusterData;
 use crate::transport::connection::{Connection, NonErrorQueryResponse, QueryResponse};
 use crate::transport::load_balancing::{LoadBalancingPolicy, Statement};
 use crate::transport::metrics::Metrics;
-use crate::transport::node::{Node, TimestampedAverage};
+use crate::transport::node::Node;
 use crate::transport::retry_policy::{QueryInfo, RetryDecision, RetrySession};
 use tracing::{trace, trace_span, warn, Instrument};
 use uuid::Uuid;
@@ -439,7 +438,6 @@ where
 
     // Contract: this function MUST send at least one item through self.sender
     async fn work(mut self, cluster_data: Arc<ClusterData>) -> PageSendAttemptedProof {
-        self.load_balancer().update_cluster_data(&cluster_data);
         let query_plan = self
             .load_balancer()
             .plan(&self.statement_info, &cluster_data);
@@ -475,7 +473,7 @@ where
                 trace!(parent: &span, "Execution started");
                 // Query pages until an error occurs
                 let queries_result: Result<PageSendAttemptedProof, QueryError> = self
-                    .query_pages(&connection, current_consistency, &node)
+                    .query_pages(&connection, current_consistency)
                     .instrument(span.clone())
                     .await;
 
@@ -552,7 +550,6 @@ where
         &mut self,
         connection: &Arc<Connection>,
         consistency: Consistency,
-        node: &Node,
     ) -> Result<PageSendAttemptedProof, QueryError> {
         loop {
             self.metrics.inc_total_paged_queries();
@@ -563,20 +560,14 @@ where
                 "Sending"
             );
             self.log_attempt_start(connection.get_connect_address());
+
             let query_response =
                 (self.page_query)(connection.clone(), consistency, self.paging_state.clone())
                     .await
                     .and_then(QueryResponse::into_non_error_query_response);
 
             let elapsed = query_start.elapsed();
-            if Session::should_consider_query_for_latency_measurements(
-                self.load_balancer(),
-                &query_response,
-            ) {
-                let mut average_latency_guard = node.average_latency.write().unwrap();
-                *average_latency_guard =
-                    TimestampedAverage::compute_next(*average_latency_guard, elapsed);
-            }
+
             match query_response {
                 Ok(NonErrorQueryResponse {
                     response: NonErrorResponse::Result(result::Result::Rows(mut rows)),

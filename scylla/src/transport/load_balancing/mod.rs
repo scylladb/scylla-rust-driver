@@ -16,10 +16,6 @@ pub use dc_aware_round_robin::DcAwareRoundRobinPolicy;
 pub use round_robin::RoundRobinPolicy;
 pub use token_aware::TokenAwarePolicy;
 
-mod latency_aware;
-
-pub use latency_aware::LatencyAwarePolicy;
-
 /// Represents info about statement that can be used by load balancing policies.
 #[derive(Default)]
 pub struct Statement<'a> {
@@ -54,13 +50,6 @@ pub trait LoadBalancingPolicy: Send + Sync + std::fmt::Debug {
 
     /// Returns name of load balancing policy
     fn name(&self) -> String;
-
-    /// Informs whether latency measurements should be done when the policy is active.
-    fn requires_latency_measurements(&self) -> bool {
-        false
-    }
-
-    fn update_cluster_data(&self, _cluster_data: &ClusterData) {}
 }
 
 /// This trait is used to apply policy to plan made by parent policy.
@@ -116,7 +105,6 @@ mod tests {
 
     use super::*;
 
-    use crate::transport::node::TimestampedAverage;
     use crate::transport::topology::Keyspace;
     use crate::transport::topology::Metadata;
     use crate::transport::topology::Peer;
@@ -185,7 +173,7 @@ mod tests {
 
     // creates ClusterData with info about 5 nodes living in 2 different datacenters
     // ring field is empty
-    pub async fn mock_cluster_data_for_round_robin_and_latency_aware_tests() -> ClusterData {
+    pub async fn mock_cluster_data_for_round_robin_tests() -> ClusterData {
         let peers = [("eu", 1), ("eu", 2), ("eu", 3), ("us", 4), ("us", 5)]
             .iter()
             .map(|(dc, id)| Peer {
@@ -218,22 +206,6 @@ mod tests {
     ) -> Vec<u16> {
         let plan = policy.plan(statement, cluster);
         plan.map(|node| node.address.port()).collect::<Vec<_>>()
-    }
-
-    pub fn set_nodes_latency_stats(
-        cluster: &mut ClusterData,
-        averages: &[(u16, Option<TimestampedAverage>)],
-    ) {
-        for (id, average) in averages {
-            *cluster
-                .known_peers
-                .values_mut()
-                .find(|peer| peer.address == tests::id_to_invalid_addr(*id))
-                .unwrap()
-                .average_latency
-                .write()
-                .unwrap() = *average;
-        }
     }
 
     // creates ClusterData with info about 3 nodes living in the same datacenter

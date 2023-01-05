@@ -746,12 +746,10 @@ mod tests {
     use scylla_cql::Consistency;
 
     use super::SessionBuilder;
-    use crate::load_balancing::LatencyAwarePolicy;
     use crate::transport::execution_profile::{defaults, ExecutionProfile};
     use crate::transport::session::KnownNode;
     use crate::transport::Compression;
     use std::net::{IpAddr, Ipv4Addr, SocketAddr};
-    use std::sync::Arc;
     use std::time::Duration;
 
     #[test]
@@ -914,13 +912,11 @@ mod tests {
 
         let custom_consistency = Consistency::Any;
         let custom_serial_consistency = Some(SerialConsistency::Serial);
-        let custom_load_balancing_policy = Arc::new(LatencyAwarePolicy::default());
         let custom_timeout = Some(Duration::from_secs(1));
         let execution_profile_handle = ExecutionProfile::builder()
             .consistency(custom_consistency)
             .serial_consistency(custom_serial_consistency)
             .request_timeout(custom_timeout)
-            .load_balancing_policy(custom_load_balancing_policy)
             .build()
             .into_handle();
         let builder_with_profile =

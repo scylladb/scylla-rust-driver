@@ -57,12 +57,6 @@ impl<const NODE: u8> LoadBalancingPolicy for BoundToPredefinedNodePolicy<NODE> {
     fn name(&self) -> String {
         "BoundToPredefinedNodePolicy".to_owned()
     }
-
-    fn requires_latency_measurements(&self) -> bool {
-        false
-    }
-
-    fn update_cluster_data(&self, _: &ClusterData) {}
 }
 
 impl<const NODE: u8> RetryPolicy for BoundToPredefinedNodePolicy<NODE> {

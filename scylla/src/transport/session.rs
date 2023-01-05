@@ -7,12 +7,10 @@ use crate::cloud::CloudConfig;
 use crate::frame::types::LegacyConsistency;
 use crate::history;
 use crate::history::HistoryListener;
-use crate::transport::node::TimestampedAverage;
 use async_trait::async_trait;
 use bytes::Bytes;
 use futures::future::join_all;
 use futures::future::try_join_all;
-use scylla_cql::errors::DbError;
 pub use scylla_cql::errors::TranslationError;
 use scylla_cql::frame::response::NonErrorResponse;
 use std::collections::HashMap;
@@ -51,7 +49,7 @@ use crate::transport::connection::{Connection, ConnectionConfig, VerifiedKeyspac
 use crate::transport::connection_pool::PoolConfig;
 use crate::transport::host_filter::HostFilter;
 use crate::transport::iterator::{PreparedIteratorConfig, RowIterator};
-use crate::transport::load_balancing::{LoadBalancingPolicy, Statement, TokenAwarePolicy};
+use crate::transport::load_balancing::{Statement, TokenAwarePolicy};
 use crate::transport::metrics::Metrics;
 use crate::transport::node::Node;
 use crate::transport::query_result::QueryResult;
@@ -1360,35 +1358,6 @@ impl Session {
         }
     }
 
-    pub fn should_consider_query_for_latency_measurements(
-        load_balancer: &dyn LoadBalancingPolicy,
-        result: &Result<impl AllowedRunQueryResTType, QueryError>,
-    ) -> bool {
-        load_balancer.requires_latency_measurements()
-            && match result {
-                Ok(_) => true,
-                Err(err) => match err {
-                    // "fast" errors, i.e. ones that are returned quickly after the query begins
-                    QueryError::BadQuery(_)
-                    | QueryError::TooManyOrphanedStreamIds(_)
-                    | QueryError::UnableToAllocStreamId
-                    | QueryError::DbError(DbError::IsBootstrapping, _)
-                    | QueryError::DbError(DbError::Unavailable { .. }, _)
-                    | QueryError::DbError(DbError::Unprepared { .. }, _)
-                    | QueryError::DbError(DbError::Overloaded { .. }, _)
-                    | QueryError::TranslationError(_) => false,
-
-                    // "slow" errors, i.e. ones that are returned after considerable time of query being run
-                    QueryError::DbError(_, _)
-                    | QueryError::InvalidMessage(_)
-                    | QueryError::IoError(_)
-                    | QueryError::ProtocolError(_)
-                    | QueryError::TimeoutError
-                    | QueryError::RequestTimeout(_) => true,
-                },
-            }
-    }
-
     // This method allows to easily run a query using load balancing, retry policy etc.
     // Requires some information about the query and two closures
     // First closure is used to choose a connection
@@ -1429,7 +1398,6 @@ impl Session {
 
         let runner = async {
             let cluster_data = self.cluster.get_data();
-            load_balancer.update_cluster_data(&cluster_data);
             let query_plan = load_balancer.plan(&statement_info, &cluster_data);
 
             // If a speculative execution policy is used to run query, query_plan has to be shared
@@ -1613,19 +1581,12 @@ impl Session {
                         .instrument(span.clone())
                         .await;
 
-                let elapsed = query_start.elapsed();
-                if Self::should_consider_query_for_latency_measurements(
-                    execution_profile.load_balancing_policy.as_ref(),
-                    &query_result,
-                ) {
-                    let mut average_latency_guard = node.average_latency.write().unwrap();
-                    *average_latency_guard =
-                        TimestampedAverage::compute_next(*average_latency_guard, elapsed);
-                }
                 last_error = match query_result {
                     Ok(response) => {
                         trace!(parent: &span, "Query succeeded");
-                        let _ = self.metrics.log_query_latency(elapsed.as_millis() as u64);
+                        let _ = self
+                            .metrics
+                            .log_query_latency(query_start.elapsed().as_millis() as u64);
                         context.log_attempt_success(&attempt_id);
                         return Some(Ok(RunQueryResult::Completed(response)));
                     }
