@@ -102,6 +102,29 @@ fn timestamp_serialization() {
 }
 
 #[test]
+fn datetime_serialization() {
+    use chrono::{DateTime, NaiveDateTime, Utc};
+    // Datetime is milliseconds since unix epoch represented as i64
+    let max_time: i64 = 24 * 60 * 60 * 1_000_000_000 - 1;
+
+    for test_val in &[0, 1, 15, 18463, max_time, max_time + 16] {
+        let native_datetime = NaiveDateTime::from_timestamp_opt(
+            *test_val / 1000,
+            ((*test_val % 1000) as i32 * 1_000_000) as u32,
+        )
+        .expect("invalid or out-of-range datetime");
+        let test_datetime = DateTime::<Utc>::from_utc(native_datetime, Utc);
+        let bytes: Vec<u8> = serialized(test_datetime);
+
+        let mut expected_bytes: Vec<u8> = vec![0, 0, 0, 8];
+        expected_bytes.extend_from_slice(&test_val.to_be_bytes());
+
+        assert_eq!(bytes, expected_bytes);
+        assert_eq!(expected_bytes.len(), 12);
+    }
+}
+
+#[test]
 fn timeuuid_serialization() {
     // A few random timeuuids generated manually
     let tests = [

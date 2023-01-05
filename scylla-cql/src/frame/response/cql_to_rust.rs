@@ -1,13 +1,16 @@
 use super::result::{CqlValue, Row};
 use crate::frame::value::Counter;
 use bigdecimal::BigDecimal;
-use chrono::{Duration, NaiveDate};
+use chrono::{DateTime, Duration, NaiveDate, TimeZone, Utc};
 use num_bigint::BigInt;
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::hash::Hash;
 use std::net::IpAddr;
 use thiserror::Error;
 use uuid::Uuid;
+
+#[cfg(feature = "secret")]
+use secrecy::{Secret, Zeroize};
 
 #[derive(Error, Debug, Clone, PartialEq, Eq)]
 pub enum FromRowError {
@@ -36,6 +39,8 @@ pub enum FromCqlValError {
     BadCqlType,
     #[error("Value is null")]
     ValIsNull,
+    #[error("Bad Value")]
+    BadVal,
 }
 
 /// This trait defines a way to convert CQL Row into some rust type
@@ -146,6 +151,23 @@ impl FromCqlVal<CqlValue> for crate::frame::value::Timestamp {
             CqlValue::Timestamp(d) => Ok(Self(d)),
             _ => Err(FromCqlValError::BadCqlType),
         }
+    }
+}
+
+impl FromCqlVal<CqlValue> for DateTime<Utc> {
+    fn from_cql(cql_val: CqlValue) -> Result<Self, FromCqlValError> {
+        let timestamp = cql_val.as_bigint().ok_or(FromCqlValError::BadCqlType)?;
+        match Utc.timestamp_millis_opt(timestamp) {
+            chrono::LocalResult::Single(datetime) => Ok(datetime),
+            _ => Err(FromCqlValError::BadVal),
+        }
+    }
+}
+
+#[cfg(feature = "secret")]
+impl<V: FromCqlVal<CqlValue> + Zeroize> FromCqlVal<CqlValue> for Secret<V> {
+    fn from_cql(cql_val: CqlValue) -> Result<Self, FromCqlValError> {
+        Ok(Secret::new(FromCqlVal::from_cql(cql_val)?))
     }
 }
 
@@ -474,6 +496,24 @@ mod tests {
             Timestamp::from_cql(CqlValue::Timestamp(timestamp_duration))
                 .unwrap()
                 .0,
+        );
+    }
+
+    #[test]
+    fn datetime_from_cql() {
+        use chrono::{DateTime, Duration, Utc};
+        let naivedatetime_utc = NaiveDate::from_ymd_opt(2022, 12, 31)
+            .unwrap()
+            .and_hms_opt(2, 0, 0)
+            .unwrap();
+        let datetime_utc = DateTime::<Utc>::from_utc(naivedatetime_utc, Utc);
+
+        assert_eq!(
+            datetime_utc,
+            DateTime::<Utc>::from_cql(CqlValue::Timestamp(Duration::milliseconds(
+                datetime_utc.timestamp_millis()
+            )))
+            .unwrap()
         );
     }
 

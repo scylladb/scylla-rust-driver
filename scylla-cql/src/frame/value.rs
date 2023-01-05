@@ -14,6 +14,9 @@ use uuid::Uuid;
 use super::response::result::CqlValue;
 use super::types::vint_encode;
 
+#[cfg(feature = "secret")]
+use secrecy::{ExposeSecret, Secret, Zeroize};
+
 /// Every value being sent in a query must implement this trait
 /// serialize() should write the Value as [bytes] to the provided buffer
 pub trait Value {
@@ -377,6 +380,21 @@ impl Value for Time {
         buf.put_i32(8);
         buf.put_i64(self.0.num_nanoseconds().ok_or(ValueTooBig)?);
         Ok(())
+    }
+}
+
+impl Value for DateTime<Utc> {
+    fn serialize(&self, buf: &mut Vec<u8>) -> Result<(), ValueTooBig> {
+        buf.put_i32(8);
+        buf.put_i64(self.timestamp_millis());
+        Ok(())
+    }
+}
+
+#[cfg(feature = "secret")]
+impl<V: Value + Zeroize> Value for Secret<V> {
+    fn serialize(&self, buf: &mut Vec<u8>) -> Result<(), ValueTooBig> {
+        self.expose_secret().serialize(buf)
     }
 }
 
