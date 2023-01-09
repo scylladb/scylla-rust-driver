@@ -1,5 +1,5 @@
 use super::result::{CqlValue, Row};
-use crate::frame::value::Counter;
+use crate::frame::value::{Counter, CqlDuration};
 use bigdecimal::BigDecimal;
 use chrono::{DateTime, Duration, NaiveDate, TimeZone, Utc};
 use num_bigint::BigInt;
@@ -135,6 +135,7 @@ impl_from_cql_value_from_method!(IpAddr, as_inet); // IpAddr::from_cql<CqlValue>
 impl_from_cql_value_from_method!(Uuid, as_uuid); // Uuid::from_cql<CqlValue>
 impl_from_cql_value_from_method!(BigDecimal, into_decimal); // BigDecimal::from_cql<CqlValue>
 impl_from_cql_value_from_method!(Duration, as_duration); // Duration::from_cql<CqlValue>
+impl_from_cql_value_from_method!(CqlDuration, as_cql_duration); // CqlDuration::from_cql<CqlValue>
 
 impl FromCqlVal<CqlValue> for crate::frame::value::Time {
     fn from_cql(cql_val: CqlValue) -> Result<Self, FromCqlValError> {
@@ -475,6 +476,20 @@ mod tests {
             timestamp_i64,
             i64::from_cql(CqlValue::Timestamp(Duration::milliseconds(timestamp_i64))).unwrap()
         )
+    }
+
+    #[test]
+    fn cql_duration_from_cql() {
+        use crate::frame::value::CqlDuration;
+        let cql_duration = CqlDuration {
+            months: 3,
+            days: 2,
+            nanoseconds: 1,
+        };
+        assert_eq!(
+            cql_duration,
+            CqlDuration::from_cql(CqlValue::Duration(cql_duration)).unwrap(),
+        );
     }
 
     #[test]
