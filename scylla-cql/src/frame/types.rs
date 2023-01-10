@@ -169,7 +169,7 @@ pub(crate) fn read_short_length(buf: &mut &[u8]) -> Result<usize, ParseError> {
 
 fn write_short_length(v: usize, buf: &mut impl BufMut) -> Result<(), ParseError> {
     let v: i16 = v.try_into()?;
-    write_short(v as i16, buf);
+    write_short(v, buf);
     Ok(())
 }
 

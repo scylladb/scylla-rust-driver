@@ -454,7 +454,7 @@ fn deser_type(buf: &mut &[u8]) -> StdResult<ColumnType, ParseError> {
         }
         0x0031 => {
             let len: usize = types::read_short(buf)?.try_into()?;
-            let mut types = Vec::with_capacity(len as usize);
+            let mut types = Vec::with_capacity(len);
             for _ in 0..len {
                 types.push(deser_type(buf)?);
             }
@@ -531,7 +531,7 @@ fn deser_prepared_metadata(buf: &mut &[u8]) -> StdResult<PreparedMetadata, Parse
     let flags = types::read_int(buf)?;
     let global_tables_spec = flags & 0x0001 != 0;
 
-    let col_count = types::read_int_length(buf)? as usize;
+    let col_count = types::read_int_length(buf)?;
 
     let pk_count: usize = types::read_int(buf)?.try_into()?;
 
