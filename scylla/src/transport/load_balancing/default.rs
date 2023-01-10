@@ -292,7 +292,9 @@ impl DefaultPolicy {
     }
 
     fn is_alive(node: &NodeRef<'_>) -> bool {
-        node.is_enabled() && !node.is_down()
+        // For now, we leave this as stub, until we have time to improve node events.
+        // node.is_enabled() && !node.is_down()
+        node.is_enabled()
     }
 
     fn is_datacenter_failover_possible(&self, routing_info: &ProcessedRoutingInfo) -> bool {
