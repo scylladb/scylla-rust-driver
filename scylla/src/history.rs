@@ -389,10 +389,7 @@ impl From<&HistoryCollectorData> for StructuredHistory {
         }
 
         StructuredHistory {
-            queries: queries
-                .into_iter()
-                .map(|(_id, query_history)| query_history)
-                .collect(),
+            queries: queries.into_values().collect(),
         }
     }
 }

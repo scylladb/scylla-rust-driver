@@ -181,7 +181,7 @@ impl Default for LatencyAwarePolicy {
             Duration::from_secs(10),
             Duration::from_millis(100),
             50,
-            Box::new(RoundRobinPolicy::default()),
+            Box::<RoundRobinPolicy>::default(),
         )
     }
 }
