@@ -35,8 +35,8 @@ use crate::transport::cluster::ClusterData;
 use crate::transport::connection::{Connection, NonErrorQueryResponse, QueryResponse};
 use crate::transport::load_balancing::{self, RoutingInfo};
 use crate::transport::metrics::Metrics;
-use crate::transport::node::Node;
 use crate::transport::retry_policy::{QueryInfo, RetryDecision, RetrySession};
+use crate::transport::{Node, NodeRef};
 use tracing::{trace, trace_span, warn, Instrument};
 use uuid::Uuid;
 
@@ -472,7 +472,7 @@ where
                 trace!(parent: &span, "Execution started");
                 // Query pages until an error occurs
                 let queries_result: Result<PageSendAttemptedProof, QueryError> = self
-                    .query_pages(&connection, current_consistency)
+                    .query_pages(&connection, current_consistency, node)
                     .instrument(span.clone())
                     .await;
 
@@ -549,6 +549,7 @@ where
         &mut self,
         connection: &Arc<Connection>,
         consistency: Consistency,
+        node: NodeRef<'_>,
     ) -> Result<PageSendAttemptedProof, QueryError> {
         loop {
             self.metrics.inc_total_paged_queries();
@@ -576,6 +577,9 @@ where
                     let _ = self.metrics.log_query_latency(elapsed.as_millis() as u64);
                     self.log_attempt_success();
                     self.log_query_success();
+                    self.execution_profile
+                        .load_balancing_policy
+                        .on_query_success(&self.statement_info, elapsed, node);
 
                     self.paging_state = rows.metadata.paging_state.take();
 
@@ -599,6 +603,9 @@ where
                 }
                 Err(err) => {
                     self.metrics.inc_failed_paged_queries();
+                    self.execution_profile
+                        .load_balancing_policy
+                        .on_query_failure(&self.statement_info, elapsed, node, &err);
                     return Err(err);
                 }
                 Ok(NonErrorQueryResponse {
@@ -615,10 +622,11 @@ where
                 }
                 Ok(_) => {
                     self.metrics.inc_failed_paged_queries();
-
-                    return Err(QueryError::ProtocolError(
-                        "Unexpected response to next page query",
-                    ));
+                    let err = QueryError::ProtocolError("Unexpected response to next page query");
+                    self.execution_profile
+                        .load_balancing_policy
+                        .on_query_failure(&self.statement_info, elapsed, node, &err);
+                    return Err(err);
                 }
             }
         }

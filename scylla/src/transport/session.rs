@@ -1469,6 +1469,7 @@ impl Session {
                                 consistency: statement_config.consistency,
                                 retry_session: retry_policy.new_session(),
                                 history_data,
+                                query_info: &statement_info,
                             },
                         )
                     };
@@ -1503,6 +1504,7 @@ impl Session {
                             consistency: statement_config.consistency,
                             retry_session: retry_policy.new_session(),
                             history_data,
+                            query_info: &statement_info,
                         },
                     )
                     .await
@@ -1592,13 +1594,17 @@ impl Session {
                         .instrument(span.clone())
                         .await;
 
+                let elapsed = query_start.elapsed();
                 last_error = match query_result {
                     Ok(response) => {
                         trace!(parent: &span, "Query succeeded");
-                        let _ = self
-                            .metrics
-                            .log_query_latency(query_start.elapsed().as_millis() as u64);
+                        let _ = self.metrics.log_query_latency(elapsed.as_millis() as u64);
                         context.log_attempt_success(&attempt_id);
+                        execution_profile.load_balancing_policy.on_query_success(
+                            context.query_info,
+                            elapsed,
+                            node,
+                        );
                         return Some(Ok(RunQueryResult::Completed(response)));
                     }
                     Err(e) => {
@@ -1608,6 +1614,12 @@ impl Session {
                             "Query failed"
                         );
                         self.metrics.inc_failed_nonpaged_queries();
+                        execution_profile.load_balancing_policy.on_query_failure(
+                            context.query_info,
+                            elapsed,
+                            node,
+                            &e,
+                        );
                         Some(e)
                     }
                 };
@@ -1797,6 +1809,7 @@ struct ExecuteQueryContext<'a> {
     consistency: Option<Consistency>,
     retry_session: Box<dyn RetrySession>,
     history_data: Option<HistoryData<'a>>,
+    query_info: &'a load_balancing::RoutingInfo<'a>,
 }
 
 struct HistoryData<'a> {

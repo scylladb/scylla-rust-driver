@@ -4,7 +4,9 @@
 
 use super::{cluster::ClusterData, NodeRef};
 use crate::routing::Token;
-use scylla_cql::frame::types;
+use scylla_cql::{errors::QueryError, frame::types};
+
+use std::time::Duration;
 
 mod default;
 mod plan;
@@ -66,6 +68,19 @@ pub trait LoadBalancingPolicy: Send + Sync + std::fmt::Debug {
     /// Returns all contact-appropriate nodes for a given query.
     fn fallback<'a>(&'a self, query: &'a RoutingInfo, cluster: &'a ClusterData)
         -> FallbackPlan<'a>;
+
+    /// Invoked each time a query succeeds.
+    fn on_query_success(&self, _query: &RoutingInfo, _latency: Duration, _node: NodeRef<'_>) {}
+
+    /// Invoked each time a query fails.
+    fn on_query_failure(
+        &self,
+        _query: &RoutingInfo,
+        _latency: Duration,
+        _node: NodeRef<'_>,
+        _error: &QueryError,
+    ) {
+    }
 
     /// Returns the name of load balancing policy.
     fn name(&self) -> String;

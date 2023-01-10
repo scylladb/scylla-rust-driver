@@ -44,6 +44,23 @@ impl LoadBalancingPolicy for FixedOrderLoadBalancer {
         )
     }
 
+    fn on_query_success(
+        &self,
+        _: &scylla::load_balancing::RoutingInfo,
+        _: std::time::Duration,
+        _: scylla::transport::NodeRef<'_>,
+    ) {
+    }
+
+    fn on_query_failure(
+        &self,
+        _: &scylla::load_balancing::RoutingInfo,
+        _: std::time::Duration,
+        _: scylla::transport::NodeRef<'_>,
+        _: &scylla_cql::errors::QueryError,
+    ) {
+    }
+
     fn name(&self) -> String {
         "FixedOrderLoadBalancer".to_string()
     }

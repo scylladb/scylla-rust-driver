@@ -62,6 +62,23 @@ impl<const NODE: u8> LoadBalancingPolicy for BoundToPredefinedNodePolicy<NODE> {
         Box::new(std::iter::empty())
     }
 
+    fn on_query_success(
+        &self,
+        _query: &RoutingInfo,
+        _latency: std::time::Duration,
+        _node: NodeRef<'_>,
+    ) {
+    }
+
+    fn on_query_failure(
+        &self,
+        _query: &RoutingInfo,
+        _latency: std::time::Duration,
+        _node: NodeRef<'_>,
+        _error: &scylla_cql::errors::QueryError,
+    ) {
+    }
+
     fn name(&self) -> String {
         "BoundToPredefinedNodePolicy".to_owned()
     }

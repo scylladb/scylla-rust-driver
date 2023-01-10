@@ -5,8 +5,8 @@ use crate::{
 };
 use itertools::{Either, Itertools};
 use rand::{prelude::SliceRandom, thread_rng, Rng};
-use scylla_cql::{frame::types::SerialConsistency, Consistency};
-use std::sync::Arc;
+use scylla_cql::{errors::QueryError, frame::types::SerialConsistency, Consistency};
+use std::{sync::Arc, time::Duration};
 use tracing::warn;
 
 // TODO: LWT optimisation
@@ -158,6 +158,23 @@ or refrain from preferring datacenters (which may ban all other datacenters, if 
 
     fn name(&self) -> String {
         "DefaultPolicy".to_string()
+    }
+
+    fn on_query_success(
+        &self,
+        _routing_info: &RoutingInfo,
+        _latency: Duration,
+        _node: NodeRef<'_>,
+    ) {
+    }
+
+    fn on_query_failure(
+        &self,
+        _routing_info: &RoutingInfo,
+        _latency: Duration,
+        _node: NodeRef<'_>,
+        _error: &QueryError,
+    ) {
     }
 }
 
