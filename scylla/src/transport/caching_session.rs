@@ -392,11 +392,32 @@ mod tests {
     /// This test checks that we can construct a CachingSession with custom HashBuilder implementations
     #[tokio::test]
     async fn test_custom_hasher() {
+        #[derive(Default, Clone)]
+        struct CustomBuildHasher;
+        impl std::hash::BuildHasher for CustomBuildHasher {
+            type Hasher = CustomHasher;
+            fn build_hasher(&self) -> Self::Hasher {
+                CustomHasher(0)
+            }
+        }
+
+        struct CustomHasher(u8);
+        impl std::hash::Hasher for CustomHasher {
+            fn write(&mut self, bytes: &[u8]) {
+                for b in bytes {
+                    self.0 ^= *b;
+                }
+            }
+            fn finish(&self) -> u64 {
+                self.0 as u64
+            }
+        }
+
         let _session: CachingSession<std::collections::hash_map::RandomState> =
             CachingSession::from(new_for_test().await, 2);
-        let _session: CachingSession<ahash::RandomState> =
+        let _session: CachingSession<CustomBuildHasher> =
             CachingSession::from(new_for_test().await, 2);
-        let _session: CachingSession<ahash::RandomState> =
+        let _session: CachingSession<CustomBuildHasher> =
             CachingSession::with_hasher(new_for_test().await, 2, Default::default());
     }
 

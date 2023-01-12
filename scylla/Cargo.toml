@@ -51,7 +51,6 @@ ntest = "0.8.1"
 criterion = "0.3"
 tracing-subscriber = { version = "0.3.14", features = ["env-filter"] }
 assert_matches = "1.5.0"
-ahash = { version = "0.8.0", default-features = false, features=["compile-time-rng"] }
 
 [[bench]]
 name = "benchmark"
