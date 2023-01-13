@@ -1,3 +1,6 @@
+use self::latency_awareness::LatencyAwareness;
+pub use self::latency_awareness::LatencyAwarenessBuilder;
+
 use super::{FallbackPlan, LoadBalancingPolicy, NodeRef, RoutingInfo};
 use crate::{
     routing::Token,
@@ -14,11 +17,13 @@ use tracing::warn;
 ///
 /// It can be configured to be datacenter-aware and token-aware.
 /// Datacenter failover for queries with non local consistency mode is also supported.
+/// Latency awareness is available, although not recommended.
 pub struct DefaultPolicy {
     preferred_datacenter: Option<String>,
     is_token_aware: bool,
     permit_dc_failover: bool,
     pick_predicate: Box<dyn Fn(&NodeRef) -> bool + Send + Sync>,
+    latency_awareness: Option<LatencyAwareness>,
 }
 
 impl fmt::Debug for DefaultPolicy {
@@ -27,6 +32,7 @@ impl fmt::Debug for DefaultPolicy {
             .field("preferred_datacenter", &self.preferred_datacenter)
             .field("is_token_aware", &self.is_token_aware)
             .field("permit_dc_failover", &self.permit_dc_failover)
+            .field("latency_awareness", &self.latency_awareness)
             .finish_non_exhaustive()
     }
 }
@@ -164,28 +170,35 @@ or refrain from preferring datacenters (which may ban all other datacenters, if 
             .chain(maybe_down_nodes)
             .unique();
 
-        Box::new(plan)
+        if let Some(latency_awareness) = self.latency_awareness.as_ref() {
+            Box::new(latency_awareness.wrap(plan))
+        } else {
+            Box::new(plan)
+        }
     }
 
     fn name(&self) -> String {
         "DefaultPolicy".to_string()
     }
 
-    fn on_query_success(
-        &self,
-        _routing_info: &RoutingInfo,
-        _latency: Duration,
-        _node: NodeRef<'_>,
-    ) {
+    fn on_query_success(&self, _routing_info: &RoutingInfo, latency: Duration, node: NodeRef<'_>) {
+        if let Some(latency_awareness) = self.latency_awareness.as_ref() {
+            latency_awareness.report_query(node, latency);
+        }
     }
 
     fn on_query_failure(
         &self,
         _routing_info: &RoutingInfo,
-        _latency: Duration,
-        _node: NodeRef<'_>,
-        _error: &QueryError,
+        latency: Duration,
+        node: NodeRef<'_>,
+        error: &QueryError,
     ) {
+        if let Some(latency_awareness) = self.latency_awareness.as_ref() {
+            if LatencyAwareness::reliable_latency_measure(error) {
+                latency_awareness.report_query(node, latency);
+            }
+        }
     }
 }
 
@@ -339,6 +352,7 @@ impl Default for DefaultPolicy {
             is_token_aware: true,
             permit_dc_failover: false,
             pick_predicate: Box::new(Self::is_alive),
+            latency_awareness: None,
         }
     }
 }
@@ -362,6 +376,7 @@ pub struct DefaultPolicyBuilder {
     preferred_datacenter: Option<String>,
     is_token_aware: bool,
     permit_dc_failover: bool,
+    latency_awareness: Option<LatencyAwarenessBuilder>,
 }
 
 impl DefaultPolicyBuilder {
@@ -371,18 +386,27 @@ impl DefaultPolicyBuilder {
             preferred_datacenter: None,
             is_token_aware: true,
             permit_dc_failover: false,
+            latency_awareness: None,
         }
     }
 
     /// Builds a new DefaultPolicy with the previously set configuration.
     pub fn build(self) -> Arc<dyn LoadBalancingPolicy> {
-        let pick_predicate = Box::new(DefaultPolicy::is_alive);
+        let latency_awareness = self.latency_awareness.map(|builder| builder.build());
+        let pick_predicate = if let Some(ref latency_awareness) = latency_awareness {
+            let latency_predicate = latency_awareness.generate_predicate();
+            Box::new(move |node: &NodeRef| DefaultPolicy::is_alive(node) && latency_predicate(node))
+                as Box<dyn Fn(&NodeRef) -> bool + Send + Sync + 'static>
+        } else {
+            Box::new(DefaultPolicy::is_alive)
+        };
 
         Arc::new(DefaultPolicy {
             preferred_datacenter: self.preferred_datacenter,
             is_token_aware: self.is_token_aware,
             permit_dc_failover: self.permit_dc_failover,
             pick_predicate,
+            latency_awareness,
         })
     }
 
@@ -446,6 +470,25 @@ impl DefaultPolicyBuilder {
     /// constraints.
     pub fn permit_dc_failover(mut self, permit: bool) -> Self {
         self.permit_dc_failover = permit;
+        self
+    }
+
+    /// Latency awareness is a mechanism that penalises nodes whose measured
+    /// recent average latency classifies it as falling behind the others.
+    ///
+    /// Every `update_rate` the global minimum average latency is computed,
+    /// and all nodes whose average latency is worse than `exclusion_threshold`
+    /// times the global minimum average latency become penalised for
+    /// `retry_period`. Penalisation involves putting those nodes at the very end
+    /// of the query plan. As it is often not truly beneficial to prefer
+    /// faster non-replica than replicas lagging behind the non-replicas,
+    /// this mechanism may as well worsen latencies and/or throughput.
+    ///
+    /// ATTENTION: using latency awareness is NOT recommended, unless prior
+    /// benchmarks prove its beneficial impact on the specific workload's
+    /// performance. Use with caution.
+    pub fn latency_awareness(mut self, latency_awareness_builder: LatencyAwarenessBuilder) -> Self {
+        self.latency_awareness = Some(latency_awareness_builder);
         self
     }
 }
@@ -1038,6 +1081,466 @@ mod tests {
                 &expected_groups,
             )
             .await;
+        }
+    }
+}
+
+mod latency_awareness {
+    use futures::{future::RemoteHandle, FutureExt};
+    use itertools::Either;
+    use scylla_cql::errors::{DbError, QueryError};
+    use tracing::trace;
+    use uuid::Uuid;
+
+    use crate::{load_balancing::NodeRef, transport::node::Node};
+    use std::{
+        collections::HashMap,
+        ops::Deref,
+        sync::{
+            atomic::{AtomicU64, Ordering},
+            Arc, RwLock,
+        },
+        time::{Duration, Instant},
+    };
+
+    #[derive(Debug)]
+    struct AtomicDuration(AtomicU64);
+
+    impl AtomicDuration {
+        fn new() -> Self {
+            Self(AtomicU64::new(u64::MAX))
+        }
+
+        fn store(&self, duration: Duration) {
+            self.0.store(duration.as_micros() as u64, Ordering::Relaxed)
+        }
+
+        fn load(&self) -> Option<Duration> {
+            let micros = self.0.load(Ordering::Relaxed);
+            if micros == u64::MAX {
+                None
+            } else {
+                Some(Duration::from_micros(micros))
+            }
+        }
+    }
+
+    #[derive(Debug, Clone, Copy)]
+    pub(super) struct TimestampedAverage {
+        pub(super) timestamp: Instant,
+        pub(super) average: Duration,
+        pub(super) num_measures: usize,
+    }
+
+    impl TimestampedAverage {
+        pub(crate) fn compute_next(previous: Option<Self>, last_latency: Duration) -> Option<Self> {
+            let now = Instant::now();
+            match previous {
+                prev if last_latency.is_zero() => prev,
+                None => Some(Self {
+                    num_measures: 1,
+                    average: last_latency,
+                    timestamp: now,
+                }),
+                Some(prev_avg) => Some({
+                    let delay = (now - prev_avg.timestamp).as_secs_f64();
+                    let prev_weight = (delay + 1.).ln() / delay;
+                    let last_latency_nanos = last_latency.as_nanos() as f64;
+                    let prev_avg_nanos = prev_avg.average.as_nanos() as f64;
+                    let average = Duration::from_nanos(
+                        ((1. - prev_weight) * last_latency_nanos + prev_weight * prev_avg_nanos)
+                            .round() as u64,
+                    );
+                    Self {
+                        num_measures: prev_avg.num_measures + 1,
+                        timestamp: now,
+                        average,
+                    }
+                }),
+            }
+        }
+    }
+
+    /// A latency-aware load balancing policy module, which enables penalising nodes that are too slow.
+    #[derive(Debug)]
+    pub(super) struct LatencyAwareness {
+        pub(super) exclusion_threshold: f64,
+        pub(super) retry_period: Duration,
+        pub(super) _update_rate: Duration,
+        pub(super) minimum_measurements: usize,
+
+        /// Last minimum average latency that was noted among the nodes. It is updated every
+        /// [update_rate](Self::_update_rate).
+        last_min_latency: Arc<AtomicDuration>,
+
+        node_avgs: Arc<RwLock<HashMap<Uuid, RwLock<Option<TimestampedAverage>>>>>,
+
+        _updater_handle: RemoteHandle<()>,
+    }
+
+    impl LatencyAwareness {
+        pub(super) fn builder() -> LatencyAwarenessBuilder {
+            LatencyAwarenessBuilder::new()
+        }
+
+        fn new(
+            exclusion_threshold: f64,
+            retry_period: Duration,
+            update_rate: Duration,
+            minimum_measurements: usize,
+        ) -> Self {
+            let min_latency = Arc::new(AtomicDuration::new());
+            let mut update_scheduler = tokio::time::interval(update_rate);
+
+            let min_latency_clone = min_latency.clone();
+            let node_avgs = Arc::new(RwLock::new(HashMap::new()));
+            let node_avgs_clone = node_avgs.clone();
+
+            let (updater_fut, updater_handle) = async move {
+                loop {
+                    update_scheduler.tick().await;
+                    let averages: &HashMap<Uuid, RwLock<Option<TimestampedAverage>>> =
+                        &node_avgs.read().unwrap();
+                    if averages.is_empty() {
+                        continue; // No nodes queries registered to LAP performed yet.
+                    }
+
+                    let min_avg = averages
+                        .values()
+                        .filter_map(|avg| {
+                            avg.read().unwrap().and_then(|timestamped_average| {
+                                (timestamped_average.num_measures >= minimum_measurements)
+                                    .then_some(timestamped_average.average)
+                            })
+                        })
+                        .min();
+                    if let Some(min_avg) = min_avg {
+                        min_latency.store(min_avg);
+                        trace!(
+                            "Latency awareness: updated min average latency to {} ms",
+                            min_avg.as_secs_f64() * 1000.
+                        );
+                    }
+                }
+            }
+            .remote_handle();
+            tokio::task::spawn(updater_fut);
+
+            Self {
+                exclusion_threshold,
+                retry_period,
+                _update_rate: update_rate,
+                minimum_measurements,
+                last_min_latency: min_latency_clone,
+                node_avgs: node_avgs_clone,
+                _updater_handle: updater_handle,
+            }
+        }
+
+        pub(super) fn generate_predicate(&self) -> impl Fn(&Node) -> bool {
+            let last_min_latency = self.last_min_latency.clone();
+            let node_avgs = self.node_avgs.clone();
+            let exclusion_threshold = self.exclusion_threshold;
+            let minimum_measurements = self.minimum_measurements;
+            let retry_period = self.retry_period;
+
+            move |node| {
+                last_min_latency.load().map(|min_avg| match fast_enough(&node_avgs.read().unwrap(), node.host_id, exclusion_threshold, retry_period, minimum_measurements, min_avg) {
+                    FastEnough::Yes => true,
+                    FastEnough::No { average } => {
+                        trace!("Latency awareness: Penalising node {{address={}, datacenter={:?}, rack={:?}}} for being on average at least {} times slower (latency: {}ms) than the fastest ({}ms).",
+                                node.address, node.datacenter, node.rack, exclusion_threshold, average.as_millis(), min_avg.as_millis());
+                        false
+                    }
+                }).unwrap_or(true)
+            }
+        }
+
+        pub(super) fn wrap<'a>(
+            &self,
+            fallback: impl Iterator<Item = NodeRef<'a>>,
+        ) -> impl Iterator<Item = NodeRef<'a>> {
+            let min_avg_latency = match self.last_min_latency.load() {
+                Some(min_avg) => min_avg,
+                None => return Either::Left(fallback), // noop, as no latency data has been collected yet
+            };
+
+            Either::Right(IteratorWithSkippedNodes::new(
+                self.node_avgs.read().unwrap().deref(),
+                fallback,
+                self.exclusion_threshold,
+                self.retry_period,
+                self.minimum_measurements,
+                min_avg_latency,
+            ))
+        }
+
+        pub(super) fn report_query(&self, node: &Node, latency: Duration) {
+            if let Some(node_avg) = self.node_avgs.read().unwrap().get(&node.host_id) {
+                // The usual path, the node has been already noticed.
+                let mut node_avg = node_avg.write().unwrap();
+                let previous = *node_avg;
+                *node_avg = TimestampedAverage::compute_next(previous, latency);
+            } else {
+                // We need to add the node to the map.
+                self.node_avgs.write().unwrap().insert(
+                    node.host_id,
+                    RwLock::new(TimestampedAverage::compute_next(None, latency)),
+                );
+            }
+        }
+
+        pub(crate) fn reliable_latency_measure(error: &QueryError) -> bool {
+            match error {
+                // "fast" errors, i.e. ones that are returned quickly after the query begins
+                QueryError::BadQuery(_)
+                | QueryError::TooManyOrphanedStreamIds(_)
+                | QueryError::UnableToAllocStreamId
+                | QueryError::DbError(DbError::IsBootstrapping, _)
+                | QueryError::DbError(DbError::Unavailable { .. }, _)
+                | QueryError::DbError(DbError::Unprepared { .. }, _)
+                | QueryError::TranslationError(_)
+                | QueryError::DbError(DbError::Overloaded { .. }, _)
+                | QueryError::DbError(DbError::RateLimitReached { .. }, _) => false,
+
+                // "slow" errors, i.e. ones that are returned after considerable time of query being run
+                QueryError::DbError(_, _)
+                | QueryError::InvalidMessage(_)
+                | QueryError::IoError(_)
+                | QueryError::ProtocolError(_)
+                | QueryError::TimeoutError
+                | QueryError::RequestTimeout(_) => true,
+            }
+        }
+    }
+
+    impl Default for LatencyAwareness {
+        fn default() -> Self {
+            Self::builder().build()
+        }
+    }
+
+    /// The builder of LatencyAwareness module of DefaultPolicy.
+    ///
+    /// (For more information about latency awareness, see [DefaultPolicyBuilder::latency_awareness()](super::DefaultPolicyBuilder::latency_awareness)).
+    /// It is intended to be created and configured by the user and then
+    /// passed to DefaultPolicyBuilder, like this:
+    ///
+    /// # Example
+    /// ```
+    /// # fn example() {
+    /// use scylla::load_balancing::{
+    ///     LatencyAwarenessBuilder, DefaultPolicy
+    /// };
+    ///
+    /// let latency_awareness_builder = LatencyAwarenessBuilder::new()
+    ///     .exclusion_threshold(3.)
+    ///     .minimum_measurements(200);
+    ///
+    /// let policy = DefaultPolicy::builder()
+    ///     .latency_awareness(latency_awareness_builder)
+    ///     .build();
+    /// # }
+    #[derive(Debug, Clone)]
+    pub struct LatencyAwarenessBuilder {
+        exclusion_threshold: f64,
+        retry_period: Duration,
+        update_rate: Duration,
+        minimum_measurements: usize,
+    }
+
+    impl LatencyAwarenessBuilder {
+        /// Creates a builder of LatencyAwareness module of DefaultPolicy.
+        pub fn new() -> Self {
+            Self {
+                exclusion_threshold: 2_f64,
+                retry_period: Duration::from_secs(10),
+                update_rate: Duration::from_millis(100),
+                minimum_measurements: 50,
+            }
+        }
+
+        /// Sets minimum measurements for latency awareness (if there have been fewer measurements taken for a node,
+        /// the node will not be penalised).
+        ///
+        /// Penalising nodes is based on an average of their recently measured average latency.
+        /// This average is only meaningful if a minimum of measurements have been collected.
+        /// This is what this option controls. If fewer than [minimum_measurements](Self::minimum_measurements)
+        /// data points have been collected for a given host, the policy will never penalise that host.
+        /// Note that the number of collected measurements for a given host is reset if the node
+        /// is restarted.
+        /// The default for this option is **50**.
+        pub fn minimum_measurements(self, minimum_measurements: usize) -> Self {
+            Self {
+                minimum_measurements,
+                ..self
+            }
+        }
+
+        /// Sets retry period for latency awareness (max time that a node is being penalised).
+        ///
+        /// The retry period defines how long a node may be penalised by the policy before it is given
+        /// a 2nd chance. More precisely, a node is excluded from query plans if both his calculated
+        /// average latency is [exclusion_threshold](Self::exclusion_threshold) times slower than
+        /// the fastest node average latency (at the time the query plan is computed) **and** his
+        /// calculated average latency has been updated since less than [retry_period](Self::retry_period).
+        /// Since penalised nodes will likely not see their latency updated, this is basically how long
+        /// the policy will exclude a node.
+        pub fn retry_period(self, retry_period: Duration) -> Self {
+            Self {
+                retry_period,
+                ..self
+            }
+        }
+
+        /// Sets exclusion threshold for latency awareness (a threshold for a node to be penalised).
+        ///
+        /// The exclusion threshold controls how much worse the average latency of a node must be
+        /// compared to the fastest performing node for it to be penalised by the policy.
+        /// For example, if set to 2, the resulting policy excludes nodes that are more than twice
+        /// slower than the fastest node.
+        pub fn exclusion_threshold(self, exclusion_threshold: f64) -> Self {
+            Self {
+                exclusion_threshold,
+                ..self
+            }
+        }
+
+        /// Sets update rate for latency awareness (how often is the global minimal average latency updated).
+        ///
+        /// The update rate defines how often the minimum average latency is recomputed. While the
+        /// average latency score of each node is computed iteratively (updated each time a new latency
+        /// is collected), the minimum score needs to be recomputed from scratch every time, which is
+        /// slightly more costly. For this reason, the minimum is only re-calculated at the given fixed
+        /// rate and cached between re-calculation.
+        /// The default update rate if **100 milliseconds**, which should be appropriate for most
+        /// applications. In particular, note that while we want to avoid to recompute the minimum for
+        /// every query, that computation is not particularly intensive either and there is no reason to
+        /// use a very slow rate (more than second is probably unnecessarily slow for instance).
+        pub fn update_rate(self, update_rate: Duration) -> Self {
+            Self {
+                update_rate,
+                ..self
+            }
+        }
+
+        pub(super) fn build(self) -> LatencyAwareness {
+            let Self {
+                exclusion_threshold,
+                retry_period,
+                update_rate,
+                minimum_measurements,
+            } = self;
+            LatencyAwareness::new(
+                exclusion_threshold,
+                retry_period,
+                update_rate,
+                minimum_measurements,
+            )
+        }
+    }
+
+    impl Default for LatencyAwarenessBuilder {
+        fn default() -> Self {
+            Self::new()
+        }
+    }
+
+    pub(super) enum FastEnough {
+        Yes,
+        No { average: Duration },
+    }
+
+    pub(super) fn fast_enough(
+        average_latencies: &HashMap<Uuid, RwLock<Option<TimestampedAverage>>>,
+        node: Uuid,
+        exclusion_threshold: f64,
+        retry_period: Duration,
+        minimum_measurements: usize,
+        min_avg: Duration,
+    ) -> FastEnough {
+        let avg = match average_latencies
+            .get(&node)
+            .and_then(|avgs| *avgs.read().unwrap())
+        {
+            Some(avg) => avg,
+            None => return FastEnough::Yes,
+        };
+        if avg.num_measures >= minimum_measurements
+            && avg.timestamp.elapsed() < retry_period
+            && avg.average.as_micros() as f64 > exclusion_threshold * min_avg.as_micros() as f64
+        {
+            FastEnough::No {
+                average: avg.average,
+            }
+        } else {
+            FastEnough::Yes
+        }
+    }
+
+    struct IteratorWithSkippedNodes<'a, Fast, Penalised>
+    where
+        Fast: Iterator<Item = NodeRef<'a>>,
+        Penalised: Iterator<Item = NodeRef<'a>>,
+    {
+        fast_nodes: Fast,
+        penalised_nodes: Penalised,
+    }
+
+    impl<'a>
+        IteratorWithSkippedNodes<
+            'a,
+            std::vec::IntoIter<NodeRef<'a>>,
+            std::vec::IntoIter<NodeRef<'a>>,
+        >
+    {
+        fn new(
+            average_latencies: &HashMap<Uuid, RwLock<Option<TimestampedAverage>>>,
+            nodes: impl Iterator<Item = NodeRef<'a>>,
+            exclusion_threshold: f64,
+            retry_period: Duration,
+            minimum_measurements: usize,
+            min_avg: Duration,
+        ) -> Self {
+            let mut fast_nodes = vec![];
+            let mut penalised_nodes = vec![];
+
+            for node in nodes {
+                match fast_enough(
+                    average_latencies,
+                    node.host_id,
+                    exclusion_threshold,
+                    retry_period,
+                    minimum_measurements,
+                    min_avg,
+                ) {
+                    FastEnough::Yes => fast_nodes.push(node),
+                    FastEnough::No { average } => {
+                        trace!("Latency awareness: Penalising node {{address={}, datacenter={:?}, rack={:?}}} for being on average at least {} times slower (latency: {}ms) than the fastest ({}ms).",
+                                node.address, node.datacenter, node.rack, exclusion_threshold, average.as_millis(), min_avg.as_millis());
+                        penalised_nodes.push(node);
+                    }
+                }
+            }
+
+            Self {
+                fast_nodes: fast_nodes.into_iter(),
+                penalised_nodes: penalised_nodes.into_iter(),
+            }
+        }
+    }
+
+    impl<'a, Fast, Penalised> Iterator for IteratorWithSkippedNodes<'a, Fast, Penalised>
+    where
+        Fast: Iterator<Item = NodeRef<'a>>,
+        Penalised: Iterator<Item = NodeRef<'a>>,
+    {
+        type Item = &'a Arc<Node>;
+
+        fn next(&mut self) -> Option<Self::Item> {
+            self.fast_nodes
+                .next()
+                .or_else(|| self.penalised_nodes.next())
         }
     }
 }

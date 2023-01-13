@@ -10,7 +10,7 @@ use std::time::Duration;
 
 mod default;
 mod plan;
-pub use default::{DefaultPolicy, DefaultPolicyBuilder};
+pub use default::{DefaultPolicy, DefaultPolicyBuilder, LatencyAwarenessBuilder};
 pub use plan::Plan;
 
 /// Represents info about statement that can be used by load balancing policies.
