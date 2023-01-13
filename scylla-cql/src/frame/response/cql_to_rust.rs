@@ -26,7 +26,7 @@ pub enum CqlTypeError {
     InvalidNumberOfElements(i32),
 }
 
-/// This trait defines a way to convert CqlValue or Option<CqlValue> into some rust type
+/// This trait defines a way to convert CqlValue or `Option<CqlValue>` into some rust type
 // We can't use From trait because impl From<Option<CqlValue>> for String {...}
 // is forbidden since neither From nor String are defined in this crate
 pub trait FromCqlVal<T>: Sized {
