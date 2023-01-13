@@ -22,8 +22,8 @@ pub fn from_row_derive(tokens_input: TokenStream) -> TokenStream {
                     .unwrap(); // vals_iter size is checked before this code is reached, so
                                // it is safe to unwrap
 
-                <#field_type as FromCqlVal<Option<CqlValue>>>::from_cql(col_value)
-                    .map_err(|e| FromRowError::BadCqlVal {
+                <#field_type as scylla::cql_to_rust::FromCqlVal<::std::option::Option<scylla::frame::response::result::CqlValue>>>::from_cql(col_value)
+                    .map_err(|e| scylla::cql_to_rust::FromRowError::BadCqlVal {
                         err: e,
                         column: col_ix,
                     })?
@@ -35,9 +35,10 @@ pub fn from_row_derive(tokens_input: TokenStream) -> TokenStream {
     let generated = quote! {
         impl #impl_generics scylla::cql_to_rust::FromRow for #struct_name #ty_generics #where_clause {
             fn from_row(row: scylla::frame::response::result::Row)
-            -> Result<Self, scylla::cql_to_rust::FromRowError> {
+            -> ::std::result::Result<Self, scylla::cql_to_rust::FromRowError> {
                 use scylla::frame::response::result::CqlValue;
                 use scylla::cql_to_rust::{FromCqlVal, FromRow, FromRowError};
+                use ::std::result::Result::{Ok, Err};
 
                 if #fields_count != row.columns.len() {
                     return Err(FromRowError::WrongRowSize {

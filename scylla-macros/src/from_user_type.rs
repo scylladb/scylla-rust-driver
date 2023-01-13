@@ -16,9 +16,9 @@ pub fn from_user_type_derive(tokens_input: TokenStream) -> TokenStream {
         let field_type = &field.ty;
 
         quote_spanned! {field.span() =>
-            #field_name: <#field_type as FromCqlVal<Option<CqlValue>>>::from_cql(
+            #field_name: <#field_type as scylla::cql_to_rust::FromCqlVal<Option<scylla::frame::response::result::CqlValue>>>::from_cql(
                 {
-                    let received_field_name: Option<&String> = fields_iter
+                    let received_field_name: Option<&::std::string::String> = fields_iter
                         .peek()
                         .map(|(ref name, _)| name);
 
@@ -43,10 +43,12 @@ pub fn from_user_type_derive(tokens_input: TokenStream) -> TokenStream {
     });
 
     let generated = quote! {
-        impl #impl_generics FromCqlVal<scylla::frame::response::result::CqlValue> for #struct_name #ty_generics #where_clause {
+        impl #impl_generics scylla::cql_to_rust::FromCqlVal<scylla::frame::response::result::CqlValue> for #struct_name #ty_generics #where_clause {
             fn from_cql(cql_val: scylla::frame::response::result::CqlValue)
-            -> Result<Self, scylla::cql_to_rust::FromCqlValError> {
-                use std::collections::BTreeMap;
+            -> ::std::result::Result<Self, scylla::cql_to_rust::FromCqlValError> {
+                use ::std::collections::BTreeMap;
+                use ::std::option::Option::{self, Some, None};
+                use ::std::result::Result::{Ok, Err};
                 use scylla::cql_to_rust::{FromCqlVal, FromCqlValError};
                 use scylla::frame::response::result::CqlValue;
 

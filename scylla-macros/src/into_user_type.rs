@@ -14,17 +14,17 @@ pub fn into_user_type_derive(tokens_input: TokenStream) -> TokenStream {
         let field_name = &field.ident;
 
         quote_spanned! {field.span() =>
-            <_ as Value>::serialize(&self.#field_name, buf) ?;
+            <_ as scylla::frame::value::Value>::serialize(&self.#field_name, buf) ?;
         }
     });
 
     let generated = quote! {
         impl #impl_generics scylla::frame::value::Value for #struct_name #ty_generics #where_clause {
-            fn serialize(&self, buf: &mut Vec<u8>) -> std::result::Result<(), scylla::frame::value::ValueTooBig> {
+            fn serialize(&self, buf: &mut ::std::vec::Vec<::core::primitive::u8>) -> ::std::result::Result<(), scylla::frame::value::ValueTooBig> {
                 use scylla::frame::value::{Value, ValueTooBig};
                 use scylla::macros::BufMut;
                 use ::std::convert::TryInto;
-
+                use ::core::primitive::{usize, i32};
 
                 // Reserve space to put serialized size in
                 let total_size_index: usize = buf.len();
@@ -40,7 +40,7 @@ pub fn into_user_type_derive(tokens_input: TokenStream) -> TokenStream {
                 let total_size_i32: i32 = total_size.try_into().map_err(|_| ValueTooBig) ?;
                 buf[total_size_index..(total_size_index+4)].copy_from_slice(&total_size_i32.to_be_bytes()[..]);
 
-                Ok(())
+                ::std::result::Result::Ok(())
             }
         }
     };

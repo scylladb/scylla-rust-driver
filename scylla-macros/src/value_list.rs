@@ -21,7 +21,7 @@ pub fn value_list_derive(tokens_input: TokenStream) -> TokenStream {
                     result.add_value(&self.#field_name)?;
                 )*
 
-                Ok(std::borrow::Cow::Owned(result))
+                ::std::result::Result::Ok(::std::borrow::Cow::Owned(result))
             }
         }
     };
