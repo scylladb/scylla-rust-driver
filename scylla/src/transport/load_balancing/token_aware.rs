@@ -314,7 +314,7 @@ mod tests {
             },
         ];
 
-        let policy = TokenAwarePolicy::new(Box::new(RoundRobinPolicy::default()));
+        let policy = TokenAwarePolicy::new(Box::<RoundRobinPolicy>::default());
         let cluster = mock_cluster_data_for_token_aware_tests();
 
         let plans = (0..15)

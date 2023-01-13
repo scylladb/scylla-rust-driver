@@ -671,7 +671,7 @@ impl Reaction for ResponseReaction {
     }
 }
 
-/// Describes what to with the given <something> (frame),
+/// Describes what to with the given \<something\> (frame),
 /// how to transform it and after what delay.
 #[derive(Clone)]
 pub struct Action<TFrom, TTo> {

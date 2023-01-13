@@ -91,7 +91,7 @@ pub type SerializedResult<'a> = Result<Cow<'a, SerializedValues>, SerializeValue
 /// gets serialized and but into request
 pub trait ValueList {
     /// Provides a view of ValueList as SerializedValues
-    /// returns Cow<SerializedValues> to make impl ValueList for SerializedValues efficient
+    /// returns `Cow<SerializedValues>` to make impl ValueList for SerializedValues efficient
     fn serialized(&self) -> SerializedResult<'_>;
 
     fn write_to_request(&self, buf: &mut impl BufMut) -> Result<(), SerializeValuesError> {
@@ -495,7 +495,7 @@ impl Value for String {
     }
 }
 
-/// Every Option<T> can be serialized as None -> NULL, Some(val) -> val.serialize()
+/// Every `Option<T>` can be serialized as None -> NULL, Some(val) -> val.serialize()
 impl<T: Value> Value for Option<T> {
     fn serialize(&self, buf: &mut Vec<u8>) -> Result<(), ValueTooBig> {
         match self {
