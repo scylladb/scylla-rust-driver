@@ -5,6 +5,7 @@ use syn::{spanned::Spanned, DeriveInput};
 /// #[derive(FromUserType)] allows to parse a struct as User Defined Type
 pub fn from_user_type_derive(tokens_input: TokenStream) -> TokenStream {
     let item = syn::parse::<DeriveInput>(tokens_input).expect("No DeriveInput");
+    let path = crate::parser::get_path(&item).expect("Couldn't get path to the scylla crate");
     let struct_fields = crate::parser::parse_named_fields(&item, "FromUserType");
 
     let struct_name = &item.ident;
@@ -16,7 +17,7 @@ pub fn from_user_type_derive(tokens_input: TokenStream) -> TokenStream {
         let field_type = &field.ty;
 
         quote_spanned! {field.span() =>
-            #field_name: <#field_type as scylla::cql_to_rust::FromCqlVal<Option<scylla::frame::response::result::CqlValue>>>::from_cql(
+            #field_name: <#field_type as FromCqlVal<::std::option::Option<CqlValue>>>::from_cql(
                 {
                     let received_field_name: Option<&::std::string::String> = fields_iter
                         .peek()
@@ -43,14 +44,13 @@ pub fn from_user_type_derive(tokens_input: TokenStream) -> TokenStream {
     });
 
     let generated = quote! {
-        impl #impl_generics scylla::cql_to_rust::FromCqlVal<scylla::frame::response::result::CqlValue> for #struct_name #ty_generics #where_clause {
-            fn from_cql(cql_val: scylla::frame::response::result::CqlValue)
-            -> ::std::result::Result<Self, scylla::cql_to_rust::FromCqlValError> {
+        impl #impl_generics #path::FromCqlVal<#path::CqlValue> for #struct_name #ty_generics #where_clause {
+            fn from_cql(cql_val: #path::CqlValue)
+            -> ::std::result::Result<Self, #path::FromCqlValError> {
                 use ::std::collections::BTreeMap;
                 use ::std::option::Option::{self, Some, None};
                 use ::std::result::Result::{Ok, Err};
-                use scylla::cql_to_rust::{FromCqlVal, FromCqlValError};
-                use scylla::frame::response::result::CqlValue;
+                use #path::{FromCqlVal, FromCqlValError, CqlValue};
 
                 // Interpret CqlValue as CQlValue::UserDefinedType
                 let mut fields_iter = match cql_val {

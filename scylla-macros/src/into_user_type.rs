@@ -5,6 +5,7 @@ use syn::{spanned::Spanned, DeriveInput};
 /// #[derive(IntoUserType)] allows to parse a struct as User Defined Type
 pub fn into_user_type_derive(tokens_input: TokenStream) -> TokenStream {
     let item = syn::parse::<DeriveInput>(tokens_input).expect("No DeriveInput");
+    let path = crate::parser::get_path(&item).expect("No path");
     let struct_fields = crate::parser::parse_named_fields(&item, "IntoUserType");
 
     let struct_name = &item.ident;
@@ -14,15 +15,14 @@ pub fn into_user_type_derive(tokens_input: TokenStream) -> TokenStream {
         let field_name = &field.ident;
 
         quote_spanned! {field.span() =>
-            <_ as scylla::frame::value::Value>::serialize(&self.#field_name, buf) ?;
+            <_ as Value>::serialize(&self.#field_name, buf) ?;
         }
     });
 
     let generated = quote! {
-        impl #impl_generics scylla::frame::value::Value for #struct_name #ty_generics #where_clause {
-            fn serialize(&self, buf: &mut ::std::vec::Vec<::core::primitive::u8>) -> ::std::result::Result<(), scylla::frame::value::ValueTooBig> {
-                use scylla::frame::value::{Value, ValueTooBig};
-                use scylla::macros::BufMut;
+        impl #impl_generics #path::Value for #struct_name #ty_generics #where_clause {
+            fn serialize(&self, buf: &mut ::std::vec::Vec<::core::primitive::u8>) -> ::std::result::Result<(), #path::ValueTooBig> {
+                use #path::{BufMut, ValueTooBig, Value};
                 use ::std::convert::TryInto;
                 use ::core::primitive::{usize, i32};
 

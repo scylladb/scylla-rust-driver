@@ -6,6 +6,7 @@ use syn::DeriveInput;
 /// which can be fed to the query directly.
 pub fn value_list_derive(tokens_input: TokenStream) -> TokenStream {
     let item = syn::parse::<DeriveInput>(tokens_input).expect("No DeriveInput");
+    let path = crate::parser::get_path(&item).expect("No path");
     let struct_fields = crate::parser::parse_named_fields(&item, "ValueList");
 
     let struct_name = &item.ident;
@@ -14,9 +15,9 @@ pub fn value_list_derive(tokens_input: TokenStream) -> TokenStream {
     let values_len = struct_fields.named.len();
     let field_name = struct_fields.named.iter().map(|field| &field.ident);
     let generated = quote! {
-        impl #impl_generics scylla::frame::value::ValueList for #struct_name #ty_generics #where_clause {
-            fn serialized(&self) -> scylla::frame::value::SerializedResult {
-                let mut result = scylla::frame::value::SerializedValues::with_capacity(#values_len);
+        impl #impl_generics #path::ValueList for #struct_name #ty_generics #where_clause {
+            fn serialized(&self) -> #path::SerializedResult {
+                let mut result = #path::SerializedValues::with_capacity(#values_len);
                 #(
                     result.add_value(&self.#field_name)?;
                 )*
