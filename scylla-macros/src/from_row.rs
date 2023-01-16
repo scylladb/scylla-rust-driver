@@ -39,6 +39,7 @@ pub fn from_row_derive(tokens_input: TokenStream) -> TokenStream {
             -> ::std::result::Result<Self, #path::FromRowError> {
                 use #path::{CqlValue, FromCqlVal, FromRow, FromRowError};
                 use ::std::result::Result::{Ok, Err};
+                use ::std::iter::{Iterator, IntoIterator};
 
                 if #fields_count != row.columns.len() {
                     return Err(FromRowError::WrongRowSize {

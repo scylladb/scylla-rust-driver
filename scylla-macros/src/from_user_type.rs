@@ -51,6 +51,7 @@ pub fn from_user_type_derive(tokens_input: TokenStream) -> TokenStream {
                 use ::std::option::Option::{self, Some, None};
                 use ::std::result::Result::{Ok, Err};
                 use #path::{FromCqlVal, FromCqlValError, CqlValue};
+                use ::std::iter::{Iterator, IntoIterator};
 
                 // Interpret CqlValue as CQlValue::UserDefinedType
                 let mut fields_iter = match cql_val {
