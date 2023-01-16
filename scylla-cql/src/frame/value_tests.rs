@@ -1,4 +1,4 @@
-use crate::frame::value::{BatchValuesGatWorkaround, BatchValuesIterator};
+use crate::frame::value::BatchValuesIterator;
 
 use super::value::{
     BatchValues, Date, MaybeUnset, SerializeValuesError, SerializedValues, Time, Timestamp, Unset,
@@ -676,7 +676,7 @@ fn ref_batch_values() {
 
     return check_ref_bv::<&&&&&[&[i8]]>(&&&&batch_values);
     fn check_ref_bv<B: BatchValues>(batch_values: B) {
-        let mut it = <B as BatchValuesGatWorkaround<'_>>::batch_values_iter(&batch_values);
+        let mut it = <B as BatchValues>::batch_values_iter(&batch_values);
 
         let mut request: Vec<u8> = Vec::new();
         it.write_next_to_request(&mut request).unwrap().unwrap();
