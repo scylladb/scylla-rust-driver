@@ -219,9 +219,6 @@ impl<'a> Iterator for SerializedValuesIterator<'a> {
 }
 
 /// Represents List of ValueList for Batch statement
-///
-/// This trait is not implemented directly, but rather implemented through `BatchValuesGatWorkaround`
-/// (until GATs are made available in Rust)
 pub trait BatchValues {
     /// For some unknown reason, this type, when not resolved to a concrete type for a given async function,
     /// cannot live across await boundaries while maintaining the corresponding future `Send`, unless `'r: 'static`
@@ -239,10 +236,8 @@ pub trait BatchValues {
 /// `BatchValuesIteratorFromIterator<IT>`
 ///
 /// It's just essentially making methods from `ValueList` accessible instead of being an actual iterator because of
-/// several compiler limitations that would otherwise be very complex to overcome.\
-/// (specifically, types being different would require yielding enums for tuple impls, and the trait
-/// bound of `for<'r> <BatchValuesGatWorkaround<'r>::BatchValuesIter as Iterator>::Item: ValueList` is very
-/// hard to express considering several compiler limitations)
+/// compiler limitations that would otherwise be very complex to overcome.
+/// (specifically, types being different would require yielding enums for tuple impls)
 pub trait BatchValuesIterator<'a> {
     fn next_serialized(&mut self) -> Option<SerializedResult<'a>>;
     fn write_next_to_request(
