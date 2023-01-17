@@ -10,6 +10,7 @@ use crate::utils::parse::{ParseErrorCause, ParseResult, ParserState};
 
 use crate::QueryResult;
 use futures::future::try_join_all;
+use itertools::Itertools;
 use rand::seq::SliceRandom;
 use rand::{thread_rng, Rng};
 use std::borrow::BorrowMut;
@@ -501,7 +502,7 @@ async fn query_peers(
     ))?;
 
     let typed_peers_rows = peers_rows.into_typed::<(
-        Uuid,
+        Option<Uuid>,
         IpAddr,
         Option<String>,
         Option<String>,
@@ -512,7 +513,7 @@ async fn query_peers(
     let local_address = SocketAddr::new(local_ip, connect_port);
 
     let typed_local_rows = local_rows.into_typed::<(
-        Uuid,
+        Option<Uuid>,
         IpAddr,
         Option<String>,
         Option<String>,
@@ -523,7 +524,15 @@ async fn query_peers(
         .map(|res| res.map(|peer_row| (false, peer_row)))
         .chain(typed_local_rows.map(|res| res.map(|local_row| (true, local_row))));
 
-    let translated_peers_futures = untranslated_rows.map(|untranslated_row| async {
+    let translated_peers_futures = untranslated_rows
+        .filter_map_ok(|(is_local, (host_id, ip, dc, rack, tokens))| if let Some(host_id) = host_id {
+            Some((is_local, (host_id, ip, dc, rack, tokens)))
+        } else {
+            let who = if is_local { "Local node" } else { "Peer" };
+            warn!("{} (untranslated ip: {}, dc: {:?}, rack: {:?}) has Host ID set to null; skipping node.", who, ip, dc, rack);
+            None
+        })
+        .map(|untranslated_row| async {
         let (is_local, (host_id, untranslated_ip_addr, datacenter, rack, tokens)) = untranslated_row.map_err(
             |_| QueryError::ProtocolError("system.peers or system.local has invalid column type")
         )?;
