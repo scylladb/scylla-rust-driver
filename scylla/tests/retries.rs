@@ -20,7 +20,7 @@ use scylla_proxy::{
 async fn speculative_execution_is_fired() {
     const TIMEOUT_PER_REQUEST: Duration = Duration::from_millis(1000);
 
-    let res = test_with_3_node_cluster(ShardAwareness::QueryNode, 217, |proxy_uris, translation_map, mut running_proxy| async move {
+    let res = test_with_3_node_cluster(ShardAwareness::QueryNode, |proxy_uris, translation_map, mut running_proxy| async move {
         // DB preparation phase
         let session: Session = SessionBuilder::new()
             .known_node(proxy_uris[0].as_str())
@@ -98,7 +98,7 @@ async fn speculative_execution_is_fired() {
 #[tokio::test]
 #[ntest::timeout(30000)]
 async fn retries_occur() {
-    let res = test_with_3_node_cluster(ShardAwareness::QueryNode, 210, |proxy_uris, translation_map, mut running_proxy| async move {
+    let res = test_with_3_node_cluster(ShardAwareness::QueryNode, |proxy_uris, translation_map, mut running_proxy| async move {
 
         // DB preparation phase
         let session: Session = SessionBuilder::new()

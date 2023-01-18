@@ -20,7 +20,7 @@ async fn if_lwt_optimisation_mark_offered_then_negotiatied_and_lwt_routed_optima
     // This is just to increase the likelyhood that only intended prepared statements (which contain this mark) are captures by the proxy.
     const MAGIC_MARK: i32 = 123;
 
-    let res = test_with_3_node_cluster(ShardAwareness::QueryNode, 220, |proxy_uris, translation_map, mut running_proxy| async move {
+    let res = test_with_3_node_cluster(ShardAwareness::QueryNode, |proxy_uris, translation_map, mut running_proxy| async move {
 
         // We set up proxy, so that it informs us (via supported_rx) about cluster's Supported features (including LWT optimisation mark),
         // and also passes us information about which node was queried (via prepared_rx).
