@@ -63,7 +63,7 @@ pub struct Node {
     // If the node is filtered out by the host filter, this will be None
     pool: Option<NodeConnectionPool>,
 
-    down_marker: AtomicBool,
+    up_marker: AtomicBool,
 }
 
 impl Node {
@@ -91,8 +91,8 @@ impl Node {
             datacenter,
             rack,
             pool,
-            down_marker: false.into(),
             average_latency: RwLock::new(None),
+            up_marker: true.into(),
         }
     }
 
@@ -114,8 +114,8 @@ impl Node {
         self.get_pool()?.random_connection()
     }
 
-    pub fn is_down(&self) -> bool {
-        self.down_marker.load(Ordering::Relaxed)
+    pub fn is_up(&self) -> bool {
+        self.up_marker.load(Ordering::Relaxed)
     }
 
     /// Returns a boolean which indicates whether this node was is enabled.
@@ -125,8 +125,8 @@ impl Node {
         self.pool.is_some()
     }
 
-    pub(crate) fn change_down_marker(&self, is_down: bool) {
-        self.down_marker.store(is_down, Ordering::Relaxed);
+    pub(crate) fn change_up_marker(&self, is_up: bool) {
+        self.up_marker.store(is_up, Ordering::Relaxed);
     }
 
     pub(crate) async fn use_keyspace(

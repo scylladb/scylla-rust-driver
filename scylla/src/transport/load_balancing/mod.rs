@@ -191,6 +191,7 @@ mod tests {
                 address: tests::id_to_invalid_addr(*id),
                 tokens: Vec::new(),
                 untranslated_address: Some(tests::id_to_invalid_addr(*id)),
+                up: true,
             })
             .collect::<Vec<_>>();
 
@@ -248,6 +249,7 @@ mod tests {
                     Token { value: 500 },
                 ],
                 untranslated_address: None,
+                up: true,
             },
             Peer {
                 datacenter: Some("eu".into()),
@@ -259,6 +261,7 @@ mod tests {
                     Token { value: 300 },
                 ],
                 untranslated_address: None,
+                up: true,
             },
             Peer {
                 datacenter: Some("us".into()),
@@ -266,6 +269,7 @@ mod tests {
                 address: tests::id_to_invalid_addr(3),
                 tokens: vec![Token { value: 200 }, Token { value: 400 }],
                 untranslated_address: None,
+                up: true,
             },
         ];
 

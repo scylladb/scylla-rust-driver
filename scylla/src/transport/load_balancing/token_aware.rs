@@ -437,6 +437,7 @@ mod tests {
                 address: tests::id_to_invalid_addr(1),
                 tokens: vec![Token { value: 50 }, Token { value: 200 }],
                 untranslated_address: Some(tests::id_to_invalid_addr(1)),
+                up: true,
             },
             Peer {
                 datacenter: Some("waw".into()),
@@ -444,6 +445,7 @@ mod tests {
                 address: tests::id_to_invalid_addr(2),
                 tokens: vec![Token { value: 150 }],
                 untranslated_address: Some(tests::id_to_invalid_addr(2)),
+                up: true,
             },
             Peer {
                 datacenter: Some("waw".into()),
@@ -451,6 +453,7 @@ mod tests {
                 address: tests::id_to_invalid_addr(3),
                 tokens: vec![Token { value: 510 }],
                 untranslated_address: Some(tests::id_to_invalid_addr(3)),
+                up: true,
             },
             Peer {
                 datacenter: Some("waw".into()),
@@ -458,6 +461,7 @@ mod tests {
                 address: tests::id_to_invalid_addr(4),
                 tokens: vec![Token { value: 300 }],
                 untranslated_address: Some(tests::id_to_invalid_addr(4)),
+                up: true,
             },
             Peer {
                 datacenter: Some("her".into()),
@@ -465,6 +469,7 @@ mod tests {
                 address: tests::id_to_invalid_addr(5),
                 tokens: vec![Token { value: 100 }],
                 untranslated_address: Some(tests::id_to_invalid_addr(5)),
+                up: true,
             },
             Peer {
                 datacenter: Some("her".into()),
@@ -472,6 +477,7 @@ mod tests {
                 address: tests::id_to_invalid_addr(6),
                 tokens: vec![Token { value: 250 }],
                 untranslated_address: Some(tests::id_to_invalid_addr(6)),
+                up: true,
             },
             Peer {
                 datacenter: Some("her".into()),
@@ -479,6 +485,7 @@ mod tests {
                 address: tests::id_to_invalid_addr(7),
                 tokens: vec![Token { value: 500 }],
                 untranslated_address: Some(tests::id_to_invalid_addr(7)),
+                up: true,
             },
             Peer {
                 datacenter: Some("her".into()),
@@ -486,6 +493,7 @@ mod tests {
                 address: tests::id_to_invalid_addr(8),
                 tokens: vec![Token { value: 400 }],
                 untranslated_address: Some(tests::id_to_invalid_addr(8)),
+                up: true,
             },
         ];
 
