@@ -34,6 +34,7 @@
     - [Date](data-types/date.md)
     - [Time](data-types/time.md)
     - [Timestamp](data-types/timestamp.md)
+    - [Duration](data-types/duration.md)
     - [Decimal](data-types/decimal.md)
     - [Varint](data-types/varint.md)
     - [List, Set, Map](data-types/collections.md)

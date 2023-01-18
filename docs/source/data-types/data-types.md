@@ -24,6 +24,7 @@ Database types and their Rust equivalents:
 * `Date` <----> `chrono::NaiveDate`, `u32`
 * `Time` <----> `chrono::Duration`
 * `Timestamp` <----> `chrono::Duration`
+* `Duration` <----> `value::CqlDuration`
 * `Decimal` <----> `bigdecimal::Decimal`
 * `Varint` <----> `num_bigint::BigInt`
 * `List` <----> `Vec<T>`
@@ -47,6 +48,7 @@ Database types and their Rust equivalents:
    date
    time
    timestamp
+   duration
    decimal
    varint
    collections
