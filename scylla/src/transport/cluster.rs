@@ -304,12 +304,17 @@ impl ClusterData {
             // Changing rack/datacenter but not ip address seems improbable
             // so we can just create new node and connections then
             let node: Arc<Node> = match known_peers.get(&peer.address) {
-                Some(node) if node.datacenter == peer.datacenter && node.rack == peer.rack => {
+                Some(node)
+                    if node.datacenter == peer.datacenter
+                        && node.rack == peer.rack
+                        && node.host_id == peer.host_id =>
+                {
                     node.clone()
                 }
                 _ => {
                     let is_enabled = host_filter.map_or(true, |f| f.accept(&peer));
                     Arc::new(Node::new(
+                        peer.host_id,
                         peer.address,
                         pool_config.clone(),
                         peer.datacenter,

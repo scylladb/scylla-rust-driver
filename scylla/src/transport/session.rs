@@ -399,11 +399,10 @@ pub enum RunQueryResult<ResT> {
 /// Represents a CQL session, which can be used to communicate
 /// with the database
 impl Session {
-    // because it's more convenient
     /// Estabilishes a CQL session with the database
     ///
     /// Usually it's easier to use [SessionBuilder](crate::transport::session_builder::SessionBuilder)
-    /// instead of calling `Session::connect` directly
+    /// instead of calling `Session::connect` directly, because it's more convenient.
     /// # Arguments
     /// * `config` - Connection configuration - known nodes, Compression, etc.
     /// Must contain at least one known node.

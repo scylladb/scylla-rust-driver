@@ -192,6 +192,8 @@ impl LoadBalancingPolicy for TokenAwarePolicy {
 
 #[cfg(test)]
 mod tests {
+    use uuid::Uuid;
+
     use super::*;
 
     use crate::load_balancing::tests::DumbPolicy;
@@ -359,6 +361,7 @@ mod tests {
                     Token { value: 500 },
                 ],
                 untranslated_address: Some(tests::id_to_invalid_addr(1)),
+                host_id: Uuid::new_v4(),
             },
             Peer {
                 datacenter: Some("eu".into()),
@@ -370,6 +373,7 @@ mod tests {
                     Token { value: 300 },
                 ],
                 untranslated_address: Some(tests::id_to_invalid_addr(2)),
+                host_id: Uuid::new_v4(),
             },
             Peer {
                 datacenter: Some("us".into()),
@@ -377,6 +381,7 @@ mod tests {
                 address: tests::id_to_invalid_addr(3),
                 tokens: vec![Token { value: 200 }, Token { value: 400 }],
                 untranslated_address: Some(tests::id_to_invalid_addr(3)),
+                host_id: Uuid::new_v4(),
             },
         ];
 
@@ -437,6 +442,7 @@ mod tests {
                 address: tests::id_to_invalid_addr(1),
                 tokens: vec![Token { value: 50 }, Token { value: 200 }],
                 untranslated_address: Some(tests::id_to_invalid_addr(1)),
+                host_id: Uuid::new_v4(),
             },
             Peer {
                 datacenter: Some("waw".into()),
@@ -444,6 +450,7 @@ mod tests {
                 address: tests::id_to_invalid_addr(2),
                 tokens: vec![Token { value: 150 }],
                 untranslated_address: Some(tests::id_to_invalid_addr(2)),
+                host_id: Uuid::new_v4(),
             },
             Peer {
                 datacenter: Some("waw".into()),
@@ -451,6 +458,7 @@ mod tests {
                 address: tests::id_to_invalid_addr(3),
                 tokens: vec![Token { value: 510 }],
                 untranslated_address: Some(tests::id_to_invalid_addr(3)),
+                host_id: Uuid::new_v4(),
             },
             Peer {
                 datacenter: Some("waw".into()),
@@ -458,6 +466,7 @@ mod tests {
                 address: tests::id_to_invalid_addr(4),
                 tokens: vec![Token { value: 300 }],
                 untranslated_address: Some(tests::id_to_invalid_addr(4)),
+                host_id: Uuid::new_v4(),
             },
             Peer {
                 datacenter: Some("her".into()),
@@ -465,6 +474,7 @@ mod tests {
                 address: tests::id_to_invalid_addr(5),
                 tokens: vec![Token { value: 100 }],
                 untranslated_address: Some(tests::id_to_invalid_addr(5)),
+                host_id: Uuid::new_v4(),
             },
             Peer {
                 datacenter: Some("her".into()),
@@ -472,6 +482,7 @@ mod tests {
                 address: tests::id_to_invalid_addr(6),
                 tokens: vec![Token { value: 250 }],
                 untranslated_address: Some(tests::id_to_invalid_addr(6)),
+                host_id: Uuid::new_v4(),
             },
             Peer {
                 datacenter: Some("her".into()),
@@ -479,6 +490,7 @@ mod tests {
                 address: tests::id_to_invalid_addr(7),
                 tokens: vec![Token { value: 500 }],
                 untranslated_address: Some(tests::id_to_invalid_addr(7)),
+                host_id: Uuid::new_v4(),
             },
             Peer {
                 datacenter: Some("her".into()),
@@ -486,6 +498,7 @@ mod tests {
                 address: tests::id_to_invalid_addr(8),
                 tokens: vec![Token { value: 400 }],
                 untranslated_address: Some(tests::id_to_invalid_addr(8)),
+                host_id: Uuid::new_v4(),
             },
         ];
 

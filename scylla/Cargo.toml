@@ -27,7 +27,7 @@ histogram = "0.6.9"
 num_enum = "0.5"
 tokio = { version = "1.12", features = ["net", "time", "io-util", "sync", "rt", "macros"] }
 snap = "1.0"
-uuid = "1.0"
+uuid = { version = "1.0", features = ["v4"] }
 rand = "0.8.3"
 thiserror = "1.0"
 itertools = "0.10.0"

@@ -10,6 +10,7 @@ use crate::utils::parse::{ParseErrorCause, ParseResult, ParserState};
 
 use crate::QueryResult;
 use futures::future::try_join_all;
+use itertools::Itertools;
 use rand::seq::SliceRandom;
 use rand::{thread_rng, Rng};
 use std::borrow::BorrowMut;
@@ -24,6 +25,7 @@ use std::time::Duration;
 use strum_macros::EnumString;
 use tokio::sync::mpsc;
 use tracing::{debug, error, trace, warn};
+use uuid::Uuid;
 
 /// Allows to read current metadata from the cluster
 pub(crate) struct MetadataReader {
@@ -48,7 +50,9 @@ pub struct Metadata {
     pub keyspaces: HashMap<String, Keyspace>,
 }
 
+#[non_exhaustive] // <- so that we can add more fields in a backwards-compatible way
 pub struct Peer {
+    pub host_id: Uuid,
     pub address: SocketAddr,
     pub untranslated_address: Option<SocketAddr>,
     pub tokens: Vec<Token>,
@@ -58,6 +62,7 @@ pub struct Peer {
 
 #[non_exhaustive] // <- so that we can add more fields in a backwards-compatible way
 pub struct UntranslatedPeer {
+    pub host_id: Uuid,
     pub untranslated_address: SocketAddr,
 }
 
@@ -203,6 +208,7 @@ impl Metadata {
                     datacenter: None,
                     rack: None,
                     untranslated_address: None,
+                    host_id: Uuid::new_v4(),
                 }
             })
             .collect();
@@ -476,12 +482,12 @@ async fn query_peers(
     address_translator: Option<&dyn AddressTranslator>,
 ) -> Result<Vec<Peer>, QueryError> {
     let mut peers_query =
-        Query::new("select rpc_address, data_center, rack, tokens from system.peers");
+        Query::new("select host_id, rpc_address, data_center, rack, tokens from system.peers");
     peers_query.set_page_size(1024);
     let peers_query_future = conn.query_all(&peers_query, &[]);
 
     let mut local_query =
-        Query::new("select rpc_address, data_center, rack, tokens from system.local");
+        Query::new("select host_id, rpc_address, data_center, rack, tokens from system.local");
     local_query.set_page_size(1024);
     let local_query_future = conn.query_all(&local_query, &[]);
 
@@ -495,21 +501,39 @@ async fn query_peers(
         "system.local query response was not Rows",
     ))?;
 
-    let typed_peers_rows =
-        peers_rows.into_typed::<(IpAddr, Option<String>, Option<String>, Option<Vec<String>>)>();
+    let typed_peers_rows = peers_rows.into_typed::<(
+        Option<Uuid>,
+        IpAddr,
+        Option<String>,
+        Option<String>,
+        Option<Vec<String>>,
+    )>();
 
     let local_ip: IpAddr = conn.get_connect_address().ip();
     let local_address = SocketAddr::new(local_ip, connect_port);
 
-    let typed_local_rows =
-        local_rows.into_typed::<(IpAddr, Option<String>, Option<String>, Option<Vec<String>>)>();
+    let typed_local_rows = local_rows.into_typed::<(
+        Option<Uuid>,
+        IpAddr,
+        Option<String>,
+        Option<String>,
+        Option<Vec<String>>,
+    )>();
 
     let untranslated_rows = typed_peers_rows
         .map(|res| res.map(|peer_row| (false, peer_row)))
         .chain(typed_local_rows.map(|res| res.map(|local_row| (true, local_row))));
 
-    let translated_peers_futures = untranslated_rows.map(|untranslated_row| async {
-        let (is_local, (untranslated_ip_addr, datacenter, rack, tokens)) = untranslated_row.map_err(
+    let translated_peers_futures = untranslated_rows
+        .filter_map_ok(|(is_local, (host_id, ip, dc, rack, tokens))| if let Some(host_id) = host_id {
+            Some((is_local, (host_id, ip, dc, rack, tokens)))
+        } else {
+            let who = if is_local { "Local node" } else { "Peer" };
+            warn!("{} (untranslated ip: {}, dc: {:?}, rack: {:?}) has Host ID set to null; skipping node.", who, ip, dc, rack);
+            None
+        })
+        .map(|untranslated_row| async {
+        let (is_local, (host_id, untranslated_ip_addr, datacenter, rack, tokens)) = untranslated_row.map_err(
             |_| QueryError::ProtocolError("system.peers or system.local has invalid column type")
         )?;
         let untranslated_address = SocketAddr::new(untranslated_ip_addr, connect_port);
@@ -530,7 +554,7 @@ async fn query_peers(
             (false, Some(translator)) => {
                 // We use the provided translator and skip the peer if there is no rule for translating it.
                 (Some(untranslated_address),
-                    match translator.translate_address(&UntranslatedPeer {untranslated_address}).await {
+                    match translator.translate_address(&UntranslatedPeer {host_id, untranslated_address}).await {
                         Ok(address) => address,
                         Err(err) => {
                             warn!("Could not translate address {}; TranslationError: {:?}; node therefore skipped.",
@@ -564,6 +588,7 @@ async fn query_peers(
         };
 
         Ok(Some(Peer {
+            host_id,
             untranslated_address,
             address,
             tokens,

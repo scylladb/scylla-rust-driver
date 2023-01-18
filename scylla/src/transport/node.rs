@@ -1,3 +1,5 @@
+use uuid::Uuid;
+
 /// Node represents a cluster node along with it's data and connections
 use crate::routing::{Sharder, Token};
 use crate::transport::connection::Connection;
@@ -52,8 +54,13 @@ impl TimestampedAverage {
 }
 
 /// Node represents a cluster node along with it's data and connections
+///
+/// Note: if a Node changes its address (the optionally translated address),
+/// then it is not longer represented by the same instance of Node struct,
+/// but instead a new instance is created (for implementation reasons).
 #[derive(Debug)]
 pub struct Node {
+    pub host_id: Uuid,
     pub address: SocketAddr,
     pub datacenter: Option<String>,
     pub rack: Option<String>,
@@ -75,6 +82,7 @@ impl Node {
     /// `datacenter` - optional datacenter name
     /// `rack` - optional rack name
     pub(crate) fn new(
+        host_id: Uuid,
         address: SocketAddr,
         pool_config: PoolConfig,
         datacenter: Option<String>,
@@ -87,6 +95,7 @@ impl Node {
         });
 
         Node {
+            host_id,
             address,
             datacenter,
             rack,
@@ -162,7 +171,7 @@ impl Node {
 
 impl PartialEq for Node {
     fn eq(&self, other: &Self) -> bool {
-        self.address == other.address
+        self.host_id == other.host_id
     }
 }
 
@@ -170,6 +179,6 @@ impl Eq for Node {}
 
 impl Hash for Node {
     fn hash<H: Hasher>(&self, state: &mut H) {
-        self.address.hash(state);
+        self.host_id.hash(state);
     }
 }
