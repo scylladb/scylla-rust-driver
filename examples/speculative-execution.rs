@@ -1,5 +1,6 @@
 use scylla::{
-    speculative_execution::PercentileSpeculativeExecutionPolicy, Session, SessionBuilder,
+    speculative_execution::PercentileSpeculativeExecutionPolicy,
+    transport::execution_profile::ExecutionProfile, Session, SessionBuilder,
 };
 
 use anyhow::Result;
@@ -15,9 +16,13 @@ async fn main() -> Result<()> {
         percentile: 99.0,
     };
 
+    let speculative_profile = ExecutionProfile::builder()
+        .speculative_execution_policy(Some(Arc::new(speculative)))
+        .build();
+
     let session: Session = SessionBuilder::new()
         .known_node(uri)
-        .speculative_execution(Arc::new(speculative))
+        .default_execution_profile_handle(speculative_profile.into_handle())
         .build()
         .await?;
 

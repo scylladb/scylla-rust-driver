@@ -3,8 +3,8 @@ mod utils;
 use scylla::frame::types;
 use scylla::retry_policy::FallthroughRetryPolicy;
 use scylla::transport::session::Session;
-use scylla::SessionBuilder;
 use scylla::{frame::protocol_features::ProtocolFeatures, test_utils::unique_keyspace_name};
+use scylla::{ExecutionProfile, SessionBuilder};
 use std::sync::Arc;
 use tokio::sync::mpsc;
 use utils::test_with_3_node_cluster;
@@ -43,10 +43,15 @@ async fn if_lwt_optimisation_mark_offered_then_negotiatied_and_lwt_routed_optima
             prepared_rx
         });
 
+        let handle = ExecutionProfile::builder()
+            .retry_policy(Box::new(FallthroughRetryPolicy))
+            .build()
+            .into_handle();
+
         // DB preparation phase
         let session: Session = SessionBuilder::new()
             .known_node(proxy_uris[0].as_str())
-            .retry_policy(Box::new(FallthroughRetryPolicy))
+            .default_execution_profile_handle(handle)
             .address_translator(Arc::new(translation_map))
             .build()
             .await

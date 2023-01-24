@@ -14,6 +14,7 @@ use crate::transport::topology::Strategy::SimpleStrategy;
 use crate::transport::topology::{CollectionType, ColumnKind, CqlType, NativeType};
 use crate::utils::test_utils::{supports_feature, unique_keyspace_name};
 use crate::CachingSession;
+use crate::ExecutionProfile;
 use crate::QueryResult;
 use crate::{IntoTypedRows, Session, SessionBuilder};
 use assert_matches::assert_matches;
@@ -1229,6 +1230,11 @@ async fn test_request_timeout() {
     use std::time::Duration;
     let uri = std::env::var("SCYLLA_URI").unwrap_or_else(|_| "127.0.0.1:9042".to_string());
 
+    let fast_timeouting_profile_handle = ExecutionProfile::builder()
+        .request_timeout(Some(Duration::from_millis(1)))
+        .build()
+        .into_handle();
+
     {
         let session = SessionBuilder::new()
             .known_node(uri.as_str())
@@ -1257,7 +1263,7 @@ async fn test_request_timeout() {
     {
         let timeouting_session = SessionBuilder::new()
             .known_node(uri)
-            .request_timeout(Some(Duration::from_millis(1)))
+            .default_execution_profile_handle(fast_timeouting_profile_handle)
             .build()
             .await
             .unwrap();
@@ -2590,10 +2596,16 @@ async fn test_iter_works_when_retry_policy_returns_ignore_write_error() {
     }
 
     let uri = std::env::var("SCYLLA_URI").unwrap_or_else(|_| "127.0.0.1:9042".to_string());
+
+    let handle = ExecutionProfile::builder()
+        .consistency(Consistency::All)
+        .retry_policy(Box::new(MyRetryPolicy(retried_flag.clone())))
+        .build()
+        .into_handle();
+
     let session = SessionBuilder::new()
         .known_node(&uri)
-        .retry_policy(Box::new(MyRetryPolicy(retried_flag.clone())))
-        .default_consistency(Consistency::All)
+        .default_execution_profile_handle(handle)
         .build()
         .await
         .unwrap();

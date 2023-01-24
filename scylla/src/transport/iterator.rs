@@ -14,6 +14,7 @@ use thiserror::Error;
 use tokio::sync::mpsc;
 
 use super::errors::QueryError;
+use super::execution_profile::ExecutionProfileInner;
 use crate::cql_to_rust::{FromRow, FromRowError};
 use crate::Session;
 
@@ -72,10 +73,8 @@ struct ReceivedPage {
 pub(crate) struct PreparedIteratorConfig {
     pub prepared: PreparedStatement,
     pub values: SerializedValues,
-    pub default_consistency: Consistency,
     pub token: Option<Token>,
-    pub retry_session: Box<dyn RetrySession>,
-    pub load_balancer: Arc<dyn LoadBalancingPolicy>,
+    pub execution_profile: Arc<ExecutionProfileInner>,
     pub cluster_data: Arc<ClusterData>,
     pub metrics: Arc<Metrics>,
 }
@@ -130,9 +129,7 @@ impl RowIterator {
     pub(crate) async fn new_for_query(
         mut query: Query,
         values: SerializedValues,
-        default_consistency: Consistency,
-        retry_session: Box<dyn RetrySession>,
-        load_balancer: Arc<dyn LoadBalancingPolicy>,
+        execution_profile: Arc<ExecutionProfileInner>,
         cluster_data: Arc<ClusterData>,
         metrics: Arc<Metrics>,
     ) -> Result<RowIterator, QueryError> {
@@ -140,7 +137,17 @@ impl RowIterator {
             query.set_page_size(DEFAULT_ITER_PAGE_SIZE);
         }
         let (sender, mut receiver) = mpsc::channel(1);
-        let consistency = query.config.determine_consistency(default_consistency);
+
+        let consistency = query
+            .config
+            .consistency
+            .unwrap_or(execution_profile.consistency);
+        let serial_consistency = query
+            .config
+            .serial_consistency
+            .unwrap_or(execution_profile.serial_consistency);
+
+        let retry_session = execution_profile.retry_policy.new_session();
 
         let worker_task = async move {
             let query_ref = &query;
@@ -156,7 +163,7 @@ impl RowIterator {
                         query_ref,
                         values_ref,
                         consistency,
-                        query.config.serial_consistency.flatten(),
+                        serial_consistency,
                         paging_state,
                     )
                     .await
@@ -170,7 +177,7 @@ impl RowIterator {
                 query_is_idempotent: query.config.is_idempotent,
                 query_consistency: consistency,
                 retry_session,
-                load_balancer,
+                execution_profile,
                 metrics,
                 paging_state: None,
                 history_listener: query.config.history_listener.clone(),
@@ -209,10 +216,18 @@ impl RowIterator {
             config.prepared.set_page_size(DEFAULT_ITER_PAGE_SIZE);
         }
         let (sender, mut receiver) = mpsc::channel(1);
+
         let consistency = config
             .prepared
             .config
-            .determine_consistency(config.default_consistency);
+            .consistency
+            .unwrap_or(config.execution_profile.consistency);
+        let serial_consistency = config
+            .prepared
+            .config
+            .serial_consistency
+            .unwrap_or(config.execution_profile.serial_consistency);
+        let retry_session = config.execution_profile.retry_policy.new_session();
 
         let statement_info = Statement {
             token: config.token,
@@ -240,7 +255,7 @@ impl RowIterator {
                         prepared_ref,
                         values_ref,
                         consistency,
-                        config.prepared.config.serial_consistency.flatten(),
+                        serial_consistency,
                         paging_state,
                     )
                     .await
@@ -253,8 +268,8 @@ impl RowIterator {
                 statement_info,
                 query_is_idempotent: config.prepared.config.is_idempotent,
                 query_consistency: consistency,
-                retry_session: config.retry_session,
-                load_balancer: config.load_balancer,
+                retry_session,
+                execution_profile: config.execution_profile,
                 metrics: config.metrics,
                 paging_state: None,
                 history_listener: config.prepared.config.history_listener.clone(),
@@ -351,9 +366,8 @@ struct RowIteratorWorker<'a, ConnFunc, QueryFunc> {
     statement_info: Statement<'a>,
     query_is_idempotent: bool,
     query_consistency: Consistency,
-
     retry_session: Box<dyn RetrySession>,
-    load_balancer: Arc<dyn LoadBalancingPolicy>,
+    execution_profile: Arc<ExecutionProfileInner>,
     metrics: Arc<Metrics>,
 
     paging_state: Option<Bytes>,
@@ -370,10 +384,16 @@ where
     QueryFunc: Fn(Arc<Connection>, Consistency, Option<Bytes>) -> QueryFut,
     QueryFut: Future<Output = Result<QueryResponse, QueryError>>,
 {
+    fn load_balancer(&self) -> &dyn LoadBalancingPolicy {
+        &*self.execution_profile.load_balancing_policy
+    }
+
     // Contract: this function MUST send at least one item through self.sender
     async fn work(mut self, cluster_data: Arc<ClusterData>) -> PageSendAttemptedProof {
-        self.load_balancer.update_cluster_data(&cluster_data);
-        let query_plan = self.load_balancer.plan(&self.statement_info, &cluster_data);
+        self.load_balancer().update_cluster_data(&cluster_data);
+        let query_plan = self
+            .load_balancer()
+            .plan(&self.statement_info, &cluster_data);
 
         let mut last_error: QueryError =
             QueryError::ProtocolError("Empty query plan - driver bug!");
@@ -511,7 +531,7 @@ where
 
             let elapsed = query_start.elapsed();
             if Session::should_consider_query_for_latency_measurements(
-                &*self.load_balancer,
+                self.load_balancer(),
                 &query_response,
             ) {
                 let mut average_latency_guard = node.average_latency.write().unwrap();
