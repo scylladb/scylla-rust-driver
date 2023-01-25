@@ -360,7 +360,6 @@ mod tests {
                     Token { value: 250 },
                     Token { value: 500 },
                 ],
-                untranslated_address: Some(tests::id_to_invalid_addr(1)),
                 host_id: Uuid::new_v4(),
             },
             Peer {
@@ -372,7 +371,6 @@ mod tests {
                     Token { value: 150 },
                     Token { value: 300 },
                 ],
-                untranslated_address: Some(tests::id_to_invalid_addr(2)),
                 host_id: Uuid::new_v4(),
             },
             Peer {
@@ -380,7 +378,6 @@ mod tests {
                 rack: None,
                 address: tests::id_to_invalid_addr(3),
                 tokens: vec![Token { value: 200 }, Token { value: 400 }],
-                untranslated_address: Some(tests::id_to_invalid_addr(3)),
                 host_id: Uuid::new_v4(),
             },
         ];
@@ -441,7 +438,6 @@ mod tests {
                 rack: Some("r1".into()),
                 address: tests::id_to_invalid_addr(1),
                 tokens: vec![Token { value: 50 }, Token { value: 200 }],
-                untranslated_address: Some(tests::id_to_invalid_addr(1)),
                 host_id: Uuid::new_v4(),
             },
             Peer {
@@ -449,7 +445,6 @@ mod tests {
                 rack: Some("r1".into()),
                 address: tests::id_to_invalid_addr(2),
                 tokens: vec![Token { value: 150 }],
-                untranslated_address: Some(tests::id_to_invalid_addr(2)),
                 host_id: Uuid::new_v4(),
             },
             Peer {
@@ -457,7 +452,6 @@ mod tests {
                 rack: Some("r2".into()),
                 address: tests::id_to_invalid_addr(3),
                 tokens: vec![Token { value: 510 }],
-                untranslated_address: Some(tests::id_to_invalid_addr(3)),
                 host_id: Uuid::new_v4(),
             },
             Peer {
@@ -465,7 +459,6 @@ mod tests {
                 rack: Some("r2".into()),
                 address: tests::id_to_invalid_addr(4),
                 tokens: vec![Token { value: 300 }],
-                untranslated_address: Some(tests::id_to_invalid_addr(4)),
                 host_id: Uuid::new_v4(),
             },
             Peer {
@@ -473,7 +466,6 @@ mod tests {
                 rack: Some("r3".into()),
                 address: tests::id_to_invalid_addr(5),
                 tokens: vec![Token { value: 100 }],
-                untranslated_address: Some(tests::id_to_invalid_addr(5)),
                 host_id: Uuid::new_v4(),
             },
             Peer {
@@ -481,7 +473,6 @@ mod tests {
                 rack: Some("r3".into()),
                 address: tests::id_to_invalid_addr(6),
                 tokens: vec![Token { value: 250 }],
-                untranslated_address: Some(tests::id_to_invalid_addr(6)),
                 host_id: Uuid::new_v4(),
             },
             Peer {
@@ -489,7 +480,6 @@ mod tests {
                 rack: Some("r4".into()),
                 address: tests::id_to_invalid_addr(7),
                 tokens: vec![Token { value: 500 }],
-                untranslated_address: Some(tests::id_to_invalid_addr(7)),
                 host_id: Uuid::new_v4(),
             },
             Peer {
@@ -497,7 +487,6 @@ mod tests {
                 rack: Some("r4".into()),
                 address: tests::id_to_invalid_addr(8),
                 tokens: vec![Token { value: 400 }],
-                untranslated_address: Some(tests::id_to_invalid_addr(8)),
                 host_id: Uuid::new_v4(),
             },
         ];

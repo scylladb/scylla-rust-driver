@@ -55,7 +55,6 @@ pub struct Metadata {
 pub struct Peer {
     pub host_id: Uuid,
     pub address: SocketAddr,
-    pub untranslated_address: Option<SocketAddr>,
     pub tokens: Vec<Token>,
     pub datacenter: Option<String>,
     pub rack: Option<String>,
@@ -306,7 +305,6 @@ impl Metadata {
                     }],
                     datacenter: None,
                     rack: None,
-                    untranslated_address: None,
                     host_id: Uuid::new_v4(),
                 }
             })
@@ -698,7 +696,6 @@ async fn create_peer_from_row(
 
     Ok(Some(Peer {
         host_id,
-        untranslated_address: Some(untranslated_address),
         address,
         tokens,
         datacenter,
