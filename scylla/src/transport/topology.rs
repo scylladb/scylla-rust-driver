@@ -5,7 +5,6 @@ use crate::transport::connection::{Connection, ConnectionConfig};
 use crate::transport::connection_pool::{NodeConnectionPool, PoolConfig, PoolSize};
 use crate::transport::errors::{DbError, QueryError};
 use crate::transport::host_filter::HostFilter;
-use crate::transport::session::AddressTranslator;
 use crate::utils::parse::{ParseErrorCause, ParseResult, ParserState};
 
 use futures::future::{self, FutureExt};
@@ -43,8 +42,6 @@ pub(crate) struct MetadataReader {
     known_peers: Vec<SocketAddr>,
     keyspaces_to_fetch: Vec<String>,
     fetch_schema: bool,
-
-    address_translator: Option<Arc<dyn AddressTranslator>>,
     host_filter: Option<Arc<dyn HostFilter>>,
 }
 
@@ -332,7 +329,6 @@ impl MetadataReader {
         server_event_sender: mpsc::Sender<Event>,
         keyspaces_to_fetch: Vec<String>,
         fetch_schema: bool,
-        address_translator: &Option<Arc<dyn AddressTranslator>>,
         host_filter: &Option<Arc<dyn HostFilter>>,
     ) -> Self {
         let control_connection_address = *known_peers
@@ -358,7 +354,6 @@ impl MetadataReader {
             known_peers: known_peers.into(),
             keyspaces_to_fetch,
             fetch_schema,
-            address_translator: address_translator.clone(),
             host_filter: host_filter.clone(),
         }
     }
@@ -442,7 +437,6 @@ impl MetadataReader {
         let res = query_metadata(
             conn,
             self.control_connection_address.port(),
-            self.address_translator.as_deref(),
             &self.keyspaces_to_fetch,
             self.fetch_schema,
         )
@@ -552,11 +546,10 @@ impl MetadataReader {
 async fn query_metadata(
     conn: &Arc<Connection>,
     connect_port: u16,
-    address_translator: Option<&dyn AddressTranslator>,
     keyspace_to_fetch: &[String],
     fetch_schema: bool,
 ) -> Result<Metadata, QueryError> {
-    let peers_query = query_peers(conn, connect_port, address_translator);
+    let peers_query = query_peers(conn, connect_port);
     let keyspaces_query = query_keyspaces(conn, keyspace_to_fetch, fetch_schema);
 
     let (peers, keyspaces) = tokio::try_join!(peers_query, keyspaces_query)?;
@@ -603,11 +596,7 @@ impl NodeInfoSource {
     }
 }
 
-async fn query_peers(
-    conn: &Arc<Connection>,
-    connect_port: u16,
-    address_translator: Option<&dyn AddressTranslator>,
-) -> Result<Vec<Peer>, QueryError> {
+async fn query_peers(conn: &Arc<Connection>, connect_port: u16) -> Result<Vec<Peer>, QueryError> {
     let mut peers_query =
         Query::new("select host_id, rpc_address, data_center, rack, tokens from system.peers");
     peers_query.set_page_size(1024);
@@ -638,7 +627,7 @@ async fn query_peers(
         let row = raw_row.into_typed().map_err(|_| {
             QueryError::ProtocolError("system.peers or system.local has invalid column type")
         })?;
-        create_peer_from_row(source, row, local_address, address_translator).await
+        create_peer_from_row(source, row, local_address).await
     });
 
     let peers = translated_peers_futures
@@ -652,7 +641,6 @@ async fn create_peer_from_row(
     source: NodeInfoSource,
     row: NodeInfoRow,
     local_address: SocketAddr,
-    address_translator: Option<&dyn AddressTranslator>,
 ) -> Result<Option<Peer>, QueryError> {
     let NodeInfoRow {
         host_id,
@@ -673,38 +661,17 @@ async fn create_peer_from_row(
     let connect_port = local_address.port();
     let untranslated_address = SocketAddr::new(untranslated_ip_addr, connect_port);
 
-    let (untranslated_address, address) = match (source, address_translator) {
-        (NodeInfoSource::Local, None) => {
+    let address = match source {
+        NodeInfoSource::Local => {
+            // For the local node we should use connection's address instead of rpc_address.
+            // (The reason is that rpc_address in system.local can be wrong.)
+            // Thus, we replace address in local_rows with connection's address.
             // We need to replace rpc_address with control connection address.
-            (Some(untranslated_address), local_address)
+            local_address
         }
-        (NodeInfoSource::Local, Some(_)) => {
-            // The address we used to connect is most likely different and we just don't know.
-            (None, local_address)
-        }
-        (NodeInfoSource::Peer, None) => {
+        NodeInfoSource::Peer => {
             // The usual case - no translation.
-            (Some(untranslated_address), untranslated_address)
-        }
-        (NodeInfoSource::Peer, Some(translator)) => {
-            // We use the provided translator and skip the peer if there is no rule for translating it.
-            (
-                Some(untranslated_address),
-                match translator
-                    .translate_address(&UntranslatedPeer {
-                        host_id,
-                        untranslated_address,
-                    })
-                    .await
-                {
-                    Ok(address) => address,
-                    Err(err) => {
-                        warn!("Could not translate address {}; TranslationError: {:?}; node therefore skipped.",
-                                untranslated_address, err);
-                        return Ok::<Option<Peer>, QueryError>(None);
-                    }
-                },
-            )
+            untranslated_address
         }
     };
 
@@ -731,7 +698,7 @@ async fn create_peer_from_row(
 
     Ok(Some(Peer {
         host_id,
-        untranslated_address,
+        untranslated_address: Some(untranslated_address),
         address,
         tokens,
         datacenter,

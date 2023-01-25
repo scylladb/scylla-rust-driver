@@ -10,7 +10,6 @@ use crate::transport::{
     errors::QueryError,
     node::Node,
     partitioner::PartitionerName,
-    session::AddressTranslator,
     topology::{Keyspace, Metadata, MetadataReader},
 };
 
@@ -134,7 +133,6 @@ impl Cluster {
         pool_config: PoolConfig,
         keyspaces_to_fetch: Vec<String>,
         fetch_schema_metadata: bool,
-        address_translator: &Option<Arc<dyn AddressTranslator>>,
         host_filter: &Option<Arc<dyn HostFilter>>,
     ) -> Result<Cluster, QueryError> {
         let (refresh_sender, refresh_receiver) = tokio::sync::mpsc::channel(32);
@@ -148,7 +146,6 @@ impl Cluster {
             server_events_sender,
             keyspaces_to_fetch,
             fetch_schema_metadata,
-            address_translator,
             host_filter,
         );
 

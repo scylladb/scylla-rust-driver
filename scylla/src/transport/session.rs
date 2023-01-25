@@ -425,7 +425,6 @@ impl Session {
             config.get_pool_config(),
             config.keyspaces_to_fetch,
             config.fetch_schema_metadata,
-            &config.address_translator,
             &config.host_filter,
         )
         .await?;
