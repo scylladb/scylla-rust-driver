@@ -24,6 +24,7 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration;
 use tracing::{debug, warn};
+use uuid::Uuid;
 
 /// Cluster manages up to date information and connections to database nodes.
 /// All data can be accessed by cloning Arc<ClusterData> in the `data` field
@@ -58,8 +59,8 @@ pub struct Datacenter {
 
 #[derive(Clone)]
 pub struct ClusterData {
-    pub(crate) known_peers: HashMap<SocketAddr, Arc<Node>>, // Invariant: nonempty after Cluster::new()
-    pub(crate) ring: BTreeMap<Token, Arc<Node>>, // Invariant: nonempty after Cluster::new()
+    pub(crate) known_peers: HashMap<Uuid, Arc<Node>>, // Invariant: nonempty after Cluster::new()
+    pub(crate) ring: BTreeMap<Token, Arc<Node>>,      // Invariant: nonempty after Cluster::new()
     pub(crate) keyspaces: HashMap<String, Keyspace>,
     pub(crate) all_nodes: Vec<Arc<Node>>,
     pub(crate) datacenters: HashMap<String, Datacenter>,
@@ -285,12 +286,12 @@ impl ClusterData {
     pub(crate) fn new(
         metadata: Metadata,
         pool_config: &PoolConfig,
-        known_peers: &HashMap<SocketAddr, Arc<Node>>,
+        known_peers: &HashMap<Uuid, Arc<Node>>,
         used_keyspace: &Option<VerifiedKeyspaceName>,
         host_filter: Option<&dyn HostFilter>,
     ) -> Self {
         // Create new updated known_peers and ring
-        let mut new_known_peers: HashMap<SocketAddr, Arc<Node>> =
+        let mut new_known_peers: HashMap<Uuid, Arc<Node>> =
             HashMap::with_capacity(metadata.peers.len());
         let mut ring: BTreeMap<Token, Arc<Node>> = BTreeMap::new();
         let mut datacenters: HashMap<String, Datacenter> = HashMap::new();
@@ -300,11 +301,11 @@ impl ClusterData {
             // Take existing Arc<Node> if possible, otherwise create new one
             // Changing rack/datacenter but not ip address seems improbable
             // so we can just create new node and connections then
-            let node: Arc<Node> = match known_peers.get(&peer.address) {
+            let node: Arc<Node> = match known_peers.get(&peer.host_id) {
                 Some(node)
                     if node.datacenter == peer.datacenter
                         && node.rack == peer.rack
-                        && node.host_id == peer.host_id =>
+                        && node.address == peer.address =>
                 {
                     node.clone()
                 }
@@ -322,7 +323,7 @@ impl ClusterData {
                 }
             };
 
-            new_known_peers.insert(peer.address, node.clone());
+            new_known_peers.insert(peer.host_id, node.clone());
 
             if let Some(dc) = &node.datacenter {
                 match datacenters.get_mut(dc) {
@@ -519,7 +520,14 @@ impl ClusterWorker {
     fn change_node_down_marker(&mut self, addr: SocketAddr, is_down: bool) {
         let cluster_data = self.cluster_data.load_full();
 
-        let node = match cluster_data.known_peers.get(&addr) {
+        // We need to iterate through the whole map here, but there will rarely more than ~100 nodes,
+        // and changes of down marker are infrequent enough to afford this. As an important tradeoff,
+        // we only keep one hashmap of known_peers, which is indexed by host IDs for node identification.
+        let node = match cluster_data
+            .known_peers
+            .values()
+            .find(|&peer| peer.address == addr)
+        {
             Some(node) => node,
             None => {
                 warn!("Unknown node address {}", addr);

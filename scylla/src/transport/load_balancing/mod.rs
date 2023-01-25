@@ -226,7 +226,8 @@ mod tests {
         for (id, average) in averages {
             *cluster
                 .known_peers
-                .get_mut(&tests::id_to_invalid_addr(*id))
+                .values_mut()
+                .find(|peer| peer.address == tests::id_to_invalid_addr(*id))
                 .unwrap()
                 .average_latency
                 .write()
