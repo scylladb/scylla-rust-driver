@@ -26,6 +26,8 @@ jobs:
       run: cargo clippy --verbose --examples --tests
     - name: Cargo check without features
       run: cargo check --manifest-path "scylla/Cargo.toml" --features ""
+    - name: Cargo check with secrecy feature
+      run: cargo check --manifest-path "scylla/Cargo.toml" --features "secret"
     - name: Build scylla-cql
       run: cargo build --verbose --all-targets --manifest-path "scylla-cql/Cargo.toml"
     - name: Build
