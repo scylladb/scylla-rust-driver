@@ -1,5 +1,4 @@
 use anyhow::Result;
-use scylla::cql_to_rust::FromCqlVal;
 use scylla::macros::{FromUserType, IntoUserType};
 use scylla::{IntoTypedRows, Session, SessionBuilder};
 use std::env;
