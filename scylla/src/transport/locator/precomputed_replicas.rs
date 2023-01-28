@@ -208,3 +208,132 @@ impl PrecomputedReplicas {
         Some(&precomputed_replicas[..result_len])
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use std::collections::HashMap;
+
+    use crate::{
+        routing::Token,
+        transport::{
+            locator::test::{create_ring, mock_metadata_for_token_aware_tests, A, C, D, E, F, G},
+            topology::{Keyspace, Strategy},
+        },
+    };
+
+    use super::{PrecomputedReplicas, ReplicationInfo};
+
+    #[tokio::test]
+    async fn test_simple_stategy() {
+        let mut metadata = mock_metadata_for_token_aware_tests();
+        metadata.keyspaces = [(
+            "SimpleStrategy{rf=2}".into(),
+            Keyspace {
+                strategy: Strategy::SimpleStrategy {
+                    replication_factor: 2,
+                },
+                tables: HashMap::new(),
+                views: HashMap::new(),
+                user_defined_types: HashMap::new(),
+            },
+        )]
+        .iter()
+        .cloned()
+        .collect();
+
+        let ring = create_ring(&metadata);
+        let replication_info = ReplicationInfo::new(ring);
+        let precomputed_replicas = PrecomputedReplicas::compute(
+            &replication_info,
+            metadata
+                .keyspaces
+                .values()
+                .map(|keyspace| &keyspace.strategy),
+        );
+
+        let check = |token, replication_factor, expected_node_ids| {
+            let replicas = precomputed_replicas.get_precomputed_simple_strategy_replicas(
+                Token { value: token },
+                replication_factor,
+            );
+
+            let ids: Vec<u16> = replicas
+                .unwrap()
+                .iter()
+                .map(|node| node.address.port())
+                .collect();
+
+            assert_eq!(ids, expected_node_ids);
+        };
+
+        check(160, 0, vec![]);
+        check(160, 1, vec![F]);
+        check(160, 2, vec![F, A]);
+        assert_eq!(
+            precomputed_replicas.get_precomputed_simple_strategy_replicas(Token { value: 160 }, 3),
+            None
+        );
+
+        check(200, 1, vec![F]);
+        check(200, 2, vec![F, A]);
+
+        check(701, 1, vec![E]);
+        check(701, 2, vec![E, G]);
+    }
+
+    #[tokio::test]
+    async fn test_network_topology_strategy() {
+        let metadata = mock_metadata_for_token_aware_tests();
+        let ring = create_ring(&metadata);
+        let replication_info = ReplicationInfo::new(ring);
+        let precomputed_replicas = PrecomputedReplicas::compute(
+            &replication_info,
+            metadata
+                .keyspaces
+                .values()
+                .map(|keyspace| &keyspace.strategy),
+        );
+
+        let check = |token, dc, replication_factor, expected_node_ids| {
+            let replicas = precomputed_replicas.get_precomputed_network_strategy_replicas(
+                Token { value: token },
+                dc,
+                replication_factor,
+            );
+
+            let ids: Vec<u16> = replicas
+                .unwrap()
+                .iter()
+                .map(|node| node.address.port())
+                .collect();
+
+            assert_eq!(ids, expected_node_ids);
+        };
+
+        check(160, "eu", 0, vec![]);
+        check(160, "eu", 1, vec![A]);
+        check(160, "eu", 2, vec![A, G]);
+        check(160, "eu", 3, vec![A, C, G]);
+        assert_eq!(
+            precomputed_replicas.get_precomputed_network_strategy_replicas(
+                Token { value: 160 },
+                "eu",
+                4
+            ),
+            None
+        );
+
+        check(160, "us", 0, vec![]);
+        check(160, "us", 1, vec![F]);
+        check(160, "us", 2, vec![F, D]);
+        check(160, "us", 3, vec![F, D, E]);
+        assert_eq!(
+            precomputed_replicas.get_precomputed_network_strategy_replicas(
+                Token { value: 160 },
+                "us",
+                4
+            ),
+            None
+        );
+    }
+}
