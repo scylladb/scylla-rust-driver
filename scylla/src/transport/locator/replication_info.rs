@@ -200,3 +200,76 @@ where
         None
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use crate::{
+        routing::Token,
+        transport::locator::test::{
+            create_ring, mock_metadata_for_token_aware_tests, A, B, C, D, E, F, G,
+        },
+    };
+
+    use super::ReplicationInfo;
+
+    #[tokio::test]
+    async fn test_simple_stategy() {
+        let ring = create_ring(&mock_metadata_for_token_aware_tests());
+        let replication_info = ReplicationInfo::new(ring);
+
+        let check = |token, replication_factor, expected_node_ids| {
+            let replicas = replication_info
+                .simple_strategy_replicas(Token { value: token }, replication_factor);
+            let ids: Vec<u16> = replicas.map(|node| node.address.port()).collect();
+
+            assert_eq!(ids, expected_node_ids);
+        };
+
+        check(160, 0, vec![]);
+        check(160, 2, vec![F, A]);
+
+        check(200, 1, vec![F]);
+        check(200, 2, vec![F, A]);
+        check(200, 3, vec![F, A, C]);
+        check(200, 4, vec![F, A, C, D]);
+        check(200, 5, vec![F, A, C, D, G]);
+        check(200, 6, vec![F, A, C, D, G, B]);
+        check(200, 7, vec![F, A, C, D, G, B, E]);
+
+        check(701, 1, vec![E]);
+        check(701, 2, vec![E, G]);
+        check(701, 3, vec![E, G, B]);
+        check(701, 4, vec![E, G, B, A]);
+        check(701, 5, vec![E, G, B, A, F]);
+        check(701, 6, vec![E, G, B, A, F, C]);
+        check(701, 7, vec![E, G, B, A, F, C, D]);
+        check(701, 8, vec![E, G, B, A, F, C, D]);
+    }
+
+    #[tokio::test]
+    async fn test_network_topology_strategy() {
+        let ring = create_ring(&mock_metadata_for_token_aware_tests());
+        let replication_info = ReplicationInfo::new(ring);
+
+        let check = |token, dc, rf, expected| {
+            let replicas =
+                replication_info.nts_replicas_in_datacenter(Token { value: token }, dc, rf);
+            let ids: Vec<u16> = replicas.map(|node| node.address.port()).collect();
+
+            assert_eq!(ids, expected);
+        };
+
+        check(160, "eu", 0, vec![]);
+        check(160, "eu", 1, vec![A]);
+        check(160, "eu", 2, vec![A, G]);
+        check(160, "eu", 3, vec![A, C, G]);
+        check(160, "eu", 4, vec![A, C, G, B]);
+        check(160, "eu", 5, vec![A, C, G, B]);
+
+        check(160, "us", 0, vec![]);
+        check(160, "us", 1, vec![F]);
+        check(160, "us", 2, vec![F, D]);
+        check(160, "us", 3, vec![F, D, E]);
+        check(160, "us", 4, vec![F, D, E]);
+    }
+}
