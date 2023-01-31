@@ -1,10 +1,29 @@
+use darling::ToTokens;
 use proc_macro::TokenStream;
+
+mod deserialize;
 
 mod from_row;
 mod from_user_type;
 mod into_user_type;
 mod parser;
 mod value_list;
+
+#[proc_macro_derive(DeserializeRow, attributes(scylla, scylla_crate))]
+pub fn deserialize_row_derive(tokens_input: TokenStream) -> TokenStream {
+    match deserialize::row::deserialize_row_derive(tokens_input) {
+        Ok(tokens) => tokens.into_token_stream().into(),
+        Err(err) => err.into_compile_error().into(),
+    }
+}
+
+#[proc_macro_derive(DeserializeCql, attributes(scylla))]
+pub fn deserialize_cql_derive(tokens_input: TokenStream) -> TokenStream {
+    match deserialize::cql::deserialize_user_type_derive(tokens_input) {
+        Ok(tokens) => tokens.into_token_stream().into(),
+        Err(err) => err.into_compile_error().into(),
+    }
+}
 
 /// #[derive(FromRow)] derives FromRow for struct
 /// Works only on simple structs without generics etc

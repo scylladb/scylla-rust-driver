@@ -12,6 +12,7 @@ pub use crate::frame::types::Consistency;
 
 #[doc(hidden)]
 pub mod _macro_internal {
+    pub use crate::frame;
     pub use crate::frame::response::cql_to_rust::{
         FromCqlVal, FromCqlValError, FromRow, FromRowError,
     };
@@ -20,4 +21,5 @@ pub mod _macro_internal {
         SerializedResult, SerializedValues, Value, ValueList, ValueTooBig,
     };
     pub use crate::macros::*;
+    pub use crate::types;
 }
