@@ -23,10 +23,10 @@ session
     .await?;
 
 // Read time from the table, no need for a wrapper here
-if let Some(rows) = session.query("SELECT a FROM keyspace.table", &[]).await?.rows {
-    for row in rows.into_typed::<(Duration,)>() {
-        let (time_value,): (Duration,) = row?;
-    }
+let result = session.query("SELECT a FROM keyspace.table", &[]).await?;
+let mut iter = result.rows_typed::<(Duration,)>()?;
+while let Some((time_value,)) = iter.next().transpose()? {
+    println!("{:?}", time_value);
 }
 # Ok(())
 # }

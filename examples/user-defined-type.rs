@@ -1,6 +1,6 @@
 use anyhow::Result;
 use scylla::macros::{FromUserType, IntoUserType};
-use scylla::{IntoTypedRows, Session, SessionBuilder};
+use scylla::{Session, SessionBuilder};
 use std::env;
 
 #[tokio::main]
@@ -46,11 +46,10 @@ async fn main() -> Result<()> {
         .await?;
 
     // And read like any normal value
-    if let Some(rows) = session.query("SELECT my FROM ks.udt_tab", &[]).await?.rows {
-        for row in rows.into_typed::<(MyType,)>() {
-            let (my_val,) = row?;
-            println!("{:?}", my_val)
-        }
+    let result = session.query("SELECT my FROM ks.udt_tab", &[]).await?;
+    let mut iter = result.rows_typed::<(MyType,)>()?;
+    while let Some((my_val,)) = iter.next().transpose()? {
+        println!("{:?}", my_val);
     }
 
     println!("Ok.");

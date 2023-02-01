@@ -1,12 +1,13 @@
 # Date
 
-For most use cases `Date` can be represented as 
+For most use cases `Date` can be represented as
 [`chrono::NaiveDate`](https://docs.rs/chrono/0.4.19/chrono/naive/struct.NaiveDate.html).\
 `NaiveDate` supports dates from -262145-1-1 to 262143-12-31.
 
 For dates outside of this range you can use the raw `u32` representation.
 
 ### Using `chrono::NaiveDate`:
+
 ```rust
 # extern crate scylla;
 # extern crate chrono;
@@ -23,16 +24,17 @@ session
     .await?;
 
 // Read NaiveDate from the table
-if let Some(rows) = session.query("SELECT a FROM keyspace.table", &[]).await?.rows {
-    for row in rows.into_typed::<(NaiveDate,)>() {
-        let (date_value,): (NaiveDate,) = row?;
-    }
+let result = session.query("SELECT a FROM keyspace.table", &[]).await?;
+let mut iter = result.rows_typed::<(NaiveDate,)>()?;
+while let Some((date_value,)) = iter.next().transpose()? {
+    println!("{:?}", date_value);
 }
 # Ok(())
 # }
 ```
 
 ### Using raw `u32` representation
+
 Internally `Date` is represented as number of days since -5877641-06-23 i.e. 2^31 days before unix epoch.
 
 ```rust
@@ -50,13 +52,10 @@ session
     .await?;
 
 // Read raw Date from the table
-if let Some(rows) = session.query("SELECT a FROM keyspace.table", &[]).await?.rows {
-    for row in rows {
-        let date_value: u32 = match row.columns[0] {
-            Some(CqlValue::Date(date_value)) => date_value,
-            _ => panic!("Should be a date!")
-        };
-    }
+let result = session.query("SELECT a FROM keyspace.table", &[]).await?;
+let mut iter = result.rows_typed::<(Date,)>()?;
+while let Some((date_value,)) = iter.next().transpose()? {
+    println!("{:?}", date_value);
 }
 # Ok(())
 # }

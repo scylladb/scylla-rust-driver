@@ -1,5 +1,5 @@
 use anyhow::Result;
-use scylla::transport::session::{IntoTypedRows, Session};
+use scylla::transport::session::Session;
 use scylla::SessionBuilder;
 use std::env;
 use std::fs;
@@ -80,12 +80,12 @@ async fn main() -> Result<()> {
         .await?;
 
     // Rows can be parsed as tuples
-    if let Some(rows) = session.query("SELECT a, b, c FROM ks.t", &[]).await?.rows {
-        for row in rows.into_typed::<(i32, i32, String)>() {
-            let (a, b, c) = row?;
-            println!("a, b, c: {}, {}, {}", a, b, c);
-        }
+    let result = session.query("SELECT a, b, c FROM ks.t", &[]).await?;
+    let mut iter = result.rows_typed::<(i32, i32, String)>()?;
+    while let Some((a, b, c)) = iter.next().transpose()? {
+        println!("a, b, c: {}, {}, {}", a, b, c);
     }
+
     println!("Ok.");
 
     Ok(())

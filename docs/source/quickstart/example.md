@@ -43,12 +43,10 @@ async fn main() -> Result<(), Box<dyn Error>> {
         .await?;
 
     // Query rows from the table and print them
-    if let Some(rows) = session.query("SELECT a FROM ks.extab", &[]).await?.rows {
-        // Parse each row as a tuple containing single i32
-        for row in rows.into_typed::<(i32,)>() {
-            let read_row: (i32,) = row?;
-            println!("Read a value from row: {}", read_row.0);
-        }
+    let result = session.query("SELECT a FROM ks.extab", &[]).await?;
+    let mut iter = result.rows_typed::<(i32,)>()?;
+    while let Some(read_row) = iter.next().transpose()? {
+        println!("Read a value from row: {}", read_row.0);
     }
 
     Ok(())

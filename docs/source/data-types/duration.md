@@ -9,17 +9,17 @@
 use scylla::IntoTypedRows;
 use scylla::frame::value::CqlDuration;
 
-// Insert some ip address into the table
+// Insert some duration into the table
 let to_insert: CqlDuration = CqlDuration { months: 1, days: 2, nanoseconds: 3 };
 session
     .query("INSERT INTO keyspace.table (a) VALUES(?)", (to_insert,))
     .await?;
 
-// Read inet from the table
-if let Some(rows) = session.query("SELECT a FROM keyspace.table", &[]).await?.rows {
-    for row in rows.into_typed::<(CqlDuration,)>() {
-        let (cql_duration,): (CqlDuration,) = row?;
-    }
+// Read duration from the table
+let result = session.query("SELECT a FROM keyspace.table", &[]).await?;
+let mut iter = result.rows_typed::<(CqlDuration,)>()?;
+while let Some((duration_value,)) = iter.next().transpose()? {
+    println!("{:?}", duration_value);
 }
 # Ok(())
 # }

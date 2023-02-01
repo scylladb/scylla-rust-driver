@@ -17,10 +17,10 @@ session
     .await?;
 
 // Read a list of ints from the table
-if let Some(rows) = session.query("SELECT a FROM keyspace.table", &[]).await?.rows {
-    for row in rows.into_typed::<(Vec<i32>,)>() {
-        let (list_value,): (Vec<i32>,) = row?;
-    }
+let result = session.query("SELECT a FROM keyspace.table", &[]).await?;
+let mut iter = result.rows_typed::<(Vec<i32>,)>()?;
+while let Some((list_value,)) = iter.next().transpose()? {
+    println!("{:?}", list_value);
 }
 # Ok(())
 # }
@@ -43,10 +43,10 @@ session
     .await?;
 
 // Read a set of ints from the table
-if let Some(rows) = session.query("SELECT a FROM keyspace.table", &[]).await?.rows {
-    for row in rows.into_typed::<(Vec<i32>,)>() {
-        let (set_value,): (Vec<i32>,) = row?;
-    }
+let result = session.query("SELECT a FROM keyspace.table", &[]).await?;
+let mut iter = result.rows_typed::<(Vec<i32>,)>()?;
+while let Some((list_value,)) = iter.next().transpose()? {
+    println!("{:?}", list_value);
 }
 # Ok(())
 # }
@@ -67,10 +67,10 @@ session
     .await?;
 
 // Read a set of ints from the table
-if let Some(rows) = session.query("SELECT a FROM keyspace.table", &[]).await?.rows {
-    for row in rows.into_typed::<(HashSet<i32>,)>() {
-        let (set_value,): (HashSet<i32>,) = row?;
-    }
+let result = session.query("SELECT a FROM keyspace.table", &[]).await?;
+let mut iter = result.rows_typed::<(HashSet<i32>,)>()?;
+while let Some((list_value,)) = iter.next().transpose()? {
+    println!("{:?}", list_value);
 }
 # Ok(())
 # }
@@ -91,10 +91,10 @@ session
     .await?;
 
 // Read a set of ints from the table
-if let Some(rows) = session.query("SELECT a FROM keyspace.table", &[]).await?.rows {
-    for row in rows.into_typed::<(BTreeSet<i32>,)>() {
-        let (set_value,): (BTreeSet<i32>,) = row?;
-    }
+let result = session.query("SELECT a FROM keyspace.table", &[]).await?;
+let mut iter = result.rows_typed::<(BTreeSet<i32>,)>()?;
+while let Some((list_value,)) = iter.next().transpose()? {
+    println!("{:?}", list_value);
 }
 # Ok(())
 # }
@@ -120,10 +120,10 @@ session
     .await?;
 
 // Read a map from the table
-if let Some(rows) = session.query("SELECT a FROM keyspace.table", &[]).await?.rows {
-    for row in rows.into_typed::<(HashMap<String, i32>,)>() {
-        let (map_value,): (HashMap<String, i32>,) = row?;
-    }
+let result = session.query("SELECT a FROM keyspace.table", &[]).await?;
+let mut iter = result.rows_typed::<(HashMap<String, i32>,)>()?;
+while let Some((map_value,)) = iter.next().transpose()? {
+    println!("{:?}", map_value);
 }
 # Ok(())
 # }
@@ -146,10 +146,10 @@ session
     .await?;
 
 // Read a map from the table
-if let Some(rows) = session.query("SELECT a FROM keyspace.table", &[]).await?.rows {
-    for row in rows.into_typed::<(BTreeMap<String, i32>,)>() {
-        let (map_value,): (BTreeMap<String, i32>,) = row?;
-    }
+let result = session.query("SELECT a FROM keyspace.table", &[]).await?;
+let mut iter = result.rows_typed::<(BTreeMap<String, i32>,)>()?;
+while let Some((map_value,)) = iter.next().transpose()? {
+    println!("{:?}", map_value);
 }
 # Ok(())
 # }

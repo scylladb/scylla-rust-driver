@@ -17,10 +17,10 @@ session
     .await?;
 
 // Read blobs from the table
-if let Some(rows) = session.query("SELECT a FROM keyspace.table", &[]).await?.rows {
-    for row in rows.into_typed::<(Vec<u8>,)>() {
-        let (blob_value,): (Vec<u8>,) = row?;
-    }
+let result = session.query("SELECT a FROM keyspace.table", &[]).await?;
+let mut iter = result.rows_typed::<(Vec<u8>,)>()?;
+while let Some((blob_value,)) = iter.next().transpose()? {
+    println!("{:?}", blob_value);
 }
 # Ok(())
 # }
