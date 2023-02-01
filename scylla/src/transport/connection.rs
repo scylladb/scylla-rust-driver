@@ -43,6 +43,7 @@ use std::{
 
 use super::errors::{BadKeyspaceName, DbError, QueryError};
 use super::iterator::RowIterator;
+use super::query_result::SingleRowTypedError;
 use super::session::AddressTranslator;
 use super::topology::{PeerEndpoint, UntranslatedEndpoint, UntranslatedPeer};
 use super::NodeAddr;
@@ -62,7 +63,6 @@ use crate::query::Query;
 use crate::routing::ShardInfo;
 use crate::statement::prepared_statement::PreparedStatement;
 use crate::statement::Consistency;
-use crate::transport::session::IntoTypedRows;
 use crate::transport::Compression;
 use crate::QueryResult;
 
@@ -963,12 +963,18 @@ impl Connection {
         let (version_id,): (Uuid,) = self
             .query_single_page(LOCAL_VERSION)
             .await?
-            .rows
-            .ok_or(QueryError::ProtocolError("Version query returned not rows"))?
-            .into_typed::<(Uuid,)>()
-            .next()
-            .ok_or(QueryError::ProtocolError("Admin table returned empty rows"))?
-            .map_err(|_| QueryError::ProtocolError("Row is not uuid type as it should be"))?;
+            .single_row_typed()
+            .map_err(|err| match err {
+                SingleRowTypedError::RowsExpected(_) => {
+                    QueryError::ProtocolError("Version query returned not rows")
+                }
+                SingleRowTypedError::BadNumberOfRows(_) => {
+                    QueryError::ProtocolError("system.local query returned a wrong number of rows")
+                }
+                SingleRowTypedError::FromRowError(_) => {
+                    QueryError::ProtocolError("Row is not uuid type as it should be")
+                }
+            })?;
         Ok(version_id)
     }
 

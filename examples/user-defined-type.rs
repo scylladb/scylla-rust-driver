@@ -1,6 +1,6 @@
 use anyhow::Result;
 use scylla::macros::FromUserType;
-use scylla::{IntoTypedRows, SerializeCql, Session, SessionBuilder};
+use scylla::{SerializeCql, Session, SessionBuilder};
 use std::env;
 
 #[tokio::main]
@@ -49,15 +49,12 @@ async fn main() -> Result<()> {
         .await?;
 
     // And read like any normal value
-    if let Some(rows) = session
+    let result = session
         .query("SELECT my FROM examples_ks.user_defined_type_table", &[])
-        .await?
-        .rows
-    {
-        for row in rows.into_typed::<(MyType,)>() {
-            let (my_type_value,): (MyType,) = row?;
-            println!("{:?}", my_type_value)
-        }
+        .await?;
+    let mut iter = result.rows_typed::<(MyType,)>()?;
+    while let Some((my_val,)) = iter.next().transpose()? {
+        println!("{:?}", my_val);
     }
 
     println!("Ok.");

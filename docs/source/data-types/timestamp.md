@@ -72,14 +72,10 @@ session
     .await?;
 
 // Read timestamp from the table
-if let Some(rows) = session
-    .query("SELECT a FROM keyspace.table", &[])
-    .await?
-    .rows
-{
-    for row in rows.into_typed::<(DateTime<Utc>,)>() {
-        let (timestamp_value,): (DateTime<Utc>,) = row?;
-    }
+let result = session.query("SELECT a FROM keyspace.table", &[]).await?;
+let mut iter = result.rows_typed::<(DateTime<Utc>,)>()?;
+while let Some((timestamp_value,)) = iter.next().transpose()? {
+    println!("{:?}", timestamp_value);
 }
 # Ok(())
 # }
@@ -115,14 +111,10 @@ session
     .await?;
 
 // Read timestamp from the table
-if let Some(rows) = session
-    .query("SELECT a FROM keyspace.table", &[])
-    .await?
-    .rows
-{
-    for row in rows.into_typed::<(OffsetDateTime,)>() {
-        let (timestamp_value,): (OffsetDateTime,) = row?;
-    }
+let result = session.query("SELECT a FROM keyspace.table", &[]).await?;
+let mut iter = result.rows_typed::<(OffsetDateTime,)>()?;
+while let Some((timestamp_value,)) = iter.next().transpose()? {
+    println!("{:?}", timestamp_value);
 }
 # Ok(())
 # }

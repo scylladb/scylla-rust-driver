@@ -67,14 +67,10 @@ session
     .await?;
 
 // Read time from the table
-if let Some(rows) = session
-    .query("SELECT a FROM keyspace.table", &[])
-    .await?
-    .rows
-{
-    for row in rows.into_typed::<(NaiveTime,)>() {
-        let (time_value,): (NaiveTime,) = row?;
-    }
+let result = session.query("SELECT a FROM keyspace.table", &[]).await?;
+let mut iter = result.rows_typed::<(NaiveTime,)>()?;
+while let Some((time_value,)) = iter.next().transpose()? {
+    println!("{:?}", time_value);
 }
 # Ok(())
 # }
@@ -103,14 +99,10 @@ session
     .await?;
 
 // Read time from the table
-if let Some(rows) = session
-    .query("SELECT a FROM keyspace.table", &[])
-    .await?
-    .rows
-{
-    for row in rows.into_typed::<(Time,)>() {
-        let (time_value,): (Time,) = row?;
-    }
+let result = session.query("SELECT a FROM keyspace.table", &[]).await?;
+let mut iter = result.rows_typed::<(Time,)>()?;
+while let Some((time_value,)) = iter.next().transpose()? {
+    println!("{:?}", time_value);
 }
 # Ok(())
 # }

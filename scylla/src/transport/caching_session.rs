@@ -322,7 +322,7 @@ mod tests {
             .unwrap();
 
         assert_eq!(1, session.cache.len());
-        assert_eq!(1, result.rows.unwrap().len());
+        assert_eq!(1, result.rows_num().unwrap());
 
         let result = session
             .execute("select * from test_table", &[])
@@ -330,7 +330,7 @@ mod tests {
             .unwrap();
 
         assert_eq!(1, session.cache.len());
-        assert_eq!(1, result.rows.unwrap().len());
+        assert_eq!(1, result.rows_num().unwrap());
     }
 
     /// Checks that caching works with execute_iter
@@ -364,7 +364,7 @@ mod tests {
             .unwrap();
 
         assert_eq!(1, session.cache.len());
-        assert_eq!(1, result.rows.unwrap().len());
+        assert_eq!(1, result.rows_num().unwrap());
     }
 
     async fn assert_test_batch_table_rows_contain(
