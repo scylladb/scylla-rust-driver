@@ -61,13 +61,13 @@ impl Batch {
     /// Sets the serial consistency to be used when executing this batch.
     /// (Ignored unless the batch is an LWT)
     pub fn set_serial_consistency(&mut self, sc: Option<SerialConsistency>) {
-        self.config.serial_consistency = sc;
+        self.config.serial_consistency = Some(sc);
     }
 
     /// Gets the serial consistency to be used when executing this batch.
     /// (Ignored unless the batch is an LWT)
     pub fn get_serial_consistency(&self) -> Option<SerialConsistency> {
-        self.config.serial_consistency
+        self.config.serial_consistency.flatten()
     }
 
     /// Sets the idempotence of this batch

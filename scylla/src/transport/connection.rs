@@ -390,8 +390,13 @@ impl Connection {
             .determine_consistency(self.config.default_consistency);
         let serial_consistency = query.config.serial_consistency;
 
-        self.query_single_page_with_consistency(query, &values, consistency, serial_consistency)
-            .await
+        self.query_single_page_with_consistency(
+            query,
+            &values,
+            consistency,
+            serial_consistency.flatten(),
+        )
+        .await
     }
 
     pub async fn query_single_page_with_consistency(
@@ -420,7 +425,7 @@ impl Connection {
             query
                 .config
                 .determine_consistency(self.config.default_consistency),
-            query.config.serial_consistency,
+            query.config.serial_consistency.flatten(),
             paging_state,
         )
         .await
@@ -538,7 +543,7 @@ impl Connection {
             prepared_statement
                 .config
                 .determine_consistency(self.config.default_consistency),
-            prepared_statement.config.serial_consistency,
+            prepared_statement.config.serial_consistency.flatten(),
             paging_state,
         )
         .await
@@ -635,7 +640,7 @@ impl Connection {
             batch
                 .config
                 .determine_consistency(self.config.default_consistency),
-            batch.config.serial_consistency,
+            batch.config.serial_consistency.flatten(),
         )
         .await
     }

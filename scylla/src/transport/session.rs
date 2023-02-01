@@ -599,7 +599,7 @@ impl Session {
                                 query_ref,
                                 values_ref,
                                 consistency,
-                                query.config.serial_consistency,
+                                query.config.serial_consistency.flatten(),
                                 paging_state_ref.clone(),
                             )
                             .await
@@ -917,7 +917,7 @@ impl Session {
                             prepared,
                             values_ref,
                             consistency,
-                            prepared.config.serial_consistency,
+                            prepared.config.serial_consistency.flatten(),
                             paging_state_ref.clone(),
                         )
                         .await
@@ -1103,7 +1103,7 @@ impl Session {
                             batch,
                             values_ref,
                             consistency,
-                            batch.config.serial_consistency,
+                            batch.config.serial_consistency.flatten(),
                         )
                         .await
                 },
@@ -1694,7 +1694,7 @@ impl Session {
         let info = Statement::default();
         let config = StatementConfig {
             is_idempotent: true,
-            serial_consistency: Some(SerialConsistency::LocalSerial),
+            serial_consistency: Some(Some(SerialConsistency::LocalSerial)),
             ..Default::default()
         };
 

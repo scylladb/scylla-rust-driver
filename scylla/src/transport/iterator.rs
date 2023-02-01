@@ -156,7 +156,7 @@ impl RowIterator {
                         query_ref,
                         values_ref,
                         consistency,
-                        query.config.serial_consistency,
+                        query.config.serial_consistency.flatten(),
                         paging_state,
                     )
                     .await
@@ -240,7 +240,7 @@ impl RowIterator {
                         prepared_ref,
                         values_ref,
                         consistency,
-                        config.prepared.config.serial_consistency,
+                        config.prepared.config.serial_consistency.flatten(),
                         paging_state,
                     )
                     .await

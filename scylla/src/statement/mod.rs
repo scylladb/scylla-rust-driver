@@ -12,7 +12,7 @@ pub use crate::frame::types::{Consistency, SerialConsistency};
 #[derive(Debug)]
 pub struct StatementConfig {
     pub consistency: Option<Consistency>,
-    pub serial_consistency: Option<SerialConsistency>,
+    pub serial_consistency: Option<Option<SerialConsistency>>,
 
     pub is_idempotent: bool,
 
@@ -26,11 +26,12 @@ pub struct StatementConfig {
     pub history_listener: Option<Arc<dyn HistoryListener>>,
 }
 
+#[allow(clippy::derivable_impls)]
 impl Default for StatementConfig {
     fn default() -> Self {
         Self {
             consistency: Default::default(),
-            serial_consistency: Some(SerialConsistency::LocalSerial),
+            serial_consistency: None,
             is_idempotent: false,
             retry_policy: None,
             speculative_execution_policy: None,
