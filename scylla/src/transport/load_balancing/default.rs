@@ -461,3 +461,148 @@ impl<'a> TokenWithStrategy<'a> {
         Some(TokenWithStrategy { strategy, token })
     }
 }
+
+#[cfg(test)]
+mod tests {
+    pub(crate) mod framework {
+        use std::collections::{HashMap, HashSet};
+
+        use uuid::Uuid;
+
+        use crate::{
+            load_balancing::{LoadBalancingPolicy, Plan, RoutingInfo},
+            routing::Token,
+            transport::{
+                locator::test::{id_to_invalid_addr, mock_metadata_for_token_aware_tests},
+                topology::{Metadata, Peer},
+                ClusterData,
+            },
+        };
+        pub(crate) struct ExpectedGroupsBuilder {
+            groups: Vec<HashSet<u16>>,
+        }
+
+        impl ExpectedGroupsBuilder {
+            pub(crate) fn new() -> Self {
+                Self { groups: Vec::new() }
+            }
+            pub(crate) fn group(mut self, group: impl IntoIterator<Item = u16>) -> Self {
+                self.groups.push(group.into_iter().collect());
+                self
+            }
+            pub(crate) fn build(self) -> Vec<HashSet<u16>> {
+                self.groups
+            }
+        }
+
+        pub(crate) fn assert_proper_grouping_in_plan(
+            got: &Vec<u16>,
+            expected_groups: &Vec<HashSet<u16>>,
+        ) {
+            // First, make sure that `got` has the right number of items,
+            // equal to the sum of sizes of all expected groups
+            let combined_groups_len = expected_groups.iter().map(|s| s.len()).sum();
+            assert_eq!(got.len(), combined_groups_len);
+
+            // Now, split `got` into groups of expected sizes
+            // and just `assert_eq` them
+            let mut got = got.iter();
+            let got_groups = expected_groups
+                .iter()
+                .map(|s| (&mut got).take(s.len()).copied().collect::<HashSet<u16>>())
+                .collect::<Vec<_>>();
+
+            assert_eq!(&got_groups, expected_groups);
+        }
+
+        #[test]
+        fn test_assert_proper_grouping_in_plan_good() {
+            let got = vec![1u16, 2, 3, 4, 5];
+            let expected_groups = ExpectedGroupsBuilder::new()
+                .group([1])
+                .group([3, 2, 4])
+                .group([5])
+                .build();
+
+            assert_proper_grouping_in_plan(&got, &expected_groups);
+        }
+
+        #[test]
+        #[should_panic]
+        fn test_assert_proper_grouping_in_plan_too_many_nodes_in_the_end() {
+            let got = vec![1u16, 2, 3, 4, 5, 6];
+            let expected_groups = ExpectedGroupsBuilder::new()
+                .group([1])
+                .group([3, 2, 4])
+                .group([5])
+                .build();
+
+            assert_proper_grouping_in_plan(&got, &expected_groups);
+        }
+
+        #[test]
+        #[should_panic]
+        fn test_assert_proper_grouping_in_plan_too_many_nodes_in_the_middle() {
+            let got = vec![1u16, 2, 6, 3, 4, 5];
+            let expected_groups = ExpectedGroupsBuilder::new()
+                .group([1])
+                .group([3, 2, 4])
+                .group([5])
+                .build();
+
+            assert_proper_grouping_in_plan(&got, &expected_groups);
+        }
+
+        #[test]
+        #[should_panic]
+        fn test_assert_proper_grouping_in_plan_missing_node() {
+            let got = vec![1u16, 2, 3, 4];
+            let expected_groups = ExpectedGroupsBuilder::new()
+                .group([1])
+                .group([3, 2, 4])
+                .group([5])
+                .build();
+
+            assert_proper_grouping_in_plan(&got, &expected_groups);
+        }
+
+        // based on locator mock cluster
+        pub(crate) async fn mock_cluster_data_for_token_aware_tests() -> ClusterData {
+            let metadata = mock_metadata_for_token_aware_tests();
+            ClusterData::new(metadata, &Default::default(), &HashMap::new(), &None, None).await
+        }
+
+        // creates ClusterData with info about 5 nodes living in 2 different datacenters
+        // ring field is minimal, not intended to influence the tests
+        pub(crate) async fn mock_cluster_data_for_token_unaware_tests() -> ClusterData {
+            let peers = [("eu", 1), ("eu", 2), ("eu", 3), ("us", 4), ("us", 5)]
+                .iter()
+                .map(|(dc, id)| Peer {
+                    datacenter: Some(dc.to_string()),
+                    rack: None,
+                    address: id_to_invalid_addr(*id),
+                    tokens: vec![Token {
+                        value: *id as i64 * 100,
+                    }],
+                    host_id: Uuid::new_v4(),
+                })
+                .collect::<Vec<_>>();
+
+            let info = Metadata {
+                peers,
+                keyspaces: HashMap::new(),
+            };
+
+            ClusterData::new(info, &Default::default(), &HashMap::new(), &None, None).await
+        }
+
+        pub(crate) fn get_plan_and_collect_node_identifiers(
+            policy: &impl LoadBalancingPolicy,
+            query_info: &RoutingInfo,
+            cluster: &ClusterData,
+        ) -> Vec<u16> {
+            let plan = Plan::new(policy, query_info, cluster);
+            plan.map(|node| node.address.port()).collect::<Vec<_>>()
+        }
+    }
+}
