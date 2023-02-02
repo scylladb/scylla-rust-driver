@@ -17,6 +17,7 @@ use std::net::SocketAddr;
 use std::str::FromStr;
 use std::sync::Arc;
 use std::time::Duration;
+use thiserror::Error;
 use tokio::net::lookup_host;
 use tokio::time::timeout;
 use tracing::{debug, error, trace, trace_span, Instrument};
@@ -62,9 +63,11 @@ use crate::authentication::AuthenticatorProvider;
 #[cfg(feature = "ssl")]
 use openssl::ssl::SslContext;
 
-#[derive(Debug, Copy, Clone)]
+#[derive(Debug, Copy, Clone, Error)]
 pub enum TranslationError {
+    #[error("No rule for address")]
     NoRuleForAddress,
+    #[error("Invalid address in rule")]
     InvalidAddressInRule,
 }
 
