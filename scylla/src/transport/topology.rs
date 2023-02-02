@@ -318,10 +318,10 @@ impl Metadata {
 }
 
 impl MetadataReader {
-    /// Creates new MetadataReader, which connects to known_peers in the background
+    /// Creates new MetadataReader, which connects to initially_known_peers in the background
     #[allow(clippy::too_many_arguments)]
     pub fn new(
-        known_peers: &[SocketAddr],
+        initially_known_peers: &[SocketAddr],
         mut connection_config: ConnectionConfig,
         keepalive_interval: Option<Duration>,
         server_event_sender: mpsc::Sender<Event>,
@@ -329,7 +329,7 @@ impl MetadataReader {
         fetch_schema: bool,
         host_filter: &Option<Arc<dyn HostFilter>>,
     ) -> Self {
-        let control_connection_address = *known_peers
+        let control_connection_address = *initially_known_peers
             .choose(&mut thread_rng())
             .expect("Tried to initialize MetadataReader with empty known_peers list!");
 
@@ -349,7 +349,7 @@ impl MetadataReader {
             control_connection,
             keepalive_interval,
             connection_config,
-            known_peers: known_peers.into(),
+            known_peers: initially_known_peers.into(),
             keyspaces_to_fetch,
             fetch_schema,
             host_filter: host_filter.clone(),
