@@ -27,7 +27,7 @@ check-without-features:
 
 .PHONY: clippy
 clippy:
-	RUSTFLAGS=-Dwarnings cargo clippy --examples --tests
+	RUSTFLAGS=-Dwarnings cargo clippy --examples --tests -- -Aclippy::uninlined_format_args
 
 .PHONY: test
 test: up wait-for-cluster
