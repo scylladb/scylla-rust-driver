@@ -137,6 +137,15 @@ impl_from_cql_value_from_method!(BigDecimal, into_decimal); // BigDecimal::from_
 impl_from_cql_value_from_method!(Duration, as_duration); // Duration::from_cql<CqlValue>
 impl_from_cql_value_from_method!(CqlDuration, as_cql_duration); // CqlDuration::from_cql<CqlValue>
 
+impl FromCqlVal<CqlValue> for crate::frame::value::Date {
+    fn from_cql(cql_val: CqlValue) -> Result<Self, FromCqlValError> {
+        match cql_val {
+            CqlValue::Date(d) => Ok(crate::frame::value::Date(d)),
+            _ => Err(FromCqlValError::BadCqlType),
+        }
+    }
+}
+
 impl FromCqlVal<CqlValue> for crate::frame::value::Time {
     fn from_cql(cql_val: CqlValue) -> Result<Self, FromCqlValError> {
         match cql_val {
@@ -455,6 +464,20 @@ mod tests {
 
         let max_date: CqlValue = CqlValue::Date(u32::MAX);
         assert!(NaiveDate::from_cql(max_date).is_err());
+    }
+
+    #[test]
+    fn date_from_cql() {
+        use crate::frame::value::Date;
+
+        let unix_epoch: CqlValue = CqlValue::Date(2_u32.pow(31));
+        assert_eq!(Ok(Date(2_u32.pow(31))), Date::from_cql(unix_epoch));
+
+        let min_date: CqlValue = CqlValue::Date(0);
+        assert_eq!(Ok(Date(0)), Date::from_cql(min_date));
+
+        let max_date: CqlValue = CqlValue::Date(u32::MAX);
+        assert_eq!(Ok(Date(u32::MAX)), Date::from_cql(max_date));
     }
 
     #[test]
