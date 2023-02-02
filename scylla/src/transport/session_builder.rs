@@ -687,8 +687,8 @@ mod tests {
 
     use super::SessionBuilder;
     use crate::load_balancing::LatencyAwarePolicy;
-    use crate::transport::execution_profile::ExecutionProfile;
-    use crate::transport::session::{defaults, KnownNode};
+    use crate::transport::execution_profile::{defaults, ExecutionProfile};
+    use crate::transport::session::KnownNode;
     use crate::transport::Compression;
     use std::net::{IpAddr, Ipv4Addr, SocketAddr};
     use std::sync::Arc;

@@ -170,7 +170,47 @@ use crate::{
     speculative_execution::SpeculativeExecutionPolicy,
 };
 
-use super::session;
+pub(crate) mod defaults {
+    use crate::load_balancing::{LoadBalancingPolicy, RoundRobinPolicy, TokenAwarePolicy};
+    use crate::retry_policy::{DefaultRetryPolicy, RetryPolicy};
+    use crate::speculative_execution::SpeculativeExecutionPolicy;
+    use crate::transport::execution_profile::ExecutionProfileInner;
+    use scylla_cql::frame::types::SerialConsistency;
+    use scylla_cql::Consistency;
+    use std::sync::Arc;
+    use std::time::Duration;
+    pub fn consistency() -> Consistency {
+        Consistency::LocalQuorum
+    }
+    pub fn serial_consistency() -> Option<SerialConsistency> {
+        None
+    }
+    pub fn request_timeout() -> Option<Duration> {
+        Some(Duration::from_secs(30))
+    }
+    pub fn load_balancing_policy() -> Arc<dyn LoadBalancingPolicy> {
+        Arc::new(TokenAwarePolicy::new(Box::new(RoundRobinPolicy::new())))
+    }
+    pub fn retry_policy() -> Box<dyn RetryPolicy> {
+        Box::new(DefaultRetryPolicy::new())
+    }
+    pub fn speculative_execution_policy() -> Option<Arc<dyn SpeculativeExecutionPolicy>> {
+        None
+    }
+
+    impl Default for ExecutionProfileInner {
+        fn default() -> Self {
+            Self {
+                request_timeout: request_timeout(),
+                consistency: consistency(),
+                serial_consistency: serial_consistency(),
+                load_balancing_policy: load_balancing_policy(),
+                retry_policy: retry_policy(),
+                speculative_execution_policy: speculative_execution_policy(),
+            }
+        }
+    }
+}
 
 /// `ExecutionProfileBuilder` is used to create new `ExecutionProfile`s
 /// # Example
@@ -319,7 +359,6 @@ impl ExecutionProfileBuilder {
     /// # }
     /// ```
     pub fn build(self) -> ExecutionProfile {
-        use session::defaults;
         ExecutionProfile(Arc::new(ExecutionProfileInner {
             request_timeout: self
                 .request_timeout
