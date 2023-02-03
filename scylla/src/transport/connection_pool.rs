@@ -6,6 +6,7 @@ use crate::transport::{
 };
 
 use super::topology::UntranslatedEndpoint;
+use super::NodeAddr;
 use arc_swap::ArcSwap;
 use futures::{future::RemoteHandle, stream::FuturesUnordered, Future, FutureExt, StreamExt};
 use rand::Rng;
@@ -164,13 +165,9 @@ impl NodeConnectionPool {
 
         let keepalive_interval = pool_config.keepalive_interval;
 
-        // temporary in this commit
-        let addr = endpoint.address();
-        let (address, port) = { (addr.ip(), addr.port()) };
-
+        let endpoint_ip = endpoint.address().ip();
         let refiller = PoolRefiller::new(
-            address,
-            port,
+            endpoint,
             pool_config,
             current_keyspace,
             pool_updated_notify.clone(),
@@ -184,7 +181,7 @@ impl NodeConnectionPool {
             let keepaliver = Keepaliver {
                 connections: conns.clone(),
                 keepalive_interval: interval,
-                node_address: address,
+                node_address: endpoint_ip,
             };
 
             let (fut, keepaliver_handle) = keepaliver.work().remote_handle();
@@ -485,8 +482,7 @@ impl RefillDelayStrategy {
 
 struct PoolRefiller {
     // Following information identify the pool and do not change
-    address: IpAddr,
-    regular_port: u16,
+    endpoint: UntranslatedEndpoint,
     pool_config: PoolConfig,
 
     // Following fields are updated with information from OPTIONS
@@ -541,8 +537,7 @@ struct UseKeyspaceRequest {
 
 impl PoolRefiller {
     pub fn new(
-        address: IpAddr,
-        port: u16,
+        endpoint: UntranslatedEndpoint,
         pool_config: PoolConfig,
         current_keyspace: Option<VerifiedKeyspaceName>,
         pool_updated_notify: Arc<Notify>,
@@ -553,8 +548,7 @@ impl PoolRefiller {
         let shared_conns = Arc::new(ArcSwap::new(Arc::new(MaybePoolConnections::Initializing)));
 
         Self {
-            address,
-            regular_port: port,
+            endpoint,
             pool_config,
 
             shard_aware_port: None,
@@ -577,8 +571,8 @@ impl PoolRefiller {
         }
     }
 
-    fn endpoint_description(&self) -> IpAddr {
-        self.address
+    fn endpoint_description(&self) -> NodeAddr {
+        self.endpoint.address()
     }
 
     pub fn get_shared_connections(&self) -> Arc<ArcSwap<MaybePoolConnections>> {
@@ -908,10 +902,16 @@ impl PoolRefiller {
     // the shard aware port is available, it will attempt to connect directly
     // to the shard using the port.
     fn start_opening_connection(&self, shard: Option<Shard>) {
+        // temporary in this commit
+        let (address, regular_port) = {
+            let addr = self.endpoint.address();
+            (addr.ip(), addr.port())
+        };
+
         let cfg = self.pool_config.connection_config.clone();
         let fut = match (self.sharder.clone(), self.shard_aware_port, shard) {
             (Some(sharder), Some(port), Some(shard)) => {
-                let shard_aware_address = (self.address, port).into();
+                let shard_aware_address: SocketAddr = (address, port).into();
                 async move {
                     let result = open_connection_to_shard_aware_port(
                         shard_aware_address,
@@ -929,7 +929,7 @@ impl PoolRefiller {
                 .boxed()
             }
             _ => {
-                let non_shard_aware_address = (self.address, self.regular_port).into();
+                let non_shard_aware_address = (address, regular_port).into();
                 async move {
                     let result =
                         connection::open_connection(non_shard_aware_address, None, cfg).await;
@@ -1066,7 +1066,7 @@ impl PoolRefiller {
 
         let mut conns = self.conns.clone();
         let keyspace_name = keyspace_name.clone();
-        let address = self.address;
+        let address = self.endpoint.address();
         let connect_timeout = self.pool_config.connection_config.connect_timeout;
 
         let fut = async move {
