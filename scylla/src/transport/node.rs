@@ -98,9 +98,9 @@ impl Display for NodeAddr {
 
 /// Node represents a cluster node along with it's data and connections
 ///
-/// Note: if a Node changes its address (the optionally translated address),
-/// then it is not longer represented by the same instance of Node struct,
-/// but instead a new instance is created (for implementation reasons).
+/// Note: if a Node changes its broadcast address, then it is not longer
+/// represented by the same instance of Node struct, but instead
+/// a new instance is created (for implementation reasons).
 #[derive(Debug)]
 pub struct Node {
     pub host_id: Uuid,
