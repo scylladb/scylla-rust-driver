@@ -136,7 +136,7 @@ impl RowIterator {
         if query.get_page_size().is_none() {
             query.set_page_size(DEFAULT_ITER_PAGE_SIZE);
         }
-        let (sender, mut receiver) = mpsc::channel(1);
+        let (sender, receiver) = mpsc::channel(1);
 
         let consistency = query
             .config
@@ -185,28 +185,10 @@ impl RowIterator {
                 current_attempt_id: None,
             };
 
-            let _: PageSendAttemptedProof = worker.work(cluster_data).await;
+            worker.work(cluster_data).await
         };
 
-        tokio::task::spawn(worker_task);
-
-        // This unwrap is safe because:
-        // - The future returned by worker.work sends at least one item
-        //   to the channel (the PageSendAttemptedProof helps enforce this)
-        // - That future is polled in a tokio::task which isn't going to be
-        //   cancelled
-        let pages_received = receiver.recv().await.unwrap()?;
-
-        Ok(RowIterator {
-            current_row_idx: 0,
-            current_page: pages_received.rows,
-            page_receiver: receiver,
-            tracing_ids: if let Some(tracing_id) = pages_received.tracing_id {
-                vec![tracing_id]
-            } else {
-                Vec::new()
-            },
-        })
+        Self::new_from_worker_future(worker_task, receiver).await
     }
 
     pub(crate) async fn new_for_prepared_statement(
@@ -215,7 +197,7 @@ impl RowIterator {
         if config.prepared.get_page_size().is_none() {
             config.prepared.set_page_size(DEFAULT_ITER_PAGE_SIZE);
         }
-        let (sender, mut receiver) = mpsc::channel(1);
+        let (sender, receiver) = mpsc::channel(1);
 
         let consistency = config
             .prepared
@@ -277,10 +259,19 @@ impl RowIterator {
                 current_attempt_id: None,
             };
 
-            let _: PageSendAttemptedProof = worker.work(config.cluster_data).await;
+            worker.work(config.cluster_data).await
         };
 
-        tokio::task::spawn(worker_task);
+        Self::new_from_worker_future(worker_task, receiver).await
+    }
+
+    async fn new_from_worker_future(
+        worker_task: impl Future<Output = PageSendAttemptedProof> + Send + 'static,
+        mut receiver: mpsc::Receiver<Result<ReceivedPage, QueryError>>,
+    ) -> Result<RowIterator, QueryError> {
+        tokio::task::spawn(async move {
+            worker_task.await;
+        });
 
         // This unwrap is safe because:
         // - The future returned by worker.work sends at least one item
