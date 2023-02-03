@@ -5,6 +5,7 @@ use crate::frame::{
 };
 use crate::RequestOpcode;
 use bytes::Bytes;
+use rand::Rng;
 use scylla_cql::frame::types::read_string_multimap;
 use std::collections::HashMap;
 use std::fmt::Display;
@@ -701,6 +702,34 @@ impl Doorkeeper {
         Ok((driver_stream, driver_addr))
     }
 
+    fn draw_source_port_for_shard(&self, shard: u16) -> u16 {
+        let shards_count = self.shards_count.unwrap();
+        rand::thread_rng().gen_range((49152 + shards_count - 1)..(65535 - shards_count + 1))
+            / shards_count
+            * shards_count
+            + shard
+    }
+
+    /// Returns iterator over source ports `p` such that `shard == shard_of_source_port(p)`.
+    /// Starts at a random port and goes forward by `nr_shards`. After reaching maximum wraps back around.
+    /// Stops once all possible ports have been returned
+    fn iter_source_ports_for_shard(&self, shard: u16) -> impl Iterator<Item = u16> {
+        assert!(shard < self.shards_count.unwrap());
+        let shards_count = self.shards_count.unwrap();
+
+        // Randomly choose a port to start at
+        let starting_port = self.draw_source_port_for_shard(shard);
+
+        // Choose smallest available port number to begin at after wrapping
+        // apply the formula from draw_source_port_for_shard for lowest possible gen_range result
+        let first_valid_port = (49152 + shards_count - 1) / shards_count * shards_count + shard;
+
+        let before_wrap = (starting_port..=65535).step_by(shards_count.into());
+        let after_wrap = (first_valid_port..starting_port).step_by(shards_count.into());
+
+        before_wrap.chain(after_wrap)
+    }
+
     async fn make_cluster_stream(
         &mut self,
         driver_addr: SocketAddr,
@@ -714,17 +743,17 @@ impl Doorkeeper {
             .map_err(DoorkeeperError::SocketCreate)?;
 
             let shard_preserving_addr = {
-                let mut desired_addr =
-                    SocketAddr::new(IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0)), driver_addr.port());
-                while socket.bind(desired_addr).is_err() {
-                    // in search for a port that translates to the desired shard
-                    let next_port = self.next_port_to_same_shard(desired_addr.port());
-                    if next_port == driver_addr.port() {
-                        return Err(DoorkeeperError::NoMorePorts);
+                for port in self
+                    .iter_source_ports_for_shard(driver_addr.port() % self.shards_count.unwrap())
+                {
+                    if socket
+                        .bind(SocketAddr::new(IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0)), port))
+                        .is_ok()
+                    {
+                        break;
                     }
-                    desired_addr.set_port(next_port);
                 }
-                desired_addr
+                socket.local_addr().unwrap()
             };
 
             socket.connect(real_addr).await.map(|ok| {
@@ -745,10 +774,6 @@ impl Doorkeeper {
         .map_err(|err| DoorkeeperError::NodeConnectionAttempt(real_addr, err))?;
 
         Ok(cluster_stream)
-    }
-
-    fn next_port_to_same_shard(&self, port: u16) -> u16 {
-        port.wrapping_add(self.shards_count.unwrap())
     }
 
     async fn obtain_shards_count(&self, real_addr: SocketAddr) -> Result<u16, DoorkeeperError> {
@@ -1322,7 +1347,6 @@ mod tests {
     #[tokio::test]
     #[ntest::timeout(1000)]
     async fn identity_shard_aware_proxy_does_not_mutate_frames() {
-        init_logger();
         identity_proxy_does_not_mutate_frames(ShardAwareness::QueryNode).await
     }
 
