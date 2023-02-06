@@ -9,6 +9,7 @@ use std::task::{Context, Poll};
 
 use bytes::Bytes;
 use futures::Stream;
+use scylla_cql::frame::types::SerialConsistency;
 use std::result::Result;
 use thiserror::Error;
 use tokio::sync::mpsc;
@@ -260,6 +261,37 @@ impl RowIterator {
             };
 
             worker.work(config.cluster_data).await
+        };
+
+        Self::new_from_worker_future(worker_task, receiver).await
+    }
+
+    pub(crate) async fn new_for_connection_query_iter(
+        mut query: Query,
+        connection: Arc<Connection>,
+        values: SerializedValues,
+        consistency: Consistency,
+        serial_consistency: Option<SerialConsistency>,
+    ) -> Result<RowIterator, QueryError> {
+        if query.get_page_size().is_none() {
+            query.set_page_size(DEFAULT_ITER_PAGE_SIZE);
+        }
+        let (sender, receiver) = mpsc::channel::<Result<ReceivedPage, QueryError>>(1);
+
+        let worker_task = async move {
+            let worker = SingleConnectionRowIteratorWorker {
+                sender: sender.into(),
+                fetcher: |paging_state| {
+                    connection.query_with_consistency(
+                        &query,
+                        &values,
+                        consistency,
+                        serial_consistency,
+                        paging_state,
+                    )
+                },
+            };
+            worker.work().await
         };
 
         Self::new_from_worker_future(worker_task, receiver).await
@@ -680,6 +712,66 @@ where
         };
 
         history_listener.log_attempt_error(attempt_id, error, retry_decision);
+    }
+}
+
+/// A massively simplified version of the RowIteratorWorker. It does not have
+/// any complicated logic related to retries, it just fetches pages from
+/// a single connection.
+struct SingleConnectionRowIteratorWorker<Fetcher> {
+    sender: ProvingSender<Result<ReceivedPage, QueryError>>,
+    fetcher: Fetcher,
+}
+
+impl<Fetcher, FetchFut> SingleConnectionRowIteratorWorker<Fetcher>
+where
+    Fetcher: Fn(Option<Bytes>) -> FetchFut + Send + Sync,
+    FetchFut: Future<Output = Result<QueryResponse, QueryError>> + Send,
+{
+    async fn work(mut self) -> PageSendAttemptedProof {
+        match self.do_work().await {
+            Ok(proof) => proof,
+            Err(err) => {
+                let (proof, _) = self.sender.send(Err(err)).await;
+                proof
+            }
+        }
+    }
+
+    async fn do_work(&mut self) -> Result<PageSendAttemptedProof, QueryError> {
+        let mut paging_state = None;
+        loop {
+            let result = (self.fetcher)(paging_state).await?;
+            let response = result.into_non_error_query_response()?;
+            match response.response {
+                NonErrorResponse::Result(result::Result::Rows(mut rows)) => {
+                    paging_state = rows.metadata.paging_state.take();
+                    let (proof, send_result) = self
+                        .sender
+                        .send(Ok(ReceivedPage {
+                            rows,
+                            tracing_id: response.tracing_id,
+                        }))
+                        .await;
+                    if paging_state.is_none() || send_result.is_err() {
+                        return Ok(proof);
+                    }
+                }
+                NonErrorResponse::Result(_) => {
+                    // We have most probably sent a modification statement (e.g. INSERT or UPDATE),
+                    // so let's return an empty iterator as suggested in #631.
+
+                    // We must attempt to send something because the iterator expects it.
+                    let (proof, _) = self.sender.send_empty_page(response.tracing_id).await;
+                    return Ok(proof);
+                }
+                _ => {
+                    return Err(QueryError::ProtocolError(
+                        "Unexpected response to next page query",
+                    ));
+                }
+            }
+        }
     }
 }
 
