@@ -31,6 +31,7 @@ use std::{
 
 use super::errors::{BadKeyspaceName, DbError, QueryError};
 use super::iterator::RowIterator;
+use super::session::AddressTranslator;
 
 use crate::batch::{Batch, BatchStatement};
 use crate::frame::protocol_features::ProtocolFeatures;
@@ -220,6 +221,7 @@ pub struct ConnectionConfig {
     pub event_sender: Option<mpsc::Sender<Event>>,
     pub default_consistency: Consistency,
     pub authenticator: Option<Arc<dyn AuthenticatorProvider>>,
+    pub address_translator: Option<Arc<dyn AddressTranslator>>,
 }
 
 impl Default for ConnectionConfig {
@@ -233,6 +235,7 @@ impl Default for ConnectionConfig {
             connect_timeout: std::time::Duration::from_secs(5),
             default_consistency: Default::default(),
             authenticator: None,
+            address_translator: None,
         }
     }
 }
