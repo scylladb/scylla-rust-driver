@@ -12,7 +12,7 @@ use futures::{future::RemoteHandle, stream::FuturesUnordered, Future, FutureExt,
 use rand::Rng;
 use std::convert::TryInto;
 use std::io::ErrorKind;
-use std::net::{IpAddr, SocketAddr};
+use std::net::IpAddr;
 use std::num::NonZeroUsize;
 use std::pin::Pin;
 use std::sync::{Arc, Weak};
@@ -902,19 +902,18 @@ impl PoolRefiller {
     // the shard aware port is available, it will attempt to connect directly
     // to the shard using the port.
     fn start_opening_connection(&self, shard: Option<Shard>) {
-        // temporary in this commit
-        let (address, regular_port) = {
-            let addr = self.endpoint.address();
-            (addr.ip(), addr.port())
-        };
-
         let cfg = self.pool_config.connection_config.clone();
+
         let fut = match (self.sharder.clone(), self.shard_aware_port, shard) {
             (Some(sharder), Some(port), Some(shard)) => {
-                let shard_aware_address: SocketAddr = (address, port).into();
+                let shard_aware_endpoint = {
+                    let mut endpoint = self.endpoint.clone();
+                    endpoint.set_port(port);
+                    endpoint
+                };
                 async move {
                     let result = open_connection_to_shard_aware_port(
-                        shard_aware_address,
+                        shard_aware_endpoint,
                         shard,
                         sharder.clone(),
                         &cfg,
@@ -929,10 +928,10 @@ impl PoolRefiller {
                 .boxed()
             }
             _ => {
-                let non_shard_aware_address = (address, regular_port).into();
+                let non_shard_aware_endpoint = self.endpoint.clone();
                 async move {
                     let result =
-                        connection::open_connection(non_shard_aware_address, None, cfg).await;
+                        connection::open_connection(non_shard_aware_endpoint, None, cfg).await;
                     OpenedConnectionEvent {
                         result,
                         requested_shard: None,
@@ -1209,7 +1208,7 @@ struct OpenedConnectionEvent {
 }
 
 async fn open_connection_to_shard_aware_port(
-    address: SocketAddr,
+    endpoint: UntranslatedEndpoint,
     shard: Shard,
     sharder: Sharder,
     connection_config: &ConnectionConfig,
@@ -1219,7 +1218,8 @@ async fn open_connection_to_shard_aware_port(
 
     for port in source_port_iter {
         let connect_result =
-            connection::open_connection(address, Some(port), connection_config.clone()).await;
+            connection::open_connection(endpoint.clone(), Some(port), connection_config.clone())
+                .await;
 
         match connect_result {
             Err(err) if err.is_address_unavailable_for_use() => continue, // If we can't use this port, try the next one
@@ -1238,7 +1238,9 @@ async fn open_connection_to_shard_aware_port(
 mod tests {
     use super::open_connection_to_shard_aware_port;
     use crate::routing::{ShardCount, Sharder};
+    use crate::transport::cluster::ContactPoint;
     use crate::transport::connection::ConnectionConfig;
+    use crate::transport::topology::UntranslatedEndpoint;
     use std::net::{SocketAddr, ToSocketAddrs};
 
     // Open many connections to a node
@@ -1273,7 +1275,9 @@ mod tests {
 
         for _ in 0..connections_number {
             conns.push(open_connection_to_shard_aware_port(
-                connect_address,
+                UntranslatedEndpoint::ContactPoint(ContactPoint {
+                    address: connect_address,
+                }),
                 0,
                 sharder.clone(),
                 &connection_config,

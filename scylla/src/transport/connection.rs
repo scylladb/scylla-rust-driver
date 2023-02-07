@@ -32,6 +32,7 @@ use std::{
 use super::errors::{BadKeyspaceName, DbError, QueryError};
 use super::iterator::RowIterator;
 use super::session::AddressTranslator;
+use super::topology::UntranslatedEndpoint;
 
 use crate::batch::{Batch, BatchStatement};
 use crate::frame::protocol_features::ProtocolFeatures;
@@ -1059,10 +1060,11 @@ impl Connection {
 }
 
 pub async fn open_connection(
-    addr: SocketAddr,
+    endpoint: UntranslatedEndpoint,
     source_port: Option<u16>,
     config: ConnectionConfig,
 ) -> Result<(Connection, ErrorReceiver), QueryError> {
+    let addr = endpoint.address().into_inner();
     open_named_connection(
         addr,
         source_port,
@@ -1472,7 +1474,9 @@ mod tests {
 
     use super::ConnectionConfig;
     use crate::query::Query;
+    use crate::transport::cluster::ContactPoint;
     use crate::transport::connection::open_connection;
+    use crate::transport::topology::UntranslatedEndpoint;
     use crate::utils::test_utils::unique_keyspace_name;
     use crate::SessionBuilder;
     use futures::{StreamExt, TryStreamExt};
@@ -1504,9 +1508,13 @@ mod tests {
         let uri = std::env::var("SCYLLA_URI").unwrap_or_else(|_| "127.0.0.1:9042".to_string());
         let addr: SocketAddr = resolve_hostname(&uri).await;
 
-        let (connection, _) = super::open_connection(addr, None, ConnectionConfig::default())
-            .await
-            .unwrap();
+        let (connection, _) = super::open_connection(
+            UntranslatedEndpoint::ContactPoint(ContactPoint { address: addr }),
+            None,
+            ConnectionConfig::default(),
+        )
+        .await
+        .unwrap();
         let connection = Arc::new(connection);
 
         let ks = unique_keyspace_name();
@@ -1633,7 +1641,7 @@ mod tests {
 
         // We must interrupt the driver's full connection opening, because our proxy does not interact further after Startup.
         let startup_without_lwt_optimisation = select! {
-            _ = open_connection(proxy_addr, None, config.clone()) => unreachable!(),
+            _ = open_connection(UntranslatedEndpoint::ContactPoint(ContactPoint{address: proxy_addr}), None, config.clone()) => unreachable!(),
             startup = startup_rx.recv() => startup.unwrap(),
         };
 
@@ -1641,7 +1649,7 @@ mod tests {
             .change_request_rules(Some(make_rules(options_with_lwt_optimisation_support)));
 
         let startup_with_lwt_optimisation = select! {
-            _ = open_connection(proxy_addr, None, config.clone()) => unreachable!(),
+            _ = open_connection(UntranslatedEndpoint::ContactPoint(ContactPoint{address: proxy_addr}), None, config.clone()) => unreachable!(),
             startup = startup_rx.recv() => startup.unwrap(),
         };
 
