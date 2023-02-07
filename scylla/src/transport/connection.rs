@@ -1,5 +1,6 @@
 use bytes::Bytes;
 use futures::{future::RemoteHandle, FutureExt};
+use scylla_cql::errors::TranslationError;
 use scylla_cql::frame::types::SerialConsistency;
 use tokio::io::{split, AsyncRead, AsyncWrite, AsyncWriteExt, BufReader, BufWriter};
 use tokio::net::{TcpSocket, TcpStream};
@@ -32,7 +33,8 @@ use std::{
 use super::errors::{BadKeyspaceName, DbError, QueryError};
 use super::iterator::RowIterator;
 use super::session::AddressTranslator;
-use super::topology::UntranslatedEndpoint;
+use super::topology::{PeerEndpoint, UntranslatedEndpoint, UntranslatedPeer};
+use super::NodeAddr;
 
 use crate::batch::{Batch, BatchStatement};
 use crate::frame::protocol_features::ProtocolFeatures;
@@ -1059,12 +1061,51 @@ impl Connection {
     }
 }
 
+async fn maybe_translated_addr(
+    endpoint: UntranslatedEndpoint,
+    address_translator: Option<&dyn AddressTranslator>,
+) -> Result<SocketAddr, TranslationError> {
+    match endpoint {
+        UntranslatedEndpoint::ContactPoint(addr) => Ok(addr.address),
+        UntranslatedEndpoint::Peer(PeerEndpoint {
+            host_id,
+            address,
+            datacenter,
+            rack,
+        }) => match address {
+            NodeAddr::Translatable(addr) => {
+                // In this case, addr is subject to AddressTranslator.
+                if let Some(translator) = address_translator {
+                    let res = translator
+                        .translate_address(&UntranslatedPeer {
+                            host_id,
+                            untranslated_address: addr,
+                            datacenter,
+                            rack,
+                        })
+                        .await;
+                    if let Err(ref err) = res {
+                        error!("Address translation failed for addr {}: {}", addr, err);
+                    }
+                    res
+                } else {
+                    Ok(addr)
+                }
+            }
+            NodeAddr::Untranslatable(addr) => {
+                // In this case, addr is considered to be translated, as it is the control connection's address.
+                Ok(addr)
+            }
+        },
+    }
+}
+
 pub async fn open_connection(
     endpoint: UntranslatedEndpoint,
     source_port: Option<u16>,
     config: ConnectionConfig,
 ) -> Result<(Connection, ErrorReceiver), QueryError> {
-    let addr = endpoint.address().into_inner();
+    let addr = maybe_translated_addr(endpoint, config.address_translator.as_deref()).await?;
     open_named_connection(
         addr,
         source_port,
