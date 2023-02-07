@@ -10,6 +10,7 @@ use bytes::Bytes;
 use futures::future::join_all;
 use futures::future::try_join_all;
 use scylla_cql::errors::DbError;
+pub use scylla_cql::errors::TranslationError;
 use scylla_cql::frame::response::NonErrorResponse;
 use std::collections::HashMap;
 use std::future::Future;
@@ -17,7 +18,6 @@ use std::net::SocketAddr;
 use std::str::FromStr;
 use std::sync::Arc;
 use std::time::Duration;
-use thiserror::Error;
 use tokio::net::lookup_host;
 use tokio::time::timeout;
 use tracing::{debug, error, trace, trace_span, Instrument};
@@ -62,14 +62,6 @@ pub use crate::transport::connection_pool::PoolSize;
 use crate::authentication::AuthenticatorProvider;
 #[cfg(feature = "ssl")]
 use openssl::ssl::SslContext;
-
-#[derive(Debug, Copy, Clone, Error)]
-pub enum TranslationError {
-    #[error("No rule for address")]
-    NoRuleForAddress,
-    #[error("Invalid address in rule")]
-    InvalidAddressInRule,
-}
 
 #[async_trait]
 pub trait AddressTranslator: Send + Sync {
@@ -1326,7 +1318,8 @@ impl Session {
                     | QueryError::DbError(DbError::IsBootstrapping, _)
                     | QueryError::DbError(DbError::Unavailable { .. }, _)
                     | QueryError::DbError(DbError::Unprepared { .. }, _)
-                    | QueryError::DbError(DbError::Overloaded { .. }, _) => false,
+                    | QueryError::DbError(DbError::Overloaded { .. }, _)
+                    | QueryError::TranslationError(_) => false,
 
                     // "slow" errors, i.e. ones that are returned after considerable time of query being run
                     QueryError::DbError(_, _)
