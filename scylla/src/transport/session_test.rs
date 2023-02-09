@@ -2630,3 +2630,41 @@ async fn test_iter_works_when_retry_policy_returns_ignore_write_error() {
     assert!(retried_flag.load(Ordering::Relaxed));
     while iter.try_next().await.unwrap().is_some() {}
 }
+
+#[tokio::test]
+async fn test_iter_methods_with_modification_statements() {
+    let uri = std::env::var("SCYLLA_URI").unwrap_or_else(|_| "127.0.0.1:9042".to_string());
+    let session = SessionBuilder::new().known_node(uri).build().await.unwrap();
+    let ks = unique_keyspace_name();
+
+    session.query(format!("CREATE KEYSPACE IF NOT EXISTS {} WITH REPLICATION = {{'class' : 'SimpleStrategy', 'replication_factor' : 1}}", ks), &[]).await.unwrap();
+    session
+        .query(
+            format!(
+                "CREATE TABLE IF NOT EXISTS {}.t (a int, b int, c text, primary key (a, b))",
+                ks
+            ),
+            &[],
+        )
+        .await
+        .unwrap();
+
+    let mut query = Query::from(format!(
+        "INSERT INTO {}.t (a, b, c) VALUES (1, 2, 'abc')",
+        ks
+    ));
+    query.set_tracing(true);
+    let mut row_iterator = session.query_iter(query, &[]).await.unwrap();
+    row_iterator.next().await.ok_or(()).unwrap_err(); // assert empty
+    assert!(!row_iterator.get_tracing_ids().is_empty());
+
+    let prepared_statement = session
+        .prepare(format!("INSERT INTO {}.t (a, b, c) VALUES (?, ?, ?)", ks))
+        .await
+        .unwrap();
+    let mut row_iterator = session
+        .execute_iter(prepared_statement, (2, 3, "cba"))
+        .await
+        .unwrap();
+    row_iterator.next().await.ok_or(()).unwrap_err(); // assert empty
+}

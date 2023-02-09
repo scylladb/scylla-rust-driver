@@ -540,6 +540,28 @@ where
                     self.metrics.inc_failed_paged_queries();
                     return Err(err);
                 }
+                Ok(NonErrorQueryResponse {
+                    response: NonErrorResponse::Result(_),
+                    tracing_id,
+                    ..
+                }) => {
+                    // We have most probably sent a modification statement (e.g. INSERT or UPDATE),
+                    // so let's return an empty iterator as suggested in #631.
+
+                    // We must attempt to send something because the iterator expects it.
+                    let (proof, _) = self
+                        .sender
+                        .send(Ok(ReceivedPage {
+                            rows: Rows {
+                                metadata: Default::default(),
+                                rows_count: 0,
+                                rows: Vec::new(),
+                            },
+                            tracing_id,
+                        }))
+                        .await;
+                    return Ok(proof);
+                }
                 Ok(_) => {
                     self.metrics.inc_failed_paged_queries();
 
