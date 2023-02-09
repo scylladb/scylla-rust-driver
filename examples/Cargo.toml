@@ -107,3 +107,7 @@ path = "allocations.rs"
 [[example]]
 name = "query_history"
 path = "query_history.rs"
+
+[[example]]
+name = "execution_profile"
+path = "execution_profile.rs"

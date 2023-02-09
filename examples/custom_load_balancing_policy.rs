@@ -1,7 +1,7 @@
 use anyhow::Result;
 use scylla::{
     load_balancing::{LoadBalancingPolicy, Statement},
-    transport::{ClusterData, Node},
+    transport::{ClusterData, ExecutionProfile, Node},
     Session, SessionBuilder,
 };
 use std::{env, sync::Arc};
@@ -42,9 +42,13 @@ async fn main() -> Result<()> {
         fav_datacenter_name: "PL".to_string(),
     };
 
+    let profile = ExecutionProfile::builder()
+        .load_balancing_policy(Arc::new(custom_load_balancing))
+        .build();
+
     let _session: Session = SessionBuilder::new()
         .known_node(uri)
-        .load_balancing(Arc::new(custom_load_balancing))
+        .default_execution_profile_handle(profile.into_handle())
         .build()
         .await?;
 

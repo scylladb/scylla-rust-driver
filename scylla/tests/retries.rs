@@ -3,6 +3,7 @@ mod utils;
 use scylla::retry_policy::FallthroughRetryPolicy;
 use scylla::speculative_execution::SimpleSpeculativeExecutionPolicy;
 use scylla::transport::session::Session;
+use scylla::ExecutionProfile;
 use scylla::SessionBuilder;
 use scylla::{query::Query, test_utils::unique_keyspace_name};
 use std::sync::Arc;
@@ -22,13 +23,13 @@ async fn speculative_execution_is_fired() {
 
     let res = test_with_3_node_cluster(ShardAwareness::QueryNode, |proxy_uris, translation_map, mut running_proxy| async move {
         // DB preparation phase
+        let simple_speculative_no_retry_profile = ExecutionProfile::builder().speculative_execution_policy(Some(Arc::new(SimpleSpeculativeExecutionPolicy {
+            max_retry_count: 2,
+            retry_interval: Duration::from_millis(10),
+        }))).retry_policy(Box::new(FallthroughRetryPolicy)).build();
         let session: Session = SessionBuilder::new()
             .known_node(proxy_uris[0].as_str())
-            .speculative_execution(Arc::new(SimpleSpeculativeExecutionPolicy {
-                max_retry_count: 2,
-                retry_interval: Duration::from_millis(10),
-            }))
-            .retry_policy(Box::new(FallthroughRetryPolicy))
+            .default_execution_profile_handle(simple_speculative_no_retry_profile.into_handle())
             .address_translator(Arc::new(translation_map))
             .build()
             .await

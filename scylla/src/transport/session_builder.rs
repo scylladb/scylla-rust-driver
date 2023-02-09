@@ -1,18 +1,16 @@
 //! SessionBuilder provides an easy way to create new Sessions
 
 use super::errors::NewSessionError;
-use super::load_balancing::LoadBalancingPolicy;
+use super::execution_profile::ExecutionProfileHandle;
 use super::session::{AddressTranslator, Session, SessionConfig};
-use super::speculative_execution::SpeculativeExecutionPolicy;
 use super::Compression;
+use crate::transport::connection_pool::PoolSize;
 use crate::transport::host_filter::HostFilter;
-use crate::transport::{connection_pool::PoolSize, retry_policy::RetryPolicy};
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration;
 
 use crate::authentication::{AuthenticatorProvider, PlainTextAuthenticator};
-use crate::statement::Consistency;
 #[cfg(feature = "ssl")]
 use openssl::ssl::SslContext;
 use tracing::warn;
@@ -67,13 +65,6 @@ impl SessionBuilder {
     /// ```
     pub fn known_node(mut self, hostname: impl AsRef<str>) -> Self {
         self.config.add_known_node(hostname);
-        self
-    }
-
-    /// Specify a default consistency to be used for queries.
-    /// It's possible to override it by explicitly setting a consistency on the chosen query.
-    pub fn default_consistency(mut self, consistency: Consistency) -> Self {
-        self.config.default_consistency = consistency;
         self
     }
 
@@ -296,81 +287,30 @@ impl SessionBuilder {
         self
     }
 
-    /// Set the load balancing policy
-    /// The default is Token-aware Round-robin.
+    /// Set the default execution profile using its handle
     ///
     /// # Example
     /// ```
-    /// # use scylla::{Session, SessionBuilder};
-    /// # use scylla::transport::load_balancing::RoundRobinPolicy;
-    /// # use std::sync::Arc;
+    /// # use scylla::{statement::Consistency, ExecutionProfile, Session, SessionBuilder};
+    /// # use std::time::Duration;
     /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
+    /// let execution_profile = ExecutionProfile::builder()
+    ///     .consistency(Consistency::All)
+    ///     .request_timeout(Some(Duration::from_secs(2)))
+    ///     .build();
     /// let session: Session = SessionBuilder::new()
     ///     .known_node("127.0.0.1:9042")
-    ///     .load_balancing(Arc::new(RoundRobinPolicy::new()))
+    ///     .default_execution_profile_handle(execution_profile.into_handle())
     ///     .build()
     ///     .await?;
     /// # Ok(())
     /// # }
     /// ```
-    pub fn load_balancing(mut self, policy: Arc<dyn LoadBalancingPolicy>) -> Self {
-        self.config.load_balancing = policy;
-        self
-    }
-
-    /// Set the speculative execution policy
-    /// The default is None
-    /// # Example
-    /// ```
-    /// # extern crate scylla;
-    /// # use scylla::Session;
-    /// # use std::error::Error;
-    /// # async fn check_only_compiles() -> Result<(), Box<dyn Error>> {
-    /// use std::{sync::Arc, time::Duration};
-    /// use scylla::{
-    ///     Session,
-    ///     SessionBuilder,
-    ///     transport::speculative_execution::SimpleSpeculativeExecutionPolicy
-    /// };
-    ///
-    /// let policy = SimpleSpeculativeExecutionPolicy {
-    ///     max_retry_count: 3,
-    ///     retry_interval: Duration::from_millis(100),
-    /// };
-    ///
-    /// let session: Session = SessionBuilder::new()
-    ///     .known_node("127.0.0.1:9042")
-    ///     .speculative_execution(Arc::new(policy))
-    ///     .build()
-    ///     .await?;
-    /// # Ok(())
-    /// # }
-    /// ```
-    pub fn speculative_execution(mut self, policy: Arc<dyn SpeculativeExecutionPolicy>) -> Self {
-        self.config.speculative_execution_policy = Some(policy);
-        self
-    }
-
-    /// Sets the [`RetryPolicy`] to use by default on queries
-    /// The default is [DefaultRetryPolicy](crate::transport::retry_policy::DefaultRetryPolicy)
-    /// It is possible to implement a custom retry policy by implementing the trait [`RetryPolicy`]
-    ///
-    /// # Example
-    /// ```
-    /// # use scylla::{Session, SessionBuilder};
-    /// # use scylla::transport::Compression;
-    /// use scylla::transport::retry_policy::DefaultRetryPolicy;
-    /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
-    /// let session: Session = SessionBuilder::new()
-    ///     .known_node("127.0.0.1:9042")
-    ///     .retry_policy(Box::new(DefaultRetryPolicy::new()))
-    ///     .build()
-    ///     .await?;
-    /// # Ok(())
-    /// # }
-    /// ```
-    pub fn retry_policy(mut self, retry_policy: Box<dyn RetryPolicy + Send + Sync>) -> Self {
-        self.config.retry_policy = retry_policy;
+    pub fn default_execution_profile_handle(
+        mut self,
+        profile_handle: ExecutionProfileHandle,
+    ) -> Self {
+        self.config.default_execution_profile_handle = profile_handle;
         self
     }
 
@@ -621,27 +561,6 @@ impl SessionBuilder {
         self
     }
 
-    /// Changes client-side timeout
-    /// The default is 30 seconds.
-    ///
-    /// # Example
-    /// ```
-    /// # use scylla::{Session, SessionBuilder};
-    /// # use std::time::Duration;
-    /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
-    /// let session: Session = SessionBuilder::new()
-    ///     .known_node("127.0.0.1:9042")
-    ///     .request_timeout(Some(Duration::from_millis(500)))
-    ///     .build() // Turns SessionBuilder into Session
-    ///     .await?;
-    /// # Ok(())
-    /// # }
-    /// ```
-    pub fn request_timeout(mut self, duration: Option<std::time::Duration>) -> Self {
-        self.config.request_timeout = duration;
-        self
-    }
-
     /// Uses a custom address translator for peer addresses retrieved from the cluster.
     /// By default, no translation is performed.
     ///
@@ -763,12 +682,17 @@ impl Default for SessionBuilder {
 
 #[cfg(test)]
 mod tests {
+    use scylla_cql::frame::types::SerialConsistency;
+    use scylla_cql::Consistency;
+
     use super::SessionBuilder;
-    use crate::transport::load_balancing::RoundRobinPolicy;
+    use crate::load_balancing::LatencyAwarePolicy;
+    use crate::transport::execution_profile::{defaults, ExecutionProfile};
     use crate::transport::session::KnownNode;
     use crate::transport::Compression;
     use std::net::{IpAddr, Ipv4Addr, SocketAddr};
     use std::sync::Arc;
+    use std::time::Duration;
 
     #[test]
     fn default_session_builder() {
@@ -862,21 +786,6 @@ mod tests {
     }
 
     #[test]
-    fn load_balancing() {
-        let mut builder = SessionBuilder::new();
-        assert_eq!(
-            builder.config.load_balancing.name(),
-            "TokenAwarePolicy{child_policy: RoundRobinPolicy}".to_string()
-        );
-
-        builder = builder.load_balancing(Arc::new(RoundRobinPolicy::new()));
-        assert_eq!(
-            builder.config.load_balancing.name(),
-            "RoundRobinPolicy".to_string()
-        );
-    }
-
-    #[test]
     fn use_keyspace() {
         let mut builder = SessionBuilder::new();
         assert_eq!(builder.config.used_keyspace, None);
@@ -918,18 +827,65 @@ mod tests {
         assert!(builder.config.fetch_schema_metadata);
     }
 
-    #[test]
-    fn request_timeout() {
-        let mut builder = SessionBuilder::new();
+    // LatencyAwarePolicy, which is used in the test, requires presence of Tokio runtime.
+    #[tokio::test]
+    async fn execution_profile() {
+        let default_builder = SessionBuilder::new();
+        let default_execution_profile = default_builder
+            .config
+            .default_execution_profile_handle
+            .access();
         assert_eq!(
-            builder.config.request_timeout,
-            Some(std::time::Duration::from_secs(30))
+            default_execution_profile.consistency,
+            defaults::consistency()
+        );
+        assert_eq!(
+            default_execution_profile.serial_consistency,
+            defaults::serial_consistency()
+        );
+        assert_eq!(
+            default_execution_profile.request_timeout,
+            defaults::request_timeout()
+        );
+        assert_eq!(
+            default_execution_profile.load_balancing_policy.name(),
+            defaults::load_balancing_policy().name()
         );
 
-        builder = builder.request_timeout(Some(std::time::Duration::from_secs(10)));
+        let custom_consistency = Consistency::Any;
+        let custom_serial_consistency = Some(SerialConsistency::Serial);
+        let custom_load_balancing_policy = Arc::new(LatencyAwarePolicy::default());
+        let custom_timeout = Some(Duration::from_secs(1));
+        let execution_profile_handle = ExecutionProfile::builder()
+            .consistency(custom_consistency)
+            .serial_consistency(custom_serial_consistency)
+            .request_timeout(custom_timeout)
+            .load_balancing_policy(custom_load_balancing_policy)
+            .build()
+            .into_handle();
+        let builder_with_profile =
+            default_builder.default_execution_profile_handle(execution_profile_handle.clone());
+        let execution_profile = execution_profile_handle.access();
+
+        let profile_in_builder = builder_with_profile
+            .config
+            .default_execution_profile_handle
+            .access();
         assert_eq!(
-            builder.config.request_timeout,
-            Some(std::time::Duration::from_secs(10))
+            profile_in_builder.consistency,
+            execution_profile.consistency
+        );
+        assert_eq!(
+            profile_in_builder.serial_consistency,
+            execution_profile.serial_consistency
+        );
+        assert_eq!(
+            profile_in_builder.request_timeout,
+            execution_profile.request_timeout
+        );
+        assert_eq!(
+            profile_in_builder.load_balancing_policy.name(),
+            execution_profile.load_balancing_policy.name()
         );
     }
 
@@ -947,7 +903,6 @@ mod tests {
         builder = builder.known_nodes_addr(&[addr1, addr2]);
         builder = builder.compression(Some(Compression::Snappy));
         builder = builder.tcp_nodelay(true);
-        builder = builder.load_balancing(Arc::new(RoundRobinPolicy::new()));
         builder = builder.use_keyspace("ks_name", true);
         builder = builder.fetch_schema_metadata(false);
 
@@ -965,10 +920,6 @@ mod tests {
 
         assert_eq!(builder.config.compression, Some(Compression::Snappy));
         assert!(builder.config.tcp_nodelay);
-        assert_eq!(
-            builder.config.load_balancing.name(),
-            "RoundRobinPolicy".to_string()
-        );
 
         assert_eq!(builder.config.used_keyspace, Some("ks_name".to_string()));
 

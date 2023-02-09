@@ -3,6 +3,7 @@ mod cluster;
 pub(crate) mod connection;
 mod connection_pool;
 pub mod downgrading_consistency_retry_policy;
+pub mod execution_profile;
 pub mod host_filter;
 pub mod iterator;
 pub mod load_balancing;
@@ -15,7 +16,9 @@ pub mod session;
 pub mod session_builder;
 pub mod speculative_execution;
 pub mod topology;
+
 pub use crate::frame::{Authenticator, Compression};
+pub use execution_profile::ExecutionProfile;
 pub use scylla_cql::errors;
 
 #[cfg(test)]

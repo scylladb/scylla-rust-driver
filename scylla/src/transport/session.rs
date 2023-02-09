@@ -25,6 +25,7 @@ use uuid::Uuid;
 use super::connection::NonErrorQueryResponse;
 use super::connection::QueryResponse;
 use super::errors::{BadQuery, NewSessionError, QueryError};
+use super::execution_profile::{ExecutionProfile, ExecutionProfileHandle, ExecutionProfileInner};
 use super::partitioner::PartitionerName;
 use super::topology::UntranslatedPeer;
 use crate::cql_to_rust::FromRow;
@@ -43,17 +44,12 @@ use crate::transport::connection::{Connection, ConnectionConfig, VerifiedKeyspac
 use crate::transport::connection_pool::PoolConfig;
 use crate::transport::host_filter::HostFilter;
 use crate::transport::iterator::{PreparedIteratorConfig, RowIterator};
-use crate::transport::load_balancing::{
-    LoadBalancingPolicy, RoundRobinPolicy, Statement, TokenAwarePolicy,
-};
+use crate::transport::load_balancing::{LoadBalancingPolicy, Statement, TokenAwarePolicy};
 use crate::transport::metrics::Metrics;
 use crate::transport::node::Node;
 use crate::transport::query_result::QueryResult;
-use crate::transport::retry_policy::{
-    DefaultRetryPolicy, QueryInfo, RetryDecision, RetryPolicy, RetrySession,
-};
+use crate::transport::retry_policy::{QueryInfo, RetryDecision, RetrySession};
 use crate::transport::speculative_execution;
-use crate::transport::speculative_execution::SpeculativeExecutionPolicy;
 use crate::transport::Compression;
 use crate::{
     batch::{Batch, BatchStatement},
@@ -116,14 +112,10 @@ impl AddressTranslator for HashMap<&'static str, &'static str> {
 /// `Session` manages connections to the cluster and allows to perform queries
 pub struct Session {
     cluster: Cluster,
-    load_balancer: Arc<dyn LoadBalancingPolicy>,
+    default_execution_profile_handle: ExecutionProfileHandle,
     schema_agreement_interval: Duration,
-    retry_policy: Box<dyn RetryPolicy>,
-    speculative_execution_policy: Option<Arc<dyn SpeculativeExecutionPolicy>>,
     metrics: Arc<Metrics>,
-    default_consistency: Consistency,
     auto_await_schema_agreement_timeout: Option<Duration>,
-    request_timeout: Option<Duration>,
     refresh_metadata_on_auto_schema_agreement: bool,
 }
 
@@ -133,15 +125,12 @@ impl std::fmt::Debug for Session {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Session")
             .field("cluster", &ClusterNeatDebug(&self.cluster))
-            .field("load_balancer", &self.load_balancer)
-            .field("schema_agreement_interval", &self.schema_agreement_interval)
-            .field("retry_policy", &self.retry_policy)
             .field(
-                "speculative_execution_policy",
-                &self.speculative_execution_policy,
+                "default_execution_profile_handle",
+                &self.default_execution_profile_handle,
             )
+            .field("schema_agreement_interval", &self.schema_agreement_interval)
             .field("metrics", &self.metrics)
-            .field("default_consistency", &self.default_consistency)
             .field(
                 "auto_await_schema_agreement_timeout",
                 &self.auto_await_schema_agreement_timeout,
@@ -165,14 +154,10 @@ pub struct SessionConfig {
     pub compression: Option<Compression>,
     pub tcp_nodelay: bool,
 
-    /// Load balancing policy used by Session
-    pub load_balancing: Arc<dyn LoadBalancingPolicy>,
+    pub default_execution_profile_handle: ExecutionProfileHandle,
 
     pub used_keyspace: Option<String>,
     pub keyspace_case_sensitive: bool,
-
-    pub retry_policy: Box<dyn RetryPolicy>,
-    pub speculative_execution_policy: Option<Arc<dyn SpeculativeExecutionPolicy>>,
 
     /// Provide our Session with TLS
     #[cfg(feature = "ssl")]
@@ -191,8 +176,6 @@ pub struct SessionConfig {
     /// Generally, this options is best left as default (false).
     pub disallow_shard_aware_port: bool,
 
-    pub default_consistency: Consistency,
-
     /// If empty, fetch all keyspaces
     pub keyspaces_to_fetch: Vec<String>,
 
@@ -205,10 +188,6 @@ pub struct SessionConfig {
     /// Controls the timeout for the automatic wait for schema agreement after sending a schema-altering statement.
     /// If `None`, the automatic schema agreement is disabled.
     pub auto_await_schema_agreement_timeout: Option<Duration>,
-
-    /// Controls the client-side timeout for queries.
-    /// If `None`, the queries have no timeout (the driver will block indefinitely).
-    pub request_timeout: Option<Duration>,
 
     pub address_translator: Option<Arc<dyn AddressTranslator>>,
 
@@ -246,23 +225,20 @@ impl SessionConfig {
             compression: None,
             tcp_nodelay: true,
             schema_agreement_interval: Duration::from_millis(200),
-            load_balancing: Arc::new(TokenAwarePolicy::new(Box::new(RoundRobinPolicy::new()))),
+            default_execution_profile_handle: ExecutionProfile::new_from_inner(Default::default())
+                .into_handle(),
             used_keyspace: None,
             keyspace_case_sensitive: false,
-            retry_policy: Box::new(DefaultRetryPolicy),
-            speculative_execution_policy: None,
             #[cfg(feature = "ssl")]
             ssl_context: None,
             authenticator: None,
             connect_timeout: Duration::from_secs(5),
             connection_pool_size: Default::default(),
             disallow_shard_aware_port: false,
-            default_consistency: Consistency::LocalQuorum,
             keyspaces_to_fetch: Vec::new(),
             fetch_schema_metadata: true,
             keepalive_interval: None,
             auto_await_schema_agreement_timeout: Some(std::time::Duration::from_secs(60)),
-            request_timeout: Some(Duration::from_secs(30)),
             address_translator: None,
             host_filter: None,
             refresh_metadata_on_auto_schema_agreement: true,
@@ -347,7 +323,7 @@ impl SessionConfig {
             authenticator: self.authenticator.clone(),
             connect_timeout: self.connect_timeout,
             event_sender: None,
-            default_consistency: self.default_consistency,
+            default_consistency: self.default_execution_profile_handle.access().consistency,
         }
     }
 }
@@ -454,16 +430,14 @@ impl Session {
         )
         .await?;
 
+        let default_execution_profile_handle = config.default_execution_profile_handle;
+
         let session = Session {
             cluster,
-            load_balancer: config.load_balancing,
-            retry_policy: config.retry_policy,
+            default_execution_profile_handle,
             schema_agreement_interval: config.schema_agreement_interval,
-            speculative_execution_policy: config.speculative_execution_policy,
             metrics: Arc::new(Metrics::new()),
-            default_consistency: config.default_consistency,
             auto_await_schema_agreement_timeout: config.auto_await_schema_agreement_timeout,
-            request_timeout: config.request_timeout,
             refresh_metadata_on_auto_schema_agreement: config
                 .refresh_metadata_on_auto_schema_agreement,
         };
@@ -552,7 +526,13 @@ impl Session {
                 Statement::default(),
                 &query.config,
                 |node: Arc<Node>| async move { node.random_connection().await },
-                |connection: Arc<Connection>, consistency: Consistency| {
+                |connection: Arc<Connection>,
+                 consistency: Consistency,
+                 execution_profile: &ExecutionProfileInner| {
+                    let serial_consistency = query
+                        .config
+                        .serial_consistency
+                        .unwrap_or(execution_profile.serial_consistency);
                     // Needed to avoid moving query and values into async move block
                     let query_ref = &query;
                     let values_ref = &serialized_values;
@@ -563,6 +543,7 @@ impl Session {
                                 query_ref,
                                 values_ref,
                                 consistency,
+                                serial_consistency,
                                 paging_state_ref.clone(),
                             )
                             .await
@@ -674,18 +655,16 @@ impl Session {
         let query: Query = query.into();
         let serialized_values = values.serialized()?;
 
-        let retry_session = match &query.config.retry_policy {
-            Some(policy) => policy.new_session(),
-            None => self.retry_policy.new_session(),
-        };
+        let execution_profile = query
+            .get_execution_profile_handle()
+            .unwrap_or_else(|| self.get_default_execution_profile_handle())
+            .access();
 
         let span = trace_span!("Request", query = query.contents.as_str());
         RowIterator::new_for_query(
             query,
             serialized_values.into_owned(),
-            self.default_consistency,
-            retry_session,
-            self.load_balancer.clone(),
+            execution_profile,
             self.cluster.get_data(),
             self.metrics.clone(),
         )
@@ -874,16 +853,25 @@ impl Session {
                         None => node.random_connection().await,
                     }
                 },
-                |connection: Arc<Connection>, consistency: Consistency| async move {
-                    connection
-                        .execute_with_consistency(
-                            prepared,
-                            values_ref,
-                            consistency,
-                            paging_state_ref.clone(),
-                        )
-                        .await
-                        .and_then(QueryResponse::into_non_error_query_response)
+                |connection: Arc<Connection>,
+                 consistency: Consistency,
+                 execution_profile: &ExecutionProfileInner| {
+                    let serial_consistency = prepared
+                        .config
+                        .serial_consistency
+                        .unwrap_or(execution_profile.serial_consistency);
+                    async move {
+                        connection
+                            .execute_with_consistency(
+                                prepared,
+                                values_ref,
+                                consistency,
+                                serial_consistency,
+                                paging_state_ref.clone(),
+                            )
+                            .await
+                            .and_then(QueryResponse::into_non_error_query_response)
+                    }
                 },
             )
             .instrument(span)
@@ -956,10 +944,10 @@ impl Session {
 
         let token = self.calculate_token(&prepared, &serialized_values)?;
 
-        let retry_session = match &prepared.config.retry_policy {
-            Some(policy) => policy.new_session(),
-            None => self.retry_policy.new_session(),
-        };
+        let execution_profile = prepared
+            .get_execution_profile_handle()
+            .unwrap_or_else(|| self.get_default_execution_profile_handle())
+            .access();
 
         let span = trace_span!(
             "Request",
@@ -968,10 +956,8 @@ impl Session {
         RowIterator::new_for_prepared_statement(PreparedIteratorConfig {
             prepared,
             values: serialized_values.into_owned(),
-            default_consistency: self.default_consistency,
             token,
-            retry_session,
-            load_balancer: self.load_balancer.clone(),
+            execution_profile,
             cluster_data: self.cluster.get_data(),
             metrics: self.metrics.clone(),
         })
@@ -1059,10 +1045,23 @@ impl Session {
                         None => node.random_connection().await,
                     }
                 },
-                |connection: Arc<Connection>, consistency: Consistency| async move {
-                    connection
-                        .batch_with_consistency(batch, values_ref, consistency)
-                        .await
+                |connection: Arc<Connection>,
+                 consistency: Consistency,
+                 execution_profile: &ExecutionProfileInner| {
+                    let serial_consistency = batch
+                        .config
+                        .serial_consistency
+                        .unwrap_or(execution_profile.serial_consistency);
+                    async move {
+                        connection
+                            .batch_with_consistency(
+                                batch,
+                                values_ref,
+                                consistency,
+                                serial_consistency,
+                            )
+                            .await
+                    }
                 },
             )
             .instrument(trace_span!("Batch"))
@@ -1357,7 +1356,7 @@ impl Session {
         statement_info: Statement<'a>,
         statement_config: &'a StatementConfig,
         choose_connection: impl Fn(Arc<Node>) -> ConnFut,
-        do_query: impl Fn(Arc<Connection>, Consistency) -> QueryFut,
+        do_query: impl Fn(Arc<Connection>, Consistency, &ExecutionProfileInner) -> QueryFut,
     ) -> Result<RunQueryResult<ResT>, QueryError>
     where
         ConnFut: Future<Output = Result<Arc<Connection>, QueryError>>,
@@ -1370,10 +1369,18 @@ impl Session {
                 .as_ref()
                 .map(|hl| (&**hl, hl.log_query_start()));
 
+        let execution_profile = statement_config
+            .execution_profile_handle
+            .as_ref()
+            .unwrap_or_else(|| self.get_default_execution_profile_handle())
+            .access();
+
+        let load_balancer = &execution_profile.load_balancing_policy;
+
         let runner = async {
             let cluster_data = self.cluster.get_data();
-            self.load_balancer.update_cluster_data(&cluster_data);
-            let query_plan = self.load_balancer.plan(&statement_info, &cluster_data);
+            load_balancer.update_cluster_data(&cluster_data);
+            let query_plan = load_balancer.plan(&statement_info, &cluster_data);
 
             // If a speculative execution policy is used to run query, query_plan has to be shared
             // between different async functions. This struct helps to wrap query_plan in mutex so it
@@ -1396,16 +1403,9 @@ impl Session {
                 }
             }
 
-            let retry_policy = statement_config
-                .retry_policy
-                .as_ref()
-                .unwrap_or(&self.retry_policy);
+            let retry_policy = &execution_profile.retry_policy;
 
-            #[allow(clippy::unnecessary_lazy_evaluations)]
-            let speculative_policy = statement_config
-                .speculative_execution_policy
-                .as_ref()
-                .or_else(|| self.speculative_execution_policy.as_ref());
+            let speculative_policy = execution_profile.speculative_execution_policy.as_ref();
 
             match speculative_policy {
                 Some(speculative) if statement_config.is_idempotent => {
@@ -1434,6 +1434,7 @@ impl Session {
                             &shared_query_plan,
                             &choose_connection,
                             &do_query,
+                            &execution_profile,
                             ExecuteQueryContext {
                                 is_idempotent: statement_config.is_idempotent,
                                 consistency: statement_config.consistency,
@@ -1467,6 +1468,7 @@ impl Session {
                         query_plan,
                         &choose_connection,
                         &do_query,
+                        &execution_profile,
                         ExecuteQueryContext {
                             is_idempotent: statement_config.is_idempotent,
                             consistency: statement_config.consistency,
@@ -1482,7 +1484,9 @@ impl Session {
             }
         };
 
-        let effective_timeout = statement_config.request_timeout.or(self.request_timeout);
+        let effective_timeout = statement_config
+            .request_timeout
+            .or(execution_profile.request_timeout);
         let result = match effective_timeout {
             Some(timeout) => tokio::time::timeout(timeout, runner)
                 .await
@@ -1510,7 +1514,8 @@ impl Session {
         &'a self,
         query_plan: impl Iterator<Item = Arc<Node>>,
         choose_connection: impl Fn(Arc<Node>) -> ConnFut,
-        do_query: impl Fn(Arc<Connection>, Consistency) -> QueryFut,
+        do_query: impl Fn(Arc<Connection>, Consistency, &ExecutionProfileInner) -> QueryFut,
+        execution_profile: &ExecutionProfileInner,
         mut context: ExecuteQueryContext<'a>,
     ) -> Option<Result<RunQueryResult<ResT>, QueryError>>
     where
@@ -1520,7 +1525,7 @@ impl Session {
     {
         let mut last_error: Option<QueryError> = None;
         let mut current_consistency: Consistency =
-            context.consistency.unwrap_or(self.default_consistency);
+            context.consistency.unwrap_or(execution_profile.consistency);
 
         'nodes_in_plan: for node in query_plan {
             let span = trace_span!("Executing query", node = node.address.to_string().as_str());
@@ -1554,13 +1559,13 @@ impl Session {
                 let attempt_id: Option<history::AttemptId> =
                     context.log_attempt_start(connection.get_connect_address());
                 let query_result: Result<ResT, QueryError> =
-                    do_query(connection, current_consistency)
+                    do_query(connection, current_consistency, execution_profile)
                         .instrument(span.clone())
                         .await;
 
                 let elapsed = query_start.elapsed();
                 if Self::should_consider_query_for_latency_measurements(
-                    &*self.load_balancer,
+                    execution_profile.load_balancing_policy.as_ref(),
                     &query_result,
                 ) {
                     let mut average_latency_guard = node.average_latency.write().unwrap();
@@ -1591,7 +1596,7 @@ impl Session {
                     error: the_error,
                     is_idempotent: context.is_idempotent,
                     consistency: LegacyConsistency::Regular(
-                        context.consistency.unwrap_or(self.default_consistency),
+                        context.consistency.unwrap_or(execution_profile.consistency),
                     ),
                 };
 
@@ -1642,7 +1647,7 @@ impl Session {
 
     async fn schema_agreement_auxiliary<ResT, QueryFut>(
         &self,
-        do_query: impl Fn(Arc<Connection>, Consistency) -> QueryFut,
+        do_query: impl Fn(Arc<Connection>, Consistency, &ExecutionProfileInner) -> QueryFut,
     ) -> Result<ResT, QueryError>
     where
         QueryFut: Future<Output = Result<ResT, QueryError>>,
@@ -1651,7 +1656,7 @@ impl Session {
         let info = Statement::default();
         let config = StatementConfig {
             is_idempotent: true,
-            serial_consistency: Some(SerialConsistency::LocalSerial),
+            serial_consistency: Some(Some(SerialConsistency::LocalSerial)),
             ..Default::default()
         };
 
@@ -1685,7 +1690,7 @@ impl Session {
     pub async fn fetch_schema_version(&self) -> Result<Uuid, QueryError> {
         // We ignore custom Consistency that a retry policy could decide to put here, using the default instead.
         self.schema_agreement_auxiliary(
-            |connection: Arc<Connection>, _ignored: Consistency| async move {
+            |connection: Arc<Connection>, _: Consistency, _: &ExecutionProfileInner| async move {
                 connection.fetch_schema_version().await
             },
         )
@@ -1706,6 +1711,10 @@ impl Session {
         let partition_key = calculate_partition_key(prepared, serialized_values)?;
 
         Ok(Some(partitioner_name.hash(partition_key)))
+    }
+
+    fn get_default_execution_profile_handle(&self) -> &ExecutionProfileHandle {
+        &self.default_execution_profile_handle
     }
 }
 

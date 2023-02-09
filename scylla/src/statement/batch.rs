@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use crate::history::HistoryListener;
 use crate::statement::{prepared_statement::PreparedStatement, query::Query};
-use crate::transport::retry_policy::RetryPolicy;
+use crate::transport::execution_profile::ExecutionProfileHandle;
 
 use super::StatementConfig;
 pub use super::{Consistency, SerialConsistency};
@@ -61,20 +61,20 @@ impl Batch {
     /// Sets the serial consistency to be used when executing this batch.
     /// (Ignored unless the batch is an LWT)
     pub fn set_serial_consistency(&mut self, sc: Option<SerialConsistency>) {
-        self.config.serial_consistency = sc;
+        self.config.serial_consistency = Some(sc);
     }
 
     /// Gets the serial consistency to be used when executing this batch.
     /// (Ignored unless the batch is an LWT)
     pub fn get_serial_consistency(&self) -> Option<SerialConsistency> {
-        self.config.serial_consistency
+        self.config.serial_consistency.flatten()
     }
 
     /// Sets the idempotence of this batch
     /// A query is idempotent if it can be applied multiple times without changing the result of the initial application
     /// If set to `true` we can be sure that it is idempotent
     /// If set to `false` it is unknown whether it is idempotent
-    /// This is used in [`RetryPolicy`] to decide if retrying a query is safe
+    /// This is used in [`RetryPolicy`](crate::retry_policy::RetryPolicy) to decide if retrying a query is safe
     pub fn set_is_idempotent(&mut self, is_idempotent: bool) {
         self.config.is_idempotent = is_idempotent;
     }
@@ -82,17 +82,6 @@ impl Batch {
     /// Gets the idempotence of this batch
     pub fn get_is_idempotent(&self) -> bool {
         self.config.is_idempotent
-    }
-
-    /// Sets a custom [`RetryPolicy`] to be used with this batch
-    /// By default Session's retry policy is used, this allows to use a custom retry policy
-    pub fn set_retry_policy(&mut self, retry_policy: Box<dyn RetryPolicy>) {
-        self.config.retry_policy = Some(retry_policy);
-    }
-
-    /// Gets custom [`RetryPolicy`] used by this batch
-    pub fn get_retry_policy(&self) -> &Option<Box<dyn RetryPolicy>> {
-        &self.config.retry_policy
     }
 
     /// Enable or disable CQL Tracing for this batch
@@ -127,6 +116,17 @@ impl Batch {
     /// Removes the listener set by `set_history_listener`.
     pub fn remove_history_listener(&mut self) -> Option<Arc<dyn HistoryListener>> {
         self.config.history_listener.take()
+    }
+
+    /// Associates the batch with execution profile referred by the provided handle.
+    /// Handle may be later remapped to another profile, and batch will reflect those changes.
+    pub fn set_execution_profile_handle(&mut self, profile_handle: Option<ExecutionProfileHandle>) {
+        self.config.execution_profile_handle = profile_handle;
+    }
+
+    /// Borrows the execution profile handle associated with this batch.
+    pub fn get_execution_profile_handle(&self) -> Option<&ExecutionProfileHandle> {
+        self.config.execution_profile_handle.as_ref()
     }
 }
 

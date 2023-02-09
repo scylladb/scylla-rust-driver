@@ -1,6 +1,6 @@
 # Scylla Rust Driver
 This book contains documentation for [scylla-rust-driver](https://github.com/scylladb/scylla-rust-driver) - a driver
-for the [Scylla](https://scylladb.com) database written in Rust. 
+for the [Scylla](https://scylladb.com) database written in Rust.
 Although optimized for Scylla, the driver is also compatible with [Apache Cassandra®](https://cassandra.apache.org/).
 
 ### Other documentation
@@ -15,6 +15,7 @@ Although optimized for Scylla, the driver is also compatible with [Apache Cassan
 * [Quick start](quickstart/quickstart.md) - Setting up a Rust project using `scylla-rust-driver` and running a few queries
 * [Connecting to the cluster](connecting/connecting.md) - Configuring a connection to scylla cluster
 * [Making queries](queries/queries.md) - Making different types of queries (simple, prepared, batch, paged)
+* [Execution profiles](execution-profiles/execution-profiles.md) - Grouping query execution configuration options together and switching them all at once
 * [Data Types](data-types/data-types.md) - How to use various column data types
 * [Load balancing](load-balancing/load-balancing.md) - Load balancing configuration, local datacenters etc.
 * [Retry policy configuration](retry-policy/retry-policy.md) - What to do when a query fails, query idempotence

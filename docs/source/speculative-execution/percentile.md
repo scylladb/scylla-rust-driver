@@ -17,6 +17,7 @@ use scylla::{
     Session,
     SessionBuilder,
     speculative_execution::PercentileSpeculativeExecutionPolicy,
+    transport::execution_profile::ExecutionProfile,
 };
 
 let policy = PercentileSpeculativeExecutionPolicy  {
@@ -24,9 +25,14 @@ let policy = PercentileSpeculativeExecutionPolicy  {
     percentile: 99.0,
 };
 
+let handle = ExecutionProfile::builder()
+    .speculative_execution_policy(Some(Arc::new(policy)))
+    .build()
+    .into_handle();
+
 let session: Session = SessionBuilder::new()
     .known_node("127.0.0.1:9042")
-    .speculative_execution(Arc::new(policy))
+    .default_execution_profile_handle(handle)
     .build()
     .await?;
 # Ok(())
