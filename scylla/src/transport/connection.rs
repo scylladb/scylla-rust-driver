@@ -30,6 +30,7 @@ use std::{
 };
 
 use super::errors::{BadKeyspaceName, BadQuery, DbError, QueryError};
+use super::iterator::RowIterator;
 
 use crate::batch::{Batch, BatchStatement};
 use crate::frame::protocol_features::ProtocolFeatures;
@@ -626,6 +627,30 @@ impl Connection {
                 return Ok(final_result);
             }
         }
+    }
+
+    /// Executes a query and fetches its results over multiple pages, using
+    /// the asynchronous iterator interface.
+    pub(crate) async fn query_iter(
+        self: Arc<Self>,
+        query: Query,
+        values: impl ValueList,
+    ) -> Result<RowIterator, QueryError> {
+        let serialized_values = values.serialized()?.into_owned();
+
+        let consistency = query
+            .config
+            .determine_consistency(self.config.default_consistency);
+        let serial_consistency = query.config.serial_consistency.flatten();
+
+        RowIterator::new_for_connection_query_iter(
+            query,
+            self,
+            serialized_values,
+            consistency,
+            serial_consistency,
+        )
+        .await
     }
 
     #[allow(dead_code)]
