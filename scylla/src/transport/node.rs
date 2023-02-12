@@ -118,6 +118,9 @@ pub struct Node {
     down_marker: AtomicBool,
 }
 
+/// A way that Nodes are often passed and accessed in the driver's code.
+pub type NodeRef<'a> = &'a Arc<Node>;
+
 impl Node {
     /// Creates new node which starts connecting in the background
     /// # Arguments
