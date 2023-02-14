@@ -1,6 +1,6 @@
 [package]
 name = "scylla-cql"
-version = "0.0.3"
+version = "0.0.4"
 edition = "2021"
 description = "CQL data types and primitives, for interacting with Scylla."
 repository = "https://github.com/scylladb/scylla-rust-driver"
