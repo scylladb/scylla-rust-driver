@@ -521,35 +521,6 @@ impl Connection {
         }
     }
 
-    pub async fn execute_single_page(
-        &self,
-        prepared_statement: &PreparedStatement,
-        values: impl ValueList,
-        paging_state: Option<Bytes>,
-    ) -> Result<QueryResult, QueryError> {
-        self.execute(prepared_statement, values, paging_state)
-            .await?
-            .into_query_result()
-    }
-
-    pub async fn execute(
-        &self,
-        prepared_statement: &PreparedStatement,
-        values: impl ValueList,
-        paging_state: Option<Bytes>,
-    ) -> Result<QueryResponse, QueryError> {
-        self.execute_with_consistency(
-            prepared_statement,
-            values,
-            prepared_statement
-                .config
-                .determine_consistency(self.config.default_consistency),
-            prepared_statement.config.serial_consistency.flatten(),
-            paging_state,
-        )
-        .await
-    }
-
     pub async fn execute_with_consistency(
         &self,
         prepared_statement: &PreparedStatement,
@@ -589,43 +560,6 @@ impl Connection {
                     .await
             }
             _ => Ok(query_response),
-        }
-    }
-
-    /// Performs execute_single_page multiple times to fetch all available pages
-    #[allow(dead_code)]
-    pub async fn execute_all(
-        &self,
-        prepared_statement: &PreparedStatement,
-        values: impl ValueList,
-    ) -> Result<QueryResult, QueryError> {
-        if prepared_statement.get_page_size().is_none() {
-            return Err(QueryError::BadQuery(BadQuery::Other(
-                "Called Connection::execute_all without page size set!".to_string(),
-            )));
-        }
-
-        let mut final_result = QueryResult::default();
-
-        let serialized_values = values.serialized()?;
-        let mut paging_state: Option<Bytes> = None;
-
-        loop {
-            // Send next paged query
-            let mut cur_result: QueryResult = self
-                .execute_single_page(prepared_statement, &serialized_values, paging_state)
-                .await?;
-
-            // Set paging_state for the next query
-            paging_state = cur_result.paging_state.take();
-
-            // Add current query results to the final_result
-            final_result.merge_with_next_page_res(cur_result);
-
-            if paging_state.is_none() {
-                // No more pages to query, we can return the final result
-                return Ok(final_result);
-            }
         }
     }
 
@@ -1621,14 +1555,14 @@ mod tests {
         }
     }
 
-    /// Tests for Connection::query_all and Connection::execute_all
+    /// Tests for Connection::query_all
     /// 1. SELECT from an empty table.
     /// 2. Create table and insert ints 0..100.
-    ///    Then use query_all and execute_all with page_size set to 7 to select all 100 rows.
+    ///    Then use query_all with page_size set to 7 to select all 100 rows.
     /// 3. INSERT query_all should have None in result rows.
     /// 4. Calling query_all with a Query that doesn't have page_size set should result in an error.
     #[tokio::test]
-    async fn connection_query_all_execute_all_test() {
+    async fn connection_query_all_test() {
         let uri = std::env::var("SCYLLA_URI").unwrap_or_else(|_| "127.0.0.1:9042".to_string());
         let addr: SocketAddr = resolve_hostname(&uri).await;
 
@@ -1670,11 +1604,6 @@ mod tests {
         let empty_res = connection.query_all(&select_query, &[]).await.unwrap();
         assert!(empty_res.rows.unwrap().is_empty());
 
-        let mut prepared_select = connection.prepare(&select_query).await.unwrap();
-        prepared_select.set_page_size(7);
-        let empty_res_prepared = connection.execute_all(&prepared_select, &[]).await.unwrap();
-        assert!(empty_res_prepared.rows.unwrap().is_empty());
-
         // 2. Insert 100 and select using query_all with page_size 7
         let values: Vec<i32> = (0..100).collect();
         let mut insert_futures = Vec::new();
@@ -1698,43 +1627,15 @@ mod tests {
         results.sort_unstable(); // Clippy recommended to use sort_unstable instead of sort()
         assert_eq!(results, values);
 
-        let mut results2: Vec<i32> = connection
-            .execute_all(&prepared_select, &[])
-            .await
-            .unwrap()
-            .rows
-            .unwrap()
-            .into_typed::<(i32,)>()
-            .map(|r| r.unwrap().0)
-            .collect();
-        results2.sort_unstable();
-        assert_eq!(results2, values);
-
         // 3. INSERT query_all should have None in result rows.
         let insert_res1 = connection.query_all(&insert_query, (0,)).await.unwrap();
         assert!(insert_res1.rows.is_none());
-
-        let prepared_insert = connection.prepare(&insert_query).await.unwrap();
-        let insert_res2 = connection
-            .execute_all(&prepared_insert, (0,))
-            .await
-            .unwrap();
-        assert!(insert_res2.rows.is_none(),);
 
         // 4. Calling query_all with a Query that doesn't have page_size set should result in an error.
         let no_page_size_query = Query::new("SELECT p FROM connection_query_all_tab");
         let no_page_res = connection.query_all(&no_page_size_query, &[]).await;
         assert!(matches!(
             no_page_res,
-            Err(QueryError::BadQuery(BadQuery::Other(_)))
-        ));
-
-        let prepared_no_page_size_query = connection.prepare(&no_page_size_query).await.unwrap();
-        let prepared_no_page_res = connection
-            .execute_all(&prepared_no_page_size_query, &[])
-            .await;
-        assert!(matches!(
-            prepared_no_page_res,
             Err(QueryError::BadQuery(BadQuery::Other(_)))
         ));
     }
