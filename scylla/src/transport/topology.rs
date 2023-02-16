@@ -13,6 +13,7 @@ use futures::future::try_join_all;
 use itertools::Itertools;
 use rand::seq::SliceRandom;
 use rand::{thread_rng, Rng};
+use scylla_macros::FromRow;
 use std::borrow::BorrowMut;
 use std::collections::HashMap;
 use std::fmt;
@@ -476,6 +477,16 @@ async fn query_metadata(
     Ok(Metadata { peers, keyspaces })
 }
 
+#[derive(FromRow)]
+#[scylla_crate = "scylla_cql"]
+struct NodeInfoRow {
+    host_id: Option<Uuid>,
+    untranslated_ip_addr: IpAddr,
+    datacenter: Option<String>,
+    rack: Option<String>,
+    tokens: Option<Vec<String>>,
+}
+
 async fn query_peers(
     conn: &Arc<Connection>,
     connect_port: u16,
@@ -501,35 +512,23 @@ async fn query_peers(
         "system.local query response was not Rows",
     ))?;
 
-    let typed_peers_rows = peers_rows.into_typed::<(
-        Option<Uuid>,
-        IpAddr,
-        Option<String>,
-        Option<String>,
-        Option<Vec<String>>,
-    )>();
+    let typed_peers_rows = peers_rows.into_typed::<NodeInfoRow>();
 
     let local_ip: IpAddr = conn.get_connect_address().ip();
     let local_address = SocketAddr::new(local_ip, connect_port);
 
-    let typed_local_rows = local_rows.into_typed::<(
-        Option<Uuid>,
-        IpAddr,
-        Option<String>,
-        Option<String>,
-        Option<Vec<String>>,
-    )>();
+    let typed_local_rows = local_rows.into_typed::<NodeInfoRow>();
 
     let untranslated_rows = typed_peers_rows
         .map(|res| res.map(|peer_row| (false, peer_row)))
         .chain(typed_local_rows.map(|res| res.map(|local_row| (true, local_row))));
 
     let translated_peers_futures = untranslated_rows
-        .filter_map_ok(|(is_local, (host_id, ip, dc, rack, tokens))| if let Some(host_id) = host_id {
-            Some((is_local, (host_id, ip, dc, rack, tokens)))
+        .filter_map_ok(|(is_local, NodeInfoRow { host_id, untranslated_ip_addr, datacenter, rack, tokens })| if let Some(host_id) = host_id {
+            Some((is_local, (host_id, untranslated_ip_addr, datacenter, rack, tokens)))
         } else {
             let who = if is_local { "Local node" } else { "Peer" };
-            warn!("{} (untranslated ip: {}, dc: {:?}, rack: {:?}) has Host ID set to null; skipping node.", who, ip, dc, rack);
+            warn!("{} (untranslated ip: {}, dc: {:?}, rack: {:?}) has Host ID set to null; skipping node.", who, untranslated_ip_addr, datacenter, rack);
             None
         })
         .map(|untranslated_row| async {
