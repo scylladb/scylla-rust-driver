@@ -5,14 +5,16 @@ use crate::transport::connection::{Connection, ConnectionConfig};
 use crate::transport::connection_pool::{NodeConnectionPool, PoolConfig, PoolSize};
 use crate::transport::errors::{DbError, QueryError};
 use crate::transport::host_filter::HostFilter;
-use crate::transport::session::{AddressTranslator, IntoTypedRows};
+use crate::transport::session::AddressTranslator;
 use crate::utils::parse::{ParseErrorCause, ParseResult, ParserState};
 
-use crate::QueryResult;
 use futures::future::{self, FutureExt};
 use futures::stream::{self, StreamExt, TryStreamExt};
+use futures::Stream;
 use rand::seq::SliceRandom;
 use rand::{thread_rng, Rng};
+use scylla_cql::frame::response::result::Row;
+use scylla_cql::frame::value::ValueList;
 use scylla_macros::FromRow;
 use std::borrow::BorrowMut;
 use std::collections::HashMap;
@@ -638,24 +640,30 @@ async fn create_peer_from_row(
     }))
 }
 
-async fn query_filter_keyspace_name(
-    conn: &Connection,
+fn query_filter_keyspace_name(
+    conn: &Arc<Connection>,
     query_str: &str,
     keyspaces_to_fetch: &[String],
-) -> Result<QueryResult, QueryError> {
+) -> impl Stream<Item = Result<Row, QueryError>> {
     let keyspaces = &[keyspaces_to_fetch] as &[&[String]];
     let (query_str, query_values) = if !keyspaces_to_fetch.is_empty() {
         (format!("{query_str} where keyspace_name in ?"), keyspaces)
     } else {
         (query_str.into(), &[] as &[&[String]])
     };
+    let query_values = query_values.serialized().map(|sv| sv.into_owned());
     let mut query = Query::new(query_str);
+    let conn = conn.clone();
     query.set_page_size(1024);
-    conn.query_all(&query, query_values).await
+    let fut = async move {
+        let query_values = query_values?;
+        conn.query_iter(query, query_values).await
+    };
+    fut.into_stream().try_flatten()
 }
 
 async fn query_keyspaces(
-    conn: &Connection,
+    conn: &Arc<Connection>,
     keyspaces_to_fetch: &[String],
     fetch_schema: bool,
 ) -> Result<HashMap<String, Keyspace>, QueryError> {
@@ -663,14 +671,8 @@ async fn query_keyspaces(
         conn,
         "select keyspace_name, replication from system_schema.keyspaces",
         keyspaces_to_fetch,
-    )
-    .await?
-    .rows
-    .ok_or(QueryError::ProtocolError(
-        "system_schema.keyspaces query response was not Rows",
-    ))?;
+    );
 
-    let mut result = HashMap::with_capacity(rows.len());
     let (mut all_tables, mut all_views, mut all_user_defined_types) = if fetch_schema {
         (
             query_tables(conn, keyspaces_to_fetch).await?,
@@ -681,8 +683,9 @@ async fn query_keyspaces(
         (HashMap::new(), HashMap::new(), HashMap::new())
     };
 
-    for row in rows.into_typed::<(String, HashMap<String, String>)>() {
-        let (keyspace_name, strategy_map) = row.map_err(|_| {
+    rows.map(|row_result| {
+        let row = row_result?;
+        let (keyspace_name, strategy_map) = row.into_typed().map_err(|_| {
             QueryError::ProtocolError("system_schema.keyspaces has invalid column type")
         })?;
 
@@ -693,39 +696,39 @@ async fn query_keyspaces(
             .remove(&keyspace_name)
             .unwrap_or_default();
 
-        result.insert(
-            keyspace_name,
-            Keyspace {
-                strategy,
-                tables,
-                views,
-                user_defined_types,
-            },
-        );
-    }
+        let keyspace = Keyspace {
+            strategy,
+            tables,
+            views,
+            user_defined_types,
+        };
 
-    Ok(result)
+        Ok((keyspace_name, keyspace))
+    })
+    .try_collect()
+    .await
 }
 
 async fn query_user_defined_types(
-    conn: &Connection,
+    conn: &Arc<Connection>,
     keyspaces_to_fetch: &[String],
 ) -> Result<HashMap<String, HashMap<String, Vec<(String, CqlType)>>>, QueryError> {
     let rows = query_filter_keyspace_name(
         conn,
         "select keyspace_name, type_name, field_names, field_types from system_schema.types",
         keyspaces_to_fetch,
-    )
-    .await?
-    .rows
-    .ok_or(QueryError::ProtocolError(
-        "system_schema.types query response was not Rows",
-    ))?;
+    );
 
-    let mut result = HashMap::with_capacity(rows.len());
+    let mut result = HashMap::new();
 
-    for row in rows.into_typed::<(String, String, Vec<String>, Vec<String>)>() {
-        let (keyspace_name, type_name, field_names, field_types) = row.map_err(|_| {
+    rows.map(|row_result| {
+        let row = row_result?;
+        let (keyspace_name, type_name, field_names, field_types): (
+            String,
+            String,
+            Vec<String>,
+            Vec<String>,
+        ) = row.into_typed().map_err(|_| {
             QueryError::ProtocolError("system_schema.types has invalid column type")
         })?;
 
@@ -739,31 +742,30 @@ async fn query_user_defined_types(
             .entry(keyspace_name)
             .or_insert_with(HashMap::new)
             .insert(type_name, fields);
-    }
+
+        Ok::<_, QueryError>(())
+    })
+    .try_for_each(|_| future::ok(()))
+    .await?;
 
     Ok(result)
 }
 
 async fn query_tables(
-    conn: &Connection,
+    conn: &Arc<Connection>,
     keyspaces_to_fetch: &[String],
 ) -> Result<HashMap<String, HashMap<String, Table>>, QueryError> {
     let rows = query_filter_keyspace_name(
         conn,
         "SELECT keyspace_name, table_name FROM system_schema.tables",
         keyspaces_to_fetch,
-    )
-    .await?
-    .rows
-    .ok_or(QueryError::ProtocolError(
-        "system_schema.tables query response was not Rows",
-    ))?;
-
-    let mut result = HashMap::with_capacity(rows.len());
+    );
+    let mut result = HashMap::new();
     let mut tables = query_tables_schema(conn, keyspaces_to_fetch).await?;
 
-    for row in rows.into_typed::<(String, String)>() {
-        let (keyspace_name, table_name) = row.map_err(|_| {
+    rows.map(|row_result| {
+        let row = row_result?;
+        let (keyspace_name, table_name) = row.into_typed().map_err(|_| {
             QueryError::ProtocolError("system_schema.tables has invalid column type")
         })?;
 
@@ -780,31 +782,31 @@ async fn query_tables(
             .entry(keyspace_and_table_name.0)
             .or_insert_with(HashMap::new)
             .insert(keyspace_and_table_name.1, table);
-    }
+
+        Ok::<_, QueryError>(())
+    })
+    .try_for_each(|_| future::ok(()))
+    .await?;
 
     Ok(result)
 }
 
 async fn query_views(
-    conn: &Connection,
+    conn: &Arc<Connection>,
     keyspaces_to_fetch: &[String],
 ) -> Result<HashMap<String, HashMap<String, MaterializedView>>, QueryError> {
     let rows = query_filter_keyspace_name(
         conn,
         "SELECT keyspace_name, view_name, base_table_name FROM system_schema.views",
         keyspaces_to_fetch,
-    )
-    .await?
-    .rows
-    .ok_or(QueryError::ProtocolError(
-        "system_schema.views query response was not Rows",
-    ))?;
+    );
 
-    let mut result = HashMap::with_capacity(rows.len());
+    let mut result = HashMap::new();
     let mut tables = query_tables_schema(conn, keyspaces_to_fetch).await?;
 
-    for row in rows.into_typed::<(String, String, String)>() {
-        let (keyspace_name, view_name, base_table_name) = row.map_err(|_| {
+    rows.map(|row_result| {
+        let row = row_result?;
+        let (keyspace_name, view_name, base_table_name) = row.into_typed().map_err(|_| {
             QueryError::ProtocolError("system_schema.views has invalid column type")
         })?;
 
@@ -825,13 +827,17 @@ async fn query_views(
             .entry(keyspace_and_view_name.0)
             .or_insert_with(HashMap::new)
             .insert(keyspace_and_view_name.1, materialized_view);
-    }
+
+        Ok::<_, QueryError>(())
+    })
+    .try_for_each(|_| future::ok(()))
+    .await?;
 
     Ok(result)
 }
 
 async fn query_tables_schema(
-    conn: &Connection,
+    conn: &Arc<Connection>,
     keyspaces_to_fetch: &[String],
 ) -> Result<HashMap<(String, String), Table>, QueryError> {
     // Upon migration from thrift to CQL, Cassandra internally creates a surrogate column "value" of
@@ -841,23 +847,25 @@ async fn query_tables_schema(
 
     let rows = query_filter_keyspace_name(conn,
         "select keyspace_name, table_name, column_name, kind, position, type from system_schema.columns", keyspaces_to_fetch
-    )
-        .await?
-        .rows
-        .ok_or(QueryError::ProtocolError(
-            "system_schema.columns query response was not Rows",
-        ))?;
+    );
 
-    let mut tables_schema = HashMap::with_capacity(rows.len());
+    let mut tables_schema = HashMap::new();
 
-    for row in rows.into_typed::<(String, String, String, String, i32, String)>() {
-        let (keyspace_name, table_name, column_name, kind, position, type_) =
-            row.map_err(|_| {
-                QueryError::ProtocolError("system_schema.columns has invalid column type")
-            })?;
+    rows.map(|row_result| {
+        let row = row_result?;
+        let (keyspace_name, table_name, column_name, kind, position, type_): (
+            String,
+            String,
+            String,
+            String,
+            i32,
+            String,
+        ) = row.into_typed().map_err(|_| {
+            QueryError::ProtocolError("system_schema.columns has invalid column type")
+        })?;
 
         if type_ == THRIFT_EMPTY_TYPE {
-            continue;
+            return Ok::<_, QueryError>(());
         }
 
         let entry = tables_schema.entry((keyspace_name, table_name)).or_insert((
@@ -888,7 +896,11 @@ async fn query_tables_schema(
                 kind,
             },
         );
-    }
+
+        Ok::<_, QueryError>(())
+    })
+    .try_for_each(|_| future::ok(()))
+    .await?;
 
     let mut all_partitioners = query_table_partitioners(conn).await?;
     let mut result = HashMap::new();
@@ -1042,33 +1054,38 @@ fn freeze_type(type_: CqlType) -> CqlType {
 }
 
 async fn query_table_partitioners(
-    conn: &Connection,
+    conn: &Arc<Connection>,
 ) -> Result<HashMap<(String, String), Option<String>>, QueryError> {
     let mut partitioner_query = Query::new(
         "select keyspace_name, table_name, partitioner from system_schema.scylla_tables",
     );
     partitioner_query.set_page_size(1024);
 
-    let rows = match conn.query_all(&partitioner_query, &[]).await {
+    let rows = conn
+        .clone()
+        .query_iter(partitioner_query, &[])
+        .into_stream()
+        .try_flatten();
+
+    let result = rows
+        .map(|row_result| {
+            let (keyspace_name, table_name, partitioner) =
+                row_result?.into_typed().map_err(|_| {
+                    QueryError::ProtocolError("system_schema.tables has invalid column type")
+                })?;
+            Ok::<_, QueryError>(((keyspace_name, table_name), partitioner))
+        })
+        .try_collect::<HashMap<_, _>>()
+        .await;
+
+    match result {
         // FIXME: This match catches all database errors with this error code despite the fact
         // that we are only interested in the ones resulting from non-existent table
         // system_schema.scylla_tables.
         // For more information please refer to https://github.com/scylladb/scylla-rust-driver/pull/349#discussion_r762050262
-        Err(QueryError::DbError(DbError::Invalid, _)) => return Ok(HashMap::new()),
-        query_result => query_result?.rows.ok_or(QueryError::ProtocolError(
-            "system_schema.scylla_tables query response was not Rows",
-        ))?,
-    };
-
-    let mut result = HashMap::with_capacity(rows.len());
-
-    for row in rows.into_typed::<(String, String, Option<String>)>() {
-        let (keyspace_name, table_name, partitioner) = row.map_err(|_| {
-            QueryError::ProtocolError("system_schema.tables has invalid column type")
-        })?;
-        result.insert((keyspace_name, table_name), partitioner);
+        Err(QueryError::DbError(DbError::Invalid, _)) => Ok(HashMap::new()),
+        result => result,
     }
-    Ok(result)
 }
 
 fn strategy_from_string_map(
