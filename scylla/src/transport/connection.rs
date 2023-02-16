@@ -1518,7 +1518,6 @@ impl VerifiedKeyspaceName {
 
 #[cfg(test)]
 mod tests {
-    use scylla_cql::errors::BadQuery;
     use scylla_cql::frame::protocol_features::{
         LWT_OPTIMIZATION_META_BIT_MASK_KEY, SCYLLA_LWT_ADD_METADATA_MARK_EXTENSION,
     };
@@ -1531,12 +1530,12 @@ mod tests {
     use tokio::select;
     use tokio::sync::mpsc;
 
-    use super::super::errors::QueryError;
     use super::ConnectionConfig;
     use crate::query::Query;
     use crate::transport::connection::open_connection;
     use crate::utils::test_utils::unique_keyspace_name;
-    use crate::{IntoTypedRows, SessionBuilder};
+    use crate::SessionBuilder;
+    use futures::{StreamExt, TryStreamExt};
     use std::collections::HashMap;
     use std::net::SocketAddr;
     use std::sync::Arc;
@@ -1555,20 +1554,20 @@ mod tests {
         }
     }
 
-    /// Tests for Connection::query_all
+    /// Tests for Connection::query_iter
     /// 1. SELECT from an empty table.
     /// 2. Create table and insert ints 0..100.
-    ///    Then use query_all with page_size set to 7 to select all 100 rows.
-    /// 3. INSERT query_all should have None in result rows.
-    /// 4. Calling query_all with a Query that doesn't have page_size set should result in an error.
+    ///    Then use query_iter with page_size set to 7 to select all 100 rows.
+    /// 3. INSERT query_iter should work and not return any rows.
     #[tokio::test]
-    async fn connection_query_all_test() {
+    async fn connection_query_iter_test() {
         let uri = std::env::var("SCYLLA_URI").unwrap_or_else(|_| "127.0.0.1:9042".to_string());
         let addr: SocketAddr = resolve_hostname(&uri).await;
 
         let (connection, _) = super::open_connection(addr, None, ConnectionConfig::default())
             .await
             .unwrap();
+        let connection = Arc::new(connection);
 
         let ks = unique_keyspace_name();
 
@@ -1582,12 +1581,12 @@ mod tests {
             session.query(format!("CREATE KEYSPACE IF NOT EXISTS {} WITH REPLICATION = {{'class' : 'SimpleStrategy', 'replication_factor' : 1}}", ks.clone()), &[]).await.unwrap();
             session.use_keyspace(ks.clone(), false).await.unwrap();
             session
-                .query("DROP TABLE IF EXISTS connection_query_all_tab", &[])
+                .query("DROP TABLE IF EXISTS connection_query_iter_tab", &[])
                 .await
                 .unwrap();
             session
                 .query(
-                    "CREATE TABLE IF NOT EXISTS connection_query_all_tab (p int primary key)",
+                    "CREATE TABLE IF NOT EXISTS connection_query_iter_tab (p int primary key)",
                     &[],
                 )
                 .await
@@ -1600,15 +1599,22 @@ mod tests {
             .unwrap();
 
         // 1. SELECT from an empty table returns query result where rows are Some(Vec::new())
-        let select_query = Query::new("SELECT p FROM connection_query_all_tab").with_page_size(7);
-        let empty_res = connection.query_all(&select_query, &[]).await.unwrap();
-        assert!(empty_res.rows.unwrap().is_empty());
+        let select_query = Query::new("SELECT p FROM connection_query_iter_tab").with_page_size(7);
+        let empty_res = connection
+            .clone()
+            .query_iter(select_query.clone(), &[])
+            .await
+            .unwrap()
+            .try_collect::<Vec<_>>()
+            .await
+            .unwrap();
+        assert!(empty_res.is_empty());
 
-        // 2. Insert 100 and select using query_all with page_size 7
+        // 2. Insert 100 and select using query_iter with page_size 7
         let values: Vec<i32> = (0..100).collect();
         let mut insert_futures = Vec::new();
         let insert_query =
-            Query::new("INSERT INTO connection_query_all_tab (p) VALUES (?)").with_page_size(7);
+            Query::new("INSERT INTO connection_query_iter_tab (p) VALUES (?)").with_page_size(7);
         for v in &values {
             insert_futures.push(connection.query_single_page(insert_query.clone(), (v,)));
         }
@@ -1616,28 +1622,26 @@ mod tests {
         futures::future::try_join_all(insert_futures).await.unwrap();
 
         let mut results: Vec<i32> = connection
-            .query_all(&select_query, &[])
+            .clone()
+            .query_iter(select_query.clone(), &[])
             .await
             .unwrap()
-            .rows
-            .unwrap()
             .into_typed::<(i32,)>()
-            .map(|r| r.unwrap().0)
-            .collect();
+            .map(|ret| ret.unwrap().0)
+            .collect::<Vec<_>>()
+            .await;
         results.sort_unstable(); // Clippy recommended to use sort_unstable instead of sort()
         assert_eq!(results, values);
 
-        // 3. INSERT query_all should have None in result rows.
-        let insert_res1 = connection.query_all(&insert_query, (0,)).await.unwrap();
-        assert!(insert_res1.rows.is_none());
-
-        // 4. Calling query_all with a Query that doesn't have page_size set should result in an error.
-        let no_page_size_query = Query::new("SELECT p FROM connection_query_all_tab");
-        let no_page_res = connection.query_all(&no_page_size_query, &[]).await;
-        assert!(matches!(
-            no_page_res,
-            Err(QueryError::BadQuery(BadQuery::Other(_)))
-        ));
+        // 3. INSERT query_iter should work and not return any rows.
+        let insert_res1 = connection
+            .query_iter(insert_query, (0,))
+            .await
+            .unwrap()
+            .try_collect::<Vec<_>>()
+            .await
+            .unwrap();
+        assert!(insert_res1.is_empty());
     }
 
     #[tokio::test]
