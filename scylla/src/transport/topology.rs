@@ -538,80 +538,106 @@ async fn query_peers(
         .map(|res| res.map(|peer_row| (NodeInfoSource::Peer, peer_row)))
         .chain(typed_local_rows.map(|res| res.map(|local_row| (NodeInfoSource::Local, local_row))));
 
-    let translated_peers_futures = untranslated_rows
-        .filter_map_ok(|(source, NodeInfoRow { host_id, untranslated_ip_addr, datacenter, rack, tokens })| if let Some(host_id) = host_id {
-            Some((source, (host_id, untranslated_ip_addr, datacenter, rack, tokens)))
-        } else {
-            warn!("{} (untranslated ip: {}, dc: {:?}, rack: {:?}) has Host ID set to null; skipping node.", source.describe(), untranslated_ip_addr, datacenter, rack);
-            None
-        })
-        .map(|untranslated_row| async {
-        let (source, (host_id, untranslated_ip_addr, datacenter, rack, tokens)) = untranslated_row.map_err(
+    let translated_peers_futures = untranslated_rows.map(|untranslated_row| async {
+        let (source, row) = untranslated_row.map_err(
             |_| QueryError::ProtocolError("system.peers or system.local has invalid column type")
         )?;
-        let untranslated_address = SocketAddr::new(untranslated_ip_addr, connect_port);
-
-        let (untranslated_address, address) = match (source, address_translator) {
-            (NodeInfoSource::Local, None) => {
-                // We need to replace rpc_address with control connection address.
-                (Some(untranslated_address), local_address)
-            },
-            (NodeInfoSource::Local, Some(_)) => {
-                // The address we used to connect is most likely different and we just don't know.
-                (None, local_address)
-            },
-            (NodeInfoSource::Peer, None) => {
-                // The usual case - no translation.
-                (Some(untranslated_address), untranslated_address)
-            },
-            (NodeInfoSource::Peer, Some(translator)) => {
-                // We use the provided translator and skip the peer if there is no rule for translating it.
-                (Some(untranslated_address),
-                    match translator.translate_address(&UntranslatedPeer {host_id, untranslated_address}).await {
-                        Ok(address) => address,
-                        Err(err) => {
-                            warn!("Could not translate address {}; TranslationError: {:?}; node therefore skipped.",
-                                    untranslated_address, err);
-                            return Ok::<Option<Peer>, QueryError>(None);
-                        }
-                    }
-                )
-            }
-        };
-
-        let tokens_str: Vec<String> = tokens.unwrap_or_default();
-
-        // Parse string representation of tokens as integer values
-        let tokens: Vec<Token> = match tokens_str
-            .iter()
-            .map(|s| Token::from_str(s))
-            .collect::<Result<Vec<Token>, _>>()
-        {
-            Ok(parsed) => parsed,
-            Err(e) => {
-                // FIXME: we could allow the users to provide custom partitioning information
-                // in order for it to work with non-standard token sizes.
-                // Also, we could implement support for Cassandra's other standard partitioners
-                // like RandomPartitioner or ByteOrderedPartitioner.
-                trace!("Couldn't parse tokens as 64-bit integers: {}, proceeding with a dummy token. If you're using a partitioner with different token size, consider migrating to murmur3", e);
-                vec![Token {
-                    value: rand::thread_rng().gen::<i64>(),
-                }]
-            }
-        };
-
-        Ok(Some(Peer {
-            host_id,
-            untranslated_address,
-            address,
-            tokens,
-            datacenter,
-            rack,
-        }))
+        create_peer_from_row(source, row, local_address, address_translator).await
     });
 
     let peers = try_join_all(translated_peers_futures).await?;
     Ok(peers.into_iter().flatten().collect())
+}
+
+async fn create_peer_from_row(
+    source: NodeInfoSource,
+    row: NodeInfoRow,
+    local_address: SocketAddr,
+    address_translator: Option<&dyn AddressTranslator>,
+) -> Result<Option<Peer>, QueryError> {
+    let NodeInfoRow {
+        host_id,
+        untranslated_ip_addr,
+        datacenter,
+        rack,
+        tokens,
+    } = row;
+
+    let host_id = match host_id {
+        Some(host_id) => host_id,
+        None => {
+            warn!("{} (untranslated ip: {}, dc: {:?}, rack: {:?}) has Host ID set to null; skipping node.", source.describe(), untranslated_ip_addr, datacenter, rack);
+            return Ok(None);
+        }
+    };
+
+    let connect_port = local_address.port();
+    let untranslated_address = SocketAddr::new(untranslated_ip_addr, connect_port);
+
+    let (untranslated_address, address) = match (source, address_translator) {
+        (NodeInfoSource::Local, None) => {
+            // We need to replace rpc_address with control connection address.
+            (Some(untranslated_address), local_address)
+        }
+        (NodeInfoSource::Local, Some(_)) => {
+            // The address we used to connect is most likely different and we just don't know.
+            (None, local_address)
+        }
+        (NodeInfoSource::Peer, None) => {
+            // The usual case - no translation.
+            (Some(untranslated_address), untranslated_address)
+        }
+        (NodeInfoSource::Peer, Some(translator)) => {
+            // We use the provided translator and skip the peer if there is no rule for translating it.
+            (
+                Some(untranslated_address),
+                match translator
+                    .translate_address(&UntranslatedPeer {
+                        host_id,
+                        untranslated_address,
+                    })
+                    .await
+                {
+                    Ok(address) => address,
+                    Err(err) => {
+                        warn!("Could not translate address {}; TranslationError: {:?}; node therefore skipped.",
+                                untranslated_address, err);
+                        return Ok::<Option<Peer>, QueryError>(None);
+                    }
+                },
+            )
+        }
+    };
+
+    let tokens_str: Vec<String> = tokens.unwrap_or_default();
+
+    // Parse string representation of tokens as integer values
+    let tokens: Vec<Token> = match tokens_str
+        .iter()
+        .map(|s| Token::from_str(s))
+        .collect::<Result<Vec<Token>, _>>()
+    {
+        Ok(parsed) => parsed,
+        Err(e) => {
+            // FIXME: we could allow the users to provide custom partitioning information
+            // in order for it to work with non-standard token sizes.
+            // Also, we could implement support for Cassandra's other standard partitioners
+            // like RandomPartitioner or ByteOrderedPartitioner.
+            trace!("Couldn't parse tokens as 64-bit integers: {}, proceeding with a dummy token. If you're using a partitioner with different token size, consider migrating to murmur3", e);
+            vec![Token {
+                value: rand::thread_rng().gen::<i64>(),
+            }]
+        }
+    };
+
+    Ok(Some(Peer {
+        host_id,
+        untranslated_address,
+        address,
+        tokens,
+        datacenter,
+        rack,
+    }))
 }
 
 async fn query_filter_keyspace_name(
