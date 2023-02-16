@@ -335,7 +335,7 @@ impl MetadataReader {
     async fn fetch_metadata(&self, initial: bool) -> Result<Metadata, QueryError> {
         // TODO: Timeouts?
         self.control_connection.wait_until_initialized().await;
-        let conn = &*self.control_connection.random_connection()?;
+        let conn = &self.control_connection.random_connection()?;
 
         let res = query_metadata(
             conn,
@@ -448,7 +448,7 @@ impl MetadataReader {
 }
 
 async fn query_metadata(
-    conn: &Connection,
+    conn: &Arc<Connection>,
     connect_port: u16,
     address_translator: Option<&dyn AddressTranslator>,
     keyspace_to_fetch: &[String],
@@ -477,7 +477,7 @@ async fn query_metadata(
 }
 
 async fn query_peers(
-    conn: &Connection,
+    conn: &Arc<Connection>,
     connect_port: u16,
     address_translator: Option<&dyn AddressTranslator>,
 ) -> Result<Vec<Peer>, QueryError> {
