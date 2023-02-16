@@ -487,6 +487,21 @@ struct NodeInfoRow {
     tokens: Option<Vec<String>>,
 }
 
+#[derive(Clone, Copy)]
+enum NodeInfoSource {
+    Local,
+    Peer,
+}
+
+impl NodeInfoSource {
+    fn describe(&self) -> &'static str {
+        match self {
+            Self::Local => "local node",
+            Self::Peer => "peer",
+        }
+    }
+}
+
 async fn query_peers(
     conn: &Arc<Connection>,
     connect_port: u16,
@@ -520,37 +535,36 @@ async fn query_peers(
     let typed_local_rows = local_rows.into_typed::<NodeInfoRow>();
 
     let untranslated_rows = typed_peers_rows
-        .map(|res| res.map(|peer_row| (false, peer_row)))
-        .chain(typed_local_rows.map(|res| res.map(|local_row| (true, local_row))));
+        .map(|res| res.map(|peer_row| (NodeInfoSource::Peer, peer_row)))
+        .chain(typed_local_rows.map(|res| res.map(|local_row| (NodeInfoSource::Local, local_row))));
 
     let translated_peers_futures = untranslated_rows
-        .filter_map_ok(|(is_local, NodeInfoRow { host_id, untranslated_ip_addr, datacenter, rack, tokens })| if let Some(host_id) = host_id {
-            Some((is_local, (host_id, untranslated_ip_addr, datacenter, rack, tokens)))
+        .filter_map_ok(|(source, NodeInfoRow { host_id, untranslated_ip_addr, datacenter, rack, tokens })| if let Some(host_id) = host_id {
+            Some((source, (host_id, untranslated_ip_addr, datacenter, rack, tokens)))
         } else {
-            let who = if is_local { "Local node" } else { "Peer" };
-            warn!("{} (untranslated ip: {}, dc: {:?}, rack: {:?}) has Host ID set to null; skipping node.", who, untranslated_ip_addr, datacenter, rack);
+            warn!("{} (untranslated ip: {}, dc: {:?}, rack: {:?}) has Host ID set to null; skipping node.", source.describe(), untranslated_ip_addr, datacenter, rack);
             None
         })
         .map(|untranslated_row| async {
-        let (is_local, (host_id, untranslated_ip_addr, datacenter, rack, tokens)) = untranslated_row.map_err(
+        let (source, (host_id, untranslated_ip_addr, datacenter, rack, tokens)) = untranslated_row.map_err(
             |_| QueryError::ProtocolError("system.peers or system.local has invalid column type")
         )?;
         let untranslated_address = SocketAddr::new(untranslated_ip_addr, connect_port);
 
-        let (untranslated_address, address) = match (is_local, address_translator) {
-            (true, None) => {
+        let (untranslated_address, address) = match (source, address_translator) {
+            (NodeInfoSource::Local, None) => {
                 // We need to replace rpc_address with control connection address.
                 (Some(untranslated_address), local_address)
             },
-            (true, Some(_)) => {
+            (NodeInfoSource::Local, Some(_)) => {
                 // The address we used to connect is most likely different and we just don't know.
                 (None, local_address)
             },
-            (false, None) => {
+            (NodeInfoSource::Peer, None) => {
                 // The usual case - no translation.
                 (Some(untranslated_address), untranslated_address)
             },
-            (false, Some(translator)) => {
+            (NodeInfoSource::Peer, Some(translator)) => {
                 // We use the provided translator and skip the peer if there is no rule for translating it.
                 (Some(untranslated_address),
                     match translator.translate_address(&UntranslatedPeer {host_id, untranslated_address}).await {
