@@ -9,8 +9,8 @@ use crate::transport::session::{AddressTranslator, IntoTypedRows};
 use crate::utils::parse::{ParseErrorCause, ParseResult, ParserState};
 
 use crate::QueryResult;
-use futures::future::try_join_all;
-use itertools::Itertools;
+use futures::future::{self, FutureExt};
+use futures::stream::{self, StreamExt, TryStreamExt};
 use rand::seq::SliceRandom;
 use rand::{thread_rng, Rng};
 use scylla_macros::FromRow;
@@ -510,42 +510,40 @@ async fn query_peers(
     let mut peers_query =
         Query::new("select host_id, rpc_address, data_center, rack, tokens from system.peers");
     peers_query.set_page_size(1024);
-    let peers_query_future = conn.query_all(&peers_query, &[]);
+    let peers_query_stream = conn
+        .clone()
+        .query_iter(peers_query, &[])
+        .into_stream()
+        .try_flatten()
+        .and_then(|row_result| future::ok((NodeInfoSource::Peer, row_result)));
 
     let mut local_query =
         Query::new("select host_id, rpc_address, data_center, rack, tokens from system.local");
     local_query.set_page_size(1024);
-    let local_query_future = conn.query_all(&local_query, &[]);
+    let local_query_stream = conn
+        .clone()
+        .query_iter(local_query, &[])
+        .into_stream()
+        .try_flatten()
+        .and_then(|row_result| future::ok((NodeInfoSource::Local, row_result)));
 
-    let (peers_res, local_res) = tokio::try_join!(peers_query_future, local_query_future)?;
-
-    let peers_rows = peers_res.rows.ok_or(QueryError::ProtocolError(
-        "system.peers query response was not Rows",
-    ))?;
-
-    let local_rows = local_res.rows.ok_or(QueryError::ProtocolError(
-        "system.local query response was not Rows",
-    ))?;
-
-    let typed_peers_rows = peers_rows.into_typed::<NodeInfoRow>();
+    let untranslated_rows = stream::select(peers_query_stream, local_query_stream);
 
     let local_ip: IpAddr = conn.get_connect_address().ip();
     let local_address = SocketAddr::new(local_ip, connect_port);
 
-    let typed_local_rows = local_rows.into_typed::<NodeInfoRow>();
-
-    let untranslated_rows = typed_peers_rows
-        .map(|res| res.map(|peer_row| (NodeInfoSource::Peer, peer_row)))
-        .chain(typed_local_rows.map(|res| res.map(|local_row| (NodeInfoSource::Local, local_row))));
-
-    let translated_peers_futures = untranslated_rows.map(|untranslated_row| async {
-        let (source, row) = untranslated_row.map_err(
-            |_| QueryError::ProtocolError("system.peers or system.local has invalid column type")
-        )?;
+    let translated_peers_futures = untranslated_rows.map(|row_result| async {
+        let (source, raw_row) = row_result?;
+        let row = raw_row.into_typed().map_err(|_| {
+            QueryError::ProtocolError("system.peers or system.local has invalid column type")
+        })?;
         create_peer_from_row(source, row, local_address, address_translator).await
     });
 
-    let peers = try_join_all(translated_peers_futures).await?;
+    let peers = translated_peers_futures
+        .buffer_unordered(256)
+        .try_collect::<Vec<_>>()
+        .await?;
     Ok(peers.into_iter().flatten().collect())
 }
 
