@@ -29,7 +29,7 @@ use std::{
     net::{Ipv4Addr, Ipv6Addr},
 };
 
-use super::errors::{BadKeyspaceName, BadQuery, DbError, QueryError};
+use super::errors::{BadKeyspaceName, DbError, QueryError};
 use super::iterator::RowIterator;
 
 use crate::batch::{Batch, BatchStatement};
@@ -456,69 +456,6 @@ impl Connection {
 
         self.send_request(&query_frame, true, query.config.tracing)
             .await
-    }
-
-    /// Performs query_single_page multiple times to query all available pages
-    pub async fn query_all(
-        &self,
-        query: &Query,
-        values: impl ValueList,
-    ) -> Result<QueryResult, QueryError> {
-        // This method is used only for driver internal queries, so no need to consult execution profile here.
-        self.query_all_with_consistency(
-            query,
-            values,
-            query
-                .config
-                .determine_consistency(self.config.default_consistency),
-            query.get_serial_consistency(),
-        )
-        .await
-    }
-
-    pub async fn query_all_with_consistency(
-        &self,
-        query: &Query,
-        values: impl ValueList,
-        consistency: Consistency,
-        serial_consistency: Option<SerialConsistency>,
-    ) -> Result<QueryResult, QueryError> {
-        if query.get_page_size().is_none() {
-            // Page size should be set when someone wants to use paging
-            return Err(QueryError::BadQuery(BadQuery::Other(
-                "Called Connection::query_all without page size set!".to_string(),
-            )));
-        }
-
-        let mut final_result = QueryResult::default();
-
-        let serialized_values = values.serialized()?;
-        let mut paging_state: Option<Bytes> = None;
-
-        loop {
-            // Send next paged query
-            let mut cur_result: QueryResult = self
-                .query_with_consistency(
-                    query,
-                    &serialized_values,
-                    consistency,
-                    serial_consistency,
-                    paging_state,
-                )
-                .await?
-                .into_query_result()?;
-
-            // Set paging_state for the next query
-            paging_state = cur_result.paging_state.take();
-
-            // Add current query results to the final_result
-            final_result.merge_with_next_page_res(cur_result);
-
-            if paging_state.is_none() {
-                // No more pages to query, we can return the final result
-                return Ok(final_result);
-            }
-        }
     }
 
     pub async fn execute_with_consistency(

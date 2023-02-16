@@ -131,23 +131,6 @@ impl QueryResult {
             .enumerate()
             .find(|(_id, spec)| spec.name == name)
     }
-
-    /// This function is used to merge results of multiple paged queries into one.\
-    /// other is the result of a new paged query.\
-    /// It is merged with current result kept in self.\
-    pub(crate) fn merge_with_next_page_res(&mut self, other: QueryResult) {
-        if let Some(other_rows) = other.rows {
-            match &mut self.rows {
-                Some(self_rows) => self_rows.extend(other_rows),
-                None => self.rows = Some(other_rows),
-            }
-        };
-
-        self.warnings.extend(other.warnings);
-        self.tracing_id = other.tracing_id;
-        self.paging_state = other.paging_state;
-        self.col_specs = other.col_specs;
-    }
 }
 
 /// [`QueryResult::rows()`](QueryResult::rows) or a similar function called on a bad QueryResult.\
