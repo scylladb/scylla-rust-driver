@@ -24,10 +24,14 @@ impl TokenAwarePolicy {
         token: &Token,
         replication_factor: usize,
     ) -> Vec<Arc<Node>> {
+        // Don't attempt to find more unique nodes in the token ring than exist.
+        // This is an optimization to avoid iterating over the entire ring when
+        // the number of nodes falls temporarily below the RF.
+        let effective_rf = std::cmp::min(replication_factor, cluster.all_nodes.len());
         cluster
             .ring_range(token)
             .unique()
-            .take(replication_factor)
+            .take(effective_rf)
             .collect()
     }
 
@@ -58,9 +62,20 @@ impl TokenAwarePolicy {
                 Some(dc) => dc,
             };
 
-            let repfactor = match datacenter_repfactors.get(current_node_dc) {
+            let effective_rf = match datacenter_repfactors.get(current_node_dc) {
                 None => continue,
-                Some(r) => r,
+                // Don't attempt to find more unique nodes in the DC than currently exist.
+                // This is an optimization to avoid iterating over the entire ring when
+                // the number of nodes falls temporarily below RF for that DC.
+                Some(r) => std::cmp::min(
+                    *r,
+                    cluster
+                        .datacenters
+                        .get(current_node_dc)
+                        .unwrap()
+                        .nodes
+                        .len(),
+                ),
             };
 
             let picked_nodes_from_current_dc = || {
@@ -69,7 +84,7 @@ impl TokenAwarePolicy {
                     .filter(|node| node.datacenter.as_ref() == Some(current_node_dc))
             };
 
-            if *repfactor == picked_nodes_from_current_dc().count() {
+            if effective_rf == picked_nodes_from_current_dc().count() {
                 // found enough nodes in this datacenter
                 continue;
             }
