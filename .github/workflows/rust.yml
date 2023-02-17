@@ -34,7 +34,13 @@ jobs:
       run: cargo build --verbose --examples
     - name: Run tests
       run: SCYLLA_URI=172.42.0.2:9042 SCYLLA_URI2=172.42.0.3:9042 SCYLLA_URI3=172.42.0.4:9042 cargo test --verbose
-    - name: Stop cluster
+    - name: Stop the cluster
+      if: ${{ always() }}
+      run: docker-compose -f test/cluster/docker-compose.yml stop
+    - name: Print the cluster logs
+      if: ${{ always() }}
+      run: docker-compose -f test/cluster/docker-compose.yml logs
+    - name: Remove cluster
       run: docker-compose -f test/cluster/docker-compose.yml down
 
   # Tests that our current minimum supported rust version compiles everything sucessfully
