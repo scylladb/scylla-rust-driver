@@ -310,8 +310,12 @@ impl RowIterator {
 // A separate module is used here so that the parent module cannot construct
 // SendAttemptedProof directly.
 mod checked_channel_sender {
+    use scylla_cql::{errors::QueryError, frame::response::result::Rows};
     use std::marker::PhantomData;
     use tokio::sync::mpsc;
+    use uuid::Uuid;
+
+    use super::ReceivedPage;
 
     /// A value whose existence proves that there was an attempt
     /// to send an item of type T through a channel.
@@ -333,6 +337,28 @@ mod checked_channel_sender {
             value: T,
         ) -> (SendAttemptedProof<T>, Result<(), mpsc::error::SendError<T>>) {
             (SendAttemptedProof(PhantomData), self.0.send(value).await)
+        }
+    }
+
+    type ResultPage = Result<ReceivedPage, QueryError>;
+
+    impl ProvingSender<ResultPage> {
+        pub(crate) async fn send_empty_page(
+            &self,
+            tracing_id: Option<Uuid>,
+        ) -> (
+            SendAttemptedProof<ResultPage>,
+            Result<(), mpsc::error::SendError<ResultPage>>,
+        ) {
+            let empty_page = ReceivedPage {
+                rows: Rows {
+                    metadata: Default::default(),
+                    rows_count: 0,
+                    rows: Vec::new(),
+                },
+                tracing_id,
+            };
+            self.send(Ok(empty_page)).await
         }
     }
 }
@@ -472,17 +498,7 @@ where
                         // interface isn't meant for sending writes),
                         // we must attempt to send something because
                         // the iterator expects it.
-                        let (proof, _) = self
-                            .sender
-                            .send(Ok(ReceivedPage {
-                                rows: Rows {
-                                    metadata: Default::default(),
-                                    rows_count: 0,
-                                    rows: Vec::new(),
-                                },
-                                tracing_id: None,
-                            }))
-                            .await;
+                        let (proof, _) = self.sender.send_empty_page(None).await;
                         return proof;
                     }
                 };
@@ -572,17 +588,7 @@ where
                     // so let's return an empty iterator as suggested in #631.
 
                     // We must attempt to send something because the iterator expects it.
-                    let (proof, _) = self
-                        .sender
-                        .send(Ok(ReceivedPage {
-                            rows: Rows {
-                                metadata: Default::default(),
-                                rows_count: 0,
-                                rows: Vec::new(),
-                            },
-                            tracing_id,
-                        }))
-                        .await;
+                    let (proof, _) = self.sender.send_empty_page(tracing_id).await;
                     return Ok(proof);
                 }
                 Ok(_) => {
