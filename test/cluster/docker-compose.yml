@@ -14,16 +14,58 @@ services:
     networks:
       public:
         ipv4_address: 172.42.0.2
-    command: --rpc-address 172.42.0.2 --listen-address 172.42.0.2 --seeds 172.42.0.2 --skip-wait-for-gossip-to-settle 0
+    command: |
+      --rpc-address 172.42.0.2
+      --listen-address 172.42.0.2
+      --seeds 172.42.0.2
+      --skip-wait-for-gossip-to-settle 0
+      --ring-delay-ms 0
+      --smp 2
+      --memory 1G
+    healthcheck:
+      test: [ "CMD", "cqlsh", "-e", "select * from system.local" ]
+      interval: 5s
+      timeout: 5s
+      retries: 60
   scylla2:
     image: scylladb/scylla
     networks:
       public:
         ipv4_address: 172.42.0.3
-    command: --rpc-address 172.42.0.3 --listen-address 172.42.0.3 --seeds 172.42.0.2 --skip-wait-for-gossip-to-settle 0
+    command: |
+      --rpc-address 172.42.0.3
+      --listen-address 172.42.0.3
+      --seeds 172.42.0.2
+      --skip-wait-for-gossip-to-settle 0
+      --ring-delay-ms 0
+      --smp 2
+      --memory 1G
+    healthcheck:
+      test: [ "CMD", "cqlsh", "-e", "select * from system.local" ]
+      interval: 5s
+      timeout: 5s
+      retries: 60
+    depends_on:
+      scylla1:
+        condition: service_healthy
   scylla3:
     image: scylladb/scylla
     networks:
       public:
         ipv4_address: 172.42.0.4
-    command: --rpc-address 172.42.0.4 --listen-address 172.42.0.4 --seeds 172.42.0.2,172.42.0.3 --skip-wait-for-gossip-to-settle 0
+    command: |
+      --rpc-address 172.42.0.4
+      --listen-address 172.42.0.4
+      --seeds 172.42.0.2,172.42.0.3
+      --skip-wait-for-gossip-to-settle 0
+      --ring-delay-ms 0
+      --smp 2
+      --memory 1G
+    healthcheck:
+      test: [ "CMD", "cqlsh", "-e", "select * from system.local" ]
+      interval: 5s
+      timeout: 5s
+      retries: 60
+    depends_on:
+      scylla2:
+        condition: service_healthy
