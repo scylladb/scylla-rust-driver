@@ -7,6 +7,7 @@ use itertools::{Either, Itertools};
 use rand::{prelude::SliceRandom, thread_rng, Rng};
 use scylla_cql::{frame::types::SerialConsistency, Consistency};
 use std::sync::Arc;
+use tracing::warn;
 
 // TODO: LWT optimisation
 /// The default load balancing policy.
@@ -23,7 +24,22 @@ pub struct DefaultPolicy {
 impl LoadBalancingPolicy for DefaultPolicy {
     fn pick<'a>(&'a self, query: &'a RoutingInfo, cluster: &'a ClusterData) -> Option<NodeRef<'a>> {
         let routing_info = self.routing_info(query, cluster);
-
+        if let Some(ref token_with_strategy) = routing_info.token_with_strategy {
+            if self.preferred_datacenter.is_some()
+                && !self.permit_dc_failover
+                && matches!(
+                    token_with_strategy.strategy,
+                    Strategy::SimpleStrategy { .. }
+                )
+            {
+                warn!("\
+Combining SimpleStrategy with preferred_datacenter set to Some and disabled datacenter failover may lead to empty query plans for some tokens.\
+It is better to give up using one of them: either operate in a keyspace with NetworkTopologyStrategy, which explicitly states\
+how many replicas there are in each datacenter (you probably want at least 1 to avoid empty plans while preferring that datacenter), \
+or refrain from preferring datacenters (which may ban all other datacenters, if datacenter failover happens to be not possible)."
+                );
+            }
+        }
         if let Some(ts) = &routing_info.token_with_strategy {
             // Try to pick some alive local random replica.
             // If preferred datacenter is not specified, all replicas are treated as local.
