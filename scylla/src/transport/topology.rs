@@ -77,7 +77,7 @@ pub struct Keyspace {
     /// Empty HashMap may as well mean that the client disabled schema fetching in SessionConfig
     pub views: HashMap<String, MaterializedView>,
     /// Empty HashMap may as well mean that the client disabled schema fetching in SessionConfig
-    pub user_defined_types: HashMap<String, Vec<(String, CqlType)>>,
+    pub user_defined_types: HashMap<String, Arc<UserDefinedType>>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -758,14 +758,14 @@ struct UdtRow {
 async fn query_user_defined_types(
     conn: &Arc<Connection>,
     keyspaces_to_fetch: &[String],
-) -> Result<HashMap<String, HashMap<String, Vec<(String, CqlType)>>>, QueryError> {
+) -> Result<HashMap<String, HashMap<String, Arc<UserDefinedType>>>, QueryError> {
     let rows = query_filter_keyspace_name(
         conn,
         "select keyspace_name, type_name, field_names, field_types from system_schema.types",
         keyspaces_to_fetch,
     );
 
-    let mut result = HashMap::new();
+    let mut udts = HashMap::new();
 
     rows.map(|row_result| {
         let row = row_result?;
@@ -784,17 +784,22 @@ async fn query_user_defined_types(
             fields.push((field_name, map_string_to_cql_type(field_type)?));
         }
 
-        result
-            .entry(keyspace_name)
+        let udt = Arc::new(UserDefinedType {
+            name: type_name.clone(),
+            keyspace: keyspace_name.clone(),
+            field_types: fields,
+        });
+
+        udts.entry(keyspace_name)
             .or_insert_with(HashMap::new)
-            .insert(type_name, fields);
+            .insert(type_name, udt);
 
         Ok::<_, QueryError>(())
     })
     .try_for_each(|_| future::ok(()))
     .await?;
 
-    Ok(result)
+    Ok(udts)
 }
 
 async fn query_tables(
