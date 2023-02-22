@@ -101,6 +101,20 @@ pub struct Column {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
+enum PreCqlType {
+    Native(NativeType),
+    Collection {
+        frozen: bool,
+        type_: PreCollectionType,
+    },
+    Tuple(Vec<PreCqlType>),
+    UserDefinedType {
+        frozen: bool,
+        name: String,
+    },
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum CqlType {
     Native(NativeType),
     Collection { frozen: bool, type_: CollectionType },
@@ -146,6 +160,13 @@ pub enum NativeType {
     Timeuuid,
     Uuid,
     Varint,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum PreCollectionType {
+    List(Box<PreCqlType>),
+    Map(Box<PreCqlType>, Box<PreCqlType>),
+    Set(Box<PreCqlType>),
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
