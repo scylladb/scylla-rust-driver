@@ -17,6 +17,7 @@ use scylla_cql::frame::response::result::Row;
 use scylla_cql::frame::value::ValueList;
 use scylla_macros::FromRow;
 use std::borrow::BorrowMut;
+use std::cell::Cell;
 use std::collections::HashMap;
 use std::fmt;
 use std::fmt::Formatter;
@@ -900,6 +901,102 @@ async fn query_user_defined_types(
     }
 
     Ok(udts)
+}
+
+fn topo_sort_udts(udts: &mut Vec<UdtRowWithParsedFieldTypes>) -> Result<(), QueryError> {
+    fn do_with_referenced_udts(what: &mut impl FnMut(&str), pre_cql_type: &PreCqlType) {
+        match pre_cql_type {
+            PreCqlType::Native(_) => (),
+            PreCqlType::Collection { type_, .. } => match type_ {
+                PreCollectionType::List(t) | PreCollectionType::Set(t) => {
+                    do_with_referenced_udts(what, t)
+                }
+                PreCollectionType::Map(t1, t2) => {
+                    do_with_referenced_udts(what, t1);
+                    do_with_referenced_udts(what, t2);
+                }
+            },
+            PreCqlType::Tuple(types) => types
+                .iter()
+                .for_each(|type_| do_with_referenced_udts(what, type_)),
+            PreCqlType::UserDefinedType { name, .. } => what(name),
+        }
+    }
+
+    // Build an indegree map: for each node in the graph, how many directly depending types it has.
+    let mut indegs = udts
+        .drain(..)
+        .map(|def| {
+            (
+                (def.keyspace_name.clone(), def.type_name.clone()),
+                (def, Cell::new(0u32)),
+            )
+        })
+        .collect::<HashMap<_, _>>();
+
+    // For each node in the graph...
+    for (def, _) in indegs.values() {
+        let mut increment_referred_udts = |type_name: &str| {
+            let deg = indegs
+                .get(&(def.keyspace_name.clone(), type_name.to_string()))
+                .map(|(_, count)| count);
+
+            if let Some(deg_cell) = deg {
+                deg_cell.set(deg_cell.get() + 1);
+            }
+        };
+
+        // For each type referred by the node...
+        for field_type in def.field_types.iter() {
+            do_with_referenced_udts(&mut increment_referred_udts, field_type);
+        }
+    }
+
+    let mut sorted = Vec::with_capacity(indegs.len());
+    let mut next_idx = 0;
+
+    // Schedule keys that had an initial indeg of 0
+    for (key, _) in indegs.iter().filter(|(_, (_, deg))| deg.get() == 0) {
+        sorted.push(key);
+    }
+
+    while let Some(key @ (keyspace, _type_name)) = sorted.get(next_idx).copied() {
+        next_idx += 1;
+        // Decrement the counters of all UDTs that this UDT depends upon
+        // and then schedule them if their counter drops to 0
+        let mut decrement_referred_udts = |type_name: &str| {
+            let key_value = indegs.get_key_value(&(keyspace.clone(), type_name.to_string()));
+
+            if let Some((ref_key, (_, cnt))) = key_value {
+                let new_cnt = cnt.get() - 1;
+                cnt.set(new_cnt);
+                if new_cnt == 0 {
+                    sorted.push(ref_key);
+                }
+            }
+        };
+
+        let def = &indegs.get(key).unwrap().0;
+        // For each type referred by the node...
+        for field_type in def.field_types.iter() {
+            do_with_referenced_udts(&mut decrement_referred_udts, field_type);
+        }
+    }
+
+    if sorted.len() < indegs.len() {
+        // Some UDTs could not become leaves in the graph, which implies cycles.
+        return Err(QueryError::ProtocolError(
+            "Invalid fetched User Defined Types definitions: circular type dependency detected. Topological sort is thus impossible."
+        ));
+    }
+
+    let owned_sorted = sorted.into_iter().cloned().collect::<Vec<_>>();
+    assert!(udts.is_empty());
+    for key in owned_sorted.into_iter().rev() {
+        udts.push(indegs.remove(&key).unwrap().0);
+    }
+
+    Ok(())
 }
 
 async fn query_tables(
