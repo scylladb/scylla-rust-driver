@@ -674,10 +674,11 @@ async fn query_keyspaces(
     );
 
     let (mut all_tables, mut all_views, mut all_user_defined_types) = if fetch_schema {
+        let udts = query_user_defined_types(conn, keyspaces_to_fetch).await?;
         (
             query_tables(conn, keyspaces_to_fetch).await?,
             query_views(conn, keyspaces_to_fetch).await?,
-            query_user_defined_types(conn, keyspaces_to_fetch).await?,
+            udts,
         )
     } else {
         (HashMap::new(), HashMap::new(), HashMap::new())
