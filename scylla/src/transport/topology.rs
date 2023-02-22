@@ -999,6 +999,166 @@ fn topo_sort_udts(udts: &mut Vec<UdtRowWithParsedFieldTypes>) -> Result<(), Quer
     Ok(())
 }
 
+#[cfg(test)]
+mod toposort_tests {
+    use super::{topo_sort_udts, UdtRow, UdtRowWithParsedFieldTypes};
+
+    const KEYSPACE1: &str = "KEYSPACE1";
+    const KEYSPACE2: &str = "KEYSPACE2";
+
+    fn make_udt_row(
+        keyspace_name: String,
+        type_name: String,
+        field_types: Vec<String>,
+    ) -> UdtRowWithParsedFieldTypes {
+        UdtRow {
+            keyspace_name,
+            type_name,
+            field_names: vec!["udt_field".into(); field_types.len()],
+            field_types,
+        }
+        .try_into()
+        .unwrap()
+    }
+
+    fn get_udt_idx(
+        toposorted: &[UdtRowWithParsedFieldTypes],
+        keyspace_name: &str,
+        type_name: &str,
+    ) -> usize {
+        toposorted
+            .iter()
+            .enumerate()
+            .find_map(|(idx, def)| {
+                (def.type_name == type_name && def.keyspace_name == keyspace_name).then_some(idx)
+            })
+            .unwrap()
+    }
+
+    #[test]
+    #[ntest::timeout(1000)]
+    fn test_udt_topo_sort_valid_case() {
+        // UDTs dependencies on each other (arrow A -> B signifies that type B is composed of type A):
+        //
+        // KEYSPACE1
+        //      F -->+
+        //      ^    |
+        //      |    |
+        // A -> B -> C
+        // |    ^
+        // + -> D
+        //
+        // E   (E is an independent UDT)
+        //
+        // KEYSPACE2
+        // B -> A -> C
+        // ^    ^
+        // D -> E
+
+        let mut udts = vec![
+            make_udt_row(KEYSPACE1.into(), "A".into(), vec!["blob".into()]),
+            make_udt_row(KEYSPACE1.into(), "B".into(), vec!["A".into(), "D".into()]),
+            make_udt_row(
+                KEYSPACE1.into(),
+                "C".into(),
+                vec!["blob".into(), "B".into(), "list<map<F, text>>".into()],
+            ),
+            make_udt_row(
+                KEYSPACE1.into(),
+                "D".into(),
+                vec!["A".into(), "blob".into()],
+            ),
+            make_udt_row(KEYSPACE1.into(), "E".into(), vec!["blob".into()]),
+            make_udt_row(
+                KEYSPACE1.into(),
+                "F".into(),
+                vec!["B".into(), "blob".into()],
+            ),
+            make_udt_row(
+                KEYSPACE2.into(),
+                "A".into(),
+                vec!["B".into(), "tuple<E, E>".into()],
+            ),
+            make_udt_row(KEYSPACE2.into(), "B".into(), vec!["map<text, D>".into()]),
+            make_udt_row(KEYSPACE2.into(), "C".into(), vec!["frozen<A>".into()]),
+            make_udt_row(KEYSPACE2.into(), "D".into(), vec!["blob".into()]),
+            make_udt_row(KEYSPACE2.into(), "E".into(), vec!["D".into()]),
+        ];
+
+        topo_sort_udts(&mut udts).unwrap();
+
+        assert!(get_udt_idx(&udts, KEYSPACE1, "A") < get_udt_idx(&udts, KEYSPACE1, "B"));
+        assert!(get_udt_idx(&udts, KEYSPACE1, "A") < get_udt_idx(&udts, KEYSPACE1, "D"));
+        assert!(get_udt_idx(&udts, KEYSPACE1, "B") < get_udt_idx(&udts, KEYSPACE1, "C"));
+        assert!(get_udt_idx(&udts, KEYSPACE1, "B") < get_udt_idx(&udts, KEYSPACE1, "F"));
+        assert!(get_udt_idx(&udts, KEYSPACE1, "F") < get_udt_idx(&udts, KEYSPACE1, "C"));
+        assert!(get_udt_idx(&udts, KEYSPACE1, "D") < get_udt_idx(&udts, KEYSPACE1, "B"));
+
+        assert!(get_udt_idx(&udts, KEYSPACE2, "B") < get_udt_idx(&udts, KEYSPACE2, "A"));
+        assert!(get_udt_idx(&udts, KEYSPACE2, "D") < get_udt_idx(&udts, KEYSPACE2, "B"));
+        assert!(get_udt_idx(&udts, KEYSPACE2, "D") < get_udt_idx(&udts, KEYSPACE2, "E"));
+        assert!(get_udt_idx(&udts, KEYSPACE2, "E") < get_udt_idx(&udts, KEYSPACE2, "A"));
+        assert!(get_udt_idx(&udts, KEYSPACE2, "A") < get_udt_idx(&udts, KEYSPACE2, "C"));
+    }
+
+    #[test]
+    #[ntest::timeout(1000)]
+    fn test_udt_topo_sort_detects_cycles() {
+        const KEYSPACE1: &str = "KEYSPACE1";
+        let tests = [
+            // test 1
+            // A depends on itself.
+            vec![make_udt_row(
+                KEYSPACE1.into(),
+                "A".into(),
+                vec!["blob".into(), "A".into()],
+            )],
+            // test 2
+            // A depends on B, which depends on A; also, there is an independent E.
+            vec![
+                make_udt_row(
+                    KEYSPACE1.into(),
+                    "A".into(),
+                    vec!["blob".into(), "B".into()],
+                ),
+                make_udt_row(
+                    KEYSPACE1.into(),
+                    "B".into(),
+                    vec!["int".into(), "map<text, A>".into()],
+                ),
+                make_udt_row(KEYSPACE1.into(), "E".into(), vec!["text".into()]),
+            ],
+        ];
+
+        for mut udts in tests {
+            topo_sort_udts(&mut udts).unwrap_err();
+        }
+    }
+
+    #[test]
+    #[ntest::timeout(1000)]
+    fn test_udt_topo_sort_ignores_invalid_metadata() {
+        // A depends on B, which depends on unknown C; also, there is an independent E.
+        let mut udts = vec![
+            make_udt_row(
+                KEYSPACE1.into(),
+                "A".into(),
+                vec!["blob".into(), "B".into()],
+            ),
+            make_udt_row(
+                KEYSPACE1.into(),
+                "B".into(),
+                vec!["int".into(), "map<text, C>".into()],
+            ),
+            make_udt_row(KEYSPACE1.into(), "E".into(), vec!["text".into()]),
+        ];
+
+        topo_sort_udts(&mut udts).unwrap();
+
+        assert!(get_udt_idx(&udts, KEYSPACE1, "B") < get_udt_idx(&udts, KEYSPACE1, "A"));
+    }
+}
+
 async fn query_tables(
     conn: &Arc<Connection>,
     keyspaces_to_fetch: &[String],
