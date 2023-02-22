@@ -108,6 +108,21 @@ pub enum CqlType {
     UserDefinedType { frozen: bool, name: String },
 }
 
+/// Definition of a user-defined type
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct UserDefinedType {
+    pub name: String,
+    pub keyspace: String,
+    pub field_types: Vec<(String, CqlType)>,
+}
+
+/// Represents a user defined type whose definition is missing from the metadata.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct MissingUserDefinedType {
+    pub name: String,
+    pub keyspace: String,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, EnumString)]
 #[strum(serialize_all = "lowercase")]
 pub enum NativeType {
