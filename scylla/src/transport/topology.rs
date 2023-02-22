@@ -858,7 +858,7 @@ async fn query_user_defined_types(
         keyspaces_to_fetch,
     );
 
-    let udt_rows: Vec<UdtRowWithParsedFieldTypes> = rows
+    let mut udt_rows: Vec<UdtRowWithParsedFieldTypes> = rows
         .map(|row_result| {
             let row = row_result?;
             let udt_row = row
@@ -872,6 +872,8 @@ async fn query_user_defined_types(
         })
         .try_collect()
         .await?;
+
+    topo_sort_udts(&mut udt_rows)?;
 
     let mut udts = HashMap::new();
     for udt_row in udt_rows {
