@@ -857,24 +857,34 @@ async fn query_user_defined_types(
         keyspaces_to_fetch,
     );
 
-    let mut udts = HashMap::new();
+    let udt_rows: Vec<UdtRowWithParsedFieldTypes> = rows
+        .map(|row_result| {
+            let row = row_result?;
+            let udt_row = row
+                .into_typed::<UdtRow>()
+                .map_err(|_| {
+                    QueryError::ProtocolError("system_schema.types has invalid column type")
+                })?
+                .try_into()?;
 
-    rows.map(|row_result| {
-        let row = row_result?;
-        let UdtRow {
+            Ok::<_, QueryError>(udt_row)
+        })
+        .try_collect()
+        .await?;
+
+    let mut udts = HashMap::new();
+    for udt_row in udt_rows {
+        let UdtRowWithParsedFieldTypes {
             keyspace_name,
             type_name,
             field_names,
             field_types,
-        } = row.into_typed().map_err(|_| {
-            QueryError::ProtocolError("system_schema.types has invalid column type")
-        })?;
+        } = udt_row;
 
         let mut fields = Vec::with_capacity(field_names.len());
 
-        for (field_name, field_type) in field_names.into_iter().zip(field_types.iter()) {
-            let parsed_type = map_string_to_cql_type(field_type)?;
-            let cql_type = parsed_type.into_cql_type(&keyspace_name, &udts);
+        for (field_name, field_type) in field_names.into_iter().zip(field_types.into_iter()) {
+            let cql_type = field_type.into_cql_type(&keyspace_name, &udts);
             fields.push((field_name, cql_type));
         }
 
@@ -887,11 +897,7 @@ async fn query_user_defined_types(
         udts.entry(keyspace_name)
             .or_insert_with(HashMap::new)
             .insert(type_name, udt);
-
-        Ok::<_, QueryError>(())
-    })
-    .try_for_each(|_| future::ok(()))
-    .await?;
+    }
 
     Ok(udts)
 }
