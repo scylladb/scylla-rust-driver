@@ -709,6 +709,15 @@ async fn query_keyspaces(
     .await
 }
 
+#[derive(FromRow, Debug)]
+#[scylla_crate = "crate"]
+struct UdtRow {
+    keyspace_name: String,
+    type_name: String,
+    field_names: Vec<String>,
+    field_types: Vec<String>,
+}
+
 async fn query_user_defined_types(
     conn: &Arc<Connection>,
     keyspaces_to_fetch: &[String],
@@ -723,12 +732,12 @@ async fn query_user_defined_types(
 
     rows.map(|row_result| {
         let row = row_result?;
-        let (keyspace_name, type_name, field_names, field_types): (
-            String,
-            String,
-            Vec<String>,
-            Vec<String>,
-        ) = row.into_typed().map_err(|_| {
+        let UdtRow {
+            keyspace_name,
+            type_name,
+            field_names,
+            field_types,
+        } = row.into_typed().map_err(|_| {
             QueryError::ProtocolError("system_schema.types has invalid column type")
         })?;
 
