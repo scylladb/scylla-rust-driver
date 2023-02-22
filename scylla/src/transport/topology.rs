@@ -712,8 +712,8 @@ async fn query_keyspaces(
     let (mut all_tables, mut all_views, mut all_user_defined_types) = if fetch_schema {
         let udts = query_user_defined_types(conn, keyspaces_to_fetch).await?;
         (
-            query_tables(conn, keyspaces_to_fetch).await?,
-            query_views(conn, keyspaces_to_fetch).await?,
+            query_tables(conn, keyspaces_to_fetch, &udts).await?,
+            query_views(conn, keyspaces_to_fetch, &udts).await?,
             udts,
         )
     } else {
@@ -805,6 +805,7 @@ async fn query_user_defined_types(
 async fn query_tables(
     conn: &Arc<Connection>,
     keyspaces_to_fetch: &[String],
+    udts: &HashMap<String, HashMap<String, Arc<UserDefinedType>>>,
 ) -> Result<HashMap<String, HashMap<String, Table>>, QueryError> {
     let rows = query_filter_keyspace_name(
         conn,
@@ -812,7 +813,7 @@ async fn query_tables(
         keyspaces_to_fetch,
     );
     let mut result = HashMap::new();
-    let mut tables = query_tables_schema(conn, keyspaces_to_fetch).await?;
+    let mut tables = query_tables_schema(conn, keyspaces_to_fetch, udts).await?;
 
     rows.map(|row_result| {
         let row = row_result?;
@@ -845,6 +846,7 @@ async fn query_tables(
 async fn query_views(
     conn: &Arc<Connection>,
     keyspaces_to_fetch: &[String],
+    udts: &HashMap<String, HashMap<String, Arc<UserDefinedType>>>,
 ) -> Result<HashMap<String, HashMap<String, MaterializedView>>, QueryError> {
     let rows = query_filter_keyspace_name(
         conn,
@@ -853,7 +855,7 @@ async fn query_views(
     );
 
     let mut result = HashMap::new();
-    let mut tables = query_tables_schema(conn, keyspaces_to_fetch).await?;
+    let mut tables = query_tables_schema(conn, keyspaces_to_fetch, udts).await?;
 
     rows.map(|row_result| {
         let row = row_result?;
@@ -890,6 +892,7 @@ async fn query_views(
 async fn query_tables_schema(
     conn: &Arc<Connection>,
     keyspaces_to_fetch: &[String],
+    udts: &HashMap<String, HashMap<String, Arc<UserDefinedType>>>,
 ) -> Result<HashMap<(String, String), Table>, QueryError> {
     // Upon migration from thrift to CQL, Cassandra internally creates a surrogate column "value" of
     // type EmptyType for dense tables. This resolves into this CQL type name.
