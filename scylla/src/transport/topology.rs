@@ -114,12 +114,53 @@ enum PreCqlType {
     },
 }
 
+impl PreCqlType {
+    pub(crate) fn into_cql_type(
+        self,
+        keyspace_name: &String,
+        udts: &HashMap<String, HashMap<String, Arc<UserDefinedType>>>,
+    ) -> CqlType {
+        match self {
+            PreCqlType::Native(n) => CqlType::Native(n),
+            PreCqlType::Collection { frozen, type_ } => CqlType::Collection {
+                frozen,
+                type_: type_.into_collection_type(keyspace_name, udts),
+            },
+            PreCqlType::Tuple(t) => CqlType::Tuple(
+                t.into_iter()
+                    .map(|t| t.into_cql_type(keyspace_name, udts))
+                    .collect(),
+            ),
+            PreCqlType::UserDefinedType { frozen, name } => {
+                let definition = match udts
+                    .get(keyspace_name)
+                    .and_then(|per_keyspace_udts| per_keyspace_udts.get(&name))
+                {
+                    Some(def) => Ok(def.clone()),
+                    None => Err(MissingUserDefinedType {
+                        name,
+                        keyspace: keyspace_name.clone(),
+                    }),
+                };
+                CqlType::UserDefinedType { frozen, definition }
+            }
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum CqlType {
     Native(NativeType),
-    Collection { frozen: bool, type_: CollectionType },
+    Collection {
+        frozen: bool,
+        type_: CollectionType,
+    },
     Tuple(Vec<CqlType>),
-    UserDefinedType { frozen: bool, name: String },
+    UserDefinedType {
+        frozen: bool,
+        // Using Arc here in order not to have many copies of the same definition
+        definition: Result<Arc<UserDefinedType>, MissingUserDefinedType>,
+    },
 }
 
 /// Definition of a user-defined type
@@ -167,6 +208,27 @@ enum PreCollectionType {
     List(Box<PreCqlType>),
     Map(Box<PreCqlType>, Box<PreCqlType>),
     Set(Box<PreCqlType>),
+}
+
+impl PreCollectionType {
+    pub(crate) fn into_collection_type(
+        self,
+        keyspace_name: &String,
+        udts: &HashMap<String, HashMap<String, Arc<UserDefinedType>>>,
+    ) -> CollectionType {
+        match self {
+            PreCollectionType::List(t) => {
+                CollectionType::List(Box::new(t.into_cql_type(keyspace_name, udts)))
+            }
+            PreCollectionType::Map(tk, tv) => CollectionType::Map(
+                Box::new(tk.into_cql_type(keyspace_name, udts)),
+                Box::new(tv.into_cql_type(keyspace_name, udts)),
+            ),
+            PreCollectionType::Set(t) => {
+                CollectionType::Set(Box::new(t.into_cql_type(keyspace_name, udts)))
+            }
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -781,7 +843,9 @@ async fn query_user_defined_types(
         let mut fields = Vec::with_capacity(field_names.len());
 
         for (field_name, field_type) in field_names.into_iter().zip(field_types.iter()) {
-            fields.push((field_name, map_string_to_cql_type(field_type)?));
+            let parsed_type = map_string_to_cql_type(field_type)?;
+            let cql_type = parsed_type.into_cql_type(&keyspace_name, &udts);
+            fields.push((field_name, cql_type));
         }
 
         let udt = Arc::new(UserDefinedType {
@@ -922,13 +986,14 @@ async fn query_tables_schema(
             return Ok::<_, QueryError>(());
         }
 
+        let pre_cql_type = map_string_to_cql_type(&type_)?;
+        let cql_type = pre_cql_type.into_cql_type(&keyspace_name, udts);
+
         let entry = tables_schema.entry((keyspace_name, table_name)).or_insert((
             HashMap::new(), // columns
             HashMap::new(), // partition key
             HashMap::new(), // clustering key
         ));
-
-        let cql_type = map_string_to_cql_type(&type_)?;
 
         let kind = ColumnKind::from_str(&kind)
             // FIXME: The correct error type is QueryError:ProtocolError but at the moment it accepts only &'static str
@@ -992,7 +1057,7 @@ async fn query_tables_schema(
     Ok(result)
 }
 
-fn map_string_to_cql_type(type_: &str) -> Result<CqlType, InvalidCqlType> {
+fn map_string_to_cql_type(type_: &str) -> Result<PreCqlType, InvalidCqlType> {
     match parse_cql_type(ParserState::new(type_)) {
         Err(err) => Err(InvalidCqlType {
             type_: type_.to_string(),
@@ -1008,7 +1073,7 @@ fn map_string_to_cql_type(type_: &str) -> Result<CqlType, InvalidCqlType> {
     }
 }
 
-fn parse_cql_type(p: ParserState) -> ParseResult<(CqlType, ParserState)> {
+fn parse_cql_type(p: ParserState<'_>) -> ParseResult<(PreCqlType, ParserState<'_>)> {
     if let Ok(p) = p.accept("frozen<") {
         let (inner_type, p) = parse_cql_type(p)?;
         let p = p.accept(">")?;
@@ -1022,9 +1087,9 @@ fn parse_cql_type(p: ParserState) -> ParseResult<(CqlType, ParserState)> {
         let (value, p) = parse_cql_type(p)?;
         let p = p.accept(">")?;
 
-        let typ = CqlType::Collection {
+        let typ = PreCqlType::Collection {
             frozen: false,
-            type_: CollectionType::Map(Box::new(key), Box::new(value)),
+            type_: PreCollectionType::Map(Box::new(key), Box::new(value)),
         };
 
         Ok((typ, p))
@@ -1032,9 +1097,9 @@ fn parse_cql_type(p: ParserState) -> ParseResult<(CqlType, ParserState)> {
         let (inner_type, p) = parse_cql_type(p)?;
         let p = p.accept(">")?;
 
-        let typ = CqlType::Collection {
+        let typ = PreCqlType::Collection {
             frozen: false,
-            type_: CollectionType::List(Box::new(inner_type)),
+            type_: PreCollectionType::List(Box::new(inner_type)),
         };
 
         Ok((typ, p))
@@ -1042,9 +1107,9 @@ fn parse_cql_type(p: ParserState) -> ParseResult<(CqlType, ParserState)> {
         let (inner_type, p) = parse_cql_type(p)?;
         let p = p.accept(">")?;
 
-        let typ = CqlType::Collection {
+        let typ = PreCqlType::Collection {
             frozen: false,
-            type_: CollectionType::Set(Box::new(inner_type)),
+            type_: PreCollectionType::Set(Box::new(inner_type)),
         };
 
         Ok((typ, p))
@@ -1064,11 +1129,11 @@ fn parse_cql_type(p: ParserState) -> ParseResult<(CqlType, ParserState)> {
             }
         })?;
 
-        Ok((CqlType::Tuple(types), p))
+        Ok((PreCqlType::Tuple(types), p))
     } else if let Ok((typ, p)) = parse_native_type(p) {
-        Ok((CqlType::Native(typ), p))
+        Ok((PreCqlType::Native(typ), p))
     } else if let Ok((name, p)) = parse_user_defined_type(p) {
-        let typ = CqlType::UserDefinedType {
+        let typ = PreCqlType::UserDefinedType {
             frozen: false,
             name: name.to_string(),
         };
@@ -1096,13 +1161,15 @@ fn parse_user_defined_type(p: ParserState) -> ParseResult<(&str, ParserState)> {
     Ok((tok, p))
 }
 
-fn freeze_type(type_: CqlType) -> CqlType {
+fn freeze_type(type_: PreCqlType) -> PreCqlType {
     match type_ {
-        CqlType::Collection { type_, .. } => CqlType::Collection {
+        PreCqlType::Collection { type_, .. } => PreCqlType::Collection {
             frozen: true,
             type_,
         },
-        CqlType::UserDefinedType { name, .. } => CqlType::UserDefinedType { frozen: true, name },
+        PreCqlType::UserDefinedType { name, .. } => {
+            PreCqlType::UserDefinedType { frozen: true, name }
+        }
         other => other,
     }
 }
@@ -1200,76 +1267,76 @@ mod tests {
     #[test]
     fn test_cql_type_parsing() {
         let test_cases = [
-            ("bigint", CqlType::Native(NativeType::BigInt)),
+            ("bigint", PreCqlType::Native(NativeType::BigInt)),
             (
                 "list<int>",
-                CqlType::Collection {
+                PreCqlType::Collection {
                     frozen: false,
-                    type_: CollectionType::List(Box::new(CqlType::Native(NativeType::Int))),
+                    type_: PreCollectionType::List(Box::new(PreCqlType::Native(NativeType::Int))),
                 },
             ),
             (
                 "set<ascii>",
-                CqlType::Collection {
+                PreCqlType::Collection {
                     frozen: false,
-                    type_: CollectionType::Set(Box::new(CqlType::Native(NativeType::Ascii))),
+                    type_: PreCollectionType::Set(Box::new(PreCqlType::Native(NativeType::Ascii))),
                 },
             ),
             (
                 "map<blob, boolean>",
-                CqlType::Collection {
+                PreCqlType::Collection {
                     frozen: false,
-                    type_: CollectionType::Map(
-                        Box::new(CqlType::Native(NativeType::Blob)),
-                        Box::new(CqlType::Native(NativeType::Boolean)),
+                    type_: PreCollectionType::Map(
+                        Box::new(PreCqlType::Native(NativeType::Blob)),
+                        Box::new(PreCqlType::Native(NativeType::Boolean)),
                     ),
                 },
             ),
             (
                 "frozen<map<text, text>>",
-                CqlType::Collection {
+                PreCqlType::Collection {
                     frozen: true,
-                    type_: CollectionType::Map(
-                        Box::new(CqlType::Native(NativeType::Text)),
-                        Box::new(CqlType::Native(NativeType::Text)),
+                    type_: PreCollectionType::Map(
+                        Box::new(PreCqlType::Native(NativeType::Text)),
+                        Box::new(PreCqlType::Native(NativeType::Text)),
                     ),
                 },
             ),
             (
                 "tuple<tinyint, smallint, int, bigint, varint>",
-                CqlType::Tuple(vec![
-                    CqlType::Native(NativeType::TinyInt),
-                    CqlType::Native(NativeType::SmallInt),
-                    CqlType::Native(NativeType::Int),
-                    CqlType::Native(NativeType::BigInt),
-                    CqlType::Native(NativeType::Varint),
+                PreCqlType::Tuple(vec![
+                    PreCqlType::Native(NativeType::TinyInt),
+                    PreCqlType::Native(NativeType::SmallInt),
+                    PreCqlType::Native(NativeType::Int),
+                    PreCqlType::Native(NativeType::BigInt),
+                    PreCqlType::Native(NativeType::Varint),
                 ]),
             ),
             (
                 "com.scylladb.types.AwesomeType",
-                CqlType::UserDefinedType {
+                PreCqlType::UserDefinedType {
                     frozen: false,
                     name: "com.scylladb.types.AwesomeType".to_string(),
                 },
             ),
             (
                 "frozen<ks.my_udt>",
-                CqlType::UserDefinedType {
+                PreCqlType::UserDefinedType {
                     frozen: true,
                     name: "ks.my_udt".to_string(),
                 },
             ),
             (
                 "map<text, frozen<map<text, text>>>",
-                CqlType::Collection {
+                PreCqlType::Collection {
                     frozen: false,
-                    type_: CollectionType::Map(
-                        Box::new(CqlType::Native(NativeType::Text)),
-                        Box::new(CqlType::Collection {
+                    type_: PreCollectionType::Map(
+                        Box::new(PreCqlType::Native(NativeType::Text)),
+                        Box::new(PreCqlType::Collection {
                             frozen: true,
-                            type_: CollectionType::Map(
-                                Box::new(CqlType::Native(NativeType::Text)),
-                                Box::new(CqlType::Native(NativeType::Text)),
+                            type_: PreCollectionType::Map(
+                                Box::new(PreCqlType::Native(NativeType::Text)),
+                                Box::new(PreCqlType::Native(NativeType::Text)),
                             ),
                         }),
                     ),
@@ -1289,59 +1356,63 @@ mod tests {
                     >\
                 >",
                 // map<...>
-                CqlType::Collection {
+                PreCqlType::Collection {
                     frozen: false,
-                    type_: CollectionType::Map(
-                        Box::new(CqlType::Collection {
+                    type_: PreCollectionType::Map(
+                        Box::new(PreCqlType::Collection {
                             // frozen<list<int>>
                             frozen: true,
-                            type_: CollectionType::List(Box::new(CqlType::Native(NativeType::Int))),
+                            type_: PreCollectionType::List(Box::new(PreCqlType::Native(
+                                NativeType::Int,
+                            ))),
                         }),
-                        Box::new(CqlType::Collection {
+                        Box::new(PreCqlType::Collection {
                             // set<...>
                             frozen: false,
-                            type_: CollectionType::Set(Box::new(CqlType::Collection {
+                            type_: PreCollectionType::Set(Box::new(PreCqlType::Collection {
                                 // list<tuple<...>>
                                 frozen: false,
-                                type_: CollectionType::List(Box::new(CqlType::Tuple(vec![
-                                    CqlType::Collection {
+                                type_: PreCollectionType::List(Box::new(PreCqlType::Tuple(vec![
+                                    PreCqlType::Collection {
                                         // list<list<text>>
                                         frozen: false,
-                                        type_: CollectionType::List(Box::new(
-                                            CqlType::Collection {
+                                        type_: PreCollectionType::List(Box::new(
+                                            PreCqlType::Collection {
                                                 frozen: false,
-                                                type_: CollectionType::List(Box::new(
-                                                    CqlType::Native(NativeType::Text),
+                                                type_: PreCollectionType::List(Box::new(
+                                                    PreCqlType::Native(NativeType::Text),
                                                 )),
                                             },
                                         )),
                                     },
-                                    CqlType::Collection {
+                                    PreCqlType::Collection {
                                         // map<text, map<ks.my_type, blob>>
                                         frozen: false,
-                                        type_: CollectionType::Map(
-                                            Box::new(CqlType::Native(NativeType::Text)),
-                                            Box::new(CqlType::Collection {
+                                        type_: PreCollectionType::Map(
+                                            Box::new(PreCqlType::Native(NativeType::Text)),
+                                            Box::new(PreCqlType::Collection {
                                                 frozen: false,
-                                                type_: CollectionType::Map(
-                                                    Box::new(CqlType::UserDefinedType {
+                                                type_: PreCollectionType::Map(
+                                                    Box::new(PreCqlType::UserDefinedType {
                                                         frozen: false,
                                                         name: "ks.my_type".to_string(),
                                                     }),
-                                                    Box::new(CqlType::Native(NativeType::Blob)),
+                                                    Box::new(PreCqlType::Native(NativeType::Blob)),
                                                 ),
                                             }),
                                         ),
                                     },
-                                    CqlType::Collection {
+                                    PreCqlType::Collection {
                                         // frozen<set<set<int>>>
                                         frozen: true,
-                                        type_: CollectionType::Set(Box::new(CqlType::Collection {
-                                            frozen: false,
-                                            type_: CollectionType::Set(Box::new(CqlType::Native(
-                                                NativeType::Int,
-                                            ))),
-                                        })),
+                                        type_: PreCollectionType::Set(Box::new(
+                                            PreCqlType::Collection {
+                                                frozen: false,
+                                                type_: PreCollectionType::Set(Box::new(
+                                                    PreCqlType::Native(NativeType::Int),
+                                                )),
+                                            },
+                                        )),
                                     },
                                 ]))),
                             })),
