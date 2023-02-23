@@ -817,6 +817,36 @@ struct UdtRow {
     field_types: Vec<String>,
 }
 
+#[derive(Debug)]
+struct UdtRowWithParsedFieldTypes {
+    keyspace_name: String,
+    type_name: String,
+    field_names: Vec<String>,
+    field_types: Vec<PreCqlType>,
+}
+
+impl TryFrom<UdtRow> for UdtRowWithParsedFieldTypes {
+    type Error = InvalidCqlType;
+    fn try_from(udt_row: UdtRow) -> Result<Self, InvalidCqlType> {
+        let UdtRow {
+            keyspace_name,
+            type_name,
+            field_names,
+            field_types,
+        } = udt_row;
+        let field_types = field_types
+            .into_iter()
+            .map(|type_| map_string_to_cql_type(&type_))
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(Self {
+            keyspace_name,
+            type_name,
+            field_names,
+            field_types,
+        })
+    }
+}
+
 async fn query_user_defined_types(
     conn: &Arc<Connection>,
     keyspaces_to_fetch: &[String],
