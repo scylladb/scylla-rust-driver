@@ -25,7 +25,7 @@ use std::net::{IpAddr, SocketAddr};
 use std::num::NonZeroUsize;
 use std::str::FromStr;
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use strum_macros::EnumString;
 use tokio::sync::mpsc;
 use tracing::{debug, error, trace, warn};
@@ -873,7 +873,14 @@ async fn query_user_defined_types(
         .try_collect()
         .await?;
 
+    let instant_before_toposort = Instant::now();
     topo_sort_udts(&mut udt_rows)?;
+    let toposort_elapsed = instant_before_toposort.elapsed();
+    debug!(
+        "Toposort of UDT definitions took {:.2} ms (udts len: {})",
+        toposort_elapsed.as_secs_f64() * 1000.,
+        udt_rows.len(),
+    );
 
     let mut udts = HashMap::new();
     for udt_row in udt_rows {
