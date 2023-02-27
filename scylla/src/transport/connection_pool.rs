@@ -138,11 +138,11 @@ impl std::fmt::Debug for PoolConnections {
     }
 }
 
+#[derive(Clone)]
 pub struct NodeConnectionPool {
     conns: Arc<ArcSwap<MaybePoolConnections>>,
     use_keyspace_request_sender: mpsc::Sender<UseKeyspaceRequest>,
-    _refiller_handle: RemoteHandle<()>,
-    _keepaliver_handle: Option<RemoteHandle<()>>,
+    _refiller_and_keepaliver_handles: Arc<(RemoteHandle<()>, Option<RemoteHandle<()>>)>,
     pool_updated_notify: Arc<Notify>,
 }
 
@@ -195,8 +195,7 @@ impl NodeConnectionPool {
         Self {
             conns,
             use_keyspace_request_sender,
-            _refiller_handle: refiller_handle,
-            _keepaliver_handle: keepaliver_handle,
+            _refiller_and_keepaliver_handles: Arc::new((refiller_handle, keepaliver_handle)),
             pool_updated_notify,
         }
     }
