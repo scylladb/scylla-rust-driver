@@ -15,7 +15,7 @@ use std::io::ErrorKind;
 use std::net::IpAddr;
 use std::num::NonZeroUsize;
 use std::pin::Pin;
-use std::sync::{Arc, Weak};
+use std::sync::{Arc, RwLock, Weak};
 use std::time::Duration;
 use tokio::sync::{mpsc, Notify};
 use tracing::{debug, trace, warn};
@@ -144,6 +144,7 @@ pub struct NodeConnectionPool {
     use_keyspace_request_sender: mpsc::Sender<UseKeyspaceRequest>,
     _refiller_and_keepaliver_handles: Arc<(RemoteHandle<()>, Option<RemoteHandle<()>>)>,
     pool_updated_notify: Arc<Notify>,
+    endpoint: Arc<RwLock<UntranslatedEndpoint>>,
 }
 
 impl std::fmt::Debug for NodeConnectionPool {
@@ -166,8 +167,10 @@ impl NodeConnectionPool {
         let keepalive_interval = pool_config.keepalive_interval;
 
         let endpoint_ip = endpoint.address().ip();
+        let arced_endpoint = Arc::new(RwLock::new(endpoint));
+
         let refiller = PoolRefiller::new(
-            endpoint,
+            arced_endpoint.clone(),
             pool_config,
             current_keyspace,
             pool_updated_notify.clone(),
@@ -197,6 +200,7 @@ impl NodeConnectionPool {
             use_keyspace_request_sender,
             _refiller_and_keepaliver_handles: Arc::new((refiller_handle, keepaliver_handle)),
             pool_updated_notify,
+            endpoint: arced_endpoint,
         }
     }
 
@@ -481,8 +485,10 @@ impl RefillDelayStrategy {
 
 struct PoolRefiller {
     // Following information identify the pool and do not change
-    endpoint: UntranslatedEndpoint,
     pool_config: PoolConfig,
+
+    // Following information is subject to updates on topology refresh
+    endpoint: Arc<RwLock<UntranslatedEndpoint>>,
 
     // Following fields are updated with information from OPTIONS
     shard_aware_port: Option<u16>,
@@ -536,7 +542,7 @@ struct UseKeyspaceRequest {
 
 impl PoolRefiller {
     pub fn new(
-        endpoint: UntranslatedEndpoint,
+        endpoint: Arc<RwLock<UntranslatedEndpoint>>,
         pool_config: PoolConfig,
         current_keyspace: Option<VerifiedKeyspaceName>,
         pool_updated_notify: Arc<Notify>,
@@ -571,7 +577,7 @@ impl PoolRefiller {
     }
 
     fn endpoint_description(&self) -> NodeAddr {
-        self.endpoint.address()
+        self.endpoint.read().unwrap().address()
     }
 
     pub fn get_shared_connections(&self) -> Arc<ArcSwap<MaybePoolConnections>> {
@@ -902,11 +908,11 @@ impl PoolRefiller {
     // to the shard using the port.
     fn start_opening_connection(&self, shard: Option<Shard>) {
         let cfg = self.pool_config.connection_config.clone();
+        let mut endpoint = self.endpoint.read().unwrap().clone();
 
         let fut = match (self.sharder.clone(), self.shard_aware_port, shard) {
             (Some(sharder), Some(port), Some(shard)) => {
                 let shard_aware_endpoint = {
-                    let mut endpoint = self.endpoint.clone();
                     endpoint.set_port(port);
                     endpoint
                 };
@@ -927,7 +933,7 @@ impl PoolRefiller {
                 .boxed()
             }
             _ => {
-                let non_shard_aware_endpoint = self.endpoint.clone();
+                let non_shard_aware_endpoint = endpoint;
                 async move {
                     let result =
                         connection::open_connection(non_shard_aware_endpoint, None, cfg).await;
@@ -1064,7 +1070,7 @@ impl PoolRefiller {
 
         let mut conns = self.conns.clone();
         let keyspace_name = keyspace_name.clone();
-        let address = self.endpoint.address();
+        let address = self.endpoint.read().unwrap().address();
         let connect_timeout = self.pool_config.connection_config.connect_timeout;
 
         let fut = async move {
