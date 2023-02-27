@@ -151,6 +151,30 @@ impl Node {
         }
     }
 
+    /// Recreates a Node after it changes its IP, preserving the pool.
+    ///
+    /// All settings except address are inherited from `node`.
+    /// The underlying pool is preserved and notified about the IP change.
+    /// # Arguments
+    ///
+    /// `node` - previous definition of that node
+    /// `address` - new address to connect to
+    pub(crate) fn inherit_with_ip_changed(node: &Node, endpoint: PeerEndpoint) -> Self {
+        let address = endpoint.address;
+        if let Some(ref pool) = node.pool {
+            pool.update_endpoint(endpoint);
+        }
+        Self {
+            address,
+            average_latency: RwLock::new(None),
+            down_marker: false.into(),
+            datacenter: node.datacenter.clone(),
+            rack: node.rack.clone(),
+            host_id: node.host_id,
+            pool: node.pool.clone(),
+        }
+    }
+
     pub fn sharder(&self) -> Option<Sharder> {
         self.pool.as_ref()?.sharder()
     }

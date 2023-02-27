@@ -5,7 +5,7 @@ use crate::transport::{
     connection::{Connection, ConnectionConfig, ErrorReceiver, VerifiedKeyspaceName},
 };
 
-use super::topology::UntranslatedEndpoint;
+use super::topology::{PeerEndpoint, UntranslatedEndpoint};
 use super::NodeAddr;
 use arc_swap::ArcSwap;
 use futures::{future::RemoteHandle, stream::FuturesUnordered, Future, FutureExt, StreamExt};
@@ -202,6 +202,10 @@ impl NodeConnectionPool {
             pool_updated_notify,
             endpoint: arced_endpoint,
         }
+    }
+
+    pub(crate) fn update_endpoint(&self, new_endpoint: PeerEndpoint) {
+        *self.endpoint.write().unwrap() = UntranslatedEndpoint::Peer(new_endpoint);
     }
 
     pub fn sharder(&self) -> Option<Sharder> {
