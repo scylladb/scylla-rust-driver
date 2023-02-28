@@ -89,7 +89,16 @@ pub(crate) struct PreparedIteratorConfig {
 impl Stream for Legacy08RowIterator {
     type Item = Result<Row, QueryError>;
 
-    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+    fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+        self.poll_next_internal(cx)
+    }
+}
+
+impl Legacy08RowIterator {
+    fn poll_next_internal(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+    ) -> Poll<Option<Result<Row, QueryError>>> {
         let mut s = self.as_mut();
 
         if s.is_current_page_exhausted() {
@@ -124,9 +133,7 @@ impl Stream for Legacy08RowIterator {
         cx.waker().wake_by_ref();
         Poll::Pending
     }
-}
 
-impl Legacy08RowIterator {
     /// Converts this iterator into an iterator over rows parsed as given type
     pub fn into_typed<RowT: FromRow>(self) -> Legacy08TypedRowIterator<RowT> {
         Legacy08TypedRowIterator {
