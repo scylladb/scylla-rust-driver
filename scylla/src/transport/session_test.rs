@@ -1378,7 +1378,7 @@ fn udt_type_c_def(ks: &str) -> Arc<UserDefinedType> {
                     }),
                     Box::new(CqlType::UserDefinedType {
                         frozen: true,
-                        name: "type_b".to_string(),
+                        definition: Ok(udt_type_b_def(ks)),
                     }),
                 ),
             },
@@ -1471,8 +1471,8 @@ async fn test_schema_types_in_metadata() {
     assert_eq!(
         a.type_,
         CqlType::UserDefinedType {
-            name: "type_a".to_string(),
             frozen: true,
+            definition: Ok(udt_type_a_def(&ks)),
         }
     );
 
@@ -1481,8 +1481,8 @@ async fn test_schema_types_in_metadata() {
     assert_eq!(
         b.type_,
         CqlType::UserDefinedType {
-            name: "type_b".to_string(),
             frozen: false,
+            definition: Ok(udt_type_b_def(&ks)),
         }
     );
 
@@ -1491,8 +1491,8 @@ async fn test_schema_types_in_metadata() {
     assert_eq!(
         c.type_,
         CqlType::UserDefinedType {
-            name: "type_c".to_string(),
-            frozen: true
+            frozen: true,
+            definition: Ok(udt_type_c_def(&ks))
         }
     );
 
