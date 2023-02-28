@@ -11,7 +11,9 @@ use crate::tracing::{GetTracingConfig, TracingInfo};
 use crate::transport::errors::{BadKeyspaceName, BadQuery, DbError, QueryError};
 use crate::transport::partitioner::{Murmur3Partitioner, Partitioner, PartitionerName};
 use crate::transport::topology::Strategy::SimpleStrategy;
-use crate::transport::topology::{CollectionType, ColumnKind, CqlType, NativeType};
+use crate::transport::topology::{
+    CollectionType, ColumnKind, CqlType, NativeType, UserDefinedType,
+};
 use crate::utils::test_utils::{supports_feature, unique_keyspace_name};
 use crate::CachingSession;
 use crate::ExecutionProfile;
@@ -1312,64 +1314,76 @@ async fn test_prepared_config() {
     assert_eq!(prepared_statement.get_page_size(), Some(42));
 }
 
-fn udt_type_a_def(ks: &str) -> Vec<(String, CqlType)> {
-    vec![
-        (
+fn udt_type_a_def(ks: &str) -> Arc<UserDefinedType> {
+    Arc::new(UserDefinedType {
+        name: "type_a".to_string(),
+        keyspace: ks.to_owned(),
+        field_types: vec![
+            (
+                "a".into(),
+                CqlType::Collection {
+                    frozen: false,
+                    type_: CollectionType::Map(
+                        Box::new(CqlType::Collection {
+                            frozen: true,
+                            type_: CollectionType::List(Box::new(CqlType::Native(NativeType::Int))),
+                        }),
+                        Box::new(CqlType::Native(NativeType::Text)),
+                    ),
+                },
+            ),
+            (
+                "b".into(),
+                CqlType::Collection {
+                    frozen: true,
+                    type_: CollectionType::Map(
+                        Box::new(CqlType::Collection {
+                            frozen: true,
+                            type_: CollectionType::List(Box::new(CqlType::Native(NativeType::Int))),
+                        }),
+                        Box::new(CqlType::Collection {
+                            frozen: true,
+                            type_: CollectionType::Set(Box::new(CqlType::Native(NativeType::Text))),
+                        }),
+                    ),
+                },
+            ),
+        ],
+    })
+}
+
+fn udt_type_b_def(ks: &str) -> Arc<UserDefinedType> {
+    Arc::new(UserDefinedType {
+        name: "type_b".to_string(),
+        keyspace: ks.to_owned(),
+        field_types: vec![
+            ("a".to_string(), CqlType::Native(NativeType::Int)),
+            ("b".to_string(), CqlType::Native(NativeType::Text)),
+        ],
+    })
+}
+
+fn udt_type_c_def(ks: &str) -> Arc<UserDefinedType> {
+    Arc::new(UserDefinedType {
+        name: "type_c".to_string(),
+        keyspace: ks.to_owned(),
+        field_types: vec![(
             "a".to_string(),
             CqlType::Collection {
                 frozen: false,
                 type_: CollectionType::Map(
                     Box::new(CqlType::Collection {
                         frozen: true,
-                        type_: CollectionType::List(Box::new(CqlType::Native(NativeType::Int))),
-                    }),
-                    Box::new(CqlType::Native(NativeType::Text)),
-                ),
-            },
-        ),
-        (
-            "b".to_string(),
-            CqlType::Collection {
-                frozen: true,
-                type_: CollectionType::Map(
-                    Box::new(CqlType::Collection {
-                        frozen: true,
-                        type_: CollectionType::List(Box::new(CqlType::Native(NativeType::Int))),
-                    }),
-                    Box::new(CqlType::Collection {
-                        frozen: true,
                         type_: CollectionType::Set(Box::new(CqlType::Native(NativeType::Text))),
                     }),
+                    Box::new(CqlType::UserDefinedType {
+                        frozen: true,
+                        name: "type_b".to_string(),
+                    }),
                 ),
             },
-        ),
-    ]
-}
-
-fn udt_type_b_def(ks: &str) -> Vec<(String, CqlType)> {
-    vec![
-        ("a".to_string(), CqlType::Native(NativeType::Int)),
-        ("b".to_string(), CqlType::Native(NativeType::Text)),
-    ]
-}
-
-fn udt_type_c_def(ks: &str) -> Vec<(String, CqlType)> {
-    vec![(
-        "a".to_string(),
-        CqlType::Collection {
-            frozen: false,
-            type_: CollectionType::Map(
-                Box::new(CqlType::Collection {
-                    frozen: true,
-                    type_: CollectionType::Set(Box::new(CqlType::Native(NativeType::Text))),
-                }),
-                Box::new(CqlType::UserDefinedType {
-                    frozen: true,
-                    name: "type_b".to_string(),
-                }),
-            ),
-        },
-    )]
+        )],
+    })
 }
 
 #[tokio::test]
@@ -2353,11 +2367,15 @@ async fn test_refresh_metadata_after_schema_agreement() {
 
     assert_eq!(
         udt.unwrap(),
-        &Vec::from([
-            ("field1".to_string(), CqlType::Native(NativeType::Int)),
-            ("field2".to_string(), CqlType::Native(NativeType::Uuid)),
-            ("field3".to_string(), CqlType::Native(NativeType::Text))
-        ])
+        &Arc::new(UserDefinedType {
+            keyspace: ks,
+            name: "udt".to_string(),
+            field_types: Vec::from([
+                ("field1".to_string(), CqlType::Native(NativeType::Int)),
+                ("field2".to_string(), CqlType::Native(NativeType::Uuid)),
+                ("field3".to_string(), CqlType::Native(NativeType::Text))
+            ])
+        })
     );
 }
 
