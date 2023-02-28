@@ -1312,6 +1312,66 @@ async fn test_prepared_config() {
     assert_eq!(prepared_statement.get_page_size(), Some(42));
 }
 
+fn udt_type_a_def(ks: &str) -> Vec<(String, CqlType)> {
+    vec![
+        (
+            "a".to_string(),
+            CqlType::Collection {
+                frozen: false,
+                type_: CollectionType::Map(
+                    Box::new(CqlType::Collection {
+                        frozen: true,
+                        type_: CollectionType::List(Box::new(CqlType::Native(NativeType::Int))),
+                    }),
+                    Box::new(CqlType::Native(NativeType::Text)),
+                ),
+            },
+        ),
+        (
+            "b".to_string(),
+            CqlType::Collection {
+                frozen: true,
+                type_: CollectionType::Map(
+                    Box::new(CqlType::Collection {
+                        frozen: true,
+                        type_: CollectionType::List(Box::new(CqlType::Native(NativeType::Int))),
+                    }),
+                    Box::new(CqlType::Collection {
+                        frozen: true,
+                        type_: CollectionType::Set(Box::new(CqlType::Native(NativeType::Text))),
+                    }),
+                ),
+            },
+        ),
+    ]
+}
+
+fn udt_type_b_def(ks: &str) -> Vec<(String, CqlType)> {
+    vec![
+        ("a".to_string(), CqlType::Native(NativeType::Int)),
+        ("b".to_string(), CqlType::Native(NativeType::Text)),
+    ]
+}
+
+fn udt_type_c_def(ks: &str) -> Vec<(String, CqlType)> {
+    vec![(
+        "a".to_string(),
+        CqlType::Collection {
+            frozen: false,
+            type_: CollectionType::Map(
+                Box::new(CqlType::Collection {
+                    frozen: true,
+                    type_: CollectionType::Set(Box::new(CqlType::Native(NativeType::Text))),
+                }),
+                Box::new(CqlType::UserDefinedType {
+                    frozen: true,
+                    name: "type_b".to_string(),
+                }),
+            ),
+        },
+    )]
+}
+
 #[tokio::test]
 async fn test_schema_types_in_metadata() {
     let uri = std::env::var("SCYLLA_URI").unwrap_or_else(|_| "127.0.0.1:9042".to_string());
@@ -1398,7 +1458,7 @@ async fn test_schema_types_in_metadata() {
         a.type_,
         CqlType::UserDefinedType {
             name: "type_a".to_string(),
-            frozen: true
+            frozen: true,
         }
     );
 
@@ -1518,72 +1578,15 @@ async fn test_user_defined_types_in_metadata() {
 
     let type_a = &user_defined_types["type_a"];
 
-    assert_eq!(
-        type_a,
-        &vec![
-            (
-                "a".to_string(),
-                CqlType::Collection {
-                    frozen: false,
-                    type_: CollectionType::Map(
-                        Box::new(CqlType::Collection {
-                            frozen: true,
-                            type_: CollectionType::List(Box::new(CqlType::Native(NativeType::Int)))
-                        }),
-                        Box::new(CqlType::Native(NativeType::Text))
-                    )
-                }
-            ),
-            (
-                "b".to_string(),
-                CqlType::Collection {
-                    frozen: true,
-                    type_: CollectionType::Map(
-                        Box::new(CqlType::Collection {
-                            frozen: true,
-                            type_: CollectionType::List(Box::new(CqlType::Native(NativeType::Int)))
-                        }),
-                        Box::new(CqlType::Collection {
-                            frozen: true,
-                            type_: CollectionType::Set(Box::new(CqlType::Native(NativeType::Text)))
-                        })
-                    )
-                }
-            )
-        ]
-    );
+    assert_eq!(*type_a, udt_type_a_def(&ks));
 
     let type_b = &user_defined_types["type_b"];
 
-    assert_eq!(
-        type_b,
-        &vec![
-            ("a".to_string(), CqlType::Native(NativeType::Int)),
-            ("b".to_string(), CqlType::Native(NativeType::Text))
-        ]
-    );
+    assert_eq!(*type_b, udt_type_b_def(&ks));
 
     let type_c = &user_defined_types["type_c"];
 
-    assert_eq!(
-        type_c,
-        &vec![(
-            "a".to_string(),
-            CqlType::Collection {
-                frozen: false,
-                type_: CollectionType::Map(
-                    Box::new(CqlType::Collection {
-                        frozen: true,
-                        type_: CollectionType::Set(Box::new(CqlType::Native(NativeType::Text)))
-                    }),
-                    Box::new(CqlType::UserDefinedType {
-                        frozen: true,
-                        name: "type_b".to_string()
-                    })
-                )
-            }
-        )]
-    );
+    assert_eq!(*type_c, udt_type_c_def(&ks));
 }
 
 #[tokio::test]
