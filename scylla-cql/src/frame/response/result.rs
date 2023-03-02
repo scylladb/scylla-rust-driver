@@ -40,7 +40,7 @@ pub struct TableSpec {
     pub table_name: String,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ColumnType {
     Custom(String),
     Ascii,

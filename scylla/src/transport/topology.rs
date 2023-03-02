@@ -17,6 +17,7 @@ use scylla_cql::frame::response::result::Row;
 use scylla_cql::frame::value::ValueList;
 use scylla_macros::FromRow;
 use std::borrow::BorrowMut;
+use std::cell::Cell;
 use std::collections::HashMap;
 use std::fmt;
 use std::fmt::Formatter;
@@ -24,7 +25,7 @@ use std::net::{IpAddr, SocketAddr};
 use std::num::NonZeroUsize;
 use std::str::FromStr;
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use strum_macros::EnumString;
 use tokio::sync::mpsc;
 use tracing::{debug, error, trace, warn};
@@ -77,7 +78,7 @@ pub struct Keyspace {
     /// Empty HashMap may as well mean that the client disabled schema fetching in SessionConfig
     pub views: HashMap<String, MaterializedView>,
     /// Empty HashMap may as well mean that the client disabled schema fetching in SessionConfig
-    pub user_defined_types: HashMap<String, Vec<(String, CqlType)>>,
+    pub user_defined_types: HashMap<String, Arc<UserDefinedType>>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -101,11 +102,81 @@ pub struct Column {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
+enum PreCqlType {
+    Native(NativeType),
+    Collection {
+        frozen: bool,
+        type_: PreCollectionType,
+    },
+    Tuple(Vec<PreCqlType>),
+    UserDefinedType {
+        frozen: bool,
+        name: String,
+    },
+}
+
+impl PreCqlType {
+    pub(crate) fn into_cql_type(
+        self,
+        keyspace_name: &String,
+        udts: &HashMap<String, HashMap<String, Arc<UserDefinedType>>>,
+    ) -> CqlType {
+        match self {
+            PreCqlType::Native(n) => CqlType::Native(n),
+            PreCqlType::Collection { frozen, type_ } => CqlType::Collection {
+                frozen,
+                type_: type_.into_collection_type(keyspace_name, udts),
+            },
+            PreCqlType::Tuple(t) => CqlType::Tuple(
+                t.into_iter()
+                    .map(|t| t.into_cql_type(keyspace_name, udts))
+                    .collect(),
+            ),
+            PreCqlType::UserDefinedType { frozen, name } => {
+                let definition = match udts
+                    .get(keyspace_name)
+                    .and_then(|per_keyspace_udts| per_keyspace_udts.get(&name))
+                {
+                    Some(def) => Ok(def.clone()),
+                    None => Err(MissingUserDefinedType {
+                        name,
+                        keyspace: keyspace_name.clone(),
+                    }),
+                };
+                CqlType::UserDefinedType { frozen, definition }
+            }
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum CqlType {
     Native(NativeType),
-    Collection { frozen: bool, type_: CollectionType },
+    Collection {
+        frozen: bool,
+        type_: CollectionType,
+    },
     Tuple(Vec<CqlType>),
-    UserDefinedType { frozen: bool, name: String },
+    UserDefinedType {
+        frozen: bool,
+        // Using Arc here in order not to have many copies of the same definition
+        definition: Result<Arc<UserDefinedType>, MissingUserDefinedType>,
+    },
+}
+
+/// Definition of a user-defined type
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct UserDefinedType {
+    pub name: String,
+    pub keyspace: String,
+    pub field_types: Vec<(String, CqlType)>,
+}
+
+/// Represents a user defined type whose definition is missing from the metadata.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct MissingUserDefinedType {
+    pub name: String,
+    pub keyspace: String,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, EnumString)]
@@ -131,6 +202,34 @@ pub enum NativeType {
     Timeuuid,
     Uuid,
     Varint,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum PreCollectionType {
+    List(Box<PreCqlType>),
+    Map(Box<PreCqlType>, Box<PreCqlType>),
+    Set(Box<PreCqlType>),
+}
+
+impl PreCollectionType {
+    pub(crate) fn into_collection_type(
+        self,
+        keyspace_name: &String,
+        udts: &HashMap<String, HashMap<String, Arc<UserDefinedType>>>,
+    ) -> CollectionType {
+        match self {
+            PreCollectionType::List(t) => {
+                CollectionType::List(Box::new(t.into_cql_type(keyspace_name, udts)))
+            }
+            PreCollectionType::Map(tk, tv) => CollectionType::Map(
+                Box::new(tk.into_cql_type(keyspace_name, udts)),
+                Box::new(tv.into_cql_type(keyspace_name, udts)),
+            ),
+            PreCollectionType::Set(t) => {
+                CollectionType::Set(Box::new(t.into_cql_type(keyspace_name, udts)))
+            }
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -674,10 +773,11 @@ async fn query_keyspaces(
     );
 
     let (mut all_tables, mut all_views, mut all_user_defined_types) = if fetch_schema {
+        let udts = query_user_defined_types(conn, keyspaces_to_fetch).await?;
         (
-            query_tables(conn, keyspaces_to_fetch).await?,
-            query_views(conn, keyspaces_to_fetch).await?,
-            query_user_defined_types(conn, keyspaces_to_fetch).await?,
+            query_tables(conn, keyspaces_to_fetch, &udts).await?,
+            query_views(conn, keyspaces_to_fetch, &udts).await?,
+            udts,
         )
     } else {
         (HashMap::new(), HashMap::new(), HashMap::new())
@@ -709,51 +809,369 @@ async fn query_keyspaces(
     .await
 }
 
+#[derive(FromRow, Debug)]
+#[scylla_crate = "crate"]
+struct UdtRow {
+    keyspace_name: String,
+    type_name: String,
+    field_names: Vec<String>,
+    field_types: Vec<String>,
+}
+
+#[derive(Debug)]
+struct UdtRowWithParsedFieldTypes {
+    keyspace_name: String,
+    type_name: String,
+    field_names: Vec<String>,
+    field_types: Vec<PreCqlType>,
+}
+
+impl TryFrom<UdtRow> for UdtRowWithParsedFieldTypes {
+    type Error = InvalidCqlType;
+    fn try_from(udt_row: UdtRow) -> Result<Self, InvalidCqlType> {
+        let UdtRow {
+            keyspace_name,
+            type_name,
+            field_names,
+            field_types,
+        } = udt_row;
+        let field_types = field_types
+            .into_iter()
+            .map(|type_| map_string_to_cql_type(&type_))
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(Self {
+            keyspace_name,
+            type_name,
+            field_names,
+            field_types,
+        })
+    }
+}
+
 async fn query_user_defined_types(
     conn: &Arc<Connection>,
     keyspaces_to_fetch: &[String],
-) -> Result<HashMap<String, HashMap<String, Vec<(String, CqlType)>>>, QueryError> {
+) -> Result<HashMap<String, HashMap<String, Arc<UserDefinedType>>>, QueryError> {
     let rows = query_filter_keyspace_name(
         conn,
         "select keyspace_name, type_name, field_names, field_types from system_schema.types",
         keyspaces_to_fetch,
     );
 
-    let mut result = HashMap::new();
+    let mut udt_rows: Vec<UdtRowWithParsedFieldTypes> = rows
+        .map(|row_result| {
+            let row = row_result?;
+            let udt_row = row
+                .into_typed::<UdtRow>()
+                .map_err(|_| {
+                    QueryError::ProtocolError("system_schema.types has invalid column type")
+                })?
+                .try_into()?;
 
-    rows.map(|row_result| {
-        let row = row_result?;
-        let (keyspace_name, type_name, field_names, field_types): (
-            String,
-            String,
-            Vec<String>,
-            Vec<String>,
-        ) = row.into_typed().map_err(|_| {
-            QueryError::ProtocolError("system_schema.types has invalid column type")
-        })?;
+            Ok::<_, QueryError>(udt_row)
+        })
+        .try_collect()
+        .await?;
+
+    let instant_before_toposort = Instant::now();
+    topo_sort_udts(&mut udt_rows)?;
+    let toposort_elapsed = instant_before_toposort.elapsed();
+    debug!(
+        "Toposort of UDT definitions took {:.2} ms (udts len: {})",
+        toposort_elapsed.as_secs_f64() * 1000.,
+        udt_rows.len(),
+    );
+
+    let mut udts = HashMap::new();
+    for udt_row in udt_rows {
+        let UdtRowWithParsedFieldTypes {
+            keyspace_name,
+            type_name,
+            field_names,
+            field_types,
+        } = udt_row;
 
         let mut fields = Vec::with_capacity(field_names.len());
 
-        for (field_name, field_type) in field_names.into_iter().zip(field_types.iter()) {
-            fields.push((field_name, map_string_to_cql_type(field_type)?));
+        for (field_name, field_type) in field_names.into_iter().zip(field_types.into_iter()) {
+            let cql_type = field_type.into_cql_type(&keyspace_name, &udts);
+            fields.push((field_name, cql_type));
         }
 
-        result
-            .entry(keyspace_name)
+        let udt = Arc::new(UserDefinedType {
+            name: type_name.clone(),
+            keyspace: keyspace_name.clone(),
+            field_types: fields,
+        });
+
+        udts.entry(keyspace_name)
             .or_insert_with(HashMap::new)
-            .insert(type_name, fields);
+            .insert(type_name, udt);
+    }
 
-        Ok::<_, QueryError>(())
-    })
-    .try_for_each(|_| future::ok(()))
-    .await?;
+    Ok(udts)
+}
 
-    Ok(result)
+fn topo_sort_udts(udts: &mut Vec<UdtRowWithParsedFieldTypes>) -> Result<(), QueryError> {
+    fn do_with_referenced_udts(what: &mut impl FnMut(&str), pre_cql_type: &PreCqlType) {
+        match pre_cql_type {
+            PreCqlType::Native(_) => (),
+            PreCqlType::Collection { type_, .. } => match type_ {
+                PreCollectionType::List(t) | PreCollectionType::Set(t) => {
+                    do_with_referenced_udts(what, t)
+                }
+                PreCollectionType::Map(t1, t2) => {
+                    do_with_referenced_udts(what, t1);
+                    do_with_referenced_udts(what, t2);
+                }
+            },
+            PreCqlType::Tuple(types) => types
+                .iter()
+                .for_each(|type_| do_with_referenced_udts(what, type_)),
+            PreCqlType::UserDefinedType { name, .. } => what(name),
+        }
+    }
+
+    // Build an indegree map: for each node in the graph, how many directly depending types it has.
+    let mut indegs = udts
+        .drain(..)
+        .map(|def| {
+            (
+                (def.keyspace_name.clone(), def.type_name.clone()),
+                (def, Cell::new(0u32)),
+            )
+        })
+        .collect::<HashMap<_, _>>();
+
+    // For each node in the graph...
+    for (def, _) in indegs.values() {
+        let mut increment_referred_udts = |type_name: &str| {
+            let deg = indegs
+                .get(&(def.keyspace_name.clone(), type_name.to_string()))
+                .map(|(_, count)| count);
+
+            if let Some(deg_cell) = deg {
+                deg_cell.set(deg_cell.get() + 1);
+            }
+        };
+
+        // For each type referred by the node...
+        for field_type in def.field_types.iter() {
+            do_with_referenced_udts(&mut increment_referred_udts, field_type);
+        }
+    }
+
+    let mut sorted = Vec::with_capacity(indegs.len());
+    let mut next_idx = 0;
+
+    // Schedule keys that had an initial indeg of 0
+    for (key, _) in indegs.iter().filter(|(_, (_, deg))| deg.get() == 0) {
+        sorted.push(key);
+    }
+
+    while let Some(key @ (keyspace, _type_name)) = sorted.get(next_idx).copied() {
+        next_idx += 1;
+        // Decrement the counters of all UDTs that this UDT depends upon
+        // and then schedule them if their counter drops to 0
+        let mut decrement_referred_udts = |type_name: &str| {
+            let key_value = indegs.get_key_value(&(keyspace.clone(), type_name.to_string()));
+
+            if let Some((ref_key, (_, cnt))) = key_value {
+                let new_cnt = cnt.get() - 1;
+                cnt.set(new_cnt);
+                if new_cnt == 0 {
+                    sorted.push(ref_key);
+                }
+            }
+        };
+
+        let def = &indegs.get(key).unwrap().0;
+        // For each type referred by the node...
+        for field_type in def.field_types.iter() {
+            do_with_referenced_udts(&mut decrement_referred_udts, field_type);
+        }
+    }
+
+    if sorted.len() < indegs.len() {
+        // Some UDTs could not become leaves in the graph, which implies cycles.
+        return Err(QueryError::ProtocolError(
+            "Invalid fetched User Defined Types definitions: circular type dependency detected. Topological sort is thus impossible."
+        ));
+    }
+
+    let owned_sorted = sorted.into_iter().cloned().collect::<Vec<_>>();
+    assert!(udts.is_empty());
+    for key in owned_sorted.into_iter().rev() {
+        udts.push(indegs.remove(&key).unwrap().0);
+    }
+
+    Ok(())
+}
+
+#[cfg(test)]
+mod toposort_tests {
+    use super::{topo_sort_udts, UdtRow, UdtRowWithParsedFieldTypes};
+
+    const KEYSPACE1: &str = "KEYSPACE1";
+    const KEYSPACE2: &str = "KEYSPACE2";
+
+    fn make_udt_row(
+        keyspace_name: String,
+        type_name: String,
+        field_types: Vec<String>,
+    ) -> UdtRowWithParsedFieldTypes {
+        UdtRow {
+            keyspace_name,
+            type_name,
+            field_names: vec!["udt_field".into(); field_types.len()],
+            field_types,
+        }
+        .try_into()
+        .unwrap()
+    }
+
+    fn get_udt_idx(
+        toposorted: &[UdtRowWithParsedFieldTypes],
+        keyspace_name: &str,
+        type_name: &str,
+    ) -> usize {
+        toposorted
+            .iter()
+            .enumerate()
+            .find_map(|(idx, def)| {
+                (def.type_name == type_name && def.keyspace_name == keyspace_name).then_some(idx)
+            })
+            .unwrap()
+    }
+
+    #[test]
+    #[ntest::timeout(1000)]
+    fn test_udt_topo_sort_valid_case() {
+        // UDTs dependencies on each other (arrow A -> B signifies that type B is composed of type A):
+        //
+        // KEYSPACE1
+        //      F -->+
+        //      ^    |
+        //      |    |
+        // A -> B -> C
+        // |    ^
+        // + -> D
+        //
+        // E   (E is an independent UDT)
+        //
+        // KEYSPACE2
+        // B -> A -> C
+        // ^    ^
+        // D -> E
+
+        let mut udts = vec![
+            make_udt_row(KEYSPACE1.into(), "A".into(), vec!["blob".into()]),
+            make_udt_row(KEYSPACE1.into(), "B".into(), vec!["A".into(), "D".into()]),
+            make_udt_row(
+                KEYSPACE1.into(),
+                "C".into(),
+                vec!["blob".into(), "B".into(), "list<map<F, text>>".into()],
+            ),
+            make_udt_row(
+                KEYSPACE1.into(),
+                "D".into(),
+                vec!["A".into(), "blob".into()],
+            ),
+            make_udt_row(KEYSPACE1.into(), "E".into(), vec!["blob".into()]),
+            make_udt_row(
+                KEYSPACE1.into(),
+                "F".into(),
+                vec!["B".into(), "blob".into()],
+            ),
+            make_udt_row(
+                KEYSPACE2.into(),
+                "A".into(),
+                vec!["B".into(), "tuple<E, E>".into()],
+            ),
+            make_udt_row(KEYSPACE2.into(), "B".into(), vec!["map<text, D>".into()]),
+            make_udt_row(KEYSPACE2.into(), "C".into(), vec!["frozen<A>".into()]),
+            make_udt_row(KEYSPACE2.into(), "D".into(), vec!["blob".into()]),
+            make_udt_row(KEYSPACE2.into(), "E".into(), vec!["D".into()]),
+        ];
+
+        topo_sort_udts(&mut udts).unwrap();
+
+        assert!(get_udt_idx(&udts, KEYSPACE1, "A") < get_udt_idx(&udts, KEYSPACE1, "B"));
+        assert!(get_udt_idx(&udts, KEYSPACE1, "A") < get_udt_idx(&udts, KEYSPACE1, "D"));
+        assert!(get_udt_idx(&udts, KEYSPACE1, "B") < get_udt_idx(&udts, KEYSPACE1, "C"));
+        assert!(get_udt_idx(&udts, KEYSPACE1, "B") < get_udt_idx(&udts, KEYSPACE1, "F"));
+        assert!(get_udt_idx(&udts, KEYSPACE1, "F") < get_udt_idx(&udts, KEYSPACE1, "C"));
+        assert!(get_udt_idx(&udts, KEYSPACE1, "D") < get_udt_idx(&udts, KEYSPACE1, "B"));
+
+        assert!(get_udt_idx(&udts, KEYSPACE2, "B") < get_udt_idx(&udts, KEYSPACE2, "A"));
+        assert!(get_udt_idx(&udts, KEYSPACE2, "D") < get_udt_idx(&udts, KEYSPACE2, "B"));
+        assert!(get_udt_idx(&udts, KEYSPACE2, "D") < get_udt_idx(&udts, KEYSPACE2, "E"));
+        assert!(get_udt_idx(&udts, KEYSPACE2, "E") < get_udt_idx(&udts, KEYSPACE2, "A"));
+        assert!(get_udt_idx(&udts, KEYSPACE2, "A") < get_udt_idx(&udts, KEYSPACE2, "C"));
+    }
+
+    #[test]
+    #[ntest::timeout(1000)]
+    fn test_udt_topo_sort_detects_cycles() {
+        const KEYSPACE1: &str = "KEYSPACE1";
+        let tests = [
+            // test 1
+            // A depends on itself.
+            vec![make_udt_row(
+                KEYSPACE1.into(),
+                "A".into(),
+                vec!["blob".into(), "A".into()],
+            )],
+            // test 2
+            // A depends on B, which depends on A; also, there is an independent E.
+            vec![
+                make_udt_row(
+                    KEYSPACE1.into(),
+                    "A".into(),
+                    vec!["blob".into(), "B".into()],
+                ),
+                make_udt_row(
+                    KEYSPACE1.into(),
+                    "B".into(),
+                    vec!["int".into(), "map<text, A>".into()],
+                ),
+                make_udt_row(KEYSPACE1.into(), "E".into(), vec!["text".into()]),
+            ],
+        ];
+
+        for mut udts in tests {
+            topo_sort_udts(&mut udts).unwrap_err();
+        }
+    }
+
+    #[test]
+    #[ntest::timeout(1000)]
+    fn test_udt_topo_sort_ignores_invalid_metadata() {
+        // A depends on B, which depends on unknown C; also, there is an independent E.
+        let mut udts = vec![
+            make_udt_row(
+                KEYSPACE1.into(),
+                "A".into(),
+                vec!["blob".into(), "B".into()],
+            ),
+            make_udt_row(
+                KEYSPACE1.into(),
+                "B".into(),
+                vec!["int".into(), "map<text, C>".into()],
+            ),
+            make_udt_row(KEYSPACE1.into(), "E".into(), vec!["text".into()]),
+        ];
+
+        topo_sort_udts(&mut udts).unwrap();
+
+        assert!(get_udt_idx(&udts, KEYSPACE1, "B") < get_udt_idx(&udts, KEYSPACE1, "A"));
+    }
 }
 
 async fn query_tables(
     conn: &Arc<Connection>,
     keyspaces_to_fetch: &[String],
+    udts: &HashMap<String, HashMap<String, Arc<UserDefinedType>>>,
 ) -> Result<HashMap<String, HashMap<String, Table>>, QueryError> {
     let rows = query_filter_keyspace_name(
         conn,
@@ -761,7 +1179,7 @@ async fn query_tables(
         keyspaces_to_fetch,
     );
     let mut result = HashMap::new();
-    let mut tables = query_tables_schema(conn, keyspaces_to_fetch).await?;
+    let mut tables = query_tables_schema(conn, keyspaces_to_fetch, udts).await?;
 
     rows.map(|row_result| {
         let row = row_result?;
@@ -794,6 +1212,7 @@ async fn query_tables(
 async fn query_views(
     conn: &Arc<Connection>,
     keyspaces_to_fetch: &[String],
+    udts: &HashMap<String, HashMap<String, Arc<UserDefinedType>>>,
 ) -> Result<HashMap<String, HashMap<String, MaterializedView>>, QueryError> {
     let rows = query_filter_keyspace_name(
         conn,
@@ -802,7 +1221,7 @@ async fn query_views(
     );
 
     let mut result = HashMap::new();
-    let mut tables = query_tables_schema(conn, keyspaces_to_fetch).await?;
+    let mut tables = query_tables_schema(conn, keyspaces_to_fetch, udts).await?;
 
     rows.map(|row_result| {
         let row = row_result?;
@@ -839,6 +1258,7 @@ async fn query_views(
 async fn query_tables_schema(
     conn: &Arc<Connection>,
     keyspaces_to_fetch: &[String],
+    udts: &HashMap<String, HashMap<String, Arc<UserDefinedType>>>,
 ) -> Result<HashMap<(String, String), Table>, QueryError> {
     // Upon migration from thrift to CQL, Cassandra internally creates a surrogate column "value" of
     // type EmptyType for dense tables. This resolves into this CQL type name.
@@ -868,13 +1288,14 @@ async fn query_tables_schema(
             return Ok::<_, QueryError>(());
         }
 
+        let pre_cql_type = map_string_to_cql_type(&type_)?;
+        let cql_type = pre_cql_type.into_cql_type(&keyspace_name, udts);
+
         let entry = tables_schema.entry((keyspace_name, table_name)).or_insert((
             HashMap::new(), // columns
             HashMap::new(), // partition key
             HashMap::new(), // clustering key
         ));
-
-        let cql_type = map_string_to_cql_type(&type_)?;
 
         let kind = ColumnKind::from_str(&kind)
             // FIXME: The correct error type is QueryError:ProtocolError but at the moment it accepts only &'static str
@@ -938,7 +1359,7 @@ async fn query_tables_schema(
     Ok(result)
 }
 
-fn map_string_to_cql_type(type_: &str) -> Result<CqlType, InvalidCqlType> {
+fn map_string_to_cql_type(type_: &str) -> Result<PreCqlType, InvalidCqlType> {
     match parse_cql_type(ParserState::new(type_)) {
         Err(err) => Err(InvalidCqlType {
             type_: type_.to_string(),
@@ -954,7 +1375,7 @@ fn map_string_to_cql_type(type_: &str) -> Result<CqlType, InvalidCqlType> {
     }
 }
 
-fn parse_cql_type(p: ParserState) -> ParseResult<(CqlType, ParserState)> {
+fn parse_cql_type(p: ParserState<'_>) -> ParseResult<(PreCqlType, ParserState<'_>)> {
     if let Ok(p) = p.accept("frozen<") {
         let (inner_type, p) = parse_cql_type(p)?;
         let p = p.accept(">")?;
@@ -968,9 +1389,9 @@ fn parse_cql_type(p: ParserState) -> ParseResult<(CqlType, ParserState)> {
         let (value, p) = parse_cql_type(p)?;
         let p = p.accept(">")?;
 
-        let typ = CqlType::Collection {
+        let typ = PreCqlType::Collection {
             frozen: false,
-            type_: CollectionType::Map(Box::new(key), Box::new(value)),
+            type_: PreCollectionType::Map(Box::new(key), Box::new(value)),
         };
 
         Ok((typ, p))
@@ -978,9 +1399,9 @@ fn parse_cql_type(p: ParserState) -> ParseResult<(CqlType, ParserState)> {
         let (inner_type, p) = parse_cql_type(p)?;
         let p = p.accept(">")?;
 
-        let typ = CqlType::Collection {
+        let typ = PreCqlType::Collection {
             frozen: false,
-            type_: CollectionType::List(Box::new(inner_type)),
+            type_: PreCollectionType::List(Box::new(inner_type)),
         };
 
         Ok((typ, p))
@@ -988,9 +1409,9 @@ fn parse_cql_type(p: ParserState) -> ParseResult<(CqlType, ParserState)> {
         let (inner_type, p) = parse_cql_type(p)?;
         let p = p.accept(">")?;
 
-        let typ = CqlType::Collection {
+        let typ = PreCqlType::Collection {
             frozen: false,
-            type_: CollectionType::Set(Box::new(inner_type)),
+            type_: PreCollectionType::Set(Box::new(inner_type)),
         };
 
         Ok((typ, p))
@@ -1010,11 +1431,11 @@ fn parse_cql_type(p: ParserState) -> ParseResult<(CqlType, ParserState)> {
             }
         })?;
 
-        Ok((CqlType::Tuple(types), p))
+        Ok((PreCqlType::Tuple(types), p))
     } else if let Ok((typ, p)) = parse_native_type(p) {
-        Ok((CqlType::Native(typ), p))
+        Ok((PreCqlType::Native(typ), p))
     } else if let Ok((name, p)) = parse_user_defined_type(p) {
-        let typ = CqlType::UserDefinedType {
+        let typ = PreCqlType::UserDefinedType {
             frozen: false,
             name: name.to_string(),
         };
@@ -1042,13 +1463,15 @@ fn parse_user_defined_type(p: ParserState) -> ParseResult<(&str, ParserState)> {
     Ok((tok, p))
 }
 
-fn freeze_type(type_: CqlType) -> CqlType {
+fn freeze_type(type_: PreCqlType) -> PreCqlType {
     match type_ {
-        CqlType::Collection { type_, .. } => CqlType::Collection {
+        PreCqlType::Collection { type_, .. } => PreCqlType::Collection {
             frozen: true,
             type_,
         },
-        CqlType::UserDefinedType { name, .. } => CqlType::UserDefinedType { frozen: true, name },
+        PreCqlType::UserDefinedType { name, .. } => {
+            PreCqlType::UserDefinedType { frozen: true, name }
+        }
         other => other,
     }
 }
@@ -1146,76 +1569,76 @@ mod tests {
     #[test]
     fn test_cql_type_parsing() {
         let test_cases = [
-            ("bigint", CqlType::Native(NativeType::BigInt)),
+            ("bigint", PreCqlType::Native(NativeType::BigInt)),
             (
                 "list<int>",
-                CqlType::Collection {
+                PreCqlType::Collection {
                     frozen: false,
-                    type_: CollectionType::List(Box::new(CqlType::Native(NativeType::Int))),
+                    type_: PreCollectionType::List(Box::new(PreCqlType::Native(NativeType::Int))),
                 },
             ),
             (
                 "set<ascii>",
-                CqlType::Collection {
+                PreCqlType::Collection {
                     frozen: false,
-                    type_: CollectionType::Set(Box::new(CqlType::Native(NativeType::Ascii))),
+                    type_: PreCollectionType::Set(Box::new(PreCqlType::Native(NativeType::Ascii))),
                 },
             ),
             (
                 "map<blob, boolean>",
-                CqlType::Collection {
+                PreCqlType::Collection {
                     frozen: false,
-                    type_: CollectionType::Map(
-                        Box::new(CqlType::Native(NativeType::Blob)),
-                        Box::new(CqlType::Native(NativeType::Boolean)),
+                    type_: PreCollectionType::Map(
+                        Box::new(PreCqlType::Native(NativeType::Blob)),
+                        Box::new(PreCqlType::Native(NativeType::Boolean)),
                     ),
                 },
             ),
             (
                 "frozen<map<text, text>>",
-                CqlType::Collection {
+                PreCqlType::Collection {
                     frozen: true,
-                    type_: CollectionType::Map(
-                        Box::new(CqlType::Native(NativeType::Text)),
-                        Box::new(CqlType::Native(NativeType::Text)),
+                    type_: PreCollectionType::Map(
+                        Box::new(PreCqlType::Native(NativeType::Text)),
+                        Box::new(PreCqlType::Native(NativeType::Text)),
                     ),
                 },
             ),
             (
                 "tuple<tinyint, smallint, int, bigint, varint>",
-                CqlType::Tuple(vec![
-                    CqlType::Native(NativeType::TinyInt),
-                    CqlType::Native(NativeType::SmallInt),
-                    CqlType::Native(NativeType::Int),
-                    CqlType::Native(NativeType::BigInt),
-                    CqlType::Native(NativeType::Varint),
+                PreCqlType::Tuple(vec![
+                    PreCqlType::Native(NativeType::TinyInt),
+                    PreCqlType::Native(NativeType::SmallInt),
+                    PreCqlType::Native(NativeType::Int),
+                    PreCqlType::Native(NativeType::BigInt),
+                    PreCqlType::Native(NativeType::Varint),
                 ]),
             ),
             (
                 "com.scylladb.types.AwesomeType",
-                CqlType::UserDefinedType {
+                PreCqlType::UserDefinedType {
                     frozen: false,
                     name: "com.scylladb.types.AwesomeType".to_string(),
                 },
             ),
             (
                 "frozen<ks.my_udt>",
-                CqlType::UserDefinedType {
+                PreCqlType::UserDefinedType {
                     frozen: true,
                     name: "ks.my_udt".to_string(),
                 },
             ),
             (
                 "map<text, frozen<map<text, text>>>",
-                CqlType::Collection {
+                PreCqlType::Collection {
                     frozen: false,
-                    type_: CollectionType::Map(
-                        Box::new(CqlType::Native(NativeType::Text)),
-                        Box::new(CqlType::Collection {
+                    type_: PreCollectionType::Map(
+                        Box::new(PreCqlType::Native(NativeType::Text)),
+                        Box::new(PreCqlType::Collection {
                             frozen: true,
-                            type_: CollectionType::Map(
-                                Box::new(CqlType::Native(NativeType::Text)),
-                                Box::new(CqlType::Native(NativeType::Text)),
+                            type_: PreCollectionType::Map(
+                                Box::new(PreCqlType::Native(NativeType::Text)),
+                                Box::new(PreCqlType::Native(NativeType::Text)),
                             ),
                         }),
                     ),
@@ -1235,59 +1658,63 @@ mod tests {
                     >\
                 >",
                 // map<...>
-                CqlType::Collection {
+                PreCqlType::Collection {
                     frozen: false,
-                    type_: CollectionType::Map(
-                        Box::new(CqlType::Collection {
+                    type_: PreCollectionType::Map(
+                        Box::new(PreCqlType::Collection {
                             // frozen<list<int>>
                             frozen: true,
-                            type_: CollectionType::List(Box::new(CqlType::Native(NativeType::Int))),
+                            type_: PreCollectionType::List(Box::new(PreCqlType::Native(
+                                NativeType::Int,
+                            ))),
                         }),
-                        Box::new(CqlType::Collection {
+                        Box::new(PreCqlType::Collection {
                             // set<...>
                             frozen: false,
-                            type_: CollectionType::Set(Box::new(CqlType::Collection {
+                            type_: PreCollectionType::Set(Box::new(PreCqlType::Collection {
                                 // list<tuple<...>>
                                 frozen: false,
-                                type_: CollectionType::List(Box::new(CqlType::Tuple(vec![
-                                    CqlType::Collection {
+                                type_: PreCollectionType::List(Box::new(PreCqlType::Tuple(vec![
+                                    PreCqlType::Collection {
                                         // list<list<text>>
                                         frozen: false,
-                                        type_: CollectionType::List(Box::new(
-                                            CqlType::Collection {
+                                        type_: PreCollectionType::List(Box::new(
+                                            PreCqlType::Collection {
                                                 frozen: false,
-                                                type_: CollectionType::List(Box::new(
-                                                    CqlType::Native(NativeType::Text),
+                                                type_: PreCollectionType::List(Box::new(
+                                                    PreCqlType::Native(NativeType::Text),
                                                 )),
                                             },
                                         )),
                                     },
-                                    CqlType::Collection {
+                                    PreCqlType::Collection {
                                         // map<text, map<ks.my_type, blob>>
                                         frozen: false,
-                                        type_: CollectionType::Map(
-                                            Box::new(CqlType::Native(NativeType::Text)),
-                                            Box::new(CqlType::Collection {
+                                        type_: PreCollectionType::Map(
+                                            Box::new(PreCqlType::Native(NativeType::Text)),
+                                            Box::new(PreCqlType::Collection {
                                                 frozen: false,
-                                                type_: CollectionType::Map(
-                                                    Box::new(CqlType::UserDefinedType {
+                                                type_: PreCollectionType::Map(
+                                                    Box::new(PreCqlType::UserDefinedType {
                                                         frozen: false,
                                                         name: "ks.my_type".to_string(),
                                                     }),
-                                                    Box::new(CqlType::Native(NativeType::Blob)),
+                                                    Box::new(PreCqlType::Native(NativeType::Blob)),
                                                 ),
                                             }),
                                         ),
                                     },
-                                    CqlType::Collection {
+                                    PreCqlType::Collection {
                                         // frozen<set<set<int>>>
                                         frozen: true,
-                                        type_: CollectionType::Set(Box::new(CqlType::Collection {
-                                            frozen: false,
-                                            type_: CollectionType::Set(Box::new(CqlType::Native(
-                                                NativeType::Int,
-                                            ))),
-                                        })),
+                                        type_: PreCollectionType::Set(Box::new(
+                                            PreCqlType::Collection {
+                                                frozen: false,
+                                                type_: PreCollectionType::Set(Box::new(
+                                                    PreCqlType::Native(NativeType::Int),
+                                                )),
+                                            },
+                                        )),
                                     },
                                 ]))),
                             })),
