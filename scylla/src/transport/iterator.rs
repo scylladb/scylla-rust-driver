@@ -9,6 +9,7 @@ use std::task::{Context, Poll};
 
 use bytes::Bytes;
 use futures::Stream;
+use scylla_cql::frame::types::SerialConsistency;
 use std::result::Result;
 use thiserror::Error;
 use tokio::sync::mpsc;
@@ -136,7 +137,7 @@ impl RowIterator {
         if query.get_page_size().is_none() {
             query.set_page_size(DEFAULT_ITER_PAGE_SIZE);
         }
-        let (sender, mut receiver) = mpsc::channel(1);
+        let (sender, receiver) = mpsc::channel(1);
 
         let consistency = query
             .config
@@ -185,28 +186,10 @@ impl RowIterator {
                 current_attempt_id: None,
             };
 
-            let _: PageSendAttemptedProof = worker.work(cluster_data).await;
+            worker.work(cluster_data).await
         };
 
-        tokio::task::spawn(worker_task);
-
-        // This unwrap is safe because:
-        // - The future returned by worker.work sends at least one item
-        //   to the channel (the PageSendAttemptedProof helps enforce this)
-        // - That future is polled in a tokio::task which isn't going to be
-        //   cancelled
-        let pages_received = receiver.recv().await.unwrap()?;
-
-        Ok(RowIterator {
-            current_row_idx: 0,
-            current_page: pages_received.rows,
-            page_receiver: receiver,
-            tracing_ids: if let Some(tracing_id) = pages_received.tracing_id {
-                vec![tracing_id]
-            } else {
-                Vec::new()
-            },
-        })
+        Self::new_from_worker_future(worker_task, receiver).await
     }
 
     pub(crate) async fn new_for_prepared_statement(
@@ -215,7 +198,7 @@ impl RowIterator {
         if config.prepared.get_page_size().is_none() {
             config.prepared.set_page_size(DEFAULT_ITER_PAGE_SIZE);
         }
-        let (sender, mut receiver) = mpsc::channel(1);
+        let (sender, receiver) = mpsc::channel(1);
 
         let consistency = config
             .prepared
@@ -277,10 +260,50 @@ impl RowIterator {
                 current_attempt_id: None,
             };
 
-            let _: PageSendAttemptedProof = worker.work(config.cluster_data).await;
+            worker.work(config.cluster_data).await
         };
 
-        tokio::task::spawn(worker_task);
+        Self::new_from_worker_future(worker_task, receiver).await
+    }
+
+    pub(crate) async fn new_for_connection_query_iter(
+        mut query: Query,
+        connection: Arc<Connection>,
+        values: SerializedValues,
+        consistency: Consistency,
+        serial_consistency: Option<SerialConsistency>,
+    ) -> Result<RowIterator, QueryError> {
+        if query.get_page_size().is_none() {
+            query.set_page_size(DEFAULT_ITER_PAGE_SIZE);
+        }
+        let (sender, receiver) = mpsc::channel::<Result<ReceivedPage, QueryError>>(1);
+
+        let worker_task = async move {
+            let worker = SingleConnectionRowIteratorWorker {
+                sender: sender.into(),
+                fetcher: |paging_state| {
+                    connection.query_with_consistency(
+                        &query,
+                        &values,
+                        consistency,
+                        serial_consistency,
+                        paging_state,
+                    )
+                },
+            };
+            worker.work().await
+        };
+
+        Self::new_from_worker_future(worker_task, receiver).await
+    }
+
+    async fn new_from_worker_future(
+        worker_task: impl Future<Output = PageSendAttemptedProof> + Send + 'static,
+        mut receiver: mpsc::Receiver<Result<ReceivedPage, QueryError>>,
+    ) -> Result<RowIterator, QueryError> {
+        tokio::task::spawn(async move {
+            worker_task.await;
+        });
 
         // This unwrap is safe because:
         // - The future returned by worker.work sends at least one item
@@ -319,8 +342,12 @@ impl RowIterator {
 // A separate module is used here so that the parent module cannot construct
 // SendAttemptedProof directly.
 mod checked_channel_sender {
+    use scylla_cql::{errors::QueryError, frame::response::result::Rows};
     use std::marker::PhantomData;
     use tokio::sync::mpsc;
+    use uuid::Uuid;
+
+    use super::ReceivedPage;
 
     /// A value whose existence proves that there was an attempt
     /// to send an item of type T through a channel.
@@ -342,6 +369,28 @@ mod checked_channel_sender {
             value: T,
         ) -> (SendAttemptedProof<T>, Result<(), mpsc::error::SendError<T>>) {
             (SendAttemptedProof(PhantomData), self.0.send(value).await)
+        }
+    }
+
+    type ResultPage = Result<ReceivedPage, QueryError>;
+
+    impl ProvingSender<ResultPage> {
+        pub(crate) async fn send_empty_page(
+            &self,
+            tracing_id: Option<Uuid>,
+        ) -> (
+            SendAttemptedProof<ResultPage>,
+            Result<(), mpsc::error::SendError<ResultPage>>,
+        ) {
+            let empty_page = ReceivedPage {
+                rows: Rows {
+                    metadata: Default::default(),
+                    rows_count: 0,
+                    rows: Vec::new(),
+                },
+                tracing_id,
+            };
+            self.send(Ok(empty_page)).await
         }
     }
 }
@@ -481,17 +530,7 @@ where
                         // interface isn't meant for sending writes),
                         // we must attempt to send something because
                         // the iterator expects it.
-                        let (proof, _) = self
-                            .sender
-                            .send(Ok(ReceivedPage {
-                                rows: Rows {
-                                    metadata: Default::default(),
-                                    rows_count: 0,
-                                    rows: Vec::new(),
-                                },
-                                tracing_id: None,
-                            }))
-                            .await;
+                        let (proof, _) = self.sender.send_empty_page(None).await;
                         return proof;
                     }
                 };
@@ -581,17 +620,7 @@ where
                     // so let's return an empty iterator as suggested in #631.
 
                     // We must attempt to send something because the iterator expects it.
-                    let (proof, _) = self
-                        .sender
-                        .send(Ok(ReceivedPage {
-                            rows: Rows {
-                                metadata: Default::default(),
-                                rows_count: 0,
-                                rows: Vec::new(),
-                            },
-                            tracing_id,
-                        }))
-                        .await;
+                    let (proof, _) = self.sender.send_empty_page(tracing_id).await;
                     return Ok(proof);
                 }
                 Ok(_) => {
@@ -683,6 +712,66 @@ where
         };
 
         history_listener.log_attempt_error(attempt_id, error, retry_decision);
+    }
+}
+
+/// A massively simplified version of the RowIteratorWorker. It does not have
+/// any complicated logic related to retries, it just fetches pages from
+/// a single connection.
+struct SingleConnectionRowIteratorWorker<Fetcher> {
+    sender: ProvingSender<Result<ReceivedPage, QueryError>>,
+    fetcher: Fetcher,
+}
+
+impl<Fetcher, FetchFut> SingleConnectionRowIteratorWorker<Fetcher>
+where
+    Fetcher: Fn(Option<Bytes>) -> FetchFut + Send + Sync,
+    FetchFut: Future<Output = Result<QueryResponse, QueryError>> + Send,
+{
+    async fn work(mut self) -> PageSendAttemptedProof {
+        match self.do_work().await {
+            Ok(proof) => proof,
+            Err(err) => {
+                let (proof, _) = self.sender.send(Err(err)).await;
+                proof
+            }
+        }
+    }
+
+    async fn do_work(&mut self) -> Result<PageSendAttemptedProof, QueryError> {
+        let mut paging_state = None;
+        loop {
+            let result = (self.fetcher)(paging_state).await?;
+            let response = result.into_non_error_query_response()?;
+            match response.response {
+                NonErrorResponse::Result(result::Result::Rows(mut rows)) => {
+                    paging_state = rows.metadata.paging_state.take();
+                    let (proof, send_result) = self
+                        .sender
+                        .send(Ok(ReceivedPage {
+                            rows,
+                            tracing_id: response.tracing_id,
+                        }))
+                        .await;
+                    if paging_state.is_none() || send_result.is_err() {
+                        return Ok(proof);
+                    }
+                }
+                NonErrorResponse::Result(_) => {
+                    // We have most probably sent a modification statement (e.g. INSERT or UPDATE),
+                    // so let's return an empty iterator as suggested in #631.
+
+                    // We must attempt to send something because the iterator expects it.
+                    let (proof, _) = self.sender.send_empty_page(response.tracing_id).await;
+                    return Ok(proof);
+                }
+                _ => {
+                    return Err(QueryError::ProtocolError(
+                        "Unexpected response to next page query",
+                    ));
+                }
+            }
+        }
     }
 }
 
