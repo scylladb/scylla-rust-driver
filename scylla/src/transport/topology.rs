@@ -37,11 +37,11 @@ pub(crate) struct MetadataReader {
     connection_config: ConnectionConfig,
     keepalive_interval: Option<Duration>,
 
-    control_connection_address: SocketAddr,
+    control_connection_endpoint: UntranslatedEndpoint,
     control_connection: NodeConnectionPool,
 
     // when control connection fails, MetadataReader tries to connect to one of known_peers
-    known_peers: Vec<SocketAddr>,
+    known_peers: Vec<UntranslatedEndpoint>,
     keyspaces_to_fetch: Vec<String>,
     fetch_schema: bool,
     host_filter: Option<Arc<dyn HostFilter>>,
@@ -346,17 +346,17 @@ impl Metadata {
     ///
     /// It can be used as a replacement for real metadata when initial
     /// metadata read fails.
-    pub fn new_dummy(initial_peers: &[SocketAddr]) -> Self {
+    pub fn new_dummy(initial_peers: &[UntranslatedEndpoint]) -> Self {
         let peers = initial_peers
             .iter()
             .enumerate()
-            .map(|(id, addr)| {
+            .map(|(id, endpoint)| {
                 // Given N nodes, divide the ring into N roughly equal parts
                 // and assign them to each node.
                 let token = ((id as u128) << 64) / initial_peers.len() as u128;
 
                 Peer {
-                    address: *addr,
+                    address: endpoint.address(),
                     tokens: vec![Token {
                         value: token as i64,
                     }],
@@ -386,10 +386,12 @@ impl MetadataReader {
         fetch_schema: bool,
         host_filter: &Option<Arc<dyn HostFilter>>,
     ) -> Self {
-        let control_connection_address = initially_known_peers
-            .choose(&mut thread_rng())
-            .expect("Tried to initialize MetadataReader with empty known_peers list!")
-            .address;
+        let control_connection_endpoint = UntranslatedEndpoint::ContactPoint(
+            initially_known_peers
+                .choose(&mut thread_rng())
+                .expect("Tried to initialize MetadataReader with empty known_peers list!")
+                .clone(),
+        );
 
         // setting event_sender field in connection config will cause control connection to
         // - send REGISTER message to receive server events
@@ -397,19 +399,19 @@ impl MetadataReader {
         connection_config.event_sender = Some(server_event_sender);
 
         let control_connection = Self::make_control_connection_pool(
-            control_connection_address,
+            control_connection_endpoint.clone(),
             connection_config.clone(),
             keepalive_interval,
         );
 
         MetadataReader {
-            control_connection_address,
+            control_connection_endpoint,
             control_connection,
             keepalive_interval,
             connection_config,
             known_peers: initially_known_peers
                 .into_iter()
-                .map(|contact_point| contact_point.address)
+                .map(UntranslatedEndpoint::ContactPoint)
                 .collect(),
             keyspaces_to_fetch,
             fetch_schema,
@@ -434,16 +436,16 @@ impl MetadataReader {
             "Known peers: {}",
             self.known_peers
                 .iter()
-                .map(std::net::SocketAddr::to_string)
+                .map(|endpoint| format!("{:?}", endpoint))
                 .collect::<Vec<String>>()
                 .join(", ")
         );
 
-        let address_of_failed_control_connection = self.control_connection_address;
+        let address_of_failed_control_connection = self.control_connection_endpoint.address();
         let filtered_known_peers = self
             .known_peers
             .iter()
-            .filter(|&peer| peer != &address_of_failed_control_connection);
+            .filter(|&peer| peer.address() != address_of_failed_control_connection);
 
         // if fetching metadata on current control connection failed,
         // try to fetch metadata from other known peer
@@ -454,21 +456,25 @@ impl MetadataReader {
             };
 
             warn!(
-                control_connection_address = self.control_connection_address.to_string().as_str(),
+                control_connection_address = self
+                    .control_connection_endpoint
+                    .address()
+                    .to_string()
+                    .as_str(),
                 error = err.to_string().as_str(),
                 "Failed to fetch metadata using current control connection"
             );
 
-            self.control_connection_address = *peer;
+            self.control_connection_endpoint = peer.clone();
             self.control_connection = Self::make_control_connection_pool(
-                self.control_connection_address,
+                self.control_connection_endpoint.clone(),
                 self.connection_config.clone(),
                 self.keepalive_interval,
             );
 
             debug!(
                 "Retrying to establish the control connection on {}",
-                self.control_connection_address
+                self.control_connection_endpoint.address()
             );
             result = self.fetch_metadata(initial).await;
         }
@@ -495,7 +501,7 @@ impl MetadataReader {
 
         let res = query_metadata(
             conn,
-            self.control_connection_address.port(),
+            self.control_connection_endpoint.address().port(),
             &self.keyspaces_to_fetch,
             self.fetch_schema,
         )
@@ -523,7 +529,7 @@ impl MetadataReader {
             .peers
             .iter()
             .filter(|peer| host_filter.map_or(true, |f| f.accept(peer)))
-            .map(|peer| peer.address)
+            .map(|peer| UntranslatedEndpoint::Peer(peer.to_peer_endpoint()))
             .collect();
 
         // Check if the host filter isn't accidentally too restrictive,
@@ -546,7 +552,7 @@ impl MetadataReader {
         let control_connection_peer = metadata
             .peers
             .iter()
-            .find(|peer| peer.address == self.control_connection_address);
+            .find(|peer| peer.address == self.control_connection_endpoint.address());
         if let Some(peer) = control_connection_peer {
             if !self.host_filter.as_ref().map_or(true, |f| f.accept(peer)) {
                 warn!(
@@ -556,7 +562,7 @@ impl MetadataReader {
                         .filter(|peer| self.host_filter.as_ref().map_or(true, |p| p.accept(peer)))
                         .map(|peer| peer.address)
                         .collect::<Vec<_>>(),
-                    control_connection_address = ?self.control_connection_address,
+                    control_connection_address = ?self.control_connection_endpoint.address(),
                     "The node that the control connection is established to \
                     is not accepted by the host filter. Please verify that \
                     the nodes in your initial peers list are accepted by the \
@@ -566,13 +572,14 @@ impl MetadataReader {
 
                 // Assuming here that known_peers are up-to-date
                 if !self.known_peers.is_empty() {
-                    self.control_connection_address = *self
+                    self.control_connection_endpoint = self
                         .known_peers
                         .choose(&mut thread_rng())
-                        .expect("known_peers is empty - should be impossible");
+                        .expect("known_peers is empty - should be impossible")
+                        .clone();
 
                     self.control_connection = Self::make_control_connection_pool(
-                        self.control_connection_address,
+                        self.control_connection_endpoint.clone(),
                         self.connection_config.clone(),
                         self.keepalive_interval,
                     );
@@ -582,7 +589,7 @@ impl MetadataReader {
     }
 
     fn make_control_connection_pool(
-        addr: SocketAddr,
+        endpoint: UntranslatedEndpoint,
         connection_config: ConnectionConfig,
         keepalive_interval: Option<Duration>,
     ) -> NodeConnectionPool {
@@ -598,7 +605,7 @@ impl MetadataReader {
             can_use_shard_aware_port: false,
         };
 
-        NodeConnectionPool::new(addr, pool_config, None)
+        NodeConnectionPool::new(endpoint.address(), pool_config, None)
     }
 }
 
