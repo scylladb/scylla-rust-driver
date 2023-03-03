@@ -320,11 +320,8 @@ impl ClusterData {
                 _ => {
                     let is_enabled = host_filter.map_or(true, |f| f.accept(&peer));
                     Arc::new(Node::new(
-                        peer.host_id,
-                        peer.address,
+                        peer.to_peer_endpoint(),
                         pool_config.clone(),
-                        peer.datacenter,
-                        peer.rack,
                         used_keyspace.clone(),
                         is_enabled,
                     ))

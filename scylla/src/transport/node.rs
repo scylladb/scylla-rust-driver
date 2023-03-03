@@ -19,6 +19,8 @@ use std::{
     time::{Duration, Instant},
 };
 
+use super::topology::{PeerEndpoint, UntranslatedEndpoint};
+
 #[derive(Debug, Clone, Copy)]
 pub struct TimestampedAverage {
     pub timestamp: Instant,
@@ -125,14 +127,15 @@ impl Node {
     /// `datacenter` - optional datacenter name
     /// `rack` - optional rack name
     pub(crate) fn new(
-        host_id: Uuid,
-        address: NodeAddr,
+        peer: PeerEndpoint,
         pool_config: PoolConfig,
-        datacenter: Option<String>,
-        rack: Option<String>,
         keyspace_name: Option<VerifiedKeyspaceName>,
         enabled: bool,
     ) -> Self {
+        let host_id = peer.host_id;
+        let address = peer.address;
+        let datacenter = peer.datacenter.clone();
+        let rack = peer.rack.clone();
         let pool = enabled
             .then(|| NodeConnectionPool::new(address.into_inner(), pool_config, keyspace_name));
 
