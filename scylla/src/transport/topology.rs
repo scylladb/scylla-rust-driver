@@ -62,6 +62,56 @@ pub struct Peer {
     pub rack: Option<String>,
 }
 
+/// An endpoint for a node that the driver is to issue connections to,
+/// possibly after prior address translation.
+#[non_exhaustive] // <- so that we can add more fields in a backwards-compatible way
+#[derive(Clone, Debug)]
+pub enum UntranslatedEndpoint {
+    /// Provided by user in SessionConfig (initial contact points).
+    ContactPoint(ContactPoint),
+    /// Fetched in Metadata with `query_peers()`
+    Peer(PeerEndpoint),
+}
+
+impl UntranslatedEndpoint {
+    pub(crate) fn address(&self) -> SocketAddr {
+        match *self {
+            UntranslatedEndpoint::ContactPoint(ContactPoint { address }) => address,
+            UntranslatedEndpoint::Peer(PeerEndpoint { address, .. }) => address,
+        }
+    }
+    pub(crate) fn set_port(&mut self, port: u16) {
+        let inner_address = match self {
+            UntranslatedEndpoint::ContactPoint(ContactPoint { address }) => address,
+            UntranslatedEndpoint::Peer(PeerEndpoint { address, .. }) => address,
+        };
+        inner_address.set_port(port);
+    }
+}
+
+/// Data used to issue connections to a node.
+///
+/// Fetched from the cluster in Metadata.
+#[non_exhaustive] // <- so that we can add more fields in a backwards-compatible way
+#[derive(Clone, Debug)]
+pub struct PeerEndpoint {
+    pub host_id: Uuid,
+    pub address: SocketAddr,
+    pub datacenter: Option<String>,
+    pub rack: Option<String>,
+}
+
+impl Peer {
+    pub(crate) fn to_peer_endpoint(&self) -> PeerEndpoint {
+        PeerEndpoint {
+            host_id: self.host_id,
+            address: self.address,
+            datacenter: self.datacenter.clone(),
+            rack: self.rack.clone(),
+        }
+    }
+}
+
 /// Data used to issue connections to a node that is possibly subject to address translation.
 ///
 /// Built from `PeerEndpoint` if its `NodeAddr` variant implies address translation possibility.
