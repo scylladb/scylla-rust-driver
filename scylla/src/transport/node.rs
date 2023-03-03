@@ -7,6 +7,8 @@ use crate::transport::connection::VerifiedKeyspaceName;
 use crate::transport::connection_pool::{NodeConnectionPool, PoolConfig};
 use crate::transport::errors::QueryError;
 
+use std::fmt::Display;
+use std::net::IpAddr;
 use std::{
     hash::{Hash, Hasher},
     net::SocketAddr,
@@ -50,6 +52,47 @@ impl TimestampedAverage {
                 }
             }),
         }
+    }
+}
+
+/// This enum is introduced to support address translation only in PoolRefiller,
+/// as well as to cope with the bug in older Cassandra and Scylla releases.
+/// The bug involves misconfiguration of rpc_address and/or broadcast_rpc_address
+/// in system.local to 0.0.0.0. Mitigation involves replacing the faulty address
+/// with connection's address, but then that address must not be subject to AddressTranslator,
+/// so we carry that information using this enum. Address translation is never performed
+/// on Untranslatable variant.
+#[non_exhaustive]
+#[derive(Debug, Clone, Copy, Hash, PartialEq, Eq, PartialOrd, Ord)]
+pub enum NodeAddr {
+    /// Fetched in Metadata with `query_peers()` (broadcast by a node itself).
+    Translatable(SocketAddr),
+    /// Built from control connection's address upon `query_peers()` in order to mitigate the bug described above.
+    Untranslatable(SocketAddr),
+}
+
+impl NodeAddr {
+    pub(crate) fn into_inner(self) -> SocketAddr {
+        match self {
+            NodeAddr::Translatable(addr) | NodeAddr::Untranslatable(addr) => addr,
+        }
+    }
+    pub(crate) fn inner_mut(&mut self) -> &mut SocketAddr {
+        match self {
+            NodeAddr::Translatable(addr) | NodeAddr::Untranslatable(addr) => addr,
+        }
+    }
+    pub fn ip(&self) -> IpAddr {
+        self.into_inner().ip()
+    }
+    pub fn port(&self) -> u16 {
+        self.into_inner().port()
+    }
+}
+
+impl Display for NodeAddr {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.into_inner())
     }
 }
 
