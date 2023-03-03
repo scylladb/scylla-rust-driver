@@ -62,10 +62,15 @@ pub struct Peer {
     pub rack: Option<String>,
 }
 
+/// Data used to issue connections to a node that is possibly subject to address translation.
+///
+/// Built from `PeerEndpoint` if its `NodeAddr` variant implies address translation possibility.
 #[non_exhaustive] // <- so that we can add more fields in a backwards-compatible way
 pub struct UntranslatedPeer {
     pub host_id: Uuid,
     pub untranslated_address: SocketAddr,
+    pub datacenter: Option<String>,
+    pub rack: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
