@@ -548,7 +548,7 @@ impl MetadataReader {
             can_use_shard_aware_port: false,
         };
 
-        NodeConnectionPool::new(addr.ip(), addr.port(), pool_config, None)
+        NodeConnectionPool::new(addr, pool_config, None)
     }
 }
 

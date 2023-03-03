@@ -154,8 +154,7 @@ impl std::fmt::Debug for NodeConnectionPool {
 
 impl NodeConnectionPool {
     pub fn new(
-        address: IpAddr,
-        port: u16,
+        addr: SocketAddr,
         pool_config: PoolConfig,
         current_keyspace: Option<VerifiedKeyspaceName>,
     ) -> Self {
@@ -163,6 +162,9 @@ impl NodeConnectionPool {
         let pool_updated_notify = Arc::new(Notify::new());
 
         let keepalive_interval = pool_config.keepalive_interval;
+
+        // temporary in this commit
+        let (address, port) = { (addr.ip(), addr.port()) };
 
         let refiller = PoolRefiller::new(
             address,

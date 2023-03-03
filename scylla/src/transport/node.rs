@@ -90,9 +90,7 @@ impl Node {
         keyspace_name: Option<VerifiedKeyspaceName>,
         enabled: bool,
     ) -> Self {
-        let pool = enabled.then(|| {
-            NodeConnectionPool::new(address.ip(), address.port(), pool_config, keyspace_name)
-        });
+        let pool = enabled.then(|| NodeConnectionPool::new(address, pool_config, keyspace_name));
 
         Node {
             host_id,
