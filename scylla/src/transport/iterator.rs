@@ -565,8 +565,8 @@ where
             self.log_attempt_start(connection.get_connect_address());
             let query_response =
                 (self.page_query)(connection.clone(), consistency, self.paging_state.clone())
-                    .await?
-                    .into_non_error_query_response();
+                    .await
+                    .and_then(QueryResponse::into_non_error_query_response);
 
             let elapsed = query_start.elapsed();
             if Session::should_consider_query_for_latency_measurements(
