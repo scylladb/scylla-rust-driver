@@ -104,7 +104,7 @@ impl Display for NodeAddr {
 #[derive(Debug)]
 pub struct Node {
     pub host_id: Uuid,
-    pub address: SocketAddr,
+    pub address: NodeAddr,
     pub datacenter: Option<String>,
     pub rack: Option<String>,
 
@@ -126,14 +126,15 @@ impl Node {
     /// `rack` - optional rack name
     pub(crate) fn new(
         host_id: Uuid,
-        address: SocketAddr,
+        address: NodeAddr,
         pool_config: PoolConfig,
         datacenter: Option<String>,
         rack: Option<String>,
         keyspace_name: Option<VerifiedKeyspaceName>,
         enabled: bool,
     ) -> Self {
-        let pool = enabled.then(|| NodeConnectionPool::new(address, pool_config, keyspace_name));
+        let pool = enabled
+            .then(|| NodeConnectionPool::new(address.into_inner(), pool_config, keyspace_name));
 
         Node {
             host_id,

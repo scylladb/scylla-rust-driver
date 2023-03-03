@@ -26,6 +26,8 @@ use std::time::Duration;
 use tracing::{debug, warn};
 use uuid::Uuid;
 
+use super::node::NodeAddr;
+
 #[derive(Debug, Clone)]
 #[non_exhaustive]
 pub struct ContactPoint {
@@ -532,7 +534,7 @@ impl ClusterWorker {
         let node = match cluster_data
             .known_peers
             .values()
-            .find(|&peer| peer.address == addr)
+            .find(|&peer| peer.address == NodeAddr::Translatable(addr))
         {
             Some(node) => node,
             None => {

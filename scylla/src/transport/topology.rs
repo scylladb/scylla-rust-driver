@@ -31,6 +31,7 @@ use tracing::{debug, error, trace, warn};
 use uuid::Uuid;
 
 use super::cluster::ContactPoint;
+use super::NodeAddr;
 
 /// Allows to read current metadata from the cluster
 pub(crate) struct MetadataReader {
@@ -56,7 +57,7 @@ pub struct Metadata {
 #[non_exhaustive] // <- so that we can add more fields in a backwards-compatible way
 pub struct Peer {
     pub host_id: Uuid,
-    pub address: SocketAddr,
+    pub address: NodeAddr,
     pub tokens: Vec<Token>,
     pub datacenter: Option<String>,
     pub rack: Option<String>,
@@ -74,18 +75,20 @@ pub enum UntranslatedEndpoint {
 }
 
 impl UntranslatedEndpoint {
-    pub(crate) fn address(&self) -> SocketAddr {
+    pub(crate) fn address(&self) -> NodeAddr {
         match *self {
-            UntranslatedEndpoint::ContactPoint(ContactPoint { address }) => address,
+            UntranslatedEndpoint::ContactPoint(ContactPoint { address, .. }) => {
+                NodeAddr::Untranslatable(address)
+            }
             UntranslatedEndpoint::Peer(PeerEndpoint { address, .. }) => address,
         }
     }
     pub(crate) fn set_port(&mut self, port: u16) {
-        let inner_address = match self {
-            UntranslatedEndpoint::ContactPoint(ContactPoint { address }) => address,
-            UntranslatedEndpoint::Peer(PeerEndpoint { address, .. }) => address,
+        let inner_addr = match self {
+            UntranslatedEndpoint::ContactPoint(ContactPoint { address, .. }) => address,
+            UntranslatedEndpoint::Peer(PeerEndpoint { address, .. }) => address.inner_mut(),
         };
-        inner_address.set_port(port);
+        inner_addr.set_port(port);
     }
 }
 
@@ -96,7 +99,7 @@ impl UntranslatedEndpoint {
 #[derive(Clone, Debug)]
 pub struct PeerEndpoint {
     pub host_id: Uuid,
-    pub address: SocketAddr,
+    pub address: NodeAddr,
     pub datacenter: Option<String>,
     pub rack: Option<String>,
 }
@@ -552,7 +555,7 @@ impl MetadataReader {
         let control_connection_peer = metadata
             .peers
             .iter()
-            .find(|peer| peer.address == self.control_connection_endpoint.address());
+            .find(|peer| matches!(self.control_connection_endpoint, UntranslatedEndpoint::Peer(PeerEndpoint{address, ..}) if address == peer.address));
         if let Some(peer) = control_connection_peer {
             if !self.host_filter.as_ref().map_or(true, |f| f.accept(peer)) {
                 warn!(
@@ -605,7 +608,7 @@ impl MetadataReader {
             can_use_shard_aware_port: false,
         };
 
-        NodeConnectionPool::new(endpoint.address(), pool_config, None)
+        NodeConnectionPool::new(endpoint.address().into_inner(), pool_config, None)
     }
 }
 
@@ -727,17 +730,17 @@ async fn create_peer_from_row(
     let connect_port = local_address.port();
     let untranslated_address = SocketAddr::new(untranslated_ip_addr, connect_port);
 
-    let address = match source {
+    let node_addr = match source {
         NodeInfoSource::Local => {
             // For the local node we should use connection's address instead of rpc_address.
             // (The reason is that rpc_address in system.local can be wrong.)
             // Thus, we replace address in local_rows with connection's address.
             // We need to replace rpc_address with control connection address.
-            local_address
+            NodeAddr::Untranslatable(local_address)
         }
         NodeInfoSource::Peer => {
             // The usual case - no translation.
-            untranslated_address
+            NodeAddr::Translatable(untranslated_address)
         }
     };
 
@@ -764,7 +767,7 @@ async fn create_peer_from_row(
 
     Ok(Some(Peer {
         host_id,
-        address,
+        address: node_addr,
         tokens,
         datacenter,
         rack,

@@ -1,6 +1,7 @@
 use anyhow::Result;
 use scylla::frame::value::ValueList;
 use scylla::transport::partitioner::{Murmur3Partitioner, Partitioner};
+use scylla::transport::NodeAddr;
 use scylla::{Session, SessionBuilder};
 use std::env;
 
@@ -42,7 +43,7 @@ async fn main() -> Result<()> {
                 .estimate_replicas_for_query(&statement_info)
                 .iter()
                 .map(|n| n.address)
-                .collect::<Vec<std::net::SocketAddr>>()
+                .collect::<Vec<NodeAddr>>()
         );
 
         let qt = session

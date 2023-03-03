@@ -121,6 +121,7 @@ mod tests {
     use crate::transport::topology::Metadata;
     use crate::transport::topology::Peer;
     use crate::transport::topology::Strategy;
+    use crate::transport::NodeAddr;
     use std::collections::HashMap;
     use std::net::SocketAddr;
 
@@ -178,8 +179,8 @@ mod tests {
         );
     }
 
-    pub fn id_to_invalid_addr(id: u16) -> SocketAddr {
-        SocketAddr::from(([255, 255, 255, 255], id))
+    pub fn id_to_invalid_addr(id: u16) -> NodeAddr {
+        NodeAddr::Translatable(SocketAddr::from(([255, 255, 255, 255], id)))
     }
 
     // creates ClusterData with info about 5 nodes living in 2 different datacenters
