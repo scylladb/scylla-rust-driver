@@ -5,6 +5,7 @@ use crate::transport::{
     connection::{Connection, ConnectionConfig, ErrorReceiver, VerifiedKeyspaceName},
 };
 
+use super::topology::UntranslatedEndpoint;
 use arc_swap::ArcSwap;
 use futures::{future::RemoteHandle, stream::FuturesUnordered, Future, FutureExt, StreamExt};
 use rand::Rng;
@@ -154,7 +155,7 @@ impl std::fmt::Debug for NodeConnectionPool {
 
 impl NodeConnectionPool {
     pub fn new(
-        addr: SocketAddr,
+        endpoint: UntranslatedEndpoint,
         pool_config: PoolConfig,
         current_keyspace: Option<VerifiedKeyspaceName>,
     ) -> Self {
@@ -164,6 +165,7 @@ impl NodeConnectionPool {
         let keepalive_interval = pool_config.keepalive_interval;
 
         // temporary in this commit
+        let addr = endpoint.address();
         let (address, port) = { (addr.ip(), addr.port()) };
 
         let refiller = PoolRefiller::new(

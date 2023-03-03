@@ -136,8 +136,9 @@ impl Node {
         let address = peer.address;
         let datacenter = peer.datacenter.clone();
         let rack = peer.rack.clone();
-        let pool = enabled
-            .then(|| NodeConnectionPool::new(address.into_inner(), pool_config, keyspace_name));
+        let pool = enabled.then(|| {
+            NodeConnectionPool::new(UntranslatedEndpoint::Peer(peer), pool_config, keyspace_name)
+        });
 
         Node {
             host_id,
