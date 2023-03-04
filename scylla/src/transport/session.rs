@@ -1785,7 +1785,7 @@ fn calculate_partition_key(
 // Resolve the given hostname using a DNS lookup if necessary.
 // The resolution may return multiple IPs and the function returns one of them.
 // It prefers to return IPv4s first, and only if there are none, IPv6s.
-async fn resolve_hostname(hostname: &str) -> Result<SocketAddr, NewSessionError> {
+pub(crate) async fn resolve_hostname(hostname: &str) -> Result<SocketAddr, NewSessionError> {
     let mut ret = None;
     let addrs: Vec<SocketAddr> = match lookup_host(hostname).await {
         Ok(addrs) => addrs.collect(),
