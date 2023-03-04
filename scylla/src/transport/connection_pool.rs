@@ -1286,6 +1286,7 @@ mod tests {
             conns.push(open_connection_to_shard_aware_port(
                 UntranslatedEndpoint::ContactPoint(ContactPoint {
                     address: connect_address,
+                    datacenter: None,
                 }),
                 0,
                 sharder.clone(),

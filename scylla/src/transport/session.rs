@@ -394,12 +394,16 @@ impl Session {
         for node in known_nodes {
             match node {
                 KnownNode::Hostname(hostname) => to_resolve.push(hostname),
-                KnownNode::Address(address) => initial_peers.push(ContactPoint { address }),
+                KnownNode::Address(address) => initial_peers.push(ContactPoint {
+                    address,
+                    datacenter: None,
+                }),
             };
         }
         let resolve_futures = to_resolve.into_iter().map(|hostname| async move {
             Ok::<_, NewSessionError>(ContactPoint {
                 address: resolve_hostname(&hostname).await?,
+                datacenter: None,
             })
         });
         let resolved: Vec<ContactPoint> = futures::future::try_join_all(resolve_futures).await?;

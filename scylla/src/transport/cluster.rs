@@ -32,6 +32,7 @@ use super::node::NodeAddr;
 #[non_exhaustive]
 pub struct ContactPoint {
     pub address: SocketAddr,
+    pub datacenter: Option<String>,
 }
 
 /// Cluster manages up to date information and connections to database nodes.
