@@ -12,7 +12,7 @@ pub use default::DefaultPolicy;
 
 /// Represents info about statement that can be used by load balancing policies.
 #[derive(Default)]
-pub struct Statement<'a> {
+pub struct RoutingInfo<'a> {
     pub token: Option<Token>,
     pub keyspace: Option<&'a str>,
 
@@ -30,7 +30,7 @@ pub type Plan<'a> = Box<dyn Iterator<Item = Arc<Node>> + Send + Sync + 'a>;
 /// Policy that decides which nodes to contact for each query
 pub trait LoadBalancingPolicy: Send + Sync + std::fmt::Debug {
     /// It is used for each query to find which nodes to query first
-    fn plan<'a>(&self, statement: &Statement, cluster: &'a ClusterData) -> Plan<'a>;
+    fn plan<'a>(&self, statement: &RoutingInfo, cluster: &'a ClusterData) -> Plan<'a>;
 
     /// Returns name of load balancing policy
     fn name(&self) -> String;

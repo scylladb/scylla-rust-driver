@@ -49,7 +49,7 @@ use crate::transport::connection::{Connection, ConnectionConfig, VerifiedKeyspac
 use crate::transport::connection_pool::PoolConfig;
 use crate::transport::host_filter::HostFilter;
 use crate::transport::iterator::{PreparedIteratorConfig, RowIterator};
-use crate::transport::load_balancing::Statement;
+use crate::transport::load_balancing::RoutingInfo;
 use crate::transport::metrics::Metrics;
 use crate::transport::node::Node;
 use crate::transport::query_result::QueryResult;
@@ -570,7 +570,7 @@ impl Session {
         let span = trace_span!("Request", query = %query.contents);
         let run_query_result = self
             .run_query(
-                Statement::default(),
+                RoutingInfo::default(),
                 &query.config,
                 |node: Arc<Node>| async move { node.random_connection().await },
                 |connection: Arc<Connection>,
@@ -880,7 +880,7 @@ impl Session {
 
         let token = self.calculate_token(prepared, &serialized_values)?;
 
-        let statement_info = Statement {
+        let statement_info = RoutingInfo {
             token,
             keyspace: prepared.get_keyspace_name(),
             is_confirmed_lwt: prepared.is_confirmed_lwt(),
@@ -1065,13 +1065,13 @@ impl Session {
         let first_serialized_value = first_serialized_value.as_deref();
         let statement_info = match (first_serialized_value, batch.statements.first()) {
             (Some(first_serialized_value), Some(BatchStatement::PreparedStatement(ps))) => {
-                Statement {
+                RoutingInfo {
                     token: self.calculate_token(ps, first_serialized_value)?,
                     keyspace: ps.get_keyspace_name(),
                     is_confirmed_lwt: false,
                 }
             }
-            _ => Statement::default(),
+            _ => RoutingInfo::default(),
         };
         let first_value_token = statement_info.token;
 
@@ -1348,7 +1348,7 @@ impl Session {
     // Returns which replicas are likely to take part in handling the query.
     // If a list of replicas cannot be easily narrowed down, all available replicas
     // will be returned.
-    pub fn estimate_replicas_for_query(&self, statement: &Statement) -> Vec<Arc<Node>> {
+    pub fn estimate_replicas_for_query(&self, statement: &RoutingInfo) -> Vec<Arc<Node>> {
         let cluster_data = self.cluster.get_data();
         match statement.token {
             Some(token) => {
@@ -1373,7 +1373,7 @@ impl Session {
     // maybe once async closures get stabilized this can be fixed
     async fn run_query<'a, ConnFut, QueryFut, ResT>(
         &'a self,
-        statement_info: Statement<'a>,
+        statement_info: RoutingInfo<'a>,
         statement_config: &'a StatementConfig,
         choose_connection: impl Fn(Arc<Node>) -> ConnFut,
         do_query: impl Fn(Arc<Connection>, Consistency, &ExecutionProfileInner) -> QueryFut,
@@ -1665,7 +1665,7 @@ impl Session {
         QueryFut: Future<Output = Result<ResT, QueryError>>,
         ResT: AllowedRunQueryResTType,
     {
-        let info = Statement::default();
+        let info = RoutingInfo::default();
         let config = StatementConfig {
             is_idempotent: true,
             serial_consistency: Some(Some(SerialConsistency::LocalSerial)),

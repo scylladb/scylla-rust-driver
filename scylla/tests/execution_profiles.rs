@@ -10,7 +10,7 @@ use scylla::query::Query;
 use scylla::statement::SerialConsistency;
 use scylla::{
     frame::types::LegacyConsistency,
-    load_balancing::{LoadBalancingPolicy, Plan, Statement},
+    load_balancing::{LoadBalancingPolicy, Plan, RoutingInfo},
     retry_policy::{RetryPolicy, RetrySession},
     speculative_execution::SpeculativeExecutionPolicy,
     test_utils::unique_keyspace_name,
@@ -48,7 +48,7 @@ impl<const NODE: u8> BoundToPredefinedNodePolicy<NODE> {
 }
 
 impl<const NODE: u8> LoadBalancingPolicy for BoundToPredefinedNodePolicy<NODE> {
-    fn plan<'a>(&self, _: &Statement, cluster: &'a ClusterData) -> Plan<'a> {
+    fn plan<'a>(&self, _: &RoutingInfo, cluster: &'a ClusterData) -> Plan<'a> {
         self.report_node(Report::LoadBalancing);
         let node = cluster.get_nodes_info().iter().next().unwrap();
         Box::new(std::iter::once(node.clone()))

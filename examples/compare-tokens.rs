@@ -2,7 +2,7 @@ use anyhow::Result;
 use scylla::frame::value::ValueList;
 use scylla::transport::partitioner::{Murmur3Partitioner, Partitioner};
 use scylla::transport::NodeAddr;
-use scylla::{Session, SessionBuilder};
+use scylla::{load_balancing, Session, SessionBuilder};
 use std::env;
 
 #[tokio::main]
@@ -32,7 +32,7 @@ async fn main() -> Result<()> {
         let serialized_pk = (pk,).serialized()?.into_owned();
         let t = Murmur3Partitioner::hash(prepared.compute_partition_key(&serialized_pk)?).value;
 
-        let statement_info = scylla::transport::load_balancing::Statement {
+        let statement_info = load_balancing::RoutingInfo {
             token: Some(scylla::routing::Token { value: t }),
             keyspace: Some("ks"),
             is_confirmed_lwt: false,

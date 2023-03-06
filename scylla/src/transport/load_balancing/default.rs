@@ -1,4 +1,4 @@
-use super::{LoadBalancingPolicy, Plan, Statement};
+use super::{LoadBalancingPolicy, Plan, RoutingInfo};
 use crate::transport::cluster::ClusterData;
 
 #[derive(Debug, Default)]
@@ -11,7 +11,7 @@ impl DefaultPolicy {
 }
 
 impl LoadBalancingPolicy for DefaultPolicy {
-    fn plan<'a>(&self, _statement: &Statement, cluster: &'a ClusterData) -> Plan<'a> {
+    fn plan<'a>(&self, _statement: &RoutingInfo, cluster: &'a ClusterData) -> Plan<'a> {
         Box::new(cluster.known_peers.values().cloned())
     }
 

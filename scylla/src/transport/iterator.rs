@@ -33,7 +33,7 @@ use crate::statement::Consistency;
 use crate::statement::{prepared_statement::PreparedStatement, query::Query};
 use crate::transport::cluster::ClusterData;
 use crate::transport::connection::{Connection, NonErrorQueryResponse, QueryResponse};
-use crate::transport::load_balancing::{LoadBalancingPolicy, Statement};
+use crate::transport::load_balancing::{LoadBalancingPolicy, RoutingInfo};
 use crate::transport::metrics::Metrics;
 use crate::transport::node::Node;
 use crate::transport::retry_policy::{QueryInfo, RetryDecision, RetrySession};
@@ -173,7 +173,7 @@ impl RowIterator {
                 sender: sender.into(),
                 choose_connection,
                 page_query,
-                statement_info: Statement::default(),
+                statement_info: RoutingInfo::default(),
                 query_is_idempotent: query.config.is_idempotent,
                 query_consistency: consistency,
                 retry_session,
@@ -211,7 +211,7 @@ impl RowIterator {
             .unwrap_or(config.execution_profile.serial_consistency);
         let retry_session = config.execution_profile.retry_policy.new_session();
 
-        let statement_info = Statement {
+        let statement_info = RoutingInfo {
             token: config.token,
             keyspace: None,
             is_confirmed_lwt: config.prepared.is_confirmed_lwt(),
@@ -411,7 +411,7 @@ struct RowIteratorWorker<'a, ConnFunc, QueryFunc> {
     // AsyncFn(Arc<Connection>, Option<Bytes>) -> Result<QueryResponse, QueryError>
     page_query: QueryFunc,
 
-    statement_info: Statement<'a>,
+    statement_info: RoutingInfo<'a>,
     query_is_idempotent: bool,
     query_consistency: Consistency,
     retry_session: Box<dyn RetrySession>,

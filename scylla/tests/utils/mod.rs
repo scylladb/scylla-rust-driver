@@ -21,7 +21,7 @@ pub struct FixedOrderLoadBalancer;
 impl LoadBalancingPolicy for FixedOrderLoadBalancer {
     fn plan<'a>(
         &self,
-        _statement: &scylla::load_balancing::Statement,
+        _statement: &scylla::load_balancing::RoutingInfo,
         cluster: &'a scylla::transport::ClusterData,
     ) -> scylla::load_balancing::Plan<'a> {
         Box::new(
