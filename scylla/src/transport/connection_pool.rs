@@ -1270,7 +1270,7 @@ mod tests {
             compression: None,
             tcp_nodelay: true,
             #[cfg(feature = "ssl")]
-            ssl_context: None,
+            ssl_config: None,
             ..Default::default()
         };
 

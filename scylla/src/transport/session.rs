@@ -29,6 +29,8 @@ use uuid::Uuid;
 use super::cluster::ContactPoint;
 use super::connection::NonErrorQueryResponse;
 use super::connection::QueryResponse;
+#[cfg(feature = "ssl")]
+use super::connection::SslConfig;
 use super::errors::{BadQuery, NewSessionError, QueryError};
 use super::execution_profile::{ExecutionProfile, ExecutionProfileHandle, ExecutionProfileInner};
 use super::partitioner::PartitionerName;
@@ -450,7 +452,7 @@ impl Session {
             compression: config.compression,
             tcp_nodelay: config.tcp_nodelay,
             #[cfg(feature = "ssl")]
-            ssl_context: config.ssl_context,
+            ssl_config: config.ssl_context.map(SslConfig::new_with_global_context),
             authenticator: config.authenticator.clone(),
             connect_timeout: config.connect_timeout,
             event_sender: None,

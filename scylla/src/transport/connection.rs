@@ -10,12 +10,13 @@ use tracing::{debug, error, trace, warn};
 use uuid::Uuid;
 
 #[cfg(feature = "ssl")]
-use openssl::ssl::{Ssl, SslContext};
-#[cfg(feature = "ssl")]
 use std::pin::Pin;
 use std::sync::atomic::AtomicU64;
 #[cfg(feature = "ssl")]
 use tokio_openssl::SslStream;
+
+#[cfg(feature = "ssl")]
+pub(crate) use ssl_config::SslConfig;
 
 use crate::authentication::AuthenticatorProvider;
 use scylla_cql::frame::response::authenticate::Authenticate;
@@ -215,7 +216,6 @@ impl NonErrorQueryResponse {
     }
 }
 #[cfg(feature = "ssl")]
-#[allow(unused)]
 mod ssl_config {
     use openssl::{
         error::ErrorStack,
@@ -245,7 +245,7 @@ pub struct ConnectionConfig {
     pub compression: Option<Compression>,
     pub tcp_nodelay: bool,
     #[cfg(feature = "ssl")]
-    pub ssl_context: Option<SslContext>,
+    pub ssl_config: Option<SslConfig>,
     pub connect_timeout: std::time::Duration,
     // should be Some only in control connections,
     pub event_sender: Option<mpsc::Sender<Event>>,
@@ -263,7 +263,7 @@ impl Default for ConnectionConfig {
             tcp_nodelay: true,
             event_sender: None,
             #[cfg(feature = "ssl")]
-            ssl_context: None,
+            ssl_config: None,
             connect_timeout: std::time::Duration::from_secs(5),
             default_consistency: Default::default(),
             authenticator: None,
@@ -277,7 +277,7 @@ impl Default for ConnectionConfig {
 impl ConnectionConfig {
     #[cfg(feature = "ssl")]
     pub fn is_ssl(&self) -> bool {
-        self.ssl_context.is_some()
+        self.ssl_config.is_some()
     }
 
     #[cfg(not(feature = "ssl"))]
@@ -799,8 +799,8 @@ impl Connection {
         orphan_notification_receiver: mpsc::UnboundedReceiver<RequestId>,
     ) -> Result<RemoteHandle<()>, std::io::Error> {
         #[cfg(feature = "ssl")]
-        if let Some(context) = &config.ssl_context {
-            let ssl = Ssl::new(context)?;
+        if let Some(ssl_config) = &config.ssl_config {
+            let ssl = ssl_config.new_ssl()?;
             let mut stream = SslStream::new(ssl, stream)?;
             let _pin = Pin::new(&mut stream).connect().await;
 
