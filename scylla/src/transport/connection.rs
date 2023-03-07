@@ -35,6 +35,8 @@ use super::iterator::RowIterator;
 use super::session::AddressTranslator;
 use super::topology::{PeerEndpoint, UntranslatedEndpoint, UntranslatedPeer};
 use super::NodeAddr;
+#[cfg(feature = "cloud")]
+use crate::cloud::CloudConfig;
 
 use crate::batch::{Batch, BatchStatement};
 use crate::frame::protocol_features::ProtocolFeatures;
@@ -248,6 +250,8 @@ pub struct ConnectionConfig {
     // should be Some only in control connections,
     pub event_sender: Option<mpsc::Sender<Event>>,
     pub default_consistency: Consistency,
+    #[cfg(feature = "cloud")]
+    pub(crate) cloud_config: Option<Arc<CloudConfig>>,
     pub authenticator: Option<Arc<dyn AuthenticatorProvider>>,
     pub address_translator: Option<Arc<dyn AddressTranslator>>,
 }
@@ -264,6 +268,8 @@ impl Default for ConnectionConfig {
             default_consistency: Default::default(),
             authenticator: None,
             address_translator: None,
+            #[cfg(feature = "cloud")]
+            cloud_config: None,
         }
     }
 }

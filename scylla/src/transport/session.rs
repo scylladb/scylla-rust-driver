@@ -456,6 +456,8 @@ impl Session {
             event_sender: None,
             default_consistency: Default::default(),
             address_translator: config.address_translator,
+            #[cfg(feature = "cloud")]
+            cloud_config: config.cloud_config,
         };
 
         let pool_config = PoolConfig {
