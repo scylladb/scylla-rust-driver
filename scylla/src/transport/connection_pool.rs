@@ -575,6 +575,10 @@ impl PoolRefiller {
         }
     }
 
+    fn endpoint_description(&self) -> IpAddr {
+        self.address
+    }
+
     pub fn get_shared_connections(&self) -> Arc<ArcSwap<MaybePoolConnections>> {
         self.shared_conns.clone()
     }
@@ -584,7 +588,10 @@ impl PoolRefiller {
         mut self,
         mut use_keyspace_request_receiver: mpsc::Receiver<UseKeyspaceRequest>,
     ) {
-        debug!("[{}] Started asynchronous pool worker", self.address);
+        debug!(
+            "[{}] Started asynchronous pool worker",
+            self.endpoint_description()
+        );
 
         let mut next_refill_time = tokio::time::Instant::now();
         let mut refill_scheduled = true;
@@ -603,7 +610,7 @@ impl PoolRefiller {
                     if self.is_full() {
                         debug!(
                             "[{}] Pool is full, clearing {} excess connections",
-                            self.address,
+                            self.endpoint_description(),
                             self.excess_connections.len()
                         );
                         self.excess_connections.clear();
@@ -612,20 +619,20 @@ impl PoolRefiller {
 
                 evt = self.connection_errors.select_next_some(), if !self.connection_errors.is_empty() => {
                     if let Some(conn) = evt.connection.upgrade() {
-                        debug!("[{}] Got error for connection {:p}: {:?}", self.address, Arc::as_ptr(&conn), evt.error);
+                        debug!("[{}] Got error for connection {:p}: {:?}", self.endpoint_description(), Arc::as_ptr(&conn), evt.error);
                         self.remove_connection(conn, evt.error);
                     }
                 }
 
                 req = use_keyspace_request_receiver.recv() => {
                     if let Some(req) = req {
-                        debug!("[{}] Requested keyspace change: {}", self.address, req.keyspace_name.as_str());
+                        debug!("[{}] Requested keyspace change: {}", self.endpoint_description(), req.keyspace_name.as_str());
                         self.use_keyspace(&req.keyspace_name, req.response_sender);
                     } else {
                         // The keyspace request channel is dropped.
                         // This means that the corresponding pool is dropped.
                         // We can stop here.
-                        trace!("[{}] Keyspace request channel dropped, stopping asynchronous pool worker", self.address);
+                        trace!("[{}] Keyspace request channel dropped, stopping asynchronous pool worker", self.endpoint_description());
                         return;
                     }
                 }
@@ -644,7 +651,7 @@ impl PoolRefiller {
                 let delay = self.refill_delay_strategy.get_delay();
                 debug!(
                     "[{}] Scheduling next refill in {} ms",
-                    self.address,
+                    self.endpoint_description(),
                     delay.as_millis(),
                 );
 
@@ -691,7 +698,7 @@ impl PoolRefiller {
             // fail, so there is no use in opening more than one connection now.
             trace!(
                 "[{}] Will open the first connection to the node",
-                self.address
+                self.endpoint_description()
             );
             self.start_opening_connection(None);
             return;
@@ -708,7 +715,7 @@ impl PoolRefiller {
                     }
                     trace!(
                         "[{}] Will open {} connections to shard {}",
-                        self.address,
+                        self.endpoint_description(),
                         to_open_count,
                         shard_id,
                     );
@@ -738,7 +745,7 @@ impl PoolRefiller {
         // connecting later.
         trace!(
             "[{}] Will open {} non-shard-aware connections",
-            self.address,
+            self.endpoint_description(),
             to_open_count,
         );
         for _ in 0..to_open_count {
@@ -764,7 +771,7 @@ impl PoolRefiller {
                     // and does not cause any errors.
                     debug!(
                         "[{}] Failed to open connection to the shard-aware port: {:?}, will retry with regular port",
-                        self.address,
+                        self.endpoint_description(),
                         err,
                     );
                     self.start_opening_connection(None);
@@ -775,7 +782,8 @@ impl PoolRefiller {
                     self.had_error_since_last_refill = true;
                     debug!(
                         "[{}] Failed to open connection to the non-shard-aware port: {:?}",
-                        self.address, err,
+                        self.endpoint_description(),
+                        err,
                     );
 
                     // If all connection attempts in this fill attempt failed
@@ -796,7 +804,7 @@ impl PoolRefiller {
                 if self.shard_aware_port != connection.get_shard_aware_port() {
                     debug!(
                         "[{}] Updating shard aware port: {:?}",
-                        self.address,
+                        self.endpoint_description(),
                         connection.get_shard_aware_port(),
                     );
                     self.shard_aware_port = connection.get_shard_aware_port();
@@ -835,7 +843,7 @@ impl PoolRefiller {
                     let conn = Arc::new(connection);
                     trace!(
                         "[{}] Adding connection {:p} to shard {} pool, now there are {} for the shard, total {}",
-                        self.address,
+                        self.endpoint_description(),
                         Arc::as_ptr(&conn),
                         shard_id,
                         self.conns[shard_id].len() + 1,
@@ -856,7 +864,7 @@ impl PoolRefiller {
                     // immediately with a non-shard-aware port here.
                     debug!(
                         "[{}] Excess shard-aware port connection for shard {}; will retry with non-shard-aware port",
-                        self.address,
+                        self.endpoint_description(),
                         shard_id,
                     );
 
@@ -870,7 +878,7 @@ impl PoolRefiller {
                     let conn = Arc::new(connection);
                     trace!(
                         "[{}] Storing excess connection {:p} for shard {}",
-                        self.address,
+                        self.endpoint_description(),
                         Arc::as_ptr(&conn),
                         shard_id,
                     );
@@ -883,7 +891,7 @@ impl PoolRefiller {
                     if self.excess_connections.len() > excess_connection_limit {
                         debug!(
                             "[{}] Excess connection pool exceeded limit of {} connections - clearing",
-                            self.address,
+                            self.endpoint_description(),
                             excess_connection_limit,
                         );
                         self.excess_connections.clear();
@@ -942,7 +950,8 @@ impl PoolRefiller {
 
         debug!(
             "[{}] New sharder: {:?}, clearing all connections",
-            self.address, new_sharder,
+            self.endpoint_description(),
+            new_sharder,
         );
 
         self.sharder = new_sharder.clone();
@@ -1014,7 +1023,7 @@ impl PoolRefiller {
         if shard_id < self.conns.len() && maybe_remove_in_vec(&mut self.conns[shard_id]) {
             trace!(
                 "[{}] Connection {:p} removed from shard {} pool, now there is {} for the shard, total {}",
-                self.address,
+                self.endpoint_description(),
                 ptr,
                 shard_id,
                 self.conns[shard_id].len(),
@@ -1028,7 +1037,7 @@ impl PoolRefiller {
         if maybe_remove_in_vec(&mut self.excess_connections) {
             trace!(
                 "[{}] Connection {:p} removed from excess connection pool",
-                self.address,
+                self.endpoint_description(),
                 ptr,
             );
             return;
@@ -1036,7 +1045,7 @@ impl PoolRefiller {
 
         trace!(
             "[{}] Connection {:p} was already removed",
-            self.address,
+            self.endpoint_description(),
             ptr,
         );
     }
