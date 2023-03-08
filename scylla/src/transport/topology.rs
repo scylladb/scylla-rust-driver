@@ -5,7 +5,6 @@ use crate::transport::connection::{Connection, ConnectionConfig};
 use crate::transport::connection_pool::{NodeConnectionPool, PoolConfig, PoolSize};
 use crate::transport::errors::{DbError, QueryError};
 use crate::transport::host_filter::HostFilter;
-use crate::transport::session::AddressTranslator;
 use crate::utils::parse::{ParseErrorCause, ParseResult, ParserState};
 
 use futures::future::{self, FutureExt};
@@ -31,20 +30,21 @@ use tokio::sync::mpsc;
 use tracing::{debug, error, trace, warn};
 use uuid::Uuid;
 
+use super::cluster::ContactPoint;
+use super::NodeAddr;
+
 /// Allows to read current metadata from the cluster
 pub(crate) struct MetadataReader {
     connection_config: ConnectionConfig,
     keepalive_interval: Option<Duration>,
 
-    control_connection_address: SocketAddr,
+    control_connection_endpoint: UntranslatedEndpoint,
     control_connection: NodeConnectionPool,
 
     // when control connection fails, MetadataReader tries to connect to one of known_peers
-    known_peers: Vec<SocketAddr>,
+    known_peers: Vec<UntranslatedEndpoint>,
     keyspaces_to_fetch: Vec<String>,
     fetch_schema: bool,
-
-    address_translator: Option<Arc<dyn AddressTranslator>>,
     host_filter: Option<Arc<dyn HostFilter>>,
 }
 
@@ -57,17 +57,73 @@ pub struct Metadata {
 #[non_exhaustive] // <- so that we can add more fields in a backwards-compatible way
 pub struct Peer {
     pub host_id: Uuid,
-    pub address: SocketAddr,
-    pub untranslated_address: Option<SocketAddr>,
+    pub address: NodeAddr,
     pub tokens: Vec<Token>,
     pub datacenter: Option<String>,
     pub rack: Option<String>,
 }
 
+/// An endpoint for a node that the driver is to issue connections to,
+/// possibly after prior address translation.
+#[non_exhaustive] // <- so that we can add more fields in a backwards-compatible way
+#[derive(Clone, Debug)]
+pub enum UntranslatedEndpoint {
+    /// Provided by user in SessionConfig (initial contact points).
+    ContactPoint(ContactPoint),
+    /// Fetched in Metadata with `query_peers()`
+    Peer(PeerEndpoint),
+}
+
+impl UntranslatedEndpoint {
+    pub(crate) fn address(&self) -> NodeAddr {
+        match *self {
+            UntranslatedEndpoint::ContactPoint(ContactPoint { address, .. }) => {
+                NodeAddr::Untranslatable(address)
+            }
+            UntranslatedEndpoint::Peer(PeerEndpoint { address, .. }) => address,
+        }
+    }
+    pub(crate) fn set_port(&mut self, port: u16) {
+        let inner_addr = match self {
+            UntranslatedEndpoint::ContactPoint(ContactPoint { address, .. }) => address,
+            UntranslatedEndpoint::Peer(PeerEndpoint { address, .. }) => address.inner_mut(),
+        };
+        inner_addr.set_port(port);
+    }
+}
+
+/// Data used to issue connections to a node.
+///
+/// Fetched from the cluster in Metadata.
+#[non_exhaustive] // <- so that we can add more fields in a backwards-compatible way
+#[derive(Clone, Debug)]
+pub struct PeerEndpoint {
+    pub host_id: Uuid,
+    pub address: NodeAddr,
+    pub datacenter: Option<String>,
+    pub rack: Option<String>,
+}
+
+impl Peer {
+    pub(crate) fn to_peer_endpoint(&self) -> PeerEndpoint {
+        PeerEndpoint {
+            host_id: self.host_id,
+            address: self.address,
+            datacenter: self.datacenter.clone(),
+            rack: self.rack.clone(),
+        }
+    }
+}
+
+/// Data used to issue connections to a node that is possibly subject to address translation.
+///
+/// Built from `PeerEndpoint` if its `NodeAddr` variant implies address translation possibility.
 #[non_exhaustive] // <- so that we can add more fields in a backwards-compatible way
 pub struct UntranslatedPeer {
     pub host_id: Uuid,
     pub untranslated_address: SocketAddr,
+    pub datacenter: Option<String>,
+    pub rack: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -293,23 +349,22 @@ impl Metadata {
     ///
     /// It can be used as a replacement for real metadata when initial
     /// metadata read fails.
-    pub fn new_dummy(initial_peers: &[SocketAddr]) -> Self {
+    pub fn new_dummy(initial_peers: &[UntranslatedEndpoint]) -> Self {
         let peers = initial_peers
             .iter()
             .enumerate()
-            .map(|(id, addr)| {
+            .map(|(id, endpoint)| {
                 // Given N nodes, divide the ring into N roughly equal parts
                 // and assign them to each node.
                 let token = ((id as u128) << 64) / initial_peers.len() as u128;
 
                 Peer {
-                    address: *addr,
+                    address: endpoint.address(),
                     tokens: vec![Token {
                         value: token as i64,
                     }],
                     datacenter: None,
                     rack: None,
-                    untranslated_address: None,
                     host_id: Uuid::new_v4(),
                 }
             })
@@ -323,21 +378,23 @@ impl Metadata {
 }
 
 impl MetadataReader {
-    /// Creates new MetadataReader, which connects to known_peers in the background
+    /// Creates new MetadataReader, which connects to initially_known_peers in the background
     #[allow(clippy::too_many_arguments)]
     pub fn new(
-        known_peers: &[SocketAddr],
+        initially_known_peers: Vec<ContactPoint>,
         mut connection_config: ConnectionConfig,
         keepalive_interval: Option<Duration>,
         server_event_sender: mpsc::Sender<Event>,
         keyspaces_to_fetch: Vec<String>,
         fetch_schema: bool,
-        address_translator: &Option<Arc<dyn AddressTranslator>>,
         host_filter: &Option<Arc<dyn HostFilter>>,
     ) -> Self {
-        let control_connection_address = *known_peers
-            .choose(&mut thread_rng())
-            .expect("Tried to initialize MetadataReader with empty known_peers list!");
+        let control_connection_endpoint = UntranslatedEndpoint::ContactPoint(
+            initially_known_peers
+                .choose(&mut thread_rng())
+                .expect("Tried to initialize MetadataReader with empty known_peers list!")
+                .clone(),
+        );
 
         // setting event_sender field in connection config will cause control connection to
         // - send REGISTER message to receive server events
@@ -345,20 +402,22 @@ impl MetadataReader {
         connection_config.event_sender = Some(server_event_sender);
 
         let control_connection = Self::make_control_connection_pool(
-            control_connection_address,
+            control_connection_endpoint.clone(),
             connection_config.clone(),
             keepalive_interval,
         );
 
         MetadataReader {
-            control_connection_address,
+            control_connection_endpoint,
             control_connection,
             keepalive_interval,
             connection_config,
-            known_peers: known_peers.into(),
+            known_peers: initially_known_peers
+                .into_iter()
+                .map(UntranslatedEndpoint::ContactPoint)
+                .collect(),
             keyspaces_to_fetch,
             fetch_schema,
-            address_translator: address_translator.clone(),
             host_filter: host_filter.clone(),
         }
     }
@@ -380,16 +439,16 @@ impl MetadataReader {
             "Known peers: {}",
             self.known_peers
                 .iter()
-                .map(std::net::SocketAddr::to_string)
+                .map(|endpoint| format!("{:?}", endpoint))
                 .collect::<Vec<String>>()
                 .join(", ")
         );
 
-        let address_of_failed_control_connection = self.control_connection_address;
+        let address_of_failed_control_connection = self.control_connection_endpoint.address();
         let filtered_known_peers = self
             .known_peers
             .iter()
-            .filter(|&peer| peer != &address_of_failed_control_connection);
+            .filter(|&peer| peer.address() != address_of_failed_control_connection);
 
         // if fetching metadata on current control connection failed,
         // try to fetch metadata from other known peer
@@ -400,21 +459,25 @@ impl MetadataReader {
             };
 
             warn!(
-                control_connection_address = self.control_connection_address.to_string().as_str(),
+                control_connection_address = self
+                    .control_connection_endpoint
+                    .address()
+                    .to_string()
+                    .as_str(),
                 error = err.to_string().as_str(),
                 "Failed to fetch metadata using current control connection"
             );
 
-            self.control_connection_address = *peer;
+            self.control_connection_endpoint = peer.clone();
             self.control_connection = Self::make_control_connection_pool(
-                self.control_connection_address,
+                self.control_connection_endpoint.clone(),
                 self.connection_config.clone(),
                 self.keepalive_interval,
             );
 
             debug!(
                 "Retrying to establish the control connection on {}",
-                self.control_connection_address
+                self.control_connection_endpoint.address()
             );
             result = self.fetch_metadata(initial).await;
         }
@@ -441,8 +504,7 @@ impl MetadataReader {
 
         let res = query_metadata(
             conn,
-            self.control_connection_address.port(),
-            self.address_translator.as_deref(),
+            self.control_connection_endpoint.address().port(),
             &self.keyspaces_to_fetch,
             self.fetch_schema,
         )
@@ -470,7 +532,7 @@ impl MetadataReader {
             .peers
             .iter()
             .filter(|peer| host_filter.map_or(true, |f| f.accept(peer)))
-            .map(|peer| peer.address)
+            .map(|peer| UntranslatedEndpoint::Peer(peer.to_peer_endpoint()))
             .collect();
 
         // Check if the host filter isn't accidentally too restrictive,
@@ -493,7 +555,7 @@ impl MetadataReader {
         let control_connection_peer = metadata
             .peers
             .iter()
-            .find(|peer| peer.address == self.control_connection_address);
+            .find(|peer| matches!(self.control_connection_endpoint, UntranslatedEndpoint::Peer(PeerEndpoint{address, ..}) if address == peer.address));
         if let Some(peer) = control_connection_peer {
             if !self.host_filter.as_ref().map_or(true, |f| f.accept(peer)) {
                 warn!(
@@ -503,7 +565,7 @@ impl MetadataReader {
                         .filter(|peer| self.host_filter.as_ref().map_or(true, |p| p.accept(peer)))
                         .map(|peer| peer.address)
                         .collect::<Vec<_>>(),
-                    control_connection_address = ?self.control_connection_address,
+                    control_connection_address = ?self.control_connection_endpoint.address(),
                     "The node that the control connection is established to \
                     is not accepted by the host filter. Please verify that \
                     the nodes in your initial peers list are accepted by the \
@@ -513,13 +575,14 @@ impl MetadataReader {
 
                 // Assuming here that known_peers are up-to-date
                 if !self.known_peers.is_empty() {
-                    self.control_connection_address = *self
+                    self.control_connection_endpoint = self
                         .known_peers
                         .choose(&mut thread_rng())
-                        .expect("known_peers is empty - should be impossible");
+                        .expect("known_peers is empty - should be impossible")
+                        .clone();
 
                     self.control_connection = Self::make_control_connection_pool(
-                        self.control_connection_address,
+                        self.control_connection_endpoint.clone(),
                         self.connection_config.clone(),
                         self.keepalive_interval,
                     );
@@ -529,7 +592,7 @@ impl MetadataReader {
     }
 
     fn make_control_connection_pool(
-        addr: SocketAddr,
+        endpoint: UntranslatedEndpoint,
         connection_config: ConnectionConfig,
         keepalive_interval: Option<Duration>,
     ) -> NodeConnectionPool {
@@ -545,18 +608,17 @@ impl MetadataReader {
             can_use_shard_aware_port: false,
         };
 
-        NodeConnectionPool::new(addr.ip(), addr.port(), pool_config, None)
+        NodeConnectionPool::new(endpoint, pool_config, None)
     }
 }
 
 async fn query_metadata(
     conn: &Arc<Connection>,
     connect_port: u16,
-    address_translator: Option<&dyn AddressTranslator>,
     keyspace_to_fetch: &[String],
     fetch_schema: bool,
 ) -> Result<Metadata, QueryError> {
-    let peers_query = query_peers(conn, connect_port, address_translator);
+    let peers_query = query_peers(conn, connect_port);
     let keyspaces_query = query_keyspaces(conn, keyspace_to_fetch, fetch_schema);
 
     let (peers, keyspaces) = tokio::try_join!(peers_query, keyspaces_query)?;
@@ -603,11 +665,7 @@ impl NodeInfoSource {
     }
 }
 
-async fn query_peers(
-    conn: &Arc<Connection>,
-    connect_port: u16,
-    address_translator: Option<&dyn AddressTranslator>,
-) -> Result<Vec<Peer>, QueryError> {
+async fn query_peers(conn: &Arc<Connection>, connect_port: u16) -> Result<Vec<Peer>, QueryError> {
     let mut peers_query =
         Query::new("select host_id, rpc_address, data_center, rack, tokens from system.peers");
     peers_query.set_page_size(1024);
@@ -638,7 +696,7 @@ async fn query_peers(
         let row = raw_row.into_typed().map_err(|_| {
             QueryError::ProtocolError("system.peers or system.local has invalid column type")
         })?;
-        create_peer_from_row(source, row, local_address, address_translator).await
+        create_peer_from_row(source, row, local_address).await
     });
 
     let peers = translated_peers_futures
@@ -652,7 +710,6 @@ async fn create_peer_from_row(
     source: NodeInfoSource,
     row: NodeInfoRow,
     local_address: SocketAddr,
-    address_translator: Option<&dyn AddressTranslator>,
 ) -> Result<Option<Peer>, QueryError> {
     let NodeInfoRow {
         host_id,
@@ -673,38 +730,17 @@ async fn create_peer_from_row(
     let connect_port = local_address.port();
     let untranslated_address = SocketAddr::new(untranslated_ip_addr, connect_port);
 
-    let (untranslated_address, address) = match (source, address_translator) {
-        (NodeInfoSource::Local, None) => {
+    let node_addr = match source {
+        NodeInfoSource::Local => {
+            // For the local node we should use connection's address instead of rpc_address.
+            // (The reason is that rpc_address in system.local can be wrong.)
+            // Thus, we replace address in local_rows with connection's address.
             // We need to replace rpc_address with control connection address.
-            (Some(untranslated_address), local_address)
+            NodeAddr::Untranslatable(local_address)
         }
-        (NodeInfoSource::Local, Some(_)) => {
-            // The address we used to connect is most likely different and we just don't know.
-            (None, local_address)
-        }
-        (NodeInfoSource::Peer, None) => {
+        NodeInfoSource::Peer => {
             // The usual case - no translation.
-            (Some(untranslated_address), untranslated_address)
-        }
-        (NodeInfoSource::Peer, Some(translator)) => {
-            // We use the provided translator and skip the peer if there is no rule for translating it.
-            (
-                Some(untranslated_address),
-                match translator
-                    .translate_address(&UntranslatedPeer {
-                        host_id,
-                        untranslated_address,
-                    })
-                    .await
-                {
-                    Ok(address) => address,
-                    Err(err) => {
-                        warn!("Could not translate address {}; TranslationError: {:?}; node therefore skipped.",
-                                untranslated_address, err);
-                        return Ok::<Option<Peer>, QueryError>(None);
-                    }
-                },
-            )
+            NodeAddr::Translatable(untranslated_address)
         }
     };
 
@@ -731,8 +767,7 @@ async fn create_peer_from_row(
 
     Ok(Some(Peer {
         host_id,
-        untranslated_address,
-        address,
+        address: node_addr,
         tokens,
         datacenter,
         rack,

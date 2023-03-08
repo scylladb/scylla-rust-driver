@@ -314,6 +314,8 @@ impl Proxy {
             } = node
             {
                 translation_map.insert(real_addr, proxy_addr);
+                let shard_aware_real_addr = SocketAddr::new(real_addr.ip(), 19042);
+                translation_map.insert(shard_aware_real_addr, proxy_addr);
             }
         }
         translation_map

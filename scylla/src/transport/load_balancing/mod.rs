@@ -121,6 +121,7 @@ mod tests {
     use crate::transport::topology::Metadata;
     use crate::transport::topology::Peer;
     use crate::transport::topology::Strategy;
+    use crate::transport::NodeAddr;
     use std::collections::HashMap;
     use std::net::SocketAddr;
 
@@ -178,8 +179,8 @@ mod tests {
         );
     }
 
-    pub fn id_to_invalid_addr(id: u16) -> SocketAddr {
-        SocketAddr::from(([255, 255, 255, 255], id))
+    pub fn id_to_invalid_addr(id: u16) -> NodeAddr {
+        NodeAddr::Translatable(SocketAddr::from(([255, 255, 255, 255], id)))
     }
 
     // creates ClusterData with info about 5 nodes living in 2 different datacenters
@@ -192,7 +193,6 @@ mod tests {
                 rack: None,
                 address: tests::id_to_invalid_addr(*id),
                 tokens: Vec::new(),
-                untranslated_address: Some(tests::id_to_invalid_addr(*id)),
                 host_id: Uuid::new_v4(),
             })
             .collect::<Vec<_>>();
@@ -227,7 +227,8 @@ mod tests {
         for (id, average) in averages {
             *cluster
                 .known_peers
-                .get_mut(&tests::id_to_invalid_addr(*id))
+                .values_mut()
+                .find(|peer| peer.address == tests::id_to_invalid_addr(*id))
                 .unwrap()
                 .average_latency
                 .write()
@@ -250,7 +251,6 @@ mod tests {
                     Token { value: 250 },
                     Token { value: 500 },
                 ],
-                untranslated_address: None,
                 host_id: Uuid::new_v4(),
             },
             Peer {
@@ -262,7 +262,6 @@ mod tests {
                     Token { value: 150 },
                     Token { value: 300 },
                 ],
-                untranslated_address: None,
                 host_id: Uuid::new_v4(),
             },
             Peer {
@@ -270,7 +269,6 @@ mod tests {
                 rack: None,
                 address: tests::id_to_invalid_addr(3),
                 tokens: vec![Token { value: 200 }, Token { value: 400 }],
-                untranslated_address: None,
                 host_id: Uuid::new_v4(),
             },
         ];

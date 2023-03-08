@@ -10,6 +10,7 @@ use bytes::Bytes;
 use futures::future::join_all;
 use futures::future::try_join_all;
 use scylla_cql::errors::DbError;
+pub use scylla_cql::errors::TranslationError;
 use scylla_cql::frame::response::NonErrorResponse;
 use std::collections::HashMap;
 use std::future::Future;
@@ -22,6 +23,7 @@ use tokio::time::timeout;
 use tracing::{debug, error, trace, trace_span, Instrument};
 use uuid::Uuid;
 
+use super::cluster::ContactPoint;
 use super::connection::NonErrorQueryResponse;
 use super::connection::QueryResponse;
 use super::errors::{BadQuery, NewSessionError, QueryError};
@@ -61,12 +63,6 @@ pub use crate::transport::connection_pool::PoolSize;
 use crate::authentication::AuthenticatorProvider;
 #[cfg(feature = "ssl")]
 use openssl::ssl::SslContext;
-
-#[derive(Debug, Copy, Clone)]
-pub enum TranslationError {
-    NoRuleForAddress,
-    InvalidAddressInRule,
-}
 
 #[async_trait]
 pub trait AddressTranslator: Send + Sync {
@@ -302,30 +298,6 @@ impl SessionConfig {
             self.add_known_node_addr(*address);
         }
     }
-
-    /// Creates a PoolConfig which can be used to create NodeConnectionPools
-    fn get_pool_config(&self) -> PoolConfig {
-        PoolConfig {
-            connection_config: self.get_connection_config(),
-            pool_size: self.connection_pool_size.clone(),
-            can_use_shard_aware_port: !self.disallow_shard_aware_port,
-            keepalive_interval: self.keepalive_interval,
-        }
-    }
-
-    /// Makes a config that should be used in Connection
-    fn get_connection_config(&self) -> ConnectionConfig {
-        ConnectionConfig {
-            compression: self.compression,
-            tcp_nodelay: self.tcp_nodelay,
-            #[cfg(feature = "ssl")]
-            ssl_context: self.ssl_context.clone(),
-            authenticator: self.authenticator.clone(),
-            connect_timeout: self.connect_timeout,
-            event_sender: None,
-            default_consistency: self.default_execution_profile_handle.access().consistency,
-        }
-    }
 }
 
 /// Creates default [`SessionConfig`], same as [`SessionConfig::new`]
@@ -398,35 +370,57 @@ impl Session {
     /// # }
     /// ```
     pub async fn connect(config: SessionConfig) -> Result<Session, NewSessionError> {
+        let known_nodes = config.known_nodes;
+
         // Ensure there is at least one known node
-        if config.known_nodes.is_empty() {
+        if known_nodes.is_empty() {
             return Err(NewSessionError::EmptyKnownNodesList);
         }
 
         // Find IP addresses of all known nodes passed in the config
-        let mut node_addresses: Vec<SocketAddr> = Vec::with_capacity(config.known_nodes.len());
+        let mut initial_peers: Vec<ContactPoint> = Vec::with_capacity(known_nodes.len());
 
-        let mut to_resolve: Vec<&str> = Vec::new();
+        let mut to_resolve: Vec<String> = Vec::new();
 
-        for node in &config.known_nodes {
+        for node in known_nodes {
             match node {
                 KnownNode::Hostname(hostname) => to_resolve.push(hostname),
-                KnownNode::Address(address) => node_addresses.push(*address),
+                KnownNode::Address(address) => initial_peers.push(ContactPoint { address }),
             };
         }
+        let resolve_futures = to_resolve.into_iter().map(|hostname| async move {
+            Ok::<_, NewSessionError>(ContactPoint {
+                address: resolve_hostname(&hostname).await?,
+            })
+        });
+        let resolved: Vec<ContactPoint> = futures::future::try_join_all(resolve_futures).await?;
+        initial_peers.extend(resolved);
 
-        let resolve_futures = to_resolve.into_iter().map(resolve_hostname);
-        let resolved: Vec<SocketAddr> = futures::future::try_join_all(resolve_futures).await?;
+        let connection_config = ConnectionConfig {
+            compression: config.compression,
+            tcp_nodelay: config.tcp_nodelay,
+            #[cfg(feature = "ssl")]
+            ssl_context: config.ssl_context,
+            authenticator: config.authenticator.clone(),
+            connect_timeout: config.connect_timeout,
+            event_sender: None,
+            default_consistency: Default::default(),
+            address_translator: config.address_translator,
+        };
 
-        node_addresses.extend(resolved);
+        let pool_config = PoolConfig {
+            connection_config,
+            pool_size: config.connection_pool_size,
+            can_use_shard_aware_port: !config.disallow_shard_aware_port,
+            keepalive_interval: config.keepalive_interval,
+        };
 
         let cluster = Cluster::new(
-            &node_addresses,
-            config.get_pool_config(),
+            initial_peers,
+            pool_config,
             config.keyspaces_to_fetch,
             config.fetch_schema_metadata,
-            &config.address_translator,
-            &config.host_filter,
+            config.host_filter,
         )
         .await?;
 
@@ -1326,7 +1320,8 @@ impl Session {
                     | QueryError::DbError(DbError::IsBootstrapping, _)
                     | QueryError::DbError(DbError::Unavailable { .. }, _)
                     | QueryError::DbError(DbError::Unprepared { .. }, _)
-                    | QueryError::DbError(DbError::Overloaded { .. }, _) => false,
+                    | QueryError::DbError(DbError::Overloaded { .. }, _)
+                    | QueryError::TranslationError(_) => false,
 
                     // "slow" errors, i.e. ones that are returned after considerable time of query being run
                     QueryError::DbError(_, _)

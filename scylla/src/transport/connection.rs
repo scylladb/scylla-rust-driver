@@ -1,5 +1,6 @@
 use bytes::Bytes;
 use futures::{future::RemoteHandle, FutureExt};
+use scylla_cql::errors::TranslationError;
 use scylla_cql::frame::types::SerialConsistency;
 use tokio::io::{split, AsyncRead, AsyncWrite, AsyncWriteExt, BufReader, BufWriter};
 use tokio::net::{TcpSocket, TcpStream};
@@ -31,6 +32,9 @@ use std::{
 
 use super::errors::{BadKeyspaceName, DbError, QueryError};
 use super::iterator::RowIterator;
+use super::session::AddressTranslator;
+use super::topology::{PeerEndpoint, UntranslatedEndpoint, UntranslatedPeer};
+use super::NodeAddr;
 
 use crate::batch::{Batch, BatchStatement};
 use crate::frame::protocol_features::ProtocolFeatures;
@@ -220,6 +224,7 @@ pub struct ConnectionConfig {
     pub event_sender: Option<mpsc::Sender<Event>>,
     pub default_consistency: Consistency,
     pub authenticator: Option<Arc<dyn AuthenticatorProvider>>,
+    pub address_translator: Option<Arc<dyn AddressTranslator>>,
 }
 
 impl Default for ConnectionConfig {
@@ -233,6 +238,7 @@ impl Default for ConnectionConfig {
             connect_timeout: std::time::Duration::from_secs(5),
             default_consistency: Default::default(),
             authenticator: None,
+            address_translator: None,
         }
     }
 }
@@ -1055,11 +1061,51 @@ impl Connection {
     }
 }
 
+async fn maybe_translated_addr(
+    endpoint: UntranslatedEndpoint,
+    address_translator: Option<&dyn AddressTranslator>,
+) -> Result<SocketAddr, TranslationError> {
+    match endpoint {
+        UntranslatedEndpoint::ContactPoint(addr) => Ok(addr.address),
+        UntranslatedEndpoint::Peer(PeerEndpoint {
+            host_id,
+            address,
+            datacenter,
+            rack,
+        }) => match address {
+            NodeAddr::Translatable(addr) => {
+                // In this case, addr is subject to AddressTranslator.
+                if let Some(translator) = address_translator {
+                    let res = translator
+                        .translate_address(&UntranslatedPeer {
+                            host_id,
+                            untranslated_address: addr,
+                            datacenter,
+                            rack,
+                        })
+                        .await;
+                    if let Err(ref err) = res {
+                        error!("Address translation failed for addr {}: {}", addr, err);
+                    }
+                    res
+                } else {
+                    Ok(addr)
+                }
+            }
+            NodeAddr::Untranslatable(addr) => {
+                // In this case, addr is considered to be translated, as it is the control connection's address.
+                Ok(addr)
+            }
+        },
+    }
+}
+
 pub async fn open_connection(
-    addr: SocketAddr,
+    endpoint: UntranslatedEndpoint,
     source_port: Option<u16>,
     config: ConnectionConfig,
 ) -> Result<(Connection, ErrorReceiver), QueryError> {
+    let addr = maybe_translated_addr(endpoint, config.address_translator.as_deref()).await?;
     open_named_connection(
         addr,
         source_port,
@@ -1469,7 +1515,9 @@ mod tests {
 
     use super::ConnectionConfig;
     use crate::query::Query;
+    use crate::transport::cluster::ContactPoint;
     use crate::transport::connection::open_connection;
+    use crate::transport::topology::UntranslatedEndpoint;
     use crate::utils::test_utils::unique_keyspace_name;
     use crate::SessionBuilder;
     use futures::{StreamExt, TryStreamExt};
@@ -1501,9 +1549,13 @@ mod tests {
         let uri = std::env::var("SCYLLA_URI").unwrap_or_else(|_| "127.0.0.1:9042".to_string());
         let addr: SocketAddr = resolve_hostname(&uri).await;
 
-        let (connection, _) = super::open_connection(addr, None, ConnectionConfig::default())
-            .await
-            .unwrap();
+        let (connection, _) = super::open_connection(
+            UntranslatedEndpoint::ContactPoint(ContactPoint { address: addr }),
+            None,
+            ConnectionConfig::default(),
+        )
+        .await
+        .unwrap();
         let connection = Arc::new(connection);
 
         let ks = unique_keyspace_name();
@@ -1630,7 +1682,7 @@ mod tests {
 
         // We must interrupt the driver's full connection opening, because our proxy does not interact further after Startup.
         let startup_without_lwt_optimisation = select! {
-            _ = open_connection(proxy_addr, None, config.clone()) => unreachable!(),
+            _ = open_connection(UntranslatedEndpoint::ContactPoint(ContactPoint{address: proxy_addr}), None, config.clone()) => unreachable!(),
             startup = startup_rx.recv() => startup.unwrap(),
         };
 
@@ -1638,7 +1690,7 @@ mod tests {
             .change_request_rules(Some(make_rules(options_with_lwt_optimisation_support)));
 
         let startup_with_lwt_optimisation = select! {
-            _ = open_connection(proxy_addr, None, config.clone()) => unreachable!(),
+            _ = open_connection(UntranslatedEndpoint::ContactPoint(ContactPoint{address: proxy_addr}), None, config.clone()) => unreachable!(),
             startup = startup_rx.recv() => startup.unwrap(),
         };
 

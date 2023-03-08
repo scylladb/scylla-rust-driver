@@ -10,7 +10,6 @@ use crate::transport::{
     errors::QueryError,
     node::Node,
     partitioner::PartitionerName,
-    session::AddressTranslator,
     topology::{Keyspace, Metadata, MetadataReader},
 };
 
@@ -25,6 +24,15 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration;
 use tracing::{debug, warn};
+use uuid::Uuid;
+
+use super::node::NodeAddr;
+
+#[derive(Debug, Clone)]
+#[non_exhaustive]
+pub struct ContactPoint {
+    pub address: SocketAddr,
+}
 
 /// Cluster manages up to date information and connections to database nodes.
 /// All data can be accessed by cloning Arc<ClusterData> in the `data` field
@@ -59,8 +67,8 @@ pub struct Datacenter {
 
 #[derive(Clone)]
 pub struct ClusterData {
-    pub(crate) known_peers: HashMap<SocketAddr, Arc<Node>>, // Invariant: nonempty after Cluster::new()
-    pub(crate) ring: BTreeMap<Token, Arc<Node>>, // Invariant: nonempty after Cluster::new()
+    pub(crate) known_peers: HashMap<Uuid, Arc<Node>>, // Invariant: nonempty after Cluster::new()
+    pub(crate) ring: BTreeMap<Token, Arc<Node>>,      // Invariant: nonempty after Cluster::new()
     pub(crate) keyspaces: HashMap<String, Keyspace>,
     pub(crate) all_nodes: Vec<Arc<Node>>,
     pub(crate) datacenters: HashMap<String, Datacenter>,
@@ -130,12 +138,11 @@ struct UseKeyspaceRequest {
 
 impl Cluster {
     pub async fn new(
-        initial_peers: &[SocketAddr],
+        initial_peers: Vec<ContactPoint>,
         pool_config: PoolConfig,
         keyspaces_to_fetch: Vec<String>,
         fetch_schema_metadata: bool,
-        address_translator: &Option<Arc<dyn AddressTranslator>>,
-        host_filter: &Option<Arc<dyn HostFilter>>,
+        host_filter: Option<Arc<dyn HostFilter>>,
     ) -> Result<Cluster, QueryError> {
         let (refresh_sender, refresh_receiver) = tokio::sync::mpsc::channel(32);
         let (use_keyspace_sender, use_keyspace_receiver) = tokio::sync::mpsc::channel(32);
@@ -148,8 +155,7 @@ impl Cluster {
             server_events_sender,
             keyspaces_to_fetch,
             fetch_schema_metadata,
-            address_translator,
-            host_filter,
+            &host_filter,
         );
 
         let metadata = metadata_reader.read_metadata(true).await?;
@@ -176,7 +182,7 @@ impl Cluster {
             use_keyspace_channel: use_keyspace_receiver,
             used_keyspace: None,
 
-            host_filter: host_filter.clone(),
+            host_filter,
         };
 
         let (fut, worker_handle) = worker.work().remote_handle();
@@ -288,12 +294,12 @@ impl ClusterData {
     pub(crate) fn new(
         metadata: Metadata,
         pool_config: &PoolConfig,
-        known_peers: &HashMap<SocketAddr, Arc<Node>>,
+        known_peers: &HashMap<Uuid, Arc<Node>>,
         used_keyspace: &Option<VerifiedKeyspaceName>,
         host_filter: Option<&dyn HostFilter>,
     ) -> Self {
         // Create new updated known_peers and ring
-        let mut new_known_peers: HashMap<SocketAddr, Arc<Node>> =
+        let mut new_known_peers: HashMap<Uuid, Arc<Node>> =
             HashMap::with_capacity(metadata.peers.len());
         let mut ring: BTreeMap<Token, Arc<Node>> = BTreeMap::new();
         let mut datacenters: HashMap<String, Datacenter> = HashMap::new();
@@ -303,29 +309,27 @@ impl ClusterData {
             // Take existing Arc<Node> if possible, otherwise create new one
             // Changing rack/datacenter but not ip address seems improbable
             // so we can just create new node and connections then
-            let node: Arc<Node> = match known_peers.get(&peer.address) {
-                Some(node)
-                    if node.datacenter == peer.datacenter
-                        && node.rack == peer.rack
-                        && node.host_id == peer.host_id =>
-                {
-                    node.clone()
+            let node: Arc<Node> = match known_peers.get(&peer.host_id) {
+                Some(node) if node.datacenter == peer.datacenter && node.rack == peer.rack => {
+                    if node.address == peer.address {
+                        node.clone()
+                    } else {
+                        // If IP changes, the Node struct is recreated, but the underlying pool is preserved and notified about the IP change.
+                        Arc::new(Node::inherit_with_ip_changed(node, peer.to_peer_endpoint()))
+                    }
                 }
                 _ => {
                     let is_enabled = host_filter.map_or(true, |f| f.accept(&peer));
                     Arc::new(Node::new(
-                        peer.host_id,
-                        peer.address,
+                        peer.to_peer_endpoint(),
                         pool_config.clone(),
-                        peer.datacenter,
-                        peer.rack,
                         used_keyspace.clone(),
                         is_enabled,
                     ))
                 }
             };
 
-            new_known_peers.insert(peer.address, node.clone());
+            new_known_peers.insert(peer.host_id, node.clone());
 
             if let Some(dc) = &node.datacenter {
                 match datacenters.get_mut(dc) {
@@ -522,7 +526,14 @@ impl ClusterWorker {
     fn change_node_down_marker(&mut self, addr: SocketAddr, is_down: bool) {
         let cluster_data = self.cluster_data.load_full();
 
-        let node = match cluster_data.known_peers.get(&addr) {
+        // We need to iterate through the whole map here, but there will rarely more than ~100 nodes,
+        // and changes of down marker are infrequent enough to afford this. As an important tradeoff,
+        // we only keep one hashmap of known_peers, which is indexed by host IDs for node identification.
+        let node = match cluster_data
+            .known_peers
+            .values()
+            .find(|&peer| peer.address == NodeAddr::Translatable(addr))
+        {
             Some(node) => node,
             None => {
                 warn!("Unknown node address {}", addr);

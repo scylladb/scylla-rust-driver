@@ -7,6 +7,8 @@ use crate::transport::connection::VerifiedKeyspaceName;
 use crate::transport::connection_pool::{NodeConnectionPool, PoolConfig};
 use crate::transport::errors::QueryError;
 
+use std::fmt::Display;
+use std::net::IpAddr;
 use std::{
     hash::{Hash, Hasher},
     net::SocketAddr,
@@ -16,6 +18,8 @@ use std::{
     },
     time::{Duration, Instant},
 };
+
+use super::topology::{PeerEndpoint, UntranslatedEndpoint};
 
 #[derive(Debug, Clone, Copy)]
 pub struct TimestampedAverage {
@@ -53,15 +57,56 @@ impl TimestampedAverage {
     }
 }
 
+/// This enum is introduced to support address translation only in PoolRefiller,
+/// as well as to cope with the bug in older Cassandra and Scylla releases.
+/// The bug involves misconfiguration of rpc_address and/or broadcast_rpc_address
+/// in system.local to 0.0.0.0. Mitigation involves replacing the faulty address
+/// with connection's address, but then that address must not be subject to AddressTranslator,
+/// so we carry that information using this enum. Address translation is never performed
+/// on Untranslatable variant.
+#[non_exhaustive]
+#[derive(Debug, Clone, Copy, Hash, PartialEq, Eq, PartialOrd, Ord)]
+pub enum NodeAddr {
+    /// Fetched in Metadata with `query_peers()` (broadcast by a node itself).
+    Translatable(SocketAddr),
+    /// Built from control connection's address upon `query_peers()` in order to mitigate the bug described above.
+    Untranslatable(SocketAddr),
+}
+
+impl NodeAddr {
+    pub(crate) fn into_inner(self) -> SocketAddr {
+        match self {
+            NodeAddr::Translatable(addr) | NodeAddr::Untranslatable(addr) => addr,
+        }
+    }
+    pub(crate) fn inner_mut(&mut self) -> &mut SocketAddr {
+        match self {
+            NodeAddr::Translatable(addr) | NodeAddr::Untranslatable(addr) => addr,
+        }
+    }
+    pub fn ip(&self) -> IpAddr {
+        self.into_inner().ip()
+    }
+    pub fn port(&self) -> u16 {
+        self.into_inner().port()
+    }
+}
+
+impl Display for NodeAddr {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.into_inner())
+    }
+}
+
 /// Node represents a cluster node along with it's data and connections
 ///
-/// Note: if a Node changes its address (the optionally translated address),
-/// then it is not longer represented by the same instance of Node struct,
-/// but instead a new instance is created (for implementation reasons).
+/// Note: if a Node changes its broadcast address, then it is not longer
+/// represented by the same instance of Node struct, but instead
+/// a new instance is created (for implementation reasons).
 #[derive(Debug)]
 pub struct Node {
     pub host_id: Uuid,
-    pub address: SocketAddr,
+    pub address: NodeAddr,
     pub datacenter: Option<String>,
     pub rack: Option<String>,
 
@@ -82,16 +127,17 @@ impl Node {
     /// `datacenter` - optional datacenter name
     /// `rack` - optional rack name
     pub(crate) fn new(
-        host_id: Uuid,
-        address: SocketAddr,
+        peer: PeerEndpoint,
         pool_config: PoolConfig,
-        datacenter: Option<String>,
-        rack: Option<String>,
         keyspace_name: Option<VerifiedKeyspaceName>,
         enabled: bool,
     ) -> Self {
+        let host_id = peer.host_id;
+        let address = peer.address;
+        let datacenter = peer.datacenter.clone();
+        let rack = peer.rack.clone();
         let pool = enabled.then(|| {
-            NodeConnectionPool::new(address.ip(), address.port(), pool_config, keyspace_name)
+            NodeConnectionPool::new(UntranslatedEndpoint::Peer(peer), pool_config, keyspace_name)
         });
 
         Node {
@@ -102,6 +148,30 @@ impl Node {
             pool,
             down_marker: false.into(),
             average_latency: RwLock::new(None),
+        }
+    }
+
+    /// Recreates a Node after it changes its IP, preserving the pool.
+    ///
+    /// All settings except address are inherited from `node`.
+    /// The underlying pool is preserved and notified about the IP change.
+    /// # Arguments
+    ///
+    /// `node` - previous definition of that node
+    /// `address` - new address to connect to
+    pub(crate) fn inherit_with_ip_changed(node: &Node, endpoint: PeerEndpoint) -> Self {
+        let address = endpoint.address;
+        if let Some(ref pool) = node.pool {
+            pool.update_endpoint(endpoint);
+        }
+        Self {
+            address,
+            average_latency: RwLock::new(None),
+            down_marker: false.into(),
+            datacenter: node.datacenter.clone(),
+            rack: node.rack.clone(),
+            host_id: node.host_id,
+            pool: node.pool.clone(),
         }
     }
 
