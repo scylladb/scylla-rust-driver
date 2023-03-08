@@ -21,11 +21,16 @@ pub struct PreparedStatement {
     pub prepare_tracing_ids: Vec<Uuid>,
 
     id: Bytes,
-    metadata: PreparedMetadata,
-    statement: String,
+    shared: Arc<PreparedStatementSharedData>,
     page_size: Option<i32>,
     partitioner_name: PartitionerName,
     is_confirmed_lwt: bool,
+}
+
+#[derive(Debug)]
+struct PreparedStatementSharedData {
+    metadata: PreparedMetadata,
+    statement: String,
 }
 
 impl Clone for PreparedStatement {
@@ -34,8 +39,7 @@ impl Clone for PreparedStatement {
             config: self.config.clone(),
             prepare_tracing_ids: Vec::new(),
             id: self.id.clone(),
-            metadata: self.metadata.clone(),
-            statement: self.statement.clone(),
+            shared: self.shared.clone(),
             page_size: self.page_size,
             partitioner_name: self.partitioner_name.clone(),
             is_confirmed_lwt: self.is_confirmed_lwt,
@@ -54,8 +58,10 @@ impl PreparedStatement {
     ) -> Self {
         Self {
             id,
-            metadata,
-            statement,
+            shared: Arc::new(PreparedStatementSharedData {
+                metadata,
+                statement,
+            }),
             prepare_tracing_ids: Vec::new(),
             page_size,
             config,
@@ -69,7 +75,7 @@ impl PreparedStatement {
     }
 
     pub fn get_statement(&self) -> &str {
-        &self.statement
+        &self.shared.statement
     }
 
     /// Sets the page size for this CQL query.
@@ -97,7 +103,7 @@ impl PreparedStatement {
     /// to be routed in a token-aware manner. If false, the query
     /// will always be sent to a random node/shard.
     pub fn is_token_aware(&self) -> bool {
-        !self.metadata.pk_indexes.is_empty()
+        !self.get_prepared_metadata().pk_indexes.is_empty()
     }
 
     /// Returns true if it is known that the prepared statement contains
@@ -121,13 +127,13 @@ impl PreparedStatement {
     ) -> Result<Bytes, PartitionKeyError> {
         let mut buf = BytesMut::new();
 
-        if self.metadata.pk_indexes.len() == 1 {
+        if self.get_prepared_metadata().pk_indexes.len() == 1 {
             if let Some(v) = bound_values
                 .iter()
-                .nth(self.metadata.pk_indexes[0].index as usize)
+                .nth(self.get_prepared_metadata().pk_indexes[0].index as usize)
                 .ok_or_else(|| {
                     PartitionKeyError::NoPkIndexValue(
-                        self.metadata.pk_indexes[0].index,
+                        self.get_prepared_metadata().pk_indexes[0].index,
                         bound_values.len(),
                     )
                 })?
@@ -139,7 +145,8 @@ impl PreparedStatement {
         // Iterate on values using sorted pk_indexes (see deser_prepared_metadata),
         // and use PartitionKeyIndex.sequence to insert the value in pk_values with the correct order.
         // At the same time, compute the size of the buffer to reserve it before writing in it.
-        let mut pk_values: SmallVec<[_; 8]> = smallvec![None; self.metadata.pk_indexes.len()];
+        let mut pk_values: SmallVec<[_; 8]> =
+            smallvec![None; self.get_prepared_metadata().pk_indexes.len()];
         let mut values_iter = bound_values.iter();
         let mut buf_size = 0;
         // pk_indexes contains the indexes of the partition key value, so the current offset of the
@@ -147,7 +154,7 @@ impl PreparedStatement {
         // At each iteration values_iter.nth(0) will roughly correspond to values[values_iter_offset],
         // so values[pk_index.index] will be retrieved with values_iter.nth(pk_index.index - values_iter_offset)
         let mut values_iter_offset = 0;
-        for pk_index in &self.metadata.pk_indexes {
+        for pk_index in &self.get_prepared_metadata().pk_indexes {
             // Find value matching current pk_index
             let next_val = values_iter
                 .nth((pk_index.index - values_iter_offset) as usize)
@@ -178,7 +185,7 @@ impl PreparedStatement {
 
     /// Returns the name of the keyspace this statement is operating on.
     pub fn get_keyspace_name(&self) -> Option<&str> {
-        self.metadata
+        self.get_prepared_metadata()
             .col_specs
             .first()
             .map(|col_spec| col_spec.table_spec.ks_name.as_str())
@@ -186,7 +193,7 @@ impl PreparedStatement {
 
     /// Returns the name of the table this statement is operating on.
     pub fn get_table_name(&self) -> Option<&str> {
-        self.metadata
+        self.get_prepared_metadata()
             .col_specs
             .first()
             .map(|col_spec| col_spec.table_spec.table_name.as_str())
@@ -274,7 +281,7 @@ impl PreparedStatement {
 
     /// Access metadata about this prepared statement as returned by the database
     pub fn get_prepared_metadata(&self) -> &PreparedMetadata {
-        &self.metadata
+        &self.shared.metadata
     }
 
     /// Get the name of the partitioner used for this statement.
