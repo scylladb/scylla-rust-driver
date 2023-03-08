@@ -10,12 +10,13 @@ use tracing::{debug, error, trace, warn};
 use uuid::Uuid;
 
 #[cfg(feature = "ssl")]
-use openssl::ssl::{Ssl, SslContext};
-#[cfg(feature = "ssl")]
 use std::pin::Pin;
 use std::sync::atomic::AtomicU64;
 #[cfg(feature = "ssl")]
 use tokio_openssl::SslStream;
+
+#[cfg(feature = "ssl")]
+pub(crate) use ssl_config::SslConfig;
 
 use crate::authentication::AuthenticatorProvider;
 use scylla_cql::frame::response::authenticate::Authenticate;
@@ -35,6 +36,8 @@ use super::iterator::RowIterator;
 use super::session::AddressTranslator;
 use super::topology::{PeerEndpoint, UntranslatedEndpoint, UntranslatedPeer};
 use super::NodeAddr;
+#[cfg(feature = "cloud")]
+use crate::cloud::CloudConfig;
 
 use crate::batch::{Batch, BatchStatement};
 use crate::frame::protocol_features::ProtocolFeatures;
@@ -212,17 +215,85 @@ impl NonErrorQueryResponse {
         })
     }
 }
+#[cfg(feature = "ssl")]
+mod ssl_config {
+    use openssl::{
+        error::ErrorStack,
+        ssl::{Ssl, SslContext},
+    };
+    #[cfg(feature = "cloud")]
+    use uuid::Uuid;
+
+    /// This struct encapsulates all Ssl-regarding configuration and helps pass it tidily through the code.
+    //
+    // There are 3 possible options for SslConfig, whose behaviour is somewhat subtle.
+    // Option 1: No ssl configuration. Then it is None everytime.
+    // Option 2: User-provided global SslContext. Then, a SslConfig is created upon Session creation
+    // and henceforth stored in the ConnectionConfig.
+    // Option 3: Serverless Cloud. The Option<SslConfig> remains None in ConnectionConfig until it reaches
+    // NodeConnectionPool::new(). Inside that function, the field is mutated to contain SslConfig specific
+    // for the particular node. (The SslConfig must be different, because SNIs differ for different nodes.)
+    // Thenceforth, all connections to that node share the same SslConfig.
+    #[derive(Clone)]
+    pub struct SslConfig {
+        context: SslContext,
+        #[cfg(feature = "cloud")]
+        sni: Option<String>,
+    }
+
+    impl SslConfig {
+        // Used in case when the user provided their own SslContext to be used in all connections.
+        pub fn new_with_global_context(context: SslContext) -> Self {
+            Self {
+                context,
+                #[cfg(feature = "cloud")]
+                sni: None,
+            }
+        }
+
+        // Used in case of Serverless Cloud connections.
+        #[cfg(feature = "cloud")]
+        pub(crate) fn new_for_sni(
+            context: SslContext,
+            domain_name: &str,
+            host_id: Option<Uuid>,
+        ) -> Self {
+            Self {
+                context,
+                #[cfg(feature = "cloud")]
+                sni: Some(if let Some(host_id) = host_id {
+                    format!("{}.{}", host_id, domain_name)
+                } else {
+                    domain_name.into()
+                }),
+            }
+        }
+
+        // Produces a new Ssl object that is able to wrap a TCP stream.
+        pub(crate) fn new_ssl(&self) -> Result<Ssl, ErrorStack> {
+            #[allow(unused_mut)]
+            let mut ssl = Ssl::new(&self.context)?;
+            #[cfg(feature = "cloud")]
+            if let Some(sni) = self.sni.as_ref() {
+                ssl.set_hostname(sni)?;
+            }
+            Ok(ssl)
+        }
+    }
+}
 
 #[derive(Clone)]
 pub struct ConnectionConfig {
     pub compression: Option<Compression>,
     pub tcp_nodelay: bool,
     #[cfg(feature = "ssl")]
-    pub ssl_context: Option<SslContext>,
+    pub ssl_config: Option<SslConfig>,
     pub connect_timeout: std::time::Duration,
     // should be Some only in control connections,
     pub event_sender: Option<mpsc::Sender<Event>>,
     pub default_consistency: Consistency,
+    #[cfg(feature = "cloud")]
+    pub(crate) cloud_config: Option<Arc<CloudConfig>>,
     pub authenticator: Option<Arc<dyn AuthenticatorProvider>>,
     pub address_translator: Option<Arc<dyn AddressTranslator>>,
 }
@@ -234,11 +305,13 @@ impl Default for ConnectionConfig {
             tcp_nodelay: true,
             event_sender: None,
             #[cfg(feature = "ssl")]
-            ssl_context: None,
+            ssl_config: None,
             connect_timeout: std::time::Duration::from_secs(5),
             default_consistency: Default::default(),
             authenticator: None,
             address_translator: None,
+            #[cfg(feature = "cloud")]
+            cloud_config: None,
         }
     }
 }
@@ -246,7 +319,11 @@ impl Default for ConnectionConfig {
 impl ConnectionConfig {
     #[cfg(feature = "ssl")]
     pub fn is_ssl(&self) -> bool {
-        self.ssl_context.is_some()
+        #[cfg(feature = "cloud")]
+        if self.cloud_config.is_some() {
+            return true;
+        }
+        self.ssl_config.is_some()
     }
 
     #[cfg(not(feature = "ssl"))]
@@ -768,8 +845,8 @@ impl Connection {
         orphan_notification_receiver: mpsc::UnboundedReceiver<RequestId>,
     ) -> Result<RemoteHandle<()>, std::io::Error> {
         #[cfg(feature = "ssl")]
-        if let Some(context) = &config.ssl_context {
-            let ssl = Ssl::new(context)?;
+        if let Some(ssl_config) = &config.ssl_config {
+            let ssl = ssl_config.new_ssl()?;
             let mut stream = SslStream::new(ssl, stream)?;
             let _pin = Pin::new(&mut stream).connect().await;
 
@@ -1550,7 +1627,10 @@ mod tests {
         let addr: SocketAddr = resolve_hostname(&uri).await;
 
         let (connection, _) = super::open_connection(
-            UntranslatedEndpoint::ContactPoint(ContactPoint { address: addr }),
+            UntranslatedEndpoint::ContactPoint(ContactPoint {
+                address: addr,
+                datacenter: None,
+            }),
             None,
             ConnectionConfig::default(),
         )
@@ -1682,7 +1762,7 @@ mod tests {
 
         // We must interrupt the driver's full connection opening, because our proxy does not interact further after Startup.
         let startup_without_lwt_optimisation = select! {
-            _ = open_connection(UntranslatedEndpoint::ContactPoint(ContactPoint{address: proxy_addr}), None, config.clone()) => unreachable!(),
+            _ = open_connection(UntranslatedEndpoint::ContactPoint(ContactPoint{address: proxy_addr, datacenter: None}), None, config.clone()) => unreachable!(),
             startup = startup_rx.recv() => startup.unwrap(),
         };
 
@@ -1690,7 +1770,7 @@ mod tests {
             .change_request_rules(Some(make_rules(options_with_lwt_optimisation_support)));
 
         let startup_with_lwt_optimisation = select! {
-            _ = open_connection(UntranslatedEndpoint::ContactPoint(ContactPoint{address: proxy_addr}), None, config.clone()) => unreachable!(),
+            _ = open_connection(UntranslatedEndpoint::ContactPoint(ContactPoint{address: proxy_addr, datacenter: None}), None, config.clone()) => unreachable!(),
             startup = startup_rx.recv() => startup.unwrap(),
         };
 

@@ -1,6 +1,9 @@
 //! `Session` is the main object used in the driver.\
 //! It manages all connections to the cluster and allows to perform queries.
 
+#[cfg(feature = "cloud")]
+use crate::cloud::CloudConfig;
+
 use crate::frame::types::LegacyConsistency;
 use crate::history;
 use crate::history::HistoryListener;
@@ -26,6 +29,8 @@ use uuid::Uuid;
 use super::cluster::ContactPoint;
 use super::connection::NonErrorQueryResponse;
 use super::connection::QueryResponse;
+#[cfg(feature = "ssl")]
+use super::connection::SslConfig;
 use super::errors::{BadQuery, NewSessionError, QueryError};
 use super::execution_profile::{ExecutionProfile, ExecutionProfileHandle, ExecutionProfileInner};
 use super::partitioner::PartitionerName;
@@ -139,6 +144,7 @@ impl std::fmt::Debug for Session {
 /// Can be created manually, but usually it's easier to use
 /// [SessionBuilder](super::session_builder::SessionBuilder)
 #[derive(Clone)]
+#[non_exhaustive]
 pub struct SessionConfig {
     /// List of database servers known on Session startup.
     /// Session will connect to these nodes to retrieve information about other nodes in the cluster.
@@ -195,13 +201,28 @@ pub struct SessionConfig {
     /// If true, full schema metadata is fetched after successfully reaching a schema agreement.
     /// It is true by default but can be disabled if successive schema-altering statements should be performed.
     pub refresh_metadata_on_auto_schema_agreement: bool,
+
+    // If the driver is to connect to ScyllaCloud, there is a config for it.
+    #[cfg(feature = "cloud")]
+    pub(crate) cloud_config: Option<Arc<CloudConfig>>,
 }
 
 /// Describes database server known on Session startup.
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Debug)]
+#[non_exhaustive]
 pub enum KnownNode {
     Hostname(String),
     Address(SocketAddr),
+    #[cfg(feature = "cloud")]
+    CloudEndpoint(CloudEndpoint),
+}
+
+#[cfg(feature = "cloud")]
+#[non_exhaustive]
+#[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Debug)]
+pub struct CloudEndpoint {
+    pub hostname: String,
+    pub datacenter: String,
 }
 
 impl SessionConfig {
@@ -238,6 +259,8 @@ impl SessionConfig {
             address_translator: None,
             host_filter: None,
             refresh_metadata_on_auto_schema_agreement: true,
+            #[cfg(feature = "cloud")]
+            cloud_config: None,
         }
     }
 
@@ -372,6 +395,25 @@ impl Session {
     pub async fn connect(config: SessionConfig) -> Result<Session, NewSessionError> {
         let known_nodes = config.known_nodes;
 
+        #[cfg(feature = "cloud")]
+        let known_nodes = if let Some(cloud_servers) =
+            config.cloud_config.as_ref().map(|cloud_config| {
+                cloud_config
+                    .get_datacenters()
+                    .iter()
+                    .map(|(dc_name, dc_data)| {
+                        KnownNode::CloudEndpoint(CloudEndpoint {
+                            hostname: dc_data.get_server().to_owned(),
+                            datacenter: dc_name.clone(),
+                        })
+                    })
+                    .collect()
+            }) {
+            cloud_servers
+        } else {
+            known_nodes
+        };
+
         // Ensure there is at least one known node
         if known_nodes.is_empty() {
             return Err(NewSessionError::EmptyKnownNodesList);
@@ -380,19 +422,30 @@ impl Session {
         // Find IP addresses of all known nodes passed in the config
         let mut initial_peers: Vec<ContactPoint> = Vec::with_capacity(known_nodes.len());
 
-        let mut to_resolve: Vec<String> = Vec::new();
+        let mut to_resolve: Vec<(String, Option<String>)> = Vec::new();
 
         for node in known_nodes {
             match node {
-                KnownNode::Hostname(hostname) => to_resolve.push(hostname),
-                KnownNode::Address(address) => initial_peers.push(ContactPoint { address }),
+                KnownNode::Hostname(hostname) => to_resolve.push((hostname, None)),
+                KnownNode::Address(address) => initial_peers.push(ContactPoint {
+                    address,
+                    datacenter: None,
+                }),
+                #[cfg(feature = "cloud")]
+                KnownNode::CloudEndpoint(CloudEndpoint {
+                    hostname,
+                    datacenter,
+                }) => to_resolve.push((hostname, Some(datacenter))),
             };
         }
-        let resolve_futures = to_resolve.into_iter().map(|hostname| async move {
-            Ok::<_, NewSessionError>(ContactPoint {
-                address: resolve_hostname(&hostname).await?,
-            })
-        });
+        let resolve_futures = to_resolve
+            .into_iter()
+            .map(|(hostname, datacenter)| async move {
+                Ok::<_, NewSessionError>(ContactPoint {
+                    address: resolve_hostname(&hostname).await?,
+                    datacenter,
+                })
+            });
         let resolved: Vec<ContactPoint> = futures::future::try_join_all(resolve_futures).await?;
         initial_peers.extend(resolved);
 
@@ -400,12 +453,14 @@ impl Session {
             compression: config.compression,
             tcp_nodelay: config.tcp_nodelay,
             #[cfg(feature = "ssl")]
-            ssl_context: config.ssl_context,
+            ssl_config: config.ssl_context.map(SslConfig::new_with_global_context),
             authenticator: config.authenticator.clone(),
             connect_timeout: config.connect_timeout,
             event_sender: None,
             default_consistency: Default::default(),
             address_translator: config.address_translator,
+            #[cfg(feature = "cloud")]
+            cloud_config: config.cloud_config,
         };
 
         let pool_config = PoolConfig {
@@ -1731,8 +1786,7 @@ fn calculate_partition_key(
 // Resolve the given hostname using a DNS lookup if necessary.
 // The resolution may return multiple IPs and the function returns one of them.
 // It prefers to return IPv4s first, and only if there are none, IPv6s.
-async fn resolve_hostname(hostname: &str) -> Result<SocketAddr, NewSessionError> {
-    let failed_err = NewSessionError::FailedToResolveAddress(hostname.to_string());
+pub(crate) async fn resolve_hostname(hostname: &str) -> Result<SocketAddr, NewSessionError> {
     let mut ret = None;
     let addrs: Vec<SocketAddr> = match lookup_host(hostname).await {
         Ok(addrs) => addrs.collect(),
@@ -1748,7 +1802,7 @@ async fn resolve_hostname(hostname: &str) -> Result<SocketAddr, NewSessionError>
         }
     }
 
-    ret.ok_or(failed_err)
+    ret.ok_or_else(|| NewSessionError::FailedToResolveAddress(hostname.to_string()))
 }
 
 // run_query, execute_query, etc have a template type called ResT.

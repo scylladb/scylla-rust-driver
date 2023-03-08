@@ -1,3 +1,6 @@
+#[cfg(feature = "cloud")]
+use crate::cloud::set_ssl_config_for_scylla_cloud_host;
+
 use crate::routing::{Shard, ShardCount, Sharder, Token};
 use crate::transport::errors::QueryError;
 use crate::transport::{
@@ -5,8 +8,14 @@ use crate::transport::{
     connection::{Connection, ConnectionConfig, ErrorReceiver, VerifiedKeyspaceName},
 };
 
+#[cfg(feature = "cloud")]
+use super::session::resolve_hostname;
+
+#[cfg(feature = "cloud")]
+use super::cluster::ContactPoint;
 use super::topology::{PeerEndpoint, UntranslatedEndpoint};
 use super::NodeAddr;
+
 use arc_swap::ArcSwap;
 use futures::{future::RemoteHandle, stream::FuturesUnordered, Future, FutureExt, StreamExt};
 use rand::Rng;
@@ -21,7 +30,7 @@ use tokio::sync::{mpsc, Notify};
 use tracing::{debug, trace, warn};
 
 /// The target size of a per-node connection pool.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy)]
 pub enum PoolSize {
     /// Indicates that the pool should establish given number of connections to the node.
     ///
@@ -158,13 +167,38 @@ impl std::fmt::Debug for NodeConnectionPool {
 impl NodeConnectionPool {
     pub fn new(
         endpoint: UntranslatedEndpoint,
-        pool_config: PoolConfig,
+        #[allow(unused_mut)] mut pool_config: PoolConfig, // `mut` needed only with "cloud" feature
         current_keyspace: Option<VerifiedKeyspaceName>,
     ) -> Self {
         let (use_keyspace_request_sender, use_keyspace_request_receiver) = mpsc::channel(1);
         let pool_updated_notify = Arc::new(Notify::new());
 
         let keepalive_interval = pool_config.keepalive_interval;
+
+        #[cfg(feature = "cloud")]
+        if pool_config.connection_config.cloud_config.is_some() {
+            let (host_id, address, dc) = match endpoint {
+                UntranslatedEndpoint::ContactPoint(ContactPoint {
+                    address,
+                    ref datacenter,
+                }) => (None, address, datacenter.as_deref()), // FIXME: Pass DC in ContactPoint
+                UntranslatedEndpoint::Peer(PeerEndpoint {
+                    host_id,
+                    address,
+                    ref datacenter,
+                    ..
+                }) => (Some(host_id), address.into_inner(), datacenter.as_deref()),
+            };
+            set_ssl_config_for_scylla_cloud_host(host_id, dc, address, &mut pool_config.connection_config)
+                .unwrap_or_else(|err| warn!(
+                    "SslContext for SNI connection to Scylla Cloud node {{ host_id={:?}, dc={:?} at {} }} could not be set up: {}\n Proceeding with attempting probably nonworking connection",
+                    host_id,
+                    dc,
+                    address,
+                    err
+                )
+            );
+        }
 
         let endpoint_ip = endpoint.address().ip();
         let arced_endpoint = Arc::new(RwLock::new(endpoint));
@@ -906,49 +940,111 @@ impl PoolRefiller {
         }
     }
 
+    #[cfg(not(feature = "cloud"))]
+    fn maybe_translate_for_serverless(
+        &self,
+        endpoint: UntranslatedEndpoint,
+    ) -> impl Future<Output = UntranslatedEndpoint> {
+        // We are not in serverless Cloud, so no modifications are necessary here.
+        async move { endpoint }
+    }
+
+    #[cfg(feature = "cloud")]
+    fn maybe_translate_for_serverless(
+        &self,
+        mut endpoint: UntranslatedEndpoint,
+    ) -> impl Future<Output = UntranslatedEndpoint> {
+        let cloud_config = self.pool_config.connection_config.cloud_config.clone();
+        async move {
+            if let Some(cloud_config) = cloud_config {
+                // If we operate in the serverless Cloud, then we substitute every node's address
+                // with the address of the proxy in the datacenter that the node resides in.
+                if let UntranslatedEndpoint::Peer(PeerEndpoint {
+                    host_id,
+                    ref mut address,
+                    ref datacenter,
+                    ..
+                }) = endpoint
+                {
+                    if let Some(dc) = datacenter.as_deref() {
+                        if let Some(dc_config) = cloud_config.get_datacenters().get(dc) {
+                            let hostname = dc_config.get_server();
+                            if let Ok(resolved) = resolve_hostname(hostname).await {
+                                *address = NodeAddr::Untranslatable(resolved)
+                            } else {
+                                warn!(
+                                        "Couldn't resolve address: {} of datacenter {} that node {} resides in; therefore address \
+                                         broadcast by the node was left as address to open connection to.",
+                                        hostname, dc, host_id
+                                    );
+                            }
+                        } else {
+                            warn!( // FIXME: perhaps error! would fit here better?
+                                    "Datacenter {} that node {} resides in not found in the Cloud config; ; therefore address \
+                                     broadcast by the node was left as address to open connection to.",
+                                    dc, host_id
+                                );
+                        }
+                    } else {
+                        warn!( // FIXME: perhaps error! would fit here better?
+                                "Datacenter for node {} is empty in the Metadata fetched from the Cloud cluster; ; therefore address \
+                                 broadcast by the node was left as address to open connection to.",
+                                host_id
+                            );
+                    }
+                }
+                endpoint
+            } else {
+                // We are not in serverless Cloud, so no modifications are necessary here.
+                endpoint
+            }
+        }
+    }
+
     // Starts opening a new connection in the background. The result of connecting
     // will be available on `ready_connections`. If the shard is specified and
     // the shard aware port is available, it will attempt to connect directly
     // to the shard using the port.
     fn start_opening_connection(&self, shard: Option<Shard>) {
         let cfg = self.pool_config.connection_config.clone();
-        let mut endpoint = self.endpoint.read().unwrap().clone();
+        let endpoint = self.endpoint.read().unwrap().clone();
+
+        // If we operate in the serverless Cloud, then we substitute every node's address
+        // with the address of the proxy in the datacenter that the node resides in.
+        // As this may may involve resolving a hostname, the whole operation is async.
+        let endpoint_fut = self.maybe_translate_for_serverless(endpoint);
 
         let fut = match (self.sharder.clone(), self.shard_aware_port, shard) {
-            (Some(sharder), Some(port), Some(shard)) => {
+            (Some(sharder), Some(port), Some(shard)) => async move {
                 let shard_aware_endpoint = {
+                    let mut endpoint = endpoint_fut.await;
                     endpoint.set_port(port);
                     endpoint
                 };
-                async move {
-                    let result = open_connection_to_shard_aware_port(
-                        shard_aware_endpoint,
-                        shard,
-                        sharder.clone(),
-                        &cfg,
-                    )
-                    .await;
-                    OpenedConnectionEvent {
-                        result,
-                        requested_shard: Some(shard),
-                        keyspace_name: None,
-                    }
+                let result = open_connection_to_shard_aware_port(
+                    shard_aware_endpoint,
+                    shard,
+                    sharder.clone(),
+                    &cfg,
+                )
+                .await;
+                OpenedConnectionEvent {
+                    result,
+                    requested_shard: Some(shard),
+                    keyspace_name: None,
                 }
-                .boxed()
             }
-            _ => {
-                let non_shard_aware_endpoint = endpoint;
-                async move {
-                    let result =
-                        connection::open_connection(non_shard_aware_endpoint, None, cfg).await;
-                    OpenedConnectionEvent {
-                        result,
-                        requested_shard: None,
-                        keyspace_name: None,
-                    }
+            .boxed(),
+            _ => async move {
+                let non_shard_aware_endpoint = endpoint_fut.await;
+                let result = connection::open_connection(non_shard_aware_endpoint, None, cfg).await;
+                OpenedConnectionEvent {
+                    result,
+                    requested_shard: None,
+                    keyspace_name: None,
                 }
-                .boxed()
             }
+            .boxed(),
         };
         self.ready_connections.push(fut);
     }
@@ -1270,7 +1366,7 @@ mod tests {
             compression: None,
             tcp_nodelay: true,
             #[cfg(feature = "ssl")]
-            ssl_context: None,
+            ssl_config: None,
             ..Default::default()
         };
 
@@ -1286,6 +1382,7 @@ mod tests {
             conns.push(open_connection_to_shard_aware_port(
                 UntranslatedEndpoint::ContactPoint(ContactPoint {
                     address: connect_address,
+                    datacenter: None,
                 }),
                 0,
                 sharder.clone(),

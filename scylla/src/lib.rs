@@ -102,6 +102,9 @@ pub use scylla_cql::frame;
 pub use scylla_cql::macros::{self, *};
 
 pub mod authentication;
+#[cfg(feature = "cloud")]
+pub mod cloud;
+
 pub mod history;
 pub mod routing;
 pub mod statement;
@@ -127,6 +130,9 @@ pub use transport::execution_profile::ExecutionProfile;
 pub use transport::query_result::QueryResult;
 pub use transport::session::{IntoTypedRows, Session, SessionConfig};
 pub use transport::session_builder::SessionBuilder;
+
+#[cfg(feature = "cloud")]
+pub use transport::session_builder::CloudSessionBuilder;
 
 pub use transport::host_filter;
 pub use transport::load_balancing;
