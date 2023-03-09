@@ -254,7 +254,7 @@ impl SessionConfig {
             disallow_shard_aware_port: false,
             keyspaces_to_fetch: Vec::new(),
             fetch_schema_metadata: true,
-            keepalive_interval: None,
+            keepalive_interval: Some(Duration::from_secs(30)),
             auto_await_schema_agreement_timeout: Some(std::time::Duration::from_secs(60)),
             address_translator: None,
             host_filter: None,
