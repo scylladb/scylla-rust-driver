@@ -613,7 +613,8 @@ impl<K: SessionBuilderKind> GenericSessionBuilder<K> {
     }
 
     /// Set the keepalive interval.
-    /// The default is `None`, it corresponds to no keepalive messages being send.
+    /// The default is `Some(Duration::from_secs(30))`, it corresponds
+    /// to keepalive messages being sent every 30 seconds.
     ///
     /// # Example
     /// ```
