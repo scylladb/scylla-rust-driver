@@ -48,6 +48,7 @@
     - [UDT (User defined type)](data-types/udt.md)
 
 - [Load balancing](load-balancing/load-balancing.md)
+    - [Default policy](load-balancing/default-policy.md)
 
 - [Retry policy configuration](retry-policy/retry-policy.md)
     - [Fallthrough retry policy](retry-policy/fallthrough.md)
