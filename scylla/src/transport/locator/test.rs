@@ -1,3 +1,5 @@
+use rand::SeedableRng;
+use rand_chacha::ChaCha8Rng;
 use uuid::Uuid;
 
 use super::{ReplicaLocator, ReplicaSet};
@@ -487,7 +489,7 @@ fn test_replica_set_choose(locator: &ReplicaLocator) {
         },
     ];
 
-    let mut rng = rand::thread_rng();
+    let mut rng = ChaCha8Rng::seed_from_u64(69);
 
     for strategy in strategies {
         let replica_set_generator =
@@ -528,7 +530,7 @@ fn test_replica_set_choose_filtered(locator: &ReplicaLocator) {
         },
     ];
 
-    let mut rng = rand::thread_rng();
+    let mut rng = ChaCha8Rng::seed_from_u64(69);
 
     for strategy in strategies {
         let replica_set_generator =
