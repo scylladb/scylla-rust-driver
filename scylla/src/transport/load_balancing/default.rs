@@ -1543,4 +1543,699 @@ mod latency_awareness {
                 .or_else(|| self.penalised_nodes.next())
         }
     }
+    #[cfg(test)]
+    mod tests {
+        use scylla_cql::Consistency;
+
+        use super::{
+            super::tests::{framework::*, EMPTY_ROUTING_INFO},
+            super::DefaultPolicy,
+            *,
+        };
+
+        use crate::{
+            load_balancing::{
+                default::tests::test_default_policy_with_given_cluster_and_routing_info,
+                RoutingInfo,
+            },
+            routing::Token,
+            transport::{
+                locator::test::{
+                    id_to_invalid_addr, A, B, C, D, E, F, G, KEYSPACE_NTS_RF_2, KEYSPACE_NTS_RF_3,
+                },
+                ClusterData, NodeAddr,
+            },
+        };
+        use std::{collections::HashSet, time::Instant};
+
+        trait DefaultPolicyTestExt {
+            fn set_nodes_latency_stats(
+                &self,
+                cluster: &ClusterData,
+                averages: &[(u16, Option<TimestampedAverage>)],
+            );
+        }
+
+        impl DefaultPolicyTestExt for DefaultPolicy {
+            fn set_nodes_latency_stats(
+                &self,
+                cluster: &ClusterData,
+                averages: &[(u16, Option<TimestampedAverage>)],
+            ) {
+                let addr_to_host_id: HashMap<NodeAddr, Uuid> = cluster
+                    .known_peers
+                    .values()
+                    .map(|node| (node.address, node.host_id))
+                    .collect();
+
+                for (id, average) in averages.iter().copied() {
+                    let host_id = *addr_to_host_id.get(&id_to_invalid_addr(id)).unwrap();
+                    let mut node_latencies = self
+                        .latency_awareness
+                        .as_ref()
+                        .unwrap()
+                        .node_avgs
+                        .write()
+                        .unwrap();
+                    let mut node_latency =
+                        node_latencies.entry(host_id).or_default().write().unwrap();
+                    println!("Set latency: node {}, latency {:?}.", id, average);
+                    *node_latency = average;
+                }
+                println!("Set node latency stats.")
+            }
+        }
+
+        pub fn latency_aware_default_policy() -> DefaultPolicy {
+            let latency_awareness = LatencyAwareness::builder().build();
+
+            let pick_predicate = {
+                let latency_predicate = latency_awareness.generate_predicate();
+                Box::new(move |node: &NodeRef| {
+                    DefaultPolicy::is_alive(node) && latency_predicate(node)
+                }) as Box<dyn Fn(&NodeRef) -> bool + Send + Sync + 'static>
+            };
+
+            DefaultPolicy {
+                preferred_datacenter: Some("eu".to_owned()),
+                permit_dc_failover: true,
+                is_token_aware: true,
+                pick_predicate,
+                latency_awareness: Some(latency_awareness),
+            }
+        }
+
+        #[tokio::test]
+        async fn latency_aware_default_policy_does_not_penalise_if_no_latency_info_available_yet() {
+            let policy = latency_aware_default_policy();
+            let cluster = tests::mock_cluster_data_for_token_unaware_tests().await;
+
+            let expected_groups = ExpectedGroupsBuilder::new()
+                .group([1, 2, 3]) // pick + fallback local nodes
+                .group([4, 5]) // fallback remote nodes
+                .build();
+
+            test_default_policy_with_given_cluster_and_routing_info(
+                &policy,
+                &cluster,
+                &EMPTY_ROUTING_INFO,
+                &expected_groups,
+            )
+            .await;
+        }
+
+        #[tokio::test]
+        async fn latency_aware_default_policy_does_not_penalise_if_not_enough_measurements() {
+            let policy = latency_aware_default_policy();
+            let cluster = tests::mock_cluster_data_for_token_unaware_tests().await;
+
+            let min_avg = Duration::from_millis(10);
+
+            policy.set_nodes_latency_stats(
+                &cluster,
+                &[
+                    (
+                        1,
+                        Some(TimestampedAverage {
+                            timestamp: Instant::now(),
+                            average: Duration::from_secs_f64(
+                                policy
+                                    .latency_awareness
+                                    .as_ref()
+                                    .unwrap()
+                                    .exclusion_threshold
+                                    * 1.5
+                                    * min_avg.as_secs_f64(),
+                            ),
+                            num_measures: policy
+                                .latency_awareness
+                                .as_ref()
+                                .unwrap()
+                                .minimum_measurements
+                                - 1,
+                        }),
+                    ),
+                    (
+                        3,
+                        Some(TimestampedAverage {
+                            timestamp: Instant::now(),
+                            average: min_avg,
+                            num_measures: policy
+                                .latency_awareness
+                                .as_ref()
+                                .unwrap()
+                                .minimum_measurements,
+                        }),
+                    ),
+                ],
+            );
+
+            let expected_groups = ExpectedGroupsBuilder::new()
+                .group([1, 2, 3]) // pick + fallback local nodes
+                .group([4, 5]) // fallback remote nodes
+                .build();
+
+            test_default_policy_with_given_cluster_and_routing_info(
+                &policy,
+                &cluster,
+                &EMPTY_ROUTING_INFO,
+                &expected_groups,
+            )
+            .await;
+        }
+
+        #[tokio::test]
+        async fn latency_aware_default_policy_does_not_penalise_if_exclusion_threshold_not_crossed()
+        {
+            let policy = latency_aware_default_policy();
+            let cluster = tests::mock_cluster_data_for_token_unaware_tests().await;
+
+            let min_avg = Duration::from_millis(10);
+
+            policy.set_nodes_latency_stats(
+                &cluster,
+                &[
+                    (
+                        1,
+                        Some(TimestampedAverage {
+                            timestamp: Instant::now(),
+                            average: Duration::from_secs_f64(
+                                policy
+                                    .latency_awareness
+                                    .as_ref()
+                                    .unwrap()
+                                    .exclusion_threshold
+                                    * 0.95
+                                    * min_avg.as_secs_f64(),
+                            ),
+                            num_measures: policy
+                                .latency_awareness
+                                .as_ref()
+                                .unwrap()
+                                .minimum_measurements,
+                        }),
+                    ),
+                    (
+                        3,
+                        Some(TimestampedAverage {
+                            timestamp: Instant::now(),
+                            average: min_avg,
+                            num_measures: policy
+                                .latency_awareness
+                                .as_ref()
+                                .unwrap()
+                                .minimum_measurements,
+                        }),
+                    ),
+                ],
+            );
+
+            let expected_groups = ExpectedGroupsBuilder::new()
+                .group([1, 2, 3]) // pick + fallback local nodes
+                .group([4, 5]) // fallback remote nodes
+                .build();
+
+            test_default_policy_with_given_cluster_and_routing_info(
+                &policy,
+                &cluster,
+                &EMPTY_ROUTING_INFO,
+                &expected_groups,
+            )
+            .await;
+        }
+
+        #[tokio::test]
+        async fn latency_aware_default_policy_does_not_penalise_if_retry_period_expired() {
+            let mut policy = latency_aware_default_policy();
+            policy.latency_awareness.as_mut().unwrap().retry_period = Duration::from_millis(10);
+
+            let cluster = tests::mock_cluster_data_for_token_unaware_tests().await;
+
+            let min_avg = Duration::from_millis(10);
+
+            policy.set_nodes_latency_stats(
+                &cluster,
+                &[
+                    (
+                        1,
+                        Some(TimestampedAverage {
+                            timestamp: Instant::now(),
+                            average: Duration::from_secs_f64(
+                                policy
+                                    .latency_awareness
+                                    .as_ref()
+                                    .unwrap()
+                                    .exclusion_threshold
+                                    * 1.5
+                                    * min_avg.as_secs_f64(),
+                            ),
+                            num_measures: policy
+                                .latency_awareness
+                                .as_ref()
+                                .unwrap()
+                                .minimum_measurements,
+                        }),
+                    ),
+                    (
+                        3,
+                        Some(TimestampedAverage {
+                            timestamp: Instant::now(),
+                            average: min_avg,
+                            num_measures: policy
+                                .latency_awareness
+                                .as_ref()
+                                .unwrap()
+                                .minimum_measurements,
+                        }),
+                    ),
+                ],
+            );
+
+            tokio::time::sleep(2 * policy.latency_awareness.as_ref().unwrap().retry_period).await;
+
+            let expected_groups = ExpectedGroupsBuilder::new()
+                .group([1, 2, 3]) // pick + fallback local nodes
+                .group([4, 5]) // fallback remote nodes
+                .build();
+
+            test_default_policy_with_given_cluster_and_routing_info(
+                &policy,
+                &cluster,
+                &EMPTY_ROUTING_INFO,
+                &expected_groups,
+            )
+            .await;
+        }
+
+        #[tokio::test]
+        async fn latency_aware_default_policy_penalises_if_conditions_met() {
+            let _ = tracing_subscriber::fmt::fmt()
+                .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+                .without_time()
+                .try_init();
+            let policy = latency_aware_default_policy();
+            let cluster = tests::mock_cluster_data_for_token_unaware_tests().await;
+
+            let min_avg = Duration::from_millis(10);
+
+            policy.set_nodes_latency_stats(
+                &cluster,
+                &[
+                    // 3 is fast enough to make 1 and 4 penalised.
+                    (
+                        1,
+                        Some(TimestampedAverage {
+                            timestamp: Instant::now(),
+                            average: Duration::from_secs_f64(
+                                policy
+                                    .latency_awareness
+                                    .as_ref()
+                                    .unwrap()
+                                    .exclusion_threshold
+                                    * 1.05
+                                    * min_avg.as_secs_f64(),
+                            ),
+                            num_measures: policy
+                                .latency_awareness
+                                .as_ref()
+                                .unwrap()
+                                .minimum_measurements,
+                        }),
+                    ),
+                    (
+                        3,
+                        Some(TimestampedAverage {
+                            timestamp: Instant::now(),
+                            average: min_avg,
+                            num_measures: policy
+                                .latency_awareness
+                                .as_ref()
+                                .unwrap()
+                                .minimum_measurements,
+                        }),
+                    ),
+                    (
+                        4,
+                        Some(TimestampedAverage {
+                            timestamp: Instant::now(),
+                            average: Duration::from_secs_f64(
+                                policy
+                                    .latency_awareness
+                                    .as_ref()
+                                    .unwrap()
+                                    .exclusion_threshold
+                                    * 1.05
+                                    * min_avg.as_secs_f64(),
+                            ),
+                            num_measures: policy
+                                .latency_awareness
+                                .as_ref()
+                                .unwrap()
+                                .minimum_measurements,
+                        }),
+                    ),
+                ],
+            );
+
+            // Await last min average updater.
+            // policy.latency_awareness.as_ref().unwrap().refresh_last_min_avg_nodes(&cluster.all_nodes); FIXME:
+            tokio::time::sleep(policy.latency_awareness.as_ref().unwrap()._update_rate * 5).await;
+
+            let expected_groups = ExpectedGroupsBuilder::new()
+                .group([2, 3]) // pick + fallback local nodes
+                .group([5]) // fallback remote nodes
+                .group([1]) // local node that was penalised due to high latency
+                .group([4]) // remote node that was penalised due to high latency
+                .build();
+
+            test_default_policy_with_given_cluster_and_routing_info(
+                &policy,
+                &cluster,
+                &EMPTY_ROUTING_INFO,
+                &expected_groups,
+            )
+            .await;
+        }
+
+        #[tokio::test]
+        async fn latency_aware_default_policy_stops_penalising_after_min_average_increases_enough_only_after_update_rate_elapses(
+        ) {
+            let policy = latency_aware_default_policy();
+            let cluster = tests::mock_cluster_data_for_token_unaware_tests().await;
+
+            let min_avg = Duration::from_millis(10);
+
+            policy.set_nodes_latency_stats(
+                &cluster,
+                &[
+                    (
+                        1,
+                        Some(TimestampedAverage {
+                            timestamp: Instant::now(),
+                            average: Duration::from_secs_f64(
+                                policy
+                                    .latency_awareness
+                                    .as_ref()
+                                    .unwrap()
+                                    .exclusion_threshold
+                                    * 1.05
+                                    * min_avg.as_secs_f64(),
+                            ),
+                            num_measures: policy
+                                .latency_awareness
+                                .as_ref()
+                                .unwrap()
+                                .minimum_measurements,
+                        }),
+                    ),
+                    (
+                        3,
+                        Some(TimestampedAverage {
+                            timestamp: Instant::now(),
+                            average: min_avg,
+                            num_measures: policy
+                                .latency_awareness
+                                .as_ref()
+                                .unwrap()
+                                .minimum_measurements,
+                        }),
+                    ),
+                ],
+            );
+
+            // Await last min average updater.
+            tokio::time::sleep(policy.latency_awareness.as_ref().unwrap()._update_rate).await;
+            {
+                // min_avg is low enough to penalise node 1
+                let expected_groups = ExpectedGroupsBuilder::new()
+                    .group([2, 3]) // pick + fallback local nodes
+                    .group([4, 5]) // fallback remote nodes
+                    .group([1]) // local node that was penalised due to high latency
+                    .build();
+
+                test_default_policy_with_given_cluster_and_routing_info(
+                    &policy,
+                    &cluster,
+                    &EMPTY_ROUTING_INFO,
+                    &expected_groups,
+                )
+                .await;
+            }
+
+            // node 3 becomes as slow as node 1
+            policy.set_nodes_latency_stats(
+                &cluster,
+                &[(
+                    3,
+                    Some(TimestampedAverage {
+                        timestamp: Instant::now(),
+                        average: Duration::from_secs_f64(
+                            policy
+                                .latency_awareness
+                                .as_ref()
+                                .unwrap()
+                                .exclusion_threshold
+                                * min_avg.as_secs_f64(),
+                        ),
+                        num_measures: policy
+                            .latency_awareness
+                            .as_ref()
+                            .unwrap()
+                            .minimum_measurements,
+                    }),
+                )],
+            );
+            {
+                // min_avg has not yet been updated and so node 1 is still being penalised
+                let expected_groups = ExpectedGroupsBuilder::new()
+                    .group([2, 3]) // pick + fallback local nodes
+                    .group([4, 5]) // fallback remote nodes
+                    .group([1]) // local node that was penalised due to high latency
+                    .build();
+
+                test_default_policy_with_given_cluster_and_routing_info(
+                    &policy,
+                    &cluster,
+                    &EMPTY_ROUTING_INFO,
+                    &expected_groups,
+                )
+                .await;
+            }
+
+            tokio::time::sleep(policy.latency_awareness.as_ref().unwrap()._update_rate).await;
+            {
+                // min_avg has been updated and is already high enough to stop penalising node 1
+                let expected_groups = ExpectedGroupsBuilder::new()
+                    .group([1, 2, 3]) // pick + fallback local nodes
+                    .group([4, 5]) // fallback remote nodes
+                    .build();
+
+                test_default_policy_with_given_cluster_and_routing_info(
+                    &policy,
+                    &cluster,
+                    &EMPTY_ROUTING_INFO,
+                    &expected_groups,
+                )
+                .await;
+            }
+        }
+
+        #[tokio::test]
+        async fn latency_aware_default_policy_is_correctly_token_aware() {
+            let _ = tracing_subscriber::fmt::try_init();
+
+            struct Test<'a, 'b> {
+                // If Some, then the provided value is set as a min_avg.
+                // Else, the min_avg is updated based on values provided to set_latency_stats().
+                preset_min_avg: Option<Duration>,
+                latency_stats: &'b [(u16, Option<TimestampedAverage>)],
+                routing_info: RoutingInfo<'a>,
+                expected_groups: Vec<HashSet<u16>>,
+            }
+
+            let cluster = tests::mock_cluster_data_for_token_aware_tests().await;
+            let latency_awareness_defaults =
+                latency_aware_default_policy().latency_awareness.unwrap();
+            let min_avg = Duration::from_millis(10);
+
+            let fast_leader = || {
+                Some(TimestampedAverage {
+                    timestamp: Instant::now(),
+                    average: min_avg,
+                    num_measures: latency_awareness_defaults.minimum_measurements,
+                })
+            };
+
+            let fast_enough = || {
+                Some(TimestampedAverage {
+                    timestamp: Instant::now(),
+                    average: Duration::from_secs_f64(
+                        latency_awareness_defaults.exclusion_threshold
+                            * 0.95
+                            * min_avg.as_secs_f64(),
+                    ),
+                    num_measures: latency_awareness_defaults.minimum_measurements,
+                })
+            };
+
+            let slow_penalised = || {
+                Some(TimestampedAverage {
+                    timestamp: Instant::now(),
+                    average: Duration::from_secs_f64(
+                        latency_awareness_defaults.exclusion_threshold
+                            * 1.05
+                            * min_avg.as_secs_f64(),
+                    ),
+                    num_measures: latency_awareness_defaults.minimum_measurements,
+                })
+            };
+
+            let too_few_measurements_slow = || {
+                Some(TimestampedAverage {
+                    timestamp: Instant::now(),
+                    average: Duration::from_secs_f64(
+                        latency_awareness_defaults.exclusion_threshold
+                            * 1.05
+                            * min_avg.as_secs_f64(),
+                    ),
+                    num_measures: latency_awareness_defaults.minimum_measurements - 1,
+                })
+            };
+
+            let too_few_measurements_fast_leader = || {
+                Some(TimestampedAverage {
+                    timestamp: Instant::now(),
+                    average: min_avg,
+                    num_measures: 1,
+                })
+            };
+
+            let tests = [
+                Test {
+                    // Latency-awareness penalisation fires up and moves C and D to the end.
+                    preset_min_avg: None,
+                    latency_stats: &[
+                        (A, fast_leader()),
+                        (C, slow_penalised()),
+                        (D, slow_penalised()),
+                        (E, too_few_measurements_slow()),
+                    ],
+                    routing_info: RoutingInfo {
+                        token: Some(Token { value: 160 }),
+                        keyspace: Some(KEYSPACE_NTS_RF_3),
+                        consistency: Consistency::Quorum,
+                        ..Default::default()
+                    },
+                    // going though the ring, we get order: F , A , C , D , G , B , E
+                    //                                      us  eu  eu  us  eu  eu  us
+                    //                                      r2  r1  r1  r1  r2  r1  r1
+                    expected_groups: ExpectedGroupsBuilder::new()
+                        .group([A, G]) // fast enough local replicas
+                        .group([F, E]) // fast enough remote replicas
+                        .group([B]) // fast enough local nodes
+                        .group([C]) // penalised local replica
+                        .group([D]) // penalised remote replica
+                        .build(),
+                },
+                Test {
+                    // Latency-awareness has old minimum average cached, so does not fire.
+                    preset_min_avg: Some(100 * min_avg),
+                    routing_info: RoutingInfo {
+                        token: Some(Token { value: 160 }),
+                        keyspace: Some(KEYSPACE_NTS_RF_3),
+                        consistency: Consistency::Quorum,
+                        ..Default::default()
+                    },
+                    latency_stats: &[
+                        (A, fast_leader()),
+                        (B, fast_enough()),
+                        (C, slow_penalised()),
+                        (D, slow_penalised()),
+                    ],
+                    // going though the ring, we get order: F , A , C , D , G , B , E
+                    //                                      us  eu  eu  us  eu  eu  us
+                    //                                      r2  r1  r1  r1  r2  r1  r1
+                    expected_groups: ExpectedGroupsBuilder::new()
+                        .group([A, C, G]) // fast enough local replicas
+                        .group([F, D, E]) // fast enough remote replicas
+                        .group([B]) // fast enough local nodes
+                        .build(),
+                },
+                Test {
+                    // Both A and B are slower than C, but only B has enough measurements collected.
+                    preset_min_avg: None,
+                    latency_stats: &[
+                        (A, slow_penalised()), // not really penalised, because no fast leader here
+                        (B, slow_penalised()), // ditto
+                        (C, too_few_measurements_fast_leader()),
+                    ],
+                    routing_info: RoutingInfo {
+                        token: Some(Token { value: 160 }),
+                        keyspace: Some(KEYSPACE_NTS_RF_2),
+                        consistency: Consistency::Quorum,
+                        ..Default::default()
+                    },
+                    // going though the ring, we get order: F , A , C , D , G , B , E
+                    //                                      us  eu  eu  us  eu  eu  us
+                    //                                      r2  r1  r1  r1  r2  r1  r1
+                    expected_groups: ExpectedGroupsBuilder::new()
+                        .group([A, G]) // pick + fallback local replicas
+                        .group([F, D]) // remote replicas
+                        .group([C, B]) // local nodes
+                        .group([E]) // remote nodes
+                        .build(),
+                },
+                Test {
+                    // No latency stats, so latency-awareness is a no-op.
+                    preset_min_avg: None,
+                    routing_info: RoutingInfo {
+                        token: Some(Token { value: 160 }),
+                        keyspace: Some("invalid"),
+                        consistency: Consistency::Quorum,
+                        ..Default::default()
+                    },
+                    latency_stats: &[],
+                    expected_groups: ExpectedGroupsBuilder::new()
+                        .group([A, B, C, G]) // local nodes
+                        .group([D, E, F]) // remote nodes
+                        .build(),
+                },
+            ];
+
+            for test in &tests {
+                let policy = latency_aware_default_policy();
+
+                if let Some(preset_min_avg) = test.preset_min_avg {
+                    policy.set_nodes_latency_stats(
+                        &cluster,
+                        &[(
+                            1,
+                            Some(TimestampedAverage {
+                                timestamp: Instant::now(),
+                                average: preset_min_avg,
+                                num_measures: latency_awareness_defaults.minimum_measurements,
+                            }),
+                        )],
+                    );
+                    // Await last min average updater for update with a forged min_avg.
+                    tokio::time::sleep(latency_awareness_defaults._update_rate).await;
+                    policy.set_nodes_latency_stats(&cluster, &[(1, None)]);
+                }
+                policy.set_nodes_latency_stats(&cluster, test.latency_stats);
+
+                if test.preset_min_avg.is_none() {
+                    // Await last min average updater for update with None min_avg.
+                    tokio::time::sleep(latency_awareness_defaults._update_rate).await;
+                }
+
+                test_default_policy_with_given_cluster_and_routing_info(
+                    &policy,
+                    &cluster,
+                    &test.routing_info,
+                    &test.expected_groups,
+                )
+                .await;
+            }
+        }
+    }
 }
