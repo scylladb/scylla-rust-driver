@@ -882,7 +882,7 @@ impl Connection {
         orphan_notification_receiver: mpsc::UnboundedReceiver<RequestId>,
     ) {
         let (read_half, write_half) = split(stream);
-        // Why are using a mutex here?
+        // Why are we using a mutex here?
         //
         // The handler_map is supposed to be shared between reader and writer
         // futures, which will be run on the same task. The mutex should not
