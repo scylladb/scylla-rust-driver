@@ -451,7 +451,7 @@ where
         self.log_query_start();
 
         'nodes_in_plan: for node in query_plan {
-            let span = trace_span!("Executing query", node = node.address.to_string().as_str());
+            let span = trace_span!("Executing query", node = %node.address);
             // For each node in the plan choose a connection to use
             // This connection will be reused for same node retries to preserve paging cache on the shard
             let connection: Arc<Connection> = match (self.choose_connection)(node.clone())
@@ -462,7 +462,7 @@ where
                 Err(e) => {
                     trace!(
                         parent: &span,
-                        error = e.to_string().as_str(),
+                        error = %e,
                         "Choosing connection failed"
                     );
                     last_error = e;
@@ -490,7 +490,7 @@ where
                     Err(error) => {
                         trace!(
                             parent: &span,
-                            error = error.to_string().as_str(),
+                            error = %error,
                             "Query failed"
                         );
                         error
@@ -559,7 +559,7 @@ where
             let query_start = std::time::Instant::now();
 
             trace!(
-                connection = connection.get_connect_address().to_string().as_str(),
+                connection = %connection.get_connect_address(),
                 "Sending"
             );
             self.log_attempt_start(connection.get_connect_address());

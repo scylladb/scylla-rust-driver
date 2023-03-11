@@ -464,7 +464,7 @@ impl MetadataReader {
                     .address()
                     .to_string()
                     .as_str(),
-                error = err.to_string().as_str(),
+                error = %err,
                 "Failed to fetch metadata using current control connection"
             );
 
@@ -489,7 +489,7 @@ impl MetadataReader {
                 debug!("Fetched new metadata");
             }
             Err(error) => error!(
-                error = error.to_string().as_str(),
+                error = %error,
                 "Could not fetch metadata"
             ),
         }
