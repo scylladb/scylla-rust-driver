@@ -89,27 +89,11 @@ impl LegacyRowIterator {
         mut self: Pin<&mut Self>,
         cx: &mut Context<'_>,
     ) -> Poll<Option<Result<Row, QueryError>>> {
-        let mut s = self.as_mut();
-
-        if s.is_current_page_exhausted() {
-            let received_page = ready_some_ok!(Pin::new(&mut s.page_receiver).poll_recv(cx));
-            let rows = match received_page
-                .rows
-                // As RowIteratorWorker manages paging itself, the paging state response
-                // returned to the user is always NoMorePages. It used to be so before
-                // the deserialization refactor, too.
-                .into_legacy_rows(PagingStateResponse::NoMorePages)
-            {
-                Ok(rows) => rows,
-                Err(err) => return Poll::Ready(Some(Err(err.into()))),
-            };
-            s.current_page = rows;
-            s.current_row_idx = 0;
-
-            if let Some(tracing_id) = received_page.tracing_id {
-                s.tracing_ids.push(tracing_id);
-            }
+        if self.as_ref().is_current_page_exhausted() {
+            ready_some_ok!(self.as_mut().poll_next_page(cx));
         }
+
+        let mut s = self.as_mut();
 
         let idx = s.current_row_idx;
         if idx < s.current_page.rows.len() {
@@ -117,11 +101,42 @@ impl LegacyRowIterator {
             s.current_row_idx += 1;
             return Poll::Ready(Some(Ok(row)));
         }
-
         // We probably got a zero-sized page
         // Yield, but tell that we are ready
         cx.waker().wake_by_ref();
         Poll::Pending
+    }
+
+    /// Makes an attempt to acquire the next page (which may be empty).
+    ///
+    /// On success, returns Some(Ok()).
+    /// On failure, returns Some(Err()).
+    /// If there are no more pages, returns None.
+    fn poll_next_page<'r>(
+        mut self: Pin<&'r mut Self>,
+        cx: &mut Context<'_>,
+    ) -> Poll<Option<Result<(), QueryError>>> {
+        let mut s = self.as_mut();
+
+        let received_page = ready_some_ok!(Pin::new(&mut s.page_receiver).poll_recv(cx));
+        let rows = match received_page
+            .rows
+            // As RowIteratorWorker manages paging itself, the paging state response
+            // returned to the user is always NoMorePages. It used to be so before
+            // the deserialization refactor, too.
+            .into_legacy_rows(PagingStateResponse::NoMorePages)
+        {
+            Ok(rows) => rows,
+            Err(err) => return Poll::Ready(Some(Err(err.into()))),
+        };
+        s.current_page = rows;
+        s.current_row_idx = 0;
+
+        if let Some(tracing_id) = received_page.tracing_id {
+            s.tracing_ids.push(tracing_id);
+        }
+
+        Poll::Ready(Some(Ok(())))
     }
 
     /// Converts this iterator into an iterator over rows parsed as given type
