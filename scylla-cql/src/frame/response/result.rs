@@ -851,7 +851,7 @@ pub struct Rows {
 #[derive(Debug)]
 pub enum Result {
     Void,
-    Rows(Rows),
+    Rows((RawMetadataAndRawRows, PagingStateResponse)),
     SetKeyspace(SetKeyspace),
     Prepared(Prepared),
     SchemaChange(SchemaChange),
@@ -1506,13 +1506,9 @@ pub fn deser_cql_value(
 fn deser_rows(
     buf_bytes: Bytes,
     cached_metadata: Option<&Arc<ResultMetadata<'static>>>,
-) -> StdResult<Rows, RowsParseError> {
+) -> StdResult<(RawMetadataAndRawRows, PagingStateResponse), RowsParseError> {
     let mut frame_slice = FrameSlice::new(&buf_bytes);
-    let (raw_rows, paging_state_response) =
-        RawMetadataAndRawRows::deserialize(&mut frame_slice, cached_metadata.cloned())?;
-    let rows = raw_rows.into_legacy_rows(paging_state_response)?;
-
-    Ok(rows)
+    RawMetadataAndRawRows::deserialize(&mut frame_slice, cached_metadata.cloned())
 }
 
 fn deser_set_keyspace(buf: &mut &[u8]) -> StdResult<SetKeyspace, SetKeyspaceParseError> {
