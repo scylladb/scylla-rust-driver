@@ -503,8 +503,6 @@ impl RawRows {
         &self.metadata
     }
 
-    /// Consumes the `RawRows` and returns metadata associated with the
-    /// response.
     #[inline]
     pub(crate) fn into_inner(self) -> (Arc<ResultMetadata>, usize, Bytes) {
         (self.metadata, self.rows_count, self.raw_rows)
