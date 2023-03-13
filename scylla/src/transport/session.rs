@@ -492,7 +492,7 @@ pub(crate) enum RunQueryResult<ResT> {
     Completed(ResT),
 }
 
-impl GenericSession<LegacyDeserializationApi> {
+impl GenericSession<CurrentDeserializationApi> {
     /// Sends a request to the database and receives a response.\
     /// Performs an unpaged query, i.e. all results are received in a single response.
     ///
@@ -556,11 +556,8 @@ impl GenericSession<LegacyDeserializationApi> {
         &self,
         query: impl Into<Query>,
         values: impl SerializeRow,
-    ) -> Result<LegacyQueryResult, QueryError> {
-        Ok(self
-            .do_query_unpaged(&query.into(), values)
-            .await?
-            .into_legacy_result()?)
+    ) -> Result<QueryResult, QueryError> {
+        self.do_query_unpaged(&query.into(), values).await
     }
 
     /// Queries a single page from the database, optionally continuing from a saved point.
@@ -616,11 +613,11 @@ impl GenericSession<LegacyDeserializationApi> {
         query: impl Into<Query>,
         values: impl SerializeRow,
         paging_state: PagingState,
-    ) -> Result<(LegacyQueryResult, PagingStateResponse), QueryError> {
+    ) -> Result<(QueryResult, PagingStateResponse), QueryError> {
         let (result, paging_state_response) = self
             .do_query_single_page(&query.into(), values, paging_state)
             .await?;
-        Ok((result.into_legacy_result()?, paging_state_response))
+        Ok((result, paging_state_response))
     }
 
     /// Run an unprepared query with paging\
@@ -664,10 +661,8 @@ impl GenericSession<LegacyDeserializationApi> {
         &self,
         query: impl Into<Query>,
         values: impl SerializeRow,
-    ) -> Result<LegacyRowIterator, QueryError> {
-        self.do_query_iter(query.into(), values)
-            .await
-            .map(RawIterator::into_legacy)
+    ) -> Result<RawIterator, QueryError> {
+        self.do_query_iter(query.into(), values).await
     }
 
     /// Execute a prepared statement. Requires a [PreparedStatement]
@@ -717,11 +712,8 @@ impl GenericSession<LegacyDeserializationApi> {
         &self,
         prepared: &PreparedStatement,
         values: impl SerializeRow,
-    ) -> Result<LegacyQueryResult, QueryError> {
-        Ok(self
-            .do_execute_unpaged(prepared, values)
-            .await?
-            .into_legacy_result()?)
+    ) -> Result<QueryResult, QueryError> {
+        self.do_execute_unpaged(prepared, values).await
     }
 
     /// Executes a prepared statement, restricting results to single page.
@@ -782,11 +774,11 @@ impl GenericSession<LegacyDeserializationApi> {
         prepared: &PreparedStatement,
         values: impl SerializeRow,
         paging_state: PagingState,
-    ) -> Result<(LegacyQueryResult, PagingStateResponse), QueryError> {
+    ) -> Result<(QueryResult, PagingStateResponse), QueryError> {
         let (result, paging_state_response) = self
             .do_execute_single_page(prepared, values, paging_state)
             .await?;
-        Ok((result.into_legacy_result()?, paging_state_response))
+        Ok((result, paging_state_response))
     }
 
     /// Run a prepared query with paging.\
@@ -833,10 +825,8 @@ impl GenericSession<LegacyDeserializationApi> {
         &self,
         prepared: impl Into<PreparedStatement>,
         values: impl SerializeRow,
-    ) -> Result<LegacyRowIterator, QueryError> {
-        self.do_execute_iter(prepared.into(), values)
-            .await
-            .map(RawIterator::into_legacy)
+    ) -> Result<RawIterator, QueryError> {
+        self.do_execute_iter(prepared.into(), values).await
     }
 
     /// Perform a batch query\
@@ -884,6 +874,82 @@ impl GenericSession<LegacyDeserializationApi> {
     /// # Ok(())
     /// # }
     /// ```
+    pub async fn batch(
+        &self,
+        batch: &Batch,
+        values: impl BatchValues,
+    ) -> Result<QueryResult, QueryError> {
+        self.do_batch(batch, values).await
+    }
+}
+
+impl GenericSession<LegacyDeserializationApi> {
+    pub async fn query_unpaged(
+        &self,
+        query: impl Into<Query>,
+        values: impl SerializeRow,
+    ) -> Result<LegacyQueryResult, QueryError> {
+        Ok(self
+            .do_query_unpaged(&query.into(), values)
+            .await?
+            .into_legacy_result()?)
+    }
+
+    pub async fn query_single_page(
+        &self,
+        query: impl Into<Query>,
+        values: impl SerializeRow,
+        paging_state: PagingState,
+    ) -> Result<(LegacyQueryResult, PagingStateResponse), QueryError> {
+        let (result, paging_state_response) = self
+            .do_query_single_page(&query.into(), values, paging_state)
+            .await?;
+        Ok((result.into_legacy_result()?, paging_state_response))
+    }
+
+    pub async fn query_iter(
+        &self,
+        query: impl Into<Query>,
+        values: impl SerializeRow,
+    ) -> Result<LegacyRowIterator, QueryError> {
+        self.do_query_iter(query.into(), values)
+            .await
+            .map(RawIterator::into_legacy)
+    }
+
+    pub async fn execute_unpaged(
+        &self,
+        prepared: &PreparedStatement,
+        values: impl SerializeRow,
+    ) -> Result<LegacyQueryResult, QueryError> {
+        Ok(self
+            .do_execute_unpaged(prepared, values)
+            .await?
+            .into_legacy_result()?)
+    }
+
+    pub async fn execute_single_page(
+        &self,
+        prepared: &PreparedStatement,
+        values: impl SerializeRow,
+        paging_state: PagingState,
+    ) -> Result<(LegacyQueryResult, PagingStateResponse), QueryError> {
+        let (result, paging_state_response) = self
+            .do_execute_single_page(prepared, values, paging_state)
+            .await?;
+        Ok((result.into_legacy_result()?, paging_state_response))
+    }
+
+    pub async fn execute_iter(
+        &self,
+        prepared: impl Into<PreparedStatement>,
+        values: impl SerializeRow,
+    ) -> Result<LegacyRowIterator, QueryError> {
+        self.do_execute_iter(prepared.into(), values)
+            .await
+            .map(RawIterator::into_legacy)
+    }
+
     pub async fn batch(
         &self,
         batch: &Batch,
