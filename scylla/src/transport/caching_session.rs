@@ -3,7 +3,7 @@ use crate::frame::value::{BatchValues, ValueList};
 use crate::prepared_statement::PreparedStatement;
 use crate::query::Query;
 use crate::transport::errors::QueryError;
-use crate::transport::iterator::RowIterator;
+use crate::transport::iterator::Legacy08RowIterator;
 use crate::transport::partitioner::PartitionerName;
 use crate::{Legacy08QueryResult, Session};
 use bytes::Bytes;
@@ -83,7 +83,7 @@ where
         &self,
         query: impl Into<Query>,
         values: impl ValueList,
-    ) -> Result<RowIterator, QueryError> {
+    ) -> Result<Legacy08RowIterator, QueryError> {
         let query = query.into();
         let prepared = self.add_prepared_statement_owned(query).await?;
         let values = values.serialized()?;

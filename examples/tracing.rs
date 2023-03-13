@@ -8,7 +8,7 @@ use scylla::statement::{
     prepared_statement::PreparedStatement, query::Query, Consistency, SerialConsistency,
 };
 use scylla::tracing::{GetTracingConfig, TracingInfo};
-use scylla::transport::iterator::RowIterator;
+use scylla::transport::iterator::Legacy08RowIterator;
 use scylla::Legacy08QueryResult;
 use scylla::{Session, SessionBuilder};
 use std::env;
@@ -83,7 +83,7 @@ async fn main() -> Result<()> {
     // It's also possible to trace paged queries like query_iter or execute_iter
     // After iterating through all rows iterator.get_tracing_ids() will give tracing ids
     // for all page queries
-    let mut row_iterator: RowIterator = session.query_iter(query, &[]).await?;
+    let mut row_iterator: Legacy08RowIterator = session.query_iter(query, &[]).await?;
 
     while let Some(_row) = row_iterator.next().await {
         // Receive rows

@@ -38,7 +38,7 @@ use super::connection::QueryResponse;
 use super::connection::SslConfig;
 use super::errors::{BadQuery, NewSessionError, QueryError};
 use super::execution_profile::{ExecutionProfile, ExecutionProfileHandle, ExecutionProfileInner};
-use super::legacy_query_result::MaybeFirstRowTypedError;
+use super::legacy_query_result::{Legacy08QueryResult, MaybeFirstRowTypedError};
 use super::partitioner::PartitionerName;
 use super::topology::UntranslatedPeer;
 use super::NodeRef;
@@ -57,8 +57,7 @@ use crate::transport::cluster::{Cluster, ClusterData, ClusterNeatDebug};
 use crate::transport::connection::{Connection, ConnectionConfig, VerifiedKeyspaceName};
 use crate::transport::connection_pool::PoolConfig;
 use crate::transport::host_filter::HostFilter;
-use crate::transport::iterator::{PreparedIteratorConfig, RowIterator};
-use crate::transport::legacy_query_result::Legacy08QueryResult;
+use crate::transport::iterator::{Legacy08RowIterator, PreparedIteratorConfig};
 use crate::transport::load_balancing::{self, RoutingInfo};
 use crate::transport::metrics::Metrics;
 use crate::transport::node::Node;
@@ -717,7 +716,7 @@ impl Session {
         &self,
         query: impl Into<Query>,
         values: impl ValueList,
-    ) -> Result<RowIterator, QueryError> {
+    ) -> Result<Legacy08RowIterator, QueryError> {
         let query: Query = query.into();
         let serialized_values = values.serialized()?;
 
@@ -726,7 +725,7 @@ impl Session {
             .unwrap_or_else(|| self.get_default_execution_profile_handle())
             .access();
 
-        RowIterator::new_for_query(
+        Legacy08RowIterator::new_for_query(
             query,
             serialized_values.into_owned(),
             execution_profile,
@@ -1022,7 +1021,7 @@ impl Session {
         &self,
         prepared: impl Into<PreparedStatement>,
         values: impl ValueList,
-    ) -> Result<RowIterator, QueryError> {
+    ) -> Result<Legacy08RowIterator, QueryError> {
         let prepared = prepared.into();
         let serialized_values = values.serialized()?;
         let partition_key = self.calculate_partition_key(&prepared, &serialized_values)?;
@@ -1035,7 +1034,7 @@ impl Session {
             .unwrap_or_else(|| self.get_default_execution_profile_handle())
             .access();
 
-        RowIterator::new_for_prepared_statement(PreparedIteratorConfig {
+        Legacy08RowIterator::new_for_prepared_statement(PreparedIteratorConfig {
             prepared,
             values: serialized_values.into_owned(),
             partition_key,
