@@ -37,6 +37,11 @@ impl QueryResult {
         Some(self.raw_rows.as_ref()?.rows_count())
     }
 
+    /// Returns the size of the serialized rows, or `None` if the response wasn't of Rows type.
+    pub fn rows_size(&self) -> Option<usize> {
+        Some(self.raw_rows.as_ref()?.rows_size())
+    }
+
     /// Returns a bool indicating the current response is of Rows type.
     pub fn is_rows(&self) -> bool {
         self.raw_rows.is_some()
