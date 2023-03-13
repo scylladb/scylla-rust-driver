@@ -47,7 +47,7 @@ use std::{
 };
 
 use super::errors::{ProtocolError, UseKeyspaceProtocolError};
-use super::iterator::RowIterator;
+use super::iterator::LegacyRowIterator;
 use super::locator::tablets::{RawTablet, TabletParsingError};
 use super::query_result::QueryResult;
 use super::session::AddressTranslator;
@@ -1182,14 +1182,19 @@ impl Connection {
     pub(crate) async fn query_iter(
         self: Arc<Self>,
         query: Query,
-    ) -> Result<RowIterator, QueryError> {
+    ) -> Result<LegacyRowIterator, QueryError> {
         let consistency = query
             .config
             .determine_consistency(self.config.default_consistency);
         let serial_consistency = query.config.serial_consistency.flatten();
 
-        RowIterator::new_for_connection_query_iter(query, self, consistency, serial_consistency)
-            .await
+        LegacyRowIterator::new_for_connection_query_iter(
+            query,
+            self,
+            consistency,
+            serial_consistency,
+        )
+        .await
     }
 
     /// Executes a prepared statements and fetches its results over multiple pages, using
@@ -1198,13 +1203,13 @@ impl Connection {
         self: Arc<Self>,
         prepared_statement: PreparedStatement,
         values: SerializedValues,
-    ) -> Result<RowIterator, QueryError> {
+    ) -> Result<LegacyRowIterator, QueryError> {
         let consistency = prepared_statement
             .config
             .determine_consistency(self.config.default_consistency);
         let serial_consistency = prepared_statement.config.serial_consistency.flatten();
 
-        RowIterator::new_for_connection_execute_iter(
+        LegacyRowIterator::new_for_connection_execute_iter(
             prepared_statement,
             values,
             self,
