@@ -49,6 +49,7 @@ use std::{
 use super::errors::{ProtocolError, UseKeyspaceProtocolError};
 use super::iterator::RowIterator;
 use super::locator::tablets::{RawTablet, TabletParsingError};
+use super::query_result::QueryResult;
 use super::session::AddressTranslator;
 use super::topology::{PeerEndpoint, UntranslatedEndpoint, UntranslatedPeer};
 use super::NodeAddr;
@@ -69,10 +70,6 @@ use crate::routing::ShardInfo;
 use crate::statement::prepared_statement::PreparedStatement;
 use crate::statement::{Consistency, PageSize, PagingState, PagingStateResponse};
 use crate::transport::Compression;
-
-// Existing code imports scylla::transport::connection::LegacyQueryResult because it used to be located in this file.
-// Reexport LegacyQueryResult to avoid breaking the existing code.
-use crate::LegacyQueryResult;
 
 // Queries for schema agreement
 const LOCAL_VERSION: &str = "SELECT schema_version FROM system.local WHERE key='local'";
@@ -243,12 +240,12 @@ impl QueryResponse {
 
     pub(crate) fn into_query_result_and_paging_state(
         self,
-    ) -> Result<(LegacyQueryResult, PagingStateResponse), UserRequestError> {
+    ) -> Result<(QueryResult, PagingStateResponse), UserRequestError> {
         self.into_non_error_query_response()?
             .into_query_result_and_paging_state()
     }
 
-    pub(crate) fn into_query_result(self) -> Result<LegacyQueryResult, QueryError> {
+    pub(crate) fn into_query_result(self) -> Result<QueryResult, QueryError> {
         self.into_non_error_query_response()?.into_query_result()
     }
 }
@@ -270,15 +267,12 @@ impl NonErrorQueryResponse {
 
     pub(crate) fn into_query_result_and_paging_state(
         self,
-    ) -> Result<(LegacyQueryResult, PagingStateResponse), UserRequestError> {
-        let (rows, paging_state, metadata, serialized_size) = match self.response {
-            NonErrorResponse::Result(result::Result::Rows(rs)) => (
-                Some(rs.rows),
-                rs.paging_state_response,
-                Some(rs.metadata),
-                rs.serialized_size,
-            ),
-            NonErrorResponse::Result(_) => (None, PagingStateResponse::NoMorePages, None, 0),
+    ) -> Result<(QueryResult, PagingStateResponse), UserRequestError> {
+        let (raw_rows, paging_state_response) = match self.response {
+            NonErrorResponse::Result(result::Result::Rows((rs, paging_state_response))) => {
+                (Some(rs), paging_state_response)
+            }
+            NonErrorResponse::Result(_) => (None, PagingStateResponse::NoMorePages),
             _ => {
                 return Err(UserRequestError::UnexpectedResponse(
                     self.response.to_response_kind(),
@@ -287,18 +281,12 @@ impl NonErrorQueryResponse {
         };
 
         Ok((
-            LegacyQueryResult {
-                rows,
-                warnings: self.warnings,
-                tracing_id: self.tracing_id,
-                metadata,
-                serialized_size,
-            },
-            paging_state,
+            QueryResult::new(raw_rows, self.tracing_id, self.warnings),
+            paging_state_response,
         ))
     }
 
-    pub(crate) fn into_query_result(self) -> Result<LegacyQueryResult, QueryError> {
+    pub(crate) fn into_query_result(self) -> Result<QueryResult, QueryError> {
         let (result, paging_state) = self.into_query_result_and_paging_state()?;
 
         if !paging_state.finished() {
@@ -980,7 +968,7 @@ impl Connection {
         &self,
         query: impl Into<Query>,
         paging_state: PagingState,
-    ) -> Result<(LegacyQueryResult, PagingStateResponse), UserRequestError> {
+    ) -> Result<(QueryResult, PagingStateResponse), UserRequestError> {
         let query: Query = query.into();
 
         // This method is used only for driver internal queries, so no need to consult execution profile here.
@@ -1005,7 +993,7 @@ impl Connection {
         paging_state: PagingState,
         consistency: Consistency,
         serial_consistency: Option<SerialConsistency>,
-    ) -> Result<(LegacyQueryResult, PagingStateResponse), UserRequestError> {
+    ) -> Result<(QueryResult, PagingStateResponse), UserRequestError> {
         let query: Query = query.into();
         let page_size = query.get_validated_page_size();
 
@@ -1024,7 +1012,7 @@ impl Connection {
     pub(crate) async fn query_unpaged(
         &self,
         query: impl Into<Query>,
-    ) -> Result<LegacyQueryResult, QueryError> {
+    ) -> Result<QueryResult, QueryError> {
         // This method is used only for driver internal queries, so no need to consult execution profile here.
         let query: Query = query.into();
 
@@ -1084,7 +1072,7 @@ impl Connection {
         &self,
         prepared: &PreparedStatement,
         values: SerializedValues,
-    ) -> Result<LegacyQueryResult, QueryError> {
+    ) -> Result<QueryResult, QueryError> {
         // This method is used only for driver internal queries, so no need to consult execution profile here.
         self.execute_raw_unpaged(prepared, values)
             .await
@@ -1231,7 +1219,7 @@ impl Connection {
         &self,
         batch: &Batch,
         values: impl BatchValues,
-    ) -> Result<LegacyQueryResult, QueryError> {
+    ) -> Result<QueryResult, QueryError> {
         self.batch_with_consistency(
             batch,
             values,
@@ -1249,7 +1237,7 @@ impl Connection {
         values: impl BatchValues,
         consistency: Consistency,
         serial_consistency: Option<SerialConsistency>,
-    ) -> Result<LegacyQueryResult, QueryError> {
+    ) -> Result<QueryResult, QueryError> {
         let batch = self.prepare_batch(init_batch, &values).await?;
 
         let contexts = batch.statements.iter().map(|bs| match bs {
@@ -1446,6 +1434,7 @@ impl Connection {
         let (version_id,) = self
             .query_unpaged(LOCAL_VERSION)
             .await?
+            .into_legacy_result()?
             .single_row_typed()
             .map_err(ProtocolError::SchemaVersionFetch)?;
         Ok(version_id)
@@ -2617,6 +2606,8 @@ mod tests {
             let mut results = connection
                 .query_unpaged("SELECT p, v FROM t")
                 .await
+                .unwrap()
+                .into_legacy_result()
                 .unwrap()
                 .rows_typed::<(i32, Vec<u8>)>()
                 .unwrap()

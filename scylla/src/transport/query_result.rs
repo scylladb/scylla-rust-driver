@@ -1,7 +1,5 @@
 use std::fmt::Debug;
 use std::marker::PhantomData;
-use std::sync::Arc;
-
 use thiserror::Error;
 use uuid::Uuid;
 
@@ -318,7 +316,7 @@ impl QueryResult {
                 rows: Some(deserialized_rows),
                 warnings: self.warnings,
                 tracing_id: self.tracing_id,
-                metadata: Some(Arc::new((*metadata).clone())),
+                metadata: Some(metadata),
                 serialized_size,
             })
         } else {
