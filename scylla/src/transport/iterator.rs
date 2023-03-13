@@ -44,6 +44,20 @@ use crate::transport::{Node, NodeRef};
 use tracing::{trace, trace_span, warn, Instrument};
 use uuid::Uuid;
 
+// Like std::task::ready!, but handles the whole stack of Poll<Option<Result<>>>.
+// If it matches Poll::Ready(Some(Ok(_))), then it returns the innermost value,
+// otherwise it returns from the surrounding function.
+macro_rules! ready_some_ok {
+    ($e:expr) => {
+        match $e {
+            Poll::Ready(Some(Ok(x))) => x,
+            Poll::Ready(Some(Err(err))) => return Poll::Ready(Some(Err(err.into()))),
+            Poll::Ready(None) => return Poll::Ready(None),
+            Poll::Pending => return Poll::Pending,
+        }
+    };
+}
+
 // #424
 //
 // Both `Query` and `PreparedStatement` have page size set to `None` as default,
@@ -102,22 +116,16 @@ impl Legacy08RowIterator {
         let mut s = self.as_mut();
 
         if s.is_current_page_exhausted() {
-            match Pin::new(&mut s.page_receiver).poll_recv(cx) {
-                Poll::Ready(Some(Ok(received_page))) => {
-                    let rows = match received_page.rows.into_legacy_rows() {
-                        Ok(rows) => rows,
-                        Err(err) => return Poll::Ready(Some(Err(err.into()))),
-                    };
-                    s.current_page = rows;
-                    s.current_row_idx = 0;
+            let received_page = ready_some_ok!(Pin::new(&mut s.page_receiver).poll_recv(cx));
+            let rows = match received_page.rows.into_legacy_rows() {
+                Ok(rows) => rows,
+                Err(err) => return Poll::Ready(Some(Err(err.into()))),
+            };
+            s.current_page = rows;
+            s.current_row_idx = 0;
 
-                    if let Some(tracing_id) = received_page.tracing_id {
-                        s.tracing_ids.push(tracing_id);
-                    }
-                }
-                Poll::Ready(Some(Err(err))) => return Poll::Ready(Some(Err(err))),
-                Poll::Ready(None) => return Poll::Ready(None),
-                Poll::Pending => return Poll::Pending,
+            if let Some(tracing_id) = received_page.tracing_id {
+                s.tracing_ids.push(tracing_id);
             }
         }
 
@@ -906,19 +914,9 @@ impl<RowT: FromRow> Stream for Legacy08TypedRowIterator<RowT> {
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         let mut s = self.as_mut();
 
-        let next_elem: Option<Result<Row, QueryError>> =
-            match Pin::new(&mut s.row_iterator).poll_next(cx) {
-                Poll::Ready(next_elem) => next_elem,
-                Poll::Pending => return Poll::Pending,
-            };
-
-        let next_ready: Option<Self::Item> = match next_elem {
-            Some(Ok(next_row)) => Some(RowT::from_row(next_row).map_err(|e| e.into())),
-            Some(Err(e)) => Some(Err(e.into())),
-            None => None,
-        };
-
-        Poll::Ready(next_ready)
+        let next_row = ready_some_ok!(Pin::new(&mut s.row_iterator).poll_next(cx));
+        let typed_row_res = RowT::from_row(next_row).map_err(|e| e.into());
+        Poll::Ready(Some(typed_row_res))
     }
 }
 
