@@ -438,6 +438,8 @@ pub struct ResultMetadata {
 
 impl ResultMetadata {
     #[inline]
+    // Preferred to implementing Default, because users shouldn't be able to create
+    // empty ResultMetadata.
     pub fn mock_empty() -> Self {
         Self {
             col_count: 0,
@@ -496,6 +498,17 @@ pub struct RawRows {
 }
 
 impl RawRows {
+    // Preferred to implementing Default, because users shouldn't be able to create
+    // empty RawRows.
+    #[inline]
+    pub fn mock_empty() -> Self {
+        Self {
+            metadata: Arc::new(ResultMetadata::mock_empty()),
+            rows_count: 0,
+            raw_rows: Bytes::new(),
+        }
+    }
+
     /// Returns the metadata associated with this response (paging state
     /// and column specifications).
     #[inline]
@@ -587,7 +600,7 @@ pub struct Rows {
 #[derive(Debug)]
 pub enum Result {
     Void,
-    Rows(Rows),
+    Rows((RawRows, PagingStateResponse)),
     SetKeyspace(SetKeyspace),
     Prepared(Prepared),
     SchemaChange(SchemaChange),
@@ -958,7 +971,7 @@ pub fn deser_cql_value(
 fn deser_rows(
     buf_bytes: Bytes,
     cached_metadata: Option<&Arc<ResultMetadata>>,
-) -> StdResult<Rows, RowsParseError> {
+) -> StdResult<(RawRows, PagingStateResponse), RowsParseError> {
     let buf = &mut &*buf_bytes;
     let (server_metadata, paging_state_response) = deser_result_metadata(buf)?;
 
@@ -976,28 +989,16 @@ fn deser_rows(
         }
     };
 
-    let original_size = buf.len();
-
     let rows_count: usize =
         types::read_int_length(buf).map_err(RowsParseError::RowsCountParseError)?;
 
-    let raw_rows_iter = RowIterator::new(
-        rows_count,
-        &metadata.col_specs,
-        FrameSlice::new_borrowed(buf),
-    );
-    let rows_iter = TypedRowIterator::<Row>::new(raw_rows_iter)
-        .map_err(|err| DeserializationError::new(err.0))?;
-
-    let rows = rows_iter.collect::<StdResult<_, _>>()?;
-
-    Ok(Rows {
+    let raw_rows = RawRows {
         metadata,
-        paging_state_response,
         rows_count,
-        rows,
-        serialized_size: original_size - buf.len(),
-    })
+        raw_rows: buf_bytes.slice_ref(buf),
+    };
+
+    Ok((raw_rows, paging_state_response))
 }
 
 fn deser_set_keyspace(buf: &mut &[u8]) -> StdResult<SetKeyspace, SetKeyspaceParseError> {

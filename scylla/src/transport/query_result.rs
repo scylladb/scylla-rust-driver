@@ -302,6 +302,7 @@ impl QueryResult {
                 .collect::<Result<Vec<_>, DeserializationError>>()?;
             let serialized_size = raw_rows.rows_size();
             let metadata = raw_rows.into_metadata();
+
             Ok(LegacyQueryResult {
                 rows: Some(deserialized_rows),
                 warnings: self.warnings,
