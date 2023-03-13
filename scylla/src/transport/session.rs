@@ -17,7 +17,7 @@ use async_trait::async_trait;
 use futures::future::join_all;
 use futures::future::try_join_all;
 use itertools::{Either, Itertools};
-use scylla_cql::frame::response::result::{deser_cql_value, ColumnSpec, Rows};
+use scylla_cql::frame::response::result::{deser_cql_value, ColumnSpec};
 use scylla_cql::frame::response::NonErrorResponse;
 use scylla_cql::types::serialize::batch::BatchValues;
 use scylla_cql::types::serialize::row::{SerializeRow, SerializedValues};
@@ -66,6 +66,7 @@ use crate::transport::legacy_query_result::LegacyQueryResult;
 use crate::transport::load_balancing::{self, RoutingInfo};
 use crate::transport::metrics::Metrics;
 use crate::transport::node::Node;
+use crate::transport::query_result::QueryResult;
 use crate::transport::retry_policy::{QueryInfo, RetryDecision, RetrySession};
 use crate::transport::speculative_execution;
 use crate::transport::Compression;
@@ -821,6 +822,7 @@ impl Session {
         self.handle_auto_await_schema_agreement(&response).await?;
 
         let (result, paging_state) = response.into_query_result_and_paging_state()?;
+        let result = result.into_legacy_result()?;
         Ok((result, paging_state))
     }
 
@@ -1255,6 +1257,7 @@ impl Session {
         self.handle_auto_await_schema_agreement(&response).await?;
 
         let (result, paging_state) = response.into_query_result_and_paging_state()?;
+        let result = result.into_legacy_result()?;
         Ok((result, paging_state))
     }
 
@@ -1448,7 +1451,7 @@ impl Session {
 
         let result = match run_query_result {
             RunQueryResult::IgnoredWriteError => LegacyQueryResult::mock_empty(),
-            RunQueryResult::Completed(response) => response,
+            RunQueryResult::Completed(response) => response.into_legacy_result()?,
         };
         Ok(result)
     }
@@ -2012,7 +2015,7 @@ impl Session {
 pub(crate) trait AllowedRunQueryResTType {}
 
 impl AllowedRunQueryResTType for Uuid {}
-impl AllowedRunQueryResTType for LegacyQueryResult {}
+impl AllowedRunQueryResTType for QueryResult {}
 impl AllowedRunQueryResTType for NonErrorQueryResponse {}
 
 struct ExecuteQueryContext<'a> {
