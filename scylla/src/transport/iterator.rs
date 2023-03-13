@@ -9,6 +9,8 @@ use std::sync::Arc;
 use std::task::{Context, Poll};
 
 use futures::Stream;
+use scylla_cql::frame::request::query::PagingStateResponse;
+use scylla_cql::frame::response::result::RawMetadataAndRawRows;
 use scylla_cql::frame::response::NonErrorResponse;
 use scylla_cql::types::serialize::row::SerializedValues;
 use std::result::Result;
@@ -46,7 +48,7 @@ pub struct RowIterator {
 }
 
 struct ReceivedPage {
-    rows: Rows,
+    rows: RawMetadataAndRawRows,
     tracing_id: Option<Uuid>,
 }
 
@@ -69,7 +71,17 @@ impl Stream for RowIterator {
         if s.is_current_page_exhausted() {
             match Pin::new(&mut s.page_receiver).poll_recv(cx) {
                 Poll::Ready(Some(Ok(received_page))) => {
-                    s.current_page = received_page.rows;
+                    let rows = match received_page
+                        .rows
+                        // As RowIteratorWorker manages paging itself, the paging state response
+                        // returned to the user is always NoMorePages. It used to be so before
+                        // the deserialization refactor, too.
+                        .into_legacy_rows(PagingStateResponse::NoMorePages)
+                    {
+                        Ok(rows) => rows,
+                        Err(err) => return Poll::Ready(Some(Err(err.into()))),
+                    };
+                    s.current_page = rows;
                     s.current_row_idx = 0;
 
                     if let Some(tracing_id) = received_page.tracing_id {
@@ -377,10 +389,13 @@ impl RowIterator {
         // - That future is polled in a tokio::task which isn't going to be
         //   cancelled
         let pages_received = receiver.recv().await.unwrap()?;
+        let rows = pages_received
+            .rows
+            .into_legacy_rows(PagingStateResponse::NoMorePages)?;
 
         Ok(RowIterator {
             current_row_idx: 0,
-            current_page: pages_received.rows,
+            current_page: rows,
             page_receiver: receiver,
             tracing_ids: if let Some(tracing_id) = pages_received.tracing_id {
                 vec![tracing_id]
@@ -408,11 +423,8 @@ impl RowIterator {
 // A separate module is used here so that the parent module cannot construct
 // SendAttemptedProof directly.
 mod checked_channel_sender {
-    use scylla_cql::frame::{
-        request::query::PagingStateResponse,
-        response::result::{ResultMetadata, Rows},
-    };
-    use std::{marker::PhantomData, sync::Arc};
+    use scylla_cql::frame::response::result::RawMetadataAndRawRows;
+    use std::marker::PhantomData;
     use tokio::sync::mpsc;
     use uuid::Uuid;
 
@@ -454,13 +466,7 @@ mod checked_channel_sender {
             Result<(), mpsc::error::SendError<ResultPage>>,
         ) {
             let empty_page = ReceivedPage {
-                rows: Rows {
-                    metadata: Arc::new(ResultMetadata::mock_empty()),
-                    paging_state_response: PagingStateResponse::NoMorePages,
-                    rows_count: 0,
-                    rows: Vec::new(),
-                    serialized_size: 0,
-                },
+                rows: RawMetadataAndRawRows::mock_empty(),
                 tracing_id,
             };
             self.send(Ok(empty_page)).await
@@ -662,7 +668,8 @@ where
 
         match query_response {
             Ok(NonErrorQueryResponse {
-                response: NonErrorResponse::Result(result::Result::Rows(mut rows)),
+                response:
+                    NonErrorResponse::Result(result::Result::Rows((rows, paging_state_response))),
                 tracing_id,
                 ..
             }) => {
@@ -672,8 +679,6 @@ where
                 self.execution_profile
                     .load_balancing_policy
                     .on_query_success(&self.statement_info, elapsed, node);
-
-                let paging_state_response = rows.paging_state_response.take();
 
                 let received_page = ReceivedPage { rows, tracing_id };
 
@@ -842,9 +847,7 @@ where
             let result = (self.fetcher)(paging_state).await?;
             let response = result.into_non_error_query_response()?;
             match response.response {
-                NonErrorResponse::Result(result::Result::Rows(mut rows)) => {
-                    let paging_state_response = rows.paging_state_response.take();
-
+                NonErrorResponse::Result(result::Result::Rows((rows, paging_state_response))) => {
                     let (proof, send_result) = self
                         .sender
                         .send(Ok(ReceivedPage {
