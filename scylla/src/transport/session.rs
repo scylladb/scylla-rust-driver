@@ -14,7 +14,7 @@ use bytes::Bytes;
 use futures::future::join_all;
 use futures::future::try_join_all;
 pub use scylla_cql::errors::TranslationError;
-use scylla_cql::frame::response::result::Rows;
+use scylla_cql::frame::response::result::RawRows;
 use scylla_cql::frame::response::NonErrorResponse;
 use std::borrow::Borrow;
 use std::collections::HashMap;
@@ -62,6 +62,7 @@ use crate::transport::legacy_query_result::Legacy08QueryResult;
 use crate::transport::load_balancing::{self, RoutingInfo};
 use crate::transport::metrics::Metrics;
 use crate::transport::node::Node;
+use crate::transport::query_result::QueryResult;
 use crate::transport::retry_policy::{QueryInfo, RetryDecision, RetrySession};
 use crate::transport::speculative_execution;
 use crate::transport::Compression;
@@ -630,7 +631,7 @@ impl Session {
         self.handle_auto_await_schema_agreement(&query.contents, &response)
             .await?;
 
-        let result = response.into_query_result()?;
+        let result = response.into_query_result()?.into_legacy_result()?;
         span.record_result_fields(&result);
         Ok(result)
     }
@@ -971,7 +972,7 @@ impl Session {
         self.handle_auto_await_schema_agreement(prepared.get_statement(), &response)
             .await?;
 
-        let result = response.into_query_result()?;
+        let result = response.into_query_result()?.into_legacy_result()?;
         span.record_result_fields(&result);
         Ok(result)
     }
@@ -1158,7 +1159,7 @@ impl Session {
 
         let result = match run_query_result {
             RunQueryResult::IgnoredWriteError => Legacy08QueryResult::default(),
-            RunQueryResult::Completed(response) => response,
+            RunQueryResult::Completed(response) => response.into_legacy_result()?,
         };
         span.record_result_fields(&result);
         Ok(result)
@@ -1877,7 +1878,7 @@ pub(crate) async fn resolve_hostname(hostname: &str) -> Result<SocketAddr, NewSe
 pub trait AllowedRunQueryResTType {}
 
 impl AllowedRunQueryResTType for Uuid {}
-impl AllowedRunQueryResTType for Legacy08QueryResult {}
+impl AllowedRunQueryResTType for QueryResult {}
 impl AllowedRunQueryResTType for NonErrorQueryResponse {}
 
 struct ExecuteQueryContext<'a> {
@@ -2046,9 +2047,9 @@ impl RequestSpan {
         }
     }
 
-    pub(crate) fn record_rows_fields(&self, rows: &Rows) {
-        self.span.record("result_size", rows.serialized_size);
-        self.span.record("result_rows", rows.rows.len());
+    pub(crate) fn record_rows_fields(&self, rows: &RawRows) {
+        self.span.record("result_size", rows.rows_size());
+        self.span.record("result_rows", rows.rows_count());
     }
 
     pub(crate) fn record_replicas<'a>(&'a self, replicas: &'a [impl Borrow<Arc<Node>>]) {

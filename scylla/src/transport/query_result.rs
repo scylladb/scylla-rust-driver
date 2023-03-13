@@ -20,6 +20,18 @@ pub struct QueryResult {
 }
 
 impl QueryResult {
+    pub(crate) fn new(
+        raw_rows: Option<RawRows>,
+        tracing_id: Option<Uuid>,
+        warnings: Vec<String>,
+    ) -> Self {
+        Self {
+            raw_rows,
+            tracing_id,
+            warnings,
+        }
+    }
+
     /// Returns the number of received rows, or `None` if the response wasn't of Rows type.
     pub fn rows_num(&self) -> Option<usize> {
         Some(self.raw_rows.as_ref()?.rows_count())
