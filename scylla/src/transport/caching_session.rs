@@ -3,7 +3,7 @@ use crate::prepared_statement::PreparedStatement;
 use crate::query::Query;
 use crate::statement::{PagingState, PagingStateResponse};
 use crate::transport::errors::QueryError;
-use crate::transport::iterator::RowIterator;
+use crate::transport::iterator::LegacyRowIterator;
 use crate::transport::partitioner::PartitionerName;
 use crate::{LegacyQueryResult, Session};
 use bytes::Bytes;
@@ -86,7 +86,7 @@ where
         &self,
         query: impl Into<Query>,
         values: impl SerializeRow,
-    ) -> Result<RowIterator, QueryError> {
+    ) -> Result<LegacyRowIterator, QueryError> {
         let query = query.into();
         let prepared = self.add_prepared_statement_owned(query).await?;
         self.session.execute_iter(prepared, values).await
