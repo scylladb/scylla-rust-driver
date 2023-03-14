@@ -69,7 +69,10 @@ use crate::routing::ShardInfo;
 use crate::statement::prepared_statement::PreparedStatement;
 use crate::statement::{Consistency, PageSize, PagingState, PagingStateResponse};
 use crate::transport::Compression;
-use crate::QueryResult;
+
+// Existing code imports scylla::transport::connection::LegacyQueryResult because it used to be located in this file.
+// Reexport LegacyQueryResult to avoid breaking the existing code.
+use crate::LegacyQueryResult;
 
 // Queries for schema agreement
 const LOCAL_VERSION: &str = "SELECT schema_version FROM system.local WHERE key='local'";
@@ -240,12 +243,12 @@ impl QueryResponse {
 
     pub(crate) fn into_query_result_and_paging_state(
         self,
-    ) -> Result<(QueryResult, PagingStateResponse), UserRequestError> {
+    ) -> Result<(LegacyQueryResult, PagingStateResponse), UserRequestError> {
         self.into_non_error_query_response()?
             .into_query_result_and_paging_state()
     }
 
-    pub(crate) fn into_query_result(self) -> Result<QueryResult, QueryError> {
+    pub(crate) fn into_query_result(self) -> Result<LegacyQueryResult, QueryError> {
         self.into_non_error_query_response()?.into_query_result()
     }
 }
@@ -267,7 +270,7 @@ impl NonErrorQueryResponse {
 
     pub(crate) fn into_query_result_and_paging_state(
         self,
-    ) -> Result<(QueryResult, PagingStateResponse), UserRequestError> {
+    ) -> Result<(LegacyQueryResult, PagingStateResponse), UserRequestError> {
         let (rows, paging_state, metadata, serialized_size) = match self.response {
             NonErrorResponse::Result(result::Result::Rows(rs)) => (
                 Some(rs.rows),
@@ -284,7 +287,7 @@ impl NonErrorQueryResponse {
         };
 
         Ok((
-            QueryResult {
+            LegacyQueryResult {
                 rows,
                 warnings: self.warnings,
                 tracing_id: self.tracing_id,
@@ -295,7 +298,7 @@ impl NonErrorQueryResponse {
         ))
     }
 
-    pub(crate) fn into_query_result(self) -> Result<QueryResult, QueryError> {
+    pub(crate) fn into_query_result(self) -> Result<LegacyQueryResult, QueryError> {
         let (result, paging_state) = self.into_query_result_and_paging_state()?;
 
         if !paging_state.finished() {
@@ -977,7 +980,7 @@ impl Connection {
         &self,
         query: impl Into<Query>,
         paging_state: PagingState,
-    ) -> Result<(QueryResult, PagingStateResponse), UserRequestError> {
+    ) -> Result<(LegacyQueryResult, PagingStateResponse), UserRequestError> {
         let query: Query = query.into();
 
         // This method is used only for driver internal queries, so no need to consult execution profile here.
@@ -1002,7 +1005,7 @@ impl Connection {
         paging_state: PagingState,
         consistency: Consistency,
         serial_consistency: Option<SerialConsistency>,
-    ) -> Result<(QueryResult, PagingStateResponse), UserRequestError> {
+    ) -> Result<(LegacyQueryResult, PagingStateResponse), UserRequestError> {
         let query: Query = query.into();
         let page_size = query.get_validated_page_size();
 
@@ -1021,7 +1024,7 @@ impl Connection {
     pub(crate) async fn query_unpaged(
         &self,
         query: impl Into<Query>,
-    ) -> Result<QueryResult, QueryError> {
+    ) -> Result<LegacyQueryResult, QueryError> {
         // This method is used only for driver internal queries, so no need to consult execution profile here.
         let query: Query = query.into();
 
@@ -1081,7 +1084,7 @@ impl Connection {
         &self,
         prepared: &PreparedStatement,
         values: SerializedValues,
-    ) -> Result<QueryResult, QueryError> {
+    ) -> Result<LegacyQueryResult, QueryError> {
         // This method is used only for driver internal queries, so no need to consult execution profile here.
         self.execute_raw_unpaged(prepared, values)
             .await
@@ -1228,7 +1231,7 @@ impl Connection {
         &self,
         batch: &Batch,
         values: impl BatchValues,
-    ) -> Result<QueryResult, QueryError> {
+    ) -> Result<LegacyQueryResult, QueryError> {
         self.batch_with_consistency(
             batch,
             values,
@@ -1246,7 +1249,7 @@ impl Connection {
         values: impl BatchValues,
         consistency: Consistency,
         serial_consistency: Option<SerialConsistency>,
-    ) -> Result<QueryResult, QueryError> {
+    ) -> Result<LegacyQueryResult, QueryError> {
         let batch = self.prepare_batch(init_batch, &values).await?;
 
         let contexts = batch.statements.iter().map(|bs| match bs {

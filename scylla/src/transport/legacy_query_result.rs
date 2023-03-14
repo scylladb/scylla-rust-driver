@@ -11,7 +11,7 @@ use uuid::Uuid;
 /// Result of a single query\
 /// Contains all rows returned by the database and some more information
 #[derive(Debug)]
-pub struct QueryResult {
+pub struct LegacyQueryResult {
     /// Rows returned by the database.\
     /// Queries like `SELECT` will have `Some(Vec)`, while queries like `INSERT` will have `None`.\
     /// Can contain an empty Vec.
@@ -26,7 +26,7 @@ pub struct QueryResult {
     pub serialized_size: usize,
 }
 
-impl QueryResult {
+impl LegacyQueryResult {
     pub(crate) fn mock_empty() -> Self {
         Self {
             rows: None,
@@ -38,7 +38,7 @@ impl QueryResult {
     }
 
     /// Returns the number of received rows.\
-    /// Fails when the query isn't of a type that could return rows, same as [`rows()`](QueryResult::rows).
+    /// Fails when the query isn't of a type that could return rows, same as [`rows()`](LegacyQueryResult::rows).
     pub fn rows_num(&self) -> Result<usize, RowsExpectedError> {
         match &self.rows {
             Some(rows) => Ok(rows.len()),
@@ -47,7 +47,7 @@ impl QueryResult {
     }
 
     /// Returns the received rows when present.\
-    /// If `QueryResult.rows` is `None`, which means that this query is not supposed to return rows (e.g `INSERT`), returns an error.\
+    /// If `LegacyQueryResult.rows` is `None`, which means that this query is not supposed to return rows (e.g `INSERT`), returns an error.\
     /// Can return an empty `Vec`.
     pub fn rows(self) -> Result<Vec<Row>, RowsExpectedError> {
         match self.rows {
@@ -58,14 +58,14 @@ impl QueryResult {
 
     /// Returns the received rows parsed as the given type.\
     /// Equal to `rows()?.into_typed()`.\
-    /// Fails when the query isn't of a type that could return rows, same as [`rows()`](QueryResult::rows).
+    /// Fails when the query isn't of a type that could return rows, same as [`rows()`](LegacyQueryResult::rows).
     pub fn rows_typed<RowT: FromRow>(self) -> Result<TypedRowIter<RowT>, RowsExpectedError> {
         Ok(self.rows()?.into_typed())
     }
 
     /// Returns `Ok` for a result of a query that shouldn't contain any rows.\
     /// Will return `Ok` for `INSERT` result, but a `SELECT` result, even an empty one, will cause an error.\
-    /// Opposite of [`rows()`](QueryResult::rows).
+    /// Opposite of [`rows()`](LegacyQueryResult::rows).
     pub fn result_not_rows(&self) -> Result<(), RowsNotExpectedError> {
         match self.rows {
             Some(_) => Err(RowsNotExpectedError),
@@ -73,14 +73,14 @@ impl QueryResult {
         }
     }
 
-    /// Returns rows when `QueryResult.rows` is `Some`, otherwise an empty Vec.\
+    /// Returns rows when `LegacyQueryResult.rows` is `Some`, otherwise an empty Vec.\
     /// Equal to `rows().unwrap_or_default()`.
     pub fn rows_or_empty(self) -> Vec<Row> {
         self.rows.unwrap_or_default()
     }
 
     /// Returns rows parsed as the given type.\
-    /// When `QueryResult.rows` is `None`, returns 0 rows.\
+    /// When `LegacyQueryResult.rows` is `None`, returns 0 rows.\
     /// Equal to `rows_or_empty().into_typed::<RowT>()`.
     pub fn rows_typed_or_empty<RowT: FromRow>(self) -> TypedRowIter<RowT> {
         self.rows_or_empty().into_typed::<RowT>()
@@ -102,13 +102,13 @@ impl QueryResult {
     }
 
     /// Returns `Option<RowT>` containing the first of a result.\
-    /// Fails when the query isn't of a type that could return rows, same as [`rows()`](QueryResult::rows).
+    /// Fails when the query isn't of a type that could return rows, same as [`rows()`](LegacyQueryResult::rows).
     pub fn maybe_first_row(self) -> Result<Option<Row>, RowsExpectedError> {
         Ok(self.rows()?.into_iter().next())
     }
 
     /// Returns `Option<RowT>` containing the first of a result.\
-    /// Fails when the query isn't of a type that could return rows, same as [`rows()`](QueryResult::rows).
+    /// Fails when the query isn't of a type that could return rows, same as [`rows()`](LegacyQueryResult::rows).
     pub fn maybe_first_row_typed<RowT: FromRow>(
         self,
     ) -> Result<Option<RowT>, MaybeFirstRowTypedError> {
@@ -155,57 +155,57 @@ impl QueryResult {
     }
 }
 
-/// [`QueryResult::rows()`](QueryResult::rows) or a similar function called on a bad QueryResult.\
-/// Expected `QueryResult.rows` to be `Some`, but it was `None`.\
-/// `QueryResult.rows` is `Some` for queries that can return rows (e.g `SELECT`).\
+/// [`LegacyQueryResult::rows()`](LegacyQueryResult::rows) or a similar function called on a bad LegacyQueryResult.\
+/// Expected `LegacyQueryResult.rows` to be `Some`, but it was `None`.\
+/// `LegacyQueryResult.rows` is `Some` for queries that can return rows (e.g `SELECT`).\
 /// It is `None` for queries that can't return rows (e.g `INSERT`).
 #[derive(Debug, Clone, Error, PartialEq, Eq)]
 #[error(
-    "QueryResult::rows() or similar function called on a bad QueryResult.
-         Expected QueryResult.rows to be Some, but it was None.
-         QueryResult.rows is Some for queries that can return rows (e.g SELECT).
+    "LegacyQueryResult::rows() or similar function called on a bad LegacyQueryResult.
+         Expected LegacyQueryResult.rows to be Some, but it was None.
+         LegacyQueryResult.rows is Some for queries that can return rows (e.g SELECT).
          It is None for queries that can't return rows (e.g INSERT)."
 )]
 pub struct RowsExpectedError;
 
-/// [`QueryResult::result_not_rows()`](QueryResult::result_not_rows) called on a bad QueryResult.\
-/// Expected `QueryResult.rows` to be `None`, but it was `Some`.\
-/// `QueryResult.rows` is `Some` for queries that can return rows (e.g `SELECT`).\
+/// [`LegacyQueryResult::result_not_rows()`](LegacyQueryResult::result_not_rows) called on a bad LegacyQueryResult.\
+/// Expected `LegacyQueryResult.rows` to be `None`, but it was `Some`.\
+/// `LegacyQueryResult.rows` is `Some` for queries that can return rows (e.g `SELECT`).\
 /// It is `None` for queries that can't return rows (e.g `INSERT`).
 #[derive(Debug, Clone, Error, PartialEq, Eq)]
 #[error(
-    "QueryResult::result_not_rows() called on a bad QueryResult.
-         Expected QueryResult.rows to be None, but it was Some.
-         QueryResult.rows is Some for queries that can return rows (e.g SELECT).
+    "LegacyQueryResult::result_not_rows() called on a bad LegacyQueryResult.
+         Expected LegacyQueryResult.rows to be None, but it was Some.
+         LegacyQueryResult.rows is Some for queries that can return rows (e.g SELECT).
          It is None for queries that can't return rows (e.g INSERT)."
 )]
 pub struct RowsNotExpectedError;
 
 #[derive(Debug, Clone, Error, PartialEq, Eq)]
 pub enum FirstRowError {
-    /// [`QueryResult::first_row()`](QueryResult::first_row) called on a bad QueryResult.\
-    /// Expected `QueryResult.rows` to be `Some`, but it was `None`.\
-    /// `QueryResult.rows` is `Some` for queries that can return rows (e.g `SELECT`).\
+    /// [`LegacyQueryResult::first_row()`](LegacyQueryResult::first_row) called on a bad LegacyQueryResult.\
+    /// Expected `LegacyQueryResult.rows` to be `Some`, but it was `None`.\
+    /// `LegacyQueryResult.rows` is `Some` for queries that can return rows (e.g `SELECT`).\
     /// It is `None` for queries that can't return rows (e.g `INSERT`).
     #[error(transparent)]
     RowsExpected(#[from] RowsExpectedError),
 
-    /// Rows in `QueryResult` are empty
-    #[error("Rows in QueryResult are empty")]
+    /// Rows in `LegacyQueryResult` are empty
+    #[error("Rows in LegacyQueryResult are empty")]
     RowsEmpty,
 }
 
 #[derive(Debug, Clone, Error, PartialEq, Eq)]
 pub enum FirstRowTypedError {
-    /// [`QueryResult::first_row_typed()`](QueryResult::first_row_typed) called on a bad QueryResult.\
-    /// Expected `QueryResult.rows` to be `Some`, but it was `None`.\
-    /// `QueryResult.rows` is `Some` for queries that can return rows (e.g `SELECT`).\
+    /// [`LegacyQueryResult::first_row_typed()`](LegacyQueryResult::first_row_typed) called on a bad LegacyQueryResult.\
+    /// Expected `LegacyQueryResult.rows` to be `Some`, but it was `None`.\
+    /// `LegacyQueryResult.rows` is `Some` for queries that can return rows (e.g `SELECT`).\
     /// It is `None` for queries that can't return rows (e.g `INSERT`).
     #[error(transparent)]
     RowsExpected(#[from] RowsExpectedError),
 
-    /// Rows in `QueryResult` are empty
-    #[error("Rows in QueryResult are empty")]
+    /// Rows in `LegacyQueryResult` are empty
+    #[error("Rows in LegacyQueryResult are empty")]
     RowsEmpty,
 
     /// Parsing row as the given type failed
@@ -215,9 +215,9 @@ pub enum FirstRowTypedError {
 
 #[derive(Debug, Clone, Error, PartialEq, Eq)]
 pub enum MaybeFirstRowTypedError {
-    /// [`QueryResult::maybe_first_row_typed()`](QueryResult::maybe_first_row_typed) called on a bad QueryResult.\
-    /// Expected `QueryResult.rows` to be `Some`, but it was `None`.
-    /// `QueryResult.rows` is `Some` for queries that can return rows (e.g `SELECT`).\
+    /// [`LegacyQueryResult::maybe_first_row_typed()`](LegacyQueryResult::maybe_first_row_typed) called on a bad LegacyQueryResult.\
+    /// Expected `LegacyQueryResult.rows` to be `Some`, but it was `None`.
+    /// `LegacyQueryResult.rows` is `Some` for queries that can return rows (e.g `SELECT`).\
     /// It is `None` for queries that can't return rows (e.g `INSERT`).
     #[error(transparent)]
     RowsExpected(#[from] RowsExpectedError),
@@ -229,9 +229,9 @@ pub enum MaybeFirstRowTypedError {
 
 #[derive(Debug, Clone, Error, PartialEq, Eq)]
 pub enum SingleRowError {
-    /// [`QueryResult::single_row()`](QueryResult::single_row) called on a bad QueryResult.\
-    /// Expected `QueryResult.rows` to be `Some`, but it was `None`.\
-    /// `QueryResult.rows` is `Some` for queries that can return rows (e.g `SELECT`).\
+    /// [`LegacyQueryResult::single_row()`](LegacyQueryResult::single_row) called on a bad LegacyQueryResult.\
+    /// Expected `LegacyQueryResult.rows` to be `Some`, but it was `None`.\
+    /// `LegacyQueryResult.rows` is `Some` for queries that can return rows (e.g `SELECT`).\
     /// It is `None` for queries that can't return rows (e.g `INSERT`).
     #[error(transparent)]
     RowsExpected(#[from] RowsExpectedError),
@@ -243,9 +243,9 @@ pub enum SingleRowError {
 
 #[derive(Debug, Clone, Error, PartialEq, Eq)]
 pub enum SingleRowTypedError {
-    /// [`QueryResult::single_row_typed()`](QueryResult::single_row_typed) called on a bad QueryResult.\
-    /// Expected `QueryResult.rows` to be `Some`, but it was `None`.\
-    /// `QueryResult.rows` is `Some` for queries that can return rows (e.g `SELECT`).\
+    /// [`LegacyQueryResult::single_row_typed()`](LegacyQueryResult::single_row_typed) called on a bad LegacyQueryResult.\
+    /// Expected `LegacyQueryResult.rows` to be `Some`, but it was `None`.\
+    /// `LegacyQueryResult.rows` is `Some` for queries that can return rows (e.g `SELECT`).\
     /// It is `None` for queries that can't return rows (e.g `INSERT`).
     #[error(transparent)]
     RowsExpected(#[from] RowsExpectedError),
@@ -322,8 +322,8 @@ mod tests {
         ResultMetadata::new_for_test(1, vec![column_spec])
     }
 
-    fn make_not_rows_query_result() -> QueryResult {
-        QueryResult {
+    fn make_not_rows_query_result() -> LegacyQueryResult {
+        LegacyQueryResult {
             rows: None,
             warnings: vec![],
             tracing_id: None,
@@ -332,14 +332,14 @@ mod tests {
         }
     }
 
-    fn make_rows_query_result(rows_num: usize) -> QueryResult {
+    fn make_rows_query_result(rows_num: usize) -> LegacyQueryResult {
         let mut res = make_not_rows_query_result();
         res.rows = Some(make_rows(rows_num));
         res.metadata = Some(Arc::new(make_test_metadata()));
         res
     }
 
-    fn make_string_rows_query_result(rows_num: usize) -> QueryResult {
+    fn make_string_rows_query_result(rows_num: usize) -> LegacyQueryResult {
         let mut res = make_not_rows_query_result();
         res.rows = Some(make_string_rows(rows_num));
         res.metadata = Some(Arc::new(make_test_metadata()));
