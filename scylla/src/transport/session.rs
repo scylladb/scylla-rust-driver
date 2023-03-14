@@ -146,7 +146,7 @@ where
     metrics: Arc<Metrics>,
     auto_await_schema_agreement_timeout: Option<Duration>,
     refresh_metadata_on_auto_schema_agreement: bool,
-    keyspace_name: ArcSwapOption<String>,
+    keyspace_name: Arc<ArcSwapOption<String>>,
     _phantom_deser_api: PhantomData<DeserializationApi>,
 }
 
@@ -676,6 +676,28 @@ impl GenericSession<CurrentDeserializationApi> {
     ) -> Result<QueryResult, QueryError> {
         self.do_batch(batch, values).await
     }
+
+    /// Creates a new Session instance that shared resources with
+    /// the current Session but supports the legacy API.
+    ///
+    /// This method is provided in order to make migration to the new
+    /// deserialization API easier. For example, if your program in general uses
+    /// the new API but you still have some modules left that use the old one,
+    /// you can use this method to create an instance that supports the old API
+    /// and pass it to the module that you intend to migrate later.
+    pub fn make_shared_session_with_legacy_api(&self) -> Legacy08Session {
+        Legacy08Session {
+            cluster: self.cluster.clone(),
+            auto_await_schema_agreement_timeout: self.auto_await_schema_agreement_timeout,
+            default_execution_profile_handle: self.default_execution_profile_handle.clone(),
+            metrics: self.metrics.clone(),
+            refresh_metadata_on_auto_schema_agreement: self
+                .refresh_metadata_on_auto_schema_agreement,
+            schema_agreement_interval: self.schema_agreement_interval,
+            keyspace_name: self.keyspace_name.clone(),
+            _phantom_deser_api: PhantomData,
+        }
+    }
 }
 
 impl GenericSession<Legacy08DeserializationApi> {
@@ -751,6 +773,31 @@ impl GenericSession<Legacy08DeserializationApi> {
         values: impl BatchValues,
     ) -> Result<Legacy08QueryResult, QueryError> {
         Ok(self.do_batch(batch, values).await?.into_legacy_result()?)
+    }
+
+    /// Creates a new Session instance that shares resources with
+    /// the current Session but supports the new API.
+    ///
+    /// This method is provided in order to make migration to the new
+    /// deserialization API easier. For example, if your program in general uses
+    /// the old API but you want to migrate some modules to the new one, you
+    /// can use this method to create an instance that supports the new API
+    /// and pass it to the module that you intend to migrate.
+    ///
+    /// The new session object will use the same connections and cluster
+    /// metadata.
+    pub fn make_shared_session_with_new_api(&self) -> Session {
+        Session {
+            cluster: self.cluster.clone(),
+            auto_await_schema_agreement_timeout: self.auto_await_schema_agreement_timeout,
+            default_execution_profile_handle: self.default_execution_profile_handle.clone(),
+            metrics: self.metrics.clone(),
+            refresh_metadata_on_auto_schema_agreement: self
+                .refresh_metadata_on_auto_schema_agreement,
+            schema_agreement_interval: self.schema_agreement_interval,
+            keyspace_name: self.keyspace_name.clone(),
+            _phantom_deser_api: PhantomData,
+        }
     }
 }
 
@@ -879,7 +926,7 @@ where
             auto_await_schema_agreement_timeout: config.auto_await_schema_agreement_timeout,
             refresh_metadata_on_auto_schema_agreement: config
                 .refresh_metadata_on_auto_schema_agreement,
-            keyspace_name: ArcSwapOption::default(), // will be set by use_keyspace
+            keyspace_name: Arc::new(ArcSwapOption::default()), // will be set by use_keyspace
             _phantom_deser_api: PhantomData,
         };
 

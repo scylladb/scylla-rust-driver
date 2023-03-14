@@ -2685,3 +2685,44 @@ async fn test_get_keyspace_name() {
         .unwrap();
     assert_eq!(*session.get_keyspace().unwrap(), ks);
 }
+
+#[tokio::test]
+async fn test_api_migration_session_sharing() {
+    {
+        let session = create_new_session_builder().build().await.unwrap();
+        let session_shared = session.make_shared_session_with_legacy_api();
+
+        // If we are unlucky then we will race with metadata fetch/cluster update
+        // and both invocations will return different cluster data. This should be
+        // SUPER rare, but in order to reduce the chance of flakiness to a minimum
+        // we will try it three times in a row. Cluster data is updated once per
+        // minute, so this should be good enough.
+        let mut matched = false;
+        for _ in 0..3 {
+            let cd1 = session.get_cluster_data();
+            let cd2 = session_shared.get_cluster_data();
+
+            if Arc::ptr_eq(&cd1, &cd2) {
+                matched = true;
+                break;
+            }
+        }
+        assert!(matched);
+    }
+    {
+        let session = create_new_session_builder().build_legacy().await.unwrap();
+        let session_shared = session.make_shared_session_with_new_api();
+
+        let mut matched = false;
+        for _ in 0..3 {
+            let cd1 = session.get_cluster_data();
+            let cd2 = session_shared.get_cluster_data();
+
+            if Arc::ptr_eq(&cd1, &cd2) {
+                matched = true;
+                break;
+            }
+        }
+        assert!(matched);
+    }
+}
