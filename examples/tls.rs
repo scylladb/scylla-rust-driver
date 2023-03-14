@@ -1,6 +1,5 @@
 use anyhow::Result;
-use futures::TryStreamExt;
-use scylla::transport::session::LegacySession;
+use scylla::transport::session::Session;
 use scylla::SessionBuilder;
 use std::env;
 use std::fs;
@@ -44,10 +43,10 @@ async fn main() -> Result<()> {
     context_builder.set_ca_file(ca_dir.as_path())?;
     context_builder.set_verify(SslVerifyMode::PEER);
 
-    let session: LegacySession = SessionBuilder::new()
+    let session: Session = SessionBuilder::new()
         .known_node(uri)
         .ssl_context(Some(context_builder.build()))
-        .build_legacy()
+        .build()
         .await?;
 
     session.query_unpaged("CREATE KEYSPACE IF NOT EXISTS examples_ks WITH REPLICATION = {'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}", &[]).await?;
@@ -90,7 +89,7 @@ async fn main() -> Result<()> {
     let mut iter = session
         .query_iter("SELECT a, b, c FROM examples_ks.tls", &[])
         .await?
-        .into_typed::<(i32, i32, String)>();
+        .into_typed::<(i32, i32, String)>()?;
     while let Some((a, b, c)) = iter.try_next().await? {
         println!("a, b, c: {}, {}, {}", a, b, c);
     }

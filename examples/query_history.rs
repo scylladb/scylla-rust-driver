@@ -1,10 +1,9 @@
 //! This example shows how to collect history of query execution.
 
 use anyhow::Result;
-use futures::StreamExt;
 use scylla::history::{HistoryCollector, StructuredHistory};
 use scylla::query::Query;
-use scylla::transport::session::LegacySession;
+use scylla::transport::session::Session;
 use scylla::SessionBuilder;
 use std::env;
 use std::sync::Arc;
@@ -15,7 +14,7 @@ async fn main() -> Result<()> {
 
     println!("Connecting to {} ...", uri);
 
-    let session: LegacySession = SessionBuilder::new().known_node(uri).build_legacy().await?;
+    let session: Session = SessionBuilder::new().known_node(uri).build().await?;
 
     session.query_unpaged("CREATE KEYSPACE IF NOT EXISTS examples_ks WITH REPLICATION = {'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}", &[]).await?;
 

@@ -2,7 +2,8 @@ use anyhow::Result;
 use scylla::cql_to_rust::{FromCqlVal, FromCqlValError};
 use scylla::frame::response::result::CqlValue;
 use scylla::macros::impl_from_cql_value_from_method;
-use scylla::{LegacySession, SessionBuilder};
+use scylla::transport::session::Session;
+use scylla::SessionBuilder;
 use std::env;
 
 #[tokio::main]
@@ -11,7 +12,7 @@ async fn main() -> Result<()> {
 
     println!("Connecting to {} ...", uri);
 
-    let session: LegacySession = SessionBuilder::new().known_node(uri).build_legacy().await?;
+    let session: Session = SessionBuilder::new().known_node(uri).build().await?;
 
     session.query_unpaged("CREATE KEYSPACE IF NOT EXISTS examples_ks WITH REPLICATION = {'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}", &[]).await?;
     session
@@ -46,6 +47,7 @@ async fn main() -> Result<()> {
             (),
         )
         .await?
+        .into_legacy_result()?
         .single_row_typed::<(MyType,)>()?;
     assert_eq!(v, MyType("asdf".to_owned()));
 
@@ -73,6 +75,7 @@ async fn main() -> Result<()> {
             (),
         )
         .await?
+        .into_legacy_result()?
         .single_row_typed::<(MyOtherType,)>()?;
     assert_eq!(v, MyOtherType("asdf".to_owned()));
 

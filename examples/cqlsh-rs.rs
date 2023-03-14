@@ -3,8 +3,11 @@ use rustyline::completion::{Completer, Pair};
 use rustyline::error::ReadlineError;
 use rustyline::{CompletionType, Config, Context, Editor};
 use rustyline_derive::{Helper, Highlighter, Hinter, Validator};
+use scylla::transport::session::Session;
 use scylla::transport::Compression;
-use scylla::{LegacyQueryResult, LegacySession, SessionBuilder};
+use scylla::QueryRowsResult;
+use scylla::SessionBuilder;
+use scylla_cql::frame::response::result::Row;
 use std::env;
 
 #[derive(Helper, Highlighter, Validator, Hinter)]
@@ -173,23 +176,24 @@ impl Completer for CqlHelper {
     }
 }
 
-fn print_result(result: &LegacyQueryResult) {
-    if result.rows.is_none() {
-        println!("OK");
-        return;
-    }
-    for row in result.rows.as_ref().unwrap() {
-        for column in &row.columns {
-            print!("|");
-            print!(
-                " {:16}",
-                match column {
-                    None => "null".to_owned(),
-                    Some(value) => format!("{:?}", value),
-                }
-            );
+fn print_result(result: Option<&QueryRowsResult>) {
+    if let Some(rows_result) = result {
+        for row in rows_result.rows::<Row>().unwrap() {
+            let row = row.unwrap();
+            for column in &row.columns {
+                print!("|");
+                print!(
+                    " {:16}",
+                    match column {
+                        None => "null".to_owned(),
+                        Some(value) => format!("{:?}", value),
+                    }
+                );
+            }
+            println!("|")
         }
-        println!("|")
+    } else {
+        println!("OK");
     }
 }
 
@@ -199,10 +203,10 @@ async fn main() -> Result<()> {
 
     println!("Connecting to {} ...", uri);
 
-    let session: LegacySession = SessionBuilder::new()
+    let session: Session = SessionBuilder::new()
         .known_node(uri)
         .compression(Some(Compression::Lz4))
-        .build_legacy()
+        .build()
         .await?;
 
     let config = Config::builder()
@@ -222,7 +226,10 @@ async fn main() -> Result<()> {
                 let maybe_res = session.query_unpaged(line, &[]).await;
                 match maybe_res {
                     Err(err) => println!("Error: {}", err),
-                    Ok(res) => print_result(&res),
+                    Ok(res) => {
+                        let rows_res = res.into_rows_result()?;
+                        print_result(rows_res.as_ref())
+                    }
                 }
             }
             Err(ReadlineError::Interrupted) => continue,
