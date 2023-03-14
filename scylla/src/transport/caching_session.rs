@@ -309,18 +309,20 @@ mod tests {
     use crate::query::Query;
     use crate::test_utils::create_new_session_builder;
     use crate::transport::partitioner::PartitionerName;
+    use crate::transport::session::Session;
     use crate::utils::test_utils::unique_keyspace_name;
     use crate::{
         batch::{Batch, BatchStatement},
         prepared_statement::PreparedStatement,
-        Legacy08CachingSession, Legacy08Session,
+        CachingSession,
     };
     use futures::TryStreamExt;
+    use scylla_cql::frame::response::result::Row;
     use std::collections::BTreeSet;
 
-    async fn new_for_test() -> Legacy08Session {
+    async fn new_for_test() -> Session {
         let session = create_new_session_builder()
-            .build_legacy()
+            .build()
             .await
             .expect("Could not create session");
         let ks = unique_keyspace_name();
@@ -349,8 +351,8 @@ mod tests {
         session
     }
 
-    async fn create_caching_session() -> Legacy08CachingSession {
-        let session = Legacy08CachingSession::from(new_for_test().await, 2);
+    async fn create_caching_session() -> CachingSession {
+        let session = CachingSession::from(new_for_test().await, 2);
 
         // Add a row, this makes it easier to check if the caching works combined with the regular execute fn on Session
         session
@@ -432,7 +434,8 @@ mod tests {
         let iter = session
             .execute_iter("select * from test_table", &[])
             .await
-            .unwrap();
+            .unwrap()
+            .into_typed::<Row>();
 
         let rows = iter.try_collect::<Vec<_>>().await.unwrap().len();
 
@@ -457,14 +460,14 @@ mod tests {
     }
 
     async fn assert_test_batch_table_rows_contain(
-        sess: &Legacy08CachingSession,
+        sess: &CachingSession,
         expected_rows: &[(i32, i32)],
     ) {
         let selected_rows: BTreeSet<(i32, i32)> = sess
             .execute("SELECT a, b FROM test_batch_table", ())
             .await
             .unwrap()
-            .rows_typed::<(i32, i32)>()
+            .rows::<(i32, i32)>()
             .unwrap()
             .map(|r| r.unwrap())
             .collect();
@@ -502,17 +505,17 @@ mod tests {
             }
         }
 
-        let _session: Legacy08CachingSession<std::collections::hash_map::RandomState> =
-            Legacy08CachingSession::from(new_for_test().await, 2);
-        let _session: Legacy08CachingSession<CustomBuildHasher> =
-            Legacy08CachingSession::from(new_for_test().await, 2);
-        let _session: Legacy08CachingSession<CustomBuildHasher> =
-            Legacy08CachingSession::with_hasher(new_for_test().await, 2, Default::default());
+        let _session: CachingSession<std::collections::hash_map::RandomState> =
+            CachingSession::from(new_for_test().await, 2);
+        let _session: CachingSession<CustomBuildHasher> =
+            CachingSession::from(new_for_test().await, 2);
+        let _session: CachingSession<CustomBuildHasher> =
+            CachingSession::with_hasher(new_for_test().await, 2, Default::default());
     }
 
     #[tokio::test]
     async fn test_batch() {
-        let session: Legacy08CachingSession = create_caching_session().await;
+        let session: CachingSession = create_caching_session().await;
 
         session
             .execute(
@@ -634,8 +637,7 @@ mod tests {
     // Reproduces #597
     #[tokio::test]
     async fn test_parameters_caching() {
-        let session: Legacy08CachingSession =
-            Legacy08CachingSession::from(new_for_test().await, 100);
+        let session: CachingSession = CachingSession::from(new_for_test().await, 100);
 
         session
             .execute("CREATE TABLE tbl (a int PRIMARY KEY, b int)", ())
@@ -671,7 +673,8 @@ mod tests {
             .execute("SELECT b, WRITETIME(b) FROM tbl", ())
             .await
             .unwrap()
-            .rows_typed_or_empty::<(i32, i64)>()
+            .rows::<(i32, i64)>()
+            .unwrap()
             .collect::<Result<Vec<_>, _>>()
             .unwrap();
 
@@ -686,8 +689,7 @@ mod tests {
             return;
         }
 
-        let session: Legacy08CachingSession =
-            Legacy08CachingSession::from(new_for_test().await, 100);
+        let session: CachingSession = CachingSession::from(new_for_test().await, 100);
 
         session
             .execute(
