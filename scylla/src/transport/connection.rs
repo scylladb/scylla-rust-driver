@@ -34,7 +34,7 @@ use std::{
 };
 
 use super::errors::{BadKeyspaceName, DbError, QueryError};
-use super::iterator::Legacy08RowIterator;
+use super::iterator::{Legacy08RowIterator, RawIterator};
 use super::legacy_query_result::SingleRowTypedError;
 use super::query_result::QueryResult;
 use super::session::AddressTranslator;
@@ -593,7 +593,7 @@ impl Connection {
             .determine_consistency(self.config.default_consistency);
         let serial_consistency = query.config.serial_consistency.flatten();
 
-        Legacy08RowIterator::new_for_connection_query_iter(
+        RawIterator::new_for_connection_query_iter(
             query,
             self,
             serialized_values,
@@ -601,6 +601,7 @@ impl Connection {
             serial_consistency,
         )
         .await
+        .map(RawIterator::into_legacy)
     }
 
     #[allow(dead_code)]

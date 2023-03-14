@@ -1,7 +1,6 @@
 //! Iterators over rows returned by paged queries
 
 use std::future::Future;
-use std::mem;
 use std::net::SocketAddr;
 use std::ops::ControlFlow;
 use std::pin::Pin;
@@ -10,9 +9,10 @@ use std::task::{Context, Poll};
 
 use bytes::Bytes;
 use futures::Stream;
-use scylla_cql::frame::response::result::RawRows;
+use scylla_cql::frame::response::result::{RawRows, RawRowsLendingIterator};
 use scylla_cql::frame::response::NonErrorResponse;
 use scylla_cql::frame::types::SerialConsistency;
+use scylla_cql::types::deserialize::row::{ColumnIterator, DeserializeRow};
 use std::result::Result;
 use thiserror::Error;
 use tokio::sync::mpsc;
@@ -27,7 +27,7 @@ use crate::frame::types::LegacyConsistency;
 use crate::frame::{
     response::{
         result,
-        result::{ColumnSpec, Row, Rows},
+        result::{ColumnSpec, Row},
     },
     value::SerializedValues,
 };
@@ -74,11 +74,19 @@ macro_rules! ready_some_ok {
 // value at the beginning of `query_iter` and `execute_iter`.
 const DEFAULT_ITER_PAGE_SIZE: i32 = 5000;
 
-/// Iterator over rows returned by paged queries\
-/// Allows to easily access rows without worrying about handling multiple pages
-pub struct Legacy08RowIterator {
-    current_row_idx: usize,
-    current_page: Rows,
+/// An intermediate object that allows to construct an iterator over a query
+/// that is asynchronously paged in the background.
+///
+/// Before the results can be processed, the RawIterator needs to be cast
+/// into a typed iterator.
+///
+/// TODO: How?
+///
+/// A pre-0.8.0 interface is also available:
+///
+/// TODO
+pub struct RawIterator {
+    current_page: RawRowsLendingIterator,
     page_receiver: mpsc::Receiver<Result<ReceivedPage, QueryError>>,
     tracing_ids: Vec<Uuid>,
 }
@@ -98,37 +106,45 @@ pub(crate) struct PreparedIteratorConfig {
     pub metrics: Arc<Metrics>,
 }
 
-/// Fetching pages is asynchronous so `RowIterator` does not implement the `Iterator` trait.\
-/// Instead it uses the asynchronous `Stream` trait
-impl Stream for Legacy08RowIterator {
-    type Item = Result<Row, QueryError>;
+/// RawIterator is not an iterator or a stream! However, it implements
+/// a `next()` method which returns a ColumnIterator<'r>. The ColumnIterator
+/// borrows from the RawIterator, and the futures::Stream trait does not allow
+/// for such a pattern. Lending streams are not a thing yet.
+impl RawIterator {
+    /// Returns the next item from the stream.
+    ///
+    /// This is not a part of the Stream interface because the returned iterator
+    /// borrows from self.
+    ///
+    /// This is cancel-safe.
+    pub async fn next(&mut self) -> Option<Result<ColumnIterator, QueryError>> {
+        let res = std::future::poll_fn(|cx| Pin::new(&mut *self).poll_fill_page(cx)).await;
+        match res {
+            Some(Ok(())) => {}
+            Some(Err(err)) => return Some(Err(err)),
+            None => return None,
+        }
 
-    fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
-        self.poll_next_internal(cx)
+        // We are guaranteed here to have a non-empty page, so unwrap
+        Some(self.current_page.next().unwrap().map_err(|e| e.into()))
     }
-}
 
-impl Legacy08RowIterator {
-    fn poll_next_internal(
-        mut self: Pin<&mut Self>,
+    /// Tries to acquire a non-empty page, if current page is exhausted.
+    fn poll_fill_page<'r>(
+        mut self: Pin<&'r mut Self>,
         cx: &mut Context<'_>,
-    ) -> Poll<Option<Result<Row, QueryError>>> {
-        if self.as_ref().is_current_page_exhausted() {
-            ready_some_ok!(self.as_mut().poll_next_page(cx));
+    ) -> Poll<Option<Result<(), QueryError>>> {
+        if !self.is_current_page_exhausted() {
+            return Poll::Ready(Some(Ok(())));
         }
-
-        let mut s = self.as_mut();
-
-        let idx = s.current_row_idx;
-        if idx < s.current_page.rows.len() {
-            let row = mem::take(&mut s.current_page.rows[idx]);
-            s.current_row_idx += 1;
-            return Poll::Ready(Some(Ok(row)));
+        ready_some_ok!(self.as_mut().poll_next_page(cx));
+        if self.is_current_page_exhausted() {
+            // Try again later
+            cx.waker().wake_by_ref();
+            Poll::Pending
+        } else {
+            Poll::Ready(Some(Ok(())))
         }
-        // We probably got a zero-sized page
-        // Yield, but tell that we are ready
-        cx.waker().wake_by_ref();
-        Poll::Pending
     }
 
     /// Makes an attempt to acquire the next page (which may be empty).
@@ -136,19 +152,14 @@ impl Legacy08RowIterator {
     /// On success, returns Some(Ok()).
     /// On failure, returns Some(Err()).
     /// If there are no more pages, returns None.
-    pub fn poll_next_page<'r>(
+    fn poll_next_page<'r>(
         mut self: Pin<&'r mut Self>,
         cx: &mut Context<'_>,
     ) -> Poll<Option<Result<(), QueryError>>> {
         let mut s = self.as_mut();
 
         let received_page = ready_some_ok!(Pin::new(&mut s.page_receiver).poll_recv(cx));
-        let rows = match received_page.rows.into_legacy_rows() {
-            Ok(rows) => rows,
-            Err(err) => return Poll::Ready(Some(Err(err.into()))),
-        };
-        s.current_page = rows;
-        s.current_row_idx = 0;
+        s.current_page = RawRowsLendingIterator::new(received_page.rows);
 
         if let Some(tracing_id) = received_page.tracing_id {
             s.tracing_ids.push(tracing_id);
@@ -157,12 +168,17 @@ impl Legacy08RowIterator {
         Poll::Ready(Some(Ok(())))
     }
 
-    /// Converts this iterator into an iterator over rows parsed as given type
-    pub fn into_typed<RowT: FromRow>(self) -> Legacy08TypedRowIterator<RowT> {
-        Legacy08TypedRowIterator {
-            row_iterator: self,
-            phantom_data: Default::default(),
+    pub fn into_typed<RowT>(self) -> TypedRowIterator<RowT> {
+        TypedRowIterator {
+            raw_iterator: self,
+            _phantom: Default::default(),
         }
+    }
+
+    /// Converts this iterator into an iterator over rows parsed as given type,
+    /// using the legacy deserialization framework.
+    pub fn into_legacy(self) -> Legacy08RowIterator {
+        Legacy08RowIterator { raw_iterator: self }
     }
 
     pub(crate) async fn new_for_query(
@@ -171,7 +187,7 @@ impl Legacy08RowIterator {
         execution_profile: Arc<ExecutionProfileInner>,
         cluster_data: Arc<ClusterData>,
         metrics: Arc<Metrics>,
-    ) -> Result<Legacy08RowIterator, QueryError> {
+    ) -> Result<Self, QueryError> {
         if query.get_page_size().is_none() {
             query.set_page_size(DEFAULT_ITER_PAGE_SIZE);
         }
@@ -245,7 +261,7 @@ impl Legacy08RowIterator {
 
     pub(crate) async fn new_for_prepared_statement(
         mut config: PreparedIteratorConfig,
-    ) -> Result<Legacy08RowIterator, QueryError> {
+    ) -> Result<Self, QueryError> {
         if config.prepared.get_page_size().is_none() {
             config.prepared.set_page_size(DEFAULT_ITER_PAGE_SIZE);
         }
@@ -363,7 +379,7 @@ impl Legacy08RowIterator {
         values: SerializedValues,
         consistency: Consistency,
         serial_consistency: Option<SerialConsistency>,
-    ) -> Result<Legacy08RowIterator, QueryError> {
+    ) -> Result<Self, QueryError> {
         if query.get_page_size().is_none() {
             query.set_page_size(DEFAULT_ITER_PAGE_SIZE);
         }
@@ -391,7 +407,7 @@ impl Legacy08RowIterator {
     async fn new_from_worker_future(
         worker_task: impl Future<Output = PageSendAttemptedProof> + Send + 'static,
         mut receiver: mpsc::Receiver<Result<ReceivedPage, QueryError>>,
-    ) -> Result<Legacy08RowIterator, QueryError> {
+    ) -> Result<Self, QueryError> {
         tokio::task::spawn(worker_task.with_current_subscriber());
 
         // This unwrap is safe because:
@@ -400,11 +416,9 @@ impl Legacy08RowIterator {
         // - That future is polled in a tokio::task which isn't going to be
         //   cancelled
         let pages_received = receiver.recv().await.unwrap()?;
-        let rows = pages_received.rows.into_legacy_rows()?;
 
-        Ok(Legacy08RowIterator {
-            current_row_idx: 0,
-            current_page: rows,
+        Ok(Self {
+            current_page: RawRowsLendingIterator::new(pages_received.rows),
             page_receiver: receiver,
             tracing_ids: if let Some(tracing_id) = pages_received.tracing_id {
                 vec![tracing_id]
@@ -421,11 +435,11 @@ impl Legacy08RowIterator {
 
     /// Returns specification of row columns
     pub fn get_column_specs(&self) -> &[ColumnSpec] {
-        &self.current_page.metadata.col_specs
+        &self.current_page.metadata().col_specs
     }
 
     fn is_current_page_exhausted(&self) -> bool {
-        self.current_row_idx >= self.current_page.rows.len()
+        self.current_page.rows_remaining() == 0
     }
 }
 
@@ -889,12 +903,98 @@ where
     }
 }
 
+pub struct TypedRowIterator<RowT> {
+    raw_iterator: RawIterator,
+    _phantom: std::marker::PhantomData<RowT>,
+}
+
+/// Stream implementation for TypedRowIterator.
+///
+/// It only works with owned types! For example, &str is not supported.
+impl<RowT> Stream for TypedRowIterator<RowT>
+where
+    RowT: for<'r> DeserializeRow<'r>,
+{
+    type Item = Result<RowT, QueryError>;
+
+    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+        let mut s = self.as_mut();
+
+        let next_fut = s.raw_iterator.next();
+        futures::pin_mut!(next_fut);
+        let iter = ready_some_ok!(next_fut.poll(cx));
+        let value = <RowT as DeserializeRow<'_>>::deserialize(iter).map_err(|e| e.into());
+        Poll::Ready(Some(value))
+    }
+}
+
+impl<RowT> TypedRowIterator<RowT> {
+    /// If tracing was enabled returns tracing ids of all finished page queries
+    pub fn get_tracing_ids(&self) -> &[Uuid] {
+        self.raw_iterator.get_tracing_ids()
+    }
+
+    /// Returns specification of row columns
+    pub fn get_column_specs(&self) -> &[ColumnSpec] {
+        self.raw_iterator.get_column_specs()
+    }
+}
+
+impl<RowT> Unpin for TypedRowIterator<RowT> {}
+
+pub struct Legacy08RowIterator {
+    raw_iterator: RawIterator,
+}
+
+impl Stream for Legacy08RowIterator {
+    type Item = Result<Row, QueryError>;
+
+    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+        let mut s = self.as_mut();
+
+        let next_fut = s.raw_iterator.next();
+        futures::pin_mut!(next_fut);
+
+        let next_elem: Option<Result<ColumnIterator<'_>, QueryError>> = match next_fut.poll(cx) {
+            Poll::Ready(next_elem) => next_elem,
+            Poll::Pending => return Poll::Pending,
+        };
+
+        let next_ready: Option<Self::Item> = match next_elem {
+            Some(Ok(iter)) => Some(Row::deserialize(iter).map_err(|e| e.into())),
+            Some(Err(e)) => Some(Err(e)),
+            None => None,
+        };
+
+        Poll::Ready(next_ready)
+    }
+}
+
+impl Legacy08RowIterator {
+    /// If tracing was enabled returns tracing ids of all finished page queries
+    pub fn get_tracing_ids(&self) -> &[Uuid] {
+        self.raw_iterator.get_tracing_ids()
+    }
+
+    /// Returns specification of row columns
+    pub fn get_column_specs(&self) -> &[ColumnSpec] {
+        self.raw_iterator.get_column_specs()
+    }
+
+    pub fn into_typed<RowT>(self) -> Legacy08TypedRowIterator<RowT> {
+        Legacy08TypedRowIterator {
+            row_iterator: self,
+            _phantom_data: Default::default(),
+        }
+    }
+}
+
 /// Iterator over rows returned by paged queries
 /// where each row is parsed as the given type\
 /// Returned by `RowIterator::into_typed`
 pub struct Legacy08TypedRowIterator<RowT> {
     row_iterator: Legacy08RowIterator,
-    phantom_data: std::marker::PhantomData<RowT>,
+    _phantom_data: std::marker::PhantomData<RowT>,
 }
 
 impl<RowT> Legacy08TypedRowIterator<RowT> {
