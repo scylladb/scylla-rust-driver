@@ -569,7 +569,7 @@ impl Session {
         let query: Query = query.into();
         let serialized_values = values.serialized()?;
 
-        let span = trace_span!("Request", query = query.contents.as_str());
+        let span = trace_span!("Request", query = %query.contents);
         let run_query_result = self
             .run_query(
                 Statement::default(),
@@ -709,7 +709,7 @@ impl Session {
             .unwrap_or_else(|| self.get_default_execution_profile_handle())
             .access();
 
-        let span = trace_span!("Request", query = query.contents.as_str());
+        let span = trace_span!("Request", query = %query.contents);
         RowIterator::new_for_query(
             query,
             serialized_values.into_owned(),
@@ -890,7 +890,7 @@ impl Session {
 
         let span = trace_span!(
             "Request",
-            prepared_id = format!("{:X}", prepared.get_id()).as_str()
+            prepared_id = %format_args!("{:X}", prepared.get_id())
         );
         let run_query_result: RunQueryResult<NonErrorQueryResponse> = self
             .run_query(
@@ -1000,7 +1000,7 @@ impl Session {
 
         let span = trace_span!(
             "Request",
-            prepared_id = format!("{:X}", prepared.get_id()).as_str()
+            prepared_id = %format_args!("{:X}", prepared.get_id())
         );
         RowIterator::new_for_prepared_statement(PreparedIteratorConfig {
             prepared,
@@ -1578,7 +1578,7 @@ impl Session {
             context.consistency.unwrap_or(execution_profile.consistency);
 
         'nodes_in_plan: for node in query_plan {
-            let span = trace_span!("Executing query", node = node.address.to_string().as_str());
+            let span = trace_span!("Executing query", node = %node.address);
             'same_node_retries: loop {
                 trace!(parent: &span, "Execution started");
                 let connection: Arc<Connection> = match choose_connection(node.clone())
@@ -1589,7 +1589,7 @@ impl Session {
                     Err(e) => {
                         trace!(
                             parent: &span,
-                            error = e.to_string().as_str(),
+                            error = %e,
                             "Choosing connection failed"
                         );
                         last_error = Some(e);
@@ -1603,7 +1603,7 @@ impl Session {
 
                 trace!(
                     parent: &span,
-                    connection = connection.get_connect_address().to_string().as_str(),
+                    connection = %connection.get_connect_address(),
                     "Sending"
                 );
                 let attempt_id: Option<history::AttemptId> =
@@ -1632,7 +1632,7 @@ impl Session {
                     Err(e) => {
                         trace!(
                             parent: &span,
-                            last_error = e.to_string().as_str(),
+                            last_error = %e,
                             "Query failed"
                         );
                         self.metrics.inc_failed_nonpaged_queries();
