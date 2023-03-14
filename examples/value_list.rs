@@ -1,5 +1,6 @@
 use anyhow::Result;
-use scylla::{LegacySession, SessionBuilder};
+use futures::StreamExt;
+use scylla::{Session, SessionBuilder};
 use std::env;
 
 #[tokio::main]
@@ -8,7 +9,7 @@ async fn main() -> Result<()> {
 
     println!("Connecting to {} ...", uri);
 
-    let session: LegacySession = SessionBuilder::new().known_node(uri).build_legacy().await?;
+    let session: Session = SessionBuilder::new().known_node(uri).build().await.unwrap();
 
     session.query_unpaged("CREATE KEYSPACE IF NOT EXISTS examples_ks WITH REPLICATION = {'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}", &[]).await?;
 
@@ -56,11 +57,14 @@ async fn main() -> Result<()> {
         )
         .await?;
 
-    let q = session
-        .query_unpaged("SELECT * FROM examples_ks.my_type", &[])
-        .await?;
+    let iter = session
+        .query_iter("SELECT * FROM examples_ks.my_type", &[])
+        .await?
+        .into_typed::<(i32, String)>()?
+        .into_stream();
 
-    println!("Q: {:?}", q.rows);
+    let rows = iter.collect::<Vec<_>>().await;
+    println!("Q: {:?}", rows);
 
     Ok(())
 }

@@ -3,8 +3,10 @@ use rustyline::completion::{Completer, Pair};
 use rustyline::error::ReadlineError;
 use rustyline::{CompletionType, Config, Context, Editor};
 use rustyline_derive::{Helper, Highlighter, Hinter, Validator};
+use scylla::transport::session::Session;
 use scylla::transport::Compression;
-use scylla::{LegacySession, LegacyQueryResult, SessionBuilder};
+use scylla::{QueryResult, SessionBuilder};
+use scylla_cql::frame::response::result::Row;
 use std::env;
 
 #[derive(Helper, Highlighter, Validator, Hinter)]
@@ -173,12 +175,13 @@ impl Completer for CqlHelper {
     }
 }
 
-fn print_result(result: &LegacyQueryResult) {
-    if result.rows.is_none() {
+fn print_result(result: &QueryResult) {
+    if !result.is_rows() {
         println!("OK");
         return;
     }
-    for row in result.rows.as_ref().unwrap() {
+    for row in result.rows::<Row>().unwrap() {
+        let row = row.unwrap();
         for column in &row.columns {
             print!("|");
             print!(
@@ -199,10 +202,10 @@ async fn main() -> Result<()> {
 
     println!("Connecting to {} ...", uri);
 
-    let session: LegacySession = SessionBuilder::new()
+    let session: Session = SessionBuilder::new()
         .known_node(uri)
         .compression(Some(Compression::Lz4))
-        .build_legacy()
+        .build()
         .await?;
 
     let config = Config::builder()

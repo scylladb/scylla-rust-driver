@@ -2,15 +2,14 @@
 // query() prepare() execute() batch() query_iter() and execute_iter() can be traced
 
 use anyhow::{anyhow, Result};
-use futures::StreamExt;
 use scylla::batch::Batch;
 use scylla::statement::{
     prepared_statement::PreparedStatement, query::Query, Consistency, SerialConsistency,
 };
 use scylla::tracing::TracingInfo;
-use scylla::transport::iterator::LegacyRowIterator;
-use scylla::LegacyQueryResult;
-use scylla::{LegacySession, SessionBuilder};
+use scylla::transport::iterator::RawIterator;
+use scylla::QueryResult;
+use scylla::{Session, SessionBuilder};
 use std::env;
 use std::num::NonZeroU32;
 use std::time::Duration;
@@ -21,9 +20,9 @@ async fn main() -> Result<()> {
     let uri = env::var("SCYLLA_URI").unwrap_or_else(|_| "127.0.0.1:9042".to_string());
 
     println!("Connecting to {} ...", uri);
-    let session: LegacySession = SessionBuilder::new()
+    let session: Session = SessionBuilder::new()
         .known_node(uri.as_str())
-        .build_legacy()
+        .build()
         .await?;
 
     session.query_unpaged("CREATE KEYSPACE IF NOT EXISTS examples_ks WITH REPLICATION = {'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}", &[]).await?;
@@ -42,9 +41,9 @@ async fn main() -> Result<()> {
     query.set_serial_consistency(Some(SerialConsistency::LocalSerial));
 
     // QueryResult will contain a tracing_id which can be used to query tracing information
-    let query_result: LegacyQueryResult = session.query_unpaged(query.clone(), &[]).await?;
+    let query_result: QueryResult = session.query_unpaged(query.clone(), &[]).await?;
     let query_tracing_id: Uuid = query_result
-        .tracing_id
+        .tracing_id()
         .ok_or_else(|| anyhow!("Tracing id is None!"))?;
 
     // Get tracing information for this query and print it
@@ -79,14 +78,14 @@ async fn main() -> Result<()> {
     // To trace execution of a prepared statement tracing must be enabled for it
     prepared.set_tracing(true);
 
-    let execute_result: LegacyQueryResult = session.execute_unpaged(&prepared, &[]).await?;
-    println!("Execute tracing id: {:?}", execute_result.tracing_id);
+    let execute_result: QueryResult = session.execute_unpaged(&prepared, &[]).await?;
+    println!("Execute tracing id: {:?}", execute_result.tracing_id());
 
     // PAGED QUERY_ITER EXECUTE_ITER
     // It's also possible to trace paged queries like query_iter or execute_iter
     // After iterating through all rows iterator.get_tracing_ids() will give tracing ids
     // for all page queries
-    let mut row_iterator: LegacyRowIterator = session.query_iter(query, &[]).await?;
+    let mut row_iterator: RawIterator = session.query_iter(query, &[]).await?;
 
     while let Some(_row) = row_iterator.next().await {
         // Receive rows
@@ -95,7 +94,7 @@ async fn main() -> Result<()> {
     // Now print tracing ids for all page queries:
     println!(
         "Paged row iterator tracing ids: {:?}\n",
-        row_iterator.get_tracing_ids()
+        row_iterator.tracing_ids()
     );
 
     // BATCH
@@ -105,19 +104,19 @@ async fn main() -> Result<()> {
     batch.set_tracing(true);
 
     // Run the batch and print its tracing_id
-    let batch_result: LegacyQueryResult = session.batch(&batch, ((),)).await?;
-    println!("Batch tracing id: {:?}\n", batch_result.tracing_id);
+    let batch_result: QueryResult = session.batch(&batch, ((),)).await?;
+    println!("Batch tracing id: {:?}\n", batch_result.tracing_id());
 
     // CUSTOM
     // Session configuration allows specifying custom settings for querying tracing info.
     // Tracing info might not immediately be available on queried node
     // so the driver performs a few attempts with sleeps in between.
-    let session: LegacySession = SessionBuilder::new()
+    let session: Session = SessionBuilder::new()
         .known_node(uri)
         .tracing_info_fetch_attempts(NonZeroU32::new(8).unwrap())
         .tracing_info_fetch_interval(Duration::from_millis(100))
         .tracing_info_fetch_consistency(Consistency::One)
-        .build_legacy()
+        .build()
         .await?;
 
     let _custom_info: TracingInfo = session.get_tracing_info(&query_tracing_id).await?;

@@ -1,7 +1,7 @@
 use anyhow::Result;
-use futures::TryStreamExt;
-use scylla::macros::FromRow;
-use scylla::transport::session::LegacySession;
+use scylla::frame::response::result::Row;
+use scylla::transport::session::Session;
+use scylla::DeserializeRow;
 use scylla::SessionBuilder;
 use std::env;
 
@@ -11,7 +11,7 @@ async fn main() -> Result<()> {
 
     println!("Connecting to {} ...", uri);
 
-    let session: LegacySession = SessionBuilder::new().known_node(uri).build_legacy().await?;
+    let session: Session = SessionBuilder::new().known_node(uri).build().await?;
 
     session.query_unpaged("CREATE KEYSPACE IF NOT EXISTS examples_ks WITH REPLICATION = {'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}", &[]).await?;
 
@@ -53,23 +53,24 @@ async fn main() -> Result<()> {
     let mut iter = session
         .query_iter("SELECT a, b, c FROM examples_ks.basic", &[])
         .await?
-        .into_typed::<(i32, i32, String)>();
+        .into_typed::<(i32, i32, String)>()?;
     while let Some((a, b, c)) = iter.try_next().await? {
         println!("a, b, c: {}, {}, {}", a, b, c);
     }
 
-    // Or as custom structs that derive FromRow
-    #[derive(Debug, FromRow)]
+    // Or as custom structs that derive DeserializeRow
+    #[allow(unused)]
+    #[derive(Debug, DeserializeRow)]
     struct RowData {
-        _a: i32,
-        _b: Option<i32>,
-        _c: String,
+        a: i32,
+        b: Option<i32>,
+        c: String,
     }
 
     let mut iter = session
         .query_iter("SELECT a, b, c FROM examples_ks.basic", &[])
         .await?
-        .into_typed::<RowData>();
+        .into_typed::<RowData>()?;
     while let Some(row_data) = iter.try_next().await? {
         println!("row_data: {:?}", row_data);
     }
@@ -77,15 +78,13 @@ async fn main() -> Result<()> {
     // Or simply as untyped rows
     let mut iter = session
         .query_iter("SELECT a, b, c FROM examples_ks.basic", &[])
-        .await?;
-    while let Some(row) = iter.try_next().await? {
+        .await?
+        .into_typed::<Row>()?;
+    while let Some(row) = iter.next().await.transpose()? {
         let a = row.columns[0].as_ref().unwrap().as_int().unwrap();
         let b = row.columns[1].as_ref().unwrap().as_int().unwrap();
         let c = row.columns[2].as_ref().unwrap().as_text().unwrap();
         println!("a, b, c: {}, {}, {}", a, b, c);
-
-        // Alternatively each row can be parsed individually
-        // let (a2, b2, c2) = row.into_typed::<(i32, i32, String)>() ?;
     }
 
     let metrics = session.get_metrics();
