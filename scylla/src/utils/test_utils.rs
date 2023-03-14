@@ -1,6 +1,8 @@
+use scylla_cql::frame::response::result::Row;
+
 #[cfg(test)]
 use crate::transport::session_builder::{GenericSessionBuilder, SessionBuilderKind};
-use crate::LegacySession;
+use crate::{LegacySession, Session};
 #[cfg(test)]
 use std::{num::NonZeroU32, time::Duration};
 use std::{
@@ -104,6 +106,23 @@ pub async fn scylla_supports_tablets_legacy(session: &LegacySession) -> bool {
         .await
         .unwrap();
     result.single_row().is_ok()
+}
+
+pub async fn scylla_supports_tablets(session: &Session) -> bool {
+    let result = session
+        .query_unpaged(
+            "select column_name from system_schema.columns where
+                keyspace_name = 'system_schema'
+                and table_name = 'scylla_keyspaces'
+                and column_name = 'initial_tablets'",
+            &[],
+        )
+        .await
+        .unwrap()
+        .into_rows_result()
+        .unwrap();
+
+    result.map_or(false, |rows_result| rows_result.single_row::<Row>().is_ok())
 }
 
 #[cfg(test)]
