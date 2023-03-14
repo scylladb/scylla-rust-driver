@@ -126,7 +126,7 @@ pub use statement::query;
 pub use frame::response::cql_to_rust;
 pub use frame::response::cql_to_rust::FromRow;
 
-pub use transport::caching_session::CachingSession;
+pub use transport::caching_session::{CachingSession, Legacy08CachingSession};
 pub use transport::execution_profile::ExecutionProfile;
 pub use transport::legacy_query_result::Legacy08QueryResult;
 pub use transport::query_result::QueryResult;
