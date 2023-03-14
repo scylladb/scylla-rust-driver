@@ -1,7 +1,7 @@
 use anyhow::Result;
 use scylla::routing::Token;
 use scylla::transport::NodeAddr;
-use scylla::{LegacySession, SessionBuilder};
+use scylla::{Session, SessionBuilder};
 use std::env;
 
 #[tokio::main]
@@ -10,7 +10,7 @@ async fn main() -> Result<()> {
 
     println!("Connecting to {} ...", uri);
 
-    let session: LegacySession = SessionBuilder::new().known_node(uri).build_legacy().await?;
+    let session: Session = SessionBuilder::new().known_node(uri).build().await?;
 
     session.query_unpaged("CREATE KEYSPACE IF NOT EXISTS examples_ks WITH REPLICATION = {'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}", &[]).await?;
 
@@ -51,7 +51,9 @@ async fn main() -> Result<()> {
                 (pk,),
             )
             .await?
-            .single_row_typed::<(i64,)>()?;
+            .into_rows_result()?
+            .expect("Got not Rows result")
+            .single_row()?;
         assert_eq!(t, qt);
         println!("token for {}: {}", pk, t);
     }

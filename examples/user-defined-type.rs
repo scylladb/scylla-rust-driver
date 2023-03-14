@@ -1,7 +1,7 @@
 use anyhow::Result;
-use futures::TryStreamExt;
-use scylla::macros::FromUserType;
-use scylla::{LegacySession, SerializeValue, SessionBuilder};
+use futures::TryStreamExt as _;
+use scylla::macros::DeserializeValue;
+use scylla::{SerializeValue, Session, SessionBuilder};
 use std::env;
 
 #[tokio::main]
@@ -10,7 +10,7 @@ async fn main() -> Result<()> {
 
     println!("Connecting to {} ...", uri);
 
-    let session: LegacySession = SessionBuilder::new().known_node(uri).build_legacy().await?;
+    let session: Session = SessionBuilder::new().known_node(uri).build().await?;
 
     session.query_unpaged("CREATE KEYSPACE IF NOT EXISTS examples_ks WITH REPLICATION = {'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}", &[]).await?;
 
@@ -30,7 +30,7 @@ async fn main() -> Result<()> {
 
     // Define custom struct that matches User Defined Type created earlier
     // wrapping field in Option will gracefully handle null field values
-    #[derive(Debug, FromUserType, SerializeValue)]
+    #[derive(Debug, DeserializeValue, SerializeValue)]
     struct MyType {
         int_val: i32,
         text_val: Option<String>,
@@ -56,7 +56,7 @@ async fn main() -> Result<()> {
             &[],
         )
         .await?
-        .into_typed::<(MyType,)>();
+        .rows_stream::<(MyType,)>()?;
     while let Some((my_val,)) = iter.try_next().await? {
         println!("{:?}", my_val);
     }

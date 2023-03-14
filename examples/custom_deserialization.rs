@@ -1,8 +1,8 @@
-use anyhow::Result;
-use scylla::cql_to_rust::{FromCqlVal, FromCqlValError};
-use scylla::frame::response::result::CqlValue;
-use scylla::macros::impl_from_cql_value_from_method;
-use scylla::{LegacySession, SessionBuilder};
+use anyhow::{Context, Result};
+use scylla::deserialize::DeserializeValue;
+use scylla::frame::response::result::ColumnType;
+use scylla::transport::session::Session;
+use scylla::SessionBuilder;
 use std::env;
 
 #[tokio::main]
@@ -11,7 +11,7 @@ async fn main() -> Result<()> {
 
     println!("Connecting to {} ...", uri);
 
-    let session: LegacySession = SessionBuilder::new().known_node(uri).build_legacy().await?;
+    let session: Session = SessionBuilder::new().known_node(uri).build().await?;
 
     session.query_unpaged("CREATE KEYSPACE IF NOT EXISTS examples_ks WITH REPLICATION = {'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}", &[]).await?;
     session
@@ -28,53 +28,38 @@ async fn main() -> Result<()> {
         )
         .await?;
 
-    // You can implement FromCqlVal for your own types
+    // You can implement DeserializeValue for your own types
     #[derive(PartialEq, Eq, Debug)]
-    struct MyType(String);
+    struct MyType<'a>(&'a str);
 
-    impl FromCqlVal<CqlValue> for MyType {
-        fn from_cql(cql_val: CqlValue) -> Result<Self, FromCqlValError> {
-            Ok(Self(
-                cql_val.into_string().ok_or(FromCqlValError::BadCqlType)?,
-            ))
+    impl<'frame, 'metadata> DeserializeValue<'frame, 'metadata> for MyType<'frame> {
+        fn type_check(
+            typ: &scylla::frame::response::result::ColumnType,
+        ) -> std::result::Result<(), scylla::deserialize::TypeCheckError> {
+            <&str as DeserializeValue<'frame, 'metadata>>::type_check(typ)
+        }
+
+        fn deserialize(
+            typ: &'metadata ColumnType<'metadata>,
+            v: Option<scylla::deserialize::FrameSlice<'frame>>,
+        ) -> std::result::Result<Self, scylla::deserialize::DeserializationError> {
+            let s = <&str as DeserializeValue<'frame, 'metadata>>::deserialize(typ, v)?;
+
+            Ok(Self(s))
         }
     }
 
-    let (v,) = session
+    let rows_result = session
         .query_unpaged(
             "SELECT v FROM examples_ks.custom_deserialization WHERE pk = 1",
             (),
         )
         .await?
-        .single_row_typed::<(MyType,)>()?;
-    assert_eq!(v, MyType("asdf".to_owned()));
+        .into_rows_result()?
+        .context("Expected Result:Rows response, got a different Result response.")?;
 
-    // If you defined an extension trait for CqlValue then you can use
-    // the `impl_from_cql_value_from_method` macro to turn it into
-    // a FromCqlValue impl
-    #[derive(PartialEq, Eq, Debug)]
-    struct MyOtherType(String);
-
-    trait CqlValueExt {
-        fn into_my_other_type(self) -> Option<MyOtherType>;
-    }
-
-    impl CqlValueExt for CqlValue {
-        fn into_my_other_type(self) -> Option<MyOtherType> {
-            Some(MyOtherType(self.into_string()?))
-        }
-    }
-
-    impl_from_cql_value_from_method!(MyOtherType, into_my_other_type);
-
-    let (v,) = session
-        .query_unpaged(
-            "SELECT v FROM examples_ks.custom_deserialization WHERE pk = 1",
-            (),
-        )
-        .await?
-        .single_row_typed::<(MyOtherType,)>()?;
-    assert_eq!(v, MyOtherType("asdf".to_owned()));
+    let (v,) = rows_result.single_row::<(MyType,)>()?;
+    assert_eq!(v, MyType("asdf"));
 
     println!("Ok.");
 

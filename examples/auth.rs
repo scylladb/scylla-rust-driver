@@ -10,7 +10,7 @@ async fn main() -> Result<()> {
     let session = SessionBuilder::new()
         .known_node(uri)
         .user("cassandra", "cassandra")
-        .build_legacy()
+        .build()
         .await
         .unwrap();
 
