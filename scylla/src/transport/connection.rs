@@ -46,7 +46,7 @@ use std::{
     net::{Ipv4Addr, Ipv6Addr},
 };
 
-use super::iterator::LegacyRowIterator;
+use super::iterator::{LegacyRowIterator, RawIterator};
 use super::legacy_query_result::SingleRowTypedError;
 use super::locator::tablets::{RawTablet, TabletParsingError};
 use super::query_result::QueryResult;
@@ -1185,13 +1185,9 @@ impl Connection {
             .determine_consistency(self.config.default_consistency);
         let serial_consistency = query.config.serial_consistency.flatten();
 
-        LegacyRowIterator::new_for_connection_query_iter(
-            query,
-            self,
-            consistency,
-            serial_consistency,
-        )
-        .await
+        RawIterator::new_for_connection_query_iter(query, self, consistency, serial_consistency)
+            .await
+            .map(RawIterator::into_legacy)
     }
 
     /// Executes a prepared statements and fetches its results over multiple pages, using
@@ -1206,7 +1202,7 @@ impl Connection {
             .determine_consistency(self.config.default_consistency);
         let serial_consistency = prepared_statement.config.serial_consistency.flatten();
 
-        LegacyRowIterator::new_for_connection_execute_iter(
+        RawIterator::new_for_connection_execute_iter(
             prepared_statement,
             values,
             self,
@@ -1214,6 +1210,7 @@ impl Connection {
             serial_consistency,
         )
         .await
+        .map(RawIterator::into_legacy)
     }
 
     #[allow(dead_code)]
