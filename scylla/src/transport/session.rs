@@ -42,11 +42,11 @@ use super::connection::QueryResponse;
 use super::connection::SslConfig;
 use super::errors::TracingProtocolError;
 use super::execution_profile::{ExecutionProfile, ExecutionProfileHandle, ExecutionProfileInner};
+use super::legacy_query_result::MaybeFirstRowTypedError;
 #[cfg(feature = "cloud")]
 use super::node::CloudEndpoint;
 use super::node::{InternalKnownNode, KnownNode};
 use super::partitioner::PartitionerName;
-use super::query_result::MaybeFirstRowTypedError;
 use super::topology::UntranslatedPeer;
 use super::{NodeRef, SelfIdentity};
 use crate::cql_to_rust::FromRow;
@@ -62,10 +62,10 @@ use crate::transport::connection::{Connection, ConnectionConfig, VerifiedKeyspac
 use crate::transport::connection_pool::PoolConfig;
 use crate::transport::host_filter::HostFilter;
 use crate::transport::iterator::{PreparedIteratorConfig, RowIterator};
+use crate::transport::legacy_query_result::LegacyQueryResult;
 use crate::transport::load_balancing::{self, RoutingInfo};
 use crate::transport::metrics::Metrics;
 use crate::transport::node::Node;
-use crate::transport::query_result::QueryResult;
 use crate::transport::retry_policy::{QueryInfo, RetryDecision, RetrySession};
 use crate::transport::speculative_execution;
 use crate::transport::Compression;
@@ -646,7 +646,7 @@ impl Session {
         &self,
         query: impl Into<Query>,
         values: impl SerializeRow,
-    ) -> Result<QueryResult, QueryError> {
+    ) -> Result<LegacyQueryResult, QueryError> {
         let query = query.into();
         let (result, paging_state_response) = self
             .query(&query, values, None, PagingState::start())
@@ -711,7 +711,7 @@ impl Session {
         query: impl Into<Query>,
         values: impl SerializeRow,
         paging_state: PagingState,
-    ) -> Result<(QueryResult, PagingStateResponse), QueryError> {
+    ) -> Result<(LegacyQueryResult, PagingStateResponse), QueryError> {
         let query = query.into();
         self.query(
             &query,
@@ -739,7 +739,7 @@ impl Session {
         values: impl SerializeRow,
         page_size: Option<PageSize>,
         paging_state: PagingState,
-    ) -> Result<(QueryResult, PagingStateResponse), QueryError> {
+    ) -> Result<(LegacyQueryResult, PagingStateResponse), QueryError> {
         let execution_profile = query
             .get_execution_profile_handle()
             .unwrap_or_else(|| self.get_default_execution_profile_handle())
@@ -1078,7 +1078,7 @@ impl Session {
         &self,
         prepared: &PreparedStatement,
         values: impl SerializeRow,
-    ) -> Result<QueryResult, QueryError> {
+    ) -> Result<LegacyQueryResult, QueryError> {
         let serialized_values = prepared.serialize_values(&values)?;
         let (result, paging_state) = self
             .execute(prepared, &serialized_values, None, PagingState::start())
@@ -1148,7 +1148,7 @@ impl Session {
         prepared: &PreparedStatement,
         values: impl SerializeRow,
         paging_state: PagingState,
-    ) -> Result<(QueryResult, PagingStateResponse), QueryError> {
+    ) -> Result<(LegacyQueryResult, PagingStateResponse), QueryError> {
         let serialized_values = prepared.serialize_values(&values)?;
         let page_size = prepared.get_validated_page_size();
         self.execute(prepared, &serialized_values, Some(page_size), paging_state)
@@ -1171,7 +1171,7 @@ impl Session {
         serialized_values: &SerializedValues,
         page_size: Option<PageSize>,
         paging_state: PagingState,
-    ) -> Result<(QueryResult, PagingStateResponse), QueryError> {
+    ) -> Result<(LegacyQueryResult, PagingStateResponse), QueryError> {
         let values_ref = &serialized_values;
         let paging_state_ref = &paging_state;
 
@@ -1377,7 +1377,7 @@ impl Session {
         &self,
         batch: &Batch,
         values: impl BatchValues,
-    ) -> Result<QueryResult, QueryError> {
+    ) -> Result<LegacyQueryResult, QueryError> {
         // Shard-awareness behavior for batch will be to pick shard based on first batch statement's shard
         // If users batch statements by shard, they will be rewarded with full shard awareness
 
@@ -1454,7 +1454,7 @@ impl Session {
             .await?;
 
         let result = match run_query_result {
-            RunQueryResult::IgnoredWriteError => QueryResult::mock_empty(),
+            RunQueryResult::IgnoredWriteError => LegacyQueryResult::mock_empty(),
             RunQueryResult::Completed(response) => response,
         };
         span.record_result_fields(&result);
@@ -2020,7 +2020,7 @@ impl Session {
 pub(crate) trait AllowedRunQueryResTType {}
 
 impl AllowedRunQueryResTType for Uuid {}
-impl AllowedRunQueryResTType for QueryResult {}
+impl AllowedRunQueryResTType for LegacyQueryResult {}
 impl AllowedRunQueryResTType for NonErrorQueryResponse {}
 
 struct ExecuteQueryContext<'a> {
@@ -2176,7 +2176,7 @@ impl RequestSpan {
         }
     }
 
-    pub(crate) fn record_result_fields(&self, result: &QueryResult) {
+    pub(crate) fn record_result_fields(&self, result: &LegacyQueryResult) {
         self.span.record("result_size", result.serialized_size);
         if let Some(rows) = result.rows.as_ref() {
             self.span.record("result_rows", rows.len());
