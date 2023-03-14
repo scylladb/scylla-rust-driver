@@ -4,7 +4,7 @@ use rustyline::error::ReadlineError;
 use rustyline::{CompletionType, Config, Context, Editor};
 use rustyline_derive::{Helper, Highlighter, Hinter, Validator};
 use scylla::transport::Compression;
-use scylla::{QueryResult, Session, SessionBuilder};
+use scylla::{Legacy08QueryResult, Session, SessionBuilder};
 use std::env;
 
 #[derive(Helper, Highlighter, Validator, Hinter)]
@@ -173,7 +173,7 @@ impl Completer for CqlHelper {
     }
 }
 
-fn print_result(result: &QueryResult) {
+fn print_result(result: &Legacy08QueryResult) {
     if result.rows.is_none() {
         println!("OK");
         return;

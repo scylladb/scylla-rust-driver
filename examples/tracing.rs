@@ -9,7 +9,7 @@ use scylla::statement::{
 };
 use scylla::tracing::{GetTracingConfig, TracingInfo};
 use scylla::transport::iterator::RowIterator;
-use scylla::QueryResult;
+use scylla::Legacy08QueryResult;
 use scylla::{Session, SessionBuilder};
 use std::env;
 use std::num::NonZeroU32;
@@ -39,7 +39,7 @@ async fn main() -> Result<()> {
     query.set_serial_consistency(Some(SerialConsistency::LocalSerial));
 
     // QueryResult will contain a tracing_id which can be used to query tracing information
-    let query_result: QueryResult = session.query(query.clone(), &[]).await?;
+    let query_result: Legacy08QueryResult = session.query(query.clone(), &[]).await?;
     let query_tracing_id: Uuid = query_result
         .tracing_id
         .ok_or_else(|| anyhow!("Tracing id is None!"))?;
@@ -76,7 +76,7 @@ async fn main() -> Result<()> {
     // To trace execution of a prepared statement tracing must be enabled for it
     prepared.set_tracing(true);
 
-    let execute_result: QueryResult = session.execute(&prepared, &[]).await?;
+    let execute_result: Legacy08QueryResult = session.execute(&prepared, &[]).await?;
     println!("Execute tracing id: {:?}", execute_result.tracing_id);
 
     // PAGED QUERY_ITER EXECUTE_ITER
@@ -102,7 +102,7 @@ async fn main() -> Result<()> {
     batch.set_tracing(true);
 
     // Run the batch and print its tracing_id
-    let batch_result: QueryResult = session.batch(&batch, ((),)).await?;
+    let batch_result: Legacy08QueryResult = session.batch(&batch, ((),)).await?;
     println!("Batch tracing id: {:?}\n", batch_result.tracing_id);
 
     // CUSTOM

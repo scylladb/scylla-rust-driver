@@ -5,7 +5,7 @@ use crate::query::Query;
 use crate::transport::errors::QueryError;
 use crate::transport::iterator::RowIterator;
 use crate::transport::partitioner::PartitionerName;
-use crate::{QueryResult, Session};
+use crate::{Legacy08QueryResult, Session};
 use bytes::Bytes;
 use dashmap::DashMap;
 use futures::future::try_join_all;
@@ -71,7 +71,7 @@ where
         &self,
         query: impl Into<Query>,
         values: impl ValueList,
-    ) -> Result<QueryResult, QueryError> {
+    ) -> Result<Legacy08QueryResult, QueryError> {
         let query = query.into();
         let prepared = self.add_prepared_statement_owned(query).await?;
         let values = values.serialized()?;
@@ -96,7 +96,7 @@ where
         query: impl Into<Query>,
         values: impl ValueList,
         paging_state: Option<Bytes>,
-    ) -> Result<QueryResult, QueryError> {
+    ) -> Result<Legacy08QueryResult, QueryError> {
         let query = query.into();
         let prepared = self.add_prepared_statement_owned(query).await?;
         let values = values.serialized()?;
@@ -111,7 +111,7 @@ where
         &self,
         batch: &Batch,
         values: impl BatchValues,
-    ) -> Result<QueryResult, QueryError> {
+    ) -> Result<Legacy08QueryResult, QueryError> {
         let all_prepared: bool = batch
             .statements
             .iter()
