@@ -46,7 +46,7 @@ use std::{
     net::{Ipv4Addr, Ipv6Addr},
 };
 
-use super::errors::{ProtocolError, UseKeyspaceProtocolError};
+use super::errors::{ProtocolError, SchemaVersionFetchError, UseKeyspaceProtocolError};
 use super::iterator::{LegacyRowIterator, RawIterator};
 use super::locator::tablets::{RawTablet, TabletParsingError};
 use super::query_result::QueryResult;
@@ -1436,9 +1436,15 @@ impl Connection {
         let (version_id,) = self
             .query_unpaged(LOCAL_VERSION)
             .await?
-            .into_legacy_result()?
-            .single_row_typed()
-            .map_err(ProtocolError::SchemaVersionFetch)?;
+            .into_rows_result()?
+            .ok_or(QueryError::ProtocolError(
+                ProtocolError::SchemaVersionFetch(SchemaVersionFetchError::ResultNotRows),
+            ))?
+            .single_row::<(Uuid,)>()
+            .map_err(|err| {
+                ProtocolError::SchemaVersionFetch(SchemaVersionFetchError::SingleRowError(err))
+            })?;
+
         Ok(version_id)
     }
 

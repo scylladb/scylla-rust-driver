@@ -32,7 +32,7 @@ use thiserror::Error;
 
 use crate::{authentication::AuthError, frame::response};
 
-use super::legacy_query_result::{RowsExpectedError, SingleRowTypedError};
+use super::{legacy_query_result::RowsExpectedError, query_result::SingleRowError};
 
 /// Error that occurred during query execution
 #[derive(Error, Debug, Clone)]
@@ -304,7 +304,7 @@ pub enum ProtocolError {
 
     /// A protocol error appeared during schema version fetch.
     #[error("Schema version fetch protocol error: {0}")]
-    SchemaVersionFetch(SingleRowTypedError),
+    SchemaVersionFetch(#[from] SchemaVersionFetchError),
 
     /// A result with nonfinished paging state received for unpaged query.
     #[error("Unpaged query returned a non-empty paging state! This is a driver-side or server-side bug.")]
@@ -343,6 +343,16 @@ pub enum UseKeyspaceProtocolError {
     },
     #[error("Received unexpected response: {0}. Expected RESULT:Set_keyspace")]
     UnexpectedResponse(CqlResponseKind),
+}
+
+/// A protocol error that occurred during schema version fetch.
+#[derive(Error, Debug, Clone)]
+#[non_exhaustive]
+pub enum SchemaVersionFetchError {
+    #[error("Schema version query returned non-rows result")]
+    ResultNotRows,
+    #[error(transparent)]
+    SingleRowError(SingleRowError),
 }
 
 /// A protocol error that occurred during tracing info fetch.
