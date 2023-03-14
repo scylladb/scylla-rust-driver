@@ -17,7 +17,7 @@ use scylla::transport::ClusterData;
 use scylla::transport::Node;
 use scylla::transport::NodeRef;
 use scylla::ExecutionProfile;
-use scylla::QueryResult;
+use scylla::LegacyQueryResult;
 use scylla::Session;
 
 use scylla::transport::errors::QueryError;
@@ -185,7 +185,7 @@ async fn send_statement_everywhere(
     cluster: &ClusterData,
     statement: &PreparedStatement,
     values: &dyn SerializeRow,
-) -> Result<Vec<QueryResult>, QueryError> {
+) -> Result<Vec<LegacyQueryResult>, QueryError> {
     let tasks = cluster.get_nodes_info().iter().flat_map(|node| {
         let shard_count: u16 = node.sharder().unwrap().nr_shards.into();
         (0..shard_count).map(|shard| {
@@ -210,7 +210,7 @@ async fn send_unprepared_query_everywhere(
     session: &Session,
     cluster: &ClusterData,
     query: &Query,
-) -> Result<Vec<QueryResult>, QueryError> {
+) -> Result<Vec<LegacyQueryResult>, QueryError> {
     let tasks = cluster.get_nodes_info().iter().flat_map(|node| {
         let shard_count: u16 = node.sharder().unwrap().nr_shards.into();
         (0..shard_count).map(|shard| {
