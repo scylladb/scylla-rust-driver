@@ -305,22 +305,22 @@ where
 mod tests {
     use crate::query::Query;
     use crate::statement::PagingState;
-    use crate::test_utils::{
-        create_new_session_builder, scylla_supports_tablets_legacy, setup_tracing,
-    };
+    use crate::test_utils::{create_new_session_builder, scylla_supports_tablets, setup_tracing};
     use crate::transport::partitioner::PartitionerName;
+    use crate::transport::session::Session;
     use crate::utils::test_utils::unique_keyspace_name;
     use crate::{
         batch::{Batch, BatchStatement},
         prepared_statement::PreparedStatement,
-        LegacyCachingSession, LegacySession,
+        CachingSession,
     };
     use futures::TryStreamExt;
+    use scylla_cql::frame::response::result::Row;
     use std::collections::BTreeSet;
 
-    async fn new_for_test(with_tablet_support: bool) -> LegacySession {
+    async fn new_for_test(with_tablet_support: bool) -> Session {
         let session = create_new_session_builder()
-            .build_legacy()
+            .build()
             .await
             .expect("Could not create session");
         let ks = unique_keyspace_name();
@@ -329,7 +329,7 @@ mod tests {
             "CREATE KEYSPACE IF NOT EXISTS {ks}
         WITH REPLICATION = {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}}"
         );
-        if !with_tablet_support && scylla_supports_tablets_legacy(&session).await {
+        if !with_tablet_support && scylla_supports_tablets(&session).await {
             create_ks += " AND TABLETS = {'enabled': false}";
         }
 
@@ -357,8 +357,8 @@ mod tests {
         session
     }
 
-    async fn create_caching_session() -> LegacyCachingSession {
-        let session = LegacyCachingSession::from(new_for_test(true).await, 2);
+    async fn create_caching_session() -> CachingSession {
+        let session = CachingSession::from(new_for_test(true).await, 2);
 
         // Add a row, this makes it easier to check if the caching works combined with the regular execute fn on Session
         session
@@ -443,7 +443,10 @@ mod tests {
         let iter = session
             .execute_iter("select * from test_table", &[])
             .await
-            .unwrap();
+            .unwrap()
+            .into_typed::<Row>()
+            .unwrap()
+            .into_stream();
 
         let rows = iter.try_collect::<Vec<_>>().await.unwrap().len();
 
@@ -469,14 +472,14 @@ mod tests {
     }
 
     async fn assert_test_batch_table_rows_contain(
-        sess: &LegacyCachingSession,
+        sess: &CachingSession,
         expected_rows: &[(i32, i32)],
     ) {
         let selected_rows: BTreeSet<(i32, i32)> = sess
             .execute_unpaged("SELECT a, b FROM test_batch_table", ())
             .await
             .unwrap()
-            .rows_typed::<(i32, i32)>()
+            .rows::<(i32, i32)>()
             .unwrap()
             .map(|r| r.unwrap())
             .collect();
@@ -515,18 +518,18 @@ mod tests {
             }
         }
 
-        let _session: LegacyCachingSession<std::collections::hash_map::RandomState> =
-            LegacyCachingSession::from(new_for_test(true).await, 2);
-        let _session: LegacyCachingSession<CustomBuildHasher> =
-            LegacyCachingSession::from(new_for_test(true).await, 2);
-        let _session: LegacyCachingSession<CustomBuildHasher> =
-            LegacyCachingSession::with_hasher(new_for_test(true).await, 2, Default::default());
+        let _session: CachingSession<std::collections::hash_map::RandomState> =
+            CachingSession::from(new_for_test(true).await, 2);
+        let _session: CachingSession<CustomBuildHasher> =
+            CachingSession::from(new_for_test(true).await, 2);
+        let _session: CachingSession<CustomBuildHasher> =
+            CachingSession::with_hasher(new_for_test(true).await, 2, Default::default());
     }
 
     #[tokio::test]
     async fn test_batch() {
         setup_tracing();
-        let session: LegacyCachingSession = create_caching_session().await;
+        let session: CachingSession = create_caching_session().await;
 
         session
             .execute_unpaged(
@@ -649,8 +652,7 @@ mod tests {
     #[tokio::test]
     async fn test_parameters_caching() {
         setup_tracing();
-        let session: LegacyCachingSession =
-            LegacyCachingSession::from(new_for_test(true).await, 100);
+        let session: CachingSession = CachingSession::from(new_for_test(true).await, 100);
 
         session
             .execute_unpaged("CREATE TABLE tbl (a int PRIMARY KEY, b int)", ())
@@ -686,7 +688,8 @@ mod tests {
             .execute_unpaged("SELECT b, WRITETIME(b) FROM tbl", ())
             .await
             .unwrap()
-            .rows_typed_or_empty::<(i32, i64)>()
+            .rows::<(i32, i64)>()
+            .unwrap()
             .collect::<Result<Vec<_>, _>>()
             .unwrap();
 
@@ -703,8 +706,7 @@ mod tests {
         }
 
         // This test uses CDC which is not yet compatible with Scylla's tablets.
-        let session: LegacyCachingSession =
-            LegacyCachingSession::from(new_for_test(false).await, 100);
+        let session: CachingSession = CachingSession::from(new_for_test(false).await, 100);
 
         session
             .execute_unpaged(
