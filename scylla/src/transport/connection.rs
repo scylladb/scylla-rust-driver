@@ -35,8 +35,7 @@ use std::{
 
 use super::errors::{BadKeyspaceName, DbError, QueryError};
 use super::iterator::{Legacy08RowIterator, RawIterator};
-use super::legacy_query_result::SingleRowTypedError;
-use super::query_result::QueryResult;
+use super::query_result::{QueryResult, SingleRowError};
 use super::session::AddressTranslator;
 use super::topology::{PeerEndpoint, UntranslatedEndpoint, UntranslatedPeer};
 use super::NodeAddr;
@@ -58,10 +57,6 @@ use crate::routing::ShardInfo;
 use crate::statement::prepared_statement::PreparedStatement;
 use crate::statement::Consistency;
 use crate::transport::Compression;
-
-// Existing code imports scylla::transport::connection::QueryResult because it used to be located in this file.
-// Reexport QueryResult to avoid breaking the existing code.
-pub use crate::Legacy08QueryResult;
 
 // Queries for schema agreement
 const LOCAL_VERSION: &str = "SELECT schema_version FROM system.local WHERE key='local'";
@@ -459,7 +454,7 @@ impl Connection {
         &self,
         query: impl Into<Query>,
         values: impl ValueList,
-    ) -> Result<Legacy08QueryResult, QueryError> {
+    ) -> Result<QueryResult, QueryError> {
         let query: Query = query.into();
 
         // This method is used only for driver internal queries, so no need to consult execution profile here.
@@ -483,13 +478,11 @@ impl Connection {
         values: impl ValueList,
         consistency: Consistency,
         serial_consistency: Option<SerialConsistency>,
-    ) -> Result<Legacy08QueryResult, QueryError> {
+    ) -> Result<QueryResult, QueryError> {
         let query: Query = query.into();
-        Ok(self
-            .query_with_consistency(&query, &values, consistency, serial_consistency, None)
+        self.query_with_consistency(&query, &values, consistency, serial_consistency, None)
             .await?
-            .into_query_result()?
-            .into_legacy_result()?)
+            .into_query_result()
     }
 
     pub async fn query(
@@ -736,15 +729,15 @@ impl Connection {
         let (version_id,): (Uuid,) = self
             .query_single_page(LOCAL_VERSION, &[])
             .await?
-            .single_row_typed()
+            .single_row::<(Uuid,)>()
             .map_err(|err| match err {
-                SingleRowTypedError::RowsExpected(_) => {
+                SingleRowError::NotRowsResponse => {
                     QueryError::ProtocolError("Version query returned not rows")
                 }
-                SingleRowTypedError::BadNumberOfRows(_) => {
+                SingleRowError::UnexpectedRowCount(_) => {
                     QueryError::ProtocolError("system.local query returned a wrong number of rows")
                 }
-                SingleRowTypedError::FromRowError(_) => {
+                SingleRowError::TypeCheckFailed(_) => {
                     QueryError::ProtocolError("Row is not uuid type as it should be")
                 }
             })?;
