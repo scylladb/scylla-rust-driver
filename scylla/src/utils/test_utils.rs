@@ -6,7 +6,7 @@ use std::{
 #[cfg(test)]
 use crate::transport::session_builder::{GenericSessionBuilder, SessionBuilderKind};
 #[cfg(test)]
-use crate::Legacy08Session;
+use crate::Session;
 
 static UNIQUE_COUNTER: AtomicUsize = AtomicUsize::new(0);
 
@@ -25,7 +25,7 @@ pub fn unique_keyspace_name() -> String {
 }
 
 #[cfg(test)]
-pub(crate) async fn supports_feature(session: &Legacy08Session, feature: &str) -> bool {
+pub(crate) async fn supports_feature(session: &Session, feature: &str) -> bool {
     // Cassandra doesn't have a concept of features, so first detect
     // if there is the `supported_features` column in system.local
 
@@ -46,7 +46,7 @@ pub(crate) async fn supports_feature(session: &Legacy08Session, feature: &str) -
         .query("SELECT supported_features FROM system.local", ())
         .await
         .unwrap()
-        .single_row_typed()
+        .single_row()
         .unwrap();
 
     features

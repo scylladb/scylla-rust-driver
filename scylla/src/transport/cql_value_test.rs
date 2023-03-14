@@ -1,12 +1,13 @@
-use crate::frame::{response::result::CqlValue, value::CqlDuration};
+use crate::frame::response::result::{CqlValue, Row};
+use crate::frame::value::CqlDuration;
 
 use crate::test_utils::create_new_session_builder;
 use crate::utils::test_utils::unique_keyspace_name;
-use crate::Legacy08Session;
+use crate::Session;
 
 #[tokio::test]
 async fn test_cqlvalue_udt() {
-    let session: Legacy08Session = create_new_session_builder().build_legacy().await.unwrap();
+    let session: Session = create_new_session_builder().build().await.unwrap();
     let ks = unique_keyspace_name();
     session
         .query(
@@ -57,7 +58,9 @@ async fn test_cqlvalue_udt() {
         .query("SELECT my FROM cqlvalue_udt_test", &[])
         .await
         .unwrap()
-        .rows
+        .rows::<Row>()
+        .unwrap()
+        .collect::<Result<Vec<_>, _>>()
         .unwrap();
 
     assert_eq!(rows.len(), 1);
@@ -70,7 +73,7 @@ async fn test_cqlvalue_udt() {
 
 #[tokio::test]
 async fn test_cqlvalue_duration() {
-    let session: Legacy08Session = create_new_session_builder().build_legacy().await.unwrap();
+    let session: Session = create_new_session_builder().build().await.unwrap();
 
     let ks = unique_keyspace_name();
     session
@@ -111,7 +114,9 @@ async fn test_cqlvalue_duration() {
         )
         .await
         .unwrap()
-        .rows
+        .rows::<Row>()
+        .unwrap()
+        .collect::<Result<Vec<_>, _>>()
         .unwrap();
 
     assert_eq!(rows.len(), 4);
