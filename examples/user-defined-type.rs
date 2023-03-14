@@ -1,6 +1,6 @@
 use anyhow::Result;
-use scylla::macros::{FromUserType, IntoUserType};
-use scylla::{Legacy08Session, SessionBuilder};
+use scylla::macros::{DeserializeCql, IntoUserType};
+use scylla::{Session, SessionBuilder};
 use std::env;
 
 #[tokio::main]
@@ -9,7 +9,7 @@ async fn main() -> Result<()> {
 
     println!("Connecting to {} ...", uri);
 
-    let session: Legacy08Session = SessionBuilder::new().known_node(uri).build_legacy().await?;
+    let session: Session = SessionBuilder::new().known_node(uri).build().await?;
 
     session.query("CREATE KEYSPACE IF NOT EXISTS ks WITH REPLICATION = {'class' : 'SimpleStrategy', 'replication_factor' : 1}", &[]).await?;
 
@@ -29,7 +29,7 @@ async fn main() -> Result<()> {
 
     // Define custom struct that matches User Defined Type created earlier
     // wrapping field in Option will gracefully handle null field values
-    #[derive(Debug, IntoUserType, FromUserType)]
+    #[derive(Debug, IntoUserType, DeserializeCql)]
     struct MyType {
         int_val: i32,
         text_val: Option<String>,
@@ -47,7 +47,7 @@ async fn main() -> Result<()> {
 
     // And read like any normal value
     let result = session.query("SELECT my FROM ks.udt_tab", &[]).await?;
-    let mut iter = result.rows_typed::<(MyType,)>()?;
+    let mut iter = result.rows::<(MyType,)>()?;
     while let Some((my_val,)) = iter.next().transpose()? {
         println!("{:?}", my_val);
     }

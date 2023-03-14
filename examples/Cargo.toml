@@ -11,6 +11,7 @@ openssl = "0.10.32"
 rustyline = "9"
 rustyline-derive = "0.6"
 scylla = {path = "../scylla", features = ["ssl", "cloud"]}
+scylla-cql = {path = "../scylla-cql"}
 tokio = {version = "1.1.0", features = ["full"]}
 tracing = "0.1.25"
 tracing-subscriber = { version = "0.3.14", features = ["env-filter"] }

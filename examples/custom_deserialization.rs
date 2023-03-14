@@ -2,7 +2,8 @@ use anyhow::Result;
 use scylla::cql_to_rust::{FromCqlVal, FromCqlValError};
 use scylla::frame::response::result::CqlValue;
 use scylla::macros::impl_from_cql_value_from_method;
-use scylla::{Legacy08Session, SessionBuilder};
+use scylla::transport::session::Session;
+use scylla::SessionBuilder;
 use std::env;
 
 #[tokio::main]
@@ -11,7 +12,7 @@ async fn main() -> Result<()> {
 
     println!("Connecting to {} ...", uri);
 
-    let session: Legacy08Session = SessionBuilder::new().known_node(uri).build_legacy().await?;
+    let session: Session = SessionBuilder::new().known_node(uri).build().await?;
 
     session.query("CREATE KEYSPACE IF NOT EXISTS ks WITH REPLICATION = {'class' : 'SimpleStrategy', 'replication_factor' : 1}", &[]).await?;
     session
@@ -40,6 +41,7 @@ async fn main() -> Result<()> {
     let (v,) = session
         .query("SELECT v FROM ks.t WHERE pk = 1", ())
         .await?
+        .into_legacy_result()?
         .single_row_typed::<(MyType,)>()?;
     assert_eq!(v, MyType("asdf".to_owned()));
 
@@ -64,6 +66,7 @@ async fn main() -> Result<()> {
     let (v,) = session
         .query("SELECT v FROM ks.t WHERE pk = 1", ())
         .await?
+        .into_legacy_result()?
         .single_row_typed::<(MyOtherType,)>()?;
     assert_eq!(v, MyOtherType("asdf".to_owned()));
 

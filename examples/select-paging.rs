@@ -1,6 +1,6 @@
 use anyhow::Result;
 use futures::stream::StreamExt;
-use scylla::{query::Query, Legacy08Session, SessionBuilder};
+use scylla::{query::Query, Session, SessionBuilder};
 use std::env;
 
 #[tokio::main]
@@ -9,7 +9,7 @@ async fn main() -> Result<()> {
 
     println!("Connecting to {} ...", uri);
 
-    let session: Legacy08Session = SessionBuilder::new().known_node(uri).build_legacy().await?;
+    let session: Session = SessionBuilder::new().known_node(uri).build().await?;
 
     session.query("CREATE KEYSPACE IF NOT EXISTS ks WITH REPLICATION = {'class' : 'SimpleStrategy', 'replication_factor' : 1}", &[]).await?;
 
@@ -44,24 +44,24 @@ async fn main() -> Result<()> {
     let res1 = session.query(paged_query.clone(), &[]).await?;
     println!(
         "Paging state: {:#?} ({} rows)",
-        res1.paging_state,
-        res1.rows_num()?,
+        res1.paging_state(),
+        res1.rows_num().unwrap(),
     );
     let res2 = session
-        .query_paged(paged_query.clone(), &[], res1.paging_state)
+        .query_paged(paged_query.clone(), &[], res1.paging_state())
         .await?;
     println!(
         "Paging state: {:#?} ({} rows)",
-        res2.paging_state,
-        res2.rows_num()?,
+        res2.paging_state(),
+        res2.rows_num().unwrap(),
     );
     let res3 = session
-        .query_paged(paged_query.clone(), &[], res2.paging_state)
+        .query_paged(paged_query.clone(), &[], res2.paging_state())
         .await?;
     println!(
         "Paging state: {:#?} ({} rows)",
-        res3.paging_state,
-        res3.rows_num()?,
+        res3.paging_state(),
+        res3.rows_num().unwrap(),
     );
 
     let paged_prepared = session
@@ -70,24 +70,24 @@ async fn main() -> Result<()> {
     let res4 = session.execute(&paged_prepared, &[]).await?;
     println!(
         "Paging state from the prepared statement execution: {:#?} ({} rows)",
-        res4.paging_state,
-        res4.rows_num()?,
+        res4.paging_state(),
+        res4.rows_num().unwrap(),
     );
     let res5 = session
-        .execute_paged(&paged_prepared, &[], res4.paging_state)
+        .execute_paged(&paged_prepared, &[], res4.paging_state())
         .await?;
     println!(
         "Paging state from the second prepared statement execution: {:#?} ({} rows)",
-        res5.paging_state,
-        res5.rows_num()?,
+        res5.paging_state(),
+        res5.rows_num().unwrap(),
     );
     let res6 = session
-        .execute_paged(&paged_prepared, &[], res5.paging_state)
+        .execute_paged(&paged_prepared, &[], res5.paging_state())
         .await?;
     println!(
         "Paging state from the third prepared statement execution: {:#?} ({} rows)",
-        res6.paging_state,
-        res6.rows_num()?,
+        res6.paging_state(),
+        res6.rows_num().unwrap(),
     );
     println!("Ok.");
 

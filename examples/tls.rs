@@ -1,5 +1,5 @@
 use anyhow::Result;
-use scylla::transport::session::Legacy08Session;
+use scylla::transport::session::Session;
 use scylla::SessionBuilder;
 use std::env;
 use std::fs;
@@ -43,10 +43,10 @@ async fn main() -> Result<()> {
     context_builder.set_ca_file(ca_dir.as_path())?;
     context_builder.set_verify(SslVerifyMode::PEER);
 
-    let session: Legacy08Session = SessionBuilder::new()
+    let session: Session = SessionBuilder::new()
         .known_node(uri)
         .ssl_context(Some(context_builder.build()))
-        .build_legacy()
+        .build()
         .await?;
 
     session.query("CREATE KEYSPACE IF NOT EXISTS ks WITH REPLICATION = {'class' : 'SimpleStrategy', 'replication_factor' : 1}", &[]).await?;
@@ -81,7 +81,7 @@ async fn main() -> Result<()> {
 
     // Rows can be parsed as tuples
     let result = session.query("SELECT a, b, c FROM ks.t", &[]).await?;
-    let mut iter = result.rows_typed::<(i32, i32, String)>()?;
+    let mut iter = result.rows::<(i32, i32, String)>()?;
     while let Some((a, b, c)) = iter.next().transpose()? {
         println!("a, b, c: {}, {}, {}", a, b, c);
     }

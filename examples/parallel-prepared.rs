@@ -1,5 +1,5 @@
 use anyhow::Result;
-use scylla::{Legacy08Session, SessionBuilder};
+use scylla::{Session, SessionBuilder};
 use std::env;
 use std::sync::Arc;
 
@@ -11,7 +11,7 @@ async fn main() -> Result<()> {
 
     println!("Connecting to {} ...", uri);
 
-    let session: Legacy08Session = SessionBuilder::new().known_node(uri).build_legacy().await?;
+    let session: Session = SessionBuilder::new().known_node(uri).build().await?;
     let session = Arc::new(session);
 
     session.query("CREATE KEYSPACE IF NOT EXISTS ks WITH REPLICATION = {'class' : 'SimpleStrategy', 'replication_factor' : 1}", &[]).await?;

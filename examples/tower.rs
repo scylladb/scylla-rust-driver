@@ -1,3 +1,5 @@
+use scylla::transport::session::Session;
+use scylla_cql::frame::response::result::Row;
 use std::env;
 use std::future::Future;
 use std::pin::Pin;
@@ -7,12 +9,12 @@ use std::task::Poll;
 use tower::Service;
 
 struct SessionService {
-    session: Arc<scylla::Legacy08Session>,
+    session: Arc<Session>,
 }
 
 // A trivial service implementation for sending parameterless simple string requests to Scylla.
 impl Service<scylla::query::Query> for SessionService {
-    type Response = scylla::Legacy08QueryResult;
+    type Response = scylla::QueryResult;
     type Error = scylla::transport::errors::QueryError;
     type Future = Pin<Box<dyn Future<Output = Result<Self::Response, Self::Error>>>>;
 
@@ -35,7 +37,7 @@ async fn main() -> anyhow::Result<()> {
         session: Arc::new(
             scylla::SessionBuilder::new()
                 .known_node(uri)
-                .build_legacy()
+                .build()
                 .await?,
         ),
     };
@@ -56,14 +58,14 @@ async fn main() -> anyhow::Result<()> {
 
     println!(
         "Tables:\n{}",
-        resp.rows()?
-            .into_iter()
-            .map(|r| format!(
+        resp.rows::<Row>()?
+            .map(|r| r.map(|r| format!(
                 "\t{}.{}",
                 print_text(&r.columns[0]),
                 print_text(&r.columns[1])
-            ))
-            .collect::<Vec<String>>()
+            )))
+            .collect::<Result<Vec<String>, _>>()
+            .unwrap()
             .join("\n")
     );
     Ok(())

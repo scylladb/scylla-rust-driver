@@ -1,5 +1,5 @@
 use anyhow::Result;
-use scylla::transport::session::Legacy08Session;
+use scylla::transport::session::Session;
 use scylla::SessionBuilder;
 use std::env;
 use tracing::info;
@@ -16,7 +16,7 @@ async fn main() -> Result<()> {
     let uri = env::var("SCYLLA_URI").unwrap_or_else(|_| "127.0.0.1:9042".to_string());
     info!("Connecting to {}", uri);
 
-    let session: Legacy08Session = SessionBuilder::new().known_node(uri).build_legacy().await?;
+    let session: Session = SessionBuilder::new().known_node(uri).build().await?;
     session.query("CREATE KEYSPACE IF NOT EXISTS ks WITH REPLICATION = {'class' : 'SimpleStrategy', 'replication_factor' : 1}", &[]).await?;
 
     session.query("USE ks", &[]).await?;

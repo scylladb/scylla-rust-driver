@@ -2,15 +2,14 @@
 // query() prepare() execute() batch() query_iter() and execute_iter() can be traced
 
 use anyhow::{anyhow, Result};
-use futures::StreamExt;
 use scylla::batch::Batch;
 use scylla::statement::{
     prepared_statement::PreparedStatement, query::Query, Consistency, SerialConsistency,
 };
 use scylla::tracing::{GetTracingConfig, TracingInfo};
-use scylla::transport::iterator::Legacy08RowIterator;
-use scylla::Legacy08QueryResult;
-use scylla::{Legacy08Session, SessionBuilder};
+use scylla::transport::iterator::RawIterator;
+use scylla::QueryResult;
+use scylla::{Session, SessionBuilder};
 use std::env;
 use std::num::NonZeroU32;
 use std::time::Duration;
@@ -21,7 +20,7 @@ async fn main() -> Result<()> {
     let uri = env::var("SCYLLA_URI").unwrap_or_else(|_| "127.0.0.1:9042".to_string());
 
     println!("Connecting to {} ...", uri);
-    let session: Legacy08Session = SessionBuilder::new().known_node(uri).build_legacy().await?;
+    let session: Session = SessionBuilder::new().known_node(uri).build().await?;
 
     session.query("CREATE KEYSPACE IF NOT EXISTS ks WITH REPLICATION = {'class' : 'SimpleStrategy', 'replication_factor' : 1}", &[]).await?;
 
@@ -39,9 +38,9 @@ async fn main() -> Result<()> {
     query.set_serial_consistency(Some(SerialConsistency::LocalSerial));
 
     // QueryResult will contain a tracing_id which can be used to query tracing information
-    let query_result: Legacy08QueryResult = session.query(query.clone(), &[]).await?;
+    let query_result: QueryResult = session.query(query.clone(), &[]).await?;
     let query_tracing_id: Uuid = query_result
-        .tracing_id
+        .tracing_id()
         .ok_or_else(|| anyhow!("Tracing id is None!"))?;
 
     // Get tracing information for this query and print it
@@ -76,14 +75,14 @@ async fn main() -> Result<()> {
     // To trace execution of a prepared statement tracing must be enabled for it
     prepared.set_tracing(true);
 
-    let execute_result: Legacy08QueryResult = session.execute(&prepared, &[]).await?;
-    println!("Execute tracing id: {:?}", execute_result.tracing_id);
+    let execute_result: QueryResult = session.execute(&prepared, &[]).await?;
+    println!("Execute tracing id: {:?}", execute_result.tracing_id());
 
     // PAGED QUERY_ITER EXECUTE_ITER
     // It's also possible to trace paged queries like query_iter or execute_iter
     // After iterating through all rows iterator.get_tracing_ids() will give tracing ids
     // for all page queries
-    let mut row_iterator: Legacy08RowIterator = session.query_iter(query, &[]).await?;
+    let mut row_iterator: RawIterator = session.query_iter(query, &[]).await?;
 
     while let Some(_row) = row_iterator.next().await {
         // Receive rows
@@ -102,8 +101,8 @@ async fn main() -> Result<()> {
     batch.set_tracing(true);
 
     // Run the batch and print its tracing_id
-    let batch_result: Legacy08QueryResult = session.batch(&batch, ((),)).await?;
-    println!("Batch tracing id: {:?}\n", batch_result.tracing_id);
+    let batch_result: QueryResult = session.batch(&batch, ((),)).await?;
+    println!("Batch tracing id: {:?}\n", batch_result.tracing_id());
 
     // CUSTOM
     // GetTracingConfig allows to specify a custom settings for querying tracing info

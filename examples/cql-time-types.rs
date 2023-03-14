@@ -4,7 +4,7 @@
 use anyhow::Result;
 use chrono::{Duration, NaiveDate};
 use scylla::frame::value::{Date, Time, Timestamp};
-use scylla::transport::session::Legacy08Session;
+use scylla::transport::session::Session;
 use scylla::SessionBuilder;
 use std::env;
 
@@ -14,7 +14,7 @@ async fn main() -> Result<()> {
 
     println!("Connecting to {} ...", uri);
 
-    let session: Legacy08Session = SessionBuilder::new().known_node(uri).build_legacy().await?;
+    let session: Session = SessionBuilder::new().known_node(uri).build().await?;
 
     session.query("CREATE KEYSPACE IF NOT EXISTS ks WITH REPLICATION = {'class' : 'SimpleStrategy', 'replication_factor' : 1}", &[]).await?;
 
@@ -36,7 +36,7 @@ async fn main() -> Result<()> {
         .await?;
 
     let result = session.query("SELECT d from ks.dates", &[]).await?;
-    let mut iter = result.rows_typed::<(NaiveDate,)>()?;
+    let mut iter = result.rows::<(NaiveDate,)>()?;
     while let Some((read_date,)) = iter.next().transpose()? {
         println!("Read a date: {:?}", read_date);
     }
@@ -48,7 +48,7 @@ async fn main() -> Result<()> {
         .await?;
 
     let result = session.query("SELECT d from ks.dates", &[]).await?;
-    let mut iter = result.rows_typed::<(Date,)>()?;
+    let mut iter = result.rows::<(Date,)>()?;
     while let Some((read_days,)) = iter.next().transpose()? {
         println!("Read a date as raw days: {}", read_days.0);
     }
@@ -69,7 +69,7 @@ async fn main() -> Result<()> {
         .await?;
 
     let result = session.query("SELECT t from ks.times", &[]).await?;
-    let mut iter = result.rows_typed::<(Duration,)>()?;
+    let mut iter = result.rows::<(Duration,)>()?;
     while let Some((read_time,)) = iter.next().transpose()? {
         println!("Read a time: {:?}", read_time);
     }
@@ -93,7 +93,7 @@ async fn main() -> Result<()> {
         .await?;
 
     let result = session.query("SELECT t from ks.timestamps", &[]).await?;
-    let mut iter = result.rows_typed::<(Duration,)>()?;
+    let mut iter = result.rows::<(Duration,)>()?;
     while let Some((read_time,)) = iter.next().transpose()? {
         println!("Read a timestamp: {:?}", read_time);
     }

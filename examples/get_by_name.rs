@@ -1,6 +1,7 @@
 use anyhow::{anyhow, Result};
-use scylla::transport::session::Legacy08Session;
+use scylla::transport::session::Session;
 use scylla::SessionBuilder;
+use scylla_cql::frame::response::result::Row;
 use std::env;
 
 #[tokio::main]
@@ -10,7 +11,7 @@ async fn main() -> Result<()> {
 
     println!("Connecting to {} ...", uri);
 
-    let session: Legacy08Session = SessionBuilder::new().known_node(uri).build_legacy().await?;
+    let session: Session = SessionBuilder::new().known_node(uri).build().await?;
 
     session.query("CREATE KEYSPACE IF NOT EXISTS ks WITH REPLICATION = {'class' : 'SimpleStrategy', 'replication_factor' : 1}", &[]).await?;
 
@@ -44,9 +45,14 @@ async fn main() -> Result<()> {
     let (value_idx, _) = query_result
         .get_column_spec("value")
         .ok_or_else(|| anyhow!("No value column found"))?;
+    let rows = query_result
+        .rows::<Row>()
+        .unwrap()
+        .collect::<Result<Vec<_>, _>>()
+        .unwrap();
     println!("ck           |  value");
     println!("---------------------");
-    for row in query_result.rows.ok_or_else(|| anyhow!("no rows found"))? {
+    for row in rows {
         println!("{:?} | {:?}", row.columns[ck_idx], row.columns[value_idx]);
     }
 
