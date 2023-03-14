@@ -47,9 +47,8 @@ use std::{
 };
 
 use super::iterator::{LegacyRowIterator, RawIterator};
-use super::legacy_query_result::SingleRowTypedError;
 use super::locator::tablets::{RawTablet, TabletParsingError};
-use super::query_result::QueryResult;
+use super::query_result::{QueryResult, SingleRowError};
 use super::session::AddressTranslator;
 use super::topology::{PeerEndpoint, UntranslatedEndpoint, UntranslatedPeer};
 use super::NodeAddr;
@@ -1417,17 +1416,19 @@ impl Connection {
         let (version_id,) = self
             .query_unpaged(LOCAL_VERSION)
             .await?
-            .into_legacy_result()?
-            .single_row_typed()
+            .single_row::<(Uuid,)>()
             .map_err(|err| match err {
-                SingleRowTypedError::RowsExpected(_) => {
+                SingleRowError::NotRowsResponse => {
                     QueryError::ProtocolError("Version query returned not rows")
                 }
-                SingleRowTypedError::BadNumberOfRows(_) => {
+                SingleRowError::UnexpectedRowCount(_) => {
                     QueryError::ProtocolError("system.local query returned a wrong number of rows")
                 }
-                SingleRowTypedError::FromRowError(_) => {
+                SingleRowError::TypeCheckFailed(_) => {
                     QueryError::ProtocolError("Row is not uuid type as it should be")
+                }
+                SingleRowError::DeserializationFailed(_) => {
+                    QueryError::ProtocolError("Error when deserializing schema version")
                 }
             })?;
         Ok(version_id)
