@@ -40,7 +40,16 @@ use super::topology::Strategy;
 
 /// Cluster manages up to date information and connections to database nodes.
 /// All data can be accessed by cloning Arc<ClusterData> in the `data` field
-pub struct Cluster {
+//
+// NOTE: This structure was intentionally made cloneable. The reason for this
+// is to make it possible to use two different Session APIs in the same program
+// that share the same session resources.
+//
+// It is safe to do because the Cluster struct is just a facade for the real,
+// "semantic" Cluster object. Cloned instance of this struct will use the same
+// ClusterData and worker and will observe the same state.
+#[derive(Clone)]
+pub(crate) struct Cluster {
     // `ArcSwap<ClusterData>` is wrapped in `Arc` to support sharing cluster data
     // between `Cluster` and `ClusterWorker`
     data: Arc<ArcSwap<ClusterData>>,
@@ -48,12 +57,12 @@ pub struct Cluster {
     refresh_channel: tokio::sync::mpsc::Sender<RefreshRequest>,
     use_keyspace_channel: tokio::sync::mpsc::Sender<UseKeyspaceRequest>,
 
-    _worker_handle: RemoteHandle<()>,
+    _worker_handle: Arc<RemoteHandle<()>>,
 }
 
 /// Enables printing [Cluster] struct in a neat way, by skipping the rather useless
 /// print of channels state and printing [ClusterData] neatly.
-pub struct ClusterNeatDebug<'a>(pub &'a Cluster);
+pub(crate) struct ClusterNeatDebug<'a>(pub &'a Cluster);
 impl<'a> std::fmt::Debug for ClusterNeatDebug<'a> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let cluster = self.0;
@@ -193,7 +202,7 @@ impl Cluster {
             data: cluster_data,
             refresh_channel: refresh_sender,
             use_keyspace_channel: use_keyspace_sender,
-            _worker_handle: worker_handle,
+            _worker_handle: Arc::new(worker_handle),
         };
 
         Ok(result)
