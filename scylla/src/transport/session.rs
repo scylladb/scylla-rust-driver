@@ -4,6 +4,7 @@
 use crate::batch::batch_values;
 #[cfg(feature = "cloud")]
 use crate::cloud::CloudConfig;
+use crate::LegacyQueryResult;
 
 use crate::history;
 use crate::history::HistoryListener;
@@ -42,7 +43,8 @@ use super::connection::QueryResponse;
 use super::connection::SslConfig;
 use super::errors::TracingProtocolError;
 use super::execution_profile::{ExecutionProfile, ExecutionProfileHandle, ExecutionProfileInner};
-use super::legacy_query_result::{LegacyQueryResult, MaybeFirstRowTypedError};
+use super::iterator::QueryPager;
+use super::legacy_query_result::MaybeFirstRowTypedError;
 #[cfg(feature = "cloud")]
 use super::node::CloudEndpoint;
 use super::node::{InternalKnownNode, KnownNode};
@@ -885,20 +887,21 @@ impl Session {
             .access();
 
         if values.is_empty() {
-            LegacyRowIterator::new_for_query(
+            QueryPager::new_for_query(
                 query,
                 execution_profile,
                 self.cluster.get_data(),
                 self.metrics.clone(),
             )
             .await
+            .map(QueryPager::into_legacy)
         } else {
-            // Making LegacyRowIterator::new_for_query work with values is too hard (if even possible)
+            // Making QueryPager::new_for_query work with values is too hard (if even possible)
             // so instead of sending one prepare to a specific connection on each iterator query,
             // we fully prepare a statement beforehand.
             let prepared = self.prepare(query).await?;
             let values = prepared.serialize_values(&values)?;
-            LegacyRowIterator::new_for_prepared_statement(PreparedIteratorConfig {
+            QueryPager::new_for_prepared_statement(PreparedIteratorConfig {
                 prepared,
                 values,
                 execution_profile,
@@ -906,6 +909,7 @@ impl Session {
                 metrics: self.metrics.clone(),
             })
             .await
+            .map(QueryPager::into_legacy)
         }
     }
 
@@ -1288,7 +1292,7 @@ impl Session {
             .unwrap_or_else(|| self.get_default_execution_profile_handle())
             .access();
 
-        LegacyRowIterator::new_for_prepared_statement(PreparedIteratorConfig {
+        QueryPager::new_for_prepared_statement(PreparedIteratorConfig {
             prepared,
             values: serialized_values,
             execution_profile,
@@ -1296,6 +1300,7 @@ impl Session {
             metrics: self.metrics.clone(),
         })
         .await
+        .map(QueryPager::into_legacy)
     }
 
     /// Perform a batch request.\
