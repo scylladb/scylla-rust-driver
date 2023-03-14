@@ -186,7 +186,7 @@ where
     schema_agreement_timeout: Duration,
     schema_agreement_automatic_waiting: bool,
     refresh_metadata_on_auto_schema_agreement: bool,
-    keyspace_name: ArcSwapOption<String>,
+    keyspace_name: Arc<ArcSwapOption<String>>,
     tracing_info_fetch_attempts: NonZeroU32,
     tracing_info_fetch_interval: Duration,
     tracing_info_fetch_consistency: Consistency,
@@ -852,6 +852,32 @@ impl GenericSession<CurrentDeserializationApi> {
     ) -> Result<QueryResult, QueryError> {
         self.do_batch(batch, values).await
     }
+
+    /// Creates a new Session instance that shared resources with
+    /// the current Session but supports the legacy API.
+    ///
+    /// This method is provided in order to make migration to the new
+    /// deserialization API easier. For example, if your program in general uses
+    /// the new API but you still have some modules left that use the old one,
+    /// you can use this method to create an instance that supports the old API
+    /// and pass it to the module that you intend to migrate later.
+    pub fn make_shared_session_with_legacy_api(&self) -> LegacySession {
+        LegacySession {
+            cluster: self.cluster.clone(),
+            default_execution_profile_handle: self.default_execution_profile_handle.clone(),
+            metrics: self.metrics.clone(),
+            refresh_metadata_on_auto_schema_agreement: self
+                .refresh_metadata_on_auto_schema_agreement,
+            schema_agreement_interval: self.schema_agreement_interval,
+            keyspace_name: self.keyspace_name.clone(),
+            schema_agreement_timeout: self.schema_agreement_timeout,
+            schema_agreement_automatic_waiting: self.schema_agreement_automatic_waiting,
+            tracing_info_fetch_attempts: self.tracing_info_fetch_attempts,
+            tracing_info_fetch_interval: self.tracing_info_fetch_interval,
+            tracing_info_fetch_consistency: self.tracing_info_fetch_consistency,
+            _phantom_deser_api: PhantomData,
+        }
+    }
 }
 
 impl GenericSession<LegacyDeserializationApi> {
@@ -927,6 +953,35 @@ impl GenericSession<LegacyDeserializationApi> {
         values: impl BatchValues,
     ) -> Result<LegacyQueryResult, QueryError> {
         Ok(self.do_batch(batch, values).await?.into_legacy_result()?)
+    }
+
+    /// Creates a new Session instance that shares resources with
+    /// the current Session but supports the new API.
+    ///
+    /// This method is provided in order to make migration to the new
+    /// deserialization API easier. For example, if your program in general uses
+    /// the old API but you want to migrate some modules to the new one, you
+    /// can use this method to create an instance that supports the new API
+    /// and pass it to the module that you intend to migrate.
+    ///
+    /// The new session object will use the same connections and cluster
+    /// metadata.
+    pub fn make_shared_session_with_new_api(&self) -> Session {
+        Session {
+            cluster: self.cluster.clone(),
+            default_execution_profile_handle: self.default_execution_profile_handle.clone(),
+            metrics: self.metrics.clone(),
+            refresh_metadata_on_auto_schema_agreement: self
+                .refresh_metadata_on_auto_schema_agreement,
+            schema_agreement_interval: self.schema_agreement_interval,
+            keyspace_name: self.keyspace_name.clone(),
+            schema_agreement_timeout: self.schema_agreement_timeout,
+            schema_agreement_automatic_waiting: self.schema_agreement_automatic_waiting,
+            tracing_info_fetch_attempts: self.tracing_info_fetch_attempts,
+            tracing_info_fetch_interval: self.tracing_info_fetch_interval,
+            tracing_info_fetch_consistency: self.tracing_info_fetch_consistency,
+            _phantom_deser_api: PhantomData,
+        }
     }
 }
 
@@ -1041,7 +1096,7 @@ where
             schema_agreement_automatic_waiting: config.schema_agreement_automatic_waiting,
             refresh_metadata_on_auto_schema_agreement: config
                 .refresh_metadata_on_auto_schema_agreement,
-            keyspace_name: ArcSwapOption::default(), // will be set by use_keyspace
+            keyspace_name: Arc::new(ArcSwapOption::default()), // will be set by use_keyspace
             tracing_info_fetch_attempts: config.tracing_info_fetch_attempts,
             tracing_info_fetch_interval: config.tracing_info_fetch_interval,
             tracing_info_fetch_consistency: config.tracing_info_fetch_consistency,
