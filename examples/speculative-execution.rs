@@ -1,6 +1,6 @@
 use scylla::{
     speculative_execution::PercentileSpeculativeExecutionPolicy,
-    transport::execution_profile::ExecutionProfile, Session, SessionBuilder,
+    transport::execution_profile::ExecutionProfile, Legacy08Session, SessionBuilder,
 };
 
 use anyhow::Result;
@@ -20,7 +20,7 @@ async fn main() -> Result<()> {
         .speculative_execution_policy(Some(Arc::new(speculative)))
         .build();
 
-    let session: Session = SessionBuilder::new()
+    let session: Legacy08Session = SessionBuilder::new()
         .known_node(uri)
         .default_execution_profile_handle(speculative_profile.into_handle())
         .build()

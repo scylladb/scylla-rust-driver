@@ -4,7 +4,7 @@
 use anyhow::Result;
 use chrono::{Duration, NaiveDate};
 use scylla::frame::value::{Date, Time, Timestamp};
-use scylla::transport::session::Session;
+use scylla::transport::session::Legacy08Session;
 use scylla::SessionBuilder;
 use std::env;
 
@@ -14,7 +14,7 @@ async fn main() -> Result<()> {
 
     println!("Connecting to {} ...", uri);
 
-    let session: Session = SessionBuilder::new().known_node(uri).build().await?;
+    let session: Legacy08Session = SessionBuilder::new().known_node(uri).build().await?;
 
     session.query("CREATE KEYSPACE IF NOT EXISTS ks WITH REPLICATION = {'class' : 'SimpleStrategy', 'replication_factor' : 1}", &[]).await?;
 

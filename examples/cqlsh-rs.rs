@@ -4,7 +4,7 @@ use rustyline::error::ReadlineError;
 use rustyline::{CompletionType, Config, Context, Editor};
 use rustyline_derive::{Helper, Highlighter, Hinter, Validator};
 use scylla::transport::Compression;
-use scylla::{Legacy08QueryResult, Session, SessionBuilder};
+use scylla::{Legacy08QueryResult, Legacy08Session, SessionBuilder};
 use std::env;
 
 #[derive(Helper, Highlighter, Validator, Hinter)]
@@ -199,7 +199,7 @@ async fn main() -> Result<()> {
 
     println!("Connecting to {} ...", uri);
 
-    let session: Session = SessionBuilder::new()
+    let session: Legacy08Session = SessionBuilder::new()
         .known_node(uri)
         .compression(Some(Compression::Lz4))
         .build()

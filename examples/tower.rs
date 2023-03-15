@@ -7,7 +7,7 @@ use std::task::Poll;
 use tower::Service;
 
 struct SessionService {
-    session: Arc<scylla::Session>,
+    session: Arc<scylla::Legacy08Session>,
 }
 
 // A trivial service implementation for sending parameterless simple string requests to Scylla.
