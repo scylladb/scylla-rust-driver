@@ -6,7 +6,7 @@ use crate::{
 use itertools::{Either, Itertools};
 use rand::{prelude::SliceRandom, thread_rng, Rng};
 use scylla_cql::{errors::QueryError, frame::types::SerialConsistency, Consistency};
-use std::{sync::Arc, time::Duration};
+use std::{fmt, sync::Arc, time::Duration};
 use tracing::warn;
 
 // TODO: LWT optimisation
@@ -14,11 +14,21 @@ use tracing::warn;
 ///
 /// It can be configured to be datacenter-aware and token-aware.
 /// Datacenter failover for queries with non local consistency mode is also supported.
-#[derive(Debug)]
 pub struct DefaultPolicy {
     preferred_datacenter: Option<String>,
     is_token_aware: bool,
     permit_dc_failover: bool,
+    pick_predicate: Box<dyn Fn(&NodeRef) -> bool + Send + Sync>,
+}
+
+impl fmt::Debug for DefaultPolicy {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("DefaultPolicy")
+            .field("preferred_datacenter", &self.preferred_datacenter)
+            .field("is_token_aware", &self.is_token_aware)
+            .field("permit_dc_failover", &self.permit_dc_failover)
+            .finish_non_exhaustive()
+    }
 }
 
 impl LoadBalancingPolicy for DefaultPolicy {
@@ -43,14 +53,15 @@ or refrain from preferring datacenters (which may ban all other datacenters, if 
         if let Some(ts) = &routing_info.token_with_strategy {
             // Try to pick some alive local random replica.
             // If preferred datacenter is not specified, all replicas are treated as local.
-            let picked = self.pick_replica(ts, true, Self::is_alive, cluster);
+            let picked = self.pick_replica(ts, true, &self.pick_predicate, cluster);
+
             if let Some(alive_local_replica) = picked {
                 return Some(alive_local_replica);
             }
 
             // If datacenter failover is possible, loosen restriction about locality.
             if self.is_datacenter_failover_possible(&routing_info) {
-                let picked = self.pick_replica(ts, false, Self::is_alive, cluster);
+                let picked = self.pick_replica(ts, false, &self.pick_predicate, cluster);
                 if let Some(alive_remote_replica) = picked {
                     return Some(alive_remote_replica);
                 }
@@ -61,7 +72,7 @@ or refrain from preferring datacenters (which may ban all other datacenters, if 
         // some alive local node.
         // If there was no preferred datacenter specified, all nodes are treated as local.
         let nodes = self.preferred_node_set(cluster);
-        let picked = Self::pick_node(nodes, Self::is_alive);
+        let picked = Self::pick_node(nodes, &self.pick_predicate);
         if let Some(alive_local) = picked {
             return Some(alive_local);
         }
@@ -69,7 +80,7 @@ or refrain from preferring datacenters (which may ban all other datacenters, if 
         let all_nodes = cluster.replica_locator().unique_nodes_in_global_ring();
         // If a datacenter failover is possible, loosen restriction about locality.
         if self.is_datacenter_failover_possible(&routing_info) {
-            let picked = Self::pick_node(all_nodes, Self::is_alive);
+            let picked = Self::pick_node(all_nodes, &self.pick_predicate);
             if let Some(alive_maybe_remote) = picked {
                 return Some(alive_maybe_remote);
             }
@@ -249,7 +260,7 @@ impl DefaultPolicy {
         &'a self,
         ts: &TokenWithStrategy<'a>,
         should_be_local: bool,
-        predicate: impl Fn(&NodeRef<'a>) -> bool,
+        predicate: &impl Fn(&NodeRef<'a>) -> bool,
         cluster: &'a ClusterData,
     ) -> Option<NodeRef<'a>> {
         self.nonfiltered_replica_set(ts, should_be_local, cluster)
@@ -327,6 +338,7 @@ impl Default for DefaultPolicy {
             preferred_datacenter: None,
             is_token_aware: true,
             permit_dc_failover: false,
+            pick_predicate: Box::new(Self::is_alive),
         }
     }
 }
@@ -364,10 +376,13 @@ impl DefaultPolicyBuilder {
 
     /// Builds a new DefaultPolicy with the previously set configuration.
     pub fn build(self) -> Arc<dyn LoadBalancingPolicy> {
+        let pick_predicate = Box::new(DefaultPolicy::is_alive);
+
         Arc::new(DefaultPolicy {
             preferred_datacenter: self.preferred_datacenter,
             is_token_aware: self.is_token_aware,
             permit_dc_failover: self.permit_dc_failover,
+            pick_predicate,
         })
     }
 
@@ -731,6 +746,7 @@ mod tests {
                     preferred_datacenter: Some("eu".to_owned()),
                     is_token_aware: true,
                     permit_dc_failover: true,
+                    ..Default::default()
                 },
                 routing_info: RoutingInfo {
                     token: Some(Token { value: 160 }),
@@ -754,6 +770,7 @@ mod tests {
                     preferred_datacenter: Some("eu".to_owned()),
                     is_token_aware: true,
                     permit_dc_failover: true,
+                    ..Default::default()
                 },
                 routing_info: RoutingInfo {
                     token: Some(Token { value: 160 }),
@@ -775,6 +792,7 @@ mod tests {
                     preferred_datacenter: Some("eu".to_owned()),
                     is_token_aware: true,
                     permit_dc_failover: false,
+                    ..Default::default()
                 },
                 routing_info: RoutingInfo {
                     token: Some(Token { value: 160 }),
@@ -796,6 +814,7 @@ mod tests {
                     preferred_datacenter: Some("eu".to_owned()),
                     is_token_aware: true,
                     permit_dc_failover: true,
+                    ..Default::default()
                 },
                 routing_info: RoutingInfo {
                     token: Some(Token { value: 160 }),
@@ -819,6 +838,7 @@ mod tests {
                     preferred_datacenter: Some("eu".to_owned()),
                     is_token_aware: true,
                     permit_dc_failover: false,
+                    ..Default::default()
                 },
                 routing_info: RoutingInfo {
                     token: Some(Token { value: 160 }),
@@ -840,6 +860,7 @@ mod tests {
                     preferred_datacenter: Some("eu".to_owned()),
                     is_token_aware: true,
                     permit_dc_failover: true,
+                    ..Default::default()
                 },
                 routing_info: RoutingInfo {
                     token: Some(Token { value: 160 }),
@@ -863,6 +884,7 @@ mod tests {
                     preferred_datacenter: Some("eu".to_owned()),
                     is_token_aware: true,
                     permit_dc_failover: true,
+                    ..Default::default()
                 },
                 routing_info: RoutingInfo {
                     token: Some(Token { value: 160 }),
@@ -884,6 +906,7 @@ mod tests {
                     preferred_datacenter: Some("eu".to_owned()),
                     is_token_aware: true,
                     permit_dc_failover: true,
+                    ..Default::default()
                 },
                 routing_info: RoutingInfo {
                     token: None, // no token
@@ -902,6 +925,7 @@ mod tests {
                     preferred_datacenter: Some("eu".to_owned()),
                     is_token_aware: true,
                     permit_dc_failover: true,
+                    ..Default::default()
                 },
                 routing_info: RoutingInfo {
                     token: Some(Token { value: 160 }),
@@ -920,6 +944,7 @@ mod tests {
                     preferred_datacenter: Some("au".to_owned()),
                     is_token_aware: true,
                     permit_dc_failover: true,
+                    ..Default::default()
                 },
                 routing_info: RoutingInfo {
                     token: Some(Token { value: 160 }),
@@ -941,6 +966,7 @@ mod tests {
                     preferred_datacenter: Some("au".to_owned()),
                     is_token_aware: true,
                     permit_dc_failover: false,
+                    ..Default::default()
                 },
                 routing_info: RoutingInfo {
                     token: Some(Token { value: 160 }),
@@ -959,6 +985,7 @@ mod tests {
                     preferred_datacenter: None,
                     is_token_aware: true,
                     permit_dc_failover: true,
+                    ..Default::default()
                 },
                 routing_info: RoutingInfo {
                     token: Some(Token { value: 160 }),
@@ -980,6 +1007,7 @@ mod tests {
                     preferred_datacenter: None,
                     is_token_aware: true,
                     permit_dc_failover: false,
+                    ..Default::default()
                 },
                 routing_info: RoutingInfo {
                     token: Some(Token { value: 160 }),
