@@ -3,6 +3,8 @@ use crate::frame::response::event::SchemaChangeEvent;
 use crate::frame::types::vint_decode;
 use crate::frame::value::{Counter, CqlDuration};
 use crate::frame::{frame_errors::ParseError, types};
+use crate::types::deserialize::row::{ColumnIterator, DeserializeRow};
+use crate::types::deserialize::{FrameSlice, RowIterator, TypedRowIterator};
 use bigdecimal::BigDecimal;
 use byteorder::{BigEndian, ReadBytesExt};
 use bytes::{Buf, Bytes};
@@ -370,6 +372,146 @@ impl Row {
     /// Allows converting Row into tuple of rust types or custom struct deriving FromRow
     pub fn into_typed<RowT: FromRow>(self) -> StdResult<RowT, FromRowError> {
         RowT::from_row(self)
+    }
+}
+
+/// Rows response, in partially serialized form.
+// TODO: We could provide ResultMetadata in a similar, lazily
+// deserialized form - now it can be a source of allocations
+#[derive(Debug, Default)]
+pub struct RawRows {
+    metadata: ResultMetadata,
+    rows_count: usize,
+    raw_rows: Bytes,
+}
+
+impl RawRows {
+    /// Returns the metadata associated with this response (paging state
+    /// and column specifications).
+    #[inline]
+    pub fn metadata(&self) -> &ResultMetadata {
+        &self.metadata
+    }
+
+    /// Consumes the `RawRows` and returns metadata associated with the
+    /// response.
+    #[inline]
+    pub fn into_metadata(self) -> ResultMetadata {
+        self.metadata
+    }
+
+    /// Returns the number of rows that these `RawRows` contain.
+    #[inline]
+    pub fn rows_count(&self) -> usize {
+        self.rows_count
+    }
+
+    /// Returns the serialized size of the `RawRows`.
+    #[inline]
+    pub fn rows_size(&self) -> usize {
+        self.raw_rows.len()
+    }
+
+    /// Creates a typed iterator over the rows that lazily deserializes
+    /// rows in the result.
+    ///
+    /// Returns Err if the schema of returned result doesn't match R.
+    #[inline]
+    pub fn rows_iter<'r, R: DeserializeRow<'r>>(
+        &'r self,
+    ) -> StdResult<TypedRowIterator<'r, R>, ParseError> {
+        let slice = FrameSlice::new(&self.raw_rows);
+        let raw = RowIterator::new(self.rows_count, &self.metadata.col_specs, slice);
+        TypedRowIterator::new(raw)
+    }
+
+    /// Converts the `RawRows` into `Rows` - a legacy, inefficient representation.
+    ///
+    /// Provided only to make migration to the new deserialization API
+    /// more convenient - this function will be deprecated and removed
+    /// in future releases.
+    pub fn into_legacy_rows(self) -> StdResult<Rows, ParseError> {
+        let rows = self.rows_iter::<Row>()?.collect::<StdResult<_, _>>()?;
+        Ok(Rows {
+            metadata: self.metadata,
+            rows_count: self.rows_count,
+            rows,
+            serialized_size: self.raw_rows.len(),
+        })
+    }
+}
+
+// Technically not an iterator because it returns items that borrow from it,
+// and the std Iterator interface does not allow for that.
+// TODO: Move to row.rs
+/// A _lending_ iterator over serialized rows.
+///
+/// This type is similar to `RowIterator`, but keeps ownership of the serialized
+/// result. Because it returns `ColumnIterator`s that need to borrow from it,
+/// it does not implement the `Iterator` trait (there is no type in the standard
+/// library to represent this concept yet).
+#[derive(Debug)]
+pub struct RawRowsLendingIterator {
+    metadata: ResultMetadata,
+    remaining: usize,
+    at: usize,
+    raw_rows: Bytes,
+}
+
+impl RawRowsLendingIterator {
+    /// Creates a new `RawRowsLendingIterator`, consuming given `RawRows`.
+    #[inline]
+    pub fn new(raw_rows: RawRows) -> Self {
+        Self {
+            metadata: raw_rows.metadata,
+            remaining: raw_rows.rows_count,
+            at: 0,
+            raw_rows: raw_rows.raw_rows,
+        }
+    }
+
+    /// Returns a `ColumnIterator` that represents the next row.
+    ///
+    /// Note: the `ColumnIterator` borrows from the `RawRowsLendingIterator`.
+    /// The column iterator must be consumed before the rows iterator can
+    /// continue.
+    #[inline]
+    #[allow(clippy::should_implement_trait)] // https://github.com/rust-lang/rust-clippy/issues/5004
+    pub fn next(&mut self) -> Option<StdResult<ColumnIterator, ParseError>> {
+        self.remaining = self.remaining.checked_sub(1)?;
+
+        let mut mem = &self.raw_rows[self.at..];
+
+        // Skip the row here, manually
+        for _ in 0..self.metadata.col_specs.len() {
+            if let Err(err) = types::read_bytes_opt(&mut mem) {
+                return Some(Err(err));
+            }
+        }
+
+        let slice = FrameSlice::new_subslice(&self.raw_rows[self.at..], &self.raw_rows);
+        let iter = ColumnIterator::new(&self.metadata.col_specs, slice);
+        self.at = self.raw_rows.len() - mem.len();
+        Some(Ok(iter))
+    }
+
+    #[inline]
+    pub fn size_hint(&self) -> (usize, Option<usize>) {
+        (0, Some(self.remaining))
+    }
+
+    /// Returns the metadata associated with the response (paging state and
+    /// column specifications).
+    #[inline]
+    pub fn metadata(&self) -> &ResultMetadata {
+        &self.metadata
+    }
+
+    /// Returns the remaining number of rows that this iterator is expected
+    /// to produce.
+    #[inline]
+    pub fn rows_remaining(&self) -> usize {
+        self.remaining
     }
 }
 
