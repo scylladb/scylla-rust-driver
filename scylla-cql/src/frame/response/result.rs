@@ -11,10 +11,11 @@ use crate::frame::value::{
     Counter, CqlDate, CqlDecimal, CqlDuration, CqlTime, CqlTimestamp, CqlTimeuuid, CqlVarint,
 };
 use crate::types::deserialize::result::{RowIterator, TypedRowIterator};
+use crate::types::deserialize::row::DeserializeRow;
 use crate::types::deserialize::value::{
     mk_deser_err, BuiltinDeserializationErrorKind, DeserializeValue, MapIterator, UdtIterator,
 };
-use crate::types::deserialize::{DeserializationError, FrameSlice};
+use crate::types::deserialize::{DeserializationError, FrameSlice, TypeCheckError};
 use bytes::{Buf, Bytes};
 use std::borrow::Cow;
 use std::sync::Arc;
@@ -481,6 +482,85 @@ impl Row {
     /// Allows converting Row into tuple of rust types or custom struct deriving FromRow
     pub fn into_typed<RowT: FromRow>(self) -> StdResult<RowT, FromRowError> {
         RowT::from_row(self)
+    }
+}
+
+/// Rows response, in partially serialized form.
+// TODO: We could provide ResultMetadata in a similar, lazily
+// deserialized form - now it can be a source of allocations
+#[derive(Debug)]
+pub struct RawRows {
+    metadata: Arc<ResultMetadata>,
+    rows_count: usize,
+    raw_rows: Bytes,
+}
+
+impl RawRows {
+    /// Returns the metadata associated with this response (paging state
+    /// and column specifications).
+    #[inline]
+    pub fn metadata(&self) -> &ResultMetadata {
+        &self.metadata
+    }
+
+    /// Consumes the `RawRows` and returns metadata associated with the
+    /// response.
+    #[inline]
+    pub(crate) fn into_inner(self) -> (Arc<ResultMetadata>, usize, Bytes) {
+        (self.metadata, self.rows_count, self.raw_rows)
+    }
+
+    /// Consumes the `RawRows` and returns metadata associated with the
+    /// response.
+    #[inline]
+    pub fn into_metadata(self) -> Arc<ResultMetadata> {
+        self.metadata
+    }
+
+    /// Returns the number of rows that these `RawRows` contain.
+    #[inline]
+    pub fn rows_count(&self) -> usize {
+        self.rows_count
+    }
+
+    /// Returns the serialized size of the `RawRows`.
+    #[inline]
+    pub fn rows_size(&self) -> usize {
+        self.raw_rows.len()
+    }
+
+    /// Creates a typed iterator over the rows that lazily deserializes
+    /// rows in the result.
+    ///
+    /// Returns Err if the schema of returned result doesn't match R.
+    #[inline]
+    pub fn rows_iter<'r, R: DeserializeRow<'r>>(
+        &'r self,
+    ) -> StdResult<TypedRowIterator<'r, R>, TypeCheckError> {
+        let slice = FrameSlice::new(&self.raw_rows);
+        let raw = RowIterator::new(self.rows_count, &self.metadata.col_specs, slice);
+        TypedRowIterator::new(raw)
+    }
+
+    /// Converts the `RawRows` into `Rows` - a legacy, inefficient representation.
+    ///
+    /// Provided only to make migration to the new deserialization API
+    /// more convenient - this function will be deprecated and removed
+    /// in future releases.
+    ///
+    /// As RawRows don't store PagingStateResponse, it must be provided separately.
+    pub fn into_legacy_rows(
+        self,
+        paging_state_response: PagingStateResponse,
+    ) -> StdResult<Rows, RowsParseError> {
+        let rows = self.rows_iter::<Row>()?.collect::<StdResult<_, _>>()?;
+        Ok(Rows {
+            metadata: self.metadata,
+            paging_state_response,
+            rows_count: self.rows_count,
+            rows,
+            serialized_size: self.raw_rows.len(),
+        })
     }
 }
 
