@@ -1,6 +1,6 @@
 use anyhow::Result;
 use futures::TryStreamExt;
-use scylla::transport::session::Session;
+use scylla::transport::session::LegacySession;
 use scylla::SessionBuilder;
 use std::env;
 use std::fs;
@@ -44,7 +44,7 @@ async fn main() -> Result<()> {
     context_builder.set_ca_file(ca_dir.as_path())?;
     context_builder.set_verify(SslVerifyMode::PEER);
 
-    let session: Session = SessionBuilder::new()
+    let session: LegacySession = SessionBuilder::new()
         .known_node(uri)
         .ssl_context(Some(context_builder.build()))
         .build()

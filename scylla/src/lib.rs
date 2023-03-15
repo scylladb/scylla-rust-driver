@@ -17,12 +17,12 @@
 //! `Session` is created by specifying a few known nodes and connecting to them:
 //!
 //! ```rust,no_run
-//! use scylla::{Session, SessionBuilder};
+//! use scylla::{LegacySession, SessionBuilder};
 //! use std::error::Error;
 //!
 //! #[tokio::main]
 //! async fn main() -> Result<(), Box<dyn Error>> {
-//!    let session: Session = SessionBuilder::new()
+//!    let session: LegacySession = SessionBuilder::new()
 //!         .known_node("127.0.0.1:9042")
 //!         .known_node("1.2.3.4:9876")
 //!         .build()
@@ -50,9 +50,9 @@
 //!
 //! The easiest way to specify bound values in a query is using a tuple:
 //! ```rust
-//! # use scylla::Session;
+//! # use scylla::LegacySession;
 //! # use std::error::Error;
-//! # async fn check_only_compiles(session: &Session) -> Result<(), Box<dyn Error>> {
+//! # async fn check_only_compiles(session: &LegacySession) -> Result<(), Box<dyn Error>> {
 //! // Insert an int and text into the table
 //! session
 //!     .query_unpaged(
@@ -69,9 +69,9 @@
 //! The easiest way to read rows returned by a query is to cast each row to a tuple of values:
 //!
 //! ```rust
-//! # use scylla::Session;
+//! # use scylla::LegacySession;
 //! # use std::error::Error;
-//! # async fn check_only_compiles(session: &Session) -> Result<(), Box<dyn Error>> {
+//! # async fn check_only_compiles(session: &LegacySession) -> Result<(), Box<dyn Error>> {
 //! use scylla::IntoTypedRows;
 //!
 //! // Read rows containing an int and text
@@ -260,7 +260,7 @@ pub use transport::caching_session::CachingSession;
 pub use transport::execution_profile::ExecutionProfile;
 pub use transport::legacy_query_result::LegacyQueryResult;
 pub use transport::query_result::{QueryResult, QueryRowsResult};
-pub use transport::session::{IntoTypedRows, Session, SessionConfig};
+pub use transport::session::{IntoTypedRows, LegacySession, SessionConfig};
 pub use transport::session_builder::SessionBuilder;
 
 #[cfg(feature = "cloud")]

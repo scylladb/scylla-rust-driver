@@ -2,7 +2,7 @@ use crate::{
     batch::Batch,
     prepared_statement::PreparedStatement,
     test_utils::{create_new_session_builder, setup_tracing, unique_keyspace_name},
-    Session,
+    LegacySession,
 };
 use std::collections::BTreeSet;
 
@@ -91,7 +91,7 @@ async fn test_quietly_prepare_batch() {
     }
 }
 
-async fn assert_test_batch_table_rows_contain(sess: &Session, expected_rows: &[(i32, i32)]) {
+async fn assert_test_batch_table_rows_contain(sess: &LegacySession, expected_rows: &[(i32, i32)]) {
     let selected_rows: BTreeSet<(i32, i32)> = sess
         .query_unpaged("SELECT a, b FROM test_batch_table", ())
         .await

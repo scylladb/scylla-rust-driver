@@ -4,7 +4,7 @@ use crate::frame::response::result::CqlValue;
 use crate::frame::value::{Counter, CqlDate, CqlTime, CqlTimestamp};
 use crate::macros::FromUserType;
 use crate::test_utils::{create_new_session_builder, scylla_supports_tablets, setup_tracing};
-use crate::transport::session::Session;
+use crate::transport::session::LegacySession;
 use crate::utils::test_utils::unique_keyspace_name;
 use itertools::Itertools;
 use scylla_cql::frame::value::{CqlTimeuuid, CqlVarint};
@@ -22,8 +22,8 @@ async fn init_test_maybe_without_tablets(
     table_name: &str,
     type_name: &str,
     supports_tablets: bool,
-) -> Session {
-    let session: Session = create_new_session_builder().build().await.unwrap();
+) -> LegacySession {
+    let session: LegacySession = create_new_session_builder().build().await.unwrap();
     let ks = unique_keyspace_name();
 
     let mut create_ks = format!(
@@ -61,7 +61,7 @@ async fn init_test_maybe_without_tablets(
 // Used to prepare a table for test
 // Creates a new keyspace
 // Drops and creates table {table_name} (id int PRIMARY KEY, val {type_name})
-async fn init_test(table_name: &str, type_name: &str) -> Session {
+async fn init_test(table_name: &str, type_name: &str) -> LegacySession {
     init_test_maybe_without_tablets(table_name, type_name, true).await
 }
 
@@ -77,7 +77,7 @@ async fn run_tests<T>(tests: &[&str], type_name: &str)
 where
     T: SerializeValue + FromCqlVal<CqlValue> + FromStr + Debug + Clone + PartialEq,
 {
-    let session: Session = init_test(type_name, type_name).await;
+    let session: LegacySession = init_test(type_name, type_name).await;
     session.await_schema_agreement().await.unwrap();
 
     for test in tests.iter() {
@@ -168,7 +168,7 @@ async fn test_cql_varint() {
     ];
 
     let table_name = "cql_varint_tests";
-    let session: Session = create_new_session_builder().build().await.unwrap();
+    let session: LegacySession = create_new_session_builder().build().await.unwrap();
     let ks = unique_keyspace_name();
 
     session
@@ -278,7 +278,7 @@ async fn test_counter() {
 
     // Can't use run_tests, because counters are special and can't be inserted
     let type_name = "counter";
-    let session: Session = init_test_maybe_without_tablets(type_name, type_name, false).await;
+    let session: LegacySession = init_test_maybe_without_tablets(type_name, type_name, false).await;
 
     for (i, test) in tests.iter().enumerate() {
         let update_bound_value = format!("UPDATE {} SET val = val + ? WHERE id = ?", type_name);
@@ -311,7 +311,7 @@ async fn test_naive_date_04() {
     use chrono::Datelike;
     use chrono::NaiveDate;
 
-    let session: Session = init_test("chrono_naive_date_tests", "date").await;
+    let session: LegacySession = init_test("chrono_naive_date_tests", "date").await;
 
     let min_naive_date: NaiveDate = NaiveDate::MIN;
     let min_naive_date_string = min_naive_date.format("%Y-%m-%d").to_string();
@@ -404,7 +404,7 @@ async fn test_cql_date() {
     setup_tracing();
     // Tests value::Date which allows to insert dates outside NaiveDate range
 
-    let session: Session = init_test("cql_date_tests", "date").await;
+    let session: LegacySession = init_test("cql_date_tests", "date").await;
 
     let tests = [
         ("1970-01-01", CqlDate(2_u32.pow(31))),
@@ -465,7 +465,7 @@ async fn test_date_03() {
     setup_tracing();
     use time::{Date, Month::*};
 
-    let session: Session = init_test("time_date_tests", "date").await;
+    let session: LegacySession = init_test("time_date_tests", "date").await;
 
     let tests = [
         // Basic test values
@@ -551,7 +551,7 @@ async fn test_cql_time() {
     // CqlTime is an i64 - nanoseconds since midnight
     // in range 0..=86399999999999
 
-    let session: Session = init_test("cql_time_tests", "time").await;
+    let session: LegacySession = init_test("cql_time_tests", "time").await;
 
     let max_time: i64 = 24 * 60 * 60 * 1_000_000_000 - 1;
     assert_eq!(max_time, 86399999999999);
@@ -784,7 +784,7 @@ async fn test_time_03() {
 #[tokio::test]
 async fn test_cql_timestamp() {
     setup_tracing();
-    let session: Session = init_test("cql_timestamp_tests", "timestamp").await;
+    let session: LegacySession = init_test("cql_timestamp_tests", "timestamp").await;
 
     //let epoch_date = NaiveDate::from_ymd_opt(1970, 1, 1).unwrap();
 
@@ -1164,7 +1164,7 @@ async fn test_offset_date_time_03() {
 #[tokio::test]
 async fn test_timeuuid() {
     setup_tracing();
-    let session: Session = init_test("timeuuid_tests", "timeuuid").await;
+    let session: LegacySession = init_test("timeuuid_tests", "timeuuid").await;
 
     // A few random timeuuids generated manually
     let tests = [
@@ -1234,7 +1234,7 @@ async fn test_timeuuid() {
 #[tokio::test]
 async fn test_timeuuid_ordering() {
     setup_tracing();
-    let session: Session = create_new_session_builder().build().await.unwrap();
+    let session: LegacySession = create_new_session_builder().build().await.unwrap();
     let ks = unique_keyspace_name();
 
     session
@@ -1316,7 +1316,7 @@ async fn test_timeuuid_ordering() {
 #[tokio::test]
 async fn test_inet() {
     setup_tracing();
-    let session: Session = init_test("inet_tests", "inet").await;
+    let session: LegacySession = init_test("inet_tests", "inet").await;
 
     let tests = [
         ("0.0.0.0", IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0))),
@@ -1397,7 +1397,7 @@ async fn test_inet() {
 #[tokio::test]
 async fn test_blob() {
     setup_tracing();
-    let session: Session = init_test("blob_tests", "blob").await;
+    let session: LegacySession = init_test("blob_tests", "blob").await;
 
     let long_blob: Vec<u8> = vec![0x11; 1234];
     let mut long_blob_str: String = "0x".to_string();
@@ -1466,7 +1466,7 @@ async fn test_udt_after_schema_update() {
     let table_name = "udt_tests";
     let type_name = "usertype1";
 
-    let session: Session = create_new_session_builder().build().await.unwrap();
+    let session: LegacySession = create_new_session_builder().build().await.unwrap();
     let ks = unique_keyspace_name();
 
     session
@@ -1595,7 +1595,7 @@ async fn test_udt_after_schema_update() {
 #[tokio::test]
 async fn test_empty() {
     setup_tracing();
-    let session: Session = init_test("empty_tests", "int").await;
+    let session: LegacySession = init_test("empty_tests", "int").await;
 
     session
         .query_unpaged(
@@ -1638,7 +1638,7 @@ async fn test_udt_with_missing_field() {
     let table_name = "udt_tests";
     let type_name = "usertype1";
 
-    let session: Session = create_new_session_builder().build().await.unwrap();
+    let session: LegacySession = create_new_session_builder().build().await.unwrap();
     let ks = unique_keyspace_name();
 
     session
@@ -1689,7 +1689,7 @@ async fn test_udt_with_missing_field() {
     let mut id = 0;
 
     async fn verify_insert_select_identity<TQ, TR>(
-        session: &Session,
+        session: &LegacySession,
         table_name: &str,
         id: i32,
         element: TQ,
