@@ -100,6 +100,7 @@ pub mod _macro_internal {
 
 pub use scylla_cql::frame;
 pub use scylla_cql::macros::{self, *};
+pub use scylla_cql::types;
 
 pub mod authentication;
 #[cfg(feature = "cloud")]
