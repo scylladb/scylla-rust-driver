@@ -7,6 +7,7 @@ use num_bigint::BigInt;
 use std::borrow::Cow;
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::convert::TryInto;
+use std::fmt::{Debug, Write};
 use std::net::IpAddr;
 use thiserror::Error;
 use uuid::Uuid;
@@ -21,6 +22,33 @@ use secrecy::{ExposeSecret, Secret, Zeroize};
 /// serialize() should write the Value as [bytes] to the provided buffer
 pub trait Value {
     fn serialize(&self, buf: &mut Vec<u8>) -> Result<(), ValueTooBig>;
+
+    fn for_debug(&self) -> String {
+        let mut s = String::new();
+        self.for_debug_append(&mut s);
+        s
+    }
+
+    fn for_debug_append(&self, s: &mut String) {
+        const MAX_VALUE_STRING_SIZE: usize = 1000;
+        static CUT_INFO: &str = " [...]cut here";
+        if s.len() == MAX_VALUE_STRING_SIZE {
+            return;
+        }
+
+        if self.for_debug_specialised(s).is_some() {
+            if s.len() > MAX_VALUE_STRING_SIZE {
+                s.truncate(MAX_VALUE_STRING_SIZE - CUT_INFO.len());
+                s.push_str(CUT_INFO);
+            }
+        } else {
+            s.push_str("<serialized>");
+        }
+    }
+
+    fn for_debug_specialised(&self, _s: &mut String) -> Option<()> {
+        None
+    }
 }
 
 #[derive(Debug, Error, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -39,6 +67,18 @@ pub struct Counter(pub i64);
 pub enum MaybeUnset<V: Value> {
     Unset,
     Set(V),
+}
+
+impl<V> Debug for MaybeUnset<V>
+where
+    V: Value + Debug,
+{
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Unset => write!(f, "Unset"),
+            Self::Set(arg0) => f.debug_tuple("Set").field(arg0).finish(),
+        }
+    }
 }
 
 /// Wrapper that allows to send dates outside of NaiveDate range (-262145-1-1 to 262143-12-31)
@@ -87,6 +127,9 @@ pub enum SerializeValuesError {
 
 pub type SerializedResult<'a> = Result<Cow<'a, SerializedValues>, SerializeValuesError>;
 
+/// Too few values were provided for given prepared statement
+pub struct NotEnoughValuesError;
+
 /// Represents list of values to be sent in a query
 /// gets serialized and but into request
 pub trait ValueList {
@@ -98,6 +141,21 @@ pub trait ValueList {
         let serialized = self.serialized()?;
         SerializedValues::write_to_request(&serialized, buf);
 
+        Ok(())
+    }
+
+    fn for_debug(&self) -> String {
+        let mut s = String::new();
+        self.for_debug_append(&mut s);
+        s
+    }
+
+    fn for_debug_append(&self, s: &mut String) {
+        s.push_str("<Serialized>")
+    }
+
+    fn for_debug_append_nth(&self, s: &mut String, _n: usize) -> Result<(), NotEnoughValuesError> {
+        s.push_str("<Serialized>");
         Ok(())
     }
 }
@@ -295,6 +353,11 @@ impl Value for i8 {
         buf.put_i8(*self);
         Ok(())
     }
+
+    fn for_debug_specialised(&self, s: &mut String) -> Option<()> {
+        write!(s, "{}", self).unwrap();
+        Some(())
+    }
 }
 
 impl Value for i16 {
@@ -302,6 +365,11 @@ impl Value for i16 {
         buf.put_i32(2);
         buf.put_i16(*self);
         Ok(())
+    }
+
+    fn for_debug_specialised(&self, s: &mut String) -> Option<()> {
+        write!(s, "{}", self).unwrap();
+        Some(())
     }
 }
 
@@ -311,6 +379,11 @@ impl Value for i32 {
         buf.put_i32(*self);
         Ok(())
     }
+
+    fn for_debug_specialised(&self, s: &mut String) -> Option<()> {
+        write!(s, "{}", self).unwrap();
+        Some(())
+    }
 }
 
 impl Value for i64 {
@@ -318,6 +391,11 @@ impl Value for i64 {
         buf.put_i32(8);
         buf.put_i64(*self);
         Ok(())
+    }
+
+    fn for_debug_specialised(&self, s: &mut String) -> Option<()> {
+        write!(s, "{}", self).unwrap();
+        Some(())
     }
 }
 
@@ -333,6 +411,11 @@ impl Value for BigDecimal {
         buf.extend_from_slice(&serialized);
 
         Ok(())
+    }
+
+    fn for_debug_specialised(&self, s: &mut String) -> Option<()> {
+        write!(s, "{}", self).unwrap();
+        Some(())
     }
 }
 
@@ -351,6 +434,11 @@ impl Value for NaiveDate {
         buf.put_u32(days);
         Ok(())
     }
+
+    fn for_debug_specialised(&self, s: &mut String) -> Option<()> {
+        write!(s, "{}", self).unwrap();
+        Some(())
+    }
 }
 
 impl Value for Date {
@@ -358,6 +446,11 @@ impl Value for Date {
         buf.put_i32(4);
         buf.put_u32(self.0);
         Ok(())
+    }
+
+    fn for_debug_specialised(&self, s: &mut String) -> Option<()> {
+        write!(s, "{:?}", self).unwrap();
+        Some(())
     }
 }
 
@@ -367,6 +460,11 @@ impl Value for Timestamp {
         buf.put_i64(self.0.num_milliseconds());
         Ok(())
     }
+
+    fn for_debug_specialised(&self, s: &mut String) -> Option<()> {
+        write!(s, "{:?}", self).unwrap();
+        Some(())
+    }
 }
 
 impl Value for Time {
@@ -374,6 +472,11 @@ impl Value for Time {
         buf.put_i32(8);
         buf.put_i64(self.0.num_nanoseconds().ok_or(ValueTooBig)?);
         Ok(())
+    }
+
+    fn for_debug_specialised(&self, s: &mut String) -> Option<()> {
+        write!(s, "{:?}", self).unwrap();
+        Some(())
     }
 }
 
@@ -405,6 +508,11 @@ impl Value for bool {
 
         Ok(())
     }
+
+    fn for_debug_specialised(&self, s: &mut String) -> Option<()> {
+        write!(s, "{}", self).unwrap();
+        Some(())
+    }
 }
 
 impl Value for f32 {
@@ -412,6 +520,11 @@ impl Value for f32 {
         buf.put_i32(4);
         buf.put_f32(*self);
         Ok(())
+    }
+
+    fn for_debug_specialised(&self, s: &mut String) -> Option<()> {
+        write!(s, "{}", self).unwrap();
+        Some(())
     }
 }
 
@@ -421,6 +534,11 @@ impl Value for f64 {
         buf.put_f64(*self);
         Ok(())
     }
+
+    fn for_debug_specialised(&self, s: &mut String) -> Option<()> {
+        write!(s, "{}", self).unwrap();
+        Some(())
+    }
 }
 
 impl Value for Uuid {
@@ -428,6 +546,11 @@ impl Value for Uuid {
         buf.put_i32(16);
         buf.extend_from_slice(self.as_bytes());
         Ok(())
+    }
+
+    fn for_debug_specialised(&self, s: &mut String) -> Option<()> {
+        write!(s, "{}", self).unwrap();
+        Some(())
     }
 }
 
@@ -441,6 +564,11 @@ impl Value for BigInt {
 
         Ok(())
     }
+
+    fn for_debug_specialised(&self, s: &mut String) -> Option<()> {
+        write!(s, "{}", self).unwrap();
+        Some(())
+    }
 }
 
 impl Value for &str {
@@ -453,6 +581,11 @@ impl Value for &str {
 
         Ok(())
     }
+
+    fn for_debug_specialised(&self, s: &mut String) -> Option<()> {
+        write!(s, "{}", self).unwrap();
+        Some(())
+    }
 }
 
 impl Value for Vec<u8> {
@@ -463,6 +596,13 @@ impl Value for Vec<u8> {
         buf.extend_from_slice(self);
 
         Ok(())
+    }
+
+    fn for_debug_specialised(&self, s: &mut String) -> Option<()> {
+        for elem in self.iter() {
+            write!(s, "{}", elem).unwrap();
+        }
+        Some(())
     }
 }
 
@@ -481,11 +621,21 @@ impl Value for IpAddr {
 
         Ok(())
     }
+
+    fn for_debug_specialised(&self, s: &mut String) -> Option<()> {
+        write!(s, "{}", self).unwrap();
+        Some(())
+    }
 }
 
 impl Value for String {
     fn serialize(&self, buf: &mut Vec<u8>) -> Result<(), ValueTooBig> {
         <&str as Value>::serialize(&self.as_str(), buf)
+    }
+
+    fn for_debug_specialised(&self, s: &mut String) -> Option<()> {
+        write!(s, "{}", self).unwrap();
+        Some(())
     }
 }
 
@@ -500,6 +650,20 @@ impl<T: Value> Value for Option<T> {
             }
         }
     }
+
+    fn for_debug_specialised(&self, s: &mut String) -> Option<()> {
+        match self {
+            Some(v) => {
+                s.push_str("Some(");
+                if v.for_debug_specialised(s).is_none() {
+                    s.push_str("<serialized>")
+                }
+                s.push(')');
+            }
+            None => s.push_str("None"),
+        }
+        Some(())
+    }
 }
 
 impl Value for Unset {
@@ -508,11 +672,21 @@ impl Value for Unset {
         buf.put_i32(-2);
         Ok(())
     }
+
+    fn for_debug_specialised(&self, s: &mut String) -> Option<()> {
+        s.push_str("unset");
+        Some(())
+    }
 }
 
 impl Value for Counter {
     fn serialize(&self, buf: &mut Vec<u8>) -> Result<(), ValueTooBig> {
         self.0.serialize(buf)
+    }
+
+    fn for_debug_specialised(&self, s: &mut String) -> Option<()> {
+        write!(s, "{:?}", self).unwrap();
+        Some(())
     }
 }
 
@@ -531,6 +705,11 @@ impl Value for CqlDuration {
 
         Ok(())
     }
+
+    fn for_debug_specialised(&self, s: &mut String) -> Option<()> {
+        write!(s, "{:?}", self).unwrap();
+        Some(())
+    }
 }
 
 impl<V: Value> Value for MaybeUnset<V> {
@@ -540,12 +719,30 @@ impl<V: Value> Value for MaybeUnset<V> {
             MaybeUnset::Unset => Unset.serialize(buf),
         }
     }
+
+    fn for_debug_specialised(&self, s: &mut String) -> Option<()> {
+        match self {
+            MaybeUnset::Unset => s.push_str("Unset"),
+            MaybeUnset::Set(v) => {
+                s.push_str("Set(");
+                if v.for_debug_specialised(s).is_none() {
+                    s.push_str("<serialized>")
+                }
+                s.push(')');
+            }
+        };
+        Some(())
+    }
 }
 
 // Every &impl Value and &dyn Value should also implement Value
 impl<T: Value + ?Sized> Value for &T {
     fn serialize(&self, buf: &mut Vec<u8>) -> Result<(), ValueTooBig> {
         <T as Value>::serialize(*self, buf)
+    }
+
+    fn for_debug_specialised(&self, s: &mut String) -> Option<()> {
+        <T as Value>::for_debug_specialised(*self, s)
     }
 }
 
@@ -752,12 +949,28 @@ impl ValueList for () {
     fn serialized(&self) -> SerializedResult<'_> {
         Ok(Cow::Owned(SerializedValues::new()))
     }
+
+    fn for_debug_append(&self, s: &mut String) {
+        s.push_str("()")
+    }
+
+    fn for_debug_append_nth(&self, _s: &mut String, _n: usize) -> Result<(), NotEnoughValuesError> {
+        Err(NotEnoughValuesError)
+    }
 }
 
 // Implement ValueList for &[] - u8 because otherwise rust can't infer type
 impl ValueList for [u8; 0] {
     fn serialized(&self) -> SerializedResult<'_> {
         Ok(Cow::Owned(SerializedValues::new()))
+    }
+
+    fn for_debug_append(&self, s: &mut String) {
+        s.push_str("[]")
+    }
+
+    fn for_debug_append_nth(&self, _s: &mut String, _n: usize) -> Result<(), NotEnoughValuesError> {
+        Err(NotEnoughValuesError)
     }
 }
 
@@ -771,6 +984,25 @@ impl<T: Value> ValueList for &[T] {
 
         Ok(Cow::Owned(result))
     }
+
+    fn for_debug_append(&self, s: &mut String) {
+        s.push('[');
+        for v in self.iter() {
+            v.for_debug_append(s);
+            s.push_str(", ");
+        }
+        s.pop();
+        s.pop();
+        s.push(']');
+    }
+
+    fn for_debug_append_nth(&self, s: &mut String, n: usize) -> Result<(), NotEnoughValuesError> {
+        self.get(n)
+            .ok_or(())
+            .map_err(|_| NotEnoughValuesError)?
+            .for_debug_append(s);
+        Ok(())
+    }
 }
 
 // Implement ValueList for Vec<Value>
@@ -782,6 +1014,14 @@ impl<T: Value> ValueList for Vec<T> {
         }
 
         Ok(Cow::Owned(result))
+    }
+
+    fn for_debug_append(&self, s: &mut String) {
+        ValueList::for_debug_append(&self.as_slice(), s)
+    }
+
+    fn for_debug_append_nth(&self, s: &mut String, n: usize) -> Result<(), NotEnoughValuesError> {
+        ValueList::for_debug_append_nth(&self.as_slice(), s, n)
     }
 }
 
@@ -796,6 +1036,27 @@ macro_rules! impl_value_list_for_map {
                 }
 
                 Ok(Cow::Owned(result))
+            }
+
+            fn for_debug_append(&self, s: &mut String) {
+                s.push('[');
+                for v in self.iter() {
+                    Value::for_debug_append(&v, s);
+                    s.push_str(", ");
+                }
+                s.pop();
+                s.pop();
+                s.push(']');
+            }
+
+            fn for_debug_append_nth(
+                &self,
+                s: &mut String,
+                _n: usize,
+            ) -> Result<(), NotEnoughValuesError> {
+                // We have no idea how to map index to column name
+                s.push_str("<inaccessible>"); // TODO: change ValueList API to enable named lists too
+                Ok(())
             }
         }
     };
@@ -816,6 +1077,21 @@ impl<T0: Value> ValueList for (T0,) {
         result.add_value(&self.0)?;
         Ok(Cow::Owned(result))
     }
+
+    fn for_debug_append(&self, s: &mut String) {
+        s.push('(');
+        self.0.for_debug_append(s);
+        s.push_str(",)");
+    }
+
+    fn for_debug_append_nth(&self, s: &mut String, n: usize) -> Result<(), NotEnoughValuesError> {
+        if n == 0 {
+            self.0.for_debug_append(s);
+            Ok(())
+        } else {
+            Err(NotEnoughValuesError)
+        }
+    }
 }
 
 macro_rules! impl_value_list_for_tuple {
@@ -830,6 +1106,28 @@ macro_rules! impl_value_list_for_tuple {
                     result.add_value(&self.$FieldI) ?;
                 )*
                 Ok(Cow::Owned(result))
+            }
+
+            fn for_debug_append(&self, s: &mut String) {
+                s.push('(');
+                $(
+                    self.$FieldI.for_debug_append(s);
+                    s.push_str(", ");
+                )*
+                s.pop(); // removes trailing space
+                s.pop(); // removes trailing comma
+                s.push(')');
+            }
+
+            fn for_debug_append_nth(&self, s: &mut String, n: usize) -> Result<(), NotEnoughValuesError> {
+                let appenders: Vec::<Box<dyn Value>> = vec![
+                    $(
+                        Box::new(&self.$FieldI),
+                    )*
+                ];
+                appenders.get(n).ok_or(NotEnoughValuesError)?.for_debug_append(s);
+
+                Ok(())
             }
         }
     }
@@ -862,6 +1160,14 @@ impl_value_list_for_tuple!(T0, T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, T12
 impl<T: ValueList> ValueList for &T {
     fn serialized(&self) -> SerializedResult<'_> {
         <T as ValueList>::serialized(*self)
+    }
+
+    fn for_debug_append(&self, s: &mut String) {
+        <T as ValueList>::for_debug_append(*self, s)
+    }
+
+    fn for_debug_append_nth(&self, s: &mut String, n: usize) -> Result<(), NotEnoughValuesError> {
+        <T as ValueList>::for_debug_append_nth(*self, s, n)
     }
 }
 
