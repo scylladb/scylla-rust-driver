@@ -173,7 +173,10 @@ pub fn read_int_length(buf: &mut &[u8]) -> Result<usize, LowLevelDeserialization
     Ok(v)
 }
 
-fn write_int_length(v: usize, buf: &mut impl BufMut) -> Result<(), std::num::TryFromIntError> {
+pub(crate) fn write_int_length(
+    v: usize,
+    buf: &mut impl BufMut,
+) -> Result<(), std::num::TryFromIntError> {
     let v: i32 = v.try_into()?;
 
     write_int(v, buf);
@@ -224,7 +227,10 @@ pub(crate) fn read_short_length(buf: &mut &[u8]) -> Result<usize, std::io::Error
     Ok(v)
 }
 
-fn write_short_length(v: usize, buf: &mut impl BufMut) -> Result<(), std::num::TryFromIntError> {
+pub(crate) fn write_short_length(
+    v: usize,
+    buf: &mut impl BufMut,
+) -> Result<(), std::num::TryFromIntError> {
     let v: u16 = v.try_into()?;
     write_short(v, buf);
     Ok(())

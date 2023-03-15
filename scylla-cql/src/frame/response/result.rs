@@ -11,12 +11,14 @@ use crate::frame::value::{
     Counter, CqlDate, CqlDecimal, CqlDuration, CqlTime, CqlTimestamp, CqlTimeuuid, CqlVarint,
 };
 use crate::types::deserialize::result::{RowIterator, TypedRowIterator};
+use crate::types::deserialize::row::DeserializeRow;
 use crate::types::deserialize::value::{
     mk_deser_err, BuiltinDeserializationErrorKind, DeserializeValue, MapIterator, UdtIterator,
 };
-use crate::types::deserialize::{DeserializationError, FrameSlice};
+use crate::types::deserialize::{DeserializationError, FrameSlice, TypeCheckError};
 use bytes::{Buf, Bytes};
 use std::borrow::Cow;
+use std::ops::Deref;
 use std::sync::Arc;
 use std::{net::IpAddr, result::Result as StdResult, str};
 use uuid::Uuid;
@@ -527,16 +529,6 @@ pub struct ResultMetadata<'a> {
 
 impl<'a> ResultMetadata<'a> {
     #[inline]
-    // Preferred to implementing Default, because users shouldn't be able to create
-    // empty ResultMetadata.
-    pub fn mock_empty() -> Self {
-        Self {
-            col_count: 0,
-            col_specs: Vec::new(),
-        }
-    }
-
-    #[inline]
     pub fn col_count(&self) -> usize {
         self.col_count
     }
@@ -545,16 +537,37 @@ impl<'a> ResultMetadata<'a> {
     pub fn col_specs(&self) -> &[ColumnSpec] {
         &self.col_specs
     }
+
+    // Preferred to implementing Default, because users shouldn't be encouraged to create
+    // empty ResultMetadata.
+    #[inline]
+    pub fn mock_empty() -> Self {
+        Self {
+            col_count: 0,
+            col_specs: Vec::new(),
+        }
+    }
 }
 
-// Test utils for scylla crate.
-#[doc(hidden)]
-impl<'a> ResultMetadata<'a> {
-    #[inline]
-    pub fn new_for_test(col_count: usize, col_specs: Vec<ColumnSpec<'a>>) -> Self {
-        Self {
-            col_count,
-            col_specs,
+/// Versatile holder for ResultMetadata. Allows 3 types of ownership
+/// of ResultMetadata:
+/// 1) borrowing it from somewhere, be it the RESULT:Rows frame
+///    or the cached metadata in PreparedStatement;
+/// 2) owning it after deserializing from RESULT:Rows;
+/// 3) sharing ownership of metadata cached in PreparedStatement.
+#[derive(Debug, Clone)]
+pub enum ResultMetadataHolder<'frame> {
+    BorrowedOrOwned(Cow<'frame, ResultMetadata<'frame>>),
+    SharedCached(Arc<ResultMetadata<'static>>),
+}
+
+impl<'a> Deref for ResultMetadataHolder<'a> {
+    type Target = ResultMetadata<'a>;
+
+    fn deref(&self) -> &Self::Target {
+        match self {
+            ResultMetadataHolder::BorrowedOrOwned(cow) => cow.deref(),
+            ResultMetadataHolder::SharedCached(arc) => arc.deref(),
         }
     }
 }
@@ -586,6 +599,93 @@ impl Row {
     /// Allows converting Row into tuple of rust types or custom struct deriving FromRow
     pub fn into_typed<RowT: FromRow>(self) -> StdResult<RowT, FromRowError> {
         RowT::from_row(self)
+    }
+}
+
+/// RESULT:Rows response, in partially serialized form.
+///
+/// Flags and paging state are deserialized, remaining part of metadata
+/// as well as rows remain serialized.
+#[derive(Debug)]
+pub struct RawRows {
+    // Already deserialized part of metadata:
+    col_count: usize,
+    global_tables_spec: bool,
+    no_metadata: bool,
+
+    /// The remaining part of the RESULT frame.
+    raw_metadata_and_rows: Bytes,
+
+    /// Metadata cached in PreparedStatement, if present.
+    cached_metadata: Option<Arc<ResultMetadata<'static>>>,
+}
+
+/// RESULT:Rows response, in partially serialized form.
+///
+/// Paging state and metadata are deserialized, rows remain serialized.
+#[derive(Debug)]
+pub struct RawRowsWithDeserializedMetadata<'frame> {
+    metadata: ResultMetadataHolder<'frame>,
+    rows_count: usize,
+    raw_rows: Bytes,
+}
+
+impl<'frame> RawRowsWithDeserializedMetadata<'frame> {
+    // Preferred to implementing Default, because users shouldn't be encouraged to create
+    // empty RawRowsWithDeserializedMetadata.
+    #[inline]
+    pub fn mock_empty() -> Self {
+        Self {
+            metadata: ResultMetadataHolder::BorrowedOrOwned(Cow::Owned(
+                ResultMetadata::mock_empty(),
+            )),
+            rows_count: 0,
+            raw_rows: Bytes::new(),
+        }
+    }
+
+    /// Returns the metadata associated with this response
+    /// (table and column specifications).
+    #[inline]
+    pub fn metadata(&self) -> &ResultMetadata {
+        &self.metadata
+    }
+
+    #[inline]
+    pub(crate) fn into_inner(self) -> (ResultMetadataHolder<'frame>, usize, Bytes) {
+        (self.metadata, self.rows_count, self.raw_rows)
+    }
+
+    /// Consumes the `RawRowsWithDeserializedMetadata` and returns metadata
+    /// associated with the response (or cached metadata, if used in its stead).
+    #[inline]
+    pub fn into_metadata(self) -> ResultMetadataHolder<'frame> {
+        self.metadata
+    }
+
+    /// Returns the number of rows that the RESULT:Rows contain.
+    #[inline]
+    pub fn rows_count(&self) -> usize {
+        self.rows_count
+    }
+
+    /// Returns the serialized size of the raw rows.
+    #[inline]
+    pub fn rows_size(&self) -> usize {
+        self.raw_rows.len()
+    }
+
+    /// Creates a typed iterator over the rows that lazily deserializes
+    /// rows in the result.
+    ///
+    /// Returns Err if the schema of returned result doesn't match R.
+    #[inline]
+    pub fn rows_iter<'r, R: DeserializeRow<'r>>(
+        &'r self,
+    ) -> StdResult<TypedRowIterator<'r, R>, TypeCheckError> {
+        let slice = FrameSlice::new(&self.raw_rows);
+        let raw = RowIterator::new(self.rows_count, self.metadata.col_specs(), slice);
+        TypedRowIterator::new(raw)
     }
 }
 
@@ -698,7 +798,7 @@ macro_rules! generate_deser_type {
     };
 }
 
-generate_deser_type!(_deser_type_borrowed, 'frame, types::read_string);
+generate_deser_type!(deser_type_borrowed, 'frame, types::read_string);
 
 generate_deser_type!(deser_type_owned, 'static, |buf| types::read_string(buf).map(ToOwned::to_owned));
 
@@ -820,9 +920,9 @@ macro_rules! generate_deser_col_specs {
 }
 
 generate_deser_col_specs!(
-    _deser_col_specs_borrowed,
+    deser_col_specs_borrowed,
     'frame,
-    _deser_type_borrowed,
+    deser_type_borrowed,
     ColumnSpec::borrowed,
 );
 
@@ -866,6 +966,134 @@ fn deser_result_metadata(
         col_specs,
     };
     Ok((metadata, paging_state))
+}
+
+impl RawRows {
+    /// Deserializes flags and paging state; the other part of result metadata
+    /// as well as rows remain serialized.
+    fn deserialize(
+        frame: &mut FrameSlice,
+        cached_metadata: Option<Arc<ResultMetadata<'static>>>,
+    ) -> StdResult<(Self, PagingStateResponse), RowsParseError> {
+        let flags = types::read_int(frame.as_slice_mut())
+            .map_err(|err| ResultMetadataParseError::FlagsParseError(err.into()))?;
+        let global_tables_spec = flags & 0x0001 != 0;
+        let has_more_pages = flags & 0x0002 != 0;
+        let no_metadata = flags & 0x0004 != 0;
+
+        let col_count = types::read_int_length(frame.as_slice_mut())
+            .map_err(ResultMetadataParseError::ColumnCountParseError)?;
+
+        let raw_paging_state = has_more_pages
+            .then(|| {
+                types::read_bytes(frame.as_slice_mut())
+                    .map_err(ResultMetadataParseError::PagingStateParseError)
+            })
+            .transpose()?;
+
+        let paging_state = PagingStateResponse::new_from_raw_bytes(raw_paging_state);
+
+        let raw_rows = Self {
+            col_count,
+            global_tables_spec,
+            no_metadata,
+            raw_metadata_and_rows: frame.to_bytes(),
+            cached_metadata,
+        };
+
+        Ok((raw_rows, paging_state))
+    }
+}
+
+macro_rules! generate_deserialize_metadata {
+    ($deserialize_metadata: ident, $l: lifetime, $use_cached_metadata: expr, $deser_col_specs: ident $(,)?) => {
+        /// Deserializes ResultMetadata in the form mentioned by its name,
+        /// and deserializes rows count. Keeps rows in the serialized form.
+        ///
+        /// If metadata is cached (in the PreparedStatement), it is reused (shared) from cache
+        /// instead of deserializing.
+        pub fn $deserialize_metadata(
+            &self,
+        ) -> StdResult<RawRowsWithDeserializedMetadata<$l>, RowsParseError> {
+            let mut frame_slice = FrameSlice::new(&self.raw_metadata_and_rows);
+
+            let metadata = match self.cached_metadata.as_ref() {
+                Some(cached) if self.no_metadata => {
+                    // Server sent no metadata, but we have metadata cached. This means that we asked the server
+                    // not to send metadata in the response as an optimization. We use cached metadata instead.
+                    $use_cached_metadata(cached)
+                }
+                None if self.no_metadata => {
+                    // Server sent no metadata and we have no metadata cached. Having no metadata cached,
+                    // we wouldn't have asked the server for skipping metadata. Therefore, this is most probably
+                    // not a SELECT, because in such case the server would send empty metadata both in Prepared
+                    // and in Result responses.
+                    ResultMetadataHolder::BorrowedOrOwned(Cow::Owned(ResultMetadata::mock_empty()))
+                }
+                Some(_) | None => {
+                    // Two possibilities:
+                    // 1) no cached_metadata provided. Server is supposed to provide the result metadata.
+                    // 2) cached metadata present (so we should have asked for skipping metadata),
+                    //    but the server sent result metadata anyway.
+                    // In case 1 we have to deserialize result metadata. In case 2 we choose to do that,
+                    // too, because it's suspicious, so we had better use the new metadata just in case.
+                    // Also, we simply need to advance the buffer pointer past metadata, and this requires
+                    // parsing metadata.
+                    let server_metadata = {
+                        let global_table_spec = self
+                            .global_tables_spec
+                            .then(|| deser_table_spec(frame_slice.as_slice_mut()))
+                            .transpose()
+                            .map_err(ResultMetadataParseError::from)?;
+
+                        let col_specs = $deser_col_specs(
+                            frame_slice.as_slice_mut(),
+                            global_table_spec,
+                            self.col_count,
+                        )
+                        .map_err(ResultMetadataParseError::from)?;
+
+                        ResultMetadata {
+                            col_count: self.col_count,
+                            col_specs,
+                        }
+                    };
+                    if server_metadata.col_count() != server_metadata.col_specs().len() {
+                        return Err(RowsParseError::ColumnCountMismatch {
+                            col_count: server_metadata.col_count(),
+                            col_specs_count: server_metadata.col_specs().len(),
+                        });
+                    }
+                    ResultMetadataHolder::BorrowedOrOwned(Cow::Owned(server_metadata))
+                }
+            };
+
+            let rows_count: usize = types::read_int_length(frame_slice.as_slice_mut())
+                .map_err(RowsParseError::RowsCountParseError)?;
+
+            Ok(RawRowsWithDeserializedMetadata {
+                metadata,
+                rows_count,
+                raw_rows: frame_slice.to_bytes(),
+            })
+        }
+    };
+}
+
+impl RawRows {
+    generate_deserialize_metadata!(
+        deserialize_borrowed_metadata,
+        '_,
+        |cached| ResultMetadataHolder::BorrowedOrOwned(Cow::Borrowed(cached)),
+        deser_col_specs_borrowed,
+    );
+
+    generate_deserialize_metadata!(
+        deserialize_owned_metadata,
+        'static,
+        |cached| ResultMetadataHolder::SharedCached(Arc::clone(cached)),
+        deser_col_specs_owned,
+    );
 }
 
 fn deser_prepared_metadata(
@@ -1167,6 +1395,26 @@ pub fn deserialize(
             id => return Err(CqlResultParseError::UnknownResultId(id)),
         },
     )
+}
+
+// This is not #[cfg(test)], because it is used by scylla crate.
+// Unfortunately, this attribute does not apply recursively to
+// children item. Therefore, every `pub` item here must use have
+// the specifier, too.
+#[doc(hidden)]
+mod test_utils {
+    use super::*;
+
+    impl<'a> ResultMetadata<'a> {
+        #[inline]
+        #[doc(hidden)]
+        pub fn new_for_test(col_count: usize, col_specs: Vec<ColumnSpec<'a>>) -> Self {
+            Self {
+                col_count,
+                col_specs,
+            }
+        }
+    }
 }
 
 #[cfg(test)]
