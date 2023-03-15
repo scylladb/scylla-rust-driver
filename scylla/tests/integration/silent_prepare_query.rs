@@ -1,5 +1,5 @@
 use crate::utils::{setup_tracing, test_with_3_node_cluster};
-use scylla::transport::session::Session;
+use scylla::transport::session::LegacySession;
 use scylla::SessionBuilder;
 use scylla::{query::Query, test_utils::unique_keyspace_name};
 use scylla_proxy::{
@@ -19,7 +19,7 @@ async fn test_prepare_query_with_values() {
 
     let res = test_with_3_node_cluster(ShardAwareness::QueryNode, |proxy_uris, translation_map, mut running_proxy| async move {
         // DB preparation phase
-        let session: Session = SessionBuilder::new()
+        let session: LegacySession = SessionBuilder::new()
             .known_node(proxy_uris[0].as_str())
             .address_translator(Arc::new(translation_map))
             .build()
@@ -70,7 +70,7 @@ async fn test_query_with_no_values() {
 
     let res = test_with_3_node_cluster(ShardAwareness::QueryNode, |proxy_uris, translation_map, mut running_proxy| async move {
         // DB preparation phase
-        let session: Session = SessionBuilder::new()
+        let session: LegacySession = SessionBuilder::new()
             .known_node(proxy_uris[0].as_str())
             .address_translator(Arc::new(translation_map))
             .build()

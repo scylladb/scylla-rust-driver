@@ -4,7 +4,7 @@ use scylla::query::Query;
 use scylla::retry_policy::{DefaultRetryPolicy, FallthroughRetryPolicy};
 use scylla::speculative_execution::PercentileSpeculativeExecutionPolicy;
 use scylla::statement::{Consistency, SerialConsistency};
-use scylla::transport::session::Session;
+use scylla::transport::session::LegacySession;
 use scylla::transport::ExecutionProfile;
 use scylla::{SessionBuilder, SessionConfig};
 use std::env;
@@ -42,13 +42,13 @@ async fn main() -> Result<()> {
     let mut handle2 = profile2.into_handle();
 
     // It is even possible to use multiple sessions interleaved, having them configured with different profiles.
-    let session1: Session = SessionBuilder::new()
+    let session1: LegacySession = SessionBuilder::new()
         .known_node(&uri)
         .default_execution_profile_handle(handle1.clone())
         .build()
         .await?;
 
-    let session2: Session = SessionBuilder::new()
+    let session2: LegacySession = SessionBuilder::new()
         .known_node(&uri)
         .default_execution_profile_handle(handle2.clone())
         .build()
@@ -57,7 +57,7 @@ async fn main() -> Result<()> {
     // As default execution profile is not provided explicitly, session 3 uses a predefined one.
     let mut session_3_config = SessionConfig::new();
     session_3_config.add_known_node(uri);
-    let session3: Session = Session::connect(session_3_config).await?;
+    let session3: LegacySession = LegacySession::connect(session_3_config).await?;
 
     session1.query_unpaged("CREATE KEYSPACE IF NOT EXISTS examples_ks WITH REPLICATION = {'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}", &[]).await?;
 

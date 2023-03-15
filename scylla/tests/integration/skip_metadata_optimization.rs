@@ -1,5 +1,5 @@
 use crate::utils::{setup_tracing, test_with_3_node_cluster};
-use scylla::transport::session::Session;
+use scylla::transport::session::LegacySession;
 use scylla::SessionBuilder;
 use scylla::{prepared_statement::PreparedStatement, test_utils::unique_keyspace_name};
 use scylla_cql::frame::request::query::{PagingState, PagingStateResponse};
@@ -20,7 +20,7 @@ async fn test_skip_result_metadata() {
 
     let res = test_with_3_node_cluster(ShardAwareness::QueryNode, |proxy_uris, translation_map, mut running_proxy| async move {
         // DB preparation phase
-        let session: Session = SessionBuilder::new()
+        let session: LegacySession = SessionBuilder::new()
             .known_node(proxy_uris[0].as_str())
             .address_translator(Arc::new(translation_map))
             .build()
@@ -51,7 +51,7 @@ async fn test_skip_result_metadata() {
         }
 
         async fn test_with_flags_predicate(
-            session: &Session,
+            session: &LegacySession,
             prepared: &PreparedStatement,
             rx: &mut tokio::sync::mpsc::UnboundedReceiver<(ResponseFrame, Option<TargetShard>)>,
             predicate: impl FnOnce(i32) -> bool

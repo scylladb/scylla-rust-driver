@@ -1,7 +1,7 @@
 use anyhow::Result;
 use futures::TryStreamExt;
 use scylla::macros::FromRow;
-use scylla::transport::session::Session;
+use scylla::transport::session::LegacySession;
 use scylla::SessionBuilder;
 use std::env;
 
@@ -11,7 +11,7 @@ async fn main() -> Result<()> {
 
     println!("Connecting to {} ...", uri);
 
-    let session: Session = SessionBuilder::new().known_node(uri).build().await?;
+    let session: LegacySession = SessionBuilder::new().known_node(uri).build().await?;
 
     session.query_unpaged("CREATE KEYSPACE IF NOT EXISTS examples_ks WITH REPLICATION = {'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}", &[]).await?;
 

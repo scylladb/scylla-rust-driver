@@ -1,11 +1,11 @@
 use crate::cql_to_rust::FromCqlVal;
 use crate::test_utils::{create_new_session_builder, setup_tracing};
 use crate::utils::test_utils::unique_keyspace_name;
-use crate::{frame::response::result::CqlValue, Session};
+use crate::{frame::response::result::CqlValue, LegacySession};
 use scylla_cql::types::serialize::value::SerializeValue;
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
-async fn connect() -> Session {
+async fn connect() -> LegacySession {
     let session = create_new_session_builder().build().await.unwrap();
     let ks = unique_keyspace_name();
     session.query_unpaged(format!("CREATE KEYSPACE IF NOT EXISTS {} WITH REPLICATION = {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}}", ks), &[]).await.unwrap();
@@ -14,7 +14,7 @@ async fn connect() -> Session {
     session
 }
 
-async fn create_table(session: &Session, table_name: &str, value_type: &str) {
+async fn create_table(session: &LegacySession, table_name: &str, value_type: &str) {
     session
         .query_unpaged(
             format!(
@@ -28,7 +28,7 @@ async fn create_table(session: &Session, table_name: &str, value_type: &str) {
 }
 
 async fn insert_and_select<InsertT, SelectT>(
-    session: &Session,
+    session: &LegacySession,
     table_name: &str,
     to_insert: &InsertT,
     expected: &SelectT,
@@ -58,7 +58,7 @@ async fn insert_and_select<InsertT, SelectT>(
 #[tokio::test]
 async fn test_cql_list() {
     setup_tracing();
-    let session: Session = connect().await;
+    let session: LegacySession = connect().await;
 
     let table_name: &str = "test_cql_list_tab";
     create_table(&session, table_name, "list<int>").await;
@@ -91,7 +91,7 @@ async fn test_cql_list() {
 #[tokio::test]
 async fn test_cql_set() {
     setup_tracing();
-    let session: Session = connect().await;
+    let session: LegacySession = connect().await;
 
     let table_name: &str = "test_cql_set_tab";
     create_table(&session, table_name, "set<int>").await;
@@ -155,7 +155,7 @@ async fn test_cql_set() {
 #[tokio::test]
 async fn test_cql_map() {
     setup_tracing();
-    let session: Session = connect().await;
+    let session: LegacySession = connect().await;
 
     let table_name: &str = "test_cql_map_tab";
     create_table(&session, table_name, "map<int, int>").await;
@@ -206,7 +206,7 @@ async fn test_cql_map() {
 #[tokio::test]
 async fn test_cql_tuple() {
     setup_tracing();
-    let session: Session = connect().await;
+    let session: LegacySession = connect().await;
 
     let table_name: &str = "test_cql_tuple_tab";
     create_table(&session, table_name, "tuple<int, int, text>").await;

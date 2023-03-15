@@ -2,12 +2,12 @@ use crate::frame::{response::result::CqlValue, value::CqlDuration};
 
 use crate::test_utils::{create_new_session_builder, setup_tracing};
 use crate::utils::test_utils::unique_keyspace_name;
-use crate::Session;
+use crate::LegacySession;
 
 #[tokio::test]
 async fn test_cqlvalue_udt() {
     setup_tracing();
-    let session: Session = create_new_session_builder().build().await.unwrap();
+    let session: LegacySession = create_new_session_builder().build().await.unwrap();
     let ks = unique_keyspace_name();
     session
         .query_unpaged(
@@ -72,7 +72,7 @@ async fn test_cqlvalue_udt() {
 #[tokio::test]
 async fn test_cqlvalue_duration() {
     setup_tracing();
-    let session: Session = create_new_session_builder().build().await.unwrap();
+    let session: LegacySession = create_new_session_builder().build().await.unwrap();
 
     let ks = unique_keyspace_name();
     session

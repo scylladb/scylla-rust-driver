@@ -2,7 +2,7 @@ use crate::utils::{setup_tracing, test_with_3_node_cluster};
 use scylla::retry_policy::FallthroughRetryPolicy;
 use scylla::test_utils::scylla_supports_tablets;
 use scylla::test_utils::unique_keyspace_name;
-use scylla::transport::session::Session;
+use scylla::transport::session::LegacySession;
 use scylla::{ExecutionProfile, SessionBuilder};
 use scylla_cql::frame::protocol_features::ProtocolFeatures;
 use scylla_cql::frame::types;
@@ -52,7 +52,7 @@ async fn if_lwt_optimisation_mark_offered_then_negotiatied_and_lwt_routed_optima
             .into_handle();
 
         // DB preparation phase
-        let session: Session = SessionBuilder::new()
+        let session: LegacySession = SessionBuilder::new()
             .known_node(proxy_uris[0].as_str())
             .default_execution_profile_handle(handle)
             .address_translator(Arc::new(translation_map))
