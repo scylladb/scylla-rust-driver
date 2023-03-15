@@ -11,12 +11,15 @@ use crate::frame::value::{
     Counter, CqlDate, CqlDecimal, CqlDuration, CqlTime, CqlTimestamp, CqlTimeuuid, CqlVarint,
 };
 use crate::types::deserialize::result::{RowIterator, TypedRowIterator};
+use crate::types::deserialize::row::DeserializeRow;
 use crate::types::deserialize::value::{
     mk_deser_err, BuiltinDeserializationErrorKind, DeserializeValue, MapIterator, UdtIterator,
 };
-use crate::types::deserialize::{DeserializationError, FrameSlice};
+use crate::types::deserialize::{DeserializationError, FrameSlice, TypeCheckError};
 use bytes::{Buf, Bytes};
 use std::borrow::Cow;
+use std::fmt::Debug;
+use std::ops::Deref;
 use std::sync::Arc;
 use std::{net::IpAddr, result::Result as StdResult, str};
 use uuid::Uuid;
@@ -547,6 +550,29 @@ impl<'a> ResultMetadata<'a> {
     }
 }
 
+/// Versatile holder for ResultMetadata. Allows 3 types of ownership
+/// of ResultMetadata:
+/// 1) borrowing it from somewhere, be it the RESULT:Rows frame
+///    or the cached metadata in PreparedStatement;
+/// 2) owning it after deserializing from RESULT:Rows;
+/// 3) sharing ownership of metadata cached in PreparedStatement.
+#[derive(Debug, Clone)]
+pub enum ResultMetadataHolder<'frame> {
+    BorrowedOrOwned(Cow<'frame, ResultMetadata<'frame>>),
+    SharedCached(Arc<ResultMetadata<'static>>),
+}
+
+impl<'a> Deref for ResultMetadataHolder<'a> {
+    type Target = ResultMetadata<'a>;
+
+    fn deref(&self) -> &Self::Target {
+        match self {
+            ResultMetadataHolder::BorrowedOrOwned(cow) => cow.deref(),
+            ResultMetadataHolder::SharedCached(arc) => arc.deref(),
+        }
+    }
+}
+
 #[derive(Debug, Copy, Clone)]
 pub struct PartitionKeyIndex {
     /// index in the serialized values
@@ -574,6 +600,176 @@ impl Row {
     /// Allows converting Row into tuple of rust types or custom struct deriving FromRow
     pub fn into_typed<RowT: FromRow>(self) -> StdResult<RowT, FromRowError> {
         RowT::from_row(self)
+    }
+}
+
+/// RESULT:Rows response, in partially serialized form.
+///
+/// Flags and paging state are deserialized, remaining part of metadata
+/// as well as rows remain serialized.
+#[derive(Debug)]
+pub struct RawMetadataAndRawRows {
+    // Already deserialized part of metadata:
+    col_count: usize,
+    global_tables_spec: bool,
+    no_metadata: bool,
+
+    /// The remaining part of the RESULT frame.
+    raw_metadata_and_rows: Bytes,
+
+    /// Metadata cached in PreparedStatement, if present.
+    cached_metadata: Option<Arc<ResultMetadata<'static>>>,
+}
+
+/// RESULT:Rows response, in partially serialized form.
+///
+/// Paging state and metadata are deserialized, rows remain serialized.
+///
+/// See [`RawRowsKind`] for explanation what it is and why it is needed.
+#[derive(Debug)]
+pub struct DeserializedMetadataAndRawRows<'frame, RawRowsRepr: RawRowsKind> {
+    metadata: ResultMetadataHolder<'frame>,
+    rows_count: usize,
+    raw_rows: RawRowsRepr,
+}
+
+mod sealed {
+    // This is a sealed trait - its whole purpose is to be unnameable.
+    // This means we need to disable the check.
+    #[allow(unknown_lints)] // Rust 1.70 (our MSRV) doesn't know this lint.
+    #[allow(unnameable_types)]
+    pub trait Sealed {}
+}
+
+/// This abstracts over two different ways of storing the frame:
+/// - shared ownership (Bytes),
+/// - borrowing (FrameSlice).
+///
+/// Its whole purpose is to restrict the type parameter of `DeserializedMetadataAndRawRows`
+/// to the two valid variants.
+///
+/// ### Why is a trait used, and not an enum, as it's done for `ResultMetadataHolder`?
+///
+/// The problem arises with the `rows_iter` method.
+/// - in case of `DeserializedMetadataAndRawRows<RawRowsOwned>`, the struct itself
+///   owns the frame. Therefore, the reference to `self` should have the `'frame`
+///   lifetime (and this way bound the lifetime of deserialized items).
+/// - in case of `DeserializedMetadataAndRawRows<RawRowsBorrowed>`, the struct
+///   borrows the frame with some lifetime 'frame. Therefore, the reference to
+///   `self` should only have the `'metadata` lifetime, as the frame is owned
+///   independently of Self's lifetime.
+///
+/// This discrepancy is not expressible by enums. Therefore, an entirely separate
+/// `rows_iter` must be defined for both cases, and thus both cases must be separate
+/// types - and this is guaranteed by having a different type parameter (because they
+/// are distinct instantiations of a generic type).
+pub trait RawRowsKind: sealed::Sealed + Debug {
+    fn as_slice(&self) -> &[u8];
+}
+#[derive(Debug)]
+pub struct RawRowsOwned(Bytes);
+impl sealed::Sealed for RawRowsOwned {}
+impl RawRowsKind for RawRowsOwned {
+    fn as_slice(&self) -> &[u8] {
+        &self.0
+    }
+}
+#[derive(Debug)]
+pub struct RawRowsBorrowed<'a>(FrameSlice<'a>);
+impl<'a> sealed::Sealed for RawRowsBorrowed<'a> {}
+impl<'a> RawRowsKind for RawRowsBorrowed<'a> {
+    fn as_slice(&self) -> &[u8] {
+        self.0.as_slice()
+    }
+}
+
+impl<'frame, RawRowsRepr: RawRowsKind> DeserializedMetadataAndRawRows<'frame, RawRowsRepr> {
+    /// Returns the metadata associated with this response
+    /// (table and column specifications).
+    #[inline]
+    pub fn metadata(&self) -> &ResultMetadata {
+        &self.metadata
+    }
+
+    /// Consumes the `DeserializedMetadataAndRawRows` and returns metadata
+    /// associated with the response (or cached metadata, if used in its stead).
+    #[inline]
+    pub fn into_metadata(self) -> ResultMetadataHolder<'frame> {
+        self.metadata
+    }
+
+    /// Returns the number of rows that the RESULT:Rows contain.
+    #[inline]
+    pub fn rows_count(&self) -> usize {
+        self.rows_count
+    }
+
+    /// Returns the serialized size of the raw rows.
+    #[inline]
+    pub fn rows_bytes_size(&self) -> usize {
+        self.raw_rows.as_slice().len()
+    }
+}
+
+impl DeserializedMetadataAndRawRows<'static, RawRowsOwned> {
+    // Preferred to implementing Default, because users shouldn't be encouraged to create
+    // empty DeserializedMetadataAndRawRows.
+    #[inline]
+    pub fn mock_empty() -> Self {
+        Self {
+            metadata: ResultMetadataHolder::BorrowedOrOwned(Cow::Owned(
+                ResultMetadata::mock_empty(),
+            )),
+            rows_count: 0,
+            raw_rows: RawRowsOwned(Bytes::new()),
+        }
+    }
+
+    pub(crate) fn into_inner(self) -> (ResultMetadataHolder<'static>, usize, Bytes) {
+        (self.metadata, self.rows_count, self.raw_rows.0)
+    }
+
+    /// Creates a typed iterator over the rows that lazily deserializes
+    /// rows in the result.
+    ///
+    /// Returns Err if the schema of returned result doesn't match R.
+    #[inline]
+    pub fn rows_iter<'frame, 'metadata, R: DeserializeRow<'frame, 'metadata>>(
+        &'frame self,
+    ) -> StdResult<TypedRowIterator<'frame, 'metadata, R>, TypeCheckError>
+    where
+        'frame: 'metadata,
+    {
+        let frame_slice = FrameSlice::new(&self.raw_rows.0);
+        let raw = RowIterator::new(self.rows_count, self.metadata.col_specs(), frame_slice);
+        TypedRowIterator::new(raw)
+    }
+}
+
+impl<'frame> DeserializedMetadataAndRawRows<'frame, RawRowsBorrowed<'frame>> {
+    // Preferred to implementing Default, because users shouldn't be encouraged to create
+    // empty DeserializedMetadataAndRawRows.
+    #[inline]
+    pub fn mock_empty() -> Self {
+        Self {
+            metadata: ResultMetadataHolder::BorrowedOrOwned(Cow::Owned(
+                ResultMetadata::mock_empty(),
+            )),
+            rows_count: 0,
+            raw_rows: RawRowsBorrowed(FrameSlice::new_empty()),
+        }
+    }
+
+    /// Creates a typed iterator over the rows that lazily deserializes
+    /// rows in the result.
+    ///
+    /// Returns Err if the schema of returned result doesn't match R.
+    #[inline]
+    pub fn rows_iter<'metadata, R: DeserializeRow<'frame, 'metadata>>(
+        &'metadata self,
+    ) -> StdResult<TypedRowIterator<'frame, 'metadata, R>, TypeCheckError> {
+        let raw = RowIterator::new(self.rows_count, self.metadata.col_specs(), self.raw_rows.0);
+        TypedRowIterator::new(raw)
     }
 }
 
@@ -686,7 +882,7 @@ macro_rules! generate_deser_type {
     };
 }
 
-generate_deser_type!(_deser_type_borrowed, 'frame, types::read_string);
+generate_deser_type!(deser_type_borrowed, 'frame, types::read_string);
 
 generate_deser_type!(deser_type_owned, 'static, |buf| types::read_string(buf).map(ToOwned::to_owned));
 
@@ -808,9 +1004,9 @@ macro_rules! generate_deser_col_specs {
 }
 
 generate_deser_col_specs!(
-    _deser_col_specs_borrowed,
+    deser_col_specs_borrowed,
     'frame,
-    _deser_type_borrowed,
+    deser_type_borrowed,
     ColumnSpec::borrowed,
 );
 
@@ -854,6 +1050,139 @@ fn deser_result_metadata(
         col_specs,
     };
     Ok((metadata, paging_state))
+}
+
+impl RawMetadataAndRawRows {
+    /// Deserializes flags and paging state; the other part of result metadata
+    /// as well as rows remain serialized.
+    fn deserialize(
+        frame: &mut FrameSlice,
+        cached_metadata: Option<Arc<ResultMetadata<'static>>>,
+    ) -> StdResult<(Self, PagingStateResponse), RowsParseError> {
+        let flags = types::read_int(frame.as_slice_mut())
+            .map_err(|err| ResultMetadataParseError::FlagsParseError(err.into()))?;
+        let global_tables_spec = flags & 0x0001 != 0;
+        let has_more_pages = flags & 0x0002 != 0;
+        let no_metadata = flags & 0x0004 != 0;
+
+        let col_count = types::read_int_length(frame.as_slice_mut())
+            .map_err(ResultMetadataParseError::ColumnCountParseError)?;
+
+        let raw_paging_state = has_more_pages
+            .then(|| {
+                types::read_bytes(frame.as_slice_mut())
+                    .map_err(ResultMetadataParseError::PagingStateParseError)
+            })
+            .transpose()?;
+
+        let paging_state = PagingStateResponse::new_from_raw_bytes(raw_paging_state);
+
+        let raw_rows = Self {
+            col_count,
+            global_tables_spec,
+            no_metadata,
+            raw_metadata_and_rows: frame.to_bytes(),
+            cached_metadata,
+        };
+
+        Ok((raw_rows, paging_state))
+    }
+}
+
+macro_rules! generate_deserialize_metadata {
+    ($deserialize_metadata: ident, $metadata_l: lifetime, $raw_rows_kind: ty, $raw_rows_constructor: expr, $use_cached_metadata: expr, $deser_col_specs: ident$(,)?) => {
+        /// Deserializes ResultMetadata in the form mentioned by its name,
+        /// and deserializes rows count. Keeps rows in the serialized form.
+        ///
+        /// If metadata is cached (in the PreparedStatement), it is reused (shared) from cache
+        /// instead of deserializing.
+        pub fn $deserialize_metadata(
+            &self,
+        ) -> StdResult<DeserializedMetadataAndRawRows<$metadata_l, $raw_rows_kind>, RowsParseError>
+        {
+            let mut frame_slice = FrameSlice::new(&self.raw_metadata_and_rows);
+
+            let metadata = match self.cached_metadata.as_ref() {
+                Some(cached) if self.no_metadata => {
+                    // Server sent no metadata, but we have metadata cached. This means that we asked the server
+                    // not to send metadata in the response as an optimization. We use cached metadata instead.
+                    $use_cached_metadata(cached)
+                }
+                None if self.no_metadata => {
+                    // Server sent no metadata and we have no metadata cached. Having no metadata cached,
+                    // we wouldn't have asked the server for skipping metadata. Therefore, this is most probably
+                    // not a SELECT, because in such case the server would send empty metadata both in Prepared
+                    // and in Result responses.
+                    ResultMetadataHolder::BorrowedOrOwned(Cow::Owned(ResultMetadata::mock_empty()))
+                }
+                Some(_) | None => {
+                    // Two possibilities:
+                    // 1) no cached_metadata provided. Server is supposed to provide the result metadata.
+                    // 2) cached metadata present (so we should have asked for skipping metadata),
+                    //    but the server sent result metadata anyway.
+                    // In case 1 we have to deserialize result metadata. In case 2 we choose to do that,
+                    // too, because it's suspicious, so we had better use the new metadata just in case.
+                    // Also, we simply need to advance the buffer pointer past metadata, and this requires
+                    // parsing metadata.
+                    let server_metadata = {
+                        let global_table_spec = self
+                            .global_tables_spec
+                            .then(|| deser_table_spec(frame_slice.as_slice_mut()))
+                            .transpose()
+                            .map_err(ResultMetadataParseError::from)?;
+
+                        let col_specs = $deser_col_specs(
+                            frame_slice.as_slice_mut(),
+                            global_table_spec,
+                            self.col_count,
+                        )
+                        .map_err(ResultMetadataParseError::from)?;
+
+                        ResultMetadata {
+                            col_count: self.col_count,
+                            col_specs,
+                        }
+                    };
+                    if server_metadata.col_count() != server_metadata.col_specs().len() {
+                        return Err(RowsParseError::ColumnCountMismatch {
+                            col_count: server_metadata.col_count(),
+                            col_specs_count: server_metadata.col_specs().len(),
+                        });
+                    }
+                    ResultMetadataHolder::BorrowedOrOwned(Cow::Owned(server_metadata))
+                }
+            };
+
+            let rows_count: usize = types::read_int_length(frame_slice.as_slice_mut())
+                .map_err(RowsParseError::RowsCountParseError)?;
+
+            Ok(DeserializedMetadataAndRawRows {
+                metadata,
+                rows_count,
+                raw_rows: $raw_rows_constructor(frame_slice),
+            })
+        }
+    };
+}
+
+impl RawMetadataAndRawRows {
+    generate_deserialize_metadata!(
+        deserialize_borrowed_metadata,
+        '_,
+        RawRowsBorrowed<'_>,
+        RawRowsBorrowed,
+        |cached| ResultMetadataHolder::BorrowedOrOwned(Cow::Borrowed(cached)),
+        deser_col_specs_borrowed,
+    );
+
+    generate_deserialize_metadata!(
+        deserialize_owned_metadata,
+        'static,
+        RawRowsOwned,
+        |frame_slice: FrameSlice| RawRowsOwned(frame_slice.to_bytes()),
+        |cached| ResultMetadataHolder::SharedCached(Arc::clone(cached)),
+        deser_col_specs_owned,
+    );
 }
 
 fn deser_prepared_metadata(
