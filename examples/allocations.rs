@@ -1,5 +1,5 @@
 use anyhow::Result;
-use scylla::{statement::prepared_statement::PreparedStatement, Session, SessionBuilder};
+use scylla::{statement::prepared_statement::PreparedStatement, LegacySession, SessionBuilder};
 use std::io::Write;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
@@ -65,7 +65,7 @@ fn print_stats(stats: &stats_alloc::Stats, reqs: f64) {
 }
 
 async fn measure(
-    session: Arc<Session>,
+    session: Arc<LegacySession>,
     prepared: Arc<PreparedStatement>,
     reqs: usize,
     parallelism: usize,
@@ -128,7 +128,7 @@ async fn main() -> Result<()> {
 
     println!("Connecting to {} ...", args.node);
 
-    let session: Session = SessionBuilder::new().known_node(args.node).build().await?;
+    let session: LegacySession = SessionBuilder::new().known_node(args.node).build().await?;
     let session = Arc::new(session);
 
     session.query_unpaged("CREATE KEYSPACE IF NOT EXISTS examples_ks WITH REPLICATION = {'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}", &[]).await?;

@@ -1,6 +1,6 @@
 #[cfg(test)]
 use crate::transport::session_builder::{GenericSessionBuilder, SessionBuilderKind};
-use crate::Session;
+use crate::LegacySession;
 #[cfg(test)]
 use std::{num::NonZeroU32, time::Duration};
 use std::{
@@ -25,7 +25,7 @@ pub fn unique_keyspace_name() -> String {
 }
 
 #[cfg(test)]
-pub(crate) async fn supports_feature(session: &Session, feature: &str) -> bool {
+pub(crate) async fn supports_feature(session: &LegacySession, feature: &str) -> bool {
     // Cassandra doesn't have a concept of features, so first detect
     // if there is the `supported_features` column in system.local
 
@@ -92,7 +92,7 @@ pub fn create_new_session_builder() -> GenericSessionBuilder<impl SessionBuilder
         .tracing_info_fetch_interval(Duration::from_millis(50))
 }
 
-pub async fn scylla_supports_tablets(session: &Session) -> bool {
+pub async fn scylla_supports_tablets(session: &LegacySession) -> bool {
     let result = session
         .query_unpaged(
             "select column_name from system_schema.columns where 

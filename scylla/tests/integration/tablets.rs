@@ -16,9 +16,7 @@ use scylla::test_utils::unique_keyspace_name;
 use scylla::transport::ClusterData;
 use scylla::transport::Node;
 use scylla::transport::NodeRef;
-use scylla::ExecutionProfile;
-use scylla::LegacyQueryResult;
-use scylla::Session;
+use scylla::{ExecutionProfile, LegacyQueryResult, LegacySession};
 
 use scylla::transport::errors::QueryError;
 use scylla_proxy::{
@@ -42,7 +40,7 @@ struct Tablet {
     replicas: Vec<(Arc<Node>, i32)>,
 }
 
-async fn get_tablets(session: &Session, ks: &str, table: &str) -> Vec<Tablet> {
+async fn get_tablets(session: &LegacySession, ks: &str, table: &str) -> Vec<Tablet> {
     let cluster_data = session.get_cluster_data();
     let endpoints = cluster_data.get_nodes_info();
     for endpoint in endpoints.iter() {
@@ -181,7 +179,7 @@ impl LoadBalancingPolicy for SingleTargetLBP {
 }
 
 async fn send_statement_everywhere(
-    session: &Session,
+    session: &LegacySession,
     cluster: &ClusterData,
     statement: &PreparedStatement,
     values: &dyn SerializeRow,
@@ -207,7 +205,7 @@ async fn send_statement_everywhere(
 }
 
 async fn send_unprepared_query_everywhere(
-    session: &Session,
+    session: &LegacySession,
     cluster: &ClusterData,
     query: &Query,
 ) -> Result<Vec<LegacyQueryResult>, QueryError> {
@@ -249,7 +247,7 @@ fn count_tablet_feedbacks(
         .count()
 }
 
-async fn prepare_schema(session: &Session, ks: &str, table: &str, tablet_count: usize) {
+async fn prepare_schema(session: &LegacySession, ks: &str, table: &str, tablet_count: usize) {
     session
         .query_unpaged(
             format!(

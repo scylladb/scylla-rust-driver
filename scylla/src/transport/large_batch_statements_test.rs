@@ -7,7 +7,7 @@ use crate::transport::errors::{BadQuery, QueryError};
 use crate::{
     batch::Batch,
     test_utils::{create_new_session_builder, unique_keyspace_name},
-    LegacyQueryResult, Session,
+    LegacyQueryResult, LegacySession,
 };
 
 #[tokio::test]
@@ -31,7 +31,7 @@ async fn test_large_batch_statements() {
     )
 }
 
-async fn create_test_session(session: Session, ks: &String) -> Session {
+async fn create_test_session(session: LegacySession, ks: &String) -> LegacySession {
     session
         .query_unpaged(
             format!("CREATE KEYSPACE {} WITH REPLICATION = {{ 'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1 }}",ks),
@@ -52,7 +52,7 @@ async fn create_test_session(session: Session, ks: &String) -> Session {
 }
 
 async fn write_batch(
-    session: &Session,
+    session: &LegacySession,
     n: usize,
     ks: &String,
 ) -> Result<LegacyQueryResult, QueryError> {

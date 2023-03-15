@@ -10,7 +10,7 @@ use scylla::statement::{
 use scylla::tracing::TracingInfo;
 use scylla::transport::iterator::LegacyRowIterator;
 use scylla::LegacyQueryResult;
-use scylla::{Session, SessionBuilder};
+use scylla::{LegacySession, SessionBuilder};
 use std::env;
 use std::num::NonZeroU32;
 use std::time::Duration;
@@ -21,7 +21,7 @@ async fn main() -> Result<()> {
     let uri = env::var("SCYLLA_URI").unwrap_or_else(|_| "127.0.0.1:9042".to_string());
 
     println!("Connecting to {} ...", uri);
-    let session: Session = SessionBuilder::new()
+    let session: LegacySession = SessionBuilder::new()
         .known_node(uri.as_str())
         .build()
         .await?;
@@ -112,7 +112,7 @@ async fn main() -> Result<()> {
     // Session configuration allows specifying custom settings for querying tracing info.
     // Tracing info might not immediately be available on queried node
     // so the driver performs a few attempts with sleeps in between.
-    let session: Session = SessionBuilder::new()
+    let session: LegacySession = SessionBuilder::new()
         .known_node(uri)
         .tracing_info_fetch_attempts(NonZeroU32::new(8).unwrap())
         .tracing_info_fetch_interval(Duration::from_millis(100))
