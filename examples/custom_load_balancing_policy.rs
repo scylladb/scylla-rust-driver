@@ -71,7 +71,7 @@ async fn main() -> Result<()> {
     let _session: LegacySession = SessionBuilder::new()
         .known_node(uri)
         .default_execution_profile_handle(profile.into_handle())
-        .build()
+        .build_legacy()
         .await?;
 
     Ok(())

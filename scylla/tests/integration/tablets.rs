@@ -294,7 +294,7 @@ async fn test_default_policy_is_tablet_aware() {
             let session = scylla::SessionBuilder::new()
                 .known_node(proxy_uris[0].as_str())
                 .address_translator(Arc::new(translation_map))
-                .build()
+                .build_legacy()
                 .await
                 .unwrap();
 
@@ -425,7 +425,7 @@ async fn test_tablet_feedback_not_sent_for_unprepared_queries() {
             let session = scylla::SessionBuilder::new()
                 .known_node(proxy_uris[0].as_str())
                 .address_translator(Arc::new(translation_map))
-                .build()
+                .build_legacy()
                 .await
                 .unwrap();
 
@@ -497,7 +497,7 @@ async fn test_lwt_optimization_works_with_tablets() {
             let session = scylla::SessionBuilder::new()
                 .known_node(proxy_uris[0].as_str())
                 .address_translator(Arc::new(translation_map))
-                .build()
+                .build_legacy()
                 .await
                 .unwrap();
 

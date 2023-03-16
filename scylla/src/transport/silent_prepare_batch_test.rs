@@ -9,7 +9,7 @@ use std::collections::BTreeSet;
 #[tokio::test]
 async fn test_quietly_prepare_batch() {
     setup_tracing();
-    let session = create_new_session_builder().build().await.unwrap();
+    let session = create_new_session_builder().build_legacy().await.unwrap();
 
     let ks = unique_keyspace_name();
     session.query_unpaged(format!("CREATE KEYSPACE IF NOT EXISTS {} WITH REPLICATION = {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}}", ks), &[]).await.unwrap();

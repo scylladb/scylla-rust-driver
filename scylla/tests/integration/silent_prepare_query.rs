@@ -22,7 +22,7 @@ async fn test_prepare_query_with_values() {
         let session: LegacySession = SessionBuilder::new()
             .known_node(proxy_uris[0].as_str())
             .address_translator(Arc::new(translation_map))
-            .build()
+            .build_legacy()
             .await
             .unwrap();
 
@@ -73,7 +73,7 @@ async fn test_query_with_no_values() {
         let session: LegacySession = SessionBuilder::new()
             .known_node(proxy_uris[0].as_str())
             .address_translator(Arc::new(translation_map))
-            .build()
+            .build_legacy()
             .await
             .unwrap();
 

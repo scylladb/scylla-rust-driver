@@ -56,7 +56,10 @@ async fn test_connection_failure() {
     .remote_handle();
     tokio::spawn(fut);
 
-    let res = SessionBuilder::new().known_node_addr(addr).build().await;
+    let res = SessionBuilder::new()
+        .known_node_addr(addr)
+        .build_legacy()
+        .await;
     match res {
         Ok(_) => panic!("Unexpected success"),
         Err(err) => println!("Connection error (it was expected): {:?}", err),
@@ -66,7 +69,7 @@ async fn test_connection_failure() {
 #[tokio::test]
 async fn test_unprepared_statement() {
     setup_tracing();
-    let session = create_new_session_builder().build().await.unwrap();
+    let session = create_new_session_builder().build_legacy().await.unwrap();
     let ks = unique_keyspace_name();
 
     session.query_unpaged(format!("CREATE KEYSPACE IF NOT EXISTS {} WITH REPLICATION = {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}}", ks), &[]).await.unwrap();
@@ -168,7 +171,7 @@ async fn test_unprepared_statement() {
 #[tokio::test]
 async fn test_prepared_statement() {
     setup_tracing();
-    let session = create_new_session_builder().build().await.unwrap();
+    let session = create_new_session_builder().build_legacy().await.unwrap();
     let ks = unique_keyspace_name();
 
     session.query_unpaged(format!("CREATE KEYSPACE IF NOT EXISTS {} WITH REPLICATION = {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}}", ks), &[]).await.unwrap();
@@ -369,7 +372,7 @@ async fn test_counter_batch() {
     use scylla_cql::frame::request::batch::BatchType;
 
     setup_tracing();
-    let session = Arc::new(create_new_session_builder().build().await.unwrap());
+    let session = Arc::new(create_new_session_builder().build_legacy().await.unwrap());
     let ks = unique_keyspace_name();
 
     // Need to disable tablets in this test because they don't support counters yet.
@@ -424,7 +427,7 @@ async fn test_counter_batch() {
 #[tokio::test]
 async fn test_batch() {
     setup_tracing();
-    let session = Arc::new(create_new_session_builder().build().await.unwrap());
+    let session = Arc::new(create_new_session_builder().build_legacy().await.unwrap());
     let ks = unique_keyspace_name();
 
     session.query_unpaged(format!("CREATE KEYSPACE IF NOT EXISTS {} WITH REPLICATION = {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}}", ks), &[]).await.unwrap();
@@ -526,7 +529,7 @@ async fn test_batch() {
 #[tokio::test]
 async fn test_token_calculation() {
     setup_tracing();
-    let session = create_new_session_builder().build().await.unwrap();
+    let session = create_new_session_builder().build_legacy().await.unwrap();
     let ks = unique_keyspace_name();
 
     session.query_unpaged(format!("CREATE KEYSPACE IF NOT EXISTS {} WITH REPLICATION = {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}}", ks), &[]).await.unwrap();
@@ -585,7 +588,7 @@ async fn test_token_calculation() {
 #[tokio::test]
 async fn test_token_awareness() {
     setup_tracing();
-    let session = create_new_session_builder().build().await.unwrap();
+    let session = create_new_session_builder().build_legacy().await.unwrap();
     let ks = unique_keyspace_name();
 
     // Need to disable tablets in this test because they make token routing
@@ -647,7 +650,7 @@ async fn test_token_awareness() {
 #[tokio::test]
 async fn test_use_keyspace() {
     setup_tracing();
-    let session = create_new_session_builder().build().await.unwrap();
+    let session = create_new_session_builder().build_legacy().await.unwrap();
     let ks = unique_keyspace_name();
 
     session.query_unpaged(format!("CREATE KEYSPACE IF NOT EXISTS {} WITH REPLICATION = {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}}", ks), &[]).await.unwrap();
@@ -717,7 +720,7 @@ async fn test_use_keyspace() {
     // Make sure that use_keyspace on SessionBuiler works
     let session2: LegacySession = create_new_session_builder()
         .use_keyspace(ks.clone(), false)
-        .build()
+        .build_legacy()
         .await
         .unwrap();
 
@@ -738,7 +741,7 @@ async fn test_use_keyspace() {
 #[tokio::test]
 async fn test_use_keyspace_case_sensitivity() {
     setup_tracing();
-    let session = create_new_session_builder().build().await.unwrap();
+    let session = create_new_session_builder().build_legacy().await.unwrap();
     let ks_lower = unique_keyspace_name().to_lowercase();
     let ks_upper = ks_lower.to_uppercase();
 
@@ -811,7 +814,7 @@ async fn test_use_keyspace_case_sensitivity() {
 #[tokio::test]
 async fn test_raw_use_keyspace() {
     setup_tracing();
-    let session = create_new_session_builder().build().await.unwrap();
+    let session = create_new_session_builder().build_legacy().await.unwrap();
     let ks = unique_keyspace_name();
 
     session.query_unpaged(format!("CREATE KEYSPACE IF NOT EXISTS {} WITH REPLICATION = {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}}", ks), &[]).await.unwrap();
@@ -863,7 +866,7 @@ async fn test_raw_use_keyspace() {
 #[tokio::test]
 async fn test_fetch_system_keyspace() {
     setup_tracing();
-    let session = create_new_session_builder().build().await.unwrap();
+    let session = create_new_session_builder().build_legacy().await.unwrap();
 
     let prepared_statement = session
         .prepare("SELECT * FROM system_schema.keyspaces")
@@ -880,7 +883,7 @@ async fn test_fetch_system_keyspace() {
 #[tokio::test]
 async fn test_db_errors() {
     setup_tracing();
-    let session = create_new_session_builder().build().await.unwrap();
+    let session = create_new_session_builder().build_legacy().await.unwrap();
     let ks = unique_keyspace_name();
 
     // SyntaxError on bad query
@@ -935,7 +938,7 @@ async fn test_db_errors() {
 #[tokio::test]
 async fn test_tracing() {
     setup_tracing();
-    let session = create_new_session_builder().build().await.unwrap();
+    let session = create_new_session_builder().build_legacy().await.unwrap();
     let ks = unique_keyspace_name();
 
     session.query_unpaged(format!("CREATE KEYSPACE IF NOT EXISTS {} WITH REPLICATION = {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}}", ks), &[]).await.unwrap();
@@ -1177,21 +1180,14 @@ async fn assert_in_tracing_table(session: &LegacySession, tracing_uuid: Uuid) {
 #[tokio::test]
 async fn test_await_schema_agreement() {
     setup_tracing();
-    let session = create_new_session_builder().build().await.unwrap();
+    let session = create_new_session_builder().build_legacy().await.unwrap();
     let _schema_version = session.await_schema_agreement().await.unwrap();
-}
-
-#[tokio::test]
-async fn test_await_timed_schema_agreement() {
-    setup_tracing();
-    let session = create_new_session_builder().build().await.unwrap();
-    session.await_schema_agreement().await.unwrap();
 }
 
 #[tokio::test]
 async fn test_timestamp() {
     setup_tracing();
-    let session = create_new_session_builder().build().await.unwrap();
+    let session = create_new_session_builder().build_legacy().await.unwrap();
     let ks = unique_keyspace_name();
 
     session.query_unpaged(format!("CREATE KEYSPACE IF NOT EXISTS {} WITH REPLICATION = {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}}", ks), &[]).await.unwrap();
@@ -1310,7 +1306,7 @@ async fn test_request_timeout() {
         .into_handle();
 
     {
-        let session = create_new_session_builder().build().await.unwrap();
+        let session = create_new_session_builder().build_legacy().await.unwrap();
 
         let mut query: Query = Query::new("SELECT * FROM system_schema.tables");
         query.set_request_timeout(Some(Duration::from_millis(1)));
@@ -1333,7 +1329,7 @@ async fn test_request_timeout() {
     {
         let timeouting_session = create_new_session_builder()
             .default_execution_profile_handle(fast_timeouting_profile_handle)
-            .build()
+            .build_legacy()
             .await
             .unwrap();
 
@@ -1369,7 +1365,7 @@ async fn test_request_timeout() {
 #[tokio::test]
 async fn test_prepared_config() {
     setup_tracing();
-    let session = create_new_session_builder().build().await.unwrap();
+    let session = create_new_session_builder().build_legacy().await.unwrap();
 
     let mut query = Query::new("SELECT * FROM system_schema.tables");
     query.set_is_idempotent(true);
@@ -1456,7 +1452,7 @@ fn udt_type_c_def(ks: &str) -> Arc<UserDefinedType> {
 #[tokio::test]
 async fn test_schema_types_in_metadata() {
     setup_tracing();
-    let session = create_new_session_builder().build().await.unwrap();
+    let session = create_new_session_builder().build_legacy().await.unwrap();
     let ks = unique_keyspace_name();
 
     session
@@ -1615,7 +1611,7 @@ async fn test_schema_types_in_metadata() {
 #[tokio::test]
 async fn test_user_defined_types_in_metadata() {
     setup_tracing();
-    let session = create_new_session_builder().build().await.unwrap();
+    let session = create_new_session_builder().build_legacy().await.unwrap();
     let ks = unique_keyspace_name();
 
     session
@@ -1679,7 +1675,7 @@ async fn test_user_defined_types_in_metadata() {
 #[tokio::test]
 async fn test_column_kinds_in_metadata() {
     setup_tracing();
-    let session = create_new_session_builder().build().await.unwrap();
+    let session = create_new_session_builder().build_legacy().await.unwrap();
     let ks = unique_keyspace_name();
 
     session
@@ -1725,7 +1721,7 @@ async fn test_column_kinds_in_metadata() {
 #[tokio::test]
 async fn test_primary_key_ordering_in_metadata() {
     setup_tracing();
-    let session = create_new_session_builder().build().await.unwrap();
+    let session = create_new_session_builder().build_legacy().await.unwrap();
     let ks = unique_keyspace_name();
 
     session
@@ -1774,7 +1770,7 @@ async fn test_table_partitioner_in_metadata() {
         return;
     }
 
-    let session = create_new_session_builder().build().await.unwrap();
+    let session = create_new_session_builder().build_legacy().await.unwrap();
     let ks = unique_keyspace_name();
 
     // This test uses CDC which is not yet compatible with Scylla's tablets.
@@ -1820,7 +1816,7 @@ async fn test_turning_off_schema_fetching() {
     setup_tracing();
     let session = create_new_session_builder()
         .fetch_schema_metadata(false)
-        .build()
+        .build_legacy()
         .await
         .unwrap();
     let ks = unique_keyspace_name();
@@ -1895,7 +1891,7 @@ async fn test_turning_off_schema_fetching() {
 
 #[tokio::test]
 async fn test_named_bind_markers() {
-    let session = create_new_session_builder().build().await.unwrap();
+    let session = create_new_session_builder().build_legacy().await.unwrap();
     let ks = unique_keyspace_name();
 
     session
@@ -1952,7 +1948,7 @@ async fn test_named_bind_markers() {
 
 #[tokio::test]
 async fn test_prepared_partitioner() {
-    let session = create_new_session_builder().build().await.unwrap();
+    let session = create_new_session_builder().build_legacy().await.unwrap();
     let ks = unique_keyspace_name();
 
     // This test uses CDC which is not yet compatible with Scylla's tablets.
@@ -2034,7 +2030,7 @@ async fn rename_caching(session: &CachingSession, rename_str: &str) {
 async fn test_unprepared_reprepare_in_execute() {
     let _ = tracing_subscriber::fmt::try_init();
 
-    let session = create_new_session_builder().build().await.unwrap();
+    let session = create_new_session_builder().build_legacy().await.unwrap();
     let ks = unique_keyspace_name();
 
     session.query_unpaged(format!("CREATE KEYSPACE IF NOT EXISTS {} WITH REPLICATION = {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}}", ks), &[]).await.unwrap();
@@ -2095,7 +2091,7 @@ async fn test_unprepared_reprepare_in_execute() {
 async fn test_unusual_valuelists() {
     let _ = tracing_subscriber::fmt::try_init();
 
-    let session = create_new_session_builder().build().await.unwrap();
+    let session = create_new_session_builder().build_legacy().await.unwrap();
     let ks = unique_keyspace_name();
 
     session.query_unpaged(format!("CREATE KEYSPACE IF NOT EXISTS {} WITH REPLICATION = {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}}", ks), &[]).await.unwrap();
@@ -2163,7 +2159,7 @@ async fn test_unusual_valuelists() {
 async fn test_unprepared_reprepare_in_batch() {
     let _ = tracing_subscriber::fmt::try_init();
 
-    let session = create_new_session_builder().build().await.unwrap();
+    let session = create_new_session_builder().build_legacy().await.unwrap();
     let ks = unique_keyspace_name();
 
     session.query_unpaged(format!("CREATE KEYSPACE IF NOT EXISTS {} WITH REPLICATION = {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}}", ks), &[]).await.unwrap();
@@ -2228,7 +2224,7 @@ async fn test_unprepared_reprepare_in_batch() {
 async fn test_unprepared_reprepare_in_caching_session_execute() {
     let _ = tracing_subscriber::fmt::try_init();
 
-    let session = create_new_session_builder().build().await.unwrap();
+    let session = create_new_session_builder().build_legacy().await.unwrap();
     let ks = unique_keyspace_name();
 
     session.query_unpaged(format!("CREATE KEYSPACE IF NOT EXISTS {} WITH REPLICATION = {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}}", ks), &[]).await.unwrap();
@@ -2288,7 +2284,7 @@ async fn test_unprepared_reprepare_in_caching_session_execute() {
 async fn test_views_in_schema_info() {
     let _ = tracing_subscriber::fmt::try_init();
 
-    let session = create_new_session_builder().build().await.unwrap();
+    let session = create_new_session_builder().build_legacy().await.unwrap();
     let ks = unique_keyspace_name();
 
     session.query_unpaged(format!("CREATE KEYSPACE IF NOT EXISTS {} WITH REPLICATION = {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}}", ks), &[]).await.unwrap();
@@ -2359,7 +2355,7 @@ async fn assert_test_batch_table_rows_contain(sess: &LegacySession, expected_row
 
 #[tokio::test]
 async fn test_prepare_batch() {
-    let session = create_new_session_builder().build().await.unwrap();
+    let session = create_new_session_builder().build_legacy().await.unwrap();
 
     let ks = unique_keyspace_name();
     session.query_unpaged(format!("CREATE KEYSPACE IF NOT EXISTS {} WITH REPLICATION = {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}}", ks), &[]).await.unwrap();
@@ -2456,7 +2452,7 @@ async fn test_prepare_batch() {
 
 #[tokio::test]
 async fn test_refresh_metadata_after_schema_agreement() {
-    let session = create_new_session_builder().build().await.unwrap();
+    let session = create_new_session_builder().build_legacy().await.unwrap();
 
     let ks = unique_keyspace_name();
     session.query_unpaged(format!("CREATE KEYSPACE IF NOT EXISTS {} WITH REPLICATION = {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}}", ks), &[]).await.unwrap();
@@ -2494,7 +2490,7 @@ async fn test_refresh_metadata_after_schema_agreement() {
 
 #[tokio::test]
 async fn test_rate_limit_exceeded_exception() {
-    let session = create_new_session_builder().build().await.unwrap();
+    let session = create_new_session_builder().build_legacy().await.unwrap();
 
     // Typed errors in RPC were introduced along with per-partition rate limiting.
     // There is no dedicated feature for per-partition rate limiting, so we are
@@ -2542,7 +2538,7 @@ async fn test_rate_limit_exceeded_exception() {
 // Batches containing LWT queries (IF col = som) return rows with information whether the queries were applied.
 #[tokio::test]
 async fn test_batch_lwts() {
-    let session = create_new_session_builder().build().await.unwrap();
+    let session = create_new_session_builder().build_legacy().await.unwrap();
 
     let ks = unique_keyspace_name();
     let mut create_ks = format!("CREATE KEYSPACE {} WITH REPLICATION = {{'class': 'NetworkTopologyStrategy', 'replication_factor': 1}}", ks);
@@ -2669,7 +2665,7 @@ async fn test_keyspaces_to_fetch() {
     let ks1 = unique_keyspace_name();
     let ks2 = unique_keyspace_name();
 
-    let session_default = create_new_session_builder().build().await.unwrap();
+    let session_default = create_new_session_builder().build_legacy().await.unwrap();
     for ks in [&ks1, &ks2] {
         session_default
             .query_unpaged(format!("CREATE KEYSPACE {} WITH REPLICATION = {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}}", ks), &[])
@@ -2688,7 +2684,7 @@ async fn test_keyspaces_to_fetch() {
 
     let session1 = create_new_session_builder()
         .keyspaces_to_fetch([&ks1])
-        .build()
+        .build_legacy()
         .await
         .unwrap();
     assert!(session1.get_cluster_data().keyspaces.contains_key(&ks1));
@@ -2696,7 +2692,7 @@ async fn test_keyspaces_to_fetch() {
 
     let session_all = create_new_session_builder()
         .keyspaces_to_fetch([] as [String; 0])
-        .build()
+        .build_legacy()
         .await
         .unwrap();
     assert!(session_all.get_cluster_data().keyspaces.contains_key(&ks1));
@@ -2741,7 +2737,7 @@ async fn test_iter_works_when_retry_policy_returns_ignore_write_error() {
 
     let session = create_new_session_builder()
         .default_execution_profile_handle(handle)
-        .build()
+        .build_legacy()
         .await
         .unwrap();
 
@@ -2784,7 +2780,7 @@ async fn test_iter_works_when_retry_policy_returns_ignore_write_error() {
 
 #[tokio::test]
 async fn test_iter_methods_with_modification_statements() {
-    let session = create_new_session_builder().build().await.unwrap();
+    let session = create_new_session_builder().build_legacy().await.unwrap();
     let ks = unique_keyspace_name();
 
     session.query_unpaged(format!("CREATE KEYSPACE IF NOT EXISTS {} WITH REPLICATION = {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}}", ks), &[]).await.unwrap();
@@ -2825,7 +2821,7 @@ async fn test_get_keyspace_name() {
 
     // Create the keyspace
     // No keyspace is set in config, so get_keyspace() should return None.
-    let session = create_new_session_builder().build().await.unwrap();
+    let session = create_new_session_builder().build_legacy().await.unwrap();
     assert_eq!(session.get_keyspace(), None);
     session.query_unpaged(format!("CREATE KEYSPACE IF NOT EXISTS {} WITH REPLICATION = {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}}", ks), &[]).await.unwrap();
     assert_eq!(session.get_keyspace(), None);
@@ -2850,7 +2846,7 @@ async fn test_get_keyspace_name() {
 #[tokio::test]
 async fn simple_strategy_test() {
     let ks = unique_keyspace_name();
-    let session = create_new_session_builder().build().await.unwrap();
+    let session = create_new_session_builder().build_legacy().await.unwrap();
 
     session
         .query_unpaged(
@@ -2915,7 +2911,7 @@ async fn simple_strategy_test() {
 async fn test_manual_primary_key_computation() {
     // Setup session
     let ks = unique_keyspace_name();
-    let session = create_new_session_builder().build().await.unwrap();
+    let session = create_new_session_builder().build_legacy().await.unwrap();
     session.query_unpaged(format!("CREATE KEYSPACE IF NOT EXISTS {} WITH REPLICATION = {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}}", ks), &[]).await.unwrap();
     session.use_keyspace(&ks, true).await.unwrap();
 

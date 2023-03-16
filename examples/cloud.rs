@@ -12,7 +12,7 @@ async fn main() -> Result<()> {
         .unwrap_or("examples/config_data.yaml".to_owned());
     let session = CloudSessionBuilder::new(Path::new(&config_path))
         .unwrap()
-        .build()
+        .build_legacy()
         .await
         .unwrap();
 

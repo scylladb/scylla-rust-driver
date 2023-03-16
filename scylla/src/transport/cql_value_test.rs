@@ -7,7 +7,7 @@ use crate::LegacySession;
 #[tokio::test]
 async fn test_cqlvalue_udt() {
     setup_tracing();
-    let session: LegacySession = create_new_session_builder().build().await.unwrap();
+    let session: LegacySession = create_new_session_builder().build_legacy().await.unwrap();
     let ks = unique_keyspace_name();
     session
         .query_unpaged(
@@ -72,7 +72,7 @@ async fn test_cqlvalue_udt() {
 #[tokio::test]
 async fn test_cqlvalue_duration() {
     setup_tracing();
-    let session: LegacySession = create_new_session_builder().build().await.unwrap();
+    let session: LegacySession = create_new_session_builder().build_legacy().await.unwrap();
 
     let ks = unique_keyspace_name();
     session
