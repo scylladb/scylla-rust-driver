@@ -54,7 +54,7 @@ async fn test_given_self_identity(self_identity: SelfIdentity<'static>) {
                 .known_node(proxy_uris[0].as_str())
                 .address_translator(Arc::new(translation_map))
                 .custom_identity(self_identity.clone())
-                .build()
+                .build_legacy()
                 .await
                 .unwrap();
 

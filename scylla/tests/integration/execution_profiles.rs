@@ -159,7 +159,7 @@ async fn test_execution_profiles() {
             .known_node(proxy_uris[0].as_str())
             .address_translator(Arc::new(translation_map))
             .default_execution_profile_handle(profile1.into_handle())
-            .build()
+            .build_legacy()
             .await
             .unwrap();
         let ks = unique_keyspace_name();

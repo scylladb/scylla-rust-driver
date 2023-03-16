@@ -13,7 +13,7 @@ use crate::{
 #[tokio::test]
 async fn test_large_batch_statements() {
     setup_tracing();
-    let mut session = create_new_session_builder().build().await.unwrap();
+    let mut session = create_new_session_builder().build_legacy().await.unwrap();
 
     let ks = unique_keyspace_name();
     session = create_test_session(session, &ks).await;

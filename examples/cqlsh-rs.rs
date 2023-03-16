@@ -202,7 +202,7 @@ async fn main() -> Result<()> {
     let session: LegacySession = SessionBuilder::new()
         .known_node(uri)
         .compression(Some(Compression::Lz4))
-        .build()
+        .build_legacy()
         .await?;
 
     let config = Config::builder()

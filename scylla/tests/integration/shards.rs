@@ -32,7 +32,7 @@ async fn test_consistent_shard_awareness() {
         let session = SessionBuilder::new()
             .known_node(proxy_uris[0].as_str())
             .address_translator(Arc::new(translation_map))
-            .build()
+            .build_legacy()
             .await
             .unwrap();
         let ks = unique_keyspace_name();

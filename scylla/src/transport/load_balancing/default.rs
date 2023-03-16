@@ -3860,7 +3860,7 @@ mod latency_awareness {
 
             let session = create_new_session_builder()
                 .default_execution_profile_handle(handle)
-                .build()
+                .build_legacy()
                 .await
                 .unwrap();
 

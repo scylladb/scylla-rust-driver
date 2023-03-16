@@ -128,7 +128,10 @@ async fn main() -> Result<()> {
 
     println!("Connecting to {} ...", args.node);
 
-    let session: LegacySession = SessionBuilder::new().known_node(args.node).build().await?;
+    let session: LegacySession = SessionBuilder::new()
+        .known_node(args.node)
+        .build_legacy()
+        .await?;
     let session = Arc::new(session);
 
     session.query_unpaged("CREATE KEYSPACE IF NOT EXISTS examples_ks WITH REPLICATION = {'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}", &[]).await?;

@@ -6,7 +6,7 @@ use scylla_cql::types::serialize::value::SerializeValue;
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
 async fn connect() -> LegacySession {
-    let session = create_new_session_builder().build().await.unwrap();
+    let session = create_new_session_builder().build_legacy().await.unwrap();
     let ks = unique_keyspace_name();
     session.query_unpaged(format!("CREATE KEYSPACE IF NOT EXISTS {} WITH REPLICATION = {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}}", ks), &[]).await.unwrap();
     session.use_keyspace(ks, false).await.unwrap();

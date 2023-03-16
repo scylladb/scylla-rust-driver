@@ -23,7 +23,7 @@ async fn test_skip_result_metadata() {
         let session: LegacySession = SessionBuilder::new()
             .known_node(proxy_uris[0].as_str())
             .address_translator(Arc::new(translation_map))
-            .build()
+            .build_legacy()
             .await
             .unwrap();
 

@@ -1604,7 +1604,7 @@ where
     /// # use scylla::{LegacySession, SessionBuilder};
     /// # use scylla::transport::Compression;
     /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
-    /// # let session = SessionBuilder::new().known_node("127.0.0.1:9042").build().await?;
+    /// # let session = SessionBuilder::new().known_node("127.0.0.1:9042").build_legacy().await?;
     /// session
     ///     .query_unpaged("INSERT INTO my_keyspace.tab (a) VALUES ('test1')", &[])
     ///     .await?;

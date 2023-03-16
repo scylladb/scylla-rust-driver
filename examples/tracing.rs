@@ -23,7 +23,7 @@ async fn main() -> Result<()> {
     println!("Connecting to {} ...", uri);
     let session: LegacySession = SessionBuilder::new()
         .known_node(uri.as_str())
-        .build()
+        .build_legacy()
         .await?;
 
     session.query_unpaged("CREATE KEYSPACE IF NOT EXISTS examples_ks WITH REPLICATION = {'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}", &[]).await?;
@@ -117,7 +117,7 @@ async fn main() -> Result<()> {
         .tracing_info_fetch_attempts(NonZeroU32::new(8).unwrap())
         .tracing_info_fetch_interval(Duration::from_millis(100))
         .tracing_info_fetch_consistency(Consistency::One)
-        .build()
+        .build_legacy()
         .await?;
 
     let _custom_info: TracingInfo = session.get_tracing_info(&query_tracing_id).await?;
