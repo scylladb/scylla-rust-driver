@@ -130,7 +130,7 @@ pub use transport::caching_session::CachingSession;
 pub use transport::execution_profile::ExecutionProfile;
 pub use transport::legacy_query_result::Legacy08QueryResult;
 pub use transport::query_result::QueryResult;
-pub use transport::session::{IntoTypedRows, Legacy08Session, SessionConfig};
+pub use transport::session::{IntoTypedRows, Legacy08Session, Session, SessionConfig};
 pub use transport::session_builder::SessionBuilder;
 
 #[cfg(feature = "cloud")]

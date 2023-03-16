@@ -415,7 +415,7 @@ impl<K: SessionBuilderKind> GenericSessionBuilder<K> {
 
     /// Set keyspace to be used on all connections.\
     /// Each connection will send `"USE <keyspace_name>"` before sending any requests.\
-    /// This can be later changed with [`Session::use_keyspace`]
+    /// This can be later changed with [`crate::Session::use_keyspace`]
     ///
     /// # Example
     /// ```
