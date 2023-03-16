@@ -457,9 +457,399 @@ pub(crate) enum RunQueryResult<ResT> {
     Completed(ResT),
 }
 
+impl GenericSession<LegacyDeserializationApi> {
+    /// Sends a request to the database and receives a response.\
+    /// Performs an unpaged query, i.e. all results are received in a single response.
+    ///
+    /// This is the easiest way to make a query, but performance is worse than that of prepared queries.
+    ///
+    /// It is discouraged to use this method with non-empty values argument (`is_empty()` method from `SerializeRow`
+    /// trait returns false). In such case, query first needs to be prepared (on a single connection), so
+    /// driver will perform 2 round trips instead of 1. Please use [`Session::execute_unpaged()`] instead.
+    ///
+    /// As all results come in one response (no paging is done!), the memory footprint and latency may be huge
+    /// for statements returning rows (i.e. SELECTs)! Prefer this method for non-SELECTs, and for SELECTs
+    /// it is best to use paged queries:
+    /// - to receive multiple pages and transparently iterate through them, use [query_iter](Session::query_iter).
+    /// - to manually receive multiple pages and iterate through them, use [query_single_page](Session::query_single_page).
+    ///
+    /// See [the book](https://rust-driver.docs.scylladb.com/stable/queries/simple.html) for more information
+    /// # Arguments
+    /// * `query` - statement to be executed, can be just a `&str` or the [Query] struct.
+    /// * `values` - values bound to the query, the easiest way is to use a tuple of bound values.
+    ///
+    /// # Examples
+    /// ```rust
+    /// # use scylla::LegacySession;
+    /// # use std::error::Error;
+    /// # async fn check_only_compiles(session: &LegacySession) -> Result<(), Box<dyn Error>> {
+    /// // Insert an int and text into a table.
+    /// session
+    ///     .query_unpaged(
+    ///         "INSERT INTO ks.tab (a, b) VALUES(?, ?)",
+    ///         (2_i32, "some text")
+    ///     )
+    ///     .await?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    /// ```rust
+    /// # use scylla::LegacySession;
+    /// # use std::error::Error;
+    /// # async fn check_only_compiles(session: &LegacySession) -> Result<(), Box<dyn Error>> {
+    /// use scylla::IntoTypedRows;
+    ///
+    /// // Read rows containing an int and text.
+    /// // Keep in mind that all results come in one response (no paging is done!),
+    /// // so the memory footprint and latency may be huge!
+    /// // To prevent that, use `Session::query_iter` or `Session::query_single_page`.
+    /// let rows_opt = session
+    /// .query_unpaged("SELECT a, b FROM ks.tab", &[])
+    ///     .await?
+    ///     .rows;
+    ///
+    /// if let Some(rows) = rows_opt {
+    ///     for row in rows.into_typed::<(i32, String)>() {
+    ///         // Parse row as int and text \
+    ///         let (int_val, text_val): (i32, String) = row?;
+    ///     }
+    /// }
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub async fn query_unpaged(
+        &self,
+        query: impl Into<Query>,
+        values: impl SerializeRow,
+    ) -> Result<LegacyQueryResult, QueryError> {
+        self.do_query_unpaged(&query.into(), values).await
+    }
+
+    /// Queries a single page from the database, optionally continuing from a saved point.
+    ///
+    /// It is discouraged to use this method with non-empty values argument (`is_empty()` method from `SerializeRow`
+    /// trait returns false). In such case, query first needs to be prepared (on a single connection), so
+    /// driver will perform 2 round trips instead of 1. Please use [`Session::execute_single_page()`] instead.
+    ///
+    /// # Arguments
+    ///
+    /// * `query` - statement to be executed
+    /// * `values` - values bound to the query
+    /// * `paging_state` - previously received paging state or [PagingState::start()]
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// # use scylla::LegacySession;
+    /// # use std::error::Error;
+    /// # async fn check_only_compiles(session: &LegacySession) -> Result<(), Box<dyn Error>> {
+    /// use std::ops::ControlFlow;
+    /// use scylla::statement::PagingState;
+    ///
+    /// // Manual paging in a loop, unprepared statement.
+    /// let mut paging_state = PagingState::start();
+    /// loop {
+    ///    let (res, paging_state_response) = session
+    ///        .query_single_page("SELECT a, b, c FROM ks.tbl", &[], paging_state)
+    ///        .await?;
+    ///
+    ///    // Do something with a single page of results.
+    ///    for row in res.rows_typed::<(i32, String)>()? {
+    ///        let (a, b) = row?;
+    ///    }
+    ///
+    ///    match paging_state_response.into_paging_control_flow() {
+    ///        ControlFlow::Break(()) => {
+    ///            // No more pages to be fetched.
+    ///            break;
+    ///        }
+    ///        ControlFlow::Continue(new_paging_state) => {
+    ///            // Update paging state from the response, so that query
+    ///            // will be resumed from where it ended the last time.
+    ///            paging_state = new_paging_state;
+    ///        }
+    ///    }
+    /// }
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub async fn query_single_page(
+        &self,
+        query: impl Into<Query>,
+        values: impl SerializeRow,
+        paging_state: PagingState,
+    ) -> Result<(LegacyQueryResult, PagingStateResponse), QueryError> {
+        self.do_query_single_page(&query.into(), values, paging_state)
+            .await
+    }
+
+    /// Run an unprepared query with paging\
+    /// This method will query all pages of the result\
+    ///
+    /// Returns an async iterator (stream) over all received rows\
+    /// Page size can be specified in the [Query] passed to the function
+    ///
+    /// It is discouraged to use this method with non-empty values argument (`is_empty()` method from `SerializeRow`
+    /// trait returns false). In such case, query first needs to be prepared (on a single connection), so
+    /// driver will initially perform 2 round trips instead of 1. Please use [`Session::execute_iter()`] instead.
+    ///
+    /// See [the book](https://rust-driver.docs.scylladb.com/stable/queries/paged.html) for more information.
+    ///
+    /// # Arguments
+    /// * `query` - statement to be executed, can be just a `&str` or the [Query] struct.
+    /// * `values` - values bound to the query, the easiest way is to use a tuple of bound values.
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// # use scylla::LegacySession;
+    /// # use std::error::Error;
+    /// # async fn check_only_compiles(session: &LegacySession) -> Result<(), Box<dyn Error>> {
+    /// use scylla::IntoTypedRows;
+    /// use futures::stream::StreamExt;
+    ///
+    /// let mut rows_stream = session
+    ///    .query_iter("SELECT a, b FROM ks.t", &[])
+    ///    .await?
+    ///    .into_typed::<(i32, i32)>();
+    ///
+    /// while let Some(next_row_res) = rows_stream.next().await {
+    ///     let (a, b): (i32, i32) = next_row_res?;
+    ///     println!("a, b: {}, {}", a, b);
+    /// }
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub async fn query_iter(
+        &self,
+        query: impl Into<Query>,
+        values: impl SerializeRow,
+    ) -> Result<LegacyRowIterator, QueryError> {
+        self.do_query_iter(query, values).await
+    }
+
+    /// Execute a prepared statement. Requires a [PreparedStatement]
+    /// generated using [`Session::prepare`](Session::prepare).\
+    /// Performs an unpaged query, i.e. all results are received in a single response.
+    ///
+    /// As all results come in one response (no paging is done!), the memory footprint and latency may be huge
+    /// for statements returning rows (i.e. SELECTs)! Prefer this method for non-SELECTs, and for SELECTs
+    /// it is best to use paged queries:
+    /// - to receive multiple pages and transparently iterate through them, use [execute_iter](Session::execute_iter).
+    /// - to manually receive multiple pages and iterate through them, use [execute_single_page](Session::execute_single_page).
+    ///
+    /// Prepared queries are much faster than simple queries:
+    /// * Database doesn't need to parse the query
+    /// * They are properly load balanced using token aware routing
+    ///
+    /// > ***Warning***\
+    /// > For token/shard aware load balancing to work properly, all partition key values
+    /// > must be sent as bound values
+    /// > (see [performance section](https://rust-driver.docs.scylladb.com/stable/queries/prepared.html#performance)).
+    ///
+    /// See [the book](https://rust-driver.docs.scylladb.com/stable/queries/prepared.html) for more information.
+    ///
+    /// # Arguments
+    /// * `prepared` - the prepared statement to execute, generated using [`Session::prepare`](Session::prepare)
+    /// * `values` - values bound to the query, the easiest way is to use a tuple of bound values
+    ///
+    /// # Example
+    /// ```rust
+    /// # use scylla::LegacySession;
+    /// # use std::error::Error;
+    /// # async fn check_only_compiles(session: &LegacySession) -> Result<(), Box<dyn Error>> {
+    /// use scylla::prepared_statement::PreparedStatement;
+    ///
+    /// // Prepare the query for later execution
+    /// let prepared: PreparedStatement = session
+    ///     .prepare("INSERT INTO ks.tab (a) VALUES(?)")
+    ///     .await?;
+    ///
+    /// // Run the prepared query with some values, just like a simple query.
+    /// let to_insert: i32 = 12345;
+    /// session.execute_unpaged(&prepared, (to_insert,)).await?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub async fn execute_unpaged(
+        &self,
+        prepared: &PreparedStatement,
+        values: impl SerializeRow,
+    ) -> Result<LegacyQueryResult, QueryError> {
+        self.do_execute_unpaged(prepared, values).await
+    }
+
+    /// Executes a prepared statement, restricting results to single page.
+    /// Optionally continues fetching results from a saved point.
+    ///
+    /// # Arguments
+    ///
+    /// * `prepared` - a statement prepared with [prepare](crate::Session::prepare)
+    /// * `values` - values bound to the query
+    /// * `paging_state` - continuation based on a paging state received from a previous paged query or None
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// # use scylla::LegacySession;
+    /// # use std::error::Error;
+    /// # async fn check_only_compiles(session: &LegacySession) -> Result<(), Box<dyn Error>> {
+    /// use std::ops::ControlFlow;
+    /// use scylla::query::Query;
+    /// use scylla::statement::{PagingState, PagingStateResponse};
+    ///
+    /// let paged_prepared = session
+    ///     .prepare(
+    ///         Query::new("SELECT a, b FROM ks.tbl")
+    ///             .with_page_size(100.try_into().unwrap()),
+    ///     )
+    ///     .await?;
+    ///
+    /// // Manual paging in a loop, prepared statement.
+    /// let mut paging_state = PagingState::start();
+    /// loop {
+    ///     let (res, paging_state_response) = session
+    ///         .execute_single_page(&paged_prepared, &[], paging_state)
+    ///         .await?;
+    ///
+    ///    // Do something with a single page of results.
+    ///    for row in res.rows_typed::<(i32, String)>()? {
+    ///        let (a, b) = row?;
+    ///    }
+    ///
+    ///     match paging_state_response.into_paging_control_flow() {
+    ///         ControlFlow::Break(()) => {
+    ///             // No more pages to be fetched.
+    ///             break;
+    ///         }
+    ///         ControlFlow::Continue(new_paging_state) => {
+    ///             // Update paging continuation from the paging state, so that query
+    ///             // will be resumed from where it ended the last time.
+    ///             paging_state = new_paging_state;
+    ///         }
+    ///     }
+    /// }
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub async fn execute_single_page(
+        &self,
+        prepared: &PreparedStatement,
+        values: impl SerializeRow,
+        paging_state: PagingState,
+    ) -> Result<(LegacyQueryResult, PagingStateResponse), QueryError> {
+        self.do_execute_single_page(prepared, values, paging_state)
+            .await
+    }
+
+    /// Run a prepared query with paging.\
+    /// This method will query all pages of the result.\
+    ///
+    /// Returns an async iterator (stream) over all received rows.\
+    /// Page size can be specified in the [PreparedStatement] passed to the function.
+    ///
+    /// See [the book](https://rust-driver.docs.scylladb.com/stable/queries/paged.html) for more information.
+    ///
+    /// # Arguments
+    /// * `prepared` - the prepared statement to execute, generated using [`Session::prepare`](Session::prepare)
+    /// * `values` - values bound to the query, the easiest way is to use a tuple of bound values
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// # use scylla::LegacySession;
+    /// # use std::error::Error;
+    /// # async fn check_only_compiles(session: &LegacySession) -> Result<(), Box<dyn Error>> {
+    /// use scylla::prepared_statement::PreparedStatement;
+    /// use scylla::IntoTypedRows;
+    /// use futures::stream::StreamExt;
+    ///
+    /// // Prepare the query for later execution
+    /// let prepared: PreparedStatement = session
+    ///     .prepare("SELECT a, b FROM ks.t")
+    ///     .await?;
+    ///
+    /// // Execute the query and receive all pages
+    /// let mut rows_stream = session
+    ///    .execute_iter(prepared, &[])
+    ///    .await?
+    ///    .into_typed::<(i32, i32)>();
+    ///
+    /// while let Some(next_row_res) = rows_stream.next().await {
+    ///     let (a, b): (i32, i32) = next_row_res?;
+    ///     println!("a, b: {}, {}", a, b);
+    /// }
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub async fn execute_iter(
+        &self,
+        prepared: impl Into<PreparedStatement>,
+        values: impl SerializeRow,
+    ) -> Result<LegacyRowIterator, QueryError> {
+        self.do_execute_iter(prepared, values).await
+    }
+
+    /// Perform a batch query\
+    /// Batch contains many `simple` or `prepared` queries which are executed at once\
+    /// Batch doesn't return any rows
+    ///
+    /// Batch values must contain values for each of the queries
+    ///
+    /// Avoid using non-empty values (`SerializeRow::is_empty()` return false) for simple queries
+    /// inside the batch. Such queries will first need to be prepared, so the driver will need to
+    /// send (numer_of_unprepared_queries_with_values + 1) requests instead of 1 request, severly
+    /// affecting performance.
+    ///
+    /// See [the book](https://rust-driver.docs.scylladb.com/stable/queries/batch.html) for more information
+    ///
+    /// # Arguments
+    /// * `batch` - [Batch] to be performed
+    /// * `values` - List of values for each query, it's the easiest to use a tuple of tuples
+    ///
+    /// # Example
+    /// ```rust
+    /// # use scylla::LegacySession;
+    /// # use std::error::Error;
+    /// # async fn check_only_compiles(session: &LegacySession) -> Result<(), Box<dyn Error>> {
+    /// use scylla::batch::Batch;
+    ///
+    /// let mut batch: Batch = Default::default();
+    ///
+    /// // A query with two bound values
+    /// batch.append_statement("INSERT INTO ks.tab(a, b) VALUES(?, ?)");
+    ///
+    /// // A query with one bound value
+    /// batch.append_statement("INSERT INTO ks.tab(a, b) VALUES(3, ?)");
+    ///
+    /// // A query with no bound values
+    /// batch.append_statement("INSERT INTO ks.tab(a, b) VALUES(5, 6)");
+    ///
+    /// // Batch values is a tuple of 3 tuples containing values for each query
+    /// let batch_values = ((1_i32, 2_i32), // Tuple with two values for the first query
+    ///                     (4_i32,),       // Tuple with one value for the second query
+    ///                     ());            // Empty tuple/unit for the third query
+    ///
+    /// // Run the batch
+    /// session.batch(&batch, batch_values).await?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub async fn batch(
+        &self,
+        batch: &Batch,
+        values: impl BatchValues,
+    ) -> Result<LegacyQueryResult, QueryError> {
+        self.do_batch(batch, values).await
+    }
+}
+
 /// Represents a CQL session, which can be used to communicate
 /// with the database
-impl LegacySession {
+impl<DeserApi> GenericSession<DeserApi>
+where
+    DeserApi: DeserializationApiKind,
+{
     /// Estabilishes a CQL session with the database
     ///
     /// Usually it's easier to use [SessionBuilder](crate::transport::session_builder::SessionBuilder)
@@ -581,73 +971,13 @@ impl LegacySession {
         Ok(session)
     }
 
-    /// Sends a request to the database and receives a response.\
-    /// Performs an unpaged query, i.e. all results are received in a single response.
-    ///
-    /// This is the easiest way to make a query, but performance is worse than that of prepared queries.
-    ///
-    /// It is discouraged to use this method with non-empty values argument (`is_empty()` method from `SerializeRow`
-    /// trait returns false). In such case, query first needs to be prepared (on a single connection), so
-    /// driver will perform 2 round trips instead of 1. Please use [`Session::execute_unpaged()`] instead.
-    ///
-    /// As all results come in one response (no paging is done!), the memory footprint and latency may be huge
-    /// for statements returning rows (i.e. SELECTs)! Prefer this method for non-SELECTs, and for SELECTs
-    /// it is best to use paged queries:
-    /// - to receive multiple pages and transparently iterate through them, use [query_iter](Session::query_iter).
-    /// - to manually receive multiple pages and iterate through them, use [query_single_page](Session::query_single_page).
-    ///
-    /// See [the book](https://rust-driver.docs.scylladb.com/stable/queries/simple.html) for more information
-    /// # Arguments
-    /// * `query` - statement to be executed, can be just a `&str` or the [Query] struct.
-    /// * `values` - values bound to the query, the easiest way is to use a tuple of bound values.
-    ///
-    /// # Examples
-    /// ```rust
-    /// # use scylla::LegacySession;
-    /// # use std::error::Error;
-    /// # async fn check_only_compiles(session: &LegacySession) -> Result<(), Box<dyn Error>> {
-    /// // Insert an int and text into a table.
-    /// session
-    ///     .query_unpaged(
-    ///         "INSERT INTO ks.tab (a, b) VALUES(?, ?)",
-    ///         (2_i32, "some text")
-    ///     )
-    ///     .await?;
-    /// # Ok(())
-    /// # }
-    /// ```
-    /// ```rust
-    /// # use scylla::LegacySession;
-    /// # use std::error::Error;
-    /// # async fn check_only_compiles(session: &LegacySession) -> Result<(), Box<dyn Error>> {
-    /// use scylla::IntoTypedRows;
-    ///
-    /// // Read rows containing an int and text.
-    /// // Keep in mind that all results come in one response (no paging is done!),
-    /// // so the memory footprint and latency may be huge!
-    /// // To prevent that, use `Session::query_iter` or `Session::query_single_page`.
-    /// let rows_opt = session
-    /// .query_unpaged("SELECT a, b FROM ks.tab", &[])
-    ///     .await?
-    ///     .rows;
-    ///
-    /// if let Some(rows) = rows_opt {
-    ///     for row in rows.into_typed::<(i32, String)>() {
-    ///         // Parse row as int and text \
-    ///         let (int_val, text_val): (i32, String) = row?;
-    ///     }
-    /// }
-    /// # Ok(())
-    /// # }
-    /// ```
-    pub async fn query_unpaged(
+    async fn do_query_unpaged(
         &self,
-        query: impl Into<Query>,
+        query: &Query,
         values: impl SerializeRow,
     ) -> Result<LegacyQueryResult, QueryError> {
-        let query = query.into();
         let (result, paging_state_response) = self
-            .query(&query, values, None, PagingState::start())
+            .query(query, values, None, PagingState::start())
             .await?;
         if !paging_state_response.finished() {
             error!("Unpaged unprepared query returned a non-empty paging state! This is a driver-side or server-side bug.");
@@ -656,63 +986,14 @@ impl LegacySession {
         Ok(result)
     }
 
-    /// Queries a single page from the database, optionally continuing from a saved point.
-    ///
-    /// It is discouraged to use this method with non-empty values argument (`is_empty()` method from `SerializeRow`
-    /// trait returns false). In such case, query first needs to be prepared (on a single connection), so
-    /// driver will perform 2 round trips instead of 1. Please use [`Session::execute_single_page()`] instead.
-    ///
-    /// # Arguments
-    ///
-    /// * `query` - statement to be executed
-    /// * `values` - values bound to the query
-    /// * `paging_state` - previously received paging state or [PagingState::start()]
-    ///
-    /// # Example
-    ///
-    /// ```rust
-    /// # use scylla::LegacySession;
-    /// # use std::error::Error;
-    /// # async fn check_only_compiles(session: &LegacySession) -> Result<(), Box<dyn Error>> {
-    /// use std::ops::ControlFlow;
-    /// use scylla::statement::PagingState;
-    ///
-    /// // Manual paging in a loop, unprepared statement.
-    /// let mut paging_state = PagingState::start();
-    /// loop {
-    ///    let (res, paging_state_response) = session
-    ///        .query_single_page("SELECT a, b, c FROM ks.tbl", &[], paging_state)
-    ///        .await?;
-    ///
-    ///    // Do something with a single page of results.
-    ///    for row in res.rows_typed::<(i32, String)>()? {
-    ///        let (a, b) = row?;
-    ///    }
-    ///
-    ///    match paging_state_response.into_paging_control_flow() {
-    ///        ControlFlow::Break(()) => {
-    ///            // No more pages to be fetched.
-    ///            break;
-    ///        }
-    ///        ControlFlow::Continue(new_paging_state) => {
-    ///            // Update paging state from the response, so that query
-    ///            // will be resumed from where it ended the last time.
-    ///            paging_state = new_paging_state;
-    ///        }
-    ///    }
-    /// }
-    /// # Ok(())
-    /// # }
-    /// ```
-    pub async fn query_single_page(
+    async fn do_query_single_page(
         &self,
-        query: impl Into<Query>,
+        query: &Query,
         values: impl SerializeRow,
         paging_state: PagingState,
     ) -> Result<(LegacyQueryResult, PagingStateResponse), QueryError> {
-        let query = query.into();
         self.query(
-            &query,
+            query,
             values,
             Some(query.get_validated_page_size()),
             paging_state,
@@ -864,44 +1145,7 @@ impl LegacySession {
         Ok(())
     }
 
-    /// Run an unprepared query with paging\
-    /// This method will query all pages of the result\
-    ///
-    /// Returns an async iterator (stream) over all received rows\
-    /// Page size can be specified in the [Query] passed to the function
-    ///
-    /// It is discouraged to use this method with non-empty values argument (`is_empty()` method from `SerializeRow`
-    /// trait returns false). In such case, query first needs to be prepared (on a single connection), so
-    /// driver will initially perform 2 round trips instead of 1. Please use [`Session::execute_iter()`] instead.
-    ///
-    /// See [the book](https://rust-driver.docs.scylladb.com/stable/queries/paged.html) for more information.
-    ///
-    /// # Arguments
-    /// * `query` - statement to be executed, can be just a `&str` or the [Query] struct.
-    /// * `values` - values bound to the query, the easiest way is to use a tuple of bound values.
-    ///
-    /// # Example
-    ///
-    /// ```rust
-    /// # use scylla::LegacySession;
-    /// # use std::error::Error;
-    /// # async fn check_only_compiles(session: &LegacySession) -> Result<(), Box<dyn Error>> {
-    /// use scylla::IntoTypedRows;
-    /// use futures::stream::StreamExt;
-    ///
-    /// let mut rows_stream = session
-    ///    .query_iter("SELECT a, b FROM ks.t", &[])
-    ///    .await?
-    ///    .into_typed::<(i32, i32)>();
-    ///
-    /// while let Some(next_row_res) = rows_stream.next().await {
-    ///     let (a, b): (i32, i32) = next_row_res?;
-    ///     println!("a, b: {}, {}", a, b);
-    /// }
-    /// # Ok(())
-    /// # }
-    /// ```
-    pub async fn query_iter(
+    async fn do_query_iter(
         &self,
         query: impl Into<Query>,
         values: impl SerializeRow,
@@ -1032,50 +1276,7 @@ impl LegacySession {
             .as_deref()
     }
 
-    /// Execute a prepared statement. Requires a [PreparedStatement]
-    /// generated using [`Session::prepare`](Session::prepare).\
-    /// Performs an unpaged query, i.e. all results are received in a single response.
-    ///
-    /// As all results come in one response (no paging is done!), the memory footprint and latency may be huge
-    /// for statements returning rows (i.e. SELECTs)! Prefer this method for non-SELECTs, and for SELECTs
-    /// it is best to use paged queries:
-    /// - to receive multiple pages and transparently iterate through them, use [execute_iter](Session::execute_iter).
-    /// - to manually receive multiple pages and iterate through them, use [execute_single_page](Session::execute_single_page).
-    ///
-    /// Prepared queries are much faster than simple queries:
-    /// * Database doesn't need to parse the query
-    /// * They are properly load balanced using token aware routing
-    ///
-    /// > ***Warning***\
-    /// > For token/shard aware load balancing to work properly, all partition key values
-    /// > must be sent as bound values
-    /// > (see [performance section](https://rust-driver.docs.scylladb.com/stable/queries/prepared.html#performance)).
-    ///
-    /// See [the book](https://rust-driver.docs.scylladb.com/stable/queries/prepared.html) for more information.
-    ///
-    /// # Arguments
-    /// * `prepared` - the prepared statement to execute, generated using [`Session::prepare`](Session::prepare)
-    /// * `values` - values bound to the query, the easiest way is to use a tuple of bound values
-    ///
-    /// # Example
-    /// ```rust
-    /// # use scylla::LegacySession;
-    /// # use std::error::Error;
-    /// # async fn check_only_compiles(session: &LegacySession) -> Result<(), Box<dyn Error>> {
-    /// use scylla::prepared_statement::PreparedStatement;
-    ///
-    /// // Prepare the query for later execution
-    /// let prepared: PreparedStatement = session
-    ///     .prepare("INSERT INTO ks.tab (a) VALUES(?)")
-    ///     .await?;
-    ///
-    /// // Run the prepared query with some values, just like a simple query.
-    /// let to_insert: i32 = 12345;
-    /// session.execute_unpaged(&prepared, (to_insert,)).await?;
-    /// # Ok(())
-    /// # }
-    /// ```
-    pub async fn execute_unpaged(
+    async fn do_execute_unpaged(
         &self,
         prepared: &PreparedStatement,
         values: impl SerializeRow,
@@ -1091,60 +1292,7 @@ impl LegacySession {
         Ok(result)
     }
 
-    /// Executes a prepared statement, restricting results to single page.
-    /// Optionally continues fetching results from a saved point.
-    ///
-    /// # Arguments
-    ///
-    /// * `prepared` - a statement prepared with [prepare](crate::Session::prepare)
-    /// * `values` - values bound to the query
-    /// * `paging_state` - continuation based on a paging state received from a previous paged query or None
-    ///
-    /// # Example
-    ///
-    /// ```rust
-    /// # use scylla::LegacySession;
-    /// # use std::error::Error;
-    /// # async fn check_only_compiles(session: &LegacySession) -> Result<(), Box<dyn Error>> {
-    /// use std::ops::ControlFlow;
-    /// use scylla::query::Query;
-    /// use scylla::statement::{PagingState, PagingStateResponse};
-    ///
-    /// let paged_prepared = session
-    ///     .prepare(
-    ///         Query::new("SELECT a, b FROM ks.tbl")
-    ///             .with_page_size(100.try_into().unwrap()),
-    ///     )
-    ///     .await?;
-    ///
-    /// // Manual paging in a loop, prepared statement.
-    /// let mut paging_state = PagingState::start();
-    /// loop {
-    ///     let (res, paging_state_response) = session
-    ///         .execute_single_page(&paged_prepared, &[], paging_state)
-    ///         .await?;
-    ///
-    ///    // Do something with a single page of results.
-    ///    for row in res.rows_typed::<(i32, String)>()? {
-    ///        let (a, b) = row?;
-    ///    }
-    ///
-    ///     match paging_state_response.into_paging_control_flow() {
-    ///         ControlFlow::Break(()) => {
-    ///             // No more pages to be fetched.
-    ///             break;
-    ///         }
-    ///         ControlFlow::Continue(new_paging_state) => {
-    ///             // Update paging continuation from the paging state, so that query
-    ///             // will be resumed from where it ended the last time.
-    ///             paging_state = new_paging_state;
-    ///         }
-    ///     }
-    /// }
-    /// # Ok(())
-    /// # }
-    /// ```
-    pub async fn execute_single_page(
+    async fn do_execute_single_page(
         &self,
         prepared: &PreparedStatement,
         values: impl SerializeRow,
@@ -1267,47 +1415,7 @@ impl LegacySession {
         Ok((result, paging_state))
     }
 
-    /// Run a prepared query with paging.\
-    /// This method will query all pages of the result.\
-    ///
-    /// Returns an async iterator (stream) over all received rows.\
-    /// Page size can be specified in the [PreparedStatement] passed to the function.
-    ///
-    /// See [the book](https://rust-driver.docs.scylladb.com/stable/queries/paged.html) for more information.
-    ///
-    /// # Arguments
-    /// * `prepared` - the prepared statement to execute, generated using [`Session::prepare`](Session::prepare)
-    /// * `values` - values bound to the query, the easiest way is to use a tuple of bound values
-    ///
-    /// # Example
-    ///
-    /// ```rust
-    /// # use scylla::LegacySession;
-    /// # use std::error::Error;
-    /// # async fn check_only_compiles(session: &LegacySession) -> Result<(), Box<dyn Error>> {
-    /// use scylla::prepared_statement::PreparedStatement;
-    /// use scylla::IntoTypedRows;
-    /// use futures::stream::StreamExt;
-    ///
-    /// // Prepare the query for later execution
-    /// let prepared: PreparedStatement = session
-    ///     .prepare("SELECT a, b FROM ks.t")
-    ///     .await?;
-    ///
-    /// // Execute the query and receive all pages
-    /// let mut rows_stream = session
-    ///    .execute_iter(prepared, &[])
-    ///    .await?
-    ///    .into_typed::<(i32, i32)>();
-    ///
-    /// while let Some(next_row_res) = rows_stream.next().await {
-    ///     let (a, b): (i32, i32) = next_row_res?;
-    ///     println!("a, b: {}, {}", a, b);
-    /// }
-    /// # Ok(())
-    /// # }
-    /// ```
-    pub async fn execute_iter(
+    async fn do_execute_iter(
         &self,
         prepared: impl Into<PreparedStatement>,
         values: impl SerializeRow,
@@ -1331,52 +1439,7 @@ impl LegacySession {
         .map(QueryPager::into_legacy)
     }
 
-    /// Perform a batch request.\
-    /// Batch contains many `simple` or `prepared` queries which are executed at once.\
-    /// Batch doesn't return any rows.
-    ///
-    /// Batch values must contain values for each of the queries.
-    ///
-    /// Avoid using non-empty values (`SerializeRow::is_empty()` return false) for unprepared statements
-    /// inside the batch. Such statements will first need to be prepared, so the driver will need to
-    /// send (numer_of_unprepared_statements_with_values + 1) requests instead of 1 request, severly
-    /// affecting performance.
-    ///
-    /// See [the book](https://rust-driver.docs.scylladb.com/stable/queries/batch.html) for more information.
-    ///
-    /// # Arguments
-    /// * `batch` - [Batch] to be performed
-    /// * `values` - List of values for each query, it's the easiest to use a tuple of tuples
-    ///
-    /// # Example
-    /// ```rust
-    /// # use scylla::LegacySession;
-    /// # use std::error::Error;
-    /// # async fn check_only_compiles(session: &LegacySession) -> Result<(), Box<dyn Error>> {
-    /// use scylla::batch::Batch;
-    ///
-    /// let mut batch: Batch = Default::default();
-    ///
-    /// // A query with two bound values
-    /// batch.append_statement("INSERT INTO ks.tab(a, b) VALUES(?, ?)");
-    ///
-    /// // A query with one bound value
-    /// batch.append_statement("INSERT INTO ks.tab(a, b) VALUES(3, ?)");
-    ///
-    /// // A query with no bound values
-    /// batch.append_statement("INSERT INTO ks.tab(a, b) VALUES(5, 6)");
-    ///
-    /// // Batch values is a tuple of 3 tuples containing values for each query
-    /// let batch_values = ((1_i32, 2_i32), // Tuple with two values for the first query
-    ///                     (4_i32,),       // Tuple with one value for the second query
-    ///                     ());            // Empty tuple/unit for the third query
-    ///
-    /// // Run the batch
-    /// session.batch(&batch, batch_values).await?;
-    /// # Ok(())
-    /// # }
-    /// ```
-    pub async fn batch(
+    async fn do_batch(
         &self,
         batch: &Batch,
         values: impl BatchValues,
@@ -1646,8 +1709,8 @@ impl LegacySession {
         traces_events_query.set_page_size(TRACING_QUERY_PAGE_SIZE);
 
         let (traces_session_res, traces_events_res) = tokio::try_join!(
-            self.query_unpaged(traces_session_query, (tracing_id,)),
-            self.query_unpaged(traces_events_query, (tracing_id,))
+            self.do_query_unpaged(&traces_session_query, (tracing_id,)),
+            self.do_query_unpaged(&traces_events_query, (tracing_id,))
         )?;
 
         // Get tracing info
