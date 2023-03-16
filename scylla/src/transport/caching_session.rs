@@ -232,7 +232,7 @@ mod tests {
 
     async fn new_for_test() -> Legacy08Session {
         let session = create_new_session_builder()
-            .build()
+            .build_legacy()
             .await
             .expect("Could not create session");
         let ks = unique_keyspace_name();

@@ -35,7 +35,7 @@ async fn main() -> anyhow::Result<()> {
         session: Arc::new(
             scylla::SessionBuilder::new()
                 .known_node(uri)
-                .build()
+                .build_legacy()
                 .await?,
         ),
     };

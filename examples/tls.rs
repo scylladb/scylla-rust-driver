@@ -46,7 +46,7 @@ async fn main() -> Result<()> {
     let session: Legacy08Session = SessionBuilder::new()
         .known_node(uri)
         .ssl_context(Some(context_builder.build()))
-        .build()
+        .build_legacy()
         .await?;
 
     session.query("CREATE KEYSPACE IF NOT EXISTS ks WITH REPLICATION = {'class' : 'SimpleStrategy', 'replication_factor' : 1}", &[]).await?;

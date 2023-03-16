@@ -25,7 +25,7 @@
 //!    let session: Legacy08Session = SessionBuilder::new()
 //!         .known_node("127.0.0.1:9042")
 //!         .known_node("1.2.3.4:9876")
-//!         .build()
+//!         .build_legacy()
 //!         .await?;
 //!
 //!    Ok(())

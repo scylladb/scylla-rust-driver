@@ -30,7 +30,7 @@
 //! let session: Legacy08Session = SessionBuilder::new()
 //!     .known_node("127.0.0.1:9042")
 //!     .default_execution_profile_handle(handle)
-//!     .build()
+//!     .build_legacy()
 //!     .await?;
 //! # Ok(())
 //! # }
@@ -128,7 +128,7 @@
 //! let session: Legacy08Session = SessionBuilder::new()
 //!     .known_node("127.0.0.1:9042")
 //!     .default_execution_profile_handle(handle1.clone())
-//!     .build()
+//!     .build_legacy()
 //!     .await?;
 //!
 //! let mut query1 = Query::from("SELECT * FROM ks.table");

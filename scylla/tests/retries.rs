@@ -32,7 +32,7 @@ async fn speculative_execution_is_fired() {
             .known_node(proxy_uris[0].as_str())
             .default_execution_profile_handle(simple_speculative_no_retry_profile.into_handle())
             .address_translator(Arc::new(translation_map))
-            .build()
+            .build_legacy()
             .await
             .unwrap();
 
@@ -107,7 +107,7 @@ async fn retries_occur() {
         let session: Legacy08Session = SessionBuilder::new()
             .known_node(proxy_uris[0].as_str())
             .address_translator(Arc::new(translation_map))
-            .build()
+            .build_legacy()
             .await
             .unwrap();
 

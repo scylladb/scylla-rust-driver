@@ -21,7 +21,7 @@ use uuid::Uuid;
 // Creates a new keyspace
 // Drops and creates table {table_name} (id int PRIMARY KEY, val {type_name})
 async fn init_test(table_name: &str, type_name: &str) -> Legacy08Session {
-    let session: Legacy08Session = create_new_session_builder().build().await.unwrap();
+    let session: Legacy08Session = create_new_session_builder().build_legacy().await.unwrap();
     let ks = unique_keyspace_name();
 
     session
@@ -719,7 +719,7 @@ async fn test_udt_after_schema_update() {
     let table_name = "udt_tests";
     let type_name = "usertype1";
 
-    let session: Legacy08Session = create_new_session_builder().build().await.unwrap();
+    let session: Legacy08Session = create_new_session_builder().build_legacy().await.unwrap();
     let ks = unique_keyspace_name();
 
     session

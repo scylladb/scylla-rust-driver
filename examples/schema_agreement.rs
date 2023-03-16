@@ -14,7 +14,7 @@ async fn main() -> Result<()> {
     let session: Legacy08Session = SessionBuilder::new()
         .known_node(uri)
         .schema_agreement_interval(Duration::from_secs(1)) // check every second for schema agreement if not agreed first check
-        .build()
+        .build_legacy()
         .await?;
 
     let schema_version = session.fetch_schema_version().await?;

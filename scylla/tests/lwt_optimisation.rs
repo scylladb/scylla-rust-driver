@@ -56,7 +56,7 @@ async fn if_lwt_optimisation_mark_offered_then_negotiatied_and_lwt_routed_optima
             .known_node(proxy_uris[0].as_str())
             .default_execution_profile_handle(handle)
             .address_translator(Arc::new(translation_map))
-            .build()
+            .build_legacy()
             .await
             .unwrap();
 

@@ -909,7 +909,7 @@ mod tests {
 
     #[tokio::test]
     async fn successful_query_history() {
-        let session = create_new_session_builder().build().await.unwrap();
+        let session = create_new_session_builder().build_legacy().await.unwrap();
 
         let mut query = Query::new("SELECT * FROM system.local");
         let history_collector = Arc::new(HistoryCollector::new());
@@ -975,7 +975,7 @@ mod tests {
 
     #[tokio::test]
     async fn failed_query_history() {
-        let session = create_new_session_builder().build().await.unwrap();
+        let session = create_new_session_builder().build_legacy().await.unwrap();
 
         let mut query = Query::new("This isnt even CQL");
         let history_collector = Arc::new(HistoryCollector::new());
@@ -1011,7 +1011,7 @@ mod tests {
 
     #[tokio::test]
     async fn iterator_query_history() {
-        let session = create_new_session_builder().build().await.unwrap();
+        let session = create_new_session_builder().build_legacy().await.unwrap();
         let ks = unique_keyspace_name();
         session
         .query(format!("CREATE KEYSPACE {} WITH REPLICATION = {{'class' : 'SimpleStrategy', 'replication_factor' : 1}}", ks), &[])

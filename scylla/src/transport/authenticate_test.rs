@@ -14,7 +14,7 @@ async fn authenticate_superuser() {
     let session = crate::SessionBuilder::new()
         .known_node(uri)
         .user("cassandra", "cassandra")
-        .build()
+        .build_legacy()
         .await
         .unwrap();
     let ks = unique_keyspace_name();
@@ -69,7 +69,7 @@ async fn custom_authentication() {
     let session = crate::SessionBuilder::new()
         .known_node(uri)
         .authenticator_provider(Arc::new(CustomAuthenticatorProvider))
-        .build()
+        .build_legacy()
         .await
         .unwrap();
     let ks = unique_keyspace_name();

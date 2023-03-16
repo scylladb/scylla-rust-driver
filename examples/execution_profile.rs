@@ -45,13 +45,13 @@ async fn main() -> Result<()> {
     let session1: Legacy08Session = SessionBuilder::new()
         .known_node(&uri)
         .default_execution_profile_handle(handle1.clone())
-        .build()
+        .build_legacy()
         .await?;
 
     let session2: Legacy08Session = SessionBuilder::new()
         .known_node(&uri)
         .default_execution_profile_handle(handle2.clone())
-        .build()
+        .build_legacy()
         .await?;
 
     // As default execution profile is not provided explicitly, session 3 uses a predefined one.
