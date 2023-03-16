@@ -27,6 +27,7 @@ use std::borrow::Borrow;
 use std::collections::HashMap;
 use std::fmt::Display;
 use std::future::Future;
+use std::marker::PhantomData;
 use std::net::SocketAddr;
 use std::num::NonZeroU32;
 use std::str::FromStr;
@@ -84,6 +85,14 @@ pub use crate::transport::legacy_query_result::{IntoTypedRows, TypedRowIter};
 use crate::authentication::AuthenticatorProvider;
 #[cfg(feature = "ssl")]
 use openssl::ssl::SslContext;
+
+mod sealed {
+    // This is a sealed trait - its whole purpose is to be unnameable.
+    // This means we need to disable the check.
+    #[allow(unknown_lints)] // Rust 1.70 (our MSRV) doesn't know this lint
+    #[allow(unnameable_types)]
+    pub trait Sealed {}
+}
 
 pub(crate) const TABLET_CHANNEL_SIZE: usize = 8192;
 
@@ -154,8 +163,17 @@ impl AddressTranslator for HashMap<&'static str, &'static str> {
     }
 }
 
+pub trait DeserializationApiKind: sealed::Sealed {}
+
+pub enum LegacyDeserializationApi {}
+impl sealed::Sealed for LegacyDeserializationApi {}
+impl DeserializationApiKind for LegacyDeserializationApi {}
+
 /// `Session` manages connections to the cluster and allows to perform queries
-pub struct LegacySession {
+pub struct GenericSession<DeserializationApi>
+where
+    DeserializationApi: DeserializationApiKind,
+{
     cluster: Cluster,
     default_execution_profile_handle: ExecutionProfileHandle,
     schema_agreement_interval: Duration,
@@ -167,11 +185,17 @@ pub struct LegacySession {
     tracing_info_fetch_attempts: NonZeroU32,
     tracing_info_fetch_interval: Duration,
     tracing_info_fetch_consistency: Consistency,
+    _phantom_deser_api: PhantomData<DeserializationApi>,
 }
+
+pub type LegacySession = GenericSession<LegacyDeserializationApi>;
 
 /// This implementation deliberately omits some details from Cluster in order
 /// to avoid cluttering the print with much information of little usability.
-impl std::fmt::Debug for LegacySession {
+impl<DeserApi> std::fmt::Debug for GenericSession<DeserApi>
+where
+    DeserApi: DeserializationApiKind,
+{
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Session")
             .field("cluster", &ClusterNeatDebug(&self.cluster))
@@ -458,7 +482,7 @@ impl LegacySession {
     /// # Ok(())
     /// # }
     /// ```
-    pub async fn connect(config: SessionConfig) -> Result<LegacySession, NewSessionError> {
+    pub async fn connect(config: SessionConfig) -> Result<Self, NewSessionError> {
         let known_nodes = config.known_nodes;
 
         #[cfg(feature = "cloud")]
@@ -532,7 +556,7 @@ impl LegacySession {
 
         let default_execution_profile_handle = config.default_execution_profile_handle;
 
-        let session = LegacySession {
+        let session = Self {
             cluster,
             default_execution_profile_handle,
             schema_agreement_interval: config.schema_agreement_interval,
@@ -545,6 +569,7 @@ impl LegacySession {
             tracing_info_fetch_attempts: config.tracing_info_fetch_attempts,
             tracing_info_fetch_interval: config.tracing_info_fetch_interval,
             tracing_info_fetch_consistency: config.tracing_info_fetch_consistency,
+            _phantom_deser_api: PhantomData,
         };
 
         if let Some(keyspace_name) = config.used_keyspace {
