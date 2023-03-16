@@ -379,6 +379,12 @@ impl ExecutionProfileBuilder {
     }
 }
 
+impl Default for ExecutionProfileBuilder {
+    fn default() -> Self {
+        ExecutionProfile::builder()
+    }
+}
+
 /// A profile that groups configurable options regarding query execution.
 ///
 /// Execution profile is immutable as such, but the driver implements double indirection of form:
