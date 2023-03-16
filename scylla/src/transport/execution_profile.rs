@@ -226,6 +226,7 @@ pub(crate) mod defaults {
 /// # Ok(())
 /// # }
 /// ```
+#[derive(Clone, Debug)]
 pub struct ExecutionProfileBuilder {
     request_timeout: Option<Option<Duration>>,
     consistency: Option<Consistency>,
