@@ -23,7 +23,7 @@ async fn main() -> Result<()> {
     let session: LegacySession = SessionBuilder::new()
         .known_node(uri)
         .default_execution_profile_handle(speculative_profile.into_handle())
-        .build()
+        .build_legacy()
         .await?;
 
     session.query_unpaged("CREATE KEYSPACE IF NOT EXISTS examples_ks WITH REPLICATION = {'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}", &[]).await?;

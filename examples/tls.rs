@@ -47,7 +47,7 @@ async fn main() -> Result<()> {
     let session: LegacySession = SessionBuilder::new()
         .known_node(uri)
         .ssl_context(Some(context_builder.build()))
-        .build()
+        .build_legacy()
         .await?;
 
     session.query_unpaged("CREATE KEYSPACE IF NOT EXISTS examples_ks WITH REPLICATION = {'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}", &[]).await?;

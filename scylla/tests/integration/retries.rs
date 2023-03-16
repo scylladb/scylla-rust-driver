@@ -31,7 +31,7 @@ async fn speculative_execution_is_fired() {
             .known_node(proxy_uris[0].as_str())
             .default_execution_profile_handle(simple_speculative_no_retry_profile.into_handle())
             .address_translator(Arc::new(translation_map))
-            .build()
+            .build_legacy()
             .await
             .unwrap();
 
@@ -107,7 +107,7 @@ async fn retries_occur() {
         let session: LegacySession = SessionBuilder::new()
             .known_node(proxy_uris[0].as_str())
             .address_translator(Arc::new(translation_map))
-            .build()
+            .build_legacy()
             .await
             .unwrap();
 
@@ -187,7 +187,7 @@ async fn speculative_execution_panic_regression_test() {
             .known_node(proxy_uris[0].as_str())
             .address_translator(Arc::new(translation_map))
             .default_execution_profile_handle(profile.into_handle())
-            .build()
+            .build_legacy()
             .await
             .unwrap();
 

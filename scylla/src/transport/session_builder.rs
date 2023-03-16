@@ -2,7 +2,10 @@
 
 use super::connection::SelfIdentity;
 use super::execution_profile::ExecutionProfileHandle;
-use super::session::{AddressTranslator, LegacySession, SessionConfig};
+use super::session::{
+    AddressTranslator, CurrentDeserializationApi, GenericSession, LegacyDeserializationApi,
+    SessionConfig,
+};
 use super::Compression;
 
 #[cfg(feature = "cloud")]
@@ -65,7 +68,7 @@ pub type CloudSessionBuilder = GenericSessionBuilder<CloudMode>;
 /// let session: LegacySession = SessionBuilder::new()
 ///     .known_node("127.0.0.1:9042")
 ///     .compression(Some(Compression::Snappy))
-///     .build()
+///     .build_legacy()
 ///     .await?;
 /// # Ok(())
 /// # }
@@ -96,7 +99,10 @@ impl GenericSessionBuilder<DefaultMode> {
     /// ```
     /// # use scylla::{LegacySession, SessionBuilder};
     /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
-    /// let session: LegacySession = SessionBuilder::new().known_node("127.0.0.1:9042").build().await?;
+    /// let session: LegacySession = SessionBuilder::new()
+    ///     .known_node("127.0.0.1:9042")
+    ///     .build_legacy()
+    ///     .await?;
     /// # Ok(())
     /// # }
     /// ```
@@ -104,7 +110,10 @@ impl GenericSessionBuilder<DefaultMode> {
     /// ```
     /// # use scylla::{LegacySession, SessionBuilder};
     /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
-    /// let session: LegacySession = SessionBuilder::new().known_node("db1.example.com").build().await?;
+    /// let session: LegacySession = SessionBuilder::new()
+    ///     .known_node("db1.example.com")
+    ///     .build_legacy()
+    ///     .await?;
     /// # Ok(())
     /// # }
     /// ```
@@ -121,7 +130,7 @@ impl GenericSessionBuilder<DefaultMode> {
     /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
     /// let session: LegacySession = SessionBuilder::new()
     ///     .known_node_addr(SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), 9042))
-    ///     .build()
+    ///     .build_legacy()
     ///     .await?;
     /// # Ok(())
     /// # }
@@ -138,7 +147,7 @@ impl GenericSessionBuilder<DefaultMode> {
     /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
     /// let session: LegacySession = SessionBuilder::new()
     ///     .known_nodes(["127.0.0.1:9042", "db1.example.com"])
-    ///     .build()
+    ///     .build_legacy()
     ///     .await?;
     /// # Ok(())
     /// # }
@@ -159,7 +168,7 @@ impl GenericSessionBuilder<DefaultMode> {
     ///
     /// let session: LegacySession = SessionBuilder::new()
     ///     .known_nodes_addr([addr1, addr2])
-    ///     .build()
+    ///     .build_legacy()
     ///     .await?;
     /// # Ok(())
     /// # }
@@ -184,7 +193,7 @@ impl GenericSessionBuilder<DefaultMode> {
     ///     .known_node("127.0.0.1:9042")
     ///     .use_keyspace("my_keyspace_name", false)
     ///     .user("cassandra", "cassandra")
-    ///     .build()
+    ///     .build_legacy()
     ///     .await?;
     /// # Ok(())
     /// # }
@@ -236,7 +245,7 @@ impl GenericSessionBuilder<DefaultMode> {
     ///     .use_keyspace("my_keyspace_name", false)
     ///     .user("cassandra", "cassandra")
     ///     .authenticator_provider(Arc::new(CustomAuthenticatorProvider))
-    ///     .build()
+    ///     .build_legacy()
     ///     .await?;
     /// # Ok(())
     /// # }
@@ -276,7 +285,7 @@ impl GenericSessionBuilder<DefaultMode> {
     /// let session: LegacySession = SessionBuilder::new()
     ///     .known_node("127.0.0.1:9042")
     ///     .address_translator(Arc::new(IdentityTranslator))
-    ///     .build()
+    ///     .build_legacy()
     ///     .await?;
     /// # Ok(())
     /// # }
@@ -298,7 +307,7 @@ impl GenericSessionBuilder<DefaultMode> {
     /// let session: LegacySession = SessionBuilder::new()
     ///     .known_node("127.0.0.1:9042")
     ///     .address_translator(Arc::new(translation_rules))
-    ///     .build()
+    ///     .build_legacy()
     ///     .await?;
     /// #    Ok(())
     /// # }
@@ -329,7 +338,7 @@ impl GenericSessionBuilder<DefaultMode> {
     /// let session: LegacySession = SessionBuilder::new()
     ///     .known_node("127.0.0.1:9042")
     ///     .ssl_context(Some(context_builder.build()))
-    ///     .build()
+    ///     .build_legacy()
     ///     .await?;
     /// # Ok(())
     /// # }
@@ -383,7 +392,7 @@ impl<K: SessionBuilderKind> GenericSessionBuilder<K> {
     /// let session: LegacySession = SessionBuilder::new()
     ///     .known_node("127.0.0.1:9042")
     ///     .compression(Some(Compression::Snappy))
-    ///     .build()
+    ///     .build_legacy()
     ///     .await?;
     /// # Ok(())
     /// # }
@@ -404,7 +413,7 @@ impl<K: SessionBuilderKind> GenericSessionBuilder<K> {
     /// let session: LegacySession = SessionBuilder::new()
     ///     .known_node("127.0.0.1:9042")
     ///     .schema_agreement_interval(Duration::from_secs(5))
-    ///     .build()
+    ///     .build_legacy()
     ///     .await?;
     /// # Ok(())
     /// # }
@@ -428,7 +437,7 @@ impl<K: SessionBuilderKind> GenericSessionBuilder<K> {
     /// let session: LegacySession = SessionBuilder::new()
     ///     .known_node("127.0.0.1:9042")
     ///     .default_execution_profile_handle(execution_profile.into_handle())
-    ///     .build()
+    ///     .build_legacy()
     ///     .await?;
     /// # Ok(())
     /// # }
@@ -451,7 +460,7 @@ impl<K: SessionBuilderKind> GenericSessionBuilder<K> {
     /// let session: LegacySession = SessionBuilder::new()
     ///     .known_node("127.0.0.1:9042")
     ///     .tcp_nodelay(true)
-    ///     .build()
+    ///     .build_legacy()
     ///     .await?;
     /// # Ok(())
     /// # }
@@ -474,7 +483,7 @@ impl<K: SessionBuilderKind> GenericSessionBuilder<K> {
     /// let session: LegacySession = SessionBuilder::new()
     ///     .known_node("127.0.0.1:9042")
     ///     .tcp_keepalive_interval(std::time::Duration::from_secs(42))
-    ///     .build()
+    ///     .build_legacy()
     ///     .await?;
     /// # Ok(())
     /// # }
@@ -503,7 +512,7 @@ impl<K: SessionBuilderKind> GenericSessionBuilder<K> {
     /// let session: LegacySession = SessionBuilder::new()
     ///     .known_node("127.0.0.1:9042")
     ///     .use_keyspace("my_keyspace_name", false)
-    ///     .build()
+    ///     .build_legacy()
     ///     .await?;
     /// # Ok(())
     /// # }
@@ -514,7 +523,10 @@ impl<K: SessionBuilderKind> GenericSessionBuilder<K> {
         self
     }
 
-    /// Builds the Session after setting all the options
+    /// Builds the Session after setting all the options.
+    ///
+    /// The new session object uses the legacy deserialization API. If you wish
+    /// to use the new API, use [`SessionBuilder::build`].
     ///
     /// # Example
     /// ```
@@ -524,13 +536,39 @@ impl<K: SessionBuilderKind> GenericSessionBuilder<K> {
     /// let session: LegacySession = SessionBuilder::new()
     ///     .known_node("127.0.0.1:9042")
     ///     .compression(Some(Compression::Snappy))
+    ///     .build_legacy() // Turns SessionBuilder into Session
+    ///     .await?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub async fn build_legacy(
+        &self,
+    ) -> Result<GenericSession<LegacyDeserializationApi>, NewSessionError> {
+        GenericSession::connect(self.config.clone()).await
+    }
+
+    /// Builds the Session after setting all the options.
+    ///
+    /// The new session object uses the new deserialization API. If you wish
+    /// to use the old API, use [`SessionBuilder::build_legacy`].
+    ///
+    /// # Example
+    /// ```
+    /// # use scylla::{Session, SessionBuilder};
+    /// # use scylla::transport::Compression;
+    /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
+    /// let session: Session = SessionBuilder::new()
+    ///     .known_node("127.0.0.1:9042")
+    ///     .compression(Some(Compression::Snappy))
     ///     .build() // Turns SessionBuilder into Session
     ///     .await?;
     /// # Ok(())
     /// # }
     /// ```
-    pub async fn build(&self) -> Result<LegacySession, NewSessionError> {
-        LegacySession::connect(self.config.clone()).await
+    pub async fn build(
+        &self,
+    ) -> Result<GenericSession<CurrentDeserializationApi>, NewSessionError> {
+        GenericSession::connect(self.config.clone()).await
     }
 
     /// Changes connection timeout
@@ -545,7 +583,7 @@ impl<K: SessionBuilderKind> GenericSessionBuilder<K> {
     /// let session: LegacySession = SessionBuilder::new()
     ///     .known_node("127.0.0.1:9042")
     ///     .connection_timeout(Duration::from_secs(30))
-    ///     .build() // Turns SessionBuilder into Session
+    ///     .build_legacy() // Turns SessionBuilder into Session
     ///     .await?;
     /// # Ok(())
     /// # }
@@ -570,7 +608,7 @@ impl<K: SessionBuilderKind> GenericSessionBuilder<K> {
     /// let session: LegacySession = SessionBuilder::new()
     ///     .known_node("127.0.0.1:9042")
     ///     .pool_size(PoolSize::PerHost(NonZeroUsize::new(4).unwrap()))
-    ///     .build()
+    ///     .build_legacy()
     ///     .await?;
     /// # Ok(())
     /// # }
@@ -609,7 +647,7 @@ impl<K: SessionBuilderKind> GenericSessionBuilder<K> {
     /// let session: LegacySession = SessionBuilder::new()
     ///     .known_node("127.0.0.1:9042")
     ///     .disallow_shard_aware_port(true)
-    ///     .build()
+    ///     .build_legacy()
     ///     .await?;
     /// # Ok(())
     /// # }
@@ -629,7 +667,7 @@ impl<K: SessionBuilderKind> GenericSessionBuilder<K> {
     /// let session: LegacySession = SessionBuilder::new()
     ///     .known_node("127.0.0.1:9042")
     ///     .keyspaces_to_fetch(["my_keyspace"])
-    ///     .build()
+    ///     .build_legacy()
     ///     .await?;
     /// # Ok(())
     /// # }
@@ -652,7 +690,7 @@ impl<K: SessionBuilderKind> GenericSessionBuilder<K> {
     /// let session: LegacySession = SessionBuilder::new()
     ///     .known_node("127.0.0.1:9042")
     ///     .fetch_schema_metadata(true)
-    ///     .build()
+    ///     .build_legacy()
     ///     .await?;
     /// # Ok(())
     /// # }
@@ -675,7 +713,7 @@ impl<K: SessionBuilderKind> GenericSessionBuilder<K> {
     /// let session: LegacySession = SessionBuilder::new()
     ///     .known_node("127.0.0.1:9042")
     ///     .keepalive_interval(std::time::Duration::from_secs(42))
-    ///     .build()
+    ///     .build_legacy()
     ///     .await?;
     /// # Ok(())
     /// # }
@@ -705,7 +743,7 @@ impl<K: SessionBuilderKind> GenericSessionBuilder<K> {
     /// let session: LegacySession = SessionBuilder::new()
     ///     .known_node("127.0.0.1:9042")
     ///     .keepalive_timeout(std::time::Duration::from_secs(42))
-    ///     .build()
+    ///     .build_legacy()
     ///     .await?;
     /// # Ok(())
     /// # }
@@ -732,7 +770,7 @@ impl<K: SessionBuilderKind> GenericSessionBuilder<K> {
     /// let session: LegacySession = SessionBuilder::new()
     ///     .known_node("127.0.0.1:9042")
     ///     .schema_agreement_timeout(std::time::Duration::from_secs(120))
-    ///     .build()
+    ///     .build_legacy()
     ///     .await?;
     /// # Ok(())
     /// # }
@@ -752,7 +790,7 @@ impl<K: SessionBuilderKind> GenericSessionBuilder<K> {
     /// let session: LegacySession = SessionBuilder::new()
     ///     .known_node("127.0.0.1:9042")
     ///     .auto_await_schema_agreement(false)
-    ///     .build()
+    ///     .build_legacy()
     ///     .await?;
     /// # Ok(())
     /// # }
@@ -784,7 +822,7 @@ impl<K: SessionBuilderKind> GenericSessionBuilder<K> {
     /// let session: LegacySession = SessionBuilder::new()
     ///     .known_node("127.0.0.1:9042")
     ///     .host_filter(Arc::new(DcHostFilter::new("my-local-dc".to_string())))
-    ///     .build()
+    ///     .build_legacy()
     ///     .await?;
     /// # Ok(())
     /// # }
@@ -804,7 +842,7 @@ impl<K: SessionBuilderKind> GenericSessionBuilder<K> {
     /// let session: LegacySession = SessionBuilder::new()
     ///     .known_node("127.0.0.1:9042")
     ///     .refresh_metadata_on_auto_schema_agreement(true)
-    ///     .build()
+    ///     .build_legacy()
     ///     .await?;
     /// # Ok(())
     /// # }
@@ -833,7 +871,7 @@ impl<K: SessionBuilderKind> GenericSessionBuilder<K> {
     /// let session: LegacySession = SessionBuilder::new()
     ///     .known_node("127.0.0.1:9042")
     ///     .tracing_info_fetch_attempts(NonZeroU32::new(10).unwrap())
-    ///     .build()
+    ///     .build_legacy()
     ///     .await?;
     /// # Ok(())
     /// # }
@@ -862,7 +900,7 @@ impl<K: SessionBuilderKind> GenericSessionBuilder<K> {
     /// let session: LegacySession = SessionBuilder::new()
     ///     .known_node("127.0.0.1:9042")
     ///     .tracing_info_fetch_interval(Duration::from_millis(50))
-    ///     .build()
+    ///     .build_legacy()
     ///     .await?;
     /// # Ok(())
     /// # }
@@ -883,7 +921,7 @@ impl<K: SessionBuilderKind> GenericSessionBuilder<K> {
     /// let session: LegacySession = SessionBuilder::new()
     ///     .known_node("127.0.0.1:9042")
     ///     .tracing_info_fetch_consistency(Consistency::One)
-    ///     .build()
+    ///     .build_legacy()
     ///     .await?;
     /// # Ok(())
     /// # }
@@ -914,7 +952,7 @@ impl<K: SessionBuilderKind> GenericSessionBuilder<K> {
     /// let session: LegacySession = SessionBuilder::new()
     ///     .known_node("127.0.0.1:9042")
     ///     .write_coalescing(false) // Enabled by default
-    ///     .build()
+    ///     .build_legacy()
     ///     .await?;
     /// # Ok(())
     /// # }
@@ -938,7 +976,7 @@ impl<K: SessionBuilderKind> GenericSessionBuilder<K> {
     ///     let session: LegacySession = SessionBuilder::new()
     ///         .known_node("127.0.0.1:9042")
     ///         .cluster_metadata_refresh_interval(std::time::Duration::from_secs(20))
-    ///         .build()
+    ///         .build_legacy()
     ///         .await?;
     /// #   Ok(())
     /// # }
@@ -970,7 +1008,7 @@ impl<K: SessionBuilderKind> GenericSessionBuilder<K> {
     ///                 .with_application_name("my-app")
     ///                 .with_application_version(app_version)
     ///         )
-    ///         .build()
+    ///         .build_legacy()
     ///         .await?;
     /// #   Ok(())
     /// # }

@@ -159,7 +159,7 @@ async fn check_for_all_consistencies_and_setting_options<
     let session = session_builder
         .clone()
         .default_execution_profile_handle(base_for_every_profile.clone().build().into_handle())
-        .build()
+        .build_legacy()
         .await
         .unwrap();
     create_schema(&session, ks).await;
@@ -212,7 +212,7 @@ async fn check_for_all_consistencies_and_setting_options<
         let session_with_consistencies = session_builder
             .clone()
             .default_execution_profile_handle(handle)
-            .build()
+            .build_legacy()
             .await
             .unwrap();
         session_with_consistencies
@@ -473,7 +473,7 @@ async fn consistency_allows_for_paxos_selects() {
 
     let session = SessionBuilder::new()
         .known_node(uri.as_str())
-        .build()
+        .build_legacy()
         .await
         .unwrap();
 
