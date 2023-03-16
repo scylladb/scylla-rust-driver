@@ -260,7 +260,7 @@ pub use transport::caching_session::CachingSession;
 pub use transport::execution_profile::ExecutionProfile;
 pub use transport::legacy_query_result::LegacyQueryResult;
 pub use transport::query_result::{QueryResult, QueryRowsResult};
-pub use transport::session::{IntoTypedRows, LegacySession, SessionConfig};
+pub use transport::session::{IntoTypedRows, LegacySession, Session, SessionConfig};
 pub use transport::session_builder::SessionBuilder;
 
 #[cfg(feature = "cloud")]

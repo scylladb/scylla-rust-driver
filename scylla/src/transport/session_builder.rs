@@ -493,7 +493,7 @@ impl<K: SessionBuilderKind> GenericSessionBuilder<K> {
 
     /// Set keyspace to be used on all connections.\
     /// Each connection will send `"USE <keyspace_name>"` before sending any requests.\
-    /// This can be later changed with [`Session::use_keyspace`]
+    /// This can be later changed with [`crate::Session::use_keyspace`]
     ///
     /// # Example
     /// ```
@@ -815,7 +815,7 @@ impl<K: SessionBuilderKind> GenericSessionBuilder<K> {
     }
 
     /// Set the number of attempts to fetch [TracingInfo](crate::tracing::TracingInfo)
-    /// in [`LegacySession::get_tracing_info`].
+    /// in [`Session::get_tracing_info`](crate::Session::get_tracing_info).
     /// The default is 5 attempts.
     ///
     /// Tracing info might not be available immediately on queried node - that's why
@@ -844,7 +844,7 @@ impl<K: SessionBuilderKind> GenericSessionBuilder<K> {
     }
 
     /// Set the delay between attempts to fetch [TracingInfo](crate::tracing::TracingInfo)
-    /// in [`LegacySession::get_tracing_info`].
+    /// in [`Session::get_tracing_info`](crate::Session::get_tracing_info).
     /// The default is 3 milliseconds.
     ///
     /// Tracing info might not be available immediately on queried node - that's why
@@ -873,7 +873,7 @@ impl<K: SessionBuilderKind> GenericSessionBuilder<K> {
     }
 
     /// Set the consistency level of fetching [TracingInfo](crate::tracing::TracingInfo)
-    /// in [`LegacySession::get_tracing_info`].
+    /// in [`Session::get_tracing_info`](crate::Session::get_tracing_info).
     /// The default is [`Consistency::One`].
     ///
     /// # Example
