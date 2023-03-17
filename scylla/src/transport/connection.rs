@@ -6,7 +6,7 @@ use tokio::io::{split, AsyncRead, AsyncWrite, AsyncWriteExt, BufReader, BufWrite
 use tokio::net::{TcpSocket, TcpStream};
 use tokio::sync::{mpsc, oneshot};
 use tokio::time::Instant;
-use tracing::{debug, error, trace, warn};
+use tracing::{debug, error, trace, warn, Instrument};
 use uuid::Uuid;
 
 #[cfg(feature = "ssl")]
@@ -49,6 +49,7 @@ use crate::frame::{
     value::{BatchValues, ValueList},
     FrameParams, SerializedRequest,
 };
+use crate::otel_span;
 use crate::query::Query;
 use crate::routing::ShardInfo;
 use crate::statement::prepared_statement::PreparedStatement;
@@ -58,6 +59,7 @@ use crate::transport::Compression;
 
 // Existing code imports scylla::transport::connection::QueryResult because it used to be located in this file.
 // Reexport QueryResult to avoid breaking the existing code.
+use crate::utils::{RecordError, SpanExt};
 pub use crate::QueryResult;
 
 // Queries for schema agreement
@@ -400,6 +402,15 @@ impl Connection {
     }
 
     pub async fn prepare(&self, query: &Query) -> Result<PreparedStatement, QueryError> {
+        let span = otel_span!(
+            "Prepare attempt",
+            net.peer = display(self.connect_address),
+            db.scylladb.shard_id = self
+                .features
+                .shard_info
+                .as_ref()
+                .map(|shard_info| shard_info.shard),
+        );
         let query_response = self
             .send_request(
                 &request::Prepare {
@@ -408,10 +419,16 @@ impl Connection {
                 true,
                 query.config.tracing,
             )
-            .await?;
+            .instrument(span.clone())
+            .await
+            .record_error(&span)?;
 
         let mut prepared_statement = match query_response.response {
-            Response::Error(err) => return Err(err.into()),
+            Response::Error(err) => {
+                let query_err = err.into();
+                span.record_error(&query_err);
+                return Err(query_err);
+            }
             Response::Result(result::Result::Prepared(p)) => PreparedStatement::new(
                 p.id,
                 self.features
@@ -437,7 +454,17 @@ impl Connection {
 
     async fn reprepare(&self, previous_prepared: &PreparedStatement) -> Result<(), QueryError> {
         let reprepare_query: Query = previous_prepared.get_statement().into();
-        let reprepared = self.prepare(&reprepare_query).await?;
+        let span = otel_span!(
+            "Repreparation",
+            db.scylladb.statement_type = "prepare_request",
+            db.scylladb.statement = reprepare_query.contents,
+            db.scylladb.prepared_id = format_args!("{:X}", previous_prepared.get_id()),
+        );
+        let reprepared = self
+            .prepare(&reprepare_query)
+            .instrument(span.clone())
+            .await
+            .record_error(&span)?;
         // Reprepared statement should keep its id - it's the md5 sum
         // of statement contents
         if reprepared.get_id() != previous_prepared.get_id() {

@@ -28,6 +28,7 @@ use tokio::time::timeout;
 use tracing::{debug, error, trace, Instrument};
 use uuid::Uuid;
 
+use self::spans::PreparationSpan;
 use self::spans::{BatchSpan, PreparedSpan, QuerySpan};
 
 use super::cluster::ContactPoint;
@@ -534,6 +535,34 @@ mod spans {
             &self.0
         }
     }
+
+    pub(super) struct PreparationSpan(tracing::Span);
+
+    impl PreparationSpan {
+        pub(super) fn new(query: &Query) -> Self {
+            Self(otel_span!(
+                "Preparation",
+                db.scylladb.statement_type = "prepare_request",
+                db.scylladb.statement = query.contents.as_str(),
+                db.scylladb.prepared_id = tracing::field::Empty,
+            ))
+        }
+
+        pub(super) fn record_prepared_id(&self, prepared: &PreparedStatement) {
+            self.record(
+                scylladb_tag!("prepared_id"),
+                format_args!("{:X}", prepared.get_id()),
+            );
+        }
+    }
+
+    impl Deref for PreparationSpan {
+        type Target = tracing::Span;
+
+        fn deref(&self) -> &Self::Target {
+            &self.0
+        }
+    }
 }
 
 /// Represents a CQL session, which can be used to communicate
@@ -938,11 +967,13 @@ impl Session {
     pub async fn prepare(&self, query: impl Into<Query>) -> Result<PreparedStatement, QueryError> {
         let query = query.into();
 
+        let span = PreparationSpan::new(&query);
+
         let connections = self.cluster.get_working_connections().await?;
 
         // Prepare statements on all connections concurrently
         let handles = connections.iter().map(|c| c.prepare(&query));
-        let mut results = join_all(handles).await;
+        let mut results = join_all(handles).instrument(span.clone()).await;
 
         // If at least one prepare was successful prepare returns Ok
 
@@ -959,7 +990,10 @@ impl Session {
             }
         }
 
-        let mut prepared: PreparedStatement = first_ok.unwrap()?;
+        let mut prepared: PreparedStatement = first_ok.unwrap().map_err(|err| {
+            span.record_error(&err);
+            err
+        })?;
 
         // Validate prepared ids equality
         for statement in results.into_iter().flatten() {
@@ -980,6 +1014,8 @@ impl Session {
                 .and_then(PartitionerName::from_str)
                 .unwrap_or_default(),
         );
+
+        span.record_prepared_id(&prepared);
 
         Ok(prepared)
     }
