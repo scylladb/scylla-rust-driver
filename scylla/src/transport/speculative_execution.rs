@@ -21,6 +21,8 @@ pub trait SpeculativeExecutionPolicy: std::fmt::Debug + Send + Sync {
 
     /// The delay between each speculative execution
     fn retry_interval(&self, context: &Context) -> Duration;
+
+    fn name(&self) -> &'static str;
 }
 
 /// A SpeculativeExecutionPolicy that schedules a given number of speculative
@@ -56,6 +58,10 @@ impl SpeculativeExecutionPolicy for SimpleSpeculativeExecutionPolicy {
     fn retry_interval(&self, _: &Context) -> Duration {
         self.retry_interval
     }
+
+    fn name(&self) -> &'static str {
+        "SimpleSpeculativeExecutionPolicy"
+    }
 }
 
 impl SpeculativeExecutionPolicy for PercentileSpeculativeExecutionPolicy {
@@ -76,6 +82,10 @@ impl SpeculativeExecutionPolicy for PercentileSpeculativeExecutionPolicy {
             }
         };
         Duration::from_millis(ms)
+    }
+
+    fn name(&self) -> &'static str {
+        "PercentileSpeculativeExecutionPolicy"
     }
 }
 

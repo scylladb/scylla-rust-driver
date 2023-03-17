@@ -32,6 +32,8 @@ pub trait RetryPolicy: std::fmt::Debug + Send + Sync {
 
     /// Used to clone this RetryPolicy
     fn clone_boxed(&self) -> Box<dyn RetryPolicy>;
+
+    fn name(&self) -> &'static str;
 }
 
 impl Clone for Box<dyn RetryPolicy> {
@@ -75,6 +77,10 @@ impl RetryPolicy for FallthroughRetryPolicy {
     fn clone_boxed(&self) -> Box<dyn RetryPolicy> {
         Box::new(FallthroughRetryPolicy)
     }
+
+    fn name(&self) -> &'static str {
+        "FallthroughRetryPolicy"
+    }
 }
 
 impl RetrySession for FallthroughRetrySession {
@@ -109,6 +115,10 @@ impl RetryPolicy for DefaultRetryPolicy {
 
     fn clone_boxed(&self) -> Box<dyn RetryPolicy> {
         Box::new(DefaultRetryPolicy)
+    }
+
+    fn name(&self) -> &'static str {
+        "DefaultRetryPolicy"
     }
 }
 

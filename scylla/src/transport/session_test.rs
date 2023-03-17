@@ -2605,6 +2605,9 @@ async fn test_iter_works_when_retry_policy_returns_ignore_write_error() {
         fn clone_boxed(&self) -> Box<dyn RetryPolicy> {
             Box::new(MyRetryPolicy(self.0.clone()))
         }
+        fn name(&self) -> &'static str {
+            "MyRetryPolicy"
+        }
     }
 
     struct MyRetrySession(Arc<AtomicBool>);

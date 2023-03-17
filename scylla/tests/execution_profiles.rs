@@ -93,6 +93,10 @@ impl<const NODE: u8> RetryPolicy for BoundToPredefinedNodePolicy<NODE> {
     fn clone_boxed(&self) -> Box<dyn RetryPolicy> {
         Box::new(self.clone())
     }
+
+    fn name(&self) -> &'static str {
+        "BoundToPredefinedNodePolicy"
+    }
 }
 
 impl<const NODE: u8> RetrySession for BoundToPredefinedNodePolicy<NODE> {
@@ -115,6 +119,10 @@ impl<const NODE: u8> SpeculativeExecutionPolicy for BoundToPredefinedNodePolicy<
     fn retry_interval(&self, _: &scylla::speculative_execution::Context) -> std::time::Duration {
         self.report_node(Report::SpeculativeExecution);
         std::time::Duration::from_millis(200)
+    }
+
+    fn name(&self) -> &'static str {
+        "BoundToPredefinedNodePolicy"
     }
 }
 
