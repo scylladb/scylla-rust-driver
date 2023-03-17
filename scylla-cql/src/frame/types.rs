@@ -46,6 +46,16 @@ pub enum LegacyConsistency {
     Serial(SerialConsistency),
 }
 
+// Although we could `impl Default for Consistency` with an automatic derive,
+// this would require adding a #[default] annotation on the default variant,
+// but - unfortunately - that annotation is also recognized by `TryFromPrimitive`
+// derive macro. If there is a #[default] variant then `TryFromPrimitive`
+// falls back to it - if not, then it returns an error. This breaks one of the
+// tests.
+//
+// It will be possible to fix this properly after the following issue is closed:
+// https://github.com/illicitonion/num_enum/issues/75
+#[allow(clippy::derivable_impls)]
 impl Default for Consistency {
     fn default() -> Self {
         Consistency::LocalQuorum
