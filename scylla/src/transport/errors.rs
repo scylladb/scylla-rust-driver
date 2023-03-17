@@ -13,7 +13,6 @@ use std::{
 };
 
 use scylla_cql::{
-    cql_to_rust::FromRowError,
     frame::{
         frame_errors::{
             CqlAuthChallengeParseError, CqlAuthSuccessParseError, CqlAuthenticateParseError,
@@ -25,14 +24,17 @@ use scylla_cql::{
         response::CqlResponseKind,
         value::SerializeValuesError,
     },
-    types::{deserialize::TypeCheckError, serialize::SerializationError},
+    types::{
+        deserialize::{DeserializationError, TypeCheckError},
+        serialize::SerializationError,
+    },
 };
 
 use thiserror::Error;
 
 use crate::{authentication::AuthError, frame::response};
 
-use super::{legacy_query_result::RowsExpectedError, query_result::SingleRowError};
+use super::query_result::SingleRowError;
 
 /// Error that occurred during query execution
 #[derive(Error, Debug, Clone)]
@@ -360,20 +362,28 @@ pub enum SchemaVersionFetchError {
 #[non_exhaustive]
 pub enum TracingProtocolError {
     /// Response to system_traces.session is not RESULT:Rows.
-    #[error("Response to system_traces.session is not RESULT:Rows: {0}")]
-    TracesSessionNotRows(RowsExpectedError),
+    #[error("Response to system_traces.session is not RESULT:Rows")]
+    TracesSessionNotRows,
 
     /// system_traces.session has invalid column type.
     #[error("system_traces.session has invalid column type: {0}")]
-    TracesSessionInvalidColumnType(FromRowError),
+    TracesSessionInvalidColumnType(TypeCheckError),
+
+    /// Response to system_traces.session failed to deserialize.
+    #[error("Response to system_traces.session failed to deserialize: {0}")]
+    TracesSessionDeserializationFailed(DeserializationError),
 
     /// Response to system_traces.events is not RESULT:Rows.
-    #[error("Response to system_traces.events is not RESULT:Rows: {0}")]
-    TracesEventsNotRows(RowsExpectedError),
+    #[error("Response to system_traces.events is not RESULT:Rows")]
+    TracesEventsNotRows,
 
     /// system_traces.events has invalid column type.
     #[error("system_traces.events has invalid column type: {0}")]
-    TracesEventsInvalidColumnType(FromRowError),
+    TracesEventsInvalidColumnType(TypeCheckError),
+
+    /// Response to system_traces.events failed to deserialize.
+    #[error("Response to system_traces.events failed to deserialize: {0}")]
+    TracesEventsDeserializationFailed(DeserializationError),
 
     /// All tracing queries returned an empty result.
     #[error(

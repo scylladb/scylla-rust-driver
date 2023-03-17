@@ -46,11 +46,12 @@ use super::connection::SslConfig;
 use super::errors::TracingProtocolError;
 use super::execution_profile::{ExecutionProfile, ExecutionProfileHandle, ExecutionProfileInner};
 use super::iterator::QueryPager;
-use super::legacy_query_result::MaybeFirstRowTypedError;
 #[cfg(feature = "cloud")]
 use super::node::CloudEndpoint;
 use super::node::{InternalKnownNode, KnownNode};
 use super::partitioner::PartitionerName;
+use super::query_result::MaybeFirstRowError;
+use super::query_result::RowsError;
 use super::topology::UntranslatedPeer;
 use super::{NodeRef, SelfIdentity};
 use crate::frame::response::result;
@@ -58,7 +59,7 @@ use crate::prepared_statement::PreparedStatement;
 use crate::query::Query;
 use crate::routing::{Shard, Token};
 use crate::statement::{Consistency, PageSize, PagingState, PagingStateResponse};
-use crate::tracing::{TracingEvent, TracingInfo};
+use crate::tracing::TracingInfo;
 use crate::transport::cluster::{Cluster, ClusterData, ClusterNeatDebug};
 use crate::transport::connection::{Connection, ConnectionConfig, VerifiedKeyspaceName};
 use crate::transport::connection_pool::PoolConfig;
@@ -1790,15 +1791,18 @@ where
 
         // Get tracing info
         let maybe_tracing_info: Option<TracingInfo> = traces_session_res
-            .into_legacy_result()?
-            .maybe_first_row_typed()
+            .into_rows_result()?
+            .ok_or(ProtocolError::Tracing(
+                TracingProtocolError::TracesSessionNotRows,
+            ))?
+            .maybe_first_row()
             .map_err(|err| match err {
-                MaybeFirstRowTypedError::RowsExpected(e) => {
-                    ProtocolError::Tracing(TracingProtocolError::TracesSessionNotRows(e))
-                }
-                MaybeFirstRowTypedError::FromRowError(e) => {
+                MaybeFirstRowError::TypeCheckFailed(e) => {
                     ProtocolError::Tracing(TracingProtocolError::TracesSessionInvalidColumnType(e))
                 }
+                MaybeFirstRowError::DeserializationFailed(e) => ProtocolError::Tracing(
+                    TracingProtocolError::TracesSessionDeserializationFailed(e),
+                ),
             })?;
 
         let mut tracing_info = match maybe_tracing_info {
@@ -1807,20 +1811,23 @@ where
         };
 
         // Get tracing events
-        let tracing_event_rows = traces_events_res
-            .into_legacy_result()?
-            .rows_typed()
-            .map_err(|err| {
-                ProtocolError::Tracing(TracingProtocolError::TracesEventsNotRows(err))
-            })?;
-
-        for event in tracing_event_rows {
-            let tracing_event: TracingEvent = event.map_err(|err| {
+        let tracing_event_rows_result =
+            traces_events_res
+                .into_rows_result()?
+                .ok_or(ProtocolError::Tracing(
+                    TracingProtocolError::TracesEventsNotRows,
+                ))?;
+        let tracing_event_rows = tracing_event_rows_result.rows().map_err(|err| match err {
+            RowsError::TypeCheckFailed(err) => {
                 ProtocolError::Tracing(TracingProtocolError::TracesEventsInvalidColumnType(err))
-            })?;
+            }
+        })?;
 
-            tracing_info.events.push(tracing_event);
-        }
+        tracing_info.events = tracing_event_rows
+            .collect::<Result<_, _>>()
+            .map_err(|err| {
+                ProtocolError::Tracing(TracingProtocolError::TracesEventsDeserializationFailed(err))
+            })?;
 
         if tracing_info.events.is_empty() {
             return Ok(None);
