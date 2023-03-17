@@ -2701,3 +2701,34 @@ async fn test_iter_methods_with_modification_statements() {
         .unwrap();
     row_iterator.next().await.ok_or(()).unwrap_err(); // assert empty
 }
+
+#[tokio::test]
+async fn test_get_keyspace_name() {
+    let uri = std::env::var("SCYLLA_URI").unwrap_or_else(|_| "127.0.0.1:9042".to_string());
+    let ks = unique_keyspace_name();
+
+    // Create the keyspace
+    // No keyspace is set in config, so get_keyspace() should return None.
+    let session = SessionBuilder::new()
+        .known_node(uri.clone())
+        .build()
+        .await
+        .unwrap();
+    assert_eq!(session.get_keyspace(), None);
+    session.query(format!("CREATE KEYSPACE IF NOT EXISTS {} WITH REPLICATION = {{'class' : 'SimpleStrategy', 'replication_factor' : 1}}", ks), &[]).await.unwrap();
+    assert_eq!(session.get_keyspace(), None);
+
+    // Call use_keyspace(), get_keyspace now should return the new keyspace name
+    session.use_keyspace(&ks, true).await.unwrap();
+    assert_eq!(*session.get_keyspace().unwrap(), ks);
+
+    // Creating a new session with the keyspace set in config should cause
+    // get_keyspace to return that name
+    let session = SessionBuilder::new()
+        .known_node(uri)
+        .use_keyspace(&ks, true)
+        .build()
+        .await
+        .unwrap();
+    assert_eq!(*session.get_keyspace().unwrap(), ks);
+}

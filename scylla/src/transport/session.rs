@@ -7,6 +7,7 @@ use crate::cloud::CloudConfig;
 use crate::frame::types::LegacyConsistency;
 use crate::history;
 use crate::history::HistoryListener;
+use arc_swap::ArcSwapOption;
 use async_trait::async_trait;
 use bytes::Bytes;
 use futures::future::join_all;
@@ -117,6 +118,7 @@ pub struct Session {
     metrics: Arc<Metrics>,
     auto_await_schema_agreement_timeout: Option<Duration>,
     refresh_metadata_on_auto_schema_agreement: bool,
+    keyspace_name: ArcSwapOption<String>,
 }
 
 /// This implementation deliberately omits some details from Cluster in order
@@ -488,6 +490,7 @@ impl Session {
             auto_await_schema_agreement_timeout: config.auto_await_schema_agreement_timeout,
             refresh_metadata_on_auto_schema_agreement: config
                 .refresh_metadata_on_auto_schema_agreement,
+            keyspace_name: ArcSwapOption::default(), // will be set by use_keyspace
         };
 
         if let Some(keyspace_name) = config.used_keyspace {
@@ -1217,10 +1220,14 @@ impl Session {
         keyspace_name: impl Into<String>,
         case_sensitive: bool,
     ) -> Result<(), QueryError> {
+        let keyspace_name = keyspace_name.into();
+        self.keyspace_name
+            .store(Some(Arc::new(keyspace_name.clone())));
+
         // Trying to pass keyspace as bound value in "USE ?" doesn't work
         // So we have to create a string for query: "USE " + new_keyspace
         // To avoid any possible CQL injections it's good to verify that the name is valid
-        let verified_ks_name = VerifiedKeyspaceName::new(keyspace_name.into(), case_sensitive)?;
+        let verified_ks_name = VerifiedKeyspaceName::new(keyspace_name, case_sensitive)?;
 
         self.cluster.use_keyspace(verified_ks_name).await?;
 
@@ -1257,6 +1264,21 @@ impl Session {
     pub async fn get_tracing_info(&self, tracing_id: &Uuid) -> Result<TracingInfo, QueryError> {
         self.get_tracing_info_custom(tracing_id, &GetTracingConfig::default())
             .await
+    }
+
+    /// Gets the name of the keyspace that is currently set, or `None` if no
+    /// keyspace was set.
+    ///
+    /// It will initially return the name of the keyspace that was set
+    /// in the session configuration, but calling `use_keyspace` will update
+    /// it.
+    ///
+    /// Note: the return value might be wrong if `use_keyspace` was called
+    /// concurrently or it previously failed. It is also unspecified
+    /// if `get_keyspace` is called concurrently with `use_keyspace`.
+    #[inline]
+    pub fn get_keyspace(&self) -> Option<Arc<String>> {
+        self.keyspace_name.load_full()
     }
 
     /// Queries tracing info with custom retry settings.\
