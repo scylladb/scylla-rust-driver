@@ -14,48 +14,11 @@ use std::{
     net::SocketAddr,
     sync::{
         atomic::{AtomicBool, Ordering},
-        Arc, RwLock,
+        Arc,
     },
-    time::{Duration, Instant},
 };
 
 use super::topology::{PeerEndpoint, UntranslatedEndpoint};
-
-#[derive(Debug, Clone, Copy)]
-pub struct TimestampedAverage {
-    pub timestamp: Instant,
-    pub average: Duration,
-    pub num_measures: usize,
-}
-
-impl TimestampedAverage {
-    pub(crate) fn compute_next(previous: Option<Self>, last_latency: Duration) -> Option<Self> {
-        let now = Instant::now();
-        match previous {
-            prev if last_latency.is_zero() => prev,
-            None => Some(Self {
-                num_measures: 1,
-                average: last_latency,
-                timestamp: now,
-            }),
-            Some(prev_avg) => Some({
-                let delay = (now - prev_avg.timestamp).as_secs_f64();
-                let prev_weight = (delay + 1.).ln() / delay;
-                let last_latency_nanos = last_latency.as_nanos() as f64;
-                let prev_avg_nanos = prev_avg.average.as_nanos() as f64;
-                let average = Duration::from_nanos(
-                    ((1. - prev_weight) * last_latency_nanos + prev_weight * prev_avg_nanos).round()
-                        as u64,
-                );
-                Self {
-                    num_measures: prev_avg.num_measures + 1,
-                    timestamp: now,
-                    average,
-                }
-            }),
-        }
-    }
-}
 
 /// This enum is introduced to support address translation only in PoolRefiller,
 /// as well as to cope with the bug in older Cassandra and Scylla releases.
@@ -110,13 +73,14 @@ pub struct Node {
     pub datacenter: Option<String>,
     pub rack: Option<String>,
 
-    pub average_latency: RwLock<Option<TimestampedAverage>>,
-
     // If the node is filtered out by the host filter, this will be None
     pool: Option<NodeConnectionPool>,
 
     down_marker: AtomicBool,
 }
+
+/// A way that Nodes are often passed and accessed in the driver's code.
+pub type NodeRef<'a> = &'a Arc<Node>;
 
 impl Node {
     /// Creates new node which starts connecting in the background
@@ -147,7 +111,6 @@ impl Node {
             rack,
             pool,
             down_marker: false.into(),
-            average_latency: RwLock::new(None),
         }
     }
 
@@ -166,7 +129,6 @@ impl Node {
         }
         Self {
             address,
-            average_latency: RwLock::new(None),
             down_marker: false.into(),
             datacenter: node.datacenter.clone(),
             rack: node.rack.clone(),

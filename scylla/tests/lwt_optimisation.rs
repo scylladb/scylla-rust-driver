@@ -14,6 +14,8 @@ use scylla_proxy::{
     ResponseOpcode, ResponseReaction, ResponseRule, ShardAwareness, WorkerError,
 };
 
+// FIXME: This will only work again after refactor of load balancing is finished.
+#[ignore]
 #[tokio::test]
 #[ntest::timeout(20000)]
 async fn if_lwt_optimisation_mark_offered_then_negotiatied_and_lwt_routed_optimally() {

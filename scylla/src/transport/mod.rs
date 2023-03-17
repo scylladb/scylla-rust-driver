@@ -7,6 +7,7 @@ pub mod execution_profile;
 pub mod host_filter;
 pub mod iterator;
 pub mod load_balancing;
+pub mod locator;
 pub(crate) mod metrics;
 mod node;
 pub mod partitioner;
@@ -34,4 +35,4 @@ mod cql_types_test;
 mod cql_value_test;
 
 pub use cluster::ClusterData;
-pub use node::{Node, NodeAddr};
+pub use node::{Node, NodeAddr, NodeRef};

@@ -1,7 +1,6 @@
 /// Cluster manages up to date information and connections to database nodes
 use crate::frame::response::event::{Event, StatusChangeEvent};
 use crate::frame::value::ValueList;
-use crate::load_balancing::TokenAwarePolicy;
 use crate::routing::Token;
 use crate::transport::host_filter::HostFilter;
 use crate::transport::{
@@ -19,7 +18,7 @@ use futures::future::join_all;
 use futures::{future::RemoteHandle, FutureExt};
 use itertools::Itertools;
 use scylla_cql::errors::BadQuery;
-use std::collections::{BTreeMap, HashMap};
+use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration;
@@ -34,6 +33,9 @@ pub struct ContactPoint {
     pub address: SocketAddr,
     pub datacenter: Option<String>,
 }
+
+use super::locator::ReplicaLocator;
+use super::topology::Strategy;
 
 /// Cluster manages up to date information and connections to database nodes.
 /// All data can be accessed by cloning Arc<ClusterData> in the `data` field
@@ -69,10 +71,8 @@ pub struct Datacenter {
 #[derive(Clone)]
 pub struct ClusterData {
     pub(crate) known_peers: HashMap<Uuid, Arc<Node>>, // Invariant: nonempty after Cluster::new()
-    pub(crate) ring: BTreeMap<Token, Arc<Node>>,      // Invariant: nonempty after Cluster::new()
     pub(crate) keyspaces: HashMap<String, Keyspace>,
-    pub(crate) all_nodes: Vec<Arc<Node>>,
-    pub(crate) datacenters: HashMap<String, Datacenter>,
+    pub(crate) locator: ReplicaLocator,
 }
 
 /// Enables printing [ClusterData] struct in a neat way, skipping the clutter involved by
@@ -91,11 +91,9 @@ impl<'a> std::fmt::Debug for ClusterDataNeatDebug<'a> {
                         write!(f, "<size={}>", self.0)
                     }
                 }
-                &RingSizePrinter(cluster_data.ring.len())
+                &RingSizePrinter(cluster_data.locator.ring().len())
             })
             .field("keyspaces", &cluster_data.keyspaces.keys())
-            .field("all_nodes", &cluster_data.all_nodes)
-            .field("datacenters", &cluster_data.datacenters)
             .finish_non_exhaustive()
     }
 }
@@ -166,7 +164,8 @@ impl Cluster {
             &HashMap::new(),
             &None,
             host_filter.as_deref(),
-        );
+        )
+        .await;
         cluster_data.wait_until_all_pools_are_initialized().await;
         let cluster_data: Arc<ArcSwap<ClusterData>> =
             Arc::new(ArcSwap::from(Arc::new(cluster_data)));
@@ -263,15 +262,6 @@ impl Cluster {
 }
 
 impl ClusterData {
-    /// Returns an iterator to the sequence of ends of vnodes, starting at the vnode in which t
-    /// lies and going clockwise. Returned sequence has the same length as ring.
-    pub(crate) fn ring_range<'a>(&'a self, t: &Token) -> impl Iterator<Item = Arc<Node>> + 'a {
-        let before_wrap = self.ring.range(t..).map(|(_token, node)| node.clone());
-        let after_wrap = self.ring.values().cloned();
-
-        before_wrap.chain(after_wrap).take(self.ring.len())
-    }
-
     // Updates information about rack count in each datacenter
     fn update_rack_count(datacenters: &mut HashMap<String, Datacenter>) {
         for datacenter in datacenters.values_mut() {
@@ -285,14 +275,14 @@ impl ClusterData {
     }
 
     pub(crate) async fn wait_until_all_pools_are_initialized(&self) {
-        for node in self.all_nodes.iter() {
+        for node in self.locator.unique_nodes_in_global_ring().iter() {
             node.wait_until_pool_initialized().await;
         }
     }
 
     /// Creates new ClusterData using information about topology held in `metadata`.
     /// Uses provided `known_peers` hashmap to recycle nodes if possible.
-    pub(crate) fn new(
+    pub(crate) async fn new(
         metadata: Metadata,
         pool_config: &PoolConfig,
         known_peers: &HashMap<Uuid, Arc<Node>>,
@@ -302,7 +292,7 @@ impl ClusterData {
         // Create new updated known_peers and ring
         let mut new_known_peers: HashMap<Uuid, Arc<Node>> =
             HashMap::with_capacity(metadata.peers.len());
-        let mut ring: BTreeMap<Token, Arc<Node>> = BTreeMap::new();
+        let mut ring: Vec<(Token, Arc<Node>)> = Vec::new();
         let mut datacenters: HashMap<String, Datacenter> = HashMap::new();
         let mut all_nodes: Vec<Arc<Node>> = Vec::with_capacity(metadata.peers.len());
 
@@ -346,7 +336,7 @@ impl ClusterData {
             }
 
             for token in peer.tokens {
-                ring.insert(token, node.clone());
+                ring.push((token, node.clone()));
             }
 
             all_nodes.push(node);
@@ -354,12 +344,22 @@ impl ClusterData {
 
         Self::update_rack_count(&mut datacenters);
 
+        let keyspace_strategies: Vec<Strategy> = metadata
+            .keyspaces
+            .values()
+            .map(|ks| ks.strategy.clone())
+            .collect();
+
+        let locator = tokio::task::spawn_blocking(move || {
+            ReplicaLocator::new(ring.into_iter(), keyspace_strategies.iter())
+        })
+        .await
+        .unwrap();
+
         ClusterData {
             known_peers: new_known_peers,
-            ring,
             keyspaces: metadata.keyspaces,
-            all_nodes,
-            datacenters,
+            locator,
         }
     }
 
@@ -372,18 +372,26 @@ impl ClusterData {
 
     /// Access datacenter details collected by the driver
     /// Returned `HashMap` is indexed by names of datacenters
-    pub fn get_datacenters_info(&self) -> &HashMap<String, Datacenter> {
-        &self.datacenters
-    }
+    pub fn get_datacenters_info(&self) -> HashMap<String, Datacenter> {
+        self.locator
+            .datacenter_names()
+            .iter()
+            .map(|dc_name| {
+                let nodes = self
+                    .locator
+                    .unique_nodes_in_datacenter_ring(dc_name)
+                    .unwrap()
+                    .to_vec();
+                let rack_count = nodes.iter().map(|node| node.rack.as_ref()).unique().count();
 
-    /// Access ring details collected by the driver
-    pub fn get_ring_info(&self) -> &BTreeMap<Token, Arc<Node>> {
-        &self.ring
+                (dc_name.clone(), Datacenter { nodes, rack_count })
+            })
+            .collect()
     }
 
     /// Access details about nodes known to the driver
-    pub fn get_nodes_info(&self) -> &Vec<Arc<Node>> {
-        &self.all_nodes
+    pub fn get_nodes_info(&self) -> &[Arc<Node>] {
+        self.locator.unique_nodes_in_global_ring()
     }
 
     /// Compute token of a table partition key
@@ -429,7 +437,15 @@ impl ClusterData {
 
     /// Access to replicas owning a given token
     pub fn get_token_endpoints(&self, keyspace: &str, token: Token) -> Vec<Arc<Node>> {
-        TokenAwarePolicy::replicas_for_token(self, &token, Some(keyspace))
+        let keyspace = self.keyspaces.get(keyspace);
+        let strategy = keyspace
+            .map(|k| &k.strategy)
+            .unwrap_or(&Strategy::LocalStrategy);
+        let replica_set = self
+            .replica_locator()
+            .replicas_for_token(token, strategy, None);
+
+        replica_set.into_iter().cloned().collect()
     }
 
     /// Access to replicas owning a given partition key (similar to `nodetool getendpoints`)
@@ -443,6 +459,11 @@ impl ClusterData {
             keyspace,
             self.compute_token(keyspace, table, partition_key)?,
         ))
+    }
+
+    /// Access replica location info
+    pub fn replica_locator(&self) -> &ReplicaLocator {
+        &self.locator
     }
 }
 
@@ -601,13 +622,16 @@ impl ClusterWorker {
         let metadata = self.metadata_reader.read_metadata(false).await?;
         let cluster_data: Arc<ClusterData> = self.cluster_data.load_full();
 
-        let new_cluster_data = Arc::new(ClusterData::new(
-            metadata,
-            &self.pool_config,
-            &cluster_data.known_peers,
-            &self.used_keyspace,
-            self.host_filter.as_deref(),
-        ));
+        let new_cluster_data = Arc::new(
+            ClusterData::new(
+                metadata,
+                &self.pool_config,
+                &cluster_data.known_peers,
+                &self.used_keyspace,
+                self.host_filter.as_deref(),
+            )
+            .await,
+        );
 
         new_cluster_data
             .wait_until_all_pools_are_initialized()

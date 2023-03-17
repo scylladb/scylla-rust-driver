@@ -8,9 +8,10 @@ use scylla::batch::BatchStatement;
 use scylla::batch::{Batch, BatchType};
 use scylla::query::Query;
 use scylla::statement::SerialConsistency;
+use scylla::transport::NodeRef;
 use scylla::{
     frame::types::LegacyConsistency,
-    load_balancing::{LoadBalancingPolicy, Plan, Statement},
+    load_balancing::{LoadBalancingPolicy, RoutingInfo},
     retry_policy::{RetryPolicy, RetrySession},
     speculative_execution::SpeculativeExecutionPolicy,
     test_utils::unique_keyspace_name,
@@ -48,21 +49,39 @@ impl<const NODE: u8> BoundToPredefinedNodePolicy<NODE> {
 }
 
 impl<const NODE: u8> LoadBalancingPolicy for BoundToPredefinedNodePolicy<NODE> {
-    fn plan<'a>(&self, _: &Statement, cluster: &'a ClusterData) -> Plan<'a> {
+    fn pick<'a>(&'a self, _info: &'a RoutingInfo, cluster: &'a ClusterData) -> Option<NodeRef<'a>> {
         self.report_node(Report::LoadBalancing);
-        let node = cluster.get_nodes_info().iter().next().unwrap();
-        Box::new(std::iter::once(node.clone()))
+        cluster.get_nodes_info().iter().next()
+    }
+
+    fn fallback<'a>(
+        &'a self,
+        _info: &'a RoutingInfo,
+        _cluster: &'a ClusterData,
+    ) -> scylla::load_balancing::FallbackPlan<'a> {
+        Box::new(std::iter::empty())
+    }
+
+    fn on_query_success(
+        &self,
+        _query: &RoutingInfo,
+        _latency: std::time::Duration,
+        _node: NodeRef<'_>,
+    ) {
+    }
+
+    fn on_query_failure(
+        &self,
+        _query: &RoutingInfo,
+        _latency: std::time::Duration,
+        _node: NodeRef<'_>,
+        _error: &scylla_cql::errors::QueryError,
+    ) {
     }
 
     fn name(&self) -> String {
         "BoundToPredefinedNodePolicy".to_owned()
     }
-
-    fn requires_latency_measurements(&self) -> bool {
-        false
-    }
-
-    fn update_cluster_data(&self, _: &ClusterData) {}
 }
 
 impl<const NODE: u8> RetryPolicy for BoundToPredefinedNodePolicy<NODE> {

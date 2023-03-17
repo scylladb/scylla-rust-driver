@@ -19,18 +19,46 @@ pub fn init_logger() {
 #[derive(Debug)]
 pub struct FixedOrderLoadBalancer;
 impl LoadBalancingPolicy for FixedOrderLoadBalancer {
-    fn plan<'a>(
-        &self,
-        _statement: &scylla::load_balancing::Statement,
+    fn pick<'a>(
+        &'a self,
+        _info: &'a scylla::load_balancing::RoutingInfo,
         cluster: &'a scylla::transport::ClusterData,
-    ) -> scylla::load_balancing::Plan<'a> {
+    ) -> Option<scylla::transport::NodeRef<'a>> {
+        cluster
+            .get_nodes_info()
+            .iter()
+            .sorted_by(|node1, node2| Ord::cmp(&node1.address, &node2.address))
+            .next()
+    }
+
+    fn fallback<'a>(
+        &'a self,
+        _info: &'a scylla::load_balancing::RoutingInfo,
+        cluster: &'a scylla::transport::ClusterData,
+    ) -> scylla::load_balancing::FallbackPlan<'a> {
         Box::new(
             cluster
                 .get_nodes_info()
-                .clone()
-                .into_iter()
+                .iter()
                 .sorted_by(|node1, node2| Ord::cmp(&node1.address, &node2.address)),
         )
+    }
+
+    fn on_query_success(
+        &self,
+        _: &scylla::load_balancing::RoutingInfo,
+        _: std::time::Duration,
+        _: scylla::transport::NodeRef<'_>,
+    ) {
+    }
+
+    fn on_query_failure(
+        &self,
+        _: &scylla::load_balancing::RoutingInfo,
+        _: std::time::Duration,
+        _: scylla::transport::NodeRef<'_>,
+        _: &scylla_cql::errors::QueryError,
+    ) {
     }
 
     fn name(&self) -> String {

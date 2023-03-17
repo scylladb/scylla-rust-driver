@@ -9,6 +9,7 @@ use std::task::{Context, Poll};
 
 use bytes::Bytes;
 use futures::Stream;
+use scylla_cql::frame::response::NonErrorResponse;
 use scylla_cql::frame::types::SerialConsistency;
 use std::result::Result;
 use thiserror::Error;
@@ -17,14 +18,12 @@ use tokio::sync::mpsc;
 use super::errors::QueryError;
 use super::execution_profile::ExecutionProfileInner;
 use crate::cql_to_rust::{FromRow, FromRowError};
-use crate::Session;
 
 use crate::frame::types::LegacyConsistency;
 use crate::frame::{
     response::{
         result,
         result::{ColumnSpec, Row, Rows},
-        NonErrorResponse,
     },
     value::SerializedValues,
 };
@@ -34,10 +33,10 @@ use crate::statement::Consistency;
 use crate::statement::{prepared_statement::PreparedStatement, query::Query};
 use crate::transport::cluster::ClusterData;
 use crate::transport::connection::{Connection, NonErrorQueryResponse, QueryResponse};
-use crate::transport::load_balancing::{LoadBalancingPolicy, Statement};
+use crate::transport::load_balancing::{self, RoutingInfo};
 use crate::transport::metrics::Metrics;
-use crate::transport::node::{Node, TimestampedAverage};
 use crate::transport::retry_policy::{QueryInfo, RetryDecision, RetrySession};
+use crate::transport::{Node, NodeRef};
 use tracing::{trace, trace_span, warn, Instrument};
 use uuid::Uuid;
 
@@ -174,7 +173,7 @@ impl RowIterator {
                 sender: sender.into(),
                 choose_connection,
                 page_query,
-                statement_info: Statement::default(),
+                statement_info: RoutingInfo::default(),
                 query_is_idempotent: query.config.is_idempotent,
                 query_consistency: consistency,
                 retry_session,
@@ -212,7 +211,9 @@ impl RowIterator {
             .unwrap_or(config.execution_profile.serial_consistency);
         let retry_session = config.execution_profile.retry_policy.new_session();
 
-        let statement_info = Statement {
+        let statement_info = RoutingInfo {
+            consistency,
+            serial_consistency: config.prepared.get_serial_consistency(),
             token: config.token,
             keyspace: None,
             is_confirmed_lwt: config.prepared.is_confirmed_lwt(),
@@ -412,7 +413,7 @@ struct RowIteratorWorker<'a, ConnFunc, QueryFunc> {
     // AsyncFn(Arc<Connection>, Option<Bytes>) -> Result<QueryResponse, QueryError>
     page_query: QueryFunc,
 
-    statement_info: Statement<'a>,
+    statement_info: RoutingInfo<'a>,
     query_is_idempotent: bool,
     query_consistency: Consistency,
     retry_session: Box<dyn RetrySession>,
@@ -433,16 +434,12 @@ where
     QueryFunc: Fn(Arc<Connection>, Consistency, Option<Bytes>) -> QueryFut,
     QueryFut: Future<Output = Result<QueryResponse, QueryError>>,
 {
-    fn load_balancer(&self) -> &dyn LoadBalancingPolicy {
-        &*self.execution_profile.load_balancing_policy
-    }
-
     // Contract: this function MUST send at least one item through self.sender
     async fn work(mut self, cluster_data: Arc<ClusterData>) -> PageSendAttemptedProof {
-        self.load_balancer().update_cluster_data(&cluster_data);
-        let query_plan = self
-            .load_balancer()
-            .plan(&self.statement_info, &cluster_data);
+        let load_balancer = self.execution_profile.load_balancing_policy.clone();
+        let statement_info = self.statement_info.clone();
+        let query_plan =
+            load_balancing::Plan::new(load_balancer.as_ref(), &statement_info, &cluster_data);
 
         let mut last_error: QueryError =
             QueryError::ProtocolError("Empty query plan - driver bug!");
@@ -475,7 +472,7 @@ where
                 trace!(parent: &span, "Execution started");
                 // Query pages until an error occurs
                 let queries_result: Result<PageSendAttemptedProof, QueryError> = self
-                    .query_pages(&connection, current_consistency, &node)
+                    .query_pages(&connection, current_consistency, node)
                     .instrument(span.clone())
                     .await;
 
@@ -552,7 +549,7 @@ where
         &mut self,
         connection: &Arc<Connection>,
         consistency: Consistency,
-        node: &Node,
+        node: NodeRef<'_>,
     ) -> Result<PageSendAttemptedProof, QueryError> {
         loop {
             self.metrics.inc_total_paged_queries();
@@ -563,20 +560,14 @@ where
                 "Sending"
             );
             self.log_attempt_start(connection.get_connect_address());
+
             let query_response =
                 (self.page_query)(connection.clone(), consistency, self.paging_state.clone())
-                    .await?
-                    .into_non_error_query_response();
+                    .await
+                    .and_then(QueryResponse::into_non_error_query_response);
 
             let elapsed = query_start.elapsed();
-            if Session::should_consider_query_for_latency_measurements(
-                self.load_balancer(),
-                &query_response,
-            ) {
-                let mut average_latency_guard = node.average_latency.write().unwrap();
-                *average_latency_guard =
-                    TimestampedAverage::compute_next(*average_latency_guard, elapsed);
-            }
+
             match query_response {
                 Ok(NonErrorQueryResponse {
                     response: NonErrorResponse::Result(result::Result::Rows(mut rows)),
@@ -586,6 +577,9 @@ where
                     let _ = self.metrics.log_query_latency(elapsed.as_millis() as u64);
                     self.log_attempt_success();
                     self.log_query_success();
+                    self.execution_profile
+                        .load_balancing_policy
+                        .on_query_success(&self.statement_info, elapsed, node);
 
                     self.paging_state = rows.metadata.paging_state.take();
 
@@ -609,6 +603,9 @@ where
                 }
                 Err(err) => {
                     self.metrics.inc_failed_paged_queries();
+                    self.execution_profile
+                        .load_balancing_policy
+                        .on_query_failure(&self.statement_info, elapsed, node, &err);
                     return Err(err);
                 }
                 Ok(NonErrorQueryResponse {
@@ -625,10 +622,11 @@ where
                 }
                 Ok(_) => {
                     self.metrics.inc_failed_paged_queries();
-
-                    return Err(QueryError::ProtocolError(
-                        "Unexpected response to next page query",
-                    ));
+                    let err = QueryError::ProtocolError("Unexpected response to next page query");
+                    self.execution_profile
+                        .load_balancing_policy
+                        .on_query_failure(&self.statement_info, elapsed, node, &err);
+                    return Err(err);
                 }
             }
         }

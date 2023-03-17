@@ -7,12 +7,10 @@ use crate::cloud::CloudConfig;
 use crate::frame::types::LegacyConsistency;
 use crate::history;
 use crate::history::HistoryListener;
-use crate::transport::node::TimestampedAverage;
 use async_trait::async_trait;
 use bytes::Bytes;
 use futures::future::join_all;
 use futures::future::try_join_all;
-use scylla_cql::errors::DbError;
 pub use scylla_cql::errors::TranslationError;
 use scylla_cql::frame::response::NonErrorResponse;
 use std::collections::HashMap;
@@ -35,6 +33,7 @@ use super::errors::{BadQuery, NewSessionError, QueryError};
 use super::execution_profile::{ExecutionProfile, ExecutionProfileHandle, ExecutionProfileInner};
 use super::partitioner::PartitionerName;
 use super::topology::UntranslatedPeer;
+use super::NodeRef;
 use crate::cql_to_rust::FromRow;
 use crate::frame::response::cql_to_rust::FromRowError;
 use crate::frame::response::result;
@@ -51,7 +50,7 @@ use crate::transport::connection::{Connection, ConnectionConfig, VerifiedKeyspac
 use crate::transport::connection_pool::PoolConfig;
 use crate::transport::host_filter::HostFilter;
 use crate::transport::iterator::{PreparedIteratorConfig, RowIterator};
-use crate::transport::load_balancing::{LoadBalancingPolicy, Statement, TokenAwarePolicy};
+use crate::transport::load_balancing::{self, RoutingInfo};
 use crate::transport::metrics::Metrics;
 use crate::transport::node::Node;
 use crate::transport::query_result::QueryResult;
@@ -572,7 +571,7 @@ impl Session {
         let span = trace_span!("Request", query = %query.contents);
         let run_query_result = self
             .run_query(
-                Statement::default(),
+                RoutingInfo::default(),
                 &query.config,
                 |node: Arc<Node>| async move { node.random_connection().await },
                 |connection: Arc<Connection>,
@@ -882,7 +881,11 @@ impl Session {
 
         let token = self.calculate_token(prepared, &serialized_values)?;
 
-        let statement_info = Statement {
+        let statement_info = RoutingInfo {
+            consistency: prepared
+                .get_consistency()
+                .unwrap_or(self.default_execution_profile_handle.access().consistency),
+            serial_consistency: prepared.get_serial_consistency(),
             token,
             keyspace: prepared.get_keyspace_name(),
             is_confirmed_lwt: prepared.is_confirmed_lwt(),
@@ -1067,13 +1070,17 @@ impl Session {
         let first_serialized_value = first_serialized_value.as_deref();
         let statement_info = match (first_serialized_value, batch.statements.first()) {
             (Some(first_serialized_value), Some(BatchStatement::PreparedStatement(ps))) => {
-                Statement {
+                RoutingInfo {
+                    consistency: batch
+                        .get_consistency()
+                        .unwrap_or(self.default_execution_profile_handle.access().consistency),
+                    serial_consistency: batch.get_serial_consistency(),
                     token: self.calculate_token(ps, first_serialized_value)?,
                     keyspace: ps.get_keyspace_name(),
                     is_confirmed_lwt: false,
                 }
             }
-            _ => Statement::default(),
+            _ => RoutingInfo::default(),
         };
         let first_value_token = statement_info.token;
 
@@ -1350,43 +1357,15 @@ impl Session {
     // Returns which replicas are likely to take part in handling the query.
     // If a list of replicas cannot be easily narrowed down, all available replicas
     // will be returned.
-    pub fn estimate_replicas_for_query(&self, statement: &Statement) -> Vec<Arc<Node>> {
+    pub fn estimate_replicas_for_query(&self, statement: &RoutingInfo) -> Vec<Arc<Node>> {
         let cluster_data = self.cluster.get_data();
         match statement.token {
             Some(token) => {
-                TokenAwarePolicy::replicas_for_token(&cluster_data, &token, statement.keyspace)
+                let cluster_data = self.cluster.get_data();
+                cluster_data.get_token_endpoints(statement.keyspace.unwrap_or(""), token)
             }
-            None => cluster_data.all_nodes.clone(),
+            None => cluster_data.get_nodes_info().to_owned(),
         }
-    }
-
-    pub fn should_consider_query_for_latency_measurements(
-        load_balancer: &dyn LoadBalancingPolicy,
-        result: &Result<impl AllowedRunQueryResTType, QueryError>,
-    ) -> bool {
-        load_balancer.requires_latency_measurements()
-            && match result {
-                Ok(_) => true,
-                Err(err) => match err {
-                    // "fast" errors, i.e. ones that are returned quickly after the query begins
-                    QueryError::BadQuery(_)
-                    | QueryError::TooManyOrphanedStreamIds(_)
-                    | QueryError::UnableToAllocStreamId
-                    | QueryError::DbError(DbError::IsBootstrapping, _)
-                    | QueryError::DbError(DbError::Unavailable { .. }, _)
-                    | QueryError::DbError(DbError::Unprepared { .. }, _)
-                    | QueryError::DbError(DbError::Overloaded { .. }, _)
-                    | QueryError::TranslationError(_) => false,
-
-                    // "slow" errors, i.e. ones that are returned after considerable time of query being run
-                    QueryError::DbError(_, _)
-                    | QueryError::InvalidMessage(_)
-                    | QueryError::IoError(_)
-                    | QueryError::ProtocolError(_)
-                    | QueryError::TimeoutError
-                    | QueryError::RequestTimeout(_) => true,
-                },
-            }
     }
 
     // This method allows to easily run a query using load balancing, retry policy etc.
@@ -1403,7 +1382,7 @@ impl Session {
     // maybe once async closures get stabilized this can be fixed
     async fn run_query<'a, ConnFut, QueryFut, ResT>(
         &'a self,
-        statement_info: Statement<'a>,
+        statement_info: RoutingInfo<'a>,
         statement_config: &'a StatementConfig,
         choose_connection: impl Fn(Arc<Node>) -> ConnFut,
         do_query: impl Fn(Arc<Connection>, Consistency, &ExecutionProfileInner) -> QueryFut,
@@ -1429,24 +1408,24 @@ impl Session {
 
         let runner = async {
             let cluster_data = self.cluster.get_data();
-            load_balancer.update_cluster_data(&cluster_data);
-            let query_plan = load_balancer.plan(&statement_info, &cluster_data);
+            let query_plan =
+                load_balancing::Plan::new(load_balancer.as_ref(), &statement_info, &cluster_data);
 
             // If a speculative execution policy is used to run query, query_plan has to be shared
             // between different async functions. This struct helps to wrap query_plan in mutex so it
             // can be shared safely.
-            struct SharedPlan<I>
+            struct SharedPlan<'a, I>
             where
-                I: Iterator<Item = Arc<Node>>,
+                I: Iterator<Item = NodeRef<'a>>,
             {
                 iter: std::sync::Mutex<I>,
             }
 
-            impl<I> Iterator for &SharedPlan<I>
+            impl<'a, I> Iterator for &SharedPlan<'a, I>
             where
-                I: Iterator<Item = Arc<Node>>,
+                I: Iterator<Item = NodeRef<'a>>,
             {
-                type Item = Arc<Node>;
+                type Item = NodeRef<'a>;
 
                 fn next(&mut self) -> Option<Self::Item> {
                     self.iter.lock().unwrap().next()
@@ -1490,6 +1469,7 @@ impl Session {
                                 consistency: statement_config.consistency,
                                 retry_session: retry_policy.new_session(),
                                 history_data,
+                                query_info: &statement_info,
                             },
                         )
                     };
@@ -1524,6 +1504,7 @@ impl Session {
                             consistency: statement_config.consistency,
                             retry_session: retry_policy.new_session(),
                             history_data,
+                            query_info: &statement_info,
                         },
                     )
                     .await
@@ -1562,7 +1543,7 @@ impl Session {
 
     async fn execute_query<'a, ConnFut, QueryFut, ResT>(
         &'a self,
-        query_plan: impl Iterator<Item = Arc<Node>>,
+        query_plan: impl Iterator<Item = NodeRef<'a>>,
         choose_connection: impl Fn(Arc<Node>) -> ConnFut,
         do_query: impl Fn(Arc<Connection>, Consistency, &ExecutionProfileInner) -> QueryFut,
         execution_profile: &ExecutionProfileInner,
@@ -1614,19 +1595,16 @@ impl Session {
                         .await;
 
                 let elapsed = query_start.elapsed();
-                if Self::should_consider_query_for_latency_measurements(
-                    execution_profile.load_balancing_policy.as_ref(),
-                    &query_result,
-                ) {
-                    let mut average_latency_guard = node.average_latency.write().unwrap();
-                    *average_latency_guard =
-                        TimestampedAverage::compute_next(*average_latency_guard, elapsed);
-                }
                 last_error = match query_result {
                     Ok(response) => {
                         trace!(parent: &span, "Query succeeded");
                         let _ = self.metrics.log_query_latency(elapsed.as_millis() as u64);
                         context.log_attempt_success(&attempt_id);
+                        execution_profile.load_balancing_policy.on_query_success(
+                            context.query_info,
+                            elapsed,
+                            node,
+                        );
                         return Some(Ok(RunQueryResult::Completed(response)));
                     }
                     Err(e) => {
@@ -1636,6 +1614,12 @@ impl Session {
                             "Query failed"
                         );
                         self.metrics.inc_failed_nonpaged_queries();
+                        execution_profile.load_balancing_policy.on_query_failure(
+                            context.query_info,
+                            elapsed,
+                            node,
+                            &e,
+                        );
                         Some(e)
                     }
                 };
@@ -1703,7 +1687,7 @@ impl Session {
         QueryFut: Future<Output = Result<ResT, QueryError>>,
         ResT: AllowedRunQueryResTType,
     {
-        let info = Statement::default();
+        let info = RoutingInfo::default();
         let config = StatementConfig {
             is_idempotent: true,
             serial_consistency: Some(Some(SerialConsistency::LocalSerial)),
@@ -1825,6 +1809,7 @@ struct ExecuteQueryContext<'a> {
     consistency: Option<Consistency>,
     retry_session: Box<dyn RetrySession>,
     history_data: Option<HistoryData<'a>>,
+    query_info: &'a load_balancing::RoutingInfo<'a>,
 }
 
 struct HistoryData<'a> {

@@ -171,7 +171,7 @@ use crate::{
 };
 
 pub(crate) mod defaults {
-    use crate::load_balancing::{LoadBalancingPolicy, RoundRobinPolicy, TokenAwarePolicy};
+    use crate::load_balancing::{self, LoadBalancingPolicy};
     use crate::retry_policy::{DefaultRetryPolicy, RetryPolicy};
     use crate::speculative_execution::SpeculativeExecutionPolicy;
     use crate::transport::execution_profile::ExecutionProfileInner;
@@ -189,7 +189,7 @@ pub(crate) mod defaults {
         Some(Duration::from_secs(30))
     }
     pub fn load_balancing_policy() -> Arc<dyn LoadBalancingPolicy> {
-        Arc::new(TokenAwarePolicy::new(Box::new(RoundRobinPolicy::new())))
+        Arc::new(load_balancing::DefaultPolicy::default())
     }
     pub fn retry_policy() -> Box<dyn RetryPolicy> {
         Box::new(DefaultRetryPolicy::new())
@@ -271,16 +271,16 @@ impl ExecutionProfileBuilder {
     }
 
     /// Sets the load balancing policy.
-    /// The default is Token-aware Round-robin.
+    /// The default is DefaultPolicy (token-aware round robin).
     ///
     /// # Example
     /// ```
     /// # use scylla::transport::ExecutionProfile;
-    /// # use scylla::transport::load_balancing::RoundRobinPolicy;
+    /// # use scylla::transport::load_balancing::DefaultPolicy;
     /// # use std::sync::Arc;
     /// # fn example() -> Result<(), Box<dyn std::error::Error>> {
     /// let profile: ExecutionProfile = ExecutionProfile::builder()
-    ///     .load_balancing_policy(Arc::new(RoundRobinPolicy::new()))
+    ///     .load_balancing_policy(Arc::new(DefaultPolicy::default()))
     ///     .build();
     /// # Ok(())
     /// # }
