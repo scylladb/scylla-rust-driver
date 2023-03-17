@@ -1,17 +1,16 @@
 use crate::statement::Consistency;
 use itertools::Itertools;
+use scylla_macros::DeserializeRow;
 use std::collections::HashMap;
 use std::net::IpAddr;
 use std::num::NonZeroU32;
 use std::time::Duration;
 use uuid::Uuid;
 
-use crate::cql_to_rust::{FromRow, FromRowError};
-use crate::frame::response::result::Row;
-
 /// Tracing info retrieved from `system_traces.sessions`
 /// with all events from `system_traces.events`
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, DeserializeRow, Clone, PartialEq, Eq)]
+#[scylla(crate = "crate")]
 pub struct TracingInfo {
     pub client: Option<IpAddr>,
     pub command: Option<String>,
@@ -22,11 +21,13 @@ pub struct TracingInfo {
     /// started_at is a timestamp - time since unix epoch
     pub started_at: Option<chrono::Duration>,
 
+    #[scylla(skip)]
     pub events: Vec<TracingEvent>,
 }
 
 /// A single event happening during a traced query
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, DeserializeRow, Clone, PartialEq, Eq)]
+#[scylla(crate = "crate")]
 pub struct TracingEvent {
     pub event_id: Uuid,
     pub activity: Option<String>,
@@ -79,51 +80,3 @@ pub(crate) const TRACES_SESSION_QUERY_STR: &str =
 pub(crate) const TRACES_EVENTS_QUERY_STR: &str =
     "SELECT event_id, activity, source, source_elapsed, thread \
     FROM system_traces.events WHERE session_id = ?";
-
-// Converts a row received by performing TRACES_SESSION_QUERY_STR to TracingInfo
-impl FromRow for TracingInfo {
-    fn from_row(row: Row) -> Result<TracingInfo, FromRowError> {
-        let (client, command, coordinator, duration, parameters, request, started_at) =
-            <(
-                Option<IpAddr>,
-                Option<String>,
-                Option<IpAddr>,
-                Option<i32>,
-                Option<HashMap<String, String>>,
-                Option<String>,
-                Option<chrono::Duration>,
-            )>::from_row(row)?;
-
-        Ok(TracingInfo {
-            client,
-            command,
-            coordinator,
-            duration,
-            parameters,
-            request,
-            started_at,
-            events: Vec::new(),
-        })
-    }
-}
-
-// Converts a row received by performing TRACES_SESSION_QUERY_STR to TracingInfo
-impl FromRow for TracingEvent {
-    fn from_row(row: Row) -> Result<TracingEvent, FromRowError> {
-        let (event_id, activity, source, source_elapsed, thread) = <(
-            Uuid,
-            Option<String>,
-            Option<IpAddr>,
-            Option<i32>,
-            Option<String>,
-        )>::from_row(row)?;
-
-        Ok(TracingEvent {
-            event_id,
-            activity,
-            source,
-            source_elapsed,
-            thread,
-        })
-    }
-}
