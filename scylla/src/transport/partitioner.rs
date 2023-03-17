@@ -4,8 +4,9 @@ use std::num::Wrapping;
 use crate::routing::Token;
 
 #[allow(clippy::upper_case_acronyms)]
-#[derive(Clone, PartialEq, Debug)]
+#[derive(Clone, PartialEq, Debug, Default)]
 pub(crate) enum PartitionerName {
+    #[default]
     Murmur3,
     CDC,
 }
@@ -26,12 +27,6 @@ impl PartitionerName {
             PartitionerName::Murmur3 => Murmur3Partitioner::hash(pk),
             PartitionerName::CDC => CDCPartitioner::hash(pk),
         }
-    }
-}
-
-impl Default for PartitionerName {
-    fn default() -> Self {
-        PartitionerName::Murmur3
     }
 }
 
