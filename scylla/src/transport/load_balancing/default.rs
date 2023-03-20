@@ -8,6 +8,7 @@ use crate::{
 };
 use itertools::{Either, Itertools};
 use rand::{prelude::SliceRandom, thread_rng, Rng};
+use rand_pcg::Pcg32;
 use scylla_cql::{errors::QueryError, frame::types::SerialConsistency, Consistency};
 use std::{fmt, sync::Arc, time::Duration};
 use tracing::warn;
@@ -24,6 +25,7 @@ pub struct DefaultPolicy {
     permit_dc_failover: bool,
     pick_predicate: Box<dyn Fn(&NodeRef) -> bool + Send + Sync>,
     latency_awareness: Option<LatencyAwareness>,
+    fixed_shuffle_seed: Option<u64>,
 }
 
 impl fmt::Debug for DefaultPolicy {
@@ -33,6 +35,7 @@ impl fmt::Debug for DefaultPolicy {
             .field("is_token_aware", &self.is_token_aware)
             .field("permit_dc_failover", &self.permit_dc_failover)
             .field("latency_awareness", &self.latency_awareness)
+            .field("fixed_shuffle_seed", &self.fixed_shuffle_seed)
             .finish_non_exhaustive()
     }
 }
@@ -276,8 +279,13 @@ impl DefaultPolicy {
         predicate: &impl Fn(&NodeRef<'a>) -> bool,
         cluster: &'a ClusterData,
     ) -> Option<NodeRef<'a>> {
-        self.nonfiltered_replica_set(ts, should_be_local, cluster)
-            .choose_filtered(&mut thread_rng(), |node| predicate(&node))
+        let replica_set = self.nonfiltered_replica_set(ts, should_be_local, cluster);
+        if let Some(fixed) = self.fixed_shuffle_seed {
+            let mut gen = Pcg32::new(fixed, 0);
+            replica_set.choose_filtered(&mut gen, |node| predicate(&node))
+        } else {
+            replica_set.choose_filtered(&mut thread_rng(), |node| predicate(&node))
+        }
     }
 
     fn shuffled_replicas<'a>(
@@ -289,7 +297,7 @@ impl DefaultPolicy {
     ) -> impl Iterator<Item = NodeRef<'a>> {
         let replicas = self.replicas(ts, should_be_local, predicate, cluster);
 
-        Self::shuffle(replicas)
+        self.shuffle(replicas)
     }
 
     fn randomly_rotated_nodes(nodes: &[Arc<Node>]) -> impl Iterator<Item = NodeRef<'_>> {
@@ -323,11 +331,18 @@ impl DefaultPolicy {
         Self::randomly_rotated_nodes(nodes).filter(predicate)
     }
 
-    fn shuffle<'a>(iter: impl Iterator<Item = NodeRef<'a>>) -> impl Iterator<Item = NodeRef<'a>> {
+    fn shuffle<'a>(
+        &self,
+        iter: impl Iterator<Item = NodeRef<'a>>,
+    ) -> impl Iterator<Item = NodeRef<'a>> {
         let mut vec: Vec<NodeRef<'a>> = iter.collect();
 
-        let mut rng = thread_rng();
-        vec.shuffle(&mut rng);
+        if let Some(fixed) = self.fixed_shuffle_seed {
+            let mut gen = Pcg32::new(fixed, 0);
+            vec.shuffle(&mut gen);
+        } else {
+            vec.shuffle(&mut thread_rng());
+        }
 
         vec.into_iter()
     }
@@ -353,6 +368,7 @@ impl Default for DefaultPolicy {
             permit_dc_failover: false,
             pick_predicate: Box::new(Self::is_alive),
             latency_awareness: None,
+            fixed_shuffle_seed: None,
         }
     }
 }
@@ -377,6 +393,7 @@ pub struct DefaultPolicyBuilder {
     is_token_aware: bool,
     permit_dc_failover: bool,
     latency_awareness: Option<LatencyAwarenessBuilder>,
+    enable_replica_shuffle: bool,
 }
 
 impl DefaultPolicyBuilder {
@@ -387,6 +404,7 @@ impl DefaultPolicyBuilder {
             is_token_aware: true,
             permit_dc_failover: false,
             latency_awareness: None,
+            enable_replica_shuffle: true,
         }
     }
 
@@ -407,6 +425,7 @@ impl DefaultPolicyBuilder {
             permit_dc_failover: self.permit_dc_failover,
             pick_predicate,
             latency_awareness,
+            fixed_shuffle_seed: (!self.enable_replica_shuffle).then(rand::random),
         })
     }
 
@@ -489,6 +508,19 @@ impl DefaultPolicyBuilder {
     /// performance. Use with caution.
     pub fn latency_awareness(mut self, latency_awareness_builder: LatencyAwarenessBuilder) -> Self {
         self.latency_awareness = Some(latency_awareness_builder);
+        self
+    }
+
+    /// Sets whether this policy should shuffle replicas when token-awareness
+    /// is enabled. Shuffling can help distribute the load over replicas, but
+    /// can reduce the effectiveness of caching on the database side (e.g.
+    /// for reads).
+    ///
+    /// This option is enabled by default. If disabled, replicas will be chosen
+    /// in some random order that is chosen when the load balancing policy
+    /// is created and will not change over its lifetime.
+    pub fn enable_shuffling_replicas(mut self, enable: bool) -> Self {
+        self.enable_replica_shuffle = enable;
         self
     }
 }
@@ -1622,6 +1654,7 @@ mod latency_awareness {
                 is_token_aware: true,
                 pick_predicate,
                 latency_awareness: Some(latency_awareness),
+                fixed_shuffle_seed: None,
             }
         }
 
