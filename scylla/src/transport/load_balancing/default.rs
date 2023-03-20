@@ -628,22 +628,24 @@ mod tests {
         }
 
         impl ExpectedGroups {
-            pub(crate) fn assert_proper_grouping_in_plan(&self, got: &Vec<u16>) {
-                // First, make sure that `got` has the right number of items,
-                // equal to the sum of sizes of all expected groups
-                let combined_groups_len = self.groups.iter().map(|s| s.len()).sum();
-                assert_eq!(got.len(), combined_groups_len);
+            pub(crate) fn assert_proper_grouping_in_plans(&self, gots: &[Vec<u16>]) {
+                for got in gots {
+                    // First, make sure that `got` has the right number of items,
+                    // equal to the sum of sizes of all expected groups
+                    let combined_groups_len = self.groups.iter().map(|s| s.len()).sum();
+                    assert_eq!(got.len(), combined_groups_len);
 
-                // Now, split `got` into groups of expected sizes
-                // and just `assert_eq` them
-                let mut got = got.iter();
-                let got_groups = self
-                    .groups
-                    .iter()
-                    .map(|s| (&mut got).take(s.len()).copied().collect::<HashSet<u16>>())
-                    .collect::<Vec<_>>();
+                    // Now, split `got` into groups of expected sizes
+                    // and just `assert_eq` them
+                    let mut got = got.iter();
+                    let got_groups = self
+                        .groups
+                        .iter()
+                        .map(|s| (&mut got).take(s.len()).copied().collect::<HashSet<u16>>())
+                        .collect::<Vec<_>>();
 
-                assert_eq!(&got_groups, &self.groups);
+                    assert_eq!(&got_groups, &self.groups);
+                }
             }
         }
 
@@ -656,7 +658,7 @@ mod tests {
                 .group([5])
                 .build();
 
-            expected_groups.assert_proper_grouping_in_plan(&got);
+            expected_groups.assert_proper_grouping_in_plans(&[got]);
         }
 
         #[test]
@@ -669,7 +671,7 @@ mod tests {
                 .group([5])
                 .build();
 
-            expected_groups.assert_proper_grouping_in_plan(&got);
+            expected_groups.assert_proper_grouping_in_plans(&[got]);
         }
 
         #[test]
@@ -682,7 +684,7 @@ mod tests {
                 .group([5])
                 .build();
 
-            expected_groups.assert_proper_grouping_in_plan(&got);
+            expected_groups.assert_proper_grouping_in_plans(&[got]);
         }
 
         #[test]
@@ -695,7 +697,7 @@ mod tests {
                 .group([5])
                 .build();
 
-            expected_groups.assert_proper_grouping_in_plan(&got);
+            expected_groups.assert_proper_grouping_in_plans(&[got]);
         }
 
         // based on locator mock cluster
@@ -752,10 +754,12 @@ mod tests {
         routing_info: &RoutingInfo<'_>,
         expected_groups: &ExpectedGroups,
     ) {
+        let mut plans = Vec::new();
         for _ in 0..16 {
             let plan = get_plan_and_collect_node_identifiers(policy, routing_info, cluster);
-            expected_groups.assert_proper_grouping_in_plan(&plan);
+            plans.push(plan);
         }
+        expected_groups.assert_proper_grouping_in_plans(&plans);
     }
 
     async fn test_given_default_policy_with_token_unaware_statements(
