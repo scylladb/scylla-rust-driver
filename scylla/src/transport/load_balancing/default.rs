@@ -573,6 +573,10 @@ impl<'a> TokenWithStrategy<'a> {
 mod tests {
     use scylla_cql::{frame::types::SerialConsistency, Consistency};
 
+    use self::framework::{
+        get_plan_and_collect_node_identifiers, mock_cluster_data_for_token_unaware_tests,
+        ExpectedGroups, ExpectedGroupsBuilder,
+    };
     use crate::{
         load_balancing::{
             default::tests::framework::mock_cluster_data_for_token_aware_tests, RoutingInfo,
@@ -582,12 +586,6 @@ mod tests {
             locator::test::{KEYSPACE_NTS_RF_2, KEYSPACE_NTS_RF_3, KEYSPACE_SS_RF_2},
             ClusterData,
         },
-    };
-    use std::collections::HashSet;
-
-    use self::framework::{
-        assert_proper_grouping_in_plan, get_plan_and_collect_node_identifiers,
-        mock_cluster_data_for_token_unaware_tests, ExpectedGroupsBuilder,
     };
 
     use super::DefaultPolicy;
@@ -618,29 +616,35 @@ mod tests {
                 self.groups.push(group.into_iter().collect());
                 self
             }
-            pub(crate) fn build(self) -> Vec<HashSet<u16>> {
-                self.groups
+            pub(crate) fn build(self) -> ExpectedGroups {
+                ExpectedGroups {
+                    groups: self.groups,
+                }
             }
         }
 
-        pub(crate) fn assert_proper_grouping_in_plan(
-            got: &Vec<u16>,
-            expected_groups: &Vec<HashSet<u16>>,
-        ) {
-            // First, make sure that `got` has the right number of items,
-            // equal to the sum of sizes of all expected groups
-            let combined_groups_len = expected_groups.iter().map(|s| s.len()).sum();
-            assert_eq!(got.len(), combined_groups_len);
+        pub(crate) struct ExpectedGroups {
+            groups: Vec<HashSet<u16>>,
+        }
 
-            // Now, split `got` into groups of expected sizes
-            // and just `assert_eq` them
-            let mut got = got.iter();
-            let got_groups = expected_groups
-                .iter()
-                .map(|s| (&mut got).take(s.len()).copied().collect::<HashSet<u16>>())
-                .collect::<Vec<_>>();
+        impl ExpectedGroups {
+            pub(crate) fn assert_proper_grouping_in_plan(&self, got: &Vec<u16>) {
+                // First, make sure that `got` has the right number of items,
+                // equal to the sum of sizes of all expected groups
+                let combined_groups_len = self.groups.iter().map(|s| s.len()).sum();
+                assert_eq!(got.len(), combined_groups_len);
 
-            assert_eq!(&got_groups, expected_groups);
+                // Now, split `got` into groups of expected sizes
+                // and just `assert_eq` them
+                let mut got = got.iter();
+                let got_groups = self
+                    .groups
+                    .iter()
+                    .map(|s| (&mut got).take(s.len()).copied().collect::<HashSet<u16>>())
+                    .collect::<Vec<_>>();
+
+                assert_eq!(&got_groups, &self.groups);
+            }
         }
 
         #[test]
@@ -652,7 +656,7 @@ mod tests {
                 .group([5])
                 .build();
 
-            assert_proper_grouping_in_plan(&got, &expected_groups);
+            expected_groups.assert_proper_grouping_in_plan(&got);
         }
 
         #[test]
@@ -665,7 +669,7 @@ mod tests {
                 .group([5])
                 .build();
 
-            assert_proper_grouping_in_plan(&got, &expected_groups);
+            expected_groups.assert_proper_grouping_in_plan(&got);
         }
 
         #[test]
@@ -678,7 +682,7 @@ mod tests {
                 .group([5])
                 .build();
 
-            assert_proper_grouping_in_plan(&got, &expected_groups);
+            expected_groups.assert_proper_grouping_in_plan(&got);
         }
 
         #[test]
@@ -691,7 +695,7 @@ mod tests {
                 .group([5])
                 .build();
 
-            assert_proper_grouping_in_plan(&got, &expected_groups);
+            expected_groups.assert_proper_grouping_in_plan(&got);
         }
 
         // based on locator mock cluster
@@ -746,17 +750,17 @@ mod tests {
         policy: &DefaultPolicy,
         cluster: &ClusterData,
         routing_info: &RoutingInfo<'_>,
-        expected_groups: &Vec<HashSet<u16>>,
+        expected_groups: &ExpectedGroups,
     ) {
         for _ in 0..16 {
             let plan = get_plan_and_collect_node_identifiers(policy, routing_info, cluster);
-            assert_proper_grouping_in_plan(&plan, expected_groups);
+            expected_groups.assert_proper_grouping_in_plan(&plan);
         }
     }
 
     async fn test_given_default_policy_with_token_unaware_statements(
         policy: DefaultPolicy,
-        expected_groups: &Vec<HashSet<u16>>,
+        expected_groups: &ExpectedGroups,
     ) {
         let cluster = mock_cluster_data_for_token_unaware_tests().await;
 
@@ -811,7 +815,7 @@ mod tests {
         struct Test<'a> {
             policy: DefaultPolicy,
             routing_info: RoutingInfo<'a>,
-            expected_groups: Vec<HashSet<u16>>,
+            expected_groups: ExpectedGroups,
         }
 
         let tests = [
@@ -1598,7 +1602,7 @@ mod latency_awareness {
                 ClusterData, NodeAddr,
             },
         };
-        use std::{collections::HashSet, time::Instant};
+        use std::time::Instant;
 
         trait DefaultPolicyTestExt {
             fn set_nodes_latency_stats(
@@ -2083,7 +2087,7 @@ mod latency_awareness {
                 preset_min_avg: Option<Duration>,
                 latency_stats: &'b [(u16, Option<TimestampedAverage>)],
                 routing_info: RoutingInfo<'a>,
-                expected_groups: Vec<HashSet<u16>>,
+                expected_groups: ExpectedGroups,
             }
 
             let cluster = tests::mock_cluster_data_for_token_aware_tests().await;
