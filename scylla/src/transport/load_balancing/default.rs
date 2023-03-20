@@ -606,21 +606,21 @@ mod tests {
         };
 
         enum ExpectedGroup {
-            AnyOrder(HashSet<u16>),
+            NonDeterministic(HashSet<u16>),
             Deterministic(HashSet<u16>),
         }
 
         impl ExpectedGroup {
             fn len(&self) -> usize {
                 match self {
-                    Self::AnyOrder(s) => s.len(),
+                    Self::NonDeterministic(s) => s.len(),
                     Self::Deterministic(s) => s.len(),
                 }
             }
 
             fn nodes(&self) -> &HashSet<u16> {
                 match self {
-                    Self::AnyOrder(s) => s,
+                    Self::NonDeterministic(s) => s,
                     Self::Deterministic(s) => s,
                 }
             }
@@ -635,10 +635,12 @@ mod tests {
                 Self { groups: Vec::new() }
             }
             /// Expects that the next group in the plan will have a set of nodes
-            /// that is equal to the provided one.
+            /// that is equal to the provided one. The groups are assumed to be
+            /// non deterministic, i.e. the policy is expected to shuffle
+            /// the nodes within that group.
             pub(crate) fn group(mut self, group: impl IntoIterator<Item = u16>) -> Self {
                 self.groups
-                    .push(ExpectedGroup::AnyOrder(group.into_iter().collect()));
+                    .push(ExpectedGroup::NonDeterministic(group.into_iter().collect()));
                 self
             }
             /// Expects that the next group in the plan will have a set of nodes
@@ -702,8 +704,14 @@ mod tests {
                 // or non-deterministic
                 for (sets, expected) in sets_of_groups.iter().zip(self.groups.iter()) {
                     match expected {
-                        ExpectedGroup::AnyOrder(_) => {
-                            // No requirements for now
+                        ExpectedGroup::NonDeterministic(s) => {
+                            // The group is supposed to have non-deterministic
+                            // ordering. If the group size is larger than one,
+                            // then expect there to be more than one group
+                            // in the set.
+                            if gots.len() > 1 && s.len() > 1 {
+                                assert!(sets.len() > 1);
+                            }
                         }
                         ExpectedGroup::Deterministic(_) => {
                             // The group is supposed to be deterministic,
@@ -825,7 +833,7 @@ mod tests {
         expected_groups: &ExpectedGroups,
     ) {
         let mut plans = Vec::new();
-        for _ in 0..16 {
+        for _ in 0..256 {
             let plan = get_plan_and_collect_node_identifiers(policy, routing_info, cluster);
             plans.push(plan);
         }
