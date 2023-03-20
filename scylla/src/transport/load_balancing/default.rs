@@ -8,6 +8,7 @@ use crate::{
 };
 use itertools::{Either, Itertools};
 use rand::{prelude::SliceRandom, thread_rng, Rng};
+use rand_pcg::Pcg32;
 use scylla_cql::{errors::QueryError, frame::types::SerialConsistency, Consistency};
 use std::{fmt, sync::Arc, time::Duration};
 use tracing::warn;
@@ -24,6 +25,7 @@ pub struct DefaultPolicy {
     permit_dc_failover: bool,
     pick_predicate: Box<dyn Fn(&NodeRef) -> bool + Send + Sync>,
     latency_awareness: Option<LatencyAwareness>,
+    fixed_shuffle_seed: Option<u64>,
 }
 
 impl fmt::Debug for DefaultPolicy {
@@ -33,6 +35,7 @@ impl fmt::Debug for DefaultPolicy {
             .field("is_token_aware", &self.is_token_aware)
             .field("permit_dc_failover", &self.permit_dc_failover)
             .field("latency_awareness", &self.latency_awareness)
+            .field("fixed_shuffle_seed", &self.fixed_shuffle_seed)
             .finish_non_exhaustive()
     }
 }
@@ -276,8 +279,13 @@ impl DefaultPolicy {
         predicate: &impl Fn(&NodeRef<'a>) -> bool,
         cluster: &'a ClusterData,
     ) -> Option<NodeRef<'a>> {
-        self.nonfiltered_replica_set(ts, should_be_local, cluster)
-            .choose_filtered(&mut thread_rng(), |node| predicate(&node))
+        let replica_set = self.nonfiltered_replica_set(ts, should_be_local, cluster);
+        if let Some(fixed) = self.fixed_shuffle_seed {
+            let mut gen = Pcg32::new(fixed, 0);
+            replica_set.choose_filtered(&mut gen, |node| predicate(&node))
+        } else {
+            replica_set.choose_filtered(&mut thread_rng(), |node| predicate(&node))
+        }
     }
 
     fn shuffled_replicas<'a>(
@@ -289,7 +297,7 @@ impl DefaultPolicy {
     ) -> impl Iterator<Item = NodeRef<'a>> {
         let replicas = self.replicas(ts, should_be_local, predicate, cluster);
 
-        Self::shuffle(replicas)
+        self.shuffle(replicas)
     }
 
     fn randomly_rotated_nodes(nodes: &[Arc<Node>]) -> impl Iterator<Item = NodeRef<'_>> {
@@ -323,11 +331,18 @@ impl DefaultPolicy {
         Self::randomly_rotated_nodes(nodes).filter(predicate)
     }
 
-    fn shuffle<'a>(iter: impl Iterator<Item = NodeRef<'a>>) -> impl Iterator<Item = NodeRef<'a>> {
+    fn shuffle<'a>(
+        &self,
+        iter: impl Iterator<Item = NodeRef<'a>>,
+    ) -> impl Iterator<Item = NodeRef<'a>> {
         let mut vec: Vec<NodeRef<'a>> = iter.collect();
 
-        let mut rng = thread_rng();
-        vec.shuffle(&mut rng);
+        if let Some(fixed) = self.fixed_shuffle_seed {
+            let mut gen = Pcg32::new(fixed, 0);
+            vec.shuffle(&mut gen);
+        } else {
+            vec.shuffle(&mut thread_rng());
+        }
 
         vec.into_iter()
     }
@@ -353,6 +368,7 @@ impl Default for DefaultPolicy {
             permit_dc_failover: false,
             pick_predicate: Box::new(Self::is_alive),
             latency_awareness: None,
+            fixed_shuffle_seed: None,
         }
     }
 }
@@ -377,6 +393,7 @@ pub struct DefaultPolicyBuilder {
     is_token_aware: bool,
     permit_dc_failover: bool,
     latency_awareness: Option<LatencyAwarenessBuilder>,
+    enable_replica_shuffle: bool,
 }
 
 impl DefaultPolicyBuilder {
@@ -387,6 +404,7 @@ impl DefaultPolicyBuilder {
             is_token_aware: true,
             permit_dc_failover: false,
             latency_awareness: None,
+            enable_replica_shuffle: true,
         }
     }
 
@@ -407,6 +425,7 @@ impl DefaultPolicyBuilder {
             permit_dc_failover: self.permit_dc_failover,
             pick_predicate,
             latency_awareness,
+            fixed_shuffle_seed: (!self.enable_replica_shuffle).then(rand::random),
         })
     }
 
@@ -491,6 +510,19 @@ impl DefaultPolicyBuilder {
         self.latency_awareness = Some(latency_awareness_builder);
         self
     }
+
+    /// Sets whether this policy should shuffle replicas when token-awareness
+    /// is enabled. Shuffling can help distribute the load over replicas, but
+    /// can reduce the effectiveness of caching on the database side (e.g.
+    /// for reads).
+    ///
+    /// This option is enabled by default. If disabled, replicas will be chosen
+    /// in some random order that is chosen when the load balancing policy
+    /// is created and will not change over its lifetime.
+    pub fn enable_shuffling_replicas(mut self, enable: bool) -> Self {
+        self.enable_replica_shuffle = enable;
+        self
+    }
 }
 
 impl Default for DefaultPolicyBuilder {
@@ -541,6 +573,10 @@ impl<'a> TokenWithStrategy<'a> {
 mod tests {
     use scylla_cql::{frame::types::SerialConsistency, Consistency};
 
+    use self::framework::{
+        get_plan_and_collect_node_identifiers, mock_cluster_data_for_token_unaware_tests,
+        ExpectedGroups, ExpectedGroupsBuilder,
+    };
     use crate::{
         load_balancing::{
             default::tests::framework::mock_cluster_data_for_token_aware_tests, RoutingInfo,
@@ -550,12 +586,6 @@ mod tests {
             locator::test::{KEYSPACE_NTS_RF_2, KEYSPACE_NTS_RF_3, KEYSPACE_SS_RF_2},
             ClusterData,
         },
-    };
-    use std::collections::HashSet;
-
-    use self::framework::{
-        assert_proper_grouping_in_plan, get_plan_and_collect_node_identifiers,
-        mock_cluster_data_for_token_unaware_tests, ExpectedGroupsBuilder,
     };
 
     use super::DefaultPolicy;
@@ -574,41 +604,127 @@ mod tests {
                 ClusterData,
             },
         };
+
+        enum ExpectedGroup {
+            NonDeterministic(HashSet<u16>),
+            Deterministic(HashSet<u16>),
+        }
+
+        impl ExpectedGroup {
+            fn len(&self) -> usize {
+                match self {
+                    Self::NonDeterministic(s) => s.len(),
+                    Self::Deterministic(s) => s.len(),
+                }
+            }
+
+            fn nodes(&self) -> &HashSet<u16> {
+                match self {
+                    Self::NonDeterministic(s) => s,
+                    Self::Deterministic(s) => s,
+                }
+            }
+        }
+
         pub(crate) struct ExpectedGroupsBuilder {
-            groups: Vec<HashSet<u16>>,
+            groups: Vec<ExpectedGroup>,
         }
 
         impl ExpectedGroupsBuilder {
             pub(crate) fn new() -> Self {
                 Self { groups: Vec::new() }
             }
+            /// Expects that the next group in the plan will have a set of nodes
+            /// that is equal to the provided one. The groups are assumed to be
+            /// non deterministic, i.e. the policy is expected to shuffle
+            /// the nodes within that group.
             pub(crate) fn group(mut self, group: impl IntoIterator<Item = u16>) -> Self {
-                self.groups.push(group.into_iter().collect());
+                self.groups
+                    .push(ExpectedGroup::NonDeterministic(group.into_iter().collect()));
                 self
             }
-            pub(crate) fn build(self) -> Vec<HashSet<u16>> {
+            /// Expects that the next group in the plan will have a set of nodes
+            /// that is equal to the provided one, but the order of nodes in
+            /// that group must be stable over multiple plans.
+            pub(crate) fn deterministic(mut self, group: impl IntoIterator<Item = u16>) -> Self {
                 self.groups
+                    .push(ExpectedGroup::Deterministic(group.into_iter().collect()));
+                self
+            }
+            pub(crate) fn build(self) -> ExpectedGroups {
+                ExpectedGroups {
+                    groups: self.groups,
+                }
             }
         }
 
-        pub(crate) fn assert_proper_grouping_in_plan(
-            got: &Vec<u16>,
-            expected_groups: &Vec<HashSet<u16>>,
-        ) {
-            // First, make sure that `got` has the right number of items,
-            // equal to the sum of sizes of all expected groups
-            let combined_groups_len = expected_groups.iter().map(|s| s.len()).sum();
-            assert_eq!(got.len(), combined_groups_len);
+        pub(crate) struct ExpectedGroups {
+            groups: Vec<ExpectedGroup>,
+        }
 
-            // Now, split `got` into groups of expected sizes
-            // and just `assert_eq` them
-            let mut got = got.iter();
-            let got_groups = expected_groups
-                .iter()
-                .map(|s| (&mut got).take(s.len()).copied().collect::<HashSet<u16>>())
-                .collect::<Vec<_>>();
+        impl ExpectedGroups {
+            pub(crate) fn assert_proper_grouping_in_plans(&self, gots: &[Vec<u16>]) {
+                // For simplicity, assume that there is at least one plan
+                // in `gots`
+                assert!(!gots.is_empty());
 
-            assert_eq!(&got_groups, expected_groups);
+                // Each plan is assumed to have the same number of groups.
+                // For group index `i`, the code below will go over all plans
+                // and will collect their `i`-th groups and put them under
+                // index `i` in `sets_of_groups`.
+                let mut sets_of_groups: Vec<HashSet<Vec<u16>>> =
+                    vec![HashSet::new(); self.groups.len()];
+
+                for got in gots {
+                    // First, make sure that `got` has the right number of items,
+                    // equal to the sum of sizes of all expected groups
+                    let combined_groups_len = self.groups.iter().map(|s| s.len()).sum();
+                    assert_eq!(got.len(), combined_groups_len);
+
+                    // Now, split `got` into groups of expected sizes
+                    // and just `assert_eq` them
+                    let mut got = got.iter();
+                    for (group_id, expected) in self.groups.iter().enumerate() {
+                        // Collect the nodes that consistute the group
+                        // in the actual plan
+                        let got_group: Vec<_> = (&mut got).take(expected.len()).copied().collect();
+
+                        // Verify that the group has the same nodes as the
+                        // expected one
+                        let got_set: HashSet<_> = got_group.iter().copied().collect();
+                        let expected_set = expected.nodes();
+                        assert_eq!(&got_set, expected_set);
+
+                        // Put the group into sets_of_groups
+                        sets_of_groups[group_id].insert(got_group);
+                    }
+                }
+
+                // Verify that the groups are either deterministic
+                // or non-deterministic
+                for (sets, expected) in sets_of_groups.iter().zip(self.groups.iter()) {
+                    match expected {
+                        ExpectedGroup::NonDeterministic(s) => {
+                            // The group is supposed to have non-deterministic
+                            // ordering. If the group size is larger than one,
+                            // then expect there to be more than one group
+                            // in the set.
+                            if gots.len() > 1 && s.len() > 1 {
+                                assert!(sets.len() > 1);
+                            }
+                        }
+                        ExpectedGroup::Deterministic(_) => {
+                            // The group is supposed to be deterministic,
+                            // i.e. a given instance of the default policy
+                            // must always return the nodes within it using
+                            // the same order.
+                            // There will only be one, unique ordering shared
+                            // by all plans - check this
+                            assert_eq!(sets.len(), 1);
+                        }
+                    }
+                }
+            }
         }
 
         #[test]
@@ -620,7 +736,7 @@ mod tests {
                 .group([5])
                 .build();
 
-            assert_proper_grouping_in_plan(&got, &expected_groups);
+            expected_groups.assert_proper_grouping_in_plans(&[got]);
         }
 
         #[test]
@@ -633,7 +749,7 @@ mod tests {
                 .group([5])
                 .build();
 
-            assert_proper_grouping_in_plan(&got, &expected_groups);
+            expected_groups.assert_proper_grouping_in_plans(&[got]);
         }
 
         #[test]
@@ -646,7 +762,7 @@ mod tests {
                 .group([5])
                 .build();
 
-            assert_proper_grouping_in_plan(&got, &expected_groups);
+            expected_groups.assert_proper_grouping_in_plans(&[got]);
         }
 
         #[test]
@@ -659,7 +775,7 @@ mod tests {
                 .group([5])
                 .build();
 
-            assert_proper_grouping_in_plan(&got, &expected_groups);
+            expected_groups.assert_proper_grouping_in_plans(&[got]);
         }
 
         // based on locator mock cluster
@@ -714,17 +830,19 @@ mod tests {
         policy: &DefaultPolicy,
         cluster: &ClusterData,
         routing_info: &RoutingInfo<'_>,
-        expected_groups: &Vec<HashSet<u16>>,
+        expected_groups: &ExpectedGroups,
     ) {
-        for _ in 0..16 {
+        let mut plans = Vec::new();
+        for _ in 0..256 {
             let plan = get_plan_and_collect_node_identifiers(policy, routing_info, cluster);
-            assert_proper_grouping_in_plan(&plan, expected_groups);
+            plans.push(plan);
         }
+        expected_groups.assert_proper_grouping_in_plans(&plans);
     }
 
     async fn test_given_default_policy_with_token_unaware_statements(
         policy: DefaultPolicy,
-        expected_groups: &Vec<HashSet<u16>>,
+        expected_groups: &ExpectedGroups,
     ) {
         let cluster = mock_cluster_data_for_token_unaware_tests().await;
 
@@ -779,7 +897,7 @@ mod tests {
         struct Test<'a> {
             policy: DefaultPolicy,
             routing_info: RoutingInfo<'a>,
-            expected_groups: Vec<HashSet<u16>>,
+            expected_groups: ExpectedGroups,
         }
 
         let tests = [
@@ -803,6 +921,31 @@ mod tests {
                 expected_groups: ExpectedGroupsBuilder::new()
                     .group([A, G]) // pick + fallback local replicas
                     .group([F, D]) // remote replicas
+                    .group([C, B]) // local nodes
+                    .group([E]) // remote nodes
+                    .build(),
+            },
+            // Keyspace NTS with RF=2 with enabled DC failover, shuffling replicas disabled
+            Test {
+                policy: DefaultPolicy {
+                    preferred_datacenter: Some("eu".to_owned()),
+                    is_token_aware: true,
+                    permit_dc_failover: true,
+                    fixed_shuffle_seed: Some(123),
+                    ..Default::default()
+                },
+                routing_info: RoutingInfo {
+                    token: Some(Token { value: 160 }),
+                    keyspace: Some(KEYSPACE_NTS_RF_2),
+                    consistency: Consistency::Two,
+                    ..Default::default()
+                },
+                // going though the ring, we get order: F , A , C , D , G , B , E
+                //                                      us  eu  eu  us  eu  eu  us
+                //                                      r2  r1  r1  r1  r2  r1  r1
+                expected_groups: ExpectedGroupsBuilder::new()
+                    .deterministic([A, G]) // pick + fallback local replicas
+                    .deterministic([F, D]) // remote replicas
                     .group([C, B]) // local nodes
                     .group([E]) // remote nodes
                     .build(),
@@ -871,6 +1014,31 @@ mod tests {
                 expected_groups: ExpectedGroupsBuilder::new()
                     .group([A, C, G]) // pick + fallback local replicas
                     .group([F, D, E]) // remote replicas
+                    .group([B]) // local nodes
+                    .group([]) // remote nodes
+                    .build(),
+            },
+            // Keyspace NTS with RF=3 with enabled DC failover, shuffling replicas disabled
+            Test {
+                policy: DefaultPolicy {
+                    preferred_datacenter: Some("eu".to_owned()),
+                    is_token_aware: true,
+                    permit_dc_failover: true,
+                    fixed_shuffle_seed: Some(123),
+                    ..Default::default()
+                },
+                routing_info: RoutingInfo {
+                    token: Some(Token { value: 160 }),
+                    keyspace: Some(KEYSPACE_NTS_RF_3),
+                    consistency: Consistency::Quorum,
+                    ..Default::default()
+                },
+                // going though the ring, we get order: F , A , C , D , G , B , E
+                //                                      us  eu  eu  us  eu  eu  us
+                //                                      r2  r1  r1  r1  r2  r1  r1
+                expected_groups: ExpectedGroupsBuilder::new()
+                    .deterministic([A, C, G]) // pick + fallback local replicas
+                    .deterministic([F, D, E]) // remote replicas
                     .group([B]) // local nodes
                     .group([]) // remote nodes
                     .build(),
@@ -1566,7 +1734,7 @@ mod latency_awareness {
                 ClusterData, NodeAddr,
             },
         };
-        use std::{collections::HashSet, time::Instant};
+        use std::time::Instant;
 
         trait DefaultPolicyTestExt {
             fn set_nodes_latency_stats(
@@ -1622,6 +1790,7 @@ mod latency_awareness {
                 is_token_aware: true,
                 pick_predicate,
                 latency_awareness: Some(latency_awareness),
+                fixed_shuffle_seed: None,
             }
         }
 
@@ -2050,7 +2219,7 @@ mod latency_awareness {
                 preset_min_avg: Option<Duration>,
                 latency_stats: &'b [(u16, Option<TimestampedAverage>)],
                 routing_info: RoutingInfo<'a>,
-                expected_groups: Vec<HashSet<u16>>,
+                expected_groups: ExpectedGroups,
             }
 
             let cluster = tests::mock_cluster_data_for_token_aware_tests().await;
