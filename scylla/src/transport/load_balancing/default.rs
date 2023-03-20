@@ -607,12 +607,21 @@ mod tests {
 
         enum ExpectedGroup {
             AnyOrder(HashSet<u16>),
+            Deterministic(HashSet<u16>),
         }
 
         impl ExpectedGroup {
             fn len(&self) -> usize {
                 match self {
                     Self::AnyOrder(s) => s.len(),
+                    Self::Deterministic(s) => s.len(),
+                }
+            }
+
+            fn nodes(&self) -> &HashSet<u16> {
+                match self {
+                    Self::AnyOrder(s) => s,
+                    Self::Deterministic(s) => s,
                 }
             }
         }
@@ -625,9 +634,19 @@ mod tests {
             pub(crate) fn new() -> Self {
                 Self { groups: Vec::new() }
             }
+            /// Expects that the next group in the plan will have a set of nodes
+            /// that is equal to the provided one.
             pub(crate) fn group(mut self, group: impl IntoIterator<Item = u16>) -> Self {
                 self.groups
                     .push(ExpectedGroup::AnyOrder(group.into_iter().collect()));
+                self
+            }
+            /// Expects that the next group in the plan will have a set of nodes
+            /// that is equal to the provided one, but the order of nodes in
+            /// that group must be stable over multiple plans.
+            pub(crate) fn deterministic(mut self, group: impl IntoIterator<Item = u16>) -> Self {
+                self.groups
+                    .push(ExpectedGroup::Deterministic(group.into_iter().collect()));
                 self
             }
             pub(crate) fn build(self) -> ExpectedGroups {
@@ -643,6 +662,17 @@ mod tests {
 
         impl ExpectedGroups {
             pub(crate) fn assert_proper_grouping_in_plans(&self, gots: &[Vec<u16>]) {
+                // For simplicity, assume that there is at least one plan
+                // in `gots`
+                assert!(!gots.is_empty());
+
+                // Each plan is assumed to have the same number of groups.
+                // For group index `i`, the code below will go over all plans
+                // and will collect their `i`-th groups and put them under
+                // index `i` in `sets_of_groups`.
+                let mut sets_of_groups: Vec<HashSet<Vec<u16>>> =
+                    vec![HashSet::new(); self.groups.len()];
+
                 for got in gots {
                     // First, make sure that `got` has the right number of items,
                     // equal to the sum of sizes of all expected groups
@@ -652,13 +682,37 @@ mod tests {
                     // Now, split `got` into groups of expected sizes
                     // and just `assert_eq` them
                     let mut got = got.iter();
-                    for expected in self.groups.iter() {
+                    for (group_id, expected) in self.groups.iter().enumerate() {
+                        // Collect the nodes that consistute the group
+                        // in the actual plan
                         let got_group: Vec<_> = (&mut got).take(expected.len()).copied().collect();
-                        match expected {
-                            ExpectedGroup::AnyOrder(expected_set) => {
-                                let got_group: HashSet<_> = got_group.into_iter().collect();
-                                assert_eq!(&got_group, expected_set);
-                            }
+
+                        // Verify that the group has the same nodes as the
+                        // expected one
+                        let got_set: HashSet<_> = got_group.iter().copied().collect();
+                        let expected_set = expected.nodes();
+                        assert_eq!(&got_set, expected_set);
+
+                        // Put the group into sets_of_groups
+                        sets_of_groups[group_id].insert(got_group);
+                    }
+                }
+
+                // Verify that the groups are either deterministic
+                // or non-deterministic
+                for (sets, expected) in sets_of_groups.iter().zip(self.groups.iter()) {
+                    match expected {
+                        ExpectedGroup::AnyOrder(_) => {
+                            // No requirements for now
+                        }
+                        ExpectedGroup::Deterministic(_) => {
+                            // The group is supposed to be deterministic,
+                            // i.e. a given instance of the default policy
+                            // must always return the nodes within it using
+                            // the same order.
+                            // There will only be one, unique ordering shared
+                            // by all plans - check this
+                            assert_eq!(sets.len(), 1);
                         }
                     }
                 }
