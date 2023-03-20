@@ -1753,7 +1753,7 @@ impl Session {
         .await
     }
 
-    fn calculate_token(
+    pub fn calculate_token(
         &self,
         prepared: &PreparedStatement,
         serialized_values: &SerializedValues,
