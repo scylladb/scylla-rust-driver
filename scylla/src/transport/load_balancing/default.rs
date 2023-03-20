@@ -917,6 +917,31 @@ mod tests {
                     .group([E]) // remote nodes
                     .build(),
             },
+            // Keyspace NTS with RF=2 with enabled DC failover, shuffling replicas disabled
+            Test {
+                policy: DefaultPolicy {
+                    preferred_datacenter: Some("eu".to_owned()),
+                    is_token_aware: true,
+                    permit_dc_failover: true,
+                    fixed_shuffle_seed: Some(123),
+                    ..Default::default()
+                },
+                routing_info: RoutingInfo {
+                    token: Some(Token { value: 160 }),
+                    keyspace: Some(KEYSPACE_NTS_RF_2),
+                    consistency: Consistency::Two,
+                    ..Default::default()
+                },
+                // going though the ring, we get order: F , A , C , D , G , B , E
+                //                                      us  eu  eu  us  eu  eu  us
+                //                                      r2  r1  r1  r1  r2  r1  r1
+                expected_groups: ExpectedGroupsBuilder::new()
+                    .deterministic([A, G]) // pick + fallback local replicas
+                    .deterministic([F, D]) // remote replicas
+                    .group([C, B]) // local nodes
+                    .group([E]) // remote nodes
+                    .build(),
+            },
             // Keyspace NTS with RF=2 with DC failover forbidden by local Consistency
             Test {
                 policy: DefaultPolicy {
@@ -981,6 +1006,31 @@ mod tests {
                 expected_groups: ExpectedGroupsBuilder::new()
                     .group([A, C, G]) // pick + fallback local replicas
                     .group([F, D, E]) // remote replicas
+                    .group([B]) // local nodes
+                    .group([]) // remote nodes
+                    .build(),
+            },
+            // Keyspace NTS with RF=3 with enabled DC failover, shuffling replicas disabled
+            Test {
+                policy: DefaultPolicy {
+                    preferred_datacenter: Some("eu".to_owned()),
+                    is_token_aware: true,
+                    permit_dc_failover: true,
+                    fixed_shuffle_seed: Some(123),
+                    ..Default::default()
+                },
+                routing_info: RoutingInfo {
+                    token: Some(Token { value: 160 }),
+                    keyspace: Some(KEYSPACE_NTS_RF_3),
+                    consistency: Consistency::Quorum,
+                    ..Default::default()
+                },
+                // going though the ring, we get order: F , A , C , D , G , B , E
+                //                                      us  eu  eu  us  eu  eu  us
+                //                                      r2  r1  r1  r1  r2  r1  r1
+                expected_groups: ExpectedGroupsBuilder::new()
+                    .deterministic([A, C, G]) // pick + fallback local replicas
+                    .deterministic([F, D, E]) // remote replicas
                     .group([B]) // local nodes
                     .group([]) // remote nodes
                     .build(),
