@@ -604,8 +604,21 @@ mod tests {
                 ClusterData,
             },
         };
+
+        enum ExpectedGroup {
+            AnyOrder(HashSet<u16>),
+        }
+
+        impl ExpectedGroup {
+            fn len(&self) -> usize {
+                match self {
+                    Self::AnyOrder(s) => s.len(),
+                }
+            }
+        }
+
         pub(crate) struct ExpectedGroupsBuilder {
-            groups: Vec<HashSet<u16>>,
+            groups: Vec<ExpectedGroup>,
         }
 
         impl ExpectedGroupsBuilder {
@@ -613,7 +626,8 @@ mod tests {
                 Self { groups: Vec::new() }
             }
             pub(crate) fn group(mut self, group: impl IntoIterator<Item = u16>) -> Self {
-                self.groups.push(group.into_iter().collect());
+                self.groups
+                    .push(ExpectedGroup::AnyOrder(group.into_iter().collect()));
                 self
             }
             pub(crate) fn build(self) -> ExpectedGroups {
@@ -624,7 +638,7 @@ mod tests {
         }
 
         pub(crate) struct ExpectedGroups {
-            groups: Vec<HashSet<u16>>,
+            groups: Vec<ExpectedGroup>,
         }
 
         impl ExpectedGroups {
@@ -638,13 +652,15 @@ mod tests {
                     // Now, split `got` into groups of expected sizes
                     // and just `assert_eq` them
                     let mut got = got.iter();
-                    let got_groups = self
-                        .groups
-                        .iter()
-                        .map(|s| (&mut got).take(s.len()).copied().collect::<HashSet<u16>>())
-                        .collect::<Vec<_>>();
-
-                    assert_eq!(&got_groups, &self.groups);
+                    for expected in self.groups.iter() {
+                        let got_group: Vec<_> = (&mut got).take(expected.len()).copied().collect();
+                        match expected {
+                            ExpectedGroup::AnyOrder(expected_set) => {
+                                let got_group: HashSet<_> = got_group.into_iter().collect();
+                                assert_eq!(&got_group, expected_set);
+                            }
+                        }
+                    }
                 }
             }
         }
