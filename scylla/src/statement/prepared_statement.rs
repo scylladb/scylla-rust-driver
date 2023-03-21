@@ -311,7 +311,7 @@ impl PreparedStatement {
     }
 }
 
-#[derive(Debug, Error, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Clone, Debug, Error, PartialEq, Eq, PartialOrd, Ord)]
 pub enum PartitionKeyError {
     #[error("No value with given pk_index! pk_index: {0}, values.len(): {1}")]
     NoPkIndexValue(u16, i16),
