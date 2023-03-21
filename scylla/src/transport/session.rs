@@ -13,11 +13,16 @@ use bytes::Bytes;
 use futures::future::join_all;
 use futures::future::try_join_all;
 pub use scylla_cql::errors::TranslationError;
+use scylla_cql::frame::response::result::Rows;
 use scylla_cql::frame::response::NonErrorResponse;
+use std::borrow::Borrow;
 use std::collections::HashMap;
+use std::fmt::Display;
 use std::future::Future;
 use std::net::SocketAddr;
 use std::str::FromStr;
+use std::sync::atomic::AtomicUsize;
+use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::net::lookup_host;
@@ -1892,5 +1897,157 @@ impl<'a> ExecuteQueryContext<'a> {
         history_data
             .listener
             .log_attempt_error(*attempt_id, error, retry_decision);
+    }
+}
+
+pub(crate) struct RequestSpan {
+    span: tracing::Span,
+    speculative_executions: AtomicUsize,
+}
+
+impl RequestSpan {
+    pub(crate) fn new_query(contents: &str, request_size: usize) -> Self {
+        use tracing::field::Empty;
+
+        let span = trace_span!(
+            "Request",
+            kind = "unprepared",
+            contents = contents,
+            //
+            request_size = request_size,
+            result_size = Empty,
+            result_rows = Empty,
+            replicas = Empty,
+            shard = Empty,
+            speculative_executions = Empty,
+        );
+
+        Self {
+            span,
+            speculative_executions: 0.into(),
+        }
+    }
+
+    pub(crate) fn new_prepared(
+        partition_key: Option<&Bytes>,
+        token: Option<Token>,
+        request_size: usize,
+    ) -> Self {
+        use crate::utils::pretty::HexBytes;
+        use tracing::field::Empty;
+
+        let span = trace_span!(
+            "Request",
+            kind = "prepared",
+            partition_key = Empty,
+            token = Empty,
+            //
+            request_size = request_size,
+            result_size = Empty,
+            result_rows = Empty,
+            replicas = Empty,
+            shard = Empty,
+            speculative_executions = Empty,
+        );
+
+        if let Some(partition_key) = partition_key {
+            span.record(
+                "partition_key",
+                tracing::field::display(format_args!("{:x}", HexBytes(partition_key))),
+            );
+        }
+        if let Some(token) = token {
+            span.record("token", token.value);
+        }
+
+        Self {
+            span,
+            speculative_executions: 0.into(),
+        }
+    }
+
+    pub(crate) fn new_batch() -> Self {
+        use tracing::field::Empty;
+
+        let span = trace_span!(
+            "Request",
+            kind = "batch",
+            //
+            request_size = Empty,
+            result_size = Empty,
+            result_rows = Empty,
+            replicas = Empty,
+            shard = Empty,
+            speculative_executions = Empty,
+        );
+
+        Self {
+            span,
+            speculative_executions: 0.into(),
+        }
+    }
+
+    pub(crate) fn new_none() -> Self {
+        Self {
+            span: tracing::Span::none(),
+            speculative_executions: 0.into(),
+        }
+    }
+
+    pub(crate) fn record_shard_id(&self, conn: &Connection) {
+        if let Some(info) = conn.get_shard_info() {
+            self.span.record("shard", info.shard);
+        }
+    }
+
+    pub(crate) fn record_result_fields(&self, result: &QueryResult) {
+        self.span.record("result_size", result.serialized_size);
+        if let Some(rows) = result.rows.as_ref() {
+            self.span.record("result_rows", rows.len());
+        }
+    }
+
+    pub(crate) fn record_rows_fields(&self, rows: &Rows) {
+        self.span.record("result_size", rows.serialized_size);
+        self.span.record("result_rows", rows.rows.len());
+    }
+
+    pub(crate) fn record_replicas<'a>(&'a self, replicas: &'a [impl Borrow<Arc<Node>>]) {
+        struct ReplicaIps<'a, N>(&'a [N]);
+        impl<'a, N> Display for ReplicaIps<'a, N>
+        where
+            N: Borrow<Arc<Node>>,
+        {
+            fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                let mut nodes = self.0.iter();
+                if let Some(node) = nodes.next() {
+                    write!(f, "{}", node.borrow().address.ip())?;
+
+                    for node in nodes {
+                        write!(f, ",{}", node.borrow().address.ip())?;
+                    }
+                }
+                Ok(())
+            }
+        }
+        self.span
+            .record("replicas", tracing::field::display(&ReplicaIps(replicas)));
+    }
+
+    pub(crate) fn inc_speculative_executions(&self) {
+        self.speculative_executions.fetch_add(1, Ordering::Relaxed);
+    }
+
+    pub(crate) fn span(&self) -> &tracing::Span {
+        &self.span
+    }
+}
+
+impl Drop for RequestSpan {
+    fn drop(&mut self) {
+        self.span.record(
+            "speculative_executions",
+            self.speculative_executions.load(Ordering::Relaxed),
+        );
     }
 }
