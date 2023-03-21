@@ -432,7 +432,7 @@ impl ClusterData {
                 Some(buf.into())
             }
         };
-        Ok(partitioner.hash(serialized_pk.unwrap_or_default()))
+        Ok(partitioner.hash(&serialized_pk.unwrap_or_default()))
     }
 
     /// Access to replicas owning a given token

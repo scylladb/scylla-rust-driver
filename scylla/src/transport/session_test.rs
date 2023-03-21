@@ -231,7 +231,7 @@ async fn test_prepared_statement() {
                 .unwrap(),
         };
         let prepared_token = Murmur3Partitioner::hash(
-            prepared_statement
+            &prepared_statement
                 .compute_partition_key(&serialized_values)
                 .unwrap(),
         );
@@ -257,7 +257,7 @@ async fn test_prepared_statement() {
                 .unwrap(),
         };
         let prepared_token = Murmur3Partitioner::hash(
-            prepared_complex_pk_statement
+            &prepared_complex_pk_statement
                 .compute_partition_key(&serialized_values)
                 .unwrap(),
         );
@@ -531,7 +531,7 @@ async fn test_token_calculation() {
                 .unwrap(),
         };
         let prepared_token = Murmur3Partitioner::hash(
-            prepared_statement
+            &prepared_statement
                 .compute_partition_key(&serialized_values)
                 .unwrap(),
         );

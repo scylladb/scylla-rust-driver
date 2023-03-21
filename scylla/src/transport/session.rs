@@ -1766,7 +1766,7 @@ impl Session {
 
         let partition_key = calculate_partition_key(prepared, serialized_values)?;
 
-        Ok(Some(partitioner_name.hash(partition_key)))
+        Ok(Some(partitioner_name.hash(&partition_key)))
     }
 
     fn get_default_execution_profile_handle(&self) -> &ExecutionProfileHandle {

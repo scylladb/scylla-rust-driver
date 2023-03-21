@@ -1,4 +1,4 @@
-use bytes::{Buf, Bytes};
+use bytes::Buf;
 use std::num::Wrapping;
 
 use crate::routing::Token;
@@ -22,7 +22,7 @@ impl PartitionerName {
         }
     }
 
-    pub(crate) fn hash(&self, pk: Bytes) -> Token {
+    pub(crate) fn hash(&self, pk: &[u8]) -> Token {
         match self {
             PartitionerName::Murmur3 => Murmur3Partitioner::hash(pk),
             PartitionerName::CDC => CDCPartitioner::hash(pk),
@@ -31,7 +31,7 @@ impl PartitionerName {
 }
 
 pub trait Partitioner {
-    fn hash(pk: Bytes) -> Token;
+    fn hash(pk: &[u8]) -> Token;
 }
 
 pub struct Murmur3Partitioner;
@@ -133,15 +133,15 @@ impl Murmur3Partitioner {
 }
 
 impl Partitioner for Murmur3Partitioner {
-    fn hash(pk: Bytes) -> Token {
+    fn hash(pk: &[u8]) -> Token {
         Token {
-            value: Self::hash3_x64_128(&pk) as i64,
+            value: Self::hash3_x64_128(pk) as i64,
         }
     }
 }
 
 impl Partitioner for CDCPartitioner {
-    fn hash(mut pk: Bytes) -> Token {
+    fn hash(mut pk: &[u8]) -> Token {
         let value = if pk.len() < 8 { i64::MIN } else { pk.get_i64() };
         Token { value }
     }
@@ -150,11 +150,9 @@ impl Partitioner for CDCPartitioner {
 #[cfg(test)]
 mod tests {
     use super::{CDCPartitioner, Murmur3Partitioner, Partitioner};
-    use bytes::Bytes;
 
     fn assert_correct_murmur3_hash(pk: &'static str, expected_hash: i64) {
-        let pk = Bytes::from(pk);
-        let hash = Murmur3Partitioner::hash(pk).value;
+        let hash = Murmur3Partitioner::hash(pk.as_bytes()).value;
         assert_eq!(hash, expected_hash);
     }
 
@@ -171,8 +169,7 @@ mod tests {
     }
 
     fn assert_correct_cdc_hash(pk: &'static str, expected_hash: i64) {
-        let pk = Bytes::from(pk);
-        let hash = CDCPartitioner::hash(pk).value;
+        let hash = CDCPartitioner::hash(pk.as_bytes()).value;
         assert_eq!(hash, expected_hash);
     }
 
