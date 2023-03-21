@@ -1753,20 +1753,31 @@ impl Session {
         .await
     }
 
+    fn calculate_partition_key(
+        &self,
+        prepared: &PreparedStatement,
+        serialized_values: &SerializedValues,
+    ) -> Result<Option<Bytes>, QueryError> {
+        if !prepared.is_token_aware() {
+            return Ok(None);
+        }
+        let partition_key = calculate_partition_key(prepared, serialized_values)?;
+        Ok(Some(partition_key))
+    }
+
     pub fn calculate_token(
         &self,
         prepared: &PreparedStatement,
         serialized_values: &SerializedValues,
     ) -> Result<Option<Token>, QueryError> {
-        if !prepared.is_token_aware() {
-            return Ok(None);
+        match self.calculate_partition_key(prepared, serialized_values) {
+            Ok(Some(partition_key)) => {
+                let partitioner_name = prepared.get_partitioner_name();
+                Ok(Some(partitioner_name.hash(&partition_key)))
+            }
+            Ok(None) => Ok(None),
+            Err(err) => Err(err),
         }
-
-        let partitioner_name = prepared.get_partitioner_name();
-
-        let partition_key = calculate_partition_key(prepared, serialized_values)?;
-
-        Ok(Some(partitioner_name.hash(&partition_key)))
     }
 
     fn get_default_execution_profile_handle(&self) -> &ExecutionProfileHandle {
