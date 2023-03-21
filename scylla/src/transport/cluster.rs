@@ -437,6 +437,16 @@ impl ClusterData {
 
     /// Access to replicas owning a given token
     pub fn get_token_endpoints(&self, keyspace: &str, token: Token) -> Vec<Arc<Node>> {
+        self.get_token_endpoints_iter(keyspace, token)
+            .cloned()
+            .collect()
+    }
+
+    pub(crate) fn get_token_endpoints_iter(
+        &self,
+        keyspace: &str,
+        token: Token,
+    ) -> impl Iterator<Item = &Arc<Node>> {
         let keyspace = self.keyspaces.get(keyspace);
         let strategy = keyspace
             .map(|k| &k.strategy)
@@ -445,7 +455,7 @@ impl ClusterData {
             .replica_locator()
             .replicas_for_token(token, strategy, None);
 
-        replica_set.into_iter().cloned().collect()
+        replica_set.into_iter()
     }
 
     /// Access to replicas owning a given partition key (similar to `nodetool getendpoints`)
