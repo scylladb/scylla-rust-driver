@@ -19,6 +19,7 @@ use tracing::instrument::WithSubscriber;
 
 use super::errors::QueryError;
 use super::execution_profile::ExecutionProfileInner;
+use super::session::RequestSpan;
 use crate::cql_to_rust::{FromRow, FromRowError};
 
 use crate::frame::types::LegacyConsistency;
@@ -75,6 +76,7 @@ struct ReceivedPage {
 pub(crate) struct PreparedIteratorConfig {
     pub prepared: PreparedStatement,
     pub values: SerializedValues,
+    pub partition_key: Option<Bytes>,
     pub token: Option<Token>,
     pub execution_profile: Arc<ExecutionProfileInner>,
     pub cluster_data: Arc<ClusterData>,
@@ -151,6 +153,7 @@ impl RowIterator {
 
         let retry_session = execution_profile.retry_policy.new_session();
 
+        let parent_span = tracing::Span::current();
         let worker_task = async move {
             let query_ref = &query;
             let values_ref = &values;
@@ -171,6 +174,12 @@ impl RowIterator {
                     .await
             };
 
+            let query_ref = &query;
+            let serialized_values_size = values.size();
+
+            let span_creator =
+                move || RequestSpan::new_query(&query_ref.contents, serialized_values_size);
+
             let worker = RowIteratorWorker {
                 sender: sender.into(),
                 choose_connection,
@@ -185,6 +194,8 @@ impl RowIterator {
                 history_listener: query.config.history_listener.clone(),
                 current_query_id: None,
                 current_attempt_id: None,
+                parent_span,
+                span_creator,
             };
 
             worker.work(cluster_data).await
@@ -221,9 +232,11 @@ impl RowIterator {
             is_confirmed_lwt: config.prepared.is_confirmed_lwt(),
         };
 
+        let parent_span = tracing::Span::current();
         let worker_task = async move {
             let prepared_ref = &config.prepared;
             let values_ref = &config.values;
+            let partition_key = config.partition_key;
             let token = config.token;
 
             let choose_connection = |node: Arc<Node>| async move {
@@ -247,6 +260,35 @@ impl RowIterator {
                     .await
             };
 
+            let serialized_values_size = config.values.size();
+
+            let replicas: Option<smallvec::SmallVec<[_; 8]>> =
+                if let (Some(keyspace), Some(token)) =
+                    (statement_info.keyspace.as_ref(), statement_info.token)
+                {
+                    Some(
+                        config
+                            .cluster_data
+                            .get_token_endpoints_iter(keyspace, token)
+                            .cloned()
+                            .collect(),
+                    )
+                } else {
+                    None
+                };
+
+            let span_creator = move || {
+                let span = RequestSpan::new_prepared(
+                    partition_key.as_ref(),
+                    token,
+                    serialized_values_size,
+                );
+                if let Some(replicas) = replicas.as_ref() {
+                    span.record_replicas(replicas);
+                }
+                span
+            };
+
             let worker = RowIteratorWorker {
                 sender: sender.into(),
                 choose_connection,
@@ -261,6 +303,8 @@ impl RowIterator {
                 history_listener: config.prepared.config.history_listener.clone(),
                 current_query_id: None,
                 current_attempt_id: None,
+                parent_span,
+                span_creator,
             };
 
             worker.work(config.cluster_data).await
@@ -403,7 +447,7 @@ type PageSendAttemptedProof = SendAttemptedProof<Result<ReceivedPage, QueryError
 
 // RowIteratorWorker works in the background to fetch pages
 // RowIterator receives them through a channel
-struct RowIteratorWorker<'a, ConnFunc, QueryFunc> {
+struct RowIteratorWorker<'a, ConnFunc, QueryFunc, SpanCreatorFunc> {
     sender: ProvingSender<Result<ReceivedPage, QueryError>>,
 
     // Closure used to choose a connection from a node
@@ -426,14 +470,19 @@ struct RowIteratorWorker<'a, ConnFunc, QueryFunc> {
     history_listener: Option<Arc<dyn HistoryListener>>,
     current_query_id: Option<history::QueryId>,
     current_attempt_id: Option<history::AttemptId>,
+
+    parent_span: tracing::Span,
+    span_creator: SpanCreatorFunc,
 }
 
-impl<ConnFunc, ConnFut, QueryFunc, QueryFut> RowIteratorWorker<'_, ConnFunc, QueryFunc>
+impl<ConnFunc, ConnFut, QueryFunc, QueryFut, SpanCreator>
+    RowIteratorWorker<'_, ConnFunc, QueryFunc, SpanCreator>
 where
     ConnFunc: Fn(Arc<Node>) -> ConnFut,
     ConnFut: Future<Output = Result<Arc<Connection>, QueryError>>,
     QueryFunc: Fn(Arc<Connection>, Consistency, Option<Bytes>) -> QueryFut,
     QueryFut: Future<Output = Result<QueryResponse, QueryError>>,
+    SpanCreator: Fn() -> RequestSpan,
 {
     // Contract: this function MUST send at least one item through self.sender
     async fn work(mut self, cluster_data: Arc<ClusterData>) -> PageSendAttemptedProof {
@@ -449,7 +498,8 @@ where
         self.log_query_start();
 
         'nodes_in_plan: for node in query_plan {
-            let span = trace_span!("Executing query", node = %node.address);
+            let span =
+                trace_span!(parent: &self.parent_span, "Executing query", node = %node.address);
             // For each node in the plan choose a connection to use
             // This connection will be reused for same node retries to preserve paging cache on the shard
             let connection: Arc<Connection> = match (self.choose_connection)(node.clone())
@@ -553,7 +603,12 @@ where
         node: NodeRef<'_>,
     ) -> Result<PageSendAttemptedProof, QueryError> {
         loop {
-            match self.query_one_page(connection, consistency, node).await? {
+            let request_span = (self.span_creator)();
+            match self
+                .query_one_page(connection, consistency, node, &request_span)
+                .instrument(request_span.span().clone())
+                .await?
+            {
                 ControlFlow::Break(proof) => return Ok(proof),
                 ControlFlow::Continue(_) => {}
             }
@@ -565,6 +620,7 @@ where
         connection: &Arc<Connection>,
         consistency: Consistency,
         node: NodeRef<'_>,
+        request_span: &RequestSpan,
     ) -> Result<ControlFlow<PageSendAttemptedProof, ()>, QueryError> {
         self.metrics.inc_total_paged_queries();
         let query_start = std::time::Instant::now();
@@ -582,6 +638,8 @@ where
 
         let elapsed = query_start.elapsed();
 
+        request_span.record_shard_id(connection);
+
         match query_response {
             Ok(NonErrorQueryResponse {
                 response: NonErrorResponse::Result(result::Result::Rows(mut rows)),
@@ -596,6 +654,8 @@ where
                     .on_query_success(&self.statement_info, elapsed, node);
 
                 self.paging_state = rows.metadata.paging_state.take();
+
+                request_span.record_rows_fields(&rows);
 
                 let received_page = ReceivedPage { rows, tracing_id };
 

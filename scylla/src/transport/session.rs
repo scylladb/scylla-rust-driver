@@ -1019,8 +1019,10 @@ impl Session {
     ) -> Result<RowIterator, QueryError> {
         let prepared = prepared.into();
         let serialized_values = values.serialized()?;
-
-        let token = self.calculate_token(&prepared, &serialized_values)?;
+        let partition_key = self.calculate_partition_key(&prepared, &serialized_values)?;
+        let token = partition_key
+            .as_ref()
+            .map(|pk| prepared.get_partitioner_name().hash(pk));
 
         let execution_profile = prepared
             .get_execution_profile_handle()
@@ -1034,6 +1036,7 @@ impl Session {
         RowIterator::new_for_prepared_statement(PreparedIteratorConfig {
             prepared,
             values: serialized_values.into_owned(),
+            partition_key,
             token,
             execution_profile,
             cluster_data: self.cluster.get_data(),
