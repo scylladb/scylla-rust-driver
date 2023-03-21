@@ -8,6 +8,7 @@ use uuid::Uuid;
 
 /// Result of a single query\
 /// Contains all rows returned by the database and some more information
+#[non_exhaustive]
 #[derive(Default, Debug)]
 pub struct QueryResult {
     /// Rows returned by the database.\
@@ -22,6 +23,8 @@ pub struct QueryResult {
     pub paging_state: Option<Bytes>,
     /// Column specification returned from the server
     pub col_specs: Vec<ColumnSpec>,
+    /// The original size of the serialized rows in request
+    pub serialized_size: usize,
 }
 
 impl QueryResult {
@@ -304,6 +307,7 @@ mod tests {
             tracing_id: None,
             paging_state: None,
             col_specs: vec![column_spec],
+            serialized_size: 0,
         }
     }
 

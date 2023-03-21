@@ -388,6 +388,7 @@ mod checked_channel_sender {
                     metadata: Default::default(),
                     rows_count: 0,
                     rows: Vec::new(),
+                    serialized_size: 0,
                 },
                 tracing_id,
             };

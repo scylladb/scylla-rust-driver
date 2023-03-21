@@ -378,6 +378,8 @@ pub struct Rows {
     pub metadata: ResultMetadata,
     pub rows_count: usize,
     pub rows: Vec<Row>,
+    /// Original size of the serialized rows.
+    pub serialized_size: usize,
 }
 
 #[derive(Debug)]
@@ -836,6 +838,8 @@ pub fn deser_cql_value(typ: &ColumnType, buf: &mut &[u8]) -> StdResult<CqlValue,
 fn deser_rows(buf: &mut &[u8]) -> StdResult<Rows, ParseError> {
     let metadata = deser_result_metadata(buf)?;
 
+    let original_size = buf.len();
+
     // TODO: the protocol allows an optimization (which must be explicitly requested on query by
     // the driver) where the column metadata is not sent with the result.
     // Implement this optimization. We'll then need to take the column types by a parameter.
@@ -861,6 +865,7 @@ fn deser_rows(buf: &mut &[u8]) -> StdResult<Rows, ParseError> {
         metadata,
         rows_count,
         rows,
+        serialized_size: original_size - buf.len(),
     })
 }
 

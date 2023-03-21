@@ -192,13 +192,14 @@ impl NonErrorQueryResponse {
     }
 
     pub fn into_query_result(self) -> Result<QueryResult, QueryError> {
-        let (rows, paging_state, col_specs) = match self.response {
+        let (rows, paging_state, col_specs, serialized_size) = match self.response {
             NonErrorResponse::Result(result::Result::Rows(rs)) => (
                 Some(rs.rows),
                 rs.metadata.paging_state,
                 rs.metadata.col_specs,
+                rs.serialized_size,
             ),
-            NonErrorResponse::Result(_) => (None, None, vec![]),
+            NonErrorResponse::Result(_) => (None, None, vec![], 0),
             _ => {
                 return Err(QueryError::ProtocolError(
                     "Unexpected server response, expected Result or Error",
@@ -212,6 +213,7 @@ impl NonErrorQueryResponse {
             tracing_id: self.tracing_id,
             paging_state,
             col_specs,
+            serialized_size,
         })
     }
 }
