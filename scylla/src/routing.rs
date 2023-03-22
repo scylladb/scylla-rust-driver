@@ -106,7 +106,7 @@ impl Sharder {
     }
 }
 
-#[derive(Error, Debug)]
+#[derive(Clone, Error, Debug)]
 pub enum ShardingError {
     #[error("ShardInfo parameters missing")]
     MissingShardInfoParameter,

@@ -5,7 +5,7 @@ use crate::frame::types;
 use byteorder::ReadBytesExt;
 use bytes::Bytes;
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Error {
     pub error: DbError,
     pub reason: String,

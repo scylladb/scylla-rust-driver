@@ -137,7 +137,7 @@ impl QueryResult {
 /// Expected `QueryResult.rows` to be `Some`, but it was `None`.\
 /// `QueryResult.rows` is `Some` for queries that can return rows (e.g `SELECT`).\
 /// It is `None` for queries that can't return rows (e.g `INSERT`).
-#[derive(Debug, Error, PartialEq, Eq)]
+#[derive(Debug, Clone, Error, PartialEq, Eq)]
 #[error(
     "QueryResult::rows() or similar function called on a bad QueryResult.
          Expected QueryResult.rows to be Some, but it was None.
@@ -150,7 +150,7 @@ pub struct RowsExpectedError;
 /// Expected `QueryResult.rows` to be `None`, but it was `Some`.\
 /// `QueryResult.rows` is `Some` for queries that can return rows (e.g `SELECT`).\
 /// It is `None` for queries that can't return rows (e.g `INSERT`).
-#[derive(Debug, Error, PartialEq, Eq)]
+#[derive(Debug, Clone, Error, PartialEq, Eq)]
 #[error(
     "QueryResult::result_not_rows() called on a bad QueryResult.
          Expected QueryResult.rows to be None, but it was Some.
@@ -159,7 +159,7 @@ pub struct RowsExpectedError;
 )]
 pub struct RowsNotExpectedError;
 
-#[derive(Debug, Error, PartialEq, Eq)]
+#[derive(Debug, Clone, Error, PartialEq, Eq)]
 pub enum FirstRowError {
     /// [`QueryResult::first_row()`](QueryResult::first_row) called on a bad QueryResult.\
     /// Expected `QueryResult.rows` to be `Some`, but it was `None`.\
@@ -173,7 +173,7 @@ pub enum FirstRowError {
     RowsEmpty,
 }
 
-#[derive(Debug, Error, PartialEq, Eq)]
+#[derive(Debug, Clone, Error, PartialEq, Eq)]
 pub enum FirstRowTypedError {
     /// [`QueryResult::first_row_typed()`](QueryResult::first_row_typed) called on a bad QueryResult.\
     /// Expected `QueryResult.rows` to be `Some`, but it was `None`.\
@@ -191,7 +191,7 @@ pub enum FirstRowTypedError {
     FromRowError(#[from] FromRowError),
 }
 
-#[derive(Debug, Error, PartialEq, Eq)]
+#[derive(Debug, Clone, Error, PartialEq, Eq)]
 pub enum MaybeFirstRowTypedError {
     /// [`QueryResult::maybe_first_row_typed()`](QueryResult::maybe_first_row_typed) called on a bad QueryResult.\
     /// Expected `QueryResult.rows` to be `Some`, but it was `None`.
@@ -205,7 +205,7 @@ pub enum MaybeFirstRowTypedError {
     FromRowError(#[from] FromRowError),
 }
 
-#[derive(Debug, Error, PartialEq, Eq)]
+#[derive(Debug, Clone, Error, PartialEq, Eq)]
 pub enum SingleRowError {
     /// [`QueryResult::single_row()`](QueryResult::single_row) called on a bad QueryResult.\
     /// Expected `QueryResult.rows` to be `Some`, but it was `None`.\
@@ -219,7 +219,7 @@ pub enum SingleRowError {
     BadNumberOfRows(usize),
 }
 
-#[derive(Debug, Error, PartialEq, Eq)]
+#[derive(Debug, Clone, Error, PartialEq, Eq)]
 pub enum SingleRowTypedError {
     /// [`QueryResult::single_row_typed()`](QueryResult::single_row_typed) called on a bad QueryResult.\
     /// Expected `QueryResult.rows` to be `Some`, but it was `None`.\

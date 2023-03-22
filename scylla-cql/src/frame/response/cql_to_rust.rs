@@ -20,7 +20,7 @@ pub enum FromRowError {
     WrongRowSize { expected: usize, actual: usize },
 }
 
-#[derive(Error, Debug, PartialEq, Eq)]
+#[derive(Error, Clone, Debug, PartialEq, Eq)]
 pub enum CqlTypeError {
     #[error("Invalid number of set elements: {0}")]
     InvalidNumberOfElements(i32),
