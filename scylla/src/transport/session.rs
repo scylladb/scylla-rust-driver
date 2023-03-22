@@ -719,7 +719,6 @@ impl Session {
             .unwrap_or_else(|| self.get_default_execution_profile_handle())
             .access();
 
-        let span = trace_span!("Request", query = %query.contents);
         RowIterator::new_for_query(
             query,
             serialized_values.into_owned(),
@@ -727,7 +726,6 @@ impl Session {
             self.cluster.get_data(),
             self.metrics.clone(),
         )
-        .instrument(span)
         .await
     }
 
@@ -1029,10 +1027,6 @@ impl Session {
             .unwrap_or_else(|| self.get_default_execution_profile_handle())
             .access();
 
-        let span = trace_span!(
-            "Request",
-            prepared_id = %format_args!("{:X}", prepared.get_id())
-        );
         RowIterator::new_for_prepared_statement(PreparedIteratorConfig {
             prepared,
             values: serialized_values.into_owned(),
@@ -1042,7 +1036,6 @@ impl Session {
             cluster_data: self.cluster.get_data(),
             metrics: self.metrics.clone(),
         })
-        .instrument(span)
         .await
     }
 
