@@ -15,6 +15,7 @@ use scylla_cql::frame::types::SerialConsistency;
 use std::result::Result;
 use thiserror::Error;
 use tokio::sync::mpsc;
+use tracing::instrument::WithSubscriber;
 
 use super::errors::QueryError;
 use super::execution_profile::ExecutionProfileInner;
@@ -303,9 +304,7 @@ impl RowIterator {
         worker_task: impl Future<Output = PageSendAttemptedProof> + Send + 'static,
         mut receiver: mpsc::Receiver<Result<ReceivedPage, QueryError>>,
     ) -> Result<RowIterator, QueryError> {
-        tokio::task::spawn(async move {
-            worker_task.await;
-        });
+        tokio::task::spawn(worker_task.with_current_subscriber());
 
         // This unwrap is safe because:
         // - The future returned by worker.work sends at least one item

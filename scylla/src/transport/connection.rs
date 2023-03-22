@@ -6,6 +6,7 @@ use tokio::io::{split, AsyncRead, AsyncWrite, AsyncWriteExt, BufReader, BufWrite
 use tokio::net::{TcpSocket, TcpStream};
 use tokio::sync::{mpsc, oneshot};
 use tokio::time::Instant;
+use tracing::instrument::WithSubscriber;
 use tracing::{debug, error, trace, warn};
 use uuid::Uuid;
 
@@ -860,7 +861,7 @@ impl Connection {
                 orphan_notification_receiver,
             )
             .remote_handle();
-            tokio::task::spawn(task);
+            tokio::task::spawn(task.with_current_subscriber());
             return Ok(handle);
         }
 
@@ -872,7 +873,7 @@ impl Connection {
             orphan_notification_receiver,
         )
         .remote_handle();
-        tokio::task::spawn(task);
+        tokio::task::spawn(task.with_current_subscriber());
         Ok(handle)
     }
 
