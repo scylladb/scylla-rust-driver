@@ -3,6 +3,7 @@
 use std::future::Future;
 use std::mem;
 use std::net::SocketAddr;
+use std::ops::ControlFlow;
 use std::pin::Pin;
 use std::sync::Arc;
 use std::task::{Context, Poll};
@@ -14,9 +15,11 @@ use scylla_cql::frame::types::SerialConsistency;
 use std::result::Result;
 use thiserror::Error;
 use tokio::sync::mpsc;
+use tracing::instrument::WithSubscriber;
 
 use super::errors::QueryError;
 use super::execution_profile::ExecutionProfileInner;
+use super::session::RequestSpan;
 use crate::cql_to_rust::{FromRow, FromRowError};
 
 use crate::frame::types::LegacyConsistency;
@@ -73,6 +76,7 @@ struct ReceivedPage {
 pub(crate) struct PreparedIteratorConfig {
     pub prepared: PreparedStatement,
     pub values: SerializedValues,
+    pub partition_key: Option<Bytes>,
     pub token: Option<Token>,
     pub execution_profile: Arc<ExecutionProfileInner>,
     pub cluster_data: Arc<ClusterData>,
@@ -149,6 +153,7 @@ impl RowIterator {
 
         let retry_session = execution_profile.retry_policy.new_session();
 
+        let parent_span = tracing::Span::current();
         let worker_task = async move {
             let query_ref = &query;
             let values_ref = &values;
@@ -169,6 +174,12 @@ impl RowIterator {
                     .await
             };
 
+            let query_ref = &query;
+            let serialized_values_size = values.size();
+
+            let span_creator =
+                move || RequestSpan::new_query(&query_ref.contents, serialized_values_size);
+
             let worker = RowIteratorWorker {
                 sender: sender.into(),
                 choose_connection,
@@ -183,6 +194,8 @@ impl RowIterator {
                 history_listener: query.config.history_listener.clone(),
                 current_query_id: None,
                 current_attempt_id: None,
+                parent_span,
+                span_creator,
             };
 
             worker.work(cluster_data).await
@@ -219,9 +232,11 @@ impl RowIterator {
             is_confirmed_lwt: config.prepared.is_confirmed_lwt(),
         };
 
+        let parent_span = tracing::Span::current();
         let worker_task = async move {
             let prepared_ref = &config.prepared;
             let values_ref = &config.values;
+            let partition_key = config.partition_key;
             let token = config.token;
 
             let choose_connection = |node: Arc<Node>| async move {
@@ -245,6 +260,35 @@ impl RowIterator {
                     .await
             };
 
+            let serialized_values_size = config.values.size();
+
+            let replicas: Option<smallvec::SmallVec<[_; 8]>> =
+                if let (Some(keyspace), Some(token)) =
+                    (statement_info.keyspace.as_ref(), statement_info.token)
+                {
+                    Some(
+                        config
+                            .cluster_data
+                            .get_token_endpoints_iter(keyspace, token)
+                            .cloned()
+                            .collect(),
+                    )
+                } else {
+                    None
+                };
+
+            let span_creator = move || {
+                let span = RequestSpan::new_prepared(
+                    partition_key.as_ref(),
+                    token,
+                    serialized_values_size,
+                );
+                if let Some(replicas) = replicas.as_ref() {
+                    span.record_replicas(replicas);
+                }
+                span
+            };
+
             let worker = RowIteratorWorker {
                 sender: sender.into(),
                 choose_connection,
@@ -259,6 +303,8 @@ impl RowIterator {
                 history_listener: config.prepared.config.history_listener.clone(),
                 current_query_id: None,
                 current_attempt_id: None,
+                parent_span,
+                span_creator,
             };
 
             worker.work(config.cluster_data).await
@@ -302,9 +348,7 @@ impl RowIterator {
         worker_task: impl Future<Output = PageSendAttemptedProof> + Send + 'static,
         mut receiver: mpsc::Receiver<Result<ReceivedPage, QueryError>>,
     ) -> Result<RowIterator, QueryError> {
-        tokio::task::spawn(async move {
-            worker_task.await;
-        });
+        tokio::task::spawn(worker_task.with_current_subscriber());
 
         // This unwrap is safe because:
         // - The future returned by worker.work sends at least one item
@@ -388,6 +432,7 @@ mod checked_channel_sender {
                     metadata: Default::default(),
                     rows_count: 0,
                     rows: Vec::new(),
+                    serialized_size: 0,
                 },
                 tracing_id,
             };
@@ -402,7 +447,7 @@ type PageSendAttemptedProof = SendAttemptedProof<Result<ReceivedPage, QueryError
 
 // RowIteratorWorker works in the background to fetch pages
 // RowIterator receives them through a channel
-struct RowIteratorWorker<'a, ConnFunc, QueryFunc> {
+struct RowIteratorWorker<'a, ConnFunc, QueryFunc, SpanCreatorFunc> {
     sender: ProvingSender<Result<ReceivedPage, QueryError>>,
 
     // Closure used to choose a connection from a node
@@ -425,14 +470,19 @@ struct RowIteratorWorker<'a, ConnFunc, QueryFunc> {
     history_listener: Option<Arc<dyn HistoryListener>>,
     current_query_id: Option<history::QueryId>,
     current_attempt_id: Option<history::AttemptId>,
+
+    parent_span: tracing::Span,
+    span_creator: SpanCreatorFunc,
 }
 
-impl<ConnFunc, ConnFut, QueryFunc, QueryFut> RowIteratorWorker<'_, ConnFunc, QueryFunc>
+impl<ConnFunc, ConnFut, QueryFunc, QueryFut, SpanCreator>
+    RowIteratorWorker<'_, ConnFunc, QueryFunc, SpanCreator>
 where
     ConnFunc: Fn(Arc<Node>) -> ConnFut,
     ConnFut: Future<Output = Result<Arc<Connection>, QueryError>>,
     QueryFunc: Fn(Arc<Connection>, Consistency, Option<Bytes>) -> QueryFut,
     QueryFut: Future<Output = Result<QueryResponse, QueryError>>,
+    SpanCreator: Fn() -> RequestSpan,
 {
     // Contract: this function MUST send at least one item through self.sender
     async fn work(mut self, cluster_data: Arc<ClusterData>) -> PageSendAttemptedProof {
@@ -448,7 +498,8 @@ where
         self.log_query_start();
 
         'nodes_in_plan: for node in query_plan {
-            let span = trace_span!("Executing query", node = %node.address);
+            let span =
+                trace_span!(parent: &self.parent_span, "Executing query", node = %node.address);
             // For each node in the plan choose a connection to use
             // This connection will be reused for same node retries to preserve paging cache on the shard
             let connection: Arc<Connection> = match (self.choose_connection)(node.clone())
@@ -552,82 +603,106 @@ where
         node: NodeRef<'_>,
     ) -> Result<PageSendAttemptedProof, QueryError> {
         loop {
-            self.metrics.inc_total_paged_queries();
-            let query_start = std::time::Instant::now();
+            let request_span = (self.span_creator)();
+            match self
+                .query_one_page(connection, consistency, node, &request_span)
+                .instrument(request_span.span().clone())
+                .await?
+            {
+                ControlFlow::Break(proof) => return Ok(proof),
+                ControlFlow::Continue(_) => {}
+            }
+        }
+    }
 
-            trace!(
-                connection = %connection.get_connect_address(),
-                "Sending"
-            );
-            self.log_attempt_start(connection.get_connect_address());
+    async fn query_one_page(
+        &mut self,
+        connection: &Arc<Connection>,
+        consistency: Consistency,
+        node: NodeRef<'_>,
+        request_span: &RequestSpan,
+    ) -> Result<ControlFlow<PageSendAttemptedProof, ()>, QueryError> {
+        self.metrics.inc_total_paged_queries();
+        let query_start = std::time::Instant::now();
 
-            let query_response =
-                (self.page_query)(connection.clone(), consistency, self.paging_state.clone())
-                    .await
-                    .and_then(QueryResponse::into_non_error_query_response);
+        trace!(
+            connection = %connection.get_connect_address(),
+            "Sending"
+        );
+        self.log_attempt_start(connection.get_connect_address());
 
-            let elapsed = query_start.elapsed();
+        let query_response =
+            (self.page_query)(connection.clone(), consistency, self.paging_state.clone())
+                .await
+                .and_then(QueryResponse::into_non_error_query_response);
 
-            match query_response {
-                Ok(NonErrorQueryResponse {
-                    response: NonErrorResponse::Result(result::Result::Rows(mut rows)),
-                    tracing_id,
-                    ..
-                }) => {
-                    let _ = self.metrics.log_query_latency(elapsed.as_millis() as u64);
-                    self.log_attempt_success();
-                    self.log_query_success();
-                    self.execution_profile
-                        .load_balancing_policy
-                        .on_query_success(&self.statement_info, elapsed, node);
+        let elapsed = query_start.elapsed();
 
-                    self.paging_state = rows.metadata.paging_state.take();
+        request_span.record_shard_id(connection);
 
-                    let received_page = ReceivedPage { rows, tracing_id };
+        match query_response {
+            Ok(NonErrorQueryResponse {
+                response: NonErrorResponse::Result(result::Result::Rows(mut rows)),
+                tracing_id,
+                ..
+            }) => {
+                let _ = self.metrics.log_query_latency(elapsed.as_millis() as u64);
+                self.log_attempt_success();
+                self.log_query_success();
+                self.execution_profile
+                    .load_balancing_policy
+                    .on_query_success(&self.statement_info, elapsed, node);
 
-                    // Send next page to RowIterator
-                    let (proof, res) = self.sender.send(Ok(received_page)).await;
-                    if res.is_err() {
-                        // channel was closed, RowIterator was dropped - should shutdown
-                        return Ok(proof);
-                    }
+                self.paging_state = rows.metadata.paging_state.take();
 
-                    if self.paging_state.is_none() {
-                        // Reached the last query, shutdown
-                        return Ok(proof);
-                    }
+                request_span.record_rows_fields(&rows);
 
-                    // Query succeeded, reset retry policy for future retries
-                    self.retry_session.reset();
-                    self.log_query_start();
+                let received_page = ReceivedPage { rows, tracing_id };
+
+                // Send next page to RowIterator
+                let (proof, res) = self.sender.send(Ok(received_page)).await;
+                if res.is_err() {
+                    // channel was closed, RowIterator was dropped - should shutdown
+                    return Ok(ControlFlow::Break(proof));
                 }
-                Err(err) => {
-                    self.metrics.inc_failed_paged_queries();
-                    self.execution_profile
-                        .load_balancing_policy
-                        .on_query_failure(&self.statement_info, elapsed, node, &err);
-                    return Err(err);
-                }
-                Ok(NonErrorQueryResponse {
-                    response: NonErrorResponse::Result(_),
-                    tracing_id,
-                    ..
-                }) => {
-                    // We have most probably sent a modification statement (e.g. INSERT or UPDATE),
-                    // so let's return an empty iterator as suggested in #631.
 
-                    // We must attempt to send something because the iterator expects it.
-                    let (proof, _) = self.sender.send_empty_page(tracing_id).await;
-                    return Ok(proof);
+                if self.paging_state.is_none() {
+                    // Reached the last query, shutdown
+                    return Ok(ControlFlow::Break(proof));
                 }
-                Ok(_) => {
-                    self.metrics.inc_failed_paged_queries();
-                    let err = QueryError::ProtocolError("Unexpected response to next page query");
-                    self.execution_profile
-                        .load_balancing_policy
-                        .on_query_failure(&self.statement_info, elapsed, node, &err);
-                    return Err(err);
-                }
+
+                // Query succeeded, reset retry policy for future retries
+                self.retry_session.reset();
+                self.log_query_start();
+
+                Ok(ControlFlow::Continue(()))
+            }
+            Err(err) => {
+                self.metrics.inc_failed_paged_queries();
+                self.execution_profile
+                    .load_balancing_policy
+                    .on_query_failure(&self.statement_info, elapsed, node, &err);
+                Err(err)
+            }
+            Ok(NonErrorQueryResponse {
+                response: NonErrorResponse::Result(_),
+                tracing_id,
+                ..
+            }) => {
+                // We have most probably sent a modification statement (e.g. INSERT or UPDATE),
+                // so let's return an empty iterator as suggested in #631.
+
+                // We must attempt to send something because the iterator expects it.
+                let (proof, _) = self.sender.send_empty_page(tracing_id).await;
+                Ok(ControlFlow::Break(proof))
+            }
+            Ok(_) => {
+                self.metrics.inc_failed_paged_queries();
+                let err = QueryError::ProtocolError("Unexpected response to next page query");
+                self.execution_profile
+                    .load_balancing_policy
+                    .on_query_failure(&self.statement_info, elapsed, node, &err);
+                Err(err)
             }
         }
     }

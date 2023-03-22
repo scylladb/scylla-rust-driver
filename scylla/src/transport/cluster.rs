@@ -22,6 +22,7 @@ use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration;
+use tracing::instrument::WithSubscriber;
 use tracing::{debug, warn};
 use uuid::Uuid;
 
@@ -186,7 +187,7 @@ impl Cluster {
         };
 
         let (fut, worker_handle) = worker.work().remote_handle();
-        tokio::spawn(fut);
+        tokio::spawn(fut.with_current_subscriber());
 
         let result = Cluster {
             data: cluster_data,
@@ -432,11 +433,21 @@ impl ClusterData {
                 Some(buf.into())
             }
         };
-        Ok(partitioner.hash(serialized_pk.unwrap_or_default()))
+        Ok(partitioner.hash(&serialized_pk.unwrap_or_default()))
     }
 
     /// Access to replicas owning a given token
     pub fn get_token_endpoints(&self, keyspace: &str, token: Token) -> Vec<Arc<Node>> {
+        self.get_token_endpoints_iter(keyspace, token)
+            .cloned()
+            .collect()
+    }
+
+    pub(crate) fn get_token_endpoints_iter(
+        &self,
+        keyspace: &str,
+        token: Token,
+    ) -> impl Iterator<Item = &Arc<Node>> {
         let keyspace = self.keyspaces.get(keyspace);
         let strategy = keyspace
             .map(|k| &k.strategy)
@@ -445,7 +456,7 @@ impl ClusterData {
             .replica_locator()
             .replicas_for_token(token, strategy, None);
 
-        replica_set.into_iter().cloned().collect()
+        replica_set.into_iter()
     }
 
     /// Access to replicas owning a given partition key (similar to `nodetool getendpoints`)
@@ -523,7 +534,7 @@ impl ClusterWorker {
 
                             let cluster_data = self.cluster_data.load_full();
                             let use_keyspace_future = Self::handle_use_keyspace_request(cluster_data, request);
-                            tokio::spawn(use_keyspace_future);
+                            tokio::spawn(use_keyspace_future.with_current_subscriber());
                         },
                         None => return, // If use_keyspace_channel was closed then cluster was dropped, we can stop working
                     }

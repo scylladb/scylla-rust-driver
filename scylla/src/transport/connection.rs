@@ -6,6 +6,7 @@ use tokio::io::{split, AsyncRead, AsyncWrite, AsyncWriteExt, BufReader, BufWrite
 use tokio::net::{TcpSocket, TcpStream};
 use tokio::sync::{mpsc, oneshot};
 use tokio::time::Instant;
+use tracing::instrument::WithSubscriber;
 use tracing::{debug, error, trace, warn};
 use uuid::Uuid;
 
@@ -192,13 +193,14 @@ impl NonErrorQueryResponse {
     }
 
     pub fn into_query_result(self) -> Result<QueryResult, QueryError> {
-        let (rows, paging_state, col_specs) = match self.response {
+        let (rows, paging_state, col_specs, serialized_size) = match self.response {
             NonErrorResponse::Result(result::Result::Rows(rs)) => (
                 Some(rs.rows),
                 rs.metadata.paging_state,
                 rs.metadata.col_specs,
+                rs.serialized_size,
             ),
-            NonErrorResponse::Result(_) => (None, None, vec![]),
+            NonErrorResponse::Result(_) => (None, None, vec![], 0),
             _ => {
                 return Err(QueryError::ProtocolError(
                     "Unexpected server response, expected Result or Error",
@@ -212,6 +214,7 @@ impl NonErrorQueryResponse {
             tracing_id: self.tracing_id,
             paging_state,
             col_specs,
+            serialized_size,
         })
     }
 }
@@ -858,7 +861,7 @@ impl Connection {
                 orphan_notification_receiver,
             )
             .remote_handle();
-            tokio::task::spawn(task);
+            tokio::task::spawn(task.with_current_subscriber());
             return Ok(handle);
         }
 
@@ -870,7 +873,7 @@ impl Connection {
             orphan_notification_receiver,
         )
         .remote_handle();
-        tokio::task::spawn(task);
+        tokio::task::spawn(task.with_current_subscriber());
         Ok(handle)
     }
 

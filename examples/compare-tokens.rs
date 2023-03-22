@@ -30,7 +30,7 @@ async fn main() -> Result<()> {
             .await?;
 
         let serialized_pk = (pk,).serialized()?.into_owned();
-        let t = Murmur3Partitioner::hash(prepared.compute_partition_key(&serialized_pk)?).value;
+        let t = Murmur3Partitioner::hash(&prepared.compute_partition_key(&serialized_pk)?).value;
 
         let statement_info = load_balancing::RoutingInfo {
             token: Some(scylla::routing::Token { value: t }),

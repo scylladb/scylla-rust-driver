@@ -13,11 +13,16 @@ use bytes::Bytes;
 use futures::future::join_all;
 use futures::future::try_join_all;
 pub use scylla_cql::errors::TranslationError;
+use scylla_cql::frame::response::result::Rows;
 use scylla_cql::frame::response::NonErrorResponse;
+use std::borrow::Borrow;
 use std::collections::HashMap;
+use std::fmt::Display;
 use std::future::Future;
 use std::net::SocketAddr;
 use std::str::FromStr;
+use std::sync::atomic::AtomicUsize;
+use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::net::lookup_host;
@@ -571,7 +576,7 @@ impl Session {
         let query: Query = query.into();
         let serialized_values = values.serialized()?;
 
-        let span = trace_span!("Request", query = %query.contents);
+        let span = RequestSpan::new_query(&query.contents, serialized_values.size());
         let run_query_result = self
             .run_query(
                 RoutingInfo::default(),
@@ -601,8 +606,9 @@ impl Session {
                             .and_then(QueryResponse::into_non_error_query_response)
                     }
                 },
+                &span,
             )
-            .instrument(span)
+            .instrument(span.span().clone())
             .await?;
 
         let response = match run_query_result {
@@ -618,7 +624,9 @@ impl Session {
         self.handle_auto_await_schema_agreement(&query.contents, &response)
             .await?;
 
-        response.into_query_result()
+        let result = response.into_query_result()?;
+        span.record_result_fields(&result);
+        Ok(result)
     }
 
     async fn handle_set_keyspace_response(
@@ -711,7 +719,6 @@ impl Session {
             .unwrap_or_else(|| self.get_default_execution_profile_handle())
             .access();
 
-        let span = trace_span!("Request", query = %query.contents);
         RowIterator::new_for_query(
             query,
             serialized_values.into_owned(),
@@ -719,7 +726,6 @@ impl Session {
             self.cluster.get_data(),
             self.metrics.clone(),
         )
-        .instrument(span)
         .await
     }
 
@@ -882,7 +888,10 @@ impl Session {
         let values_ref = &serialized_values;
         let paging_state_ref = &paging_state;
 
-        let token = self.calculate_token(prepared, &serialized_values)?;
+        let partition_key = self.calculate_partition_key(prepared, &serialized_values)?;
+        let token = partition_key
+            .as_ref()
+            .map(|pk| prepared.get_partitioner_name().hash(pk));
 
         let statement_info = RoutingInfo {
             consistency: prepared
@@ -894,10 +903,19 @@ impl Session {
             is_confirmed_lwt: prepared.is_confirmed_lwt(),
         };
 
-        let span = trace_span!(
-            "Request",
-            prepared_id = %format_args!("{:X}", prepared.get_id())
-        );
+        let span =
+            RequestSpan::new_prepared(partition_key.as_ref(), token, serialized_values.size());
+
+        if !span.span().is_disabled() {
+            if let (Some(keyspace), Some(token)) = (statement_info.keyspace.as_ref(), token) {
+                let cluster_data = self.get_cluster_data();
+                let replicas: smallvec::SmallVec<[_; 8]> = cluster_data
+                    .get_token_endpoints_iter(keyspace, token)
+                    .collect();
+                span.record_replicas(&replicas)
+            }
+        }
+
         let run_query_result: RunQueryResult<NonErrorQueryResponse> = self
             .run_query(
                 statement_info,
@@ -928,8 +946,9 @@ impl Session {
                             .and_then(QueryResponse::into_non_error_query_response)
                     }
                 },
+                &span,
             )
-            .instrument(span)
+            .instrument(span.span().clone())
             .await?;
 
         let response = match run_query_result {
@@ -945,7 +964,9 @@ impl Session {
         self.handle_auto_await_schema_agreement(prepared.get_statement(), &response)
             .await?;
 
-        response.into_query_result()
+        let result = response.into_query_result()?;
+        span.record_result_fields(&result);
+        Ok(result)
     }
 
     /// Run a prepared query with paging\
@@ -996,27 +1017,25 @@ impl Session {
     ) -> Result<RowIterator, QueryError> {
         let prepared = prepared.into();
         let serialized_values = values.serialized()?;
-
-        let token = self.calculate_token(&prepared, &serialized_values)?;
+        let partition_key = self.calculate_partition_key(&prepared, &serialized_values)?;
+        let token = partition_key
+            .as_ref()
+            .map(|pk| prepared.get_partitioner_name().hash(pk));
 
         let execution_profile = prepared
             .get_execution_profile_handle()
             .unwrap_or_else(|| self.get_default_execution_profile_handle())
             .access();
 
-        let span = trace_span!(
-            "Request",
-            prepared_id = %format_args!("{:X}", prepared.get_id())
-        );
         RowIterator::new_for_prepared_statement(PreparedIteratorConfig {
             prepared,
             values: serialized_values.into_owned(),
+            partition_key,
             token,
             execution_profile,
             cluster_data: self.cluster.get_data(),
             metrics: self.metrics.clone(),
         })
-        .instrument(span)
         .await
     }
 
@@ -1092,6 +1111,8 @@ impl Session {
         let values = BatchValuesFirstSerialized::new(&values, first_serialized_value);
         let values_ref = &values;
 
+        let span = RequestSpan::new_batch();
+
         let run_query_result = self
             .run_query(
                 statement_info,
@@ -1122,14 +1143,17 @@ impl Session {
                             .await
                     }
                 },
+                &span,
             )
-            .instrument(trace_span!("Batch"))
+            .instrument(span.span().clone())
             .await?;
 
-        Ok(match run_query_result {
+        let result = match run_query_result {
             RunQueryResult::IgnoredWriteError => QueryResult::default(),
             RunQueryResult::Completed(response) => response,
-        })
+        };
+        span.record_result_fields(&result);
+        Ok(result)
     }
 
     /// Prepares all statements within the batch and returns a new batch where every
@@ -1408,6 +1432,7 @@ impl Session {
         statement_config: &'a StatementConfig,
         choose_connection: impl Fn(Arc<Node>) -> ConnFut,
         do_query: impl Fn(Arc<Connection>, Consistency, &ExecutionProfileInner) -> QueryFut,
+        request_span: &'a RequestSpan,
     ) -> Result<RunQueryResult<ResT>, QueryError>
     where
         ConnFut: Future<Output = Result<Arc<Connection>, QueryError>>,
@@ -1481,6 +1506,10 @@ impl Session {
                                 }
                             });
 
+                        if is_speculative {
+                            request_span.inc_speculative_executions();
+                        }
+
                         self.execute_query(
                             &shared_query_plan,
                             &choose_connection,
@@ -1492,6 +1521,7 @@ impl Session {
                                 retry_session: retry_policy.new_session(),
                                 history_data,
                                 query_info: &statement_info,
+                                request_span,
                             },
                         )
                     };
@@ -1527,6 +1557,7 @@ impl Session {
                             retry_session: retry_policy.new_session(),
                             history_data,
                             query_info: &statement_info,
+                            request_span,
                         },
                     )
                     .await
@@ -1600,6 +1631,7 @@ impl Session {
                         continue 'nodes_in_plan;
                     }
                 };
+                context.request_span.record_shard_id(&connection);
 
                 self.metrics.inc_total_nonpaged_queries();
                 let query_start = std::time::Instant::now();
@@ -1716,12 +1748,15 @@ impl Session {
             ..Default::default()
         };
 
+        let span = RequestSpan::new_none();
+
         match self
             .run_query(
                 info,
                 &config,
                 |node: Arc<Node>| async move { node.random_connection().await },
                 do_query,
+                &span,
             )
             .await?
         {
@@ -1753,20 +1788,31 @@ impl Session {
         .await
     }
 
+    fn calculate_partition_key(
+        &self,
+        prepared: &PreparedStatement,
+        serialized_values: &SerializedValues,
+    ) -> Result<Option<Bytes>, QueryError> {
+        if !prepared.is_token_aware() {
+            return Ok(None);
+        }
+        let partition_key = calculate_partition_key(prepared, serialized_values)?;
+        Ok(Some(partition_key))
+    }
+
     pub fn calculate_token(
         &self,
         prepared: &PreparedStatement,
         serialized_values: &SerializedValues,
     ) -> Result<Option<Token>, QueryError> {
-        if !prepared.is_token_aware() {
-            return Ok(None);
+        match self.calculate_partition_key(prepared, serialized_values) {
+            Ok(Some(partition_key)) => {
+                let partitioner_name = prepared.get_partitioner_name();
+                Ok(Some(partitioner_name.hash(&partition_key)))
+            }
+            Ok(None) => Ok(None),
+            Err(err) => Err(err),
         }
-
-        let partitioner_name = prepared.get_partitioner_name();
-
-        let partition_key = calculate_partition_key(prepared, serialized_values)?;
-
-        Ok(Some(partitioner_name.hash(partition_key)))
     }
 
     fn get_default_execution_profile_handle(&self) -> &ExecutionProfileHandle {
@@ -1832,6 +1878,7 @@ struct ExecuteQueryContext<'a> {
     retry_session: Box<dyn RetrySession>,
     history_data: Option<HistoryData<'a>>,
     query_info: &'a load_balancing::RoutingInfo<'a>,
+    request_span: &'a RequestSpan,
 }
 
 struct HistoryData<'a> {
@@ -1881,5 +1928,157 @@ impl<'a> ExecuteQueryContext<'a> {
         history_data
             .listener
             .log_attempt_error(*attempt_id, error, retry_decision);
+    }
+}
+
+pub(crate) struct RequestSpan {
+    span: tracing::Span,
+    speculative_executions: AtomicUsize,
+}
+
+impl RequestSpan {
+    pub(crate) fn new_query(contents: &str, request_size: usize) -> Self {
+        use tracing::field::Empty;
+
+        let span = trace_span!(
+            "Request",
+            kind = "unprepared",
+            contents = contents,
+            //
+            request_size = request_size,
+            result_size = Empty,
+            result_rows = Empty,
+            replicas = Empty,
+            shard = Empty,
+            speculative_executions = Empty,
+        );
+
+        Self {
+            span,
+            speculative_executions: 0.into(),
+        }
+    }
+
+    pub(crate) fn new_prepared(
+        partition_key: Option<&Bytes>,
+        token: Option<Token>,
+        request_size: usize,
+    ) -> Self {
+        use crate::utils::pretty::HexBytes;
+        use tracing::field::Empty;
+
+        let span = trace_span!(
+            "Request",
+            kind = "prepared",
+            partition_key = Empty,
+            token = Empty,
+            //
+            request_size = request_size,
+            result_size = Empty,
+            result_rows = Empty,
+            replicas = Empty,
+            shard = Empty,
+            speculative_executions = Empty,
+        );
+
+        if let Some(partition_key) = partition_key {
+            span.record(
+                "partition_key",
+                tracing::field::display(format_args!("{:x}", HexBytes(partition_key))),
+            );
+        }
+        if let Some(token) = token {
+            span.record("token", token.value);
+        }
+
+        Self {
+            span,
+            speculative_executions: 0.into(),
+        }
+    }
+
+    pub(crate) fn new_batch() -> Self {
+        use tracing::field::Empty;
+
+        let span = trace_span!(
+            "Request",
+            kind = "batch",
+            //
+            request_size = Empty,
+            result_size = Empty,
+            result_rows = Empty,
+            replicas = Empty,
+            shard = Empty,
+            speculative_executions = Empty,
+        );
+
+        Self {
+            span,
+            speculative_executions: 0.into(),
+        }
+    }
+
+    pub(crate) fn new_none() -> Self {
+        Self {
+            span: tracing::Span::none(),
+            speculative_executions: 0.into(),
+        }
+    }
+
+    pub(crate) fn record_shard_id(&self, conn: &Connection) {
+        if let Some(info) = conn.get_shard_info() {
+            self.span.record("shard", info.shard);
+        }
+    }
+
+    pub(crate) fn record_result_fields(&self, result: &QueryResult) {
+        self.span.record("result_size", result.serialized_size);
+        if let Some(rows) = result.rows.as_ref() {
+            self.span.record("result_rows", rows.len());
+        }
+    }
+
+    pub(crate) fn record_rows_fields(&self, rows: &Rows) {
+        self.span.record("result_size", rows.serialized_size);
+        self.span.record("result_rows", rows.rows.len());
+    }
+
+    pub(crate) fn record_replicas<'a>(&'a self, replicas: &'a [impl Borrow<Arc<Node>>]) {
+        struct ReplicaIps<'a, N>(&'a [N]);
+        impl<'a, N> Display for ReplicaIps<'a, N>
+        where
+            N: Borrow<Arc<Node>>,
+        {
+            fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                let mut nodes = self.0.iter();
+                if let Some(node) = nodes.next() {
+                    write!(f, "{}", node.borrow().address.ip())?;
+
+                    for node in nodes {
+                        write!(f, ",{}", node.borrow().address.ip())?;
+                    }
+                }
+                Ok(())
+            }
+        }
+        self.span
+            .record("replicas", tracing::field::display(&ReplicaIps(replicas)));
+    }
+
+    pub(crate) fn inc_speculative_executions(&self) {
+        self.speculative_executions.fetch_add(1, Ordering::Relaxed);
+    }
+
+    pub(crate) fn span(&self) -> &tracing::Span {
+        &self.span
+    }
+}
+
+impl Drop for RequestSpan {
+    fn drop(&mut self) {
+        self.span.record(
+            "speculative_executions",
+            self.speculative_executions.load(Ordering::Relaxed),
+        );
     }
 }

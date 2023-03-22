@@ -193,6 +193,10 @@ impl SerializedValues {
     pub fn len(&self) -> i16 {
         self.values_num
     }
+
+    pub fn size(&self) -> usize {
+        self.serialized_values.len()
+    }
 }
 
 #[derive(Clone, Copy)]

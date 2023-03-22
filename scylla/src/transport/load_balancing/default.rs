@@ -1257,7 +1257,7 @@ mod latency_awareness {
     use futures::{future::RemoteHandle, FutureExt};
     use itertools::Either;
     use scylla_cql::errors::{DbError, QueryError};
-    use tracing::trace;
+    use tracing::{instrument::WithSubscriber, trace};
     use uuid::Uuid;
 
     use crate::{load_balancing::NodeRef, transport::node::Node};
@@ -1392,7 +1392,7 @@ mod latency_awareness {
                 }
             }
             .remote_handle();
-            tokio::task::spawn(updater_fut);
+            tokio::task::spawn(updater_fut.with_current_subscriber());
 
             Self {
                 exclusion_threshold,
