@@ -21,6 +21,7 @@ use tracing::warn;
 /// Latency awareness is available, although not recommended.
 pub struct DefaultPolicy {
     preferred_datacenter: Option<String>,
+    preferred_rack: Option<String>,
     is_token_aware: bool,
     permit_dc_failover: bool,
     pick_predicate: Box<dyn Fn(&NodeRef) -> bool + Send + Sync>,
@@ -32,6 +33,7 @@ impl fmt::Debug for DefaultPolicy {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("DefaultPolicy")
             .field("preferred_datacenter", &self.preferred_datacenter)
+            .field("preferred_rack", &self.preferred_rack)
             .field("is_token_aware", &self.is_token_aware)
             .field("permit_dc_failover", &self.permit_dc_failover)
             .field("latency_awareness", &self.latency_awareness)
@@ -364,6 +366,7 @@ impl Default for DefaultPolicy {
     fn default() -> Self {
         Self {
             preferred_datacenter: None,
+            preferred_rack: None,
             is_token_aware: true,
             permit_dc_failover: false,
             pick_predicate: Box::new(Self::is_alive),
@@ -390,6 +393,7 @@ impl Default for DefaultPolicy {
 #[derive(Clone, Debug)]
 pub struct DefaultPolicyBuilder {
     preferred_datacenter: Option<String>,
+    preferred_rack: Option<String>,
     is_token_aware: bool,
     permit_dc_failover: bool,
     latency_awareness: Option<LatencyAwarenessBuilder>,
@@ -401,6 +405,7 @@ impl DefaultPolicyBuilder {
     pub fn new() -> Self {
         Self {
             preferred_datacenter: None,
+            preferred_rack: None,
             is_token_aware: true,
             permit_dc_failover: false,
             latency_awareness: None,
@@ -421,12 +426,26 @@ impl DefaultPolicyBuilder {
 
         Arc::new(DefaultPolicy {
             preferred_datacenter: self.preferred_datacenter,
+            preferred_rack: self.preferred_rack,
             is_token_aware: self.is_token_aware,
             permit_dc_failover: self.permit_dc_failover,
             pick_predicate,
             latency_awareness,
             fixed_shuffle_seed: (!self.enable_replica_shuffle).then(rand::random),
         })
+    }
+
+    /// Sets the rack to be preferred by this policy
+    ///
+    /// Allows the load balancing policy to prioritize nodes based on their availability zones
+    /// in the preferred datacenter.
+    /// When a preferred rack is set, the policy will first return replicas in the local rack
+    /// in the preferred datacenter, and then the other replicas in the datacenter.
+    ///
+    /// When a preferred datacenter is not set, setting preferred rack will not have any effect.
+    pub fn prefer_rack(mut self, rack_name: String) -> Self {
+        self.preferred_rack = Some(rack_name);
+        self
     }
 
     /// Sets the datacenter to be preferred by this policy.
@@ -1786,6 +1805,7 @@ mod latency_awareness {
 
             DefaultPolicy {
                 preferred_datacenter: Some("eu".to_owned()),
+                preferred_rack: None,
                 permit_dc_failover: true,
                 is_token_aware: true,
                 pick_predicate,
