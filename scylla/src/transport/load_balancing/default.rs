@@ -1313,6 +1313,102 @@ mod tests {
                     .group([B, C, E]) // remote nodes
                     .build(),
             },
+            // Keyspace SS with RF=2 with enabled DC failover and rack-awareness
+            Test {
+                policy: DefaultPolicy {
+                    preferred_datacenter: Some("eu".to_owned()),
+                    preferred_rack: Some("r1".to_owned()),
+                    is_token_aware: true,
+                    permit_dc_failover: true,
+                    ..Default::default()
+                },
+                routing_info: RoutingInfo {
+                    token: Some(Token { value: 160 }),
+                    keyspace: Some(KEYSPACE_NTS_RF_3),
+                    consistency: Consistency::One,
+                    ..Default::default()
+                },
+                // going though the ring, we get order: F , A , C , D , G , B , E
+                //                                      us  eu  eu  us  eu  eu  us
+                //                                      r2  r1  r1  r1  r2  r1  r1
+                expected_groups: ExpectedGroupsBuilder::new()
+                    .group([A, C]) // pick local rack replicas
+                    .group([G]) // local DC replicas
+                    .group([F, D, E]) // remote replicas
+                    .group([B]) // local nodes
+                    .build(),
+            },
+            // Keyspace SS with RF=2 with enabled rack-awareness, shuffling replicas disabled
+            Test {
+                policy: DefaultPolicy {
+                    preferred_datacenter: Some("eu".to_owned()),
+                    preferred_rack: Some("r1".to_owned()),
+                    is_token_aware: true,
+                    permit_dc_failover: false,
+                    fixed_shuffle_seed: Some(123),
+                    ..Default::default()
+                },
+                routing_info: RoutingInfo {
+                    token: Some(Token { value: 560 }),
+                    keyspace: Some(KEYSPACE_SS_RF_2),
+                    consistency: Consistency::Two,
+                    ..Default::default()
+                },
+                // going though the ring, we get order: B , C , E , G , A , F , D
+                //                                      eu  eu  us  eu  eu  us  us
+                //                                      r1  r1  r1  r2  r1  r2  r1
+                expected_groups: ExpectedGroupsBuilder::new()
+                    .deterministic([B]) // pick local rack replicas
+                    .deterministic([C]) // fallback replicas
+                    .group([A, G]) // local nodes
+                    .build(),
+            },
+            // Keyspace SS with RF=2 with enabled rack-awareness and no local-rack replica
+            Test {
+                policy: DefaultPolicy {
+                    preferred_datacenter: Some("eu".to_owned()),
+                    preferred_rack: Some("r2".to_owned()),
+                    is_token_aware: true,
+                    permit_dc_failover: false,
+                    ..Default::default()
+                },
+                routing_info: RoutingInfo {
+                    token: Some(Token { value: 160 }),
+                    keyspace: Some(KEYSPACE_SS_RF_2),
+                    consistency: Consistency::One,
+                    ..Default::default()
+                },
+                // going though the ring, we get order: F , A , C , D , G , B , E
+                //                                      us  eu  eu  us  eu  eu  us
+                //                                      r2  r1  r1  r1  r2  r1  r1
+                expected_groups: ExpectedGroupsBuilder::new()
+                    .group([A]) // pick local DC
+                    .group([C, G, B]) // local nodes
+                    .build(),
+            },
+            // No preferred DC, preferred rack should be ignored, failover permitted
+            Test {
+                policy: DefaultPolicy {
+                    preferred_datacenter: None,
+                    preferred_rack: Some("r2".to_owned()),
+                    is_token_aware: true,
+                    permit_dc_failover: true,
+                    ..Default::default()
+                },
+                routing_info: RoutingInfo {
+                    token: Some(Token { value: 160 }),
+                    keyspace: Some(KEYSPACE_NTS_RF_2),
+                    consistency: Consistency::Quorum,
+                    ..Default::default()
+                },
+                // going though the ring, we get order: F , A , C , D , G , B , E
+                //                                      us  eu  eu  us  eu  eu  us
+                //                                      r2  r1  r1  r1  r2  r1  r1
+                expected_groups: ExpectedGroupsBuilder::new()
+                    .group([A, D, F, G]) // remote replicas
+                    .group([B, C, E]) // remote nodes
+                    .build(),
+            },
         ];
 
         for Test {
