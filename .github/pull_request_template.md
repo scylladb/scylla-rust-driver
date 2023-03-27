@@ -12,4 +12,6 @@
 - [ ] I added relevant tests for new features and bug fixes.
 - [ ] All commits compile, pass static checks and pass test.
 - [ ] PR description sums up the changes and reasons why they should be introduced.
+- [ ] I have provided docstrings for the public items that I want to introduce.
+- [ ] I have adjusted the documentation in `./docs/source/`.
 - [ ] I added appropriate `Fixes:` annotations to PR description.
