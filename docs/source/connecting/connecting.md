@@ -34,6 +34,53 @@ async fn main() -> Result<(), Box<dyn Error>> {
 After successfully connecting to some specified node the driver will fetch topology information about
 other nodes in this cluster and connect to them as well.
 
+Scylla Serverless is an elastic and dynamic deployment model. When creating a `Session` you need to
+specify the secure connection bundle as follows:
+
+```rust
+# extern crate scylla;
+# extern crate tokio;
+# fn check_only_compiles() {
+use std::path::Path;
+use std::error::Error;
+use scylla::CloudSessionBuilder;
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn Error>> {
+    let session = CloudSessionBuilder::new(Path::new("config_data.yaml"))
+        .unwrap()
+        .build()
+        .await
+        .unwrap();
+
+    Ok(())
+}
+# }
+```
+
+Note that the bundle file will be provided after the serverless cluster is created. Here is an example of a
+configuration file for a serverless cluster:
+
+```yaml
+datacenters:
+  datacenter1:
+    certificateAuthorityData: CERTIFICATE_DATA
+    server: 127.0.1.1:9142
+    nodeDomain: cql.cluster-id.scylla.com
+    insecureSkipTlsVerify: false
+authInfos:
+  default:
+    clientCertificateData: CERTIFICATE_DATA
+    clientKeyData: KEY_DATA
+    username: scylladb
+    password: scylladb
+contexts:
+  default:
+    datacenterName: datacenter1
+    authInfoName: default
+currentContext: default
+```
+
 ```eval_rst
 .. toctree::
    :hidden:
