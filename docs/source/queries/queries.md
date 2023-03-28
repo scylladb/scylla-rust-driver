@@ -33,7 +33,7 @@ Queries are fully asynchronous - you can run as many of them in parallel as you 
    batch
    paged
    usekeyspace
-   schema_agreement
+   schema-agreement
    lwt
    timeouts
 ```
