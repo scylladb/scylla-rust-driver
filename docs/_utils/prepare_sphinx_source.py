@@ -30,7 +30,10 @@ def remove_hidden_code_lines(md_file_text):
         new_chunk_lines = []
         chunk_lines = cur_chunk.split('\n')
         for line in cur_chunk.split('\n'):
-            if not line.lstrip().startswith("#"):
+            # Rustdoc strips lines which start with '# ' (pound sign followed
+            # by a space). The space is important, otherwise the code would
+            # strip Rust attributes and procedural macro derives.
+            if not line.lstrip().startswith("# "):
                 new_chunk_lines.append(line)
         new_chunk = "\n".join(new_chunk_lines)
         result.append(new_chunk)
