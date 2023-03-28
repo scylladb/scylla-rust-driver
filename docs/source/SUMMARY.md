@@ -21,7 +21,7 @@
     - [Paged query](queries/paged.md)
     - [Lightweight transaction query (LWT)](queries/lwt.md)
     - [USE keyspace](queries/usekeyspace.md)
-    - [Schema agreement](queries/schema_agreement.md)
+    - [Schema agreement](queries/schema-agreement.md)
     - [Query timeouts](queries/timeouts.md)
 
 - [Execution profiles](execution-profiles/execution-profiles.md)
@@ -53,7 +53,7 @@
 - [Retry policy configuration](retry-policy/retry-policy.md)
     - [Fallthrough retry policy](retry-policy/fallthrough.md)
     - [Default retry policy](retry-policy/default.md)
-    - [Downgrading consistency policy](retry-policy/downgrading_consistency.md)
+    - [Downgrading consistency policy](retry-policy/downgrading-consistency.md)
 
 - [Speculative execution](speculative-execution/speculative.md)
     - [Simple](speculative-execution/simple.md)
