@@ -60,7 +60,7 @@ base64 = { version = "0.13.1", optional = true }
 rand_pcg = "0.3.1"
 
 [dev-dependencies]
-scylla-proxy = { version = "0.0.1", path = "../scylla-proxy"}
+scylla-proxy = { version = "0.0.2", path = "../scylla-proxy"}
 ntest = "0.8.1"
 criterion = "0.3"
 tracing-subscriber = { version = "0.3.14", features = ["env-filter"] }

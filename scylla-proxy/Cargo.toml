@@ -1,6 +1,6 @@
 [package]
 name = "scylla-proxy"
-version = "0.0.1"
+version = "0.0.2"
 edition = "2021"
 description = "Proxy layer between Scylla driver and cluster that enables testing Scylla drivers' behaviour in unfavourable conditions"
 repository = "https://github.com/scylladb/scylla-rust-driver"
