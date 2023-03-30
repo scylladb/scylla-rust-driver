@@ -19,7 +19,7 @@ session
 // Read inet from the table
 let mut iter = session.query_iter("SELECT a FROM keyspace.table", &[])
     .await?
-    .into_typed::<(IpAddr,)>();
+    .rows_stream::<(IpAddr,)>()?;
 while let Some((inet_value,)) = iter.try_next().await? {
     println!("{:?}", inet_value);
 }

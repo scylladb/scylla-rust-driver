@@ -18,8 +18,10 @@ session
     .await?;
 
 // Read a list of ints from the table
-let mut iter = session.query_iter("SELECT a FROM keyspace.table", &[]).await?.into_typed::<(Vec<i32>,)>();
-while let Some((list_value,)) = iter.try_next().await? {
+let mut stream = session.query_iter("SELECT a FROM keyspace.table", &[])
+    .await?
+    .rows_stream::<(Vec<i32>,)>()?;
+while let Some((list_value,)) = stream.try_next().await? {
     println!("{:?}", list_value);
 }
 # Ok(())
@@ -44,10 +46,10 @@ session
     .await?;
 
 // Read a set of ints from the table
-let mut iter = session.query_iter("SELECT a FROM keyspace.table", &[])
+let mut stream = session.query_iter("SELECT a FROM keyspace.table", &[])
     .await?
-    .into_typed::<(Vec<i32>,)>();
-while let Some((set_value,)) = iter.try_next().await? {
+    .rows_stream::<(Vec<i32>,)>()?;
+while let Some((set_value,)) = stream.try_next().await? {
     println!("{:?}", set_value);
 }
 # Ok(())
@@ -72,7 +74,7 @@ session
 // Read a set of ints from the table
 let mut iter = session.query_iter("SELECT a FROM keyspace.table", &[])
     .await?
-    .into_typed::<(HashSet<i32>,)>();
+    .rows_stream::<(HashSet<i32>,)>()?;
 while let Some((set_value,)) = iter.try_next().await? {
     println!("{:?}", set_value);
 }
@@ -98,7 +100,7 @@ session
 // Read a set of ints from the table
 let mut iter = session.query_iter("SELECT a FROM keyspace.table", &[])
     .await?
-    .into_typed::<(BTreeSet<i32>,)>();
+    .rows_stream::<(BTreeSet<i32>,)>()?;
 while let Some((set_value,)) = iter.try_next().await? {
     println!("{:?}", set_value);
 }
@@ -129,7 +131,7 @@ session
 // Read a map from the table
 let mut iter = session.query_iter("SELECT a FROM keyspace.table", &[])
     .await?
-    .into_typed::<(HashMap<String, i32>,)>();
+    .rows_stream::<(HashMap<String, i32>,)>()?;
 while let Some((map_value,)) = iter.try_next().await? {
     println!("{:?}", map_value);
 }
@@ -157,7 +159,7 @@ session
 // Read a map from the table
 let mut iter = session.query_iter("SELECT a FROM keyspace.table", &[])
     .await?
-    .into_typed::<(BTreeMap<String, i32>,)>();
+    .rows_stream::<(BTreeMap<String, i32>,)>()?;
 while let Some((map_value,)) = iter.try_next().await? {
     println!("{:?}", map_value);
 }

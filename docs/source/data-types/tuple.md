@@ -19,7 +19,7 @@ session
 // Read a tuple of int and string from the table
 let mut iter = session.query_iter("SELECT a FROM keyspace.table", &[])
     .await?
-    .into_typed::<((i32, String),)>();
+    .rows_stream::<((i32, String),)>()?;
 while let Some((tuple_value,)) = iter.try_next().await? {
     let int_value: i32 = tuple_value.0;
     let string_value: String = tuple_value.1;

@@ -24,7 +24,7 @@ session
 // Read ascii/text/varchar from the table
 let mut iter = session.query_iter("SELECT a FROM keyspace.table", &[])
     .await?
-    .into_typed::<(String,)>();
+    .rows_stream::<(String,)>()?;
 while let Some((text_value,)) = iter.try_next().await? {
     println!("{}", text_value);
 }

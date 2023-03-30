@@ -15,18 +15,26 @@ In fact, most SELECTs queries should be done with paging, to avoid big load on c
 >
 > Stay safe. Page your SELECTs.
 
-## `RowIterator`
+## `QueryPager`
 
-The automated way to achieve that is `RowIterator`. It always fetches and enables access to one page,
+The automated way to achieve that is `QueryPager`. It always fetches and enables access to one page,
 while prefetching the next one. This limits latency and is a convenient abstraction.
 
 > ***Note***\
-> `RowIterator` is quite heavy machinery, introducing considerable overhead. Therefore,
+> `QueryPager` is quite heavy machinery, introducing considerable overhead. Therefore,
 > don't use it for statements that do not benefit from paging. In particular, avoid using it
 > for non-SELECTs.
 
 On API level, `Session::query_iter` and `Session::execute_iter` take a [simple query](simple.md)
-or a [prepared query](prepared.md), respectively, and return an `async` iterator over result `Rows`.
+or a [prepared query](prepared.md), respectively, and return a `QueryPager`. `QueryPager` needs
+to be converted into typed `Stream` (by calling `QueryPager::rows_stream::<RowT>`) in order to
+deserialize rows.
+
+> ***Note***\
+> Due to lending stream limitations of Rust, `QueryPager` currently only enables deserialization
+> of owned types (i.e., those with `'static` lifetime). If you want to deserialize borrowed types
+> (such as slices, `&str`, etc.) in order to save allocations, you should use the manual paging
+> method (described in a section **Manual Paging** below).
 
 > ***Warning***\
 > In case of unprepared variant (`Session::query_iter`) if the values are not empty
@@ -49,7 +57,7 @@ use futures::stream::StreamExt;
 let mut rows_stream = session
     .query_iter("SELECT a, b FROM ks.t", &[])
     .await?
-    .into_typed::<(i32, i32)>();
+    .rows_stream::<(i32, i32)>()?;
 
 while let Some(next_row_res) = rows_stream.next().await {
     let (a, b): (i32, i32) = next_row_res?;
@@ -76,7 +84,7 @@ let prepared: PreparedStatement = session
 let mut rows_stream = session
     .execute_iter(prepared, &[])
     .await?
-    .into_typed::<(i32, i32)>();
+    .rows_stream::<(i32, i32)>()?;
 
 while let Some(next_row_res) = rows_stream.next().await {
     let (a, b): (i32, i32) = next_row_res?;
@@ -194,10 +202,12 @@ loop {
         .execute_single_page(&paged_prepared, &[], paging_state)
         .await?;
 
+    let rows_res = res.into_rows_result()?.unwrap();
+
     println!(
         "Paging state response from the prepared statement execution: {:#?} ({} rows)",
         paging_state_response,
-        res.rows_num()?,
+        rows_res.rows_num(),
     );
 
     match paging_state_response.into_paging_control_flow() {
@@ -227,8 +237,8 @@ See [query types overview](queries.md).
 | Exposed Session API     | `{query,execute}_unpaged`                                                                                               | `{query,execute}_single_page`                                                                        | `{query,execute}_iter`                                                                            |
 | Working                 | get all results in a single CQL frame, into a single Rust struct                                                        | get one page of results in a single CQL frame, into a single Rust struct                             | upon high-level iteration, fetch consecutive CQL frames and transparently iterate over their rows |
 | Cluster load            | potentially **HIGH** for large results, beware!                                                                         | normal                                                                                               | normal                                                                                            |
-| Driver overhead         | low - simple frame fetch                                                                                                | low - simple frame fetch                                                                             | considerable - `RowIteratorWorker` is a separate tokio task                                       |
+| Driver overhead         | low - simple frame fetch                                                                                                | low - simple frame fetch                                                                             | considerable - `PagerWorker` is a separate tokio task                                         |
 | Feature limitations     | none                                                                                                                    | none                                                                                                 | speculative execution not supported                                                               |
 | Driver memory footprint | potentially **BIG** - all results have to be stored at once!                                                            | small - only one page stored at a time                                                               | small - at most constant number of pages stored at a time                                         |
 | Latency                 | potentially **BIG** - all results have to be generated at once!                                                         | considerable on page boundary - new page needs to be fetched                                         | small - next page is always pre-fetched in background                                             |
-| Suitable operations     | - in general: operations with empty result set (non-SELECTs)</br> - as possible optimisation: SELECTs with LIMIT clause | - for advanced users who prefer more control over paging, with less overhead of `RowIteratorWorker`  | - in general: all SELECTs                                                                         |
+| Suitable operations     | - in general: operations with empty result set (non-SELECTs)</br> - as possible optimisation: SELECTs with LIMIT clause | - for advanced users who prefer more control over paging, with less overhead of `PagerWorker`      | - in general: all SELECTs                                                                         |

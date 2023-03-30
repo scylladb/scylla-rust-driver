@@ -75,8 +75,9 @@ Here the first `?` will be filled with `2` and the second with `"Some text"`.
 See [Query values](values.md) for more information about sending values in queries
 
 ### Query result
-`Session::query_unpaged` returns `QueryResult` with rows represented as `Option<Vec<Row>>`.\
-Each row can be parsed as a tuple of rust types using `rows_typed`:
+`Session::query_unpaged` returns `QueryResult`.
+The result can then be operated on via helper methods which verify that the result is of appropriate type.
+Here, we use the `rows` method to check that the response indeed contains rows with a single `int` column:
 ```rust
 # extern crate scylla;
 # use scylla::Session;
@@ -100,8 +101,11 @@ use scylla::IntoTypedRows;
 
 
 // Query rows from the table and print them
-let result = session.query_unpaged("SELECT a FROM ks.tab", &[]).await?;
-let mut iter = result.rows_typed::<(i32,)>()?;
+let result = session.query_unpaged("SELECT a FROM ks.tab", &[])
+    .await?
+    .into_rows_result()?
+    .unwrap();
+let mut iter = result.rows::<(i32,)>()?;
 while let Some(read_row) = iter.next().transpose()? {
     println!("Read a value from row: {}", read_row.0);
 }

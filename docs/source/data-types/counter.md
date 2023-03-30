@@ -18,10 +18,10 @@ session
     .await?;
 
 // Read counter from the table
-let mut iter = session.query_iter("SELECT c FROM keyspace.table", &[])
+let mut stream = session.query_iter("SELECT c FROM keyspace.table", &[])
     .await?
-    .into_typed::<(Counter,)>();
-while let Some((counter_value,)) = iter.try_next().await? {
+    .rows_stream::<(Counter,)>()?;
+while let Some((counter_value,)) = stream.try_next().await? {
     let counter_int_value: i64 = counter_value.0;
     println!("{}", counter_int_value);
 }

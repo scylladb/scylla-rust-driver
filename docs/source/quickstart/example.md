@@ -47,7 +47,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
     // Query rows from the table and print them
     let mut iter = session.query_iter("SELECT a FROM ks.extab", &[])
         .await?
-        .into_typed::<(i32,)>();
+        .rows_stream::<(i32,)>()?;
     while let Some(read_row) = iter.try_next().await? {
         println!("Read a value from row: {}", read_row.0);
     }

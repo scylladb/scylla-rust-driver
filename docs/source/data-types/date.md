@@ -32,7 +32,7 @@ session
 // Read raw Date from the table
 let mut iter = session.query_iter("SELECT a FROM keyspace.table", &[])
     .await?
-    .into_typed::<(CqlDate,)>();
+    .rows_stream::<(CqlDate,)>()?;
 while let Some((date_value,)) = iter.try_next().await? {
     // ...
 }
@@ -68,7 +68,7 @@ session
 // Read NaiveDate from the table
 let mut iter = session.query_iter("SELECT a FROM keyspace.table", &[])
     .await?
-    .into_typed::<(NaiveDate,)>();
+    .rows_stream::<(NaiveDate,)>()?;
 while let Some((date_value,)) = iter.try_next().await? {
     // ...
 }
@@ -104,7 +104,7 @@ session
 // Read Date from the table
 let mut iter = session.query_iter("SELECT a FROM keyspace.table", &[])
     .await?
-    .into_typed::<(Date,)>();
+    .rows_stream::<(Date,)>()?;
 while let Some((date_value,)) = iter.try_next().await? {
     // ...
 }

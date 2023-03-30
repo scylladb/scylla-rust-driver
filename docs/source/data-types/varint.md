@@ -32,7 +32,7 @@ session
 // Read a varint from the table
 let mut iter = session.query_iter("SELECT a FROM keyspace.table", &[])
     .await?
-    .into_typed::<(BigInt,)>();
+    .rows_stream::<(BigInt,)>()?;
 while let Some((varint_value,)) = iter.try_next().await? {
     println!("{:?}", varint_value);
 }
