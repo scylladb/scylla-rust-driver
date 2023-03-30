@@ -7,6 +7,9 @@
     - [Running Scylla using Docker](quickstart/scylla-docker.md)
     - [Connecting and running a simple query](quickstart/example.md)
 
+- [Migration guides](migration-guides/migration-guides.md)
+    - [Adjusting deserialization code from 0.8 and older](migration-guides/post-0.8-deserialization.md)
+
 - [Connecting to the cluster](connecting/connecting.md)
     - [Compression](connecting/compression.md)
     - [Authentication](connecting/authentication.md)
