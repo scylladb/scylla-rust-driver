@@ -22,7 +22,7 @@ session
 
 // Read ascii/text/varchar from the table
 let result = session.query("SELECT a FROM keyspace.table", &[]).await?;
-let mut iter = result.rows_typed::<(String,)>()?;
+let mut iter = result.rows::<(String,)>()?;
 while let Some((text_value,)) = iter.next().transpose()? {
     println!("{}", text_value);
 }

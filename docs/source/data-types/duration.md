@@ -17,7 +17,7 @@ session
 
 // Read duration from the table
 let result = session.query("SELECT a FROM keyspace.table", &[]).await?;
-let mut iter = result.rows_typed::<(CqlDuration,)>()?;
+let mut iter = result.rows::<(CqlDuration,)>()?;
 while let Some((duration_value,)) = iter.next().transpose()? {
     println!("{:?}", duration_value);
 }

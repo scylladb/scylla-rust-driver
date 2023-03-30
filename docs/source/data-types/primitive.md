@@ -19,7 +19,7 @@ session
 
 // Read a bool from the table
 let result = session.query("SELECT a FROM keyspace.table", &[]).await?;
-let mut iter = result.rows_typed::<(bool,)>()?;
+let mut iter = result.rows::<(bool,)>()?;
 while let Some((bool_value,)) = iter.next().transpose()? {
     println!("{}", bool_value);
 }
@@ -46,7 +46,7 @@ session
 
 // Read a tinyint from the table
 let result = session.query("SELECT a FROM keyspace.table", &[]).await?;
-let mut iter = result.rows_typed::<(i8,)>()?;
+let mut iter = result.rows::<(i8,)>()?;
 while let Some((tinyint_value,)) = iter.next().transpose()? {
     println!("{:?}", tinyint_value);
 }
@@ -73,7 +73,7 @@ session
 
 // Read a smallint from the table
 let result = session.query("SELECT a FROM keyspace.table", &[]).await?;
-let mut iter = result.rows_typed::<(i16,)>()?;
+let mut iter = result.rows::<(i16,)>()?;
 while let Some((smallint_value,)) = iter.next().transpose()? {
     println!("{}", smallint_value);
 }
@@ -100,7 +100,7 @@ session
 
 // Read an int from the table
 let result = session.query("SELECT a FROM keyspace.table", &[]).await?;
-let mut iter = result.rows_typed::<(i32,)>()?;
+let mut iter = result.rows::<(i32,)>()?;
 while let Some((int_value,)) = iter.next().transpose()? {
     println!("{}", int_value);
 }
@@ -127,7 +127,7 @@ session
 
 // Read a bigint from the table
 let result = session.query("SELECT a FROM keyspace.table", &[]).await?;
-let mut iter = result.rows_typed::<(i64,)>()?;
+let mut iter = result.rows::<(i64,)>()?;
 while let Some((bigint_value,)) = iter.next().transpose()? {
     println!("{:?}", bigint_value);
 }
@@ -154,7 +154,7 @@ session
 
 // Read a float from the table
 let result = session.query("SELECT a FROM keyspace.table", &[]).await?;
-let mut iter = result.rows_typed::<(f32,)>()?;
+let mut iter = result.rows::<(f32,)>()?;
 while let Some((float_value,)) = iter.next().transpose()? {
     println!("{:?}", float_value);
 }
@@ -181,7 +181,7 @@ session
 
 // Read a double from the table
 let result = session.query("SELECT a FROM keyspace.table", &[]).await?;
-let mut iter = result.rows_typed::<(f64,)>()?;
+let mut iter = result.rows::<(f64,)>()?;
 while let Some((double_value,)) = iter.next().transpose()? {
     println!("{:?}", double_value);
 }

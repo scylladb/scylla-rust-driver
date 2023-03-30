@@ -13,7 +13,6 @@ If tracing is enabled the row iterator will contain a list of tracing ids for al
 # use std::error::Error;
 # async fn check_only_compiles(session: &Session) -> Result<(), Box<dyn Error>> {
 use scylla::query::Query;
-use scylla::transport::iterator::RowIterator;
 use scylla::tracing::TracingInfo;
 use futures::StreamExt;
 use uuid::Uuid;
@@ -23,7 +22,10 @@ let mut query: Query = Query::new("INSERT INTO ks.tab (a) VALUES(4)");
 query.set_tracing(true);
 
 // Create a paged query iterator and fetch pages
-let mut row_iterator: RowIterator = session.query_iter(query, &[]).await?;
+let mut row_iterator = session
+    .query_iter(query, &[])
+    .await?
+    .into_typed::<(i32,)>();
 while let Some(_row) = row_iterator.next().await {
     // Receive rows
 }
@@ -49,7 +51,6 @@ for id in tracing_ids {
 # use std::error::Error;
 # async fn check_only_compiles(session: &Session) -> Result<(), Box<dyn Error>> {
 use scylla::prepared_statement::PreparedStatement;
-use scylla::transport::iterator::RowIterator;
 use scylla::tracing::TracingInfo;
 use futures::StreamExt;
 use uuid::Uuid;
@@ -63,7 +64,10 @@ let mut prepared: PreparedStatement = session
 prepared.set_tracing(true);
 
 // Create a paged query iterator and fetch pages
-let mut row_iterator: RowIterator = session.execute_iter(prepared, &[]).await?;
+let mut row_iterator = session
+    .execute_iter(prepared, &[])
+    .await?
+    .into_typed::<(i32,)>();
 while let Some(_row) = row_iterator.next().await {
     // Receive rows
 }

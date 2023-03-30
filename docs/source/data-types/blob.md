@@ -18,7 +18,7 @@ session
 
 // Read blobs from the table
 let result = session.query("SELECT a FROM keyspace.table", &[]).await?;
-let mut iter = result.rows_typed::<(Vec<u8>,)>()?;
+let mut iter = result.rows::<(Vec<u8>,)>()?;
 while let Some((blob_value,)) = iter.next().transpose()? {
     println!("{:?}", blob_value);
 }

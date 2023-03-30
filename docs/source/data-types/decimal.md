@@ -19,7 +19,7 @@ session
 
 // Read a decimal from the table
 let result = session.query("SELECT a FROM keyspace.table", &[]).await?;
-let mut iter = result.rows_typed::<(BigDecimal,)>()?;
+let mut iter = result.rows::<(BigDecimal,)>()?;
 while let Some((decimal_value,)) = iter.next().transpose()? {
     println!("{:?}", decimal_value);
 }

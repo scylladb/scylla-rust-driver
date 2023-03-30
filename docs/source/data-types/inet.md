@@ -17,7 +17,7 @@ session
 
 // Read inet from the table
 let result = session.query("SELECT a FROM keyspace.table", &[]).await?;
-let mut iter = result.rows_typed::<(IpAddr,)>()?;
+let mut iter = result.rows::<(IpAddr,)>()?;
 while let Some((inet_value,)) = iter.next().transpose()? {
     println!("{:?}", inet_value);
 }

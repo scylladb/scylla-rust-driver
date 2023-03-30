@@ -113,7 +113,7 @@ use scylla::query::Query;
 let paged_query = Query::new("SELECT a, b, c FROM ks.t").with_page_size(6);
 let res1 = session.query(paged_query.clone(), &[]).await?;
 let res2 = session
-    .query_paged(paged_query.clone(), &[], res1.paging_state)
+    .query_paged(paged_query.clone(), &[], res1.paging_state())
     .await?;
 # Ok(())
 # }
@@ -132,7 +132,7 @@ let paged_prepared = session
     .await?;
 let res1 = session.execute(&paged_prepared, &[]).await?;
 let res2 = session
-    .execute_paged(&paged_prepared, &[], res1.paging_state)
+    .execute_paged(&paged_prepared, &[], res1.paging_state())
     .await?;
 # Ok(())
 # }

@@ -18,7 +18,7 @@ session
 
 // Read a list of ints from the table
 let result = session.query("SELECT a FROM keyspace.table", &[]).await?;
-let mut iter = result.rows_typed::<(Vec<i32>,)>()?;
+let mut iter = result.rows::<(Vec<i32>,)>()?;
 while let Some((list_value,)) = iter.next().transpose()? {
     println!("{:?}", list_value);
 }
@@ -44,7 +44,7 @@ session
 
 // Read a set of ints from the table
 let result = session.query("SELECT a FROM keyspace.table", &[]).await?;
-let mut iter = result.rows_typed::<(Vec<i32>,)>()?;
+let mut iter = result.rows::<(Vec<i32>,)>()?;
 while let Some((list_value,)) = iter.next().transpose()? {
     println!("{:?}", list_value);
 }
@@ -68,7 +68,7 @@ session
 
 // Read a set of ints from the table
 let result = session.query("SELECT a FROM keyspace.table", &[]).await?;
-let mut iter = result.rows_typed::<(HashSet<i32>,)>()?;
+let mut iter = result.rows::<(HashSet<i32>,)>()?;
 while let Some((list_value,)) = iter.next().transpose()? {
     println!("{:?}", list_value);
 }
@@ -92,7 +92,7 @@ session
 
 // Read a set of ints from the table
 let result = session.query("SELECT a FROM keyspace.table", &[]).await?;
-let mut iter = result.rows_typed::<(BTreeSet<i32>,)>()?;
+let mut iter = result.rows::<(BTreeSet<i32>,)>()?;
 while let Some((list_value,)) = iter.next().transpose()? {
     println!("{:?}", list_value);
 }
@@ -121,7 +121,7 @@ session
 
 // Read a map from the table
 let result = session.query("SELECT a FROM keyspace.table", &[]).await?;
-let mut iter = result.rows_typed::<(HashMap<String, i32>,)>()?;
+let mut iter = result.rows::<(HashMap<String, i32>,)>()?;
 while let Some((map_value,)) = iter.next().transpose()? {
     println!("{:?}", map_value);
 }
@@ -147,7 +147,7 @@ session
 
 // Read a map from the table
 let result = session.query("SELECT a FROM keyspace.table", &[]).await?;
-let mut iter = result.rows_typed::<(BTreeMap<String, i32>,)>()?;
+let mut iter = result.rows::<(BTreeMap<String, i32>,)>()?;
 while let Some((map_value,)) = iter.next().transpose()? {
     println!("{:?}", map_value);
 }
