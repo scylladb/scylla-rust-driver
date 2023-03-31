@@ -1,6 +1,7 @@
 use bytes::Bytes;
 use futures::{future::RemoteHandle, FutureExt};
 use scylla_cql::errors::TranslationError;
+use scylla_cql::frame::response::Error;
 use scylla_cql::frame::types::SerialConsistency;
 use tokio::io::{split, AsyncRead, AsyncWrite, AsyncWriteExt, BufReader, BufWriter};
 use tokio::net::{TcpSocket, TcpStream};
@@ -1216,6 +1217,7 @@ pub async fn open_named_connection(
 
     let mut supported = match options_result {
         Response::Supported(supported) => supported,
+        Response::Error(Error { error, reason }) => return Err(QueryError::DbError(error, reason)),
         _ => {
             return Err(QueryError::ProtocolError(
                 "Wrong response to OPTIONS message was received",
@@ -1269,6 +1271,7 @@ pub async fn open_named_connection(
         Response::Authenticate(authenticate) => {
             perform_authenticate(&mut connection, &authenticate).await?;
         }
+        Response::Error(Error { error, reason }) => return Err(QueryError::DbError(error, reason)),
         _ => {
             return Err(QueryError::ProtocolError(
                 "Unexpected response to STARTUP message",
