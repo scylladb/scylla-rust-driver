@@ -1,0 +1,35 @@
+name: Serverless
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v2
+      - name: Setup Python 2.7
+        uses: actions/setup-python@v2
+        with:
+          python-version: '2.7'
+      - name: Install scylla-ccm
+        run: pip3 install https://github.com/scylladb/scylla-ccm/archive/master.zip
+
+      - name: Create serverless cluster
+        run: |
+          ccm create serverless -i 127.0.1. -n 1 --scylla -v release:5.1.6
+          ccm start  --sni-proxy --sni-port 7777
+
+      - name: Check
+        run: cargo check --verbose
+      - name: Run cloud example
+        run: cargo run --example cloud -- $HOME/.ccm/serverless/config_data.yaml
+
+      - name: Remove serverless cluster
+        run: ccm remove serverless
