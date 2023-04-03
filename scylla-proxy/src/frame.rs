@@ -119,6 +119,14 @@ impl ResponseFrame {
         })
     }
 
+    pub fn forged_ready(request_params: FrameParams) -> Self {
+        ResponseFrame {
+            params: request_params.for_response(),
+            opcode: ResponseOpcode::Ready,
+            body: Bytes::new(),
+        }
+    }
+
     pub(crate) async fn write(
         &self,
         writer: &mut (impl AsyncWrite + Unpin),
