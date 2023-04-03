@@ -1,3 +1,4 @@
+use std::env;
 use std::path::Path;
 
 use anyhow::Result;
@@ -6,8 +7,10 @@ use scylla::CloudSessionBuilder;
 #[tokio::main]
 async fn main() -> Result<()> {
     println!("Connecting to SNI proxy as described in cloud config yaml ...");
-
-    let session = CloudSessionBuilder::new(Path::new("examples/config_data.yaml"))
+    let config_path = env::args()
+        .nth(1)
+        .unwrap_or("examples/config_data.yaml".to_owned());
+    let session = CloudSessionBuilder::new(Path::new(&config_path))
         .unwrap()
         .build()
         .await
