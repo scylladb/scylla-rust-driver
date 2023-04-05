@@ -13,6 +13,13 @@ use scylla_cql::{errors::QueryError, frame::types::SerialConsistency, Consistenc
 use std::{fmt, sync::Arc, time::Duration};
 use tracing::warn;
 
+#[derive(Clone, Copy)]
+enum ReplicaLocation {
+    Any,
+    Datacenter,
+    DatacenterAndRack,
+}
+
 // TODO: LWT optimisation
 /// The default load balancing policy.
 ///
@@ -21,6 +28,7 @@ use tracing::warn;
 /// Latency awareness is available, although not recommended.
 pub struct DefaultPolicy {
     preferred_datacenter: Option<String>,
+    preferred_rack: Option<String>,
     is_token_aware: bool,
     permit_dc_failover: bool,
     pick_predicate: Box<dyn Fn(&NodeRef) -> bool + Send + Sync>,
@@ -32,6 +40,7 @@ impl fmt::Debug for DefaultPolicy {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("DefaultPolicy")
             .field("preferred_datacenter", &self.preferred_datacenter)
+            .field("preferred_rack", &self.preferred_rack)
             .field("is_token_aware", &self.is_token_aware)
             .field("permit_dc_failover", &self.permit_dc_failover)
             .field("latency_awareness", &self.latency_awareness)
@@ -60,9 +69,29 @@ or refrain from preferring datacenters (which may ban all other datacenters, if 
             }
         }
         if let Some(ts) = &routing_info.token_with_strategy {
+            // Try to pick some alive local rack random replica.
+            // If preferred rack is not specified, try to pick local DC replica.
+            if self.preferred_rack.is_some() {
+                let local_rack_picked = self.pick_replica(
+                    ts,
+                    ReplicaLocation::DatacenterAndRack,
+                    &self.pick_predicate,
+                    cluster,
+                );
+
+                if let Some(alive_local_rack_replica) = local_rack_picked {
+                    return Some(alive_local_rack_replica);
+                }
+            }
+
             // Try to pick some alive local random replica.
             // If preferred datacenter is not specified, all replicas are treated as local.
-            let picked = self.pick_replica(ts, true, &self.pick_predicate, cluster);
+            let picked = self.pick_replica(
+                ts,
+                ReplicaLocation::Datacenter,
+                &self.pick_predicate,
+                cluster,
+            );
 
             if let Some(alive_local_replica) = picked {
                 return Some(alive_local_replica);
@@ -70,7 +99,8 @@ or refrain from preferring datacenters (which may ban all other datacenters, if 
 
             // If datacenter failover is possible, loosen restriction about locality.
             if self.is_datacenter_failover_possible(&routing_info) {
-                let picked = self.pick_replica(ts, false, &self.pick_predicate, cluster);
+                let picked =
+                    self.pick_replica(ts, ReplicaLocation::Any, &self.pick_predicate, cluster);
                 if let Some(alive_remote_replica) = picked {
                     return Some(alive_remote_replica);
                 }
@@ -123,11 +153,19 @@ or refrain from preferring datacenters (which may ban all other datacenters, if 
 
         // If token is available, get a shuffled list of alive replicas.
         let maybe_replicas = if let Some(ts) = &routing_info.token_with_strategy {
-            let local_replicas = self.shuffled_replicas(ts, true, Self::is_alive, cluster);
+            let local_rack_replicas = self.shuffled_replicas(
+                ts,
+                ReplicaLocation::DatacenterAndRack,
+                Self::is_alive,
+                cluster,
+            );
+            let local_replicas =
+                self.shuffled_replicas(ts, ReplicaLocation::Datacenter, Self::is_alive, cluster);
 
             // If a datacenter failover is possible, loosen restriction about locality.
             let maybe_remote_replicas = if self.is_datacenter_failover_possible(&routing_info) {
-                let remote_replicas = self.shuffled_replicas(ts, false, Self::is_alive, cluster);
+                let remote_replicas =
+                    self.shuffled_replicas(ts, ReplicaLocation::Any, Self::is_alive, cluster);
                 Either::Left(remote_replicas)
             } else {
                 Either::Right(std::iter::empty())
@@ -135,7 +173,11 @@ or refrain from preferring datacenters (which may ban all other datacenters, if 
 
             // Produce an iterator, prioritizes local replicas.
             // If preferred datacenter is not specified, every replica is treated as a local one.
-            Either::Left(local_replicas.chain(maybe_remote_replicas))
+            Either::Left(
+                local_rack_replicas
+                    .chain(local_replicas)
+                    .chain(maybe_remote_replicas),
+            )
         } else {
             Either::Right(std::iter::empty::<NodeRef<'a>>())
         };
@@ -263,39 +305,59 @@ impl DefaultPolicy {
     fn replicas<'a>(
         &'a self,
         ts: &TokenWithStrategy<'a>,
-        should_be_local: bool,
+        replica_location: ReplicaLocation,
         predicate: impl Fn(&NodeRef<'a>) -> bool,
         cluster: &'a ClusterData,
     ) -> impl Iterator<Item = NodeRef<'a>> {
+        let predicate = move |node| match replica_location {
+            ReplicaLocation::Any | ReplicaLocation::Datacenter => predicate(&node),
+            ReplicaLocation::DatacenterAndRack => {
+                predicate(&node) && node.rack == self.preferred_rack
+            }
+        };
+        let should_be_local = match replica_location {
+            ReplicaLocation::Any => false,
+            ReplicaLocation::Datacenter | ReplicaLocation::DatacenterAndRack => true,
+        };
         self.nonfiltered_replica_set(ts, should_be_local, cluster)
             .into_iter()
-            .filter(predicate)
+            .filter(move |node: &NodeRef<'a>| predicate(node))
     }
 
     fn pick_replica<'a>(
         &'a self,
         ts: &TokenWithStrategy<'a>,
-        should_be_local: bool,
+        replica_location: ReplicaLocation,
         predicate: &impl Fn(&NodeRef<'a>) -> bool,
         cluster: &'a ClusterData,
     ) -> Option<NodeRef<'a>> {
+        let predicate = |node| match replica_location {
+            ReplicaLocation::Any | ReplicaLocation::Datacenter => predicate(&node),
+            ReplicaLocation::DatacenterAndRack => {
+                predicate(&node) && node.rack == self.preferred_rack
+            }
+        };
+        let should_be_local = match replica_location {
+            ReplicaLocation::Any => false,
+            ReplicaLocation::Datacenter | ReplicaLocation::DatacenterAndRack => true,
+        };
         let replica_set = self.nonfiltered_replica_set(ts, should_be_local, cluster);
         if let Some(fixed) = self.fixed_shuffle_seed {
             let mut gen = Pcg32::new(fixed, 0);
-            replica_set.choose_filtered(&mut gen, |node| predicate(&node))
+            replica_set.choose_filtered(&mut gen, predicate)
         } else {
-            replica_set.choose_filtered(&mut thread_rng(), |node| predicate(&node))
+            replica_set.choose_filtered(&mut thread_rng(), predicate)
         }
     }
 
     fn shuffled_replicas<'a>(
         &'a self,
         ts: &TokenWithStrategy<'a>,
-        should_be_local: bool,
+        replica_location: ReplicaLocation,
         predicate: impl Fn(&NodeRef<'a>) -> bool,
         cluster: &'a ClusterData,
     ) -> impl Iterator<Item = NodeRef<'a>> {
-        let replicas = self.replicas(ts, should_be_local, predicate, cluster);
+        let replicas = self.replicas(ts, replica_location, predicate, cluster);
 
         self.shuffle(replicas)
     }
@@ -364,6 +426,7 @@ impl Default for DefaultPolicy {
     fn default() -> Self {
         Self {
             preferred_datacenter: None,
+            preferred_rack: None,
             is_token_aware: true,
             permit_dc_failover: false,
             pick_predicate: Box::new(Self::is_alive),
@@ -390,6 +453,7 @@ impl Default for DefaultPolicy {
 #[derive(Clone, Debug)]
 pub struct DefaultPolicyBuilder {
     preferred_datacenter: Option<String>,
+    preferred_rack: Option<String>,
     is_token_aware: bool,
     permit_dc_failover: bool,
     latency_awareness: Option<LatencyAwarenessBuilder>,
@@ -401,6 +465,7 @@ impl DefaultPolicyBuilder {
     pub fn new() -> Self {
         Self {
             preferred_datacenter: None,
+            preferred_rack: None,
             is_token_aware: true,
             permit_dc_failover: false,
             latency_awareness: None,
@@ -421,12 +486,26 @@ impl DefaultPolicyBuilder {
 
         Arc::new(DefaultPolicy {
             preferred_datacenter: self.preferred_datacenter,
+            preferred_rack: self.preferred_rack,
             is_token_aware: self.is_token_aware,
             permit_dc_failover: self.permit_dc_failover,
             pick_predicate,
             latency_awareness,
             fixed_shuffle_seed: (!self.enable_replica_shuffle).then(rand::random),
         })
+    }
+
+    /// Sets the rack to be preferred by this policy
+    ///
+    /// Allows the load balancing policy to prioritize nodes based on their availability zones
+    /// in the preferred datacenter.
+    /// When a preferred rack is set, the policy will first return replicas in the local rack
+    /// in the preferred datacenter, and then the other replicas in the datacenter.
+    ///
+    /// When a preferred datacenter is not set, setting preferred rack will not have any effect.
+    pub fn prefer_rack(mut self, rack_name: String) -> Self {
+        self.preferred_rack = Some(rack_name);
+        self
     }
 
     /// Sets the datacenter to be preferred by this policy.
@@ -1234,6 +1313,102 @@ mod tests {
                     .group([B, C, E]) // remote nodes
                     .build(),
             },
+            // Keyspace SS with RF=2 with enabled DC failover and rack-awareness
+            Test {
+                policy: DefaultPolicy {
+                    preferred_datacenter: Some("eu".to_owned()),
+                    preferred_rack: Some("r1".to_owned()),
+                    is_token_aware: true,
+                    permit_dc_failover: true,
+                    ..Default::default()
+                },
+                routing_info: RoutingInfo {
+                    token: Some(Token { value: 160 }),
+                    keyspace: Some(KEYSPACE_NTS_RF_3),
+                    consistency: Consistency::One,
+                    ..Default::default()
+                },
+                // going though the ring, we get order: F , A , C , D , G , B , E
+                //                                      us  eu  eu  us  eu  eu  us
+                //                                      r2  r1  r1  r1  r2  r1  r1
+                expected_groups: ExpectedGroupsBuilder::new()
+                    .group([A, C]) // pick local rack replicas
+                    .group([G]) // local DC replicas
+                    .group([F, D, E]) // remote replicas
+                    .group([B]) // local nodes
+                    .build(),
+            },
+            // Keyspace SS with RF=2 with enabled rack-awareness, shuffling replicas disabled
+            Test {
+                policy: DefaultPolicy {
+                    preferred_datacenter: Some("eu".to_owned()),
+                    preferred_rack: Some("r1".to_owned()),
+                    is_token_aware: true,
+                    permit_dc_failover: false,
+                    fixed_shuffle_seed: Some(123),
+                    ..Default::default()
+                },
+                routing_info: RoutingInfo {
+                    token: Some(Token { value: 560 }),
+                    keyspace: Some(KEYSPACE_SS_RF_2),
+                    consistency: Consistency::Two,
+                    ..Default::default()
+                },
+                // going though the ring, we get order: B , C , E , G , A , F , D
+                //                                      eu  eu  us  eu  eu  us  us
+                //                                      r1  r1  r1  r2  r1  r2  r1
+                expected_groups: ExpectedGroupsBuilder::new()
+                    .deterministic([B]) // pick local rack replicas
+                    .deterministic([C]) // fallback replicas
+                    .group([A, G]) // local nodes
+                    .build(),
+            },
+            // Keyspace SS with RF=2 with enabled rack-awareness and no local-rack replica
+            Test {
+                policy: DefaultPolicy {
+                    preferred_datacenter: Some("eu".to_owned()),
+                    preferred_rack: Some("r2".to_owned()),
+                    is_token_aware: true,
+                    permit_dc_failover: false,
+                    ..Default::default()
+                },
+                routing_info: RoutingInfo {
+                    token: Some(Token { value: 160 }),
+                    keyspace: Some(KEYSPACE_SS_RF_2),
+                    consistency: Consistency::One,
+                    ..Default::default()
+                },
+                // going though the ring, we get order: F , A , C , D , G , B , E
+                //                                      us  eu  eu  us  eu  eu  us
+                //                                      r2  r1  r1  r1  r2  r1  r1
+                expected_groups: ExpectedGroupsBuilder::new()
+                    .group([A]) // pick local DC
+                    .group([C, G, B]) // local nodes
+                    .build(),
+            },
+            // No preferred DC, preferred rack should be ignored, failover permitted
+            Test {
+                policy: DefaultPolicy {
+                    preferred_datacenter: None,
+                    preferred_rack: Some("r2".to_owned()),
+                    is_token_aware: true,
+                    permit_dc_failover: true,
+                    ..Default::default()
+                },
+                routing_info: RoutingInfo {
+                    token: Some(Token { value: 160 }),
+                    keyspace: Some(KEYSPACE_NTS_RF_2),
+                    consistency: Consistency::Quorum,
+                    ..Default::default()
+                },
+                // going though the ring, we get order: F , A , C , D , G , B , E
+                //                                      us  eu  eu  us  eu  eu  us
+                //                                      r2  r1  r1  r1  r2  r1  r1
+                expected_groups: ExpectedGroupsBuilder::new()
+                    .group([A, D, F, G]) // remote replicas
+                    .group([B, C, E]) // remote nodes
+                    .build(),
+            },
         ];
 
         for Test {
@@ -1786,6 +1961,7 @@ mod latency_awareness {
 
             DefaultPolicy {
                 preferred_datacenter: Some("eu".to_owned()),
+                preferred_rack: None,
                 permit_dc_failover: true,
                 is_token_aware: true,
                 pick_predicate,

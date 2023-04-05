@@ -11,6 +11,7 @@ for queries with non-local consistency mode is also supported.
 `DefaultPolicyBuilder` with the following default values:
 
 - `preferred_datacenter`: `None`
+- `preferred_rack`: `None`
 - `is_token_aware`: `true`
 - `permit_dc_failover`: `false`
 - `latency_awareness`: `None`
@@ -25,6 +26,7 @@ use scylla::load_balancing::DefaultPolicy;
 
 let default_policy = DefaultPolicy::builder()
         .prefer_datacenter("dc1".to_string())
+        .prefer_rack("rack1".to_string())
         .token_aware(true)
         .permit_dc_failover(true)
         .build();
@@ -47,6 +49,14 @@ When datacenter failover is disabled (`permit_dc_failover` is set to
 false), the default policy will only include local nodes in load balancing
 plans. Remote nodes will be excluded, even if they are alive and available to
 serve requests.
+
+#### Preferred Rack
+
+The `preferred_rack` field in `DefaultPolicy` allows the load balancing policy to
+prioritize nodes based on their availability zones in the preferred datacenter.
+When a preferred rack is set, the policy will first return replicas in the local rack
+in the preferred datacenter, and then the other replicas in the datacenter.
+When a preferred datacenter is not set, setting preferred rack will not have any effect.
 
 #### Datacenter Failover
 
