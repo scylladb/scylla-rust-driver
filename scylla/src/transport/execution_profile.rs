@@ -226,6 +226,7 @@ pub(crate) mod defaults {
 /// # Ok(())
 /// # }
 /// ```
+#[derive(Clone, Debug)]
 pub struct ExecutionProfileBuilder {
     request_timeout: Option<Option<Duration>>,
     consistency: Option<Consistency>,
@@ -378,6 +379,12 @@ impl ExecutionProfileBuilder {
     }
 }
 
+impl Default for ExecutionProfileBuilder {
+    fn default() -> Self {
+        ExecutionProfile::builder()
+    }
+}
+
 /// A profile that groups configurable options regarding query execution.
 ///
 /// Execution profile is immutable as such, but the driver implements double indirection of form:
@@ -399,6 +406,20 @@ pub(crate) struct ExecutionProfileInner {
     pub(crate) speculative_execution_policy: Option<Arc<dyn SpeculativeExecutionPolicy>>,
 }
 
+impl ExecutionProfileInner {
+    /// Creates a builder having all options set to the same as set in this ExecutionProfileInner.
+    pub(crate) fn to_builder(&self) -> ExecutionProfileBuilder {
+        ExecutionProfileBuilder {
+            request_timeout: Some(self.request_timeout),
+            consistency: Some(self.consistency),
+            serial_consistency: Some(self.serial_consistency),
+            load_balancing_policy: Some(self.load_balancing_policy.clone()),
+            retry_policy: Some(self.retry_policy.clone()),
+            speculative_execution_policy: Some(self.speculative_execution_policy.clone()),
+        }
+    }
+}
+
 impl ExecutionProfile {
     pub(crate) fn new_from_inner(inner: ExecutionProfileInner) -> Self {
         Self(Arc::new(inner))
@@ -418,14 +439,7 @@ impl ExecutionProfile {
 
     /// Creates a builder having all options set to the same as set in this ExecutionProfile.
     pub fn to_builder(&self) -> ExecutionProfileBuilder {
-        ExecutionProfileBuilder {
-            request_timeout: Some(self.0.request_timeout),
-            consistency: Some(self.0.consistency),
-            serial_consistency: Some(self.0.serial_consistency),
-            load_balancing_policy: Some(self.0.load_balancing_policy.clone()),
-            retry_policy: Some(self.0.retry_policy.clone()),
-            speculative_execution_policy: Some(self.0.speculative_execution_policy.clone()),
-        }
+        self.0.to_builder()
     }
 
     /// Returns a new handle to this ExecutionProfile.
@@ -459,6 +473,11 @@ pub struct ExecutionProfileHandle(Arc<(ArcSwap<ExecutionProfileInner>, Option<St
 impl ExecutionProfileHandle {
     pub(crate) fn access(&self) -> Arc<ExecutionProfileInner> {
         self.0 .0.load_full()
+    }
+
+    /// Creates a builder having all options set to the same as set in the ExecutionProfile pointed by this handle.
+    pub fn pointee_to_builder(&self) -> ExecutionProfileBuilder {
+        self.0 .0.load().to_builder()
     }
 
     /// Makes the handle point to a new execution profile.

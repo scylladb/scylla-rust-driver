@@ -134,6 +134,7 @@ pub use transport::session_builder::SessionBuilder;
 #[cfg(feature = "cloud")]
 pub use transport::session_builder::CloudSessionBuilder;
 
+pub use transport::execution_profile;
 pub use transport::host_filter;
 pub use transport::load_balancing;
 pub use transport::retry_policy;

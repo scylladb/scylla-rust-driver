@@ -1815,7 +1815,9 @@ impl Session {
         }
     }
 
-    fn get_default_execution_profile_handle(&self) -> &ExecutionProfileHandle {
+    /// Retrieves the handle to execution profile that is used by this session
+    /// by default, i.e. when an executed statement does not define its own handle.
+    pub fn get_default_execution_profile_handle(&self) -> &ExecutionProfileHandle {
         &self.default_execution_profile_handle
     }
 }
