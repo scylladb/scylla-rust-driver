@@ -137,6 +137,13 @@ impl_from_cql_value_from_method!(BigDecimal, into_decimal); // BigDecimal::from_
 impl_from_cql_value_from_method!(Duration, as_duration); // Duration::from_cql<CqlValue>
 impl_from_cql_value_from_method!(CqlDuration, as_cql_duration); // CqlDuration::from_cql<CqlValue>
 
+impl<const N: usize> FromCqlVal<CqlValue> for [u8; N] {
+    fn from_cql(cql_val: CqlValue) -> Result<Self, FromCqlValError> {
+        let val = cql_val.into_blob().ok_or(FromCqlValError::BadCqlType)?;
+        val.try_into().map_err(|_| FromCqlValError::BadVal)
+    }
+}
+
 impl FromCqlVal<CqlValue> for crate::frame::value::Date {
     fn from_cql(cql_val: CqlValue) -> Result<Self, FromCqlValError> {
         match cql_val {
@@ -407,6 +414,12 @@ mod tests {
             Ok("text_test".to_string()),
             String::from_cql(CqlValue::Text("text_test".to_string()))
         );
+    }
+
+    #[test]
+    fn u8_array_from_cql() {
+        let val = [1u8; 4];
+        assert_eq!(Ok(val), <[u8; 4]>::from_cql(CqlValue::Blob(val.to_vec())));
     }
 
     #[test]
