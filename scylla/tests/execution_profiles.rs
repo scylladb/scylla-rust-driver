@@ -120,6 +120,7 @@ impl<const NODE: u8> SpeculativeExecutionPolicy for BoundToPredefinedNodePolicy<
 
 #[tokio::test]
 #[ntest::timeout(20000)]
+#[cfg(not(scylla_cloud_tests))]
 async fn test_execution_profiles() {
     let res = test_with_3_node_cluster(ShardAwareness::QueryNode, |proxy_uris, translation_map, mut running_proxy| async move {
 

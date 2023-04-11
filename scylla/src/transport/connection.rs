@@ -1628,6 +1628,7 @@ mod tests {
     ///    Then use query_iter with page_size set to 7 to select all 100 rows.
     /// 3. INSERT query_iter should work and not return any rows.
     #[tokio::test]
+    #[cfg(not(scylla_cloud_tests))]
     async fn connection_query_iter_test() {
         let uri = std::env::var("SCYLLA_URI").unwrap_or_else(|_| "127.0.0.1:9042".to_string());
         let addr: SocketAddr = resolve_hostname(&uri).await;

@@ -18,6 +18,7 @@ use scylla_proxy::{
 #[ignore]
 #[tokio::test]
 #[ntest::timeout(20000)]
+#[cfg(not(scylla_cloud_tests))]
 async fn if_lwt_optimisation_mark_offered_then_negotiatied_and_lwt_routed_optimally() {
     // This is just to increase the likelyhood that only intended prepared statements (which contain this mark) are captures by the proxy.
     const MAGIC_MARK: i32 = 123;
