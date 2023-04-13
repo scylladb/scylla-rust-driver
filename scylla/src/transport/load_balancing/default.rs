@@ -757,7 +757,7 @@ mod tests {
                 for got in gots {
                     // First, make sure that `got` has the right number of items,
                     // equal to the sum of sizes of all expected groups
-                    let combined_groups_len = self.groups.iter().map(|s| s.len()).sum();
+                    let combined_groups_len: usize = self.groups.iter().map(|s| s.len()).sum();
                     assert_eq!(got.len(), combined_groups_len);
 
                     // Now, split `got` into groups of expected sizes
@@ -1619,16 +1619,27 @@ mod latency_awareness {
         }
 
         pub(super) fn report_query(&self, node: &Node, latency: Duration) {
-            if let Some(node_avg) = self.node_avgs.read().unwrap().get(&node.host_id) {
+            let node_avgs_guard = self.node_avgs.read().unwrap();
+            if let Some(previous_node_avg) = node_avgs_guard.get(&node.host_id) {
                 // The usual path, the node has been already noticed.
-                let mut node_avg = node_avg.write().unwrap();
-                let previous = *node_avg;
-                *node_avg = TimestampedAverage::compute_next(previous, latency);
+                let mut node_avg_guard = previous_node_avg.write().unwrap();
+                let previous_node_avg = *node_avg_guard;
+                *node_avg_guard = TimestampedAverage::compute_next(previous_node_avg, latency);
             } else {
-                // We need to add the node to the map.
-                self.node_avgs.write().unwrap().insert(
+                // We drop the read lock not to deadlock while taking write lock.
+                std::mem::drop(node_avgs_guard);
+                let mut node_avgs_guard = self.node_avgs.write().unwrap();
+
+                // We have to read this again, as other threads may race with us.
+                let previous_node_avg = node_avgs_guard
+                    .get(&node.host_id)
+                    .and_then(|rwlock| *rwlock.read().unwrap());
+
+                // We most probably need to add the node to the map.
+                // (this will be Some only in an unlikely case that another thread raced with us and won)
+                node_avgs_guard.insert(
                     node.host_id,
-                    RwLock::new(TimestampedAverage::compute_next(None, latency)),
+                    RwLock::new(TimestampedAverage::compute_next(previous_node_avg, latency)),
                 );
             }
         }
@@ -1908,6 +1919,7 @@ mod latency_awareness {
                 },
                 ClusterData, NodeAddr,
             },
+            ExecutionProfile, SessionBuilder,
         };
         use std::time::Instant;
 
@@ -2581,6 +2593,30 @@ mod latency_awareness {
                 )
                 .await;
             }
+        }
+
+        // This is a regression test for #696.
+        #[tokio::test]
+        #[ntest::timeout(1000)]
+        async fn latency_aware_query_completes() {
+            let uri = std::env::var("SCYLLA_URI").unwrap_or_else(|_| "127.0.0.1:9042".to_string());
+
+            let policy = DefaultPolicy::builder()
+                .latency_awareness(LatencyAwarenessBuilder::default())
+                .build();
+            let handle = ExecutionProfile::builder()
+                .load_balancing_policy(policy)
+                .build()
+                .into_handle();
+
+            let session = SessionBuilder::new()
+                .known_node(uri)
+                .default_execution_profile_handle(handle)
+                .build()
+                .await
+                .unwrap();
+
+            session.query("whatever", ()).await.unwrap_err();
         }
     }
 }
