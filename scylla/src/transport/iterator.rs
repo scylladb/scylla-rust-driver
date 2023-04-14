@@ -224,16 +224,16 @@ impl RowIterator {
             .unwrap_or(config.execution_profile.serial_consistency);
         let retry_session = config.execution_profile.retry_policy.new_session();
 
-        let statement_info = RoutingInfo {
-            consistency,
-            serial_consistency: config.prepared.get_serial_consistency(),
-            token: config.token,
-            keyspace: None,
-            is_confirmed_lwt: config.prepared.is_confirmed_lwt(),
-        };
-
         let parent_span = tracing::Span::current();
         let worker_task = async move {
+            let statement_info = RoutingInfo {
+                consistency,
+                serial_consistency: config.prepared.get_serial_consistency(),
+                token: config.token,
+                keyspace: config.prepared.get_keyspace_name(),
+                is_confirmed_lwt: config.prepared.is_confirmed_lwt(),
+            };
+
             let prepared_ref = &config.prepared;
             let values_ref = &config.values;
             let partition_key = config.partition_key;
