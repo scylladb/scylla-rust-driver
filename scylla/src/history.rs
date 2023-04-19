@@ -457,13 +457,13 @@ mod tests {
 
     use crate::{
         query::Query, retry_policy::RetryDecision, utils::test_utils::unique_keyspace_name,
-        SessionBuilder,
     };
 
     use super::{
         AttemptId, AttemptResult, HistoryCollector, HistoryListener, QueryHistoryResult, QueryId,
         SpeculativeId, StructuredHistory, TimePoint,
     };
+    use crate::test_utils::create_new_session_builder;
     use chrono::{DateTime, NaiveDate, NaiveDateTime, NaiveTime, Utc};
     use futures::StreamExt;
     use scylla_cql::{
@@ -909,8 +909,7 @@ mod tests {
 
     #[tokio::test]
     async fn successful_query_history() {
-        let uri = std::env::var("SCYLLA_URI").unwrap_or_else(|_| "127.0.0.1:9042".to_string());
-        let session = SessionBuilder::new().known_node(uri).build().await.unwrap();
+        let session = create_new_session_builder().build().await.unwrap();
 
         let mut query = Query::new("SELECT * FROM system.local");
         let history_collector = Arc::new(HistoryCollector::new());
@@ -976,8 +975,7 @@ mod tests {
 
     #[tokio::test]
     async fn failed_query_history() {
-        let uri = std::env::var("SCYLLA_URI").unwrap_or_else(|_| "127.0.0.1:9042".to_string());
-        let session = SessionBuilder::new().known_node(uri).build().await.unwrap();
+        let session = create_new_session_builder().build().await.unwrap();
 
         let mut query = Query::new("This isnt even CQL");
         let history_collector = Arc::new(HistoryCollector::new());
@@ -1013,8 +1011,7 @@ mod tests {
 
     #[tokio::test]
     async fn iterator_query_history() {
-        let uri = std::env::var("SCYLLA_URI").unwrap_or_else(|_| "127.0.0.1:9042".to_string());
-        let session = SessionBuilder::new().known_node(uri).build().await.unwrap();
+        let session = create_new_session_builder().build().await.unwrap();
         let ks = unique_keyspace_name();
         session
         .query(format!("CREATE KEYSPACE {} WITH REPLICATION = {{'class' : 'SimpleStrategy', 'replication_factor' : 1}}", ks), &[])

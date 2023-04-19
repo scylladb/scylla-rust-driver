@@ -1907,6 +1907,7 @@ mod latency_awareness {
             *,
         };
 
+        use crate::test_utils::create_new_session_builder;
         use crate::{
             load_balancing::{
                 default::tests::test_default_policy_with_given_cluster_and_routing_info,
@@ -1919,7 +1920,7 @@ mod latency_awareness {
                 },
                 ClusterData, NodeAddr,
             },
-            ExecutionProfile, SessionBuilder,
+            ExecutionProfile,
         };
         use std::time::Instant;
 
@@ -2599,8 +2600,6 @@ mod latency_awareness {
         #[tokio::test]
         #[ntest::timeout(1000)]
         async fn latency_aware_query_completes() {
-            let uri = std::env::var("SCYLLA_URI").unwrap_or_else(|_| "127.0.0.1:9042".to_string());
-
             let policy = DefaultPolicy::builder()
                 .latency_awareness(LatencyAwarenessBuilder::default())
                 .build();
@@ -2609,8 +2608,7 @@ mod latency_awareness {
                 .build()
                 .into_handle();
 
-            let session = SessionBuilder::new()
-                .known_node(uri)
+            let session = create_new_session_builder()
                 .default_execution_profile_handle(handle)
                 .build()
                 .await
