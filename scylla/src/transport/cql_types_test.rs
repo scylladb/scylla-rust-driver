@@ -5,15 +5,14 @@ use crate::frame::value::Counter;
 use crate::frame::value::Value;
 use crate::frame::value::{Date, Time, Timestamp};
 use crate::macros::{FromUserType, IntoUserType};
+use crate::test_utils::create_new_session_builder;
 use crate::transport::session::IntoTypedRows;
 use crate::transport::session::Session;
 use crate::utils::test_utils::unique_keyspace_name;
-use crate::SessionBuilder;
 use bigdecimal::BigDecimal;
 use chrono::{Duration, NaiveDate};
 use num_bigint::BigInt;
 use std::cmp::PartialEq;
-use std::env;
 use std::fmt::Debug;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 use std::str::FromStr;
@@ -23,10 +22,7 @@ use uuid::Uuid;
 // Creates a new keyspace
 // Drops and creates table {table_name} (id int PRIMARY KEY, val {type_name})
 async fn init_test(table_name: &str, type_name: &str) -> Session {
-    let uri = env::var("SCYLLA_URI").unwrap_or_else(|_| "127.0.0.1:9042".to_string());
-
-    println!("Connecting to {} ...", uri);
-    let session: Session = SessionBuilder::new().known_node(uri).build().await.unwrap();
+    let session: Session = create_new_session_builder().build().await.unwrap();
     let ks = unique_keyspace_name();
 
     session
@@ -778,10 +774,7 @@ async fn test_udt_after_schema_update() {
     let table_name = "udt_tests";
     let type_name = "usertype1";
 
-    let uri = env::var("SCYLLA_URI").unwrap_or_else(|_| "127.0.0.1:9042".to_string());
-
-    println!("Connecting to {} ...", uri);
-    let session: Session = SessionBuilder::new().known_node(uri).build().await.unwrap();
+    let session: Session = create_new_session_builder().build().await.unwrap();
     let ks = unique_keyspace_name();
 
     session
