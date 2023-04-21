@@ -7,6 +7,7 @@ use crate::cloud::CloudConfig;
 use crate::frame::types::LegacyConsistency;
 use crate::history;
 use crate::history::HistoryListener;
+use crate::retry_policy::RetryPolicy;
 use arc_swap::ArcSwapOption;
 use async_trait::async_trait;
 use bytes::Bytes;
@@ -581,6 +582,7 @@ impl Session {
             .run_query(
                 RoutingInfo::default(),
                 &query.config,
+                query.get_retry_policy().map(|rp| &**rp),
                 |node: Arc<Node>| async move { node.random_connection().await },
                 |connection: Arc<Connection>,
                  consistency: Consistency,
@@ -920,6 +922,7 @@ impl Session {
             .run_query(
                 statement_info,
                 &prepared.config,
+                prepared.get_retry_policy().map(|rp| &**rp),
                 |node: Arc<Node>| async move {
                     match token {
                         Some(token) => node.connection_for_token(token).await,
@@ -1117,6 +1120,7 @@ impl Session {
             .run_query(
                 statement_info,
                 &batch.config,
+                batch.get_retry_policy().map(|rp| &**rp),
                 |node: Arc<Node>| async move {
                     match first_value_token {
                         Some(first_value_token) => {
@@ -1430,6 +1434,7 @@ impl Session {
         &'a self,
         statement_info: RoutingInfo<'a>,
         statement_config: &'a StatementConfig,
+        statement_retry_policy: Option<&dyn RetryPolicy>,
         choose_connection: impl Fn(Arc<Node>) -> ConnFut,
         do_query: impl Fn(Arc<Connection>, Consistency, &ExecutionProfileInner) -> QueryFut,
         request_span: &'a RequestSpan,
@@ -1479,7 +1484,7 @@ impl Session {
                 }
             }
 
-            let retry_policy = &execution_profile.retry_policy;
+            let retry_policy = statement_retry_policy.unwrap_or(&*execution_profile.retry_policy);
 
             let speculative_policy = execution_profile.speculative_execution_policy.as_ref();
 
@@ -1754,6 +1759,7 @@ impl Session {
             .run_query(
                 info,
                 &config,
+                None, // No specific retry policy needed for schema agreement
                 |node: Arc<Node>| async move { node.random_connection().await },
                 do_query,
                 &span,

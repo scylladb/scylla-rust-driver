@@ -33,18 +33,21 @@ To use in a [simple query](../queries/simple.md):
 # extern crate scylla;
 # use scylla::Session;
 # use std::error::Error;
+# use std::sync::Arc;
 # async fn check_only_compiles(session: &Session) -> Result<(), Box<dyn Error>> {
 use scylla::query::Query;
 use scylla::transport::ExecutionProfile;
 use scylla::transport::retry_policy::DefaultRetryPolicy;
 
+// Create a Query manually and set the retry policy
+let mut my_query: Query = Query::new("INSERT INTO ks.tab (a) VALUES(?)");
+my_query.set_retry_policy(Some(Arc::new(DefaultRetryPolicy::new())));
+
+// You can also set retry policy in an execution profile
 let handle = ExecutionProfile::builder()
     .retry_policy(Box::new(DefaultRetryPolicy::new()))
     .build()
     .into_handle();
-
-// Create a Query manually and set the retry policy
-let mut my_query: Query = Query::new("INSERT INTO ks.tab (a) VALUES(?)");
 my_query.set_execution_profile_handle(Some(handle));
 
 // Run the query using this retry policy
@@ -59,21 +62,23 @@ To use in a [prepared query](../queries/prepared.md):
 # extern crate scylla;
 # use scylla::Session;
 # use std::error::Error;
+# use std::sync::Arc;
 # async fn check_only_compiles(session: &Session) -> Result<(), Box<dyn Error>> {
 use scylla::prepared_statement::PreparedStatement;
 use scylla::transport::ExecutionProfile;
 use scylla::transport::retry_policy::DefaultRetryPolicy;
 
-let handle = ExecutionProfile::builder()
-    .retry_policy(Box::new(DefaultRetryPolicy::new()))
-    .build()
-    .into_handle();
-
 // Create PreparedStatement manually and set the retry policy
 let mut prepared: PreparedStatement = session
     .prepare("INSERT INTO ks.tab (a) VALUES(?)")
     .await?;
+prepared.set_retry_policy(Some(Arc::new(DefaultRetryPolicy::new())));
 
+// You can also set retry policy in an execution profile
+let handle = ExecutionProfile::builder()
+    .retry_policy(Box::new(DefaultRetryPolicy::new()))
+    .build()
+    .into_handle();
 prepared.set_execution_profile_handle(Some(handle));
 
 // Run the query using this retry policy
