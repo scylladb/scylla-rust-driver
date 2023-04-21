@@ -1,6 +1,7 @@
 use super::StatementConfig;
 use crate::frame::types::{Consistency, SerialConsistency};
 use crate::history::HistoryListener;
+use crate::retry_policy::RetryPolicy;
 use crate::transport::execution_profile::ExecutionProfileHandle;
 use std::sync::Arc;
 use std::time::Duration;
@@ -12,6 +13,9 @@ use std::time::Duration;
 pub struct Query {
     pub(crate) config: StatementConfig,
 
+    // TODO: Move this after #701 is fixed
+    retry_policy: Option<Arc<dyn RetryPolicy>>,
+
     pub contents: String,
     page_size: Option<i32>,
 }
@@ -21,6 +25,7 @@ impl Query {
     pub fn new(query_text: impl Into<String>) -> Self {
         Self {
             contents: query_text.into(),
+            retry_policy: None,
             page_size: None,
             config: Default::default(),
         }
@@ -121,6 +126,18 @@ impl Query {
     /// Gets client timeout associated with this query
     pub fn get_request_timeout(&self) -> Option<Duration> {
         self.config.request_timeout
+    }
+
+    /// Set the retry policy for this statement, overriding the one from execution profile if not None.
+    #[inline]
+    pub fn set_retry_policy(&mut self, retry_policy: Option<Arc<dyn RetryPolicy>>) {
+        self.retry_policy = retry_policy;
+    }
+
+    /// Get the retry policy set for the statement.
+    #[inline]
+    pub fn get_retry_policy(&self) -> Option<&Arc<dyn RetryPolicy>> {
+        self.retry_policy.as_ref()
     }
 
     /// Sets the listener capable of listening what happens during query execution.

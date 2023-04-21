@@ -423,6 +423,7 @@ impl Connection {
                     .prepared_flags_contain_lwt_mark(p.prepared_metadata.flags as u32),
                 p.prepared_metadata,
                 query.contents.clone(),
+                query.get_retry_policy().cloned(),
                 query.get_page_size(),
                 query.config.clone(),
             ),

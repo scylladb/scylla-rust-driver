@@ -1,6 +1,7 @@
 use std::sync::Arc;
 
 use crate::history::HistoryListener;
+use crate::retry_policy::RetryPolicy;
 use crate::statement::{prepared_statement::PreparedStatement, query::Query};
 use crate::transport::execution_profile::ExecutionProfileHandle;
 
@@ -14,6 +15,9 @@ pub use crate::frame::request::batch::BatchType;
 #[derive(Clone)]
 pub struct Batch {
     pub(crate) config: StatementConfig,
+
+    // TODO: Move this after #701 is fixed
+    retry_policy: Option<Arc<dyn RetryPolicy>>,
 
     pub statements: Vec<BatchStatement>,
     batch_type: BatchType,
@@ -108,6 +112,18 @@ impl Batch {
         self.config.timestamp
     }
 
+    /// Set the retry policy for this batch, overriding the one from execution profile if not None.
+    #[inline]
+    pub fn set_retry_policy(&mut self, retry_policy: Option<Arc<dyn RetryPolicy>>) {
+        self.retry_policy = retry_policy;
+    }
+
+    /// Get the retry policy set for the batch.
+    #[inline]
+    pub fn get_retry_policy(&self) -> Option<&Arc<dyn RetryPolicy>> {
+        self.retry_policy.as_ref()
+    }
+
     /// Sets the listener capable of listening what happens during query execution.
     pub fn set_history_listener(&mut self, history_listener: Arc<dyn HistoryListener>) {
         self.config.history_listener = Some(history_listener);
@@ -134,6 +150,7 @@ impl Default for Batch {
     fn default() -> Self {
         Self {
             statements: Vec::new(),
+            retry_policy: None,
             batch_type: BatchType::Logged,
             config: Default::default(),
         }

@@ -151,7 +151,11 @@ impl RowIterator {
             .serial_consistency
             .unwrap_or(execution_profile.serial_consistency);
 
-        let retry_session = execution_profile.retry_policy.new_session();
+        let retry_session = query
+            .get_retry_policy()
+            .map(|rp| &**rp)
+            .unwrap_or(&*execution_profile.retry_policy)
+            .new_session();
 
         let parent_span = tracing::Span::current();
         let worker_task = async move {
@@ -222,7 +226,12 @@ impl RowIterator {
             .config
             .serial_consistency
             .unwrap_or(config.execution_profile.serial_consistency);
-        let retry_session = config.execution_profile.retry_policy.new_session();
+        let retry_session = config
+            .prepared
+            .get_retry_policy()
+            .map(|rp| &**rp)
+            .unwrap_or(&*config.execution_profile.retry_policy)
+            .new_session();
 
         let parent_span = tracing::Span::current();
         let worker_task = async move {
