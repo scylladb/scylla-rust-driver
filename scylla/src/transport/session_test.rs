@@ -562,6 +562,14 @@ async fn test_token_awareness() {
         .unwrap();
     prepared_statement.set_tracing(true);
 
+    // The Cassandra cluster in CI is quite slow, so we use a quite forgiving
+    // configuration here (wait at most 10 seconds)
+    let get_tracing_config = GetTracingConfig {
+        attempts: NonZeroU32::new(50).unwrap(),
+        interval: Duration::from_millis(200),
+        consistency: Consistency::One,
+    };
+
     // The default policy should be token aware
     for size in 1..50usize {
         let key = vec!['a'; size].into_iter().collect::<String>();
@@ -570,7 +578,7 @@ async fn test_token_awareness() {
         // Execute a query and observe tracing info
         let res = session.execute(&prepared_statement, values).await.unwrap();
         let tracing_info = session
-            .get_tracing_info(res.tracing_id.as_ref().unwrap())
+            .get_tracing_info_custom(res.tracing_id.as_ref().unwrap(), &get_tracing_config)
             .await
             .unwrap();
 
@@ -583,7 +591,10 @@ async fn test_token_awareness() {
             .await
             .unwrap();
         let tracing_id = iter.get_tracing_ids()[0];
-        let tracing_info = session.get_tracing_info(&tracing_id).await.unwrap();
+        let tracing_info = session
+            .get_tracing_info_custom(&tracing_id, &get_tracing_config)
+            .await
+            .unwrap();
 
         // Again, verify that only one node was involved
         assert_eq!(tracing_info.nodes().len(), 1);
