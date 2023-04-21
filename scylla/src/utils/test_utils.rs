@@ -4,6 +4,8 @@ use std::{
 };
 
 #[cfg(test)]
+use crate::transport::session_builder::{GenericSessionBuilder, SessionBuilderKind};
+#[cfg(test)]
 use crate::Session;
 
 static UNIQUE_COUNTER: AtomicUsize = AtomicUsize::new(0);
@@ -51,4 +53,34 @@ pub(crate) async fn supports_feature(session: &Session, feature: &str) -> bool {
         .unwrap_or_default()
         .split(',')
         .any(|f| f == feature)
+}
+
+// Creates a generic session builder based on conditional compilation configuration
+// For SessionBuilder of DefaultMode type, adds localhost to known hosts, as all of the tests
+// connect to localhost.
+#[cfg(test)]
+pub fn create_new_session_builder() -> GenericSessionBuilder<impl SessionBuilderKind> {
+    #[cfg(not(scylla_cloud_tests))]
+    {
+        use crate::transport::session_builder::DefaultMode;
+        use crate::SessionBuilder;
+
+        let uri = std::env::var("SCYLLA_URI").unwrap_or_else(|_| "127.0.0.1:9042".to_string());
+        let session_builder: GenericSessionBuilder<DefaultMode> =
+            SessionBuilder::new().known_node(uri);
+        session_builder
+    }
+
+    #[cfg(scylla_cloud_tests)]
+    {
+        use crate::transport::session_builder::CloudMode;
+        use crate::CloudSessionBuilder;
+        use std::path::Path;
+
+        let session_builder: GenericSessionBuilder<CloudMode> = std::env::var("CLOUD_CONFIG_PATH")
+            .map(|config_path| CloudSessionBuilder::new(Path::new(&config_path)))
+            .unwrap()
+            .expect("failed to create a session in cloud mode");
+        session_builder
+    }
 }

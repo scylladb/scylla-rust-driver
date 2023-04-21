@@ -217,20 +217,19 @@ where
 #[cfg(test)]
 mod tests {
     use crate::query::Query;
+    use crate::test_utils::create_new_session_builder;
     use crate::transport::partitioner::PartitionerName;
     use crate::utils::test_utils::unique_keyspace_name;
     use crate::{
         batch::{Batch, BatchStatement},
         prepared_statement::PreparedStatement,
-        CachingSession, Session, SessionBuilder,
+        CachingSession, Session,
     };
     use futures::TryStreamExt;
     use std::collections::BTreeSet;
 
     async fn new_for_test() -> Session {
-        let uri = std::env::var("SCYLLA_URI").unwrap_or_else(|_| "127.0.0.1:9042".to_string());
-        let session = SessionBuilder::new()
-            .known_node(uri)
+        let session = create_new_session_builder()
             .build()
             .await
             .expect("Could not create session");

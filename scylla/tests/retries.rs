@@ -18,6 +18,7 @@ use scylla_proxy::{
 
 #[tokio::test]
 #[ntest::timeout(30000)]
+#[cfg(not(scylla_cloud_tests))]
 async fn speculative_execution_is_fired() {
     const TIMEOUT_PER_REQUEST: Duration = Duration::from_millis(1000);
 
@@ -98,6 +99,7 @@ async fn speculative_execution_is_fired() {
 
 #[tokio::test]
 #[ntest::timeout(30000)]
+#[cfg(not(scylla_cloud_tests))]
 async fn retries_occur() {
     let res = test_with_3_node_cluster(ShardAwareness::QueryNode, |proxy_uris, translation_map, mut running_proxy| async move {
 

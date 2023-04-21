@@ -1356,6 +1356,7 @@ mod tests {
     // Port collision should occur
     // If they are not handled this test will most likely fail
     #[tokio::test]
+    #[cfg(not(scylla_cloud_tests))]
     async fn many_connections() {
         let connections_number = 512;
 
