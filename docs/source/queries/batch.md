@@ -1,8 +1,8 @@
 # Batch statement
 
-A batch statement allows to run many queries at once.\
-These queries can be [simple queries](simple.md) or [prepared queries](prepared.md).\
-Only queries like `INSERT` or `UPDATE` can be in a batch.
+A batch statement allows to execute many data-modifying statements at once.\
+These statements can be [simple](simple.md) or [prepared](prepared.md).\
+Only `INSERT`, `UPDATE` and `DELETE` statements are allowed.
 
 ```rust
 # extern crate scylla;
@@ -16,20 +16,20 @@ use scylla::prepared_statement::PreparedStatement;
 // Create a batch statement
 let mut batch: Batch = Default::default();
 
-// Add a simple query to the batch using its text
+// Add a simple statement to the batch using its text
 batch.append_statement("INSERT INTO ks.tab(a, b) VALUES(?, ?)");
 
-// Add a simple query created manually to the batch
+// Add a simple statement created manually to the batch
 let simple: Query = Query::new("INSERT INTO ks.tab (a, b) VALUES(3, 4)");
 batch.append_statement(simple);
 
-// Add a prepared query to the batch
+// Add a prepared statement to the batch
 let prepared: PreparedStatement = session
     .prepare("INSERT INTO ks.tab (a, b) VALUES(?, 6)")
     .await?;
 batch.append_statement(prepared);
 
-// Specify bound values to use with each query
+// Specify bound values to use with each statement
 let batch_values = ((1_i32, 2_i32),
                     (),
                     (5_i32,));
@@ -41,7 +41,7 @@ session.batch(&batch, batch_values).await?;
 ```
 
 ### Preparing a batch
-Instead of preparing each query individually, it's possible to prepare a whole batch at once:
+Instead of preparing each statement individually, it's possible to prepare a whole batch at once:
 
 ```rust
 # extern crate scylla;
@@ -58,7 +58,7 @@ batch.append_statement("INSERT INTO ks.simple_unprepared2 VALUES(?, ?)");
 // Prepare all statements in the batch at once
 let prepared_batch: Batch = session.prepare_batch(&batch).await?;
 
-// Specify bound values to use with each query
+// Specify bound values to use with each statement
 let batch_values = ((1_i32, 2_i32),
                     (3_i32, 4_i32));
 
@@ -99,10 +99,10 @@ for more options
 Batch takes a tuple of values specified just like in [simple](simple.md) or [prepared](prepared.md) queries.
 
 Length of batch values must be equal to the number of statements in a batch.\
-Each query must have its values specified, even if they are empty.
+Each statement must have its values specified, even if they are empty.
 
 Values passed to `Session::batch` must implement the trait `BatchValues`.\
-By default this includes tuples `()` and slices `&[]` of tuples and slices which implement `ValueList`.\
+By default this includes tuples `()` and slices `&[]` of tuples and slices which implement `ValueList`.
 
 Example:
 ```rust
@@ -114,26 +114,26 @@ use scylla::batch::Batch;
 
 let mut batch: Batch = Default::default();
 
-// A query with two bound values
+// A statement with two bound values
 batch.append_statement("INSERT INTO ks.tab(a, b) VALUES(?, ?)");
 
-// A query with one bound value
+// A statement with one bound value
 batch.append_statement("INSERT INTO ks.tab(a, b) VALUES(3, ?)");
 
-// A query with no bound values
+// A statement with no bound values
 batch.append_statement("INSERT INTO ks.tab(a, b) VALUES(5, 6)");
 
-// Batch values is a tuple of 3 tuples containing values for each query
-let batch_values = ((1_i32, 2_i32), // Tuple with two values for the first query
-                    (4_i32,),       // Tuple with one value for the second query
-                    ());            // Empty tuple/unit for the third query
+// Batch values is a tuple of 3 tuples containing values for each statement
+let batch_values = ((1_i32, 2_i32), // Tuple with two values for the first statement
+                    (4_i32,),       // Tuple with one value for the second statement
+                    ());            // Empty tuple/unit for the third statement
 
 // Run the batch
 session.batch(&batch, batch_values).await?;
 # Ok(())
 # }
 ```
-For more information about sending values in a query see [Query values](values.md)
+For more information about sending values in a statement see [Query values](values.md)
 
 
 ### Performance
