@@ -302,9 +302,16 @@ impl DefaultPolicy {
     fn nonfiltered_replica_set<'a>(
         &'a self,
         ts: &TokenWithStrategy<'a>,
-        should_be_local: bool,
+        replica_location: ReplicaLocationCriteria,
         cluster: &'a ClusterData,
     ) -> ReplicaSet<'a> {
+        let should_be_local = match replica_location {
+            ReplicaLocationCriteria::Any => false,
+            ReplicaLocationCriteria::Datacenter | ReplicaLocationCriteria::DatacenterAndRack => {
+                true
+            }
+        };
+
         let datacenter = should_be_local
             .then_some(self.preferred_datacenter.as_deref())
             .flatten();
@@ -327,13 +334,8 @@ impl DefaultPolicy {
                 predicate(&node) && node.rack == self.preferred_rack
             }
         };
-        let should_be_local = match replica_location {
-            ReplicaLocationCriteria::Any => false,
-            ReplicaLocationCriteria::Datacenter | ReplicaLocationCriteria::DatacenterAndRack => {
-                true
-            }
-        };
-        self.nonfiltered_replica_set(ts, should_be_local, cluster)
+
+        self.nonfiltered_replica_set(ts, replica_location, cluster)
             .into_iter()
             .filter(move |node: &NodeRef<'a>| predicate(node))
     }
@@ -351,13 +353,9 @@ impl DefaultPolicy {
                 predicate(&node) && node.rack == self.preferred_rack
             }
         };
-        let should_be_local = match replica_location {
-            ReplicaLocationCriteria::Any => false,
-            ReplicaLocationCriteria::Datacenter | ReplicaLocationCriteria::DatacenterAndRack => {
-                true
-            }
-        };
-        let replica_set = self.nonfiltered_replica_set(ts, should_be_local, cluster);
+
+        let replica_set = self.nonfiltered_replica_set(ts, replica_location, cluster);
+
         if let Some(fixed) = self.fixed_shuffle_seed {
             let mut gen = Pcg32::new(fixed, 0);
             replica_set.choose_filtered(&mut gen, predicate)
