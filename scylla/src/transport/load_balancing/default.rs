@@ -285,18 +285,18 @@ impl DefaultPolicy {
                 .replica_locator()
                 .unique_nodes_in_datacenter_ring(preferred_datacenter.as_str())
             {
-                return nodes;
+                nodes
             } else {
                 tracing::warn!(
                     "Datacenter specified as the preferred one ({}) does not exist!",
                     preferred_datacenter
                 );
                 // We won't guess any DC, as it could lead to possible violation of dc failover ban.
-                return &[];
+                &[]
             }
+        } else {
+            cluster.replica_locator().unique_nodes_in_global_ring()
         }
-
-        cluster.replica_locator().unique_nodes_in_global_ring()
     }
 
     fn nonfiltered_replica_set<'a>(
