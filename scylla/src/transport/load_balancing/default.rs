@@ -59,7 +59,12 @@ enum ReplicaOrder {
     RingOrder,
 }
 
-// TODO: LWT optimisation
+#[derive(Clone, Copy)]
+enum StatementType {
+    Lwt,
+    NonLwt,
+}
+
 /// The default load balancing policy.
 ///
 /// It can be configured to be datacenter-aware and token-aware.
@@ -105,6 +110,11 @@ or refrain from preferring datacenters (which may ban all other datacenters, if 
                 );
             }
         }
+        let statement_type = if query.is_confirmed_lwt {
+            StatementType::Lwt
+        } else {
+            StatementType::NonLwt
+        };
         if let Some(ts) = &routing_info.token_with_strategy {
             if let ReplicaLocationPreference::DatacenterAndRack(dc, rack) = &self.preferences {
                 // Try to pick some alive local rack random replica.
@@ -113,6 +123,7 @@ or refrain from preferring datacenters (which may ban all other datacenters, if 
                     ReplicaLocationCriteria::DatacenterAndRack(dc, rack),
                     &self.pick_predicate,
                     cluster,
+                    statement_type,
                 );
 
                 if let Some(alive_local_rack_replica) = local_rack_picked {
@@ -129,6 +140,7 @@ or refrain from preferring datacenters (which may ban all other datacenters, if 
                     ReplicaLocationCriteria::Datacenter(dc),
                     &self.pick_predicate,
                     cluster,
+                    statement_type,
                 );
 
                 if let Some(alive_local_replica) = picked {
@@ -146,6 +158,7 @@ or refrain from preferring datacenters (which may ban all other datacenters, if 
                     ReplicaLocationCriteria::Any,
                     &self.pick_predicate,
                     cluster,
+                    statement_type,
                 );
                 if let Some(alive_remote_replica) = picked {
                     return Some(alive_remote_replica);
@@ -196,16 +209,22 @@ or refrain from preferring datacenters (which may ban all other datacenters, if 
         cluster: &'a ClusterData,
     ) -> FallbackPlan<'a> {
         let routing_info = self.routing_info(query, cluster);
+        let statement_type = if query.is_confirmed_lwt {
+            StatementType::Lwt
+        } else {
+            StatementType::NonLwt
+        };
 
         // If token is available, get a shuffled list of alive replicas.
         let maybe_replicas = if let Some(ts) = &routing_info.token_with_strategy {
             let maybe_local_rack_replicas =
                 if let ReplicaLocationPreference::DatacenterAndRack(dc, rack) = &self.preferences {
-                    let local_rack_replicas = self.shuffled_replicas(
+                    let local_rack_replicas = self.fallback_replicas(
                         ts,
                         ReplicaLocationCriteria::DatacenterAndRack(dc, rack),
                         Self::is_alive,
                         cluster,
+                        statement_type,
                     );
                     Either::Left(local_rack_replicas)
                 } else {
@@ -216,11 +235,12 @@ or refrain from preferring datacenters (which may ban all other datacenters, if 
             | ReplicaLocationPreference::Datacenter(dc) =
                 &self.preferences
             {
-                let local_replicas = self.shuffled_replicas(
+                let local_replicas = self.fallback_replicas(
                     ts,
                     ReplicaLocationCriteria::Datacenter(dc),
                     Self::is_alive,
                     cluster,
+                    statement_type,
                 );
                 Either::Left(local_replicas)
             } else {
@@ -231,11 +251,12 @@ or refrain from preferring datacenters (which may ban all other datacenters, if 
             let maybe_remote_replicas = if self.preferences.datacenter().is_none()
                 || self.is_datacenter_failover_possible(&routing_info)
             {
-                let remote_replicas = self.shuffled_replicas(
+                let remote_replicas = self.fallback_replicas(
                     ts,
                     ReplicaLocationCriteria::Any,
                     Self::is_alive,
                     cluster,
+                    statement_type,
                 );
                 Either::Left(remote_replicas)
             } else {
@@ -416,6 +437,80 @@ impl DefaultPolicy {
         replica_location: ReplicaLocationCriteria<'a>,
         predicate: &'a impl Fn(&NodeRef<'a>) -> bool,
         cluster: &'a ClusterData,
+        statement_type: StatementType,
+    ) -> Option<NodeRef<'a>> {
+        match statement_type {
+            StatementType::Lwt => self.pick_first_replica(ts, replica_location, predicate, cluster),
+            StatementType::NonLwt => {
+                self.pick_random_replica(ts, replica_location, predicate, cluster)
+            }
+        }
+    }
+
+    // This is to be used for LWT optimisation: in order to reduce contention
+    // caused by Paxos conflicts, we always try to query replicas in the same, ring order.
+    //
+    // If preferred rack and DC are set, then the first (encountered on the ring) replica
+    // that resides in that rack in that DC **and** satisfies the `predicate`  is returned.
+    //
+    // If preferred DC is set, then the first (encountered on the ring) replica
+    // that resides in that DC **and** satisfies the `predicate` is returned.
+    //
+    // If no DC/rack preferences are set, then the only possible replica to be returned
+    // (due to expensive computation of the others, and we avoid expensive computation in `pick()`)
+    // is the primary replica. It is returned **iff** it satisfies the predicate, else None.
+    fn pick_first_replica<'a>(
+        &'a self,
+        ts: &TokenWithStrategy<'a>,
+        replica_location: ReplicaLocationCriteria<'a>,
+        predicate: &'a impl Fn(&NodeRef<'a>) -> bool,
+        cluster: &'a ClusterData,
+    ) -> Option<NodeRef<'a>> {
+        match replica_location {
+            ReplicaLocationCriteria::Any => {
+                // ReplicaSet returned by ReplicaLocator for this case:
+                // 1) can be precomputed and lated used cheaply,
+                // 2) returns replicas in the **non-ring order** (this because ReplicaSet chains
+                //    ring-ordered replicas sequences from different DCs, thus not preserving
+                //    the global ring order).
+                // Because of 2), we can't use a precomputed ReplicaSet, but instead we need ReplicasOrdered.
+                // As ReplicasOrdered can compute cheaply only the primary global replica
+                // (computation of the remaining ones is expensive), in case that the primary replica
+                // does not satisfy the `predicate`, None is returned. All expensive computation
+                // is to be done only when `fallback()` is called.
+                self.nonfiltered_replica_set(ts, replica_location, cluster)
+                    .into_replicas_ordered()
+                    .into_iter()
+                    .next()
+                    .and_then(|primary_replica| {
+                        predicate(&primary_replica).then_some(primary_replica)
+                    })
+            }
+            ReplicaLocationCriteria::Datacenter(_)
+            | ReplicaLocationCriteria::DatacenterAndRack(_, _) => {
+                // ReplicaSet returned by ReplicaLocator for this case:
+                // 1) can be precomputed and lated used cheaply,
+                // 2) returns replicas in the ring order (this is not true for the case
+                //    when multiple DCs are allowed, because ReplicaSet chains replicas sequences
+                //    from different DCs, thus not preserving the global ring order)
+                self.replicas(
+                    ts,
+                    replica_location,
+                    move |node| predicate(node),
+                    cluster,
+                    ReplicaOrder::RingOrder,
+                )
+                .next()
+            }
+        }
+    }
+
+    fn pick_random_replica<'a>(
+        &'a self,
+        ts: &TokenWithStrategy<'a>,
+        replica_location: ReplicaLocationCriteria<'a>,
+        predicate: &'a impl Fn(&NodeRef<'a>) -> bool,
+        cluster: &'a ClusterData,
     ) -> Option<NodeRef<'a>> {
         let predicate = Self::make_rack_predicate(predicate, replica_location);
 
@@ -429,22 +524,27 @@ impl DefaultPolicy {
         }
     }
 
-    fn shuffled_replicas<'a>(
+    fn fallback_replicas<'a>(
         &'a self,
         ts: &TokenWithStrategy<'a>,
         replica_location: ReplicaLocationCriteria<'a>,
         predicate: impl Fn(&NodeRef<'a>) -> bool + 'a,
         cluster: &'a ClusterData,
+        statement_type: StatementType,
     ) -> impl Iterator<Item = NodeRef<'a>> {
-        let replicas = self.replicas(
-            ts,
-            replica_location,
-            predicate,
-            cluster,
-            ReplicaOrder::Arbitrary,
-        );
+        let order = match statement_type {
+            StatementType::Lwt => ReplicaOrder::RingOrder,
+            StatementType::NonLwt => ReplicaOrder::Arbitrary,
+        };
 
-        self.shuffle(replicas)
+        let replicas = self.replicas(ts, replica_location, predicate, cluster, order);
+
+        match statement_type {
+            // As an LWT optimisation: in order to reduce contention caused by Paxos conflicts,
+            //  we always try to query replicas in the same order.
+            StatementType::Lwt => Either::Left(replicas),
+            StatementType::NonLwt => Either::Right(self.shuffle(replicas)),
+        }
     }
 
     fn randomly_rotated_nodes(nodes: &[Arc<Node>]) -> impl Iterator<Item = NodeRef<'_>> {
