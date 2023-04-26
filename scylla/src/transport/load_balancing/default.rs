@@ -53,6 +53,12 @@ impl ReplicaLocationPreference {
     }
 }
 
+#[derive(Clone, Copy)]
+enum ReplicaOrder {
+    Arbitrary,
+    RingOrder,
+}
+
 // TODO: LWT optimisation
 /// The default load balancing policy.
 ///
@@ -386,12 +392,22 @@ impl DefaultPolicy {
         replica_location: ReplicaLocationCriteria<'a>,
         predicate: impl Fn(&NodeRef<'a>) -> bool + 'a,
         cluster: &'a ClusterData,
+        order: ReplicaOrder,
     ) -> impl Iterator<Item = NodeRef<'a>> {
         let predicate = Self::make_rack_predicate(predicate, replica_location);
 
-        self.nonfiltered_replica_set(ts, replica_location, cluster)
-            .into_iter()
-            .filter(move |node: &NodeRef<'a>| predicate(node))
+        let replica_iter = match order {
+            ReplicaOrder::Arbitrary => Either::Left(
+                self.nonfiltered_replica_set(ts, replica_location, cluster)
+                    .into_iter(),
+            ),
+            ReplicaOrder::RingOrder => Either::Right(
+                self.nonfiltered_replica_set(ts, replica_location, cluster)
+                    .into_replicas_ordered()
+                    .into_iter(),
+            ),
+        };
+        replica_iter.filter(move |node: &NodeRef<'a>| predicate(node))
     }
 
     fn pick_replica<'a>(
@@ -420,7 +436,13 @@ impl DefaultPolicy {
         predicate: impl Fn(&NodeRef<'a>) -> bool + 'a,
         cluster: &'a ClusterData,
     ) -> impl Iterator<Item = NodeRef<'a>> {
-        let replicas = self.replicas(ts, replica_location, predicate, cluster);
+        let replicas = self.replicas(
+            ts,
+            replica_location,
+            predicate,
+            cluster,
+            ReplicaOrder::Arbitrary,
+        );
 
         self.shuffle(replicas)
     }
