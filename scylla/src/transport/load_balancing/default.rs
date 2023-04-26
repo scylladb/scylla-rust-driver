@@ -886,6 +886,7 @@ mod tests {
         enum ExpectedGroup {
             NonDeterministic(HashSet<u16>),
             Deterministic(HashSet<u16>),
+            Ordered(Vec<u16>),
         }
 
         impl ExpectedGroup {
@@ -893,13 +894,7 @@ mod tests {
                 match self {
                     Self::NonDeterministic(s) => s.len(),
                     Self::Deterministic(s) => s.len(),
-                }
-            }
-
-            fn nodes(&self) -> &HashSet<u16> {
-                match self {
-                    Self::NonDeterministic(s) => s,
-                    Self::Deterministic(s) => s,
+                    Self::Ordered(v) => v.len(),
                 }
             }
         }
@@ -927,6 +922,13 @@ mod tests {
             pub(crate) fn deterministic(mut self, group: impl IntoIterator<Item = u16>) -> Self {
                 self.groups
                     .push(ExpectedGroup::Deterministic(group.into_iter().collect()));
+                self
+            }
+            /// Expects that the next group in the plan will have a sequence of nodes
+            /// that is equal to the provided one, including order.
+            pub(crate) fn ordered(mut self, group: impl IntoIterator<Item = u16>) -> Self {
+                self.groups
+                    .push(ExpectedGroup::Ordered(group.into_iter().collect()));
                 self
             }
             pub(crate) fn build(self) -> ExpectedGroups {
@@ -967,11 +969,18 @@ mod tests {
                         // in the actual plan
                         let got_group: Vec<_> = (&mut got).take(expected.len()).copied().collect();
 
-                        // Verify that the group has the same nodes as the
-                        // expected one
-                        let got_set: HashSet<_> = got_group.iter().copied().collect();
-                        let expected_set = expected.nodes();
-                        assert_eq!(&got_set, expected_set);
+                        match expected {
+                            ExpectedGroup::NonDeterministic(expected_set)
+                            | ExpectedGroup::Deterministic(expected_set) => {
+                                // Verify that the group has the same nodes as the
+                                // expected one
+                                let got_set: HashSet<_> = got_group.iter().copied().collect();
+                                assert_eq!(&got_set, expected_set);
+                            }
+                            ExpectedGroup::Ordered(sequence) => {
+                                assert_eq!(&got_group, sequence);
+                            }
+                        }
 
                         // Put the group into sets_of_groups
                         sets_of_groups[group_id].insert(got_group);
@@ -991,7 +1000,7 @@ mod tests {
                                 assert!(sets.len() > 1);
                             }
                         }
-                        ExpectedGroup::Deterministic(_) => {
+                        ExpectedGroup::Deterministic(_) | ExpectedGroup::Ordered(_) => {
                             // The group is supposed to be deterministic,
                             // i.e. a given instance of the default policy
                             // must always return the nodes within it using
