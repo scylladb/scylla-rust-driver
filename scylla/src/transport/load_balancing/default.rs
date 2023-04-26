@@ -321,19 +321,29 @@ impl DefaultPolicy {
             .replicas_for_token(ts.token, ts.strategy, datacenter)
     }
 
+    /// Wraps the provided predicate, adding the requirement for rack to match.
+    fn make_rack_predicate<'a>(
+        predicate: impl Fn(&NodeRef<'a>) -> bool + 'a,
+        replica_location: ReplicaLocationCriteria,
+        preferred_rack: &'a Option<String>,
+    ) -> impl Fn(NodeRef<'a>) -> bool {
+        move |node| match replica_location {
+            ReplicaLocationCriteria::Any | ReplicaLocationCriteria::Datacenter => predicate(&node),
+            ReplicaLocationCriteria::DatacenterAndRack => {
+                predicate(&node) && &node.rack == preferred_rack
+            }
+        }
+    }
+
     fn replicas<'a>(
         &'a self,
         ts: &TokenWithStrategy<'a>,
         replica_location: ReplicaLocationCriteria,
-        predicate: impl Fn(&NodeRef<'a>) -> bool,
+        predicate: impl Fn(&NodeRef<'a>) -> bool + 'a,
         cluster: &'a ClusterData,
     ) -> impl Iterator<Item = NodeRef<'a>> {
-        let predicate = move |node| match replica_location {
-            ReplicaLocationCriteria::Any | ReplicaLocationCriteria::Datacenter => predicate(&node),
-            ReplicaLocationCriteria::DatacenterAndRack => {
-                predicate(&node) && node.rack == self.preferred_rack
-            }
-        };
+        let predicate =
+            Self::make_rack_predicate(predicate, replica_location, &self.preferred_rack);
 
         self.nonfiltered_replica_set(ts, replica_location, cluster)
             .into_iter()
@@ -344,15 +354,11 @@ impl DefaultPolicy {
         &'a self,
         ts: &TokenWithStrategy<'a>,
         replica_location: ReplicaLocationCriteria,
-        predicate: &impl Fn(&NodeRef<'a>) -> bool,
+        predicate: &'a impl Fn(&NodeRef<'a>) -> bool,
         cluster: &'a ClusterData,
     ) -> Option<NodeRef<'a>> {
-        let predicate = |node| match replica_location {
-            ReplicaLocationCriteria::Any | ReplicaLocationCriteria::Datacenter => predicate(&node),
-            ReplicaLocationCriteria::DatacenterAndRack => {
-                predicate(&node) && node.rack == self.preferred_rack
-            }
-        };
+        let predicate =
+            Self::make_rack_predicate(predicate, replica_location, &self.preferred_rack);
 
         let replica_set = self.nonfiltered_replica_set(ts, replica_location, cluster);
 
@@ -368,7 +374,7 @@ impl DefaultPolicy {
         &'a self,
         ts: &TokenWithStrategy<'a>,
         replica_location: ReplicaLocationCriteria,
-        predicate: impl Fn(&NodeRef<'a>) -> bool,
+        predicate: impl Fn(&NodeRef<'a>) -> bool + 'a,
         cluster: &'a ClusterData,
     ) -> impl Iterator<Item = NodeRef<'a>> {
         let replicas = self.replicas(ts, replica_location, predicate, cluster);
