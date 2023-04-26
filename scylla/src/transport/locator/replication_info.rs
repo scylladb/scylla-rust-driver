@@ -213,7 +213,7 @@ mod tests {
     use super::ReplicationInfo;
 
     #[tokio::test]
-    async fn test_simple_stategy() {
+    async fn test_simple_strategy() {
         let ring = create_ring(&mock_metadata_for_token_aware_tests());
         let replication_info = ReplicationInfo::new(ring);
 

@@ -1,6 +1,7 @@
 use crate::routing::Token;
 
-/// A token ring is a continous hash ring. It defines association by hasing a key onto the ring and the walking the ring in one direction.
+/// A token ring is a continuous hash ring. It defines association by hashing a key
+/// onto the ring and then walking the ring in one direction.
 /// Cassandra and Scylla use it for determining data ownership which allows for efficient load balancing.
 /// The token ring is used by the driver to find the replicas for a given token.
 /// Each ring member has a token (i64 number) which defines the member's position on the ring.
@@ -30,7 +31,7 @@ impl<ElemT> TokenRing<ElemT> {
     /// Provides an iterator over the ring members starting at the given token.
     /// The iterator traverses the whole ring in the direction of increasing tokens.
     /// After reaching the maximum token it wraps around and continues from the lowest one.
-    /// The iterator visits each member once, it doesn't have an infinte length.
+    /// The iterator visits each member once, it doesn't have infinite length.
     pub fn ring_range_full(&self, token: Token) -> impl Iterator<Item = &(Token, ElemT)> {
         let binary_search_index: usize = match self.ring.binary_search_by(|e| e.0.cmp(&token)) {
             Ok(exact_match_index) => exact_match_index,
@@ -47,7 +48,7 @@ impl<ElemT> TokenRing<ElemT> {
     /// The iterator traverses the whole ring in the direction of increasing tokens.
     /// After reaching the maximum token it wraps around and continues from the lowest one.
     /// The iterator visits each member once, it doesn't have an infinte length.
-    /// To access the token along with the element you can use `ring_range_full`
+    /// To access the token along with the element you can use `ring_range_full`.
     pub fn ring_range(&self, token: Token) -> impl Iterator<Item = &ElemT> {
         self.ring_range_full(token).map(|(_t, e)| e)
     }

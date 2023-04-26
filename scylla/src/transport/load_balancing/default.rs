@@ -279,7 +279,7 @@ impl DefaultPolicy {
                     "Datacenter specified as the preferred one ({}) does not exist!",
                     preferred_datacenter
                 );
-                // We won't guess any DC, as it could lead to possible violation dc failover ban.
+                // We won't guess any DC, as it could lead to possible violation of dc failover ban.
                 return &[];
             }
         }
