@@ -10,8 +10,7 @@ for queries with non-local consistency mode is also supported.
 `builder()` method of `DefaultPolicy` returns a new instance of
 `DefaultPolicyBuilder` with the following default values:
 
-- `preferred_datacenter`: `None`
-- `preferred_rack`: `None`
+- `preferences`: no particular datacenter/rack preference
 - `is_token_aware`: `true`
 - `permit_dc_failover`: `false`
 - `latency_awareness`: `None`
@@ -25,8 +24,7 @@ You can use the builder methods to configure the desired settings and create a
 use scylla::load_balancing::DefaultPolicy;
 
 let default_policy = DefaultPolicy::builder()
-        .prefer_datacenter("dc1".to_string())
-        .prefer_rack("rack1".to_string())
+        .prefer_datacenter_and_rack("dc1".to_string(), "rack1".to_string())
         .token_aware(true)
         .permit_dc_failover(true)
         .build();
@@ -35,36 +33,39 @@ let default_policy = DefaultPolicy::builder()
 
 ### Semantics of `DefaultPolicy`
 
-#### Preferred Datacenter
+#### Preferences
 
-The `preferred_datacenter` field in `DefaultPolicy` allows the load balancing
-policy to prioritize nodes based on their location. When a preferred datacenter
-is set, the policy will treat nodes in that datacenter as "local" nodes, and
-nodes in other datacenters as "remote" nodes. This affects the order in which
-nodes are returned by the policy when selecting replicas for read or write
-operations. If no preferred datacenter is specified, the policy will treat all
-nodes as local nodes.
+The `preferences` field in `DefaultPolicy` allows the load balancing
+policy to prioritize nodes based on their location. It has three modes:
+
+- no preference
+- preferred datacenter
+- preferred datacenter and rack
+
+When a datacenter `"my_dc"` is preferred, the policy will treat nodes in `"my_dc"`
+as "local" nodes, and nodes in other datacenters as "remote" nodes. This affects
+the order in which nodes are returned by the policy when selecting replicas for
+read or write operations. If no datacenter is preferred, the policy will treat
+all nodes as local nodes.
+
+`preferences` allow the load balancing policy to prioritize nodes based on their
+availability zones (racks) in the preferred datacenter, too. When a datacenter
+and a rack are preferred, the policy will first return replicas in the local rack
+in the preferred datacenter, and then the other replicas in the datacenter
+(followed by remote replicas).
 
 When datacenter failover is disabled (`permit_dc_failover` is set to
 false), the default policy will only include local nodes in load balancing
 plans. Remote nodes will be excluded, even if they are alive and available to
 serve requests.
 
-#### Preferred Rack
-
-The `preferred_rack` field in `DefaultPolicy` allows the load balancing policy to
-prioritize nodes based on their availability zones in the preferred datacenter.
-When a preferred rack is set, the policy will first return replicas in the local rack
-in the preferred datacenter, and then the other replicas in the datacenter.
-When a preferred datacenter is not set, setting preferred rack will not have any effect.
-
 #### Datacenter Failover
 
 In the event of a datacenter outage or network failure, the nodes in that
 datacenter may become unavailable, and clients may no longer be able to access
-the data stored on those nodes. To address this, the `DefaultPolicy` supports datacenter
-failover, which allows to route requests to nodes in other datacenters if the
-local nodes are unavailable.
+the data stored on those nodes. To address this, the `DefaultPolicy` supports
+datacenter failover, which allows to route requests to nodes in other datacenters
+if the local nodes are unavailable.
 
 Datacenter failover can be enabled in `DefaultPolicy` by `permit_dc_failover`
 setting in the builder. When this flag is set, the policy will prefer to return
