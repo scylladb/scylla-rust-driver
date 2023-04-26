@@ -12,13 +12,11 @@ use scylla_proxy::{
     ResponseOpcode, ResponseReaction, ResponseRule, ShardAwareness, WorkerError,
 };
 
-// FIXME: This will only work again after refactor of load balancing is finished.
-#[ignore]
 #[tokio::test]
 #[ntest::timeout(20000)]
 #[cfg(not(scylla_cloud_tests))]
 async fn if_lwt_optimisation_mark_offered_then_negotiatied_and_lwt_routed_optimally() {
-    // This is just to increase the likelyhood that only intended prepared statements (which contain this mark) are captures by the proxy.
+    // This is just to increase the likelihood that only intended prepared statements (which contain this mark) are captured by the proxy.
     const MAGIC_MARK: i32 = 123;
 
     let res = test_with_3_node_cluster(ShardAwareness::QueryNode, |proxy_uris, translation_map, mut running_proxy| async move {
