@@ -12,6 +12,7 @@ use crate::ExecutionProfile;
 
 use crate::transport::connection_pool::PoolSize;
 use crate::transport::host_filter::HostFilter;
+use std::borrow::Borrow;
 use std::marker::PhantomData;
 use std::net::SocketAddr;
 #[cfg(feature = "cloud")]
@@ -126,13 +127,13 @@ impl SessionBuilder {
     /// # use scylla::{Session, SessionBuilder};
     /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
     /// let session: Session = SessionBuilder::new()
-    ///     .known_nodes(&["127.0.0.1:9042", "db1.example.com"])
+    ///     .known_nodes(["127.0.0.1:9042", "db1.example.com"])
     ///     .build()
     ///     .await?;
     /// # Ok(())
     /// # }
     /// ```
-    pub fn known_nodes(mut self, hostnames: &[impl AsRef<str>]) -> Self {
+    pub fn known_nodes(mut self, hostnames: impl IntoIterator<Item = impl AsRef<str>>) -> Self {
         self.config.add_known_nodes(hostnames);
         self
     }
@@ -147,13 +148,16 @@ impl SessionBuilder {
     /// let addr2 = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(172, 17, 0, 4)), 9042);
     ///
     /// let session: Session = SessionBuilder::new()
-    ///     .known_nodes_addr(&[addr1, addr2])
+    ///     .known_nodes_addr([addr1, addr2])
     ///     .build()
     ///     .await?;
     /// # Ok(())
     /// # }
     /// ```
-    pub fn known_nodes_addr(mut self, node_addrs: &[SocketAddr]) -> Self {
+    pub fn known_nodes_addr(
+        mut self,
+        node_addrs: impl IntoIterator<Item = impl Borrow<SocketAddr>>,
+    ) -> Self {
         self.config.add_known_nodes_addr(node_addrs);
         self
     }
@@ -788,7 +792,7 @@ mod tests {
     fn add_known_nodes() {
         let mut builder = SessionBuilder::new();
 
-        builder = builder.known_nodes(&["test_hostname1", "test_hostname2"]);
+        builder = builder.known_nodes(["test_hostname1", "test_hostname2"]);
 
         assert_eq!(
             builder.config.known_nodes,
@@ -807,7 +811,7 @@ mod tests {
         let addr1 = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(172, 17, 0, 3)), 1357);
         let addr2 = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(172, 17, 0, 4)), 9090);
 
-        builder = builder.known_nodes_addr(&[addr1, addr2]);
+        builder = builder.known_nodes_addr([addr1, addr2]);
 
         assert_eq!(
             builder.config.known_nodes,
@@ -955,8 +959,8 @@ mod tests {
 
         builder = builder.known_node("hostname_test");
         builder = builder.known_node_addr(addr);
-        builder = builder.known_nodes(&["hostname_test1", "hostname_test2"]);
-        builder = builder.known_nodes_addr(&[addr1, addr2]);
+        builder = builder.known_nodes(["hostname_test1", "hostname_test2"]);
+        builder = builder.known_nodes_addr([addr1, addr2]);
         builder = builder.compression(Some(Compression::Snappy));
         builder = builder.tcp_nodelay(true);
         builder = builder.use_keyspace("ks_name", true);
@@ -981,5 +985,19 @@ mod tests {
 
         assert!(builder.config.keyspace_case_sensitive);
         assert!(!builder.config.fetch_schema_metadata);
+    }
+
+    // This is to assert that #705 does not break the API (i.e. it merely extends it).
+    fn _check_known_nodes_compatibility(
+        hostnames: &[impl AsRef<str>],
+        host_addresses: &[SocketAddr],
+    ) {
+        let mut sb: SessionBuilder = SessionBuilder::new();
+        sb = sb.known_nodes(hostnames);
+        sb = sb.known_nodes_addr(host_addresses);
+
+        let mut config = sb.config;
+        config.add_known_nodes(hostnames);
+        config.add_known_nodes_addr(host_addresses);
     }
 }

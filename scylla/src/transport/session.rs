@@ -306,7 +306,7 @@ impl SessionConfig {
     /// let mut config = SessionConfig::new();
     /// config.add_known_nodes(&["127.0.0.1:9042", "db1.example.com"]);
     /// ```
-    pub fn add_known_nodes(&mut self, hostnames: &[impl AsRef<str>]) {
+    pub fn add_known_nodes(&mut self, hostnames: impl IntoIterator<Item = impl AsRef<str>>) {
         for hostname in hostnames {
             self.add_known_node(hostname);
         }
@@ -323,9 +323,12 @@ impl SessionConfig {
     /// let mut config = SessionConfig::new();
     /// config.add_known_nodes_addr(&[addr1, addr2]);
     /// ```
-    pub fn add_known_nodes_addr(&mut self, node_addrs: &[SocketAddr]) {
+    pub fn add_known_nodes_addr(
+        &mut self,
+        node_addrs: impl IntoIterator<Item = impl Borrow<SocketAddr>>,
+    ) {
         for address in node_addrs {
-            self.add_known_node_addr(*address);
+            self.add_known_node_addr(*address.borrow());
         }
     }
 }
