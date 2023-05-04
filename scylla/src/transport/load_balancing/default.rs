@@ -1962,9 +1962,9 @@ mod latency_awareness {
             }
         }
 
-        pub fn latency_aware_default_policy() -> DefaultPolicy {
-            let latency_awareness = LatencyAwareness::builder().build();
-
+        fn default_policy_with_given_latency_awareness(
+            latency_awareness: LatencyAwareness,
+        ) -> DefaultPolicy {
             let pick_predicate = {
                 let latency_predicate = latency_awareness.generate_predicate();
                 Box::new(move |node: &NodeRef| {
@@ -1981,6 +1981,17 @@ mod latency_awareness {
                 latency_awareness: Some(latency_awareness),
                 fixed_shuffle_seed: None,
             }
+        }
+
+        fn latency_aware_default_policy_customised(
+            configurer: impl FnOnce(LatencyAwarenessBuilder) -> LatencyAwarenessBuilder,
+        ) -> DefaultPolicy {
+            let latency_awareness = configurer(LatencyAwareness::builder()).build();
+            default_policy_with_given_latency_awareness(latency_awareness)
+        }
+
+        fn latency_aware_default_policy() -> DefaultPolicy {
+            latency_aware_default_policy_customised(|b| b)
         }
 
         #[tokio::test]
@@ -2124,8 +2135,9 @@ mod latency_awareness {
 
         #[tokio::test]
         async fn latency_aware_default_policy_does_not_penalise_if_retry_period_expired() {
-            let mut policy = latency_aware_default_policy();
-            policy.latency_awareness.as_mut().unwrap().retry_period = Duration::from_millis(10);
+            let policy = latency_aware_default_policy_customised(|b| {
+                b.retry_period(Duration::from_millis(10))
+            });
 
             let cluster = tests::mock_cluster_data_for_token_unaware_tests().await;
 
