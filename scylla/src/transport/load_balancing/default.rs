@@ -1533,37 +1533,22 @@ mod latency_awareness {
             minimum_measurements: usize,
         ) -> Self {
             let min_latency = Arc::new(AtomicDuration::new());
-            let mut update_scheduler = tokio::time::interval(update_rate);
 
             let min_latency_clone = min_latency.clone();
             let node_avgs = Arc::new(RwLock::new(HashMap::new()));
             let node_avgs_clone = node_avgs.clone();
 
+            let updater = MinAvgUpdater {
+                node_avgs,
+                min_latency,
+                minimum_measurements,
+            };
+
             let (updater_fut, updater_handle) = async move {
+                let mut update_scheduler = tokio::time::interval(update_rate);
                 loop {
                     update_scheduler.tick().await;
-                    let averages: &HashMap<Uuid, RwLock<Option<TimestampedAverage>>> =
-                        &node_avgs.read().unwrap();
-                    if averages.is_empty() {
-                        continue; // No nodes queries registered to LAP performed yet.
-                    }
-
-                    let min_avg = averages
-                        .values()
-                        .filter_map(|avg| {
-                            avg.read().unwrap().and_then(|timestamped_average| {
-                                (timestamped_average.num_measures >= minimum_measurements)
-                                    .then_some(timestamped_average.average)
-                            })
-                        })
-                        .min();
-                    if let Some(min_avg) = min_avg {
-                        min_latency.store(min_avg);
-                        trace!(
-                            "Latency awareness: updated min average latency to {} ms",
-                            min_avg.as_secs_f64() * 1000.
-                        );
-                    }
+                    updater.tick().await;
                 }
             }
             .remote_handle();
@@ -1671,6 +1656,41 @@ mod latency_awareness {
     impl Default for LatencyAwareness {
         fn default() -> Self {
             Self::builder().build()
+        }
+    }
+
+    /// Updates minimum average latency upon request each request to `tick()`.
+    /// The said average is a crucial criterium for penalising "too slow" nodes.
+    struct MinAvgUpdater {
+        node_avgs: Arc<RwLock<HashMap<Uuid, RwLock<Option<TimestampedAverage>>>>>,
+        min_latency: Arc<AtomicDuration>,
+        minimum_measurements: usize,
+    }
+
+    impl MinAvgUpdater {
+        async fn tick(&self) {
+            let averages: &HashMap<Uuid, RwLock<Option<TimestampedAverage>>> =
+                &self.node_avgs.read().unwrap();
+            if averages.is_empty() {
+                return; // No nodes queries registered to LAP performed yet.
+            }
+
+            let min_avg = averages
+                .values()
+                .filter_map(|avg| {
+                    avg.read().unwrap().and_then(|timestamped_average| {
+                        (timestamped_average.num_measures >= self.minimum_measurements)
+                            .then_some(timestamped_average.average)
+                    })
+                })
+                .min();
+            if let Some(min_avg) = min_avg {
+                self.min_latency.store(min_avg);
+                trace!(
+                    "Latency awareness: updated min average latency to {} ms",
+                    min_avg.as_secs_f64() * 1000.
+                );
+            }
         }
     }
 
