@@ -1518,7 +1518,10 @@ mod latency_awareness {
 
         node_avgs: Arc<RwLock<HashMap<Uuid, RwLock<Option<TimestampedAverage>>>>>,
 
-        _updater_handle: RemoteHandle<()>,
+        // This is Some iff there is an associated updater running on a separate Tokio task
+        // For some tests, not to rely on timing, this is None. The updater is then tick'ed
+        // explicitly from outside this struct.
+        _updater_handle: Option<RemoteHandle<()>>,
     }
 
     impl LatencyAwareness {
@@ -1526,12 +1529,12 @@ mod latency_awareness {
             LatencyAwarenessBuilder::new()
         }
 
-        fn new(
+        fn new_for_test(
             exclusion_threshold: f64,
             retry_period: Duration,
             update_rate: Duration,
             minimum_measurements: usize,
-        ) -> Self {
+        ) -> (Self, MinAvgUpdater) {
             let min_latency = Arc::new(AtomicDuration::new());
 
             let min_latency_clone = min_latency.clone();
@@ -1544,6 +1547,33 @@ mod latency_awareness {
                 minimum_measurements,
             };
 
+            (
+                Self {
+                    exclusion_threshold,
+                    retry_period,
+                    _update_rate: update_rate,
+                    minimum_measurements,
+                    last_min_latency: min_latency_clone,
+                    node_avgs: node_avgs_clone,
+                    _updater_handle: None,
+                },
+                updater,
+            )
+        }
+
+        fn new(
+            exclusion_threshold: f64,
+            retry_period: Duration,
+            update_rate: Duration,
+            minimum_measurements: usize,
+        ) -> Self {
+            let (self_, updater) = Self::new_for_test(
+                exclusion_threshold,
+                retry_period,
+                update_rate,
+                minimum_measurements,
+            );
+
             let (updater_fut, updater_handle) = async move {
                 let mut update_scheduler = tokio::time::interval(update_rate);
                 loop {
@@ -1555,13 +1585,8 @@ mod latency_awareness {
             tokio::task::spawn(updater_fut.with_current_subscriber());
 
             Self {
-                exclusion_threshold,
-                retry_period,
-                _update_rate: update_rate,
-                minimum_measurements,
-                last_min_latency: min_latency_clone,
-                node_avgs: node_avgs_clone,
-                _updater_handle: updater_handle,
+                _updater_handle: Some(updater_handle),
+                ..self_
             }
         }
 
