@@ -1837,6 +1837,22 @@ mod latency_awareness {
                 minimum_measurements,
             )
         }
+
+        #[cfg(test)]
+        fn build_for_test(self) -> (LatencyAwareness, MinAvgUpdater) {
+            let Self {
+                exclusion_threshold,
+                retry_period,
+                update_rate,
+                minimum_measurements,
+            } = self;
+            LatencyAwareness::new_for_test(
+                exclusion_threshold,
+                retry_period,
+                update_rate,
+                minimum_measurements,
+            )
+        }
     }
 
     impl Default for LatencyAwarenessBuilder {
@@ -2037,6 +2053,21 @@ mod latency_awareness {
 
         fn latency_aware_default_policy() -> DefaultPolicy {
             latency_aware_default_policy_customised(|b| b)
+        }
+
+        fn latency_aware_policy_with_explicit_updater_customised(
+            configurer: impl FnOnce(LatencyAwarenessBuilder) -> LatencyAwarenessBuilder,
+        ) -> (DefaultPolicy, MinAvgUpdater) {
+            let (latency_awareness, updater) =
+                configurer(LatencyAwareness::builder()).build_for_test();
+            (
+                default_policy_with_given_latency_awareness(latency_awareness),
+                updater,
+            )
+        }
+
+        fn latency_aware_default_policy_with_explicit_updater() -> (DefaultPolicy, MinAvgUpdater) {
+            latency_aware_policy_with_explicit_updater_customised(|b| b)
         }
 
         #[tokio::test]
@@ -2248,7 +2279,7 @@ mod latency_awareness {
                 .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
                 .without_time()
                 .try_init();
-            let policy = latency_aware_default_policy();
+            let (policy, updater) = latency_aware_default_policy_with_explicit_updater();
             let cluster = tests::mock_cluster_data_for_token_unaware_tests().await;
 
             let min_avg = Duration::from_millis(10);
@@ -2313,8 +2344,7 @@ mod latency_awareness {
             );
 
             // Await last min average updater.
-            // policy.latency_awareness.as_ref().unwrap().refresh_last_min_avg_nodes(&cluster.all_nodes); FIXME:
-            tokio::time::sleep(policy.latency_awareness.as_ref().unwrap()._update_rate * 5).await;
+            updater.tick().await;
 
             let expected_groups = ExpectedGroupsBuilder::new()
                 .group([2, 3]) // pick + fallback local nodes
@@ -2335,7 +2365,8 @@ mod latency_awareness {
         #[tokio::test]
         async fn latency_aware_default_policy_stops_penalising_after_min_average_increases_enough_only_after_update_rate_elapses(
         ) {
-            let policy = latency_aware_default_policy();
+            let (policy, updater) = latency_aware_default_policy_with_explicit_updater();
+
             let cluster = tests::mock_cluster_data_for_token_unaware_tests().await;
 
             let min_avg = Duration::from_millis(10);
@@ -2379,7 +2410,7 @@ mod latency_awareness {
             );
 
             // Await last min average updater.
-            tokio::time::sleep(policy.latency_awareness.as_ref().unwrap()._update_rate).await;
+            updater.tick().await;
             {
                 // min_avg is low enough to penalise node 1
                 let expected_groups = ExpectedGroupsBuilder::new()
@@ -2437,7 +2468,7 @@ mod latency_awareness {
                 .await;
             }
 
-            tokio::time::sleep(policy.latency_awareness.as_ref().unwrap()._update_rate).await;
+            updater.tick().await;
             {
                 // min_avg has been updated and is already high enough to stop penalising node 1
                 let expected_groups = ExpectedGroupsBuilder::new()
@@ -2618,7 +2649,7 @@ mod latency_awareness {
             ];
 
             for test in &tests {
-                let policy = latency_aware_default_policy();
+                let (policy, updater) = latency_aware_default_policy_with_explicit_updater();
 
                 if let Some(preset_min_avg) = test.preset_min_avg {
                     policy.set_nodes_latency_stats(
@@ -2633,14 +2664,14 @@ mod latency_awareness {
                         )],
                     );
                     // Await last min average updater for update with a forged min_avg.
-                    tokio::time::sleep(latency_awareness_defaults._update_rate).await;
+                    updater.tick().await;
                     policy.set_nodes_latency_stats(&cluster, &[(1, None)]);
                 }
                 policy.set_nodes_latency_stats(&cluster, test.latency_stats);
 
                 if test.preset_min_avg.is_none() {
                     // Await last min average updater for update with None min_avg.
-                    tokio::time::sleep(latency_awareness_defaults._update_rate).await;
+                    updater.tick().await;
                 }
 
                 test_default_policy_with_given_cluster_and_routing_info(
