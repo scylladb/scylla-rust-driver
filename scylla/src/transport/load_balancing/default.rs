@@ -1518,12 +1518,47 @@ mod latency_awareness {
 
         node_avgs: Arc<RwLock<HashMap<Uuid, RwLock<Option<TimestampedAverage>>>>>,
 
-        _updater_handle: RemoteHandle<()>,
+        // This is Some iff there is an associated updater running on a separate Tokio task
+        // For some tests, not to rely on timing, this is None. The updater is then tick'ed
+        // explicitly from outside this struct.
+        _updater_handle: Option<RemoteHandle<()>>,
     }
 
     impl LatencyAwareness {
         pub(super) fn builder() -> LatencyAwarenessBuilder {
             LatencyAwarenessBuilder::new()
+        }
+
+        fn new_for_test(
+            exclusion_threshold: f64,
+            retry_period: Duration,
+            update_rate: Duration,
+            minimum_measurements: usize,
+        ) -> (Self, MinAvgUpdater) {
+            let min_latency = Arc::new(AtomicDuration::new());
+
+            let min_latency_clone = min_latency.clone();
+            let node_avgs = Arc::new(RwLock::new(HashMap::new()));
+            let node_avgs_clone = node_avgs.clone();
+
+            let updater = MinAvgUpdater {
+                node_avgs,
+                min_latency,
+                minimum_measurements,
+            };
+
+            (
+                Self {
+                    exclusion_threshold,
+                    retry_period,
+                    _update_rate: update_rate,
+                    minimum_measurements,
+                    last_min_latency: min_latency_clone,
+                    node_avgs: node_avgs_clone,
+                    _updater_handle: None,
+                },
+                updater,
+            )
         }
 
         fn new(
@@ -1532,51 +1567,26 @@ mod latency_awareness {
             update_rate: Duration,
             minimum_measurements: usize,
         ) -> Self {
-            let min_latency = Arc::new(AtomicDuration::new());
-            let mut update_scheduler = tokio::time::interval(update_rate);
-
-            let min_latency_clone = min_latency.clone();
-            let node_avgs = Arc::new(RwLock::new(HashMap::new()));
-            let node_avgs_clone = node_avgs.clone();
+            let (self_, updater) = Self::new_for_test(
+                exclusion_threshold,
+                retry_period,
+                update_rate,
+                minimum_measurements,
+            );
 
             let (updater_fut, updater_handle) = async move {
+                let mut update_scheduler = tokio::time::interval(update_rate);
                 loop {
                     update_scheduler.tick().await;
-                    let averages: &HashMap<Uuid, RwLock<Option<TimestampedAverage>>> =
-                        &node_avgs.read().unwrap();
-                    if averages.is_empty() {
-                        continue; // No nodes queries registered to LAP performed yet.
-                    }
-
-                    let min_avg = averages
-                        .values()
-                        .filter_map(|avg| {
-                            avg.read().unwrap().and_then(|timestamped_average| {
-                                (timestamped_average.num_measures >= minimum_measurements)
-                                    .then_some(timestamped_average.average)
-                            })
-                        })
-                        .min();
-                    if let Some(min_avg) = min_avg {
-                        min_latency.store(min_avg);
-                        trace!(
-                            "Latency awareness: updated min average latency to {} ms",
-                            min_avg.as_secs_f64() * 1000.
-                        );
-                    }
+                    updater.tick().await;
                 }
             }
             .remote_handle();
             tokio::task::spawn(updater_fut.with_current_subscriber());
 
             Self {
-                exclusion_threshold,
-                retry_period,
-                _update_rate: update_rate,
-                minimum_measurements,
-                last_min_latency: min_latency_clone,
-                node_avgs: node_avgs_clone,
-                _updater_handle: updater_handle,
+                _updater_handle: Some(updater_handle),
+                ..self_
             }
         }
 
@@ -1671,6 +1681,41 @@ mod latency_awareness {
     impl Default for LatencyAwareness {
         fn default() -> Self {
             Self::builder().build()
+        }
+    }
+
+    /// Updates minimum average latency upon request each request to `tick()`.
+    /// The said average is a crucial criterium for penalising "too slow" nodes.
+    struct MinAvgUpdater {
+        node_avgs: Arc<RwLock<HashMap<Uuid, RwLock<Option<TimestampedAverage>>>>>,
+        min_latency: Arc<AtomicDuration>,
+        minimum_measurements: usize,
+    }
+
+    impl MinAvgUpdater {
+        async fn tick(&self) {
+            let averages: &HashMap<Uuid, RwLock<Option<TimestampedAverage>>> =
+                &self.node_avgs.read().unwrap();
+            if averages.is_empty() {
+                return; // No nodes queries registered to LAP performed yet.
+            }
+
+            let min_avg = averages
+                .values()
+                .filter_map(|avg| {
+                    avg.read().unwrap().and_then(|timestamped_average| {
+                        (timestamped_average.num_measures >= self.minimum_measurements)
+                            .then_some(timestamped_average.average)
+                    })
+                })
+                .min();
+            if let Some(min_avg) = min_avg {
+                self.min_latency.store(min_avg);
+                trace!(
+                    "Latency awareness: updated min average latency to {} ms",
+                    min_avg.as_secs_f64() * 1000.
+                );
+            }
         }
     }
 
@@ -1786,6 +1831,22 @@ mod latency_awareness {
                 minimum_measurements,
             } = self;
             LatencyAwareness::new(
+                exclusion_threshold,
+                retry_period,
+                update_rate,
+                minimum_measurements,
+            )
+        }
+
+        #[cfg(test)]
+        fn build_for_test(self) -> (LatencyAwareness, MinAvgUpdater) {
+            let Self {
+                exclusion_threshold,
+                retry_period,
+                update_rate,
+                minimum_measurements,
+            } = self;
+            LatencyAwareness::new_for_test(
                 exclusion_threshold,
                 retry_period,
                 update_rate,
@@ -1962,9 +2023,9 @@ mod latency_awareness {
             }
         }
 
-        pub fn latency_aware_default_policy() -> DefaultPolicy {
-            let latency_awareness = LatencyAwareness::builder().build();
-
+        fn default_policy_with_given_latency_awareness(
+            latency_awareness: LatencyAwareness,
+        ) -> DefaultPolicy {
             let pick_predicate = {
                 let latency_predicate = latency_awareness.generate_predicate();
                 Box::new(move |node: &NodeRef| {
@@ -1981,6 +2042,32 @@ mod latency_awareness {
                 latency_awareness: Some(latency_awareness),
                 fixed_shuffle_seed: None,
             }
+        }
+
+        fn latency_aware_default_policy_customised(
+            configurer: impl FnOnce(LatencyAwarenessBuilder) -> LatencyAwarenessBuilder,
+        ) -> DefaultPolicy {
+            let latency_awareness = configurer(LatencyAwareness::builder()).build();
+            default_policy_with_given_latency_awareness(latency_awareness)
+        }
+
+        fn latency_aware_default_policy() -> DefaultPolicy {
+            latency_aware_default_policy_customised(|b| b)
+        }
+
+        fn latency_aware_policy_with_explicit_updater_customised(
+            configurer: impl FnOnce(LatencyAwarenessBuilder) -> LatencyAwarenessBuilder,
+        ) -> (DefaultPolicy, MinAvgUpdater) {
+            let (latency_awareness, updater) =
+                configurer(LatencyAwareness::builder()).build_for_test();
+            (
+                default_policy_with_given_latency_awareness(latency_awareness),
+                updater,
+            )
+        }
+
+        fn latency_aware_default_policy_with_explicit_updater() -> (DefaultPolicy, MinAvgUpdater) {
+            latency_aware_policy_with_explicit_updater_customised(|b| b)
         }
 
         #[tokio::test]
@@ -2124,8 +2211,9 @@ mod latency_awareness {
 
         #[tokio::test]
         async fn latency_aware_default_policy_does_not_penalise_if_retry_period_expired() {
-            let mut policy = latency_aware_default_policy();
-            policy.latency_awareness.as_mut().unwrap().retry_period = Duration::from_millis(10);
+            let policy = latency_aware_default_policy_customised(|b| {
+                b.retry_period(Duration::from_millis(10))
+            });
 
             let cluster = tests::mock_cluster_data_for_token_unaware_tests().await;
 
@@ -2191,7 +2279,7 @@ mod latency_awareness {
                 .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
                 .without_time()
                 .try_init();
-            let policy = latency_aware_default_policy();
+            let (policy, updater) = latency_aware_default_policy_with_explicit_updater();
             let cluster = tests::mock_cluster_data_for_token_unaware_tests().await;
 
             let min_avg = Duration::from_millis(10);
@@ -2256,8 +2344,7 @@ mod latency_awareness {
             );
 
             // Await last min average updater.
-            // policy.latency_awareness.as_ref().unwrap().refresh_last_min_avg_nodes(&cluster.all_nodes); FIXME:
-            tokio::time::sleep(policy.latency_awareness.as_ref().unwrap()._update_rate * 5).await;
+            updater.tick().await;
 
             let expected_groups = ExpectedGroupsBuilder::new()
                 .group([2, 3]) // pick + fallback local nodes
@@ -2278,7 +2365,8 @@ mod latency_awareness {
         #[tokio::test]
         async fn latency_aware_default_policy_stops_penalising_after_min_average_increases_enough_only_after_update_rate_elapses(
         ) {
-            let policy = latency_aware_default_policy();
+            let (policy, updater) = latency_aware_default_policy_with_explicit_updater();
+
             let cluster = tests::mock_cluster_data_for_token_unaware_tests().await;
 
             let min_avg = Duration::from_millis(10);
@@ -2322,7 +2410,7 @@ mod latency_awareness {
             );
 
             // Await last min average updater.
-            tokio::time::sleep(policy.latency_awareness.as_ref().unwrap()._update_rate).await;
+            updater.tick().await;
             {
                 // min_avg is low enough to penalise node 1
                 let expected_groups = ExpectedGroupsBuilder::new()
@@ -2380,7 +2468,7 @@ mod latency_awareness {
                 .await;
             }
 
-            tokio::time::sleep(policy.latency_awareness.as_ref().unwrap()._update_rate).await;
+            updater.tick().await;
             {
                 // min_avg has been updated and is already high enough to stop penalising node 1
                 let expected_groups = ExpectedGroupsBuilder::new()
@@ -2561,7 +2649,7 @@ mod latency_awareness {
             ];
 
             for test in &tests {
-                let policy = latency_aware_default_policy();
+                let (policy, updater) = latency_aware_default_policy_with_explicit_updater();
 
                 if let Some(preset_min_avg) = test.preset_min_avg {
                     policy.set_nodes_latency_stats(
@@ -2576,14 +2664,14 @@ mod latency_awareness {
                         )],
                     );
                     // Await last min average updater for update with a forged min_avg.
-                    tokio::time::sleep(latency_awareness_defaults._update_rate).await;
+                    updater.tick().await;
                     policy.set_nodes_latency_stats(&cluster, &[(1, None)]);
                 }
                 policy.set_nodes_latency_stats(&cluster, test.latency_stats);
 
                 if test.preset_min_avg.is_none() {
                     // Await last min average updater for update with None min_avg.
-                    tokio::time::sleep(latency_awareness_defaults._update_rate).await;
+                    updater.tick().await;
                 }
 
                 test_default_policy_with_given_cluster_and_routing_info(
