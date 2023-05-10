@@ -14,7 +14,7 @@ scylla = {path = "../scylla", features = ["ssl", "cloud"]}
 tokio = {version = "1.1.0", features = ["full"]}
 tracing = "0.1.25"
 tracing-subscriber = { version = "0.3.14", features = ["env-filter"] }
-chrono = "0.4"
+chrono = { version = "0.4", default-features = false }
 uuid = "1.0"
 tower = "0.4"
 stats_alloc = "0.1"
