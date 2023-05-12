@@ -14,10 +14,19 @@ use std::{fmt, sync::Arc, time::Duration};
 use tracing::warn;
 
 #[derive(Clone, Copy)]
-enum ReplicaLocationCriteria {
+enum ReplicaLocationCriteria<'a> {
     Any,
-    Datacenter,
-    DatacenterAndRack,
+    Datacenter(&'a str),
+    DatacenterAndRack(&'a str, &'a str),
+}
+
+impl<'a> ReplicaLocationCriteria<'a> {
+    fn datacenter(&self) -> Option<&'a str> {
+        match self {
+            Self::Any => None,
+            Self::Datacenter(dc) | Self::DatacenterAndRack(dc, _) => Some(dc),
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -35,6 +44,7 @@ impl ReplicaLocationPreference {
         }
     }
 
+    #[allow(unused)]
     fn rack(&self) -> Option<&str> {
         match self {
             Self::Any | Self::Datacenter(_) => None,
@@ -90,12 +100,11 @@ or refrain from preferring datacenters (which may ban all other datacenters, if 
             }
         }
         if let Some(ts) = &routing_info.token_with_strategy {
-            // Try to pick some alive local rack random replica.
-            // If preferred rack is not specified, try to pick local DC replica.
-            if self.preferences.rack().is_some() {
+            if let ReplicaLocationPreference::DatacenterAndRack(dc, rack) = &self.preferences {
+                // Try to pick some alive local rack random replica.
                 let local_rack_picked = self.pick_replica(
                     ts,
-                    ReplicaLocationCriteria::DatacenterAndRack,
+                    ReplicaLocationCriteria::DatacenterAndRack(dc, rack),
                     &self.pick_predicate,
                     cluster,
                 );
@@ -105,21 +114,27 @@ or refrain from preferring datacenters (which may ban all other datacenters, if 
                 }
             }
 
-            // Try to pick some alive local random replica.
-            // If preferred datacenter is not specified, all replicas are treated as local.
-            let picked = self.pick_replica(
-                ts,
-                ReplicaLocationCriteria::Datacenter,
-                &self.pick_predicate,
-                cluster,
-            );
+            if let ReplicaLocationPreference::DatacenterAndRack(dc, _)
+            | ReplicaLocationPreference::Datacenter(dc) = &self.preferences
+            {
+                // Try to pick some alive local random replica.
+                let picked = self.pick_replica(
+                    ts,
+                    ReplicaLocationCriteria::Datacenter(dc),
+                    &self.pick_predicate,
+                    cluster,
+                );
 
-            if let Some(alive_local_replica) = picked {
-                return Some(alive_local_replica);
+                if let Some(alive_local_replica) = picked {
+                    return Some(alive_local_replica);
+                }
             }
 
-            // If datacenter failover is possible, loosen restriction about locality.
-            if self.is_datacenter_failover_possible(&routing_info) {
+            // If preferred datacenter is not specified, or if datacenter failover is possible, loosen restriction about locality.
+            if self.preferences.datacenter().is_none()
+                || self.is_datacenter_failover_possible(&routing_info)
+            {
+                // Try to pick some alive random replica.
                 let picked = self.pick_replica(
                     ts,
                     ReplicaLocationCriteria::Any,
@@ -178,21 +193,38 @@ or refrain from preferring datacenters (which may ban all other datacenters, if 
 
         // If token is available, get a shuffled list of alive replicas.
         let maybe_replicas = if let Some(ts) = &routing_info.token_with_strategy {
-            let local_rack_replicas = self.shuffled_replicas(
-                ts,
-                ReplicaLocationCriteria::DatacenterAndRack,
-                Self::is_alive,
-                cluster,
-            );
-            let local_replicas = self.shuffled_replicas(
-                ts,
-                ReplicaLocationCriteria::Datacenter,
-                Self::is_alive,
-                cluster,
-            );
+            let maybe_local_rack_replicas =
+                if let ReplicaLocationPreference::DatacenterAndRack(dc, rack) = &self.preferences {
+                    let local_rack_replicas = self.shuffled_replicas(
+                        ts,
+                        ReplicaLocationCriteria::DatacenterAndRack(dc, rack),
+                        Self::is_alive,
+                        cluster,
+                    );
+                    Either::Left(local_rack_replicas)
+                } else {
+                    Either::Right(std::iter::empty())
+                };
 
-            // If a datacenter failover is possible, loosen restriction about locality.
-            let maybe_remote_replicas = if self.is_datacenter_failover_possible(&routing_info) {
+            let maybe_local_replicas = if let ReplicaLocationPreference::DatacenterAndRack(dc, _)
+            | ReplicaLocationPreference::Datacenter(dc) =
+                &self.preferences
+            {
+                let local_replicas = self.shuffled_replicas(
+                    ts,
+                    ReplicaLocationCriteria::Datacenter(dc),
+                    Self::is_alive,
+                    cluster,
+                );
+                Either::Left(local_replicas)
+            } else {
+                Either::Right(std::iter::empty())
+            };
+
+            // If no datacenter is preferred, or datacenter failover is possible, loosen restriction about locality.
+            let maybe_remote_replicas = if self.preferences.datacenter().is_none()
+                || self.is_datacenter_failover_possible(&routing_info)
+            {
                 let remote_replicas = self.shuffled_replicas(
                     ts,
                     ReplicaLocationCriteria::Any,
@@ -204,11 +236,11 @@ or refrain from preferring datacenters (which may ban all other datacenters, if 
                 Either::Right(std::iter::empty())
             };
 
-            // Produce an iterator, prioritizes local replicas.
-            // If preferred datacenter is not specified, every replica is treated as a local one.
+            // Produce an iterator, prioritizing local replicas.
+            // If preferred datacenter is not specified, every replica is treated as a remote one.
             Either::Left(
-                local_rack_replicas
-                    .chain(local_replicas)
+                maybe_local_rack_replicas
+                    .chain(maybe_local_replicas)
                     .chain(maybe_remote_replicas),
             )
         } else {
@@ -323,19 +355,10 @@ impl DefaultPolicy {
     fn nonfiltered_replica_set<'a>(
         &'a self,
         ts: &TokenWithStrategy<'a>,
-        replica_location: ReplicaLocationCriteria,
+        replica_location: ReplicaLocationCriteria<'a>,
         cluster: &'a ClusterData,
     ) -> ReplicaSet<'a> {
-        let should_be_local = match replica_location {
-            ReplicaLocationCriteria::Any => false,
-            ReplicaLocationCriteria::Datacenter | ReplicaLocationCriteria::DatacenterAndRack => {
-                true
-            }
-        };
-
-        let datacenter = should_be_local
-            .then_some(self.preferences.datacenter())
-            .flatten();
+        let datacenter = replica_location.datacenter();
 
         cluster
             .replica_locator()
@@ -345,13 +368,14 @@ impl DefaultPolicy {
     /// Wraps the provided predicate, adding the requirement for rack to match.
     fn make_rack_predicate<'a>(
         predicate: impl Fn(&NodeRef<'a>) -> bool + 'a,
-        replica_location: ReplicaLocationCriteria,
-        preferences: &'a ReplicaLocationPreference,
+        replica_location: ReplicaLocationCriteria<'a>,
     ) -> impl Fn(NodeRef<'a>) -> bool {
         move |node| match replica_location {
-            ReplicaLocationCriteria::Any | ReplicaLocationCriteria::Datacenter => predicate(&node),
-            ReplicaLocationCriteria::DatacenterAndRack => {
-                predicate(&node) && node.rack.as_deref() == preferences.rack()
+            ReplicaLocationCriteria::Any | ReplicaLocationCriteria::Datacenter(_) => {
+                predicate(&node)
+            }
+            ReplicaLocationCriteria::DatacenterAndRack(_, rack) => {
+                predicate(&node) && node.rack.as_deref() == Some(rack)
             }
         }
     }
@@ -359,11 +383,11 @@ impl DefaultPolicy {
     fn replicas<'a>(
         &'a self,
         ts: &TokenWithStrategy<'a>,
-        replica_location: ReplicaLocationCriteria,
+        replica_location: ReplicaLocationCriteria<'a>,
         predicate: impl Fn(&NodeRef<'a>) -> bool + 'a,
         cluster: &'a ClusterData,
     ) -> impl Iterator<Item = NodeRef<'a>> {
-        let predicate = Self::make_rack_predicate(predicate, replica_location, &self.preferences);
+        let predicate = Self::make_rack_predicate(predicate, replica_location);
 
         self.nonfiltered_replica_set(ts, replica_location, cluster)
             .into_iter()
@@ -373,11 +397,11 @@ impl DefaultPolicy {
     fn pick_replica<'a>(
         &'a self,
         ts: &TokenWithStrategy<'a>,
-        replica_location: ReplicaLocationCriteria,
+        replica_location: ReplicaLocationCriteria<'a>,
         predicate: &'a impl Fn(&NodeRef<'a>) -> bool,
         cluster: &'a ClusterData,
     ) -> Option<NodeRef<'a>> {
-        let predicate = Self::make_rack_predicate(predicate, replica_location, &self.preferences);
+        let predicate = Self::make_rack_predicate(predicate, replica_location);
 
         let replica_set = self.nonfiltered_replica_set(ts, replica_location, cluster);
 
@@ -392,7 +416,7 @@ impl DefaultPolicy {
     fn shuffled_replicas<'a>(
         &'a self,
         ts: &TokenWithStrategy<'a>,
-        replica_location: ReplicaLocationCriteria,
+        replica_location: ReplicaLocationCriteria<'a>,
         predicate: impl Fn(&NodeRef<'a>) -> bool + 'a,
         cluster: &'a ClusterData,
     ) -> impl Iterator<Item = NodeRef<'a>> {
