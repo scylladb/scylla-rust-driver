@@ -212,6 +212,18 @@ pub struct SessionConfig {
     // If the driver is to connect to ScyllaCloud, there is a config for it.
     #[cfg(feature = "cloud")]
     pub(crate) cloud_config: Option<Arc<CloudConfig>>,
+
+    /// If true, the driver will inject a small delay before flushing data
+    /// to the socket - by rescheduling the task that writes data to the socket.
+    /// This gives the task an opportunity to collect more write requests
+    /// and write them in a single syscall, increasing the efficiency.
+    ///
+    /// However, this optimization may worsen latency if the rate of requests
+    /// issued by the application is low, but otherwise the application is
+    /// heavily loaded with other tasks on the same tokio executor.
+    /// Please do performance measurements before committing to disabling
+    /// this option.
+    pub enable_write_coalescing: bool,
 }
 
 /// Describes database server known on Session startup.
@@ -268,6 +280,7 @@ impl SessionConfig {
             refresh_metadata_on_auto_schema_agreement: true,
             #[cfg(feature = "cloud")]
             cloud_config: None,
+            enable_write_coalescing: true,
         }
     }
 
@@ -468,6 +481,7 @@ impl Session {
             address_translator: config.address_translator,
             #[cfg(feature = "cloud")]
             cloud_config: config.cloud_config,
+            enable_write_coalescing: config.enable_write_coalescing,
         };
 
         let pool_config = PoolConfig {
