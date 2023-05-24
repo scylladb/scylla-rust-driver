@@ -1202,7 +1202,7 @@ mod tests {
                     consistency: Consistency::Two,
                     ..Default::default()
                 },
-                // going though the ring, we get order: F , A , C , D , G , B , E
+                // going through the ring, we get order: F , A , C , D , G , B , E
                 //                                      us  eu  eu  us  eu  eu  us
                 //                                      r2  r1  r1  r1  r2  r1  r1
                 expected_groups: ExpectedGroupsBuilder::new()
@@ -1227,7 +1227,7 @@ mod tests {
                     consistency: Consistency::Two,
                     ..Default::default()
                 },
-                // going though the ring, we get order: F , A , C , D , G , B , E
+                // going through the ring, we get order: F , A , C , D , G , B , E
                 //                                      us  eu  eu  us  eu  eu  us
                 //                                      r2  r1  r1  r1  r2  r1  r1
                 expected_groups: ExpectedGroupsBuilder::new()
@@ -1251,7 +1251,7 @@ mod tests {
                     consistency: Consistency::LocalOne, // local Consistency forbids datacenter failover
                     ..Default::default()
                 },
-                // going though the ring, we get order: F , A , C , D , G , B , E
+                // going through the ring, we get order: F , A , C , D , G , B , E
                 //                                      us  eu  eu  us  eu  eu  us
                 //                                      r2  r1  r1  r1  r2  r1  r1
                 expected_groups: ExpectedGroupsBuilder::new()
@@ -1273,7 +1273,7 @@ mod tests {
                     consistency: Consistency::One,
                     ..Default::default()
                 },
-                // going though the ring, we get order: F , A , C , D , G , B , E
+                // going through the ring, we get order: F , A , C , D , G , B , E
                 //                                      us  eu  eu  us  eu  eu  us
                 //                                      r2  r1  r1  r1  r2  r1  r1
                 expected_groups: ExpectedGroupsBuilder::new()
@@ -1295,7 +1295,7 @@ mod tests {
                     consistency: Consistency::Quorum,
                     ..Default::default()
                 },
-                // going though the ring, we get order: F , A , C , D , G , B , E
+                // going through the ring, we get order: F , A , C , D , G , B , E
                 //                                      us  eu  eu  us  eu  eu  us
                 //                                      r2  r1  r1  r1  r2  r1  r1
                 expected_groups: ExpectedGroupsBuilder::new()
@@ -1320,7 +1320,7 @@ mod tests {
                     consistency: Consistency::Quorum,
                     ..Default::default()
                 },
-                // going though the ring, we get order: F , A , C , D , G , B , E
+                // going through the ring, we get order: F , A , C , D , G , B , E
                 //                                      us  eu  eu  us  eu  eu  us
                 //                                      r2  r1  r1  r1  r2  r1  r1
                 expected_groups: ExpectedGroupsBuilder::new()
@@ -1344,7 +1344,7 @@ mod tests {
                     consistency: Consistency::Quorum,
                     ..Default::default()
                 },
-                // going though the ring, we get order: F , A , C , D , G , B , E
+                // going through the ring, we get order: F , A , C , D , G , B , E
                 //                                      us  eu  eu  us  eu  eu  us
                 //                                      r2  r1  r1  r1  r2  r1  r1
                 expected_groups: ExpectedGroupsBuilder::new()
@@ -1366,7 +1366,7 @@ mod tests {
                     consistency: Consistency::Two,
                     ..Default::default()
                 },
-                // going though the ring, we get order: F , A , C , D , G , B , E
+                // going through the ring, we get order: F , A , C , D , G , B , E
                 //                                      us  eu  eu  us  eu  eu  us
                 //                                      r2  r1  r1  r1  r2  r1  r1
                 expected_groups: ExpectedGroupsBuilder::new()
@@ -1390,7 +1390,7 @@ mod tests {
                     consistency: Consistency::LocalOne, // local Consistency forbids datacenter failover
                     ..Default::default()
                 },
-                // going though the ring, we get order: F , A , C , D , G , B , E
+                // going through the ring, we get order: F , A , C , D , G , B , E
                 //                                      us  eu  eu  us  eu  eu  us
                 //                                      r2  r1  r1  r1  r2  r1  r1
                 expected_groups: ExpectedGroupsBuilder::new()
@@ -1450,7 +1450,7 @@ mod tests {
                     consistency: Consistency::Quorum,
                     ..Default::default()
                 },
-                // going though the ring, we get order: F , A , C , D , G , B , E
+                // going through the ring, we get order: F , A , C , D , G , B , E
                 //                                      us  eu  eu  us  eu  eu  us
                 //                                      r2  r1  r1  r1  r2  r1  r1
                 expected_groups: ExpectedGroupsBuilder::new()
@@ -1472,7 +1472,7 @@ mod tests {
                     consistency: Consistency::Quorum,
                     ..Default::default()
                 },
-                // going though the ring, we get order: F , A , C , D , G , B , E
+                // going through the ring, we get order: F , A , C , D , G , B , E
                 //                                      us  eu  eu  us  eu  eu  us
                 //                                      r2  r1  r1  r1  r2  r1  r1
                 expected_groups: ExpectedGroupsBuilder::new().build(), // empty plan, because all nodes are remote and failover is forbidden
@@ -1491,7 +1491,7 @@ mod tests {
                     consistency: Consistency::Quorum,
                     ..Default::default()
                 },
-                // going though the ring, we get order: F , A , C , D , G , B , E
+                // going through the ring, we get order: F , A , C , D , G , B , E
                 //                                      us  eu  eu  us  eu  eu  us
                 //                                      r2  r1  r1  r1  r2  r1  r1
                 expected_groups: ExpectedGroupsBuilder::new()
@@ -1513,7 +1513,7 @@ mod tests {
                     consistency: Consistency::Quorum,
                     ..Default::default()
                 },
-                // going though the ring, we get order: F , A , C , D , G , B , E
+                // going through the ring, we get order: F , A , C , D , G , B , E
                 //                                      us  eu  eu  us  eu  eu  us
                 //                                      r2  r1  r1  r1  r2  r1  r1
                 expected_groups: ExpectedGroupsBuilder::new()
@@ -1538,7 +1538,7 @@ mod tests {
                     consistency: Consistency::One,
                     ..Default::default()
                 },
-                // going though the ring, we get order: F , A , C , D , G , B , E
+                // going through the ring, we get order: F , A , C , D , G , B , E
                 //                                      us  eu  eu  us  eu  eu  us
                 //                                      r2  r1  r1  r1  r2  r1  r1
                 expected_groups: ExpectedGroupsBuilder::new()
@@ -1566,7 +1566,7 @@ mod tests {
                     consistency: Consistency::Two,
                     ..Default::default()
                 },
-                // going though the ring, we get order: B , C , E , G , A , F , D
+                // going through the ring, we get order: B , C , E , G , A , F , D
                 //                                      eu  eu  us  eu  eu  us  us
                 //                                      r1  r1  r1  r2  r1  r2  r1
                 expected_groups: ExpectedGroupsBuilder::new()
@@ -1592,7 +1592,7 @@ mod tests {
                     consistency: Consistency::One,
                     ..Default::default()
                 },
-                // going though the ring, we get order: F , A , C , D , G , B , E
+                // going through the ring, we get order: F , A , C , D , G , B , E
                 //                                      us  eu  eu  us  eu  eu  us
                 //                                      r2  r1  r1  r1  r2  r1  r1
                 expected_groups: ExpectedGroupsBuilder::new()
@@ -2765,7 +2765,7 @@ mod latency_awareness {
                         consistency: Consistency::Quorum,
                         ..Default::default()
                     },
-                    // going though the ring, we get order: F , A , C , D , G , B , E
+                    // going through the ring, we get order: F , A , C , D , G , B , E
                     //                                      us  eu  eu  us  eu  eu  us
                     //                                      r2  r1  r1  r1  r2  r1  r1
                     expected_groups: ExpectedGroupsBuilder::new()
@@ -2791,7 +2791,7 @@ mod latency_awareness {
                         (C, slow_penalised()),
                         (D, slow_penalised()),
                     ],
-                    // going though the ring, we get order: F , A , C , D , G , B , E
+                    // going through the ring, we get order: F , A , C , D , G , B , E
                     //                                      us  eu  eu  us  eu  eu  us
                     //                                      r2  r1  r1  r1  r2  r1  r1
                     expected_groups: ExpectedGroupsBuilder::new()
@@ -2814,7 +2814,7 @@ mod latency_awareness {
                         consistency: Consistency::Quorum,
                         ..Default::default()
                     },
-                    // going though the ring, we get order: F , A , C , D , G , B , E
+                    // going through the ring, we get order: F , A , C , D , G , B , E
                     //                                      us  eu  eu  us  eu  eu  us
                     //                                      r2  r1  r1  r1  r2  r1  r1
                     expected_groups: ExpectedGroupsBuilder::new()
