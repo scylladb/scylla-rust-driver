@@ -183,7 +183,7 @@ pub(crate) mod defaults {
         Consistency::LocalQuorum
     }
     pub fn serial_consistency() -> Option<SerialConsistency> {
-        None
+        Some(SerialConsistency::LocalSerial)
     }
     pub fn request_timeout() -> Option<Duration> {
         Some(Duration::from_secs(30))
