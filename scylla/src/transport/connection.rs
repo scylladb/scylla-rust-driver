@@ -362,6 +362,9 @@ pub struct ConnectionConfig {
     pub authenticator: Option<Arc<dyn AuthenticatorProvider>>,
     pub address_translator: Option<Arc<dyn AddressTranslator>>,
     pub enable_write_coalescing: bool,
+
+    pub keepalive_interval: Option<Duration>,
+    pub keepalive_timeout: Option<Duration>,
 }
 
 impl Default for ConnectionConfig {
@@ -380,6 +383,10 @@ impl Default for ConnectionConfig {
             #[cfg(feature = "cloud")]
             cloud_config: None,
             enable_write_coalescing: true,
+
+            // Note: this is different than SessionConfig default values.
+            keepalive_interval: None,
+            keepalive_timeout: None,
         }
     }
 }
