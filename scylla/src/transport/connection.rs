@@ -1753,13 +1753,15 @@ impl VerifiedKeyspaceName {
 
 #[cfg(test)]
 mod tests {
+    use assert_matches::assert_matches;
+    use scylla_cql::errors::QueryError;
     use scylla_cql::frame::protocol_features::{
         LWT_OPTIMIZATION_META_BIT_MASK_KEY, SCYLLA_LWT_ADD_METADATA_MARK_EXTENSION,
     };
     use scylla_cql::frame::types;
     use scylla_proxy::{
         Condition, Node, Proxy, Reaction, RequestFrame, RequestOpcode, RequestReaction,
-        RequestRule, ResponseFrame,
+        RequestRule, ResponseFrame, ShardAwareness,
     };
 
     use tokio::select;
@@ -1776,6 +1778,7 @@ mod tests {
     use std::collections::HashMap;
     use std::net::SocketAddr;
     use std::sync::Arc;
+    use std::time::Duration;
 
     // Just like resolve_hostname in session.rs
     async fn resolve_hostname(hostname: &str) -> SocketAddr {
@@ -2078,5 +2081,79 @@ mod tests {
                 .unwrap(),
             &lwt_optimisation_entry
         )
+    }
+
+    #[tokio::test]
+    #[ntest::timeout(20000)]
+    #[cfg(not(scylla_cloud_tests))]
+    async fn connection_is_closed_on_no_response_to_keepalives() {
+        let proxy_addr = SocketAddr::new(scylla_proxy::get_exclusive_local_address(), 9042);
+        let uri = std::env::var("SCYLLA_URI").unwrap_or_else(|_| "127.0.0.1:9042".to_string());
+        let node_addr: SocketAddr = resolve_hostname(&uri).await;
+
+        let drop_options_rule = RequestRule(
+            Condition::RequestOpcode(RequestOpcode::Options),
+            RequestReaction::drop_frame(),
+        );
+
+        let config = ConnectionConfig {
+            keepalive_interval: Some(Duration::from_millis(500)),
+            keepalive_timeout: Some(Duration::from_secs(1)),
+            ..Default::default()
+        };
+
+        let mut proxy = Proxy::builder()
+            .with_node(
+                Node::builder()
+                    .proxy_address(proxy_addr)
+                    .real_address(node_addr)
+                    .shard_awareness(ShardAwareness::QueryNode)
+                    .build(),
+            )
+            .build()
+            .run()
+            .await
+            .unwrap();
+
+        // Setup connection normally, without obstruction
+        let (conn, mut error_receiver) = open_connection(
+            UntranslatedEndpoint::ContactPoint(ContactPoint {
+                address: proxy_addr,
+                datacenter: None,
+            }),
+            None,
+            config,
+        )
+        .await
+        .unwrap();
+
+        // As everything is normal, these queries should succeed.
+        for _ in 0..3 {
+            tokio::time::sleep(Duration::from_millis(500)).await;
+            conn.query_single_page("SELECT host_id FROM system.local", ())
+                .await
+                .unwrap();
+        }
+        // As everything is normal, no error should have been reported.
+        assert_matches!(
+            error_receiver.try_recv(),
+            Err(tokio::sync::oneshot::error::TryRecvError::Empty)
+        );
+
+        // Set up proxy to drop keepalive messages
+        proxy.running_nodes[0].change_request_rules(Some(vec![drop_options_rule]));
+
+        // Wait until keepaliver gots impatient and terminates router.
+        // Then, the error from keepaliver will be propagated to the error receiver.
+        let err = error_receiver.await.unwrap();
+        assert_matches!(err, QueryError::IoError(_));
+
+        // As the router is invalidated, all further queries should immediately
+        // return error.
+        conn.query_single_page("SELECT host_id FROM system.local", ())
+            .await
+            .unwrap_err();
+
+        let _ = proxy.finish().await;
     }
 }
