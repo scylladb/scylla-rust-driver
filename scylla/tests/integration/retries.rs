@@ -1,5 +1,4 @@
-mod utils;
-
+use crate::utils::test_with_3_node_cluster;
 use scylla::retry_policy::FallthroughRetryPolicy;
 use scylla::speculative_execution::SimpleSpeculativeExecutionPolicy;
 use scylla::transport::session::Session;
@@ -9,7 +8,6 @@ use scylla::{query::Query, test_utils::unique_keyspace_name};
 use std::sync::Arc;
 use std::time::Duration;
 use tracing::info;
-use utils::test_with_3_node_cluster;
 
 use scylla_proxy::{
     Condition, ProxyError, Reaction, RequestOpcode, RequestReaction, RequestRule, ShardAwareness,
