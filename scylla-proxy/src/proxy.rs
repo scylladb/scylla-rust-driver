@@ -1177,7 +1177,7 @@ impl ProxyWorker {
     }
 }
 
-// Returns next free last IP address octet for another proxy instance.
+// Returns next free IP address for another proxy instance.
 // Useful for concurrent testing.
 #[doc(hidden)]
 pub fn get_exclusive_local_address() -> IpAddr {
