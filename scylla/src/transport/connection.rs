@@ -1227,7 +1227,27 @@ impl Connection {
                 interval.tick().await;
 
                 let keepalive_query = issue_keepalive_query(&router_handle);
-                if let Err(err) = keepalive_query.await {
+                let query_result = if let Some(timeout) = keepalive_timeout {
+                    match tokio::time::timeout(timeout, keepalive_query).await {
+                        Ok(res) => res,
+                        Err(_) => {
+                            warn!(
+                                "Timed out while waiting for response to keepalive request on connection to node {}",
+                                node_address
+                            );
+                            return Err(QueryError::IoError(Arc::new(std::io::Error::new(
+                                std::io::ErrorKind::Other,
+                                format!(
+                                    "Timed out while waiting for response to keepalive request on connection to node {}",
+                                        node_address
+                                )
+                            ))));
+                        }
+                    }
+                } else {
+                    keepalive_query.await
+                };
+                if let Err(err) = query_result {
                     warn!(
                         "Failed to execute keepalive request on connection to node {} - {}",
                         node_address, err
