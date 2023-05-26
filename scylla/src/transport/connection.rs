@@ -27,7 +27,7 @@ use scylla_cql::frame::response::authenticate::Authenticate;
 use std::collections::{BTreeSet, HashMap};
 use std::convert::TryFrom;
 use std::io::ErrorKind;
-use std::net::SocketAddr;
+use std::net::{IpAddr, SocketAddr};
 use std::sync::Arc;
 use std::sync::Mutex as StdMutex;
 use std::{
@@ -492,6 +492,8 @@ impl Connection {
             receiver,
             error_sender,
             orphan_notification_receiver,
+            router_handle.clone(),
+            addr.ip(),
         )
         .await?;
 
@@ -928,6 +930,8 @@ impl Connection {
         receiver: mpsc::Receiver<Task>,
         error_sender: tokio::sync::oneshot::Sender<QueryError>,
         orphan_notification_receiver: mpsc::UnboundedReceiver<RequestId>,
+        router_handle: Arc<RouterHandle>,
+        node_address: IpAddr,
     ) -> Result<RemoteHandle<()>, std::io::Error> {
         #[cfg(feature = "ssl")]
         if let Some(ssl_config) = &config.ssl_config {
@@ -941,6 +945,8 @@ impl Connection {
                 receiver,
                 error_sender,
                 orphan_notification_receiver,
+                router_handle,
+                node_address,
             )
             .remote_handle();
             tokio::task::spawn(task.with_current_subscriber());
@@ -953,6 +959,8 @@ impl Connection {
             receiver,
             error_sender,
             orphan_notification_receiver,
+            router_handle,
+            node_address,
         )
         .remote_handle();
         tokio::task::spawn(task.with_current_subscriber());
@@ -965,6 +973,8 @@ impl Connection {
         receiver: mpsc::Receiver<Task>,
         error_sender: tokio::sync::oneshot::Sender<QueryError>,
         orphan_notification_receiver: mpsc::UnboundedReceiver<RequestId>,
+        router_handle: Arc<RouterHandle>,
+        node_address: IpAddr,
     ) {
         let (read_half, write_half) = split(stream);
         // Why are we using a mutex here?
