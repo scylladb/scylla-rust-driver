@@ -70,8 +70,8 @@ const LOCAL_VERSION: &str = "SELECT schema_version FROM system.local WHERE key='
 // FIXME: Make this constants configurable
 // The term "orphan" refers to stream ids, that were allocated for a {request, response} that no
 // one is waiting anymore (due to cancellation of `Connection::send_request`). Old orphan refers to
-// a stream id, that is orphaned for a long time. This long time is defined below
-// (`OLD_AGE_ORPHAN_THRESHOLD`). Connection, that has a big number (`OLD_ORPHAN_COUNT_THRESHOLD`)
+// a stream id that is orphaned for a long time. This long time is defined below
+// (`OLD_AGE_ORPHAN_THRESHOLD`). Connection that has a big number (`OLD_ORPHAN_COUNT_THRESHOLD`)
 // of old orphans is shut down (and created again by a connection management layer).
 const OLD_ORPHAN_COUNT_THRESHOLD: usize = 1024;
 const OLD_AGE_ORPHAN_THRESHOLD: std::time::Duration = std::time::Duration::from_secs(1);
