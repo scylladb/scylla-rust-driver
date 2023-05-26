@@ -77,12 +77,16 @@ const OLD_ORPHAN_COUNT_THRESHOLD: usize = 1024;
 const OLD_AGE_ORPHAN_THRESHOLD: std::time::Duration = std::time::Duration::from_secs(1);
 
 pub struct Connection {
-    submit_channel: mpsc::Sender<Task>,
     _worker_handle: RemoteHandle<()>,
 
     connect_address: SocketAddr,
     config: ConnectionConfig,
     features: ConnectionFeatures,
+    router_handle: Arc<RouterHandle>,
+}
+
+struct RouterHandle {
+    submit_channel: mpsc::Sender<Task>,
 
     // Each request send by `Connection::send_request` needs a unique request id.
     // This field is a monotonic generator of such ids.
@@ -93,6 +97,60 @@ pub struct Connection {
     // pushing values in a synchronous way (without an `.await`), which is
     // needed for pushing values in `Drop` implementations.
     orphan_notification_sender: mpsc::UnboundedSender<RequestId>,
+}
+
+impl RouterHandle {
+    fn allocate_request_id(&self) -> RequestId {
+        self.request_id_generator
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+    }
+
+    async fn send_request(
+        &self,
+        request: &impl Request,
+        compression: Option<Compression>,
+        tracing: bool,
+    ) -> Result<TaskResponse, QueryError> {
+        let serialized_request = SerializedRequest::make(request, compression, tracing)?;
+        let request_id = self.allocate_request_id();
+
+        let (response_sender, receiver) = oneshot::channel();
+        let response_handler = ResponseHandler {
+            response_sender,
+            request_id,
+        };
+
+        // Dropping `notifier` (before calling `notifier.disable()`) will send a notification to
+        // `Connection::router`. This notification is then used to mark a `stream_id` associated
+        // with this request as orphaned and free associated resources.
+        let notifier = OrphanhoodNotifier::new(request_id, &self.orphan_notification_sender);
+
+        self.submit_channel
+            .send(Task {
+                serialized_request,
+                response_handler,
+            })
+            .await
+            .map_err(|_| {
+                QueryError::IoError(Arc::new(std::io::Error::new(
+                    ErrorKind::Other,
+                    "Connection broken",
+                )))
+            })?;
+
+        let task_response = receiver.await.map_err(|_| {
+            QueryError::IoError(Arc::new(std::io::Error::new(
+                ErrorKind::Other,
+                "Connection broken",
+            )))
+        })?;
+
+        // Response was successfully received, so it's time to disable
+        // notification about orphaning.
+        notifier.disable();
+
+        task_response
+    }
 }
 
 #[derive(Default)]
@@ -422,6 +480,12 @@ impl Connection {
         // Unbounded because it allows for synchronous pushes
         let (orphan_notification_sender, orphan_notification_receiver) = mpsc::unbounded_channel();
 
+        let router_handle = Arc::new(RouterHandle {
+            submit_channel: sender,
+            request_id_generator: AtomicU64::new(0),
+            orphan_notification_sender,
+        });
+
         let _worker_handle = Self::run_router(
             config.clone(),
             stream,
@@ -432,13 +496,11 @@ impl Connection {
         .await?;
 
         let connection = Connection {
-            submit_channel: sender,
             _worker_handle,
             config,
             features: Default::default(),
             connect_address: addr,
-            request_id_generator: AtomicU64::new(0),
-            orphan_notification_sender,
+            router_handle,
         };
 
         Ok((connection, error_receiver))
@@ -808,14 +870,9 @@ impl Connection {
         Ok(version_id)
     }
 
-    fn allocate_request_id(&self) -> RequestId {
-        self.request_id_generator
-            .fetch_add(1, std::sync::atomic::Ordering::Relaxed)
-    }
-
-    async fn send_request<R: Request>(
+    async fn send_request(
         &self,
-        request: &R,
+        request: &impl Request,
         compress: bool,
         tracing: bool,
     ) -> Result<QueryResponse, QueryError> {
@@ -824,46 +881,14 @@ impl Connection {
         } else {
             None
         };
-        let serialized_request = SerializedRequest::make(request, compression, tracing)?;
-        let request_id = self.allocate_request_id();
 
-        let (response_sender, receiver) = oneshot::channel();
-        let response_handler = ResponseHandler {
-            response_sender,
-            request_id,
-        };
-
-        // Dropping `notifier` (before calling `notifier.disable()`) will send a notification to
-        // `Connection::router`. This notification is then used to mark a `stream_id` associated
-        // with this request as orphaned and free associated resources.
-        let notifier = OrphanhoodNotifier::new(request_id, &self.orphan_notification_sender);
-
-        self.submit_channel
-            .send(Task {
-                serialized_request,
-                response_handler,
-            })
-            .await
-            .map_err(|_| {
-                QueryError::IoError(Arc::new(std::io::Error::new(
-                    ErrorKind::Other,
-                    "Connection broken",
-                )))
-            })?;
-
-        let task_response = receiver.await.map_err(|_| {
-            QueryError::IoError(Arc::new(std::io::Error::new(
-                ErrorKind::Other,
-                "Connection broken",
-            )))
-        })?;
-
-        // Response was successfully received, so it's time to disable
-        // notification about orphaning.
-        notifier.disable();
+        let task_response = self
+            .router_handle
+            .send_request(request, compression, tracing)
+            .await?;
 
         Self::parse_response(
-            task_response?,
+            task_response,
             self.config.compression,
             &self.features.protocol_features,
         )
