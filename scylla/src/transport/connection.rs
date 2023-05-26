@@ -1,6 +1,7 @@
 use bytes::Bytes;
 use futures::{future::RemoteHandle, FutureExt};
 use scylla_cql::errors::TranslationError;
+use scylla_cql::frame::request::options::Options;
 use scylla_cql::frame::response::Error;
 use scylla_cql::frame::types::SerialConsistency;
 use socket2::{SockRef, TcpKeepalive};
@@ -1000,6 +1001,13 @@ impl Connection {
 
         let enable_write_coalescing = config.enable_write_coalescing;
 
+        let k = Self::keepaliver(
+            router_handle,
+            config.keepalive_interval,
+            config.keepalive_timeout,
+            node_address,
+        );
+
         let r = Self::reader(
             BufReader::with_capacity(8192, read_half),
             &handler_map,
@@ -1013,7 +1021,7 @@ impl Connection {
         );
         let o = Self::orphaner(&handler_map, orphan_notification_receiver);
 
-        let result = futures::try_join!(r, w, o);
+        let result = futures::try_join!(r, w, o, k);
 
         let error: QueryError = match result {
             Ok(_) => return, // Connection was dropped, we can return
@@ -1193,6 +1201,44 @@ impl Connection {
         }
 
         Ok(())
+    }
+
+    async fn keepaliver(
+        router_handle: Arc<RouterHandle>,
+        keepalive_interval: Option<Duration>,
+        keepalive_timeout: Option<Duration>,
+        node_address: IpAddr, // This address is only used to enrich the log messages
+    ) -> Result<(), QueryError> {
+        async fn issue_keepalive_query(router_handle: &RouterHandle) -> Result<(), QueryError> {
+            router_handle
+                .send_request(&Options, None, false)
+                .await
+                .map(|_| ())
+        }
+
+        if let Some(keepalive_interval) = keepalive_interval {
+            let mut interval = tokio::time::interval(keepalive_interval);
+            interval.tick().await; // Use up the first, instant tick.
+
+            // Default behaviour (Burst) is not suitable for sending keepalives.
+            interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+
+            loop {
+                interval.tick().await;
+
+                let keepalive_query = issue_keepalive_query(&router_handle);
+                if let Err(err) = keepalive_query.await {
+                    warn!(
+                        "Failed to execute keepalive request on connection to node {} - {}",
+                        node_address, err
+                    );
+                    return Err(err);
+                }
+            }
+        } else {
+            // No keepalives are to be sent.
+            Ok(())
+        }
     }
 
     async fn handle_event(
