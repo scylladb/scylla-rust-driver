@@ -14,21 +14,64 @@ use std::{fmt, sync::Arc, time::Duration};
 use tracing::warn;
 
 #[derive(Clone, Copy)]
-enum ReplicaLocation {
+enum ReplicaLocationCriteria<'a> {
     Any,
-    Datacenter,
-    DatacenterAndRack,
+    Datacenter(&'a str),
+    DatacenterAndRack(&'a str, &'a str),
 }
 
-// TODO: LWT optimisation
+impl<'a> ReplicaLocationCriteria<'a> {
+    fn datacenter(&self) -> Option<&'a str> {
+        match self {
+            Self::Any => None,
+            Self::Datacenter(dc) | Self::DatacenterAndRack(dc, _) => Some(dc),
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+enum ReplicaLocationPreference {
+    Any,
+    Datacenter(String),
+    DatacenterAndRack(String, String),
+}
+
+impl ReplicaLocationPreference {
+    fn datacenter(&self) -> Option<&str> {
+        match self {
+            Self::Any => None,
+            Self::Datacenter(dc) | Self::DatacenterAndRack(dc, _) => Some(dc),
+        }
+    }
+
+    #[allow(unused)]
+    fn rack(&self) -> Option<&str> {
+        match self {
+            Self::Any | Self::Datacenter(_) => None,
+            Self::DatacenterAndRack(_, rack) => Some(rack),
+        }
+    }
+}
+
+#[derive(Clone, Copy)]
+enum ReplicaOrder {
+    Arbitrary,
+    RingOrder,
+}
+
+#[derive(Clone, Copy)]
+enum StatementType {
+    Lwt,
+    NonLwt,
+}
+
 /// The default load balancing policy.
 ///
 /// It can be configured to be datacenter-aware and token-aware.
 /// Datacenter failover for queries with non local consistency mode is also supported.
-/// Latency awareness is available, although not recommended.
+/// Latency awareness is available, althrough not recommended.
 pub struct DefaultPolicy {
-    preferred_datacenter: Option<String>,
-    preferred_rack: Option<String>,
+    preferences: ReplicaLocationPreference,
     is_token_aware: bool,
     permit_dc_failover: bool,
     pick_predicate: Box<dyn Fn(&NodeRef) -> bool + Send + Sync>,
@@ -39,8 +82,7 @@ pub struct DefaultPolicy {
 impl fmt::Debug for DefaultPolicy {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("DefaultPolicy")
-            .field("preferred_datacenter", &self.preferred_datacenter)
-            .field("preferred_rack", &self.preferred_rack)
+            .field("preferences", &self.preferences)
             .field("is_token_aware", &self.is_token_aware)
             .field("permit_dc_failover", &self.permit_dc_failover)
             .field("latency_awareness", &self.latency_awareness)
@@ -53,7 +95,7 @@ impl LoadBalancingPolicy for DefaultPolicy {
     fn pick<'a>(&'a self, query: &'a RoutingInfo, cluster: &'a ClusterData) -> Option<NodeRef<'a>> {
         let routing_info = self.routing_info(query, cluster);
         if let Some(ref token_with_strategy) = routing_info.token_with_strategy {
-            if self.preferred_datacenter.is_some()
+            if self.preferences.datacenter().is_some()
                 && !self.permit_dc_failover
                 && matches!(
                     token_with_strategy.strategy,
@@ -68,15 +110,20 @@ or refrain from preferring datacenters (which may ban all other datacenters, if 
                 );
             }
         }
+        let statement_type = if query.is_confirmed_lwt {
+            StatementType::Lwt
+        } else {
+            StatementType::NonLwt
+        };
         if let Some(ts) = &routing_info.token_with_strategy {
-            // Try to pick some alive local rack random replica.
-            // If preferred rack is not specified, try to pick local DC replica.
-            if self.preferred_rack.is_some() {
+            if let ReplicaLocationPreference::DatacenterAndRack(dc, rack) = &self.preferences {
+                // Try to pick some alive local rack random replica.
                 let local_rack_picked = self.pick_replica(
                     ts,
-                    ReplicaLocation::DatacenterAndRack,
+                    ReplicaLocationCriteria::DatacenterAndRack(dc, rack),
                     &self.pick_predicate,
                     cluster,
+                    statement_type,
                 );
 
                 if let Some(alive_local_rack_replica) = local_rack_picked {
@@ -84,23 +131,35 @@ or refrain from preferring datacenters (which may ban all other datacenters, if 
                 }
             }
 
-            // Try to pick some alive local random replica.
-            // If preferred datacenter is not specified, all replicas are treated as local.
-            let picked = self.pick_replica(
-                ts,
-                ReplicaLocation::Datacenter,
-                &self.pick_predicate,
-                cluster,
-            );
+            if let ReplicaLocationPreference::DatacenterAndRack(dc, _)
+            | ReplicaLocationPreference::Datacenter(dc) = &self.preferences
+            {
+                // Try to pick some alive local random replica.
+                let picked = self.pick_replica(
+                    ts,
+                    ReplicaLocationCriteria::Datacenter(dc),
+                    &self.pick_predicate,
+                    cluster,
+                    statement_type,
+                );
 
-            if let Some(alive_local_replica) = picked {
-                return Some(alive_local_replica);
+                if let Some(alive_local_replica) = picked {
+                    return Some(alive_local_replica);
+                }
             }
 
-            // If datacenter failover is possible, loosen restriction about locality.
-            if self.is_datacenter_failover_possible(&routing_info) {
-                let picked =
-                    self.pick_replica(ts, ReplicaLocation::Any, &self.pick_predicate, cluster);
+            // If preferred datacenter is not specified, or if datacenter failover is possible, loosen restriction about locality.
+            if self.preferences.datacenter().is_none()
+                || self.is_datacenter_failover_possible(&routing_info)
+            {
+                // Try to pick some alive random replica.
+                let picked = self.pick_replica(
+                    ts,
+                    ReplicaLocationCriteria::Any,
+                    &self.pick_predicate,
+                    cluster,
+                    statement_type,
+                );
                 if let Some(alive_remote_replica) = picked {
                     return Some(alive_remote_replica);
                 }
@@ -150,32 +209,65 @@ or refrain from preferring datacenters (which may ban all other datacenters, if 
         cluster: &'a ClusterData,
     ) -> FallbackPlan<'a> {
         let routing_info = self.routing_info(query, cluster);
+        let statement_type = if query.is_confirmed_lwt {
+            StatementType::Lwt
+        } else {
+            StatementType::NonLwt
+        };
 
         // If token is available, get a shuffled list of alive replicas.
         let maybe_replicas = if let Some(ts) = &routing_info.token_with_strategy {
-            let local_rack_replicas = self.shuffled_replicas(
-                ts,
-                ReplicaLocation::DatacenterAndRack,
-                Self::is_alive,
-                cluster,
-            );
-            let local_replicas =
-                self.shuffled_replicas(ts, ReplicaLocation::Datacenter, Self::is_alive, cluster);
+            let maybe_local_rack_replicas =
+                if let ReplicaLocationPreference::DatacenterAndRack(dc, rack) = &self.preferences {
+                    let local_rack_replicas = self.fallback_replicas(
+                        ts,
+                        ReplicaLocationCriteria::DatacenterAndRack(dc, rack),
+                        Self::is_alive,
+                        cluster,
+                        statement_type,
+                    );
+                    Either::Left(local_rack_replicas)
+                } else {
+                    Either::Right(std::iter::empty())
+                };
 
-            // If a datacenter failover is possible, loosen restriction about locality.
-            let maybe_remote_replicas = if self.is_datacenter_failover_possible(&routing_info) {
-                let remote_replicas =
-                    self.shuffled_replicas(ts, ReplicaLocation::Any, Self::is_alive, cluster);
+            let maybe_local_replicas = if let ReplicaLocationPreference::DatacenterAndRack(dc, _)
+            | ReplicaLocationPreference::Datacenter(dc) =
+                &self.preferences
+            {
+                let local_replicas = self.fallback_replicas(
+                    ts,
+                    ReplicaLocationCriteria::Datacenter(dc),
+                    Self::is_alive,
+                    cluster,
+                    statement_type,
+                );
+                Either::Left(local_replicas)
+            } else {
+                Either::Right(std::iter::empty())
+            };
+
+            // If no datacenter is preferred, or datacenter failover is possible, loosen restriction about locality.
+            let maybe_remote_replicas = if self.preferences.datacenter().is_none()
+                || self.is_datacenter_failover_possible(&routing_info)
+            {
+                let remote_replicas = self.fallback_replicas(
+                    ts,
+                    ReplicaLocationCriteria::Any,
+                    Self::is_alive,
+                    cluster,
+                    statement_type,
+                );
                 Either::Left(remote_replicas)
             } else {
                 Either::Right(std::iter::empty())
             };
 
-            // Produce an iterator, prioritizes local replicas.
-            // If preferred datacenter is not specified, every replica is treated as a local one.
+            // Produce an iterator, prioritizing local replicas.
+            // If preferred datacenter is not specified, every replica is treated as a remote one.
             Either::Left(
-                local_rack_replicas
-                    .chain(local_replicas)
+                maybe_local_rack_replicas
+                    .chain(maybe_local_replicas)
                     .chain(maybe_remote_replicas),
             )
         } else {
@@ -268,80 +360,162 @@ impl DefaultPolicy {
     }
 
     fn preferred_node_set<'a>(&'a self, cluster: &'a ClusterData) -> &'a [Arc<Node>] {
-        if let Some(preferred_datacenter) = &self.preferred_datacenter {
+        if let Some(preferred_datacenter) = self.preferences.datacenter() {
             if let Some(nodes) = cluster
                 .replica_locator()
-                .unique_nodes_in_datacenter_ring(preferred_datacenter.as_str())
+                .unique_nodes_in_datacenter_ring(preferred_datacenter)
             {
-                return nodes;
+                nodes
             } else {
                 tracing::warn!(
                     "Datacenter specified as the preferred one ({}) does not exist!",
                     preferred_datacenter
                 );
-                // We won't guess any DC, as it could lead to possible violation dc failover ban.
-                return &[];
+                // We won't guess any DC, as it could lead to possible violation of dc failover ban.
+                &[]
             }
+        } else {
+            cluster.replica_locator().unique_nodes_in_global_ring()
         }
-
-        cluster.replica_locator().unique_nodes_in_global_ring()
     }
 
     fn nonfiltered_replica_set<'a>(
         &'a self,
         ts: &TokenWithStrategy<'a>,
-        should_be_local: bool,
+        replica_location: ReplicaLocationCriteria<'a>,
         cluster: &'a ClusterData,
     ) -> ReplicaSet<'a> {
-        let datacenter = should_be_local
-            .then_some(self.preferred_datacenter.as_deref())
-            .flatten();
+        let datacenter = replica_location.datacenter();
 
         cluster
             .replica_locator()
             .replicas_for_token(ts.token, ts.strategy, datacenter)
     }
 
+    /// Wraps the provided predicate, adding the requirement for rack to match.
+    fn make_rack_predicate<'a>(
+        predicate: impl Fn(&NodeRef<'a>) -> bool + 'a,
+        replica_location: ReplicaLocationCriteria<'a>,
+    ) -> impl Fn(NodeRef<'a>) -> bool {
+        move |node| match replica_location {
+            ReplicaLocationCriteria::Any | ReplicaLocationCriteria::Datacenter(_) => {
+                predicate(&node)
+            }
+            ReplicaLocationCriteria::DatacenterAndRack(_, rack) => {
+                predicate(&node) && node.rack.as_deref() == Some(rack)
+            }
+        }
+    }
+
     fn replicas<'a>(
         &'a self,
         ts: &TokenWithStrategy<'a>,
-        replica_location: ReplicaLocation,
-        predicate: impl Fn(&NodeRef<'a>) -> bool,
+        replica_location: ReplicaLocationCriteria<'a>,
+        predicate: impl Fn(&NodeRef<'a>) -> bool + 'a,
         cluster: &'a ClusterData,
+        order: ReplicaOrder,
     ) -> impl Iterator<Item = NodeRef<'a>> {
-        let predicate = move |node| match replica_location {
-            ReplicaLocation::Any | ReplicaLocation::Datacenter => predicate(&node),
-            ReplicaLocation::DatacenterAndRack => {
-                predicate(&node) && node.rack == self.preferred_rack
-            }
+        let predicate = Self::make_rack_predicate(predicate, replica_location);
+
+        let replica_iter = match order {
+            ReplicaOrder::Arbitrary => Either::Left(
+                self.nonfiltered_replica_set(ts, replica_location, cluster)
+                    .into_iter(),
+            ),
+            ReplicaOrder::RingOrder => Either::Right(
+                self.nonfiltered_replica_set(ts, replica_location, cluster)
+                    .into_replicas_ordered()
+                    .into_iter(),
+            ),
         };
-        let should_be_local = match replica_location {
-            ReplicaLocation::Any => false,
-            ReplicaLocation::Datacenter | ReplicaLocation::DatacenterAndRack => true,
-        };
-        self.nonfiltered_replica_set(ts, should_be_local, cluster)
-            .into_iter()
-            .filter(move |node: &NodeRef<'a>| predicate(node))
+        replica_iter.filter(move |node: &NodeRef<'a>| predicate(node))
     }
 
     fn pick_replica<'a>(
         &'a self,
         ts: &TokenWithStrategy<'a>,
-        replica_location: ReplicaLocation,
-        predicate: &impl Fn(&NodeRef<'a>) -> bool,
+        replica_location: ReplicaLocationCriteria<'a>,
+        predicate: &'a impl Fn(&NodeRef<'a>) -> bool,
+        cluster: &'a ClusterData,
+        statement_type: StatementType,
+    ) -> Option<NodeRef<'a>> {
+        match statement_type {
+            StatementType::Lwt => self.pick_first_replica(ts, replica_location, predicate, cluster),
+            StatementType::NonLwt => {
+                self.pick_random_replica(ts, replica_location, predicate, cluster)
+            }
+        }
+    }
+
+    // This is to be used for LWT optimisation: in order to reduce contention
+    // caused by Paxos conflicts, we always try to query replicas in the same, ring order.
+    //
+    // If preferred rack and DC are set, then the first (encountered on the ring) replica
+    // that resides in that rack in that DC **and** satisfies the `predicate`  is returned.
+    //
+    // If preferred DC is set, then the first (encountered on the ring) replica
+    // that resides in that DC **and** satisfies the `predicate` is returned.
+    //
+    // If no DC/rack preferences are set, then the only possible replica to be returned
+    // (due to expensive computation of the others, and we avoid expensive computation in `pick()`)
+    // is the primary replica. It is returned **iff** it satisfies the predicate, else None.
+    fn pick_first_replica<'a>(
+        &'a self,
+        ts: &TokenWithStrategy<'a>,
+        replica_location: ReplicaLocationCriteria<'a>,
+        predicate: &'a impl Fn(&NodeRef<'a>) -> bool,
         cluster: &'a ClusterData,
     ) -> Option<NodeRef<'a>> {
-        let predicate = |node| match replica_location {
-            ReplicaLocation::Any | ReplicaLocation::Datacenter => predicate(&node),
-            ReplicaLocation::DatacenterAndRack => {
-                predicate(&node) && node.rack == self.preferred_rack
+        match replica_location {
+            ReplicaLocationCriteria::Any => {
+                // ReplicaSet returned by ReplicaLocator for this case:
+                // 1) can be precomputed and lated used cheaply,
+                // 2) returns replicas in the **non-ring order** (this because ReplicaSet chains
+                //    ring-ordered replicas sequences from different DCs, thus not preserving
+                //    the global ring order).
+                // Because of 2), we can't use a precomputed ReplicaSet, but instead we need ReplicasOrdered.
+                // As ReplicasOrdered can compute cheaply only the primary global replica
+                // (computation of the remaining ones is expensive), in case that the primary replica
+                // does not satisfy the `predicate`, None is returned. All expensive computation
+                // is to be done only when `fallback()` is called.
+                self.nonfiltered_replica_set(ts, replica_location, cluster)
+                    .into_replicas_ordered()
+                    .into_iter()
+                    .next()
+                    .and_then(|primary_replica| {
+                        predicate(&primary_replica).then_some(primary_replica)
+                    })
             }
-        };
-        let should_be_local = match replica_location {
-            ReplicaLocation::Any => false,
-            ReplicaLocation::Datacenter | ReplicaLocation::DatacenterAndRack => true,
-        };
-        let replica_set = self.nonfiltered_replica_set(ts, should_be_local, cluster);
+            ReplicaLocationCriteria::Datacenter(_)
+            | ReplicaLocationCriteria::DatacenterAndRack(_, _) => {
+                // ReplicaSet returned by ReplicaLocator for this case:
+                // 1) can be precomputed and lated used cheaply,
+                // 2) returns replicas in the ring order (this is not true for the case
+                //    when multiple DCs are allowed, because ReplicaSet chains replicas sequences
+                //    from different DCs, thus not preserving the global ring order)
+                self.replicas(
+                    ts,
+                    replica_location,
+                    move |node| predicate(node),
+                    cluster,
+                    ReplicaOrder::RingOrder,
+                )
+                .next()
+            }
+        }
+    }
+
+    fn pick_random_replica<'a>(
+        &'a self,
+        ts: &TokenWithStrategy<'a>,
+        replica_location: ReplicaLocationCriteria<'a>,
+        predicate: &'a impl Fn(&NodeRef<'a>) -> bool,
+        cluster: &'a ClusterData,
+    ) -> Option<NodeRef<'a>> {
+        let predicate = Self::make_rack_predicate(predicate, replica_location);
+
+        let replica_set = self.nonfiltered_replica_set(ts, replica_location, cluster);
+
         if let Some(fixed) = self.fixed_shuffle_seed {
             let mut gen = Pcg32::new(fixed, 0);
             replica_set.choose_filtered(&mut gen, predicate)
@@ -350,16 +524,27 @@ impl DefaultPolicy {
         }
     }
 
-    fn shuffled_replicas<'a>(
+    fn fallback_replicas<'a>(
         &'a self,
         ts: &TokenWithStrategy<'a>,
-        replica_location: ReplicaLocation,
-        predicate: impl Fn(&NodeRef<'a>) -> bool,
+        replica_location: ReplicaLocationCriteria<'a>,
+        predicate: impl Fn(&NodeRef<'a>) -> bool + 'a,
         cluster: &'a ClusterData,
+        statement_type: StatementType,
     ) -> impl Iterator<Item = NodeRef<'a>> {
-        let replicas = self.replicas(ts, replica_location, predicate, cluster);
+        let order = match statement_type {
+            StatementType::Lwt => ReplicaOrder::RingOrder,
+            StatementType::NonLwt => ReplicaOrder::Arbitrary,
+        };
 
-        self.shuffle(replicas)
+        let replicas = self.replicas(ts, replica_location, predicate, cluster, order);
+
+        match statement_type {
+            // As an LWT optimisation: in order to reduce contention caused by Paxos conflicts,
+            //  we always try to query replicas in the same order.
+            StatementType::Lwt => Either::Left(replicas),
+            StatementType::NonLwt => Either::Right(self.shuffle(replicas)),
+        }
     }
 
     fn randomly_rotated_nodes(nodes: &[Arc<Node>]) -> impl Iterator<Item = NodeRef<'_>> {
@@ -416,7 +601,7 @@ impl DefaultPolicy {
     }
 
     fn is_datacenter_failover_possible(&self, routing_info: &ProcessedRoutingInfo) -> bool {
-        self.preferred_datacenter.is_some()
+        self.preferences.datacenter().is_some()
             && self.permit_dc_failover
             && !routing_info.local_consistency
     }
@@ -425,8 +610,7 @@ impl DefaultPolicy {
 impl Default for DefaultPolicy {
     fn default() -> Self {
         Self {
-            preferred_datacenter: None,
-            preferred_rack: None,
+            preferences: ReplicaLocationPreference::Any,
             is_token_aware: true,
             permit_dc_failover: false,
             pick_predicate: Box::new(Self::is_alive),
@@ -484,9 +668,24 @@ impl DefaultPolicyBuilder {
             Box::new(DefaultPolicy::is_alive)
         };
 
+        // As the case of providing preferred rack without providing datacenter is invalid, the rack is then ignored.
+        // According to the principle “Make illegal states unrepresentable”, in the next major release we will
+        // alter the `DefaultPolicyBuilder`'s API so that it is impossible for the user to create such state.
+        let preferences = match (self.preferred_datacenter, self.preferred_rack) {
+            (None, None) => ReplicaLocationPreference::Any,
+            (None, Some(_)) => {
+                // This a is case that the user shouldn't be able to represent.
+                warn!("Preferred rack has effect only if a preferred datacenter is set as well. Ignoring the preferred rack.");
+                ReplicaLocationPreference::Any
+            }
+            (Some(datacenter), None) => ReplicaLocationPreference::Datacenter(datacenter),
+            (Some(datacenter), Some(rack)) => {
+                ReplicaLocationPreference::DatacenterAndRack(datacenter, rack)
+            }
+        };
+
         Arc::new(DefaultPolicy {
-            preferred_datacenter: self.preferred_datacenter,
-            preferred_rack: self.preferred_rack,
+            preferences,
             is_token_aware: self.is_token_aware,
             permit_dc_failover: self.permit_dc_failover,
             pick_predicate,
@@ -667,7 +866,7 @@ mod tests {
         },
     };
 
-    use super::DefaultPolicy;
+    use super::{DefaultPolicy, ReplicaLocationPreference};
 
     pub(crate) mod framework {
         use std::collections::{HashMap, HashSet};
@@ -687,6 +886,7 @@ mod tests {
         enum ExpectedGroup {
             NonDeterministic(HashSet<u16>),
             Deterministic(HashSet<u16>),
+            Ordered(Vec<u16>),
         }
 
         impl ExpectedGroup {
@@ -694,13 +894,7 @@ mod tests {
                 match self {
                     Self::NonDeterministic(s) => s.len(),
                     Self::Deterministic(s) => s.len(),
-                }
-            }
-
-            fn nodes(&self) -> &HashSet<u16> {
-                match self {
-                    Self::NonDeterministic(s) => s,
-                    Self::Deterministic(s) => s,
+                    Self::Ordered(v) => v.len(),
                 }
             }
         }
@@ -728,6 +922,13 @@ mod tests {
             pub(crate) fn deterministic(mut self, group: impl IntoIterator<Item = u16>) -> Self {
                 self.groups
                     .push(ExpectedGroup::Deterministic(group.into_iter().collect()));
+                self
+            }
+            /// Expects that the next group in the plan will have a sequence of nodes
+            /// that is equal to the provided one, including order.
+            pub(crate) fn ordered(mut self, group: impl IntoIterator<Item = u16>) -> Self {
+                self.groups
+                    .push(ExpectedGroup::Ordered(group.into_iter().collect()));
                 self
             }
             pub(crate) fn build(self) -> ExpectedGroups {
@@ -758,7 +959,11 @@ mod tests {
                     // First, make sure that `got` has the right number of items,
                     // equal to the sum of sizes of all expected groups
                     let combined_groups_len: usize = self.groups.iter().map(|s| s.len()).sum();
-                    assert_eq!(got.len(), combined_groups_len);
+                    assert_eq!(
+                        got.len(),
+                        combined_groups_len,
+                        "Plan length different than expected"
+                    );
 
                     // Now, split `got` into groups of expected sizes
                     // and just `assert_eq` them
@@ -768,11 +973,18 @@ mod tests {
                         // in the actual plan
                         let got_group: Vec<_> = (&mut got).take(expected.len()).copied().collect();
 
-                        // Verify that the group has the same nodes as the
-                        // expected one
-                        let got_set: HashSet<_> = got_group.iter().copied().collect();
-                        let expected_set = expected.nodes();
-                        assert_eq!(&got_set, expected_set);
+                        match expected {
+                            ExpectedGroup::NonDeterministic(expected_set)
+                            | ExpectedGroup::Deterministic(expected_set) => {
+                                // Verify that the group has the same nodes as the
+                                // expected one
+                                let got_set: HashSet<_> = got_group.iter().copied().collect();
+                                assert_eq!(&got_set, expected_set);
+                            }
+                            ExpectedGroup::Ordered(sequence) => {
+                                assert_eq!(&got_group, sequence);
+                            }
+                        }
 
                         // Put the group into sets_of_groups
                         sets_of_groups[group_id].insert(got_group);
@@ -792,7 +1004,7 @@ mod tests {
                                 assert!(sets.len() > 1);
                             }
                         }
-                        ExpectedGroup::Deterministic(_) => {
+                        ExpectedGroup::Deterministic(_) | ExpectedGroup::Ordered(_) => {
                             // The group is supposed to be deterministic,
                             // i.e. a given instance of the default policy
                             // must always return the nodes within it using
@@ -938,7 +1150,7 @@ mod tests {
     async fn test_default_policy_with_token_unaware_statements() {
         let local_dc = "eu".to_string();
         let policy_with_disabled_dc_failover = DefaultPolicy {
-            preferred_datacenter: Some(local_dc.clone()),
+            preferences: ReplicaLocationPreference::Datacenter(local_dc.clone()),
             permit_dc_failover: false,
             ..Default::default()
         };
@@ -952,7 +1164,7 @@ mod tests {
         .await;
 
         let policy_with_enabled_dc_failover = DefaultPolicy {
-            preferred_datacenter: Some(local_dc),
+            preferences: ReplicaLocationPreference::Datacenter(local_dc.clone()),
             permit_dc_failover: true,
             ..Default::default()
         };
@@ -969,7 +1181,6 @@ mod tests {
 
     #[tokio::test]
     async fn test_default_policy_with_token_aware_statements() {
-        let _ = tracing_subscriber::fmt::try_init();
         use crate::transport::locator::test::{A, B, C, D, E, F, G};
 
         let cluster = mock_cluster_data_for_token_aware_tests().await;
@@ -983,7 +1194,7 @@ mod tests {
             // Keyspace NTS with RF=2 with enabled DC failover
             Test {
                 policy: DefaultPolicy {
-                    preferred_datacenter: Some("eu".to_owned()),
+                    preferences: ReplicaLocationPreference::Datacenter("eu".to_owned()),
                     is_token_aware: true,
                     permit_dc_failover: true,
                     ..Default::default()
@@ -994,7 +1205,7 @@ mod tests {
                     consistency: Consistency::Two,
                     ..Default::default()
                 },
-                // going though the ring, we get order: F , A , C , D , G , B , E
+                // going through the ring, we get order: F , A , C , D , G , B , E
                 //                                      us  eu  eu  us  eu  eu  us
                 //                                      r2  r1  r1  r1  r2  r1  r1
                 expected_groups: ExpectedGroupsBuilder::new()
@@ -1007,7 +1218,7 @@ mod tests {
             // Keyspace NTS with RF=2 with enabled DC failover, shuffling replicas disabled
             Test {
                 policy: DefaultPolicy {
-                    preferred_datacenter: Some("eu".to_owned()),
+                    preferences: ReplicaLocationPreference::Datacenter("eu".to_owned()),
                     is_token_aware: true,
                     permit_dc_failover: true,
                     fixed_shuffle_seed: Some(123),
@@ -1019,7 +1230,7 @@ mod tests {
                     consistency: Consistency::Two,
                     ..Default::default()
                 },
-                // going though the ring, we get order: F , A , C , D , G , B , E
+                // going through the ring, we get order: F , A , C , D , G , B , E
                 //                                      us  eu  eu  us  eu  eu  us
                 //                                      r2  r1  r1  r1  r2  r1  r1
                 expected_groups: ExpectedGroupsBuilder::new()
@@ -1032,7 +1243,7 @@ mod tests {
             // Keyspace NTS with RF=2 with DC failover forbidden by local Consistency
             Test {
                 policy: DefaultPolicy {
-                    preferred_datacenter: Some("eu".to_owned()),
+                    preferences: ReplicaLocationPreference::Datacenter("eu".to_owned()),
                     is_token_aware: true,
                     permit_dc_failover: true,
                     ..Default::default()
@@ -1043,7 +1254,7 @@ mod tests {
                     consistency: Consistency::LocalOne, // local Consistency forbids datacenter failover
                     ..Default::default()
                 },
-                // going though the ring, we get order: F , A , C , D , G , B , E
+                // going through the ring, we get order: F , A , C , D , G , B , E
                 //                                      us  eu  eu  us  eu  eu  us
                 //                                      r2  r1  r1  r1  r2  r1  r1
                 expected_groups: ExpectedGroupsBuilder::new()
@@ -1054,7 +1265,7 @@ mod tests {
             // Keyspace NTS with RF=2 with explicitly disabled DC failover
             Test {
                 policy: DefaultPolicy {
-                    preferred_datacenter: Some("eu".to_owned()),
+                    preferences: ReplicaLocationPreference::Datacenter("eu".to_owned()),
                     is_token_aware: true,
                     permit_dc_failover: false,
                     ..Default::default()
@@ -1065,7 +1276,7 @@ mod tests {
                     consistency: Consistency::One,
                     ..Default::default()
                 },
-                // going though the ring, we get order: F , A , C , D , G , B , E
+                // going through the ring, we get order: F , A , C , D , G , B , E
                 //                                      us  eu  eu  us  eu  eu  us
                 //                                      r2  r1  r1  r1  r2  r1  r1
                 expected_groups: ExpectedGroupsBuilder::new()
@@ -1076,7 +1287,7 @@ mod tests {
             // Keyspace NTS with RF=3 with enabled DC failover
             Test {
                 policy: DefaultPolicy {
-                    preferred_datacenter: Some("eu".to_owned()),
+                    preferences: ReplicaLocationPreference::Datacenter("eu".to_owned()),
                     is_token_aware: true,
                     permit_dc_failover: true,
                     ..Default::default()
@@ -1087,7 +1298,7 @@ mod tests {
                     consistency: Consistency::Quorum,
                     ..Default::default()
                 },
-                // going though the ring, we get order: F , A , C , D , G , B , E
+                // going through the ring, we get order: F , A , C , D , G , B , E
                 //                                      us  eu  eu  us  eu  eu  us
                 //                                      r2  r1  r1  r1  r2  r1  r1
                 expected_groups: ExpectedGroupsBuilder::new()
@@ -1100,7 +1311,7 @@ mod tests {
             // Keyspace NTS with RF=3 with enabled DC failover, shuffling replicas disabled
             Test {
                 policy: DefaultPolicy {
-                    preferred_datacenter: Some("eu".to_owned()),
+                    preferences: ReplicaLocationPreference::Datacenter("eu".to_owned()),
                     is_token_aware: true,
                     permit_dc_failover: true,
                     fixed_shuffle_seed: Some(123),
@@ -1112,7 +1323,7 @@ mod tests {
                     consistency: Consistency::Quorum,
                     ..Default::default()
                 },
-                // going though the ring, we get order: F , A , C , D , G , B , E
+                // going through the ring, we get order: F , A , C , D , G , B , E
                 //                                      us  eu  eu  us  eu  eu  us
                 //                                      r2  r1  r1  r1  r2  r1  r1
                 expected_groups: ExpectedGroupsBuilder::new()
@@ -1125,7 +1336,7 @@ mod tests {
             // Keyspace NTS with RF=3 with disabled DC failover
             Test {
                 policy: DefaultPolicy {
-                    preferred_datacenter: Some("eu".to_owned()),
+                    preferences: ReplicaLocationPreference::Datacenter("eu".to_owned()),
                     is_token_aware: true,
                     permit_dc_failover: false,
                     ..Default::default()
@@ -1136,7 +1347,7 @@ mod tests {
                     consistency: Consistency::Quorum,
                     ..Default::default()
                 },
-                // going though the ring, we get order: F , A , C , D , G , B , E
+                // going through the ring, we get order: F , A , C , D , G , B , E
                 //                                      us  eu  eu  us  eu  eu  us
                 //                                      r2  r1  r1  r1  r2  r1  r1
                 expected_groups: ExpectedGroupsBuilder::new()
@@ -1147,7 +1358,7 @@ mod tests {
             // Keyspace SS with RF=2 with enabled DC failover
             Test {
                 policy: DefaultPolicy {
-                    preferred_datacenter: Some("eu".to_owned()),
+                    preferences: ReplicaLocationPreference::Datacenter("eu".to_owned()),
                     is_token_aware: true,
                     permit_dc_failover: true,
                     ..Default::default()
@@ -1158,7 +1369,7 @@ mod tests {
                     consistency: Consistency::Two,
                     ..Default::default()
                 },
-                // going though the ring, we get order: F , A , C , D , G , B , E
+                // going through the ring, we get order: F , A , C , D , G , B , E
                 //                                      us  eu  eu  us  eu  eu  us
                 //                                      r2  r1  r1  r1  r2  r1  r1
                 expected_groups: ExpectedGroupsBuilder::new()
@@ -1171,7 +1382,7 @@ mod tests {
             // Keyspace SS with RF=2 with DC failover forbidden by local Consistency
             Test {
                 policy: DefaultPolicy {
-                    preferred_datacenter: Some("eu".to_owned()),
+                    preferences: ReplicaLocationPreference::Datacenter("eu".to_owned()),
                     is_token_aware: true,
                     permit_dc_failover: true,
                     ..Default::default()
@@ -1182,7 +1393,7 @@ mod tests {
                     consistency: Consistency::LocalOne, // local Consistency forbids datacenter failover
                     ..Default::default()
                 },
-                // going though the ring, we get order: F , A , C , D , G , B , E
+                // going through the ring, we get order: F , A , C , D , G , B , E
                 //                                      us  eu  eu  us  eu  eu  us
                 //                                      r2  r1  r1  r1  r2  r1  r1
                 expected_groups: ExpectedGroupsBuilder::new()
@@ -1193,7 +1404,7 @@ mod tests {
             // No token implies no token awareness
             Test {
                 policy: DefaultPolicy {
-                    preferred_datacenter: Some("eu".to_owned()),
+                    preferences: ReplicaLocationPreference::Datacenter("eu".to_owned()),
                     is_token_aware: true,
                     permit_dc_failover: true,
                     ..Default::default()
@@ -1212,7 +1423,7 @@ mod tests {
             // No keyspace implies no token awareness
             Test {
                 policy: DefaultPolicy {
-                    preferred_datacenter: Some("eu".to_owned()),
+                    preferences: ReplicaLocationPreference::Datacenter("eu".to_owned()),
                     is_token_aware: true,
                     permit_dc_failover: true,
                     ..Default::default()
@@ -1231,7 +1442,7 @@ mod tests {
             // Unknown preferred DC, failover permitted
             Test {
                 policy: DefaultPolicy {
-                    preferred_datacenter: Some("au".to_owned()),
+                    preferences: ReplicaLocationPreference::Datacenter("au".to_owned()),
                     is_token_aware: true,
                     permit_dc_failover: true,
                     ..Default::default()
@@ -1242,7 +1453,7 @@ mod tests {
                     consistency: Consistency::Quorum,
                     ..Default::default()
                 },
-                // going though the ring, we get order: F , A , C , D , G , B , E
+                // going through the ring, we get order: F , A , C , D , G , B , E
                 //                                      us  eu  eu  us  eu  eu  us
                 //                                      r2  r1  r1  r1  r2  r1  r1
                 expected_groups: ExpectedGroupsBuilder::new()
@@ -1253,7 +1464,7 @@ mod tests {
             // Unknown preferred DC, failover forbidden
             Test {
                 policy: DefaultPolicy {
-                    preferred_datacenter: Some("au".to_owned()),
+                    preferences: ReplicaLocationPreference::Datacenter("au".to_owned()),
                     is_token_aware: true,
                     permit_dc_failover: false,
                     ..Default::default()
@@ -1264,7 +1475,7 @@ mod tests {
                     consistency: Consistency::Quorum,
                     ..Default::default()
                 },
-                // going though the ring, we get order: F , A , C , D , G , B , E
+                // going through the ring, we get order: F , A , C , D , G , B , E
                 //                                      us  eu  eu  us  eu  eu  us
                 //                                      r2  r1  r1  r1  r2  r1  r1
                 expected_groups: ExpectedGroupsBuilder::new().build(), // empty plan, because all nodes are remote and failover is forbidden
@@ -1272,7 +1483,7 @@ mod tests {
             // No preferred DC, failover permitted
             Test {
                 policy: DefaultPolicy {
-                    preferred_datacenter: None,
+                    preferences: ReplicaLocationPreference::Any,
                     is_token_aware: true,
                     permit_dc_failover: true,
                     ..Default::default()
@@ -1283,7 +1494,7 @@ mod tests {
                     consistency: Consistency::Quorum,
                     ..Default::default()
                 },
-                // going though the ring, we get order: F , A , C , D , G , B , E
+                // going through the ring, we get order: F , A , C , D , G , B , E
                 //                                      us  eu  eu  us  eu  eu  us
                 //                                      r2  r1  r1  r1  r2  r1  r1
                 expected_groups: ExpectedGroupsBuilder::new()
@@ -1294,7 +1505,7 @@ mod tests {
             // No preferred DC, failover forbidden
             Test {
                 policy: DefaultPolicy {
-                    preferred_datacenter: None,
+                    preferences: ReplicaLocationPreference::Any,
                     is_token_aware: true,
                     permit_dc_failover: false,
                     ..Default::default()
@@ -1305,7 +1516,7 @@ mod tests {
                     consistency: Consistency::Quorum,
                     ..Default::default()
                 },
-                // going though the ring, we get order: F , A , C , D , G , B , E
+                // going through the ring, we get order: F , A , C , D , G , B , E
                 //                                      us  eu  eu  us  eu  eu  us
                 //                                      r2  r1  r1  r1  r2  r1  r1
                 expected_groups: ExpectedGroupsBuilder::new()
@@ -1313,11 +1524,13 @@ mod tests {
                     .group([B, C, E]) // remote nodes
                     .build(),
             },
-            // Keyspace SS with RF=2 with enabled DC failover and rack-awareness
+            // Keyspace NTS with RF=3 with enabled DC failover and rack-awareness
             Test {
                 policy: DefaultPolicy {
-                    preferred_datacenter: Some("eu".to_owned()),
-                    preferred_rack: Some("r1".to_owned()),
+                    preferences: ReplicaLocationPreference::DatacenterAndRack(
+                        "eu".to_owned(),
+                        "r1".to_owned(),
+                    ),
                     is_token_aware: true,
                     permit_dc_failover: true,
                     ..Default::default()
@@ -1328,7 +1541,7 @@ mod tests {
                     consistency: Consistency::One,
                     ..Default::default()
                 },
-                // going though the ring, we get order: F , A , C , D , G , B , E
+                // going through the ring, we get order: F , A , C , D , G , B , E
                 //                                      us  eu  eu  us  eu  eu  us
                 //                                      r2  r1  r1  r1  r2  r1  r1
                 expected_groups: ExpectedGroupsBuilder::new()
@@ -1341,8 +1554,10 @@ mod tests {
             // Keyspace SS with RF=2 with enabled rack-awareness, shuffling replicas disabled
             Test {
                 policy: DefaultPolicy {
-                    preferred_datacenter: Some("eu".to_owned()),
-                    preferred_rack: Some("r1".to_owned()),
+                    preferences: ReplicaLocationPreference::DatacenterAndRack(
+                        "eu".to_owned(),
+                        "r1".to_owned(),
+                    ),
                     is_token_aware: true,
                     permit_dc_failover: false,
                     fixed_shuffle_seed: Some(123),
@@ -1354,7 +1569,7 @@ mod tests {
                     consistency: Consistency::Two,
                     ..Default::default()
                 },
-                // going though the ring, we get order: B , C , E , G , A , F , D
+                // going through the ring, we get order: B , C , E , G , A , F , D
                 //                                      eu  eu  us  eu  eu  us  us
                 //                                      r1  r1  r1  r2  r1  r2  r1
                 expected_groups: ExpectedGroupsBuilder::new()
@@ -1366,8 +1581,10 @@ mod tests {
             // Keyspace SS with RF=2 with enabled rack-awareness and no local-rack replica
             Test {
                 policy: DefaultPolicy {
-                    preferred_datacenter: Some("eu".to_owned()),
-                    preferred_rack: Some("r2".to_owned()),
+                    preferences: ReplicaLocationPreference::DatacenterAndRack(
+                        "eu".to_owned(),
+                        "r2".to_owned(),
+                    ),
                     is_token_aware: true,
                     permit_dc_failover: false,
                     ..Default::default()
@@ -1378,7 +1595,7 @@ mod tests {
                     consistency: Consistency::One,
                     ..Default::default()
                 },
-                // going though the ring, we get order: F , A , C , D , G , B , E
+                // going through the ring, we get order: F , A , C , D , G , B , E
                 //                                      us  eu  eu  us  eu  eu  us
                 //                                      r2  r1  r1  r1  r2  r1  r1
                 expected_groups: ExpectedGroupsBuilder::new()
@@ -1386,11 +1603,299 @@ mod tests {
                     .group([C, G, B]) // local nodes
                     .build(),
             },
-            // No preferred DC, preferred rack should be ignored, failover permitted
+        ];
+
+        for Test {
+            policy,
+            routing_info,
+            expected_groups,
+        } in tests
+        {
+            test_default_policy_with_given_cluster_and_routing_info(
+                &policy,
+                &cluster,
+                &routing_info,
+                &expected_groups,
+            )
+            .await;
+        }
+    }
+
+    #[tokio::test]
+    async fn test_default_policy_with_lwt_statements() {
+        use crate::transport::locator::test::{A, B, C, D, E, F, G};
+
+        let cluster = mock_cluster_data_for_token_aware_tests().await;
+        struct Test<'a> {
+            policy: DefaultPolicy,
+            routing_info: RoutingInfo<'a>,
+            expected_groups: ExpectedGroups,
+        }
+
+        let tests = [
+            // Keyspace NTS with RF=2 with enabled DC failover
             Test {
                 policy: DefaultPolicy {
-                    preferred_datacenter: None,
-                    preferred_rack: Some("r2".to_owned()),
+                    preferences: ReplicaLocationPreference::Datacenter("eu".to_owned()),
+                    is_token_aware: true,
+                    permit_dc_failover: true,
+                    ..Default::default()
+                },
+                routing_info: RoutingInfo {
+                    token: Some(Token { value: 160 }),
+                    keyspace: Some(KEYSPACE_NTS_RF_2),
+                    consistency: Consistency::Two,
+                    is_confirmed_lwt: true,
+                    ..Default::default()
+                },
+                // going through the ring, we get order: F , A , C , D , G , B , E
+                //                                      us  eu  eu  us  eu  eu  us
+                //                                      r2  r1  r1  r1  r2  r1  r1
+                expected_groups: ExpectedGroupsBuilder::new()
+                    .ordered([A, G]) // pick + fallback local replicas
+                    .ordered([F, D]) // remote replicas
+                    .group([C, B]) // local nodes
+                    .group([E]) // remote nodes
+                    .build(),
+            },
+            // Keyspace NTS with RF=2 with enabled DC failover, shuffling replicas disabled
+            Test {
+                policy: DefaultPolicy {
+                    preferences: ReplicaLocationPreference::Datacenter("eu".to_owned()),
+                    is_token_aware: true,
+                    permit_dc_failover: true,
+                    fixed_shuffle_seed: Some(123),
+                    ..Default::default()
+                },
+                routing_info: RoutingInfo {
+                    token: Some(Token { value: 160 }),
+                    keyspace: Some(KEYSPACE_NTS_RF_2),
+                    consistency: Consistency::Two,
+                    is_confirmed_lwt: true,
+                    ..Default::default()
+                },
+                // going through the ring, we get order: F , A , C , D , G , B , E
+                //                                      us  eu  eu  us  eu  eu  us
+                //                                      r2  r1  r1  r1  r2  r1  r1
+                expected_groups: ExpectedGroupsBuilder::new()
+                    .ordered([A, G]) // pick + fallback local replicas
+                    .ordered([F, D]) // remote replicas
+                    .group([C, B]) // local nodes
+                    .group([E]) // remote nodes
+                    .build(),
+            },
+            // Keyspace NTS with RF=2 with DC failover forbidden by local Consistency
+            Test {
+                policy: DefaultPolicy {
+                    preferences: ReplicaLocationPreference::Datacenter("eu".to_owned()),
+                    is_token_aware: true,
+                    permit_dc_failover: true,
+                    ..Default::default()
+                },
+                routing_info: RoutingInfo {
+                    token: Some(Token { value: 160 }),
+                    keyspace: Some(KEYSPACE_NTS_RF_2),
+                    consistency: Consistency::LocalOne, // local Consistency forbids datacenter failover
+                    is_confirmed_lwt: true,
+                    ..Default::default()
+                },
+                // going through the ring, we get order: F , A , C , D , G , B , E
+                //                                      us  eu  eu  us  eu  eu  us
+                //                                      r2  r1  r1  r1  r2  r1  r1
+                expected_groups: ExpectedGroupsBuilder::new()
+                    .ordered([A, G]) // pick + fallback local replicas
+                    .group([C, B]) // local nodes
+                    .build(), // failover is forbidden by local Consistency
+            },
+            // Keyspace NTS with RF=2 with explicitly disabled DC failover
+            Test {
+                policy: DefaultPolicy {
+                    preferences: ReplicaLocationPreference::Datacenter("eu".to_owned()),
+                    is_token_aware: true,
+                    permit_dc_failover: false,
+                    ..Default::default()
+                },
+                routing_info: RoutingInfo {
+                    token: Some(Token { value: 160 }),
+                    keyspace: Some(KEYSPACE_NTS_RF_2),
+                    consistency: Consistency::One,
+                    is_confirmed_lwt: true,
+                    ..Default::default()
+                },
+                // going through the ring, we get order: F , A , C , D , G , B , E
+                //                                      us  eu  eu  us  eu  eu  us
+                //                                      r2  r1  r1  r1  r2  r1  r1
+                expected_groups: ExpectedGroupsBuilder::new()
+                    .ordered([A, G]) // pick + fallback local replicas
+                    .group([C, B]) // local nodes
+                    .build(), // failover is explicitly forbidden
+            },
+            // Keyspace NTS with RF=3 with enabled DC failover
+            Test {
+                policy: DefaultPolicy {
+                    preferences: ReplicaLocationPreference::Datacenter("eu".to_owned()),
+                    is_token_aware: true,
+                    permit_dc_failover: true,
+                    ..Default::default()
+                },
+                routing_info: RoutingInfo {
+                    token: Some(Token { value: 160 }),
+                    keyspace: Some(KEYSPACE_NTS_RF_3),
+                    consistency: Consistency::Quorum,
+                    is_confirmed_lwt: true,
+                    ..Default::default()
+                },
+                // going through the ring, we get order: F , A , C , D , G , B , E
+                //                                      us  eu  eu  us  eu  eu  us
+                //                                      r2  r1  r1  r1  r2  r1  r1
+                expected_groups: ExpectedGroupsBuilder::new()
+                    .ordered([A, C, G]) // pick + fallback local replicas
+                    .ordered([F, D, E]) // remote replicas
+                    .group([B]) // local nodes
+                    .group([]) // remote nodes
+                    .build(),
+            },
+            // Keyspace NTS with RF=3 with enabled DC failover, shuffling replicas disabled
+            Test {
+                policy: DefaultPolicy {
+                    preferences: ReplicaLocationPreference::Datacenter("eu".to_owned()),
+                    is_token_aware: true,
+                    permit_dc_failover: true,
+                    fixed_shuffle_seed: Some(123),
+                    ..Default::default()
+                },
+                routing_info: RoutingInfo {
+                    token: Some(Token { value: 160 }),
+                    keyspace: Some(KEYSPACE_NTS_RF_3),
+                    consistency: Consistency::Quorum,
+                    is_confirmed_lwt: true,
+                    ..Default::default()
+                },
+                // going through the ring, we get order: F , A , C , D , G , B , E
+                //                                      us  eu  eu  us  eu  eu  us
+                //                                      r2  r1  r1  r1  r2  r1  r1
+                expected_groups: ExpectedGroupsBuilder::new()
+                    .ordered([A, C, G]) // pick + fallback local replicas
+                    .ordered([F, D, E]) // remote replicas
+                    .group([B]) // local nodes
+                    .group([]) // remote nodes
+                    .build(),
+            },
+            // Keyspace NTS with RF=3 with disabled DC failover
+            Test {
+                policy: DefaultPolicy {
+                    preferences: ReplicaLocationPreference::Datacenter("eu".to_owned()),
+                    is_token_aware: true,
+                    permit_dc_failover: false,
+                    ..Default::default()
+                },
+                routing_info: RoutingInfo {
+                    token: Some(Token { value: 160 }),
+                    keyspace: Some(KEYSPACE_NTS_RF_3),
+                    consistency: Consistency::Quorum,
+                    is_confirmed_lwt: true,
+                    ..Default::default()
+                },
+                // going through the ring, we get order: F , A , C , D , G , B , E
+                //                                      us  eu  eu  us  eu  eu  us
+                //                                      r2  r1  r1  r1  r2  r1  r1
+                expected_groups: ExpectedGroupsBuilder::new()
+                    .ordered([A, C, G]) // pick + fallback local replicas
+                    .group([B]) // local nodes
+                    .build(), // failover explicitly forbidden
+            },
+            // Keyspace SS with RF=2 with enabled DC failover
+            Test {
+                policy: DefaultPolicy {
+                    preferences: ReplicaLocationPreference::Datacenter("eu".to_owned()),
+                    is_token_aware: true,
+                    permit_dc_failover: true,
+                    ..Default::default()
+                },
+                routing_info: RoutingInfo {
+                    token: Some(Token { value: 160 }),
+                    keyspace: Some(KEYSPACE_SS_RF_2),
+                    consistency: Consistency::Two,
+                    is_confirmed_lwt: true,
+                    ..Default::default()
+                },
+                // going through the ring, we get order: F , A , C , D , G , B , E
+                //                                      us  eu  eu  us  eu  eu  us
+                //                                      r2  r1  r1  r1  r2  r1  r1
+                expected_groups: ExpectedGroupsBuilder::new()
+                    .ordered([A]) // pick + fallback local replicas
+                    .ordered([F]) // remote replicas
+                    .group([C, G, B]) // local nodes
+                    .group([D, E]) // remote nodes
+                    .build(),
+            },
+            // Keyspace SS with RF=2 with DC failover forbidden by local Consistency
+            Test {
+                policy: DefaultPolicy {
+                    preferences: ReplicaLocationPreference::Datacenter("eu".to_owned()),
+                    is_token_aware: true,
+                    permit_dc_failover: true,
+                    ..Default::default()
+                },
+                routing_info: RoutingInfo {
+                    token: Some(Token { value: 160 }),
+                    keyspace: Some(KEYSPACE_SS_RF_2),
+                    consistency: Consistency::LocalOne, // local Consistency forbids datacenter failover
+                    is_confirmed_lwt: true,
+                    ..Default::default()
+                },
+                // going through the ring, we get order: F , A , C , D , G , B , E
+                //                                      us  eu  eu  us  eu  eu  us
+                //                                      r2  r1  r1  r1  r2  r1  r1
+                expected_groups: ExpectedGroupsBuilder::new()
+                    .ordered([A]) // pick + fallback local replicas
+                    .group([C, G, B]) // local nodes
+                    .build(), // failover is forbidden by local Consistency
+            },
+            // No token implies no token awareness
+            Test {
+                policy: DefaultPolicy {
+                    preferences: ReplicaLocationPreference::Datacenter("eu".to_owned()),
+                    is_token_aware: true,
+                    permit_dc_failover: true,
+                    ..Default::default()
+                },
+                routing_info: RoutingInfo {
+                    token: None, // no token
+                    keyspace: Some(KEYSPACE_NTS_RF_3),
+                    consistency: Consistency::Quorum,
+                    is_confirmed_lwt: true,
+                    ..Default::default()
+                },
+                expected_groups: ExpectedGroupsBuilder::new()
+                    .group([A, B, C, G]) // local nodes
+                    .group([D, E, F]) // remote nodes
+                    .build(),
+            },
+            // No keyspace implies no token awareness
+            Test {
+                policy: DefaultPolicy {
+                    preferences: ReplicaLocationPreference::Datacenter("eu".to_owned()),
+                    is_token_aware: true,
+                    permit_dc_failover: true,
+                    ..Default::default()
+                },
+                routing_info: RoutingInfo {
+                    token: Some(Token { value: 160 }),
+                    keyspace: None, // no keyspace
+                    consistency: Consistency::Quorum,
+                    is_confirmed_lwt: true,
+                    ..Default::default()
+                },
+                expected_groups: ExpectedGroupsBuilder::new()
+                    .group([A, B, C, G]) // local nodes
+                    .group([D, E, F]) // remote nodes
+                    .build(),
+            },
+            // Unknown preferred DC, failover permitted
+            Test {
+                policy: DefaultPolicy {
+                    preferences: ReplicaLocationPreference::Datacenter("au".to_owned()),
                     is_token_aware: true,
                     permit_dc_failover: true,
                     ..Default::default()
@@ -1399,14 +1904,163 @@ mod tests {
                     token: Some(Token { value: 160 }),
                     keyspace: Some(KEYSPACE_NTS_RF_2),
                     consistency: Consistency::Quorum,
+                    is_confirmed_lwt: true,
                     ..Default::default()
                 },
-                // going though the ring, we get order: F , A , C , D , G , B , E
+                // going through the ring, we get order: F , A , C , D , G , B , E
                 //                                      us  eu  eu  us  eu  eu  us
                 //                                      r2  r1  r1  r1  r2  r1  r1
                 expected_groups: ExpectedGroupsBuilder::new()
-                    .group([A, D, F, G]) // remote replicas
+                    .ordered([F, A, D, G]) // remote replicas
                     .group([B, C, E]) // remote nodes
+                    .build(),
+            },
+            // Unknown preferred DC, failover forbidden
+            Test {
+                policy: DefaultPolicy {
+                    preferences: ReplicaLocationPreference::Datacenter("au".to_owned()),
+                    is_token_aware: true,
+                    permit_dc_failover: false,
+                    ..Default::default()
+                },
+                routing_info: RoutingInfo {
+                    token: Some(Token { value: 160 }),
+                    keyspace: Some(KEYSPACE_NTS_RF_2),
+                    consistency: Consistency::Quorum,
+                    is_confirmed_lwt: true,
+                    ..Default::default()
+                },
+                // going through the ring, we get order: F , A , C , D , G , B , E
+                //                                      us  eu  eu  us  eu  eu  us
+                //                                      r2  r1  r1  r1  r2  r1  r1
+                expected_groups: ExpectedGroupsBuilder::new().build(), // empty plan, because all nodes are remote and failover is forbidden
+            },
+            // No preferred DC, failover permitted
+            Test {
+                policy: DefaultPolicy {
+                    preferences: ReplicaLocationPreference::Any,
+                    is_token_aware: true,
+                    permit_dc_failover: true,
+                    ..Default::default()
+                },
+                routing_info: RoutingInfo {
+                    token: Some(Token { value: 160 }),
+                    keyspace: Some(KEYSPACE_NTS_RF_2),
+                    consistency: Consistency::Quorum,
+                    is_confirmed_lwt: true,
+                    ..Default::default()
+                },
+                // going through the ring, we get order: F , A , C , D , G , B , E
+                //                                      us  eu  eu  us  eu  eu  us
+                //                                      r2  r1  r1  r1  r2  r1  r1
+                expected_groups: ExpectedGroupsBuilder::new()
+                    .ordered([F, A, D, G]) // remote replicas
+                    .group([B, C, E]) // remote nodes
+                    .build(),
+            },
+            // No preferred DC, failover forbidden
+            Test {
+                policy: DefaultPolicy {
+                    preferences: ReplicaLocationPreference::Any,
+                    is_token_aware: true,
+                    permit_dc_failover: false,
+                    ..Default::default()
+                },
+                routing_info: RoutingInfo {
+                    token: Some(Token { value: 160 }),
+                    keyspace: Some(KEYSPACE_NTS_RF_2),
+                    consistency: Consistency::Quorum,
+                    is_confirmed_lwt: true,
+                    ..Default::default()
+                },
+                // going through the ring, we get order: F , A , C , D , G , B , E
+                //                                      us  eu  eu  us  eu  eu  us
+                //                                      r2  r1  r1  r1  r2  r1  r1
+                expected_groups: ExpectedGroupsBuilder::new()
+                    .ordered([F, A, D, G]) // remote replicas
+                    .group([B, C, E]) // remote nodes
+                    .build(),
+            },
+            // Keyspace NTS with RF=3 with enabled DC failover and rack-awareness
+            Test {
+                policy: DefaultPolicy {
+                    preferences: ReplicaLocationPreference::DatacenterAndRack(
+                        "eu".to_owned(),
+                        "r1".to_owned(),
+                    ),
+                    is_token_aware: true,
+                    permit_dc_failover: true,
+                    ..Default::default()
+                },
+                routing_info: RoutingInfo {
+                    token: Some(Token { value: 160 }),
+                    keyspace: Some(KEYSPACE_NTS_RF_3),
+                    consistency: Consistency::One,
+                    is_confirmed_lwt: true,
+                    ..Default::default()
+                },
+                // going through the ring, we get order: F , A , C , D , G , B , E
+                //                                      us  eu  eu  us  eu  eu  us
+                //                                      r2  r1  r1  r1  r2  r1  r1
+                expected_groups: ExpectedGroupsBuilder::new()
+                    .ordered([A, C]) // pick local rack replicas
+                    .ordered([G]) // local DC replicas
+                    .ordered([F, D, E]) // remote replicas
+                    .group([B]) // local nodes
+                    .build(),
+            },
+            // Keyspace SS with RF=2 with enabled rack-awareness, shuffling replicas disabled
+            Test {
+                policy: DefaultPolicy {
+                    preferences: ReplicaLocationPreference::DatacenterAndRack(
+                        "eu".to_owned(),
+                        "r1".to_owned(),
+                    ),
+                    is_token_aware: true,
+                    permit_dc_failover: false,
+                    fixed_shuffle_seed: Some(123),
+                    ..Default::default()
+                },
+                routing_info: RoutingInfo {
+                    token: Some(Token { value: 760 }),
+                    keyspace: Some(KEYSPACE_SS_RF_2),
+                    consistency: Consistency::Two,
+                    is_confirmed_lwt: true,
+                    ..Default::default()
+                },
+                // going through the ring, we get order: G , B , A , E , F , C , D
+                //                                      eu  eu  eu  us  us  eu  us
+                //                                      r2  r1  r1  r1  r2  r1  r1
+                expected_groups: ExpectedGroupsBuilder::new()
+                    .ordered([B]) // pick local rack replicas
+                    .ordered([G]) // local DC replicas
+                    .group([A, C]) // local nodes
+                    .build(),
+            },
+            // Keyspace SS with RF=2 with enabled rack-awareness and no local-rack replica
+            Test {
+                policy: DefaultPolicy {
+                    preferences: ReplicaLocationPreference::DatacenterAndRack(
+                        "eu".to_owned(),
+                        "r2".to_owned(),
+                    ),
+                    is_token_aware: true,
+                    permit_dc_failover: false,
+                    ..Default::default()
+                },
+                routing_info: RoutingInfo {
+                    token: Some(Token { value: 160 }),
+                    keyspace: Some(KEYSPACE_SS_RF_2),
+                    consistency: Consistency::One,
+                    is_confirmed_lwt: true,
+                    ..Default::default()
+                },
+                // going through the ring, we get order: F , A , C , D , G , B , E
+                //                                      us  eu  eu  us  eu  eu  us
+                //                                      r2  r1  r1  r1  r2  r1  r1
+                expected_groups: ExpectedGroupsBuilder::new()
+                    .group([A]) // pick local DC
+                    .group([C, G, B]) // local nodes
                     .build(),
             },
         ];
@@ -1968,7 +2622,10 @@ mod latency_awareness {
             *,
         };
 
-        use crate::test_utils::create_new_session_builder;
+        use crate::{
+            load_balancing::default::ReplicaLocationPreference,
+            test_utils::create_new_session_builder,
+        };
         use crate::{
             load_balancing::{
                 default::tests::test_default_policy_with_given_cluster_and_routing_info,
@@ -2034,8 +2691,7 @@ mod latency_awareness {
             };
 
             DefaultPolicy {
-                preferred_datacenter: Some("eu".to_owned()),
-                preferred_rack: None,
+                preferences: ReplicaLocationPreference::Datacenter("eu".to_owned()),
                 permit_dc_failover: true,
                 is_token_aware: true,
                 pick_predicate,
@@ -2572,7 +3228,7 @@ mod latency_awareness {
                         consistency: Consistency::Quorum,
                         ..Default::default()
                     },
-                    // going though the ring, we get order: F , A , C , D , G , B , E
+                    // going through the ring, we get order: F , A , C , D , G , B , E
                     //                                      us  eu  eu  us  eu  eu  us
                     //                                      r2  r1  r1  r1  r2  r1  r1
                     expected_groups: ExpectedGroupsBuilder::new()
@@ -2598,7 +3254,7 @@ mod latency_awareness {
                         (C, slow_penalised()),
                         (D, slow_penalised()),
                     ],
-                    // going though the ring, we get order: F , A , C , D , G , B , E
+                    // going through the ring, we get order: F , A , C , D , G , B , E
                     //                                      us  eu  eu  us  eu  eu  us
                     //                                      r2  r1  r1  r1  r2  r1  r1
                     expected_groups: ExpectedGroupsBuilder::new()
@@ -2621,7 +3277,7 @@ mod latency_awareness {
                         consistency: Consistency::Quorum,
                         ..Default::default()
                     },
-                    // going though the ring, we get order: F , A , C , D , G , B , E
+                    // going through the ring, we get order: F , A , C , D , G , B , E
                     //                                      us  eu  eu  us  eu  eu  us
                     //                                      r2  r1  r1  r1  r2  r1  r1
                     expected_groups: ExpectedGroupsBuilder::new()

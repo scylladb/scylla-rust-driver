@@ -214,3 +214,25 @@ impl Hash for Node {
         self.host_id.hash(state);
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    impl Node {
+        pub(crate) fn new_for_test(
+            address: NodeAddr,
+            datacenter: Option<String>,
+            rack: Option<String>,
+        ) -> Self {
+            Self {
+                host_id: Uuid::new_v4(),
+                address,
+                datacenter,
+                rack,
+                pool: None,
+                down_marker: false.into(),
+            }
+        }
+    }
+}

@@ -84,6 +84,7 @@ impl PrecomputedReplicas {
         // Each ring will precompute for at least this RF
         let min_precomputed_rep_factor: usize = 1;
 
+        // The maximum replication factor over those used with Simple strategy.
         let mut max_global_repfactor: usize = min_precomputed_rep_factor;
         let mut dc_repfactors: HashMap<&'a str, BTreeSet<usize>> = HashMap::new();
 

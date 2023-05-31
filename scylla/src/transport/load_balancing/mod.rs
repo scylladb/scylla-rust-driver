@@ -53,9 +53,8 @@ pub type FallbackPlan<'a> = Box<dyn Iterator<Item = NodeRef<'a>> + Send + Sync +
 /// `pick` and `fallback`. `pick` returns a first node to contact for a given query, `fallback`
 /// returns the rest of the load balancing plan.
 ///
-/// `fallback` is called only after a failed send to `pick`ed node (or when executing
-/// speculatively).
-/// If a `pick` returns `None`, `fallback` will not be called.
+/// `fallback` is called not only if a send to `pick`ed node failed (or when executing
+/// speculatively), but also if `pick` returns `None`.
 ///
 /// Usually the driver needs only the first node from load balancing plan (most queries are send
 /// successfully, and there is no need to retry).
