@@ -1,5 +1,4 @@
-mod utils;
-
+use crate::utils::test_with_3_node_cluster;
 use scylla::frame::types;
 use scylla::retry_policy::FallthroughRetryPolicy;
 use scylla::transport::session::Session;
@@ -7,7 +6,6 @@ use scylla::{frame::protocol_features::ProtocolFeatures, test_utils::unique_keys
 use scylla::{ExecutionProfile, SessionBuilder};
 use std::sync::Arc;
 use tokio::sync::mpsc;
-use utils::test_with_3_node_cluster;
 
 use scylla_proxy::{
     Condition, ProxyError, Reaction, RequestFrame, RequestOpcode, RequestReaction, RequestRule,

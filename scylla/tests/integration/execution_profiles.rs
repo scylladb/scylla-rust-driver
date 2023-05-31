@@ -1,8 +1,7 @@
-mod utils;
-
 use std::ops::Deref;
 use std::sync::Arc;
 
+use crate::utils::test_with_3_node_cluster;
 use assert_matches::assert_matches;
 use scylla::batch::BatchStatement;
 use scylla::batch::{Batch, BatchType};
@@ -20,7 +19,6 @@ use scylla::{
 };
 use scylla_cql::Consistency;
 use tokio::sync::mpsc;
-use utils::test_with_3_node_cluster;
 
 use scylla_proxy::{
     Condition, ProxyError, RequestReaction, RequestRule, ShardAwareness, WorkerError,
