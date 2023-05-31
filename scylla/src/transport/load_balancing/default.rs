@@ -1488,11 +1488,11 @@ mod latency_awareness {
                 Some(prev_avg) => Some({
                     let delay = (now - prev_avg.timestamp).as_secs_f64();
                     let prev_weight = (delay + 1.).ln() / delay;
-                    let last_latency_nanos = last_latency.as_nanos() as f64;
-                    let prev_avg_nanos = prev_avg.average.as_nanos() as f64;
-                    let average = Duration::from_nanos(
-                        ((1. - prev_weight) * last_latency_nanos + prev_weight * prev_avg_nanos)
-                            .round() as u64,
+
+                    let last_latency_secs = last_latency.as_secs_f64();
+                    let prev_avg_secs = prev_avg.average.as_secs_f64();
+                    let average = Duration::from_secs_f64(
+                        (1. - prev_weight) * last_latency_secs + prev_weight * prev_avg_secs,
                     );
                     Self {
                         num_measures: prev_avg.num_measures + 1,
