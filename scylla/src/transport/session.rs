@@ -162,6 +162,7 @@ pub struct SessionConfig {
     /// If it's not supported by database server Session will fall back to no compression.
     pub compression: Option<Compression>,
     pub tcp_nodelay: bool,
+    pub tcp_keepalive_interval: Option<Duration>,
 
     pub default_execution_profile_handle: ExecutionProfileHandle,
 
@@ -248,6 +249,7 @@ impl SessionConfig {
             known_nodes: Vec::new(),
             compression: None,
             tcp_nodelay: true,
+            tcp_keepalive_interval: None,
             schema_agreement_interval: Duration::from_millis(200),
             default_execution_profile_handle: ExecutionProfile::new_from_inner(Default::default())
                 .into_handle(),
@@ -462,6 +464,7 @@ impl Session {
         let connection_config = ConnectionConfig {
             compression: config.compression,
             tcp_nodelay: config.tcp_nodelay,
+            tcp_keepalive_interval: config.tcp_keepalive_interval,
             #[cfg(feature = "ssl")]
             ssl_config: config.ssl_context.map(SslConfig::new_with_global_context),
             authenticator: config.authenticator.clone(),

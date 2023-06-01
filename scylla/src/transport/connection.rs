@@ -3,6 +3,7 @@ use futures::{future::RemoteHandle, FutureExt};
 use scylla_cql::errors::TranslationError;
 use scylla_cql::frame::response::Error;
 use scylla_cql::frame::types::SerialConsistency;
+use socket2::{SockRef, TcpKeepalive};
 use tokio::io::{split, AsyncRead, AsyncWrite, AsyncWriteExt, BufReader, BufWriter};
 use tokio::net::{TcpSocket, TcpStream};
 use tokio::sync::{mpsc, oneshot};
@@ -14,6 +15,7 @@ use uuid::Uuid;
 #[cfg(feature = "ssl")]
 use std::pin::Pin;
 use std::sync::atomic::AtomicU64;
+use std::time::Duration;
 #[cfg(feature = "ssl")]
 use tokio_openssl::SslStream;
 
@@ -290,6 +292,7 @@ mod ssl_config {
 pub struct ConnectionConfig {
     pub compression: Option<Compression>,
     pub tcp_nodelay: bool,
+    pub tcp_keepalive_interval: Option<Duration>,
     #[cfg(feature = "ssl")]
     pub ssl_config: Option<SslConfig>,
     pub connect_timeout: std::time::Duration,
@@ -307,6 +310,7 @@ impl Default for ConnectionConfig {
         Self {
             compression: None,
             tcp_nodelay: true,
+            tcp_keepalive_interval: None,
             event_sender: None,
             #[cfg(feature = "ssl")]
             ssl_config: None,
@@ -360,6 +364,55 @@ impl Connection {
             }
         };
         stream.set_nodelay(config.tcp_nodelay)?;
+
+        if let Some(tcp_keepalive_interval) = config.tcp_keepalive_interval {
+            // It may be surprising why we call `with_time()` with `tcp_keepalive_interval`
+            // and `with_interval() with some other value. This is due to inconsistent naming:
+            // our interval means time after connection becomes idle until keepalives
+            // begin to be sent (they call it "time"), and their interval is time between
+            // sending keepalives.
+            // We insist on our naming due to other drivers following the same convention.
+            let mut tcp_keepalive = TcpKeepalive::new().with_time(tcp_keepalive_interval);
+
+            // These cfg values are taken from socket2 library, which uses the same constraints.
+            #[cfg(any(
+                target_os = "android",
+                target_os = "dragonfly",
+                target_os = "freebsd",
+                target_os = "fuchsia",
+                target_os = "illumos",
+                target_os = "ios",
+                target_os = "linux",
+                target_os = "macos",
+                target_os = "netbsd",
+                target_os = "tvos",
+                target_os = "watchos",
+                target_os = "windows",
+            ))]
+            {
+                tcp_keepalive = tcp_keepalive.with_interval(Duration::from_secs(1));
+            }
+
+            #[cfg(any(
+                target_os = "android",
+                target_os = "dragonfly",
+                target_os = "freebsd",
+                target_os = "fuchsia",
+                target_os = "illumos",
+                target_os = "ios",
+                target_os = "linux",
+                target_os = "macos",
+                target_os = "netbsd",
+                target_os = "tvos",
+                target_os = "watchos",
+            ))]
+            {
+                tcp_keepalive = tcp_keepalive.with_retries(10);
+            }
+
+            let sf = SockRef::from(&stream);
+            sf.set_tcp_keepalive(&tcp_keepalive)?;
+        }
 
         // TODO: What should be the size of the channel?
         let (sender, receiver) = mpsc::channel(1024);

@@ -413,6 +413,36 @@ impl<K: SessionBuilderKind> GenericSessionBuilder<K> {
         self
     }
 
+    /// Set the TCP keepalive interval.
+    /// The default is `None`, which implies that no keepalive messages
+    /// are sent **on TCP layer** when a connection is idle.
+    /// Note: CQL-layer keepalives are configured separately,
+    /// with `Self::keepalive_interval`.
+    ///
+    /// # Example
+    /// ```
+    /// # use scylla::{Session, SessionBuilder};
+    /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
+    /// let session: Session = SessionBuilder::new()
+    ///     .known_node("127.0.0.1:9042")
+    ///     .tcp_keepalive_interval(std::time::Duration::from_secs(42))
+    ///     .build()
+    ///     .await?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn tcp_keepalive_interval(mut self, interval: Duration) -> Self {
+        if interval <= Duration::from_secs(1) {
+            warn!(
+                "Setting the TCP keepalive interval to low values ({:?}) is not recommended as it can have a negative impact on performance. Consider setting it above 1 second.",
+                interval
+            );
+        }
+
+        self.config.tcp_keepalive_interval = Some(interval);
+        self
+    }
+
     /// Set keyspace to be used on all connections.\
     /// Each connection will send `"USE <keyspace_name>"` before sending any requests.\
     /// This can be later changed with [`Session::use_keyspace`]
@@ -617,8 +647,10 @@ impl<K: SessionBuilderKind> GenericSessionBuilder<K> {
     }
 
     /// Set the keepalive interval.
-    /// The default is `Some(Duration::from_secs(30))`, it corresponds
-    /// to keepalive messages being sent every 30 seconds.
+    /// The default is `Some(Duration::from_secs(30))`, which corresponds
+    /// to keepalive CQL messages being sent every 30 seconds.
+    /// Note: this configures CQL-layer keepalives. See also:
+    /// `Self::tcp_keepalive_interval`.
     ///
     /// # Example
     /// ```
