@@ -13,17 +13,18 @@ env:
 jobs:
   tls:
     runs-on: ubuntu-latest
+    timeout-minutes: 60
     services:
       scylladb:
         image: scylladb/scylla-tls
         ports:
           - 9042:9042
           - 9142:9142
-        options: 
-          --health-cmd "cqlsh --debug" 
-          --health-interval 5s 
+        options:
+          --health-cmd "cqlsh --debug"
+          --health-interval 5s
           --health-retries 10
-    env: 
+    env:
       working-directory: ./scylla
     steps:
     - uses: actions/checkout@v2
