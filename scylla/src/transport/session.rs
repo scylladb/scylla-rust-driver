@@ -1815,6 +1815,7 @@ impl Session {
     /// Get the first node/shard that the load balancer would target if running this query
     ///
     /// This may help constituting shard-aware batches
+    #[allow(clippy::type_complexity)]
     pub fn first_shard_for_statement(
         &self,
         prepared: &PreparedStatement,
