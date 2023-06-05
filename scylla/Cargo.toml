@@ -54,7 +54,7 @@ rand_pcg = "0.3.1"
 socket2 = { version = "0.5.3", features = ["all"] }
 
 [dev-dependencies]
-scylla-proxy = { version = "0.0.2", path = "../scylla-proxy"}
+scylla-proxy = { version = "0.0.3", path = "../scylla-proxy"}
 ntest = "0.8.1"
 criterion = "0.3"
 tracing-subscriber = { version = "0.3.14", features = ["env-filter"] }
