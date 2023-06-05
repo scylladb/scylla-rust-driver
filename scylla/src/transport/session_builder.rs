@@ -297,6 +297,37 @@ impl SessionBuilder {
         self.config.address_translator = Some(translator);
         self
     }
+
+    /// If true, the driver will inject a small delay before flushing data
+    /// to the socket - by rescheduling the task that writes data to the socket.
+    /// This gives the task an opportunity to collect more write requests
+    /// and write them in a single syscall, increasing the efficiency.
+    ///
+    /// However, this optimization may worsen latency if the rate of requests
+    /// issued by the application is low, but otherwise the application is
+    /// heavily loaded with other tasks on the same tokio executor.
+    /// Please do performance measurements before committing to disabling
+    /// this option.
+    ///
+    /// This option is true by default.
+    ///
+    /// # Example
+    /// ```
+    /// # use scylla::{Session, SessionBuilder};
+    /// # use scylla::transport::Compression;
+    /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
+    /// let session: Session = SessionBuilder::new()
+    ///     .known_node("127.0.0.1:9042")
+    ///     .write_coalescing(false) // Enabled by default
+    ///     .build()
+    ///     .await?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn write_coalescing(mut self, enable: bool) -> Self {
+        self.config.enable_write_coalescing = enable;
+        self
+    }
 }
 #[cfg(feature = "cloud")]
 impl CloudSessionBuilder {

@@ -303,6 +303,7 @@ pub struct ConnectionConfig {
     pub(crate) cloud_config: Option<Arc<CloudConfig>>,
     pub authenticator: Option<Arc<dyn AuthenticatorProvider>>,
     pub address_translator: Option<Arc<dyn AddressTranslator>>,
+    pub enable_write_coalescing: bool,
 }
 
 impl Default for ConnectionConfig {
@@ -320,6 +321,7 @@ impl Default for ConnectionConfig {
             address_translator: None,
             #[cfg(feature = "cloud")]
             cloud_config: None,
+            enable_write_coalescing: true,
         }
     }
 }
@@ -954,6 +956,8 @@ impl Connection {
         // across .await points. Therefore, it should not be too expensive.
         let handler_map = StdMutex::new(ResponseHandlerMap::new());
 
+        let enable_write_coalescing = config.enable_write_coalescing;
+
         let r = Self::reader(
             BufReader::with_capacity(8192, read_half),
             &handler_map,
@@ -963,6 +967,7 @@ impl Connection {
             BufWriter::with_capacity(8192, write_half),
             &handler_map,
             receiver,
+            enable_write_coalescing,
         );
         let o = Self::orphaner(&handler_map, orphan_notification_receiver);
 
@@ -1072,6 +1077,7 @@ impl Connection {
         mut write_half: (impl AsyncWrite + Unpin),
         handler_map: &StdMutex<ResponseHandlerMap>,
         mut task_receiver: mpsc::Receiver<Task>,
+        enable_write_coalescing: bool,
     ) -> Result<(), QueryError> {
         // When the Connection object is dropped, the sender half
         // of the channel will be dropped, this task will return an error
@@ -1088,7 +1094,7 @@ impl Connection {
                 write_half.write_all(req_data).await?;
                 task = match task_receiver.try_recv() {
                     Ok(t) => t,
-                    Err(_) => {
+                    Err(_) if enable_write_coalescing => {
                         // Yielding was empirically tested to inject a 1-300µs delay,
                         // much better than tokio::time::sleep's 1ms granularity.
                         // Also, yielding in a busy system let's the queue catch up with new items.
@@ -1098,6 +1104,7 @@ impl Connection {
                             Err(_) => break,
                         }
                     }
+                    Err(_) => break,
                 }
             }
             trace!("Sending {} requests; {} bytes", num_requests, total_sent);
@@ -1656,7 +1663,7 @@ mod tests {
     use crate::transport::connection::open_connection;
     use crate::transport::topology::UntranslatedEndpoint;
     use crate::utils::test_utils::unique_keyspace_name;
-    use crate::SessionBuilder;
+    use crate::{IntoTypedRows, SessionBuilder};
     use futures::{StreamExt, TryStreamExt};
     use std::collections::HashMap;
     use std::net::SocketAddr;
@@ -1772,6 +1779,119 @@ mod tests {
             .await
             .unwrap();
         assert!(insert_res1.is_empty());
+    }
+
+    #[tokio::test]
+    #[cfg(not(scylla_cloud_tests))]
+    async fn test_coalescing() {
+        // It's difficult to write a reliable test that checks whether coalescing
+        // works like intended or not. Instead, this is a smoke test which is supposed
+        // to trigger the coalescing logic and check that everything works fine
+        // no matter whether coalescing is enabled or not.
+
+        let uri = std::env::var("SCYLLA_URI").unwrap_or_else(|_| "127.0.0.1:9042".to_string());
+        let addr: SocketAddr = resolve_hostname(&uri).await;
+        let ks = unique_keyspace_name();
+
+        {
+            // Preparation phase
+            let session = SessionBuilder::new()
+                .known_node_addr(addr)
+                .build()
+                .await
+                .unwrap();
+            session.query(format!("CREATE KEYSPACE IF NOT EXISTS {} WITH REPLICATION = {{'class' : 'SimpleStrategy', 'replication_factor' : 1}}", ks.clone()), &[]).await.unwrap();
+            session.use_keyspace(ks.clone(), false).await.unwrap();
+            session
+                .query(
+                    "CREATE TABLE IF NOT EXISTS t (p int primary key, v blob)",
+                    &[],
+                )
+                .await
+                .unwrap();
+        }
+
+        let subtest = |enable_coalescing: bool, ks: String| async move {
+            let (connection, _) = super::open_connection(
+                UntranslatedEndpoint::ContactPoint(ContactPoint {
+                    address: addr,
+                    datacenter: None,
+                }),
+                None,
+                ConnectionConfig {
+                    enable_write_coalescing: enable_coalescing,
+                    ..ConnectionConfig::default()
+                },
+            )
+            .await
+            .unwrap();
+            let connection = Arc::new(connection);
+
+            connection
+                .use_keyspace(&super::VerifiedKeyspaceName::new(ks, false).unwrap())
+                .await
+                .unwrap();
+
+            connection
+                .query(&"TRUNCATE t".into(), (), None)
+                .await
+                .unwrap();
+
+            let mut futs = Vec::new();
+
+            const NUM_BATCHES: i32 = 10;
+
+            for batch_size in 0..NUM_BATCHES {
+                // Each future should issue more and more queries in the first poll
+                let base = arithmetic_sequence_sum(batch_size);
+                let conn = connection.clone();
+                futs.push(tokio::task::spawn(async move {
+                    let futs = (base..base + batch_size).map(|j| {
+                        let q = Query::new("INSERT INTO t (p, v) VALUES (?, ?)");
+                        let conn = conn.clone();
+                        async move {
+                            conn.query(&q, (j, vec![j as u8; j as usize]), None)
+                                .await
+                                .unwrap()
+                        }
+                    });
+                    futures::future::join_all(futs).await;
+                }));
+
+                tokio::task::yield_now().await;
+            }
+
+            futures::future::join_all(futs).await;
+
+            // Check that everything was written properly
+            let range_end = arithmetic_sequence_sum(NUM_BATCHES);
+            let mut results = connection
+                .query(&"SELECT p, v FROM t".into(), (), None)
+                .await
+                .unwrap()
+                .into_query_result()
+                .unwrap()
+                .rows()
+                .unwrap()
+                .into_typed::<(i32, Vec<u8>)>()
+                .collect::<Result<Vec<_>, _>>()
+                .unwrap();
+            results.sort();
+
+            let expected = (0..range_end)
+                .map(|i| (i, vec![i as u8; i as usize]))
+                .collect::<Vec<_>>();
+
+            assert_eq!(results, expected);
+        };
+
+        subtest(true, ks.clone()).await;
+        subtest(false, ks.clone()).await;
+    }
+
+    // Returns the sum of integral numbers in the range [0..n)
+    fn arithmetic_sequence_sum(n: i32) -> i32 {
+        n * (n - 1) / 2
     }
 
     #[tokio::test]
