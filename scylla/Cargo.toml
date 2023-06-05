@@ -16,14 +16,7 @@ rustdoc-args = ["--cfg", "docsrs"]
 [features]
 default = []
 ssl = ["dep:tokio-openssl", "dep:openssl"]
-cloud = [
-    "ssl",
-    "scylla-cql/serde",
-    "dep:serde_yaml",
-    "dep:serde",
-    "dep:url",
-    "dep:base64",
-]
+cloud = ["ssl", "scylla-cql/serde", "dep:serde_yaml", "dep:serde", "dep:url", "dep:base64"]
 secret = ["scylla-cql/secret"]
 
 [dependencies]
@@ -34,7 +27,7 @@ bytes = "1.0.1"
 futures = "0.3.6"
 histogram = "0.6.9"
 num_enum = "0.5"
-tokio = { version = "1.12", features = ["net", "time", "io-util", "sync", "rt", "macros"] }
+tokio = { version = "1.27", features = ["net", "time", "io-util", "sync", "rt", "macros"] }
 snap = "1.0"
 uuid = { version = "1.0", features = ["v4"] }
 rand = "0.8.3"
@@ -58,6 +51,7 @@ serde_yaml = { version = "0.9.14", optional = true }
 url = { version = "2.3.1", optional = true }
 base64 = { version = "0.13.1", optional = true }
 rand_pcg = "0.3.1"
+socket2 = { version = "0.5.3", features = ["all"] }
 
 [dev-dependencies]
 scylla-proxy = { version = "0.0.2", path = "../scylla-proxy"}
