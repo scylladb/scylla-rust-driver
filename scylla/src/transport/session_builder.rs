@@ -707,6 +707,36 @@ impl<K: SessionBuilderKind> GenericSessionBuilder<K> {
         self
     }
 
+    /// Set the keepalive timeout.
+    /// The default is `Some(Duration::from_secs(30))`. It means that
+    /// the connection will be closed if time between sending a keepalive
+    /// and receiving a response to any keepalive (not necessarily the same -
+    /// it may be one sent later) exceeds 30 seconds.
+    ///
+    /// # Example
+    /// ```
+    /// # use scylla::{Session, SessionBuilder};
+    /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
+    /// let session: Session = SessionBuilder::new()
+    ///     .known_node("127.0.0.1:9042")
+    ///     .keepalive_timeout(std::time::Duration::from_secs(42))
+    ///     .build()
+    ///     .await?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn keepalive_timeout(mut self, timeout: Duration) -> Self {
+        if timeout <= Duration::from_secs(1) {
+            warn!(
+                "Setting the keepalive timeout to low values ({:?}) is not recommended as it may aggresively close connections. Consider setting it above 5 seconds.",
+                timeout
+            );
+        }
+
+        self.config.keepalive_timeout = Some(timeout);
+        self
+    }
+
     /// Enables automatic wait for schema agreement and sets the timeout for it.
     /// By default, it is enabled and the timeout is 60 seconds.
     ///

@@ -192,8 +192,13 @@ pub struct SessionConfig {
     /// If true, full schema is fetched with every metadata refresh.
     pub fetch_schema_metadata: bool,
 
-    /// Interval of sending keepalive requests
+    /// Interval of sending keepalive requests.
+    /// If `None`, keepalives are never sent, so `Self::keepalive_timeout` has no effect.
     pub keepalive_interval: Option<Duration>,
+
+    /// Controls after what time of not receiving response to keepalives a connection is closed.
+    /// If `None`, connections are never closed due to lack of response to a keepalive message.
+    pub keepalive_timeout: Option<Duration>,
 
     /// Controls the timeout for the automatic wait for schema agreement after sending a schema-altering statement.
     /// If `None`, the automatic schema agreement is disabled.
@@ -276,6 +281,7 @@ impl SessionConfig {
             keyspaces_to_fetch: Vec::new(),
             fetch_schema_metadata: true,
             keepalive_interval: Some(Duration::from_secs(30)),
+            keepalive_timeout: Some(Duration::from_secs(30)),
             auto_await_schema_agreement_timeout: Some(std::time::Duration::from_secs(60)),
             address_translator: None,
             host_filter: None,
@@ -488,6 +494,8 @@ impl Session {
             #[cfg(feature = "cloud")]
             cloud_config: config.cloud_config,
             enable_write_coalescing: config.enable_write_coalescing,
+            keepalive_interval: config.keepalive_interval,
+            keepalive_timeout: config.keepalive_timeout,
         };
 
         let pool_config = PoolConfig {
