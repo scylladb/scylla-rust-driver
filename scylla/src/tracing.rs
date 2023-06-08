@@ -5,6 +5,7 @@ use uuid::Uuid;
 
 use crate::cql_to_rust::{FromRow, FromRowError};
 use crate::frame::response::result::Row;
+use crate::frame::value::CqlTimestamp;
 
 /// Tracing info retrieved from `system_traces.sessions`
 /// with all events from `system_traces.events`
@@ -17,7 +18,7 @@ pub struct TracingInfo {
     pub parameters: Option<HashMap<String, String>>,
     pub request: Option<String>,
     /// started_at is a timestamp - time since unix epoch
-    pub started_at: Option<chrono::Duration>,
+    pub started_at: Option<CqlTimestamp>,
 
     pub events: Vec<TracingEvent>,
 }
@@ -64,7 +65,7 @@ impl FromRow for TracingInfo {
                 Option<i32>,
                 Option<HashMap<String, String>>,
                 Option<String>,
-                Option<chrono::Duration>,
+                Option<CqlTimestamp>,
             )>::from_row(row)?;
 
         Ok(TracingInfo {

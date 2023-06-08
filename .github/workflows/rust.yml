@@ -32,14 +32,14 @@ jobs:
       run: cargo clippy --verbose --all-targets -- -Aclippy::uninlined_format_args
     - name: Cargo check without features
       run: cargo check --all-targets --manifest-path "scylla/Cargo.toml" --features ""
-    - name: Cargo check with secrecy feature
-      run: cargo check --all-targets --manifest-path "scylla/Cargo.toml" --features "secret"
+    - name: Cargo check with all serialization features
+      run: cargo check --all-targets --manifest-path "scylla/Cargo.toml" --features "full-serialization"
     - name: Build scylla-cql
-      run: cargo build --verbose --all-targets --manifest-path "scylla-cql/Cargo.toml"
+      run: cargo build --verbose --all-targets --manifest-path "scylla-cql/Cargo.toml" --features "full-serialization"
     - name: Build
-      run: cargo build --verbose --all-targets
+      run: cargo build --verbose --all-targets --features "full-serialization"
     - name: Run tests
-      run: SCYLLA_URI=172.42.0.2:9042 SCYLLA_URI2=172.42.0.3:9042 SCYLLA_URI3=172.42.0.4:9042 cargo test --verbose
+      run: SCYLLA_URI=172.42.0.2:9042 SCYLLA_URI2=172.42.0.3:9042 SCYLLA_URI3=172.42.0.4:9042 cargo test --verbose --features "full-serialization"
     - name: Stop the cluster
       if: ${{ always() }}
       run: docker compose -f test/cluster/docker-compose.yml stop
@@ -63,7 +63,7 @@ jobs:
     - name: Use MSRV Cargo.lock
       run: mv Cargo.lock.msrv Cargo.lock
     - name: MSRV cargo check with features
-      run: cargo check --verbose --all-targets --locked
+      run: cargo check --verbose --all-targets --all-features --locked
     - name: MSRV cargo check without features
       run: cargo check --verbose --all-targets --locked --manifest-path "scylla/Cargo.toml"
     - name: MSRV cargo check scylla-cql

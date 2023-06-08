@@ -21,9 +21,9 @@ Database types and their Rust equivalents:
 * `Blob` <----> `Vec<u8>`
 * `Inet` <----> `std::net::IpAddr`
 * `Uuid`, `Timeuuid` <----> `uuid::Uuid`
-* `Date` <----> `chrono::NaiveDate`, `u32`
-* `Time` <----> `chrono::Duration`
-* `Timestamp` <----> `chrono::Duration`
+* `Date` <----> `value::CqlDate`, `chrono::NaiveDate`, `time::Date`
+* `Time` <----> `value::CqlTime`, `chrono::NaiveTime`, `time::Time`
+* `Timestamp` <----> `value::CqlTimestamp`, `chrono::DateTime<Utc>`, `time::OffsetDateTime`
 * `Duration` <----> `value::CqlDuration`
 * `Decimal` <----> `bigdecimal::Decimal`
 * `Varint` <----> `num_bigint::BigInt`

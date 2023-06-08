@@ -1,29 +1,77 @@
 # Date
 
-For most use cases `Date` can be represented as 
-[`chrono::NaiveDate`](https://docs.rs/chrono/0.4.19/chrono/naive/struct.NaiveDate.html).\
-`NaiveDate` supports dates from -262145-1-1 to 262143-12-31.
+Depending on feature flags, three different types can be used to interact with date.
 
-For dates outside of this range you can use the raw `u32` representation.
+Internally [date](https://docs.scylladb.com/stable/cql/types.html#dates) is represented as number of days since
+-5877641-06-23 i.e. 2^31 days before unix epoch.
 
-### Using `chrono::NaiveDate`:
+## CqlDate
+
+Without any extra features enabled, only `frame::value::CqlDate` is available. It's an
+[`u32`](https://doc.rust-lang.org/std/primitive.u32.html) wrapper and it matches the internal date representation.
+
+However, for most use cases other types are more practical. See following sections for `chrono` and `time`.
+
 ```rust
 # extern crate scylla;
-# extern crate chrono;
 # use scylla::Session;
 # use std::error::Error;
 # async fn check_only_compiles(session: &Session) -> Result<(), Box<dyn Error>> {
+use scylla::frame::value::CqlDate;
 use scylla::IntoTypedRows;
-use chrono::naive::NaiveDate;
 
-// Insert some date into the table
-let to_insert: NaiveDate = NaiveDate::from_ymd_opt(2021, 3, 24).unwrap();
+// 1970-01-08
+let to_insert = CqlDate((1 << 31) + 7);
+
+// Insert date into the table
+session
+    .query("INSERT INTO keyspace.table (a) VALUES(?)", (to_insert,))
+    .await?;
+
+// Read raw Date from the table
+if let Some(rows) = session
+    .query("SELECT a FROM keyspace.table", &[])
+    .await?
+    .rows
+{
+    for row in rows.into_typed::<(CqlDate,)>() {
+        let (date_value,): (CqlDate,) = row?;
+    }
+}
+# Ok(())
+# }
+```
+
+## chrono::NaiveDate
+
+If full range is not required and `chrono` feature is enabled,
+[`chrono::NaiveDate`](https://docs.rs/chrono/0.4/chrono/naive/struct.NaiveDate.html) can be used.
+[`chrono::NaiveDate`](https://docs.rs/chrono/0.4/chrono/naive/struct.NaiveDate.html) supports dates from
+-262145-01-01 to 262143-12-31.
+
+```rust
+# extern crate chrono;
+# extern crate scylla;
+# use scylla::Session;
+# use std::error::Error;
+# async fn check_only_compiles(session: &Session) -> Result<(), Box<dyn Error>> {
+use chrono::NaiveDate;
+use scylla::IntoTypedRows;
+
+// 2021-03-24
+let to_insert = NaiveDate::from_ymd_opt(2021, 3, 24).unwrap();
+
+// Insert date into the table
 session
     .query("INSERT INTO keyspace.table (a) VALUES(?)", (to_insert,))
     .await?;
 
 // Read NaiveDate from the table
-if let Some(rows) = session.query("SELECT a FROM keyspace.table", &[]).await?.rows {
+if let Some(rows) = session
+    .query("SELECT a FROM keyspace.table", &[])
+    .await?
+    .rows
+{
     for row in rows.into_typed::<(NaiveDate,)>() {
         let (date_value,): (NaiveDate,) = row?;
     }
@@ -32,30 +80,38 @@ if let Some(rows) = session.query("SELECT a FROM keyspace.table", &[]).await?.ro
 # }
 ```
 
-### Using raw `u32` representation
-Internally `Date` is represented as number of days since -5877641-06-23 i.e. 2^31 days before unix epoch.
+## time::Date
+
+Alternatively, `time` feature can be used to enable support of
+[`time::Date`](https://docs.rs/time/0.3/time/struct.Date.html).
+[`time::Date`](https://docs.rs/time/0.3/time/struct.Date.html)'s value range depends on feature flags, see its
+documentation to get more info.
 
 ```rust
 # extern crate scylla;
+# extern crate time;
 # use scylla::Session;
 # use std::error::Error;
 # async fn check_only_compiles(session: &Session) -> Result<(), Box<dyn Error>> {
-use scylla::frame::value::Date;
-use scylla::frame::response::result::CqlValue;
+use scylla::IntoTypedRows;
+use time::{Date, Month};
 
-// Insert date using raw u32 representation
-let to_insert: Date = Date(2_u32.pow(31)); // 1970-01-01 
+// 2021-03-24
+let to_insert = Date::from_calendar_date(2021, Month::March, 24).unwrap();
+
+// Insert date into the table
 session
     .query("INSERT INTO keyspace.table (a) VALUES(?)", (to_insert,))
     .await?;
 
-// Read raw Date from the table
-if let Some(rows) = session.query("SELECT a FROM keyspace.table", &[]).await?.rows {
-    for row in rows {
-        let date_value: u32 = match row.columns[0] {
-            Some(CqlValue::Date(date_value)) => date_value,
-            _ => panic!("Should be a date!")
-        };
+// Read Date from the table
+if let Some(rows) = session
+    .query("SELECT a FROM keyspace.table", &[])
+    .await?
+    .rows
+{
+    for row in rows.into_typed::<(Date,)>() {
+        let (date_value,): (Date,) = row?;
     }
 }
 # Ok(())

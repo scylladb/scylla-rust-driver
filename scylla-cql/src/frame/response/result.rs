@@ -1,13 +1,11 @@
 use crate::cql_to_rust::{FromRow, FromRowError};
 use crate::frame::response::event::SchemaChangeEvent;
 use crate::frame::types::vint_decode;
-use crate::frame::value::{Counter, CqlDuration};
+use crate::frame::value::{Counter, CqlDate, CqlDuration, CqlTime, CqlTimestamp};
 use crate::frame::{frame_errors::ParseError, types};
 use bigdecimal::BigDecimal;
 use byteorder::{BigEndian, ReadBytesExt};
 use bytes::{Buf, Bytes};
-use chrono;
-use chrono::prelude::*;
 use num_bigint::BigInt;
 use std::{
     convert::{TryFrom, TryInto},
@@ -16,6 +14,9 @@ use std::{
     str,
 };
 use uuid::Uuid;
+
+#[cfg(feature = "chrono")]
+use chrono::{DateTime, NaiveDate, Utc};
 
 #[derive(Debug)]
 pub struct SetKeyspace {
@@ -83,7 +84,7 @@ pub enum CqlValue {
     Decimal(BigDecimal),
     /// Days since -5877641-06-23 i.e. 2^31 days before unix epoch
     /// Can be converted to chrono::NaiveDate (-262145-1-1 to 262143-12-31) using as_date
-    Date(u32),
+    Date(CqlDate),
     Double(f64),
     Duration(CqlDuration),
     Empty,
@@ -92,7 +93,7 @@ pub enum CqlValue {
     BigInt(i64),
     Text(String),
     /// Milliseconds since unix epoch
-    Timestamp(chrono::Duration),
+    Timestamp(CqlTimestamp),
     Inet(IpAddr),
     List(Vec<CqlValue>),
     Map(Vec<(CqlValue, CqlValue)>),
@@ -108,7 +109,7 @@ pub enum CqlValue {
     SmallInt(i16),
     TinyInt(i8),
     /// Nanoseconds since midnight
-    Time(chrono::Duration),
+    Time(CqlTime),
     Timeuuid(Uuid),
     Tuple(Vec<Option<CqlValue>>),
     Uuid(Uuid),
@@ -123,29 +124,55 @@ impl CqlValue {
         }
     }
 
-    pub fn as_date(&self) -> Option<NaiveDate> {
-        // Days since -5877641-06-23 i.e. 2^31 days before unix epoch
-        let date_days: u32 = match self {
-            CqlValue::Date(days) => *days,
-            _ => return None,
-        };
-
-        // date_days is u32 then converted to i64
-        // then we substract 2^31 - this can't panic
-        let days_since_epoch =
-            chrono::Duration::days(date_days.into()) - chrono::Duration::days(1 << 31);
-
-        NaiveDate::from_ymd_opt(1970, 1, 1)
-            .unwrap()
-            .checked_add_signed(days_since_epoch)
+    pub fn as_cql_date(&self) -> Option<CqlDate> {
+        match self {
+            Self::Date(d) => Some(*d),
+            _ => None,
+        }
     }
 
-    pub fn as_duration(&self) -> Option<chrono::Duration> {
+    #[cfg(feature = "chrono")]
+    pub fn as_naive_date(&self) -> Option<NaiveDate> {
+        self.as_cql_date().and_then(|date| date.try_into().ok())
+    }
+
+    #[cfg(feature = "time")]
+    pub fn as_date(&self) -> Option<time::Date> {
+        self.as_cql_date().and_then(|date| date.try_into().ok())
+    }
+
+    pub fn as_cql_timestamp(&self) -> Option<CqlTimestamp> {
         match self {
             Self::Timestamp(i) => Some(*i),
+            _ => None,
+        }
+    }
+
+    #[cfg(feature = "chrono")]
+    pub fn as_datetime(&self) -> Option<DateTime<Utc>> {
+        self.as_cql_timestamp().and_then(|ts| ts.try_into().ok())
+    }
+
+    #[cfg(feature = "time")]
+    pub fn as_offset_date_time(&self) -> Option<time::OffsetDateTime> {
+        self.as_cql_timestamp().and_then(|ts| ts.try_into().ok())
+    }
+
+    pub fn as_cql_time(&self) -> Option<CqlTime> {
+        match self {
             Self::Time(i) => Some(*i),
             _ => None,
         }
+    }
+
+    #[cfg(feature = "chrono")]
+    pub fn as_naive_time(&self) -> Option<chrono::NaiveTime> {
+        self.as_cql_time().and_then(|ts| ts.try_into().ok())
+    }
+
+    #[cfg(feature = "time")]
+    pub fn as_time(&self) -> Option<time::Time> {
+        self.as_cql_time().and_then(|ts| ts.try_into().ok())
     }
 
     pub fn as_cql_duration(&self) -> Option<CqlDuration> {
@@ -201,7 +228,6 @@ impl CqlValue {
     pub fn as_bigint(&self) -> Option<i64> {
         match self {
             Self::BigInt(i) => Some(*i),
-            Self::Timestamp(d) => Some(d.num_milliseconds()),
             _ => None,
         }
     }
@@ -608,7 +634,7 @@ pub fn deser_cql_value(typ: &ColumnType, buf: &mut &[u8]) -> StdResult<CqlValue,
             }
 
             let date_value = buf.read_u32::<BigEndian>()?;
-            CqlValue::Date(date_value)
+            CqlValue::Date(CqlDate(date_value))
         }
         Counter => {
             if buf.len() != 8 {
@@ -691,7 +717,7 @@ pub fn deser_cql_value(typ: &ColumnType, buf: &mut &[u8]) -> StdResult<CqlValue,
             }
             let millis = buf.read_i64::<BigEndian>()?;
 
-            CqlValue::Timestamp(chrono::Duration::milliseconds(millis))
+            CqlValue::Timestamp(CqlTimestamp(millis))
         }
         Time => {
             if buf.len() != 8 {
@@ -709,7 +735,7 @@ pub fn deser_cql_value(typ: &ColumnType, buf: &mut &[u8]) -> StdResult<CqlValue,
                 }));
             }
 
-            CqlValue::Time(chrono::Duration::nanoseconds(nanoseconds))
+            CqlValue::Time(CqlTime(nanoseconds))
         }
         Timeuuid => {
             if buf.len() != 16 {
@@ -915,10 +941,8 @@ pub fn deserialize(buf: &mut &[u8]) -> StdResult<Result, ParseError> {
 #[cfg(test)]
 mod tests {
     use crate as scylla;
-    use crate::frame::value::{Counter, CqlDuration};
+    use crate::frame::value::{Counter, CqlDate, CqlDuration, CqlTime, CqlTimestamp};
     use bigdecimal::BigDecimal;
-    use chrono::Duration;
-    use chrono::NaiveDate;
     use num_bigint::BigInt;
     use num_bigint::ToBigInt;
     use scylla::frame::response::result::{ColumnType, CqlValue};
@@ -1212,73 +1236,168 @@ mod tests {
     }
 
     #[test]
-    fn date_deserialize() {
+    fn test_deserialize_date() {
         // Date is correctly parsed from a 4 byte array
         let four_bytes: [u8; 4] = [12, 23, 34, 45];
         let date: CqlValue =
             super::deser_cql_value(&ColumnType::Date, &mut four_bytes.as_ref()).unwrap();
-        assert_eq!(date, CqlValue::Date(u32::from_be_bytes(four_bytes)));
+        assert_eq!(
+            date,
+            CqlValue::Date(CqlDate(u32::from_be_bytes(four_bytes)))
+        );
 
         // Date is parsed as u32 not i32, u32::MAX is u32::MAX
         let date: CqlValue =
             super::deser_cql_value(&ColumnType::Date, &mut u32::MAX.to_be_bytes().as_ref())
                 .unwrap();
-        assert_eq!(date, CqlValue::Date(u32::MAX));
+        assert_eq!(date, CqlValue::Date(CqlDate(u32::MAX)));
 
         // Trying to parse a 0, 3 or 5 byte array fails
         super::deser_cql_value(&ColumnType::Date, &mut [].as_ref()).unwrap();
         super::deser_cql_value(&ColumnType::Date, &mut [1, 2, 3].as_ref()).unwrap_err();
         super::deser_cql_value(&ColumnType::Date, &mut [1, 2, 3, 4, 5].as_ref()).unwrap_err();
 
-        // 2^31 when converted to NaiveDate is 1970-01-01
-        let unix_epoch: NaiveDate = NaiveDate::from_ymd_opt(1970, 1, 1).unwrap();
-        let date: CqlValue =
-            super::deser_cql_value(&ColumnType::Date, &mut 2_u32.pow(31).to_be_bytes().as_ref())
-                .unwrap();
+        // Deserialize unix epoch
+        let unix_epoch_bytes = 2_u32.pow(31).to_be_bytes();
 
-        assert_eq!(date.as_date().unwrap(), unix_epoch);
+        let date =
+            super::deser_cql_value(&ColumnType::Date, &mut unix_epoch_bytes.as_ref()).unwrap();
+        assert_eq!(date.as_cql_date(), Some(CqlDate(1 << 31)));
 
         // 2^31 - 30 when converted to NaiveDate is 1969-12-02
-        let before_epoch: NaiveDate = NaiveDate::from_ymd_opt(1969, 12, 2).unwrap();
+        let before_epoch = CqlDate((1 << 31) - 30);
         let date: CqlValue = super::deser_cql_value(
             &ColumnType::Date,
-            &mut (2_u32.pow(31) - 30).to_be_bytes().as_ref(),
+            &mut ((1_u32 << 31) - 30).to_be_bytes().as_ref(),
         )
         .unwrap();
 
-        assert_eq!(date.as_date().unwrap(), before_epoch);
+        assert_eq!(date.as_cql_date(), Some(before_epoch));
 
         // 2^31 + 30 when converted to NaiveDate is 1970-01-31
-        let after_epoch: NaiveDate = NaiveDate::from_ymd_opt(1970, 1, 31).unwrap();
-        let date: CqlValue = super::deser_cql_value(
+        let after_epoch = CqlDate((1 << 31) + 30);
+        let date = super::deser_cql_value(
             &ColumnType::Date,
-            &mut (2_u32.pow(31) + 30).to_be_bytes().as_ref(),
+            &mut ((1_u32 << 31) + 30).to_be_bytes().as_ref(),
         )
         .unwrap();
 
-        assert_eq!(date.as_date().unwrap(), after_epoch);
+        assert_eq!(date.as_cql_date(), Some(after_epoch));
 
-        // 0 and u32::MAX is out of NaiveDate range, fails with an error, not panics
-        assert!(
+        // Min date
+        let min_date = CqlDate(u32::MIN);
+        let date = super::deser_cql_value(&ColumnType::Date, &mut u32::MIN.to_be_bytes().as_ref())
+            .unwrap();
+        assert_eq!(date.as_cql_date(), Some(min_date));
+
+        // Max date
+        let max_date = CqlDate(u32::MAX);
+        let date = super::deser_cql_value(&ColumnType::Date, &mut u32::MAX.to_be_bytes().as_ref())
+            .unwrap();
+        assert_eq!(date.as_cql_date(), Some(max_date));
+    }
+
+    #[cfg(feature = "chrono")]
+    #[test]
+    fn test_naive_date_from_cql() {
+        use chrono::NaiveDate;
+
+        // 2^31 when converted to NaiveDate is 1970-01-01
+        let unix_epoch = NaiveDate::from_ymd_opt(1970, 1, 1).unwrap();
+        let date =
+            super::deser_cql_value(&ColumnType::Date, &mut (1u32 << 31).to_be_bytes().as_ref())
+                .unwrap();
+
+        assert_eq!(date.as_naive_date(), Some(unix_epoch));
+
+        // 2^31 - 30 when converted to NaiveDate is 1969-12-02
+        let before_epoch = NaiveDate::from_ymd_opt(1969, 12, 2).unwrap();
+        let date = super::deser_cql_value(
+            &ColumnType::Date,
+            &mut ((1u32 << 31) - 30).to_be_bytes().as_ref(),
+        )
+        .unwrap();
+
+        assert_eq!(date.as_naive_date(), Some(before_epoch));
+
+        // 2^31 + 30 when converted to NaiveDate is 1970-01-31
+        let after_epoch = NaiveDate::from_ymd_opt(1970, 1, 31).unwrap();
+        let date = super::deser_cql_value(
+            &ColumnType::Date,
+            &mut ((1u32 << 31) + 30).to_be_bytes().as_ref(),
+        )
+        .unwrap();
+
+        assert_eq!(date.as_naive_date(), Some(after_epoch));
+
+        // 0 and u32::MAX are out of NaiveDate range, fails with an error, not panics
+        assert_eq!(
             super::deser_cql_value(&ColumnType::Date, &mut 0_u32.to_be_bytes().as_ref())
                 .unwrap()
-                .as_date()
-                .is_none()
+                .as_naive_date(),
+            None
         );
 
-        assert!(
+        assert_eq!(
             super::deser_cql_value(&ColumnType::Date, &mut u32::MAX.to_be_bytes().as_ref())
                 .unwrap()
-                .as_date()
-                .is_none()
+                .as_naive_date(),
+            None
+        );
+    }
+
+    #[cfg(feature = "time")]
+    #[test]
+    fn test_date_from_cql() {
+        use time::Date;
+        use time::Month::*;
+
+        // 2^31 when converted to time::Date is 1970-01-01
+        let unix_epoch = Date::from_calendar_date(1970, January, 1).unwrap();
+        let date =
+            super::deser_cql_value(&ColumnType::Date, &mut (1u32 << 31).to_be_bytes().as_ref())
+                .unwrap();
+
+        assert_eq!(date.as_date(), Some(unix_epoch));
+
+        // 2^31 - 30 when converted to time::Date is 1969-12-02
+        let before_epoch = Date::from_calendar_date(1969, December, 2).unwrap();
+        let date = super::deser_cql_value(
+            &ColumnType::Date,
+            &mut ((1u32 << 31) - 30).to_be_bytes().as_ref(),
+        )
+        .unwrap();
+
+        assert_eq!(date.as_date(), Some(before_epoch));
+
+        // 2^31 + 30 when converted to time::Date is 1970-01-31
+        let after_epoch = Date::from_calendar_date(1970, January, 31).unwrap();
+        let date = super::deser_cql_value(
+            &ColumnType::Date,
+            &mut ((1u32 << 31) + 30).to_be_bytes().as_ref(),
+        )
+        .unwrap();
+
+        assert_eq!(date.as_date(), Some(after_epoch));
+
+        // 0 and u32::MAX are out of NaiveDate range, fails with an error, not panics
+        assert_eq!(
+            super::deser_cql_value(&ColumnType::Date, &mut 0_u32.to_be_bytes().as_ref())
+                .unwrap()
+                .as_date(),
+            None
         );
 
-        // It's hard to test NaiveDate more because it involves calculating days between calendar dates
-        // There are more tests using database queries that should cover it
+        assert_eq!(
+            super::deser_cql_value(&ColumnType::Date, &mut u32::MAX.to_be_bytes().as_ref())
+                .unwrap()
+                .as_date(),
+            None
+        );
     }
 
     #[test]
-    fn test_time_deserialize() {
+    fn test_deserialize_time() {
         // Time is an i64 - nanoseconds since midnight
         // in range 0..=86399999999999
 
@@ -1290,7 +1409,7 @@ mod tests {
             let bytes: [u8; 8] = test_val.to_be_bytes();
             let cql_value: CqlValue =
                 super::deser_cql_value(&ColumnType::Time, &mut &bytes[..]).unwrap();
-            assert_eq!(cql_value, CqlValue::Time(Duration::nanoseconds(*test_val)));
+            assert_eq!(cql_value, CqlValue::Time(CqlTime(*test_val)));
         }
 
         // Negative values cause an error
@@ -1299,19 +1418,85 @@ mod tests {
             let bytes: [u8; 8] = test_val.to_be_bytes();
             super::deser_cql_value(&ColumnType::Time, &mut &bytes[..]).unwrap_err();
         }
+    }
 
-        // chrono::Duration has enough precision to represent nanoseconds accurately
-        assert_eq!(Duration::nanoseconds(1).num_nanoseconds().unwrap(), 1);
-        assert_eq!(
-            Duration::nanoseconds(7364737473).num_nanoseconds().unwrap(),
-            7364737473
-        );
-        assert_eq!(
-            Duration::nanoseconds(86399999999999)
-                .num_nanoseconds()
-                .unwrap(),
-            86399999999999
-        );
+    #[cfg(feature = "chrono")]
+    #[test]
+    fn test_naive_time_from_cql() {
+        use chrono::NaiveTime;
+
+        // 0 when converted to NaiveTime is 0:0:0.0
+        let midnight = NaiveTime::from_hms_nano_opt(0, 0, 0, 0).unwrap();
+        let time =
+            super::deser_cql_value(&ColumnType::Time, &mut (0i64).to_be_bytes().as_ref()).unwrap();
+
+        assert_eq!(time.as_naive_time(), Some(midnight));
+
+        // 10:10:30.500,000,001
+        let (h, m, s, n) = (10, 10, 30, 500_000_001);
+        let midnight = NaiveTime::from_hms_nano_opt(h, m, s, n).unwrap();
+        let time = super::deser_cql_value(
+            &ColumnType::Time,
+            &mut ((h as i64 * 3600 + m as i64 * 60 + s as i64) * 1_000_000_000 + n as i64)
+                .to_be_bytes()
+                .as_ref(),
+        )
+        .unwrap();
+
+        assert_eq!(time.as_naive_time(), Some(midnight));
+
+        // 23:59:59.999,999,999
+        let (h, m, s, n) = (23, 59, 59, 999_999_999);
+        let midnight = NaiveTime::from_hms_nano_opt(h, m, s, n).unwrap();
+        let time = super::deser_cql_value(
+            &ColumnType::Time,
+            &mut ((h as i64 * 3600 + m as i64 * 60 + s as i64) * 1_000_000_000 + n as i64)
+                .to_be_bytes()
+                .as_ref(),
+        )
+        .unwrap();
+
+        assert_eq!(time.as_naive_time(), Some(midnight));
+    }
+
+    #[cfg(feature = "time")]
+    #[test]
+    fn test_primitive_time_from_cql() {
+        use time::Time;
+
+        // 0 when converted to NaiveTime is 0:0:0.0
+        let midnight = Time::from_hms_nano(0, 0, 0, 0).unwrap();
+        let time =
+            super::deser_cql_value(&ColumnType::Time, &mut (0i64).to_be_bytes().as_ref()).unwrap();
+
+        dbg!(&time);
+        assert_eq!(time.as_time(), Some(midnight));
+
+        // 10:10:30.500,000,001
+        let (h, m, s, n) = (10, 10, 30, 500_000_001);
+        let midnight = Time::from_hms_nano(h, m, s, n).unwrap();
+        let time = super::deser_cql_value(
+            &ColumnType::Time,
+            &mut ((h as i64 * 3600 + m as i64 * 60 + s as i64) * 1_000_000_000 + n as i64)
+                .to_be_bytes()
+                .as_ref(),
+        )
+        .unwrap();
+
+        assert_eq!(time.as_time(), Some(midnight));
+
+        // 23:59:59.999,999,999
+        let (h, m, s, n) = (23, 59, 59, 999_999_999);
+        let midnight = Time::from_hms_nano(h, m, s, n).unwrap();
+        let time = super::deser_cql_value(
+            &ColumnType::Time,
+            &mut ((h as i64 * 3600 + m as i64 * 60 + s as i64) * 1_000_000_000 + n as i64)
+                .to_be_bytes()
+                .as_ref(),
+        )
+        .unwrap();
+
+        assert_eq!(time.as_time(), Some(midnight));
     }
 
     #[test]
@@ -1323,17 +1508,124 @@ mod tests {
             let bytes: [u8; 8] = test_val.to_be_bytes();
             let cql_value: CqlValue =
                 super::deser_cql_value(&ColumnType::Timestamp, &mut &bytes[..]).unwrap();
-            assert_eq!(
-                cql_value,
-                CqlValue::Timestamp(Duration::milliseconds(*test_val))
-            );
-
-            // Check that Duration converted back to i64 is correct
-            assert_eq!(
-                Duration::milliseconds(*test_val).num_milliseconds(),
-                *test_val
-            );
+            assert_eq!(cql_value, CqlValue::Timestamp(CqlTimestamp(*test_val)));
         }
+    }
+
+    #[cfg(feature = "chrono")]
+    #[test]
+    fn test_datetime_from_cql() {
+        use chrono::{NaiveDate, NaiveDateTime, NaiveTime};
+
+        // 0 when converted to DateTime is 1970-01-01 0:00:00.00
+        let unix_epoch = NaiveDateTime::from_timestamp_opt(0, 0).unwrap().and_utc();
+        let date = super::deser_cql_value(&ColumnType::Timestamp, &mut 0i64.to_be_bytes().as_ref())
+            .unwrap();
+
+        assert_eq!(date.as_datetime(), Some(unix_epoch));
+
+        // When converted to NaiveDateTime, this is 1969-12-01 11:29:29.5
+        let timestamp: i64 = -((((30 * 24 + 12) * 60 + 30) * 60 + 30) * 1000 + 500);
+        let before_epoch = NaiveDateTime::new(
+            NaiveDate::from_ymd_opt(1969, 12, 1).unwrap(),
+            NaiveTime::from_hms_milli_opt(11, 29, 29, 500).unwrap(),
+        )
+        .and_utc();
+        let date = super::deser_cql_value(
+            &ColumnType::Timestamp,
+            &mut timestamp.to_be_bytes().as_ref(),
+        )
+        .unwrap();
+
+        assert_eq!(date.as_datetime(), Some(before_epoch));
+
+        // when converted to NaiveDateTime, this is is 1970-01-31 12:30:30.5
+        let timestamp: i64 = (((30 * 24 + 12) * 60 + 30) * 60 + 30) * 1000 + 500;
+        let after_epoch = NaiveDateTime::new(
+            NaiveDate::from_ymd_opt(1970, 1, 31).unwrap(),
+            NaiveTime::from_hms_milli_opt(12, 30, 30, 500).unwrap(),
+        )
+        .and_utc();
+        let date = super::deser_cql_value(
+            &ColumnType::Timestamp,
+            &mut timestamp.to_be_bytes().as_ref(),
+        )
+        .unwrap();
+
+        assert_eq!(date.as_datetime(), Some(after_epoch));
+
+        // 0 and u32::MAX are out of NaiveDate range, fails with an error, not panics
+        assert_eq!(
+            super::deser_cql_value(&ColumnType::Timestamp, &mut i64::MIN.to_be_bytes().as_ref())
+                .unwrap()
+                .as_datetime(),
+            None
+        );
+
+        assert_eq!(
+            super::deser_cql_value(&ColumnType::Timestamp, &mut i64::MAX.to_be_bytes().as_ref())
+                .unwrap()
+                .as_datetime(),
+            None
+        );
+    }
+
+    #[cfg(feature = "time")]
+    #[test]
+    fn test_offset_datetime_from_cql() {
+        use time::{Date, Month::*, OffsetDateTime, PrimitiveDateTime, Time};
+
+        // 0 when converted to OffsetDateTime is 1970-01-01 0:00:00.00
+        let unix_epoch = OffsetDateTime::from_unix_timestamp(0).unwrap();
+        let date = super::deser_cql_value(&ColumnType::Timestamp, &mut 0i64.to_be_bytes().as_ref())
+            .unwrap();
+
+        assert_eq!(date.as_offset_date_time(), Some(unix_epoch));
+
+        // When converted to NaiveDateTime, this is 1969-12-01 11:29:29.5
+        let timestamp: i64 = -((((30 * 24 + 12) * 60 + 30) * 60 + 30) * 1000 + 500);
+        let before_epoch = PrimitiveDateTime::new(
+            Date::from_calendar_date(1969, December, 1).unwrap(),
+            Time::from_hms_milli(11, 29, 29, 500).unwrap(),
+        )
+        .assume_utc();
+        let date = super::deser_cql_value(
+            &ColumnType::Timestamp,
+            &mut timestamp.to_be_bytes().as_ref(),
+        )
+        .unwrap();
+
+        assert_eq!(date.as_offset_date_time(), Some(before_epoch));
+
+        // when converted to NaiveDateTime, this is is 1970-01-31 12:30:30.5
+        let timestamp: i64 = (((30 * 24 + 12) * 60 + 30) * 60 + 30) * 1000 + 500;
+        let after_epoch = PrimitiveDateTime::new(
+            Date::from_calendar_date(1970, January, 31).unwrap(),
+            Time::from_hms_milli(12, 30, 30, 500).unwrap(),
+        )
+        .assume_utc();
+        let date = super::deser_cql_value(
+            &ColumnType::Timestamp,
+            &mut timestamp.to_be_bytes().as_ref(),
+        )
+        .unwrap();
+
+        assert_eq!(date.as_offset_date_time(), Some(after_epoch));
+
+        // 0 and u32::MAX are out of NaiveDate range, fails with an error, not panics
+        assert_eq!(
+            super::deser_cql_value(&ColumnType::Timestamp, &mut i64::MIN.to_be_bytes().as_ref())
+                .unwrap()
+                .as_offset_date_time(),
+            None
+        );
+
+        assert_eq!(
+            super::deser_cql_value(&ColumnType::Timestamp, &mut i64::MAX.to_be_bytes().as_ref())
+                .unwrap()
+                .as_offset_date_time(),
+            None
+        );
     }
 
     #[test]
