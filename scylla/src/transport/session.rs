@@ -650,6 +650,7 @@ impl Session {
                 statement_info,
                 &query.config,
                 query.get_retry_policy().map(|rp| &**rp),
+                execution_profile,
                 |node: Arc<Node>| async move { node.random_connection().await },
                 |connection: Arc<Connection>,
                  consistency: Consistency,
@@ -1003,6 +1004,7 @@ impl Session {
                 statement_info,
                 &prepared.config,
                 prepared.get_retry_policy().map(|rp| &**rp),
+                execution_profile,
                 |node: Arc<Node>| async move {
                     match token {
                         Some(token) => node.connection_for_token(token).await,
@@ -1219,6 +1221,7 @@ impl Session {
                 statement_info,
                 &batch.config,
                 batch.get_retry_policy().map(|rp| &**rp),
+                execution_profile,
                 |node: Arc<Node>| async move {
                     match first_value_token {
                         Some(first_value_token) => {
@@ -1528,11 +1531,13 @@ impl Session {
     // On success this query's result is returned
     // I tried to make this closures take a reference instead of an Arc but failed
     // maybe once async closures get stabilized this can be fixed
+    #[allow(clippy::too_many_arguments)] // <-- remove this once retry policy is put into StatementConfig
     async fn run_query<'a, ConnFut, QueryFut, ResT>(
         &'a self,
         statement_info: RoutingInfo<'a>,
         statement_config: &'a StatementConfig,
         statement_retry_policy: Option<&dyn RetryPolicy>,
+        execution_profile: Arc<ExecutionProfileInner>,
         choose_connection: impl Fn(Arc<Node>) -> ConnFut,
         do_query: impl Fn(Arc<Connection>, Consistency, &ExecutionProfileInner) -> QueryFut,
         request_span: &'a RequestSpan,
@@ -1547,12 +1552,6 @@ impl Session {
                 .history_listener
                 .as_ref()
                 .map(|hl| (&**hl, hl.log_query_start()));
-
-        let execution_profile = statement_config
-            .execution_profile_handle
-            .as_ref()
-            .unwrap_or_else(|| self.get_default_execution_profile_handle())
-            .access();
 
         let load_balancer = &execution_profile.load_balancing_policy;
 
@@ -1858,6 +1857,7 @@ impl Session {
                 info,
                 &config,
                 None, // No specific retry policy needed for schema agreement
+                self.get_default_execution_profile_handle().access(),
                 |node: Arc<Node>| async move { node.random_connection().await },
                 do_query,
                 &span,
