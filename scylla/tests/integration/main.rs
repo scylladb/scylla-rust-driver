@@ -1,3 +1,4 @@
+mod consistency;
 mod execution_profiles;
 mod hygiene;
 mod lwt_optimisation;
