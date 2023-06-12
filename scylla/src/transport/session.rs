@@ -1619,7 +1619,7 @@ impl Session {
                             &execution_profile,
                             ExecuteQueryContext {
                                 is_idempotent: statement_config.is_idempotent,
-                                consistency: statement_config.consistency,
+                                consistency_set_on_statement: statement_config.consistency,
                                 retry_session: retry_policy.new_session(),
                                 history_data,
                                 query_info: &statement_info,
@@ -1655,7 +1655,7 @@ impl Session {
                         &execution_profile,
                         ExecuteQueryContext {
                             is_idempotent: statement_config.is_idempotent,
-                            consistency: statement_config.consistency,
+                            consistency_set_on_statement: statement_config.consistency,
                             retry_session: retry_policy.new_session(),
                             history_data,
                             query_info: &statement_info,
@@ -1710,8 +1710,9 @@ impl Session {
         ResT: AllowedRunQueryResTType,
     {
         let mut last_error: Option<QueryError> = None;
-        let mut current_consistency: Consistency =
-            context.consistency.unwrap_or(execution_profile.consistency);
+        let mut current_consistency: Consistency = context
+            .consistency_set_on_statement
+            .unwrap_or(execution_profile.consistency);
 
         'nodes_in_plan: for node in query_plan {
             let span = trace_span!("Executing query", node = %node.address);
@@ -1786,7 +1787,9 @@ impl Session {
                     error: the_error,
                     is_idempotent: context.is_idempotent,
                     consistency: LegacyConsistency::Regular(
-                        context.consistency.unwrap_or(execution_profile.consistency),
+                        context
+                            .consistency_set_on_statement
+                            .unwrap_or(execution_profile.consistency),
                     ),
                 };
 
@@ -2028,7 +2031,7 @@ impl AllowedRunQueryResTType for NonErrorQueryResponse {}
 
 struct ExecuteQueryContext<'a> {
     is_idempotent: bool,
-    consistency: Option<Consistency>,
+    consistency_set_on_statement: Option<Consistency>,
     retry_session: Box<dyn RetrySession>,
     history_data: Option<HistoryData<'a>>,
     query_info: &'a load_balancing::RoutingInfo<'a>,
