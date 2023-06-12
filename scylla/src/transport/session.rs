@@ -627,10 +627,27 @@ impl Session {
         let query: Query = query.into();
         let serialized_values = values.serialized()?;
 
+        let execution_profile = query
+            .get_execution_profile_handle()
+            .unwrap_or_else(|| self.get_default_execution_profile_handle())
+            .access();
+
+        let statement_info = RoutingInfo {
+            consistency: query
+                .config
+                .consistency
+                .unwrap_or(execution_profile.consistency),
+            serial_consistency: query
+                .config
+                .serial_consistency
+                .unwrap_or(execution_profile.serial_consistency),
+            ..Default::default()
+        };
+
         let span = RequestSpan::new_query(&query.contents, serialized_values.size());
         let run_query_result = self
             .run_query(
-                RoutingInfo::default(),
+                statement_info,
                 &query.config,
                 query.get_retry_policy().map(|rp| &**rp),
                 |node: Arc<Node>| async move { node.random_connection().await },
@@ -945,11 +962,20 @@ impl Session {
             .as_ref()
             .map(|pk| prepared.get_partitioner_name().hash(pk));
 
+        let execution_profile = prepared
+            .get_execution_profile_handle()
+            .unwrap_or_else(|| self.get_default_execution_profile_handle())
+            .access();
+
         let statement_info = RoutingInfo {
             consistency: prepared
-                .get_consistency()
-                .unwrap_or(self.default_execution_profile_handle.access().consistency),
-            serial_consistency: prepared.get_serial_consistency(),
+                .config
+                .consistency
+                .unwrap_or(execution_profile.consistency),
+            serial_consistency: prepared
+                .config
+                .serial_consistency
+                .unwrap_or(execution_profile.serial_consistency),
             token,
             keyspace: prepared.get_keyspace_name(),
             is_confirmed_lwt: prepared.is_confirmed_lwt(),
@@ -1147,19 +1173,37 @@ impl Session {
         // Extract first serialized_value
         let first_serialized_value = values.batch_values_iter().next_serialized().transpose()?;
         let first_serialized_value = first_serialized_value.as_deref();
+
+        let execution_profile = batch
+            .get_execution_profile_handle()
+            .unwrap_or_else(|| self.get_default_execution_profile_handle())
+            .access();
+
+        let consistency = batch
+            .config
+            .consistency
+            .unwrap_or(execution_profile.consistency);
+
+        let serial_consistency = batch
+            .config
+            .serial_consistency
+            .unwrap_or(execution_profile.serial_consistency);
+
         let statement_info = match (first_serialized_value, batch.statements.first()) {
             (Some(first_serialized_value), Some(BatchStatement::PreparedStatement(ps))) => {
                 RoutingInfo {
-                    consistency: batch
-                        .get_consistency()
-                        .unwrap_or(self.default_execution_profile_handle.access().consistency),
-                    serial_consistency: batch.get_serial_consistency(),
+                    consistency,
+                    serial_consistency,
                     token: self.calculate_token(ps, first_serialized_value)?,
                     keyspace: ps.get_keyspace_name(),
                     is_confirmed_lwt: false,
                 }
             }
-            _ => RoutingInfo::default(),
+            _ => RoutingInfo {
+                consistency,
+                serial_consistency,
+                ..Default::default()
+            },
         };
         let first_value_token = statement_info.token;
 

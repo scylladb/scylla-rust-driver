@@ -400,7 +400,6 @@ impl LoadBalancingPolicy for RoutingInfoReportingWrapper {
 // Checks that the expected consistency and serial_consistency are set
 // in the RoutingInfo that is exposed to the load balancer.
 #[tokio::test]
-#[ignore = "Not yet passes, a bug is yet to be fixed."]
 #[ntest::timeout(60000)]
 #[cfg(not(scylla_cloud_tests))]
 async fn consistency_is_correctly_set_in_routing_info() {
