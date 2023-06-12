@@ -34,6 +34,29 @@ pub enum BatchType {
     Counter = 2,
 }
 
+pub struct BatchTypeParseError {
+    value: u8,
+}
+
+impl From<BatchTypeParseError> for ParseError {
+    fn from(err: BatchTypeParseError) -> Self {
+        Self::BadIncomingData(format!("Bad BatchType value: {}", err.value))
+    }
+}
+
+impl TryFrom<u8> for BatchType {
+    type Error = BatchTypeParseError;
+
+    fn try_from(value: u8) -> Result<Self, Self::Error> {
+        match value {
+            0 => Ok(Self::Logged),
+            1 => Ok(Self::Unlogged),
+            2 => Ok(Self::Counter),
+            _ => Err(BatchTypeParseError { value }),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, Eq, PartialEq, PartialOrd, Ord)]
 pub enum BatchStatement<'a> {
     Query { text: &'a str },
