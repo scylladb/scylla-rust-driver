@@ -18,6 +18,8 @@ default = []
 ssl = ["dep:tokio-openssl", "dep:openssl"]
 cloud = ["ssl", "scylla-cql/serde", "dep:serde_yaml", "dep:serde", "dep:url", "dep:base64"]
 secret = ["scylla-cql/secret"]
+chrono = ["scylla-cql/chrono"]
+time = ["scylla-cql/time"]
 
 [dependencies]
 scylla-macros = { version = "0.2.0", path = "../scylla-macros" }
@@ -61,6 +63,7 @@ tokio = { version = "1.27", features = ["test-util"] }
 tracing-subscriber = { version = "0.3.14", features = ["env-filter"] }
 assert_matches = "1.5.0"
 rand_chacha = "0.3.1"
+time = "0.3"
 
 [[bench]]
 name = "benchmark"

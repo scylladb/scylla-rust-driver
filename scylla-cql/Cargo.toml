@@ -21,13 +21,16 @@ uuid = "1.0"
 thiserror = "1.0"
 bigdecimal = "0.2.0"
 num-bigint = "0.3"
-chrono = { version = "0.4.27", default-features = false }
+chrono = { version = "0.4.27", default-features = false, optional = true }
 lz4_flex = { version = "0.11.1" }
 async-trait = "0.1.57"
 serde = { version = "1.0", features = ["derive"], optional = true }
+time = { version = "0.3", optional = true }
 
 [dev-dependencies]
 criterion = "0.4" # Note: v0.5 needs at least rust 1.70.0
+# Use large-dates feature to test potential edge cases
+time = { version = "0.3.21", features = ["large-dates"] }
 
 [[bench]]
 name = "benchmark"
@@ -35,3 +38,5 @@ harness = false
 
 [features]
 secret = ["secrecy"]
+time = ["dep:time"]
+chrono = ["dep:chrono"]

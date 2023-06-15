@@ -1,13 +1,15 @@
 use super::result::{CqlValue, Row};
-use crate::frame::value::{Counter, CqlDuration};
+use crate::frame::value::{Counter, CqlDate, CqlDuration, CqlTime, CqlTimestamp};
 use bigdecimal::BigDecimal;
-use chrono::{DateTime, Duration, NaiveDate, TimeZone, Utc};
 use num_bigint::BigInt;
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::hash::{BuildHasher, Hash};
 use std::net::IpAddr;
 use thiserror::Error;
 use uuid::Uuid;
+
+#[cfg(feature = "chrono")]
+use chrono::{DateTime, NaiveDate, NaiveTime, Utc};
 
 #[cfg(feature = "secret")]
 use secrecy::{Secret, Zeroize};
@@ -125,7 +127,6 @@ impl_from_cql_value_from_method!(Counter, as_counter); // Counter::from_cql<CqlV
 impl_from_cql_value_from_method!(i16, as_smallint); // i16::from_cql<CqlValue>
 impl_from_cql_value_from_method!(BigInt, into_varint); // BigInt::from_cql<CqlValue>
 impl_from_cql_value_from_method!(i8, as_tinyint); // i8::from_cql<CqlValue>
-impl_from_cql_value_from_method!(NaiveDate, as_date); // NaiveDate::from_cql<CqlValue>
 impl_from_cql_value_from_method!(f32, as_float); // f32::from_cql<CqlValue>
 impl_from_cql_value_from_method!(f64, as_double); // f64::from_cql<CqlValue>
 impl_from_cql_value_from_method!(bool, as_boolean); // bool::from_cql<CqlValue>
@@ -134,7 +135,6 @@ impl_from_cql_value_from_method!(Vec<u8>, into_blob); // Vec<u8>::from_cql<CqlVa
 impl_from_cql_value_from_method!(IpAddr, as_inet); // IpAddr::from_cql<CqlValue>
 impl_from_cql_value_from_method!(Uuid, as_uuid); // Uuid::from_cql<CqlValue>
 impl_from_cql_value_from_method!(BigDecimal, into_decimal); // BigDecimal::from_cql<CqlValue>
-impl_from_cql_value_from_method!(Duration, as_duration); // Duration::from_cql<CqlValue>
 impl_from_cql_value_from_method!(CqlDuration, as_cql_duration); // CqlDuration::from_cql<CqlValue>
 
 impl<const N: usize> FromCqlVal<CqlValue> for [u8; N] {
@@ -144,16 +144,40 @@ impl<const N: usize> FromCqlVal<CqlValue> for [u8; N] {
     }
 }
 
-impl FromCqlVal<CqlValue> for crate::frame::value::Date {
+impl FromCqlVal<CqlValue> for CqlDate {
     fn from_cql(cql_val: CqlValue) -> Result<Self, FromCqlValError> {
         match cql_val {
-            CqlValue::Date(d) => Ok(crate::frame::value::Date(d)),
+            CqlValue::Date(d) => Ok(CqlDate(d)),
             _ => Err(FromCqlValError::BadCqlType),
         }
     }
 }
 
-impl FromCqlVal<CqlValue> for crate::frame::value::Time {
+#[cfg(feature = "chrono")]
+impl FromCqlVal<CqlValue> for NaiveDate {
+    fn from_cql(cql_val: CqlValue) -> Result<Self, FromCqlValError> {
+        match cql_val {
+            CqlValue::Date(date_days) => CqlDate(date_days)
+                .try_into()
+                .map_err(|_| FromCqlValError::BadVal),
+            _ => Err(FromCqlValError::BadCqlType),
+        }
+    }
+}
+
+#[cfg(feature = "time")]
+impl FromCqlVal<CqlValue> for time::Date {
+    fn from_cql(cql_val: CqlValue) -> Result<Self, FromCqlValError> {
+        match cql_val {
+            CqlValue::Date(date_days) => CqlDate(date_days)
+                .try_into()
+                .map_err(|_| FromCqlValError::BadVal),
+            _ => Err(FromCqlValError::BadCqlType),
+        }
+    }
+}
+
+impl FromCqlVal<CqlValue> for CqlTime {
     fn from_cql(cql_val: CqlValue) -> Result<Self, FromCqlValError> {
         match cql_val {
             CqlValue::Time(d) => Ok(Self(d)),
@@ -162,7 +186,27 @@ impl FromCqlVal<CqlValue> for crate::frame::value::Time {
     }
 }
 
-impl FromCqlVal<CqlValue> for crate::frame::value::Timestamp {
+#[cfg(feature = "chrono")]
+impl FromCqlVal<CqlValue> for NaiveTime {
+    fn from_cql(cql_val: CqlValue) -> Result<Self, FromCqlValError> {
+        match cql_val {
+            CqlValue::Time(d) => CqlTime(d).try_into().map_err(|_| FromCqlValError::BadVal),
+            _ => Err(FromCqlValError::BadCqlType),
+        }
+    }
+}
+
+#[cfg(feature = "time")]
+impl FromCqlVal<CqlValue> for time::Time {
+    fn from_cql(cql_val: CqlValue) -> Result<Self, FromCqlValError> {
+        match cql_val {
+            CqlValue::Time(d) => CqlTime(d).try_into().map_err(|_| FromCqlValError::BadVal),
+            _ => Err(FromCqlValError::BadCqlType),
+        }
+    }
+}
+
+impl FromCqlVal<CqlValue> for CqlTimestamp {
     fn from_cql(cql_val: CqlValue) -> Result<Self, FromCqlValError> {
         match cql_val {
             CqlValue::Timestamp(d) => Ok(Self(d)),
@@ -171,13 +215,25 @@ impl FromCqlVal<CqlValue> for crate::frame::value::Timestamp {
     }
 }
 
+#[cfg(feature = "chrono")]
 impl FromCqlVal<CqlValue> for DateTime<Utc> {
     fn from_cql(cql_val: CqlValue) -> Result<Self, FromCqlValError> {
-        let timestamp = cql_val.as_bigint().ok_or(FromCqlValError::BadCqlType)?;
-        match Utc.timestamp_millis_opt(timestamp) {
-            chrono::LocalResult::Single(datetime) => Ok(datetime),
-            _ => Err(FromCqlValError::BadVal),
-        }
+        cql_val
+            .as_cql_timestamp()
+            .ok_or(FromCqlValError::BadCqlType)?
+            .try_into()
+            .map_err(|_| FromCqlValError::BadVal)
+    }
+}
+
+#[cfg(feature = "time")]
+impl FromCqlVal<CqlValue> for time::OffsetDateTime {
+    fn from_cql(cql_val: CqlValue) -> Result<Self, FromCqlValError> {
+        cql_val
+            .as_cql_timestamp()
+            .ok_or(FromCqlValError::BadCqlType)?
+            .try_into()
+            .map_err(|_| FromCqlValError::BadVal)
     }
 }
 
@@ -362,10 +418,9 @@ impl_tuple_from_cql!(T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, T12, T13, T14
 mod tests {
     use super::{CqlValue, FromCqlVal, FromCqlValError, FromRow, FromRowError, Row};
     use crate as scylla;
-    use crate::frame::value::Counter;
+    use crate::frame::value::{Counter, CqlDate, CqlDuration, CqlTime, CqlTimestamp};
     use crate::macros::FromRow;
     use bigdecimal::BigDecimal;
-    use chrono::{Duration, NaiveDate};
     use num_bigint::{BigInt, ToBigInt};
     use std::collections::HashSet;
     use std::net::{IpAddr, Ipv4Addr};
@@ -454,8 +509,11 @@ mod tests {
         assert_eq!(Ok(counter), Counter::from_cql(CqlValue::Counter(counter)));
     }
 
+    #[cfg(feature = "chrono")]
     #[test]
     fn naive_date_from_cql() {
+        use chrono::NaiveDate;
+
         let unix_epoch: CqlValue = CqlValue::Date(2_u32.pow(31));
         assert_eq!(
             Ok(NaiveDate::from_ymd_opt(1970, 1, 1).unwrap()),
@@ -482,43 +540,59 @@ mod tests {
     }
 
     #[test]
-    fn date_from_cql() {
-        use crate::frame::value::Date;
-
+    fn cql_date_from_cql() {
         let unix_epoch: CqlValue = CqlValue::Date(2_u32.pow(31));
-        assert_eq!(Ok(Date(2_u32.pow(31))), Date::from_cql(unix_epoch));
+        assert_eq!(Ok(CqlDate(2_u32.pow(31))), CqlDate::from_cql(unix_epoch));
 
         let min_date: CqlValue = CqlValue::Date(0);
-        assert_eq!(Ok(Date(0)), Date::from_cql(min_date));
+        assert_eq!(Ok(CqlDate(0)), CqlDate::from_cql(min_date));
 
         let max_date: CqlValue = CqlValue::Date(u32::MAX);
-        assert_eq!(Ok(Date(u32::MAX)), Date::from_cql(max_date));
+        assert_eq!(Ok(CqlDate(u32::MAX)), CqlDate::from_cql(max_date));
     }
 
+    #[cfg(feature = "time")]
     #[test]
-    fn duration_from_cql() {
-        let time_duration = Duration::nanoseconds(86399999999999);
+    fn date_from_cql() {
+        // UNIX epoch
+        let unix_epoch = CqlValue::Date(1 << 31);
         assert_eq!(
-            time_duration,
-            Duration::from_cql(CqlValue::Time(time_duration)).unwrap(),
+            Ok(time::Date::from_ordinal_date(1970, 1).unwrap()),
+            time::Date::from_cql(unix_epoch)
         );
 
-        let timestamp_duration = Duration::milliseconds(i64::MIN);
+        // 7 days after UNIX epoch
+        let after_epoch = CqlValue::Date((1 << 31) + 7);
         assert_eq!(
-            timestamp_duration,
-            Duration::from_cql(CqlValue::Timestamp(timestamp_duration)).unwrap(),
+            Ok(time::Date::from_ordinal_date(1970, 8).unwrap()),
+            time::Date::from_cql(after_epoch)
         );
 
-        let timestamp_i64 = 997;
+        // 3 days before UNIX epoch
+        let before_epoch = CqlValue::Date((1 << 31) - 3);
         assert_eq!(
-            timestamp_i64,
-            i64::from_cql(CqlValue::Timestamp(Duration::milliseconds(timestamp_i64))).unwrap()
-        )
+            Ok(time::Date::from_ordinal_date(1969, 363).unwrap()),
+            time::Date::from_cql(before_epoch)
+        );
+
+        // Min possible stored date. Since value is out of `time::Date` range, it should return `BadVal` error
+        let min_date = CqlValue::Date(u32::MIN);
+        assert_eq!(Err(FromCqlValError::BadVal), time::Date::from_cql(min_date));
+
+        // Max possible stored date. Since value is out of `time::Date` range, it should return `BadVal` error
+        let max_date = CqlValue::Date(u32::MAX);
+        assert_eq!(Err(FromCqlValError::BadVal), time::Date::from_cql(max_date));
+
+        // Different CQL type. Since value can't be casted, it should return `BadCqlType` error
+        let bad_type = CqlValue::Double(0.5);
+        assert_eq!(
+            Err(FromCqlValError::BadCqlType),
+            time::Date::from_cql(bad_type)
+        );
     }
 
     #[test]
     fn cql_duration_from_cql() {
-        use crate::frame::value::CqlDuration;
         let cql_duration = CqlDuration {
             months: 3,
             days: 2,
@@ -531,30 +605,107 @@ mod tests {
     }
 
     #[test]
-    fn time_from_cql() {
-        use crate::frame::value::Time;
-        let time_duration = Duration::nanoseconds(86399999999999);
+    fn cql_time_from_cql() {
+        let time_ns = 86399999999999;
         assert_eq!(
-            time_duration,
-            Time::from_cql(CqlValue::Time(time_duration)).unwrap().0,
+            time_ns,
+            CqlTime::from_cql(CqlValue::Time(time_ns)).unwrap().0,
+        );
+    }
+
+    #[cfg(feature = "chrono")]
+    #[test]
+    fn naive_time_from_cql() {
+        use chrono::NaiveTime;
+
+        // Midnight
+        let midnight = CqlValue::Time(0);
+        assert_eq!(Ok(NaiveTime::MIN), NaiveTime::from_cql(midnight));
+
+        // 7:15:21.123456789
+        let morning = CqlValue::Time((7 * 3600 + 15 * 60 + 21) * 1_000_000_000 + 123_456_789);
+        assert_eq!(
+            Ok(NaiveTime::from_hms_nano_opt(7, 15, 21, 123_456_789).unwrap()),
+            NaiveTime::from_cql(morning)
+        );
+
+        // 23:59:59.999999999
+        let late_night = CqlValue::Time((23 * 3600 + 59 * 60 + 59) * 1_000_000_000 + 999_999_999);
+        assert_eq!(
+            Ok(NaiveTime::from_hms_nano_opt(23, 59, 59, 999_999_999).unwrap()),
+            NaiveTime::from_cql(late_night)
+        );
+
+        // Bad values. Since value is out of `chrono::NaiveTime` range, it should return `BadVal` error
+        let bad_time1 = CqlValue::Time(-1);
+        assert_eq!(Err(FromCqlValError::BadVal), NaiveTime::from_cql(bad_time1));
+        let bad_time2 = CqlValue::Time(i64::MAX);
+        assert_eq!(Err(FromCqlValError::BadVal), NaiveTime::from_cql(bad_time2));
+
+        // Different CQL type. Since value can't be casted, it should return `BadCqlType` error
+        let bad_type = CqlValue::Double(0.5);
+        assert_eq!(
+            Err(FromCqlValError::BadCqlType),
+            NaiveTime::from_cql(bad_type)
+        );
+    }
+
+    #[cfg(feature = "time")]
+    #[test]
+    fn time_from_cql() {
+        // Midnight
+        let midnight = CqlValue::Time(0);
+        assert_eq!(Ok(time::Time::MIDNIGHT), time::Time::from_cql(midnight));
+
+        // 7:15:21.123456789
+        let morning = CqlValue::Time((7 * 3600 + 15 * 60 + 21) * 1_000_000_000 + 123_456_789);
+        assert_eq!(
+            Ok(time::Time::from_hms_nano(7, 15, 21, 123_456_789).unwrap()),
+            time::Time::from_cql(morning)
+        );
+
+        // 23:59:59.999999999
+        let late_night = CqlValue::Time((23 * 3600 + 59 * 60 + 59) * 1_000_000_000 + 999_999_999);
+        assert_eq!(
+            Ok(time::Time::from_hms_nano(23, 59, 59, 999_999_999).unwrap()),
+            time::Time::from_cql(late_night)
+        );
+
+        // Bad values. Since value is out of `time::Time` range, it should return `BadVal` error
+        let bad_time1 = CqlValue::Time(-1);
+        assert_eq!(
+            Err(FromCqlValError::BadVal),
+            time::Time::from_cql(bad_time1)
+        );
+        let bad_time2 = CqlValue::Time(i64::MAX);
+        assert_eq!(
+            Err(FromCqlValError::BadVal),
+            time::Time::from_cql(bad_time2)
+        );
+
+        // Different CQL type. Since value can't be casted, it should return `BadCqlType` error
+        let bad_type = CqlValue::Double(0.5);
+        assert_eq!(
+            Err(FromCqlValError::BadCqlType),
+            time::Time::from_cql(bad_type)
         );
     }
 
     #[test]
-    fn timestamp_from_cql() {
-        use crate::frame::value::Timestamp;
-        let timestamp_duration = Duration::milliseconds(86399999999999);
+    fn cql_timestamp_from_cql() {
+        let timestamp_ms = 86399999999999;
         assert_eq!(
-            timestamp_duration,
-            Timestamp::from_cql(CqlValue::Timestamp(timestamp_duration))
+            timestamp_ms,
+            CqlTimestamp::from_cql(CqlValue::Timestamp(timestamp_ms))
                 .unwrap()
                 .0,
         );
     }
 
+    #[cfg(feature = "chrono")]
     #[test]
     fn datetime_from_cql() {
-        use chrono::{DateTime, Duration, Utc};
+        use chrono::{DateTime, NaiveDate, Utc};
         let naivedatetime_utc = NaiveDate::from_ymd_opt(2022, 12, 31)
             .unwrap()
             .and_hms_opt(2, 0, 0)
@@ -563,10 +714,59 @@ mod tests {
 
         assert_eq!(
             datetime_utc,
-            DateTime::<Utc>::from_cql(CqlValue::Timestamp(Duration::milliseconds(
-                datetime_utc.timestamp_millis()
-            )))
-            .unwrap()
+            DateTime::<Utc>::from_cql(CqlValue::Timestamp(datetime_utc.timestamp_millis()))
+                .unwrap()
+        );
+    }
+
+    #[cfg(feature = "time")]
+    #[test]
+    fn offset_datetime_from_cql() {
+        // UNIX epoch
+        let unix_epoch = CqlValue::Timestamp(0);
+        assert_eq!(
+            Ok(time::OffsetDateTime::UNIX_EPOCH),
+            time::OffsetDateTime::from_cql(unix_epoch)
+        );
+
+        // 1 day 2 hours 3 minutes 4 seconds and 5 nanoseconds before UNIX epoch
+        let before_epoch = CqlValue::Timestamp(-(26 * 3600 + 3 * 60 + 4) * 1000 - 5);
+        assert_eq!(
+            Ok(time::OffsetDateTime::UNIX_EPOCH
+                - time::Duration::new(26 * 3600 + 3 * 60 + 4, 5 * 1_000_000)),
+            time::OffsetDateTime::from_cql(before_epoch)
+        );
+
+        // 6 days 7 hours 8 minutes 9 seconds and 10 nanoseconds after UNIX epoch
+        let after_epoch = CqlValue::Timestamp(((6 * 24 + 7) * 3600 + 8 * 60 + 9) * 1000 + 10);
+        assert_eq!(
+            Ok(time::PrimitiveDateTime::new(
+                time::Date::from_ordinal_date(1970, 7).unwrap(),
+                time::Time::from_hms_milli(7, 8, 9, 10).unwrap()
+            )
+            .assume_utc()),
+            time::OffsetDateTime::from_cql(after_epoch)
+        );
+
+        // Min possible stored timestamp. Since value is out of `time::OffsetDateTime` range, it should return `BadVal` error
+        let min_timestamp = CqlValue::Timestamp(i64::MIN);
+        assert_eq!(
+            Err(FromCqlValError::BadVal),
+            time::OffsetDateTime::from_cql(min_timestamp)
+        );
+
+        // Max possible stored timestamp. Since value is out of `time::OffsetDateTime` range, it should return `BadVal` error
+        let max_timestamp = CqlValue::Timestamp(i64::MAX);
+        assert_eq!(
+            Err(FromCqlValError::BadVal),
+            time::OffsetDateTime::from_cql(max_timestamp)
+        );
+
+        // Different CQL type. Since value can't be casted, it should return `BadCqlType` error
+        let bad_type = CqlValue::Double(0.5);
+        assert_eq!(
+            Err(FromCqlValError::BadCqlType),
+            time::OffsetDateTime::from_cql(bad_type)
         );
     }
 

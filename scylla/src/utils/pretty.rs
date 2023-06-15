@@ -68,14 +68,14 @@ where
                 write!(
                     f,
                     "'{:02}:{:02}:{:02}.{:09}'",
-                    t.num_hours() % 24,
-                    t.num_minutes() % 60,
-                    t.num_seconds() % 60,
-                    t.num_nanoseconds().unwrap_or(0) % 1_000_000_000,
+                    t / 3_600_000_000_000,
+                    t / 60_000_000_000 % 60,
+                    t / 1_000_000_000 % 60,
+                    t % 1_000_000_000,
                 )?;
             }
             CqlValue::Timestamp(t) => {
-                match Utc.timestamp_millis_opt(t.num_milliseconds()) {
+                match Utc.timestamp_millis_opt(*t) {
                     LocalResult::Ambiguous(_, _) => unreachable!(), // not supposed to happen with timestamp_millis_opt
                     LocalResult::Single(d) => {
                         write!(f, "{}", d.format("'%Y-%m-%d %H:%M:%S%.3f%z'"))?
@@ -205,7 +205,6 @@ where
 #[cfg(test)]
 mod tests {
     use std::str::FromStr;
-    use std::time::Duration;
 
     use bigdecimal::BigDecimal;
     use chrono::{NaiveDate, NaiveDateTime, NaiveTime};
@@ -261,15 +260,12 @@ mod tests {
             ),
             "1mo2d3ns"
         );
-        let t = Duration::from_nanos(123)
-            + Duration::from_secs(4)
-            + Duration::from_secs(5 * 60)
-            + Duration::from_secs(6 * 60 * 60);
+        let t = chrono::NaiveTime::from_hms_nano_opt(6, 5, 4, 123)
+            .unwrap()
+            .signed_duration_since(chrono::NaiveTime::MIN);
+        let t = t.num_nanoseconds().unwrap();
         assert_eq!(
-            format!(
-                "{}",
-                CqlValueDisplayer(CqlValue::Time(chrono::Duration::from_std(t).unwrap()))
-            ),
+            format!("{}", CqlValueDisplayer(CqlValue::Time(t))),
             "'06:05:04.000000123'"
         );
 
@@ -281,6 +277,7 @@ mod tests {
                 "{}",
                 CqlValueDisplayer(CqlValue::Timestamp(
                     t.signed_duration_since(NaiveDateTime::default())
+                        .num_milliseconds()
                 ))
             ),
             "'2005-04-02 19:37:42.000+0000'"
