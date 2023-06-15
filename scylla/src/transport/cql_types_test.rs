@@ -29,7 +29,7 @@ async fn init_test(table_name: &str, type_name: &str) -> Session {
         .query(
             format!(
                 "CREATE KEYSPACE IF NOT EXISTS {} WITH REPLICATION = \
-            {{'class' : 'SimpleStrategy', 'replication_factor' : 1}}",
+            {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}}",
                 ks
             ),
             &[],
@@ -781,7 +781,7 @@ async fn test_udt_after_schema_update() {
         .query(
             format!(
                 "CREATE KEYSPACE IF NOT EXISTS {} WITH REPLICATION = \
-            {{'class' : 'SimpleStrategy', 'replication_factor' : 1}}",
+            {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}}",
                 ks
             ),
             &[],

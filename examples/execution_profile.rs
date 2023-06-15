@@ -59,7 +59,7 @@ async fn main() -> Result<()> {
     session_3_config.add_known_node(uri);
     let session3: Session = Session::connect(session_3_config).await?;
 
-    session1.query("CREATE KEYSPACE IF NOT EXISTS ks WITH REPLICATION = {'class' : 'SimpleStrategy', 'replication_factor' : 1}", &[]).await?;
+    session1.query("CREATE KEYSPACE IF NOT EXISTS ks WITH REPLICATION = {'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}", &[]).await?;
 
     session2
         .query(

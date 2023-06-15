@@ -160,7 +160,7 @@ async fn test_execution_profiles() {
         let ks = unique_keyspace_name();
 
         /* Prepare schema */
-        session.query(format!("CREATE KEYSPACE IF NOT EXISTS {} WITH REPLICATION = {{'class' : 'SimpleStrategy', 'replication_factor' : 3}}", ks), &[]).await.unwrap();
+        session.query(format!("CREATE KEYSPACE IF NOT EXISTS {} WITH REPLICATION = {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 3}}", ks), &[]).await.unwrap();
         session
             .query(
                 format!(

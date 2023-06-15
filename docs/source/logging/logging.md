@@ -28,7 +28,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
     session
         .query(
             "CREATE KEYSPACE IF NOT EXISTS ks WITH REPLICATION = \
-            {'class' : 'SimpleStrategy', 'replication_factor' : 1}",
+            {'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}",
             &[],
         )
         .await?;
