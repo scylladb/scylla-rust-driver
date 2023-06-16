@@ -21,7 +21,7 @@ async fn main() -> Result<()> {
     println!("Schema version: {}", schema_version);
 
     session.await_schema_agreement().await?; // without timeout example
-    session.query("CREATE KEYSPACE IF NOT EXISTS ks WITH REPLICATION = {'class' : 'SimpleStrategy', 'replication_factor' : 1}", &[]).await?;
+    session.query("CREATE KEYSPACE IF NOT EXISTS ks WITH REPLICATION = {'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}", &[]).await?;
 
     if session
         .await_timed_schema_agreement(Duration::from_secs(5))

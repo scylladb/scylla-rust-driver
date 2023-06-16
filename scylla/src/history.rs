@@ -1014,7 +1014,7 @@ mod tests {
         let session = create_new_session_builder().build().await.unwrap();
         let ks = unique_keyspace_name();
         session
-        .query(format!("CREATE KEYSPACE {} WITH REPLICATION = {{'class' : 'SimpleStrategy', 'replication_factor' : 1}}", ks), &[])
+        .query(format!("CREATE KEYSPACE {} WITH REPLICATION = {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}}", ks), &[])
         .await
         .unwrap();
         session.use_keyspace(ks, true).await.unwrap();

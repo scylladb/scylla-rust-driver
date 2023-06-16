@@ -1826,7 +1826,7 @@ mod tests {
                 .build()
                 .await
                 .unwrap();
-            session.query(format!("CREATE KEYSPACE IF NOT EXISTS {} WITH REPLICATION = {{'class' : 'SimpleStrategy', 'replication_factor' : 1}}", ks.clone()), &[]).await.unwrap();
+            session.query(format!("CREATE KEYSPACE IF NOT EXISTS {} WITH REPLICATION = {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}}", ks.clone()), &[]).await.unwrap();
             session.use_keyspace(ks.clone(), false).await.unwrap();
             session
                 .query("DROP TABLE IF EXISTS connection_query_iter_tab", &[])
@@ -1911,7 +1911,7 @@ mod tests {
                 .build()
                 .await
                 .unwrap();
-            session.query(format!("CREATE KEYSPACE IF NOT EXISTS {} WITH REPLICATION = {{'class' : 'SimpleStrategy', 'replication_factor' : 1}}", ks.clone()), &[]).await.unwrap();
+            session.query(format!("CREATE KEYSPACE IF NOT EXISTS {} WITH REPLICATION = {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}}", ks.clone()), &[]).await.unwrap();
             session.use_keyspace(ks.clone(), false).await.unwrap();
             session
                 .query(

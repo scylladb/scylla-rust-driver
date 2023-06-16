@@ -19,7 +19,7 @@ async fn authenticate_superuser() {
         .unwrap();
     let ks = unique_keyspace_name();
 
-    session.query(format!("CREATE KEYSPACE IF NOT EXISTS {} WITH REPLICATION = {{'class' : 'SimpleStrategy', 'replication_factor' : 1}}", ks), &[]).await.unwrap();
+    session.query(format!("CREATE KEYSPACE IF NOT EXISTS {} WITH REPLICATION = {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}}", ks), &[]).await.unwrap();
     session.use_keyspace(ks, false).await.unwrap();
     session.query("DROP TABLE IF EXISTS t;", &[]).await.unwrap();
 
@@ -74,7 +74,7 @@ async fn custom_authentication() {
         .unwrap();
     let ks = unique_keyspace_name();
 
-    session.query(format!("CREATE KEYSPACE IF NOT EXISTS {} WITH REPLICATION = {{'class' : 'SimpleStrategy', 'replication_factor' : 1}}", ks), &[]).await.unwrap();
+    session.query(format!("CREATE KEYSPACE IF NOT EXISTS {} WITH REPLICATION = {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}}", ks), &[]).await.unwrap();
     session.use_keyspace(ks, false).await.unwrap();
     session.query("DROP TABLE IF EXISTS t;", &[]).await.unwrap();
 

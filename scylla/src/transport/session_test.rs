@@ -8,9 +8,10 @@ use crate::retry_policy::{QueryInfo, RetryDecision, RetryPolicy, RetrySession};
 use crate::routing::Token;
 use crate::statement::Consistency;
 use crate::tracing::{GetTracingConfig, TracingInfo};
+use crate::transport::cluster::Datacenter;
 use crate::transport::errors::{BadKeyspaceName, BadQuery, DbError, QueryError};
 use crate::transport::partitioner::{Murmur3Partitioner, Partitioner, PartitionerName};
-use crate::transport::topology::Strategy::SimpleStrategy;
+use crate::transport::topology::Strategy::NetworkTopologyStrategy;
 use crate::transport::topology::{
     CollectionType, ColumnKind, CqlType, NativeType, UserDefinedType,
 };
@@ -64,7 +65,7 @@ async fn test_unprepared_statement() {
     let session = create_new_session_builder().build().await.unwrap();
     let ks = unique_keyspace_name();
 
-    session.query(format!("CREATE KEYSPACE IF NOT EXISTS {} WITH REPLICATION = {{'class' : 'SimpleStrategy', 'replication_factor' : 1}}", ks), &[]).await.unwrap();
+    session.query(format!("CREATE KEYSPACE IF NOT EXISTS {} WITH REPLICATION = {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}}", ks), &[]).await.unwrap();
     session
         .query(
             format!(
@@ -162,7 +163,7 @@ async fn test_prepared_statement() {
     let session = create_new_session_builder().build().await.unwrap();
     let ks = unique_keyspace_name();
 
-    session.query(format!("CREATE KEYSPACE IF NOT EXISTS {} WITH REPLICATION = {{'class' : 'SimpleStrategy', 'replication_factor' : 1}}", ks), &[]).await.unwrap();
+    session.query(format!("CREATE KEYSPACE IF NOT EXISTS {} WITH REPLICATION = {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}}", ks), &[]).await.unwrap();
     session
         .query(
             format!(
@@ -368,7 +369,7 @@ async fn test_batch() {
     let session = Arc::new(create_new_session_builder().build().await.unwrap());
     let ks = unique_keyspace_name();
 
-    session.query(format!("CREATE KEYSPACE IF NOT EXISTS {} WITH REPLICATION = {{'class' : 'SimpleStrategy', 'replication_factor' : 1}}", ks), &[]).await.unwrap();
+    session.query(format!("CREATE KEYSPACE IF NOT EXISTS {} WITH REPLICATION = {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}}", ks), &[]).await.unwrap();
     session
         .query(
             format!(
@@ -483,7 +484,7 @@ async fn test_token_calculation() {
     let session = create_new_session_builder().build().await.unwrap();
     let ks = unique_keyspace_name();
 
-    session.query(format!("CREATE KEYSPACE IF NOT EXISTS {} WITH REPLICATION = {{'class' : 'SimpleStrategy', 'replication_factor' : 1}}", ks), &[]).await.unwrap();
+    session.query(format!("CREATE KEYSPACE IF NOT EXISTS {} WITH REPLICATION = {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}}", ks), &[]).await.unwrap();
     session
         .query(
             format!("CREATE TABLE IF NOT EXISTS {}.t3 (a text primary key)", ks),
@@ -547,7 +548,7 @@ async fn test_token_awareness() {
     let session = create_new_session_builder().build().await.unwrap();
     let ks = unique_keyspace_name();
 
-    session.query(format!("CREATE KEYSPACE IF NOT EXISTS {} WITH REPLICATION = {{'class' : 'SimpleStrategy', 'replication_factor' : 1}}", ks), &[]).await.unwrap();
+    session.query(format!("CREATE KEYSPACE IF NOT EXISTS {} WITH REPLICATION = {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}}", ks), &[]).await.unwrap();
     session
         .query(
             format!("CREATE TABLE IF NOT EXISTS {}.t (a text primary key)", ks),
@@ -606,7 +607,7 @@ async fn test_use_keyspace() {
     let session = create_new_session_builder().build().await.unwrap();
     let ks = unique_keyspace_name();
 
-    session.query(format!("CREATE KEYSPACE IF NOT EXISTS {} WITH REPLICATION = {{'class' : 'SimpleStrategy', 'replication_factor' : 1}}", ks), &[]).await.unwrap();
+    session.query(format!("CREATE KEYSPACE IF NOT EXISTS {} WITH REPLICATION = {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}}", ks), &[]).await.unwrap();
 
     session
         .query(
@@ -699,8 +700,8 @@ async fn test_use_keyspace_case_sensitivity() {
     let ks_lower = unique_keyspace_name().to_lowercase();
     let ks_upper = ks_lower.to_uppercase();
 
-    session.query(format!("CREATE KEYSPACE IF NOT EXISTS \"{}\" WITH REPLICATION = {{'class' : 'SimpleStrategy', 'replication_factor' : 1}}", ks_lower), &[]).await.unwrap();
-    session.query(format!("CREATE KEYSPACE IF NOT EXISTS \"{}\" WITH REPLICATION = {{'class' : 'SimpleStrategy', 'replication_factor' : 1}}", ks_upper), &[]).await.unwrap();
+    session.query(format!("CREATE KEYSPACE IF NOT EXISTS \"{}\" WITH REPLICATION = {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}}", ks_lower), &[]).await.unwrap();
+    session.query(format!("CREATE KEYSPACE IF NOT EXISTS \"{}\" WITH REPLICATION = {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}}", ks_upper), &[]).await.unwrap();
 
     session
         .query(
@@ -772,7 +773,7 @@ async fn test_raw_use_keyspace() {
     let session = create_new_session_builder().build().await.unwrap();
     let ks = unique_keyspace_name();
 
-    session.query(format!("CREATE KEYSPACE IF NOT EXISTS {} WITH REPLICATION = {{'class' : 'SimpleStrategy', 'replication_factor' : 1}}", ks), &[]).await.unwrap();
+    session.query(format!("CREATE KEYSPACE IF NOT EXISTS {} WITH REPLICATION = {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}}", ks), &[]).await.unwrap();
 
     session
         .query(
@@ -844,9 +845,9 @@ async fn test_db_errors() {
     ));
 
     // AlreadyExists when creating a keyspace for the second time
-    session.query(format!("CREATE KEYSPACE IF NOT EXISTS {} WITH REPLICATION = {{'class' : 'SimpleStrategy', 'replication_factor' : 1}}", ks), &[]).await.unwrap();
+    session.query(format!("CREATE KEYSPACE IF NOT EXISTS {} WITH REPLICATION = {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}}", ks), &[]).await.unwrap();
 
-    let create_keyspace_res = session.query(format!("CREATE KEYSPACE {} WITH REPLICATION = {{'class' : 'SimpleStrategy', 'replication_factor' : 1}}", ks), &[]).await;
+    let create_keyspace_res = session.query(format!("CREATE KEYSPACE {} WITH REPLICATION = {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}}", ks), &[]).await;
     let keyspace_exists_error: DbError = match create_keyspace_res {
         Err(QueryError::DbError(e, _)) => e,
         _ => panic!("Second CREATE KEYSPACE didn't return an error!"),
@@ -891,7 +892,7 @@ async fn test_tracing() {
     let session = create_new_session_builder().build().await.unwrap();
     let ks = unique_keyspace_name();
 
-    session.query(format!("CREATE KEYSPACE IF NOT EXISTS {} WITH REPLICATION = {{'class' : 'SimpleStrategy', 'replication_factor' : 1}}", ks), &[]).await.unwrap();
+    session.query(format!("CREATE KEYSPACE IF NOT EXISTS {} WITH REPLICATION = {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}}", ks), &[]).await.unwrap();
 
     session
         .query(
@@ -1155,7 +1156,7 @@ async fn test_timestamp() {
     let session = create_new_session_builder().build().await.unwrap();
     let ks = unique_keyspace_name();
 
-    session.query(format!("CREATE KEYSPACE IF NOT EXISTS {} WITH REPLICATION = {{'class' : 'SimpleStrategy', 'replication_factor' : 1}}", ks), &[]).await.unwrap();
+    session.query(format!("CREATE KEYSPACE IF NOT EXISTS {} WITH REPLICATION = {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}}", ks), &[]).await.unwrap();
     session
         .query(
             format!(
@@ -1419,7 +1420,7 @@ async fn test_schema_types_in_metadata() {
     let ks = unique_keyspace_name();
 
     session
-        .query(format!("CREATE KEYSPACE {} WITH REPLICATION = {{'class' : 'SimpleStrategy', 'replication_factor' : 1}}", ks), &[])
+        .query(format!("CREATE KEYSPACE {} WITH REPLICATION = {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}}", ks), &[])
         .await
         .unwrap();
 
@@ -1574,7 +1575,7 @@ async fn test_user_defined_types_in_metadata() {
     let ks = unique_keyspace_name();
 
     session
-        .query(format!("CREATE KEYSPACE {} WITH REPLICATION = {{'class' : 'SimpleStrategy', 'replication_factor' : 1}}", ks), &[])
+        .query(format!("CREATE KEYSPACE {} WITH REPLICATION = {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}}", ks), &[])
         .await
         .unwrap();
 
@@ -1634,7 +1635,7 @@ async fn test_column_kinds_in_metadata() {
     let ks = unique_keyspace_name();
 
     session
-        .query(format!("CREATE KEYSPACE {} WITH REPLICATION = {{'class' : 'SimpleStrategy', 'replication_factor' : 1}}", ks), &[])
+        .query(format!("CREATE KEYSPACE {} WITH REPLICATION = {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}}", ks), &[])
         .await
         .unwrap();
 
@@ -1676,7 +1677,7 @@ async fn test_primary_key_ordering_in_metadata() {
     let ks = unique_keyspace_name();
 
     session
-        .query(format!("CREATE KEYSPACE {} WITH REPLICATION = {{'class' : 'SimpleStrategy', 'replication_factor' : 1}}", ks), &[])
+        .query(format!("CREATE KEYSPACE {} WITH REPLICATION = {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}}", ks), &[])
         .await
         .unwrap();
 
@@ -1721,7 +1722,7 @@ async fn test_table_partitioner_in_metadata() {
     let ks = unique_keyspace_name();
 
     session
-        .query(format!("CREATE KEYSPACE {} WITH REPLICATION = {{'class' : 'SimpleStrategy', 'replication_factor' : 1}}", ks), &[])
+        .query(format!("CREATE KEYSPACE {} WITH REPLICATION = {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}}", ks), &[])
         .await
         .unwrap();
 
@@ -1760,7 +1761,7 @@ async fn test_turning_off_schema_fetching() {
     let ks = unique_keyspace_name();
 
     session
-        .query(format!("CREATE KEYSPACE IF NOT EXISTS {} WITH REPLICATION = {{'class' : 'SimpleStrategy', 'replication_factor' : 1}}", ks), &[])
+        .query(format!("CREATE KEYSPACE IF NOT EXISTS {} WITH REPLICATION = {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}}", ks), &[])
         .await
         .unwrap();
 
@@ -1808,10 +1809,16 @@ async fn test_turning_off_schema_fetching() {
     let cluster_data = &session.get_cluster_data();
     let keyspace = &cluster_data.get_keyspace_info()[&ks];
 
+    let datacenters: HashMap<String, Datacenter> = cluster_data.get_datacenters_info();
+    let datacenter_repfactors: HashMap<String, usize> = datacenters
+        .into_keys()
+        .map(|dc_name| (dc_name, 1))
+        .collect();
+
     assert_eq!(
         keyspace.strategy,
-        SimpleStrategy {
-            replication_factor: 1
+        NetworkTopologyStrategy {
+            datacenter_repfactors
         }
     );
     assert_eq!(keyspace.tables.len(), 0);
@@ -1824,7 +1831,7 @@ async fn test_named_bind_markers() {
     let ks = unique_keyspace_name();
 
     session
-        .query(format!("CREATE KEYSPACE {} WITH REPLICATION = {{'class' : 'SimpleStrategy', 'replication_factor' : 1}}", ks), &[])
+        .query(format!("CREATE KEYSPACE {} WITH REPLICATION = {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}}", ks), &[])
         .await
         .unwrap();
 
@@ -1878,7 +1885,7 @@ async fn test_prepared_partitioner() {
     let session = create_new_session_builder().build().await.unwrap();
     let ks = unique_keyspace_name();
 
-    session.query(format!("CREATE KEYSPACE IF NOT EXISTS {} WITH REPLICATION = {{'class' : 'SimpleStrategy', 'replication_factor' : 1}}", ks), &[]).await.unwrap();
+    session.query(format!("CREATE KEYSPACE IF NOT EXISTS {} WITH REPLICATION = {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}}", ks), &[]).await.unwrap();
     session.use_keyspace(ks, false).await.unwrap();
 
     session
@@ -1953,7 +1960,7 @@ async fn test_unprepared_reprepare_in_execute() {
     let session = create_new_session_builder().build().await.unwrap();
     let ks = unique_keyspace_name();
 
-    session.query(format!("CREATE KEYSPACE IF NOT EXISTS {} WITH REPLICATION = {{'class' : 'SimpleStrategy', 'replication_factor' : 1}}", ks), &[]).await.unwrap();
+    session.query(format!("CREATE KEYSPACE IF NOT EXISTS {} WITH REPLICATION = {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}}", ks), &[]).await.unwrap();
     session.use_keyspace(ks, false).await.unwrap();
 
     session
@@ -2002,7 +2009,7 @@ async fn test_unusual_valuelists() {
     let session = create_new_session_builder().build().await.unwrap();
     let ks = unique_keyspace_name();
 
-    session.query(format!("CREATE KEYSPACE IF NOT EXISTS {} WITH REPLICATION = {{'class' : 'SimpleStrategy', 'replication_factor' : 1}}", ks), &[]).await.unwrap();
+    session.query(format!("CREATE KEYSPACE IF NOT EXISTS {} WITH REPLICATION = {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}}", ks), &[]).await.unwrap();
     session.use_keyspace(ks, false).await.unwrap();
 
     session
@@ -2064,7 +2071,7 @@ async fn test_unprepared_reprepare_in_batch() {
     let session = create_new_session_builder().build().await.unwrap();
     let ks = unique_keyspace_name();
 
-    session.query(format!("CREATE KEYSPACE IF NOT EXISTS {} WITH REPLICATION = {{'class' : 'SimpleStrategy', 'replication_factor' : 1}}", ks), &[]).await.unwrap();
+    session.query(format!("CREATE KEYSPACE IF NOT EXISTS {} WITH REPLICATION = {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}}", ks), &[]).await.unwrap();
     session.use_keyspace(ks, false).await.unwrap();
 
     session
@@ -2129,7 +2136,7 @@ async fn test_unprepared_reprepare_in_caching_session_execute() {
     let session = create_new_session_builder().build().await.unwrap();
     let ks = unique_keyspace_name();
 
-    session.query(format!("CREATE KEYSPACE IF NOT EXISTS {} WITH REPLICATION = {{'class' : 'SimpleStrategy', 'replication_factor' : 1}}", ks), &[]).await.unwrap();
+    session.query(format!("CREATE KEYSPACE IF NOT EXISTS {} WITH REPLICATION = {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}}", ks), &[]).await.unwrap();
     session.use_keyspace(ks, false).await.unwrap();
 
     let caching_session: CachingSession = CachingSession::from(session, 64);
@@ -2189,7 +2196,7 @@ async fn test_views_in_schema_info() {
     let session = create_new_session_builder().build().await.unwrap();
     let ks = unique_keyspace_name();
 
-    session.query(format!("CREATE KEYSPACE IF NOT EXISTS {} WITH REPLICATION = {{'class' : 'SimpleStrategy', 'replication_factor' : 1}}", ks), &[]).await.unwrap();
+    session.query(format!("CREATE KEYSPACE IF NOT EXISTS {} WITH REPLICATION = {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}}", ks), &[]).await.unwrap();
     session.use_keyspace(ks.clone(), false).await.unwrap();
 
     session
@@ -2260,7 +2267,7 @@ async fn test_prepare_batch() {
     let session = create_new_session_builder().build().await.unwrap();
 
     let ks = unique_keyspace_name();
-    session.query(format!("CREATE KEYSPACE IF NOT EXISTS {} WITH REPLICATION = {{'class' : 'SimpleStrategy', 'replication_factor' : 1}}", ks), &[]).await.unwrap();
+    session.query(format!("CREATE KEYSPACE IF NOT EXISTS {} WITH REPLICATION = {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}}", ks), &[]).await.unwrap();
     session.use_keyspace(ks.clone(), false).await.unwrap();
 
     session
@@ -2357,7 +2364,7 @@ async fn test_refresh_metadata_after_schema_agreement() {
     let session = create_new_session_builder().build().await.unwrap();
 
     let ks = unique_keyspace_name();
-    session.query(format!("CREATE KEYSPACE IF NOT EXISTS {} WITH REPLICATION = {{'class' : 'SimpleStrategy', 'replication_factor' : 1}}", ks), &[]).await.unwrap();
+    session.query(format!("CREATE KEYSPACE IF NOT EXISTS {} WITH REPLICATION = {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}}", ks), &[]).await.unwrap();
     session.use_keyspace(ks.clone(), false).await.unwrap();
 
     session
@@ -2403,7 +2410,7 @@ async fn test_rate_limit_exceeded_exception() {
     }
 
     let ks = unique_keyspace_name();
-    session.query(format!("CREATE KEYSPACE IF NOT EXISTS {} WITH REPLICATION = {{'class' : 'SimpleStrategy', 'replication_factor' : 1}}", ks), &[]).await.unwrap();
+    session.query(format!("CREATE KEYSPACE IF NOT EXISTS {} WITH REPLICATION = {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}}", ks), &[]).await.unwrap();
     session.use_keyspace(ks.clone(), false).await.unwrap();
     session.query("CREATE TABLE tbl (pk int PRIMARY KEY, v int) WITH per_partition_rate_limit = {'max_writes_per_second': 1}", ()).await.unwrap();
 
@@ -2443,7 +2450,7 @@ async fn test_batch_lwts() {
     let session = create_new_session_builder().build().await.unwrap();
 
     let ks = unique_keyspace_name();
-    session.query(format!("CREATE KEYSPACE IF NOT EXISTS {} WITH REPLICATION = {{'class' : 'SimpleStrategy', 'replication_factor' : 1}}", ks), &[]).await.unwrap();
+    session.query(format!("CREATE KEYSPACE IF NOT EXISTS {} WITH REPLICATION = {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}}", ks), &[]).await.unwrap();
     session.use_keyspace(ks.clone(), false).await.unwrap();
 
     session
@@ -2558,7 +2565,7 @@ async fn test_keyspaces_to_fetch() {
     let session_default = create_new_session_builder().build().await.unwrap();
     for ks in [&ks1, &ks2] {
         session_default
-            .query(format!("CREATE KEYSPACE {} WITH REPLICATION = {{'class' : 'SimpleStrategy', 'replication_factor' : 1}}", ks), &[])
+            .query(format!("CREATE KEYSPACE {} WITH REPLICATION = {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}}", ks), &[])
             .await
             .unwrap();
     }
@@ -2633,7 +2640,7 @@ async fn test_iter_works_when_retry_policy_returns_ignore_write_error() {
     // Create a keyspace with replication factor that is larger than the cluster size
     let cluster_size = session.get_cluster_data().get_nodes_info().len();
     let ks = unique_keyspace_name();
-    session.query(format!("CREATE KEYSPACE {} WITH REPLICATION = {{'class': 'SimpleStrategy', 'replication_factor': {}}}", ks, cluster_size + 1), ()).await.unwrap();
+    session.query(format!("CREATE KEYSPACE {} WITH REPLICATION = {{'class': 'NetworkTopologyStrategy', 'replication_factor': {}}}", ks, cluster_size + 1), ()).await.unwrap();
     session.use_keyspace(ks, true).await.unwrap();
     session
         .query("CREATE TABLE t (pk int PRIMARY KEY, v int)", ())
@@ -2668,7 +2675,7 @@ async fn test_iter_methods_with_modification_statements() {
     let session = create_new_session_builder().build().await.unwrap();
     let ks = unique_keyspace_name();
 
-    session.query(format!("CREATE KEYSPACE IF NOT EXISTS {} WITH REPLICATION = {{'class' : 'SimpleStrategy', 'replication_factor' : 1}}", ks), &[]).await.unwrap();
+    session.query(format!("CREATE KEYSPACE IF NOT EXISTS {} WITH REPLICATION = {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}}", ks), &[]).await.unwrap();
     session
         .query(
             format!(
@@ -2708,7 +2715,7 @@ async fn test_get_keyspace_name() {
     // No keyspace is set in config, so get_keyspace() should return None.
     let session = create_new_session_builder().build().await.unwrap();
     assert_eq!(session.get_keyspace(), None);
-    session.query(format!("CREATE KEYSPACE IF NOT EXISTS {} WITH REPLICATION = {{'class' : 'SimpleStrategy', 'replication_factor' : 1}}", ks), &[]).await.unwrap();
+    session.query(format!("CREATE KEYSPACE IF NOT EXISTS {} WITH REPLICATION = {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}}", ks), &[]).await.unwrap();
     assert_eq!(session.get_keyspace(), None);
 
     // Call use_keyspace(), get_keyspace now should return the new keyspace name
@@ -2723,4 +2730,71 @@ async fn test_get_keyspace_name() {
         .await
         .unwrap();
     assert_eq!(*session.get_keyspace().unwrap(), ks);
+}
+
+/// It's recommended to use NetworkTopologyStrategy everywhere, so most tests use only NetworkTopologyStrategy.
+/// We still support SimpleStrategy, so to make sure that SimpleStrategy works correctly this test runs
+/// a few queries in a SimpleStrategy keyspace.
+#[tokio::test]
+async fn simple_strategy_test() {
+    let ks = unique_keyspace_name();
+    let session = create_new_session_builder().build().await.unwrap();
+
+    session
+        .query(
+            format!(
+                "CREATE KEYSPACE {} WITH REPLICATION = \
+                {{'class': 'SimpleStrategy', 'replication_factor': 1}}",
+                ks
+            ),
+            (),
+        )
+        .await
+        .unwrap();
+
+    session
+        .query(
+            format!(
+                "CREATE TABLE {}.tab (p int, c int, r int, PRIMARY KEY (p, c, r))",
+                ks
+            ),
+            (),
+        )
+        .await
+        .unwrap();
+
+    session
+        .query(
+            format!("INSERT INTO {}.tab (p, c, r) VALUES (1, 2, 3)", ks),
+            (),
+        )
+        .await
+        .unwrap();
+
+    session
+        .query(
+            format!("INSERT INTO {}.tab (p, c, r) VALUES (?, ?, ?)", ks),
+            (4, 5, 6),
+        )
+        .await
+        .unwrap();
+
+    let prepared = session
+        .prepare(format!("INSERT INTO {}.tab (p, c, r) VALUES (?, ?, ?)", ks))
+        .await
+        .unwrap();
+
+    session.execute(&prepared, (7, 8, 9)).await.unwrap();
+
+    let mut rows: Vec<(i32, i32, i32)> = session
+        .query(format!("SELECT p, c, r FROM {}.tab", ks), ())
+        .await
+        .unwrap()
+        .rows_typed::<(i32, i32, i32)>()
+        .unwrap()
+        .map(|r| r.unwrap())
+        .collect::<Vec<(i32, i32, i32)>>();
+    rows.sort();
+
+    assert_eq!(rows, vec![(1, 2, 3), (4, 5, 6), (7, 8, 9)]);
 }
