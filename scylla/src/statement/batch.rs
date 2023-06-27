@@ -1,3 +1,4 @@
+use std::borrow::Cow;
 use std::sync::Arc;
 
 use crate::history::HistoryListener;
@@ -189,12 +190,12 @@ impl<'a: 'b, 'b> From<&'a BatchStatement>
         match val {
             BatchStatement::Query(query) => {
                 scylla_cql::frame::request::batch::BatchStatement::Query {
-                    text: &query.contents,
+                    text: Cow::Borrowed(&query.contents),
                 }
             }
             BatchStatement::PreparedStatement(prepared) => {
                 scylla_cql::frame::request::batch::BatchStatement::Prepared {
-                    id: prepared.get_id(),
+                    id: Cow::Borrowed(prepared.get_id()),
                 }
             }
         }

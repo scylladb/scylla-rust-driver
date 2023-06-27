@@ -1,5 +1,6 @@
+use bytes::BufMut;
+
 use crate::frame::{frame_errors::ParseError, value::BatchValuesIterator};
-use bytes::{BufMut, Bytes};
 use std::{borrow::Cow, convert::TryInto};
 
 use crate::frame::{
@@ -57,13 +58,13 @@ impl TryFrom<u8> for BatchType {
     }
 }
 
-#[derive(Debug, Clone, Copy, Eq, PartialEq, PartialOrd, Ord)]
+#[derive(Debug, Clone, Eq, PartialEq, PartialOrd, Ord)]
 pub enum BatchStatement<'a> {
-    Query { text: &'a str },
-    Prepared { id: &'a Bytes },
+    Query { text: Cow<'a, str> },
+    Prepared { id: Cow<'a, [u8]> },
 }
 
-impl<'a, Statement, Values> Request for Batch<'a, Statement, Values>
+impl<Statement, Values> Request for Batch<'_, Statement, Values>
 where
     for<'s> BatchStatement<'s>: From<&'s Statement>,
     Statement: Clone,
@@ -138,13 +139,13 @@ where
 impl BatchStatement<'_> {
     fn serialize(&self, buf: &mut impl BufMut) -> Result<(), ParseError> {
         match self {
-            BatchStatement::Query { text } => {
+            Self::Query { text } => {
                 buf.put_u8(0);
                 types::write_long_string(text, buf)?;
             }
-            BatchStatement::Prepared { id } => {
+            Self::Prepared { id } => {
                 buf.put_u8(1);
-                types::write_short_bytes(&id[..], buf)?;
+                types::write_short_bytes(id, buf)?;
             }
         }
 

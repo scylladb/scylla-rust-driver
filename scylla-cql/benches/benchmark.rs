@@ -1,3 +1,5 @@
+use std::borrow::Cow;
+
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
 
 use scylla_cql::frame::request::Request;
@@ -7,11 +9,11 @@ use scylla_cql::frame::{request::query, Compression, SerializedRequest};
 
 fn make_query<'a>(contents: &'a str, values: &'a SerializedValues) -> query::Query<'a> {
     query::Query {
-        contents,
+        contents: Cow::Borrowed(contents),
         parameters: query::QueryParameters {
             consistency: scylla_cql::Consistency::LocalQuorum,
             serial_consistency: None,
-            values,
+            values: Cow::Borrowed(values),
             page_size: None,
             paging_state: None,
             timestamp: None,
@@ -25,7 +27,7 @@ fn serialized_request_make_bench(c: &mut Criterion) {
         ("INSERT foo INTO ks.table_name (?)", &(1234,).serialized().unwrap()),
         ("INSERT foo, bar, baz INTO ks.table_name (?, ?, ?)", &(1234, "a value", "i am storing a string").serialized().unwrap()),
         (
-            "INSERT foo, bar, baz, boop, blah INTO longer_keyspace.a_big_table_name (?, ?, ?, ?, 1000)", 
+            "INSERT foo, bar, baz, boop, blah INTO longer_keyspace.a_big_table_name (?, ?, ?, ?, 1000)",
             &(1234, "a value", "i am storing a string", "dc0c8cd7-d954-47c1-8722-a857941c43fb").serialized().unwrap()
         ),
     ];

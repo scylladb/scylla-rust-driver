@@ -656,11 +656,11 @@ impl Connection {
         let serialized_values = values.serialized()?;
 
         let query_frame = query::Query {
-            contents: &query.contents,
+            contents: Cow::Borrowed(&query.contents),
             parameters: query::QueryParameters {
                 consistency,
                 serial_consistency,
-                values: &serialized_values,
+                values: serialized_values,
                 page_size: query.get_page_size(),
                 paging_state,
                 timestamp: query.get_timestamp(),
@@ -686,7 +686,7 @@ impl Connection {
             parameters: query::QueryParameters {
                 consistency,
                 serial_consistency,
-                values: &serialized_values,
+                values: serialized_values,
                 page_size: prepared_statement.get_page_size(),
                 timestamp: prepared_statement.get_timestamp(),
                 paging_state,

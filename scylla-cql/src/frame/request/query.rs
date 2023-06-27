@@ -1,3 +1,5 @@
+use std::borrow::Cow;
+
 use crate::frame::frame_errors::ParseError;
 use bytes::{BufMut, Bytes};
 
@@ -17,16 +19,16 @@ const FLAG_WITH_SERIAL_CONSISTENCY: u8 = 0x10;
 const FLAG_WITH_DEFAULT_TIMESTAMP: u8 = 0x20;
 const FLAG_WITH_NAMES_FOR_VALUES: u8 = 0x40;
 
-pub struct Query<'a> {
-    pub contents: &'a str,
-    pub parameters: QueryParameters<'a>,
+pub struct Query<'q> {
+    pub contents: Cow<'q, str>,
+    pub parameters: QueryParameters<'q>,
 }
 
 impl Request for Query<'_> {
     const OPCODE: RequestOpcode = RequestOpcode::Query;
 
     fn serialize(&self, buf: &mut impl BufMut) -> Result<(), ParseError> {
-        types::write_long_string(self.contents, buf)?;
+        types::write_long_string(&self.contents, buf)?;
         self.parameters.serialize(buf)?;
         Ok(())
     }
@@ -38,7 +40,7 @@ pub struct QueryParameters<'a> {
     pub timestamp: Option<i64>,
     pub page_size: Option<i32>,
     pub paging_state: Option<Bytes>,
-    pub values: &'a SerializedValues,
+    pub values: Cow<'a, SerializedValues>,
 }
 
 impl Default for QueryParameters<'_> {
@@ -49,7 +51,7 @@ impl Default for QueryParameters<'_> {
             timestamp: None,
             page_size: None,
             paging_state: None,
-            values: SerializedValues::EMPTY,
+            values: Cow::Borrowed(SerializedValues::EMPTY),
         }
     }
 }
