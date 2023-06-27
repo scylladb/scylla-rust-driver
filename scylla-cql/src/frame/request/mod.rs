@@ -7,16 +7,22 @@ pub mod query;
 pub mod register;
 pub mod startup;
 
-use crate::frame::frame_errors::ParseError;
+use crate::{frame::frame_errors::ParseError, Consistency};
 use bytes::{BufMut, Bytes};
 use num_enum::TryFromPrimitive;
 
 pub use auth_response::AuthResponse;
 pub use batch::Batch;
+pub use execute::Execute;
 pub use options::Options;
 pub use prepare::Prepare;
 pub use query::Query;
 pub use startup::Startup;
+
+use self::batch::BatchStatement;
+
+use super::types::SerialConsistency;
+use super::value::SerializedValues;
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord, TryFromPrimitive)]
 #[repr(u8)]
@@ -47,6 +53,49 @@ pub trait SerializableRequest {
 /// but very useful for testing (e.g. asserting that the sent requests have proper parameters set).
 pub trait DeserializableRequest: SerializableRequest + Sized {
     fn deserialize(buf: &mut &[u8]) -> Result<Self, ParseError>;
+}
+
+#[non_exhaustive] // TODO: add remaining request types
+pub enum Request<'r> {
+    Query(Query<'r>),
+    Execute(Execute<'r>),
+    Batch(Batch<'r, BatchStatement<'r>, Vec<SerializedValues>>),
+}
+
+impl<'r> Request<'r> {
+    pub fn deserialize(buf: &mut &[u8], opcode: RequestOpcode) -> Result<Self, ParseError> {
+        match opcode {
+            RequestOpcode::Query => Query::deserialize(buf).map(Self::Query),
+            RequestOpcode::Execute => Execute::deserialize(buf).map(Self::Execute),
+            RequestOpcode::Batch => Batch::deserialize(buf).map(Self::Batch),
+            _ => unimplemented!(
+                "Deserialization of opcode {:?} is not yet supported",
+                opcode
+            ),
+        }
+    }
+
+    /// Retrieves consistency from request frame, if present.
+    pub fn get_consistency(&self) -> Option<Consistency> {
+        match self {
+            Request::Query(q) => Some(q.parameters.consistency),
+            Request::Execute(e) => Some(e.parameters.consistency),
+            Request::Batch(b) => Some(b.consistency),
+            #[allow(unreachable_patterns)] // until other opcodes are supported
+            _ => None,
+        }
+    }
+
+    /// Retrieves serial consistency from request frame.
+    pub fn get_serial_consistency(&self) -> Option<Option<SerialConsistency>> {
+        match self {
+            Request::Query(q) => Some(q.parameters.serial_consistency),
+            Request::Execute(e) => Some(e.parameters.serial_consistency),
+            Request::Batch(b) => Some(b.serial_consistency),
+            #[allow(unreachable_patterns)] // until other opcodes are supported
+            _ => None,
+        }
+    }
 }
 
 #[cfg(test)]
