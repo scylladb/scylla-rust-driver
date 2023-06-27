@@ -1,17 +1,19 @@
-use bytes::BufMut;
-
 use crate::frame::{frame_errors::ParseError, value::BatchValuesIterator};
+use bytes::{Buf, BufMut};
 use std::{borrow::Cow, convert::TryInto};
 
 use crate::frame::{
     request::{Request, RequestOpcode},
     types,
-    value::BatchValues,
+    value::{BatchValues, SerializedValues},
 };
+
+use super::DeserializableRequest;
 
 // Batch flags
 const FLAG_WITH_SERIAL_CONSISTENCY: u8 = 0x10;
 const FLAG_WITH_DEFAULT_TIMESTAMP: u8 = 0x20;
+const ALL_FLAGS: u8 = FLAG_WITH_SERIAL_CONSISTENCY | FLAG_WITH_DEFAULT_TIMESTAMP;
 
 #[cfg_attr(test, derive(Debug, PartialEq, Eq))]
 pub struct Batch<'b, Statement, Values>
@@ -139,6 +141,26 @@ where
 }
 
 impl BatchStatement<'_> {
+    fn deserialize(buf: &mut &[u8]) -> Result<Self, ParseError> {
+        let kind = buf.get_u8();
+        match kind {
+            0 => {
+                let text = Cow::Owned(types::read_long_string(buf)?.to_owned());
+                Ok(BatchStatement::Query { text })
+            }
+            1 => {
+                let id = types::read_short_bytes(buf)?.to_vec().into();
+                Ok(BatchStatement::Prepared { id })
+            }
+            _ => Err(ParseError::BadIncomingData(format!(
+                "Unexpected batch statement kind: {}",
+                kind
+            ))),
+        }
+    }
+}
+
+impl BatchStatement<'_> {
     fn serialize(&self, buf: &mut impl BufMut) -> Result<(), ParseError> {
         match self {
             Self::Query { text } => {
@@ -152,5 +174,81 @@ impl BatchStatement<'_> {
         }
 
         Ok(())
+    }
+}
+
+impl<'s, 'b> From<&'s BatchStatement<'b>> for BatchStatement<'s> {
+    fn from(value: &'s BatchStatement) -> Self {
+        match value {
+            BatchStatement::Query { text } => BatchStatement::Query { text: text.clone() },
+            BatchStatement::Prepared { id } => BatchStatement::Prepared { id: id.clone() },
+        }
+    }
+}
+
+impl<'b> DeserializableRequest for Batch<'b, BatchStatement<'b>, Vec<SerializedValues>> {
+    fn deserialize(buf: &mut &[u8]) -> Result<Self, ParseError> {
+        let batch_type = buf.get_u8().try_into()?;
+
+        let statements_count: usize = types::read_short(buf)?.try_into()?;
+        let statements_with_values = (0..statements_count)
+            .map(|_| {
+                let batch_statement = BatchStatement::deserialize(buf)?;
+
+                // As stated in CQL protocol v4 specification, values names in Batch are broken and should be never used.
+                let values = SerializedValues::new_from_frame(buf, false)?;
+
+                Ok((batch_statement, values))
+            })
+            .collect::<Result<Vec<_>, ParseError>>()?;
+
+        let consistency = match types::read_consistency(buf)? {
+            types::LegacyConsistency::Regular(reg) => Ok(reg),
+            types::LegacyConsistency::Serial(ser) => Err(ParseError::BadIncomingData(format!(
+                "Expected regular Consistency, got SerialConsistency {}",
+                ser
+            ))),
+        }?;
+
+        let flags = buf.get_u8();
+        let unknown_flags = flags & (!ALL_FLAGS);
+        if unknown_flags != 0 {
+            return Err(ParseError::BadIncomingData(format!(
+                "Specified flags are not recognised: {:02x}",
+                unknown_flags
+            )));
+        }
+        let serial_consistency_flag = (flags & FLAG_WITH_SERIAL_CONSISTENCY) != 0;
+        let default_timestamp_flag = (flags & FLAG_WITH_DEFAULT_TIMESTAMP) != 0;
+
+        let serial_consistency = serial_consistency_flag
+            .then(|| types::read_consistency(buf))
+            .transpose()?
+            .map(|legacy_consistency| match legacy_consistency {
+                types::LegacyConsistency::Regular(reg) => {
+                    Err(ParseError::BadIncomingData(format!(
+                        "Expected SerialConsistency, got regular Consistency {}",
+                        reg
+                    )))
+                }
+                types::LegacyConsistency::Serial(ser) => Ok(ser),
+            })
+            .transpose()?;
+
+        let timestamp = default_timestamp_flag
+            .then(|| types::read_long(buf))
+            .transpose()?;
+
+        let (statements, values): (Vec<BatchStatement>, Vec<SerializedValues>) =
+            statements_with_values.into_iter().unzip();
+
+        Ok(Self {
+            batch_type,
+            consistency,
+            serial_consistency,
+            timestamp,
+            statements: Cow::Owned(statements),
+            values,
+        })
     }
 }

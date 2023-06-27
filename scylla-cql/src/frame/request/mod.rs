@@ -42,3 +42,9 @@ pub trait Request {
         Ok(v.into())
     }
 }
+
+/// Not intended for driver's direct usage (as driver has no interest in deserialising CQL requests),
+/// but very useful for testing (e.g. asserting that the sent requests have proper parameters set).
+pub trait DeserializableRequest: Request + Sized {
+    fn deserialize(buf: &mut &[u8]) -> Result<Self, ParseError>;
+}
