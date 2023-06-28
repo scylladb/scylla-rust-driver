@@ -26,8 +26,11 @@ pub enum CloudConfigError {
     Ssl(#[from] openssl::error::ErrorStack),
 }
 
+/// Configuration for creating a session to a serverless cluster.
+/// This can be automatically created if you provide the bundle path
+/// to the [`CloudSessionBuilder`] constructor.
 #[derive(Debug)]
-pub(crate) struct CloudConfig {
+pub struct CloudConfig {
     datacenters: HashMap<String, Datacenter>,
     auth_infos: HashMap<String, AuthInfo>,
 
@@ -67,6 +70,8 @@ impl CloudConfig {
     }
 }
 
+/// Contains all authentication info for creating TLS connections using SNI proxy
+/// to connect to cloud nodes.
 #[derive(Debug)]
 pub(crate) struct AuthInfo {
     key: PKey<Private>,
@@ -97,6 +102,7 @@ impl AuthInfo {
     }
 }
 
+/// Contains cloud datacenter configuration for creating TLS connections to its nodes.  
 #[derive(Debug)]
 pub(crate) struct Datacenter {
     certificate_authority: X509,
@@ -137,6 +143,7 @@ impl Datacenter {
     }
 }
 
+/// Contains the names of the primary datacenter and authentication info.
 #[derive(Debug)]
 pub(crate) struct Context {
     datacenter_name: String,

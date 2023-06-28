@@ -215,9 +215,9 @@ pub struct SessionConfig {
     /// It is true by default but can be disabled if successive schema-altering statements should be performed.
     pub refresh_metadata_on_auto_schema_agreement: bool,
 
-    // If the driver is to connect to ScyllaCloud, there is a config for it.
+    /// If the driver is to connect to ScyllaCloud, there is a config for it.
     #[cfg(feature = "cloud")]
-    pub(crate) cloud_config: Option<Arc<CloudConfig>>,
+    pub cloud_config: Option<Arc<CloudConfig>>,
 
     /// If true, the driver will inject a small delay before flushing data
     /// to the socket - by rescheduling the task that writes data to the socket.
