@@ -19,6 +19,7 @@ const FLAG_WITH_SERIAL_CONSISTENCY: u8 = 0x10;
 const FLAG_WITH_DEFAULT_TIMESTAMP: u8 = 0x20;
 const FLAG_WITH_NAMES_FOR_VALUES: u8 = 0x40;
 
+#[cfg_attr(test, derive(Debug))]
 pub struct Query<'q> {
     pub contents: Cow<'q, str>,
     pub parameters: QueryParameters<'q>,
@@ -33,7 +34,7 @@ impl Request for Query<'_> {
         Ok(())
     }
 }
-
+#[cfg_attr(test, derive(Debug))]
 pub struct QueryParameters<'a> {
     pub consistency: types::Consistency,
     pub serial_consistency: Option<types::SerialConsistency>,

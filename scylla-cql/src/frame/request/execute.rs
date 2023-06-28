@@ -6,6 +6,7 @@ use crate::{
     frame::types,
 };
 
+#[cfg_attr(test, derive(Debug))]
 pub struct Execute<'a> {
     pub id: Bytes,
     pub parameters: query::QueryParameters<'a>,

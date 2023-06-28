@@ -13,6 +13,7 @@ use crate::frame::{
 const FLAG_WITH_SERIAL_CONSISTENCY: u8 = 0x10;
 const FLAG_WITH_DEFAULT_TIMESTAMP: u8 = 0x20;
 
+#[cfg_attr(test, derive(Debug))]
 pub struct Batch<'b, Statement, Values>
 where
     BatchStatement<'b>: From<&'b Statement>,
@@ -29,6 +30,7 @@ where
 
 /// The type of a batch.
 #[derive(Clone, Copy)]
+#[cfg_attr(test, derive(Debug))]
 pub enum BatchType {
     Logged = 0,
     Unlogged = 1,
