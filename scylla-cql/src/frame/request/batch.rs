@@ -1,11 +1,11 @@
-use crate::frame::{frame_errors::ParseError, value::BatchValuesIterator};
 use bytes::{Buf, BufMut};
 use std::{borrow::Cow, convert::TryInto};
 
 use crate::frame::{
+    frame_errors::ParseError,
     request::{Request, RequestOpcode},
     types,
-    value::{BatchValues, SerializedValues},
+    value::{BatchValues, BatchValuesIterator, SerializedValues},
 };
 
 use super::DeserializableRequest;
