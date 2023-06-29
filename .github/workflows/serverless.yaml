@@ -12,14 +12,12 @@ env:
 
 jobs:
   build:
-    runs-on: ubuntu-latest
+    # ccm requires Python 2 when creating a serverless cluster.
+    # Python 2 is pre-installed on Ubuntu 20.04.
+    runs-on: ubuntu-20.04
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@v2
-      - name: Setup Python 2.7
-        uses: actions/setup-python@v2
-        with:
-          python-version: '2.7'
       - name: Install scylla-ccm
         run: pip3 install https://github.com/scylladb/scylla-ccm/archive/master.zip
 
