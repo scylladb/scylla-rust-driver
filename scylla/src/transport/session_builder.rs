@@ -328,6 +328,38 @@ impl SessionBuilder {
         self.config.enable_write_coalescing = enable;
         self
     }
+
+    /// ssl feature
+    /// Provide SessionBuilder with SslContext from openssl crate that will be
+    /// used to create an ssl connection to the database.
+    /// If set to None SSL connection won't be used.
+    /// Default is None.
+    ///
+    /// # Example
+    /// ```
+    /// # use std::fs;
+    /// # use std::path::PathBuf;
+    /// # use scylla::{Session, SessionBuilder};
+    /// # use openssl::ssl::{SslContextBuilder, SslVerifyMode, SslMethod, SslFiletype};
+    /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
+    /// let certdir = fs::canonicalize(PathBuf::from("./examples/certs/scylla.crt"))?;
+    /// let mut context_builder = SslContextBuilder::new(SslMethod::tls())?;
+    /// context_builder.set_certificate_file(certdir.as_path(), SslFiletype::PEM)?;
+    /// context_builder.set_verify(SslVerifyMode::NONE);
+    ///
+    /// let session: Session = SessionBuilder::new()
+    ///     .known_node("127.0.0.1:9042")
+    ///     .ssl_context(Some(context_builder.build()))
+    ///     .build()
+    ///     .await?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    #[cfg(feature = "ssl")]
+    pub fn ssl_context(mut self, ssl_context: Option<SslContext>) -> Self {
+        self.config.ssl_context = ssl_context;
+        self
+    }
 }
 #[cfg(feature = "cloud")]
 impl CloudSessionBuilder {
@@ -494,38 +526,6 @@ impl<K: SessionBuilderKind> GenericSessionBuilder<K> {
     pub fn use_keyspace(mut self, keyspace_name: impl Into<String>, case_sensitive: bool) -> Self {
         self.config.used_keyspace = Some(keyspace_name.into());
         self.config.keyspace_case_sensitive = case_sensitive;
-        self
-    }
-
-    /// ssl feature
-    /// Provide SessionBuilder with SslContext from openssl crate that will be
-    /// used to create an ssl connection to the database.
-    /// If set to None SSL connection won't be used.
-    /// Default is None.
-    ///
-    /// # Example
-    /// ```
-    /// # use std::fs;
-    /// # use std::path::PathBuf;
-    /// # use scylla::{Session, SessionBuilder};
-    /// # use openssl::ssl::{SslContextBuilder, SslVerifyMode, SslMethod, SslFiletype};
-    /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
-    /// let certdir = fs::canonicalize(PathBuf::from("./examples/certs/scylla.crt"))?;
-    /// let mut context_builder = SslContextBuilder::new(SslMethod::tls())?;
-    /// context_builder.set_certificate_file(certdir.as_path(), SslFiletype::PEM)?;
-    /// context_builder.set_verify(SslVerifyMode::NONE);
-    ///
-    /// let session: Session = SessionBuilder::new()
-    ///     .known_node("127.0.0.1:9042")
-    ///     .ssl_context(Some(context_builder.build()))
-    ///     .build()
-    ///     .await?;
-    /// # Ok(())
-    /// # }
-    /// ```
-    #[cfg(feature = "ssl")]
-    pub fn ssl_context(mut self, ssl_context: Option<SslContext>) -> Self {
-        self.config.ssl_context = ssl_context;
         self
     }
 
