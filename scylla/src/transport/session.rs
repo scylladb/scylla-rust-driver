@@ -20,6 +20,7 @@ use std::borrow::Borrow;
 use std::collections::HashMap;
 use std::fmt::Display;
 use std::future::Future;
+use std::io;
 use std::net::SocketAddr;
 use std::str::FromStr;
 use std::sync::atomic::AtomicUsize;
@@ -1874,7 +1875,7 @@ fn calculate_partition_key(
 // Resolve the given hostname using a DNS lookup if necessary.
 // The resolution may return multiple IPs and the function returns one of them.
 // It prefers to return IPv4s first, and only if there are none, IPv6s.
-pub(crate) async fn resolve_hostname(hostname: &str) -> Result<SocketAddr, NewSessionError> {
+pub(crate) async fn resolve_hostname(hostname: &str) -> Result<SocketAddr, io::Error> {
     let mut ret = None;
     let addrs: Vec<SocketAddr> = match lookup_host(hostname).await {
         Ok(addrs) => addrs.collect(),
@@ -1890,7 +1891,12 @@ pub(crate) async fn resolve_hostname(hostname: &str) -> Result<SocketAddr, NewSe
         }
     }
 
-    ret.ok_or_else(|| NewSessionError::FailedToResolveAddress(hostname.to_string()))
+    ret.ok_or_else(|| {
+        io::Error::new(
+            io::ErrorKind::Other,
+            format!("Empty address list returned by DNS for {}", hostname),
+        )
+    })
 }
 
 // run_query, execute_query, etc have a template type called ResT.
