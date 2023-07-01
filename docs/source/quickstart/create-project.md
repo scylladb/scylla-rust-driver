@@ -14,7 +14,7 @@ futures = "0.3.6"
 uuid = "1.0"
 bigdecimal = "0.2.0"
 num-bigint = "0.3"
-tracing = "0.1.25"
+tracing = "0.1.36"
 tracing-subscriber = { version = "0.3.14", features = ["env-filter"] }
 ```
 
