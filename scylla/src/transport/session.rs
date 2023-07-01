@@ -29,6 +29,7 @@ use std::sync::Arc;
 use std::time::Duration;
 use tokio::net::lookup_host;
 use tokio::time::timeout;
+use tracing::warn;
 use tracing::{debug, error, trace, trace_span, Instrument};
 use uuid::Uuid;
 
@@ -470,16 +471,30 @@ impl Session {
                 }) => to_resolve.push((hostname, Some(datacenter))),
             };
         }
-        let resolve_futures = to_resolve
-            .into_iter()
-            .map(|(hostname, datacenter)| async move {
-                Ok::<_, NewSessionError>(ContactPoint {
-                    address: resolve_hostname(&hostname).await?,
-                    datacenter,
-                })
-            });
-        let resolved: Vec<ContactPoint> = futures::future::try_join_all(resolve_futures).await?;
-        initial_peers.extend(resolved);
+        let resolve_futures = to_resolve.iter().map(|(hostname, datacenter)| async move {
+            match resolve_hostname(hostname).await {
+                Ok(address) => Some(ContactPoint {
+                    address,
+                    datacenter: datacenter.clone(),
+                }),
+                Err(e) => {
+                    warn!("Hostname resolution failed for {}: {}", hostname, &e);
+                    None
+                }
+            }
+        });
+        let resolved: Vec<_> = futures::future::join_all(resolve_futures).await;
+        initial_peers.extend(resolved.into_iter().flatten());
+
+        // Ensure there is at least one resolved node
+        if initial_peers.is_empty() {
+            return Err(NewSessionError::FailedToResolveAnyHostname(
+                to_resolve
+                    .into_iter()
+                    .map(|(hostname, _datacenter)| hostname)
+                    .collect(),
+            ));
+        }
 
         let connection_config = ConnectionConfig {
             compression: config.compression,
