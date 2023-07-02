@@ -899,7 +899,7 @@ impl Session {
             .as_ref()
             .map(|pk| prepared.get_partitioner_name().hash(pk));
 
-        let statement_info = self.routing_info(prepared, token);
+        let statement_info = self.routing_info_from_prepared_statement(prepared, token);
 
         let span =
             RequestSpan::new_prepared(partition_key.as_ref(), token, serialized_values.size());
@@ -1825,7 +1825,7 @@ impl Session {
             Some(token) => token,
             None => return Ok(None),
         };
-        let routing_info = self.routing_info(prepared, Some(token));
+        let routing_info = self.routing_info_from_prepared_statement(prepared, Some(token));
         let cluster_data = self.cluster.get_data();
         let execution_profile = prepared
             .config
@@ -1852,7 +1852,7 @@ impl Session {
         }))
     }
 
-    fn routing_info<'p>(
+    fn routing_info_from_prepared_statement<'p>(
         &self,
         prepared: &'p PreparedStatement,
         token: Option<Token>,
