@@ -1,7 +1,11 @@
-use super::{FallbackPlan, LoadBalancingPolicy, NodeRef, RoutingInfo};
+use super::{DefaultPolicy, FallbackPlan, LoadBalancingPolicy, NodeRef, RoutingInfo};
 use crate::transport::{cluster::ClusterData, Node};
 use std::sync::Arc;
 
+/// This policy will always return the same node, unless it is not available anymore, in which case it will
+/// fallback to the provided policy.
+///
+/// This is meant to be used for shard-aware batching.
 #[derive(Debug)]
 pub struct EnforceTargetNodePolicy {
     target_node: uuid::Uuid,
@@ -21,6 +25,7 @@ impl LoadBalancingPolicy for EnforceTargetNodePolicy {
         cluster
             .known_peers
             .get(&self.target_node)
+            .filter(DefaultPolicy::is_alive)
             .or_else(|| self.fallback.pick(query, cluster))
     }
 
