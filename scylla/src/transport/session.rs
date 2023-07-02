@@ -1812,11 +1812,11 @@ impl Session {
             .map(|partition_key| prepared.get_partitioner_name().hash(&partition_key)))
     }
 
-    /// Get the first node/shard that the load balancer would target if running this query
+    /// Get a node/shard that the load balancer would potentially target if running this query
     ///
-    /// This may help constituting shard-aware batches
+    /// This may help constituting shard-aware batches (see [`Batch::enforce_target_node`])
     #[allow(clippy::type_complexity)]
-    pub fn first_shard_for_statement(
+    pub fn shard_for_statement(
         &self,
         prepared: &PreparedStatement,
         serialized_values: &SerializedValues,

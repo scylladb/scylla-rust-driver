@@ -485,4 +485,8 @@ impl ExecutionProfileHandle {
     pub fn map_to_another_profile(&mut self, profile: ExecutionProfile) {
         self.0 .0.store(profile.0)
     }
+
+    pub fn load_balancing_policy(&self) -> Arc<dyn LoadBalancingPolicy> {
+        self.0 .0.load().load_balancing_policy.clone()
+    }
 }
