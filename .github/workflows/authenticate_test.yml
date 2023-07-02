@@ -13,6 +13,7 @@ env:
 jobs:
   # PasswordAuthenticator
   build:
+    timeout-minutes: 60
     runs-on: ubuntu-latest
     services:
       scylladb:

@@ -35,7 +35,7 @@ async fn speculative_execution_is_fired() {
             .unwrap();
 
         let ks = unique_keyspace_name();
-        session.query(format!("CREATE KEYSPACE IF NOT EXISTS {} WITH REPLICATION = {{'class' : 'SimpleStrategy', 'replication_factor' : 3}}", ks), &[]).await.unwrap();
+        session.query(format!("CREATE KEYSPACE IF NOT EXISTS {} WITH REPLICATION = {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 3}}", ks), &[]).await.unwrap();
         session.use_keyspace(ks, false).await.unwrap();
         session
             .query("CREATE TABLE t (a int primary key)", &[])
@@ -110,7 +110,7 @@ async fn retries_occur() {
             .unwrap();
 
         let ks = unique_keyspace_name();
-        session.query(format!("CREATE KEYSPACE IF NOT EXISTS {} WITH REPLICATION = {{'class' : 'SimpleStrategy', 'replication_factor' : 3}}", ks), &[]).await.unwrap();
+        session.query(format!("CREATE KEYSPACE IF NOT EXISTS {} WITH REPLICATION = {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 3}}", ks), &[]).await.unwrap();
         session.use_keyspace(ks, false).await.unwrap();
         session
             .query("CREATE TABLE t (a int primary key)", &[])

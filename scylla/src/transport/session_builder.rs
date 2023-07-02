@@ -297,6 +297,69 @@ impl SessionBuilder {
         self.config.address_translator = Some(translator);
         self
     }
+
+    /// If true, the driver will inject a small delay before flushing data
+    /// to the socket - by rescheduling the task that writes data to the socket.
+    /// This gives the task an opportunity to collect more write requests
+    /// and write them in a single syscall, increasing the efficiency.
+    ///
+    /// However, this optimization may worsen latency if the rate of requests
+    /// issued by the application is low, but otherwise the application is
+    /// heavily loaded with other tasks on the same tokio executor.
+    /// Please do performance measurements before committing to disabling
+    /// this option.
+    ///
+    /// This option is true by default.
+    ///
+    /// # Example
+    /// ```
+    /// # use scylla::{Session, SessionBuilder};
+    /// # use scylla::transport::Compression;
+    /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
+    /// let session: Session = SessionBuilder::new()
+    ///     .known_node("127.0.0.1:9042")
+    ///     .write_coalescing(false) // Enabled by default
+    ///     .build()
+    ///     .await?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn write_coalescing(mut self, enable: bool) -> Self {
+        self.config.enable_write_coalescing = enable;
+        self
+    }
+
+    /// ssl feature
+    /// Provide SessionBuilder with SslContext from openssl crate that will be
+    /// used to create an ssl connection to the database.
+    /// If set to None SSL connection won't be used.
+    /// Default is None.
+    ///
+    /// # Example
+    /// ```
+    /// # use std::fs;
+    /// # use std::path::PathBuf;
+    /// # use scylla::{Session, SessionBuilder};
+    /// # use openssl::ssl::{SslContextBuilder, SslVerifyMode, SslMethod, SslFiletype};
+    /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
+    /// let certdir = fs::canonicalize(PathBuf::from("./examples/certs/scylla.crt"))?;
+    /// let mut context_builder = SslContextBuilder::new(SslMethod::tls())?;
+    /// context_builder.set_certificate_file(certdir.as_path(), SslFiletype::PEM)?;
+    /// context_builder.set_verify(SslVerifyMode::NONE);
+    ///
+    /// let session: Session = SessionBuilder::new()
+    ///     .known_node("127.0.0.1:9042")
+    ///     .ssl_context(Some(context_builder.build()))
+    ///     .build()
+    ///     .await?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    #[cfg(feature = "ssl")]
+    pub fn ssl_context(mut self, ssl_context: Option<SslContext>) -> Self {
+        self.config.ssl_context = ssl_context;
+        self
+    }
 }
 #[cfg(feature = "cloud")]
 impl CloudSessionBuilder {
@@ -413,6 +476,36 @@ impl<K: SessionBuilderKind> GenericSessionBuilder<K> {
         self
     }
 
+    /// Set the TCP keepalive interval.
+    /// The default is `None`, which implies that no keepalive messages
+    /// are sent **on TCP layer** when a connection is idle.
+    /// Note: CQL-layer keepalives are configured separately,
+    /// with `Self::keepalive_interval`.
+    ///
+    /// # Example
+    /// ```
+    /// # use scylla::{Session, SessionBuilder};
+    /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
+    /// let session: Session = SessionBuilder::new()
+    ///     .known_node("127.0.0.1:9042")
+    ///     .tcp_keepalive_interval(std::time::Duration::from_secs(42))
+    ///     .build()
+    ///     .await?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn tcp_keepalive_interval(mut self, interval: Duration) -> Self {
+        if interval <= Duration::from_secs(1) {
+            warn!(
+                "Setting the TCP keepalive interval to low values ({:?}) is not recommended as it can have a negative impact on performance. Consider setting it above 1 second.",
+                interval
+            );
+        }
+
+        self.config.tcp_keepalive_interval = Some(interval);
+        self
+    }
+
     /// Set keyspace to be used on all connections.\
     /// Each connection will send `"USE <keyspace_name>"` before sending any requests.\
     /// This can be later changed with [`Session::use_keyspace`]
@@ -433,38 +526,6 @@ impl<K: SessionBuilderKind> GenericSessionBuilder<K> {
     pub fn use_keyspace(mut self, keyspace_name: impl Into<String>, case_sensitive: bool) -> Self {
         self.config.used_keyspace = Some(keyspace_name.into());
         self.config.keyspace_case_sensitive = case_sensitive;
-        self
-    }
-
-    /// ssl feature
-    /// Provide SessionBuilder with SslContext from openssl crate that will be
-    /// used to create an ssl connection to the database.
-    /// If set to None SSL connection won't be used.
-    /// Default is None.
-    ///
-    /// # Example
-    /// ```
-    /// # use std::fs;
-    /// # use std::path::PathBuf;
-    /// # use scylla::{Session, SessionBuilder};
-    /// # use openssl::ssl::{SslContextBuilder, SslVerifyMode, SslMethod, SslFiletype};
-    /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
-    /// let certdir = fs::canonicalize(PathBuf::from("./examples/certs/scylla.crt"))?;
-    /// let mut context_builder = SslContextBuilder::new(SslMethod::tls())?;
-    /// context_builder.set_certificate_file(certdir.as_path(), SslFiletype::PEM)?;
-    /// context_builder.set_verify(SslVerifyMode::NONE);
-    ///
-    /// let session: Session = SessionBuilder::new()
-    ///     .known_node("127.0.0.1:9042")
-    ///     .ssl_context(Some(context_builder.build()))
-    ///     .build()
-    ///     .await?;
-    /// # Ok(())
-    /// # }
-    /// ```
-    #[cfg(feature = "ssl")]
-    pub fn ssl_context(mut self, ssl_context: Option<SslContext>) -> Self {
-        self.config.ssl_context = ssl_context;
         self
     }
 
@@ -617,8 +678,10 @@ impl<K: SessionBuilderKind> GenericSessionBuilder<K> {
     }
 
     /// Set the keepalive interval.
-    /// The default is `Some(Duration::from_secs(30))`, it corresponds
-    /// to keepalive messages being sent every 30 seconds.
+    /// The default is `Some(Duration::from_secs(30))`, which corresponds
+    /// to keepalive CQL messages being sent every 30 seconds.
+    /// Note: this configures CQL-layer keepalives. See also:
+    /// `Self::tcp_keepalive_interval`.
     ///
     /// # Example
     /// ```
@@ -641,6 +704,36 @@ impl<K: SessionBuilderKind> GenericSessionBuilder<K> {
         }
 
         self.config.keepalive_interval = Some(interval);
+        self
+    }
+
+    /// Set the keepalive timeout.
+    /// The default is `Some(Duration::from_secs(30))`. It means that
+    /// the connection will be closed if time between sending a keepalive
+    /// and receiving a response to any keepalive (not necessarily the same -
+    /// it may be one sent later) exceeds 30 seconds.
+    ///
+    /// # Example
+    /// ```
+    /// # use scylla::{Session, SessionBuilder};
+    /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
+    /// let session: Session = SessionBuilder::new()
+    ///     .known_node("127.0.0.1:9042")
+    ///     .keepalive_timeout(std::time::Duration::from_secs(42))
+    ///     .build()
+    ///     .await?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn keepalive_timeout(mut self, timeout: Duration) -> Self {
+        if timeout <= Duration::from_secs(1) {
+            warn!(
+                "Setting the keepalive timeout to low values ({:?}) is not recommended as it may aggresively close connections. Consider setting it above 5 seconds.",
+                timeout
+            );
+        }
+
+        self.config.keepalive_timeout = Some(timeout);
         self
     }
 

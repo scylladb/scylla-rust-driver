@@ -131,7 +131,7 @@ async fn main() -> Result<()> {
     let session: Session = SessionBuilder::new().known_node(args.node).build().await?;
     let session = Arc::new(session);
 
-    session.query("CREATE KEYSPACE IF NOT EXISTS ks WITH REPLICATION = {'class' : 'SimpleStrategy', 'replication_factor' : 1}", &[]).await?;
+    session.query("CREATE KEYSPACE IF NOT EXISTS ks WITH REPLICATION = {'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}", &[]).await?;
     session.await_schema_agreement().await.unwrap();
 
     session

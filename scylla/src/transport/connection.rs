@@ -1,8 +1,10 @@
 use bytes::Bytes;
 use futures::{future::RemoteHandle, FutureExt};
 use scylla_cql::errors::TranslationError;
+use scylla_cql::frame::request::options::Options;
 use scylla_cql::frame::response::Error;
 use scylla_cql::frame::types::SerialConsistency;
+use socket2::{SockRef, TcpKeepalive};
 use tokio::io::{split, AsyncRead, AsyncWrite, AsyncWriteExt, BufReader, BufWriter};
 use tokio::net::{TcpSocket, TcpStream};
 use tokio::sync::{mpsc, oneshot};
@@ -14,6 +16,7 @@ use uuid::Uuid;
 #[cfg(feature = "ssl")]
 use std::pin::Pin;
 use std::sync::atomic::AtomicU64;
+use std::time::Duration;
 #[cfg(feature = "ssl")]
 use tokio_openssl::SslStream;
 
@@ -25,7 +28,7 @@ use scylla_cql::frame::response::authenticate::Authenticate;
 use std::collections::{BTreeSet, HashMap};
 use std::convert::TryFrom;
 use std::io::ErrorKind;
-use std::net::SocketAddr;
+use std::net::{IpAddr, SocketAddr};
 use std::sync::Arc;
 use std::sync::Mutex as StdMutex;
 use std::{
@@ -68,19 +71,23 @@ const LOCAL_VERSION: &str = "SELECT schema_version FROM system.local WHERE key='
 // FIXME: Make this constants configurable
 // The term "orphan" refers to stream ids, that were allocated for a {request, response} that no
 // one is waiting anymore (due to cancellation of `Connection::send_request`). Old orphan refers to
-// a stream id, that is orphaned for a long time. This long time is defined below
-// (`OLD_AGE_ORPHAN_THRESHOLD`). Connection, that has a big number (`OLD_ORPHAN_COUNT_THRESHOLD`)
+// a stream id that is orphaned for a long time. This long time is defined below
+// (`OLD_AGE_ORPHAN_THRESHOLD`). Connection that has a big number (`OLD_ORPHAN_COUNT_THRESHOLD`)
 // of old orphans is shut down (and created again by a connection management layer).
 const OLD_ORPHAN_COUNT_THRESHOLD: usize = 1024;
 const OLD_AGE_ORPHAN_THRESHOLD: std::time::Duration = std::time::Duration::from_secs(1);
 
 pub struct Connection {
-    submit_channel: mpsc::Sender<Task>,
     _worker_handle: RemoteHandle<()>,
 
     connect_address: SocketAddr,
     config: ConnectionConfig,
     features: ConnectionFeatures,
+    router_handle: Arc<RouterHandle>,
+}
+
+struct RouterHandle {
+    submit_channel: mpsc::Sender<Task>,
 
     // Each request send by `Connection::send_request` needs a unique request id.
     // This field is a monotonic generator of such ids.
@@ -91,6 +98,60 @@ pub struct Connection {
     // pushing values in a synchronous way (without an `.await`), which is
     // needed for pushing values in `Drop` implementations.
     orphan_notification_sender: mpsc::UnboundedSender<RequestId>,
+}
+
+impl RouterHandle {
+    fn allocate_request_id(&self) -> RequestId {
+        self.request_id_generator
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+    }
+
+    async fn send_request(
+        &self,
+        request: &impl Request,
+        compression: Option<Compression>,
+        tracing: bool,
+    ) -> Result<TaskResponse, QueryError> {
+        let serialized_request = SerializedRequest::make(request, compression, tracing)?;
+        let request_id = self.allocate_request_id();
+
+        let (response_sender, receiver) = oneshot::channel();
+        let response_handler = ResponseHandler {
+            response_sender,
+            request_id,
+        };
+
+        // Dropping `notifier` (before calling `notifier.disable()`) will send a notification to
+        // `Connection::router`. This notification is then used to mark a `stream_id` associated
+        // with this request as orphaned and free associated resources.
+        let notifier = OrphanhoodNotifier::new(request_id, &self.orphan_notification_sender);
+
+        self.submit_channel
+            .send(Task {
+                serialized_request,
+                response_handler,
+            })
+            .await
+            .map_err(|_| {
+                QueryError::IoError(Arc::new(std::io::Error::new(
+                    ErrorKind::Other,
+                    "Connection broken",
+                )))
+            })?;
+
+        let task_response = receiver.await.map_err(|_| {
+            QueryError::IoError(Arc::new(std::io::Error::new(
+                ErrorKind::Other,
+                "Connection broken",
+            )))
+        })?;
+
+        // Response was successfully received, so it's time to disable
+        // notification about orphaning.
+        notifier.disable();
+
+        task_response
+    }
 }
 
 #[derive(Default)]
@@ -290,6 +351,7 @@ mod ssl_config {
 pub struct ConnectionConfig {
     pub compression: Option<Compression>,
     pub tcp_nodelay: bool,
+    pub tcp_keepalive_interval: Option<Duration>,
     #[cfg(feature = "ssl")]
     pub ssl_config: Option<SslConfig>,
     pub connect_timeout: std::time::Duration,
@@ -300,6 +362,10 @@ pub struct ConnectionConfig {
     pub(crate) cloud_config: Option<Arc<CloudConfig>>,
     pub authenticator: Option<Arc<dyn AuthenticatorProvider>>,
     pub address_translator: Option<Arc<dyn AddressTranslator>>,
+    pub enable_write_coalescing: bool,
+
+    pub keepalive_interval: Option<Duration>,
+    pub keepalive_timeout: Option<Duration>,
 }
 
 impl Default for ConnectionConfig {
@@ -307,6 +373,7 @@ impl Default for ConnectionConfig {
         Self {
             compression: None,
             tcp_nodelay: true,
+            tcp_keepalive_interval: None,
             event_sender: None,
             #[cfg(feature = "ssl")]
             ssl_config: None,
@@ -316,6 +383,11 @@ impl Default for ConnectionConfig {
             address_translator: None,
             #[cfg(feature = "cloud")]
             cloud_config: None,
+            enable_write_coalescing: true,
+
+            // Note: this is different than SessionConfig default values.
+            keepalive_interval: None,
+            keepalive_timeout: None,
         }
     }
 }
@@ -361,11 +433,66 @@ impl Connection {
         };
         stream.set_nodelay(config.tcp_nodelay)?;
 
+        if let Some(tcp_keepalive_interval) = config.tcp_keepalive_interval {
+            // It may be surprising why we call `with_time()` with `tcp_keepalive_interval`
+            // and `with_interval() with some other value. This is due to inconsistent naming:
+            // our interval means time after connection becomes idle until keepalives
+            // begin to be sent (they call it "time"), and their interval is time between
+            // sending keepalives.
+            // We insist on our naming due to other drivers following the same convention.
+            let mut tcp_keepalive = TcpKeepalive::new().with_time(tcp_keepalive_interval);
+
+            // These cfg values are taken from socket2 library, which uses the same constraints.
+            #[cfg(any(
+                target_os = "android",
+                target_os = "dragonfly",
+                target_os = "freebsd",
+                target_os = "fuchsia",
+                target_os = "illumos",
+                target_os = "ios",
+                target_os = "linux",
+                target_os = "macos",
+                target_os = "netbsd",
+                target_os = "tvos",
+                target_os = "watchos",
+                target_os = "windows",
+            ))]
+            {
+                tcp_keepalive = tcp_keepalive.with_interval(Duration::from_secs(1));
+            }
+
+            #[cfg(any(
+                target_os = "android",
+                target_os = "dragonfly",
+                target_os = "freebsd",
+                target_os = "fuchsia",
+                target_os = "illumos",
+                target_os = "ios",
+                target_os = "linux",
+                target_os = "macos",
+                target_os = "netbsd",
+                target_os = "tvos",
+                target_os = "watchos",
+            ))]
+            {
+                tcp_keepalive = tcp_keepalive.with_retries(10);
+            }
+
+            let sf = SockRef::from(&stream);
+            sf.set_tcp_keepalive(&tcp_keepalive)?;
+        }
+
         // TODO: What should be the size of the channel?
         let (sender, receiver) = mpsc::channel(1024);
         let (error_sender, error_receiver) = tokio::sync::oneshot::channel();
         // Unbounded because it allows for synchronous pushes
         let (orphan_notification_sender, orphan_notification_receiver) = mpsc::unbounded_channel();
+
+        let router_handle = Arc::new(RouterHandle {
+            submit_channel: sender,
+            request_id_generator: AtomicU64::new(0),
+            orphan_notification_sender,
+        });
 
         let _worker_handle = Self::run_router(
             config.clone(),
@@ -373,17 +500,17 @@ impl Connection {
             receiver,
             error_sender,
             orphan_notification_receiver,
+            router_handle.clone(),
+            addr.ip(),
         )
         .await?;
 
         let connection = Connection {
-            submit_channel: sender,
             _worker_handle,
             config,
             features: Default::default(),
             connect_address: addr,
-            request_id_generator: AtomicU64::new(0),
-            orphan_notification_sender,
+            router_handle,
         };
 
         Ok((connection, error_receiver))
@@ -753,14 +880,9 @@ impl Connection {
         Ok(version_id)
     }
 
-    fn allocate_request_id(&self) -> RequestId {
-        self.request_id_generator
-            .fetch_add(1, std::sync::atomic::Ordering::Relaxed)
-    }
-
-    async fn send_request<R: Request>(
+    async fn send_request(
         &self,
-        request: &R,
+        request: &impl Request,
         compress: bool,
         tracing: bool,
     ) -> Result<QueryResponse, QueryError> {
@@ -769,46 +891,14 @@ impl Connection {
         } else {
             None
         };
-        let serialized_request = SerializedRequest::make(request, compression, tracing)?;
-        let request_id = self.allocate_request_id();
 
-        let (response_sender, receiver) = oneshot::channel();
-        let response_handler = ResponseHandler {
-            response_sender,
-            request_id,
-        };
-
-        // Dropping `notifier` (before calling `notifier.disable()`) will send a notification to
-        // `Connection::router`. This notification is then used to mark a `stream_id` associated
-        // with this request as orphaned and free associated resources.
-        let notifier = OrphanhoodNotifier::new(request_id, &self.orphan_notification_sender);
-
-        self.submit_channel
-            .send(Task {
-                serialized_request,
-                response_handler,
-            })
-            .await
-            .map_err(|_| {
-                QueryError::IoError(Arc::new(std::io::Error::new(
-                    ErrorKind::Other,
-                    "Connection broken",
-                )))
-            })?;
-
-        let task_response = receiver.await.map_err(|_| {
-            QueryError::IoError(Arc::new(std::io::Error::new(
-                ErrorKind::Other,
-                "Connection broken",
-            )))
-        })?;
-
-        // Response was successfully received, so it's time to disable
-        // notification about orphaning.
-        notifier.disable();
+        let task_response = self
+            .router_handle
+            .send_request(request, compression, tracing)
+            .await?;
 
         Self::parse_response(
-            task_response?,
+            task_response,
             self.config.compression,
             &self.features.protocol_features,
         )
@@ -848,6 +938,8 @@ impl Connection {
         receiver: mpsc::Receiver<Task>,
         error_sender: tokio::sync::oneshot::Sender<QueryError>,
         orphan_notification_receiver: mpsc::UnboundedReceiver<RequestId>,
+        router_handle: Arc<RouterHandle>,
+        node_address: IpAddr,
     ) -> Result<RemoteHandle<()>, std::io::Error> {
         #[cfg(feature = "ssl")]
         if let Some(ssl_config) = &config.ssl_config {
@@ -861,6 +953,8 @@ impl Connection {
                 receiver,
                 error_sender,
                 orphan_notification_receiver,
+                router_handle,
+                node_address,
             )
             .remote_handle();
             tokio::task::spawn(task.with_current_subscriber());
@@ -873,6 +967,8 @@ impl Connection {
             receiver,
             error_sender,
             orphan_notification_receiver,
+            router_handle,
+            node_address,
         )
         .remote_handle();
         tokio::task::spawn(task.with_current_subscriber());
@@ -885,6 +981,8 @@ impl Connection {
         receiver: mpsc::Receiver<Task>,
         error_sender: tokio::sync::oneshot::Sender<QueryError>,
         orphan_notification_receiver: mpsc::UnboundedReceiver<RequestId>,
+        router_handle: Arc<RouterHandle>,
+        node_address: IpAddr,
     ) {
         let (read_half, write_half) = split(stream);
         // Why are we using a mutex here?
@@ -901,6 +999,15 @@ impl Connection {
         // across .await points. Therefore, it should not be too expensive.
         let handler_map = StdMutex::new(ResponseHandlerMap::new());
 
+        let enable_write_coalescing = config.enable_write_coalescing;
+
+        let k = Self::keepaliver(
+            router_handle,
+            config.keepalive_interval,
+            config.keepalive_timeout,
+            node_address,
+        );
+
         let r = Self::reader(
             BufReader::with_capacity(8192, read_half),
             &handler_map,
@@ -910,10 +1017,11 @@ impl Connection {
             BufWriter::with_capacity(8192, write_half),
             &handler_map,
             receiver,
+            enable_write_coalescing,
         );
         let o = Self::orphaner(&handler_map, orphan_notification_receiver);
 
-        let result = futures::try_join!(r, w, o);
+        let result = futures::try_join!(r, w, o, k);
 
         let error: QueryError = match result {
             Ok(_) => return, // Connection was dropped, we can return
@@ -1019,6 +1127,7 @@ impl Connection {
         mut write_half: (impl AsyncWrite + Unpin),
         handler_map: &StdMutex<ResponseHandlerMap>,
         mut task_receiver: mpsc::Receiver<Task>,
+        enable_write_coalescing: bool,
     ) -> Result<(), QueryError> {
         // When the Connection object is dropped, the sender half
         // of the channel will be dropped, this task will return an error
@@ -1035,7 +1144,7 @@ impl Connection {
                 write_half.write_all(req_data).await?;
                 task = match task_receiver.try_recv() {
                     Ok(t) => t,
-                    Err(_) => {
+                    Err(_) if enable_write_coalescing => {
                         // Yielding was empirically tested to inject a 1-300µs delay,
                         // much better than tokio::time::sleep's 1ms granularity.
                         // Also, yielding in a busy system let's the queue catch up with new items.
@@ -1045,6 +1154,7 @@ impl Connection {
                             Err(_) => break,
                         }
                     }
+                    Err(_) => break,
                 }
             }
             trace!("Sending {} requests; {} bytes", num_requests, total_sent);
@@ -1091,6 +1201,64 @@ impl Connection {
         }
 
         Ok(())
+    }
+
+    async fn keepaliver(
+        router_handle: Arc<RouterHandle>,
+        keepalive_interval: Option<Duration>,
+        keepalive_timeout: Option<Duration>,
+        node_address: IpAddr, // This address is only used to enrich the log messages
+    ) -> Result<(), QueryError> {
+        async fn issue_keepalive_query(router_handle: &RouterHandle) -> Result<(), QueryError> {
+            router_handle
+                .send_request(&Options, None, false)
+                .await
+                .map(|_| ())
+        }
+
+        if let Some(keepalive_interval) = keepalive_interval {
+            let mut interval = tokio::time::interval(keepalive_interval);
+            interval.tick().await; // Use up the first, instant tick.
+
+            // Default behaviour (Burst) is not suitable for sending keepalives.
+            interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+
+            loop {
+                interval.tick().await;
+
+                let keepalive_query = issue_keepalive_query(&router_handle);
+                let query_result = if let Some(timeout) = keepalive_timeout {
+                    match tokio::time::timeout(timeout, keepalive_query).await {
+                        Ok(res) => res,
+                        Err(_) => {
+                            warn!(
+                                "Timed out while waiting for response to keepalive request on connection to node {}",
+                                node_address
+                            );
+                            return Err(QueryError::IoError(Arc::new(std::io::Error::new(
+                                std::io::ErrorKind::Other,
+                                format!(
+                                    "Timed out while waiting for response to keepalive request on connection to node {}",
+                                        node_address
+                                )
+                            ))));
+                        }
+                    }
+                } else {
+                    keepalive_query.await
+                };
+                if let Err(err) = query_result {
+                    warn!(
+                        "Failed to execute keepalive request on connection to node {} - {}",
+                        node_address, err
+                    );
+                    return Err(err);
+                }
+            }
+        } else {
+            // No keepalives are to be sent.
+            Ok(())
+        }
     }
 
     async fn handle_event(
@@ -1585,13 +1753,15 @@ impl VerifiedKeyspaceName {
 
 #[cfg(test)]
 mod tests {
+    use assert_matches::assert_matches;
+    use scylla_cql::errors::QueryError;
     use scylla_cql::frame::protocol_features::{
         LWT_OPTIMIZATION_META_BIT_MASK_KEY, SCYLLA_LWT_ADD_METADATA_MARK_EXTENSION,
     };
     use scylla_cql::frame::types;
     use scylla_proxy::{
         Condition, Node, Proxy, Reaction, RequestFrame, RequestOpcode, RequestReaction,
-        RequestRule, ResponseFrame,
+        RequestRule, ResponseFrame, ShardAwareness,
     };
 
     use tokio::select;
@@ -1603,11 +1773,12 @@ mod tests {
     use crate::transport::connection::open_connection;
     use crate::transport::topology::UntranslatedEndpoint;
     use crate::utils::test_utils::unique_keyspace_name;
-    use crate::SessionBuilder;
+    use crate::{IntoTypedRows, SessionBuilder};
     use futures::{StreamExt, TryStreamExt};
     use std::collections::HashMap;
     use std::net::SocketAddr;
     use std::sync::Arc;
+    use std::time::Duration;
 
     // Just like resolve_hostname in session.rs
     async fn resolve_hostname(hostname: &str) -> SocketAddr {
@@ -1655,7 +1826,7 @@ mod tests {
                 .build()
                 .await
                 .unwrap();
-            session.query(format!("CREATE KEYSPACE IF NOT EXISTS {} WITH REPLICATION = {{'class' : 'SimpleStrategy', 'replication_factor' : 1}}", ks.clone()), &[]).await.unwrap();
+            session.query(format!("CREATE KEYSPACE IF NOT EXISTS {} WITH REPLICATION = {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}}", ks.clone()), &[]).await.unwrap();
             session.use_keyspace(ks.clone(), false).await.unwrap();
             session
                 .query("DROP TABLE IF EXISTS connection_query_iter_tab", &[])
@@ -1719,6 +1890,119 @@ mod tests {
             .await
             .unwrap();
         assert!(insert_res1.is_empty());
+    }
+
+    #[tokio::test]
+    #[cfg(not(scylla_cloud_tests))]
+    async fn test_coalescing() {
+        // It's difficult to write a reliable test that checks whether coalescing
+        // works like intended or not. Instead, this is a smoke test which is supposed
+        // to trigger the coalescing logic and check that everything works fine
+        // no matter whether coalescing is enabled or not.
+
+        let uri = std::env::var("SCYLLA_URI").unwrap_or_else(|_| "127.0.0.1:9042".to_string());
+        let addr: SocketAddr = resolve_hostname(&uri).await;
+        let ks = unique_keyspace_name();
+
+        {
+            // Preparation phase
+            let session = SessionBuilder::new()
+                .known_node_addr(addr)
+                .build()
+                .await
+                .unwrap();
+            session.query(format!("CREATE KEYSPACE IF NOT EXISTS {} WITH REPLICATION = {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}}", ks.clone()), &[]).await.unwrap();
+            session.use_keyspace(ks.clone(), false).await.unwrap();
+            session
+                .query(
+                    "CREATE TABLE IF NOT EXISTS t (p int primary key, v blob)",
+                    &[],
+                )
+                .await
+                .unwrap();
+        }
+
+        let subtest = |enable_coalescing: bool, ks: String| async move {
+            let (connection, _) = super::open_connection(
+                UntranslatedEndpoint::ContactPoint(ContactPoint {
+                    address: addr,
+                    datacenter: None,
+                }),
+                None,
+                ConnectionConfig {
+                    enable_write_coalescing: enable_coalescing,
+                    ..ConnectionConfig::default()
+                },
+            )
+            .await
+            .unwrap();
+            let connection = Arc::new(connection);
+
+            connection
+                .use_keyspace(&super::VerifiedKeyspaceName::new(ks, false).unwrap())
+                .await
+                .unwrap();
+
+            connection
+                .query(&"TRUNCATE t".into(), (), None)
+                .await
+                .unwrap();
+
+            let mut futs = Vec::new();
+
+            const NUM_BATCHES: i32 = 10;
+
+            for batch_size in 0..NUM_BATCHES {
+                // Each future should issue more and more queries in the first poll
+                let base = arithmetic_sequence_sum(batch_size);
+                let conn = connection.clone();
+                futs.push(tokio::task::spawn(async move {
+                    let futs = (base..base + batch_size).map(|j| {
+                        let q = Query::new("INSERT INTO t (p, v) VALUES (?, ?)");
+                        let conn = conn.clone();
+                        async move {
+                            conn.query(&q, (j, vec![j as u8; j as usize]), None)
+                                .await
+                                .unwrap()
+                        }
+                    });
+                    futures::future::join_all(futs).await;
+                }));
+
+                tokio::task::yield_now().await;
+            }
+
+            futures::future::join_all(futs).await;
+
+            // Check that everything was written properly
+            let range_end = arithmetic_sequence_sum(NUM_BATCHES);
+            let mut results = connection
+                .query(&"SELECT p, v FROM t".into(), (), None)
+                .await
+                .unwrap()
+                .into_query_result()
+                .unwrap()
+                .rows()
+                .unwrap()
+                .into_typed::<(i32, Vec<u8>)>()
+                .collect::<Result<Vec<_>, _>>()
+                .unwrap();
+            results.sort();
+
+            let expected = (0..range_end)
+                .map(|i| (i, vec![i as u8; i as usize]))
+                .collect::<Vec<_>>();
+
+            assert_eq!(results, expected);
+        };
+
+        subtest(true, ks.clone()).await;
+        subtest(false, ks.clone()).await;
+    }
+
+    // Returns the sum of integral numbers in the range [0..n)
+    fn arithmetic_sequence_sum(n: i32) -> i32 {
+        n * (n - 1) / 2
     }
 
     #[tokio::test]
@@ -1797,5 +2081,79 @@ mod tests {
                 .unwrap(),
             &lwt_optimisation_entry
         )
+    }
+
+    #[tokio::test]
+    #[ntest::timeout(20000)]
+    #[cfg(not(scylla_cloud_tests))]
+    async fn connection_is_closed_on_no_response_to_keepalives() {
+        let proxy_addr = SocketAddr::new(scylla_proxy::get_exclusive_local_address(), 9042);
+        let uri = std::env::var("SCYLLA_URI").unwrap_or_else(|_| "127.0.0.1:9042".to_string());
+        let node_addr: SocketAddr = resolve_hostname(&uri).await;
+
+        let drop_options_rule = RequestRule(
+            Condition::RequestOpcode(RequestOpcode::Options),
+            RequestReaction::drop_frame(),
+        );
+
+        let config = ConnectionConfig {
+            keepalive_interval: Some(Duration::from_millis(500)),
+            keepalive_timeout: Some(Duration::from_secs(1)),
+            ..Default::default()
+        };
+
+        let mut proxy = Proxy::builder()
+            .with_node(
+                Node::builder()
+                    .proxy_address(proxy_addr)
+                    .real_address(node_addr)
+                    .shard_awareness(ShardAwareness::QueryNode)
+                    .build(),
+            )
+            .build()
+            .run()
+            .await
+            .unwrap();
+
+        // Setup connection normally, without obstruction
+        let (conn, mut error_receiver) = open_connection(
+            UntranslatedEndpoint::ContactPoint(ContactPoint {
+                address: proxy_addr,
+                datacenter: None,
+            }),
+            None,
+            config,
+        )
+        .await
+        .unwrap();
+
+        // As everything is normal, these queries should succeed.
+        for _ in 0..3 {
+            tokio::time::sleep(Duration::from_millis(500)).await;
+            conn.query_single_page("SELECT host_id FROM system.local", ())
+                .await
+                .unwrap();
+        }
+        // As everything is normal, no error should have been reported.
+        assert_matches!(
+            error_receiver.try_recv(),
+            Err(tokio::sync::oneshot::error::TryRecvError::Empty)
+        );
+
+        // Set up proxy to drop keepalive messages
+        proxy.running_nodes[0].change_request_rules(Some(vec![drop_options_rule]));
+
+        // Wait until keepaliver gots impatient and terminates router.
+        // Then, the error from keepaliver will be propagated to the error receiver.
+        let err = error_receiver.await.unwrap();
+        assert_matches!(err, QueryError::IoError(_));
+
+        // As the router is invalidated, all further queries should immediately
+        // return error.
+        conn.query_single_page("SELECT host_id FROM system.local", ())
+            .await
+            .unwrap_err();
+
+        let _ = proxy.finish().await;
     }
 }

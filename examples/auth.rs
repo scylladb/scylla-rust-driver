@@ -14,7 +14,7 @@ async fn main() -> Result<()> {
         .await
         .unwrap();
 
-    session.query("CREATE KEYSPACE IF NOT EXISTS ks WITH REPLICATION = {'class' : 'SimpleStrategy', 'replication_factor' : 1}", &[]).await.unwrap();
+    session.query("CREATE KEYSPACE IF NOT EXISTS ks WITH REPLICATION = {'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}", &[]).await.unwrap();
     session
         .query("DROP TABLE IF EXISTS ks.t;", &[])
         .await

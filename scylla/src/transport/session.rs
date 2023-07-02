@@ -163,6 +163,7 @@ pub struct SessionConfig {
     /// If it's not supported by database server Session will fall back to no compression.
     pub compression: Option<Compression>,
     pub tcp_nodelay: bool,
+    pub tcp_keepalive_interval: Option<Duration>,
 
     pub default_execution_profile_handle: ExecutionProfileHandle,
 
@@ -192,8 +193,13 @@ pub struct SessionConfig {
     /// If true, full schema is fetched with every metadata refresh.
     pub fetch_schema_metadata: bool,
 
-    /// Interval of sending keepalive requests
+    /// Interval of sending keepalive requests.
+    /// If `None`, keepalives are never sent, so `Self::keepalive_timeout` has no effect.
     pub keepalive_interval: Option<Duration>,
+
+    /// Controls after what time of not receiving response to keepalives a connection is closed.
+    /// If `None`, connections are never closed due to lack of response to a keepalive message.
+    pub keepalive_timeout: Option<Duration>,
 
     /// Controls the timeout for the automatic wait for schema agreement after sending a schema-altering statement.
     /// If `None`, the automatic schema agreement is disabled.
@@ -210,9 +216,21 @@ pub struct SessionConfig {
     /// It is true by default but can be disabled if successive schema-altering statements should be performed.
     pub refresh_metadata_on_auto_schema_agreement: bool,
 
-    // If the driver is to connect to ScyllaCloud, there is a config for it.
+    /// If the driver is to connect to ScyllaCloud, there is a config for it.
     #[cfg(feature = "cloud")]
-    pub(crate) cloud_config: Option<Arc<CloudConfig>>,
+    pub cloud_config: Option<Arc<CloudConfig>>,
+
+    /// If true, the driver will inject a small delay before flushing data
+    /// to the socket - by rescheduling the task that writes data to the socket.
+    /// This gives the task an opportunity to collect more write requests
+    /// and write them in a single syscall, increasing the efficiency.
+    ///
+    /// However, this optimization may worsen latency if the rate of requests
+    /// issued by the application is low, but otherwise the application is
+    /// heavily loaded with other tasks on the same tokio executor.
+    /// Please do performance measurements before committing to disabling
+    /// this option.
+    pub enable_write_coalescing: bool,
 }
 
 /// Describes database server known on Session startup.
@@ -249,6 +267,7 @@ impl SessionConfig {
             known_nodes: Vec::new(),
             compression: None,
             tcp_nodelay: true,
+            tcp_keepalive_interval: None,
             schema_agreement_interval: Duration::from_millis(200),
             default_execution_profile_handle: ExecutionProfile::new_from_inner(Default::default())
                 .into_handle(),
@@ -263,12 +282,14 @@ impl SessionConfig {
             keyspaces_to_fetch: Vec::new(),
             fetch_schema_metadata: true,
             keepalive_interval: Some(Duration::from_secs(30)),
+            keepalive_timeout: Some(Duration::from_secs(30)),
             auto_await_schema_agreement_timeout: Some(std::time::Duration::from_secs(60)),
             address_translator: None,
             host_filter: None,
             refresh_metadata_on_auto_schema_agreement: true,
             #[cfg(feature = "cloud")]
             cloud_config: None,
+            enable_write_coalescing: true,
         }
     }
 
@@ -463,6 +484,7 @@ impl Session {
         let connection_config = ConnectionConfig {
             compression: config.compression,
             tcp_nodelay: config.tcp_nodelay,
+            tcp_keepalive_interval: config.tcp_keepalive_interval,
             #[cfg(feature = "ssl")]
             ssl_config: config.ssl_context.map(SslConfig::new_with_global_context),
             authenticator: config.authenticator.clone(),
@@ -472,6 +494,9 @@ impl Session {
             address_translator: config.address_translator,
             #[cfg(feature = "cloud")]
             cloud_config: config.cloud_config,
+            enable_write_coalescing: config.enable_write_coalescing,
+            keepalive_interval: config.keepalive_interval,
+            keepalive_timeout: config.keepalive_timeout,
         };
 
         let pool_config = PoolConfig {
