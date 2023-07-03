@@ -1,6 +1,7 @@
 use std::sync::Arc;
 
 use crate::history::HistoryListener;
+use crate::load_balancing;
 use crate::retry_policy::RetryPolicy;
 use crate::statement::{prepared_statement::PreparedStatement, query::Query};
 use crate::transport::{execution_profile::ExecutionProfileHandle, Node};
@@ -211,12 +212,10 @@ impl Batch {
         self.set_execution_profile_handle(Some(
             execution_profile_handle
                 .pointee_to_builder()
-                .load_balancing_policy(Arc::new(
-                    crate::load_balancing::EnforceTargetNodePolicy::new(
-                        node,
-                        execution_profile_handle.load_balancing_policy(),
-                    ),
-                ))
+                .load_balancing_policy(Arc::new(load_balancing::EnforceTargetNodePolicy::new(
+                    node,
+                    execution_profile_handle.load_balancing_policy(),
+                )))
                 .build()
                 .into_handle(),
         ))

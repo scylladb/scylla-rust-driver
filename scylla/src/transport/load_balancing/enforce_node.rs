@@ -1,6 +1,7 @@
 use super::{DefaultPolicy, FallbackPlan, LoadBalancingPolicy, NodeRef, RoutingInfo};
 use crate::transport::{cluster::ClusterData, Node};
 use std::sync::Arc;
+use uuid::Uuid;
 
 /// This policy will always return the same node, unless it is not available anymore, in which case it will
 /// fallback to the provided policy.
@@ -8,7 +9,7 @@ use std::sync::Arc;
 /// This is meant to be used for shard-aware batching.
 #[derive(Debug)]
 pub struct EnforceTargetNodePolicy {
-    target_node: uuid::Uuid,
+    target_node: Uuid,
     fallback: Arc<dyn LoadBalancingPolicy>,
 }
 
