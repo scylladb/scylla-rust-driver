@@ -2130,7 +2130,11 @@ mod latency_awareness {
     }
 
     impl TimestampedAverage {
-        pub(crate) fn compute_next(previous: Option<Self>, last_latency: Duration) -> Option<Self> {
+        pub(crate) fn compute_next(
+            previous: Option<Self>,
+            last_latency: Duration,
+            scale_secs: f64,
+        ) -> Option<Self> {
             let now = Instant::now();
             match previous {
                 prev if last_latency.is_zero() => prev,
@@ -2141,12 +2145,13 @@ mod latency_awareness {
                 }),
                 Some(prev_avg) => Some({
                     let delay = (now - prev_avg.timestamp).as_secs_f64();
-                    let prev_weight = (delay + 1.).ln() / delay;
-                    let last_latency_nanos = last_latency.as_nanos() as f64;
-                    let prev_avg_nanos = prev_avg.average.as_nanos() as f64;
-                    let average = Duration::from_nanos(
-                        ((1. - prev_weight) * last_latency_nanos + prev_weight * prev_avg_nanos)
-                            .round() as u64,
+                    let scaled_delay = delay / scale_secs;
+                    let prev_weight = (scaled_delay + 1.).ln() / scaled_delay;
+
+                    let last_latency_secs = last_latency.as_secs_f64();
+                    let prev_avg_secs = prev_avg.average.as_secs_f64();
+                    let average = Duration::from_secs_f64(
+                        (1. - prev_weight) * last_latency_secs + prev_weight * prev_avg_secs,
                     );
                     Self {
                         num_measures: prev_avg.num_measures + 1,
@@ -2165,6 +2170,7 @@ mod latency_awareness {
         pub(super) retry_period: Duration,
         pub(super) _update_rate: Duration,
         pub(super) minimum_measurements: usize,
+        pub(super) scale_secs: f64,
 
         /// Last minimum average latency that was noted among the nodes. It is updated every
         /// [update_rate](Self::_update_rate).
@@ -2188,6 +2194,7 @@ mod latency_awareness {
             retry_period: Duration,
             update_rate: Duration,
             minimum_measurements: usize,
+            scale: Duration,
         ) -> (Self, MinAvgUpdater) {
             let min_latency = Arc::new(AtomicDuration::new());
 
@@ -2207,6 +2214,7 @@ mod latency_awareness {
                     retry_period,
                     _update_rate: update_rate,
                     minimum_measurements,
+                    scale_secs: scale.as_secs_f64(),
                     last_min_latency: min_latency_clone,
                     node_avgs: node_avgs_clone,
                     _updater_handle: None,
@@ -2220,12 +2228,14 @@ mod latency_awareness {
             retry_period: Duration,
             update_rate: Duration,
             minimum_measurements: usize,
+            scale: Duration,
         ) -> Self {
             let (self_, updater) = Self::new_for_test(
                 exclusion_threshold,
                 retry_period,
                 update_rate,
                 minimum_measurements,
+                scale,
             );
 
             let (updater_fut, updater_handle) = async move {
@@ -2288,7 +2298,8 @@ mod latency_awareness {
                 // The usual path, the node has been already noticed.
                 let mut node_avg_guard = previous_node_avg.write().unwrap();
                 let previous_node_avg = *node_avg_guard;
-                *node_avg_guard = TimestampedAverage::compute_next(previous_node_avg, latency);
+                *node_avg_guard =
+                    TimestampedAverage::compute_next(previous_node_avg, latency, self.scale_secs);
             } else {
                 // We drop the read lock not to deadlock while taking write lock.
                 std::mem::drop(node_avgs_guard);
@@ -2303,7 +2314,11 @@ mod latency_awareness {
                 // (this will be Some only in an unlikely case that another thread raced with us and won)
                 node_avgs_guard.insert(
                     node.host_id,
-                    RwLock::new(TimestampedAverage::compute_next(previous_node_avg, latency)),
+                    RwLock::new(TimestampedAverage::compute_next(
+                        previous_node_avg,
+                        latency,
+                        self.scale_secs,
+                    )),
                 );
             }
         }
@@ -2400,6 +2415,7 @@ mod latency_awareness {
         retry_period: Duration,
         update_rate: Duration,
         minimum_measurements: usize,
+        scale: Duration,
     }
 
     impl LatencyAwarenessBuilder {
@@ -2410,6 +2426,7 @@ mod latency_awareness {
                 retry_period: Duration::from_secs(10),
                 update_rate: Duration::from_millis(100),
                 minimum_measurements: 50,
+                scale: Duration::from_millis(100),
             }
         }
 
@@ -2477,18 +2494,47 @@ mod latency_awareness {
             }
         }
 
+        /// Sets the scale to use for the resulting latency aware policy.
+        ///
+        /// The `scale` provides control on how the weight given to older latencies decreases
+        /// over time. For a given host, if a new latency `l` is received at time `t`, and
+        /// the previously calculated average is `prev` calculated at time `t'`, then the
+        /// newly calculated average `avg` for that host is calculated thusly:
+        ///
+        /// ```text
+        /// d = (t - t') / scale
+        /// alpha = 1 - (ln(d+1) / d)
+        /// avg = alpha * l + (1 - alpha) * prev
+        /// ```
+        ///
+        /// Typically, with a `scale` of 100 milliseconds (the default), if a new latency is
+        /// measured and the previous measure is 10 millisecond old (so `d=0.1`), then `alpha`
+        /// will be around `0.05`. In other words, the new latency will weight 5% of the
+        /// updated average. A bigger scale will get less weight to new measurements (compared to
+        /// previous ones), a smaller one will give them more weight.
+        ///
+        /// The default scale (if this method is not used) is of **100 milliseconds**. If unsure,
+        /// try this default scale first and experiment only if it doesn't provide acceptable results
+        /// (hosts are excluded too quickly or not fast enough and tuning the exclusion threshold doesn't
+        /// help).
+        pub fn scale(self, scale: Duration) -> Self {
+            Self { scale, ..self }
+        }
+
         pub(super) fn build(self) -> LatencyAwareness {
             let Self {
                 exclusion_threshold,
                 retry_period,
                 update_rate,
                 minimum_measurements,
+                scale,
             } = self;
             LatencyAwareness::new(
                 exclusion_threshold,
                 retry_period,
                 update_rate,
                 minimum_measurements,
+                scale,
             )
         }
 
@@ -2499,12 +2545,14 @@ mod latency_awareness {
                 retry_period,
                 update_rate,
                 minimum_measurements,
+                scale,
             } = self;
             LatencyAwareness::new_for_test(
                 exclusion_threshold,
                 retry_period,
                 update_rate,
                 minimum_measurements,
+                scale,
             )
         }
     }
