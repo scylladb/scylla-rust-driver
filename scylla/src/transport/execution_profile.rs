@@ -486,7 +486,18 @@ impl ExecutionProfileHandle {
         self.0 .0.store(profile.0)
     }
 
+    /// Get the load balancing policy associated with this execution profile.
+    ///
+    /// This may be useful if one wants to construct a new load balancing policy
+    /// that is based on the one associated with this execution profile.
     pub fn load_balancing_policy(&self) -> Arc<dyn LoadBalancingPolicy> {
+        // Exposed as a building block of `Batch::enforce_target_node` in case a user
+        // wants more control than what that method does.
+        // Since the fact that the load balancing policy is accessible from the
+        // ExecutionProfileHandle is already public API through the fact it's documented
+        // that it would be preserved by pointee_to_builder, having this as pblic API
+        // doesn't prevent any more non-breaking evolution than would already be
+        // blocked anyway
         self.0 .0.load().load_balancing_policy.clone()
     }
 }
