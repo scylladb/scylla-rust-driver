@@ -1834,6 +1834,10 @@ impl Session {
         Ok(Some(partition_key))
     }
 
+    /// Calculates the token for given prepared statement and serialized values.
+    ///
+    /// Returns the token that would be computed for executing the provided
+    /// prepared statement with the provided values.
     pub fn calculate_token(
         &self,
         prepared: &PreparedStatement,
