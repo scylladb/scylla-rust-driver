@@ -2798,3 +2798,98 @@ async fn simple_strategy_test() {
 
     assert_eq!(rows, vec![(1, 2, 3), (4, 5, 6), (7, 8, 9)]);
 }
+
+#[tokio::test]
+async fn test_manual_primary_key_computation() {
+    // Setup session
+    let ks = unique_keyspace_name();
+    let session = create_new_session_builder().build().await.unwrap();
+    session.query(format!("CREATE KEYSPACE IF NOT EXISTS {} WITH REPLICATION = {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}}", ks), &[]).await.unwrap();
+    session.use_keyspace(&ks, true).await.unwrap();
+
+    async fn assert_tokens_equal(
+        session: &Session,
+        prepared: &PreparedStatement,
+        pk_values_in_pk_order: impl ValueList,
+        all_values_in_query_order: impl ValueList,
+    ) {
+        let serialized_values_in_pk_order =
+            pk_values_in_pk_order.serialized().unwrap().into_owned();
+        let serialized_values_in_query_order =
+            all_values_in_query_order.serialized().unwrap().into_owned();
+
+        session
+            .execute(prepared, &serialized_values_in_query_order)
+            .await
+            .unwrap();
+
+        let token_by_prepared = session
+            .calculate_token(prepared, &serialized_values_in_query_order)
+            .unwrap()
+            .unwrap();
+        let token_by_hand = Session::calculate_token_for_partition_key(
+            &serialized_values_in_pk_order,
+            &Murmur3Partitioner,
+        )
+        .unwrap();
+        println!(
+            "by_prepared: {}, by_hand: {}",
+            token_by_prepared.value, token_by_hand.value
+        );
+        assert_eq!(token_by_prepared, token_by_hand);
+    }
+
+    // Single-column partition key
+    {
+        session
+            .query(
+                "CREATE TABLE IF NOT EXISTS t2 (a int, b int, c text, primary key (a, b))",
+                &[],
+            )
+            .await
+            .unwrap();
+
+        // Values are given non partition key order,
+        let prepared_simple_pk = session
+            .prepare("INSERT INTO t2 (a, b, c) VALUES (?, ?, ?)")
+            .await
+            .unwrap();
+
+        let pk_values_in_pk_order = (17_i32,);
+        let all_values_in_query_order = (17_i32, 16_i32, "I'm prepared!!!");
+
+        assert_tokens_equal(
+            &session,
+            &prepared_simple_pk,
+            pk_values_in_pk_order,
+            all_values_in_query_order,
+        )
+        .await;
+    }
+
+    // Composite partition key
+    {
+        session
+            .query("CREATE TABLE IF NOT EXISTS complex_pk (a int, b int, c text, d int, e int, primary key ((a,b,c),d))", &[])
+            .await
+            .unwrap();
+
+        // Values are given in non partition key order, to check that such permutation
+        // still yields consistent hashes.
+        let prepared_complex_pk = session
+            .prepare("INSERT INTO complex_pk (a, d, c, b) VALUES (?, 7, ?, ?)")
+            .await
+            .unwrap();
+
+        let pk_values_in_pk_order = (17_i32, 16_i32, "I'm prepared!!!");
+        let all_values_in_query_order = (17_i32, "I'm prepared!!!", 16_i32);
+
+        assert_tokens_equal(
+            &session,
+            &prepared_complex_pk,
+            pk_values_in_pk_order,
+            all_values_in_query_order,
+        )
+        .await;
+    }
+}

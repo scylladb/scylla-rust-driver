@@ -10,7 +10,9 @@ use crate::history::HistoryListener;
 use crate::retry_policy::RetryPolicy;
 use arc_swap::ArcSwapOption;
 use async_trait::async_trait;
+use bytes::BufMut;
 use bytes::Bytes;
+use bytes::BytesMut;
 use futures::future::join_all;
 use futures::future::try_join_all;
 pub use scylla_cql::errors::TranslationError;
@@ -38,6 +40,7 @@ use super::connection::QueryResponse;
 use super::connection::SslConfig;
 use super::errors::{BadQuery, NewSessionError, QueryError};
 use super::execution_profile::{ExecutionProfile, ExecutionProfileHandle, ExecutionProfileInner};
+use super::partitioner::Partitioner;
 use super::partitioner::PartitionerName;
 use super::topology::UntranslatedPeer;
 use super::NodeRef;
@@ -1834,6 +1837,10 @@ impl Session {
         Ok(Some(partition_key))
     }
 
+    /// Calculates the token for given prepared statement and serialized values.
+    ///
+    /// Returns the token that would be computed for executing the provided
+    /// prepared statement with the provided values.
     pub fn calculate_token(
         &self,
         prepared: &PreparedStatement,
@@ -1847,6 +1854,45 @@ impl Session {
             Ok(None) => Ok(None),
             Err(err) => Err(err),
         }
+    }
+
+    /// Calculates the token for given partitioner and serialized partition key.
+    ///
+    /// The ordinary way to calculate token is based on a PreparedStatement
+    /// and values for that statement. However, if a user knows:
+    /// - the order of the columns in the partition key,
+    /// - the values of the columns of the partition key,
+    /// - the partitioner of the table that the statement operates on,
+    ///
+    /// then having a `PreparedStatement` is not necessary and the token can
+    /// be calculated based on that information.
+    ///
+    /// NOTE: the provided values must completely constitute partition key
+    /// and be in the order defined in CREATE TABLE statement.
+    pub fn calculate_token_for_partition_key<P: Partitioner>(
+        serialized_partition_key_values: &SerializedValues,
+        _partitioner: &P,
+    ) -> Result<Token, PartitionKeyError> {
+        let mut buf: BytesMut = BytesMut::new();
+
+        if serialized_partition_key_values.len() == 1 {
+            let val = serialized_partition_key_values.iter().next().unwrap();
+            if let Some(val) = val {
+                buf.extend_from_slice(val);
+            }
+        } else {
+            for val in serialized_partition_key_values.iter().flatten() {
+                let val_len_u16: u16 = val
+                    .len()
+                    .try_into()
+                    .map_err(|_| PartitionKeyError::ValueTooLong(val.len()))?;
+                buf.put_u16(val_len_u16);
+                buf.extend_from_slice(val);
+                buf.put_u8(0);
+            }
+        }
+
+        Ok(P::hash(&buf.freeze()))
     }
 
     /// Retrieves the handle to execution profile that is used by this session
