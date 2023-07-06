@@ -11,9 +11,7 @@ use crate::prepared_statement::PartitionKeyDecoder;
 use crate::utils::pretty::{CommaSeparatedDisplayer, CqlValueDisplayer};
 use arc_swap::ArcSwapOption;
 use async_trait::async_trait;
-use bytes::BufMut;
 use bytes::Bytes;
-use bytes::BytesMut;
 use futures::future::join_all;
 use futures::future::try_join_all;
 use itertools::Either;
@@ -46,6 +44,7 @@ use super::connection::SslConfig;
 use super::errors::{BadQuery, NewSessionError, QueryError};
 use super::execution_profile::{ExecutionProfile, ExecutionProfileHandle, ExecutionProfileInner};
 use super::partitioner::Partitioner;
+use super::partitioner::PartitionerHasher;
 use super::partitioner::PartitionerName;
 use super::topology::UntranslatedPeer;
 use super::NodeRef;
@@ -1936,14 +1935,14 @@ impl Session {
     /// and be in the order defined in CREATE TABLE statement.
     pub fn calculate_token_for_partition_key<P: Partitioner>(
         serialized_partition_key_values: &SerializedValues,
-        _partitioner: &P,
+        partitioner: &P,
     ) -> Result<Token, PartitionKeyError> {
-        let mut buf: BytesMut = BytesMut::new();
+        let mut partitioner_hasher = partitioner.build_hasher();
 
         if serialized_partition_key_values.len() == 1 {
             let val = serialized_partition_key_values.iter().next().unwrap();
             if let Some(val) = val {
-                buf.extend_from_slice(val);
+                partitioner_hasher.write(val);
             }
         } else {
             for val in serialized_partition_key_values.iter().flatten() {
@@ -1951,13 +1950,13 @@ impl Session {
                     .len()
                     .try_into()
                     .map_err(|_| PartitionKeyError::ValueTooLong(val.len()))?;
-                buf.put_u16(val_len_u16);
-                buf.extend_from_slice(val);
-                buf.put_u8(0);
+                partitioner_hasher.write(&val_len_u16.to_be_bytes());
+                partitioner_hasher.write(val);
+                partitioner_hasher.write(&[0u8]);
             }
         }
 
-        Ok(P::hash(&buf.freeze()))
+        Ok(partitioner_hasher.finish())
     }
 
     /// Retrieves the handle to execution profile that is used by this session

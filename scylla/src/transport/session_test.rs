@@ -229,7 +229,7 @@ async fn test_prepared_statement() {
                 .as_bigint()
                 .unwrap(),
         };
-        let prepared_token = Murmur3Partitioner::hash(
+        let prepared_token = Murmur3Partitioner.hash_one(
             &prepared_statement
                 .compute_partition_key(&serialized_values)
                 .unwrap(),
@@ -255,7 +255,7 @@ async fn test_prepared_statement() {
                 .as_bigint()
                 .unwrap(),
         };
-        let prepared_token = Murmur3Partitioner::hash(
+        let prepared_token = Murmur3Partitioner.hash_one(
             &prepared_complex_pk_statement
                 .compute_partition_key(&serialized_values)
                 .unwrap(),
@@ -527,7 +527,7 @@ async fn test_token_calculation() {
                 .as_bigint()
                 .unwrap(),
         };
-        let prepared_token = Murmur3Partitioner::hash(
+        let prepared_token = Murmur3Partitioner.hash_one(
             &prepared_statement
                 .compute_partition_key(&serialized_values)
                 .unwrap(),

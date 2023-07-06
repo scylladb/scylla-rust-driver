@@ -31,7 +31,9 @@ async fn main() -> Result<()> {
             .await?;
 
         let serialized_pk = (pk,).serialized()?.into_owned();
-        let t = Murmur3Partitioner::hash(&prepared.compute_partition_key(&serialized_pk)?).value;
+        let t = Murmur3Partitioner
+            .hash_one(&prepared.compute_partition_key(&serialized_pk)?)
+            .value;
 
         println!(
             "Token endpoints for query: {:?}",
