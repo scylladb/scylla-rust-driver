@@ -22,6 +22,7 @@ use std::borrow::Borrow;
 use std::collections::HashMap;
 use std::fmt::Display;
 use std::future::Future;
+use std::io;
 use std::net::SocketAddr;
 use std::str::FromStr;
 use std::sync::atomic::AtomicUsize;
@@ -30,6 +31,7 @@ use std::sync::Arc;
 use std::time::Duration;
 use tokio::net::lookup_host;
 use tokio::time::timeout;
+use tracing::warn;
 use tracing::{debug, error, trace, trace_span, Instrument};
 use uuid::Uuid;
 
@@ -472,16 +474,30 @@ impl Session {
                 }) => to_resolve.push((hostname, Some(datacenter))),
             };
         }
-        let resolve_futures = to_resolve
-            .into_iter()
-            .map(|(hostname, datacenter)| async move {
-                Ok::<_, NewSessionError>(ContactPoint {
-                    address: resolve_hostname(&hostname).await?,
-                    datacenter,
-                })
-            });
-        let resolved: Vec<ContactPoint> = futures::future::try_join_all(resolve_futures).await?;
-        initial_peers.extend(resolved);
+        let resolve_futures = to_resolve.iter().map(|(hostname, datacenter)| async move {
+            match resolve_hostname(hostname).await {
+                Ok(address) => Some(ContactPoint {
+                    address,
+                    datacenter: datacenter.clone(),
+                }),
+                Err(e) => {
+                    warn!("Hostname resolution failed for {}: {}", hostname, &e);
+                    None
+                }
+            }
+        });
+        let resolved: Vec<_> = futures::future::join_all(resolve_futures).await;
+        initial_peers.extend(resolved.into_iter().flatten());
+
+        // Ensure there is at least one resolved node
+        if initial_peers.is_empty() {
+            return Err(NewSessionError::FailedToResolveAnyHostname(
+                to_resolve
+                    .into_iter()
+                    .map(|(hostname, _datacenter)| hostname)
+                    .collect(),
+            ));
+        }
 
         let connection_config = ConnectionConfig {
             compression: config.compression,
@@ -1920,7 +1936,7 @@ fn calculate_partition_key(
 // Resolve the given hostname using a DNS lookup if necessary.
 // The resolution may return multiple IPs and the function returns one of them.
 // It prefers to return IPv4s first, and only if there are none, IPv6s.
-pub(crate) async fn resolve_hostname(hostname: &str) -> Result<SocketAddr, NewSessionError> {
+pub(crate) async fn resolve_hostname(hostname: &str) -> Result<SocketAddr, io::Error> {
     let mut ret = None;
     let addrs: Vec<SocketAddr> = match lookup_host(hostname).await {
         Ok(addrs) => addrs.collect(),
@@ -1936,7 +1952,12 @@ pub(crate) async fn resolve_hostname(hostname: &str) -> Result<SocketAddr, NewSe
         }
     }
 
-    ret.ok_or_else(|| NewSessionError::FailedToResolveAddress(hostname.to_string()))
+    ret.ok_or_else(|| {
+        io::Error::new(
+            io::ErrorKind::Other,
+            format!("Empty address list returned by DNS for {}", hostname),
+        )
+    })
 }
 
 // run_query, execute_query, etc have a template type called ResT.
