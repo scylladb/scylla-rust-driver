@@ -124,7 +124,7 @@ impl PreparedStatement {
 
     /// Computes the partition key of the target table from given values —
     /// it assumes that all partition key columns are passed in values.
-    /// Partition keys have a specific serialization rules.
+    /// Partition keys have specific serialization rules.
     /// Ref: <https://github.com/scylladb/scylla/blob/40adf38915b6d8f5314c621a94d694d172360833/compound_compat.hh#L33-L47>
     pub fn compute_partition_key(
         &self,
@@ -142,48 +142,47 @@ impl PreparedStatement {
             {
                 buf.extend_from_slice(v);
             }
-            return Ok(buf.into());
-        }
+        } else {
+            // Composite partition key case
 
-        // Composite partition key case
-
-        // Iterate on values using sorted pk_indexes (see deser_prepared_metadata),
-        // and use PartitionKeyIndex.sequence to insert the value in pk_values with the correct order.
-        // At the same time, compute the size of the buffer to reserve it before writing in it.
-        let mut pk_values: SmallVec<[_; 8]> =
-            smallvec![None; self.get_prepared_metadata().pk_indexes.len()];
-        let mut values_iter = bound_values.iter();
-        let mut buf_size = 0;
-        // pk_indexes contains the indexes of the partition key value, so the current offset of the
-        // iterator must be kept, in order to compute the next position of the pk in the iterator.
-        // At each iteration values_iter.nth(0) will roughly correspond to values[values_iter_offset],
-        // so values[pk_index.index] will be retrieved with values_iter.nth(pk_index.index - values_iter_offset)
-        let mut values_iter_offset = 0;
-        for pk_index in self.get_prepared_metadata().pk_indexes.iter().copied() {
-            // Find value matching current pk_index
-            let next_val = values_iter
-                .nth((pk_index.index - values_iter_offset) as usize)
-                .ok_or_else(|| {
-                    PartitionKeyError::NoPkIndexValue(pk_index.index, bound_values.len())
-                })?;
-            // Add it in sequence order to pk_values
-            if let Some(v) = next_val {
-                pk_values[pk_index.sequence as usize] = Some(v);
-                buf_size += std::mem::size_of::<u16>() + v.len() + std::mem::size_of::<u8>();
+            // Iterate on values using sorted pk_indexes (see deser_prepared_metadata),
+            // and use PartitionKeyIndex.sequence to insert the value in pk_values with the correct order.
+            // At the same time, compute the size of the buffer to reserve it before writing in it.
+            let mut pk_values: SmallVec<[_; 8]> =
+                smallvec![None; self.get_prepared_metadata().pk_indexes.len()];
+            let mut values_iter = bound_values.iter();
+            let mut buf_size = 0;
+            // pk_indexes contains the indexes of the partition key value, so the current offset of the
+            // iterator must be kept, in order to compute the next position of the pk in the iterator.
+            // At each iteration values_iter.nth(0) will roughly correspond to values[values_iter_offset],
+            // so values[pk_index.index] will be retrieved with values_iter.nth(pk_index.index - values_iter_offset)
+            let mut values_iter_offset = 0;
+            for pk_index in self.get_prepared_metadata().pk_indexes.iter().copied() {
+                // Find value matching current pk_index
+                let next_val = values_iter
+                    .nth((pk_index.index - values_iter_offset) as usize)
+                    .ok_or_else(|| {
+                        PartitionKeyError::NoPkIndexValue(pk_index.index, bound_values.len())
+                    })?;
+                // Add it in sequence order to pk_values
+                if let Some(v) = next_val {
+                    pk_values[pk_index.sequence as usize] = Some(v);
+                    buf_size += std::mem::size_of::<u16>() + v.len() + std::mem::size_of::<u8>();
+                }
+                values_iter_offset = pk_index.index + 1;
             }
-            values_iter_offset = pk_index.index + 1;
-        }
-        // Add values' bytes
-        buf.reserve(buf_size);
-        for v in pk_values.iter().flatten() {
-            let v_len_u16: u16 = v
-                .len()
-                .try_into()
-                .map_err(|_| PartitionKeyError::ValueTooLong(v.len()))?;
+            // Add values' bytes
+            buf.reserve(buf_size);
+            for v in pk_values.iter().flatten() {
+                let v_len_u16: u16 = v
+                    .len()
+                    .try_into()
+                    .map_err(|_| PartitionKeyError::ValueTooLong(v.len()))?;
 
-            buf.put_u16(v_len_u16);
-            buf.extend_from_slice(v);
-            buf.put_u8(0);
+                buf.put_u16(v_len_u16);
+                buf.extend_from_slice(v);
+                buf.put_u8(0);
+            }
         }
         Ok(buf.into())
     }
