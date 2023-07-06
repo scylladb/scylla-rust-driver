@@ -30,6 +30,41 @@ impl PartitionerName {
     }
 }
 
+impl Partitioner for PartitionerName {
+    type Hasher = PartitionerHasherAny;
+
+    fn build_hasher(&self) -> Self::Hasher {
+        match self {
+            PartitionerName::Murmur3 => {
+                PartitionerHasherAny::Murmur3(Murmur3Partitioner.build_hasher())
+            }
+            PartitionerName::CDC => PartitionerHasherAny::CDC(CDCPartitioner.build_hasher()),
+        }
+    }
+}
+
+#[allow(clippy::upper_case_acronyms)]
+pub(crate) enum PartitionerHasherAny {
+    Murmur3(Murmur3PartitionerHasher),
+    CDC(CDCPartitionerHasher),
+}
+
+impl PartitionerHasher for PartitionerHasherAny {
+    fn write(&mut self, pk_part: &[u8]) {
+        match self {
+            PartitionerHasherAny::Murmur3(h) => h.write(pk_part),
+            PartitionerHasherAny::CDC(h) => h.write(pk_part),
+        }
+    }
+
+    fn finish(&self) -> Token {
+        match self {
+            PartitionerHasherAny::Murmur3(h) => h.finish(),
+            PartitionerHasherAny::CDC(h) => h.finish(),
+        }
+    }
+}
+
 /// A trait for creating instances of `PartitionHasher`, which ultimately compute the token.
 ///
 /// The Partitioners' design is based on std::hash design: `Partitioner`
