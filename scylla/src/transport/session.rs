@@ -1885,18 +1885,6 @@ impl Session {
         .await
     }
 
-    fn calculate_partition_key(
-        &self,
-        prepared: &PreparedStatement,
-        serialized_values: &SerializedValues,
-    ) -> Result<Option<Bytes>, QueryError> {
-        if !prepared.is_token_aware() {
-            return Ok(None);
-        }
-        let partition_key = calculate_partition_key(prepared, serialized_values)?;
-        Ok(Some(partition_key))
-    }
-
     /// Calculates the token for given prepared statement and serialized values.
     ///
     /// Returns the token that would be computed for executing the provided
@@ -1906,14 +1894,13 @@ impl Session {
         prepared: &PreparedStatement,
         serialized_values: &SerializedValues,
     ) -> Result<Option<Token>, QueryError> {
-        match self.calculate_partition_key(prepared, serialized_values) {
-            Ok(Some(partition_key)) => {
-                let partitioner_name = prepared.get_partitioner_name();
-                Ok(Some(partitioner_name.hash(&partition_key)))
-            }
-            Ok(None) => Ok(None),
-            Err(err) => Err(err),
+        if !prepared.is_token_aware() {
+            return Ok(None);
         }
+
+        prepared
+            .extract_partition_key_and_calculate_token(serialized_values)
+            .map(|opt| opt.map(|(_pk, token)| token))
     }
 
     /// Calculates the token for given partitioner and serialized partition key.
@@ -1959,26 +1946,6 @@ impl Session {
     /// by default, i.e. when an executed statement does not define its own handle.
     pub fn get_default_execution_profile_handle(&self) -> &ExecutionProfileHandle {
         &self.default_execution_profile_handle
-    }
-}
-
-fn calculate_partition_key(
-    stmt: &PreparedStatement,
-    values: &SerializedValues,
-) -> Result<Bytes, QueryError> {
-    match stmt.compute_partition_key(values) {
-        Ok(key) => Ok(key),
-        Err(PartitionKeyError::PartitionKeyExtraction(
-            PartitionKeyExtractionError::NoPkIndexValue(_, _),
-        )) => Err(QueryError::ProtocolError(
-            "No pk indexes - can't calculate token",
-        )),
-        Err(PartitionKeyError::TokenCalculation(TokenCalculationError::ValueTooLong(
-            values_len,
-        ))) => Err(QueryError::BadQuery(BadQuery::ValuesTooLongForKey(
-            values_len,
-            u16::MAX.into(),
-        ))),
     }
 }
 
