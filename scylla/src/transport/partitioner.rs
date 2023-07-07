@@ -21,13 +21,6 @@ impl PartitionerName {
             None
         }
     }
-
-    pub(crate) fn hash(&self, pk: &[u8]) -> Token {
-        match self {
-            PartitionerName::Murmur3 => Murmur3Partitioner.hash_one(pk),
-            PartitionerName::CDC => CDCPartitioner.hash_one(pk),
-        }
-    }
 }
 
 impl Partitioner for PartitionerName {
