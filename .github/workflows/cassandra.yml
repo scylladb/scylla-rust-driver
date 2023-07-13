@@ -19,7 +19,7 @@ jobs:
     - uses: actions/checkout@v2
     - name: Setup 3-node Cassandra cluster
       run: |
-        docker compose -f test/cluster/cassandra/docker-compose.yml up -d
+        docker compose -f test/cluster/cassandra/docker-compose.yml up -d --wait
       # A separate step for building to separate measuring time of compilation and testing
     - name: Build the project
       run: cargo build --verbose --tests

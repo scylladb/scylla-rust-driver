@@ -30,14 +30,14 @@ clippy:
 	RUSTFLAGS=-Dwarnings cargo clippy --examples --tests -- -Aclippy::uninlined_format_args
 
 .PHONY: test
-test: up wait-for-cluster
+test: up
 	SCYLLA_URI=172.42.0.2:9042 \
 	 SCYLLA_URI2=172.42.0.3:9042 \
 	 SCYLLA_URI3=172.42.0.4:9042 \
 	 cargo test
 
 .PHONY: dockerized-test
-dockerized-test: up wait-for-cluster
+dockerized-test: up
 	test/dockerized/run.sh
 
 .PHONY: build
@@ -50,7 +50,7 @@ docs:
 
 .PHONY: up
 up:
-	$(COMPOSE) up -d
+	$(COMPOSE) up -d --wait
 	@echo
 	@echo "ScyllaDB cluster is running in the background. Use 'make down' to stop it."
 	@echo
@@ -75,7 +75,3 @@ shell:
 clean: down
 	cargo clean
 	rm -rf docs/book
-
-.PHONY: wait-for-cluster
-wait-for-cluster:
-	@test/cluster/wait.sh
