@@ -16,7 +16,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 60
     steps:
-    - uses: actions/checkout@v2
+    - uses: actions/checkout@v3
     - name: Setup 3-node Cassandra cluster
       run: |
         docker-compose -f test/cluster/cassandra/docker-compose.yml up -d
