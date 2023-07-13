@@ -1,4 +1,4 @@
-COMPOSE := docker-compose -f test/cluster/docker-compose.yml
+COMPOSE := docker compose -f test/cluster/docker-compose.yml
 
 .PHONY: all
 all: test
