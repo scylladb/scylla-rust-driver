@@ -31,10 +31,10 @@ Currently, we require new PRs to compile without warnings, pass `cargo fmt` and 
 ## Testing
 
 A 3-node ScyllaDB cluster is required to run the tests.
-The simplest way to set it up locally is to use a `docker-compose`.
-Fortunately there is no need to invoke `docker-compose` manually, everything can be handled by our `Makefile`.
+The simplest way to set it up locally is to use a `docker compose`.
+Fortunately there is no need to invoke `docker compose` manually, everything can be handled by our `Makefile`.
 
-To run a cargo test suite, use the command below (note that you must have docker and docker-compose installed):
+To run a cargo test suite, use the command below (note that you must have Docker and Docker Compose V2 installed):
 ```bash
 make test
 ```

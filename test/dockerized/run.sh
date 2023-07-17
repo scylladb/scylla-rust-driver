@@ -2,7 +2,7 @@
 
 cd "$(dirname "$0")"/../../
 
-if [[ -z $(docker container ls | grep cluster_scylla) ]]; then
+if [[ -z $(docker container ls | grep cluster-scylla) ]]; then
     echo "Scylla container must be running to execute tests (use 'make up')."
     exit 1
 fi
