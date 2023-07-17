@@ -17,7 +17,7 @@ jobs:
     runs-on: ubuntu-20.04
     timeout-minutes: 60
     steps:
-      - uses: actions/checkout@v2
+      - uses: actions/checkout@v3
       - name: Install scylla-ccm
         run: pip3 install https://github.com/scylladb/scylla-ccm/archive/master.zip
 

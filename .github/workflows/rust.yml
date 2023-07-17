@@ -17,7 +17,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 60
     steps:
-    - uses: actions/checkout@v2
+    - uses: actions/checkout@v3
     - name: Setup 3-node Scylla cluster
       run: |
         sudo sh -c "echo 2097152 >> /proc/sys/fs/aio-max-nr"
@@ -49,12 +49,11 @@ jobs:
   min_rust:
     runs-on: ubuntu-latest
     steps:
-    - uses: actions/checkout@v2
+    - uses: actions/checkout@v3
     - name: Install Rust ${{ env.rust_min }}
-      uses: actions-rs/toolchain@v1
-      with:
-        toolchain: ${{ env.rust_min }}
-        override: true
+      run: |
+        rustup install ${{ env.rust_min }}
+        rustup override set ${{ env.rust_min }}
     - name: Print Rust version
       run: rustc --version
     - name: MSRV cargo check with features
@@ -68,6 +67,6 @@ jobs:
   cargo_docs:
     runs-on: ubuntu-latest
     steps:
-    - uses: actions/checkout@v2
+    - uses: actions/checkout@v3
     - name: Compile docs
       run: RUSTDOCFLAGS=-Dwarnings cargo doc
