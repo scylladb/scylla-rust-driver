@@ -1,16 +1,8 @@
 use rand::Rng;
 use std::collections::HashMap;
 use std::convert::TryFrom;
-use std::net::SocketAddr;
 use std::num::NonZeroU16;
 use thiserror::Error;
-
-#[derive(PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Copy)]
-pub struct Node {
-    // TODO: potentially a node may have multiple addresses, remember them?
-    // but we need an Ord instance on Node
-    pub addr: SocketAddr,
-}
 
 #[derive(PartialEq, Eq, PartialOrd, Ord, Clone, Copy, Debug)]
 pub struct Token {
