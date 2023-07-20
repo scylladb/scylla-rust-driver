@@ -60,10 +60,7 @@ use crate::statement::prepared_statement::PreparedStatement;
 use crate::statement::Consistency;
 use crate::transport::session::IntoTypedRows;
 use crate::transport::Compression;
-
-// Existing code imports scylla::transport::connection::QueryResult because it used to be located in this file.
-// Reexport QueryResult to avoid breaking the existing code.
-pub use crate::QueryResult;
+use crate::QueryResult;
 
 // Queries for schema agreement
 const LOCAL_VERSION: &str = "SELECT schema_version FROM system.local WHERE key='local'";
