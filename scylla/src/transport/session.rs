@@ -1451,20 +1451,6 @@ impl Session {
         Ok(Some(tracing_info))
     }
 
-    // Returns which replicas are likely to take part in handling the query.
-    // If a list of replicas cannot be easily narrowed down, all available replicas
-    // will be returned.
-    pub fn estimate_replicas_for_query(&self, statement: &RoutingInfo) -> Vec<Arc<Node>> {
-        let cluster_data = self.cluster.get_data();
-        match statement.token {
-            Some(token) => {
-                let cluster_data = self.cluster.get_data();
-                cluster_data.get_token_endpoints(statement.keyspace.unwrap_or(""), token)
-            }
-            None => cluster_data.get_nodes_info().to_owned(),
-        }
-    }
-
     // This method allows to easily run a query using load balancing, retry policy etc.
     // Requires some information about the query and two closures
     // First closure is used to choose a connection

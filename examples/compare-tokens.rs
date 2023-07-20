@@ -1,8 +1,9 @@
 use anyhow::Result;
 use scylla::frame::value::ValueList;
+use scylla::routing::Token;
 use scylla::transport::partitioner::{Murmur3Partitioner, Partitioner};
 use scylla::transport::NodeAddr;
-use scylla::{load_balancing, Session, SessionBuilder};
+use scylla::{Session, SessionBuilder};
 use std::env;
 
 #[tokio::main]
@@ -32,16 +33,11 @@ async fn main() -> Result<()> {
         let serialized_pk = (pk,).serialized()?.into_owned();
         let t = Murmur3Partitioner::hash(&prepared.compute_partition_key(&serialized_pk)?).value;
 
-        let statement_info = load_balancing::RoutingInfo {
-            token: Some(scylla::routing::Token { value: t }),
-            keyspace: Some("ks"),
-            is_confirmed_lwt: false,
-            ..Default::default()
-        };
         println!(
-            "Estimated replicas for query: {:?}",
+            "Token endpoints for query: {:?}",
             session
-                .estimate_replicas_for_query(&statement_info)
+                .get_cluster_data()
+                .get_token_endpoints("ks", Token { value: t })
                 .iter()
                 .map(|n| n.address)
                 .collect::<Vec<NodeAddr>>()
