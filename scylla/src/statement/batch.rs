@@ -6,7 +6,7 @@ use crate::statement::{prepared_statement::PreparedStatement, query::Query};
 use crate::transport::execution_profile::ExecutionProfileHandle;
 
 use super::StatementConfig;
-pub use super::{Consistency, SerialConsistency};
+use super::{Consistency, SerialConsistency};
 pub use crate::frame::request::batch::BatchType;
 
 /// CQL batch statement.
