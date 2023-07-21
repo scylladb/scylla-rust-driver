@@ -7,7 +7,7 @@ use crate::query::Query;
 use crate::retry_policy::{QueryInfo, RetryDecision, RetryPolicy, RetrySession};
 use crate::routing::Token;
 use crate::statement::Consistency;
-use crate::tracing::{GetTracingConfig, TracingInfo};
+use crate::tracing::TracingInfo;
 use crate::transport::cluster::Datacenter;
 use crate::transport::errors::{BadKeyspaceName, BadQuery, DbError, QueryError};
 use crate::transport::partitioner::{Murmur3Partitioner, Partitioner, PartitionerName};
@@ -29,10 +29,8 @@ use itertools::Itertools;
 use scylla_cql::frame::value::Value;
 use std::collections::BTreeSet;
 use std::collections::{BTreeMap, HashMap};
-use std::num::NonZeroU32;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
-use std::time::Duration;
 use tokio::net::TcpListener;
 use uuid::Uuid;
 
@@ -563,14 +561,6 @@ async fn test_token_awareness() {
         .unwrap();
     prepared_statement.set_tracing(true);
 
-    // The Cassandra cluster in CI is quite slow, so we use a quite forgiving
-    // configuration here (wait at most 10 seconds)
-    let get_tracing_config = GetTracingConfig {
-        attempts: NonZeroU32::new(50).unwrap(),
-        interval: Duration::from_millis(200),
-        consistency: Consistency::One,
-    };
-
     // The default policy should be token aware
     for size in 1..50usize {
         let key = vec!['a'; size].into_iter().collect::<String>();
@@ -579,7 +569,7 @@ async fn test_token_awareness() {
         // Execute a query and observe tracing info
         let res = session.execute(&prepared_statement, values).await.unwrap();
         let tracing_info = session
-            .get_tracing_info_custom(res.tracing_id.as_ref().unwrap(), &get_tracing_config)
+            .get_tracing_info(res.tracing_id.as_ref().unwrap())
             .await
             .unwrap();
 
@@ -592,10 +582,7 @@ async fn test_token_awareness() {
             .await
             .unwrap();
         let tracing_id = iter.get_tracing_ids()[0];
-        let tracing_info = session
-            .get_tracing_info_custom(&tracing_id, &get_tracing_config)
-            .await
-            .unwrap();
+        let tracing_info = session.get_tracing_info(&tracing_id).await.unwrap();
 
         // Again, verify that only one node was involved
         assert_eq!(tracing_info.nodes().len(), 1);
@@ -986,21 +973,8 @@ async fn test_get_tracing_info(session: &Session, ks: String) {
     let traced_query_result: QueryResult = session.query(traced_query, &[]).await.unwrap();
     let tracing_id: Uuid = traced_query_result.tracing_id.unwrap();
 
-    // The reason why we enable so long waiting for TracingInfo is... Cassandra. (Yes, again.)
-    // In Cassandra Java Driver, the wait time for tracing info is 10 seconds, so here we do the same.
-    // However, as Scylla usually gets TracingInfo ready really fast (our default interval is hence 3ms),
-    // we stick to a not-so-much-terribly-long interval here.
-    let get_tracing_config = GetTracingConfig {
-        attempts: NonZeroU32::new(50).unwrap(),
-        interval: Duration::from_millis(200),
-        consistency: Consistency::One,
-    };
-
     // Getting tracing info from session using this uuid works
-    let tracing_info: TracingInfo = session
-        .get_tracing_info_custom(&tracing_id, &get_tracing_config)
-        .await
-        .unwrap();
+    let tracing_info: TracingInfo = session.get_tracing_info(&tracing_id).await.unwrap();
     assert!(!tracing_info.events.is_empty());
     assert!(!tracing_info.nodes().is_empty());
 }

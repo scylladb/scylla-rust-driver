@@ -10,11 +10,13 @@ use crate::cloud::{CloudConfig, CloudConfigError};
 #[cfg(feature = "cloud")]
 use crate::ExecutionProfile;
 
+use crate::statement::Consistency;
 use crate::transport::connection_pool::PoolSize;
 use crate::transport::host_filter::HostFilter;
 use std::borrow::Borrow;
 use std::marker::PhantomData;
 use std::net::SocketAddr;
+use std::num::NonZeroU32;
 #[cfg(feature = "cloud")]
 use std::path::Path;
 use std::sync::Arc;
@@ -826,6 +828,77 @@ impl<K: SessionBuilderKind> GenericSessionBuilder<K> {
     /// ```
     pub fn refresh_metadata_on_auto_schema_agreement(mut self, refresh_metadata: bool) -> Self {
         self.config.refresh_metadata_on_auto_schema_agreement = refresh_metadata;
+        self
+    }
+
+    /// Set the number of attempts to fetch [TracingInfo](crate::tracing::TracingInfo)
+    /// in [`Session::get_tracing_info`].
+    /// The default is 5 attempts.
+    ///
+    /// Tracing info might not be available immediately on queried node - that's why
+    /// the driver performs a few attempts with sleeps in between.
+    ///
+    /// # Example
+    /// ```
+    /// # use scylla::{Session, SessionBuilder};
+    /// # use std::num::NonZeroU32;
+    /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
+    /// let session: Session = SessionBuilder::new()
+    ///     .known_node("127.0.0.1:9042")
+    ///     .tracing_info_fetch_attempts(NonZeroU32::new(10).unwrap())
+    ///     .build()
+    ///     .await?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn tracing_info_fetch_attempts(mut self, attempts: NonZeroU32) -> Self {
+        self.config.tracing_info_fetch_attempts = attempts;
+        self
+    }
+
+    /// Set the delay between attempts to fetch [TracingInfo](crate::tracing::TracingInfo)
+    /// in [`Session::get_tracing_info`].
+    /// The default is 3 milliseconds.
+    ///
+    /// Tracing info might not be available immediately on queried node - that's why
+    /// the driver performs a few attempts with sleeps in between.
+    ///
+    /// # Example
+    /// ```
+    /// # use scylla::{Session, SessionBuilder};
+    /// # use std::time::Duration;
+    /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
+    /// let session: Session = SessionBuilder::new()
+    ///     .known_node("127.0.0.1:9042")
+    ///     .tracing_info_fetch_interval(Duration::from_millis(50))
+    ///     .build()
+    ///     .await?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn tracing_info_fetch_interval(mut self, interval: Duration) -> Self {
+        self.config.tracing_info_fetch_interval = interval;
+        self
+    }
+
+    /// Set the consistency level of fetching [TracingInfo](crate::tracing::TracingInfo)
+    /// in [`Session::get_tracing_info`].
+    /// The default is [`Consistency::One`].
+    ///
+    /// # Example
+    /// ```
+    /// # use scylla::{Session, SessionBuilder, statement::Consistency};
+    /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
+    /// let session: Session = SessionBuilder::new()
+    ///     .known_node("127.0.0.1:9042")
+    ///     .tracing_info_fetch_consistency(Consistency::One)
+    ///     .build()
+    ///     .await?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn tracing_info_fetch_consistency(mut self, consistency: Consistency) -> Self {
+        self.config.tracing_info_fetch_consistency = consistency;
         self
     }
 }

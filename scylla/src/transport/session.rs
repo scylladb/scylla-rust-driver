@@ -24,6 +24,7 @@ use std::fmt::Display;
 use std::future::Future;
 use std::io;
 use std::net::SocketAddr;
+use std::num::NonZeroU32;
 use std::str::FromStr;
 use std::sync::atomic::AtomicUsize;
 use std::sync::atomic::Ordering;
@@ -56,7 +57,7 @@ use crate::prepared_statement::{PartitionKeyError, PreparedStatement};
 use crate::query::Query;
 use crate::routing::Token;
 use crate::statement::{Consistency, SerialConsistency};
-use crate::tracing::{GetTracingConfig, TracingEvent, TracingInfo};
+use crate::tracing::{TracingEvent, TracingInfo};
 use crate::transport::cluster::{Cluster, ClusterData, ClusterNeatDebug};
 use crate::transport::connection::{Connection, ConnectionConfig, VerifiedKeyspaceName};
 use crate::transport::connection_pool::PoolConfig;
@@ -130,6 +131,9 @@ pub struct Session {
     auto_await_schema_agreement_timeout: Option<Duration>,
     refresh_metadata_on_auto_schema_agreement: bool,
     keyspace_name: ArcSwapOption<String>,
+    tracing_info_fetch_attempts: NonZeroU32,
+    tracing_info_fetch_interval: Duration,
+    tracing_info_fetch_consistency: Consistency,
 }
 
 /// This implementation deliberately omits some details from Cluster in order
@@ -235,6 +239,22 @@ pub struct SessionConfig {
     /// Please do performance measurements before committing to disabling
     /// this option.
     pub enable_write_coalescing: bool,
+
+    /// Number of attempts to fetch [`TracingInfo`]
+    /// in [`Session::get_tracing_info`]. Tracing info
+    /// might not be available immediately on queried node - that's why
+    /// the driver performs a few attempts with sleeps in between.
+    pub tracing_info_fetch_attempts: NonZeroU32,
+
+    /// Delay between attempts to fetch [`TracingInfo`]
+    /// in [`Session::get_tracing_info`]. Tracing info
+    /// might not be available immediately on queried node - that's why
+    /// the driver performs a few attempts with sleeps in between.
+    pub tracing_info_fetch_interval: Duration,
+
+    /// Consistency level of fetching [`TracingInfo`]
+    /// in [`Session::get_tracing_info`].
+    pub tracing_info_fetch_consistency: Consistency,
 }
 
 /// Describes database server known on Session startup.
@@ -294,6 +314,9 @@ impl SessionConfig {
             #[cfg(feature = "cloud")]
             cloud_config: None,
             enable_write_coalescing: true,
+            tracing_info_fetch_attempts: NonZeroU32::new(5).unwrap(),
+            tracing_info_fetch_interval: Duration::from_millis(3),
+            tracing_info_fetch_consistency: Consistency::One,
         }
     }
 
@@ -544,6 +567,9 @@ impl Session {
             refresh_metadata_on_auto_schema_agreement: config
                 .refresh_metadata_on_auto_schema_agreement,
             keyspace_name: ArcSwapOption::default(), // will be set by use_keyspace
+            tracing_info_fetch_attempts: config.tracing_info_fetch_attempts,
+            tracing_info_fetch_interval: config.tracing_info_fetch_interval,
+            tracing_info_fetch_consistency: config.tracing_info_fetch_consistency,
         };
 
         if let Some(keyspace_name) = config.used_keyspace {
@@ -1337,8 +1363,24 @@ impl Session {
     /// See [the book](https://rust-driver.docs.scylladb.com/stable/tracing/tracing.html)
     /// for more information about query tracing
     pub async fn get_tracing_info(&self, tracing_id: &Uuid) -> Result<TracingInfo, QueryError> {
-        self.get_tracing_info_custom(tracing_id, &GetTracingConfig::default())
-            .await
+        // tracing_info_fetch_attempts is NonZeroU32 so at least one attempt will be made
+        for _ in 0..self.tracing_info_fetch_attempts.get() {
+            let current_try: Option<TracingInfo> = self
+                .try_getting_tracing_info(tracing_id, Some(self.tracing_info_fetch_consistency))
+                .await?;
+
+            match current_try {
+                Some(tracing_info) => return Ok(tracing_info),
+                None => tokio::time::sleep(self.tracing_info_fetch_interval).await,
+            };
+        }
+
+        Err(QueryError::ProtocolError(
+            "All tracing queries returned an empty result, \
+            maybe the trace information didn't propagate yet. \
+            Consider configuring Session with \
+            a longer fetch interval (tracing_info_fetch_interval)",
+        ))
     }
 
     /// Gets the name of the keyspace that is currently set, or `None` if no
@@ -1354,35 +1396,6 @@ impl Session {
     #[inline]
     pub fn get_keyspace(&self) -> Option<Arc<String>> {
         self.keyspace_name.load_full()
-    }
-
-    /// Queries tracing info with custom retry settings.\
-    /// Tracing info might not be available immediately on queried node -
-    /// that's why the driver performs a few attempts with sleeps in between.
-    /// [`GetTracingConfig`] allows to specify a custom querying strategy.
-    pub async fn get_tracing_info_custom(
-        &self,
-        tracing_id: &Uuid,
-        config: &GetTracingConfig,
-    ) -> Result<TracingInfo, QueryError> {
-        // config.attempts is NonZeroU32 so at least one attempt will be made
-        for _ in 0..config.attempts.get() {
-            let current_try: Option<TracingInfo> = self
-                .try_getting_tracing_info(tracing_id, Some(config.consistency))
-                .await?;
-
-            match current_try {
-                Some(tracing_info) => return Ok(tracing_info),
-                None => tokio::time::sleep(config.interval).await,
-            };
-        }
-
-        Err(QueryError::ProtocolError(
-            "All tracing queries returned an empty result, \
-            maybe information didn't reach this node yet. \
-            Consider using get_tracing_info_custom with \
-            bigger interval in GetTracingConfig",
-        ))
     }
 
     // Tries getting the tracing info

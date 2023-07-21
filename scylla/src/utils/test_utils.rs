@@ -1,12 +1,13 @@
-use std::{
-    sync::atomic::{AtomicUsize, Ordering},
-    time::{SystemTime, UNIX_EPOCH},
-};
-
 #[cfg(test)]
 use crate::transport::session_builder::{GenericSessionBuilder, SessionBuilderKind};
 #[cfg(test)]
 use crate::Session;
+#[cfg(test)]
+use std::{num::NonZeroU32, time::Duration};
+use std::{
+    sync::atomic::{AtomicUsize, Ordering},
+    time::{SystemTime, UNIX_EPOCH},
+};
 
 static UNIQUE_COUNTER: AtomicUsize = AtomicUsize::new(0);
 
@@ -60,27 +61,34 @@ pub(crate) async fn supports_feature(session: &Session, feature: &str) -> bool {
 // connect to localhost.
 #[cfg(test)]
 pub fn create_new_session_builder() -> GenericSessionBuilder<impl SessionBuilderKind> {
-    #[cfg(not(scylla_cloud_tests))]
-    {
-        use crate::transport::session_builder::DefaultMode;
-        use crate::SessionBuilder;
+    let session_builder = {
+        #[cfg(not(scylla_cloud_tests))]
+        {
+            use crate::SessionBuilder;
 
-        let uri = std::env::var("SCYLLA_URI").unwrap_or_else(|_| "127.0.0.1:9042".to_string());
-        let session_builder: GenericSessionBuilder<DefaultMode> =
-            SessionBuilder::new().known_node(uri);
-        session_builder
-    }
+            let uri = std::env::var("SCYLLA_URI").unwrap_or_else(|_| "127.0.0.1:9042".to_string());
 
-    #[cfg(scylla_cloud_tests)]
-    {
-        use crate::transport::session_builder::CloudMode;
-        use crate::CloudSessionBuilder;
-        use std::path::Path;
+            SessionBuilder::new().known_node(uri)
+        }
 
-        let session_builder: GenericSessionBuilder<CloudMode> = std::env::var("CLOUD_CONFIG_PATH")
-            .map(|config_path| CloudSessionBuilder::new(Path::new(&config_path)))
-            .unwrap()
-            .expect("failed to create a session in cloud mode");
-        session_builder
-    }
+        #[cfg(scylla_cloud_tests)]
+        {
+            use crate::transport::session_builder::CloudMode;
+            use crate::CloudSessionBuilder;
+            use std::path::Path;
+
+            std::env::var("CLOUD_CONFIG_PATH")
+                .map(|config_path| CloudSessionBuilder::new(Path::new(&config_path)))
+                .expect("Failed to initialize CloudSessionBuilder")
+                .expect("CLOUD_CONFIG_PATH environment variable is missing")
+        }
+    };
+
+    // The reason why we enable so long waiting for TracingInfo is... Cassandra. (Yes, again.)
+    // In Cassandra Java Driver, the wait time for tracing info is 10 seconds, so here we do the same.
+    // However, as Scylla usually gets TracingInfo ready really fast (our default interval is hence 3ms),
+    // we stick to a not-so-much-terribly-long interval here.
+    session_builder
+        .tracing_info_fetch_attempts(NonZeroU32::new(50).unwrap())
+        .tracing_info_fetch_interval(Duration::from_millis(200))
 }
