@@ -288,6 +288,7 @@ impl RowIterator {
 
             let span_creator = move || {
                 let span = RequestSpan::new_prepared(
+                    prepared_ref.get_prepared_metadata(),
                     partition_key.as_ref(),
                     token,
                     serialized_values_size,

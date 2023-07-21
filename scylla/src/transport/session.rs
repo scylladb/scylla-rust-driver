@@ -7,7 +7,9 @@ use crate::cloud::CloudConfig;
 use crate::frame::types::LegacyConsistency;
 use crate::history;
 use crate::history::HistoryListener;
+use crate::prepared_statement::PartitionKeyDecoder;
 use crate::retry_policy::RetryPolicy;
+use crate::utils::pretty::{CommaSeparatedDisplayer, CqlValueDisplayer};
 use arc_swap::ArcSwapOption;
 use async_trait::async_trait;
 use bytes::BufMut;
@@ -15,8 +17,9 @@ use bytes::Bytes;
 use bytes::BytesMut;
 use futures::future::join_all;
 use futures::future::try_join_all;
+use itertools::Either;
 pub use scylla_cql::errors::TranslationError;
-use scylla_cql::frame::response::result::Rows;
+use scylla_cql::frame::response::result::{PreparedMetadata, Rows};
 use scylla_cql::frame::response::NonErrorResponse;
 use std::borrow::Borrow;
 use std::collections::HashMap;
@@ -952,8 +955,12 @@ impl Session {
             is_confirmed_lwt: prepared.is_confirmed_lwt(),
         };
 
-        let span =
-            RequestSpan::new_prepared(partition_key.as_ref(), token, serialized_values.size());
+        let span = RequestSpan::new_prepared(
+            prepared.get_prepared_metadata(),
+            partition_key.as_ref(),
+            token,
+            serialized_values.size(),
+        );
 
         if !span.span().is_disabled() {
             if let (Some(keyspace), Some(token)) = (statement_info.keyspace.as_ref(), token) {
@@ -2063,11 +2070,11 @@ impl RequestSpan {
     }
 
     pub(crate) fn new_prepared(
+        prepared_metadata: &PreparedMetadata,
         partition_key: Option<&Bytes>,
         token: Option<Token>,
         request_size: usize,
     ) -> Self {
-        use crate::utils::pretty::HexBytes;
         use tracing::field::Empty;
 
         let span = trace_span!(
@@ -2087,7 +2094,10 @@ impl RequestSpan {
         if let Some(partition_key) = partition_key {
             span.record(
                 "partition_key",
-                tracing::field::display(format_args!("{:x}", HexBytes(partition_key))),
+                tracing::field::display(format_args!(
+                    "{}",
+                    partition_key_displayer(prepared_metadata, partition_key),
+                )),
             );
         }
         if let Some(token) = token {
@@ -2184,4 +2194,16 @@ impl Drop for RequestSpan {
             self.speculative_executions.load(Ordering::Relaxed),
         );
     }
+}
+
+fn partition_key_displayer<'pk>(
+    prepared_metadata: &'pk PreparedMetadata,
+    partition_key: &'pk [u8],
+) -> impl Display + 'pk {
+    CommaSeparatedDisplayer(
+        PartitionKeyDecoder::new(prepared_metadata, partition_key).map(|c| match c {
+            Ok(c) => Either::Left(CqlValueDisplayer(c)),
+            Err(_) => Either::Right("<decoding error>"),
+        }),
+    )
 }
