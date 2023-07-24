@@ -30,10 +30,7 @@ async fn main() -> Result<()> {
             .await?;
 
         let serialized_pk = (pk,).serialized()?.into_owned();
-        let t = session
-            .calculate_token(&prepared, &serialized_pk)?
-            .unwrap()
-            .value;
+        let t = prepared.calculate_token(&serialized_pk)?.unwrap().value;
 
         println!(
             "Token endpoints for query: {:?}",

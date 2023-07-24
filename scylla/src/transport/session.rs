@@ -41,10 +41,8 @@ use super::connection::NonErrorQueryResponse;
 use super::connection::QueryResponse;
 #[cfg(feature = "ssl")]
 use super::connection::SslConfig;
-use super::errors::{BadQuery, NewSessionError, QueryError};
+use super::errors::{NewSessionError, QueryError};
 use super::execution_profile::{ExecutionProfile, ExecutionProfileHandle, ExecutionProfileInner};
-use super::partitioner::Partitioner;
-use super::partitioner::PartitionerHasher;
 use super::partitioner::PartitionerName;
 use super::topology::UntranslatedPeer;
 use super::NodeRef;
@@ -52,11 +50,9 @@ use crate::cql_to_rust::FromRow;
 use crate::frame::response::cql_to_rust::FromRowError;
 use crate::frame::response::result;
 use crate::frame::value::{
-    BatchValues, BatchValuesFirstSerialized, BatchValuesIterator, SerializedValues, ValueList,
+    BatchValues, BatchValuesFirstSerialized, BatchValuesIterator, ValueList,
 };
-use crate::prepared_statement::{
-    PartitionKeyError, PartitionKeyExtractionError, PreparedStatement, TokenCalculationError,
-};
+use crate::prepared_statement::PreparedStatement;
 use crate::query::Query;
 use crate::routing::Token;
 use crate::statement::{Consistency, SerialConsistency};
@@ -1214,7 +1210,7 @@ impl Session {
                 RoutingInfo {
                     consistency,
                     serial_consistency,
-                    token: self.calculate_token(ps, first_serialized_value)?,
+                    token: ps.calculate_token(first_serialized_value)?,
                     keyspace: ps.get_keyspace_name(),
                     is_confirmed_lwt: false,
                 }
@@ -1883,63 +1879,6 @@ impl Session {
             },
         )
         .await
-    }
-
-    /// Calculates the token for given prepared statement and serialized values.
-    ///
-    /// Returns the token that would be computed for executing the provided
-    /// prepared statement with the provided values.
-    pub fn calculate_token(
-        &self,
-        prepared: &PreparedStatement,
-        serialized_values: &SerializedValues,
-    ) -> Result<Option<Token>, QueryError> {
-        if !prepared.is_token_aware() {
-            return Ok(None);
-        }
-
-        prepared
-            .extract_partition_key_and_calculate_token(serialized_values)
-            .map(|opt| opt.map(|(_pk, token)| token))
-    }
-
-    /// Calculates the token for given partitioner and serialized partition key.
-    ///
-    /// The ordinary way to calculate token is based on a PreparedStatement
-    /// and values for that statement. However, if a user knows:
-    /// - the order of the columns in the partition key,
-    /// - the values of the columns of the partition key,
-    /// - the partitioner of the table that the statement operates on,
-    ///
-    /// then having a `PreparedStatement` is not necessary and the token can
-    /// be calculated based on that information.
-    ///
-    /// NOTE: the provided values must completely constitute partition key
-    /// and be in the order defined in CREATE TABLE statement.
-    pub fn calculate_token_for_partition_key<P: Partitioner>(
-        serialized_partition_key_values: &SerializedValues,
-        partitioner: &P,
-    ) -> Result<Token, TokenCalculationError> {
-        let mut partitioner_hasher = partitioner.build_hasher();
-
-        if serialized_partition_key_values.len() == 1 {
-            let val = serialized_partition_key_values.iter().next().unwrap();
-            if let Some(val) = val {
-                partitioner_hasher.write(val);
-            }
-        } else {
-            for val in serialized_partition_key_values.iter().flatten() {
-                let val_len_u16: u16 = val
-                    .len()
-                    .try_into()
-                    .map_err(|_| TokenCalculationError::ValueTooLong(val.len()))?;
-                partitioner_hasher.write(&val_len_u16.to_be_bytes());
-                partitioner_hasher.write(val);
-                partitioner_hasher.write(&[0u8]);
-            }
-        }
-
-        Ok(partitioner_hasher.finish())
     }
 
     /// Retrieves the handle to execution profile that is used by this session

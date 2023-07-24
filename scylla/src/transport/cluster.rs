@@ -12,7 +12,6 @@ use crate::transport::{
     partitioner::PartitionerName,
     topology::{Keyspace, Metadata, MetadataReader},
 };
-use crate::Session;
 
 use arc_swap::ArcSwap;
 use futures::future::join_all;
@@ -37,6 +36,7 @@ pub struct ContactPoint {
 }
 
 use super::locator::ReplicaLocator;
+use super::partitioner::calculate_token_for_partition_key;
 use super::topology::Strategy;
 
 /// Cluster manages up to date information and connections to database nodes.
@@ -411,15 +411,12 @@ impl ClusterData {
             .and_then(PartitionerName::from_str)
             .unwrap_or_default();
 
-        Session::calculate_token_for_partition_key(
-            &partition_key.serialized().unwrap(),
-            &partitioner,
-        )
-        .map_err(|err| match err {
-            TokenCalculationError::ValueTooLong(values_len) => {
-                BadQuery::ValuesTooLongForKey(values_len, u16::MAX.into())
-            }
-        })
+        calculate_token_for_partition_key(&partition_key.serialized().unwrap(), &partitioner)
+            .map_err(|err| match err {
+                TokenCalculationError::ValueTooLong(values_len) => {
+                    BadQuery::ValuesTooLongForKey(values_len, u16::MAX.into())
+                }
+            })
     }
 
     /// Access to replicas owning a given token

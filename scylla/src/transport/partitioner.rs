@@ -1,7 +1,9 @@
 use bytes::Buf;
 use std::num::Wrapping;
 
-use crate::routing::Token;
+use crate::{
+    frame::value::SerializedValues, prepared_statement::TokenCalculationError, routing::Token,
+};
 
 #[allow(clippy::upper_case_acronyms)]
 #[derive(Clone, PartialEq, Debug, Default)]
@@ -318,6 +320,45 @@ impl PartitionerHasher for CDCPartitionerHasher {
             CDCPartitionerHasherState::Computed(token) => token,
         }
     }
+}
+
+/// Calculates the token for given partitioner and serialized partition key.
+///
+/// The ordinary way to calculate token is based on a PreparedStatement
+/// and values for that statement. However, if a user knows:
+/// - the order of the columns in the partition key,
+/// - the values of the columns of the partition key,
+/// - the partitioner of the table that the statement operates on,
+///
+/// then having a `PreparedStatement` is not necessary and the token can
+/// be calculated based on that information.
+///
+/// NOTE: the provided values must completely constitute partition key
+/// and be in the order defined in CREATE TABLE statement.
+pub fn calculate_token_for_partition_key<P: Partitioner>(
+    serialized_partition_key_values: &SerializedValues,
+    partitioner: &P,
+) -> Result<Token, TokenCalculationError> {
+    let mut partitioner_hasher = partitioner.build_hasher();
+
+    if serialized_partition_key_values.len() == 1 {
+        let val = serialized_partition_key_values.iter().next().unwrap();
+        if let Some(val) = val {
+            partitioner_hasher.write(val);
+        }
+    } else {
+        for val in serialized_partition_key_values.iter().flatten() {
+            let val_len_u16: u16 = val
+                .len()
+                .try_into()
+                .map_err(|_| TokenCalculationError::ValueTooLong(val.len()))?;
+            partitioner_hasher.write(&val_len_u16.to_be_bytes());
+            partitioner_hasher.write(val);
+            partitioner_hasher.write(&[0u8]);
+        }
+    }
+
+    Ok(partitioner_hasher.finish())
 }
 
 #[cfg(test)]

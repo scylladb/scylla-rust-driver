@@ -126,6 +126,11 @@ impl PreparedStatement {
     /// it assumes that all partition key columns are passed in values.
     /// Partition keys have specific serialization rules.
     /// Ref: <https://github.com/scylladb/scylla/blob/40adf38915b6d8f5314c621a94d694d172360833/compound_compat.hh#L33-L47>
+    ///
+    /// Note: this is no longer required to compute a token. This is because partitioners
+    /// are now stateful and stream-based, so they do not require materialised partition key.
+    /// Therefore, for computing a token, there are more efficient methods, such as
+    /// [Self::calculate_token()].
     pub fn compute_partition_key(
         &self,
         bound_values: &SerializedValues,
