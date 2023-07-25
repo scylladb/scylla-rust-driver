@@ -92,9 +92,10 @@ where
                 .ok_or_else(|| counts_mismatch_err(idx, self.statements.clone().count()))??;
             n_serialized_statements += 1;
         }
+        // At this point, we have all statements serialized. If any values are still left, we have a mismatch.
         if value_lists.skip_next().is_some() {
             return Err(counts_mismatch_err(
-                std::iter::from_fn(|| value_lists.skip_next()).count() + 1,
+                n_serialized_statements + 1 /*skipped above*/ + value_lists.count(),
                 n_serialized_statements,
             ));
         }

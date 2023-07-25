@@ -249,6 +249,16 @@ pub trait BatchValuesIterator<'a> {
         buf: &mut impl BufMut,
     ) -> Option<Result<(), SerializeValuesError>>;
     fn skip_next(&mut self) -> Option<()>;
+    fn count(mut self) -> usize
+    where
+        Self: Sized,
+    {
+        let mut count = 0;
+        while self.skip_next().is_some() {
+            count += 1;
+        }
+        count
+    }
 }
 
 /// Implements `BatchValuesIterator` from an `Iterator` over references to things that implement `ValueList`
