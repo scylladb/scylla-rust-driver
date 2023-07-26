@@ -474,14 +474,20 @@ impl ClusterWorker {
     pub(crate) async fn work(mut self) {
         use tokio::time::Instant;
 
+        let control_connection_repair_duration = Duration::from_secs(1); // Attempt control connection repair every second
         let mut last_refresh_time = Instant::now();
+        let mut control_connection_works = true;
 
         loop {
             let mut cur_request: Option<RefreshRequest> = None;
 
             // Wait until it's time for the next refresh
             let sleep_until: Instant = last_refresh_time
-                .checked_add(self.cluster_metadata_refresh_interval)
+                .checked_add(if control_connection_works {
+                    self.cluster_metadata_refresh_interval
+                } else {
+                    control_connection_repair_duration
+                })
                 .unwrap_or_else(Instant::now);
 
             let sleep_future = tokio::time::sleep_until(sleep_until);
@@ -538,6 +544,8 @@ impl ClusterWorker {
             debug!("Requesting topology refresh");
             last_refresh_time = Instant::now();
             let refresh_res = self.perform_refresh().await;
+
+            control_connection_works = refresh_res.is_ok();
 
             // Send refresh result if there was a request
             if let Some(request) = cur_request {
