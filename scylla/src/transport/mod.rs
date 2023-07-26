@@ -35,4 +35,4 @@ mod cql_types_test;
 mod cql_value_test;
 
 pub use cluster::ClusterData;
-pub use node::{Node, NodeAddr, NodeRef};
+pub use node::{KnownNode, Node, NodeAddr, NodeRef};

@@ -30,7 +30,7 @@ use tokio::sync::mpsc;
 use tracing::{debug, error, trace, warn};
 use uuid::Uuid;
 
-use super::cluster::ResolvedContactPoint;
+use super::node::ResolvedContactPoint;
 use super::NodeAddr;
 
 /// Allows to read current metadata from the cluster

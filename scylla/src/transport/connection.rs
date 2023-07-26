@@ -1764,8 +1764,8 @@ mod tests {
 
     use super::ConnectionConfig;
     use crate::query::Query;
-    use crate::transport::cluster::ResolvedContactPoint;
     use crate::transport::connection::open_connection;
+    use crate::transport::node::ResolvedContactPoint;
     use crate::transport::topology::UntranslatedEndpoint;
     use crate::utils::test_utils::unique_keyspace_name;
     use crate::{IntoTypedRows, SessionBuilder};

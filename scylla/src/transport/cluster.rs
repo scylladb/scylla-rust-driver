@@ -26,15 +26,7 @@ use tracing::instrument::WithSubscriber;
 use tracing::{debug, warn};
 use uuid::Uuid;
 
-use super::node::NodeAddr;
-
-/// Describes a database server known on Session startup, with already resolved address.
-#[derive(Debug, Clone)]
-#[non_exhaustive]
-pub struct ResolvedContactPoint {
-    pub address: SocketAddr,
-    pub datacenter: Option<String>,
-}
+use super::node::{NodeAddr, ResolvedContactPoint};
 
 use super::locator::ReplicaLocator;
 use super::partitioner::calculate_token_for_partition_key;

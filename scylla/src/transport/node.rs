@@ -215,6 +215,35 @@ impl Hash for Node {
     }
 }
 
+/// Describes a database server known on `Session` startup.
+///
+/// The name derives from SessionBuilder's `known_node()` family of methods.
+#[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Debug)]
+#[non_exhaustive]
+pub enum KnownNode {
+    Hostname(String),
+    Address(SocketAddr),
+    #[cfg(feature = "cloud")]
+    CloudEndpoint(CloudEndpoint),
+}
+
+/// Describes a database server in the serverless Scylla Cloud.
+#[cfg(feature = "cloud")]
+#[non_exhaustive]
+#[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Debug)]
+pub struct CloudEndpoint {
+    pub hostname: String,
+    pub datacenter: String,
+}
+
+/// Describes a database server known on Session startup, with already resolved address.
+#[derive(Debug, Clone)]
+#[non_exhaustive]
+pub struct ResolvedContactPoint {
+    pub address: SocketAddr,
+    pub datacenter: Option<String>,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

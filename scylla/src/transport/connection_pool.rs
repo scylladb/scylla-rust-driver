@@ -12,7 +12,7 @@ use crate::transport::{
 use super::session::resolve_hostname;
 
 #[cfg(feature = "cloud")]
-use super::cluster::ResolvedContactPoint;
+use super::node::ResolvedContactPoint;
 use super::topology::{PeerEndpoint, UntranslatedEndpoint};
 use super::NodeAddr;
 
@@ -1248,8 +1248,8 @@ async fn open_connection_to_shard_aware_port(
 mod tests {
     use super::open_connection_to_shard_aware_port;
     use crate::routing::{ShardCount, Sharder};
-    use crate::transport::cluster::ResolvedContactPoint;
     use crate::transport::connection::ConnectionConfig;
+    use crate::transport::node::ResolvedContactPoint;
     use crate::transport::topology::UntranslatedEndpoint;
     use std::net::{SocketAddr, ToSocketAddrs};
 

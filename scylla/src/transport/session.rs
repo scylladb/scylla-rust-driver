@@ -35,13 +35,16 @@ use tracing::warn;
 use tracing::{debug, trace, trace_span, Instrument};
 use uuid::Uuid;
 
-use super::cluster::ResolvedContactPoint;
 use super::connection::NonErrorQueryResponse;
 use super::connection::QueryResponse;
 #[cfg(feature = "ssl")]
 use super::connection::SslConfig;
 use super::errors::{NewSessionError, QueryError};
 use super::execution_profile::{ExecutionProfile, ExecutionProfileHandle, ExecutionProfileInner};
+#[cfg(feature = "cloud")]
+use super::node::CloudEndpoint;
+use super::node::KnownNode;
+use super::node::ResolvedContactPoint;
 use super::partitioner::PartitionerName;
 use super::topology::UntranslatedPeer;
 use super::NodeRef;
@@ -289,27 +292,6 @@ pub struct SessionConfig {
     pub cluster_metadata_refresh_interval: Duration,
 }
 
-/// Describes a database server known on [`Session`] startup.
-///
-/// The name derives from SessionBuilder's `known_node()` family of methods.
-#[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Debug)]
-#[non_exhaustive]
-pub enum KnownNode {
-    Hostname(String),
-    Address(SocketAddr),
-    #[cfg(feature = "cloud")]
-    CloudEndpoint(CloudEndpoint),
-}
-
-/// Describes a database server in the serverless Scylla Cloud.
-#[cfg(feature = "cloud")]
-#[non_exhaustive]
-#[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Debug)]
-pub struct CloudEndpoint {
-    pub hostname: String,
-    pub datacenter: String,
-}
-
 impl SessionConfig {
     /// Creates a [`SessionConfig`] with default configuration
     /// # Default configuration
@@ -479,7 +461,7 @@ impl Session {
     /// # use std::error::Error;
     /// # async fn check_only_compiles() -> Result<(), Box<dyn Error>> {
     /// use scylla::{Session, SessionConfig};
-    /// use scylla::transport::session::KnownNode;
+    /// use scylla::transport::KnownNode;
     ///
     /// let mut config = SessionConfig::new();
     /// config.known_nodes.push(KnownNode::Hostname("127.0.0.1:9042".to_string()));
