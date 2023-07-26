@@ -30,8 +30,7 @@ use tokio::sync::mpsc;
 use tracing::{debug, error, trace, warn};
 use uuid::Uuid;
 
-use super::node::ResolvedContactPoint;
-use super::NodeAddr;
+use super::node::{NodeAddr, ResolvedContactPoint};
 
 /// Allows to read current metadata from the cluster
 pub(crate) struct MetadataReader {

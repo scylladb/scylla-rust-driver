@@ -9,7 +9,7 @@ use crate::transport::{
 };
 
 #[cfg(feature = "cloud")]
-use super::session::resolve_hostname;
+use super::node::resolve_hostname;
 
 #[cfg(feature = "cloud")]
 use super::node::ResolvedContactPoint;
