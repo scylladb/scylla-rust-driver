@@ -442,13 +442,20 @@ impl MetadataReader {
     /// Fetches current metadata from the cluster
     pub(crate) async fn read_metadata(&mut self, initial: bool) -> Result<Metadata, QueryError> {
         let mut result = self.fetch_metadata(initial).await;
-        if let Ok(metadata) = result {
-            self.update_known_peers(&metadata);
-            if initial {
-                self.handle_unaccepted_host_in_control_connection(&metadata);
+        let prev_err = match result {
+            Ok(metadata) => {
+                debug!("Fetched new metadata");
+                self.update_known_peers(&metadata);
+                if initial {
+                    self.handle_unaccepted_host_in_control_connection(&metadata);
+                }
+                return Ok(metadata);
             }
-            return Ok(metadata);
-        }
+            Err(err) => err,
+        };
+
+        // At this point, we known that fetching metadata on currect control connection failed.
+        // Therefore, we try to fetch metadata from other known peers, in order.
 
         // shuffle known_peers to iterate through them in random order later
         self.known_peers.shuffle(&mut thread_rng());
@@ -464,12 +471,39 @@ impl MetadataReader {
         let address_of_failed_control_connection = self.control_connection_endpoint.address();
         let filtered_known_peers = self
             .known_peers
-            .iter()
-            .filter(|&peer| peer.address() != address_of_failed_control_connection);
+            .clone()
+            .into_iter()
+            .filter(|peer| peer.address() != address_of_failed_control_connection);
 
         // if fetching metadata on current control connection failed,
         // try to fetch metadata from other known peer
-        for peer in filtered_known_peers {
+        result = self
+            .retry_fetch_metadata_on_nodes(initial, filtered_known_peers, prev_err)
+            .await;
+
+        match &result {
+            Ok(metadata) => {
+                self.update_known_peers(metadata);
+                self.handle_unaccepted_host_in_control_connection(metadata);
+                debug!("Fetched new metadata");
+            }
+            Err(error) => error!(
+                error = %error,
+                "Could not fetch metadata"
+            ),
+        }
+
+        result
+    }
+
+    async fn retry_fetch_metadata_on_nodes(
+        &mut self,
+        initial: bool,
+        nodes: impl Iterator<Item = UntranslatedEndpoint>,
+        prev_err: QueryError,
+    ) -> Result<Metadata, QueryError> {
+        let mut result = Err(prev_err);
+        for peer in nodes {
             let err = match result {
                 Ok(_) => break,
                 Err(err) => err,
@@ -498,19 +532,6 @@ impl MetadataReader {
             );
             result = self.fetch_metadata(initial).await;
         }
-
-        match &result {
-            Ok(metadata) => {
-                self.update_known_peers(metadata);
-                self.handle_unaccepted_host_in_control_connection(metadata);
-                debug!("Fetched new metadata");
-            }
-            Err(error) => error!(
-                error = %error,
-                "Could not fetch metadata"
-            ),
-        }
-
         result
     }
 
