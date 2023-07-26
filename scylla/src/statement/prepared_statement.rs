@@ -1,5 +1,6 @@
 use byteorder::{BigEndian, ReadBytesExt};
-use bytes::{BufMut, Bytes, BytesMut};
+use bytes::{Bytes, BytesMut};
+use scylla_cql::errors::{BadQuery, QueryError};
 use smallvec::{smallvec, SmallVec};
 use std::convert::TryInto;
 use std::sync::Arc;
@@ -8,7 +9,7 @@ use thiserror::Error;
 use uuid::Uuid;
 
 use scylla_cql::frame::frame_errors::ParseError;
-use scylla_cql::frame::response::result::{deser_cql_value, CqlValue};
+use scylla_cql::frame::response::result::{deser_cql_value, ColumnSpec, CqlValue};
 
 use super::StatementConfig;
 use crate::frame::response::result::PreparedMetadata;
@@ -16,8 +17,9 @@ use crate::frame::types::{Consistency, SerialConsistency};
 use crate::frame::value::SerializedValues;
 use crate::history::HistoryListener;
 use crate::retry_policy::RetryPolicy;
+use crate::routing::Token;
 use crate::transport::execution_profile::ExecutionProfileHandle;
-use crate::transport::partitioner::PartitionerName;
+use crate::transport::partitioner::{Partitioner, PartitionerHasher, PartitionerName};
 
 /// Represents a statement prepared on the server.
 #[derive(Debug)]
@@ -130,62 +132,65 @@ impl PreparedStatement {
         &self,
         bound_values: &SerializedValues,
     ) -> Result<Bytes, PartitionKeyError> {
+        let partition_key = self.extract_partition_key(bound_values)?;
         let mut buf = BytesMut::new();
+        let mut writer = |chunk: &[u8]| buf.extend_from_slice(chunk);
 
-        // Single-value partition key case
-        if self.get_prepared_metadata().pk_indexes.len() == 1 {
-            let pk_index = self.get_prepared_metadata().pk_indexes[0].index;
-            if let Some(v) = bound_values.iter().nth(pk_index as usize).ok_or_else(|| {
-                PartitionKeyExtractionError::NoPkIndexValue(pk_index, bound_values.len())
-            })? {
-                buf.extend_from_slice(v);
-            }
-        } else {
-            // Composite partition key case
+        partition_key.write_encoded_partition_key(&mut writer)?;
 
-            // Iterate on values using sorted pk_indexes (see deser_prepared_metadata),
-            // and use PartitionKeyIndex.sequence to insert the value in pk_values with the correct order.
-            // At the same time, compute the size of the buffer to reserve it before writing in it.
-            let mut pk_values: SmallVec<[_; 8]> =
-                smallvec![None; self.get_prepared_metadata().pk_indexes.len()];
-            let mut values_iter = bound_values.iter();
-            let mut buf_size = 0;
-            // pk_indexes contains the indexes of the partition key value, so the current offset of the
-            // iterator must be kept, in order to compute the next position of the pk in the iterator.
-            // At each iteration values_iter.nth(0) will roughly correspond to values[values_iter_offset],
-            // so values[pk_index.index] will be retrieved with values_iter.nth(pk_index.index - values_iter_offset)
-            let mut values_iter_offset = 0;
-            for pk_index in self.get_prepared_metadata().pk_indexes.iter().copied() {
-                // Find value matching current pk_index
-                let next_val = values_iter
-                    .nth((pk_index.index - values_iter_offset) as usize)
-                    .ok_or_else(|| {
-                        PartitionKeyExtractionError::NoPkIndexValue(
-                            pk_index.index,
-                            bound_values.len(),
-                        )
-                    })?;
-                // Add it in sequence order to pk_values
-                if let Some(v) = next_val {
-                    pk_values[pk_index.sequence as usize] = Some(v);
-                    buf_size += std::mem::size_of::<u16>() + v.len() + std::mem::size_of::<u8>();
-                }
-                values_iter_offset = pk_index.index + 1;
-            }
-            // Add values' bytes
-            buf.reserve(buf_size);
-            for v in pk_values.iter().flatten() {
-                let v_len_u16: u16 = v
-                    .len()
-                    .try_into()
-                    .map_err(|_| TokenCalculationError::ValueTooLong(v.len()))?;
+        Ok(buf.freeze())
+    }
 
-                buf.put_u16(v_len_u16);
-                buf.extend_from_slice(v);
-                buf.put_u8(0);
-            }
+    /// Determines which values consistute the partition key and puts them in order.
+    ///
+    /// This is a preparation step necessary for calculating token based on a prepared statement.
+    pub(crate) fn extract_partition_key<'ps>(
+        &'ps self,
+        bound_values: &'ps SerializedValues,
+    ) -> Result<PartitionKey, PartitionKeyExtractionError> {
+        PartitionKey::new(self.get_prepared_metadata(), bound_values)
+    }
+
+    pub(crate) fn extract_partition_key_and_calculate_token<'ps>(
+        &'ps self,
+        partitioner_name: &'ps PartitionerName,
+        serialized_values: &'ps SerializedValues,
+    ) -> Result<Option<(PartitionKey<'ps>, Token)>, QueryError> {
+        if !self.is_token_aware() {
+            return Ok(None);
         }
-        Ok(buf.into())
+
+        let partition_key =
+            self.extract_partition_key(serialized_values)
+                .map_err(|err| match err {
+                    PartitionKeyExtractionError::NoPkIndexValue(_, _) => {
+                        QueryError::ProtocolError("No pk indexes - can't calculate token")
+                    }
+                })?;
+        let token = partition_key
+            .calculate_token(partitioner_name)
+            .map_err(|err| match err {
+                TokenCalculationError::ValueTooLong(values_len) => {
+                    QueryError::BadQuery(BadQuery::ValuesTooLongForKey(values_len, u16::MAX.into()))
+                }
+            })?;
+
+        Ok(Some((partition_key, token)))
+    }
+
+    /// Calculates the token for given prepared statement and serialized values.
+    ///
+    /// Returns the token that would be computed for executing the provided
+    /// prepared statement with the provided values.
+    // As this function creates a `PartitionKey`, it is intended rather for external usage (by users).
+    // For internal purposes, `PartitionKey::calculate_token()` is preferred, as `PartitionKey`
+    // is either way used internally, among others for display in traces.
+    pub fn calculate_token(
+        &self,
+        serialized_values: &SerializedValues,
+    ) -> Result<Option<Token>, QueryError> {
+        self.extract_partition_key_and_calculate_token(&self.partitioner_name, serialized_values)
+            .map(|opt| opt.map(|(_pk, token)| token))
     }
 
     /// Returns the name of the keyspace this statement is operating on.
@@ -357,6 +362,91 @@ impl From<PartitionKeyExtractionError> for PartitionKeyError {
 impl From<TokenCalculationError> for PartitionKeyError {
     fn from(err: TokenCalculationError) -> Self {
         Self::TokenCalculation(err)
+    }
+}
+
+pub(crate) type PartitionKeyValue<'ps> = (&'ps [u8], &'ps ColumnSpec);
+
+pub(crate) struct PartitionKey<'ps> {
+    pk_values: SmallVec<[Option<PartitionKeyValue<'ps>>; PartitionKey::SMALLVEC_ON_STACK_SIZE]>,
+}
+
+impl<'ps> PartitionKey<'ps> {
+    const SMALLVEC_ON_STACK_SIZE: usize = 8;
+
+    fn new(
+        prepared_metadata: &'ps PreparedMetadata,
+        bound_values: &'ps SerializedValues,
+    ) -> Result<Self, PartitionKeyExtractionError> {
+        // Iterate on values using sorted pk_indexes (see deser_prepared_metadata),
+        // and use PartitionKeyIndex.sequence to insert the value in pk_values with the correct order.
+        let mut pk_values: SmallVec<[_; PartitionKey::SMALLVEC_ON_STACK_SIZE]> =
+            smallvec![None; prepared_metadata.pk_indexes.len()];
+        let mut values_iter = bound_values.iter();
+        // pk_indexes contains the indexes of the partition key value, so the current offset of the
+        // iterator must be kept, in order to compute the next position of the pk in the iterator.
+        // At each iteration values_iter.nth(0) will roughly correspond to values[values_iter_offset],
+        // so values[pk_index.index] will be retrieved with values_iter.nth(pk_index.index - values_iter_offset)
+        let mut values_iter_offset = 0;
+        for pk_index in prepared_metadata.pk_indexes.iter().copied() {
+            // Find value matching current pk_index
+            let next_val = values_iter
+                .nth((pk_index.index - values_iter_offset) as usize)
+                .ok_or_else(|| {
+                    PartitionKeyExtractionError::NoPkIndexValue(pk_index.index, bound_values.len())
+                })?;
+            // Add it in sequence order to pk_values
+            if let Some(v) = next_val {
+                let spec = &prepared_metadata.col_specs[pk_index.index as usize];
+                pk_values[pk_index.sequence as usize] = Some((v, spec));
+            }
+            values_iter_offset = pk_index.index + 1;
+        }
+        Ok(Self { pk_values })
+    }
+
+    pub(crate) fn iter(&self) -> impl Iterator<Item = PartitionKeyValue<'ps>> + Clone + '_ {
+        self.pk_values.iter().flatten().copied()
+    }
+
+    fn write_encoded_partition_key(
+        &self,
+        writer: &mut impl FnMut(&[u8]),
+    ) -> Result<(), TokenCalculationError> {
+        let mut pk_val_iter = self.iter().map(|(val, _spec)| val);
+        if let Some(first_value) = pk_val_iter.next() {
+            if let Some(second_value) = pk_val_iter.next() {
+                // Composite partition key case
+                for value in std::iter::once(first_value)
+                    .chain(std::iter::once(second_value))
+                    .chain(pk_val_iter)
+                {
+                    let v_len_u16: u16 = value
+                        .len()
+                        .try_into()
+                        .map_err(|_| TokenCalculationError::ValueTooLong(value.len()))?;
+                    writer(&v_len_u16.to_be_bytes());
+                    writer(value);
+                    writer(&[0u8]);
+                }
+            } else {
+                // Single-value partition key case
+                writer(first_value);
+            }
+        }
+        Ok(())
+    }
+
+    pub(crate) fn calculate_token(
+        &self,
+        partitioner_name: &PartitionerName,
+    ) -> Result<Token, TokenCalculationError> {
+        let mut partitioner_hasher = partitioner_name.build_hasher();
+        let mut writer = |chunk: &[u8]| partitioner_hasher.write(chunk);
+
+        self.write_encoded_partition_key(&mut writer)?;
+
+        Ok(partitioner_hasher.finish())
     }
 }
 
