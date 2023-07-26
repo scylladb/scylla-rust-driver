@@ -5,6 +5,7 @@ use crate::transport::connection::{Connection, ConnectionConfig};
 use crate::transport::connection_pool::{NodeConnectionPool, PoolConfig, PoolSize};
 use crate::transport::errors::{DbError, QueryError};
 use crate::transport::host_filter::HostFilter;
+use crate::transport::node::resolve_contact_points;
 use crate::utils::parse::{ParseErrorCause, ParseResult, ParserState};
 
 use futures::future::{self, FutureExt};
@@ -480,6 +481,28 @@ impl MetadataReader {
         result = self
             .retry_fetch_metadata_on_nodes(initial, filtered_known_peers, prev_err)
             .await;
+
+        if let Err(prev_err) = result {
+            if !initial {
+                // If no known peer is reachable, try falling back to initial contact points, in hope that
+                // there are some hostnames there which will resolve to reachable new addresses.
+                warn!("Failed to establish control connection and fetch metadata on all known peers. Falling back to initial contact points.");
+                let (initial_peers, _hostnames) =
+                    resolve_contact_points(&self.initial_known_nodes).await;
+                result = self
+                    .retry_fetch_metadata_on_nodes(
+                        initial,
+                        initial_peers
+                            .into_iter()
+                            .map(UntranslatedEndpoint::ContactPoint),
+                        prev_err,
+                    )
+                    .await;
+            } else {
+                // No point in falling back as this is an initial connection attempt.
+                result = Err(prev_err);
+            }
+        }
 
         match &result {
             Ok(metadata) => {
