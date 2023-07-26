@@ -30,7 +30,7 @@ use tokio::sync::mpsc;
 use tracing::{debug, error, trace, warn};
 use uuid::Uuid;
 
-use super::node::{NodeAddr, ResolvedContactPoint};
+use super::node::{KnownNode, NodeAddr, ResolvedContactPoint};
 
 /// Allows to read current metadata from the cluster
 pub(crate) struct MetadataReader {
@@ -45,6 +45,10 @@ pub(crate) struct MetadataReader {
     keyspaces_to_fetch: Vec<String>,
     fetch_schema: bool,
     host_filter: Option<Arc<dyn HostFilter>>,
+
+    // When no known peer is reachable, initial known nodes are resolved once again as a fallback
+    // and establishing control connection to them is attempted.
+    initial_known_nodes: Vec<KnownNode>,
 }
 
 /// Describes all metadata retrieved from the cluster
@@ -392,6 +396,7 @@ impl MetadataReader {
     /// Creates new MetadataReader, which connects to initially_known_peers in the background
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn new(
+        initial_known_nodes: Vec<KnownNode>,
         initially_known_peers: Vec<ResolvedContactPoint>,
         mut connection_config: ConnectionConfig,
         keepalive_interval: Option<Duration>,
@@ -430,6 +435,7 @@ impl MetadataReader {
             keyspaces_to_fetch,
             fetch_schema,
             host_filter: host_filter.clone(),
+            initial_known_nodes,
         }
     }
 

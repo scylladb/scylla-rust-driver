@@ -26,7 +26,7 @@ use tracing::instrument::WithSubscriber;
 use tracing::{debug, warn};
 use uuid::Uuid;
 
-use super::node::{NodeAddr, ResolvedContactPoint};
+use super::node::{KnownNode, NodeAddr, ResolvedContactPoint};
 
 use super::locator::ReplicaLocator;
 use super::partitioner::calculate_token_for_partition_key;
@@ -136,6 +136,7 @@ struct UseKeyspaceRequest {
 
 impl Cluster {
     pub(crate) async fn new(
+        known_nodes: Vec<KnownNode>,
         initial_peers: Vec<ResolvedContactPoint>,
         pool_config: PoolConfig,
         keyspaces_to_fetch: Vec<String>,
@@ -148,6 +149,7 @@ impl Cluster {
         let (server_events_sender, server_events_receiver) = tokio::sync::mpsc::channel(32);
 
         let mut metadata_reader = MetadataReader::new(
+            known_nodes,
             initial_peers,
             pool_config.connection_config.clone(),
             pool_config.keepalive_interval,

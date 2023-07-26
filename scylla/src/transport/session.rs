@@ -528,6 +528,7 @@ impl Session {
         };
 
         let cluster = Cluster::new(
+            known_nodes,
             initial_peers,
             pool_config,
             config.keyspaces_to_fetch,
