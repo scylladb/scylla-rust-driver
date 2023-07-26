@@ -12,7 +12,7 @@ use crate::transport::{
 use super::session::resolve_hostname;
 
 #[cfg(feature = "cloud")]
-use super::cluster::ContactPoint;
+use super::cluster::ResolvedContactPoint;
 use super::topology::{PeerEndpoint, UntranslatedEndpoint};
 use super::NodeAddr;
 
@@ -176,7 +176,7 @@ impl NodeConnectionPool {
         #[cfg(feature = "cloud")]
         if pool_config.connection_config.cloud_config.is_some() {
             let (host_id, address, dc) = match endpoint {
-                UntranslatedEndpoint::ContactPoint(ContactPoint {
+                UntranslatedEndpoint::ContactPoint(ResolvedContactPoint {
                     address,
                     ref datacenter,
                 }) => (None, address, datacenter.as_deref()), // FIXME: Pass DC in ContactPoint
@@ -1248,7 +1248,7 @@ async fn open_connection_to_shard_aware_port(
 mod tests {
     use super::open_connection_to_shard_aware_port;
     use crate::routing::{ShardCount, Sharder};
-    use crate::transport::cluster::ContactPoint;
+    use crate::transport::cluster::ResolvedContactPoint;
     use crate::transport::connection::ConnectionConfig;
     use crate::transport::topology::UntranslatedEndpoint;
     use std::net::{SocketAddr, ToSocketAddrs};
@@ -1286,7 +1286,7 @@ mod tests {
 
         for _ in 0..connections_number {
             conns.push(open_connection_to_shard_aware_port(
-                UntranslatedEndpoint::ContactPoint(ContactPoint {
+                UntranslatedEndpoint::ContactPoint(ResolvedContactPoint {
                     address: connect_address,
                     datacenter: None,
                 }),

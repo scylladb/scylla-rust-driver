@@ -35,7 +35,7 @@ use tracing::warn;
 use tracing::{debug, trace, trace_span, Instrument};
 use uuid::Uuid;
 
-use super::cluster::ContactPoint;
+use super::cluster::ResolvedContactPoint;
 use super::connection::NonErrorQueryResponse;
 use super::connection::QueryResponse;
 #[cfg(feature = "ssl")]
@@ -289,7 +289,9 @@ pub struct SessionConfig {
     pub cluster_metadata_refresh_interval: Duration,
 }
 
-/// Describes database server known on Session startup.
+/// Describes a database server known on [`Session`] startup.
+///
+/// The name derives from SessionBuilder's `known_node()` family of methods.
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Debug)]
 #[non_exhaustive]
 pub enum KnownNode {
@@ -299,6 +301,7 @@ pub enum KnownNode {
     CloudEndpoint(CloudEndpoint),
 }
 
+/// Describes a database server in the serverless Scylla Cloud.
 #[cfg(feature = "cloud")]
 #[non_exhaustive]
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Debug)]
@@ -513,14 +516,14 @@ impl Session {
         }
 
         // Find IP addresses of all known nodes passed in the config
-        let mut initial_peers: Vec<ContactPoint> = Vec::with_capacity(known_nodes.len());
+        let mut initial_peers: Vec<ResolvedContactPoint> = Vec::with_capacity(known_nodes.len());
 
         let mut to_resolve: Vec<(String, Option<String>)> = Vec::new();
 
         for node in known_nodes {
             match node {
                 KnownNode::Hostname(hostname) => to_resolve.push((hostname, None)),
-                KnownNode::Address(address) => initial_peers.push(ContactPoint {
+                KnownNode::Address(address) => initial_peers.push(ResolvedContactPoint {
                     address,
                     datacenter: None,
                 }),
@@ -533,7 +536,7 @@ impl Session {
         }
         let resolve_futures = to_resolve.iter().map(|(hostname, datacenter)| async move {
             match resolve_hostname(hostname).await {
-                Ok(address) => Some(ContactPoint {
+                Ok(address) => Some(ResolvedContactPoint {
                     address,
                     datacenter: datacenter.clone(),
                 }),

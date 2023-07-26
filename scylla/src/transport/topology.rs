@@ -30,7 +30,7 @@ use tokio::sync::mpsc;
 use tracing::{debug, error, trace, warn};
 use uuid::Uuid;
 
-use super::cluster::ContactPoint;
+use super::cluster::ResolvedContactPoint;
 use super::NodeAddr;
 
 /// Allows to read current metadata from the cluster
@@ -69,7 +69,7 @@ pub struct Peer {
 #[derive(Clone, Debug)]
 pub enum UntranslatedEndpoint {
     /// Provided by user in SessionConfig (initial contact points).
-    ContactPoint(ContactPoint),
+    ContactPoint(ResolvedContactPoint),
     /// Fetched in Metadata with `query_peers()`
     Peer(PeerEndpoint),
 }
@@ -77,7 +77,7 @@ pub enum UntranslatedEndpoint {
 impl UntranslatedEndpoint {
     pub(crate) fn address(&self) -> NodeAddr {
         match *self {
-            UntranslatedEndpoint::ContactPoint(ContactPoint { address, .. }) => {
+            UntranslatedEndpoint::ContactPoint(ResolvedContactPoint { address, .. }) => {
                 NodeAddr::Untranslatable(address)
             }
             UntranslatedEndpoint::Peer(PeerEndpoint { address, .. }) => address,
@@ -85,7 +85,7 @@ impl UntranslatedEndpoint {
     }
     pub(crate) fn set_port(&mut self, port: u16) {
         let inner_addr = match self {
-            UntranslatedEndpoint::ContactPoint(ContactPoint { address, .. }) => address,
+            UntranslatedEndpoint::ContactPoint(ResolvedContactPoint { address, .. }) => address,
             UntranslatedEndpoint::Peer(PeerEndpoint { address, .. }) => address.inner_mut(),
         };
         inner_addr.set_port(port);
@@ -393,7 +393,7 @@ impl MetadataReader {
     /// Creates new MetadataReader, which connects to initially_known_peers in the background
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn new(
-        initially_known_peers: Vec<ContactPoint>,
+        initially_known_peers: Vec<ResolvedContactPoint>,
         mut connection_config: ConnectionConfig,
         keepalive_interval: Option<Duration>,
         server_event_sender: mpsc::Sender<Event>,

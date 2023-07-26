@@ -28,9 +28,10 @@ use uuid::Uuid;
 
 use super::node::NodeAddr;
 
+/// Describes a database server known on Session startup, with already resolved address.
 #[derive(Debug, Clone)]
 #[non_exhaustive]
-pub struct ContactPoint {
+pub struct ResolvedContactPoint {
     pub address: SocketAddr,
     pub datacenter: Option<String>,
 }
@@ -143,7 +144,7 @@ struct UseKeyspaceRequest {
 
 impl Cluster {
     pub(crate) async fn new(
-        initial_peers: Vec<ContactPoint>,
+        initial_peers: Vec<ResolvedContactPoint>,
         pool_config: PoolConfig,
         keyspaces_to_fetch: Vec<String>,
         fetch_schema_metadata: bool,
