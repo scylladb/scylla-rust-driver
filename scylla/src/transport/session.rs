@@ -653,12 +653,30 @@ impl Session {
         let query: Query = query.into();
         let serialized_values = values.serialized()?;
 
+        let execution_profile = query
+            .get_execution_profile_handle()
+            .unwrap_or_else(|| self.get_default_execution_profile_handle())
+            .access();
+
+        let statement_info = RoutingInfo {
+            consistency: query
+                .config
+                .consistency
+                .unwrap_or(execution_profile.consistency),
+            serial_consistency: query
+                .config
+                .serial_consistency
+                .unwrap_or(execution_profile.serial_consistency),
+            ..Default::default()
+        };
+
         let span = RequestSpan::new_query(&query.contents, serialized_values.size());
         let run_query_result = self
             .run_query(
-                RoutingInfo::default(),
+                statement_info,
                 &query.config,
                 query.get_retry_policy().map(|rp| &**rp),
+                execution_profile,
                 |node: Arc<Node>| async move { node.random_connection().await },
                 |connection: Arc<Connection>,
                  consistency: Consistency,
@@ -971,11 +989,20 @@ impl Session {
             .as_ref()
             .map(|pk| prepared.get_partitioner_name().hash(pk));
 
+        let execution_profile = prepared
+            .get_execution_profile_handle()
+            .unwrap_or_else(|| self.get_default_execution_profile_handle())
+            .access();
+
         let statement_info = RoutingInfo {
             consistency: prepared
-                .get_consistency()
-                .unwrap_or(self.default_execution_profile_handle.access().consistency),
-            serial_consistency: prepared.get_serial_consistency(),
+                .config
+                .consistency
+                .unwrap_or(execution_profile.consistency),
+            serial_consistency: prepared
+                .config
+                .serial_consistency
+                .unwrap_or(execution_profile.serial_consistency),
             token,
             keyspace: prepared.get_keyspace_name(),
             is_confirmed_lwt: prepared.is_confirmed_lwt(),
@@ -1003,6 +1030,7 @@ impl Session {
                 statement_info,
                 &prepared.config,
                 prepared.get_retry_policy().map(|rp| &**rp),
+                execution_profile,
                 |node: Arc<Node>| async move {
                     match token {
                         Some(token) => node.connection_for_token(token).await,
@@ -1173,19 +1201,37 @@ impl Session {
         // Extract first serialized_value
         let first_serialized_value = values.batch_values_iter().next_serialized().transpose()?;
         let first_serialized_value = first_serialized_value.as_deref();
+
+        let execution_profile = batch
+            .get_execution_profile_handle()
+            .unwrap_or_else(|| self.get_default_execution_profile_handle())
+            .access();
+
+        let consistency = batch
+            .config
+            .consistency
+            .unwrap_or(execution_profile.consistency);
+
+        let serial_consistency = batch
+            .config
+            .serial_consistency
+            .unwrap_or(execution_profile.serial_consistency);
+
         let statement_info = match (first_serialized_value, batch.statements.first()) {
             (Some(first_serialized_value), Some(BatchStatement::PreparedStatement(ps))) => {
                 RoutingInfo {
-                    consistency: batch
-                        .get_consistency()
-                        .unwrap_or(self.default_execution_profile_handle.access().consistency),
-                    serial_consistency: batch.get_serial_consistency(),
+                    consistency,
+                    serial_consistency,
                     token: self.calculate_token(ps, first_serialized_value)?,
                     keyspace: ps.get_keyspace_name(),
                     is_confirmed_lwt: false,
                 }
             }
-            _ => RoutingInfo::default(),
+            _ => RoutingInfo {
+                consistency,
+                serial_consistency,
+                ..Default::default()
+            },
         };
         let first_value_token = statement_info.token;
 
@@ -1201,6 +1247,7 @@ impl Session {
                 statement_info,
                 &batch.config,
                 batch.get_retry_policy().map(|rp| &**rp),
+                execution_profile,
                 |node: Arc<Node>| async move {
                     match first_value_token {
                         Some(first_value_token) => {
@@ -1483,11 +1530,13 @@ impl Session {
     // On success this query's result is returned
     // I tried to make this closures take a reference instead of an Arc but failed
     // maybe once async closures get stabilized this can be fixed
+    #[allow(clippy::too_many_arguments)] // <-- remove this once retry policy is put into StatementConfig
     async fn run_query<'a, ConnFut, QueryFut, ResT>(
         &'a self,
         statement_info: RoutingInfo<'a>,
         statement_config: &'a StatementConfig,
         statement_retry_policy: Option<&dyn RetryPolicy>,
+        execution_profile: Arc<ExecutionProfileInner>,
         choose_connection: impl Fn(Arc<Node>) -> ConnFut,
         do_query: impl Fn(Arc<Connection>, Consistency, &ExecutionProfileInner) -> QueryFut,
         request_span: &'a RequestSpan,
@@ -1502,12 +1551,6 @@ impl Session {
                 .history_listener
                 .as_ref()
                 .map(|hl| (&**hl, hl.log_query_start()));
-
-        let execution_profile = statement_config
-            .execution_profile_handle
-            .as_ref()
-            .unwrap_or_else(|| self.get_default_execution_profile_handle())
-            .access();
 
         let load_balancer = &execution_profile.load_balancing_policy;
 
@@ -1575,7 +1618,7 @@ impl Session {
                             &execution_profile,
                             ExecuteQueryContext {
                                 is_idempotent: statement_config.is_idempotent,
-                                consistency: statement_config.consistency,
+                                consistency_set_on_statement: statement_config.consistency,
                                 retry_session: retry_policy.new_session(),
                                 history_data,
                                 query_info: &statement_info,
@@ -1611,7 +1654,7 @@ impl Session {
                         &execution_profile,
                         ExecuteQueryContext {
                             is_idempotent: statement_config.is_idempotent,
-                            consistency: statement_config.consistency,
+                            consistency_set_on_statement: statement_config.consistency,
                             retry_session: retry_policy.new_session(),
                             history_data,
                             query_info: &statement_info,
@@ -1666,8 +1709,9 @@ impl Session {
         ResT: AllowedRunQueryResTType,
     {
         let mut last_error: Option<QueryError> = None;
-        let mut current_consistency: Consistency =
-            context.consistency.unwrap_or(execution_profile.consistency);
+        let mut current_consistency: Consistency = context
+            .consistency_set_on_statement
+            .unwrap_or(execution_profile.consistency);
 
         'nodes_in_plan: for node in query_plan {
             let span = trace_span!("Executing query", node = %node.address);
@@ -1742,7 +1786,9 @@ impl Session {
                     error: the_error,
                     is_idempotent: context.is_idempotent,
                     consistency: LegacyConsistency::Regular(
-                        context.consistency.unwrap_or(execution_profile.consistency),
+                        context
+                            .consistency_set_on_statement
+                            .unwrap_or(execution_profile.consistency),
                     ),
                 };
 
@@ -1813,6 +1859,7 @@ impl Session {
                 info,
                 &config,
                 None, // No specific retry policy needed for schema agreement
+                self.get_default_execution_profile_handle().access(),
                 |node: Arc<Node>| async move { node.random_connection().await },
                 do_query,
                 &span,
@@ -1983,7 +2030,7 @@ impl AllowedRunQueryResTType for NonErrorQueryResponse {}
 
 struct ExecuteQueryContext<'a> {
     is_idempotent: bool,
-    consistency: Option<Consistency>,
+    consistency_set_on_statement: Option<Consistency>,
     retry_session: Box<dyn RetrySession>,
     history_data: Option<HistoryData<'a>>,
     query_info: &'a load_balancing::RoutingInfo<'a>,

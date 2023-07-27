@@ -151,6 +151,12 @@ impl RowIterator {
             .serial_consistency
             .unwrap_or(execution_profile.serial_consistency);
 
+        let routing_info = RoutingInfo {
+            consistency,
+            serial_consistency,
+            ..Default::default()
+        };
+
         let retry_session = query
             .get_retry_policy()
             .map(|rp| &**rp)
@@ -188,7 +194,7 @@ impl RowIterator {
                 sender: sender.into(),
                 choose_connection,
                 page_query,
-                statement_info: RoutingInfo::default(),
+                statement_info: routing_info,
                 query_is_idempotent: query.config.is_idempotent,
                 query_consistency: consistency,
                 retry_session,
@@ -237,7 +243,7 @@ impl RowIterator {
         let worker_task = async move {
             let statement_info = RoutingInfo {
                 consistency,
-                serial_consistency: config.prepared.get_serial_consistency(),
+                serial_consistency,
                 token: config.token,
                 keyspace: config.prepared.get_keyspace_name(),
                 is_confirmed_lwt: config.prepared.is_confirmed_lwt(),

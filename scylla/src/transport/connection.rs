@@ -13,6 +13,7 @@ use tracing::instrument::WithSubscriber;
 use tracing::{debug, error, trace, warn};
 use uuid::Uuid;
 
+use std::borrow::Cow;
 #[cfg(feature = "ssl")]
 use std::pin::Pin;
 use std::sync::atomic::AtomicU64;
@@ -48,7 +49,7 @@ use crate::batch::{Batch, BatchStatement};
 use crate::frame::protocol_features::ProtocolFeatures;
 use crate::frame::{
     self,
-    request::{self, batch, execute, query, register, Request},
+    request::{self, batch, execute, query, register, SerializableRequest},
     response::{event::Event, result, NonErrorResponse, Response, ResponseOpcode},
     server_event_type::EventType,
     value::{BatchValues, ValueList},
@@ -105,7 +106,7 @@ impl RouterHandle {
 
     async fn send_request(
         &self,
-        request: &impl Request,
+        request: &impl SerializableRequest,
         compression: Option<Compression>,
         tracing: bool,
     ) -> Result<TaskResponse, QueryError> {
@@ -655,11 +656,11 @@ impl Connection {
         let serialized_values = values.serialized()?;
 
         let query_frame = query::Query {
-            contents: &query.contents,
+            contents: Cow::Borrowed(&query.contents),
             parameters: query::QueryParameters {
                 consistency,
                 serial_consistency,
-                values: &serialized_values,
+                values: serialized_values,
                 page_size: query.get_page_size(),
                 paging_state,
                 timestamp: query.get_timestamp(),
@@ -685,7 +686,7 @@ impl Connection {
             parameters: query::QueryParameters {
                 consistency,
                 serial_consistency,
-                values: &serialized_values,
+                values: serialized_values,
                 page_size: prepared_statement.get_page_size(),
                 timestamp: prepared_statement.get_timestamp(),
                 paging_state,
@@ -760,16 +761,8 @@ impl Connection {
         consistency: Consistency,
         serial_consistency: Option<SerialConsistency>,
     ) -> Result<QueryResult, QueryError> {
-        let statements_iter = batch.statements.iter().map(|s| match s {
-            BatchStatement::Query(q) => batch::BatchStatement::Query { text: &q.contents },
-            BatchStatement::PreparedStatement(s) => {
-                batch::BatchStatement::Prepared { id: s.get_id() }
-            }
-        });
-
         let batch_frame = batch::Batch {
-            statements_count: statements_iter.len(),
-            statements: statements_iter,
+            statements: Cow::Borrowed(&batch.statements),
             values,
             batch_type: batch.get_type(),
             consistency,
@@ -879,7 +872,7 @@ impl Connection {
 
     async fn send_request(
         &self,
-        request: &impl Request,
+        request: &impl SerializableRequest,
         compress: bool,
         tracing: bool,
     ) -> Result<QueryResponse, QueryError> {

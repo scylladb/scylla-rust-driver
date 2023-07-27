@@ -1,3 +1,4 @@
+use crate::frame::frame_errors::ParseError;
 use crate::frame::types;
 use bigdecimal::BigDecimal;
 use bytes::BufMut;
@@ -197,6 +198,39 @@ impl SerializedValues {
     pub fn size(&self) -> usize {
         self.serialized_values.len()
     }
+
+    /// Creates value list from the request frame
+    pub fn new_from_frame(buf: &mut &[u8], contains_names: bool) -> Result<Self, ParseError> {
+        let values_num = types::read_short(buf)?;
+        let values_beg = *buf;
+        for _ in 0..values_num {
+            if contains_names {
+                let _name = types::read_string(buf)?;
+            }
+            let _serialized = types::read_bytes_opt(buf)?;
+        }
+
+        let values_len_in_buf = values_beg.len() - buf.len();
+        let values_in_frame = &values_beg[0..values_len_in_buf];
+        Ok(SerializedValues {
+            serialized_values: values_in_frame.to_vec(),
+            values_num,
+            contains_names,
+        })
+    }
+
+    pub fn iter_name_value_pairs(&self) -> impl Iterator<Item = (Option<&str>, &[u8])> {
+        let mut buf = &self.serialized_values[..];
+        (0..self.values_num).map(move |_| {
+            // `unwrap()`s here are safe, as we assume type-safety: if `SerializedValues` exits,
+            // we have a guarantee that the layout of the serialized values is valid.
+            let name = self
+                .contains_names
+                .then(|| types::read_string(&mut buf).unwrap());
+            let serialized = types::read_bytes(&mut buf).unwrap();
+            (name, serialized)
+        })
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -249,6 +283,16 @@ pub trait BatchValuesIterator<'a> {
         buf: &mut impl BufMut,
     ) -> Option<Result<(), SerializeValuesError>>;
     fn skip_next(&mut self) -> Option<()>;
+    fn count(mut self) -> usize
+    where
+        Self: Sized,
+    {
+        let mut count = 0;
+        while self.skip_next().is_some() {
+            count += 1;
+        }
+        count
+    }
 }
 
 /// Implements `BatchValuesIterator` from an `Iterator` over references to things that implement `ValueList`
