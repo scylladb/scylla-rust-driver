@@ -31,7 +31,7 @@ pub enum RequestOpcode {
     AuthResponse = 0x0F,
 }
 
-pub trait Request {
+pub trait SerializableRequest {
     const OPCODE: RequestOpcode;
 
     fn serialize(&self, buf: &mut impl BufMut) -> Result<(), ParseError>;
@@ -45,7 +45,7 @@ pub trait Request {
 
 /// Not intended for driver's direct usage (as driver has no interest in deserialising CQL requests),
 /// but very useful for testing (e.g. asserting that the sent requests have proper parameters set).
-pub trait DeserializableRequest: Request + Sized {
+pub trait DeserializableRequest: SerializableRequest + Sized {
     fn deserialize(buf: &mut &[u8]) -> Result<Self, ParseError>;
 }
 
@@ -61,7 +61,7 @@ mod tests {
                 batch::{Batch, BatchStatement, BatchType},
                 execute::Execute,
                 query::{Query, QueryParameters},
-                DeserializableRequest, Request,
+                DeserializableRequest, SerializableRequest,
             },
             types::{self, LegacyConsistency, SerialConsistency},
             value::SerializedValues,

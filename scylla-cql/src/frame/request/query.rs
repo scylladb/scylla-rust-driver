@@ -4,7 +4,7 @@ use crate::frame::frame_errors::ParseError;
 use bytes::{Buf, BufMut, Bytes};
 
 use crate::{
-    frame::request::{Request, RequestOpcode},
+    frame::request::{RequestOpcode, SerializableRequest},
     frame::types,
     frame::value::SerializedValues,
 };
@@ -33,7 +33,7 @@ pub struct Query<'q> {
     pub parameters: QueryParameters<'q>,
 }
 
-impl Request for Query<'_> {
+impl SerializableRequest for Query<'_> {
     const OPCODE: RequestOpcode = RequestOpcode::Query;
 
     fn serialize(&self, buf: &mut impl BufMut) -> Result<(), ParseError> {

@@ -2,7 +2,7 @@ use std::borrow::Cow;
 
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
 
-use scylla_cql::frame::request::Request;
+use scylla_cql::frame::request::SerializableRequest;
 use scylla_cql::frame::value::SerializedValues;
 use scylla_cql::frame::value::ValueList;
 use scylla_cql::frame::{request::query, Compression, SerializedRequest};

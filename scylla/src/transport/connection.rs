@@ -49,7 +49,7 @@ use crate::batch::{Batch, BatchStatement};
 use crate::frame::protocol_features::ProtocolFeatures;
 use crate::frame::{
     self,
-    request::{self, batch, execute, query, register, Request},
+    request::{self, batch, execute, query, register, SerializableRequest},
     response::{event::Event, result, NonErrorResponse, Response, ResponseOpcode},
     server_event_type::EventType,
     value::{BatchValues, ValueList},
@@ -106,7 +106,7 @@ impl RouterHandle {
 
     async fn send_request(
         &self,
-        request: &impl Request,
+        request: &impl SerializableRequest,
         compression: Option<Compression>,
         tracing: bool,
     ) -> Result<TaskResponse, QueryError> {
@@ -872,7 +872,7 @@ impl Connection {
 
     async fn send_request(
         &self,
-        request: &impl Request,
+        request: &impl SerializableRequest,
         compress: bool,
         tracing: bool,
     ) -> Result<QueryResponse, QueryError> {

@@ -2,7 +2,7 @@ use bytes::BufMut;
 
 use crate::frame::{
     frame_errors::ParseError,
-    request::{Request, RequestOpcode},
+    request::{RequestOpcode, SerializableRequest},
     server_event_type::EventType,
     types,
 };
@@ -11,7 +11,7 @@ pub struct Register {
     pub event_types_to_register_for: Vec<EventType>,
 }
 
-impl Request for Register {
+impl SerializableRequest for Register {
     const OPCODE: RequestOpcode = RequestOpcode::Register;
 
     fn serialize(&self, buf: &mut impl BufMut) -> Result<(), ParseError> {

@@ -3,7 +3,7 @@ use std::{borrow::Cow, convert::TryInto};
 
 use crate::frame::{
     frame_errors::ParseError,
-    request::{Request, RequestOpcode},
+    request::{RequestOpcode, SerializableRequest},
     types,
     value::{BatchValues, BatchValuesIterator, SerializedValues},
 };
@@ -68,7 +68,7 @@ pub enum BatchStatement<'a> {
     Prepared { id: Cow<'a, [u8]> },
 }
 
-impl<Statement, Values> Request for Batch<'_, Statement, Values>
+impl<Statement, Values> SerializableRequest for Batch<'_, Statement, Values>
 where
     for<'s> BatchStatement<'s>: From<&'s Statement>,
     Statement: Clone,

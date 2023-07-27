@@ -16,7 +16,7 @@ use uuid::Uuid;
 
 use std::convert::TryFrom;
 
-use request::Request;
+use request::SerializableRequest;
 use response::ResponseOpcode;
 
 const HEADER_SIZE: usize = 9;
@@ -60,7 +60,7 @@ pub struct SerializedRequest {
 }
 
 impl SerializedRequest {
-    pub fn make<R: Request>(
+    pub fn make<R: SerializableRequest>(
         req: &R,
         compression: Option<Compression>,
         tracing: bool,
