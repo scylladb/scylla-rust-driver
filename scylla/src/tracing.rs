@@ -1,9 +1,6 @@
-use crate::statement::Consistency;
 use itertools::Itertools;
 use std::collections::HashMap;
 use std::net::IpAddr;
-use std::num::NonZeroU32;
-use std::time::Duration;
 use uuid::Uuid;
 
 use crate::cql_to_rust::{FromRow, FromRowError};
@@ -35,20 +32,6 @@ pub struct TracingEvent {
     pub thread: Option<String>,
 }
 
-/// Used to configure a custom retry strategy when querying tracing info
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct GetTracingConfig {
-    /// Number of attempts to be made before giving up.
-    /// Default value: 5
-    pub attempts: NonZeroU32,
-    /// Interval to wait between each attempt.
-    /// Default value: 3 milliseconds
-    pub interval: Duration,
-    /// Consistency to use in queries that read TracingInfo.
-    /// Default value: One
-    pub consistency: Consistency,
-}
-
 impl TracingInfo {
     /// Returns a list of unique nodes involved in the query
     pub fn nodes(&self) -> Vec<IpAddr> {
@@ -57,16 +40,6 @@ impl TracingInfo {
             .filter_map(|e| e.source)
             .unique()
             .collect()
-    }
-}
-
-impl Default for GetTracingConfig {
-    fn default() -> GetTracingConfig {
-        GetTracingConfig {
-            attempts: NonZeroU32::new(5).unwrap(),
-            interval: Duration::from_millis(3),
-            consistency: Consistency::One,
-        }
     }
 }
 
