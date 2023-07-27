@@ -1,6 +1,6 @@
 use crate::frame::{frame_errors::ParseError, value::BatchValuesIterator};
 use bytes::{BufMut, Bytes};
-use std::convert::TryInto;
+use std::{borrow::Cow, convert::TryInto};
 
 use crate::frame::{
     request::{Request, RequestOpcode},
@@ -12,13 +12,13 @@ use crate::frame::{
 const FLAG_WITH_SERIAL_CONSISTENCY: u8 = 0x10;
 const FLAG_WITH_DEFAULT_TIMESTAMP: u8 = 0x20;
 
-pub struct Batch<'a, StatementsIter, Values>
+pub struct Batch<'b, Statement, Values>
 where
-    StatementsIter: Iterator<Item = BatchStatement<'a>> + Clone,
+    BatchStatement<'b>: From<&'b Statement>,
+    Statement: Clone,
     Values: BatchValues,
 {
-    pub statements: StatementsIter,
-    pub statements_count: usize,
+    pub statements: Cow<'b, [Statement]>,
     pub batch_type: BatchType,
     pub consistency: types::Consistency,
     pub serial_consistency: Option<types::SerialConsistency>,
@@ -63,9 +63,10 @@ pub enum BatchStatement<'a> {
     Prepared { id: &'a Bytes },
 }
 
-impl<'a, StatementsIter, Values> Request for Batch<'a, StatementsIter, Values>
+impl<'a, Statement, Values> Request for Batch<'a, Statement, Values>
 where
-    StatementsIter: Iterator<Item = BatchStatement<'a>> + Clone,
+    for<'s> BatchStatement<'s>: From<&'s Statement>,
+    Statement: Clone,
     Values: BatchValues,
 {
     const OPCODE: RequestOpcode = RequestOpcode::Batch;
@@ -75,7 +76,7 @@ where
         buf.put_u8(self.batch_type as u8);
 
         // Serializing queries
-        types::write_short(self.statements_count.try_into()?, buf);
+        types::write_short(self.statements.len().try_into()?, buf);
 
         let counts_mismatch_err = |n_values: usize, n_statements: usize| {
             ParseError::BadDataToSerialize(format!(
@@ -85,11 +86,11 @@ where
         };
         let mut n_serialized_statements = 0usize;
         let mut value_lists = self.values.batch_values_iter();
-        for (idx, statement) in self.statements.clone().enumerate() {
-            statement.serialize(buf)?;
+        for (idx, statement) in self.statements.iter().enumerate() {
+            BatchStatement::from(statement).serialize(buf)?;
             value_lists
                 .write_next_to_request(buf)
-                .ok_or_else(|| counts_mismatch_err(idx, self.statements.clone().count()))??;
+                .ok_or_else(|| counts_mismatch_err(idx, self.statements.len()))??;
             n_serialized_statements += 1;
         }
         // At this point, we have all statements serialized. If any values are still left, we have a mismatch.
@@ -99,13 +100,13 @@ where
                 n_serialized_statements,
             ));
         }
-        if n_serialized_statements != self.statements_count {
+        if n_serialized_statements != self.statements.len() {
             // We want to check this to avoid propagating an invalid construction of self.statements_count as a
             // hard-to-debug silent fail
             return Err(ParseError::BadDataToSerialize(format!(
                 "Invalid Batch constructed: not as many statements serialized as announced \
                     (batch.statement_count: {announced_statement_count}, {n_serialized_statements}",
-                announced_statement_count = self.statements_count
+                announced_statement_count = self.statements.len()
             )));
         }
 

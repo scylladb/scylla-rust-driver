@@ -13,6 +13,7 @@ use tracing::instrument::WithSubscriber;
 use tracing::{debug, error, trace, warn};
 use uuid::Uuid;
 
+use std::borrow::Cow;
 #[cfg(feature = "ssl")]
 use std::pin::Pin;
 use std::sync::atomic::AtomicU64;
@@ -760,16 +761,8 @@ impl Connection {
         consistency: Consistency,
         serial_consistency: Option<SerialConsistency>,
     ) -> Result<QueryResult, QueryError> {
-        let statements_iter = batch.statements.iter().map(|s| match s {
-            BatchStatement::Query(q) => batch::BatchStatement::Query { text: &q.contents },
-            BatchStatement::PreparedStatement(s) => {
-                batch::BatchStatement::Prepared { id: s.get_id() }
-            }
-        });
-
         let batch_frame = batch::Batch {
-            statements_count: statements_iter.len(),
-            statements: statements_iter,
+            statements: Cow::Borrowed(&batch.statements),
             values,
             batch_type: batch.get_type(),
             consistency,

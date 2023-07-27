@@ -181,3 +181,22 @@ impl From<PreparedStatement> for BatchStatement {
         BatchStatement::PreparedStatement(p)
     }
 }
+
+impl<'a: 'b, 'b> From<&'a BatchStatement>
+    for scylla_cql::frame::request::batch::BatchStatement<'b>
+{
+    fn from(val: &'a BatchStatement) -> Self {
+        match val {
+            BatchStatement::Query(query) => {
+                scylla_cql::frame::request::batch::BatchStatement::Query {
+                    text: &query.contents,
+                }
+            }
+            BatchStatement::PreparedStatement(prepared) => {
+                scylla_cql::frame::request::batch::BatchStatement::Prepared {
+                    id: prepared.get_id(),
+                }
+            }
+        }
+    }
+}
