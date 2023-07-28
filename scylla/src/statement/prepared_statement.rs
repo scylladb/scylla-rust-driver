@@ -1,4 +1,3 @@
-use byteorder::{BigEndian, ReadBytesExt};
 use bytes::{Bytes, BytesMut};
 use scylla_cql::errors::{BadQuery, QueryError};
 use smallvec::{smallvec, SmallVec};
@@ -8,8 +7,7 @@ use std::time::Duration;
 use thiserror::Error;
 use uuid::Uuid;
 
-use scylla_cql::frame::frame_errors::ParseError;
-use scylla_cql::frame::response::result::{deser_cql_value, ColumnSpec, CqlValue};
+use scylla_cql::frame::response::result::ColumnSpec;
 
 use super::StatementConfig;
 use crate::frame::response::result::PreparedMetadata;
@@ -450,96 +448,15 @@ impl<'ps> PartitionKey<'ps> {
     }
 }
 
-// The PartitionKeyDecoder reverses the process of PreparedStatement::compute_partition_key:
-// it returns the consecutive values of partition key column that were encoded
-// by the function into the Bytes object, additionally decoding them to CqlValue.
-//
-// The format follows the description here:
-// <https://github.com/scylladb/scylla/blob/40adf38915b6d8f5314c621a94d694d172360833/compound_compat.hh#L33-L47>
-//
-// TODO: Currently, if there is a null value specified for a partition column,
-// it will be skipped when creating the serialized partition key. We should
-// not create such partition keys in the future, i.e. fail the request or
-// route it to a random replica instead and let the DB reject it. In the
-// meantime, this struct will return some garbage data while it tries to
-// decode the key, but nothing bad like a panic should happen otherwise.
-// The struct is currently only used for printing the partition key, so that's
-// completely fine.
-#[derive(Clone, Copy)]
-pub(crate) struct PartitionKeyDecoder<'pk> {
-    prepared_metadata: &'pk PreparedMetadata,
-    partition_key: &'pk [u8],
-    value_index: usize,
-}
-
-impl<'pk> PartitionKeyDecoder<'pk> {
-    pub(crate) fn new(prepared_metadata: &'pk PreparedMetadata, partition_key: &'pk [u8]) -> Self {
-        Self {
-            prepared_metadata,
-            partition_key,
-            value_index: 0,
-        }
-    }
-}
-
-impl<'pk> Iterator for PartitionKeyDecoder<'pk> {
-    type Item = Result<CqlValue, ParseError>;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        if self.value_index >= self.prepared_metadata.pk_indexes.len() {
-            return None;
-        }
-
-        // It should be safe to unwrap because PartitionKeyIndex::sequence
-        // fields of the pk_indexes form a permutation, but let's err
-        // on the safe side in case of bugs.
-        let pk_index = self
-            .prepared_metadata
-            .pk_indexes
-            .iter()
-            .find(|pki| pki.sequence == self.value_index as u16)?;
-
-        let col_idx = pk_index.index as usize;
-        let spec = &self.prepared_metadata.col_specs[col_idx];
-
-        let cell = if self.prepared_metadata.pk_indexes.len() == 1 {
-            Ok(self.partition_key)
-        } else {
-            self.parse_cell()
-        };
-        self.value_index += 1;
-        Some(cell.and_then(|mut cell| deser_cql_value(&spec.typ, &mut cell)))
-    }
-}
-
-impl<'pk> PartitionKeyDecoder<'pk> {
-    fn parse_cell(&mut self) -> Result<&'pk [u8], ParseError> {
-        let buf = &mut self.partition_key;
-        let len = buf.read_u16::<BigEndian>()? as usize;
-        if buf.len() < len {
-            return Err(ParseError::IoError(std::io::Error::new(
-                std::io::ErrorKind::UnexpectedEof,
-                "value too short",
-            )));
-        }
-        let col = &buf[..len];
-        *buf = &buf[len..];
-        buf.read_u8()?;
-        Ok(col)
-    }
-}
-
 #[cfg(test)]
 mod tests {
-    use bytes::{BufMut, Bytes, BytesMut};
     use scylla_cql::frame::{
         response::result::{
-            ColumnSpec, ColumnType, CqlValue, PartitionKeyIndex, PreparedMetadata, TableSpec,
+            ColumnSpec, ColumnType, PartitionKeyIndex, PreparedMetadata, TableSpec,
         },
         value::SerializedValues,
     };
 
-    use super::PartitionKeyDecoder;
     use crate::prepared_statement::PartitionKey;
 
     fn make_meta(
