@@ -532,11 +532,15 @@ impl<'pk> PartitionKeyDecoder<'pk> {
 #[cfg(test)]
 mod tests {
     use bytes::{BufMut, Bytes, BytesMut};
-    use scylla_cql::frame::response::result::{
-        ColumnSpec, ColumnType, CqlValue, PartitionKeyIndex, PreparedMetadata, TableSpec,
+    use scylla_cql::frame::{
+        response::result::{
+            ColumnSpec, ColumnType, CqlValue, PartitionKeyIndex, PreparedMetadata, TableSpec,
+        },
+        value::SerializedValues,
     };
 
     use super::PartitionKeyDecoder;
+    use crate::prepared_statement::PartitionKey;
 
     fn make_meta(
         cols: impl IntoIterator<Item = ColumnType>,
@@ -572,53 +576,8 @@ mod tests {
         }
     }
 
-    fn make_key<'pk>(cols: impl IntoIterator<Item = &'pk [u8]>) -> Bytes {
-        let cols: Vec<_> = cols.into_iter().collect();
-        // TODO: Use compute_partition_key or one of the variants
-        // after they are moved to a more sensible place
-        // instead of constructing the PK manually
-        let mut b = BytesMut::new();
-        if cols.len() == 1 {
-            b.extend_from_slice(cols[0]);
-        } else {
-            for c in cols {
-                b.put_i16(c.len() as i16);
-                b.extend_from_slice(c);
-                b.put_u8(0);
-            }
-        }
-        b.freeze()
-    }
-
     #[test]
-    fn test_pk_decoder_single_column() {
-        let meta = make_meta([ColumnType::Int], [0]);
-        let pk = make_key([0i32.to_be_bytes().as_ref()]);
-        let cells = PartitionKeyDecoder::new(&meta, &pk)
-            .collect::<Result<Vec<_>, _>>()
-            .unwrap();
-        assert_eq!(cells, vec![CqlValue::Int(0)]);
-    }
-
-    #[test]
-    fn test_pk_decoder_multiple_columns() {
-        let meta = make_meta(std::iter::repeat(ColumnType::Int).take(3), [0, 1, 2]);
-        let pk = make_key([
-            12i32.to_be_bytes().as_ref(),
-            34i32.to_be_bytes().as_ref(),
-            56i32.to_be_bytes().as_ref(),
-        ]);
-        let cells = PartitionKeyDecoder::new(&meta, &pk)
-            .collect::<Result<Vec<_>, _>>()
-            .unwrap();
-        assert_eq!(
-            cells,
-            vec![CqlValue::Int(12), CqlValue::Int(34), CqlValue::Int(56)],
-        );
-    }
-
-    #[test]
-    fn test_pk_decoder_multiple_columns_shuffled() {
+    fn test_partition_key_multiple_columns_shuffled() {
         let meta = make_meta(
             [
                 ColumnType::TinyInt,
@@ -629,21 +588,22 @@ mod tests {
             ],
             [4, 0, 3],
         );
-        let pk = make_key([
-            &[1, 2, 3, 4, 5],
-            67i8.to_be_bytes().as_ref(),
-            89i64.to_be_bytes().as_ref(),
-        ]);
-        let cells = PartitionKeyDecoder::new(&meta, &pk)
-            .collect::<Result<Vec<_>, _>>()
-            .unwrap();
+        let mut values = SerializedValues::new();
+        values.add_value(&67i8).unwrap();
+        values.add_value(&42i16).unwrap();
+        values.add_value(&23i32).unwrap();
+        values.add_value(&89i64).unwrap();
+        values.add_value(&[1u8, 2, 3, 4, 5]).unwrap();
+
+        let pk = PartitionKey::new(&meta, &values).unwrap();
+        let pk_cols = Vec::from_iter(pk.iter());
         assert_eq!(
-            cells,
+            pk_cols,
             vec![
-                CqlValue::Blob(vec![1, 2, 3, 4, 5]),
-                CqlValue::TinyInt(67),
-                CqlValue::BigInt(89),
-            ],
+                ([1u8, 2, 3, 4, 5].as_slice(), &meta.col_specs[4]),
+                (67i8.to_be_bytes().as_ref(), &meta.col_specs[0]),
+                (89i64.to_be_bytes().as_ref(), &meta.col_specs[3]),
+            ]
         );
     }
 }

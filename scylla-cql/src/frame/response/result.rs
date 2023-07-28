@@ -34,7 +34,7 @@ pub struct SchemaChange {
     pub event: SchemaChangeEvent,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TableSpec {
     pub ks_name: String,
     pub table_name: String,
@@ -329,7 +329,7 @@ impl CqlValue {
     // TODO
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ColumnSpec {
     pub table_spec: TableSpec,
     pub name: String,
