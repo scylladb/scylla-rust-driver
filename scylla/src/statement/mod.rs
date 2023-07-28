@@ -10,19 +10,19 @@ pub mod query;
 pub use crate::frame::types::{Consistency, SerialConsistency};
 
 #[derive(Debug)]
-pub struct StatementConfig {
-    pub consistency: Option<Consistency>,
-    pub serial_consistency: Option<Option<SerialConsistency>>,
+pub(crate) struct StatementConfig {
+    pub(crate) consistency: Option<Consistency>,
+    pub(crate) serial_consistency: Option<Option<SerialConsistency>>,
 
-    pub is_idempotent: bool,
+    pub(crate) is_idempotent: bool,
 
-    pub tracing: bool,
-    pub timestamp: Option<i64>,
-    pub request_timeout: Option<Duration>,
+    pub(crate) tracing: bool,
+    pub(crate) timestamp: Option<i64>,
+    pub(crate) request_timeout: Option<Duration>,
 
-    pub history_listener: Option<Arc<dyn HistoryListener>>,
+    pub(crate) history_listener: Option<Arc<dyn HistoryListener>>,
 
-    pub execution_profile_handle: Option<ExecutionProfileHandle>,
+    pub(crate) execution_profile_handle: Option<ExecutionProfileHandle>,
 }
 
 #[allow(clippy::derivable_impls)]
@@ -54,7 +54,7 @@ impl Clone for StatementConfig {
 impl StatementConfig {
     /// Determines the consistency of a query
     #[must_use]
-    pub fn determine_consistency(&self, default_consistency: Consistency) -> Consistency {
+    pub(crate) fn determine_consistency(&self, default_consistency: Consistency) -> Consistency {
         self.consistency.unwrap_or(default_consistency)
     }
 }
