@@ -57,7 +57,7 @@ use crate::frame::value::{
 };
 use crate::prepared_statement::{PartitionKeyError, PreparedStatement};
 use crate::query::Query;
-use crate::routing::{Token, Shard};
+use crate::routing::{Shard, Token};
 use crate::statement::{Consistency, SerialConsistency};
 use crate::tracing::{TracingEvent, TracingInfo};
 use crate::transport::cluster::{Cluster, ClusterData, ClusterNeatDebug};
@@ -2198,19 +2198,19 @@ impl RequestSpan {
         self.span.record("result_rows", rows.rows.len());
     }
 
-    pub(crate) fn record_replicas<'a>(&'a self, replicas: &'a [impl Borrow<Arc<Node>>]) {
-        struct ReplicaIps<'a, N>(&'a [N]);
+    pub(crate) fn record_replicas<'a>(&'a self, replicas: &'a [(impl Borrow<Arc<Node>>, Shard)]) {
+        struct ReplicaIps<'a, N>(&'a [(N, Shard)]);
         impl<'a, N> Display for ReplicaIps<'a, N>
         where
             N: Borrow<Arc<Node>>,
         {
             fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-                let mut nodes = self.0.iter();
-                if let Some(node) = nodes.next() {
-                    write!(f, "{}", node.borrow().address.ip())?;
+                let mut nodes_with_shards = self.0.iter();
+                if let Some((node, shard)) = nodes_with_shards.next() {
+                    write!(f, "{}-shard{}", node.borrow().address.ip(), shard)?;
 
-                    for node in nodes {
-                        write!(f, ",{}", node.borrow().address.ip())?;
+                    for (node, shard) in nodes_with_shards {
+                        write!(f, ",{}-shard{}", node.borrow().address.ip(), shard)?;
                     }
                 }
                 Ok(())

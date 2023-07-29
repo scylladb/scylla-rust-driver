@@ -3,7 +3,7 @@
 //! See [the book](https://rust-driver.docs.scylladb.com/stable/load-balancing/load-balancing.html) for more information
 
 use super::{cluster::ClusterData, NodeRef};
-use crate::routing::{Token, Shard};
+use crate::routing::{Shard, Token};
 use scylla_cql::{errors::QueryError, frame::types};
 
 use std::time::Duration;
@@ -62,7 +62,11 @@ pub type FallbackPlan<'a> = Box<dyn Iterator<Item = (NodeRef<'a>, Shard)> + Send
 /// This trait is used to produce an iterator of nodes to contact for a given query.
 pub trait LoadBalancingPolicy: Send + Sync + std::fmt::Debug {
     /// Returns the first node to contact for a given query.
-    fn pick<'a>(&'a self, query: &'a RoutingInfo, cluster: &'a ClusterData) -> Option<(NodeRef<'a>, Shard)>;
+    fn pick<'a>(
+        &'a self,
+        query: &'a RoutingInfo,
+        cluster: &'a ClusterData,
+    ) -> Option<(NodeRef<'a>, Shard)>;
 
     /// Returns all contact-appropriate nodes for a given query.
     fn fallback<'a>(&'a self, query: &'a RoutingInfo, cluster: &'a ClusterData)

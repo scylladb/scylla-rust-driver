@@ -3,7 +3,7 @@ pub use self::latency_awareness::LatencyAwarenessBuilder;
 
 use super::{FallbackPlan, LoadBalancingPolicy, NodeRef, RoutingInfo};
 use crate::{
-    routing::{Token, Shard},
+    routing::{Shard, Token},
     transport::{cluster::ClusterData, locator::ReplicaSet, node::Node, topology::Strategy},
 };
 use itertools::{Either, Itertools};
@@ -74,7 +74,7 @@ pub struct DefaultPolicy {
     preferences: NodeLocationPreference,
     is_token_aware: bool,
     permit_dc_failover: bool,
-    pick_predicate: Box<dyn Fn(&NodeRef) -> bool + Send + Sync>,
+    pick_predicate: Box<dyn Fn(&(NodeRef<'_>, Shard)) -> bool + Send + Sync>,
     latency_awareness: Option<LatencyAwareness>,
     fixed_shuffle_seed: Option<u64>,
 }
@@ -92,7 +92,11 @@ impl fmt::Debug for DefaultPolicy {
 }
 
 impl LoadBalancingPolicy for DefaultPolicy {
-    fn pick<'a>(&'a self, query: &'a RoutingInfo, cluster: &'a ClusterData) -> Option<(NodeRef<'a>, Shard)> {
+    fn pick<'a>(
+        &'a self,
+        query: &'a RoutingInfo,
+        cluster: &'a ClusterData,
+    ) -> Option<(NodeRef<'a>, Shard)> {
         let routing_info = self.routing_info(query, cluster);
         if let Some(ref token_with_strategy) = routing_info.token_with_strategy {
             if self.preferences.datacenter().is_some()
@@ -200,14 +204,14 @@ or refrain from preferring datacenters (which may ban all other datacenters, if 
 
         // Previous checks imply that every node we could have selected is down.
         // Let's try to return a down node that wasn't disabled.
-        let picked = Self::pick_node(nodes, |node| node.is_enabled());
+        let picked = Self::pick_node(nodes, |(node, _shard)| node.is_enabled());
         if let Some(down_but_enabled_local_node) = picked {
             return Some(down_but_enabled_local_node);
         }
 
         // If a datacenter failover is possible, loosen restriction about locality.
         if self.is_datacenter_failover_possible(&routing_info) {
-            let picked = Self::pick_node(all_nodes, |node| node.is_enabled());
+            let picked = Self::pick_node(all_nodes, |(node, _shard)| node.is_enabled());
             if let Some(down_but_enabled_maybe_remote_node) = picked {
                 return Some(down_but_enabled_maybe_remote_node);
             }
@@ -420,13 +424,15 @@ impl DefaultPolicy {
 
     /// Wraps the provided predicate, adding the requirement for rack to match.
     fn make_rack_predicate<'a>(
-        predicate: impl Fn(&NodeRef<'a>) -> bool + 'a,
+        predicate: impl Fn(&(NodeRef<'a>, Shard)) -> bool + 'a,
         replica_location: NodeLocationCriteria<'a>,
-    ) -> impl Fn(&NodeRef<'a>) -> bool {
-        move |node| match replica_location {
-            NodeLocationCriteria::Any | NodeLocationCriteria::Datacenter(_) => predicate(node),
+    ) -> impl Fn(&(NodeRef<'a>, Shard)) -> bool {
+        move |node_and_shard @ (node, _shard)| match replica_location {
+            NodeLocationCriteria::Any | NodeLocationCriteria::Datacenter(_) => {
+                predicate(node_and_shard)
+            }
             NodeLocationCriteria::DatacenterAndRack(_, rack) => {
-                predicate(node) && node.rack.as_deref() == Some(rack)
+                predicate(node_and_shard) && node.rack.as_deref() == Some(rack)
             }
         }
     }
@@ -435,10 +441,10 @@ impl DefaultPolicy {
         &'a self,
         ts: &TokenWithStrategy<'a>,
         replica_location: NodeLocationCriteria<'a>,
-        predicate: impl Fn(&NodeRef<'a>) -> bool + 'a,
+        predicate: impl Fn(&(NodeRef<'a>, Shard)) -> bool + 'a,
         cluster: &'a ClusterData,
         order: ReplicaOrder,
-    ) -> impl Iterator<Item = NodeRef<'a>> {
+    ) -> impl Iterator<Item = (NodeRef<'a>, Shard)> {
         let predicate = Self::make_rack_predicate(predicate, replica_location);
 
         let replica_iter = match order {
@@ -452,17 +458,17 @@ impl DefaultPolicy {
                     .into_iter(),
             ),
         };
-        replica_iter.filter(move |node: &NodeRef<'a>| predicate(node))
+        replica_iter.filter(move |node_and_shard: &(NodeRef<'a>, Shard)| predicate(node_and_shard))
     }
 
     fn pick_replica<'a>(
         &'a self,
         ts: &TokenWithStrategy<'a>,
         replica_location: NodeLocationCriteria<'a>,
-        predicate: &'a impl Fn(&NodeRef<'a>) -> bool,
+        predicate: &'a impl Fn(&(NodeRef<'a>, Shard)) -> bool,
         cluster: &'a ClusterData,
         statement_type: StatementType,
-    ) -> Option<NodeRef<'a>> {
+    ) -> Option<(NodeRef<'a>, Shard)> {
         match statement_type {
             StatementType::Lwt => self.pick_first_replica(ts, replica_location, predicate, cluster),
             StatementType::NonLwt => {
@@ -487,9 +493,9 @@ impl DefaultPolicy {
         &'a self,
         ts: &TokenWithStrategy<'a>,
         replica_location: NodeLocationCriteria<'a>,
-        predicate: &'a impl Fn(&NodeRef<'a>) -> bool,
+        predicate: &'a impl Fn(&(NodeRef<'a>, Shard)) -> bool,
         cluster: &'a ClusterData,
-    ) -> Option<NodeRef<'a>> {
+    ) -> Option<(NodeRef<'a>, Shard)> {
         match replica_location {
             NodeLocationCriteria::Any => {
                 // ReplicaSet returned by ReplicaLocator for this case:
@@ -519,7 +525,7 @@ impl DefaultPolicy {
                 self.replicas(
                     ts,
                     replica_location,
-                    move |node| predicate(node),
+                    move |node_and_shard| predicate(node_and_shard),
                     cluster,
                     ReplicaOrder::RingOrder,
                 )
@@ -532,9 +538,9 @@ impl DefaultPolicy {
         &'a self,
         ts: &TokenWithStrategy<'a>,
         replica_location: NodeLocationCriteria<'a>,
-        predicate: &'a impl Fn(&NodeRef<'a>) -> bool,
+        predicate: &'a impl Fn(&(NodeRef<'a>, Shard)) -> bool,
         cluster: &'a ClusterData,
-    ) -> Option<NodeRef<'a>> {
+    ) -> Option<(NodeRef<'a>, Shard)> {
         let predicate = Self::make_rack_predicate(predicate, replica_location);
 
         let replica_set = self.nonfiltered_replica_set(ts, replica_location, cluster);
@@ -551,10 +557,10 @@ impl DefaultPolicy {
         &'a self,
         ts: &TokenWithStrategy<'a>,
         replica_location: NodeLocationCriteria<'a>,
-        predicate: impl Fn(&NodeRef<'a>) -> bool + 'a,
+        predicate: impl Fn(&(NodeRef<'_>, Shard)) -> bool + 'a,
         cluster: &'a ClusterData,
         statement_type: StatementType,
-    ) -> impl Iterator<Item = NodeRef<'a>> {
+    ) -> impl Iterator<Item = (NodeRef<'_>, Shard)> {
         let order = match statement_type {
             StatementType::Lwt => ReplicaOrder::RingOrder,
             StatementType::NonLwt => ReplicaOrder::Arbitrary,
@@ -570,7 +576,7 @@ impl DefaultPolicy {
         }
     }
 
-    fn randomly_rotated_nodes(nodes: &[Arc<Node>]) -> impl Iterator<Item = NodeRef<'_>> {
+    fn randomly_rotated_nodes(nodes: &[Arc<Node>]) -> impl Iterator<Item = (NodeRef<'_>, Shard)> {
         // Create a randomly rotated slice view
         let nodes_len = nodes.len();
         if nodes_len > 0 {
@@ -588,24 +594,24 @@ impl DefaultPolicy {
 
     fn pick_node<'a>(
         nodes: &'a [Arc<Node>],
-        predicate: impl Fn(&NodeRef<'a>) -> bool,
-    ) -> Option<NodeRef<'a>> {
+        predicate: impl Fn(&(NodeRef<'_>, Shard)) -> bool,
+    ) -> Option<(NodeRef<'_>, Shard)> {
         // Select the first node that matches the predicate
         Self::randomly_rotated_nodes(nodes).find(predicate)
     }
 
     fn round_robin_nodes<'a>(
         nodes: &'a [Arc<Node>],
-        predicate: impl Fn(&NodeRef<'a>) -> bool,
-    ) -> impl Iterator<Item = NodeRef<'a>> {
+        predicate: impl Fn(&(NodeRef<'_>, Shard)) -> bool,
+    ) -> impl Iterator<Item = (NodeRef<'_>, Shard)> {
         Self::randomly_rotated_nodes(nodes).filter(predicate)
     }
 
     fn shuffle<'a>(
         &self,
-        iter: impl Iterator<Item = NodeRef<'a>>,
-    ) -> impl Iterator<Item = NodeRef<'a>> {
-        let mut vec: Vec<NodeRef<'a>> = iter.collect();
+        iter: impl Iterator<Item = (NodeRef<'a>, Shard)>,
+    ) -> impl Iterator<Item = (NodeRef<'a>, Shard)> {
+        let mut vec: Vec<(NodeRef<'_>, Shard)> = iter.collect();
 
         if let Some(fixed) = self.fixed_shuffle_seed {
             let mut gen = Pcg32::new(fixed, 0);
@@ -617,7 +623,7 @@ impl DefaultPolicy {
         vec.into_iter()
     }
 
-    fn is_alive(node: &NodeRef<'_>) -> bool {
+    fn is_alive(&(node, _shard): &(NodeRef<'_>, Shard)) -> bool {
         // For now, we leave this as stub, until we have time to improve node events.
         // node.is_enabled() && !node.is_down()
         node.is_enabled()
@@ -683,8 +689,11 @@ impl DefaultPolicyBuilder {
         let latency_awareness = self.latency_awareness.map(|builder| builder.build());
         let pick_predicate = if let Some(ref latency_awareness) = latency_awareness {
             let latency_predicate = latency_awareness.generate_predicate();
-            Box::new(move |node: &NodeRef| DefaultPolicy::is_alive(node) && latency_predicate(node))
-                as Box<dyn Fn(&NodeRef) -> bool + Send + Sync + 'static>
+            Box::new(
+                move |node_and_shard @ (node, shard): &(NodeRef<'_>, Shard)| {
+                    DefaultPolicy::is_alive(node_and_shard) && latency_predicate(node)
+                },
+            ) as Box<dyn Fn(&(NodeRef<'_>, Shard)) -> bool + Send + Sync + 'static>
         } else {
             Box::new(DefaultPolicy::is_alive)
         };
@@ -1123,7 +1132,8 @@ mod tests {
             cluster: &ClusterData,
         ) -> Vec<u16> {
             let plan = Plan::new(policy, query_info, cluster);
-            plan.map(|node| node.address.port()).collect::<Vec<_>>()
+            plan.map(|(node, _shard)| node.address.port())
+                .collect::<Vec<_>>()
         }
     }
 
@@ -2717,7 +2727,8 @@ mod latency_awareness {
         };
 
         use crate::{
-            load_balancing::default::NodeLocationPreference, test_utils::create_new_session_builder,
+            load_balancing::default::NodeLocationPreference, routing::Shard,
+            test_utils::create_new_session_builder,
         };
         use crate::{
             load_balancing::{
@@ -2778,9 +2789,12 @@ mod latency_awareness {
         ) -> DefaultPolicy {
             let pick_predicate = {
                 let latency_predicate = latency_awareness.generate_predicate();
-                Box::new(move |node: &NodeRef| {
-                    DefaultPolicy::is_alive(node) && latency_predicate(node)
-                }) as Box<dyn Fn(&NodeRef) -> bool + Send + Sync + 'static>
+                Box::new(
+                    move |node_and_shard @ (node, _shard): &(NodeRef<'_>, Shard)| {
+                        DefaultPolicy::is_alive(node_and_shard) && latency_predicate(node)
+                    },
+                )
+                    as Box<dyn Fn(&(NodeRef<'_>, Shard)) -> bool + Send + Sync + 'static>
             };
 
             DefaultPolicy {

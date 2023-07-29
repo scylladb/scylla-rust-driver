@@ -1,7 +1,7 @@
 use tracing::error;
 
 use super::{FallbackPlan, LoadBalancingPolicy, NodeRef, RoutingInfo};
-use crate::{transport::ClusterData, routing::Shard};
+use crate::{routing::Shard, transport::ClusterData};
 
 enum PlanState<'a> {
     Created,
@@ -113,11 +113,14 @@ mod tests {
     use super::*;
 
     fn expected_nodes() -> Vec<(Arc<Node>, Shard)> {
-        vec![(Arc::new(Node::new_for_test(
-            NodeAddr::Translatable(SocketAddr::from_str("127.0.0.1:9042").unwrap()),
-            None,
-            None,
-        )), todo!())]
+        vec![(
+            Arc::new(Node::new_for_test(
+                NodeAddr::Translatable(SocketAddr::from_str("127.0.0.1:9042").unwrap()),
+                None,
+                None,
+            )),
+            todo!(),
+        )]
     }
 
     #[derive(Debug)]
@@ -138,7 +141,11 @@ mod tests {
             _query: &'a RoutingInfo,
             _cluster: &'a ClusterData,
         ) -> FallbackPlan<'a> {
-            Box::new(self.expected_nodes.iter().map(|(node_ref, shard)| (node_ref, *shard)))
+            Box::new(
+                self.expected_nodes
+                    .iter()
+                    .map(|(node_ref, shard)| (node_ref, *shard)),
+            )
         }
 
         fn name(&self) -> String {
@@ -159,6 +166,9 @@ mod tests {
         };
         let routing_info = RoutingInfo::default();
         let plan = Plan::new(&policy, &routing_info, &cluster_data);
-        assert_eq!(Vec::from_iter(plan.map(|(node, shard)| (node.clone(), shard))), policy.expected_nodes);
+        assert_eq!(
+            Vec::from_iter(plan.map(|(node, shard)| (node.clone(), shard))),
+            policy.expected_nodes
+        );
     }
 }

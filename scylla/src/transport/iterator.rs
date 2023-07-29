@@ -285,7 +285,7 @@ impl RowIterator {
                         config
                             .cluster_data
                             .get_token_endpoints_iter(keyspace, token)
-                            .cloned()
+                            .map(|(node, shard)| (node.clone(), shard))
                             .collect(),
                     )
                 } else {

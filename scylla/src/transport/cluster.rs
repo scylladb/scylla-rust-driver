@@ -1,7 +1,7 @@
 /// Cluster manages up to date information and connections to database nodes
 use crate::frame::response::event::{Event, StatusChangeEvent};
 use crate::frame::value::ValueList;
-use crate::routing::Token;
+use crate::routing::{Shard, Token};
 use crate::transport::host_filter::HostFilter;
 use crate::transport::{
     connection::{Connection, VerifiedKeyspaceName},
@@ -27,6 +27,7 @@ use tracing::{debug, warn};
 use uuid::Uuid;
 
 use super::node::NodeAddr;
+use super::NodeRef;
 
 #[derive(Debug, Clone)]
 #[non_exhaustive]
@@ -437,9 +438,9 @@ impl ClusterData {
     }
 
     /// Access to replicas owning a given token
-    pub fn get_token_endpoints(&self, keyspace: &str, token: Token) -> Vec<Arc<Node>> {
+    pub fn get_token_endpoints(&self, keyspace: &str, token: Token) -> Vec<(Arc<Node>, Shard)> {
         self.get_token_endpoints_iter(keyspace, token)
-            .cloned()
+            .map(|(node, shard)| (node.clone(), shard))
             .collect()
     }
 
@@ -447,7 +448,7 @@ impl ClusterData {
         &self,
         keyspace: &str,
         token: Token,
-    ) -> impl Iterator<Item = &Arc<Node>> {
+    ) -> impl Iterator<Item = (NodeRef<'_>, Shard)> {
         let keyspace = self.keyspaces.get(keyspace);
         let strategy = keyspace
             .map(|k| &k.strategy)
@@ -465,7 +466,7 @@ impl ClusterData {
         keyspace: &str,
         table: &str,
         partition_key: impl ValueList,
-    ) -> Result<Vec<Arc<Node>>, BadQuery> {
+    ) -> Result<Vec<(Arc<Node>, Shard)>, BadQuery> {
         Ok(self.get_token_endpoints(
             keyspace,
             self.compute_token(keyspace, table, partition_key)?,

@@ -9,7 +9,7 @@ use rand::{seq::IteratorRandom, Rng};
 pub use token_ring::TokenRing;
 
 use super::{topology::Strategy, Node, NodeRef};
-use crate::routing::Token;
+use crate::routing::{Shard, Token};
 use itertools::Itertools;
 use precomputed_replicas::PrecomputedReplicas;
 use replicas::{ReplicasArray, EMPTY_REPLICAS};
@@ -245,8 +245,8 @@ impl<'a> ReplicaSet<'a> {
     pub fn choose_filtered<R>(
         self,
         rng: &mut R,
-        predicate: impl Fn(&NodeRef<'a>) -> bool,
-    ) -> Option<NodeRef<'a>>
+        predicate: impl Fn(&(NodeRef<'a>, Shard)) -> bool,
+    ) -> Option<(NodeRef<'a>, Shard)>
     where
         R: Rng + ?Sized,
     {
@@ -303,7 +303,7 @@ impl<'a> ReplicaSet<'a> {
         self.len() == 0
     }
 
-    fn choose<R>(&self, rng: &mut R) -> Option<NodeRef<'a>>
+    fn choose<R>(&self, rng: &mut R) -> Option<(NodeRef<'a>, Shard)>
     where
         R: Rng + ?Sized,
     {
@@ -355,7 +355,7 @@ impl<'a> ReplicaSet<'a> {
 }
 
 impl<'a> IntoIterator for ReplicaSet<'a> {
-    type Item = NodeRef<'a>;
+    type Item = (NodeRef<'a>, Shard);
     type IntoIter = ReplicaSetIterator<'a>;
 
     /// Converts the replica set into iterator. Order defined by that iterator does not have to
@@ -448,7 +448,7 @@ pub struct ReplicaSetIterator<'a> {
 }
 
 impl<'a> Iterator for ReplicaSetIterator<'a> {
-    type Item = NodeRef<'a>;
+    type Item = (NodeRef<'a>, Shard);
 
     fn next(&mut self) -> Option<Self::Item> {
         match &mut self.inner {
@@ -609,7 +609,7 @@ enum ReplicasOrderedNTSIterator<'a> {
 }
 
 impl<'a> Iterator for ReplicasOrderedNTSIterator<'a> {
-    type Item = NodeRef<'a>;
+    type Item = (NodeRef<'a>, Shard);
 
     fn next(&mut self) -> Option<Self::Item> {
         match *self {
@@ -696,7 +696,7 @@ impl<'a> Iterator for ReplicasOrderedNTSIterator<'a> {
 }
 
 impl<'a> Iterator for ReplicasOrderedIterator<'a> {
-    type Item = NodeRef<'a>;
+    type Item = (NodeRef<'a>, Shard);
 
     fn next(&mut self) -> Option<Self::Item> {
         match &mut self.inner {
@@ -711,7 +711,7 @@ impl<'a> Iterator for ReplicasOrderedIterator<'a> {
 }
 
 impl<'a> IntoIterator for ReplicasOrdered<'a> {
-    type Item = NodeRef<'a>;
+    type Item = (NodeRef<'a>, Shard);
     type IntoIter = ReplicasOrderedIterator<'a>;
 
     fn into_iter(self) -> Self::IntoIter {
@@ -756,7 +756,7 @@ mod tests {
             let replicas_ordered = replica_set.into_replicas_ordered();
             let ids: Vec<_> = replicas_ordered
                 .into_iter()
-                .map(|node| node.address.port())
+                .map(|(node, _shard)| node.address.port())
                 .collect();
             assert_eq!(expected, ids);
         };
