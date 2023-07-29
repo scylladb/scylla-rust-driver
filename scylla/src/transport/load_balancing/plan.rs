@@ -1,15 +1,15 @@
 use tracing::error;
 
 use super::{FallbackPlan, LoadBalancingPolicy, NodeRef, RoutingInfo};
-use crate::transport::ClusterData;
+use crate::{transport::ClusterData, routing::Shard};
 
 enum PlanState<'a> {
     Created,
     PickedNone, // This always means an abnormal situation: it means that no nodes satisfied locality/node filter requirements.
-    Picked(NodeRef<'a>),
+    Picked((NodeRef<'a>, Shard)),
     Fallback {
         iter: FallbackPlan<'a>,
-        node_to_filter_out: NodeRef<'a>,
+        node_to_filter_out: (NodeRef<'a>, Shard),
     },
 }
 
@@ -44,7 +44,7 @@ impl<'a> Plan<'a> {
 }
 
 impl<'a> Iterator for Plan<'a> {
-    type Item = NodeRef<'a>;
+    type Item = (NodeRef<'a>, Shard);
 
     fn next(&mut self) -> Option<Self::Item> {
         match &mut self.state {
@@ -77,7 +77,7 @@ impl<'a> Iterator for Plan<'a> {
             PlanState::Picked(node) => {
                 self.state = PlanState::Fallback {
                     iter: self.policy.fallback(self.routing_info, self.cluster),
-                    node_to_filter_out: node,
+                    node_to_filter_out: *node,
                 };
 
                 self.next()
@@ -112,24 +112,24 @@ mod tests {
 
     use super::*;
 
-    fn expected_nodes() -> Vec<Arc<Node>> {
-        vec![Arc::new(Node::new_for_test(
+    fn expected_nodes() -> Vec<(Arc<Node>, Shard)> {
+        vec![(Arc::new(Node::new_for_test(
             NodeAddr::Translatable(SocketAddr::from_str("127.0.0.1:9042").unwrap()),
             None,
             None,
-        ))]
+        )), todo!())]
     }
 
     #[derive(Debug)]
     struct PickingNonePolicy {
-        expected_nodes: Vec<Arc<Node>>,
+        expected_nodes: Vec<(Arc<Node>, Shard)>,
     }
     impl LoadBalancingPolicy for PickingNonePolicy {
         fn pick<'a>(
             &'a self,
             _query: &'a RoutingInfo,
             _cluster: &'a ClusterData,
-        ) -> Option<NodeRef<'a>> {
+        ) -> Option<(NodeRef<'a>, Shard)> {
             None
         }
 
@@ -138,7 +138,7 @@ mod tests {
             _query: &'a RoutingInfo,
             _cluster: &'a ClusterData,
         ) -> FallbackPlan<'a> {
-            Box::new(self.expected_nodes.iter())
+            Box::new(self.expected_nodes.iter().map(|(node_ref, shard)| (node_ref, *shard)))
         }
 
         fn name(&self) -> String {
@@ -159,6 +159,6 @@ mod tests {
         };
         let routing_info = RoutingInfo::default();
         let plan = Plan::new(&policy, &routing_info, &cluster_data);
-        assert_eq!(Vec::from_iter(plan.cloned()), policy.expected_nodes);
+        assert_eq!(Vec::from_iter(plan.map(|(node, shard)| (node.clone(), shard))), policy.expected_nodes);
     }
 }

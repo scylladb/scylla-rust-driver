@@ -3,7 +3,7 @@ pub use self::latency_awareness::LatencyAwarenessBuilder;
 
 use super::{FallbackPlan, LoadBalancingPolicy, NodeRef, RoutingInfo};
 use crate::{
-    routing::Token,
+    routing::{Token, Shard},
     transport::{cluster::ClusterData, locator::ReplicaSet, node::Node, topology::Strategy},
 };
 use itertools::{Either, Itertools};
@@ -92,7 +92,7 @@ impl fmt::Debug for DefaultPolicy {
 }
 
 impl LoadBalancingPolicy for DefaultPolicy {
-    fn pick<'a>(&'a self, query: &'a RoutingInfo, cluster: &'a ClusterData) -> Option<NodeRef<'a>> {
+    fn pick<'a>(&'a self, query: &'a RoutingInfo, cluster: &'a ClusterData) -> Option<(NodeRef<'a>, Shard)> {
         let routing_info = self.routing_info(query, cluster);
         if let Some(ref token_with_strategy) = routing_info.token_with_strategy {
             if self.preferences.datacenter().is_some()
