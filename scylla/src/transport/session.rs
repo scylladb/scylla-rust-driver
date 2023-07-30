@@ -424,7 +424,7 @@ impl<RowT: FromRow> Iterator for TypedRowIter<RowT> {
     }
 }
 
-pub enum RunQueryResult<ResT> {
+pub(crate) enum RunQueryResult<ResT> {
     IgnoredWriteError,
     Completed(ResT),
 }
@@ -2022,7 +2022,7 @@ pub(crate) async fn resolve_hostname(hostname: &str) -> Result<SocketAddr, io::E
 // When using run_query make sure that the ResT type is NOT able
 // to contain any errors.
 // See https://github.com/scylladb/scylla-rust-driver/issues/501
-pub trait AllowedRunQueryResTType {}
+pub(crate) trait AllowedRunQueryResTType {}
 
 impl AllowedRunQueryResTType for Uuid {}
 impl AllowedRunQueryResTType for QueryResult {}
