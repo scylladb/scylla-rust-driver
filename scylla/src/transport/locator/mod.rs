@@ -38,7 +38,7 @@ impl ReplicaLocator {
     /// Creates a new `ReplicaLocator` in which the specified replication strategies
     /// (`precompute_replica_sets_for`) will have its token ranges precomputed. This function can
     /// potentially be CPU-intensive (if a ring & replication factors in given strategies are big).
-    pub fn new<'a>(
+    pub(crate) fn new<'a>(
         ring_iter: impl Iterator<Item = (Token, Arc<Node>)>,
         precompute_replica_sets_for: impl Iterator<Item = &'a Strategy>,
     ) -> Self {
