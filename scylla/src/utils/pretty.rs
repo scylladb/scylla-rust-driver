@@ -26,7 +26,7 @@ impl<'a> UpperHex for HexBytes<'a> {
 
 // Displays a CqlValue. The syntax should resemble the CQL literal syntax
 // (but no guarantee is given that it's always the same).
-pub(crate) struct CqlValueDisplayer<C>(pub C);
+pub(crate) struct CqlValueDisplayer<C>(pub(crate) C);
 
 impl<C> Display for CqlValueDisplayer<C>
 where
@@ -154,7 +154,7 @@ impl<'a> Display for CqlStringLiteralDisplayer<'a> {
     }
 }
 
-pub(crate) struct CommaSeparatedDisplayer<I>(pub I);
+pub(crate) struct CommaSeparatedDisplayer<I>(pub(crate) I);
 
 impl<I, T> Display for CommaSeparatedDisplayer<I>
 where
