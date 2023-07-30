@@ -69,18 +69,18 @@ pub struct RowIterator {
 }
 
 struct ReceivedPage {
-    pub rows: Rows,
-    pub tracing_id: Option<Uuid>,
+    rows: Rows,
+    tracing_id: Option<Uuid>,
 }
 
 pub(crate) struct PreparedIteratorConfig {
-    pub prepared: PreparedStatement,
-    pub values: SerializedValues,
-    pub partition_key: Option<Bytes>,
-    pub token: Option<Token>,
-    pub execution_profile: Arc<ExecutionProfileInner>,
-    pub cluster_data: Arc<ClusterData>,
-    pub metrics: Arc<Metrics>,
+    pub(crate) prepared: PreparedStatement,
+    pub(crate) values: SerializedValues,
+    pub(crate) partition_key: Option<Bytes>,
+    pub(crate) token: Option<Token>,
+    pub(crate) execution_profile: Arc<ExecutionProfileInner>,
+    pub(crate) cluster_data: Arc<ClusterData>,
+    pub(crate) metrics: Arc<Metrics>,
 }
 
 /// Fetching pages is asynchronous so `RowIterator` does not implement the `Iterator` trait.\
