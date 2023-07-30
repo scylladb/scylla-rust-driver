@@ -49,9 +49,9 @@ pub(crate) struct MetadataReader {
 }
 
 /// Describes all metadata retrieved from the cluster
-pub struct Metadata {
-    pub peers: Vec<Peer>,
-    pub keyspaces: HashMap<String, Keyspace>,
+pub(crate) struct Metadata {
+    pub(crate) peers: Vec<Peer>,
+    pub(crate) keyspaces: HashMap<String, Keyspace>,
 }
 
 #[non_exhaustive] // <- so that we can add more fields in a backwards-compatible way
@@ -349,7 +349,7 @@ impl Metadata {
     ///
     /// It can be used as a replacement for real metadata when initial
     /// metadata read fails.
-    pub fn new_dummy(initial_peers: &[UntranslatedEndpoint]) -> Self {
+    pub(crate) fn new_dummy(initial_peers: &[UntranslatedEndpoint]) -> Self {
         let peers = initial_peers
             .iter()
             .enumerate()
