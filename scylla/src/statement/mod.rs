@@ -1,7 +1,7 @@
 use std::{sync::Arc, time::Duration};
 
-use crate::history::HistoryListener;
 use crate::transport::execution_profile::ExecutionProfileHandle;
+use crate::{history::HistoryListener, retry_policy::RetryPolicy};
 
 pub mod batch;
 pub mod prepared_statement;
@@ -9,7 +9,7 @@ pub mod query;
 
 pub use crate::frame::types::{Consistency, SerialConsistency};
 
-#[derive(Debug)]
+#[derive(Debug, Clone, Default)]
 pub(crate) struct StatementConfig {
     pub(crate) consistency: Option<Consistency>,
     pub(crate) serial_consistency: Option<Option<SerialConsistency>>,
@@ -23,32 +23,7 @@ pub(crate) struct StatementConfig {
     pub(crate) history_listener: Option<Arc<dyn HistoryListener>>,
 
     pub(crate) execution_profile_handle: Option<ExecutionProfileHandle>,
-}
-
-#[allow(clippy::derivable_impls)]
-impl Default for StatementConfig {
-    fn default() -> Self {
-        Self {
-            consistency: Default::default(),
-            serial_consistency: None,
-            is_idempotent: false,
-            tracing: false,
-            timestamp: None,
-            request_timeout: None,
-            history_listener: None,
-            execution_profile_handle: None,
-        }
-    }
-}
-
-impl Clone for StatementConfig {
-    fn clone(&self) -> Self {
-        Self {
-            history_listener: self.history_listener.clone(),
-            execution_profile_handle: self.execution_profile_handle.clone(),
-            ..*self
-        }
-    }
+    pub(crate) retry_policy: Option<Arc<dyn RetryPolicy>>,
 }
 
 impl StatementConfig {

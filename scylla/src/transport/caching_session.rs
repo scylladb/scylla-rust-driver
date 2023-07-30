@@ -166,13 +166,11 @@ where
 
         if let Some(raw) = self.cache.get(&query.contents) {
             let page_size = query.get_page_size();
-            let retry_policy = query.get_retry_policy().cloned();
             let mut stmt = PreparedStatement::new(
                 raw.id.clone(),
                 raw.is_confirmed_lwt,
                 raw.metadata.clone(),
                 query.contents,
-                retry_policy,
                 page_size,
                 query.config,
             );
