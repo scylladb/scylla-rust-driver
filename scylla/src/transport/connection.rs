@@ -1532,30 +1532,30 @@ struct OrphanageTracker {
 }
 
 impl OrphanageTracker {
-    pub fn new() -> Self {
+    fn new() -> Self {
         Self {
             orphans: HashMap::new(),
             by_orphaning_times: BTreeSet::new(),
         }
     }
 
-    pub fn insert(&mut self, stream_id: i16) {
+    fn insert(&mut self, stream_id: i16) {
         let now = Instant::now();
         self.orphans.insert(stream_id, now);
         self.by_orphaning_times.insert((now, stream_id));
     }
 
-    pub fn remove(&mut self, stream_id: i16) {
+    fn remove(&mut self, stream_id: i16) {
         if let Some(time) = self.orphans.remove(&stream_id) {
             self.by_orphaning_times.remove(&(time, stream_id));
         }
     }
 
-    pub fn contains(&self, stream_id: i16) -> bool {
+    fn contains(&self, stream_id: i16) -> bool {
         self.orphans.contains_key(&stream_id)
     }
 
-    pub fn orphans_older_than(&self, age: std::time::Duration) -> usize {
+    fn orphans_older_than(&self, age: std::time::Duration) -> usize {
         let minimal_age = Instant::now() - age;
         self.by_orphaning_times
             .range(..(minimal_age, i16::MAX))
@@ -1581,7 +1581,7 @@ enum HandlerLookupResult {
 }
 
 impl ResponseHandlerMap {
-    pub fn new() -> Self {
+    fn new() -> Self {
         Self {
             stream_set: StreamIdSet::new(),
             handlers: HashMap::new(),
@@ -1590,7 +1590,7 @@ impl ResponseHandlerMap {
         }
     }
 
-    pub fn allocate(&mut self, response_handler: ResponseHandler) -> Result<i16, ResponseHandler> {
+    fn allocate(&mut self, response_handler: ResponseHandler) -> Result<i16, ResponseHandler> {
         if let Some(stream_id) = self.stream_set.allocate() {
             self.request_to_stream
                 .insert(response_handler.request_id, stream_id);
@@ -1605,7 +1605,7 @@ impl ResponseHandlerMap {
 
     // Orphan stream_id (associated with this request_id) by moving it to
     // `orphanage_tracker`, and freeing its handler
-    pub fn orphan(&mut self, request_id: RequestId) {
+    fn orphan(&mut self, request_id: RequestId) {
         if let Some(stream_id) = self.request_to_stream.get(&request_id) {
             debug!(
                 "Orphaning stream_id = {} associated with request_id = {}",
@@ -1617,12 +1617,12 @@ impl ResponseHandlerMap {
         }
     }
 
-    pub fn old_orphans_count(&self) -> usize {
+    fn old_orphans_count(&self) -> usize {
         self.orphanage_tracker
             .orphans_older_than(OLD_AGE_ORPHAN_THRESHOLD)
     }
 
-    pub fn lookup(&mut self, stream_id: i16) -> HandlerLookupResult {
+    fn lookup(&mut self, stream_id: i16) -> HandlerLookupResult {
         self.stream_set.free(stream_id);
 
         if self.orphanage_tracker.contains(stream_id) {
@@ -1646,7 +1646,7 @@ impl ResponseHandlerMap {
 
     // Retrieves the map of handlers, used after connection breaks
     // and we have to respond to all of them with an error
-    pub fn into_handlers(self) -> HashMap<i16, ResponseHandler> {
+    fn into_handlers(self) -> HashMap<i16, ResponseHandler> {
         self.handlers
     }
 }
@@ -1656,14 +1656,14 @@ struct StreamIdSet {
 }
 
 impl StreamIdSet {
-    pub fn new() -> Self {
+    fn new() -> Self {
         const BITMAP_SIZE: usize = (std::i16::MAX as usize + 1) / 64;
         Self {
             used_bitmap: vec![0; BITMAP_SIZE].into_boxed_slice(),
         }
     }
 
-    pub fn allocate(&mut self) -> Option<i16> {
+    fn allocate(&mut self) -> Option<i16> {
         for (block_id, block) in self.used_bitmap.iter_mut().enumerate() {
             if *block != !0 {
                 let off = block.trailing_ones();
@@ -1675,7 +1675,7 @@ impl StreamIdSet {
         None
     }
 
-    pub fn free(&mut self, stream_id: i16) {
+    fn free(&mut self, stream_id: i16) {
         let block_id = stream_id as usize / 64;
         let off = stream_id as usize % 64;
         self.used_bitmap[block_id] &= !(1 << off);
