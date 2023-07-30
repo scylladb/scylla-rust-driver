@@ -123,6 +123,10 @@ struct ClusterWorker {
     // The host filter determines towards which nodes we should open
     // connections
     host_filter: Option<Arc<dyn HostFilter>>,
+
+    // This value determines how frequently the cluster
+    // worker will refresh the cluster topology
+    topology_refresh_interval: Duration,
 }
 
 #[derive(Debug)]
@@ -143,6 +147,7 @@ impl Cluster {
         keyspaces_to_fetch: Vec<String>,
         fetch_schema_metadata: bool,
         host_filter: Option<Arc<dyn HostFilter>>,
+        topology_refresh_interval: Duration,
     ) -> Result<Cluster, QueryError> {
         let (refresh_sender, refresh_receiver) = tokio::sync::mpsc::channel(32);
         let (use_keyspace_sender, use_keyspace_receiver) = tokio::sync::mpsc::channel(32);
@@ -184,6 +189,7 @@ impl Cluster {
             used_keyspace: None,
 
             host_filter,
+            topology_refresh_interval,
         };
 
         let (fut, worker_handle) = worker.work().remote_handle();
@@ -482,7 +488,6 @@ impl ClusterWorker {
     pub async fn work(mut self) {
         use tokio::time::Instant;
 
-        let refresh_duration = Duration::from_secs(60); // Refresh topology every 60 seconds
         let mut last_refresh_time = Instant::now();
 
         loop {
@@ -490,7 +495,7 @@ impl ClusterWorker {
 
             // Wait until it's time for the next refresh
             let sleep_until: Instant = last_refresh_time
-                .checked_add(refresh_duration)
+                .checked_add(self.topology_refresh_interval)
                 .unwrap_or_else(Instant::now);
 
             let sleep_future = tokio::time::sleep_until(sleep_until);
