@@ -170,8 +170,22 @@ or refrain from preferring datacenters (which may ban all other datacenters, if 
         // some alive local node.
         // If there was no preferred datacenter specified, all nodes are treated as local.
         let nodes = self.preferred_node_set(cluster);
-        let picked = Self::pick_node(nodes, &self.pick_predicate);
-        if let Some(alive_local) = picked {
+
+        if let ReplicaLocationPreference::DatacenterAndRack(dc, rack) = &self.preferences {
+            // Try to pick some alive local rack random node.
+            let rack_predicate = Self::make_rack_predicate(
+                &self.pick_predicate,
+                ReplicaLocationCriteria::DatacenterAndRack(dc, rack),
+            );
+            let local_rack_picked = Self::pick_node(nodes, rack_predicate);
+
+            if let Some(alive_local_rack) = local_rack_picked {
+                return Some(alive_local_rack);
+            }
+        }
+
+        // Try to pick some alive local random node.
+        if let Some(alive_local) = Self::pick_node(nodes, &self.pick_predicate) {
             return Some(alive_local);
         }
 
@@ -276,6 +290,17 @@ or refrain from preferring datacenters (which may ban all other datacenters, if 
 
         // Get a list of all local alive nodes, and apply a round robin to it
         let local_nodes = self.preferred_node_set(cluster);
+
+        let maybe_local_rack_nodes =
+            if let ReplicaLocationPreference::DatacenterAndRack(dc, rack) = &self.preferences {
+                let rack_predicate = Self::make_rack_predicate(
+                    &self.pick_predicate,
+                    ReplicaLocationCriteria::DatacenterAndRack(dc, rack),
+                );
+                Either::Left(Self::round_robin_nodes(local_nodes, rack_predicate))
+            } else {
+                Either::Right(std::iter::empty::<NodeRef<'a>>())
+            };
         let robined_local_nodes = Self::round_robin_nodes(local_nodes, Self::is_alive);
 
         let all_nodes = cluster.replica_locator().unique_nodes_in_global_ring();
@@ -301,6 +326,7 @@ or refrain from preferring datacenters (which may ban all other datacenters, if 
 
         // Construct a fallback plan as a composition of replicas, local nodes and remote nodes.
         let plan = maybe_replicas
+            .chain(maybe_local_rack_nodes)
             .chain(robined_local_nodes)
             .chain(maybe_remote_nodes)
             .chain(maybe_down_local_nodes)
@@ -1570,7 +1596,8 @@ mod tests {
                 expected_groups: ExpectedGroupsBuilder::new()
                     .deterministic([B]) // pick local rack replicas
                     .deterministic([C]) // fallback replicas
-                    .group([A, G]) // local nodes
+                    .group([A]) // local rack nodes
+                    .group([G]) // local DC nodes
                     .build(),
             },
             // Keyspace SS with RF=2 with enabled rack-awareness and no local-rack replica
@@ -1595,7 +1622,34 @@ mod tests {
                 //                                      r2  r1  r1  r1  r2  r1  r1
                 expected_groups: ExpectedGroupsBuilder::new()
                     .group([A]) // pick local DC
-                    .group([C, G, B]) // local nodes
+                    .group([G]) // local rack nodes
+                    .group([C, B]) // local DC nodes
+                    .build(),
+            },
+            // Keyspace NTS with RF=3 with enabled DC failover and rack-awareness, no token provided
+            Test {
+                policy: DefaultPolicy {
+                    preferences: NodeLocationPreference::DatacenterAndRack(
+                        "eu".to_owned(),
+                        "r1".to_owned(),
+                    ),
+                    is_token_aware: true,
+                    permit_dc_failover: true,
+                    ..Default::default()
+                },
+                routing_info: RoutingInfo {
+                    token: None,
+                    keyspace: Some(KEYSPACE_NTS_RF_3),
+                    consistency: Consistency::One,
+                    ..Default::default()
+                },
+                // going through the ring, we get order: F , A , C , D , G , B , E
+                //                                      us  eu  eu  us  eu  eu  us
+                //                                      r2  r1  r1  r1  r2  r1  r1
+                expected_groups: ExpectedGroupsBuilder::new()
+                    .group([A, C, B]) // local rack nodes
+                    .group([G]) // local DC nodes
+                    .group([F, D, E]) // remote nodes
                     .build(),
             },
         ];

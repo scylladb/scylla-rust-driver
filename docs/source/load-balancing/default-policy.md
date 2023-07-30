@@ -44,7 +44,7 @@ policy to prioritize nodes based on their location. It has three modes:
 
 When a datacenter `"my_dc"` is preferred, the policy will treat nodes in `"my_dc"`
 as "local" nodes, and nodes in other datacenters as "remote" nodes. This affects
-the order in which nodes are returned by the policy when selecting replicas for
+the order in which nodes are returned by the policy when selecting nodes for
 read or write operations. If no datacenter is preferred, the policy will treat
 all nodes as local nodes.
 
@@ -52,7 +52,8 @@ all nodes as local nodes.
 availability zones (racks) in the preferred datacenter, too. When a datacenter
 and a rack are preferred, the policy will first return replicas in the local rack
 in the preferred datacenter, and then the other replicas in the datacenter
-(followed by remote replicas).
+(followed by remote replicas). After replicas, the other node will be ordered
+similarly, too (local rack nodes, local datacenter nodes, remote nodes).
 
 When datacenter failover is disabled (`permit_dc_failover` is set to
 false), the default policy will only include local nodes in load balancing
