@@ -396,13 +396,13 @@ impl DefaultPolicy {
     fn make_rack_predicate<'a>(
         predicate: impl Fn(&NodeRef<'a>) -> bool + 'a,
         replica_location: ReplicaLocationCriteria<'a>,
-    ) -> impl Fn(NodeRef<'a>) -> bool {
+    ) -> impl Fn(&NodeRef<'a>) -> bool {
         move |node| match replica_location {
             ReplicaLocationCriteria::Any | ReplicaLocationCriteria::Datacenter(_) => {
-                predicate(&node)
+                predicate(node)
             }
             ReplicaLocationCriteria::DatacenterAndRack(_, rack) => {
-                predicate(&node) && node.rack.as_deref() == Some(rack)
+                predicate(node) && node.rack.as_deref() == Some(rack)
             }
         }
     }
