@@ -1284,7 +1284,7 @@ impl Connection {
         })
     }
 
-    pub fn get_shard_info(&self) -> &Option<ShardInfo> {
+    pub(crate) fn get_shard_info(&self) -> &Option<ShardInfo> {
         &self.features.shard_info
     }
 
