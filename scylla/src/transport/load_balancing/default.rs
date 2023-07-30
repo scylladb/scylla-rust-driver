@@ -718,7 +718,7 @@ impl DefaultPolicyBuilder {
         let pick_predicate = if let Some(ref latency_awareness) = latency_awareness {
             let latency_predicate = latency_awareness.generate_predicate();
             Box::new(
-                move |node_and_shard @ (node, shard): &(NodeRef<'_>, Shard)| {
+                move |node_and_shard @ (node, _shard): &(NodeRef<'_>, Shard)| {
                     DefaultPolicy::is_alive(node_and_shard) && latency_predicate(node)
                 },
             ) as Box<dyn Fn(&(NodeRef<'_>, Shard)) -> bool + Send + Sync + 'static>

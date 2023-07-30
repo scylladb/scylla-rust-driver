@@ -27,7 +27,7 @@ use std::sync::{Arc, RwLock, Weak};
 use std::time::Duration;
 use tokio::sync::{mpsc, Notify};
 use tracing::instrument::WithSubscriber;
-use tracing::{debug, trace, warn};
+use tracing::{debug, error, trace, warn};
 
 /// The target size of a per-node connection pool.
 #[derive(Debug, Clone, Copy)]
@@ -247,7 +247,30 @@ impl NodeConnectionPool {
                     .try_into()
                     .expect("Shard number doesn't fit in u16");
                 trace!(shard = shard, "Selecting connection for token");
-                Self::connection_for_shard(shard, sharder.nr_shards, connections.as_slice())
+                Self::connection_for_shard_helper(shard, sharder.nr_shards, connections.as_slice())
+            }
+        })
+    }
+
+    pub(crate) fn connection_for_shard(&self, shard: Shard) -> Result<Arc<Connection>, QueryError> {
+        trace!(shard = shard, "Selecting connection for shard");
+        self.with_connections(|pool_conns| match pool_conns {
+            PoolConnections::NotSharded(conns) => {
+                Self::choose_random_connection_from_slice(conns).unwrap()
+            }
+            PoolConnections::Sharded {
+                connections,
+                sharder
+            } => {
+                let shard = shard
+                    .try_into()
+                    // It's safer to use 0 rather that panic here, as shards are returned by `LoadBalancingPolicy`
+                    // now, which can be implemented by a user in an arbitrary way.
+                    .unwrap_or_else(|_| {
+                        error!("The provided shard number: {} does not fit u16! Using 0 as the shard number.", shard);
+                        0
+                    });
+                Self::connection_for_shard_helper(shard, sharder.nr_shards, connections.as_slice())
             }
         })
     }
@@ -263,13 +286,13 @@ impl NodeConnectionPool {
                 connections,
             } => {
                 let shard: u16 = rand::thread_rng().gen_range(0..sharder.nr_shards.get());
-                Self::connection_for_shard(shard, sharder.nr_shards, connections.as_slice())
+                Self::connection_for_shard_helper(shard, sharder.nr_shards, connections.as_slice())
             }
         })
     }
 
     // Tries to get a connection to given shard, if it's broken returns any working connection
-    fn connection_for_shard(
+    fn connection_for_shard_helper(
         shard: u16,
         nr_shards: ShardCount,
         shard_conns: &[Vec<Arc<Connection>>],

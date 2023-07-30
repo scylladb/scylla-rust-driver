@@ -675,7 +675,6 @@ impl Session {
                 statement_info,
                 &query.config,
                 execution_profile,
-                |node: Arc<Node>| async move { node.random_connection().await },
                 |connection: Arc<Connection>,
                  consistency: Consistency,
                  execution_profile: &ExecutionProfileInner| {
@@ -1028,12 +1027,6 @@ impl Session {
                 statement_info,
                 &prepared.config,
                 execution_profile,
-                |node: Arc<Node>| async move {
-                    match token {
-                        Some(token) => node.connection_for_token(token).await,
-                        None => node.random_connection().await,
-                    }
-                },
                 |connection: Arc<Connection>,
                  consistency: Consistency,
                  execution_profile: &ExecutionProfileInner| {
@@ -1230,8 +1223,6 @@ impl Session {
                 ..Default::default()
             },
         };
-        let first_value_token = statement_info.token;
-
         // Reuse first serialized value when serializing query, and delegate to `BatchValues::write_next_to_request`
         // directly for others (if they weren't already serialized, possibly don't even allocate the `SerializedValues`)
         let values = BatchValuesFirstSerialized::new(&values, first_serialized_value);
@@ -1244,14 +1235,6 @@ impl Session {
                 statement_info,
                 &batch.config,
                 execution_profile,
-                |node: Arc<Node>| async move {
-                    match first_value_token {
-                        Some(first_value_token) => {
-                            node.connection_for_token(first_value_token).await
-                        }
-                        None => node.random_connection().await,
-                    }
-                },
                 |connection: Arc<Connection>,
                  consistency: Consistency,
                  execution_profile: &ExecutionProfileInner| {
@@ -1526,17 +1509,15 @@ impl Session {
     // On success this query's result is returned
     // I tried to make this closures take a reference instead of an Arc but failed
     // maybe once async closures get stabilized this can be fixed
-    async fn run_query<'a, ConnFut, QueryFut, ResT>(
+    async fn run_query<'a, QueryFut, ResT>(
         &'a self,
         statement_info: RoutingInfo<'a>,
         statement_config: &'a StatementConfig,
         execution_profile: Arc<ExecutionProfileInner>,
-        choose_connection: impl Fn(Arc<Node>) -> ConnFut,
         do_query: impl Fn(Arc<Connection>, Consistency, &ExecutionProfileInner) -> QueryFut,
         request_span: &'a RequestSpan,
     ) -> Result<RunQueryResult<ResT>, QueryError>
     where
-        ConnFut: Future<Output = Result<Arc<Connection>, QueryError>>,
         QueryFut: Future<Output = Result<ResT, QueryError>>,
         ResT: AllowedRunQueryResTType,
     {
@@ -1610,7 +1591,6 @@ impl Session {
 
                         self.execute_query(
                             &shared_query_plan,
-                            &choose_connection,
                             &do_query,
                             &execution_profile,
                             ExecuteQueryContext {
@@ -1646,7 +1626,6 @@ impl Session {
                             });
                     self.execute_query(
                         query_plan,
-                        &choose_connection,
                         &do_query,
                         &execution_profile,
                         ExecuteQueryContext {
@@ -1692,16 +1671,14 @@ impl Session {
         result
     }
 
-    async fn execute_query<'a, ConnFut, QueryFut, ResT>(
+    async fn execute_query<'a, QueryFut, ResT>(
         &'a self,
         query_plan: impl Iterator<Item = (NodeRef<'a>, Shard)>,
-        choose_connection: impl Fn(Arc<Node>) -> ConnFut,
         do_query: impl Fn(Arc<Connection>, Consistency, &ExecutionProfileInner) -> QueryFut,
         execution_profile: &ExecutionProfileInner,
         mut context: ExecuteQueryContext<'a>,
     ) -> Option<Result<RunQueryResult<ResT>, QueryError>>
     where
-        ConnFut: Future<Output = Result<Arc<Connection>, QueryError>>,
         QueryFut: Future<Output = Result<ResT, QueryError>>,
         ResT: AllowedRunQueryResTType,
     {
@@ -1714,10 +1691,7 @@ impl Session {
             let span = trace_span!("Executing query", node = %node.address);
             'same_node_retries: loop {
                 trace!(parent: &span, "Execution started");
-                let connection: Arc<Connection> = match choose_connection(node.clone())
-                    .instrument(span.clone())
-                    .await
-                {
+                let connection = match node.connection_for_shard(shard).await {
                     Ok(connection) => connection,
                     Err(e) => {
                         trace!(
@@ -1856,7 +1830,6 @@ impl Session {
                 info,
                 &config,
                 self.get_default_execution_profile_handle().access(),
-                |node: Arc<Node>| async move { node.random_connection().await },
                 do_query,
                 &span,
             )

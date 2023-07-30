@@ -39,7 +39,7 @@ use crate::transport::connection::{Connection, NonErrorQueryResponse, QueryRespo
 use crate::transport::load_balancing::{self, RoutingInfo};
 use crate::transport::metrics::Metrics;
 use crate::transport::retry_policy::{QueryInfo, RetryDecision, RetrySession};
-use crate::transport::{Node, NodeRef};
+use crate::transport::NodeRef;
 use tracing::{trace, trace_span, warn, Instrument};
 use uuid::Uuid;
 
@@ -168,8 +168,6 @@ impl RowIterator {
             let query_ref = &query;
             let values_ref = &values;
 
-            let choose_connection = |node: Arc<Node>| async move { node.random_connection().await };
-
             let page_query = |connection: Arc<Connection>,
                               consistency: Consistency,
                               paging_state: Option<Bytes>| async move {
@@ -192,7 +190,6 @@ impl RowIterator {
 
             let worker = RowIteratorWorker {
                 sender: sender.into(),
-                choose_connection,
                 page_query,
                 statement_info: routing_info,
                 query_is_idempotent: query.config.is_idempotent,
@@ -254,13 +251,6 @@ impl RowIterator {
             let partition_key = config.partition_key;
             let token = config.token;
 
-            let choose_connection = |node: Arc<Node>| async move {
-                match token {
-                    Some(token) => node.connection_for_token(token).await,
-                    None => node.random_connection().await,
-                }
-            };
-
             let page_query = |connection: Arc<Connection>,
                               consistency: Consistency,
                               paging_state: Option<Bytes>| async move {
@@ -307,7 +297,6 @@ impl RowIterator {
 
             let worker = RowIteratorWorker {
                 sender: sender.into(),
-                choose_connection,
                 page_query,
                 statement_info,
                 query_is_idempotent: config.prepared.config.is_idempotent,
@@ -463,12 +452,8 @@ type PageSendAttemptedProof = SendAttemptedProof<Result<ReceivedPage, QueryError
 
 // RowIteratorWorker works in the background to fetch pages
 // RowIterator receives them through a channel
-struct RowIteratorWorker<'a, ConnFunc, QueryFunc, SpanCreatorFunc> {
+struct RowIteratorWorker<'a, QueryFunc, SpanCreatorFunc> {
     sender: ProvingSender<Result<ReceivedPage, QueryError>>,
-
-    // Closure used to choose a connection from a node
-    // AsyncFn(Arc<Node>) -> Result<Arc<Connection>, QueryError>
-    choose_connection: ConnFunc,
 
     // Closure used to perform a single page query
     // AsyncFn(Arc<Connection>, Option<Bytes>) -> Result<QueryResponse, QueryError>
@@ -491,11 +476,8 @@ struct RowIteratorWorker<'a, ConnFunc, QueryFunc, SpanCreatorFunc> {
     span_creator: SpanCreatorFunc,
 }
 
-impl<ConnFunc, ConnFut, QueryFunc, QueryFut, SpanCreator>
-    RowIteratorWorker<'_, ConnFunc, QueryFunc, SpanCreator>
+impl<QueryFunc, QueryFut, SpanCreator> RowIteratorWorker<'_, QueryFunc, SpanCreator>
 where
-    ConnFunc: Fn(Arc<Node>) -> ConnFut,
-    ConnFut: Future<Output = Result<Arc<Connection>, QueryError>>,
     QueryFunc: Fn(Arc<Connection>, Consistency, Option<Bytes>) -> QueryFut,
     QueryFut: Future<Output = Result<QueryResponse, QueryError>>,
     SpanCreator: Fn() -> RequestSpan,
@@ -518,7 +500,8 @@ where
                 trace_span!(parent: &self.parent_span, "Executing query", node = %node.address);
             // For each node in the plan choose a connection to use
             // This connection will be reused for same node retries to preserve paging cache on the shard
-            let connection: Arc<Connection> = match (self.choose_connection)(node.clone())
+            let connection: Arc<Connection> = match node
+                .connection_for_shard(shard)
                 .instrument(span.clone())
                 .await
             {

@@ -146,12 +146,21 @@ impl Node {
     }
 
     /// Get connection which should be used to connect using given token
-    /// If this connection is broken get any random connection to this Node
+    /// If this connection is broken, get any random connection to this `Node`
     pub(crate) async fn connection_for_token(
         &self,
         token: Token,
     ) -> Result<Arc<Connection>, QueryError> {
         self.get_pool()?.connection_for_token(token)
+    }
+
+    /// Get a connection targetting the given shard
+    /// If such connection is broken, get any random connection to this `Node`
+    pub(crate) async fn connection_for_shard(
+        &self,
+        shard: Shard,
+    ) -> Result<Arc<Connection>, QueryError> {
+        self.get_pool()?.connection_for_shard(shard)
     }
 
     /// Get random connection
