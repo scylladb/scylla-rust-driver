@@ -6,6 +6,7 @@ use assert_matches::assert_matches;
 use scylla::batch::BatchStatement;
 use scylla::batch::{Batch, BatchType};
 use scylla::query::Query;
+use scylla::routing::Shard;
 use scylla::statement::SerialConsistency;
 use scylla::transport::NodeRef;
 use scylla::{
@@ -47,9 +48,13 @@ impl<const NODE: u8> BoundToPredefinedNodePolicy<NODE> {
 }
 
 impl<const NODE: u8> LoadBalancingPolicy for BoundToPredefinedNodePolicy<NODE> {
-    fn pick<'a>(&'a self, _info: &'a RoutingInfo, cluster: &'a ClusterData) -> Option<NodeRef<'a>> {
+    fn pick<'a>(
+        &'a self,
+        _info: &'a RoutingInfo,
+        cluster: &'a ClusterData,
+    ) -> Option<(NodeRef<'a>, Shard)> {
         self.report_node(Report::LoadBalancing);
-        cluster.get_nodes_info().iter().next()
+        cluster.get_nodes_info().iter().next().map(|node| (node, 0)) // FIXME: hardcoded shard 0
     }
 
     fn fallback<'a>(

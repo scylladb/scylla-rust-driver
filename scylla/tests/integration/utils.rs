@@ -1,6 +1,6 @@
 use futures::Future;
 use itertools::Itertools;
-use scylla::load_balancing::LoadBalancingPolicy;
+use scylla::{load_balancing::LoadBalancingPolicy, routing::Shard, transport::NodeRef};
 use std::collections::HashMap;
 use std::env;
 use std::net::SocketAddr;
@@ -16,6 +16,14 @@ pub fn init_logger() {
         .try_init();
 }
 
+fn with_pseudorandom_shard(node: NodeRef) -> (NodeRef, Shard) {
+    let nr_shards = node
+        .sharder()
+        .map(|sharder| sharder.nr_shards.get())
+        .unwrap_or(1);
+    (node, ((nr_shards - 1) % 42) as Shard)
+}
+
 #[derive(Debug)]
 pub struct FixedOrderLoadBalancer;
 impl LoadBalancingPolicy for FixedOrderLoadBalancer {
@@ -23,12 +31,13 @@ impl LoadBalancingPolicy for FixedOrderLoadBalancer {
         &'a self,
         _info: &'a scylla::load_balancing::RoutingInfo,
         cluster: &'a scylla::transport::ClusterData,
-    ) -> Option<scylla::transport::NodeRef<'a>> {
+    ) -> Option<(NodeRef<'a>, Shard)> {
         cluster
             .get_nodes_info()
             .iter()
             .sorted_by(|node1, node2| Ord::cmp(&node1.address, &node2.address))
             .next()
+            .map(|node| with_pseudorandom_shard(node))
     }
 
     fn fallback<'a>(
@@ -40,7 +49,8 @@ impl LoadBalancingPolicy for FixedOrderLoadBalancer {
             cluster
                 .get_nodes_info()
                 .iter()
-                .sorted_by(|node1, node2| Ord::cmp(&node1.address, &node2.address)),
+                .sorted_by(|node1, node2| Ord::cmp(&node1.address, &node2.address))
+                .map(|node| with_pseudorandom_shard(node)),
         )
     }
 
@@ -48,7 +58,7 @@ impl LoadBalancingPolicy for FixedOrderLoadBalancer {
         &self,
         _: &scylla::load_balancing::RoutingInfo,
         _: std::time::Duration,
-        _: scylla::transport::NodeRef<'_>,
+        _: NodeRef<'_>,
     ) {
     }
 
@@ -56,7 +66,7 @@ impl LoadBalancingPolicy for FixedOrderLoadBalancer {
         &self,
         _: &scylla::load_balancing::RoutingInfo,
         _: std::time::Duration,
-        _: scylla::transport::NodeRef<'_>,
+        _: NodeRef<'_>,
         _: &scylla_cql::errors::QueryError,
     ) {
     }

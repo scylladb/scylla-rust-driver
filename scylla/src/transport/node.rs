@@ -1,7 +1,7 @@
 use uuid::Uuid;
 
 /// Node represents a cluster node along with it's data and connections
-use crate::routing::{Sharder, Token};
+use crate::routing::{Shard, Sharder, Token};
 use crate::transport::connection::Connection;
 use crate::transport::connection::VerifiedKeyspaceName;
 use crate::transport::connection_pool::{NodeConnectionPool, PoolConfig};
@@ -139,6 +139,10 @@ impl Node {
 
     pub fn sharder(&self) -> Option<Sharder> {
         self.pool.as_ref()?.sharder()
+    }
+
+    pub(crate) fn shard_for_token(&self, token: Token) -> Option<Shard> {
+        self.sharder().map(|sharder| sharder.shard_of(token))
     }
 
     /// Get connection which should be used to connect using given token

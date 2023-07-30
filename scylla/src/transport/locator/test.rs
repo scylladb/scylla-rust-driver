@@ -175,7 +175,7 @@ fn assert_same_node_ids<'a>(left: impl Iterator<Item = NodeRef<'a>>, ids: &[u16]
 }
 
 fn assert_replica_set_equal_to(nodes: ReplicaSet<'_>, ids: &[u16]) {
-    assert_same_node_ids(nodes.into_iter(), ids)
+    assert_same_node_ids(nodes.into_iter().map(|(node, _shard)| node), ids)
 }
 
 pub(crate) fn create_ring(metadata: &Metadata) -> impl Iterator<Item = (Token, Arc<Node>)> {
@@ -501,7 +501,7 @@ fn test_replica_set_choose(locator: &ReplicaLocator) {
         let mut chosen_replicas = HashSet::new();
         for _ in 0..32 {
             let set = replica_set_generator();
-            let node = set
+            let (node, _shard) = set
                 .choose(&mut rng)
                 .expect("choose from non-empty set must return some node");
             chosen_replicas.insert(node.host_id);
@@ -541,8 +541,10 @@ fn test_replica_set_choose_filtered(locator: &ReplicaLocator) {
         let mut chosen_replicas = HashSet::new();
         for _ in 0..32 {
             let set = replica_set_generator();
-            let node = set
-                .choose_filtered(&mut rng, |node| node.datacenter == Some("eu".into()))
+            let (node, _shard) = set
+                .choose_filtered(&mut rng, |(node, _shard)| {
+                    node.datacenter == Some("eu".into())
+                })
                 .expect("choose from non-empty set must return some node");
             chosen_replicas.insert(node.host_id);
         }

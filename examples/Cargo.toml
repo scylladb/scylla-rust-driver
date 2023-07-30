@@ -19,6 +19,7 @@ uuid = "1.0"
 tower = "0.4"
 stats_alloc = "0.1"
 clap = { version = "3.2.4", features = ["derive"] }
+rand = "0.8.5"
 
 [[example]]
 name = "auth"

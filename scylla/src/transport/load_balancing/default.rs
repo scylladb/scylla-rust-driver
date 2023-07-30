@@ -76,7 +76,7 @@ pub struct DefaultPolicy {
     permit_dc_failover: bool,
     pick_predicate: Box<dyn Fn(&(NodeRef<'_>, Shard)) -> bool + Send + Sync>,
     latency_awareness: Option<LatencyAwareness>,
-    fixed_shuffle_seed: Option<u64>,
+    fixed_seed: Option<u64>,
 }
 
 impl fmt::Debug for DefaultPolicy {
@@ -86,7 +86,7 @@ impl fmt::Debug for DefaultPolicy {
             .field("is_token_aware", &self.is_token_aware)
             .field("permit_dc_failover", &self.permit_dc_failover)
             .field("latency_awareness", &self.latency_awareness)
-            .field("fixed_shuffle_seed", &self.fixed_shuffle_seed)
+            .field("fixed_shuffle_seed", &self.fixed_seed)
             .finish_non_exhaustive()
     }
 }
@@ -181,7 +181,7 @@ or refrain from preferring datacenters (which may ban all other datacenters, if 
                 &self.pick_predicate,
                 NodeLocationCriteria::DatacenterAndRack(dc, rack),
             );
-            let local_rack_picked = Self::pick_node(nodes, rack_predicate);
+            let local_rack_picked = self.pick_node(nodes, rack_predicate);
 
             if let Some(alive_local_rack) = local_rack_picked {
                 return Some(alive_local_rack);
@@ -189,14 +189,14 @@ or refrain from preferring datacenters (which may ban all other datacenters, if 
         }
 
         // Try to pick some alive local random node.
-        if let Some(alive_local) = Self::pick_node(nodes, &self.pick_predicate) {
+        if let Some(alive_local) = self.pick_node(nodes, &self.pick_predicate) {
             return Some(alive_local);
         }
 
         let all_nodes = cluster.replica_locator().unique_nodes_in_global_ring();
         // If a datacenter failover is possible, loosen restriction about locality.
         if self.is_datacenter_failover_possible(&routing_info) {
-            let picked = Self::pick_node(all_nodes, &self.pick_predicate);
+            let picked = self.pick_node(all_nodes, &self.pick_predicate);
             if let Some(alive_maybe_remote) = picked {
                 return Some(alive_maybe_remote);
             }
@@ -204,21 +204,21 @@ or refrain from preferring datacenters (which may ban all other datacenters, if 
 
         // Previous checks imply that every node we could have selected is down.
         // Let's try to return a down node that wasn't disabled.
-        let picked = Self::pick_node(nodes, |(node, _shard)| node.is_enabled());
+        let picked = self.pick_node(nodes, |(node, _shard)| node.is_enabled());
         if let Some(down_but_enabled_local_node) = picked {
             return Some(down_but_enabled_local_node);
         }
 
         // If a datacenter failover is possible, loosen restriction about locality.
         if self.is_datacenter_failover_possible(&routing_info) {
-            let picked = Self::pick_node(all_nodes, |(node, _shard)| node.is_enabled());
+            let picked = self.pick_node(all_nodes, |(node, _shard)| node.is_enabled());
             if let Some(down_but_enabled_maybe_remote_node) = picked {
                 return Some(down_but_enabled_maybe_remote_node);
             }
         }
 
         // Every node is disabled. This could be due to a bad host filter - configuration error.
-        nodes.first()
+        nodes.first().map(|node| self.with_random_shard(node))
     }
 
     fn fallback<'a>(
@@ -289,7 +289,7 @@ or refrain from preferring datacenters (which may ban all other datacenters, if 
                     .chain(maybe_remote_replicas),
             )
         } else {
-            Either::Right(std::iter::empty::<NodeRef<'a>>())
+            Either::Right(std::iter::empty::<(NodeRef<'a>, Shard)>())
         };
 
         // Get a list of all local alive nodes, and apply a round robin to it
@@ -301,29 +301,35 @@ or refrain from preferring datacenters (which may ban all other datacenters, if 
                     &self.pick_predicate,
                     NodeLocationCriteria::DatacenterAndRack(dc, rack),
                 );
-                Either::Left(Self::round_robin_nodes(local_nodes, rack_predicate))
+                Either::Left(self.round_robin_nodes_with_shards(local_nodes, rack_predicate))
             } else {
-                Either::Right(std::iter::empty::<NodeRef<'a>>())
+                Either::Right(std::iter::empty::<(NodeRef<'a>, Shard)>())
             };
-        let robined_local_nodes = Self::round_robin_nodes(local_nodes, Self::is_alive);
+        let robined_local_nodes = self.round_robin_nodes_with_shards(local_nodes, Self::is_alive);
 
         let all_nodes = cluster.replica_locator().unique_nodes_in_global_ring();
 
         // If a datacenter failover is possible, loosen restriction about locality.
         let maybe_remote_nodes = if self.is_datacenter_failover_possible(&routing_info) {
-            let robined_all_nodes = Self::round_robin_nodes(all_nodes, Self::is_alive);
+            let robined_all_nodes = self.round_robin_nodes_with_shards(all_nodes, Self::is_alive);
 
             Either::Left(robined_all_nodes)
         } else {
-            Either::Right(std::iter::empty::<NodeRef<'a>>())
+            Either::Right(std::iter::empty::<(NodeRef<'a>, Shard)>())
         };
 
         // Even if we consider some enabled nodes to be down, we should try contacting them in the last resort.
-        let maybe_down_local_nodes = local_nodes.iter().filter(|node| node.is_enabled());
+        let maybe_down_local_nodes = local_nodes
+            .iter()
+            .filter_map(|node| node.is_enabled().then(|| self.with_random_shard(node)));
 
         // If a datacenter failover is possible, loosen restriction about locality.
         let maybe_down_nodes = if self.is_datacenter_failover_possible(&routing_info) {
-            Either::Left(all_nodes.iter().filter(|node| node.is_enabled()))
+            Either::Left(
+                all_nodes
+                    .iter()
+                    .filter_map(|node| node.is_enabled().then(|| self.with_random_shard(node))),
+            )
         } else {
             Either::Right(std::iter::empty())
         };
@@ -545,7 +551,7 @@ impl DefaultPolicy {
 
         let replica_set = self.nonfiltered_replica_set(ts, replica_location, cluster);
 
-        if let Some(fixed) = self.fixed_shuffle_seed {
+        if let Some(fixed) = self.fixed_seed {
             let mut gen = Pcg32::new(fixed, 0);
             replica_set.choose_filtered(&mut gen, predicate)
         } else {
@@ -576,7 +582,7 @@ impl DefaultPolicy {
         }
     }
 
-    fn randomly_rotated_nodes(nodes: &[Arc<Node>]) -> impl Iterator<Item = (NodeRef<'_>, Shard)> {
+    fn randomly_rotated_nodes(nodes: &[Arc<Node>]) -> impl Iterator<Item = NodeRef<'_>> {
         // Create a randomly rotated slice view
         let nodes_len = nodes.len();
         if nodes_len > 0 {
@@ -593,18 +599,24 @@ impl DefaultPolicy {
     }
 
     fn pick_node<'a>(
+        &'a self,
         nodes: &'a [Arc<Node>],
-        predicate: impl Fn(&(NodeRef<'_>, Shard)) -> bool,
+        predicate: impl Fn(&(NodeRef<'a>, Shard)) -> bool,
     ) -> Option<(NodeRef<'_>, Shard)> {
         // Select the first node that matches the predicate
-        Self::randomly_rotated_nodes(nodes).find(predicate)
+        Self::randomly_rotated_nodes(nodes)
+            .map(|node| self.with_random_shard(node))
+            .find(predicate)
     }
 
-    fn round_robin_nodes<'a>(
+    fn round_robin_nodes_with_shards<'a>(
+        &'a self,
         nodes: &'a [Arc<Node>],
-        predicate: impl Fn(&(NodeRef<'_>, Shard)) -> bool,
+        predicate: impl Fn(&(NodeRef<'a>, Shard)) -> bool,
     ) -> impl Iterator<Item = (NodeRef<'_>, Shard)> {
-        Self::randomly_rotated_nodes(nodes).filter(predicate)
+        Self::randomly_rotated_nodes(nodes)
+            .map(|node| self.with_random_shard(node))
+            .filter(predicate)
     }
 
     fn shuffle<'a>(
@@ -613,7 +625,7 @@ impl DefaultPolicy {
     ) -> impl Iterator<Item = (NodeRef<'a>, Shard)> {
         let mut vec: Vec<(NodeRef<'_>, Shard)> = iter.collect();
 
-        if let Some(fixed) = self.fixed_shuffle_seed {
+        if let Some(fixed) = self.fixed_seed {
             let mut gen = Pcg32::new(fixed, 0);
             vec.shuffle(&mut gen);
         } else {
@@ -621,6 +633,22 @@ impl DefaultPolicy {
         }
 
         vec.into_iter()
+    }
+
+    fn with_random_shard<'a>(&self, node: NodeRef<'a>) -> (NodeRef<'a>, Shard) {
+        let nr_shards = node
+            .sharder()
+            .map(|sharder| sharder.nr_shards.get())
+            .unwrap_or(1);
+        (
+            node,
+            (if let Some(fixed) = self.fixed_seed {
+                let mut gen = Pcg32::new(fixed, 0);
+                gen.gen_range(0..nr_shards)
+            } else {
+                thread_rng().gen_range(0..nr_shards)
+            }) as Shard,
+        )
     }
 
     fn is_alive(&(node, _shard): &(NodeRef<'_>, Shard)) -> bool {
@@ -644,7 +672,7 @@ impl Default for DefaultPolicy {
             permit_dc_failover: false,
             pick_predicate: Box::new(Self::is_alive),
             latency_awareness: None,
-            fixed_shuffle_seed: None,
+            fixed_seed: None,
         }
     }
 }
@@ -704,7 +732,7 @@ impl DefaultPolicyBuilder {
             permit_dc_failover: self.permit_dc_failover,
             pick_predicate,
             latency_awareness,
-            fixed_shuffle_seed: (!self.enable_replica_shuffle).then(rand::random),
+            fixed_seed: (!self.enable_replica_shuffle).then(rand::random),
         })
     }
 
@@ -1249,7 +1277,7 @@ mod tests {
                     preferences: NodeLocationPreference::Datacenter("eu".to_owned()),
                     is_token_aware: true,
                     permit_dc_failover: true,
-                    fixed_shuffle_seed: Some(123),
+                    fixed_seed: Some(123),
                     ..Default::default()
                 },
                 routing_info: RoutingInfo {
@@ -1342,7 +1370,7 @@ mod tests {
                     preferences: NodeLocationPreference::Datacenter("eu".to_owned()),
                     is_token_aware: true,
                     permit_dc_failover: true,
-                    fixed_shuffle_seed: Some(123),
+                    fixed_seed: Some(123),
                     ..Default::default()
                 },
                 routing_info: RoutingInfo {
@@ -1588,7 +1616,7 @@ mod tests {
                     ),
                     is_token_aware: true,
                     permit_dc_failover: false,
-                    fixed_shuffle_seed: Some(123),
+                    fixed_seed: Some(123),
                     ..Default::default()
                 },
                 routing_info: RoutingInfo {
@@ -1720,7 +1748,7 @@ mod tests {
                     preferences: NodeLocationPreference::Datacenter("eu".to_owned()),
                     is_token_aware: true,
                     permit_dc_failover: true,
-                    fixed_shuffle_seed: Some(123),
+                    fixed_seed: Some(123),
                     ..Default::default()
                 },
                 routing_info: RoutingInfo {
@@ -1817,7 +1845,7 @@ mod tests {
                     preferences: NodeLocationPreference::Datacenter("eu".to_owned()),
                     is_token_aware: true,
                     permit_dc_failover: true,
-                    fixed_shuffle_seed: Some(123),
+                    fixed_seed: Some(123),
                     ..Default::default()
                 },
                 routing_info: RoutingInfo {
@@ -2074,7 +2102,7 @@ mod tests {
                     ),
                     is_token_aware: true,
                     permit_dc_failover: false,
-                    fixed_shuffle_seed: Some(123),
+                    fixed_seed: Some(123),
                     ..Default::default()
                 },
                 routing_info: RoutingInfo {
@@ -2145,7 +2173,7 @@ mod latency_awareness {
     use tracing::{instrument::WithSubscriber, trace};
     use uuid::Uuid;
 
-    use crate::{load_balancing::NodeRef, transport::node::Node};
+    use crate::{load_balancing::NodeRef, routing::Shard, transport::node::Node};
     use std::{
         collections::HashMap,
         ops::Deref,
@@ -2331,8 +2359,8 @@ mod latency_awareness {
 
         pub(super) fn wrap<'a>(
             &self,
-            fallback: impl Iterator<Item = NodeRef<'a>>,
-        ) -> impl Iterator<Item = NodeRef<'a>> {
+            fallback: impl Iterator<Item = (NodeRef<'a>, Shard)>,
+        ) -> impl Iterator<Item = (NodeRef<'a>, Shard)> {
             let min_avg_latency = match self.last_min_latency.load() {
                 Some(min_avg) => min_avg,
                 None => return Either::Left(fallback), // noop, as no latency data has been collected yet
@@ -2653,8 +2681,8 @@ mod latency_awareness {
 
     struct IteratorWithSkippedNodes<'a, Fast, Penalised>
     where
-        Fast: Iterator<Item = NodeRef<'a>>,
-        Penalised: Iterator<Item = NodeRef<'a>>,
+        Fast: Iterator<Item = (NodeRef<'a>, Shard)>,
+        Penalised: Iterator<Item = (NodeRef<'a>, Shard)>,
     {
         fast_nodes: Fast,
         penalised_nodes: Penalised,
@@ -2663,13 +2691,13 @@ mod latency_awareness {
     impl<'a>
         IteratorWithSkippedNodes<
             'a,
-            std::vec::IntoIter<NodeRef<'a>>,
-            std::vec::IntoIter<NodeRef<'a>>,
+            std::vec::IntoIter<(NodeRef<'a>, Shard)>,
+            std::vec::IntoIter<(NodeRef<'a>, Shard)>,
         >
     {
         fn new(
             average_latencies: &HashMap<Uuid, RwLock<Option<TimestampedAverage>>>,
-            nodes: impl Iterator<Item = NodeRef<'a>>,
+            nodes: impl Iterator<Item = (NodeRef<'a>, Shard)>,
             exclusion_threshold: f64,
             retry_period: Duration,
             minimum_measurements: usize,
@@ -2678,7 +2706,7 @@ mod latency_awareness {
             let mut fast_nodes = vec![];
             let mut penalised_nodes = vec![];
 
-            for node in nodes {
+            for node_and_shard @ (node, _shard) in nodes {
                 match fast_enough(
                     average_latencies,
                     node.host_id,
@@ -2687,11 +2715,11 @@ mod latency_awareness {
                     minimum_measurements,
                     min_avg,
                 ) {
-                    FastEnough::Yes => fast_nodes.push(node),
+                    FastEnough::Yes => fast_nodes.push(node_and_shard),
                     FastEnough::No { average } => {
                         trace!("Latency awareness: Penalising node {{address={}, datacenter={:?}, rack={:?}}} for being on average at least {} times slower (latency: {}ms) than the fastest ({}ms).",
                                 node.address, node.datacenter, node.rack, exclusion_threshold, average.as_millis(), min_avg.as_millis());
-                        penalised_nodes.push(node);
+                        penalised_nodes.push(node_and_shard);
                     }
                 }
             }
@@ -2705,10 +2733,10 @@ mod latency_awareness {
 
     impl<'a, Fast, Penalised> Iterator for IteratorWithSkippedNodes<'a, Fast, Penalised>
     where
-        Fast: Iterator<Item = NodeRef<'a>>,
-        Penalised: Iterator<Item = NodeRef<'a>>,
+        Fast: Iterator<Item = (NodeRef<'a>, Shard)>,
+        Penalised: Iterator<Item = (NodeRef<'a>, Shard)>,
     {
-        type Item = &'a Arc<Node>;
+        type Item = (NodeRef<'a>, Shard);
 
         fn next(&mut self) -> Option<Self::Item> {
             self.fast_nodes
@@ -2803,7 +2831,7 @@ mod latency_awareness {
                 is_token_aware: true,
                 pick_predicate,
                 latency_awareness: Some(latency_awareness),
-                fixed_shuffle_seed: None,
+                fixed_seed: None,
             }
         }
 
