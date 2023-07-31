@@ -901,6 +901,25 @@ impl<K: SessionBuilderKind> GenericSessionBuilder<K> {
         self.config.tracing_info_fetch_consistency = consistency;
         self
     }
+
+    /// Set the interval at which the driver will refresh the cluster topology.
+    ///
+    /// # Example
+    /// ```
+    /// # use scylla::{Session, SessionBuilder};
+    /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
+    ///     let session: Session = SessionBuilder::new()
+    ///         .known_node("127.0.0.1:9042")
+    ///         .cluster_topology_refresh_interval(std::time::Duration::from_secs(60))
+    ///         .build()
+    ///         .await?;
+    /// #   Ok(())
+    /// # }
+    /// ```
+    pub fn cluster_topology_refresh_interval(mut self, interval: Duration) -> Self {
+        self.config.cluster_topology_refresh_interval = interval;
+        self
+    }
 }
 
 /// Creates a [`SessionBuilder`] with default configuration, same as [`SessionBuilder::new`]
@@ -1116,6 +1135,15 @@ mod tests {
     }
 
     #[test]
+    fn cluster_topology_refresh_interval() {
+        let builder = SessionBuilder::new();
+        assert_eq!(
+            builder.config.cluster_topology_refresh_interval,
+            std::time::Duration::from_secs(60)
+        );
+    }
+
+    #[test]
     fn all_features() {
         let mut builder = SessionBuilder::new();
 
@@ -1131,6 +1159,7 @@ mod tests {
         builder = builder.tcp_nodelay(true);
         builder = builder.use_keyspace("ks_name", true);
         builder = builder.fetch_schema_metadata(false);
+        builder = builder.cluster_topology_refresh_interval(Duration::from_secs(1));
 
         assert_eq!(
             builder.config.known_nodes,
@@ -1146,6 +1175,10 @@ mod tests {
 
         assert_eq!(builder.config.compression, Some(Compression::Snappy));
         assert!(builder.config.tcp_nodelay);
+        assert_eq!(
+            builder.config.cluster_topology_refresh_interval,
+            Duration::from_secs(1)
+        );
 
         assert_eq!(builder.config.used_keyspace, Some("ks_name".to_string()));
 
