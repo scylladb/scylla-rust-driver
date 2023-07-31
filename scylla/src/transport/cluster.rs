@@ -301,19 +301,27 @@ impl ClusterData {
             // Take existing Arc<Node> if possible, otherwise create new one
             // Changing rack/datacenter but not ip address seems improbable
             // so we can just create new node and connections then
-            let node: Arc<Node> = match known_peers.get(&peer.host_id) {
+            let peer_host_id = peer.host_id;
+            let peer_address = peer.address;
+            let peer_tokens;
+
+            let node: Arc<Node> = match known_peers.get(&peer_host_id) {
                 Some(node) if node.datacenter == peer.datacenter && node.rack == peer.rack => {
-                    if node.address == peer.address {
+                    let (peer_endpoint, tokens) = peer.into_peer_endpoint_and_tokens();
+                    peer_tokens = tokens;
+                    if node.address == peer_address {
                         node.clone()
                     } else {
                         // If IP changes, the Node struct is recreated, but the underlying pool is preserved and notified about the IP change.
-                        Arc::new(Node::inherit_with_ip_changed(node, peer.to_peer_endpoint()))
+                        Arc::new(Node::inherit_with_ip_changed(node, peer_endpoint))
                     }
                 }
                 _ => {
                     let is_enabled = host_filter.map_or(true, |f| f.accept(&peer));
+                    let (peer_endpoint, tokens) = peer.into_peer_endpoint_and_tokens();
+                    peer_tokens = tokens;
                     Arc::new(Node::new(
-                        peer.to_peer_endpoint(),
+                        peer_endpoint,
                         pool_config.clone(),
                         used_keyspace.clone(),
                         is_enabled,
@@ -321,7 +329,7 @@ impl ClusterData {
                 }
             };
 
-            new_known_peers.insert(peer.host_id, node.clone());
+            new_known_peers.insert(peer_host_id, node.clone());
 
             if let Some(dc) = &node.datacenter {
                 match datacenters.get_mut(dc) {
@@ -336,7 +344,7 @@ impl ClusterData {
                 }
             }
 
-            for token in peer.tokens {
+            for token in peer_tokens {
                 ring.push((token, node.clone()));
             }
 

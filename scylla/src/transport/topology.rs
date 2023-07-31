@@ -113,6 +113,18 @@ impl Peer {
             rack: self.rack.clone(),
         }
     }
+
+    pub(crate) fn into_peer_endpoint_and_tokens(self) -> (PeerEndpoint, Vec<Token>) {
+        (
+            PeerEndpoint {
+                host_id: self.host_id,
+                address: self.address,
+                datacenter: self.datacenter,
+                rack: self.rack,
+            },
+            self.tokens,
+        )
+    }
 }
 
 /// Data used to issue connections to a node that is possibly subject to address translation.
