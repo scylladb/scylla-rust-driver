@@ -49,8 +49,9 @@ impl ReplicaLocator {
         let datacenters = replication_data
             .get_global_ring()
             .iter()
-            .filter_map(|(_, node)| node.datacenter.clone())
+            .filter_map(|(_, node)| node.datacenter.as_deref())
             .unique()
+            .map(ToOwned::to_owned)
             .collect();
 
         Self {
