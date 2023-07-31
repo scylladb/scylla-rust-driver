@@ -16,7 +16,7 @@ use bytes::Bytes;
 use bytes::BytesMut;
 use futures::future::join_all;
 use futures::future::try_join_all;
-use itertools::Either;
+use itertools::{Either, Itertools};
 pub use scylla_cql::errors::TranslationError;
 use scylla_cql::frame::response::result::{PreparedMetadata, Rows};
 use scylla_cql::frame::response::NonErrorResponse;
@@ -865,27 +865,19 @@ impl Session {
 
         // Prepare statements on all connections concurrently
         let handles = connections.iter().map(|c| c.prepare(&query));
-        let mut results = join_all(handles).await;
+        let mut results = join_all(handles).await.into_iter();
 
-        // If at least one prepare was successful prepare returns Ok
+        // If at least one prepare was successful, `prepare()` returns Ok.
+        // Find first result that is Ok, or Err if all failed.
 
-        // Find first result that is Ok, or Err if all failed
-        let mut first_ok: Option<Result<PreparedStatement, QueryError>> = None;
-
-        while let Some(res) = results.pop() {
-            let is_ok: bool = res.is_ok();
-
-            first_ok = Some(res);
-
-            if is_ok {
-                break;
-            }
-        }
-
-        let mut prepared: PreparedStatement = first_ok.unwrap()?;
+        // Safety: there is at least one node in the cluster, and `Cluster::get_working_connections()`
+        // returns at least one connection or an error, so there will be at least one result.
+        let first_ok: Result<PreparedStatement, QueryError> =
+            results.by_ref().find_or_first(Result::is_ok).unwrap();
+        let mut prepared: PreparedStatement = first_ok?;
 
         // Validate prepared ids equality
-        for statement in results.into_iter().flatten() {
+        for statement in results.flatten() {
             if prepared.get_id() != statement.get_id() {
                 return Err(QueryError::ProtocolError(
                     "Prepared statement Ids differ, all should be equal",
