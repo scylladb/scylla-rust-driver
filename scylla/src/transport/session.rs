@@ -8,7 +8,6 @@ use crate::frame::types::LegacyConsistency;
 use crate::history;
 use crate::history::HistoryListener;
 use crate::prepared_statement::PartitionKeyDecoder;
-use crate::retry_policy::RetryPolicy;
 use crate::utils::pretty::{CommaSeparatedDisplayer, CqlValueDisplayer};
 use arc_swap::ArcSwapOption;
 use async_trait::async_trait;
@@ -675,7 +674,6 @@ impl Session {
             .run_query(
                 statement_info,
                 &query.config,
-                query.get_retry_policy().map(|rp| &**rp),
                 execution_profile,
                 |node: Arc<Node>| async move { node.random_connection().await },
                 |connection: Arc<Connection>,
@@ -1029,7 +1027,6 @@ impl Session {
             .run_query(
                 statement_info,
                 &prepared.config,
-                prepared.get_retry_policy().map(|rp| &**rp),
                 execution_profile,
                 |node: Arc<Node>| async move {
                     match token {
@@ -1246,7 +1243,6 @@ impl Session {
             .run_query(
                 statement_info,
                 &batch.config,
-                batch.get_retry_policy().map(|rp| &**rp),
                 execution_profile,
                 |node: Arc<Node>| async move {
                     match first_value_token {
@@ -1530,12 +1526,10 @@ impl Session {
     // On success this query's result is returned
     // I tried to make this closures take a reference instead of an Arc but failed
     // maybe once async closures get stabilized this can be fixed
-    #[allow(clippy::too_many_arguments)] // <-- remove this once retry policy is put into StatementConfig
     async fn run_query<'a, ConnFut, QueryFut, ResT>(
         &'a self,
         statement_info: RoutingInfo<'a>,
         statement_config: &'a StatementConfig,
-        statement_retry_policy: Option<&dyn RetryPolicy>,
         execution_profile: Arc<ExecutionProfileInner>,
         choose_connection: impl Fn(Arc<Node>) -> ConnFut,
         do_query: impl Fn(Arc<Connection>, Consistency, &ExecutionProfileInner) -> QueryFut,
@@ -1580,7 +1574,10 @@ impl Session {
                 }
             }
 
-            let retry_policy = statement_retry_policy.unwrap_or(&*execution_profile.retry_policy);
+            let retry_policy = statement_config
+                .retry_policy
+                .as_deref()
+                .unwrap_or(&*execution_profile.retry_policy);
 
             let speculative_policy = execution_profile.speculative_execution_policy.as_ref();
 
@@ -1858,7 +1855,6 @@ impl Session {
             .run_query(
                 info,
                 &config,
-                None, // No specific retry policy needed for schema agreement
                 self.get_default_execution_profile_handle().access(),
                 |node: Arc<Node>| async move { node.random_connection().await },
                 do_query,

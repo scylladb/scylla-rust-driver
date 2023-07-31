@@ -25,9 +25,6 @@ pub struct PreparedStatement {
     pub(crate) config: StatementConfig,
     pub prepare_tracing_ids: Vec<Uuid>,
 
-    // TODO: Move this after #701 is fixed
-    retry_policy: Option<Arc<dyn RetryPolicy>>,
-
     id: Bytes,
     shared: Arc<PreparedStatementSharedData>,
     page_size: Option<i32>,
@@ -45,7 +42,6 @@ impl Clone for PreparedStatement {
     fn clone(&self) -> Self {
         Self {
             config: self.config.clone(),
-            retry_policy: self.retry_policy.clone(),
             prepare_tracing_ids: Vec::new(),
             id: self.id.clone(),
             shared: self.shared.clone(),
@@ -62,7 +58,6 @@ impl PreparedStatement {
         is_lwt: bool,
         metadata: PreparedMetadata,
         statement: String,
-        retry_policy: Option<Arc<dyn RetryPolicy>>,
         page_size: Option<i32>,
         config: StatementConfig,
     ) -> Self {
@@ -72,7 +67,6 @@ impl PreparedStatement {
                 metadata,
                 statement,
             }),
-            retry_policy,
             prepare_tracing_ids: Vec::new(),
             page_size,
             config,
@@ -303,13 +297,13 @@ impl PreparedStatement {
     /// Set the retry policy for this statement, overriding the one from execution profile if not None.
     #[inline]
     pub fn set_retry_policy(&mut self, retry_policy: Option<Arc<dyn RetryPolicy>>) {
-        self.retry_policy = retry_policy;
+        self.config.retry_policy = retry_policy;
     }
 
     /// Get the retry policy set for the statement.
     #[inline]
     pub fn get_retry_policy(&self) -> Option<&Arc<dyn RetryPolicy>> {
-        self.retry_policy.as_ref()
+        self.config.retry_policy.as_ref()
     }
 
     /// Sets the listener capable of listening what happens during query execution.
