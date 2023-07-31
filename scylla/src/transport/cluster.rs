@@ -599,13 +599,10 @@ impl ClusterWorker {
         cluster_data: Arc<ClusterData>,
         keyspace_name: &VerifiedKeyspaceName,
     ) -> Result<(), QueryError> {
-        let mut use_keyspace_futures = Vec::new();
-
-        for node in cluster_data.known_peers.values() {
-            let fut = node.use_keyspace(keyspace_name.clone());
-            use_keyspace_futures.push(fut);
-        }
-
+        let use_keyspace_futures = cluster_data
+            .known_peers
+            .values()
+            .map(|node| node.use_keyspace(keyspace_name.clone()));
         let use_keyspace_results: Vec<Result<(), QueryError>> =
             join_all(use_keyspace_futures).await;
 
