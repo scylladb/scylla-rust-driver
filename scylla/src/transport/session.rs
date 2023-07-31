@@ -1819,14 +1819,8 @@ impl Session {
             .map_or(Ok(false), |res| res.and(Ok(true)))
     }
 
-    async fn schema_agreement_auxiliary<ResT, QueryFut>(
-        &self,
-        do_query: impl Fn(Arc<Connection>, Consistency, &ExecutionProfileInner) -> QueryFut,
-    ) -> Result<ResT, QueryError>
-    where
-        QueryFut: Future<Output = Result<ResT, QueryError>>,
-        ResT: AllowedRunQueryResTType,
-    {
+    pub async fn fetch_schema_version(&self) -> Result<Uuid, QueryError> {
+        // We ignore custom Consistency that a retry policy could decide to put here, using the default instead.
         let info = RoutingInfo::default();
         let config = StatementConfig {
             is_idempotent: true,
@@ -1842,13 +1836,15 @@ impl Session {
                 &config,
                 self.get_default_execution_profile_handle().access(),
                 |node: Arc<Node>| async move { node.random_connection().await },
-                do_query,
+                |connection: Arc<Connection>, _: Consistency, _: &ExecutionProfileInner| async move {
+                    connection.fetch_schema_version().await
+                },
                 &span,
             )
             .await?
         {
             RunQueryResult::IgnoredWriteError => Err(QueryError::ProtocolError(
-                "Retry policy has made the driver ignore schema's agreement query.",
+                "Retry policy has made the driver ignore fetching schema version query.",
             )),
             RunQueryResult::Completed(result) => Ok(result),
         }
@@ -1864,16 +1860,6 @@ impl Session {
         let local_version: Uuid = versions[0];
         let in_agreement = versions.into_iter().all(|v| v == local_version);
         Ok(in_agreement)
-    }
-
-    pub async fn fetch_schema_version(&self) -> Result<Uuid, QueryError> {
-        // We ignore custom Consistency that a retry policy could decide to put here, using the default instead.
-        self.schema_agreement_auxiliary(
-            |connection: Arc<Connection>, _: Consistency, _: &ExecutionProfileInner| async move {
-                connection.fetch_schema_version().await
-            },
-        )
-        .await
     }
 
     /// Retrieves the handle to execution profile that is used by this session
