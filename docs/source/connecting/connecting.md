@@ -20,6 +20,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
         .known_node("127.0.0.72:4321")
         .known_node("localhost:8000")
         .connection_timeout(Duration::from_secs(3))
+        .cluster_topology_refresh_interval(Duration::from_secs(10))
         .known_node_addr(SocketAddr::new(
             IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)),
             9000,
@@ -33,6 +34,11 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
 After successfully connecting to some specified node the driver will fetch topology information about
 other nodes in this cluster and connect to them as well.
+
+You can also set the `cluster_topology_refresh_interval` to a non-zero value to periodically refresh the
+cluster topology. This is useful when you do not have unexpected amount of traffic or when you
+have an extra traffic causing topology to change frequently. The default value is 60,
+which means that the driver will refresh the topology every 60 seconds.
 
 Scylla Serverless is an elastic and dynamic deployment model. When creating a `Session` you need to
 specify the secure connection bundle as follows:
