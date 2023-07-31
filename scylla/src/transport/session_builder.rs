@@ -71,7 +71,10 @@ pub struct GenericSessionBuilder<Kind: SessionBuilderKind> {
     kind: PhantomData<Kind>,
 }
 
-impl SessionBuilder {
+// NOTE: this `impl` block contains configuration options specific for **non-Cloud** [`Session`].
+// This means that if an option fits both non-Cloud and Cloud `Session`s, it should NOT be put
+// here, but rather in `impl<K> GenericSessionBuilder<K>` block.
+impl GenericSessionBuilder<DefaultMode> {
     /// Creates new SessionBuilder with default configuration
     /// # Default configuration
     /// * Compression: None
@@ -332,6 +335,10 @@ impl SessionBuilder {
         self
     }
 }
+
+// NOTE: this `impl` block contains configuration options specific for **Cloud** [`Session`].
+// This means that if an option fits both non-Cloud and Cloud `Session`s, it should NOT be put
+// here, but rather in `impl<K> GenericSessionBuilder<K>` block.
 #[cfg(feature = "cloud")]
 impl CloudSessionBuilder {
     /// Creates a new SessionBuilder with default configuration,
@@ -356,6 +363,8 @@ impl CloudSessionBuilder {
     }
 }
 
+// This block contains configuration options that make sense both for Cloud and non-Cloud
+// `Session`s. If an option fit only one of them, it should be put in a specialised block.
 impl<K: SessionBuilderKind> GenericSessionBuilder<K> {
     /// Set preferred Compression algorithm.
     /// The default is no compression.
