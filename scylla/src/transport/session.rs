@@ -33,7 +33,7 @@ use std::time::Duration;
 use tokio::net::lookup_host;
 use tokio::time::timeout;
 use tracing::warn;
-use tracing::{debug, error, trace, trace_span, Instrument};
+use tracing::{debug, trace, trace_span, Instrument};
 use uuid::Uuid;
 
 use super::cluster::ContactPoint;
@@ -55,7 +55,7 @@ use crate::frame::value::{
 use crate::prepared_statement::PreparedStatement;
 use crate::query::Query;
 use crate::routing::Token;
-use crate::statement::{Consistency, SerialConsistency};
+use crate::statement::Consistency;
 use crate::tracing::{TracingEvent, TracingInfo};
 use crate::transport::cluster::{Cluster, ClusterData, ClusterNeatDebug};
 use crate::transport::connection::{Connection, ConnectionConfig, VerifiedKeyspaceName};
@@ -722,8 +722,7 @@ impl Session {
         };
 
         self.handle_set_keyspace_response(&response).await?;
-        self.handle_auto_await_schema_agreement(&query.contents, &response)
-            .await?;
+        self.handle_auto_await_schema_agreement(&response).await?;
 
         let result = response.into_query_result()?;
         span.record_result_fields(&result);
@@ -748,18 +747,11 @@ impl Session {
 
     async fn handle_auto_await_schema_agreement(
         &self,
-        contents: &str,
         response: &NonErrorQueryResponse,
     ) -> Result<(), QueryError> {
         if self.schema_agreement_automatic_waiting {
-            if response.as_schema_change().is_some() && !self.await_schema_agreement().await? {
-                // TODO: The TimeoutError should allow to provide more context.
-                // For now, print an error to the logs
-                error!(
-                    "Failed to reach schema agreement after a schema-altering statement: {}",
-                    contents,
-                );
-                return Err(QueryError::TimeoutError);
+            if response.as_schema_change().is_some() {
+                self.await_schema_agreement().await?;
             }
 
             if self.refresh_metadata_on_auto_schema_agreement
@@ -1068,8 +1060,7 @@ impl Session {
         };
 
         self.handle_set_keyspace_response(&response).await?;
-        self.handle_auto_await_schema_agreement(prepared.get_statement(), &response)
-            .await?;
+        self.handle_auto_await_schema_agreement(&response).await?;
 
         let result = response.into_query_result()?;
         span.record_result_fields(&result);
@@ -1811,54 +1802,27 @@ impl Session {
         last_error.map(Result::Err)
     }
 
-    async fn await_schema_agreement_indefinitely(&self) -> Result<(), QueryError> {
-        while !self.check_schema_agreement().await? {
-            tokio::time::sleep(self.schema_agreement_interval).await
+    async fn await_schema_agreement_indefinitely(&self) -> Result<Uuid, QueryError> {
+        loop {
+            tokio::time::sleep(self.schema_agreement_interval).await;
+            if let Some(agreed_version) = self.check_schema_agreement().await? {
+                return Ok(agreed_version);
+            }
         }
-        Ok(())
     }
 
-    pub async fn await_schema_agreement(&self) -> Result<bool, QueryError> {
+    pub async fn await_schema_agreement(&self) -> Result<Uuid, QueryError> {
         timeout(
             self.schema_agreement_timeout,
             self.await_schema_agreement_indefinitely(),
         )
         .await
-        .map_or(Ok(false), |res| res.and(Ok(true)))
+        .unwrap_or(Err(QueryError::RequestTimeout(
+            "schema agreement not reached in time".to_owned(),
+        )))
     }
 
-    pub async fn fetch_schema_version(&self) -> Result<Uuid, QueryError> {
-        // We ignore custom Consistency that a retry policy could decide to put here, using the default instead.
-        let info = RoutingInfo::default();
-        let config = StatementConfig {
-            is_idempotent: true,
-            serial_consistency: Some(Some(SerialConsistency::LocalSerial)),
-            ..Default::default()
-        };
-
-        let span = RequestSpan::new_none();
-
-        match self
-            .run_query(
-                info,
-                &config,
-                self.get_default_execution_profile_handle().access(),
-                |node: Arc<Node>| async move { node.random_connection().await },
-                |connection: Arc<Connection>, _: Consistency, _: &ExecutionProfileInner| async move {
-                    connection.fetch_schema_version().await
-                },
-                &span,
-            )
-            .await?
-        {
-            RunQueryResult::IgnoredWriteError => Err(QueryError::ProtocolError(
-                "Retry policy has made the driver ignore fetching schema version query.",
-            )),
-            RunQueryResult::Completed(result) => Ok(result),
-        }
-    }
-
-    pub async fn check_schema_agreement(&self) -> Result<bool, QueryError> {
+    pub async fn check_schema_agreement(&self) -> Result<Option<Uuid>, QueryError> {
         let cluster_data = self.get_cluster_data();
         let connections_iter = cluster_data.iter_working_connections()?;
 
@@ -1867,7 +1831,7 @@ impl Session {
 
         let local_version: Uuid = versions[0];
         let in_agreement = versions.into_iter().all(|v| v == local_version);
-        Ok(in_agreement)
+        Ok(in_agreement.then_some(local_version))
     }
 
     /// Retrieves the handle to execution profile that is used by this session
@@ -2062,13 +2026,6 @@ impl RequestSpan {
 
         Self {
             span,
-            speculative_executions: 0.into(),
-        }
-    }
-
-    pub(crate) fn new_none() -> Self {
-        Self {
-            span: tracing::Span::none(),
             speculative_executions: 0.into(),
         }
     }

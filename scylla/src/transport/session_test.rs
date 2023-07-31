@@ -1106,15 +1106,9 @@ async fn assert_in_tracing_table(session: &Session, tracing_uuid: Uuid) {
 }
 
 #[tokio::test]
-async fn test_fetch_schema_version() {
-    let session = create_new_session_builder().build().await.unwrap();
-    session.fetch_schema_version().await.unwrap();
-}
-
-#[tokio::test]
 async fn test_await_schema_agreement() {
     let session = create_new_session_builder().build().await.unwrap();
-    session.await_schema_agreement().await.unwrap();
+    let _schema_version = session.await_schema_agreement().await.unwrap();
 }
 
 #[tokio::test]

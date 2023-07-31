@@ -4,24 +4,11 @@ Sometimes after performing queries some nodes have not been updated, so we need 
 There is a number of methods in `Session` that assist us.
 Every method raise `QueryError` if something goes wrong, but they should never raise any errors, unless there is a DB or connection malfunction.
 
-### Checking schema version
-`Session::fetch_schema_version` returns an `Uuid` of local node's schema version.
-
-```rust
-# extern crate scylla;
-# use scylla::Session;
-# use std::error::Error;
-# async fn check_only_compiles(session: &Session) -> Result<(), Box<dyn Error>> {
-println!("Local schema version is: {}", session.fetch_schema_version().await?);
-# Ok(())
-# }
-```
-
 ### Awaiting schema agreement
 
 `Session::await_schema_agreement` returns a `Future` that can be `await`ed as long as schema is not in an agreement.
 However, it won't wait forever; `SessionConfig` defines a timeout that limits the time of waiting. If the timeout elapses,
-the return value is `false`, otherwise it is `true`.
+the return value is `Err(QueryError::RequestTimeout)`, otherwise it is `Ok(schema_version)`.
 
 ```rust
 # extern crate scylla;
@@ -62,7 +49,7 @@ If you want to check if schema is in agreement now, without retrying after failu
 # use scylla::Session;
 # use std::error::Error;
 # async fn check_only_compiles(session: &Session) -> Result<(), Box<dyn Error>> {
-if session.check_schema_agreement().await? {
+if session.check_schema_agreement().await?.is_some() {
     println!("SCHEMA AGREED");
 } else {
     println!("SCHEMA IS NOT IN AGREEMENT");

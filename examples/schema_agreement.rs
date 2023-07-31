@@ -1,4 +1,5 @@
-use anyhow::Result;
+use anyhow::{bail, Result};
+use scylla::transport::errors::QueryError;
 use scylla::transport::session::{IntoTypedRows, Session};
 use scylla::SessionBuilder;
 use std::env;
@@ -17,16 +18,17 @@ async fn main() -> Result<()> {
         .build()
         .await?;
 
-    let schema_version = session.fetch_schema_version().await?;
+    let schema_version = session.await_schema_agreement().await?;
+
     println!("Schema version: {}", schema_version);
 
     session.query("CREATE KEYSPACE IF NOT EXISTS ks WITH REPLICATION = {'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}", &[]).await?;
 
-    if session.await_schema_agreement().await? {
-        println!("Schema is in agreement");
-    } else {
-        println!("Schema is NOT in agreement");
-    }
+    match session.await_schema_agreement().await {
+        Ok(_schema_version) => println!("Schema is in agreement in time"),
+        Err(QueryError::RequestTimeout(_)) => println!("Schema is NOT in agreement in time"),
+        Err(err) => bail!(err),
+    };
     session
         .query(
             "CREATE TABLE IF NOT EXISTS ks.t (a int, b int, c text, primary key (a, b))",
@@ -66,7 +68,7 @@ async fn main() -> Result<()> {
     }
     println!("Ok.");
 
-    let schema_version = session.fetch_schema_version().await?;
+    let schema_version = session.await_schema_agreement().await?;
     println!("Schema version: {}", schema_version);
 
     Ok(())
