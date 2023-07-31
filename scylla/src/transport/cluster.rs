@@ -239,7 +239,7 @@ impl Cluster {
     }
 
     /// Returns nonempty list of working connections to all shards
-    pub(crate) async fn get_working_connections(&self) -> Result<Vec<Arc<Connection>>, QueryError> {
+    pub(crate) fn get_working_connections(&self) -> Result<Vec<Arc<Connection>>, QueryError> {
         let cluster_data: Arc<ClusterData> = self.get_data();
         let peers = &cluster_data.known_peers;
 

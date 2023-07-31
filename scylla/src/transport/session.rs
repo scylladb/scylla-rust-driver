@@ -861,7 +861,7 @@ impl Session {
     pub async fn prepare(&self, query: impl Into<Query>) -> Result<PreparedStatement, QueryError> {
         let query = query.into();
 
-        let connections = self.cluster.get_working_connections().await?;
+        let connections = self.cluster.get_working_connections()?;
 
         // Prepare statements on all connections concurrently
         let handles = connections.iter().map(|c| c.prepare(&query));
@@ -1870,7 +1870,7 @@ impl Session {
     }
 
     pub async fn check_schema_agreement(&self) -> Result<bool, QueryError> {
-        let connections = self.cluster.get_working_connections().await?;
+        let connections = self.cluster.get_working_connections()?;
 
         let handles = connections.iter().map(|c| c.fetch_schema_version());
         let versions = try_join_all(handles).await?;
