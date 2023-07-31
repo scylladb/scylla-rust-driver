@@ -345,21 +345,18 @@ impl ClusterData {
 
         Self::update_rack_count(&mut datacenters);
 
-        let keyspace_strategies: Vec<Strategy> = metadata
-            .keyspaces
-            .values()
-            .map(|ks| ks.strategy.clone())
-            .collect();
-
-        let locator = tokio::task::spawn_blocking(move || {
-            ReplicaLocator::new(ring.into_iter(), keyspace_strategies.iter())
+        let keyspaces = metadata.keyspaces;
+        let (locator, keyspaces) = tokio::task::spawn_blocking(move || {
+            let keyspace_strategies = keyspaces.values().map(|ks| &ks.strategy);
+            let locator = ReplicaLocator::new(ring.into_iter(), keyspace_strategies);
+            (locator, keyspaces)
         })
         .await
         .unwrap();
 
         ClusterData {
             known_peers: new_known_peers,
-            keyspaces: metadata.keyspaces,
+            keyspaces,
             locator,
         }
     }
