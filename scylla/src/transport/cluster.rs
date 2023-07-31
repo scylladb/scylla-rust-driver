@@ -269,7 +269,7 @@ impl ClusterData {
             datacenter.rack_count = datacenter
                 .nodes
                 .iter()
-                .filter_map(|node| node.rack.clone())
+                .filter_map(|node| node.rack.as_ref())
                 .unique()
                 .count();
         }
