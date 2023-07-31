@@ -237,29 +237,6 @@ impl Cluster {
 
         response_receiver.await.unwrap() // ClusterWorker always responds
     }
-
-    /// Returns nonempty list of working connections to all shards
-    pub(crate) fn get_working_connections(&self) -> Result<Vec<Arc<Connection>>, QueryError> {
-        let cluster_data: Arc<ClusterData> = self.get_data();
-        let peers = &cluster_data.known_peers;
-
-        let mut result: Vec<Arc<Connection>> = Vec::with_capacity(peers.len());
-
-        let mut last_error: Option<QueryError> = None;
-
-        for node in peers.values() {
-            match node.get_working_connections() {
-                Ok(conns) => result.extend(conns),
-                Err(e) => last_error = Some(e),
-            }
-        }
-
-        if result.is_empty() {
-            return Err(last_error.unwrap()); // By invariant peers is nonempty
-        }
-
-        Ok(result)
-    }
 }
 
 impl ClusterData {
@@ -480,6 +457,32 @@ impl ClusterData {
     /// Access replica location info
     pub fn replica_locator(&self) -> &ReplicaLocator {
         &self.locator
+    }
+
+    /// Returns nonempty iterator of working connections to all shards.
+    pub(crate) fn iter_working_connections(
+        &self,
+    ) -> Result<impl Iterator<Item = Arc<Connection>> + '_, QueryError> {
+        // The returned iterator is nonempty by nonemptiness invariant of `self.known_peers`.
+        assert!(!self.known_peers.is_empty());
+        let mut peers_iter = self.known_peers.values();
+
+        // First we try to find the first working pool of connections.
+        // If none is found, return error.
+        let first_working_pool = peers_iter
+            .by_ref()
+            .map(|node| node.get_working_connections())
+            .find_or_first(Result::is_ok)
+            .expect("impossible: known_peers was asserted to be nonempty")?;
+
+        let remaining_pools_iter = peers_iter
+            .map(|node| node.get_working_connections())
+            .flatten_ok()
+            .flatten();
+
+        Ok(first_working_pool.into_iter().chain(remaining_pools_iter))
+        // By an invariant `self.known_peers` is nonempty, so the returned iterator
+        // is nonempty, too.
     }
 }
 

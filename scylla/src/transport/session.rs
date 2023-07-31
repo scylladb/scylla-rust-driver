@@ -860,18 +860,20 @@ impl Session {
     /// ```
     pub async fn prepare(&self, query: impl Into<Query>) -> Result<PreparedStatement, QueryError> {
         let query = query.into();
+        let query_ref = &query;
 
-        let connections = self.cluster.get_working_connections()?;
+        let cluster_data = self.get_cluster_data();
+        let connections_iter = cluster_data.iter_working_connections()?;
 
         // Prepare statements on all connections concurrently
-        let handles = connections.iter().map(|c| c.prepare(&query));
+        let handles = connections_iter.map(|c| async move { c.prepare(query_ref).await });
         let mut results = join_all(handles).await.into_iter();
 
         // If at least one prepare was successful, `prepare()` returns Ok.
-        // Find first result that is Ok, or Err if all failed.
+        // Find the first result that is Ok, or Err if all failed.
 
-        // Safety: there is at least one node in the cluster, and `Cluster::get_working_connections()`
-        // returns at least one connection or an error, so there will be at least one result.
+        // Safety: there is at least one node in the cluster, and `Cluster::iter_working_connections()`
+        // returns either an error or an iterator with at least one connection, so there will be at least one result.
         let first_ok: Result<PreparedStatement, QueryError> =
             results.by_ref().find_or_first(Result::is_ok).unwrap();
         let mut prepared: PreparedStatement = first_ok?;
@@ -1862,9 +1864,10 @@ impl Session {
     }
 
     pub async fn check_schema_agreement(&self) -> Result<bool, QueryError> {
-        let connections = self.cluster.get_working_connections()?;
+        let cluster_data = self.get_cluster_data();
+        let connections_iter = cluster_data.iter_working_connections()?;
 
-        let handles = connections.iter().map(|c| c.fetch_schema_version());
+        let handles = connections_iter.map(|c| async move { c.fetch_schema_version().await });
         let versions = try_join_all(handles).await?;
 
         let local_version: Uuid = versions[0];
