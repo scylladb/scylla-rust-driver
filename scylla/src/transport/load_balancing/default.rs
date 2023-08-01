@@ -636,8 +636,7 @@ impl Default for DefaultPolicy {
 /// # }
 #[derive(Clone, Debug)]
 pub struct DefaultPolicyBuilder {
-    preferred_datacenter: Option<String>,
-    preferred_rack: Option<String>,
+    preferences: ReplicaLocationPreference,
     is_token_aware: bool,
     permit_dc_failover: bool,
     latency_awareness: Option<LatencyAwarenessBuilder>,
@@ -648,8 +647,7 @@ impl DefaultPolicyBuilder {
     /// Creates a builder used to customise configuration of a new DefaultPolicy.
     pub fn new() -> Self {
         Self {
-            preferred_datacenter: None,
-            preferred_rack: None,
+            preferences: ReplicaLocationPreference::Any,
             is_token_aware: true,
             permit_dc_failover: false,
             latency_awareness: None,
@@ -668,43 +666,14 @@ impl DefaultPolicyBuilder {
             Box::new(DefaultPolicy::is_alive)
         };
 
-        // As the case of providing preferred rack without providing datacenter is invalid, the rack is then ignored.
-        // According to the principle “Make illegal states unrepresentable”, in the next major release we will
-        // alter the `DefaultPolicyBuilder`'s API so that it is impossible for the user to create such state.
-        let preferences = match (self.preferred_datacenter, self.preferred_rack) {
-            (None, None) => ReplicaLocationPreference::Any,
-            (None, Some(_)) => {
-                // This a is case that the user shouldn't be able to represent.
-                warn!("Preferred rack has effect only if a preferred datacenter is set as well. Ignoring the preferred rack.");
-                ReplicaLocationPreference::Any
-            }
-            (Some(datacenter), None) => ReplicaLocationPreference::Datacenter(datacenter),
-            (Some(datacenter), Some(rack)) => {
-                ReplicaLocationPreference::DatacenterAndRack(datacenter, rack)
-            }
-        };
-
         Arc::new(DefaultPolicy {
-            preferences,
+            preferences: self.preferences,
             is_token_aware: self.is_token_aware,
             permit_dc_failover: self.permit_dc_failover,
             pick_predicate,
             latency_awareness,
             fixed_shuffle_seed: (!self.enable_replica_shuffle).then(rand::random),
         })
-    }
-
-    /// Sets the rack to be preferred by this policy
-    ///
-    /// Allows the load balancing policy to prioritize nodes based on their availability zones
-    /// in the preferred datacenter.
-    /// When a preferred rack is set, the policy will first return replicas in the local rack
-    /// in the preferred datacenter, and then the other replicas in the datacenter.
-    ///
-    /// When a preferred datacenter is not set, setting preferred rack will not have any effect.
-    pub fn prefer_rack(mut self, rack_name: String) -> Self {
-        self.preferred_rack = Some(rack_name);
-        self
     }
 
     /// Sets the datacenter to be preferred by this policy.
@@ -721,7 +690,33 @@ impl DefaultPolicyBuilder {
     /// Remote nodes will be excluded, even if they are alive and available
     /// to serve requests.
     pub fn prefer_datacenter(mut self, datacenter_name: String) -> Self {
-        self.preferred_datacenter = Some(datacenter_name);
+        self.preferences = ReplicaLocationPreference::Datacenter(datacenter_name);
+        self
+    }
+
+    /// Sets the datacenter and rack to be preferred by this policy.
+    ///
+    /// Allows the load balancing policy to prioritize nodes based on their location
+    /// as well as their availability zones in the preferred datacenter.
+    /// When a preferred datacenter is set, the policy will treat nodes in that
+    /// datacenter as "local" nodes, and nodes in other datacenters as "remote" nodes.
+    /// This affects the order in which nodes are returned by the policy when
+    /// selecting replicas for read or write operations. If no preferred datacenter
+    /// is specified, the policy will treat all nodes as local nodes.
+    ///
+    /// When datacenter failover is disabled (`permit_dc_failover` is set to false),
+    /// the default policy will only include local nodes in load balancing plans.
+    /// Remote nodes will be excluded, even if they are alive and available
+    /// to serve requests.
+    ///
+    /// When a preferred rack is set, the policy will first return replicas in the local rack
+    /// in the preferred datacenter, and then the other replicas in the datacenter.
+    pub fn prefer_datacenter_and_rack(
+        mut self,
+        datacenter_name: String,
+        rack_name: String,
+    ) -> Self {
+        self.preferences = ReplicaLocationPreference::DatacenterAndRack(datacenter_name, rack_name);
         self
     }
 
@@ -740,7 +735,7 @@ impl DefaultPolicyBuilder {
     /// In the case of `DefaultPolicy`, token awareness is enabled by default,
     /// meaning that the policy will prefer to return alive local replicas
     /// if the token is available. This means that if the client is requesting data
-    /// that falls within the token range of a particular node, the policy will try\
+    /// that falls within the token range of a particular node, the policy will try
     /// to route the request to that node first, assuming it is alive and responsive.
     ///
     /// Token awareness can significantly improve the performance and scalability
