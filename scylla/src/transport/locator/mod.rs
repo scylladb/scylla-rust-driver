@@ -85,16 +85,16 @@ impl ReplicaLocator {
                 if let Some(datacenter) = datacenter {
                     let replicas = self.get_simple_strategy_replicas(token, *replication_factor);
 
-                    return ReplicaSet {
-                        inner: ReplicaSetInner::FilteredSimple {
+                    return ReplicaSet::ByRing {
+                        inner: RingReplicaSetInner::FilteredSimple {
                             replicas,
                             datacenter,
                         },
                         token,
                     };
                 } else {
-                    return ReplicaSet {
-                        inner: ReplicaSetInner::Plain(
+                    return ReplicaSet::ByRing {
+                        inner: RingReplicaSetInner::Plain(
                             self.get_simple_strategy_replicas(token, *replication_factor),
                         ),
                         token,
@@ -106,25 +106,24 @@ impl ReplicaLocator {
             } => {
                 if let Some(dc) = datacenter {
                     if let Some(repfactor) = datacenter_repfactors.get(dc) {
-                        return ReplicaSet {
-                            inner: ReplicaSetInner::Plain(
+                        return ReplicaSet::ByRing {
+                            inner: RingReplicaSetInner::Plain(
                                 self.get_network_strategy_replicas(token, dc, *repfactor),
                             ),
                             token,
                         };
                     } else {
                         debug!("Datacenter ({}) does not exist!", dc);
-                        return ReplicaSet {
-                            inner: ReplicaSetInner::Plain(EMPTY_REPLICAS),
+                        return ReplicaSet::ByRing {
+                            inner: RingReplicaSetInner::Plain(EMPTY_REPLICAS),
                             token,
                         };
                     }
                 } else {
-                    return ReplicaSet {
-                        inner: ReplicaSetInner::ChainedNTS {
+                    return ReplicaSet::ByRing {
+                        inner: RingReplicaSetInner::ChainedNTS {
                             datacenter_repfactors,
                             locator: self,
-                            token,
                         },
                         token,
                     };
@@ -231,7 +230,7 @@ fn with_computed_shard(node: NodeRef, token: Token) -> (NodeRef, Shard) {
 }
 
 #[derive(Debug)]
-enum ReplicaSetInner<'a> {
+enum RingReplicaSetInner<'a> {
     Plain(ReplicasArray<'a>),
 
     // Represents a set of SimpleStrategy replicas that is limited to a specified datacenter.
@@ -246,7 +245,6 @@ enum ReplicaSetInner<'a> {
     ChainedNTS {
         datacenter_repfactors: &'a HashMap<String, usize>,
         locator: &'a ReplicaLocator,
-        token: Token,
     },
 }
 
@@ -255,9 +253,11 @@ enum ReplicaSetInner<'a> {
 /// This container can only be created by calling `ReplicaLocator::replicas_for_token`, and it
 /// can borrow precomputed replica lists living in the locator.
 #[derive(Debug)]
-pub struct ReplicaSet<'a> {
-    inner: ReplicaSetInner<'a>,
-    token: Token,
+pub enum ReplicaSet<'a> {
+    ByRing {
+        inner: RingReplicaSetInner<'a>,
+        token: Token,
+    }
 }
 
 impl<'a> ReplicaSet<'a> {
@@ -289,30 +289,31 @@ impl<'a> ReplicaSet<'a> {
     ///
     /// In all other cases, the complexity is O(1)
     pub fn len(&self) -> usize {
-        match &self.inner {
-            ReplicaSetInner::Plain(replicas) => replicas.len(),
-            ReplicaSetInner::FilteredSimple {
-                replicas,
-                datacenter,
-            } => replicas
-                .iter()
-                .filter(|node| node.datacenter.as_deref() == Some(datacenter))
-                .count(),
-            ReplicaSetInner::ChainedNTS {
-                datacenter_repfactors,
-                locator,
-                token: _,
-            } => datacenter_repfactors
-                .iter()
-                .map(|(dc, rf)| {
-                    let unique_nodes_in_dc_count = locator
-                        .unique_nodes_in_datacenter_ring(dc)
-                        .map(|nodes| nodes.len())
-                        .unwrap_or(0);
+        match self {
+            ReplicaSet::ByRing { inner, .. } => match inner {
+                RingReplicaSetInner::Plain(replicas) => replicas.len(),
+                RingReplicaSetInner::FilteredSimple {
+                    replicas,
+                    datacenter,
+                } => replicas
+                    .iter()
+                    .filter(|node| node.datacenter.as_deref() == Some(datacenter))
+                    .count(),
+                RingReplicaSetInner::ChainedNTS {
+                    datacenter_repfactors,
+                    locator,
+                } => datacenter_repfactors
+                    .iter()
+                    .map(|(dc, rf)| {
+                        let unique_nodes_in_dc_count = locator
+                            .unique_nodes_in_datacenter_ring(dc)
+                            .map(|nodes| nodes.len())
+                            .unwrap_or(0);
 
-                    cmp::min(*rf, unique_nodes_in_dc_count)
-                })
-                .sum(),
+                        cmp::min(*rf, unique_nodes_in_dc_count)
+                    })
+                    .sum(),
+            }
         }
     }
 
@@ -330,46 +331,46 @@ impl<'a> ReplicaSet<'a> {
         let len = self.len();
         if len > 0 {
             let index = rng.gen_range(0..len);
+            match self {
+                ReplicaSet::ByRing { inner, token } => match inner {
+                    RingReplicaSetInner::Plain(replicas) => replicas
+                        .get(index)
+                        .map(|node| with_computed_shard(node, *token)),
+                    RingReplicaSetInner::FilteredSimple {
+                        replicas,
+                        datacenter,
+                    } => replicas
+                        .iter()
+                        .filter(|node| node.datacenter.as_deref() == Some(datacenter))
+                        .nth(index)
+                        .map(|node| with_computed_shard(node, *token)),
+                    RingReplicaSetInner::ChainedNTS {
+                        datacenter_repfactors,
+                        locator,
+                    } => {
+                        let mut nodes_to_skip = index;
+                        for datacenter in locator.datacenters.iter() {
+                            let requested_repfactor =
+                                *datacenter_repfactors.get(datacenter).unwrap_or(&0);
+                            let unique_nodes_in_dc_count = locator
+                                .unique_nodes_in_datacenter_ring(datacenter)
+                                .map(|nodes| nodes.len())
+                                .unwrap_or(0);
 
-            match &self.inner {
-                ReplicaSetInner::Plain(replicas) => replicas
-                    .get(index)
-                    .map(|node| with_computed_shard(node, self.token)),
-                ReplicaSetInner::FilteredSimple {
-                    replicas,
-                    datacenter,
-                } => replicas
-                    .iter()
-                    .filter(|node| node.datacenter.as_deref() == Some(datacenter))
-                    .nth(index)
-                    .map(|node| with_computed_shard(node, self.token)),
-                ReplicaSetInner::ChainedNTS {
-                    datacenter_repfactors,
-                    locator,
-                    token,
-                } => {
-                    let mut nodes_to_skip = index;
-                    for datacenter in locator.datacenters.iter() {
-                        let requested_repfactor =
-                            *datacenter_repfactors.get(datacenter).unwrap_or(&0);
-                        let unique_nodes_in_dc_count = locator
-                            .unique_nodes_in_datacenter_ring(datacenter)
-                            .map(|nodes| nodes.len())
-                            .unwrap_or(0);
+                            let repfactor = cmp::min(requested_repfactor, unique_nodes_in_dc_count);
 
-                        let repfactor = cmp::min(requested_repfactor, unique_nodes_in_dc_count);
+                            if nodes_to_skip < repfactor {
+                                return locator
+                                    .get_network_strategy_replicas(*token, datacenter, repfactor)
+                                    .get(nodes_to_skip)
+                                    .map(|node| with_computed_shard(node, *token));
+                            }
 
-                        if nodes_to_skip < repfactor {
-                            return locator
-                                .get_network_strategy_replicas(*token, datacenter, repfactor)
-                                .get(nodes_to_skip)
-                                .map(|node| with_computed_shard(node, self.token));
+                            nodes_to_skip -= repfactor;
                         }
 
-                        nodes_to_skip -= repfactor;
+                        None
                     }
-
-                    None
                 }
             }
         } else {
@@ -388,45 +389,47 @@ impl<'a> IntoIterator for ReplicaSet<'a> {
     /// Iterating through `ReplicaSet` using this method is far more efficient than invoking the
     /// `get` method sequentially.
     fn into_iter(self) -> Self::IntoIter {
-        let inner = match self.inner {
-            ReplicaSetInner::Plain(replicas) => ReplicaSetIteratorInner::Plain { replicas, idx: 0 },
-            ReplicaSetInner::FilteredSimple {
-                replicas,
-                datacenter,
-            } => ReplicaSetIteratorInner::FilteredSimple {
-                replicas,
-                datacenter,
-                idx: 0,
-            },
-            ReplicaSetInner::ChainedNTS {
-                datacenter_repfactors,
-                locator,
-                token,
-            } => {
-                if let Some(datacenter) = locator.datacenters.first() {
-                    let repfactor = *datacenter_repfactors.get(datacenter.as_str()).unwrap_or(&0);
-                    ReplicaSetIteratorInner::ChainedNTS {
-                        replicas: locator
-                            .get_network_strategy_replicas(token, datacenter, repfactor),
-                        replicas_idx: 0,
-
-                        locator,
-                        token,
-                        datacenter_idx: 0,
-                        datacenter_repfactors,
-                    }
-                } else {
-                    ReplicaSetIteratorInner::Plain {
-                        replicas: EMPTY_REPLICAS,
+        match self {
+            ReplicaSet::ByRing { inner, token } => {
+                let inner = match inner {
+                    RingReplicaSetInner::Plain(replicas) => ReplicaSetIteratorInner::Plain { replicas, idx: 0 },
+                    RingReplicaSetInner::FilteredSimple {
+                        replicas,
+                        datacenter,
+                    } => ReplicaSetIteratorInner::FilteredSimple {
+                        replicas,
+                        datacenter,
                         idx: 0,
+                    },
+                    RingReplicaSetInner::ChainedNTS {
+                        datacenter_repfactors,
+                        locator,
+                    } => {
+                        if let Some(datacenter) = locator.datacenters.first() {
+                            let repfactor = *datacenter_repfactors.get(datacenter.as_str()).unwrap_or(&0);
+                            ReplicaSetIteratorInner::ChainedNTS {
+                                replicas: locator
+                                    .get_network_strategy_replicas(token, datacenter, repfactor),
+                                replicas_idx: 0,
+
+                                locator,
+                                token,
+                                datacenter_idx: 0,
+                                datacenter_repfactors,
+                            }
+                        } else {
+                            ReplicaSetIteratorInner::Plain {
+                                replicas: EMPTY_REPLICAS,
+                                idx: 0,
+                            }
+                        }
                     }
+                };
+                ReplicaSetIterator {
+                    inner,
+                    token,
                 }
             }
-        };
-
-        ReplicaSetIterator {
-            inner,
-            token: self.token,
         }
     }
 }
@@ -732,28 +735,29 @@ impl<'a> IntoIterator for ReplicasOrdered<'a> {
 
     fn into_iter(self) -> Self::IntoIter {
         let Self { replica_set } = self;
-        Self::IntoIter {
-            inner: match replica_set.inner {
-                ReplicaSetInner::Plain(_) | ReplicaSetInner::FilteredSimple { .. } => {
-                    ReplicasOrderedIteratorInner::AlreadyRingOrdered {
-                        replica_set_iter: replica_set.into_iter(),
+        match &replica_set {
+            ReplicaSet::ByRing { inner, token } => Self::IntoIter {
+                inner: match inner {
+                    RingReplicaSetInner::Plain(_) | RingReplicaSetInner::FilteredSimple { .. } => {
+                        ReplicasOrderedIteratorInner::AlreadyRingOrdered {
+                            replica_set_iter: replica_set.into_iter(),
+                        }
                     }
-                }
-                ReplicaSetInner::ChainedNTS {
-                    datacenter_repfactors,
-                    locator,
-                    token,
-                } => ReplicasOrderedIteratorInner::PolyDatacenterNTS {
-                    replicas_ordered_iter: ReplicasOrderedNTSIterator {
-                        token: replica_set.token,
-                        inner: ReplicasOrderedNTSIteratorInner::FreshForPick {
-                            datacenter_repfactors,
-                            locator,
-                            token,
+                    RingReplicaSetInner::ChainedNTS {
+                        datacenter_repfactors,
+                        locator,
+                    } => ReplicasOrderedIteratorInner::PolyDatacenterNTS {
+                        replicas_ordered_iter: ReplicasOrderedNTSIterator {
+                            token: *token,
+                            inner: ReplicasOrderedNTSIteratorInner::FreshForPick {
+                                datacenter_repfactors,
+                                locator,
+                                token: *token,
+                            },
                         },
                     },
                 },
-            },
+            }
         }
     }
 }
