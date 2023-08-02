@@ -263,7 +263,7 @@ pub struct SessionConfig {
     /// can be configured according to the traffic pattern
     /// for e.g: if they do not want unexpected traffic
     /// or they expect the topology to change frequently.
-    pub cluster_topology_refresh_interval: Duration,
+    pub cluster_metadata_refresh_interval: Duration,
 }
 
 /// Describes database server known on Session startup.
@@ -326,7 +326,7 @@ impl SessionConfig {
             tracing_info_fetch_attempts: NonZeroU32::new(5).unwrap(),
             tracing_info_fetch_interval: Duration::from_millis(3),
             tracing_info_fetch_consistency: Consistency::One,
-            cluster_topology_refresh_interval: Duration::from_secs(60),
+            cluster_metadata_refresh_interval: Duration::from_secs(60),
         }
     }
 
@@ -563,7 +563,7 @@ impl Session {
             config.keyspaces_to_fetch,
             config.fetch_schema_metadata,
             config.host_filter,
-            config.cluster_topology_refresh_interval,
+            config.cluster_metadata_refresh_interval,
         )
         .await?;
 

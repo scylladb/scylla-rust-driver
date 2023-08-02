@@ -126,7 +126,7 @@ struct ClusterWorker {
 
     // This value determines how frequently the cluster
     // worker will refresh the cluster topology
-    topology_refresh_interval: Duration,
+    cluster_metadata_refresh_interval: Duration,
 }
 
 #[derive(Debug)]
@@ -147,7 +147,7 @@ impl Cluster {
         keyspaces_to_fetch: Vec<String>,
         fetch_schema_metadata: bool,
         host_filter: Option<Arc<dyn HostFilter>>,
-        topology_refresh_interval: Duration,
+        cluster_metadata_refresh_interval: Duration,
     ) -> Result<Cluster, QueryError> {
         let (refresh_sender, refresh_receiver) = tokio::sync::mpsc::channel(32);
         let (use_keyspace_sender, use_keyspace_receiver) = tokio::sync::mpsc::channel(32);
@@ -189,7 +189,7 @@ impl Cluster {
             used_keyspace: None,
 
             host_filter,
-            topology_refresh_interval,
+            cluster_metadata_refresh_interval,
         };
 
         let (fut, worker_handle) = worker.work().remote_handle();
@@ -495,7 +495,7 @@ impl ClusterWorker {
 
             // Wait until it's time for the next refresh
             let sleep_until: Instant = last_refresh_time
-                .checked_add(self.topology_refresh_interval)
+                .checked_add(self.cluster_metadata_refresh_interval)
                 .unwrap_or_else(Instant::now);
 
             let sleep_future = tokio::time::sleep_until(sleep_until);
