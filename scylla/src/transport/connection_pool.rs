@@ -54,11 +54,11 @@ impl Default for PoolSize {
 }
 
 #[derive(Clone)]
-pub struct PoolConfig {
-    pub connection_config: ConnectionConfig,
-    pub pool_size: PoolSize,
-    pub can_use_shard_aware_port: bool,
-    pub keepalive_interval: Option<Duration>,
+pub(crate) struct PoolConfig {
+    pub(crate) connection_config: ConnectionConfig,
+    pub(crate) pool_size: PoolSize,
+    pub(crate) can_use_shard_aware_port: bool,
+    pub(crate) keepalive_interval: Option<Duration>,
 }
 
 impl Default for PoolConfig {
@@ -148,7 +148,7 @@ impl std::fmt::Debug for PoolConnections {
 }
 
 #[derive(Clone)]
-pub struct NodeConnectionPool {
+pub(crate) struct NodeConnectionPool {
     conns: Arc<ArcSwap<MaybePoolConnections>>,
     use_keyspace_request_sender: mpsc::Sender<UseKeyspaceRequest>,
     _refiller_handle: Arc<RemoteHandle<()>>,
@@ -165,7 +165,7 @@ impl std::fmt::Debug for NodeConnectionPool {
 }
 
 impl NodeConnectionPool {
-    pub fn new(
+    pub(crate) fn new(
         endpoint: UntranslatedEndpoint,
         #[allow(unused_mut)] mut pool_config: PoolConfig, // `mut` needed only with "cloud" feature
         current_keyspace: Option<VerifiedKeyspaceName>,
@@ -224,7 +224,7 @@ impl NodeConnectionPool {
         *self.endpoint.write().unwrap() = UntranslatedEndpoint::Peer(new_endpoint);
     }
 
-    pub fn sharder(&self) -> Option<Sharder> {
+    pub(crate) fn sharder(&self) -> Option<Sharder> {
         self.with_connections(|pool_conns| match pool_conns {
             PoolConnections::NotSharded(_) => None,
             PoolConnections::Sharded { sharder, .. } => Some(sharder.clone()),
@@ -232,7 +232,7 @@ impl NodeConnectionPool {
         .unwrap_or(None)
     }
 
-    pub fn connection_for_token(&self, token: Token) -> Result<Arc<Connection>, QueryError> {
+    pub(crate) fn connection_for_token(&self, token: Token) -> Result<Arc<Connection>, QueryError> {
         trace!(token = token.value, "Selecting connection for token");
         self.with_connections(|pool_conns| match pool_conns {
             PoolConnections::NotSharded(conns) => {
@@ -252,7 +252,7 @@ impl NodeConnectionPool {
         })
     }
 
-    pub fn random_connection(&self) -> Result<Arc<Connection>, QueryError> {
+    pub(crate) fn random_connection(&self) -> Result<Arc<Connection>, QueryError> {
         trace!("Selecting random connection");
         self.with_connections(|pool_conns| match pool_conns {
             PoolConnections::NotSharded(conns) => {
@@ -304,7 +304,7 @@ impl NodeConnectionPool {
         unreachable!("could not find any connection in supposedly non-empty pool")
     }
 
-    pub async fn use_keyspace(
+    pub(crate) async fn use_keyspace(
         &self,
         keyspace_name: VerifiedKeyspaceName,
     ) -> Result<(), QueryError> {
@@ -325,7 +325,7 @@ impl NodeConnectionPool {
     // Waits until the pool becomes initialized.
     // The pool is considered initialized either if the first connection has been
     // established or after first filling ends, whichever comes first.
-    pub async fn wait_until_initialized(&self) {
+    pub(crate) async fn wait_until_initialized(&self) {
         // First, register for the notification
         // so that we don't miss it
         let notified = self.pool_updated_notify.notified();
@@ -336,7 +336,7 @@ impl NodeConnectionPool {
         }
     }
 
-    pub fn get_working_connections(&self) -> Result<Vec<Arc<Connection>>, QueryError> {
+    pub(crate) fn get_working_connections(&self) -> Result<Vec<Arc<Connection>>, QueryError> {
         self.with_connections(|pool_conns| match pool_conns {
             PoolConnections::NotSharded(conns) => conns.clone(),
             PoolConnections::Sharded { connections, .. } => {
@@ -481,7 +481,7 @@ struct UseKeyspaceRequest {
 }
 
 impl PoolRefiller {
-    pub fn new(
+    pub(crate) fn new(
         endpoint: Arc<RwLock<UntranslatedEndpoint>>,
         pool_config: PoolConfig,
         current_keyspace: Option<VerifiedKeyspaceName>,
@@ -520,12 +520,12 @@ impl PoolRefiller {
         self.endpoint.read().unwrap().address()
     }
 
-    pub fn get_shared_connections(&self) -> Arc<ArcSwap<MaybePoolConnections>> {
+    pub(crate) fn get_shared_connections(&self) -> Arc<ArcSwap<MaybePoolConnections>> {
         self.shared_conns.clone()
     }
 
     // The main loop of the pool refiller
-    pub async fn run(
+    pub(crate) async fn run(
         mut self,
         mut use_keyspace_request_receiver: mpsc::Receiver<UseKeyspaceRequest>,
     ) {

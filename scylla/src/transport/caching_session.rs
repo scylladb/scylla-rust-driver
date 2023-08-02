@@ -19,10 +19,10 @@ use std::hash::BuildHasher;
 /// to the `CachingSession::execute` family of methods.
 #[derive(Debug)]
 struct RawPreparedStatementData {
-    pub id: Bytes,
-    pub is_confirmed_lwt: bool,
-    pub metadata: PreparedMetadata,
-    pub partitioner_name: PartitionerName,
+    id: Bytes,
+    is_confirmed_lwt: bool,
+    metadata: PreparedMetadata,
+    partitioner_name: PartitionerName,
 }
 
 /// Provides auto caching while executing queries
