@@ -14,13 +14,13 @@ use std::{fmt, sync::Arc, time::Duration};
 use tracing::warn;
 
 #[derive(Clone, Copy)]
-enum ReplicaLocationCriteria<'a> {
+enum NodeLocationCriteria<'a> {
     Any,
     Datacenter(&'a str),
     DatacenterAndRack(&'a str, &'a str),
 }
 
-impl<'a> ReplicaLocationCriteria<'a> {
+impl<'a> NodeLocationCriteria<'a> {
     fn datacenter(&self) -> Option<&'a str> {
         match self {
             Self::Any => None,
@@ -30,13 +30,13 @@ impl<'a> ReplicaLocationCriteria<'a> {
 }
 
 #[derive(Debug, Clone)]
-enum ReplicaLocationPreference {
+enum NodeLocationPreference {
     Any,
     Datacenter(String),
     DatacenterAndRack(String, String),
 }
 
-impl ReplicaLocationPreference {
+impl NodeLocationPreference {
     fn datacenter(&self) -> Option<&str> {
         match self {
             Self::Any => None,
@@ -71,7 +71,7 @@ enum StatementType {
 /// Datacenter failover for queries with non local consistency mode is also supported.
 /// Latency awareness is available, althrough not recommended.
 pub struct DefaultPolicy {
-    preferences: ReplicaLocationPreference,
+    preferences: NodeLocationPreference,
     is_token_aware: bool,
     permit_dc_failover: bool,
     pick_predicate: Box<dyn Fn(&NodeRef) -> bool + Send + Sync>,
@@ -116,11 +116,11 @@ or refrain from preferring datacenters (which may ban all other datacenters, if 
             StatementType::NonLwt
         };
         if let Some(ts) = &routing_info.token_with_strategy {
-            if let ReplicaLocationPreference::DatacenterAndRack(dc, rack) = &self.preferences {
+            if let NodeLocationPreference::DatacenterAndRack(dc, rack) = &self.preferences {
                 // Try to pick some alive local rack random replica.
                 let local_rack_picked = self.pick_replica(
                     ts,
-                    ReplicaLocationCriteria::DatacenterAndRack(dc, rack),
+                    NodeLocationCriteria::DatacenterAndRack(dc, rack),
                     &self.pick_predicate,
                     cluster,
                     statement_type,
@@ -131,13 +131,13 @@ or refrain from preferring datacenters (which may ban all other datacenters, if 
                 }
             }
 
-            if let ReplicaLocationPreference::DatacenterAndRack(dc, _)
-            | ReplicaLocationPreference::Datacenter(dc) = &self.preferences
+            if let NodeLocationPreference::DatacenterAndRack(dc, _)
+            | NodeLocationPreference::Datacenter(dc) = &self.preferences
             {
                 // Try to pick some alive local random replica.
                 let picked = self.pick_replica(
                     ts,
-                    ReplicaLocationCriteria::Datacenter(dc),
+                    NodeLocationCriteria::Datacenter(dc),
                     &self.pick_predicate,
                     cluster,
                     statement_type,
@@ -155,7 +155,7 @@ or refrain from preferring datacenters (which may ban all other datacenters, if 
                 // Try to pick some alive random replica.
                 let picked = self.pick_replica(
                     ts,
-                    ReplicaLocationCriteria::Any,
+                    NodeLocationCriteria::Any,
                     &self.pick_predicate,
                     cluster,
                     statement_type,
@@ -171,11 +171,11 @@ or refrain from preferring datacenters (which may ban all other datacenters, if 
         // If there was no preferred datacenter specified, all nodes are treated as local.
         let nodes = self.preferred_node_set(cluster);
 
-        if let ReplicaLocationPreference::DatacenterAndRack(dc, rack) = &self.preferences {
+        if let NodeLocationPreference::DatacenterAndRack(dc, rack) = &self.preferences {
             // Try to pick some alive local rack random node.
             let rack_predicate = Self::make_rack_predicate(
                 &self.pick_predicate,
-                ReplicaLocationCriteria::DatacenterAndRack(dc, rack),
+                NodeLocationCriteria::DatacenterAndRack(dc, rack),
             );
             let local_rack_picked = Self::pick_node(nodes, rack_predicate);
 
@@ -232,10 +232,10 @@ or refrain from preferring datacenters (which may ban all other datacenters, if 
         // If token is available, get a shuffled list of alive replicas.
         let maybe_replicas = if let Some(ts) = &routing_info.token_with_strategy {
             let maybe_local_rack_replicas =
-                if let ReplicaLocationPreference::DatacenterAndRack(dc, rack) = &self.preferences {
+                if let NodeLocationPreference::DatacenterAndRack(dc, rack) = &self.preferences {
                     let local_rack_replicas = self.fallback_replicas(
                         ts,
-                        ReplicaLocationCriteria::DatacenterAndRack(dc, rack),
+                        NodeLocationCriteria::DatacenterAndRack(dc, rack),
                         Self::is_alive,
                         cluster,
                         statement_type,
@@ -245,13 +245,13 @@ or refrain from preferring datacenters (which may ban all other datacenters, if 
                     Either::Right(std::iter::empty())
                 };
 
-            let maybe_local_replicas = if let ReplicaLocationPreference::DatacenterAndRack(dc, _)
-            | ReplicaLocationPreference::Datacenter(dc) =
+            let maybe_local_replicas = if let NodeLocationPreference::DatacenterAndRack(dc, _)
+            | NodeLocationPreference::Datacenter(dc) =
                 &self.preferences
             {
                 let local_replicas = self.fallback_replicas(
                     ts,
-                    ReplicaLocationCriteria::Datacenter(dc),
+                    NodeLocationCriteria::Datacenter(dc),
                     Self::is_alive,
                     cluster,
                     statement_type,
@@ -267,7 +267,7 @@ or refrain from preferring datacenters (which may ban all other datacenters, if 
             {
                 let remote_replicas = self.fallback_replicas(
                     ts,
-                    ReplicaLocationCriteria::Any,
+                    NodeLocationCriteria::Any,
                     Self::is_alive,
                     cluster,
                     statement_type,
@@ -292,10 +292,10 @@ or refrain from preferring datacenters (which may ban all other datacenters, if 
         let local_nodes = self.preferred_node_set(cluster);
 
         let maybe_local_rack_nodes =
-            if let ReplicaLocationPreference::DatacenterAndRack(dc, rack) = &self.preferences {
+            if let NodeLocationPreference::DatacenterAndRack(dc, rack) = &self.preferences {
                 let rack_predicate = Self::make_rack_predicate(
                     &self.pick_predicate,
-                    ReplicaLocationCriteria::DatacenterAndRack(dc, rack),
+                    NodeLocationCriteria::DatacenterAndRack(dc, rack),
                 );
                 Either::Left(Self::round_robin_nodes(local_nodes, rack_predicate))
             } else {
@@ -408,7 +408,7 @@ impl DefaultPolicy {
     fn nonfiltered_replica_set<'a>(
         &'a self,
         ts: &TokenWithStrategy<'a>,
-        replica_location: ReplicaLocationCriteria<'a>,
+        replica_location: NodeLocationCriteria<'a>,
         cluster: &'a ClusterData,
     ) -> ReplicaSet<'a> {
         let datacenter = replica_location.datacenter();
@@ -421,13 +421,11 @@ impl DefaultPolicy {
     /// Wraps the provided predicate, adding the requirement for rack to match.
     fn make_rack_predicate<'a>(
         predicate: impl Fn(&NodeRef<'a>) -> bool + 'a,
-        replica_location: ReplicaLocationCriteria<'a>,
+        replica_location: NodeLocationCriteria<'a>,
     ) -> impl Fn(&NodeRef<'a>) -> bool {
         move |node| match replica_location {
-            ReplicaLocationCriteria::Any | ReplicaLocationCriteria::Datacenter(_) => {
-                predicate(node)
-            }
-            ReplicaLocationCriteria::DatacenterAndRack(_, rack) => {
+            NodeLocationCriteria::Any | NodeLocationCriteria::Datacenter(_) => predicate(node),
+            NodeLocationCriteria::DatacenterAndRack(_, rack) => {
                 predicate(node) && node.rack.as_deref() == Some(rack)
             }
         }
@@ -436,7 +434,7 @@ impl DefaultPolicy {
     fn replicas<'a>(
         &'a self,
         ts: &TokenWithStrategy<'a>,
-        replica_location: ReplicaLocationCriteria<'a>,
+        replica_location: NodeLocationCriteria<'a>,
         predicate: impl Fn(&NodeRef<'a>) -> bool + 'a,
         cluster: &'a ClusterData,
         order: ReplicaOrder,
@@ -460,7 +458,7 @@ impl DefaultPolicy {
     fn pick_replica<'a>(
         &'a self,
         ts: &TokenWithStrategy<'a>,
-        replica_location: ReplicaLocationCriteria<'a>,
+        replica_location: NodeLocationCriteria<'a>,
         predicate: &'a impl Fn(&NodeRef<'a>) -> bool,
         cluster: &'a ClusterData,
         statement_type: StatementType,
@@ -488,12 +486,12 @@ impl DefaultPolicy {
     fn pick_first_replica<'a>(
         &'a self,
         ts: &TokenWithStrategy<'a>,
-        replica_location: ReplicaLocationCriteria<'a>,
+        replica_location: NodeLocationCriteria<'a>,
         predicate: &'a impl Fn(&NodeRef<'a>) -> bool,
         cluster: &'a ClusterData,
     ) -> Option<NodeRef<'a>> {
         match replica_location {
-            ReplicaLocationCriteria::Any => {
+            NodeLocationCriteria::Any => {
                 // ReplicaSet returned by ReplicaLocator for this case:
                 // 1) can be precomputed and lated used cheaply,
                 // 2) returns replicas in the **non-ring order** (this because ReplicaSet chains
@@ -512,8 +510,7 @@ impl DefaultPolicy {
                         predicate(&primary_replica).then_some(primary_replica)
                     })
             }
-            ReplicaLocationCriteria::Datacenter(_)
-            | ReplicaLocationCriteria::DatacenterAndRack(_, _) => {
+            NodeLocationCriteria::Datacenter(_) | NodeLocationCriteria::DatacenterAndRack(_, _) => {
                 // ReplicaSet returned by ReplicaLocator for this case:
                 // 1) can be precomputed and lated used cheaply,
                 // 2) returns replicas in the ring order (this is not true for the case
@@ -534,7 +531,7 @@ impl DefaultPolicy {
     fn pick_random_replica<'a>(
         &'a self,
         ts: &TokenWithStrategy<'a>,
-        replica_location: ReplicaLocationCriteria<'a>,
+        replica_location: NodeLocationCriteria<'a>,
         predicate: &'a impl Fn(&NodeRef<'a>) -> bool,
         cluster: &'a ClusterData,
     ) -> Option<NodeRef<'a>> {
@@ -553,7 +550,7 @@ impl DefaultPolicy {
     fn fallback_replicas<'a>(
         &'a self,
         ts: &TokenWithStrategy<'a>,
-        replica_location: ReplicaLocationCriteria<'a>,
+        replica_location: NodeLocationCriteria<'a>,
         predicate: impl Fn(&NodeRef<'a>) -> bool + 'a,
         cluster: &'a ClusterData,
         statement_type: StatementType,
@@ -636,7 +633,7 @@ impl DefaultPolicy {
 impl Default for DefaultPolicy {
     fn default() -> Self {
         Self {
-            preferences: ReplicaLocationPreference::Any,
+            preferences: NodeLocationPreference::Any,
             is_token_aware: true,
             permit_dc_failover: false,
             pick_predicate: Box::new(Self::is_alive),
@@ -662,7 +659,7 @@ impl Default for DefaultPolicy {
 /// # }
 #[derive(Clone, Debug)]
 pub struct DefaultPolicyBuilder {
-    preferences: ReplicaLocationPreference,
+    preferences: NodeLocationPreference,
     is_token_aware: bool,
     permit_dc_failover: bool,
     latency_awareness: Option<LatencyAwarenessBuilder>,
@@ -673,7 +670,7 @@ impl DefaultPolicyBuilder {
     /// Creates a builder used to customise configuration of a new DefaultPolicy.
     pub fn new() -> Self {
         Self {
-            preferences: ReplicaLocationPreference::Any,
+            preferences: NodeLocationPreference::Any,
             is_token_aware: true,
             permit_dc_failover: false,
             latency_awareness: None,
@@ -716,7 +713,7 @@ impl DefaultPolicyBuilder {
     /// Remote nodes will be excluded, even if they are alive and available
     /// to serve requests.
     pub fn prefer_datacenter(mut self, datacenter_name: String) -> Self {
-        self.preferences = ReplicaLocationPreference::Datacenter(datacenter_name);
+        self.preferences = NodeLocationPreference::Datacenter(datacenter_name);
         self
     }
 
@@ -742,7 +739,7 @@ impl DefaultPolicyBuilder {
         datacenter_name: String,
         rack_name: String,
     ) -> Self {
-        self.preferences = ReplicaLocationPreference::DatacenterAndRack(datacenter_name, rack_name);
+        self.preferences = NodeLocationPreference::DatacenterAndRack(datacenter_name, rack_name);
         self
     }
 
@@ -887,7 +884,7 @@ mod tests {
         },
     };
 
-    use super::{DefaultPolicy, ReplicaLocationPreference};
+    use super::{DefaultPolicy, NodeLocationPreference};
 
     pub(crate) mod framework {
         use std::collections::{HashMap, HashSet};
@@ -1171,7 +1168,7 @@ mod tests {
     async fn test_default_policy_with_token_unaware_statements() {
         let local_dc = "eu".to_string();
         let policy_with_disabled_dc_failover = DefaultPolicy {
-            preferences: ReplicaLocationPreference::Datacenter(local_dc.clone()),
+            preferences: NodeLocationPreference::Datacenter(local_dc.clone()),
             permit_dc_failover: false,
             ..Default::default()
         };
@@ -1185,7 +1182,7 @@ mod tests {
         .await;
 
         let policy_with_enabled_dc_failover = DefaultPolicy {
-            preferences: ReplicaLocationPreference::Datacenter(local_dc.clone()),
+            preferences: NodeLocationPreference::Datacenter(local_dc.clone()),
             permit_dc_failover: true,
             ..Default::default()
         };
@@ -1215,7 +1212,7 @@ mod tests {
             // Keyspace NTS with RF=2 with enabled DC failover
             Test {
                 policy: DefaultPolicy {
-                    preferences: ReplicaLocationPreference::Datacenter("eu".to_owned()),
+                    preferences: NodeLocationPreference::Datacenter("eu".to_owned()),
                     is_token_aware: true,
                     permit_dc_failover: true,
                     ..Default::default()
@@ -1239,7 +1236,7 @@ mod tests {
             // Keyspace NTS with RF=2 with enabled DC failover, shuffling replicas disabled
             Test {
                 policy: DefaultPolicy {
-                    preferences: ReplicaLocationPreference::Datacenter("eu".to_owned()),
+                    preferences: NodeLocationPreference::Datacenter("eu".to_owned()),
                     is_token_aware: true,
                     permit_dc_failover: true,
                     fixed_shuffle_seed: Some(123),
@@ -1264,7 +1261,7 @@ mod tests {
             // Keyspace NTS with RF=2 with DC failover forbidden by local Consistency
             Test {
                 policy: DefaultPolicy {
-                    preferences: ReplicaLocationPreference::Datacenter("eu".to_owned()),
+                    preferences: NodeLocationPreference::Datacenter("eu".to_owned()),
                     is_token_aware: true,
                     permit_dc_failover: true,
                     ..Default::default()
@@ -1286,7 +1283,7 @@ mod tests {
             // Keyspace NTS with RF=2 with explicitly disabled DC failover
             Test {
                 policy: DefaultPolicy {
-                    preferences: ReplicaLocationPreference::Datacenter("eu".to_owned()),
+                    preferences: NodeLocationPreference::Datacenter("eu".to_owned()),
                     is_token_aware: true,
                     permit_dc_failover: false,
                     ..Default::default()
@@ -1308,7 +1305,7 @@ mod tests {
             // Keyspace NTS with RF=3 with enabled DC failover
             Test {
                 policy: DefaultPolicy {
-                    preferences: ReplicaLocationPreference::Datacenter("eu".to_owned()),
+                    preferences: NodeLocationPreference::Datacenter("eu".to_owned()),
                     is_token_aware: true,
                     permit_dc_failover: true,
                     ..Default::default()
@@ -1332,7 +1329,7 @@ mod tests {
             // Keyspace NTS with RF=3 with enabled DC failover, shuffling replicas disabled
             Test {
                 policy: DefaultPolicy {
-                    preferences: ReplicaLocationPreference::Datacenter("eu".to_owned()),
+                    preferences: NodeLocationPreference::Datacenter("eu".to_owned()),
                     is_token_aware: true,
                     permit_dc_failover: true,
                     fixed_shuffle_seed: Some(123),
@@ -1357,7 +1354,7 @@ mod tests {
             // Keyspace NTS with RF=3 with disabled DC failover
             Test {
                 policy: DefaultPolicy {
-                    preferences: ReplicaLocationPreference::Datacenter("eu".to_owned()),
+                    preferences: NodeLocationPreference::Datacenter("eu".to_owned()),
                     is_token_aware: true,
                     permit_dc_failover: false,
                     ..Default::default()
@@ -1379,7 +1376,7 @@ mod tests {
             // Keyspace SS with RF=2 with enabled DC failover
             Test {
                 policy: DefaultPolicy {
-                    preferences: ReplicaLocationPreference::Datacenter("eu".to_owned()),
+                    preferences: NodeLocationPreference::Datacenter("eu".to_owned()),
                     is_token_aware: true,
                     permit_dc_failover: true,
                     ..Default::default()
@@ -1403,7 +1400,7 @@ mod tests {
             // Keyspace SS with RF=2 with DC failover forbidden by local Consistency
             Test {
                 policy: DefaultPolicy {
-                    preferences: ReplicaLocationPreference::Datacenter("eu".to_owned()),
+                    preferences: NodeLocationPreference::Datacenter("eu".to_owned()),
                     is_token_aware: true,
                     permit_dc_failover: true,
                     ..Default::default()
@@ -1425,7 +1422,7 @@ mod tests {
             // No token implies no token awareness
             Test {
                 policy: DefaultPolicy {
-                    preferences: ReplicaLocationPreference::Datacenter("eu".to_owned()),
+                    preferences: NodeLocationPreference::Datacenter("eu".to_owned()),
                     is_token_aware: true,
                     permit_dc_failover: true,
                     ..Default::default()
@@ -1444,7 +1441,7 @@ mod tests {
             // No keyspace implies no token awareness
             Test {
                 policy: DefaultPolicy {
-                    preferences: ReplicaLocationPreference::Datacenter("eu".to_owned()),
+                    preferences: NodeLocationPreference::Datacenter("eu".to_owned()),
                     is_token_aware: true,
                     permit_dc_failover: true,
                     ..Default::default()
@@ -1463,7 +1460,7 @@ mod tests {
             // Unknown preferred DC, failover permitted
             Test {
                 policy: DefaultPolicy {
-                    preferences: ReplicaLocationPreference::Datacenter("au".to_owned()),
+                    preferences: NodeLocationPreference::Datacenter("au".to_owned()),
                     is_token_aware: true,
                     permit_dc_failover: true,
                     ..Default::default()
@@ -1485,7 +1482,7 @@ mod tests {
             // Unknown preferred DC, failover forbidden
             Test {
                 policy: DefaultPolicy {
-                    preferences: ReplicaLocationPreference::Datacenter("au".to_owned()),
+                    preferences: NodeLocationPreference::Datacenter("au".to_owned()),
                     is_token_aware: true,
                     permit_dc_failover: false,
                     ..Default::default()
@@ -1504,7 +1501,7 @@ mod tests {
             // No preferred DC, failover permitted
             Test {
                 policy: DefaultPolicy {
-                    preferences: ReplicaLocationPreference::Any,
+                    preferences: NodeLocationPreference::Any,
                     is_token_aware: true,
                     permit_dc_failover: true,
                     ..Default::default()
@@ -1526,7 +1523,7 @@ mod tests {
             // No preferred DC, failover forbidden
             Test {
                 policy: DefaultPolicy {
-                    preferences: ReplicaLocationPreference::Any,
+                    preferences: NodeLocationPreference::Any,
                     is_token_aware: true,
                     permit_dc_failover: false,
                     ..Default::default()
@@ -1548,7 +1545,7 @@ mod tests {
             // Keyspace NTS with RF=3 with enabled DC failover and rack-awareness
             Test {
                 policy: DefaultPolicy {
-                    preferences: ReplicaLocationPreference::DatacenterAndRack(
+                    preferences: NodeLocationPreference::DatacenterAndRack(
                         "eu".to_owned(),
                         "r1".to_owned(),
                     ),
@@ -1575,7 +1572,7 @@ mod tests {
             // Keyspace SS with RF=2 with enabled rack-awareness, shuffling replicas disabled
             Test {
                 policy: DefaultPolicy {
-                    preferences: ReplicaLocationPreference::DatacenterAndRack(
+                    preferences: NodeLocationPreference::DatacenterAndRack(
                         "eu".to_owned(),
                         "r1".to_owned(),
                     ),
@@ -1603,7 +1600,7 @@ mod tests {
             // Keyspace SS with RF=2 with enabled rack-awareness and no local-rack replica
             Test {
                 policy: DefaultPolicy {
-                    preferences: ReplicaLocationPreference::DatacenterAndRack(
+                    preferences: NodeLocationPreference::DatacenterAndRack(
                         "eu".to_owned(),
                         "r2".to_owned(),
                     ),
@@ -1685,7 +1682,7 @@ mod tests {
             // Keyspace NTS with RF=2 with enabled DC failover
             Test {
                 policy: DefaultPolicy {
-                    preferences: ReplicaLocationPreference::Datacenter("eu".to_owned()),
+                    preferences: NodeLocationPreference::Datacenter("eu".to_owned()),
                     is_token_aware: true,
                     permit_dc_failover: true,
                     ..Default::default()
@@ -1710,7 +1707,7 @@ mod tests {
             // Keyspace NTS with RF=2 with enabled DC failover, shuffling replicas disabled
             Test {
                 policy: DefaultPolicy {
-                    preferences: ReplicaLocationPreference::Datacenter("eu".to_owned()),
+                    preferences: NodeLocationPreference::Datacenter("eu".to_owned()),
                     is_token_aware: true,
                     permit_dc_failover: true,
                     fixed_shuffle_seed: Some(123),
@@ -1736,7 +1733,7 @@ mod tests {
             // Keyspace NTS with RF=2 with DC failover forbidden by local Consistency
             Test {
                 policy: DefaultPolicy {
-                    preferences: ReplicaLocationPreference::Datacenter("eu".to_owned()),
+                    preferences: NodeLocationPreference::Datacenter("eu".to_owned()),
                     is_token_aware: true,
                     permit_dc_failover: true,
                     ..Default::default()
@@ -1759,7 +1756,7 @@ mod tests {
             // Keyspace NTS with RF=2 with explicitly disabled DC failover
             Test {
                 policy: DefaultPolicy {
-                    preferences: ReplicaLocationPreference::Datacenter("eu".to_owned()),
+                    preferences: NodeLocationPreference::Datacenter("eu".to_owned()),
                     is_token_aware: true,
                     permit_dc_failover: false,
                     ..Default::default()
@@ -1782,7 +1779,7 @@ mod tests {
             // Keyspace NTS with RF=3 with enabled DC failover
             Test {
                 policy: DefaultPolicy {
-                    preferences: ReplicaLocationPreference::Datacenter("eu".to_owned()),
+                    preferences: NodeLocationPreference::Datacenter("eu".to_owned()),
                     is_token_aware: true,
                     permit_dc_failover: true,
                     ..Default::default()
@@ -1807,7 +1804,7 @@ mod tests {
             // Keyspace NTS with RF=3 with enabled DC failover, shuffling replicas disabled
             Test {
                 policy: DefaultPolicy {
-                    preferences: ReplicaLocationPreference::Datacenter("eu".to_owned()),
+                    preferences: NodeLocationPreference::Datacenter("eu".to_owned()),
                     is_token_aware: true,
                     permit_dc_failover: true,
                     fixed_shuffle_seed: Some(123),
@@ -1833,7 +1830,7 @@ mod tests {
             // Keyspace NTS with RF=3 with disabled DC failover
             Test {
                 policy: DefaultPolicy {
-                    preferences: ReplicaLocationPreference::Datacenter("eu".to_owned()),
+                    preferences: NodeLocationPreference::Datacenter("eu".to_owned()),
                     is_token_aware: true,
                     permit_dc_failover: false,
                     ..Default::default()
@@ -1856,7 +1853,7 @@ mod tests {
             // Keyspace SS with RF=2 with enabled DC failover
             Test {
                 policy: DefaultPolicy {
-                    preferences: ReplicaLocationPreference::Datacenter("eu".to_owned()),
+                    preferences: NodeLocationPreference::Datacenter("eu".to_owned()),
                     is_token_aware: true,
                     permit_dc_failover: true,
                     ..Default::default()
@@ -1881,7 +1878,7 @@ mod tests {
             // Keyspace SS with RF=2 with DC failover forbidden by local Consistency
             Test {
                 policy: DefaultPolicy {
-                    preferences: ReplicaLocationPreference::Datacenter("eu".to_owned()),
+                    preferences: NodeLocationPreference::Datacenter("eu".to_owned()),
                     is_token_aware: true,
                     permit_dc_failover: true,
                     ..Default::default()
@@ -1904,7 +1901,7 @@ mod tests {
             // No token implies no token awareness
             Test {
                 policy: DefaultPolicy {
-                    preferences: ReplicaLocationPreference::Datacenter("eu".to_owned()),
+                    preferences: NodeLocationPreference::Datacenter("eu".to_owned()),
                     is_token_aware: true,
                     permit_dc_failover: true,
                     ..Default::default()
@@ -1924,7 +1921,7 @@ mod tests {
             // No keyspace implies no token awareness
             Test {
                 policy: DefaultPolicy {
-                    preferences: ReplicaLocationPreference::Datacenter("eu".to_owned()),
+                    preferences: NodeLocationPreference::Datacenter("eu".to_owned()),
                     is_token_aware: true,
                     permit_dc_failover: true,
                     ..Default::default()
@@ -1944,7 +1941,7 @@ mod tests {
             // Unknown preferred DC, failover permitted
             Test {
                 policy: DefaultPolicy {
-                    preferences: ReplicaLocationPreference::Datacenter("au".to_owned()),
+                    preferences: NodeLocationPreference::Datacenter("au".to_owned()),
                     is_token_aware: true,
                     permit_dc_failover: true,
                     ..Default::default()
@@ -1967,7 +1964,7 @@ mod tests {
             // Unknown preferred DC, failover forbidden
             Test {
                 policy: DefaultPolicy {
-                    preferences: ReplicaLocationPreference::Datacenter("au".to_owned()),
+                    preferences: NodeLocationPreference::Datacenter("au".to_owned()),
                     is_token_aware: true,
                     permit_dc_failover: false,
                     ..Default::default()
@@ -1987,7 +1984,7 @@ mod tests {
             // No preferred DC, failover permitted
             Test {
                 policy: DefaultPolicy {
-                    preferences: ReplicaLocationPreference::Any,
+                    preferences: NodeLocationPreference::Any,
                     is_token_aware: true,
                     permit_dc_failover: true,
                     ..Default::default()
@@ -2010,7 +2007,7 @@ mod tests {
             // No preferred DC, failover forbidden
             Test {
                 policy: DefaultPolicy {
-                    preferences: ReplicaLocationPreference::Any,
+                    preferences: NodeLocationPreference::Any,
                     is_token_aware: true,
                     permit_dc_failover: false,
                     ..Default::default()
@@ -2033,7 +2030,7 @@ mod tests {
             // Keyspace NTS with RF=3 with enabled DC failover and rack-awareness
             Test {
                 policy: DefaultPolicy {
-                    preferences: ReplicaLocationPreference::DatacenterAndRack(
+                    preferences: NodeLocationPreference::DatacenterAndRack(
                         "eu".to_owned(),
                         "r1".to_owned(),
                     ),
@@ -2061,7 +2058,7 @@ mod tests {
             // Keyspace SS with RF=2 with enabled rack-awareness, shuffling replicas disabled
             Test {
                 policy: DefaultPolicy {
-                    preferences: ReplicaLocationPreference::DatacenterAndRack(
+                    preferences: NodeLocationPreference::DatacenterAndRack(
                         "eu".to_owned(),
                         "r1".to_owned(),
                     ),
@@ -2089,7 +2086,7 @@ mod tests {
             // Keyspace SS with RF=2 with enabled rack-awareness and no local-rack replica
             Test {
                 policy: DefaultPolicy {
-                    preferences: ReplicaLocationPreference::DatacenterAndRack(
+                    preferences: NodeLocationPreference::DatacenterAndRack(
                         "eu".to_owned(),
                         "r2".to_owned(),
                     ),
@@ -2720,8 +2717,7 @@ mod latency_awareness {
         };
 
         use crate::{
-            load_balancing::default::ReplicaLocationPreference,
-            test_utils::create_new_session_builder,
+            load_balancing::default::NodeLocationPreference, test_utils::create_new_session_builder,
         };
         use crate::{
             load_balancing::{
@@ -2788,7 +2784,7 @@ mod latency_awareness {
             };
 
             DefaultPolicy {
-                preferences: ReplicaLocationPreference::Datacenter("eu".to_owned()),
+                preferences: NodeLocationPreference::Datacenter("eu".to_owned()),
                 permit_dc_failover: true,
                 is_token_aware: true,
                 pick_predicate,
