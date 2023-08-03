@@ -127,7 +127,8 @@ pub struct Session {
     default_execution_profile_handle: ExecutionProfileHandle,
     schema_agreement_interval: Duration,
     metrics: Arc<Metrics>,
-    auto_await_schema_agreement_timeout: Option<Duration>,
+    schema_agreement_timeout: Duration,
+    schema_agreement_automatic_waiting: bool,
     refresh_metadata_on_auto_schema_agreement: bool,
     keyspace_name: ArcSwapOption<String>,
     tracing_info_fetch_attempts: NonZeroU32,
@@ -149,7 +150,7 @@ impl std::fmt::Debug for Session {
             .field("metrics", &self.metrics)
             .field(
                 "auto_await_schema_agreement_timeout",
-                &self.auto_await_schema_agreement_timeout,
+                &self.schema_agreement_timeout,
             )
             .finish()
     }
@@ -183,7 +184,6 @@ pub struct SessionConfig {
 
     pub authenticator: Option<Arc<dyn AuthenticatorProvider>>,
 
-    pub schema_agreement_interval: Duration,
     pub connect_timeout: Duration,
 
     /// Size of the per-node connection pool, i.e. how many connections the driver should keep to each node.
@@ -208,9 +208,21 @@ pub struct SessionConfig {
     /// If `None`, connections are never closed due to lack of response to a keepalive message.
     pub keepalive_timeout: Option<Duration>,
 
-    /// Controls the timeout for the automatic wait for schema agreement after sending a schema-altering statement.
-    /// If `None`, the automatic schema agreement is disabled.
-    pub auto_await_schema_agreement_timeout: Option<Duration>,
+    /// How often the driver should ask if schema is in agreement.
+    pub schema_agreement_interval: Duration,
+
+    /// Controls the timeout for waiting for schema agreement.
+    /// This works both for manual awaiting schema agreement and for
+    /// automatic waiting after a schema-altering statement is sent.
+    pub schema_agreement_timeout: Duration,
+
+    /// Controls whether schema agreement is automatically awaited
+    /// after sending a schema-altering statement.
+    pub schema_agreement_automatic_waiting: bool,
+
+    /// If true, full schema metadata is fetched after successfully reaching a schema agreement.
+    /// It is true by default but can be disabled if successive schema-altering statements should be performed.
+    pub refresh_metadata_on_auto_schema_agreement: bool,
 
     pub address_translator: Option<Arc<dyn AddressTranslator>>,
 
@@ -218,10 +230,6 @@ pub struct SessionConfig {
     /// to the node or not. The driver will also avoid filtered out nodes when
     /// re-establishing the control connection.
     pub host_filter: Option<Arc<dyn HostFilter>>,
-
-    /// If true, full schema metadata is fetched after successfully reaching a schema agreement.
-    /// It is true by default but can be disabled if successive schema-altering statements should be performed.
-    pub refresh_metadata_on_auto_schema_agreement: bool,
 
     /// If the driver is to connect to ScyllaCloud, there is a config for it.
     #[cfg(feature = "cloud")]
@@ -306,7 +314,8 @@ impl SessionConfig {
             fetch_schema_metadata: true,
             keepalive_interval: Some(Duration::from_secs(30)),
             keepalive_timeout: Some(Duration::from_secs(30)),
-            auto_await_schema_agreement_timeout: Some(std::time::Duration::from_secs(60)),
+            schema_agreement_timeout: Duration::from_secs(60),
+            schema_agreement_automatic_waiting: true,
             address_translator: None,
             host_filter: None,
             refresh_metadata_on_auto_schema_agreement: true,
@@ -562,7 +571,8 @@ impl Session {
             default_execution_profile_handle,
             schema_agreement_interval: config.schema_agreement_interval,
             metrics: Arc::new(Metrics::new()),
-            auto_await_schema_agreement_timeout: config.auto_await_schema_agreement_timeout,
+            schema_agreement_timeout: config.schema_agreement_timeout,
+            schema_agreement_automatic_waiting: config.schema_agreement_automatic_waiting,
             refresh_metadata_on_auto_schema_agreement: config
                 .refresh_metadata_on_auto_schema_agreement,
             keyspace_name: ArcSwapOption::default(), // will be set by use_keyspace
@@ -741,10 +751,8 @@ impl Session {
         contents: &str,
         response: &NonErrorQueryResponse,
     ) -> Result<(), QueryError> {
-        if let Some(timeout) = self.auto_await_schema_agreement_timeout {
-            if response.as_schema_change().is_some()
-                && !self.await_timed_schema_agreement(timeout).await?
-            {
+        if self.schema_agreement_automatic_waiting {
+            if response.as_schema_change().is_some() && !self.await_schema_agreement().await? {
                 // TODO: The TimeoutError should allow to provide more context.
                 // For now, print an error to the logs
                 error!(
@@ -1803,20 +1811,20 @@ impl Session {
         last_error.map(Result::Err)
     }
 
-    pub async fn await_schema_agreement(&self) -> Result<(), QueryError> {
+    async fn await_schema_agreement_indefinitely(&self) -> Result<(), QueryError> {
         while !self.check_schema_agreement().await? {
             tokio::time::sleep(self.schema_agreement_interval).await
         }
         Ok(())
     }
 
-    pub async fn await_timed_schema_agreement(
-        &self,
-        timeout_duration: Duration,
-    ) -> Result<bool, QueryError> {
-        timeout(timeout_duration, self.await_schema_agreement())
-            .await
-            .map_or(Ok(false), |res| res.and(Ok(true)))
+    pub async fn await_schema_agreement(&self) -> Result<bool, QueryError> {
+        timeout(
+            self.schema_agreement_timeout,
+            self.await_schema_agreement_indefinitely(),
+        )
+        .await
+        .map_or(Ok(false), |res| res.and(Ok(true)))
     }
 
     pub async fn fetch_schema_version(&self) -> Result<Uuid, QueryError> {

@@ -20,17 +20,12 @@ async fn main() -> Result<()> {
     let schema_version = session.fetch_schema_version().await?;
     println!("Schema version: {}", schema_version);
 
-    session.await_schema_agreement().await?; // without timeout example
     session.query("CREATE KEYSPACE IF NOT EXISTS ks WITH REPLICATION = {'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}", &[]).await?;
 
-    if session
-        .await_timed_schema_agreement(Duration::from_secs(5))
-        .await?
-    {
-        // with timeout example
-        println!("Timed schema is in agreement");
+    if session.await_schema_agreement().await? {
+        println!("Schema is in agreement");
     } else {
-        println!("Timed schema is NOT in agreement");
+        println!("Schema is NOT in agreement");
     }
     session
         .query(

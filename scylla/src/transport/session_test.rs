@@ -1119,12 +1119,8 @@ async fn test_await_schema_agreement() {
 
 #[tokio::test]
 async fn test_await_timed_schema_agreement() {
-    use std::time::Duration;
     let session = create_new_session_builder().build().await.unwrap();
-    session
-        .await_timed_schema_agreement(Duration::from_millis(50))
-        .await
-        .unwrap();
+    session.await_schema_agreement().await.unwrap();
 }
 
 #[tokio::test]

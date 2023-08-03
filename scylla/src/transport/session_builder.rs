@@ -717,8 +717,8 @@ impl<K: SessionBuilderKind> GenericSessionBuilder<K> {
         self
     }
 
-    /// Enables automatic wait for schema agreement and sets the timeout for it.
-    /// By default, it is enabled and the timeout is 60 seconds.
+    /// Sets the timeout for waiting for schema agreement.
+    /// By default, the timeout is 60 seconds.
     ///
     /// # Example
     /// ```
@@ -726,19 +726,19 @@ impl<K: SessionBuilderKind> GenericSessionBuilder<K> {
     /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
     /// let session: Session = SessionBuilder::new()
     ///     .known_node("127.0.0.1:9042")
-    ///     .auto_schema_agreement_timeout(std::time::Duration::from_secs(120))
+    ///     .schema_agreement_timeout(std::time::Duration::from_secs(120))
     ///     .build()
     ///     .await?;
     /// # Ok(())
     /// # }
     /// ```
-    pub fn auto_schema_agreement_timeout(mut self, timeout: Duration) -> Self {
-        self.config.auto_await_schema_agreement_timeout = Some(timeout);
+    pub fn schema_agreement_timeout(mut self, timeout: Duration) -> Self {
+        self.config.schema_agreement_timeout = timeout;
         self
     }
 
-    /// Disables automatic wait for schema agreement.
-    /// By default, it is enabled and the timeout is 60 seconds.
+    /// Controls automatic waiting for schema agreement after a schema-altering
+    /// statement is sent. By default, it is enabled.
     ///
     /// # Example
     /// ```
@@ -746,14 +746,14 @@ impl<K: SessionBuilderKind> GenericSessionBuilder<K> {
     /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
     /// let session: Session = SessionBuilder::new()
     ///     .known_node("127.0.0.1:9042")
-    ///     .no_auto_schema_agreement()
+    ///     .auto_await_schema_agreement(false)
     ///     .build()
     ///     .await?;
     /// # Ok(())
     /// # }
     /// ```
-    pub fn no_auto_schema_agreement(mut self) -> Self {
-        self.config.auto_await_schema_agreement_timeout = None;
+    pub fn auto_await_schema_agreement(mut self, enabled: bool) -> Self {
+        self.config.schema_agreement_automatic_waiting = enabled;
         self
     }
 
