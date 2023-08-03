@@ -13,6 +13,10 @@ The following list includes information how to release version vX.Y.Z of scylla-
 6. Go to https://github.com/scylladb/scylla-rust-driver/releases , click the `Draft new release` button and follow the procedure to create a new release on GitHub. Use the release notes as its description.
 7. Publish the crate(s) on crates.io. For `scylla` crate, go directly to the crate directory, i.e. `/your/repo/path/scylla-rust-driver/scylla`, and run `cargo publish`. It will ask you for an access token, follow the instructions if you haven't set one up.
 8. Send the release notes to scylladb-users (https://groups.google.com/g/scylladb-users) as well as Cassandra users (https://lists.apache.org/list.html?user@cassandra.apache.org) mailing lists.
+9. Publish the documentation for the new version. In `docs/source/conf.py`,
+update the following:
+- TAGS = [' '] - add the new release tag to the list
+- LATEST_VERSION = ' ' - replace the previous tag with the new release tag
 
 You're done!
 
