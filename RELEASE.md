@@ -15,8 +15,8 @@ The following list includes information how to release version vX.Y.Z of scylla-
 8. Send the release notes to scylladb-users (https://groups.google.com/g/scylladb-users) as well as Cassandra users (https://lists.apache.org/list.html?user@cassandra.apache.org) mailing lists.
 9. Publish the documentation for the new version. In `docs/source/conf.py`,
 update the following:
-- TAGS = [' '] - add the new release tag to the list
-- LATEST_VERSION = ' ' - replace the previous tag with the new release tag
+- `TAGS = [' ']` - add the new release tag to the list
+- `LATEST_VERSION = ' '` - replace the previous tag with the new release tag
 
 You're done!
 
