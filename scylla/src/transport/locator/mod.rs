@@ -244,19 +244,17 @@ impl<'a> ReplicaSet<'a> {
     pub fn choose_filtered<R>(
         self,
         rng: &mut R,
-        predicate: impl Fn(NodeRef<'a>) -> bool,
+        predicate: impl Fn(&NodeRef<'a>) -> bool,
     ) -> Option<NodeRef<'a>>
     where
         R: Rng + ?Sized,
     {
         let happy = self.choose(rng)?;
-        if predicate(happy) {
+        if predicate(&happy) {
             return Some(happy);
         }
 
-        self.into_iter()
-            .filter(|node_ref| predicate(node_ref))
-            .choose(rng)
+        self.into_iter().filter(predicate).choose(rng)
     }
 
     /// Gets the size of the set.

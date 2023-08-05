@@ -7,21 +7,27 @@ use crate::cloud::CloudConfig;
 use crate::frame::types::LegacyConsistency;
 use crate::history;
 use crate::history::HistoryListener;
-use crate::retry_policy::RetryPolicy;
+use crate::prepared_statement::PartitionKeyDecoder;
 use crate::routing;
+use crate::utils::pretty::{CommaSeparatedDisplayer, CqlValueDisplayer};
 use arc_swap::ArcSwapOption;
 use async_trait::async_trait;
+use bytes::BufMut;
 use bytes::Bytes;
+use bytes::BytesMut;
 use futures::future::join_all;
 use futures::future::try_join_all;
+use itertools::Either;
 pub use scylla_cql::errors::TranslationError;
-use scylla_cql::frame::response::result::Rows;
+use scylla_cql::frame::response::result::{PreparedMetadata, Rows};
 use scylla_cql::frame::response::NonErrorResponse;
 use std::borrow::Borrow;
 use std::collections::HashMap;
 use std::fmt::Display;
 use std::future::Future;
+use std::io;
 use std::net::SocketAddr;
+use std::num::NonZeroU32;
 use std::str::FromStr;
 use std::sync::atomic::AtomicUsize;
 use std::sync::atomic::Ordering;
@@ -29,6 +35,7 @@ use std::sync::Arc;
 use std::time::Duration;
 use tokio::net::lookup_host;
 use tokio::time::timeout;
+use tracing::warn;
 use tracing::{debug, error, trace, trace_span, Instrument};
 use uuid::Uuid;
 
@@ -39,6 +46,7 @@ use super::connection::QueryResponse;
 use super::connection::SslConfig;
 use super::errors::{BadQuery, NewSessionError, QueryError};
 use super::execution_profile::{ExecutionProfile, ExecutionProfileHandle, ExecutionProfileInner};
+use super::partitioner::Partitioner;
 use super::partitioner::PartitionerName;
 use super::topology::UntranslatedPeer;
 use super::NodeRef;
@@ -52,7 +60,7 @@ use crate::prepared_statement::{PartitionKeyError, PreparedStatement};
 use crate::query::Query;
 use crate::routing::Token;
 use crate::statement::{Consistency, SerialConsistency};
-use crate::tracing::{GetTracingConfig, TracingEvent, TracingInfo};
+use crate::tracing::{TracingEvent, TracingInfo};
 use crate::transport::cluster::{Cluster, ClusterData, ClusterNeatDebug};
 use crate::transport::connection::{Connection, ConnectionConfig, VerifiedKeyspaceName};
 use crate::transport::connection_pool::PoolConfig;
@@ -126,6 +134,9 @@ pub struct Session {
     auto_await_schema_agreement_timeout: Option<Duration>,
     refresh_metadata_on_auto_schema_agreement: bool,
     keyspace_name: ArcSwapOption<String>,
+    tracing_info_fetch_attempts: NonZeroU32,
+    tracing_info_fetch_interval: Duration,
+    tracing_info_fetch_consistency: Consistency,
 }
 
 /// This implementation deliberately omits some details from Cluster in order
@@ -231,6 +242,22 @@ pub struct SessionConfig {
     /// Please do performance measurements before committing to disabling
     /// this option.
     pub enable_write_coalescing: bool,
+
+    /// Number of attempts to fetch [`TracingInfo`]
+    /// in [`Session::get_tracing_info`]. Tracing info
+    /// might not be available immediately on queried node - that's why
+    /// the driver performs a few attempts with sleeps in between.
+    pub tracing_info_fetch_attempts: NonZeroU32,
+
+    /// Delay between attempts to fetch [`TracingInfo`]
+    /// in [`Session::get_tracing_info`]. Tracing info
+    /// might not be available immediately on queried node - that's why
+    /// the driver performs a few attempts with sleeps in between.
+    pub tracing_info_fetch_interval: Duration,
+
+    /// Consistency level of fetching [`TracingInfo`]
+    /// in [`Session::get_tracing_info`].
+    pub tracing_info_fetch_consistency: Consistency,
 }
 
 /// Describes database server known on Session startup.
@@ -290,6 +317,9 @@ impl SessionConfig {
             #[cfg(feature = "cloud")]
             cloud_config: None,
             enable_write_coalescing: true,
+            tracing_info_fetch_attempts: NonZeroU32::new(5).unwrap(),
+            tracing_info_fetch_interval: Duration::from_millis(3),
+            tracing_info_fetch_consistency: Consistency::One,
         }
     }
 
@@ -470,16 +500,30 @@ impl Session {
                 }) => to_resolve.push((hostname, Some(datacenter))),
             };
         }
-        let resolve_futures = to_resolve
-            .into_iter()
-            .map(|(hostname, datacenter)| async move {
-                Ok::<_, NewSessionError>(ContactPoint {
-                    address: resolve_hostname(&hostname).await?,
-                    datacenter,
-                })
-            });
-        let resolved: Vec<ContactPoint> = futures::future::try_join_all(resolve_futures).await?;
-        initial_peers.extend(resolved);
+        let resolve_futures = to_resolve.iter().map(|(hostname, datacenter)| async move {
+            match resolve_hostname(hostname).await {
+                Ok(address) => Some(ContactPoint {
+                    address,
+                    datacenter: datacenter.clone(),
+                }),
+                Err(e) => {
+                    warn!("Hostname resolution failed for {}: {}", hostname, &e);
+                    None
+                }
+            }
+        });
+        let resolved: Vec<_> = futures::future::join_all(resolve_futures).await;
+        initial_peers.extend(resolved.into_iter().flatten());
+
+        // Ensure there is at least one resolved node
+        if initial_peers.is_empty() {
+            return Err(NewSessionError::FailedToResolveAnyHostname(
+                to_resolve
+                    .into_iter()
+                    .map(|(hostname, _datacenter)| hostname)
+                    .collect(),
+            ));
+        }
 
         let connection_config = ConnectionConfig {
             compression: config.compression,
@@ -526,6 +570,9 @@ impl Session {
             refresh_metadata_on_auto_schema_agreement: config
                 .refresh_metadata_on_auto_schema_agreement,
             keyspace_name: ArcSwapOption::default(), // will be set by use_keyspace
+            tracing_info_fetch_attempts: config.tracing_info_fetch_attempts,
+            tracing_info_fetch_interval: config.tracing_info_fetch_interval,
+            tracing_info_fetch_consistency: config.tracing_info_fetch_consistency,
         };
 
         if let Some(keyspace_name) = config.used_keyspace {
@@ -606,12 +653,29 @@ impl Session {
         let query: Query = query.into();
         let serialized_values = values.serialized()?;
 
+        let execution_profile = query
+            .get_execution_profile_handle()
+            .unwrap_or_else(|| self.get_default_execution_profile_handle())
+            .access();
+
+        let statement_info = RoutingInfo {
+            consistency: query
+                .config
+                .consistency
+                .unwrap_or(execution_profile.consistency),
+            serial_consistency: query
+                .config
+                .serial_consistency
+                .unwrap_or(execution_profile.serial_consistency),
+            ..Default::default()
+        };
+
         let span = RequestSpan::new_query(&query.contents, serialized_values.size());
         let run_query_result = self
             .run_query(
-                RoutingInfo::default(),
+                statement_info,
                 &query.config,
-                query.get_retry_policy().map(|rp| &**rp),
+                execution_profile,
                 |node: Arc<Node>| async move { node.random_connection().await },
                 |connection: Arc<Connection>,
                  consistency: Consistency,
@@ -924,10 +988,15 @@ impl Session {
             .as_ref()
             .map(|pk| prepared.get_partitioner_name().hash(pk));
 
-        let statement_info = self.routing_info_from_prepared_statement(prepared, token);
+        let (execution_profile, statement_info) =
+            self.execution_profile_and_routing_info_from_prepared_statement(prepared, token);
 
-        let span =
-            RequestSpan::new_prepared(partition_key.as_ref(), token, serialized_values.size());
+        let span = RequestSpan::new_prepared(
+            prepared.get_prepared_metadata(),
+            partition_key.as_ref(),
+            token,
+            serialized_values.size(),
+        );
 
         if !span.span().is_disabled() {
             if let (Some(keyspace), Some(token)) = (statement_info.keyspace.as_ref(), token) {
@@ -943,7 +1012,7 @@ impl Session {
             .run_query(
                 statement_info,
                 &prepared.config,
-                prepared.get_retry_policy().map(|rp| &**rp),
+                execution_profile,
                 |node: Arc<Node>| async move {
                     match token {
                         Some(token) => node.connection_for_token(token).await,
@@ -1114,19 +1183,37 @@ impl Session {
         // Extract first serialized_value
         let first_serialized_value = values.batch_values_iter().next_serialized().transpose()?;
         let first_serialized_value = first_serialized_value.as_deref();
+
+        let execution_profile = batch
+            .get_execution_profile_handle()
+            .unwrap_or_else(|| self.get_default_execution_profile_handle())
+            .access();
+
+        let consistency = batch
+            .config
+            .consistency
+            .unwrap_or(execution_profile.consistency);
+
+        let serial_consistency = batch
+            .config
+            .serial_consistency
+            .unwrap_or(execution_profile.serial_consistency);
+
         let statement_info = match (first_serialized_value, batch.statements.first()) {
             (Some(first_serialized_value), Some(BatchStatement::PreparedStatement(ps))) => {
                 RoutingInfo {
-                    consistency: batch
-                        .get_consistency()
-                        .unwrap_or(self.default_execution_profile_handle.access().consistency),
-                    serial_consistency: batch.get_serial_consistency(),
+                    consistency,
+                    serial_consistency,
                     token: self.calculate_token(ps, first_serialized_value)?,
                     keyspace: ps.get_keyspace_name(),
                     is_confirmed_lwt: false,
                 }
             }
-            _ => RoutingInfo::default(),
+            _ => RoutingInfo {
+                consistency,
+                serial_consistency,
+                ..Default::default()
+            },
         };
         let first_value_token = statement_info.token;
 
@@ -1141,7 +1228,7 @@ impl Session {
             .run_query(
                 statement_info,
                 &batch.config,
-                batch.get_retry_policy().map(|rp| &**rp),
+                execution_profile,
                 |node: Arc<Node>| async move {
                     match first_value_token {
                         Some(first_value_token) => {
@@ -1311,8 +1398,24 @@ impl Session {
     /// See [the book](https://rust-driver.docs.scylladb.com/stable/tracing/tracing.html)
     /// for more information about query tracing
     pub async fn get_tracing_info(&self, tracing_id: &Uuid) -> Result<TracingInfo, QueryError> {
-        self.get_tracing_info_custom(tracing_id, &GetTracingConfig::default())
-            .await
+        // tracing_info_fetch_attempts is NonZeroU32 so at least one attempt will be made
+        for _ in 0..self.tracing_info_fetch_attempts.get() {
+            let current_try: Option<TracingInfo> = self
+                .try_getting_tracing_info(tracing_id, Some(self.tracing_info_fetch_consistency))
+                .await?;
+
+            match current_try {
+                Some(tracing_info) => return Ok(tracing_info),
+                None => tokio::time::sleep(self.tracing_info_fetch_interval).await,
+            };
+        }
+
+        Err(QueryError::ProtocolError(
+            "All tracing queries returned an empty result, \
+            maybe the trace information didn't propagate yet. \
+            Consider configuring Session with \
+            a longer fetch interval (tracing_info_fetch_interval)",
+        ))
     }
 
     /// Gets the name of the keyspace that is currently set, or `None` if no
@@ -1328,35 +1431,6 @@ impl Session {
     #[inline]
     pub fn get_keyspace(&self) -> Option<Arc<String>> {
         self.keyspace_name.load_full()
-    }
-
-    /// Queries tracing info with custom retry settings.\
-    /// Tracing info might not be available immediately on queried node -
-    /// that's why the driver performs a few attempts with sleeps in between.
-    /// [`GetTracingConfig`] allows to specify a custom querying strategy.
-    pub async fn get_tracing_info_custom(
-        &self,
-        tracing_id: &Uuid,
-        config: &GetTracingConfig,
-    ) -> Result<TracingInfo, QueryError> {
-        // config.attempts is NonZeroU32 so at least one attempt will be made
-        for _ in 0..config.attempts.get() {
-            let current_try: Option<TracingInfo> = self
-                .try_getting_tracing_info(tracing_id, Some(config.consistency))
-                .await?;
-
-            match current_try {
-                Some(tracing_info) => return Ok(tracing_info),
-                None => tokio::time::sleep(config.interval).await,
-            };
-        }
-
-        Err(QueryError::ProtocolError(
-            "All tracing queries returned an empty result, \
-            maybe information didn't reach this node yet. \
-            Consider using get_tracing_info_custom with \
-            bigger interval in GetTracingConfig",
-        ))
     }
 
     // Tries getting the tracing info
@@ -1425,20 +1499,6 @@ impl Session {
         Ok(Some(tracing_info))
     }
 
-    // Returns which replicas are likely to take part in handling the query.
-    // If a list of replicas cannot be easily narrowed down, all available replicas
-    // will be returned.
-    pub fn estimate_replicas_for_query(&self, statement: &RoutingInfo) -> Vec<Arc<Node>> {
-        let cluster_data = self.cluster.get_data();
-        match statement.token {
-            Some(token) => {
-                let cluster_data = self.cluster.get_data();
-                cluster_data.get_token_endpoints(statement.keyspace.unwrap_or(""), token)
-            }
-            None => cluster_data.get_nodes_info().to_owned(),
-        }
-    }
-
     // This method allows to easily run a query using load balancing, retry policy etc.
     // Requires some information about the query and two closures
     // First closure is used to choose a connection
@@ -1455,7 +1515,7 @@ impl Session {
         &'a self,
         statement_info: RoutingInfo<'a>,
         statement_config: &'a StatementConfig,
-        statement_retry_policy: Option<&dyn RetryPolicy>,
+        execution_profile: Arc<ExecutionProfileInner>,
         choose_connection: impl Fn(Arc<Node>) -> ConnFut,
         do_query: impl Fn(Arc<Connection>, Consistency, &ExecutionProfileInner) -> QueryFut,
         request_span: &'a RequestSpan,
@@ -1470,12 +1530,6 @@ impl Session {
                 .history_listener
                 .as_ref()
                 .map(|hl| (&**hl, hl.log_query_start()));
-
-        let execution_profile = statement_config
-            .execution_profile_handle
-            .as_ref()
-            .unwrap_or_else(|| self.get_default_execution_profile_handle())
-            .access();
 
         let load_balancer = &execution_profile.load_balancing_policy;
 
@@ -1505,7 +1559,10 @@ impl Session {
                 }
             }
 
-            let retry_policy = statement_retry_policy.unwrap_or(&*execution_profile.retry_policy);
+            let retry_policy = statement_config
+                .retry_policy
+                .as_deref()
+                .unwrap_or(&*execution_profile.retry_policy);
 
             let speculative_policy = execution_profile.speculative_execution_policy.as_ref();
 
@@ -1543,7 +1600,7 @@ impl Session {
                             &execution_profile,
                             ExecuteQueryContext {
                                 is_idempotent: statement_config.is_idempotent,
-                                consistency: statement_config.consistency,
+                                consistency_set_on_statement: statement_config.consistency,
                                 retry_session: retry_policy.new_session(),
                                 history_data,
                                 query_info: &statement_info,
@@ -1579,7 +1636,7 @@ impl Session {
                         &execution_profile,
                         ExecuteQueryContext {
                             is_idempotent: statement_config.is_idempotent,
-                            consistency: statement_config.consistency,
+                            consistency_set_on_statement: statement_config.consistency,
                             retry_session: retry_policy.new_session(),
                             history_data,
                             query_info: &statement_info,
@@ -1634,8 +1691,9 @@ impl Session {
         ResT: AllowedRunQueryResTType,
     {
         let mut last_error: Option<QueryError> = None;
-        let mut current_consistency: Consistency =
-            context.consistency.unwrap_or(execution_profile.consistency);
+        let mut current_consistency: Consistency = context
+            .consistency_set_on_statement
+            .unwrap_or(execution_profile.consistency);
 
         'nodes_in_plan: for node in query_plan {
             let span = trace_span!("Executing query", node = %node.address);
@@ -1710,7 +1768,9 @@ impl Session {
                     error: the_error,
                     is_idempotent: context.is_idempotent,
                     consistency: LegacyConsistency::Regular(
-                        context.consistency.unwrap_or(execution_profile.consistency),
+                        context
+                            .consistency_set_on_statement
+                            .unwrap_or(execution_profile.consistency),
                     ),
                 };
 
@@ -1780,7 +1840,7 @@ impl Session {
             .run_query(
                 info,
                 &config,
-                None, // No specific retry policy needed for schema agreement
+                self.get_default_execution_profile_handle().access(),
                 |node: Arc<Node>| async move { node.random_connection().await },
                 do_query,
                 &span,
@@ -1827,6 +1887,10 @@ impl Session {
         Ok(Some(partition_key))
     }
 
+    /// Calculates the token for given prepared statement and serialized values.
+    ///
+    /// Returns the token that would be computed for executing the provided
+    /// prepared statement with the provided values.
     pub fn calculate_token(
         &self,
         prepared: &PreparedStatement,
@@ -1850,14 +1914,10 @@ impl Session {
             Some(token) => token,
             None => return Ok(None),
         };
-        let routing_info = self.routing_info_from_prepared_statement(prepared, Some(token));
+        let (execution_profile, routing_info) =
+            self.execution_profile_and_routing_info_from_prepared_statement(prepared, Some(token));
         let cluster_data = self.cluster.get_data();
-        let execution_profile = prepared
-            .config
-            .execution_profile_handle
-            .as_ref()
-            .unwrap_or_else(|| self.get_default_execution_profile_handle())
-            .access();
+
         let mut query_plan = load_balancing::Plan::new(
             &*execution_profile.load_balancing_policy,
             &routing_info,
@@ -1877,20 +1937,70 @@ impl Session {
         }))
     }
 
-    fn routing_info_from_prepared_statement<'p>(
+    fn execution_profile_and_routing_info_from_prepared_statement<'p>(
         &self,
         prepared: &'p PreparedStatement,
         token: Option<Token>,
-    ) -> RoutingInfo<'p> {
-        RoutingInfo {
+    ) -> (Arc<ExecutionProfileInner>, RoutingInfo<'p>) {
+        let execution_profile = prepared
+            .get_execution_profile_handle()
+            .unwrap_or_else(|| self.get_default_execution_profile_handle())
+            .access();
+
+        let routing_info = RoutingInfo {
             consistency: prepared
-                .get_consistency()
-                .unwrap_or(self.default_execution_profile_handle.access().consistency),
-            serial_consistency: prepared.get_serial_consistency(),
+                .config
+                .consistency
+                .unwrap_or(execution_profile.consistency),
+            serial_consistency: prepared
+                .config
+                .serial_consistency
+                .unwrap_or(execution_profile.serial_consistency),
             token,
             keyspace: prepared.get_keyspace_name(),
             is_confirmed_lwt: prepared.is_confirmed_lwt(),
+        };
+
+        (execution_profile, routing_info)
+    }
+
+    /// Calculates the token for given partitioner and serialized partition key.
+    ///
+    /// The ordinary way to calculate token is based on a PreparedStatement
+    /// and values for that statement. However, if a user knows:
+    /// - the order of the columns in the partition key,
+    /// - the values of the columns of the partition key,
+    /// - the partitioner of the table that the statement operates on,
+    ///
+    /// then having a `PreparedStatement` is not necessary and the token can
+    /// be calculated based on that information.
+    ///
+    /// NOTE: the provided values must completely constitute partition key
+    /// and be in the order defined in CREATE TABLE statement.
+    pub fn calculate_token_for_partition_key<P: Partitioner>(
+        serialized_partition_key_values: &SerializedValues,
+        _partitioner: &P,
+    ) -> Result<Token, PartitionKeyError> {
+        let mut buf: BytesMut = BytesMut::new();
+
+        if serialized_partition_key_values.len() == 1 {
+            let val = serialized_partition_key_values.iter().next().unwrap();
+            if let Some(val) = val {
+                buf.extend_from_slice(val);
+            }
+        } else {
+            for val in serialized_partition_key_values.iter().flatten() {
+                let val_len_u16: u16 = val
+                    .len()
+                    .try_into()
+                    .map_err(|_| PartitionKeyError::ValueTooLong(val.len()))?;
+                buf.put_u16(val_len_u16);
+                buf.extend_from_slice(val);
+                buf.put_u8(0);
+            }
         }
+
+        Ok(P::hash(&buf.freeze()))
     }
 
     /// Retrieves the handle to execution profile that is used by this session
@@ -1918,7 +2028,7 @@ fn calculate_partition_key(
 // Resolve the given hostname using a DNS lookup if necessary.
 // The resolution may return multiple IPs and the function returns one of them.
 // It prefers to return IPv4s first, and only if there are none, IPv6s.
-pub(crate) async fn resolve_hostname(hostname: &str) -> Result<SocketAddr, NewSessionError> {
+pub(crate) async fn resolve_hostname(hostname: &str) -> Result<SocketAddr, io::Error> {
     let mut ret = None;
     let addrs: Vec<SocketAddr> = match lookup_host(hostname).await {
         Ok(addrs) => addrs.collect(),
@@ -1934,7 +2044,12 @@ pub(crate) async fn resolve_hostname(hostname: &str) -> Result<SocketAddr, NewSe
         }
     }
 
-    ret.ok_or_else(|| NewSessionError::FailedToResolveAddress(hostname.to_string()))
+    ret.ok_or_else(|| {
+        io::Error::new(
+            io::ErrorKind::Other,
+            format!("Empty address list returned by DNS for {}", hostname),
+        )
+    })
 }
 
 // run_query, execute_query, etc have a template type called ResT.
@@ -1954,7 +2069,7 @@ impl AllowedRunQueryResTType for NonErrorQueryResponse {}
 
 struct ExecuteQueryContext<'a> {
     is_idempotent: bool,
-    consistency: Option<Consistency>,
+    consistency_set_on_statement: Option<Consistency>,
     retry_session: Box<dyn RetrySession>,
     history_data: Option<HistoryData<'a>>,
     query_info: &'a load_balancing::RoutingInfo<'a>,
@@ -2040,11 +2155,11 @@ impl RequestSpan {
     }
 
     pub(crate) fn new_prepared(
+        prepared_metadata: &PreparedMetadata,
         partition_key: Option<&Bytes>,
         token: Option<Token>,
         request_size: usize,
     ) -> Self {
-        use crate::utils::pretty::HexBytes;
         use tracing::field::Empty;
 
         let span = trace_span!(
@@ -2064,7 +2179,10 @@ impl RequestSpan {
         if let Some(partition_key) = partition_key {
             span.record(
                 "partition_key",
-                tracing::field::display(format_args!("{:x}", HexBytes(partition_key))),
+                tracing::field::display(format_args!(
+                    "{}",
+                    partition_key_displayer(prepared_metadata, partition_key),
+                )),
             );
         }
         if let Some(token) = token {
@@ -2161,4 +2279,16 @@ impl Drop for RequestSpan {
             self.speculative_executions.load(Ordering::Relaxed),
         );
     }
+}
+
+fn partition_key_displayer<'pk>(
+    prepared_metadata: &'pk PreparedMetadata,
+    partition_key: &'pk [u8],
+) -> impl Display + 'pk {
+    CommaSeparatedDisplayer(
+        PartitionKeyDecoder::new(prepared_metadata, partition_key).map(|c| match c {
+            Ok(c) => Either::Left(CqlValueDisplayer(c)),
+            Err(_) => Either::Right("<decoding error>"),
+        }),
+    )
 }

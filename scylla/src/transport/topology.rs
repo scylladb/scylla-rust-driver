@@ -380,7 +380,7 @@ impl Metadata {
 impl MetadataReader {
     /// Creates new MetadataReader, which connects to initially_known_peers in the background
     #[allow(clippy::too_many_arguments)]
-    pub fn new(
+    pub(crate) fn new(
         initially_known_peers: Vec<ContactPoint>,
         mut connection_config: ConnectionConfig,
         keepalive_interval: Option<Duration>,
@@ -423,7 +423,7 @@ impl MetadataReader {
     }
 
     /// Fetches current metadata from the cluster
-    pub async fn read_metadata(&mut self, initial: bool) -> Result<Metadata, QueryError> {
+    pub(crate) async fn read_metadata(&mut self, initial: bool) -> Result<Metadata, QueryError> {
         let mut result = self.fetch_metadata(initial).await;
         if let Ok(metadata) = result {
             self.update_known_peers(&metadata);

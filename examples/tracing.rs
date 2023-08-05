@@ -7,7 +7,7 @@ use scylla::batch::Batch;
 use scylla::statement::{
     prepared_statement::PreparedStatement, query::Query, Consistency, SerialConsistency,
 };
-use scylla::tracing::{GetTracingConfig, TracingInfo};
+use scylla::tracing::TracingInfo;
 use scylla::transport::iterator::RowIterator;
 use scylla::QueryResult;
 use scylla::{Session, SessionBuilder};
@@ -21,7 +21,10 @@ async fn main() -> Result<()> {
     let uri = env::var("SCYLLA_URI").unwrap_or_else(|_| "127.0.0.1:9042".to_string());
 
     println!("Connecting to {} ...", uri);
-    let session: Session = SessionBuilder::new().known_node(uri).build().await?;
+    let session: Session = SessionBuilder::new()
+        .known_node(uri.as_str())
+        .build()
+        .await?;
 
     session.query("CREATE KEYSPACE IF NOT EXISTS ks WITH REPLICATION = {'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}", &[]).await?;
 
@@ -106,19 +109,18 @@ async fn main() -> Result<()> {
     println!("Batch tracing id: {:?}\n", batch_result.tracing_id);
 
     // CUSTOM
-    // GetTracingConfig allows to specify a custom settings for querying tracing info
+    // Session configuration allows specifying custom settings for querying tracing info.
     // Tracing info might not immediately be available on queried node
     // so the driver performs a few attempts with sleeps in between.
-
-    let custom_config: GetTracingConfig = GetTracingConfig {
-        attempts: NonZeroU32::new(8).unwrap(),
-        interval: Duration::from_millis(100),
-        consistency: Consistency::One,
-    };
-
-    let _custom_info: TracingInfo = session
-        .get_tracing_info_custom(&query_tracing_id, &custom_config)
+    let session: Session = SessionBuilder::new()
+        .known_node(uri)
+        .tracing_info_fetch_attempts(NonZeroU32::new(8).unwrap())
+        .tracing_info_fetch_interval(Duration::from_millis(100))
+        .tracing_info_fetch_consistency(Consistency::One)
+        .build()
         .await?;
+
+    let _custom_info: TracingInfo = session.get_tracing_info(&query_tracing_id).await?;
 
     Ok(())
 }

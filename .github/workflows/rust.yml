@@ -17,11 +17,11 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 60
     steps:
-    - uses: actions/checkout@v2
+    - uses: actions/checkout@v3
     - name: Setup 3-node Scylla cluster
       run: |
         sudo sh -c "echo 2097152 >> /proc/sys/fs/aio-max-nr"
-        docker-compose -f test/cluster/docker-compose.yml up -d
+        docker compose -f test/cluster/docker-compose.yml up -d --wait
     - name: Format check
       run: cargo fmt --verbose --all -- --check
     - name: Clippy check
@@ -38,23 +38,22 @@ jobs:
       run: SCYLLA_URI=172.42.0.2:9042 SCYLLA_URI2=172.42.0.3:9042 SCYLLA_URI3=172.42.0.4:9042 cargo test --verbose
     - name: Stop the cluster
       if: ${{ always() }}
-      run: docker-compose -f test/cluster/docker-compose.yml stop
+      run: docker compose -f test/cluster/docker-compose.yml stop
     - name: Print the cluster logs
       if: ${{ always() }}
-      run: docker-compose -f test/cluster/docker-compose.yml logs
+      run: docker compose -f test/cluster/docker-compose.yml logs
     - name: Remove cluster
-      run: docker-compose -f test/cluster/docker-compose.yml down
+      run: docker compose -f test/cluster/docker-compose.yml down
 
   # Tests that our current minimum supported rust version compiles everything sucessfully
   min_rust:
     runs-on: ubuntu-latest
     steps:
-    - uses: actions/checkout@v2
+    - uses: actions/checkout@v3
     - name: Install Rust ${{ env.rust_min }}
-      uses: actions-rs/toolchain@v1
-      with:
-        toolchain: ${{ env.rust_min }}
-        override: true
+      run: |
+        rustup install ${{ env.rust_min }}
+        rustup override set ${{ env.rust_min }}
     - name: Print Rust version
       run: rustc --version
     - name: MSRV cargo check with features
@@ -68,6 +67,6 @@ jobs:
   cargo_docs:
     runs-on: ubuntu-latest
     steps:
-    - uses: actions/checkout@v2
+    - uses: actions/checkout@v3
     - name: Compile docs
       run: RUSTDOCFLAGS=-Dwarnings cargo doc

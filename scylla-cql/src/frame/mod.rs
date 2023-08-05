@@ -16,16 +16,16 @@ use uuid::Uuid;
 
 use std::convert::TryFrom;
 
-use request::Request;
+use request::SerializableRequest;
 use response::ResponseOpcode;
 
 const HEADER_SIZE: usize = 9;
 
 // Frame flags
-pub const FLAG_COMPRESSION: u8 = 0x01;
-pub const FLAG_TRACING: u8 = 0x02;
-pub const FLAG_CUSTOM_PAYLOAD: u8 = 0x04;
-pub const FLAG_WARNING: u8 = 0x08;
+const FLAG_COMPRESSION: u8 = 0x01;
+const FLAG_TRACING: u8 = 0x02;
+const FLAG_CUSTOM_PAYLOAD: u8 = 0x04;
+const FLAG_WARNING: u8 = 0x08;
 
 // All of the Authenticators supported by Scylla
 #[derive(Debug, PartialEq, Eq, Clone)]
@@ -60,7 +60,7 @@ pub struct SerializedRequest {
 }
 
 impl SerializedRequest {
-    pub fn make<R: Request>(
+    pub fn make<R: SerializableRequest>(
         req: &R,
         compression: Option<Compression>,
         tracing: bool,
@@ -220,7 +220,7 @@ pub fn parse_response_body_extensions(
     })
 }
 
-pub fn compress_append(
+fn compress_append(
     uncomp_body: &[u8],
     compression: Compression,
     out: &mut Vec<u8>,
@@ -246,7 +246,7 @@ pub fn compress_append(
     }
 }
 
-pub fn decompress(mut comp_body: &[u8], compression: Compression) -> Result<Vec<u8>, FrameError> {
+fn decompress(mut comp_body: &[u8], compression: Compression) -> Result<Vec<u8>, FrameError> {
     match compression {
         Compression::Lz4 => {
             let uncomp_len = comp_body.get_u32() as usize;

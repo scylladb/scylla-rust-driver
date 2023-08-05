@@ -1,3 +1,4 @@
+use std::borrow::Cow;
 use std::sync::Arc;
 
 use crate::history::HistoryListener;
@@ -8,7 +9,7 @@ use crate::transport::{execution_profile::ExecutionProfileHandle, Node};
 use crate::Session;
 
 use super::StatementConfig;
-pub use super::{Consistency, SerialConsistency};
+use super::{Consistency, SerialConsistency};
 pub use crate::frame::request::batch::BatchType;
 
 /// CQL batch statement.
@@ -17,9 +18,6 @@ pub use crate::frame::request::batch::BatchType;
 #[derive(Clone)]
 pub struct Batch {
     pub(crate) config: StatementConfig,
-
-    // TODO: Move this after #701 is fixed
-    retry_policy: Option<Arc<dyn RetryPolicy>>,
 
     pub statements: Vec<BatchStatement>,
     batch_type: BatchType,
@@ -117,13 +115,13 @@ impl Batch {
     /// Set the retry policy for this batch, overriding the one from execution profile if not None.
     #[inline]
     pub fn set_retry_policy(&mut self, retry_policy: Option<Arc<dyn RetryPolicy>>) {
-        self.retry_policy = retry_policy;
+        self.config.retry_policy = retry_policy;
     }
 
     /// Get the retry policy set for the batch.
     #[inline]
     pub fn get_retry_policy(&self) -> Option<&Arc<dyn RetryPolicy>> {
-        self.retry_policy.as_ref()
+        self.config.retry_policy.as_ref()
     }
 
     /// Sets the listener capable of listening what happens during query execution.
@@ -226,7 +224,6 @@ impl Default for Batch {
     fn default() -> Self {
         Self {
             statements: Vec::new(),
-            retry_policy: None,
             batch_type: BatchType::Logged,
             config: Default::default(),
         }
@@ -255,5 +252,24 @@ impl From<Query> for BatchStatement {
 impl From<PreparedStatement> for BatchStatement {
     fn from(p: PreparedStatement) -> Self {
         BatchStatement::PreparedStatement(p)
+    }
+}
+
+impl<'a: 'b, 'b> From<&'a BatchStatement>
+    for scylla_cql::frame::request::batch::BatchStatement<'b>
+{
+    fn from(val: &'a BatchStatement) -> Self {
+        match val {
+            BatchStatement::Query(query) => {
+                scylla_cql::frame::request::batch::BatchStatement::Query {
+                    text: Cow::Borrowed(&query.contents),
+                }
+            }
+            BatchStatement::PreparedStatement(prepared) => {
+                scylla_cql::frame::request::batch::BatchStatement::Prepared {
+                    id: Cow::Borrowed(prepared.get_id()),
+                }
+            }
+        }
     }
 }

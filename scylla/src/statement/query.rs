@@ -14,8 +14,6 @@ pub struct Query {
     pub(crate) config: StatementConfig,
 
     // TODO: Move this after #701 is fixed
-    retry_policy: Option<Arc<dyn RetryPolicy>>,
-
     pub contents: String,
     page_size: Option<i32>,
 }
@@ -25,7 +23,6 @@ impl Query {
     pub fn new(query_text: impl Into<String>) -> Self {
         Self {
             contents: query_text.into(),
-            retry_policy: None,
             page_size: None,
             config: Default::default(),
         }
@@ -131,13 +128,13 @@ impl Query {
     /// Set the retry policy for this statement, overriding the one from execution profile if not None.
     #[inline]
     pub fn set_retry_policy(&mut self, retry_policy: Option<Arc<dyn RetryPolicy>>) {
-        self.retry_policy = retry_policy;
+        self.config.retry_policy = retry_policy;
     }
 
     /// Get the retry policy set for the statement.
     #[inline]
     pub fn get_retry_policy(&self) -> Option<&Arc<dyn RetryPolicy>> {
-        self.retry_policy.as_ref()
+        self.config.retry_policy.as_ref()
     }
 
     /// Sets the listener capable of listening what happens during query execution.

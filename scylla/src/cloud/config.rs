@@ -152,6 +152,7 @@ pub(crate) struct Context {
 
 mod deserialize {
     use super::CloudConfigError;
+    use base64::{engine::general_purpose, Engine as _};
     use scylla_cql::{frame::types::SerialConsistency, Consistency};
     use std::{collections::HashMap, fs::File, io::Read, path::Path};
 
@@ -299,7 +300,7 @@ mod deserialize {
         path: Option<&str>, // path to data in file
     ) -> Result<Box<[u8]>, CloudConfigError> {
         let pem = if let Some(data) = data {
-            base64::decode(data)?
+            general_purpose::STANDARD.decode(data)?
         } else if let Some(path) = path {
             let mut buf = vec![];
             File::open(path)
@@ -554,6 +555,7 @@ mod deserialize {
         use super::super::CloudConfig;
         use super::RawCloudConfig;
         use assert_matches::assert_matches;
+        use base64::{engine::general_purpose, Engine as _};
         use openssl::x509::X509;
         use scylla_cql::frame::types::SerialConsistency;
         use scylla_cql::Consistency;
@@ -821,7 +823,12 @@ mod deserialize {
 
                 assert_eq!(
                     auth_info.cert,
-                    X509::from_pem(&base64::decode(TEST_CA.as_bytes()).unwrap()).unwrap()
+                    X509::from_pem(
+                        &general_purpose::STANDARD
+                            .decode(TEST_CA.as_bytes())
+                            .unwrap()
+                    )
+                    .unwrap()
                 );
                 // comparison of PKey<Private> is not possible, so auth_info.key won't be tested here.
 
@@ -831,7 +838,12 @@ mod deserialize {
                 let datacenter = validated_config.datacenters.get("eu-west-1").unwrap();
                 assert_eq!(
                     datacenter.certificate_authority,
-                    X509::from_pem(&base64::decode(TEST_CA.as_bytes()).unwrap()).unwrap()
+                    X509::from_pem(
+                        &general_purpose::STANDARD
+                            .decode(TEST_CA.as_bytes())
+                            .unwrap()
+                    )
+                    .unwrap()
                 );
                 assert_eq!(datacenter.server.as_str(), "127.0.1.12:9142");
                 assert_eq!(datacenter.node_domain, "cql.my-cluster-id.scylla.com");

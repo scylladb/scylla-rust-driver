@@ -40,7 +40,7 @@ use super::topology::Strategy;
 
 /// Cluster manages up to date information and connections to database nodes.
 /// All data can be accessed by cloning Arc<ClusterData> in the `data` field
-pub struct Cluster {
+pub(crate) struct Cluster {
     // `ArcSwap<ClusterData>` is wrapped in `Arc` to support sharing cluster data
     // between `Cluster` and `ClusterWorker`
     data: Arc<ArcSwap<ClusterData>>,
@@ -53,7 +53,7 @@ pub struct Cluster {
 
 /// Enables printing [Cluster] struct in a neat way, by skipping the rather useless
 /// print of channels state and printing [ClusterData] neatly.
-pub struct ClusterNeatDebug<'a>(pub &'a Cluster);
+pub(crate) struct ClusterNeatDebug<'a>(pub(crate) &'a Cluster);
 impl<'a> std::fmt::Debug for ClusterNeatDebug<'a> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let cluster = self.0;
@@ -78,7 +78,7 @@ pub struct ClusterData {
 
 /// Enables printing [ClusterData] struct in a neat way, skipping the clutter involved by
 /// [ClusterData::ring] being large and [Self::keyspaces] debug print being very verbose by default.
-pub struct ClusterDataNeatDebug<'a>(pub &'a Arc<ClusterData>);
+pub(crate) struct ClusterDataNeatDebug<'a>(pub(crate) &'a Arc<ClusterData>);
 impl<'a> std::fmt::Debug for ClusterDataNeatDebug<'a> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let cluster_data = &self.0;
@@ -137,7 +137,7 @@ struct UseKeyspaceRequest {
 }
 
 impl Cluster {
-    pub async fn new(
+    pub(crate) async fn new(
         initial_peers: Vec<ContactPoint>,
         pool_config: PoolConfig,
         keyspaces_to_fetch: Vec<String>,
@@ -199,11 +199,11 @@ impl Cluster {
         Ok(result)
     }
 
-    pub fn get_data(&self) -> Arc<ClusterData> {
+    pub(crate) fn get_data(&self) -> Arc<ClusterData> {
         self.data.load_full()
     }
 
-    pub async fn refresh_metadata(&self) -> Result<(), QueryError> {
+    pub(crate) async fn refresh_metadata(&self) -> Result<(), QueryError> {
         let (response_sender, response_receiver) = tokio::sync::oneshot::channel();
 
         self.refresh_channel
@@ -220,7 +220,7 @@ impl Cluster {
         // ClusterWorker always responds
     }
 
-    pub async fn use_keyspace(
+    pub(crate) async fn use_keyspace(
         &self,
         keyspace_name: VerifiedKeyspaceName,
     ) -> Result<(), QueryError> {
@@ -239,7 +239,7 @@ impl Cluster {
     }
 
     /// Returns nonempty list of working connections to all shards
-    pub async fn get_working_connections(&self) -> Result<Vec<Arc<Connection>>, QueryError> {
+    pub(crate) async fn get_working_connections(&self) -> Result<Vec<Arc<Connection>>, QueryError> {
         let cluster_data: Arc<ClusterData> = self.get_data();
         let peers = &cluster_data.known_peers;
 
@@ -479,7 +479,7 @@ impl ClusterData {
 }
 
 impl ClusterWorker {
-    pub async fn work(mut self) {
+    pub(crate) async fn work(mut self) {
         use tokio::time::Instant;
 
         let refresh_duration = Duration::from_secs(60); // Refresh topology every 60 seconds

@@ -7,7 +7,7 @@ use crate::query::Query;
 use crate::retry_policy::{QueryInfo, RetryDecision, RetryPolicy, RetrySession};
 use crate::routing::Token;
 use crate::statement::Consistency;
-use crate::tracing::{GetTracingConfig, TracingInfo};
+use crate::tracing::TracingInfo;
 use crate::transport::cluster::Datacenter;
 use crate::transport::errors::{BadKeyspaceName, BadQuery, DbError, QueryError};
 use crate::transport::partitioner::{Murmur3Partitioner, Partitioner, PartitionerName};
@@ -29,10 +29,8 @@ use itertools::Itertools;
 use scylla_cql::frame::value::Value;
 use std::collections::BTreeSet;
 use std::collections::{BTreeMap, HashMap};
-use std::num::NonZeroU32;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
-use std::time::Duration;
 use tokio::net::TcpListener;
 use uuid::Uuid;
 
@@ -563,14 +561,6 @@ async fn test_token_awareness() {
         .unwrap();
     prepared_statement.set_tracing(true);
 
-    // The Cassandra cluster in CI is quite slow, so we use a quite forgiving
-    // configuration here (wait at most 10 seconds)
-    let get_tracing_config = GetTracingConfig {
-        attempts: NonZeroU32::new(50).unwrap(),
-        interval: Duration::from_millis(200),
-        consistency: Consistency::One,
-    };
-
     // The default policy should be token aware
     for size in 1..50usize {
         let key = vec!['a'; size].into_iter().collect::<String>();
@@ -579,7 +569,7 @@ async fn test_token_awareness() {
         // Execute a query and observe tracing info
         let res = session.execute(&prepared_statement, values).await.unwrap();
         let tracing_info = session
-            .get_tracing_info_custom(res.tracing_id.as_ref().unwrap(), &get_tracing_config)
+            .get_tracing_info(res.tracing_id.as_ref().unwrap())
             .await
             .unwrap();
 
@@ -592,10 +582,7 @@ async fn test_token_awareness() {
             .await
             .unwrap();
         let tracing_id = iter.get_tracing_ids()[0];
-        let tracing_info = session
-            .get_tracing_info_custom(&tracing_id, &get_tracing_config)
-            .await
-            .unwrap();
+        let tracing_info = session.get_tracing_info(&tracing_id).await.unwrap();
 
         // Again, verify that only one node was involved
         assert_eq!(tracing_info.nodes().len(), 1);
@@ -986,21 +973,8 @@ async fn test_get_tracing_info(session: &Session, ks: String) {
     let traced_query_result: QueryResult = session.query(traced_query, &[]).await.unwrap();
     let tracing_id: Uuid = traced_query_result.tracing_id.unwrap();
 
-    // The reason why we enable so long waiting for TracingInfo is... Cassandra. (Yes, again.)
-    // In Cassandra Java Driver, the wait time for tracing info is 10 seconds, so here we do the same.
-    // However, as Scylla usually gets TracingInfo ready really fast (our default interval is hence 3ms),
-    // we stick to a not-so-much-terribly-long interval here.
-    let get_tracing_config = GetTracingConfig {
-        attempts: NonZeroU32::new(50).unwrap(),
-        interval: Duration::from_millis(200),
-        consistency: Consistency::One,
-    };
-
     // Getting tracing info from session using this uuid works
-    let tracing_info: TracingInfo = session
-        .get_tracing_info_custom(&tracing_id, &get_tracing_config)
-        .await
-        .unwrap();
+    let tracing_info: TracingInfo = session.get_tracing_info(&tracing_id).await.unwrap();
     assert!(!tracing_info.events.is_empty());
     assert!(!tracing_info.nodes().is_empty());
 }
@@ -2797,4 +2771,99 @@ async fn simple_strategy_test() {
     rows.sort();
 
     assert_eq!(rows, vec![(1, 2, 3), (4, 5, 6), (7, 8, 9)]);
+}
+
+#[tokio::test]
+async fn test_manual_primary_key_computation() {
+    // Setup session
+    let ks = unique_keyspace_name();
+    let session = create_new_session_builder().build().await.unwrap();
+    session.query(format!("CREATE KEYSPACE IF NOT EXISTS {} WITH REPLICATION = {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}}", ks), &[]).await.unwrap();
+    session.use_keyspace(&ks, true).await.unwrap();
+
+    async fn assert_tokens_equal(
+        session: &Session,
+        prepared: &PreparedStatement,
+        pk_values_in_pk_order: impl ValueList,
+        all_values_in_query_order: impl ValueList,
+    ) {
+        let serialized_values_in_pk_order =
+            pk_values_in_pk_order.serialized().unwrap().into_owned();
+        let serialized_values_in_query_order =
+            all_values_in_query_order.serialized().unwrap().into_owned();
+
+        session
+            .execute(prepared, &serialized_values_in_query_order)
+            .await
+            .unwrap();
+
+        let token_by_prepared = session
+            .calculate_token(prepared, &serialized_values_in_query_order)
+            .unwrap()
+            .unwrap();
+        let token_by_hand = Session::calculate_token_for_partition_key(
+            &serialized_values_in_pk_order,
+            &Murmur3Partitioner,
+        )
+        .unwrap();
+        println!(
+            "by_prepared: {}, by_hand: {}",
+            token_by_prepared.value, token_by_hand.value
+        );
+        assert_eq!(token_by_prepared, token_by_hand);
+    }
+
+    // Single-column partition key
+    {
+        session
+            .query(
+                "CREATE TABLE IF NOT EXISTS t2 (a int, b int, c text, primary key (a, b))",
+                &[],
+            )
+            .await
+            .unwrap();
+
+        // Values are given non partition key order,
+        let prepared_simple_pk = session
+            .prepare("INSERT INTO t2 (a, b, c) VALUES (?, ?, ?)")
+            .await
+            .unwrap();
+
+        let pk_values_in_pk_order = (17_i32,);
+        let all_values_in_query_order = (17_i32, 16_i32, "I'm prepared!!!");
+
+        assert_tokens_equal(
+            &session,
+            &prepared_simple_pk,
+            pk_values_in_pk_order,
+            all_values_in_query_order,
+        )
+        .await;
+    }
+
+    // Composite partition key
+    {
+        session
+            .query("CREATE TABLE IF NOT EXISTS complex_pk (a int, b int, c text, d int, e int, primary key ((a,b,c),d))", &[])
+            .await
+            .unwrap();
+
+        // Values are given in non partition key order, to check that such permutation
+        // still yields consistent hashes.
+        let prepared_complex_pk = session
+            .prepare("INSERT INTO complex_pk (a, d, c, b) VALUES (?, 7, ?, ?)")
+            .await
+            .unwrap();
+
+        let pk_values_in_pk_order = (17_i32, 16_i32, "I'm prepared!!!");
+        let all_values_in_query_order = (17_i32, "I'm prepared!!!", 16_i32);
+
+        assert_tokens_equal(
+            &session,
+            &prepared_complex_pk,
+            pk_values_in_pk_order,
+            all_values_in_query_order,
+        )
+        .await;
+    }
 }

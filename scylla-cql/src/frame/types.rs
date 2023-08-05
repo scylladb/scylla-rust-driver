@@ -12,7 +12,7 @@ use std::net::SocketAddr;
 use std::str;
 use uuid::Uuid;
 
-#[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord, TryFromPrimitive)]
+#[derive(Debug, Copy, Clone, Default, PartialEq, Eq, PartialOrd, Ord, TryFromPrimitive)]
 #[cfg_attr(feature = "serde", derive(serde::Deserialize))]
 #[cfg_attr(feature = "serde", serde(rename_all = "SCREAMING_SNAKE_CASE"))]
 #[repr(i16)]
@@ -23,6 +23,7 @@ pub enum Consistency {
     Three = 0x0003,
     Quorum = 0x0004,
     All = 0x0005,
+    #[default]
     LocalQuorum = 0x0006,
     EachQuorum = 0x0007,
     LocalOne = 0x000A,
@@ -44,22 +45,6 @@ pub enum SerialConsistency {
 pub enum LegacyConsistency {
     Regular(Consistency),
     Serial(SerialConsistency),
-}
-
-// Although we could `impl Default for Consistency` with an automatic derive,
-// this would require adding a #[default] annotation on the default variant,
-// but - unfortunately - that annotation is also recognized by `TryFromPrimitive`
-// derive macro. If there is a #[default] variant then `TryFromPrimitive`
-// falls back to it - if not, then it returns an error. This breaks one of the
-// tests.
-//
-// It will be possible to fix this properly after the following issue is closed:
-// https://github.com/illicitonion/num_enum/issues/75
-#[allow(clippy::derivable_impls)]
-impl Default for Consistency {
-    fn default() -> Self {
-        Consistency::LocalQuorum
-    }
 }
 
 impl std::fmt::Display for Consistency {

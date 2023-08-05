@@ -3,6 +3,7 @@ use std::collections::HashMap;
 use bytes::{Buf, BufMut, Bytes, BytesMut};
 use scylla_cql::frame::frame_errors::{FrameError, ParseError};
 use scylla_cql::frame::protocol_features::ProtocolFeatures;
+use scylla_cql::frame::request::Request;
 pub use scylla_cql::frame::request::RequestOpcode;
 pub use scylla_cql::frame::response::ResponseOpcode;
 use scylla_cql::frame::types::LegacyConsistency;
@@ -68,6 +69,10 @@ impl RequestFrame {
             writer,
         )
         .await
+    }
+
+    pub fn deserialize(&self) -> Result<Request, ParseError> {
+        Request::deserialize(&mut &self.body[..], self.opcode)
     }
 }
 #[derive(Clone, Debug)]

@@ -357,8 +357,8 @@ pub enum BadQuery {
 #[derive(Error, Debug, Clone)]
 pub enum NewSessionError {
     /// Failed to resolve hostname passed in Session creation
-    #[error("Couldn't resolve address: {0}")]
-    FailedToResolveAddress(String),
+    #[error("Couldn't resolve any hostname: {0:?}")]
+    FailedToResolveAnyHostname(Vec<String>),
 
     /// List of known nodes passed to Session constructor is empty
     /// There needs to be at least one node to connect to

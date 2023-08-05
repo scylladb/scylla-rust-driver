@@ -10,11 +10,13 @@ use crate::cloud::{CloudConfig, CloudConfigError};
 #[cfg(feature = "cloud")]
 use crate::ExecutionProfile;
 
+use crate::statement::Consistency;
 use crate::transport::connection_pool::PoolSize;
 use crate::transport::host_filter::HostFilter;
 use std::borrow::Borrow;
 use std::marker::PhantomData;
 use std::net::SocketAddr;
+use std::num::NonZeroU32;
 #[cfg(feature = "cloud")]
 use std::path::Path;
 use std::sync::Arc;
@@ -69,7 +71,10 @@ pub struct GenericSessionBuilder<Kind: SessionBuilderKind> {
     kind: PhantomData<Kind>,
 }
 
-impl SessionBuilder {
+// NOTE: this `impl` block contains configuration options specific for **non-Cloud** [`Session`].
+// This means that if an option fits both non-Cloud and Cloud `Session`s, it should NOT be put
+// here, but rather in `impl<K> GenericSessionBuilder<K>` block.
+impl GenericSessionBuilder<DefaultMode> {
     /// Creates new SessionBuilder with default configuration
     /// # Default configuration
     /// * Compression: None
@@ -298,37 +303,6 @@ impl SessionBuilder {
         self
     }
 
-    /// If true, the driver will inject a small delay before flushing data
-    /// to the socket - by rescheduling the task that writes data to the socket.
-    /// This gives the task an opportunity to collect more write requests
-    /// and write them in a single syscall, increasing the efficiency.
-    ///
-    /// However, this optimization may worsen latency if the rate of requests
-    /// issued by the application is low, but otherwise the application is
-    /// heavily loaded with other tasks on the same tokio executor.
-    /// Please do performance measurements before committing to disabling
-    /// this option.
-    ///
-    /// This option is true by default.
-    ///
-    /// # Example
-    /// ```
-    /// # use scylla::{Session, SessionBuilder};
-    /// # use scylla::transport::Compression;
-    /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
-    /// let session: Session = SessionBuilder::new()
-    ///     .known_node("127.0.0.1:9042")
-    ///     .write_coalescing(false) // Enabled by default
-    ///     .build()
-    ///     .await?;
-    /// # Ok(())
-    /// # }
-    /// ```
-    pub fn write_coalescing(mut self, enable: bool) -> Self {
-        self.config.enable_write_coalescing = enable;
-        self
-    }
-
     /// ssl feature
     /// Provide SessionBuilder with SslContext from openssl crate that will be
     /// used to create an ssl connection to the database.
@@ -361,6 +335,10 @@ impl SessionBuilder {
         self
     }
 }
+
+// NOTE: this `impl` block contains configuration options specific for **Cloud** [`Session`].
+// This means that if an option fits both non-Cloud and Cloud `Session`s, it should NOT be put
+// here, but rather in `impl<K> GenericSessionBuilder<K>` block.
 #[cfg(feature = "cloud")]
 impl CloudSessionBuilder {
     /// Creates a new SessionBuilder with default configuration,
@@ -385,6 +363,8 @@ impl CloudSessionBuilder {
     }
 }
 
+// This block contains configuration options that make sense both for Cloud and non-Cloud
+// `Session`s. If an option fit only one of them, it should be put in a specialised block.
 impl<K: SessionBuilderKind> GenericSessionBuilder<K> {
     /// Set preferred Compression algorithm.
     /// The default is no compression.
@@ -826,6 +806,108 @@ impl<K: SessionBuilderKind> GenericSessionBuilder<K> {
     /// ```
     pub fn refresh_metadata_on_auto_schema_agreement(mut self, refresh_metadata: bool) -> Self {
         self.config.refresh_metadata_on_auto_schema_agreement = refresh_metadata;
+        self
+    }
+
+    /// Set the number of attempts to fetch [TracingInfo](crate::tracing::TracingInfo)
+    /// in [`Session::get_tracing_info`].
+    /// The default is 5 attempts.
+    ///
+    /// Tracing info might not be available immediately on queried node - that's why
+    /// the driver performs a few attempts with sleeps in between.
+    ///
+    /// # Example
+    /// ```
+    /// # use scylla::{Session, SessionBuilder};
+    /// # use std::num::NonZeroU32;
+    /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
+    /// let session: Session = SessionBuilder::new()
+    ///     .known_node("127.0.0.1:9042")
+    ///     .tracing_info_fetch_attempts(NonZeroU32::new(10).unwrap())
+    ///     .build()
+    ///     .await?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn tracing_info_fetch_attempts(mut self, attempts: NonZeroU32) -> Self {
+        self.config.tracing_info_fetch_attempts = attempts;
+        self
+    }
+
+    /// Set the delay between attempts to fetch [TracingInfo](crate::tracing::TracingInfo)
+    /// in [`Session::get_tracing_info`].
+    /// The default is 3 milliseconds.
+    ///
+    /// Tracing info might not be available immediately on queried node - that's why
+    /// the driver performs a few attempts with sleeps in between.
+    ///
+    /// # Example
+    /// ```
+    /// # use scylla::{Session, SessionBuilder};
+    /// # use std::time::Duration;
+    /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
+    /// let session: Session = SessionBuilder::new()
+    ///     .known_node("127.0.0.1:9042")
+    ///     .tracing_info_fetch_interval(Duration::from_millis(50))
+    ///     .build()
+    ///     .await?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn tracing_info_fetch_interval(mut self, interval: Duration) -> Self {
+        self.config.tracing_info_fetch_interval = interval;
+        self
+    }
+
+    /// Set the consistency level of fetching [TracingInfo](crate::tracing::TracingInfo)
+    /// in [`Session::get_tracing_info`].
+    /// The default is [`Consistency::One`].
+    ///
+    /// # Example
+    /// ```
+    /// # use scylla::{Session, SessionBuilder, statement::Consistency};
+    /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
+    /// let session: Session = SessionBuilder::new()
+    ///     .known_node("127.0.0.1:9042")
+    ///     .tracing_info_fetch_consistency(Consistency::One)
+    ///     .build()
+    ///     .await?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn tracing_info_fetch_consistency(mut self, consistency: Consistency) -> Self {
+        self.config.tracing_info_fetch_consistency = consistency;
+        self
+    }
+
+    /// If true, the driver will inject a small delay before flushing data
+    /// to the socket - by rescheduling the task that writes data to the socket.
+    /// This gives the task an opportunity to collect more write requests
+    /// and write them in a single syscall, increasing the efficiency.
+    ///
+    /// However, this optimization may worsen latency if the rate of requests
+    /// issued by the application is low, but otherwise the application is
+    /// heavily loaded with other tasks on the same tokio executor.
+    /// Please do performance measurements before committing to disabling
+    /// this option.
+    ///
+    /// This option is true by default.
+    ///
+    /// # Example
+    /// ```
+    /// # use scylla::{Session, SessionBuilder};
+    /// # use scylla::transport::Compression;
+    /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
+    /// let session: Session = SessionBuilder::new()
+    ///     .known_node("127.0.0.1:9042")
+    ///     .write_coalescing(false) // Enabled by default
+    ///     .build()
+    ///     .await?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn write_coalescing(mut self, enable: bool) -> Self {
+        self.config.enable_write_coalescing = enable;
         self
     }
 }
