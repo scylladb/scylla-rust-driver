@@ -31,7 +31,7 @@ setup:
 	$(POETRY) install
 	$(POETRY) update
 	cp -TLr source $(SOURCEDIR)
-	python3 _utils/prepare_sphinx_source.py _source
+	python _utils/prepare_sphinx_source.py _source
 
 # Clean commands
 .PHONY: pristine
