@@ -143,6 +143,7 @@ impl Cluster {
         keyspaces_to_fetch: Vec<String>,
         fetch_schema_metadata: bool,
         host_filter: Option<Arc<dyn HostFilter>>,
+        topology_refresh_interval: Option<Duration>,
     ) -> Result<Cluster, QueryError> {
         let (refresh_sender, refresh_receiver) = tokio::sync::mpsc::channel(32);
         let (use_keyspace_sender, use_keyspace_receiver) = tokio::sync::mpsc::channel(32);
@@ -186,7 +187,7 @@ impl Cluster {
             host_filter,
         };
 
-        let (fut, worker_handle) = worker.work().remote_handle();
+        let (fut, worker_handle) = worker.work(topology_refresh_interval).remote_handle();
         tokio::spawn(fut.with_current_subscriber());
 
         let result = Cluster {
@@ -479,25 +480,30 @@ impl ClusterData {
 }
 
 impl ClusterWorker {
-    pub(crate) async fn work(mut self) {
+    pub(crate) async fn work(mut self, refresh_interval: Option<Duration>) {
         use tokio::time::Instant;
 
-        let refresh_duration = Duration::from_secs(60); // Refresh topology every 60 seconds
         let mut last_refresh_time = Instant::now();
 
         loop {
             let mut cur_request: Option<RefreshRequest> = None;
 
             // Wait until it's time for the next refresh
-            let sleep_until: Instant = last_refresh_time
-                .checked_add(refresh_duration)
-                .unwrap_or_else(Instant::now);
-
-            let sleep_future = tokio::time::sleep_until(sleep_until);
-            tokio::pin!(sleep_future);
+            let refresh_interval_future = async {
+                if let Some(interval) = &refresh_interval {
+                    tokio::time::sleep_until(
+                        last_refresh_time
+                            .checked_add(*interval)
+                            .unwrap_or_else(Instant::now),
+                    )
+                    .await;
+                } else {
+                    std::future::pending().await
+                }
+            };
 
             tokio::select! {
-                _ = sleep_future => {},
+                _ = refresh_interval_future => {},
                 recv_res = self.refresh_channel.recv() => {
                     match recv_res {
                         Some(request) => cur_request = Some(request),

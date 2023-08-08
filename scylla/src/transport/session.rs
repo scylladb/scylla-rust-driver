@@ -187,6 +187,7 @@ pub struct SessionConfig {
     pub authenticator: Option<Arc<dyn AuthenticatorProvider>>,
 
     pub schema_agreement_interval: Duration,
+    pub topology_refresh_interval: Option<Duration>,
     pub connect_timeout: Duration,
 
     /// Size of the per-node connection pool, i.e. how many connections the driver should keep to each node.
@@ -295,6 +296,7 @@ impl SessionConfig {
             tcp_nodelay: true,
             tcp_keepalive_interval: None,
             schema_agreement_interval: Duration::from_millis(200),
+            topology_refresh_interval: Some(Duration::from_secs(60)),
             default_execution_profile_handle: ExecutionProfile::new_from_inner(Default::default())
                 .into_handle(),
             used_keyspace: None,
@@ -555,6 +557,7 @@ impl Session {
             config.keyspaces_to_fetch,
             config.fetch_schema_metadata,
             config.host_filter,
+            config.topology_refresh_interval,
         )
         .await?;
 

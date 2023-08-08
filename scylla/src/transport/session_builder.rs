@@ -409,6 +409,32 @@ impl<K: SessionBuilderKind> GenericSessionBuilder<K> {
         self
     }
 
+    /// Topology refresh automatically occurs when the driver detects that a refresh is needed.
+    /// However there is also a scheduled refresh in case another client alters the schema or the cluster topology is changed.
+    ///
+    /// This configuration sets the interval at which the scheduled refresh occurs.
+    /// When set to None, the scheduled refresh never occurs but refresh still occurs when the driver detects a change.
+    ///
+    /// The default is 60 seconds.
+    ///
+    /// # Example
+    /// ```
+    /// # use scylla::{Session, SessionBuilder};
+    /// # use std::time::Duration;
+    /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
+    /// let session: Session = SessionBuilder::new()
+    ///     .known_node("127.0.0.1:9042")
+    ///     .topology_refresh_interval(Some(Duration::from_secs(60)))
+    ///     .build()
+    ///     .await?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn topology_refresh_interval(mut self, timeout: Option<Duration>) -> Self {
+        self.config.topology_refresh_interval = timeout;
+        self
+    }
+
     /// Set the default execution profile using its handle
     ///
     /// # Example
