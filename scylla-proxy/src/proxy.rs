@@ -206,6 +206,18 @@ impl Display for DisplayableRealAddrOption {
     }
 }
 
+#[derive(Clone, Copy)]
+struct DisplayableShard(Option<TargetShard>);
+impl Display for DisplayableShard {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        if let Some(shard) = self.0 {
+            write!(f, "shard {}", shard)
+        } else {
+            write!(f, "unknown shard")
+        }
+    }
+}
+
 enum InternalNode {
     Real {
         real_addr: SocketAddr,
@@ -845,10 +857,11 @@ struct ProxyWorker {
 impl ProxyWorker {
     fn exit(self, duty: &'static str) {
         debug!(
-            "Worker exits: [driver: {}, proxy: {}, node: {}]::{}.",
+            "Worker exits: [driver: {}, proxy: {}, node: {}, {}]::{}.",
             self.driver_addr,
             self.proxy_addr,
             DisplayableRealAddrOption(self.real_addr),
+            DisplayableShard(self.shard),
             duty
         );
         std::mem::drop(self.finish_guard);
@@ -879,6 +892,7 @@ impl ProxyWorker {
         mut read_half: (impl AsyncRead + Unpin),
         request_processor_tx: mpsc::UnboundedSender<RequestFrame>,
     ) {
+        let shard = self.shard;
         self.run_until_interrupted(
             "receiver_from_driver",
             |driver_addr, proxy_addr, _real_addr| async move {
@@ -891,8 +905,11 @@ impl ProxyWorker {
                         })?;
 
                     debug!(
-                        "Intercepted Driver ({}) -> Cluster ({}) frame. opcode: {:?}.",
-                        driver_addr, proxy_addr, &frame.opcode
+                        "Intercepted Driver ({}) -> Cluster ({}) ({}) frame. opcode: {:?}.",
+                        driver_addr,
+                        proxy_addr,
+                        DisplayableShard(shard),
+                        &frame.opcode
                     );
                     if request_processor_tx.send(frame).is_err() {
                         warn!("request_processor had exited.");
@@ -909,6 +926,7 @@ impl ProxyWorker {
         mut read_half: (impl AsyncRead + Unpin),
         response_processor_tx: mpsc::UnboundedSender<ResponseFrame>,
     ) {
+        let shard = self.shard;
         self.run_until_interrupted(
             "receiver_from_cluster",
             |driver_addr, _proxy_addr, real_addr| async move {
@@ -923,8 +941,11 @@ impl ProxyWorker {
                             })?;
 
                     debug!(
-                        "Intercepted Cluster ({}) -> Driver ({}) frame. opcode: {:?}.",
-                        real_addr, driver_addr, &frame.opcode
+                        "Intercepted Cluster ({}) -> Driver ({}) ({}) frame. opcode: {:?}.",
+                        real_addr,
+                        driver_addr,
+                        DisplayableShard(shard),
+                        &frame.opcode
                     );
 
                     if response_processor_tx.send(frame).is_err() {
@@ -944,6 +965,7 @@ impl ProxyWorker {
         mut connection_close_notifier: ConnectionCloseNotifier,
         mut terminate_notifier: TerminateNotifier,
     ) {
+        let shard = self.shard;
         self.run_until_interrupted(
             "sender_to_driver",
             |driver_addr, proxy_addr, _real_addr| async move {
@@ -961,8 +983,11 @@ impl ProxyWorker {
                     };
 
                     debug!(
-                        "Sending Proxy ({}) -> Driver ({}) frame. opcode: {:?}.",
-                        proxy_addr, driver_addr, &response.opcode
+                        "Sending Proxy ({}) -> Driver ({}) ({}) frame. opcode: {:?}.",
+                        proxy_addr,
+                        driver_addr,
+                        DisplayableShard(shard),
+                        &response.opcode
                     );
                     if response.write(&mut write_half).await.is_err() {
                         if terminate_notifier.try_recv().is_err()
@@ -986,6 +1011,7 @@ impl ProxyWorker {
         mut connection_close_notifier: ConnectionCloseNotifier,
         mut terminate_notifier: TerminateNotifier,
     ) {
+        let shard = self.shard;
         self.run_until_interrupted(
             "sender_to_driver",
             |_driver_addr, proxy_addr, real_addr| async move {
@@ -1004,8 +1030,11 @@ impl ProxyWorker {
                     };
 
                     debug!(
-                        "Sending Proxy ({}) -> Cluster ({}) frame. opcode: {:?}.",
-                        proxy_addr, real_addr, &request.opcode
+                        "Sending Proxy ({}) -> Cluster ({}) ({}) frame. opcode: {:?}.",
+                        proxy_addr,
+                        real_addr,
+                        DisplayableShard(shard),
+                        &request.opcode
                     );
 
                     if request.write(&mut write_half).await.is_err() {
@@ -1032,6 +1061,7 @@ impl ProxyWorker {
         request_rules: Arc<Mutex<Vec<RequestRule>>>,
         connection_close_signaler: ConnectionCloseSignaler,
     ) {
+        let shard = self.shard;
         self.run_until_interrupted("request_processor", |driver_addr, _, real_addr| async move {
             'mainloop: loop {
                 match requests_rx.recv().await {
@@ -1044,7 +1074,7 @@ impl ProxyWorker {
                         let mut guard = request_rules.lock().unwrap();
                         '_ruleloop: for (i, request_rule) in guard.iter_mut().enumerate() {
                             if request_rule.0.eval(&ctx) {
-                                info!("Applying rule no={} to request ({} -> {}).", i, driver_addr, DisplayableRealAddrOption(real_addr));
+                                info!("Applying rule no={} to request ({} -> {} ({})).", i, driver_addr, DisplayableRealAddrOption(real_addr), DisplayableShard(shard));
                                 debug!("-> Applied rule: {:?}", request_rule);
                                 debug!("-> To request: {:?}", ctx.opcode);
                                 trace!("{:?}", request);
@@ -1100,8 +1130,11 @@ impl ProxyWorker {
                                         }
                                         // close connection.
                                         info!(
-                                            "Dropping connection between {} and {} (as requested by a proxy rule)!"
-                                        , driver_addr, DisplayableRealAddrOption(real_addr));
+                                            "Dropping connection between {} and {} ({}) (as requested by a proxy rule)!",
+                                            driver_addr,
+                                            DisplayableRealAddrOption(real_addr),
+                                            DisplayableShard(shard),
+                                        );
                                         let _ = connection_close_signaler_clone.send(());
                                     }
                                 };
@@ -1131,6 +1164,7 @@ impl ProxyWorker {
         response_rules: Arc<Mutex<Vec<ResponseRule>>>,
         connection_close_signaler: ConnectionCloseSignaler,
     ) {
+        let shard = self.shard;
         self.run_until_interrupted("request_processor", |driver_addr, _, real_addr| async move {
             'mainloop: loop {
                 match responses_rx.recv().await {
@@ -1143,7 +1177,7 @@ impl ProxyWorker {
                         let mut guard = response_rules.lock().unwrap();
                         '_ruleloop: for (i, response_rule) in guard.iter_mut().enumerate() {
                             if response_rule.0.eval(&ctx) {
-                                info!("Applying rule no={} to request ({} -> {}).", i, DisplayableRealAddrOption(real_addr), driver_addr);
+                                info!("Applying rule no={} to request ({} -> {} ({})).", i, DisplayableRealAddrOption(real_addr), driver_addr, DisplayableShard(shard));
                                 debug!("-> Applied rule: {:?}", response_rule);
                                 debug!("-> To response: {:?}", ctx.opcode);
                                 trace!("{:?}", response);
@@ -1199,8 +1233,11 @@ impl ProxyWorker {
                                         }
                                         // close connection.
                                         info!(
-                                            "Dropping connection between {} and {} (as requested by a proxy rule)!"
-                                        , driver_addr, real_addr.expect("BUG: response rules are unavailable for dry-mode proxy!"));
+                                            "Dropping connection between {} and {} ({}) (as requested by a proxy rule)!",
+                                            driver_addr,
+                                            real_addr.expect("BUG: response rules are unavailable for dry-mode proxy!"),
+                                            DisplayableShard(shard)
+                                        );
                                         let _ = connection_close_signaler_clone.send(());
                                     }
                                 };
