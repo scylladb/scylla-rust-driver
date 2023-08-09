@@ -4,8 +4,9 @@ use bytes::Bytes;
 use rand::{Rng, RngCore};
 use tokio::sync::mpsc;
 
-use crate::frame::{
-    FrameOpcode, FrameParams, RequestFrame, RequestOpcode, ResponseFrame, ResponseOpcode,
+use crate::{
+    frame::{FrameOpcode, FrameParams, RequestFrame, RequestOpcode, ResponseFrame, ResponseOpcode},
+    TargetShard,
 };
 use scylla_cql::{
     errors::{DbError, WriteType},
@@ -171,7 +172,10 @@ pub trait Reaction: Sized {
 
     /// Adds sending the matching frame as feedback using the provided channel.
     /// Modifies the existing `Reaction`.
-    fn with_feedback_when_performed(self, tx: mpsc::UnboundedSender<Self::Incoming>) -> Self;
+    fn with_feedback_when_performed(
+        self,
+        tx: mpsc::UnboundedSender<(Self::Incoming, Option<TargetShard>)>,
+    ) -> Self;
 }
 
 fn fmt_reaction(
@@ -202,7 +206,7 @@ pub struct RequestReaction {
     pub to_addressee: Option<Action<RequestFrame, RequestFrame>>,
     pub to_sender: Option<Action<RequestFrame, ResponseFrame>>,
     pub drop_connection: Option<Option<Duration>>,
-    pub feedback_channel: Option<mpsc::UnboundedSender<RequestFrame>>,
+    pub feedback_channel: Option<mpsc::UnboundedSender<(RequestFrame, Option<TargetShard>)>>,
 }
 
 impl fmt::Debug for RequestReaction {
@@ -223,7 +227,7 @@ pub struct ResponseReaction {
     pub to_addressee: Option<Action<ResponseFrame, ResponseFrame>>,
     pub to_sender: Option<Action<ResponseFrame, RequestFrame>>,
     pub drop_connection: Option<Option<Duration>>,
-    pub feedback_channel: Option<mpsc::UnboundedSender<ResponseFrame>>,
+    pub feedback_channel: Option<mpsc::UnboundedSender<(ResponseFrame, Option<TargetShard>)>>,
 }
 
 impl fmt::Debug for ResponseReaction {
@@ -321,7 +325,10 @@ impl Reaction for RequestReaction {
         }
     }
 
-    fn with_feedback_when_performed(self, tx: mpsc::UnboundedSender<Self::Incoming>) -> Self {
+    fn with_feedback_when_performed(
+        self,
+        tx: mpsc::UnboundedSender<(Self::Incoming, Option<TargetShard>)>,
+    ) -> Self {
         Self {
             feedback_channel: Some(tx),
             ..self
@@ -662,7 +669,10 @@ impl Reaction for ResponseReaction {
         }
     }
 
-    fn with_feedback_when_performed(self, tx: mpsc::UnboundedSender<Self::Incoming>) -> Self {
+    fn with_feedback_when_performed(
+        self,
+        tx: mpsc::UnboundedSender<(Self::Incoming, Option<TargetShard>)>,
+    ) -> Self {
         Self {
             feedback_channel: Some(tx),
             ..self
