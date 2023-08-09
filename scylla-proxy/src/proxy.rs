@@ -600,6 +600,7 @@ impl Doorkeeper {
         connection_no: usize,
         driver_stream: TcpStream,
         cluster_stream: Option<TcpStream>,
+        shard: Option<TargetShard>,
     ) {
         let (driver_read, driver_write) = driver_stream.into_split();
 
@@ -611,6 +612,7 @@ impl Doorkeeper {
             driver_addr,
             real_addr: self.node.real_addr(),
             proxy_addr: self.node.proxy_addr(),
+            shard,
         };
 
         let (tx_request, rx_request) = mpsc::unbounded_channel::<RequestFrame>();
@@ -682,6 +684,7 @@ impl Doorkeeper {
             connection_no,
             driver_stream,
             cluster_stream,
+            shard,
         )
         .await;
 
@@ -836,6 +839,7 @@ struct ProxyWorker {
     driver_addr: SocketAddr,
     real_addr: Option<SocketAddr>,
     proxy_addr: SocketAddr,
+    shard: Option<TargetShard>,
 }
 
 impl ProxyWorker {
