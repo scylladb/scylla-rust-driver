@@ -258,7 +258,7 @@ pub struct SessionConfig {
     /// in [`Session::get_tracing_info`].
     pub tracing_info_fetch_consistency: Consistency,
 
-    /// Interval between refreshing cluster topology. This
+    /// Interval between refreshing cluster metadata. This
     /// can be configured according to the traffic pattern
     /// for e.g: if they do not want unexpected traffic
     /// or they expect the topology to change frequently.
