@@ -13,10 +13,10 @@ pub type Shard = u32;
 pub type ShardCount = NonZeroU16;
 
 #[derive(PartialEq, Eq, Clone, Debug)]
-pub struct ShardInfo {
-    pub shard: u16,
-    pub nr_shards: ShardCount,
-    pub msb_ignore: u8,
+pub(crate) struct ShardInfo {
+    pub(crate) shard: u16,
+    pub(crate) nr_shards: ShardCount,
+    pub(crate) msb_ignore: u8,
 }
 
 #[derive(PartialEq, Eq, Clone, Debug)]
@@ -33,7 +33,7 @@ impl std::str::FromStr for Token {
 }
 
 impl ShardInfo {
-    pub fn new(shard: u16, nr_shards: ShardCount, msb_ignore: u8) -> Self {
+    pub(crate) fn new(shard: u16, nr_shards: ShardCount, msb_ignore: u8) -> Self {
         ShardInfo {
             shard,
             nr_shards,
@@ -41,7 +41,7 @@ impl ShardInfo {
         }
     }
 
-    pub fn get_sharder(&self) -> Sharder {
+    pub(crate) fn get_sharder(&self) -> Sharder {
         Sharder::new(self.nr_shards, self.msb_ignore)
     }
 }
