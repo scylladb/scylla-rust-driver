@@ -75,7 +75,7 @@ const LOCAL_VERSION: &str = "SELECT schema_version FROM system.local WHERE key='
 const OLD_ORPHAN_COUNT_THRESHOLD: usize = 1024;
 const OLD_AGE_ORPHAN_THRESHOLD: std::time::Duration = std::time::Duration::from_secs(1);
 
-pub struct Connection {
+pub(crate) struct Connection {
     _worker_handle: RemoteHandle<()>,
 
     connect_address: SocketAddr,
@@ -210,21 +210,21 @@ struct TaskResponse {
     body: Bytes,
 }
 
-pub struct QueryResponse {
-    pub response: Response,
-    pub tracing_id: Option<Uuid>,
-    pub warnings: Vec<String>,
+pub(crate) struct QueryResponse {
+    pub(crate) response: Response,
+    pub(crate) tracing_id: Option<Uuid>,
+    pub(crate) warnings: Vec<String>,
 }
 
 // A QueryResponse in which response can not be Response::Error
-pub struct NonErrorQueryResponse {
-    pub response: NonErrorResponse,
-    pub tracing_id: Option<Uuid>,
-    pub warnings: Vec<String>,
+pub(crate) struct NonErrorQueryResponse {
+    pub(crate) response: NonErrorResponse,
+    pub(crate) tracing_id: Option<Uuid>,
+    pub(crate) warnings: Vec<String>,
 }
 
 impl QueryResponse {
-    pub fn into_non_error_query_response(self) -> Result<NonErrorQueryResponse, QueryError> {
+    pub(crate) fn into_non_error_query_response(self) -> Result<NonErrorQueryResponse, QueryError> {
         Ok(NonErrorQueryResponse {
             response: self.response.into_non_error_response()?,
             tracing_id: self.tracing_id,
@@ -232,27 +232,27 @@ impl QueryResponse {
         })
     }
 
-    pub fn into_query_result(self) -> Result<QueryResult, QueryError> {
+    pub(crate) fn into_query_result(self) -> Result<QueryResult, QueryError> {
         self.into_non_error_query_response()?.into_query_result()
     }
 }
 
 impl NonErrorQueryResponse {
-    pub fn as_set_keyspace(&self) -> Option<&result::SetKeyspace> {
+    pub(crate) fn as_set_keyspace(&self) -> Option<&result::SetKeyspace> {
         match &self.response {
             NonErrorResponse::Result(result::Result::SetKeyspace(sk)) => Some(sk),
             _ => None,
         }
     }
 
-    pub fn as_schema_change(&self) -> Option<&result::SchemaChange> {
+    pub(crate) fn as_schema_change(&self) -> Option<&result::SchemaChange> {
         match &self.response {
             NonErrorResponse::Result(result::Result::SchemaChange(sc)) => Some(sc),
             _ => None,
         }
     }
 
-    pub fn into_query_result(self) -> Result<QueryResult, QueryError> {
+    pub(crate) fn into_query_result(self) -> Result<QueryResult, QueryError> {
         let (rows, paging_state, col_specs, serialized_size) = match self.response {
             NonErrorResponse::Result(result::Result::Rows(rs)) => (
                 Some(rs.rows),
@@ -407,11 +407,11 @@ impl ConnectionConfig {
 }
 
 // Used to listen for fatal error in connection
-pub type ErrorReceiver = tokio::sync::oneshot::Receiver<QueryError>;
+pub(crate) type ErrorReceiver = tokio::sync::oneshot::Receiver<QueryError>;
 
 impl Connection {
     // Returns new connection and ErrorReceiver which can be used to wait for a fatal error
-    pub async fn new(
+    pub(crate) async fn new(
         addr: SocketAddr,
         source_port: Option<u16>,
         config: ConnectionConfig,
@@ -514,21 +514,24 @@ impl Connection {
         Ok((connection, error_receiver))
     }
 
-    pub async fn startup(&self, options: HashMap<String, String>) -> Result<Response, QueryError> {
+    pub(crate) async fn startup(
+        &self,
+        options: HashMap<String, String>,
+    ) -> Result<Response, QueryError> {
         Ok(self
             .send_request(&request::Startup { options }, false, false)
             .await?
             .response)
     }
 
-    pub async fn get_options(&self) -> Result<Response, QueryError> {
+    pub(crate) async fn get_options(&self) -> Result<Response, QueryError> {
         Ok(self
             .send_request(&request::Options {}, false, false)
             .await?
             .response)
     }
 
-    pub async fn prepare(&self, query: &Query) -> Result<PreparedStatement, QueryError> {
+    pub(crate) async fn prepare(&self, query: &Query) -> Result<PreparedStatement, QueryError> {
         let query_response = self
             .send_request(
                 &request::Prepare {
@@ -548,7 +551,6 @@ impl Connection {
                     .prepared_flags_contain_lwt_mark(p.prepared_metadata.flags as u32),
                 p.prepared_metadata,
                 query.contents.clone(),
-                query.get_retry_policy().cloned(),
                 query.get_page_size(),
                 query.config.clone(),
             ),
@@ -565,7 +567,7 @@ impl Connection {
         Ok(prepared_statement)
     }
 
-    async fn reprepare(
+    pub(crate) async fn reprepare(
         &self,
         query: impl Into<Query>,
         previous_prepared: &PreparedStatement,
@@ -583,7 +585,7 @@ impl Connection {
         }
     }
 
-    pub async fn authenticate_response(
+    pub(crate) async fn authenticate_response(
         &self,
         response: Option<Vec<u8>>,
     ) -> Result<QueryResponse, QueryError> {
@@ -591,7 +593,7 @@ impl Connection {
             .await
     }
 
-    pub async fn query_single_page(
+    pub(crate) async fn query_single_page(
         &self,
         query: impl Into<Query>,
         values: impl ValueList,
@@ -613,7 +615,7 @@ impl Connection {
         .await
     }
 
-    pub async fn query_single_page_with_consistency(
+    pub(crate) async fn query_single_page_with_consistency(
         &self,
         query: impl Into<Query>,
         values: impl ValueList,
@@ -626,7 +628,7 @@ impl Connection {
             .into_query_result()
     }
 
-    pub async fn query(
+    pub(crate) async fn query(
         &self,
         query: &Query,
         values: impl ValueList,
@@ -645,7 +647,7 @@ impl Connection {
         .await
     }
 
-    pub async fn query_with_consistency(
+    pub(crate) async fn query_with_consistency(
         &self,
         query: &Query,
         values: impl ValueList,
@@ -671,7 +673,7 @@ impl Connection {
             .await
     }
 
-    pub async fn execute_with_consistency(
+    pub(crate) async fn execute_with_consistency(
         &self,
         prepared_statement: &PreparedStatement,
         values: impl ValueList,
@@ -738,7 +740,7 @@ impl Connection {
     }
 
     #[allow(dead_code)]
-    pub async fn batch(
+    pub(crate) async fn batch(
         &self,
         batch: &Batch,
         values: impl BatchValues,
@@ -754,7 +756,7 @@ impl Connection {
         .await
     }
 
-    pub async fn batch_with_consistency(
+    pub(crate) async fn batch_with_consistency(
         &self,
         batch: &Batch,
         values: impl BatchValues,
@@ -804,7 +806,7 @@ impl Connection {
         }
     }
 
-    pub async fn use_keyspace(
+    pub(crate) async fn use_keyspace(
         &self,
         keyspace_name: &VerifiedKeyspaceName,
     ) -> Result<(), QueryError> {
@@ -857,7 +859,7 @@ impl Connection {
         }
     }
 
-    pub async fn fetch_schema_version(&self) -> Result<Uuid, QueryError> {
+    pub(crate) async fn fetch_schema_version(&self) -> Result<Uuid, QueryError> {
         let (version_id,): (Uuid,) = self
             .query_single_page(LOCAL_VERSION, &[])
             .await?
@@ -1284,11 +1286,11 @@ impl Connection {
         })
     }
 
-    pub fn get_shard_info(&self) -> &Option<ShardInfo> {
+    pub(crate) fn get_shard_info(&self) -> &Option<ShardInfo> {
         &self.features.shard_info
     }
 
-    pub fn get_shard_aware_port(&self) -> Option<u16> {
+    pub(crate) fn get_shard_aware_port(&self) -> Option<u16> {
         self.features.shard_aware_port
     }
 
@@ -1296,7 +1298,7 @@ impl Connection {
         self.features = features;
     }
 
-    pub fn get_connect_address(&self) -> SocketAddr {
+    pub(crate) fn get_connect_address(&self) -> SocketAddr {
         self.connect_address
     }
 }
@@ -1340,7 +1342,7 @@ async fn maybe_translated_addr(
     }
 }
 
-pub async fn open_connection(
+pub(crate) async fn open_connection(
     endpoint: UntranslatedEndpoint,
     source_port: Option<u16>,
     config: ConnectionConfig,
@@ -1356,7 +1358,7 @@ pub async fn open_connection(
     .await
 }
 
-pub async fn open_named_connection(
+pub(crate) async fn open_named_connection(
     addr: SocketAddr,
     source_port: Option<u16>,
     config: ConnectionConfig,
@@ -1533,30 +1535,30 @@ struct OrphanageTracker {
 }
 
 impl OrphanageTracker {
-    pub fn new() -> Self {
+    fn new() -> Self {
         Self {
             orphans: HashMap::new(),
             by_orphaning_times: BTreeSet::new(),
         }
     }
 
-    pub fn insert(&mut self, stream_id: i16) {
+    fn insert(&mut self, stream_id: i16) {
         let now = Instant::now();
         self.orphans.insert(stream_id, now);
         self.by_orphaning_times.insert((now, stream_id));
     }
 
-    pub fn remove(&mut self, stream_id: i16) {
+    fn remove(&mut self, stream_id: i16) {
         if let Some(time) = self.orphans.remove(&stream_id) {
             self.by_orphaning_times.remove(&(time, stream_id));
         }
     }
 
-    pub fn contains(&self, stream_id: i16) -> bool {
+    fn contains(&self, stream_id: i16) -> bool {
         self.orphans.contains_key(&stream_id)
     }
 
-    pub fn orphans_older_than(&self, age: std::time::Duration) -> usize {
+    fn orphans_older_than(&self, age: std::time::Duration) -> usize {
         let minimal_age = Instant::now() - age;
         self.by_orphaning_times
             .range(..(minimal_age, i16::MAX))
@@ -1582,7 +1584,7 @@ enum HandlerLookupResult {
 }
 
 impl ResponseHandlerMap {
-    pub fn new() -> Self {
+    fn new() -> Self {
         Self {
             stream_set: StreamIdSet::new(),
             handlers: HashMap::new(),
@@ -1591,7 +1593,7 @@ impl ResponseHandlerMap {
         }
     }
 
-    pub fn allocate(&mut self, response_handler: ResponseHandler) -> Result<i16, ResponseHandler> {
+    fn allocate(&mut self, response_handler: ResponseHandler) -> Result<i16, ResponseHandler> {
         if let Some(stream_id) = self.stream_set.allocate() {
             self.request_to_stream
                 .insert(response_handler.request_id, stream_id);
@@ -1606,7 +1608,7 @@ impl ResponseHandlerMap {
 
     // Orphan stream_id (associated with this request_id) by moving it to
     // `orphanage_tracker`, and freeing its handler
-    pub fn orphan(&mut self, request_id: RequestId) {
+    fn orphan(&mut self, request_id: RequestId) {
         if let Some(stream_id) = self.request_to_stream.get(&request_id) {
             debug!(
                 "Orphaning stream_id = {} associated with request_id = {}",
@@ -1618,12 +1620,12 @@ impl ResponseHandlerMap {
         }
     }
 
-    pub fn old_orphans_count(&self) -> usize {
+    fn old_orphans_count(&self) -> usize {
         self.orphanage_tracker
             .orphans_older_than(OLD_AGE_ORPHAN_THRESHOLD)
     }
 
-    pub fn lookup(&mut self, stream_id: i16) -> HandlerLookupResult {
+    fn lookup(&mut self, stream_id: i16) -> HandlerLookupResult {
         self.stream_set.free(stream_id);
 
         if self.orphanage_tracker.contains(stream_id) {
@@ -1647,7 +1649,7 @@ impl ResponseHandlerMap {
 
     // Retrieves the map of handlers, used after connection breaks
     // and we have to respond to all of them with an error
-    pub fn into_handlers(self) -> HashMap<i16, ResponseHandler> {
+    fn into_handlers(self) -> HashMap<i16, ResponseHandler> {
         self.handlers
     }
 }
@@ -1657,14 +1659,14 @@ struct StreamIdSet {
 }
 
 impl StreamIdSet {
-    pub fn new() -> Self {
+    fn new() -> Self {
         const BITMAP_SIZE: usize = (std::i16::MAX as usize + 1) / 64;
         Self {
             used_bitmap: vec![0; BITMAP_SIZE].into_boxed_slice(),
         }
     }
 
-    pub fn allocate(&mut self) -> Option<i16> {
+    fn allocate(&mut self) -> Option<i16> {
         for (block_id, block) in self.used_bitmap.iter_mut().enumerate() {
             if *block != !0 {
                 let off = block.trailing_ones();
@@ -1676,7 +1678,7 @@ impl StreamIdSet {
         None
     }
 
-    pub fn free(&mut self, stream_id: i16) {
+    fn free(&mut self, stream_id: i16) {
         let block_id = stream_id as usize / 64;
         let off = stream_id as usize % 64;
         self.used_bitmap[block_id] &= !(1 << off);
@@ -1685,13 +1687,16 @@ impl StreamIdSet {
 
 /// This type can only hold a valid keyspace name
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
-pub struct VerifiedKeyspaceName {
+pub(crate) struct VerifiedKeyspaceName {
     name: Arc<String>,
-    pub is_case_sensitive: bool,
+    pub(crate) is_case_sensitive: bool,
 }
 
 impl VerifiedKeyspaceName {
-    pub fn new(keyspace_name: String, case_sensitive: bool) -> Result<Self, BadKeyspaceName> {
+    pub(crate) fn new(
+        keyspace_name: String,
+        case_sensitive: bool,
+    ) -> Result<Self, BadKeyspaceName> {
         Self::verify_keyspace_name_is_valid(&keyspace_name)?;
 
         Ok(VerifiedKeyspaceName {
@@ -1700,7 +1705,7 @@ impl VerifiedKeyspaceName {
         })
     }
 
-    pub fn as_str(&self) -> &str {
+    pub(crate) fn as_str(&self) -> &str {
         self.name.as_str()
     }
 

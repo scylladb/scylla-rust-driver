@@ -19,10 +19,10 @@ use std::hash::BuildHasher;
 /// to the `CachingSession::execute` family of methods.
 #[derive(Debug)]
 struct RawPreparedStatementData {
-    pub id: Bytes,
-    pub is_confirmed_lwt: bool,
-    pub metadata: PreparedMetadata,
-    pub partitioner_name: PartitionerName,
+    id: Bytes,
+    is_confirmed_lwt: bool,
+    metadata: PreparedMetadata,
+    partitioner_name: PartitionerName,
 }
 
 /// Provides auto caching while executing queries
@@ -166,13 +166,11 @@ where
 
         if let Some(raw) = self.cache.get(&query.contents) {
             let page_size = query.get_page_size();
-            let retry_policy = query.get_retry_policy().cloned();
             let mut stmt = PreparedStatement::new(
                 raw.id.clone(),
                 raw.is_confirmed_lwt,
                 raw.metadata.clone(),
                 query.contents,
-                retry_policy,
                 page_size,
                 query.config,
             );

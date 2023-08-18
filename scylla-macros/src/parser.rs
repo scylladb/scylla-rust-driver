@@ -1,5 +1,5 @@
-use syn::{Data, DeriveInput, Fields, FieldsNamed};
-use syn::{Lit, Meta};
+use syn::{Data, DeriveInput, ExprLit, Fields, FieldsNamed, Lit};
+use syn::{Expr, Meta};
 
 /// Parses the tokens_input to a DeriveInput and returns the struct name from which it derives and
 /// the named fields
@@ -22,36 +22,36 @@ pub(crate) fn parse_named_fields<'a>(
 pub(crate) fn get_path(input: &DeriveInput) -> Result<proc_macro2::TokenStream, syn::Error> {
     let mut this_path: Option<proc_macro2::TokenStream> = None;
     for attr in input.attrs.iter() {
-        if !attr.path.is_ident("scylla_crate") {
+        if !attr.path().is_ident("scylla_crate") {
             continue;
         }
-        match attr.parse_meta() {
-            Ok(Meta::NameValue(meta_name_value)) => {
-                if let Lit::Str(lit_str) = &meta_name_value.lit {
-                    let path_val = &lit_str.value().parse::<proc_macro2::TokenStream>().unwrap();
+        match &attr.meta {
+            Meta::NameValue(name_value) => {
+                if let Expr::Lit(ExprLit {
+                    lit: Lit::Str(lit), ..
+                }) = &name_value.value
+                {
+                    let path = syn::Ident::new(&lit.value(), lit.span());
                     if this_path.is_none() {
-                        this_path = Some(quote::quote!(#path_val::_macro_internal));
+                        this_path = Some(quote::quote!(#path::_macro_internal));
                     } else {
                         return Err(syn::Error::new_spanned(
-                            &meta_name_value.lit,
+                            &name_value.path,
                             "the `scylla_crate` attribute was set multiple times",
                         ));
                     }
                 } else {
                     return Err(syn::Error::new_spanned(
-                        &meta_name_value.lit,
+                        &name_value.value,
                         "the `scylla_crate` attribute should be a string literal",
                     ));
                 }
             }
-            Ok(other) => {
+            other => {
                 return Err(syn::Error::new_spanned(
                     other,
                     "the `scylla_crate` attribute have a single value",
                 ));
-            }
-            Err(err) => {
-                return Err(err);
             }
         }
     }
