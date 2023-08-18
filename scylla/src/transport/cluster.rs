@@ -125,7 +125,7 @@ struct ClusterWorker {
     host_filter: Option<Arc<dyn HostFilter>>,
 
     // This value determines how frequently the cluster
-    // worker will refresh the cluster topology
+    // worker will refresh the cluster metadata
     cluster_metadata_refresh_interval: Duration,
 }
 
