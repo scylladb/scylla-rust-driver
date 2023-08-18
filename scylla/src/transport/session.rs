@@ -7,7 +7,9 @@ use crate::cloud::CloudConfig;
 use crate::frame::types::LegacyConsistency;
 use crate::history;
 use crate::history::HistoryListener;
-use crate::prepared_statement::PartitionKeyDecoder;
+use crate::prepared_statement::{
+    PartitionKeyDecoder, PartitionKeyExtractionError, TokenCalculationError,
+};
 use crate::utils::pretty::{CommaSeparatedDisplayer, CqlValueDisplayer};
 use arc_swap::ArcSwapOption;
 use async_trait::async_trait;
@@ -1936,7 +1938,7 @@ impl Session {
     pub fn calculate_token_for_partition_key<P: Partitioner>(
         serialized_partition_key_values: &SerializedValues,
         partitioner: &P,
-    ) -> Result<Token, PartitionKeyError> {
+    ) -> Result<Token, TokenCalculationError> {
         let mut partitioner_hasher = partitioner.build_hasher();
 
         if serialized_partition_key_values.len() == 1 {
@@ -1949,7 +1951,7 @@ impl Session {
                 let val_len_u16: u16 = val
                     .len()
                     .try_into()
-                    .map_err(|_| PartitionKeyError::ValueTooLong(val.len()))?;
+                    .map_err(|_| TokenCalculationError::ValueTooLong(val.len()))?;
                 partitioner_hasher.write(&val_len_u16.to_be_bytes());
                 partitioner_hasher.write(val);
                 partitioner_hasher.write(&[0u8]);
@@ -1972,12 +1974,17 @@ fn calculate_partition_key(
 ) -> Result<Bytes, QueryError> {
     match stmt.compute_partition_key(values) {
         Ok(key) => Ok(key),
-        Err(PartitionKeyError::NoPkIndexValue(_, _)) => Err(QueryError::ProtocolError(
+        Err(PartitionKeyError::PartitionKeyExtraction(
+            PartitionKeyExtractionError::NoPkIndexValue(_, _),
+        )) => Err(QueryError::ProtocolError(
             "No pk indexes - can't calculate token",
         )),
-        Err(PartitionKeyError::ValueTooLong(values_len)) => Err(QueryError::BadQuery(
-            BadQuery::ValuesTooLongForKey(values_len, u16::MAX.into()),
-        )),
+        Err(PartitionKeyError::TokenCalculation(TokenCalculationError::ValueTooLong(
+            values_len,
+        ))) => Err(QueryError::BadQuery(BadQuery::ValuesTooLongForKey(
+            values_len,
+            u16::MAX.into(),
+        ))),
     }
 }
 

@@ -135,11 +135,9 @@ impl PreparedStatement {
         // Single-value partition key case
         if self.get_prepared_metadata().pk_indexes.len() == 1 {
             let pk_index = self.get_prepared_metadata().pk_indexes[0].index;
-            if let Some(v) = bound_values
-                .iter()
-                .nth(pk_index as usize)
-                .ok_or_else(|| PartitionKeyError::NoPkIndexValue(pk_index, bound_values.len()))?
-            {
+            if let Some(v) = bound_values.iter().nth(pk_index as usize).ok_or_else(|| {
+                PartitionKeyExtractionError::NoPkIndexValue(pk_index, bound_values.len())
+            })? {
                 buf.extend_from_slice(v);
             }
         } else {
@@ -162,7 +160,10 @@ impl PreparedStatement {
                 let next_val = values_iter
                     .nth((pk_index.index - values_iter_offset) as usize)
                     .ok_or_else(|| {
-                        PartitionKeyError::NoPkIndexValue(pk_index.index, bound_values.len())
+                        PartitionKeyExtractionError::NoPkIndexValue(
+                            pk_index.index,
+                            bound_values.len(),
+                        )
                     })?;
                 // Add it in sequence order to pk_values
                 if let Some(v) = next_val {
@@ -177,7 +178,7 @@ impl PreparedStatement {
                 let v_len_u16: u16 = v
                     .len()
                     .try_into()
-                    .map_err(|_| PartitionKeyError::ValueTooLong(v.len()))?;
+                    .map_err(|_| TokenCalculationError::ValueTooLong(v.len()))?;
 
                 buf.put_u16(v_len_u16);
                 buf.extend_from_slice(v);
@@ -328,11 +329,35 @@ impl PreparedStatement {
 }
 
 #[derive(Clone, Debug, Error, PartialEq, Eq, PartialOrd, Ord)]
-pub enum PartitionKeyError {
+pub enum PartitionKeyExtractionError {
     #[error("No value with given pk_index! pk_index: {0}, values.len(): {1}")]
     NoPkIndexValue(u16, i16),
+}
+
+#[derive(Clone, Debug, Error, PartialEq, Eq, PartialOrd, Ord)]
+pub enum TokenCalculationError {
     #[error("Value bytes too long to create partition key, max 65 535 allowed! value.len(): {0}")]
     ValueTooLong(usize),
+}
+
+#[derive(Clone, Debug, Error, PartialEq, Eq, PartialOrd, Ord)]
+pub enum PartitionKeyError {
+    #[error(transparent)]
+    PartitionKeyExtraction(PartitionKeyExtractionError),
+    #[error(transparent)]
+    TokenCalculation(TokenCalculationError),
+}
+
+impl From<PartitionKeyExtractionError> for PartitionKeyError {
+    fn from(err: PartitionKeyExtractionError) -> Self {
+        Self::PartitionKeyExtraction(err)
+    }
+}
+
+impl From<TokenCalculationError> for PartitionKeyError {
+    fn from(err: TokenCalculationError) -> Self {
+        Self::TokenCalculation(err)
+    }
 }
 
 // The PartitionKeyDecoder reverses the process of PreparedStatement::compute_partition_key:
