@@ -1,10 +1,29 @@
 # Schema agreement
 
 Sometimes after performing queries some nodes have not been updated, so we need a mechanism that checks if every node have agreed on schema version.
-There is a number of methods in `Session` that assist us.
-Every method raise `QueryError` if something goes wrong, but they should never raise any errors, unless there is a DB or connection malfunction.
 
-### Awaiting schema agreement
+### Automated awaiting schema agreement
+
+The driver automatically awaits schema agreement after a schema-altering query is executed.
+Waiting for schema agreement more than necessary is never a bug, but might slow down applications which do a lot of schema changes (e.g. a migration).
+For instance, in case where somebody wishes to create a keyspace and then a lot of tables in it, it makes sense only to wait after creating a keyspace
+and after creating all the tables rather than after every query. Therefore, the said behaviour can be disabled:
+
+```rust
+# extern crate scylla;
+# use scylla::SessionBuilder;
+# use std::error::Error;
+# async fn check_only_compiles() -> Result<(), Box<dyn Error>> {
+let session = SessionBuilder::new()
+    .known_node("127.0.0.1:9042")
+    .auto_await_schema_agreement(false)
+    .build()
+    .await?;
+# Ok(())
+# }
+```
+
+### Manually awaiting schema agreement
 
 `Session::await_schema_agreement` returns a `Future` that can be `await`ed as long as schema is not in an agreement.
 However, it won't wait forever; `SessionConfig` defines a timeout that limits the time of waiting. If the timeout elapses,
