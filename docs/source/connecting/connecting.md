@@ -36,7 +36,7 @@ After successfully connecting to some specified node the driver will fetch topol
 other nodes in this cluster and connect to them as well.
 
 The driver refreshes the cluster metadata periodically, which contains information about cluster topology as well as the cluster schema. By default, the driver refreshes the cluster metadata every 60 seconds. 
-However, you can set the `cluster_metadata_refresh_interval` to a non-negative value to periodically refresh the cluster topology. This is useful when you do not have unexpected amount of traffic or when you have an extra traffic causing topology to change frequently.
+However, you can set the `cluster_metadata_refresh_interval` to a non-negative value to periodically refresh the cluster metadata. This is useful when you do not have unexpected amount of traffic or when you have an extra traffic causing topology to change frequently.
 
 Scylla Serverless is an elastic and dynamic deployment model. When creating a `Session` you need to
 specify the secure connection bundle as follows:
