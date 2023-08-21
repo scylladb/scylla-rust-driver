@@ -6,8 +6,6 @@ use scylla_cql::frame::protocol_features::ProtocolFeatures;
 use scylla_cql::frame::request::Request;
 pub use scylla_cql::frame::request::RequestOpcode;
 pub use scylla_cql::frame::response::ResponseOpcode;
-use scylla_cql::frame::types::LegacyConsistency;
-use scylla_cql::Consistency;
 use scylla_cql::{errors::DbError, frame::types};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 
@@ -147,19 +145,13 @@ impl ResponseFrame {
 }
 
 fn serialize_error_specific_fields(buf: &mut BytesMut, error: DbError) -> Result<(), ParseError> {
-    fn unwrap_cl(c: LegacyConsistency) -> Consistency {
-        match c {
-            types::LegacyConsistency::Regular(c) => c,
-            types::LegacyConsistency::Serial(_) => unreachable!(),
-        }
-    }
     match error {
         DbError::Unavailable {
             consistency,
             required,
             alive,
         } => {
-            types::write_consistency(unwrap_cl(consistency), buf);
+            types::write_consistency(consistency, buf);
             types::write_int(required, buf);
             types::write_int(alive, buf);
         }
@@ -169,7 +161,7 @@ fn serialize_error_specific_fields(buf: &mut BytesMut, error: DbError) -> Result
             required,
             write_type,
         } => {
-            types::write_consistency(unwrap_cl(consistency), buf);
+            types::write_consistency(consistency, buf);
             types::write_int(received, buf);
             types::write_int(required, buf);
             types::write_string(write_type.as_str(), buf)?;
@@ -180,7 +172,7 @@ fn serialize_error_specific_fields(buf: &mut BytesMut, error: DbError) -> Result
             required,
             data_present,
         } => {
-            types::write_consistency(unwrap_cl(consistency), buf);
+            types::write_consistency(consistency, buf);
             types::write_int(received, buf);
             types::write_int(required, buf);
             buf.put_u8(u8::from(data_present));
@@ -192,7 +184,7 @@ fn serialize_error_specific_fields(buf: &mut BytesMut, error: DbError) -> Result
             numfailures,
             data_present,
         } => {
-            types::write_consistency(unwrap_cl(consistency), buf);
+            types::write_consistency(consistency, buf);
             types::write_int(received, buf);
             types::write_int(required, buf);
             types::write_int(numfailures, buf);
@@ -205,7 +197,7 @@ fn serialize_error_specific_fields(buf: &mut BytesMut, error: DbError) -> Result
             numfailures,
             write_type,
         } => {
-            types::write_consistency(unwrap_cl(consistency), buf);
+            types::write_consistency(consistency, buf);
             types::write_int(received, buf);
             types::write_int(required, buf);
             types::write_int(numfailures, buf);

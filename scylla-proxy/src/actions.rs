@@ -9,7 +9,6 @@ use crate::frame::{
 };
 use scylla_cql::{
     errors::{DbError, WriteType},
-    frame::types::LegacyConsistency,
     Consistency,
 };
 
@@ -427,7 +426,7 @@ impl ExampleDbErrors {
     }
     pub fn unavailable() -> DbError {
         DbError::Unavailable {
-            consistency: LegacyConsistency::Regular(Consistency::One),
+            consistency: Consistency::One,
             required: 2,
             alive: 1,
         }
@@ -443,7 +442,7 @@ impl ExampleDbErrors {
     }
     pub fn read_timeout() -> DbError {
         DbError::ReadTimeout {
-            consistency: LegacyConsistency::Regular(Consistency::One),
+            consistency: Consistency::One,
             received: 2,
             required: 3,
             data_present: true,
@@ -451,7 +450,7 @@ impl ExampleDbErrors {
     }
     pub fn write_timeout() -> DbError {
         DbError::WriteTimeout {
-            consistency: LegacyConsistency::Regular(Consistency::One),
+            consistency: Consistency::One,
             received: 2,
             required: 3,
             write_type: WriteType::UnloggedBatch,
@@ -459,7 +458,7 @@ impl ExampleDbErrors {
     }
     pub fn read_failure() -> DbError {
         DbError::ReadFailure {
-            consistency: LegacyConsistency::Regular(Consistency::One),
+            consistency: Consistency::One,
             received: 2,
             required: 3,
             data_present: true,
@@ -468,7 +467,7 @@ impl ExampleDbErrors {
     }
     pub fn write_failure() -> DbError {
         DbError::WriteFailure {
-            consistency: LegacyConsistency::Regular(Consistency::One),
+            consistency: Consistency::One,
             received: 2,
             required: 3,
             write_type: WriteType::UnloggedBatch,

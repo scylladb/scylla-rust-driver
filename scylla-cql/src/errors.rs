@@ -2,8 +2,8 @@
 
 use crate::frame::frame_errors::{FrameError, ParseError};
 use crate::frame::protocol_features::ProtocolFeatures;
-use crate::frame::types::LegacyConsistency;
 use crate::frame::value::SerializeValuesError;
+use crate::Consistency;
 use bytes::Bytes;
 use std::io::ErrorKind;
 use std::sync::Arc;
@@ -108,7 +108,7 @@ pub enum DbError {
     )]
     Unavailable {
         /// Consistency level of the query
-        consistency: LegacyConsistency,
+        consistency: Consistency,
         /// Number of nodes required to be alive to satisfy required consistency level
         required: i32,
         /// Found number of active nodes
@@ -132,7 +132,7 @@ pub enum DbError {
             (consistency: {consistency}, received: {received}, required: {required}, data_present: {data_present})")]
     ReadTimeout {
         /// Consistency level of the query
-        consistency: LegacyConsistency,
+        consistency: Consistency,
         /// Number of nodes that responded to the read request
         received: i32,
         /// Number of nodes required to respond to satisfy required consistency level
@@ -146,7 +146,7 @@ pub enum DbError {
             (consistency: {consistency}, received: {received}, required: {required}, write_type: {write_type})")]
     WriteTimeout {
         /// Consistency level of the query
-        consistency: LegacyConsistency,
+        consistency: Consistency,
         /// Number of nodes that responded to the write request
         received: i32,
         /// Number of nodes required to respond to satisfy required consistency level
@@ -163,7 +163,7 @@ pub enum DbError {
     )]
     ReadFailure {
         /// Consistency level of the query
-        consistency: LegacyConsistency,
+        consistency: Consistency,
         /// Number of nodes that responded to the read request
         received: i32,
         /// Number of nodes required to respond to satisfy required consistency level
@@ -182,7 +182,7 @@ pub enum DbError {
     )]
     WriteFailure {
         /// Consistency level of the query
-        consistency: LegacyConsistency,
+        consistency: Consistency,
         /// Number of nodes that responded to the read request
         received: i32,
         /// Number of nodes required to respond to satisfy required consistency level
@@ -550,7 +550,7 @@ impl WriteType {
 #[cfg(test)]
 mod tests {
     use super::{DbError, QueryError, WriteType};
-    use crate::frame::types::{Consistency, LegacyConsistency};
+    use crate::frame::types::Consistency;
 
     #[test]
     fn write_type_from_str() {
@@ -581,7 +581,7 @@ mod tests {
     fn dberror_full_info() {
         // Test that DbError::Unavailable is displayed correctly
         let db_error = DbError::Unavailable {
-            consistency: LegacyConsistency::Regular(Consistency::Three),
+            consistency: Consistency::Three,
             required: 3,
             alive: 2,
         };

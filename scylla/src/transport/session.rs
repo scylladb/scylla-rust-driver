@@ -4,7 +4,6 @@
 #[cfg(feature = "cloud")]
 use crate::cloud::CloudConfig;
 
-use crate::frame::types::LegacyConsistency;
 use crate::history;
 use crate::history::HistoryListener;
 use crate::utils::pretty::{CommaSeparatedDisplayer, CqlValueDisplayer};
@@ -1767,11 +1766,9 @@ impl Session {
                 let query_info = QueryInfo {
                     error: the_error,
                     is_idempotent: context.is_idempotent,
-                    consistency: LegacyConsistency::Regular(
-                        context
-                            .consistency_set_on_statement
-                            .unwrap_or(execution_profile.consistency),
-                    ),
+                    consistency: context
+                        .consistency_set_on_statement
+                        .unwrap_or(execution_profile.consistency),
                 };
 
                 let retry_decision = context.retry_session.decide_should_retry(query_info);

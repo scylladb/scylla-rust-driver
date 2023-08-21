@@ -92,7 +92,6 @@ mod tests {
     use super::Error;
     use crate::errors::{DbError, OperationType, WriteType};
     use crate::frame::protocol_features::ProtocolFeatures;
-    use crate::frame::types::LegacyConsistency;
     use crate::Consistency;
     use bytes::Bytes;
     use std::convert::TryInto;
@@ -151,7 +150,7 @@ mod tests {
         assert_eq!(
             error.error,
             DbError::Unavailable {
-                consistency: LegacyConsistency::Regular(Consistency::One),
+                consistency: Consistency::One,
                 required: 2,
                 alive: 3,
             }
@@ -178,7 +177,7 @@ mod tests {
         assert_eq!(
             error.error,
             DbError::WriteTimeout {
-                consistency: LegacyConsistency::Regular(Consistency::Quorum),
+                consistency: Consistency::Quorum,
                 received: -5, // Allow negative values when they don't make sense, it's better than crashing with ProtocolError
                 required: 100,
                 write_type: WriteType::Simple,
@@ -202,7 +201,7 @@ mod tests {
         assert_eq!(
             error.error,
             DbError::ReadTimeout {
-                consistency: LegacyConsistency::Regular(Consistency::Two),
+                consistency: Consistency::Two,
                 received: 8,
                 required: 32,
                 data_present: false,
@@ -227,7 +226,7 @@ mod tests {
         assert_eq!(
             error.error,
             DbError::ReadFailure {
-                consistency: LegacyConsistency::Regular(Consistency::Three),
+                consistency: Consistency::Three,
                 received: 4,
                 required: 5,
                 numfailures: 6,
@@ -299,7 +298,7 @@ mod tests {
         assert_eq!(
             error.error,
             DbError::WriteFailure {
-                consistency: LegacyConsistency::Regular(Consistency::Any),
+                consistency: Consistency::Any,
                 received: 2,
                 required: 4,
                 numfailures: 8,

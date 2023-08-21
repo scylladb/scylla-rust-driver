@@ -468,7 +468,6 @@ mod tests {
     use futures::StreamExt;
     use scylla_cql::{
         errors::{DbError, QueryError},
-        frame::types::LegacyConsistency,
         Consistency,
     };
 
@@ -576,7 +575,7 @@ mod tests {
     fn unavailable_error() -> QueryError {
         QueryError::DbError(
             DbError::Unavailable {
-                consistency: LegacyConsistency::Regular(Consistency::Quorum),
+                consistency: Consistency::Quorum,
                 required: 2,
                 alive: 1,
             },
