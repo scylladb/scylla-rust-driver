@@ -452,3 +452,24 @@ async fn consistency_is_correctly_set_in_routing_info() {
     )
     .await;
 }
+
+// Performs a read using Paxos, by setting Consistency to Serial.
+// This not really checks that functionality works properly, but stays here
+// to ensure that it is even expressible to issue such query.
+// Before, Consistency did not contain serial variants, so it used to be impossible.
+#[tokio::test]
+#[ntest::timeout(60000)]
+#[cfg(not(scylla_cloud_tests))]
+async fn consistency_allows_for_paxos_selects() {
+    let uri = std::env::var("SCYLLA_URI").unwrap_or_else(|_| "127.0.0.1:9042".to_string());
+
+    let session = SessionBuilder::new()
+        .known_node(uri.as_str())
+        .build()
+        .await
+        .unwrap();
+
+    let mut query = Query::from("SELECT host_id FROM system.peers WHERE peer = '127.0.0.1'");
+    query.set_consistency(Consistency::Serial);
+    session.query(query, ()).await.unwrap();
+}
