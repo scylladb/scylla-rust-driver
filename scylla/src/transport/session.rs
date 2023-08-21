@@ -8,6 +8,7 @@ use crate::frame::types::LegacyConsistency;
 use crate::history;
 use crate::history::HistoryListener;
 use crate::prepared_statement::PartitionKeyDecoder;
+use crate::routing;
 use crate::utils::pretty::{CommaSeparatedDisplayer, CqlValueDisplayer};
 use arc_swap::ArcSwapOption;
 use async_trait::async_trait;
@@ -987,24 +988,8 @@ impl Session {
             .as_ref()
             .map(|pk| prepared.get_partitioner_name().hash(pk));
 
-        let execution_profile = prepared
-            .get_execution_profile_handle()
-            .unwrap_or_else(|| self.get_default_execution_profile_handle())
-            .access();
-
-        let statement_info = RoutingInfo {
-            consistency: prepared
-                .config
-                .consistency
-                .unwrap_or(execution_profile.consistency),
-            serial_consistency: prepared
-                .config
-                .serial_consistency
-                .unwrap_or(execution_profile.serial_consistency),
-            token,
-            keyspace: prepared.get_keyspace_name(),
-            is_confirmed_lwt: prepared.is_confirmed_lwt(),
-        };
+        let (execution_profile, statement_info) =
+            self.execution_profile_and_routing_info_from_prepared_statement(prepared, token);
 
         let span = RequestSpan::new_prepared(
             prepared.get_prepared_metadata(),
@@ -1911,14 +1896,72 @@ impl Session {
         prepared: &PreparedStatement,
         serialized_values: &SerializedValues,
     ) -> Result<Option<Token>, QueryError> {
-        match self.calculate_partition_key(prepared, serialized_values) {
-            Ok(Some(partition_key)) => {
-                let partitioner_name = prepared.get_partitioner_name();
-                Ok(Some(partitioner_name.hash(&partition_key)))
-            }
-            Ok(None) => Ok(None),
-            Err(err) => Err(err),
-        }
+        Ok(self
+            .calculate_partition_key(prepared, serialized_values)?
+            .map(|partition_key| prepared.get_partitioner_name().hash(&partition_key)))
+    }
+
+    /// Get a node/shard that the load balancer would potentially target if running this query
+    ///
+    /// This may help constituting shard-aware batches (see [`Batch::enforce_target_node`])
+    #[allow(clippy::type_complexity)]
+    pub fn shard_for_statement(
+        &self,
+        prepared: &PreparedStatement,
+        serialized_values: &SerializedValues,
+    ) -> Result<Option<(Arc<Node>, Option<routing::Shard>)>, QueryError> {
+        let token = match self.calculate_token(prepared, serialized_values)? {
+            Some(token) => token,
+            None => return Ok(None),
+        };
+        let (execution_profile, routing_info) =
+            self.execution_profile_and_routing_info_from_prepared_statement(prepared, Some(token));
+        let cluster_data = self.cluster.get_data();
+
+        let mut query_plan = load_balancing::Plan::new(
+            &*execution_profile.load_balancing_policy,
+            &routing_info,
+            &cluster_data,
+        );
+        // We can't return the full iterator here because the iterator borrows from local variables.
+        // In order to achieve that, two designs would be possible:
+        // - Construct a self-referential struct and implement iterator on it via e.g. Ouroboros
+        // - Take a closure as a parameter that will take the local iterator and return anything, and
+        //   this function would return directly what the closure returns
+        // Most likely though, people would use this for some kind of shard-awareness optimization for batching,
+        // and are consequently not interested in subsequent nodes.
+        // Until then, let's just expose this, as it is simpler
+        Ok(query_plan.next().map(move |node| {
+            let token = node.sharder().map(|sharder| sharder.shard_of(token));
+            (node.clone(), token)
+        }))
+    }
+
+    fn execution_profile_and_routing_info_from_prepared_statement<'p>(
+        &self,
+        prepared: &'p PreparedStatement,
+        token: Option<Token>,
+    ) -> (Arc<ExecutionProfileInner>, RoutingInfo<'p>) {
+        let execution_profile = prepared
+            .get_execution_profile_handle()
+            .unwrap_or_else(|| self.get_default_execution_profile_handle())
+            .access();
+
+        let routing_info = RoutingInfo {
+            consistency: prepared
+                .config
+                .consistency
+                .unwrap_or(execution_profile.consistency),
+            serial_consistency: prepared
+                .config
+                .serial_consistency
+                .unwrap_or(execution_profile.serial_consistency),
+            token,
+            keyspace: prepared.get_keyspace_name(),
+            is_confirmed_lwt: prepared.is_confirmed_lwt(),
+        };
+
+        (execution_profile, routing_info)
     }
 
     /// Calculates the token for given partitioner and serialized partition key.
