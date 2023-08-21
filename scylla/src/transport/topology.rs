@@ -13,6 +13,7 @@ use futures::stream::{self, StreamExt, TryStreamExt};
 use futures::Stream;
 use rand::seq::SliceRandom;
 use rand::{thread_rng, Rng};
+use scylla_cql::errors::NewSessionError;
 use scylla_cql::frame::response::result::Row;
 use scylla_cql::frame::value::ValueList;
 use scylla_macros::FromRow;
@@ -400,21 +401,29 @@ impl Metadata {
 impl MetadataReader {
     /// Creates new MetadataReader, which connects to initially_known_peers in the background
     #[allow(clippy::too_many_arguments)]
-    pub(crate) fn new(
+    pub(crate) async fn new(
         initial_known_nodes: Vec<KnownNode>,
         control_connection_repair_requester: broadcast::Sender<()>,
-        initially_known_peers: Vec<ResolvedContactPoint>,
         mut connection_config: ConnectionConfig,
         keepalive_interval: Option<Duration>,
         server_event_sender: mpsc::Sender<Event>,
         keyspaces_to_fetch: Vec<String>,
         fetch_schema: bool,
         host_filter: &Option<Arc<dyn HostFilter>>,
-    ) -> Self {
+    ) -> Result<Self, NewSessionError> {
+        let (initial_peers, resolved_hostnames) =
+            resolve_contact_points(&initial_known_nodes).await;
+        // Ensure there is at least one resolved node
+        if initial_peers.is_empty() {
+            return Err(NewSessionError::FailedToResolveAnyHostname(
+                resolved_hostnames,
+            ));
+        }
+
         let control_connection_endpoint = UntranslatedEndpoint::ContactPoint(
-            initially_known_peers
+            initial_peers
                 .choose(&mut thread_rng())
-                .expect("Tried to initialize MetadataReader with empty known_peers list!")
+                .expect("Tried to initialize MetadataReader with empty initial_known_nodes list!")
                 .clone(),
         );
 
@@ -430,12 +439,12 @@ impl MetadataReader {
             control_connection_repair_requester.clone(),
         );
 
-        MetadataReader {
+        Ok(MetadataReader {
             control_connection_endpoint,
             control_connection,
             keepalive_interval,
             connection_config,
-            known_peers: initially_known_peers
+            known_peers: initial_peers
                 .into_iter()
                 .map(UntranslatedEndpoint::ContactPoint)
                 .collect(),
@@ -444,7 +453,7 @@ impl MetadataReader {
             host_filter: host_filter.clone(),
             initial_known_nodes,
             control_connection_repair_requester,
-        }
+        })
     }
 
     /// Fetches current metadata from the cluster

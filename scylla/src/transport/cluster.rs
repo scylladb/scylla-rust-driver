@@ -17,7 +17,7 @@ use arc_swap::ArcSwap;
 use futures::future::join_all;
 use futures::{future::RemoteHandle, FutureExt};
 use itertools::Itertools;
-use scylla_cql::errors::BadQuery;
+use scylla_cql::errors::{BadQuery, NewSessionError};
 use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -26,7 +26,7 @@ use tracing::instrument::WithSubscriber;
 use tracing::{debug, warn};
 use uuid::Uuid;
 
-use super::node::{KnownNode, NodeAddr, ResolvedContactPoint};
+use super::node::{KnownNode, NodeAddr};
 
 use super::locator::ReplicaLocator;
 use super::partitioner::calculate_token_for_partition_key;
@@ -140,13 +140,12 @@ struct UseKeyspaceRequest {
 impl Cluster {
     pub(crate) async fn new(
         known_nodes: Vec<KnownNode>,
-        initial_peers: Vec<ResolvedContactPoint>,
         pool_config: PoolConfig,
         keyspaces_to_fetch: Vec<String>,
         fetch_schema_metadata: bool,
         host_filter: Option<Arc<dyn HostFilter>>,
         cluster_metadata_refresh_interval: Duration,
-    ) -> Result<Cluster, QueryError> {
+    ) -> Result<Cluster, NewSessionError> {
         let (refresh_sender, refresh_receiver) = tokio::sync::mpsc::channel(32);
         let (use_keyspace_sender, use_keyspace_receiver) = tokio::sync::mpsc::channel(32);
         let (server_events_sender, server_events_receiver) = tokio::sync::mpsc::channel(32);
@@ -156,14 +155,14 @@ impl Cluster {
         let mut metadata_reader = MetadataReader::new(
             known_nodes,
             control_connection_repair_sender,
-            initial_peers,
             pool_config.connection_config.clone(),
             pool_config.keepalive_interval,
             server_events_sender,
             keyspaces_to_fetch,
             fetch_schema_metadata,
             &host_filter,
-        );
+        )
+        .await?;
 
         let metadata = metadata_reader.read_metadata(true).await?;
         let cluster_data = ClusterData::new(

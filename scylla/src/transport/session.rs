@@ -38,7 +38,6 @@ use super::connection::QueryResponse;
 use super::connection::SslConfig;
 use super::errors::{NewSessionError, QueryError};
 use super::execution_profile::{ExecutionProfile, ExecutionProfileHandle, ExecutionProfileInner};
-use super::node::resolve_contact_points;
 #[cfg(feature = "cloud")]
 use super::node::CloudEndpoint;
 use super::node::KnownNode;
@@ -494,14 +493,6 @@ impl Session {
             return Err(NewSessionError::EmptyKnownNodesList);
         }
 
-        let (initial_peers, resolved_hostnames) = resolve_contact_points(&known_nodes).await;
-        // Ensure there is at least one resolved node
-        if initial_peers.is_empty() {
-            return Err(NewSessionError::FailedToResolveAnyHostname(
-                resolved_hostnames,
-            ));
-        }
-
         let connection_config = ConnectionConfig {
             compression: config.compression,
             tcp_nodelay: config.tcp_nodelay,
@@ -529,7 +520,6 @@ impl Session {
 
         let cluster = Cluster::new(
             known_nodes,
-            initial_peers,
             pool_config,
             config.keyspaces_to_fetch,
             config.fetch_schema_metadata,
