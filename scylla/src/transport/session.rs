@@ -14,7 +14,7 @@ use async_trait::async_trait;
 use bytes::Bytes;
 use futures::future::join_all;
 use futures::future::try_join_all;
-use itertools::Either;
+use itertools::{Either, Itertools};
 pub use scylla_cql::errors::TranslationError;
 use scylla_cql::frame::response::result::{deser_cql_value, ColumnSpec, Rows};
 use scylla_cql::frame::response::NonErrorResponse;
@@ -857,32 +857,26 @@ impl Session {
     /// ```
     pub async fn prepare(&self, query: impl Into<Query>) -> Result<PreparedStatement, QueryError> {
         let query = query.into();
+        let query_ref = &query;
 
-        let connections = self.cluster.get_working_connections().await?;
+        let cluster_data = self.get_cluster_data();
+        let connections_iter = cluster_data.iter_working_connections()?;
 
         // Prepare statements on all connections concurrently
-        let handles = connections.iter().map(|c| c.prepare(&query));
-        let mut results = join_all(handles).await;
+        let handles = connections_iter.map(|c| async move { c.prepare(query_ref).await });
+        let mut results = join_all(handles).await.into_iter();
 
-        // If at least one prepare was successful prepare returns Ok
+        // If at least one prepare was successful, `prepare()` returns Ok.
+        // Find the first result that is Ok, or Err if all failed.
 
-        // Find first result that is Ok, or Err if all failed
-        let mut first_ok: Option<Result<PreparedStatement, QueryError>> = None;
-
-        while let Some(res) = results.pop() {
-            let is_ok: bool = res.is_ok();
-
-            first_ok = Some(res);
-
-            if is_ok {
-                break;
-            }
-        }
-
-        let mut prepared: PreparedStatement = first_ok.unwrap()?;
+        // Safety: there is at least one node in the cluster, and `Cluster::iter_working_connections()`
+        // returns either an error or an iterator with at least one connection, so there will be at least one result.
+        let first_ok: Result<PreparedStatement, QueryError> =
+            results.by_ref().find_or_first(Result::is_ok).unwrap();
+        let mut prepared: PreparedStatement = first_ok?;
 
         // Validate prepared ids equality
-        for statement in results.into_iter().flatten() {
+        for statement in results.flatten() {
             if prepared.get_id() != statement.get_id() {
                 return Err(QueryError::ProtocolError(
                     "Prepared statement Ids differ, all should be equal",
@@ -1861,9 +1855,10 @@ impl Session {
     }
 
     pub async fn check_schema_agreement(&self) -> Result<bool, QueryError> {
-        let connections = self.cluster.get_working_connections().await?;
+        let cluster_data = self.get_cluster_data();
+        let connections_iter = cluster_data.iter_working_connections()?;
 
-        let handles = connections.iter().map(|c| c.fetch_schema_version());
+        let handles = connections_iter.map(|c| async move { c.fetch_schema_version().await });
         let versions = try_join_all(handles).await?;
 
         let local_version: Uuid = versions[0];

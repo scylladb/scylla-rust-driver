@@ -238,29 +238,6 @@ impl Cluster {
 
         response_receiver.await.unwrap() // ClusterWorker always responds
     }
-
-    /// Returns nonempty list of working connections to all shards
-    pub(crate) async fn get_working_connections(&self) -> Result<Vec<Arc<Connection>>, QueryError> {
-        let cluster_data: Arc<ClusterData> = self.get_data();
-        let peers = &cluster_data.known_peers;
-
-        let mut result: Vec<Arc<Connection>> = Vec::with_capacity(peers.len());
-
-        let mut last_error: Option<QueryError> = None;
-
-        for node in peers.values() {
-            match node.get_working_connections() {
-                Ok(conns) => result.extend(conns),
-                Err(e) => last_error = Some(e),
-            }
-        }
-
-        if result.is_empty() {
-            return Err(last_error.unwrap()); // By invariant peers is nonempty
-        }
-
-        Ok(result)
-    }
 }
 
 impl ClusterData {
@@ -270,7 +247,7 @@ impl ClusterData {
             datacenter.rack_count = datacenter
                 .nodes
                 .iter()
-                .filter_map(|node| node.rack.clone())
+                .filter_map(|node| node.rack.as_ref())
                 .unique()
                 .count();
         }
@@ -302,19 +279,27 @@ impl ClusterData {
             // Take existing Arc<Node> if possible, otherwise create new one
             // Changing rack/datacenter but not ip address seems improbable
             // so we can just create new node and connections then
-            let node: Arc<Node> = match known_peers.get(&peer.host_id) {
+            let peer_host_id = peer.host_id;
+            let peer_address = peer.address;
+            let peer_tokens;
+
+            let node: Arc<Node> = match known_peers.get(&peer_host_id) {
                 Some(node) if node.datacenter == peer.datacenter && node.rack == peer.rack => {
-                    if node.address == peer.address {
+                    let (peer_endpoint, tokens) = peer.into_peer_endpoint_and_tokens();
+                    peer_tokens = tokens;
+                    if node.address == peer_address {
                         node.clone()
                     } else {
                         // If IP changes, the Node struct is recreated, but the underlying pool is preserved and notified about the IP change.
-                        Arc::new(Node::inherit_with_ip_changed(node, peer.to_peer_endpoint()))
+                        Arc::new(Node::inherit_with_ip_changed(node, peer_endpoint))
                     }
                 }
                 _ => {
                     let is_enabled = host_filter.map_or(true, |f| f.accept(&peer));
+                    let (peer_endpoint, tokens) = peer.into_peer_endpoint_and_tokens();
+                    peer_tokens = tokens;
                     Arc::new(Node::new(
-                        peer.to_peer_endpoint(),
+                        peer_endpoint,
                         pool_config.clone(),
                         used_keyspace.clone(),
                         is_enabled,
@@ -322,7 +307,7 @@ impl ClusterData {
                 }
             };
 
-            new_known_peers.insert(peer.host_id, node.clone());
+            new_known_peers.insert(peer_host_id, node.clone());
 
             if let Some(dc) = &node.datacenter {
                 match datacenters.get_mut(dc) {
@@ -337,7 +322,7 @@ impl ClusterData {
                 }
             }
 
-            for token in peer.tokens {
+            for token in peer_tokens {
                 ring.push((token, node.clone()));
             }
 
@@ -346,21 +331,18 @@ impl ClusterData {
 
         Self::update_rack_count(&mut datacenters);
 
-        let keyspace_strategies: Vec<Strategy> = metadata
-            .keyspaces
-            .values()
-            .map(|ks| ks.strategy.clone())
-            .collect();
-
-        let locator = tokio::task::spawn_blocking(move || {
-            ReplicaLocator::new(ring.into_iter(), keyspace_strategies.iter())
+        let keyspaces = metadata.keyspaces;
+        let (locator, keyspaces) = tokio::task::spawn_blocking(move || {
+            let keyspace_strategies = keyspaces.values().map(|ks| &ks.strategy);
+            let locator = ReplicaLocator::new(ring.into_iter(), keyspace_strategies);
+            (locator, keyspaces)
         })
         .await
         .unwrap();
 
         ClusterData {
             known_peers: new_known_peers,
-            keyspaces: metadata.keyspaces,
+            keyspaces,
             locator,
         }
     }
@@ -458,6 +440,32 @@ impl ClusterData {
     /// Access replica location info
     pub fn replica_locator(&self) -> &ReplicaLocator {
         &self.locator
+    }
+
+    /// Returns nonempty iterator of working connections to all shards.
+    pub(crate) fn iter_working_connections(
+        &self,
+    ) -> Result<impl Iterator<Item = Arc<Connection>> + '_, QueryError> {
+        // The returned iterator is nonempty by nonemptiness invariant of `self.known_peers`.
+        assert!(!self.known_peers.is_empty());
+        let mut peers_iter = self.known_peers.values();
+
+        // First we try to find the first working pool of connections.
+        // If none is found, return error.
+        let first_working_pool = peers_iter
+            .by_ref()
+            .map(|node| node.get_working_connections())
+            .find_or_first(Result::is_ok)
+            .expect("impossible: known_peers was asserted to be nonempty")?;
+
+        let remaining_pools_iter = peers_iter
+            .map(|node| node.get_working_connections())
+            .flatten_ok()
+            .flatten();
+
+        Ok(first_working_pool.into_iter().chain(remaining_pools_iter))
+        // By an invariant `self.known_peers` is nonempty, so the returned iterator
+        // is nonempty, too.
     }
 }
 
@@ -574,13 +582,10 @@ impl ClusterWorker {
         cluster_data: Arc<ClusterData>,
         keyspace_name: &VerifiedKeyspaceName,
     ) -> Result<(), QueryError> {
-        let mut use_keyspace_futures = Vec::new();
-
-        for node in cluster_data.known_peers.values() {
-            let fut = node.use_keyspace(keyspace_name.clone());
-            use_keyspace_futures.push(fut);
-        }
-
+        let use_keyspace_futures = cluster_data
+            .known_peers
+            .values()
+            .map(|node| node.use_keyspace(keyspace_name.clone()));
         let use_keyspace_results: Vec<Result<(), QueryError>> =
             join_all(use_keyspace_futures).await;
 
