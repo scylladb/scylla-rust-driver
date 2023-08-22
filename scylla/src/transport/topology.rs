@@ -27,7 +27,7 @@ use std::str::FromStr;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use strum_macros::EnumString;
-use tokio::sync::mpsc;
+use tokio::sync::{broadcast, mpsc};
 use tracing::{debug, error, trace, warn};
 use uuid::Uuid;
 
@@ -50,6 +50,10 @@ pub(crate) struct MetadataReader {
     // When no known peer is reachable, initial known nodes are resolved once again as a fallback
     // and establishing control connection to them is attempted.
     initial_known_nodes: Vec<KnownNode>,
+
+    // When a control connection breaks, the PoolRefiller of its pool uses the requester
+    // to signal ClusterWorker that an immediate metadata refresh is advisable.
+    control_connection_repair_requester: broadcast::Sender<()>,
 }
 
 /// Describes all metadata retrieved from the cluster
@@ -398,6 +402,7 @@ impl MetadataReader {
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn new(
         initial_known_nodes: Vec<KnownNode>,
+        control_connection_repair_requester: broadcast::Sender<()>,
         initially_known_peers: Vec<ResolvedContactPoint>,
         mut connection_config: ConnectionConfig,
         keepalive_interval: Option<Duration>,
@@ -422,6 +427,7 @@ impl MetadataReader {
             control_connection_endpoint.clone(),
             connection_config.clone(),
             keepalive_interval,
+            control_connection_repair_requester.clone(),
         );
 
         MetadataReader {
@@ -437,6 +443,7 @@ impl MetadataReader {
             fetch_schema,
             host_filter: host_filter.clone(),
             initial_known_nodes,
+            control_connection_repair_requester,
         }
     }
 
@@ -547,6 +554,7 @@ impl MetadataReader {
                 self.control_connection_endpoint.clone(),
                 self.connection_config.clone(),
                 self.keepalive_interval,
+                self.control_connection_repair_requester.clone(),
             );
 
             debug!(
@@ -646,6 +654,7 @@ impl MetadataReader {
                         self.control_connection_endpoint.clone(),
                         self.connection_config.clone(),
                         self.keepalive_interval,
+                        self.control_connection_repair_requester.clone(),
                     );
                 }
             }
@@ -656,6 +665,7 @@ impl MetadataReader {
         endpoint: UntranslatedEndpoint,
         connection_config: ConnectionConfig,
         keepalive_interval: Option<Duration>,
+        refresh_requester: broadcast::Sender<()>,
     ) -> NodeConnectionPool {
         let pool_config = PoolConfig {
             connection_config,
@@ -669,7 +679,7 @@ impl MetadataReader {
             can_use_shard_aware_port: false,
         };
 
-        NodeConnectionPool::new(endpoint, pool_config, None)
+        NodeConnectionPool::new(endpoint, pool_config, None, refresh_requester)
     }
 }
 

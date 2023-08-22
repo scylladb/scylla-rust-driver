@@ -103,8 +103,16 @@ impl Node {
         let address = peer.address;
         let datacenter = peer.datacenter.clone();
         let rack = peer.rack.clone();
+
+        // We aren't interested in the fact that the pool becomes empty, so we immediately drop the receiving part.
+        let (pool_empty_notifier, _) = tokio::sync::broadcast::channel(1);
         let pool = enabled.then(|| {
-            NodeConnectionPool::new(UntranslatedEndpoint::Peer(peer), pool_config, keyspace_name)
+            NodeConnectionPool::new(
+                UntranslatedEndpoint::Peer(peer),
+                pool_config,
+                keyspace_name,
+                pool_empty_notifier,
+            )
         });
 
         Node {

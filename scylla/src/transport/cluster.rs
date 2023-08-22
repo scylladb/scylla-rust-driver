@@ -111,6 +111,9 @@ struct ClusterWorker {
     // Channel used to receive server events
     server_events_channel: tokio::sync::mpsc::Receiver<Event>,
 
+    // Channel used to receive signals that control connection is broken
+    control_connection_repair_channel: tokio::sync::broadcast::Receiver<()>,
+
     // Keyspace send in "USE <keyspace name>" when opening each connection
     used_keyspace: Option<VerifiedKeyspaceName>,
 
@@ -147,9 +150,12 @@ impl Cluster {
         let (refresh_sender, refresh_receiver) = tokio::sync::mpsc::channel(32);
         let (use_keyspace_sender, use_keyspace_receiver) = tokio::sync::mpsc::channel(32);
         let (server_events_sender, server_events_receiver) = tokio::sync::mpsc::channel(32);
+        let (control_connection_repair_sender, control_connection_repair_receiver) =
+            tokio::sync::broadcast::channel(32);
 
         let mut metadata_reader = MetadataReader::new(
             known_nodes,
+            control_connection_repair_sender,
             initial_peers,
             pool_config.connection_config.clone(),
             pool_config.keepalive_interval,
@@ -180,6 +186,7 @@ impl Cluster {
 
             refresh_channel: refresh_receiver,
             server_events_channel: server_events_receiver,
+            control_connection_repair_channel: control_connection_repair_receiver,
 
             use_keyspace_channel: use_keyspace_receiver,
             used_keyspace: None,
@@ -537,6 +544,26 @@ impl ClusterWorker {
                     }
 
                     continue; // Don't go to refreshing, wait for the next event
+                }
+                recv_res = self.control_connection_repair_channel.recv() => {
+                    match recv_res {
+                        Ok(()) => {
+                            // The control connection was broken. Acknowledge that and start attempting to reconnect.
+                            // The first reconnect attempt will be immediate (by attempting metadata refresh below),
+                            // and if it does not succeed, then `control_connection_works` will be set to `false`,
+                            // so subsequent attempts will be issued every second.
+                        }
+                        Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {
+                            // This is very unlikely; we would have to have a lot of concurrent
+                            // control connections opened and broken at the same time.
+                            // The best we can do is ignoring this.
+                        }
+                        Err(tokio::sync::broadcast::error::RecvError::Closed) => {
+                            // If control_connection_repair_channel was closed then MetadataReader was dropped,
+                            // we can stop working.
+                            return;
+                        }
+                    }
                 }
             }
 
