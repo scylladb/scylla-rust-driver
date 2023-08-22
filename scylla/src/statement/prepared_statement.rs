@@ -382,7 +382,16 @@ impl<'pk> Iterator for PartitionKeyDecoder<'pk> {
             return None;
         }
 
-        let col_idx = self.prepared_metadata.pk_indexes[self.value_index].index as usize;
+        // It should be safe to unwrap because PartitionKeyIndex::sequence
+        // fields of the pk_indexes form a permutation, but let's err
+        // on the safe side in case of bugs.
+        let pk_index = self
+            .prepared_metadata
+            .pk_indexes
+            .iter()
+            .find(|pki| pki.sequence == self.value_index as u16)?;
+
+        let col_idx = pk_index.index as usize;
         let spec = &self.prepared_metadata.col_specs[col_idx];
 
         let cell = if self.prepared_metadata.pk_indexes.len() == 1 {
@@ -438,14 +447,15 @@ mod tests {
                 typ,
             })
             .collect();
-        let pk_indexes = idx
+        let mut pk_indexes = idx
             .into_iter()
             .enumerate()
             .map(|(sequence, index)| PartitionKeyIndex {
                 index: index as u16,
                 sequence: sequence as u16,
             })
-            .collect();
+            .collect::<Vec<_>>();
+        pk_indexes.sort_unstable_by_key(|pki| pki.index);
         PreparedMetadata {
             flags: 0,
             col_count: col_specs.len(),
