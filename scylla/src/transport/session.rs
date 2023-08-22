@@ -33,7 +33,7 @@ use std::time::Duration;
 use tokio::net::lookup_host;
 use tokio::time::timeout;
 use tracing::warn;
-use tracing::{debug, error, trace, trace_span, Instrument};
+use tracing::{debug, trace, trace_span, Instrument};
 use uuid::Uuid;
 
 use super::cluster::ContactPoint;
@@ -55,7 +55,7 @@ use crate::frame::value::{
 use crate::prepared_statement::PreparedStatement;
 use crate::query::Query;
 use crate::routing::Token;
-use crate::statement::{Consistency, SerialConsistency};
+use crate::statement::Consistency;
 use crate::tracing::{TracingEvent, TracingInfo};
 use crate::transport::cluster::{Cluster, ClusterData, ClusterNeatDebug};
 use crate::transport::connection::{Connection, ConnectionConfig, VerifiedKeyspaceName};
@@ -127,7 +127,8 @@ pub struct Session {
     default_execution_profile_handle: ExecutionProfileHandle,
     schema_agreement_interval: Duration,
     metrics: Arc<Metrics>,
-    auto_await_schema_agreement_timeout: Option<Duration>,
+    schema_agreement_timeout: Duration,
+    schema_agreement_automatic_waiting: bool,
     refresh_metadata_on_auto_schema_agreement: bool,
     keyspace_name: ArcSwapOption<String>,
     tracing_info_fetch_attempts: NonZeroU32,
@@ -149,7 +150,7 @@ impl std::fmt::Debug for Session {
             .field("metrics", &self.metrics)
             .field(
                 "auto_await_schema_agreement_timeout",
-                &self.auto_await_schema_agreement_timeout,
+                &self.schema_agreement_timeout,
             )
             .finish()
     }
@@ -183,7 +184,6 @@ pub struct SessionConfig {
 
     pub authenticator: Option<Arc<dyn AuthenticatorProvider>>,
 
-    pub schema_agreement_interval: Duration,
     pub connect_timeout: Duration,
 
     /// Size of the per-node connection pool, i.e. how many connections the driver should keep to each node.
@@ -208,9 +208,21 @@ pub struct SessionConfig {
     /// If `None`, connections are never closed due to lack of response to a keepalive message.
     pub keepalive_timeout: Option<Duration>,
 
-    /// Controls the timeout for the automatic wait for schema agreement after sending a schema-altering statement.
-    /// If `None`, the automatic schema agreement is disabled.
-    pub auto_await_schema_agreement_timeout: Option<Duration>,
+    /// How often the driver should ask if schema is in agreement.
+    pub schema_agreement_interval: Duration,
+
+    /// Controls the timeout for waiting for schema agreement.
+    /// This works both for manual awaiting schema agreement and for
+    /// automatic waiting after a schema-altering statement is sent.
+    pub schema_agreement_timeout: Duration,
+
+    /// Controls whether schema agreement is automatically awaited
+    /// after sending a schema-altering statement.
+    pub schema_agreement_automatic_waiting: bool,
+
+    /// If true, full schema metadata is fetched after successfully reaching a schema agreement.
+    /// It is true by default but can be disabled if successive schema-altering statements should be performed.
+    pub refresh_metadata_on_auto_schema_agreement: bool,
 
     pub address_translator: Option<Arc<dyn AddressTranslator>>,
 
@@ -218,10 +230,6 @@ pub struct SessionConfig {
     /// to the node or not. The driver will also avoid filtered out nodes when
     /// re-establishing the control connection.
     pub host_filter: Option<Arc<dyn HostFilter>>,
-
-    /// If true, full schema metadata is fetched after successfully reaching a schema agreement.
-    /// It is true by default but can be disabled if successive schema-altering statements should be performed.
-    pub refresh_metadata_on_auto_schema_agreement: bool,
 
     /// If the driver is to connect to ScyllaCloud, there is a config for it.
     #[cfg(feature = "cloud")]
@@ -306,7 +314,8 @@ impl SessionConfig {
             fetch_schema_metadata: true,
             keepalive_interval: Some(Duration::from_secs(30)),
             keepalive_timeout: Some(Duration::from_secs(30)),
-            auto_await_schema_agreement_timeout: Some(std::time::Duration::from_secs(60)),
+            schema_agreement_timeout: Duration::from_secs(60),
+            schema_agreement_automatic_waiting: true,
             address_translator: None,
             host_filter: None,
             refresh_metadata_on_auto_schema_agreement: true,
@@ -562,7 +571,8 @@ impl Session {
             default_execution_profile_handle,
             schema_agreement_interval: config.schema_agreement_interval,
             metrics: Arc::new(Metrics::new()),
-            auto_await_schema_agreement_timeout: config.auto_await_schema_agreement_timeout,
+            schema_agreement_timeout: config.schema_agreement_timeout,
+            schema_agreement_automatic_waiting: config.schema_agreement_automatic_waiting,
             refresh_metadata_on_auto_schema_agreement: config
                 .refresh_metadata_on_auto_schema_agreement,
             keyspace_name: ArcSwapOption::default(), // will be set by use_keyspace
@@ -712,8 +722,7 @@ impl Session {
         };
 
         self.handle_set_keyspace_response(&response).await?;
-        self.handle_auto_await_schema_agreement(&query.contents, &response)
-            .await?;
+        self.handle_auto_await_schema_agreement(&response).await?;
 
         let result = response.into_query_result()?;
         span.record_result_fields(&result);
@@ -738,20 +747,11 @@ impl Session {
 
     async fn handle_auto_await_schema_agreement(
         &self,
-        contents: &str,
         response: &NonErrorQueryResponse,
     ) -> Result<(), QueryError> {
-        if let Some(timeout) = self.auto_await_schema_agreement_timeout {
-            if response.as_schema_change().is_some()
-                && !self.await_timed_schema_agreement(timeout).await?
-            {
-                // TODO: The TimeoutError should allow to provide more context.
-                // For now, print an error to the logs
-                error!(
-                    "Failed to reach schema agreement after a schema-altering statement: {}",
-                    contents,
-                );
-                return Err(QueryError::TimeoutError);
+        if self.schema_agreement_automatic_waiting {
+            if response.as_schema_change().is_some() {
+                self.await_schema_agreement().await?;
             }
 
             if self.refresh_metadata_on_auto_schema_agreement
@@ -1060,8 +1060,7 @@ impl Session {
         };
 
         self.handle_set_keyspace_response(&response).await?;
-        self.handle_auto_await_schema_agreement(prepared.get_statement(), &response)
-            .await?;
+        self.handle_auto_await_schema_agreement(&response).await?;
 
         let result = response.into_query_result()?;
         span.record_result_fields(&result);
@@ -1803,58 +1802,27 @@ impl Session {
         last_error.map(Result::Err)
     }
 
-    pub async fn await_schema_agreement(&self) -> Result<(), QueryError> {
-        while !self.check_schema_agreement().await? {
-            tokio::time::sleep(self.schema_agreement_interval).await
-        }
-        Ok(())
-    }
-
-    pub async fn await_timed_schema_agreement(
-        &self,
-        timeout_duration: Duration,
-    ) -> Result<bool, QueryError> {
-        timeout(timeout_duration, self.await_schema_agreement())
-            .await
-            .map_or(Ok(false), |res| res.and(Ok(true)))
-    }
-
-    async fn schema_agreement_auxiliary<ResT, QueryFut>(
-        &self,
-        do_query: impl Fn(Arc<Connection>, Consistency, &ExecutionProfileInner) -> QueryFut,
-    ) -> Result<ResT, QueryError>
-    where
-        QueryFut: Future<Output = Result<ResT, QueryError>>,
-        ResT: AllowedRunQueryResTType,
-    {
-        let info = RoutingInfo::default();
-        let config = StatementConfig {
-            is_idempotent: true,
-            serial_consistency: Some(Some(SerialConsistency::LocalSerial)),
-            ..Default::default()
-        };
-
-        let span = RequestSpan::new_none();
-
-        match self
-            .run_query(
-                info,
-                &config,
-                self.get_default_execution_profile_handle().access(),
-                |node: Arc<Node>| async move { node.random_connection().await },
-                do_query,
-                &span,
-            )
-            .await?
-        {
-            RunQueryResult::IgnoredWriteError => Err(QueryError::ProtocolError(
-                "Retry policy has made the driver ignore schema's agreement query.",
-            )),
-            RunQueryResult::Completed(result) => Ok(result),
+    async fn await_schema_agreement_indefinitely(&self) -> Result<Uuid, QueryError> {
+        loop {
+            tokio::time::sleep(self.schema_agreement_interval).await;
+            if let Some(agreed_version) = self.check_schema_agreement().await? {
+                return Ok(agreed_version);
+            }
         }
     }
 
-    pub async fn check_schema_agreement(&self) -> Result<bool, QueryError> {
+    pub async fn await_schema_agreement(&self) -> Result<Uuid, QueryError> {
+        timeout(
+            self.schema_agreement_timeout,
+            self.await_schema_agreement_indefinitely(),
+        )
+        .await
+        .unwrap_or(Err(QueryError::RequestTimeout(
+            "schema agreement not reached in time".to_owned(),
+        )))
+    }
+
+    pub async fn check_schema_agreement(&self) -> Result<Option<Uuid>, QueryError> {
         let cluster_data = self.get_cluster_data();
         let connections_iter = cluster_data.iter_working_connections()?;
 
@@ -1863,17 +1831,7 @@ impl Session {
 
         let local_version: Uuid = versions[0];
         let in_agreement = versions.into_iter().all(|v| v == local_version);
-        Ok(in_agreement)
-    }
-
-    pub async fn fetch_schema_version(&self) -> Result<Uuid, QueryError> {
-        // We ignore custom Consistency that a retry policy could decide to put here, using the default instead.
-        self.schema_agreement_auxiliary(
-            |connection: Arc<Connection>, _: Consistency, _: &ExecutionProfileInner| async move {
-                connection.fetch_schema_version().await
-            },
-        )
-        .await
+        Ok(in_agreement.then_some(local_version))
     }
 
     /// Retrieves the handle to execution profile that is used by this session
@@ -2068,13 +2026,6 @@ impl RequestSpan {
 
         Self {
             span,
-            speculative_executions: 0.into(),
-        }
-    }
-
-    pub(crate) fn new_none() -> Self {
-        Self {
-            span: tracing::Span::none(),
             speculative_executions: 0.into(),
         }
     }
