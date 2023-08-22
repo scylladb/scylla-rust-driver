@@ -36,6 +36,12 @@ fn u8_array_serialization() {
 }
 
 #[test]
+fn u8_slice_serialization() {
+    let val = vec![1u8, 1, 1, 1];
+    assert_eq!(serialized(val.as_slice()), vec![0, 0, 0, 4, 1, 1, 1, 1]);
+}
+
+#[test]
 fn naive_date_serialization() {
     // 1970-01-31 is 2^31
     let unix_epoch: NaiveDate = NaiveDate::from_ymd_opt(1970, 1, 1).unwrap();
