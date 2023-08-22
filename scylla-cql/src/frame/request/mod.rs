@@ -112,7 +112,7 @@ mod tests {
                 query::{Query, QueryParameters},
                 DeserializableRequest, SerializableRequest,
             },
-            types::{self, LegacyConsistency, SerialConsistency},
+            types::{self, SerialConsistency},
             value::SerializedValues,
         },
         Consistency,
@@ -236,10 +236,7 @@ mod tests {
 
             // Now buf_ptr points at consistency.
             let consistency = types::read_consistency(&mut buf_ptr).unwrap();
-            assert_eq!(
-                consistency,
-                LegacyConsistency::Regular(Consistency::default())
-            );
+            assert_eq!(consistency, Consistency::default());
 
             // Now buf_ptr points at flags, but it is immutable. Get mutable reference into the buffer.
             let flags_idx = buf.len() - buf_ptr.len();

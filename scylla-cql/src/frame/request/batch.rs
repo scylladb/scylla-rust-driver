@@ -4,7 +4,7 @@ use std::{borrow::Cow, convert::TryInto};
 use crate::frame::{
     frame_errors::ParseError,
     request::{RequestOpcode, SerializableRequest},
-    types,
+    types::{self, SerialConsistency},
     value::{BatchValues, BatchValuesIterator, SerializedValues},
 };
 
@@ -202,13 +202,7 @@ impl<'b> DeserializableRequest for Batch<'b, BatchStatement<'b>, Vec<SerializedV
             })
             .collect::<Result<Vec<_>, ParseError>>()?;
 
-        let consistency = match types::read_consistency(buf)? {
-            types::LegacyConsistency::Regular(reg) => Ok(reg),
-            types::LegacyConsistency::Serial(ser) => Err(ParseError::BadIncomingData(format!(
-                "Expected regular Consistency, got SerialConsistency {}",
-                ser
-            ))),
-        }?;
+        let consistency = types::read_consistency(buf)?;
 
         let flags = buf.get_u8();
         let unknown_flags = flags & (!ALL_FLAGS);
@@ -224,15 +218,15 @@ impl<'b> DeserializableRequest for Batch<'b, BatchStatement<'b>, Vec<SerializedV
         let serial_consistency = serial_consistency_flag
             .then(|| types::read_consistency(buf))
             .transpose()?
-            .map(|legacy_consistency| match legacy_consistency {
-                types::LegacyConsistency::Regular(reg) => {
-                    Err(ParseError::BadIncomingData(format!(
+            .map(
+                |consistency| match SerialConsistency::try_from(consistency) {
+                    Ok(serial_consistency) => Ok(serial_consistency),
+                    Err(_) => Err(ParseError::BadIncomingData(format!(
                         "Expected SerialConsistency, got regular Consistency {}",
-                        reg
-                    )))
-                }
-                types::LegacyConsistency::Serial(ser) => Ok(ser),
-            })
+                        consistency
+                    ))),
+                },
+            )
             .transpose()?;
 
         let timestamp = default_timestamp_flag

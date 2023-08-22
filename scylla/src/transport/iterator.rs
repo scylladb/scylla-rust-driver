@@ -22,7 +22,6 @@ use super::execution_profile::ExecutionProfileInner;
 use super::session::RequestSpan;
 use crate::cql_to_rust::{FromRow, FromRowError};
 
-use crate::frame::types::LegacyConsistency;
 use crate::frame::{
     response::{
         result,
@@ -572,7 +571,7 @@ where
                 let query_info = QueryInfo {
                     error: &last_error,
                     is_idempotent: self.query_is_idempotent,
-                    consistency: LegacyConsistency::Regular(self.query_consistency),
+                    consistency: self.query_consistency,
                 };
 
                 let retry_decision = self.retry_session.decide_should_retry(query_info);

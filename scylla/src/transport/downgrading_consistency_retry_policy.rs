@@ -1,6 +1,5 @@
 use scylla_cql::{
     errors::{DbError, QueryError, WriteType},
-    frame::types::LegacyConsistency,
     Consistency,
 };
 use tracing::debug;
@@ -56,7 +55,7 @@ impl Default for DowngradingConsistencyRetrySession {
 impl RetrySession for DowngradingConsistencyRetrySession {
     fn decide_should_retry(&mut self, query_info: QueryInfo) -> RetryDecision {
         let cl = match query_info.consistency {
-            LegacyConsistency::Serial(_) => {
+            Consistency::Serial | Consistency::LocalSerial => {
                 return match query_info.error {
                     QueryError::DbError(DbError::Unavailable { .. }, _) => {
                         // JAVA-764: if the requested consistency level is serial, it means that the operation failed at
@@ -67,7 +66,7 @@ impl RetrySession for DowngradingConsistencyRetrySession {
                     _ => RetryDecision::DontRetry,
                 };
             }
-            LegacyConsistency::Regular(cl) => cl,
+            cl => cl,
         };
 
         fn max_likely_to_work_cl(known_ok: i32, previous_cl: Consistency) -> RetryDecision {
@@ -209,7 +208,7 @@ mod tests {
         QueryInfo {
             error,
             is_idempotent,
-            consistency: LegacyConsistency::Regular(cl),
+            consistency: cl,
         }
     }
 
@@ -246,14 +245,14 @@ mod tests {
             DbError::Unauthorized,
             DbError::ConfigError,
             DbError::ReadFailure {
-                consistency: LegacyConsistency::Regular(Consistency::Two),
+                consistency: Consistency::Two,
                 received: 1,
                 required: 2,
                 numfailures: 1,
                 data_present: false,
             },
             DbError::WriteFailure {
-                consistency: LegacyConsistency::Regular(Consistency::Two),
+                consistency: Consistency::Two,
                 received: 1,
                 required: 2,
                 numfailures: 1,
@@ -361,7 +360,7 @@ mod tests {
         let alive = 1;
         let error = QueryError::DbError(
             DbError::Unavailable {
-                consistency: LegacyConsistency::Regular(Consistency::Two),
+                consistency: Consistency::Two,
                 required: 2,
                 alive,
             },
@@ -399,7 +398,7 @@ mod tests {
         // Enough responses and data_present == false - coordinator received only checksums
         let enough_responses_no_data = QueryError::DbError(
             DbError::ReadTimeout {
-                consistency: LegacyConsistency::Regular(Consistency::Two),
+                consistency: Consistency::Two,
                 received: 2,
                 required: 2,
                 data_present: false,
@@ -450,7 +449,7 @@ mod tests {
         // waiting for read-repair acknowledgement.
         let enough_responses_with_data = QueryError::DbError(
             DbError::ReadTimeout {
-                consistency: LegacyConsistency::Regular(Consistency::Two),
+                consistency: Consistency::Two,
                 received: 2,
                 required: 2,
                 data_present: true,
@@ -486,7 +485,7 @@ mod tests {
         let received = 1;
         let not_enough_responses_with_data = QueryError::DbError(
             DbError::ReadTimeout {
-                consistency: LegacyConsistency::Regular(Consistency::Two),
+                consistency: Consistency::Two,
                 received,
                 required: 2,
                 data_present: true,
@@ -547,7 +546,7 @@ mod tests {
             // WriteType == BatchLog
             let write_type_batchlog = QueryError::DbError(
                 DbError::WriteTimeout {
-                    consistency: LegacyConsistency::Regular(Consistency::Two),
+                    consistency: Consistency::Two,
                     received,
                     required,
                     write_type: WriteType::BatchLog,
@@ -590,7 +589,7 @@ mod tests {
             // WriteType == UnloggedBatch
             let write_type_unlogged_batch = QueryError::DbError(
                 DbError::WriteTimeout {
-                    consistency: LegacyConsistency::Regular(Consistency::Two),
+                    consistency: Consistency::Two,
                     received,
                     required,
                     write_type: WriteType::UnloggedBatch,
@@ -633,7 +632,7 @@ mod tests {
             // WriteType == other
             let write_type_other = QueryError::DbError(
                 DbError::WriteTimeout {
-                    consistency: LegacyConsistency::Regular(Consistency::Two),
+                    consistency: Consistency::Two,
                     received,
                     required,
                     write_type: WriteType::Simple,

@@ -1,6 +1,6 @@
 use std::borrow::Cow;
 
-use crate::frame::frame_errors::ParseError;
+use crate::frame::{frame_errors::ParseError, types::SerialConsistency};
 use bytes::{Buf, BufMut, Bytes};
 
 use crate::{
@@ -134,13 +134,7 @@ impl QueryParameters<'_> {
 
 impl<'q> QueryParameters<'q> {
     pub fn deserialize(buf: &mut &[u8]) -> Result<Self, ParseError> {
-        let consistency = match types::read_consistency(buf)? {
-            types::LegacyConsistency::Regular(reg) => Ok(reg),
-            types::LegacyConsistency::Serial(ser) => Err(ParseError::BadIncomingData(format!(
-                "Expected regular Consistency, got SerialConsistency {}",
-                ser
-            ))),
-        }?;
+        let consistency = types::read_consistency(buf)?;
 
         let flags = buf.get_u8();
         let unknown_flags = flags & (!ALL_FLAGS);
@@ -169,19 +163,19 @@ impl<'q> QueryParameters<'q> {
         } else {
             None
         };
-        let serial_consistency = if serial_consistency_flag {
-            match types::read_consistency(buf)? {
-                types::LegacyConsistency::Regular(reg) => {
-                    return Err(ParseError::BadIncomingData(format!(
+        let serial_consistency = serial_consistency_flag
+            .then(|| types::read_consistency(buf))
+            .transpose()?
+            .map(
+                |consistency| match SerialConsistency::try_from(consistency) {
+                    Ok(serial_consistency) => Ok(serial_consistency),
+                    Err(_) => Err(ParseError::BadIncomingData(format!(
                         "Expected SerialConsistency, got regular Consistency {}",
-                        reg
-                    )))
-                }
-                types::LegacyConsistency::Serial(ser) => Some(ser),
-            }
-        } else {
-            None
-        };
+                        consistency
+                    ))),
+                },
+            )
+            .transpose()?;
         let timestamp = if default_timestamp_flag {
             Some(types::read_long(buf)?)
         } else {
