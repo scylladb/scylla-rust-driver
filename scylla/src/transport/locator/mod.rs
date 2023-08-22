@@ -6,6 +6,7 @@ pub(crate) mod test;
 mod token_ring;
 
 use rand::{seq::IteratorRandom, Rng};
+use scylla_cql::frame::response::result::TableSpec;
 pub use token_ring::TokenRing;
 
 use super::{topology::Strategy, Node, NodeRef};
@@ -79,6 +80,7 @@ impl ReplicaLocator {
         token: Token,
         strategy: &'a Strategy,
         datacenter: Option<&'a str>,
+        _table: &TableSpec,
     ) -> ReplicaSet<'a> {
         match strategy {
             Strategy::SimpleStrategy { replication_factor } => {
@@ -143,6 +145,7 @@ impl ReplicaLocator {
                 replication_factor: 1,
             },
             datacenter,
+            _table,
         )
     }
 
@@ -761,6 +764,7 @@ impl<'a> IntoIterator for ReplicasOrdered<'a> {
 #[cfg(test)]
 mod tests {
     use crate::{routing::Token, test_utils::setup_tracing, transport::locator::test::*};
+    use scylla_cql::frame::response::result::TableSpec;
 
     #[tokio::test]
     async fn test_replicas_ordered() {
@@ -771,7 +775,15 @@ mod tests {
         // For each case (token, limit_to_dc, strategy), we are checking
         // that ReplicasOrdered yields replicas in the expected order.
         let check = |token, limit_to_dc, strategy, expected| {
-            let replica_set = locator.replicas_for_token(Token::new(token), strategy, limit_to_dc);
+            let replica_set = locator.replicas_for_token(
+                Token::new(token),
+                strategy,
+                limit_to_dc,
+                &TableSpec {
+                    ks_name: "ks".to_owned(),
+                    table_name: "tbl".to_owned(),
+                },
+            );
             let replicas_ordered = replica_set.into_replicas_ordered();
             let ids: Vec<_> = replicas_ordered
                 .into_iter()

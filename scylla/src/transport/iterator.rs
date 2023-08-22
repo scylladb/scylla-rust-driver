@@ -248,11 +248,12 @@ impl RowIterator {
                 }
             };
 
+            let kstable = config.prepared.get_table_spec();
             let statement_info = RoutingInfo {
                 consistency,
                 serial_consistency,
                 token,
-                keyspace: config.prepared.get_keyspace_name(),
+                table: kstable,
                 is_confirmed_lwt: config.prepared.is_confirmed_lwt(),
             };
 
@@ -272,20 +273,19 @@ impl RowIterator {
 
             let serialized_values_size = config.values.buffer_size();
 
-            let replicas: Option<smallvec::SmallVec<[_; 8]>> =
-                if let (Some(keyspace), Some(token)) =
-                    (statement_info.keyspace.as_ref(), statement_info.token)
-                {
-                    Some(
-                        config
-                            .cluster_data
-                            .get_token_endpoints_iter(keyspace, token)
-                            .map(|(node, shard)| (node.clone(), shard))
-                            .collect(),
-                    )
-                } else {
-                    None
-                };
+            let replicas: Option<smallvec::SmallVec<[_; 8]>> = if let (Some(kstable), Some(token)) =
+                (statement_info.table.as_ref(), statement_info.token)
+            {
+                Some(
+                    config
+                        .cluster_data
+                        .get_token_endpoints_iter(kstable, token)
+                        .map(|(node, shard)| (node.clone(), shard))
+                        .collect(),
+                )
+            } else {
+                None
+            };
 
             let span_creator = move || {
                 let span = RequestSpan::new_prepared(

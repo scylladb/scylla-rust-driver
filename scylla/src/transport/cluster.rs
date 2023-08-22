@@ -17,6 +17,7 @@ use futures::future::join_all;
 use futures::{future::RemoteHandle, FutureExt};
 use itertools::Itertools;
 use scylla_cql::errors::{BadQuery, NewSessionError};
+use scylla_cql::frame::response::result::TableSpec;
 use scylla_cql::types::serialize::row::SerializedValues;
 use std::collections::HashMap;
 use std::net::SocketAddr;
@@ -409,24 +410,33 @@ impl ClusterData {
     }
 
     /// Access to replicas owning a given token
-    pub fn get_token_endpoints(&self, keyspace: &str, token: Token) -> Vec<(Arc<Node>, Shard)> {
-        self.get_token_endpoints_iter(keyspace, token)
+    pub fn get_token_endpoints(
+        &self,
+        keyspace: impl Into<String>,
+        table: impl Into<String>,
+        token: Token,
+    ) -> Vec<(Arc<Node>, Shard)> {
+        let table_spec = TableSpec {
+            ks_name: keyspace.into(),
+            table_name: table.into(),
+        };
+        self.get_token_endpoints_iter(&table_spec, token)
             .map(|(node, shard)| (node.clone(), shard))
             .collect()
     }
 
     pub(crate) fn get_token_endpoints_iter(
         &self,
-        keyspace: &str,
+        table: &TableSpec,
         token: Token,
     ) -> impl Iterator<Item = (NodeRef<'_>, Shard)> {
-        let keyspace = self.keyspaces.get(keyspace);
+        let keyspace = self.keyspaces.get(table.ks_name.as_str());
         let strategy = keyspace
             .map(|k| &k.strategy)
             .unwrap_or(&Strategy::LocalStrategy);
         let replica_set = self
             .replica_locator()
-            .replicas_for_token(token, strategy, None);
+            .replicas_for_token(token, strategy, None, table);
 
         replica_set.into_iter()
     }
@@ -434,14 +444,14 @@ impl ClusterData {
     /// Access to replicas owning a given partition key (similar to `nodetool getendpoints`)
     pub fn get_endpoints(
         &self,
-        keyspace: &str,
-        table: &str,
+        keyspace: impl Into<String>,
+        table: impl Into<String>,
         partition_key: &SerializedValues,
     ) -> Result<Vec<(Arc<Node>, Shard)>, BadQuery> {
-        Ok(self.get_token_endpoints(
-            keyspace,
-            self.compute_token(keyspace, table, partition_key)?,
-        ))
+        let keyspace = keyspace.into();
+        let table = table.into();
+        let token = self.compute_token(keyspace.as_ref(), table.as_ref(), partition_key)?;
+        Ok(self.get_token_endpoints(keyspace, table, token))
     }
 
     /// Access replica location info
