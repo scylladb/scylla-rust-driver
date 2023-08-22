@@ -910,6 +910,30 @@ impl<K: SessionBuilderKind> GenericSessionBuilder<K> {
         self.config.enable_write_coalescing = enable;
         self
     }
+
+    /// Set the interval at which the driver refreshes the cluster metadata which contains information
+    /// about the cluster topology as well as the cluster schema.
+    ///
+    /// The default is 60 seconds.
+    ///
+    /// In the given example, we have set the duration value to 20 seconds, which
+    /// means that the metadata is refreshed every 20 seconds.
+    /// # Example
+    /// ```
+    /// # use scylla::{Session, SessionBuilder};
+    /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
+    ///     let session: Session = SessionBuilder::new()
+    ///         .known_node("127.0.0.1:9042")
+    ///         .cluster_metadata_refresh_interval(std::time::Duration::from_secs(20))
+    ///         .build()
+    ///         .await?;
+    /// #   Ok(())
+    /// # }
+    /// ```
+    pub fn cluster_metadata_refresh_interval(mut self, interval: Duration) -> Self {
+        self.config.cluster_metadata_refresh_interval = interval;
+        self
+    }
 }
 
 /// Creates a [`SessionBuilder`] with default configuration, same as [`SessionBuilder::new`]
@@ -1125,6 +1149,15 @@ mod tests {
     }
 
     #[test]
+    fn cluster_metadata_refresh_interval() {
+        let builder = SessionBuilder::new();
+        assert_eq!(
+            builder.config.cluster_metadata_refresh_interval,
+            std::time::Duration::from_secs(60)
+        );
+    }
+
+    #[test]
     fn all_features() {
         let mut builder = SessionBuilder::new();
 
@@ -1140,6 +1173,7 @@ mod tests {
         builder = builder.tcp_nodelay(true);
         builder = builder.use_keyspace("ks_name", true);
         builder = builder.fetch_schema_metadata(false);
+        builder = builder.cluster_metadata_refresh_interval(Duration::from_secs(1));
 
         assert_eq!(
             builder.config.known_nodes,
@@ -1155,6 +1189,10 @@ mod tests {
 
         assert_eq!(builder.config.compression, Some(Compression::Snappy));
         assert!(builder.config.tcp_nodelay);
+        assert_eq!(
+            builder.config.cluster_metadata_refresh_interval,
+            Duration::from_secs(1)
+        );
 
         assert_eq!(builder.config.used_keyspace, Some("ks_name".to_string()));
 
