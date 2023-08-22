@@ -7,18 +7,16 @@ use crate::cloud::CloudConfig;
 use crate::frame::types::LegacyConsistency;
 use crate::history;
 use crate::history::HistoryListener;
-use crate::prepared_statement::PartitionKeyDecoder;
 use crate::utils::pretty::{CommaSeparatedDisplayer, CqlValueDisplayer};
+use crate::utils::unzip_option;
 use arc_swap::ArcSwapOption;
 use async_trait::async_trait;
-use bytes::BufMut;
 use bytes::Bytes;
-use bytes::BytesMut;
 use futures::future::join_all;
 use futures::future::try_join_all;
 use itertools::Either;
 pub use scylla_cql::errors::TranslationError;
-use scylla_cql::frame::response::result::{PreparedMetadata, Rows};
+use scylla_cql::frame::response::result::{deser_cql_value, ColumnSpec, Rows};
 use scylla_cql::frame::response::NonErrorResponse;
 use std::borrow::Borrow;
 use std::collections::HashMap;
@@ -43,9 +41,8 @@ use super::connection::NonErrorQueryResponse;
 use super::connection::QueryResponse;
 #[cfg(feature = "ssl")]
 use super::connection::SslConfig;
-use super::errors::{BadQuery, NewSessionError, QueryError};
+use super::errors::{NewSessionError, QueryError};
 use super::execution_profile::{ExecutionProfile, ExecutionProfileHandle, ExecutionProfileInner};
-use super::partitioner::Partitioner;
 use super::partitioner::PartitionerName;
 use super::topology::UntranslatedPeer;
 use super::NodeRef;
@@ -53,9 +50,9 @@ use crate::cql_to_rust::FromRow;
 use crate::frame::response::cql_to_rust::FromRowError;
 use crate::frame::response::result;
 use crate::frame::value::{
-    BatchValues, BatchValuesFirstSerialized, BatchValuesIterator, SerializedValues, ValueList,
+    BatchValues, BatchValuesFirstSerialized, BatchValuesIterator, ValueList,
 };
-use crate::prepared_statement::{PartitionKeyError, PreparedStatement};
+use crate::prepared_statement::PreparedStatement;
 use crate::query::Query;
 use crate::routing::Token;
 use crate::statement::{Consistency, SerialConsistency};
@@ -982,10 +979,11 @@ impl Session {
         let values_ref = &serialized_values;
         let paging_state_ref = &paging_state;
 
-        let partition_key = self.calculate_partition_key(prepared, &serialized_values)?;
-        let token = partition_key
-            .as_ref()
-            .map(|pk| prepared.get_partitioner_name().hash(pk));
+        let (partition_key, token) =
+            unzip_option(prepared.extract_partition_key_and_calculate_token(
+                prepared.get_partitioner_name(),
+                &serialized_values,
+            )?);
 
         let execution_profile = prepared
             .get_execution_profile_handle()
@@ -1007,8 +1005,7 @@ impl Session {
         };
 
         let span = RequestSpan::new_prepared(
-            prepared.get_prepared_metadata(),
-            partition_key.as_ref(),
+            partition_key.as_ref().map(|pk| pk.iter()),
             token,
             serialized_values.size(),
         );
@@ -1125,10 +1122,6 @@ impl Session {
     ) -> Result<RowIterator, QueryError> {
         let prepared = prepared.into();
         let serialized_values = values.serialized()?;
-        let partition_key = self.calculate_partition_key(&prepared, &serialized_values)?;
-        let token = partition_key
-            .as_ref()
-            .map(|pk| prepared.get_partitioner_name().hash(pk));
 
         let execution_profile = prepared
             .get_execution_profile_handle()
@@ -1138,8 +1131,6 @@ impl Session {
         RowIterator::new_for_prepared_statement(PreparedIteratorConfig {
             prepared,
             values: serialized_values.into_owned(),
-            partition_key,
-            token,
             execution_profile,
             cluster_data: self.cluster.get_data(),
             metrics: self.metrics.clone(),
@@ -1219,7 +1210,7 @@ impl Session {
                 RoutingInfo {
                     consistency,
                     serial_consistency,
-                    token: self.calculate_token(ps, first_serialized_value)?,
+                    token: ps.calculate_token(first_serialized_value)?,
                     keyspace: ps.get_keyspace_name(),
                     is_confirmed_lwt: false,
                 }
@@ -1890,95 +1881,10 @@ impl Session {
         .await
     }
 
-    fn calculate_partition_key(
-        &self,
-        prepared: &PreparedStatement,
-        serialized_values: &SerializedValues,
-    ) -> Result<Option<Bytes>, QueryError> {
-        if !prepared.is_token_aware() {
-            return Ok(None);
-        }
-        let partition_key = calculate_partition_key(prepared, serialized_values)?;
-        Ok(Some(partition_key))
-    }
-
-    /// Calculates the token for given prepared statement and serialized values.
-    ///
-    /// Returns the token that would be computed for executing the provided
-    /// prepared statement with the provided values.
-    pub fn calculate_token(
-        &self,
-        prepared: &PreparedStatement,
-        serialized_values: &SerializedValues,
-    ) -> Result<Option<Token>, QueryError> {
-        match self.calculate_partition_key(prepared, serialized_values) {
-            Ok(Some(partition_key)) => {
-                let partitioner_name = prepared.get_partitioner_name();
-                Ok(Some(partitioner_name.hash(&partition_key)))
-            }
-            Ok(None) => Ok(None),
-            Err(err) => Err(err),
-        }
-    }
-
-    /// Calculates the token for given partitioner and serialized partition key.
-    ///
-    /// The ordinary way to calculate token is based on a PreparedStatement
-    /// and values for that statement. However, if a user knows:
-    /// - the order of the columns in the partition key,
-    /// - the values of the columns of the partition key,
-    /// - the partitioner of the table that the statement operates on,
-    ///
-    /// then having a `PreparedStatement` is not necessary and the token can
-    /// be calculated based on that information.
-    ///
-    /// NOTE: the provided values must completely constitute partition key
-    /// and be in the order defined in CREATE TABLE statement.
-    pub fn calculate_token_for_partition_key<P: Partitioner>(
-        serialized_partition_key_values: &SerializedValues,
-        _partitioner: &P,
-    ) -> Result<Token, PartitionKeyError> {
-        let mut buf: BytesMut = BytesMut::new();
-
-        if serialized_partition_key_values.len() == 1 {
-            let val = serialized_partition_key_values.iter().next().unwrap();
-            if let Some(val) = val {
-                buf.extend_from_slice(val);
-            }
-        } else {
-            for val in serialized_partition_key_values.iter().flatten() {
-                let val_len_u16: u16 = val
-                    .len()
-                    .try_into()
-                    .map_err(|_| PartitionKeyError::ValueTooLong(val.len()))?;
-                buf.put_u16(val_len_u16);
-                buf.extend_from_slice(val);
-                buf.put_u8(0);
-            }
-        }
-
-        Ok(P::hash(&buf.freeze()))
-    }
-
     /// Retrieves the handle to execution profile that is used by this session
     /// by default, i.e. when an executed statement does not define its own handle.
     pub fn get_default_execution_profile_handle(&self) -> &ExecutionProfileHandle {
         &self.default_execution_profile_handle
-    }
-}
-
-fn calculate_partition_key(
-    stmt: &PreparedStatement,
-    values: &SerializedValues,
-) -> Result<Bytes, QueryError> {
-    match stmt.compute_partition_key(values) {
-        Ok(key) => Ok(key),
-        Err(PartitionKeyError::NoPkIndexValue(_, _)) => Err(QueryError::ProtocolError(
-            "No pk indexes - can't calculate token",
-        )),
-        Err(PartitionKeyError::ValueTooLong(values_len)) => Err(QueryError::BadQuery(
-            BadQuery::ValuesTooLongForKey(values_len, u16::MAX.into()),
-        )),
     }
 }
 
@@ -2111,9 +2017,8 @@ impl RequestSpan {
         }
     }
 
-    pub(crate) fn new_prepared(
-        prepared_metadata: &PreparedMetadata,
-        partition_key: Option<&Bytes>,
+    pub(crate) fn new_prepared<'ps>(
+        partition_key: Option<impl Iterator<Item = (&'ps [u8], &'ps ColumnSpec)> + Clone>,
         token: Option<Token>,
         request_size: usize,
     ) -> Self {
@@ -2136,10 +2041,9 @@ impl RequestSpan {
         if let Some(partition_key) = partition_key {
             span.record(
                 "partition_key",
-                tracing::field::display(format_args!(
-                    "{}",
-                    partition_key_displayer(prepared_metadata, partition_key),
-                )),
+                tracing::field::display(
+                    format_args!("{}", partition_key_displayer(partition_key),),
+                ),
             );
         }
         if let Some(token) = token {
@@ -2238,12 +2142,16 @@ impl Drop for RequestSpan {
     }
 }
 
-fn partition_key_displayer<'pk>(
-    prepared_metadata: &'pk PreparedMetadata,
-    partition_key: &'pk [u8],
-) -> impl Display + 'pk {
+fn partition_key_displayer<'ps, 'res>(
+    mut pk_values_iter: impl Iterator<Item = (&'ps [u8], &'ps ColumnSpec)> + 'res + Clone,
+) -> impl Display + 'res {
     CommaSeparatedDisplayer(
-        PartitionKeyDecoder::new(prepared_metadata, partition_key).map(|c| match c {
+        std::iter::from_fn(move || {
+            pk_values_iter
+                .next()
+                .map(|(mut cell, spec)| deser_cql_value(&spec.typ, &mut cell))
+        })
+        .map(|c| match c {
             Ok(c) => Either::Left(CqlValueDisplayer(c)),
             Err(_) => Either::Right("<decoding error>"),
         }),

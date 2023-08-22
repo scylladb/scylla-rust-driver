@@ -1,6 +1,7 @@
 /// Cluster manages up to date information and connections to database nodes
 use crate::frame::response::event::{Event, StatusChangeEvent};
 use crate::frame::value::ValueList;
+use crate::prepared_statement::TokenCalculationError;
 use crate::routing::Token;
 use crate::transport::host_filter::HostFilter;
 use crate::transport::{
@@ -13,7 +14,6 @@ use crate::transport::{
 };
 
 use arc_swap::ArcSwap;
-use bytes::{BufMut, Bytes, BytesMut};
 use futures::future::join_all;
 use futures::{future::RemoteHandle, FutureExt};
 use itertools::Itertools;
@@ -36,6 +36,7 @@ pub struct ContactPoint {
 }
 
 use super::locator::ReplicaLocator;
+use super::partitioner::calculate_token_for_partition_key;
 use super::topology::Strategy;
 
 /// Cluster manages up to date information and connections to database nodes.
@@ -409,31 +410,13 @@ impl ClusterData {
             .and_then(|t| t.partitioner.as_deref())
             .and_then(PartitionerName::from_str)
             .unwrap_or_default();
-        let serialized_values = partition_key.serialized()?;
-        // Null values are skipped in computation; null values in partition key are unsound,
-        // but it is consistent with computation of prepared statements token.
-        let serialized_pk = match serialized_values.len() {
-            0 => None,
-            1 => serialized_values
-                .iter()
-                .next()
-                .unwrap()
-                .map(Bytes::copy_from_slice),
-            _ => {
-                let mut buf = BytesMut::new();
-                for value in serialized_values.iter().flatten() {
-                    let value_size = value
-                        .len()
-                        .try_into()
-                        .map_err(|_| BadQuery::ValuesTooLongForKey(value.len(), u16::MAX.into()))?;
-                    buf.put_u16(value_size);
-                    buf.extend_from_slice(value);
-                    buf.put_u8(0);
+
+        calculate_token_for_partition_key(&partition_key.serialized().unwrap(), &partitioner)
+            .map_err(|err| match err {
+                TokenCalculationError::ValueTooLong(values_len) => {
+                    BadQuery::ValuesTooLongForKey(values_len, u16::MAX.into())
                 }
-                Some(buf.into())
-            }
-        };
-        Ok(partitioner.hash(&serialized_pk.unwrap_or_default()))
+            })
     }
 
     /// Access to replicas owning a given token

@@ -10,7 +10,9 @@ use crate::statement::Consistency;
 use crate::tracing::TracingInfo;
 use crate::transport::cluster::Datacenter;
 use crate::transport::errors::{BadKeyspaceName, BadQuery, DbError, QueryError};
-use crate::transport::partitioner::{Murmur3Partitioner, Partitioner, PartitionerName};
+use crate::transport::partitioner::{
+    calculate_token_for_partition_key, Murmur3Partitioner, Partitioner, PartitionerName,
+};
 use crate::transport::topology::Strategy::NetworkTopologyStrategy;
 use crate::transport::topology::{
     CollectionType, ColumnKind, CqlType, NativeType, UserDefinedType,
@@ -229,7 +231,7 @@ async fn test_prepared_statement() {
                 .as_bigint()
                 .unwrap(),
         };
-        let prepared_token = Murmur3Partitioner::hash(
+        let prepared_token = Murmur3Partitioner.hash_one(
             &prepared_statement
                 .compute_partition_key(&serialized_values)
                 .unwrap(),
@@ -255,7 +257,7 @@ async fn test_prepared_statement() {
                 .as_bigint()
                 .unwrap(),
         };
-        let prepared_token = Murmur3Partitioner::hash(
+        let prepared_token = Murmur3Partitioner.hash_one(
             &prepared_complex_pk_statement
                 .compute_partition_key(&serialized_values)
                 .unwrap(),
@@ -527,7 +529,7 @@ async fn test_token_calculation() {
                 .as_bigint()
                 .unwrap(),
         };
-        let prepared_token = Murmur3Partitioner::hash(
+        let prepared_token = Murmur3Partitioner.hash_one(
             &prepared_statement
                 .compute_partition_key(&serialized_values)
                 .unwrap(),
@@ -2797,15 +2799,13 @@ async fn test_manual_primary_key_computation() {
             .await
             .unwrap();
 
-        let token_by_prepared = session
-            .calculate_token(prepared, &serialized_values_in_query_order)
+        let token_by_prepared = prepared
+            .calculate_token(&serialized_values_in_query_order)
             .unwrap()
             .unwrap();
-        let token_by_hand = Session::calculate_token_for_partition_key(
-            &serialized_values_in_pk_order,
-            &Murmur3Partitioner,
-        )
-        .unwrap();
+        let token_by_hand =
+            calculate_token_for_partition_key(&serialized_values_in_pk_order, &Murmur3Partitioner)
+                .unwrap();
         println!(
             "by_prepared: {}, by_hand: {}",
             token_by_prepared.value, token_by_hand.value

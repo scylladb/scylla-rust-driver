@@ -31,7 +31,6 @@ use crate::frame::{
     value::SerializedValues,
 };
 use crate::history::{self, HistoryListener};
-use crate::routing::Token;
 use crate::statement::Consistency;
 use crate::statement::{prepared_statement::PreparedStatement, query::Query};
 use crate::transport::cluster::ClusterData;
@@ -40,6 +39,7 @@ use crate::transport::load_balancing::{self, RoutingInfo};
 use crate::transport::metrics::Metrics;
 use crate::transport::retry_policy::{QueryInfo, RetryDecision, RetrySession};
 use crate::transport::{Node, NodeRef};
+use crate::utils::unzip_option;
 use tracing::{trace, trace_span, warn, Instrument};
 use uuid::Uuid;
 
@@ -76,8 +76,6 @@ struct ReceivedPage {
 pub(crate) struct PreparedIteratorConfig {
     pub(crate) prepared: PreparedStatement,
     pub(crate) values: SerializedValues,
-    pub(crate) partition_key: Option<Bytes>,
-    pub(crate) token: Option<Token>,
     pub(crate) execution_profile: Arc<ExecutionProfileInner>,
     pub(crate) cluster_data: Arc<ClusterData>,
     pub(crate) metrics: Arc<Metrics>,
@@ -241,18 +239,28 @@ impl RowIterator {
 
         let parent_span = tracing::Span::current();
         let worker_task = async move {
+            let prepared_ref = &config.prepared;
+            let values_ref = &config.values;
+
+            let (partition_key, token) = match prepared_ref
+                .extract_partition_key_and_calculate_token(
+                    prepared_ref.get_partitioner_name(),
+                    values_ref,
+                ) {
+                Ok(res) => unzip_option(res),
+                Err(err) => {
+                    let (proof, _res) = ProvingSender::from(sender).send(Err(err)).await;
+                    return proof;
+                }
+            };
+
             let statement_info = RoutingInfo {
                 consistency,
                 serial_consistency,
-                token: config.token,
+                token,
                 keyspace: config.prepared.get_keyspace_name(),
                 is_confirmed_lwt: config.prepared.is_confirmed_lwt(),
             };
-
-            let prepared_ref = &config.prepared;
-            let values_ref = &config.values;
-            let partition_key = config.partition_key;
-            let token = config.token;
 
             let choose_connection = |node: Arc<Node>| async move {
                 match token {
@@ -294,8 +302,7 @@ impl RowIterator {
 
             let span_creator = move || {
                 let span = RequestSpan::new_prepared(
-                    prepared_ref.get_prepared_metadata(),
-                    partition_key.as_ref(),
+                    partition_key.as_ref().map(|pk| pk.iter()),
                     token,
                     serialized_values_size,
                 );
