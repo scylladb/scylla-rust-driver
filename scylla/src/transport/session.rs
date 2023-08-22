@@ -79,6 +79,22 @@ use crate::authentication::AuthenticatorProvider;
 #[cfg(feature = "ssl")]
 use openssl::ssl::SslContext;
 
+/// Translates IP addresses received from ScyllaDB nodes into locally reachable addresses.
+///
+/// The driver auto-detects new ScyllaDB nodes added to the cluster through server side pushed
+/// notifications and through checking the system tables. For each node, the address the driver
+/// receives corresponds to the address set as `rpc_address` in the node yaml file. In most
+/// cases, this is the correct address to use by the driver and that is what is used by default.
+/// However, sometimes the addresses received through this mechanism will either not be reachable
+/// directly by the driver or should not be the preferred address to use to reach the node (for
+/// instance, the `rpc_address` set on ScyllaDB nodes might be a private IP, but some clients
+/// may have to use a public IP, or pass by a router, e.g. through NAT, to reach that node).
+/// This interface allows to deal with such cases, by allowing to translate an address as sent
+/// by a ScyllaDB node to another address to be used by the driver for connection.
+///
+/// Please note that the "known nodes" addresses provided while creating the [`Session`]
+/// instance are not translated, only IP address retrieved from or sent by Cassandra nodes
+/// to the driver are.
 #[async_trait]
 pub trait AddressTranslator: Send + Sync {
     async fn translate_address(
@@ -223,6 +239,10 @@ pub struct SessionConfig {
     /// It is true by default but can be disabled if successive schema-altering statements should be performed.
     pub refresh_metadata_on_auto_schema_agreement: bool,
 
+    /// The address translator is used to translate addresses received from ScyllaDB nodes
+    /// (either with cluster metadata or with an event) to addresses that can be used to
+    /// actually connect to those nodes. This may be needed e.g. when there is NAT
+    /// between the nodes and the driver.
     pub address_translator: Option<Arc<dyn AddressTranslator>>,
 
     /// The host filter decides whether any connections should be opened
