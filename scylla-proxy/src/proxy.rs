@@ -731,7 +731,7 @@ impl Doorkeeper {
 
             socket.connect(real_addr).await.map(|ok| {
                 info!(
-                    "Connected to the cluster from {} at {}, shard {}.",
+                    "Connected to the cluster from {} at {}, intended shard {}.",
                     ok.local_addr().unwrap(),
                     real_addr,
                     shard_preserving_addr.port() % shards
