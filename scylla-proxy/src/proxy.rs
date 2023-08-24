@@ -3,7 +3,7 @@ use crate::errors::{DoorkeeperError, ProxyError, WorkerError};
 use crate::frame::{
     self, read_response_frame, write_frame, FrameOpcode, FrameParams, RequestFrame, ResponseFrame,
 };
-use crate::RequestOpcode;
+use crate::{RequestOpcode, TargetShard};
 use bytes::Bytes;
 use scylla_cql::frame::types::read_string_multimap;
 use std::collections::HashMap;
@@ -667,11 +667,13 @@ impl Doorkeeper {
         connection_no: usize,
     ) -> Result<(), DoorkeeperError> {
         let (driver_stream, driver_addr) = self.make_driver_stream(connection_no).await?;
-        let cluster_stream = match self.node {
+        let (cluster_stream, shard) = match self.node {
             InternalNode::Real { real_addr, .. } => {
-                Some(self.make_cluster_stream(driver_addr, real_addr).await?)
+                let (cluster_stream, shard) =
+                    self.make_cluster_stream(driver_addr, real_addr).await?;
+                (Some(cluster_stream), shard)
             }
-            InternalNode::Simulated { .. } => None,
+            InternalNode::Simulated { .. } => (None, None),
         };
 
         self.spawn_workers(
@@ -707,8 +709,8 @@ impl Doorkeeper {
         &mut self,
         driver_addr: SocketAddr,
         real_addr: SocketAddr,
-    ) -> Result<TcpStream, DoorkeeperError> {
-        let cluster_stream = if let Some(shards) = self.shards_count {
+    ) -> Result<(TcpStream, Option<TargetShard>), DoorkeeperError> {
+        let mut cluster_stream = if let Some(shards) = self.shards_count {
             let socket = match self.node.proxy_addr().ip() {
                 std::net::IpAddr::V4(_) => TcpSocket::new_v4(),
                 std::net::IpAddr::V6(_) => TcpSocket::new_v6(),
@@ -746,7 +748,20 @@ impl Doorkeeper {
         }
         .map_err(|err| DoorkeeperError::NodeConnectionAttempt(real_addr, err))?;
 
-        Ok(cluster_stream)
+        // If ShardAwareness is aware (QueryNode or FixedNum variants) and the
+        // proxy succeeded to know the shards count (in FixedNum we get it for
+        // free, in QueryNode the initial Options query succceeded and Supported
+        // contained SCYLLA_SHARDS_NUM), then upon opening each connection to the
+        // node, the proxy issues another Options requests and acknowledges the
+        // shard it got connected to.
+        let shard = if self.shards_count.is_some() {
+            self.obtain_shard_number(real_addr, &mut cluster_stream)
+                .await?
+        } else {
+            None
+        };
+
+        Ok((cluster_stream, shard))
     }
 
     fn next_port_to_same_shard(&self, port: u16) -> u16 {
@@ -792,6 +807,24 @@ impl Doorkeeper {
         }?;
         info!("Obtained shards number on node {}: {}", real_addr, shards);
         Ok(shards)
+    }
+
+    async fn obtain_shard_number(
+        &self,
+        real_addr: SocketAddr,
+        connection: &mut TcpStream,
+    ) -> Result<Option<TargetShard>, DoorkeeperError> {
+        let options = Self::get_supported_options(connection).await?;
+        let shard_entry = options.get("SCYLLA_SHARD");
+        let shard = shard_entry
+            .and_then(|vec| vec.first())
+            .map(|s| {
+                s.parse::<u16>()
+                    .map_err(DoorkeeperError::ObtainingShardNumberParseShardNumber)
+            })
+            .transpose()?;
+        info!("Connected to node {}, shard {:?}", real_addr, shard);
+        Ok(shard)
     }
 }
 
@@ -1275,8 +1308,18 @@ mod tests {
         sharded_info
     }
 
+    fn supported_shard_number(shard_num: TargetShard) -> HashMap<String, Vec<String>> {
+        let mut sharded_info = HashMap::new();
+        sharded_info.insert(String::from("SCYLLA_SHARD"), vec![shard_num.to_string()]);
+        sharded_info
+    }
+
     async fn respond_with_shards_count(conn: &mut TcpStream, shards_count: u16) {
         respond_with_supported(conn, &supported_shards_count(shards_count)).await;
+    }
+
+    async fn respond_with_shard_num(conn: &mut TcpStream, shard_num: TargetShard) {
+        respond_with_supported(conn, &supported_shard_number(shard_num)).await;
     }
 
     fn next_local_address_with_port(port: u16) -> SocketAddr {
@@ -1319,6 +1362,9 @@ mod tests {
                     .await;
             }
             let (mut conn, _) = mock_node_listener.accept().await.unwrap();
+            if shard_awareness.is_aware() {
+                respond_with_shard_num(&mut conn, 1).await;
+            }
             let RequestFrame {
                 params: recvd_params,
                 opcode: recvd_opcode,
