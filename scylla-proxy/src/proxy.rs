@@ -753,25 +753,33 @@ impl Doorkeeper {
         port.wrapping_add(self.shards_count.unwrap())
     }
 
-    async fn obtain_shards_count(&self, real_addr: SocketAddr) -> Result<u16, DoorkeeperError> {
-        let mut connection = TcpStream::connect(real_addr)
-            .await
-            .map_err(|err| DoorkeeperError::NodeConnectionAttempt(real_addr, err))?;
+    async fn get_supported_options(
+        connection: &mut TcpStream,
+    ) -> Result<HashMap<String, Vec<String>>, DoorkeeperError> {
         write_frame(
             HARDCODED_OPTIONS_PARAMS,
             FrameOpcode::Request(RequestOpcode::Options),
             &Bytes::new(),
-            &mut connection,
+            connection,
         )
         .await
         .map_err(DoorkeeperError::ObtainingShardNumber)?;
 
-        let supported_frame = read_response_frame(&mut connection)
+        let supported_frame = read_response_frame(connection)
             .await
             .map_err(DoorkeeperError::ObtainingShardNumberFrame)?;
 
         let options = read_string_multimap(&mut supported_frame.body.as_ref())
             .map_err(DoorkeeperError::ObtainingShardNumberParseOptions)?;
+
+        Ok(options)
+    }
+
+    async fn obtain_shards_count(&self, real_addr: SocketAddr) -> Result<u16, DoorkeeperError> {
+        let mut connection = TcpStream::connect(real_addr)
+            .await
+            .map_err(|err| DoorkeeperError::NodeConnectionAttempt(real_addr, err))?;
+        let options = Self::get_supported_options(&mut connection).await?;
         let nr_shards_entry = options.get("SCYLLA_NR_SHARDS");
         let shards = match nr_shards_entry
             .and_then(|vec| vec.first())
@@ -1230,23 +1238,21 @@ mod tests {
         body.freeze()
     }
 
-    async fn respond_with_shards_number(mut conn: TcpStream, shards_num: u16) {
+    async fn respond_with_supported(
+        conn: &mut TcpStream,
+        supported_options: &HashMap<String, Vec<String>>,
+    ) {
         let RequestFrame {
             params: recvd_params,
             opcode: recvd_opcode,
             body: recvd_body,
-        } = read_request_frame(&mut conn).await.unwrap();
+        } = read_request_frame(conn).await.unwrap();
         assert_eq!(recvd_params, HARDCODED_OPTIONS_PARAMS);
         assert_eq!(recvd_opcode, RequestOpcode::Options);
         assert_eq!(recvd_body, Bytes::new()); // body should be empty
 
         let mut body = BytesMut::new();
-        let mut sharded_info = HashMap::new();
-        sharded_info.insert(
-            String::from("SCYLLA_NR_SHARDS"),
-            vec![shards_num.to_string()],
-        );
-        write_string_multimap(&sharded_info, &mut body).unwrap();
+        write_string_multimap(supported_options, &mut body).unwrap();
 
         let body = body.freeze();
 
@@ -1254,10 +1260,23 @@ mod tests {
             HARDCODED_OPTIONS_PARAMS.for_response(),
             FrameOpcode::Response(ResponseOpcode::Supported),
             &body,
-            &mut conn,
+            conn,
         )
         .await
         .unwrap();
+    }
+
+    fn supported_shards_count(shards_count: u16) -> HashMap<String, Vec<String>> {
+        let mut sharded_info = HashMap::new();
+        sharded_info.insert(
+            String::from("SCYLLA_NR_SHARDS"),
+            vec![shards_count.to_string()],
+        );
+        sharded_info
+    }
+
+    async fn respond_with_shards_count(conn: &mut TcpStream, shards_count: u16) {
+        respond_with_supported(conn, &supported_shards_count(shards_count)).await;
     }
 
     fn next_local_address_with_port(port: u16) -> SocketAddr {
@@ -1296,7 +1315,8 @@ mod tests {
 
         let mock_node_action = async {
             if let ShardAwareness::QueryNode = shard_awareness {
-                respond_with_shards_number(mock_node_listener.accept().await.unwrap().0, 1).await;
+                respond_with_shards_count(&mut mock_node_listener.accept().await.unwrap().0, 1)
+                    .await;
             }
             let (mut conn, _) = mock_node_listener.accept().await.unwrap();
             let RequestFrame {
@@ -1408,8 +1428,8 @@ mod tests {
                 };
 
                 let mock_node_action = async {
-                    respond_with_shards_number(
-                        mock_node_listener.accept().await.unwrap().0,
+                    respond_with_shards_count(
+                        &mut mock_node_listener.accept().await.unwrap().0,
                         shards_num,
                     )
                     .await;

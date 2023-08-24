@@ -2,6 +2,9 @@ mod actions;
 mod errors;
 mod frame;
 mod proxy;
+
+pub type TargetShard = u16;
+
 pub use actions::{
     Action, Condition, Reaction, RequestReaction, RequestRule, ResponseReaction, ResponseRule,
 };
