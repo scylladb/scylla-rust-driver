@@ -9,7 +9,7 @@ use tokio::sync::mpsc;
 
 use scylla_proxy::{
     Condition, ProxyError, Reaction, RequestFrame, RequestOpcode, RequestReaction, RequestRule,
-    ResponseOpcode, ResponseReaction, ResponseRule, ShardAwareness, WorkerError,
+    ResponseOpcode, ResponseReaction, ResponseRule, ShardAwareness, TargetShard, WorkerError,
 };
 
 #[tokio::test]
@@ -56,7 +56,7 @@ async fn if_lwt_optimisation_mark_offered_then_negotiatied_and_lwt_routed_optima
             .await
             .unwrap();
 
-        let supported_frame = supported_rx.recv().await.unwrap();
+        let (supported_frame, _shard) = supported_rx.recv().await.unwrap();
         let supported_options = types::read_string_multimap(&mut &*supported_frame.body).unwrap();
         let supported_features = ProtocolFeatures::parse_from_supported(&supported_options);
 
@@ -74,20 +74,20 @@ async fn if_lwt_optimisation_mark_offered_then_negotiatied_and_lwt_routed_optima
             .unwrap();
 
 
-        fn clear_rxs(rxs: &mut [mpsc::UnboundedReceiver<RequestFrame>; 3]) {
+        fn clear_rxs(rxs: &mut [mpsc::UnboundedReceiver<(RequestFrame, Option<TargetShard>)>; 3]) {
             for rx in rxs.iter_mut() {
                 while rx.try_recv().is_ok() {}
             }
         }
 
-        async fn assert_all_replicas_queried(rxs: &mut [mpsc::UnboundedReceiver<RequestFrame>; 3]) {
+        async fn assert_all_replicas_queried(rxs: &mut [mpsc::UnboundedReceiver<(RequestFrame, Option<TargetShard>)>; 3]) {
             for rx in rxs.iter_mut() {
                 rx.recv().await.unwrap();
             }
             clear_rxs(rxs);
         }
 
-        fn assert_one_replica_queried(rxs: &mut [mpsc::UnboundedReceiver<RequestFrame>; 3]) {
+        fn assert_one_replica_queried(rxs: &mut [mpsc::UnboundedReceiver<(RequestFrame, Option<TargetShard>)>; 3]) {
             let mut found_queried = false;
             for rx in rxs.iter_mut() {
                 if rx.try_recv().is_ok() {
@@ -100,7 +100,7 @@ async fn if_lwt_optimisation_mark_offered_then_negotiatied_and_lwt_routed_optima
         }
 
         #[allow(unused)]
-        fn who_was_queried(rxs: &mut [mpsc::UnboundedReceiver<RequestFrame>; 3]) {
+        fn who_was_queried(rxs: &mut [mpsc::UnboundedReceiver<(RequestFrame, Option<TargetShard>)>; 3]) {
             for (i, rx) in rxs.iter_mut().enumerate() {
                 if rx.try_recv().is_ok() {
                     println!("{} was queried.", i);

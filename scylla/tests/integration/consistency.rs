@@ -20,7 +20,7 @@ use scylla_cql::Consistency;
 use scylla_proxy::ShardAwareness;
 use scylla_proxy::{
     Condition, ProxyError, Reaction, RequestFrame, RequestOpcode, RequestReaction, RequestRule,
-    WorkerError,
+    TargetShard, WorkerError,
 };
 use std::sync::Arc;
 use std::time::Duration;
@@ -296,9 +296,9 @@ async fn consistency_is_correctly_set_in_cql_requests() {
             async fn check_consistencies(
                 consistency: Consistency,
                 serial_consistency: Option<SerialConsistency>,
-                mut request_rx: UnboundedReceiver<RequestFrame>,
-            ) -> UnboundedReceiver<RequestFrame> {
-                let request_frame = request_rx.recv().await.unwrap();
+                mut request_rx: UnboundedReceiver<(RequestFrame, Option<TargetShard>)>,
+            ) -> UnboundedReceiver<(RequestFrame, Option<TargetShard>)> {
+                let (request_frame, _shard) = request_rx.recv().await.unwrap();
                 let deserialized_request = request_frame.deserialize().unwrap();
                 assert_eq!(deserialized_request.get_consistency().unwrap(), consistency);
                 assert_eq!(

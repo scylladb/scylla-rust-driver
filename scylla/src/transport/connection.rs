@@ -2048,7 +2048,7 @@ mod tests {
             .unwrap();
 
         // We must interrupt the driver's full connection opening, because our proxy does not interact further after Startup.
-        let startup_without_lwt_optimisation = select! {
+        let (startup_without_lwt_optimisation, _shard) = select! {
             _ = open_connection(UntranslatedEndpoint::ContactPoint(ContactPoint{address: proxy_addr, datacenter: None}), None, config.clone()) => unreachable!(),
             startup = startup_rx.recv() => startup.unwrap(),
         };
@@ -2056,7 +2056,7 @@ mod tests {
         proxy.running_nodes[0]
             .change_request_rules(Some(make_rules(options_with_lwt_optimisation_support)));
 
-        let startup_with_lwt_optimisation = select! {
+        let (startup_with_lwt_optimisation, _shard) = select! {
             _ = open_connection(UntranslatedEndpoint::ContactPoint(ContactPoint{address: proxy_addr, datacenter: None}), None, config.clone()) => unreachable!(),
             startup = startup_rx.recv() => startup.unwrap(),
         };
