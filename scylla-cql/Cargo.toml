@@ -27,7 +27,7 @@ async-trait = "0.1.57"
 serde = { version = "1.0", optional = true }
 
 [dev-dependencies]
-criterion = "0.5"
+criterion = "0.4" # Note: v0.5 needs at least rust 1.70.0
 
 [[bench]]
 name = "benchmark"
