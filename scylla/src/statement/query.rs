@@ -13,7 +13,6 @@ use std::time::Duration;
 pub struct Query {
     pub(crate) config: StatementConfig,
 
-    // TODO: Move this after #701 is fixed
     pub contents: String,
     page_size: Option<i32>,
 }
