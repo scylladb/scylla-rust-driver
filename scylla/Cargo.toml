@@ -56,7 +56,7 @@ socket2 = { version = "0.5.3", features = ["all"] }
 [dev-dependencies]
 scylla-proxy = { version = "0.0.3", path = "../scylla-proxy" }
 ntest = "0.9.0"
-criterion = "0.5"
+criterion = "0.4" # Note: v0.5 needs at least rust 1.70.0
 tracing-subscriber = { version = "0.3.14", features = ["env-filter"] }
 assert_matches = "1.5.0"
 rand_chacha = "0.3.1"
