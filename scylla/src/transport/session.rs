@@ -21,7 +21,6 @@ use std::borrow::Borrow;
 use std::collections::HashMap;
 use std::fmt::Display;
 use std::future::Future;
-use std::io;
 use std::net::SocketAddr;
 use std::num::NonZeroU32;
 use std::str::FromStr;
@@ -29,19 +28,19 @@ use std::sync::atomic::AtomicUsize;
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use std::time::Duration;
-use tokio::net::lookup_host;
 use tokio::time::timeout;
-use tracing::warn;
 use tracing::{debug, trace, trace_span, Instrument};
 use uuid::Uuid;
 
-use super::cluster::ContactPoint;
 use super::connection::NonErrorQueryResponse;
 use super::connection::QueryResponse;
 #[cfg(feature = "ssl")]
 use super::connection::SslConfig;
 use super::errors::{NewSessionError, QueryError};
 use super::execution_profile::{ExecutionProfile, ExecutionProfileHandle, ExecutionProfileInner};
+#[cfg(feature = "cloud")]
+use super::node::CloudEndpoint;
+use super::node::KnownNode;
 use super::partitioner::PartitionerName;
 use super::topology::UntranslatedPeer;
 use super::NodeRef;
@@ -289,24 +288,6 @@ pub struct SessionConfig {
     pub cluster_metadata_refresh_interval: Duration,
 }
 
-/// Describes database server known on Session startup.
-#[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Debug)]
-#[non_exhaustive]
-pub enum KnownNode {
-    Hostname(String),
-    Address(SocketAddr),
-    #[cfg(feature = "cloud")]
-    CloudEndpoint(CloudEndpoint),
-}
-
-#[cfg(feature = "cloud")]
-#[non_exhaustive]
-#[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Debug)]
-pub struct CloudEndpoint {
-    pub hostname: String,
-    pub datacenter: String,
-}
-
 impl SessionConfig {
     /// Creates a [`SessionConfig`] with default configuration
     /// # Default configuration
@@ -476,7 +457,7 @@ impl Session {
     /// # use std::error::Error;
     /// # async fn check_only_compiles() -> Result<(), Box<dyn Error>> {
     /// use scylla::{Session, SessionConfig};
-    /// use scylla::transport::session::KnownNode;
+    /// use scylla::transport::KnownNode;
     ///
     /// let mut config = SessionConfig::new();
     /// config.known_nodes.push(KnownNode::Hostname("127.0.0.1:9042".to_string()));
@@ -512,50 +493,6 @@ impl Session {
             return Err(NewSessionError::EmptyKnownNodesList);
         }
 
-        // Find IP addresses of all known nodes passed in the config
-        let mut initial_peers: Vec<ContactPoint> = Vec::with_capacity(known_nodes.len());
-
-        let mut to_resolve: Vec<(String, Option<String>)> = Vec::new();
-
-        for node in known_nodes {
-            match node {
-                KnownNode::Hostname(hostname) => to_resolve.push((hostname, None)),
-                KnownNode::Address(address) => initial_peers.push(ContactPoint {
-                    address,
-                    datacenter: None,
-                }),
-                #[cfg(feature = "cloud")]
-                KnownNode::CloudEndpoint(CloudEndpoint {
-                    hostname,
-                    datacenter,
-                }) => to_resolve.push((hostname, Some(datacenter))),
-            };
-        }
-        let resolve_futures = to_resolve.iter().map(|(hostname, datacenter)| async move {
-            match resolve_hostname(hostname).await {
-                Ok(address) => Some(ContactPoint {
-                    address,
-                    datacenter: datacenter.clone(),
-                }),
-                Err(e) => {
-                    warn!("Hostname resolution failed for {}: {}", hostname, &e);
-                    None
-                }
-            }
-        });
-        let resolved: Vec<_> = futures::future::join_all(resolve_futures).await;
-        initial_peers.extend(resolved.into_iter().flatten());
-
-        // Ensure there is at least one resolved node
-        if initial_peers.is_empty() {
-            return Err(NewSessionError::FailedToResolveAnyHostname(
-                to_resolve
-                    .into_iter()
-                    .map(|(hostname, _datacenter)| hostname)
-                    .collect(),
-            ));
-        }
-
         let connection_config = ConnectionConfig {
             compression: config.compression,
             tcp_nodelay: config.tcp_nodelay,
@@ -582,7 +519,7 @@ impl Session {
         };
 
         let cluster = Cluster::new(
-            initial_peers,
+            known_nodes,
             pool_config,
             config.keyspaces_to_fetch,
             config.fetch_schema_metadata,
@@ -1864,33 +1801,6 @@ impl Session {
     pub fn get_default_execution_profile_handle(&self) -> &ExecutionProfileHandle {
         &self.default_execution_profile_handle
     }
-}
-
-// Resolve the given hostname using a DNS lookup if necessary.
-// The resolution may return multiple IPs and the function returns one of them.
-// It prefers to return IPv4s first, and only if there are none, IPv6s.
-pub(crate) async fn resolve_hostname(hostname: &str) -> Result<SocketAddr, io::Error> {
-    let mut ret = None;
-    let addrs: Vec<SocketAddr> = match lookup_host(hostname).await {
-        Ok(addrs) => addrs.collect(),
-        // Use a default port in case of error, but propagate the original error on failure
-        Err(e) => lookup_host((hostname, 9042)).await.or(Err(e))?.collect(),
-    };
-    for a in addrs {
-        match a {
-            SocketAddr::V4(_) => return Ok(a),
-            _ => {
-                ret = Some(a);
-            }
-        }
-    }
-
-    ret.ok_or_else(|| {
-        io::Error::new(
-            io::ErrorKind::Other,
-            format!("Empty address list returned by DNS for {}", hostname),
-        )
-    })
 }
 
 // run_query, execute_query, etc have a template type called ResT.

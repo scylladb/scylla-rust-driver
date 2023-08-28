@@ -9,10 +9,10 @@ use crate::transport::{
 };
 
 #[cfg(feature = "cloud")]
-use super::session::resolve_hostname;
+use super::node::resolve_hostname;
 
 #[cfg(feature = "cloud")]
-use super::cluster::ContactPoint;
+use super::node::ResolvedContactPoint;
 use super::topology::{PeerEndpoint, UntranslatedEndpoint};
 use super::NodeAddr;
 
@@ -25,7 +25,8 @@ use std::num::NonZeroUsize;
 use std::pin::Pin;
 use std::sync::{Arc, RwLock, Weak};
 use std::time::Duration;
-use tokio::sync::{mpsc, Notify};
+
+use tokio::sync::{broadcast, mpsc, Notify};
 use tracing::instrument::WithSubscriber;
 use tracing::{debug, trace, warn};
 
@@ -169,6 +170,7 @@ impl NodeConnectionPool {
         endpoint: UntranslatedEndpoint,
         #[allow(unused_mut)] mut pool_config: PoolConfig, // `mut` needed only with "cloud" feature
         current_keyspace: Option<VerifiedKeyspaceName>,
+        pool_empty_notifier: broadcast::Sender<()>,
     ) -> Self {
         let (use_keyspace_request_sender, use_keyspace_request_receiver) = mpsc::channel(1);
         let pool_updated_notify = Arc::new(Notify::new());
@@ -176,7 +178,7 @@ impl NodeConnectionPool {
         #[cfg(feature = "cloud")]
         if pool_config.connection_config.cloud_config.is_some() {
             let (host_id, address, dc) = match endpoint {
-                UntranslatedEndpoint::ContactPoint(ContactPoint {
+                UntranslatedEndpoint::ContactPoint(ResolvedContactPoint {
                     address,
                     ref datacenter,
                 }) => (None, address, datacenter.as_deref()), // FIXME: Pass DC in ContactPoint
@@ -205,6 +207,7 @@ impl NodeConnectionPool {
             pool_config,
             current_keyspace,
             pool_updated_notify.clone(),
+            pool_empty_notifier,
         );
 
         let conns = refiller.get_shared_connections();
@@ -472,6 +475,9 @@ struct PoolRefiller {
 
     // Signaled when the connection pool is updated
     pool_updated_notify: Arc<Notify>,
+
+    // Signaled when the connection pool becomes empty
+    pool_empty_notifier: broadcast::Sender<()>,
 }
 
 #[derive(Debug)]
@@ -486,6 +492,7 @@ impl PoolRefiller {
         pool_config: PoolConfig,
         current_keyspace: Option<VerifiedKeyspaceName>,
         pool_updated_notify: Arc<Notify>,
+        pool_empty_notifier: broadcast::Sender<()>,
     ) -> Self {
         // At the beginning, we assume the node does not have any shards
         // and assume that the node is a Cassandra node
@@ -513,6 +520,7 @@ impl PoolRefiller {
             current_keyspace,
 
             pool_updated_notify,
+            pool_empty_notifier,
         }
     }
 
@@ -1037,6 +1045,9 @@ impl PoolRefiller {
                 self.conns[shard_id].len(),
                 self.active_connection_count(),
             );
+            if !self.has_connections() {
+                let _ = self.pool_empty_notifier.send(());
+            }
             self.update_shared_conns(Some(last_error));
             return;
         }
@@ -1248,8 +1259,8 @@ async fn open_connection_to_shard_aware_port(
 mod tests {
     use super::open_connection_to_shard_aware_port;
     use crate::routing::{ShardCount, Sharder};
-    use crate::transport::cluster::ContactPoint;
     use crate::transport::connection::ConnectionConfig;
+    use crate::transport::node::ResolvedContactPoint;
     use crate::transport::topology::UntranslatedEndpoint;
     use std::net::{SocketAddr, ToSocketAddrs};
 
@@ -1286,7 +1297,7 @@ mod tests {
 
         for _ in 0..connections_number {
             conns.push(open_connection_to_shard_aware_port(
-                UntranslatedEndpoint::ContactPoint(ContactPoint {
+                UntranslatedEndpoint::ContactPoint(ResolvedContactPoint {
                     address: connect_address,
                     datacenter: None,
                 }),

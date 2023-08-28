@@ -5,6 +5,7 @@ use crate::transport::connection::{Connection, ConnectionConfig};
 use crate::transport::connection_pool::{NodeConnectionPool, PoolConfig, PoolSize};
 use crate::transport::errors::{DbError, QueryError};
 use crate::transport::host_filter::HostFilter;
+use crate::transport::node::resolve_contact_points;
 use crate::utils::parse::{ParseErrorCause, ParseResult, ParserState};
 
 use futures::future::{self, FutureExt};
@@ -12,6 +13,7 @@ use futures::stream::{self, StreamExt, TryStreamExt};
 use futures::Stream;
 use rand::seq::SliceRandom;
 use rand::{thread_rng, Rng};
+use scylla_cql::errors::NewSessionError;
 use scylla_cql::frame::response::result::Row;
 use scylla_cql::frame::value::ValueList;
 use scylla_macros::FromRow;
@@ -26,12 +28,11 @@ use std::str::FromStr;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use strum_macros::EnumString;
-use tokio::sync::mpsc;
+use tokio::sync::{broadcast, mpsc};
 use tracing::{debug, error, trace, warn};
 use uuid::Uuid;
 
-use super::cluster::ContactPoint;
-use super::NodeAddr;
+use super::node::{KnownNode, NodeAddr, ResolvedContactPoint};
 
 /// Allows to read current metadata from the cluster
 pub(crate) struct MetadataReader {
@@ -46,6 +47,14 @@ pub(crate) struct MetadataReader {
     keyspaces_to_fetch: Vec<String>,
     fetch_schema: bool,
     host_filter: Option<Arc<dyn HostFilter>>,
+
+    // When no known peer is reachable, initial known nodes are resolved once again as a fallback
+    // and establishing control connection to them is attempted.
+    initial_known_nodes: Vec<KnownNode>,
+
+    // When a control connection breaks, the PoolRefiller of its pool uses the requester
+    // to signal ClusterWorker that an immediate metadata refresh is advisable.
+    control_connection_repair_requester: broadcast::Sender<()>,
 }
 
 /// Describes all metadata retrieved from the cluster
@@ -69,7 +78,7 @@ pub struct Peer {
 #[derive(Clone, Debug)]
 pub enum UntranslatedEndpoint {
     /// Provided by user in SessionConfig (initial contact points).
-    ContactPoint(ContactPoint),
+    ContactPoint(ResolvedContactPoint),
     /// Fetched in Metadata with `query_peers()`
     Peer(PeerEndpoint),
 }
@@ -77,7 +86,7 @@ pub enum UntranslatedEndpoint {
 impl UntranslatedEndpoint {
     pub(crate) fn address(&self) -> NodeAddr {
         match *self {
-            UntranslatedEndpoint::ContactPoint(ContactPoint { address, .. }) => {
+            UntranslatedEndpoint::ContactPoint(ResolvedContactPoint { address, .. }) => {
                 NodeAddr::Untranslatable(address)
             }
             UntranslatedEndpoint::Peer(PeerEndpoint { address, .. }) => address,
@@ -85,7 +94,7 @@ impl UntranslatedEndpoint {
     }
     pub(crate) fn set_port(&mut self, port: u16) {
         let inner_addr = match self {
-            UntranslatedEndpoint::ContactPoint(ContactPoint { address, .. }) => address,
+            UntranslatedEndpoint::ContactPoint(ResolvedContactPoint { address, .. }) => address,
             UntranslatedEndpoint::Peer(PeerEndpoint { address, .. }) => address.inner_mut(),
         };
         inner_addr.set_port(port);
@@ -392,19 +401,29 @@ impl Metadata {
 impl MetadataReader {
     /// Creates new MetadataReader, which connects to initially_known_peers in the background
     #[allow(clippy::too_many_arguments)]
-    pub(crate) fn new(
-        initially_known_peers: Vec<ContactPoint>,
+    pub(crate) async fn new(
+        initial_known_nodes: Vec<KnownNode>,
+        control_connection_repair_requester: broadcast::Sender<()>,
         mut connection_config: ConnectionConfig,
         keepalive_interval: Option<Duration>,
         server_event_sender: mpsc::Sender<Event>,
         keyspaces_to_fetch: Vec<String>,
         fetch_schema: bool,
         host_filter: &Option<Arc<dyn HostFilter>>,
-    ) -> Self {
+    ) -> Result<Self, NewSessionError> {
+        let (initial_peers, resolved_hostnames) =
+            resolve_contact_points(&initial_known_nodes).await;
+        // Ensure there is at least one resolved node
+        if initial_peers.is_empty() {
+            return Err(NewSessionError::FailedToResolveAnyHostname(
+                resolved_hostnames,
+            ));
+        }
+
         let control_connection_endpoint = UntranslatedEndpoint::ContactPoint(
-            initially_known_peers
+            initial_peers
                 .choose(&mut thread_rng())
-                .expect("Tried to initialize MetadataReader with empty known_peers list!")
+                .expect("Tried to initialize MetadataReader with empty initial_known_nodes list!")
                 .clone(),
         );
 
@@ -417,33 +436,43 @@ impl MetadataReader {
             control_connection_endpoint.clone(),
             connection_config.clone(),
             keepalive_interval,
+            control_connection_repair_requester.clone(),
         );
 
-        MetadataReader {
+        Ok(MetadataReader {
             control_connection_endpoint,
             control_connection,
             keepalive_interval,
             connection_config,
-            known_peers: initially_known_peers
+            known_peers: initial_peers
                 .into_iter()
                 .map(UntranslatedEndpoint::ContactPoint)
                 .collect(),
             keyspaces_to_fetch,
             fetch_schema,
             host_filter: host_filter.clone(),
-        }
+            initial_known_nodes,
+            control_connection_repair_requester,
+        })
     }
 
     /// Fetches current metadata from the cluster
     pub(crate) async fn read_metadata(&mut self, initial: bool) -> Result<Metadata, QueryError> {
         let mut result = self.fetch_metadata(initial).await;
-        if let Ok(metadata) = result {
-            self.update_known_peers(&metadata);
-            if initial {
-                self.handle_unaccepted_host_in_control_connection(&metadata);
+        let prev_err = match result {
+            Ok(metadata) => {
+                debug!("Fetched new metadata");
+                self.update_known_peers(&metadata);
+                if initial {
+                    self.handle_unaccepted_host_in_control_connection(&metadata);
+                }
+                return Ok(metadata);
             }
-            return Ok(metadata);
-        }
+            Err(err) => err,
+        };
+
+        // At this point, we known that fetching metadata on currect control connection failed.
+        // Therefore, we try to fetch metadata from other known peers, in order.
 
         // shuffle known_peers to iterate through them in random order later
         self.known_peers.shuffle(&mut thread_rng());
@@ -459,12 +488,61 @@ impl MetadataReader {
         let address_of_failed_control_connection = self.control_connection_endpoint.address();
         let filtered_known_peers = self
             .known_peers
-            .iter()
-            .filter(|&peer| peer.address() != address_of_failed_control_connection);
+            .clone()
+            .into_iter()
+            .filter(|peer| peer.address() != address_of_failed_control_connection);
 
         // if fetching metadata on current control connection failed,
         // try to fetch metadata from other known peer
-        for peer in filtered_known_peers {
+        result = self
+            .retry_fetch_metadata_on_nodes(initial, filtered_known_peers, prev_err)
+            .await;
+
+        if let Err(prev_err) = result {
+            if !initial {
+                // If no known peer is reachable, try falling back to initial contact points, in hope that
+                // there are some hostnames there which will resolve to reachable new addresses.
+                warn!("Failed to establish control connection and fetch metadata on all known peers. Falling back to initial contact points.");
+                let (initial_peers, _hostnames) =
+                    resolve_contact_points(&self.initial_known_nodes).await;
+                result = self
+                    .retry_fetch_metadata_on_nodes(
+                        initial,
+                        initial_peers
+                            .into_iter()
+                            .map(UntranslatedEndpoint::ContactPoint),
+                        prev_err,
+                    )
+                    .await;
+            } else {
+                // No point in falling back as this is an initial connection attempt.
+                result = Err(prev_err);
+            }
+        }
+
+        match &result {
+            Ok(metadata) => {
+                self.update_known_peers(metadata);
+                self.handle_unaccepted_host_in_control_connection(metadata);
+                debug!("Fetched new metadata");
+            }
+            Err(error) => error!(
+                error = %error,
+                "Could not fetch metadata"
+            ),
+        }
+
+        result
+    }
+
+    async fn retry_fetch_metadata_on_nodes(
+        &mut self,
+        initial: bool,
+        nodes: impl Iterator<Item = UntranslatedEndpoint>,
+        prev_err: QueryError,
+    ) -> Result<Metadata, QueryError> {
+        let mut result = Err(prev_err);
+        for peer in nodes {
             let err = match result {
                 Ok(_) => break,
                 Err(err) => err,
@@ -485,6 +563,7 @@ impl MetadataReader {
                 self.control_connection_endpoint.clone(),
                 self.connection_config.clone(),
                 self.keepalive_interval,
+                self.control_connection_repair_requester.clone(),
             );
 
             debug!(
@@ -493,19 +572,6 @@ impl MetadataReader {
             );
             result = self.fetch_metadata(initial).await;
         }
-
-        match &result {
-            Ok(metadata) => {
-                self.update_known_peers(metadata);
-                self.handle_unaccepted_host_in_control_connection(metadata);
-                debug!("Fetched new metadata");
-            }
-            Err(error) => error!(
-                error = %error,
-                "Could not fetch metadata"
-            ),
-        }
-
         result
     }
 
@@ -597,6 +663,7 @@ impl MetadataReader {
                         self.control_connection_endpoint.clone(),
                         self.connection_config.clone(),
                         self.keepalive_interval,
+                        self.control_connection_repair_requester.clone(),
                     );
                 }
             }
@@ -607,6 +674,7 @@ impl MetadataReader {
         endpoint: UntranslatedEndpoint,
         connection_config: ConnectionConfig,
         keepalive_interval: Option<Duration>,
+        refresh_requester: broadcast::Sender<()>,
     ) -> NodeConnectionPool {
         let pool_config = PoolConfig {
             connection_config,
@@ -620,7 +688,7 @@ impl MetadataReader {
             can_use_shard_aware_port: false,
         };
 
-        NodeConnectionPool::new(endpoint, pool_config, None)
+        NodeConnectionPool::new(endpoint, pool_config, None, refresh_requester)
     }
 }
 

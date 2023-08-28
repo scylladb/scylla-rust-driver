@@ -950,7 +950,7 @@ mod tests {
 
     use super::SessionBuilder;
     use crate::transport::execution_profile::{defaults, ExecutionProfile};
-    use crate::transport::session::KnownNode;
+    use crate::transport::node::KnownNode;
     use crate::transport::Compression;
     use std::net::{IpAddr, Ipv4Addr, SocketAddr};
     use std::time::Duration;

@@ -17,7 +17,7 @@ use arc_swap::ArcSwap;
 use futures::future::join_all;
 use futures::{future::RemoteHandle, FutureExt};
 use itertools::Itertools;
-use scylla_cql::errors::BadQuery;
+use scylla_cql::errors::{BadQuery, NewSessionError};
 use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -26,14 +26,7 @@ use tracing::instrument::WithSubscriber;
 use tracing::{debug, warn};
 use uuid::Uuid;
 
-use super::node::NodeAddr;
-
-#[derive(Debug, Clone)]
-#[non_exhaustive]
-pub struct ContactPoint {
-    pub address: SocketAddr,
-    pub datacenter: Option<String>,
-}
+use super::node::{KnownNode, NodeAddr};
 
 use super::locator::ReplicaLocator;
 use super::partitioner::calculate_token_for_partition_key;
@@ -118,6 +111,9 @@ struct ClusterWorker {
     // Channel used to receive server events
     server_events_channel: tokio::sync::mpsc::Receiver<Event>,
 
+    // Channel used to receive signals that control connection is broken
+    control_connection_repair_channel: tokio::sync::broadcast::Receiver<()>,
+
     // Keyspace send in "USE <keyspace name>" when opening each connection
     used_keyspace: Option<VerifiedKeyspaceName>,
 
@@ -143,26 +139,30 @@ struct UseKeyspaceRequest {
 
 impl Cluster {
     pub(crate) async fn new(
-        initial_peers: Vec<ContactPoint>,
+        known_nodes: Vec<KnownNode>,
         pool_config: PoolConfig,
         keyspaces_to_fetch: Vec<String>,
         fetch_schema_metadata: bool,
         host_filter: Option<Arc<dyn HostFilter>>,
         cluster_metadata_refresh_interval: Duration,
-    ) -> Result<Cluster, QueryError> {
+    ) -> Result<Cluster, NewSessionError> {
         let (refresh_sender, refresh_receiver) = tokio::sync::mpsc::channel(32);
         let (use_keyspace_sender, use_keyspace_receiver) = tokio::sync::mpsc::channel(32);
         let (server_events_sender, server_events_receiver) = tokio::sync::mpsc::channel(32);
+        let (control_connection_repair_sender, control_connection_repair_receiver) =
+            tokio::sync::broadcast::channel(32);
 
         let mut metadata_reader = MetadataReader::new(
-            initial_peers,
+            known_nodes,
+            control_connection_repair_sender,
             pool_config.connection_config.clone(),
             pool_config.keepalive_interval,
             server_events_sender,
             keyspaces_to_fetch,
             fetch_schema_metadata,
             &host_filter,
-        );
+        )
+        .await?;
 
         let metadata = metadata_reader.read_metadata(true).await?;
         let cluster_data = ClusterData::new(
@@ -185,6 +185,7 @@ impl Cluster {
 
             refresh_channel: refresh_receiver,
             server_events_channel: server_events_receiver,
+            control_connection_repair_channel: control_connection_repair_receiver,
 
             use_keyspace_channel: use_keyspace_receiver,
             used_keyspace: None,
@@ -479,14 +480,20 @@ impl ClusterWorker {
     pub(crate) async fn work(mut self) {
         use tokio::time::Instant;
 
+        let control_connection_repair_duration = Duration::from_secs(1); // Attempt control connection repair every second
         let mut last_refresh_time = Instant::now();
+        let mut control_connection_works = true;
 
         loop {
             let mut cur_request: Option<RefreshRequest> = None;
 
             // Wait until it's time for the next refresh
             let sleep_until: Instant = last_refresh_time
-                .checked_add(self.cluster_metadata_refresh_interval)
+                .checked_add(if control_connection_works {
+                    self.cluster_metadata_refresh_interval
+                } else {
+                    control_connection_repair_duration
+                })
                 .unwrap_or_else(Instant::now);
 
             let sleep_future = tokio::time::sleep_until(sleep_until);
@@ -537,12 +544,34 @@ impl ClusterWorker {
 
                     continue; // Don't go to refreshing, wait for the next event
                 }
+                recv_res = self.control_connection_repair_channel.recv() => {
+                    match recv_res {
+                        Ok(()) => {
+                            // The control connection was broken. Acknowledge that and start attempting to reconnect.
+                            // The first reconnect attempt will be immediate (by attempting metadata refresh below),
+                            // and if it does not succeed, then `control_connection_works` will be set to `false`,
+                            // so subsequent attempts will be issued every second.
+                        }
+                        Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {
+                            // This is very unlikely; we would have to have a lot of concurrent
+                            // control connections opened and broken at the same time.
+                            // The best we can do is ignoring this.
+                        }
+                        Err(tokio::sync::broadcast::error::RecvError::Closed) => {
+                            // If control_connection_repair_channel was closed then MetadataReader was dropped,
+                            // we can stop working.
+                            return;
+                        }
+                    }
+                }
             }
 
             // Perform the refresh
             debug!("Requesting topology refresh");
             last_refresh_time = Instant::now();
             let refresh_res = self.perform_refresh().await;
+
+            control_connection_works = refresh_res.is_ok();
 
             // Send refresh result if there was a request
             if let Some(request) = cur_request {

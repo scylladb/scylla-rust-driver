@@ -1764,8 +1764,8 @@ mod tests {
 
     use super::ConnectionConfig;
     use crate::query::Query;
-    use crate::transport::cluster::ContactPoint;
     use crate::transport::connection::open_connection;
+    use crate::transport::node::ResolvedContactPoint;
     use crate::transport::topology::UntranslatedEndpoint;
     use crate::utils::test_utils::unique_keyspace_name;
     use crate::{IntoTypedRows, SessionBuilder};
@@ -1801,7 +1801,7 @@ mod tests {
         let addr: SocketAddr = resolve_hostname(&uri).await;
 
         let (connection, _) = super::open_connection(
-            UntranslatedEndpoint::ContactPoint(ContactPoint {
+            UntranslatedEndpoint::ContactPoint(ResolvedContactPoint {
                 address: addr,
                 datacenter: None,
             }),
@@ -1919,7 +1919,7 @@ mod tests {
 
         let subtest = |enable_coalescing: bool, ks: String| async move {
             let (connection, _) = super::open_connection(
-                UntranslatedEndpoint::ContactPoint(ContactPoint {
+                UntranslatedEndpoint::ContactPoint(ResolvedContactPoint {
                     address: addr,
                     datacenter: None,
                 }),
@@ -2049,7 +2049,7 @@ mod tests {
 
         // We must interrupt the driver's full connection opening, because our proxy does not interact further after Startup.
         let (startup_without_lwt_optimisation, _shard) = select! {
-            _ = open_connection(UntranslatedEndpoint::ContactPoint(ContactPoint{address: proxy_addr, datacenter: None}), None, config.clone()) => unreachable!(),
+            _ = open_connection(UntranslatedEndpoint::ContactPoint(ResolvedContactPoint{address: proxy_addr, datacenter: None}), None, config.clone()) => unreachable!(),
             startup = startup_rx.recv() => startup.unwrap(),
         };
 
@@ -2057,7 +2057,7 @@ mod tests {
             .change_request_rules(Some(make_rules(options_with_lwt_optimisation_support)));
 
         let (startup_with_lwt_optimisation, _shard) = select! {
-            _ = open_connection(UntranslatedEndpoint::ContactPoint(ContactPoint{address: proxy_addr, datacenter: None}), None, config.clone()) => unreachable!(),
+            _ = open_connection(UntranslatedEndpoint::ContactPoint(ResolvedContactPoint{address: proxy_addr, datacenter: None}), None, config.clone()) => unreachable!(),
             startup = startup_rx.recv() => startup.unwrap(),
         };
 
@@ -2112,7 +2112,7 @@ mod tests {
 
         // Setup connection normally, without obstruction
         let (conn, mut error_receiver) = open_connection(
-            UntranslatedEndpoint::ContactPoint(ContactPoint {
+            UntranslatedEndpoint::ContactPoint(ResolvedContactPoint {
                 address: proxy_addr,
                 datacenter: None,
             }),
