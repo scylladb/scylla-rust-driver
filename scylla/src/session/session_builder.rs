@@ -254,7 +254,7 @@ impl GenericSessionBuilder<DefaultMode> {
     /// # use std::sync::Arc;
     /// # use scylla::{Session, SessionBuilder};
     /// # use scylla::session::{AddressTranslator, TranslationError};
-    /// # use scylla::transport::metadata::UntranslatedPeer;
+    /// # use scylla::cluster::metadata::UntranslatedPeer;
     /// struct IdentityTranslator;
     ///
     /// #[async_trait]

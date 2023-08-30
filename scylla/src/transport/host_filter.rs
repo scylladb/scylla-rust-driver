@@ -1,7 +1,7 @@
 //! Host filters.
 //!
 //! Host filters are essentially just a predicate over
-//! [`Peer`](crate::transport::metadata::Peer)s. Currently, they are used
+//! [`Peer`](crate::cluster::metadata::Peer)s. Currently, they are used
 //! by the [`Session`](crate::session::Session) to determine whether
 //! connections should be opened to a given node or not.
 
@@ -9,7 +9,7 @@ use std::collections::HashSet;
 use std::io::Error;
 use std::net::{SocketAddr, ToSocketAddrs};
 
-use crate::transport::metadata::Peer;
+use crate::cluster::metadata::Peer;
 
 /// The `HostFilter` trait.
 pub trait HostFilter: Send + Sync {

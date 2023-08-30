@@ -3,8 +3,9 @@ pub use self::latency_awareness::LatencyAwarenessBuilder;
 
 use super::{FallbackPlan, LoadBalancingPolicy, NodeRef, RoutingInfo};
 use crate::{
+    cluster::metadata::Strategy,
     sharding::Token,
-    transport::{cluster::ClusterData, locator::ReplicaSet, metadata::Strategy, node::Node},
+    transport::{cluster::ClusterData, locator::ReplicaSet, node::Node},
 };
 use itertools::{Either, Itertools};
 use rand::{prelude::SliceRandom, thread_rng, Rng};
@@ -892,11 +893,11 @@ mod tests {
         use uuid::Uuid;
 
         use crate::{
+            cluster::metadata::{Metadata, Peer},
             load_balancing::{LoadBalancingPolicy, Plan, RoutingInfo},
             sharding::Token,
             transport::{
                 locator::test::{id_to_invalid_addr, mock_metadata_for_token_aware_tests},
-                metadata::{Metadata, Peer},
                 ClusterData,
             },
         };

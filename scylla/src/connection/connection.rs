@@ -41,9 +41,9 @@ use std::{
 
 #[cfg(feature = "cloud")]
 use crate::cloud::CloudConfig;
+use crate::cluster::metadata::{PeerEndpoint, UntranslatedEndpoint, UntranslatedPeer};
 use crate::transport::errors::{BadKeyspaceName, DbError, QueryError};
 use crate::transport::iterator::RowIterator;
-use crate::transport::metadata::{PeerEndpoint, UntranslatedEndpoint, UntranslatedPeer};
 use crate::transport::NodeAddr;
 
 use crate::batch::{Batch, BatchStatement};
@@ -1848,8 +1848,8 @@ mod tests {
 
     use super::open_connection;
     use super::ConnectionConfig;
+    use crate::cluster::metadata::UntranslatedEndpoint;
     use crate::query::Query;
-    use crate::transport::metadata::UntranslatedEndpoint;
     use crate::transport::node::ResolvedContactPoint;
     use crate::utils::test_utils::unique_keyspace_name;
     use crate::{IntoTypedRows, SessionBuilder};

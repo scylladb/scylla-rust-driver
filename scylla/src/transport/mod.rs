@@ -5,7 +5,6 @@ pub mod host_filter;
 pub mod iterator;
 pub mod load_balancing;
 pub mod locator;
-pub mod metadata;
 pub(crate) mod metrics;
 pub(crate) mod node;
 pub mod partitioner;
