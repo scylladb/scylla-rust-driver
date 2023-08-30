@@ -8,7 +8,7 @@ use crate::transport::errors::QueryError;
 #[cfg(feature = "cloud")]
 use crate::transport::node::resolve_hostname;
 
-use crate::transport::metadata::{PeerEndpoint, UntranslatedEndpoint};
+use crate::cluster::metadata::{PeerEndpoint, UntranslatedEndpoint};
 #[cfg(feature = "cloud")]
 use crate::transport::node::ResolvedContactPoint;
 use crate::transport::NodeAddr;

@@ -14,8 +14,8 @@
 
 use super::replication_info::ReplicationInfo;
 use super::TokenRing;
+use crate::cluster::metadata::Strategy;
 use crate::sharding::Token;
-use crate::transport::metadata::Strategy;
 use crate::transport::node::Node;
 
 use std::cmp;
@@ -215,10 +215,10 @@ mod tests {
     use std::collections::HashMap;
 
     use crate::{
+        cluster::metadata::{Keyspace, Strategy},
         sharding::Token,
-        transport::{
-            locator::test::{create_ring, mock_metadata_for_token_aware_tests, A, C, D, E, F, G},
-            metadata::{Keyspace, Strategy},
+        transport::locator::test::{
+            create_ring, mock_metadata_for_token_aware_tests, A, C, D, E, F, G,
         },
     };
 

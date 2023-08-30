@@ -5,12 +5,7 @@ use crate::frame::value::ValueList;
 use crate::prepared_statement::TokenCalculationError;
 use crate::sharding::Token;
 use crate::transport::host_filter::HostFilter;
-use crate::transport::{
-    errors::QueryError,
-    metadata::{Keyspace, Metadata, MetadataReader},
-    node::Node,
-    partitioner::PartitionerName,
-};
+use crate::transport::{errors::QueryError, node::Node, partitioner::PartitionerName};
 
 use arc_swap::ArcSwap;
 use futures::future::join_all;
@@ -27,8 +22,9 @@ use uuid::Uuid;
 
 use super::node::{KnownNode, NodeAddr};
 
+use crate::cluster::metadata::{Keyspace, Metadata, MetadataReader, Strategy};
+
 use super::locator::ReplicaLocator;
-use super::metadata::Strategy;
 use super::partitioner::calculate_token_for_partition_key;
 
 /// Cluster manages up to date information and connections to database nodes.
