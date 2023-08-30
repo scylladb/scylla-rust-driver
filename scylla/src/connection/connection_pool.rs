@@ -7,10 +7,10 @@ use crate::transport::errors::{
     BrokenConnectionErrorKind, ConnectionError, ConnectionPoolError, QueryError,
 };
 
+use crate::cluster::metadata::{PeerEndpoint, UntranslatedEndpoint};
+
 #[cfg(feature = "cloud")]
 use crate::transport::node::resolve_hostname;
-
-use crate::transport::metadata::{PeerEndpoint, UntranslatedEndpoint};
 #[cfg(feature = "cloud")]
 use crate::transport::node::ResolvedContactPoint;
 use crate::transport::NodeAddr;
@@ -1195,10 +1195,10 @@ struct OpenedConnectionEvent {
 
 #[cfg(test)]
 mod tests {
-    use super::{open_connection_to_shard_aware_port, ConnectionConfig};
+    use super::ConnectionConfig;
+    use crate::cluster::metadata::UntranslatedEndpoint;
     use crate::routing::{ShardCount, Sharder};
     use crate::test_utils::setup_tracing;
-    use crate::transport::metadata::UntranslatedEndpoint;
     use crate::transport::node::ResolvedContactPoint;
     use std::net::{SocketAddr, ToSocketAddrs};
 
@@ -1208,6 +1208,8 @@ mod tests {
     #[tokio::test]
     #[cfg(not(scylla_cloud_tests))]
     async fn many_connections() {
+        use crate::connection::connection::open_connection_to_shard_aware_port;
+
         setup_tracing();
         let connections_number = 512;
 
