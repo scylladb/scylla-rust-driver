@@ -7,7 +7,6 @@ pub mod iterator;
 pub mod legacy_query_result;
 pub mod load_balancing;
 pub mod locator;
-pub mod metadata;
 pub(crate) mod metrics;
 pub(crate) mod node;
 pub mod partitioner;

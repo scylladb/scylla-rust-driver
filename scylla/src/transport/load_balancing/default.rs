@@ -3,9 +3,10 @@ pub use self::latency_awareness::LatencyAwarenessBuilder;
 
 use super::{FallbackPlan, LoadBalancingPolicy, NodeRef, RoutingInfo};
 use crate::{
+    cluster::metadata::Strategy,
     routing::{Shard, Token},
     transport::errors::QueryError,
-    transport::{cluster::ClusterData, locator::ReplicaSet, metadata::Strategy, node::Node},
+    transport::{cluster::ClusterData, locator::ReplicaSet, node::Node},
 };
 use itertools::{Either, Itertools};
 use rand::{prelude::SliceRandom, thread_rng, Rng};
@@ -1184,6 +1185,7 @@ mod tests {
         use uuid::Uuid;
 
         use crate::{
+            cluster::metadata::{Metadata, Peer},
             load_balancing::{LoadBalancingPolicy, Plan, RoutingInfo},
             routing::Token,
             test_utils::setup_tracing,
@@ -1192,7 +1194,6 @@ mod tests {
                     tablets::TabletsInfo,
                     test::{id_to_invalid_addr, mock_metadata_for_token_aware_tests},
                 },
-                metadata::{Metadata, Peer},
                 ClusterData,
             },
         };
@@ -2481,7 +2482,7 @@ mod tests {
             {
                 struct FHostFilter;
                 impl HostFilter for FHostFilter {
-                    fn accept(&self, peer: &crate::transport::metadata::Peer) -> bool {
+                    fn accept(&self, peer: &crate::cluster::metadata::Peer) -> bool {
                         peer.address != id_to_invalid_addr(F)
                     }
                 }

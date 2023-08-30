@@ -4,10 +4,10 @@
 use crate::batch::batch_values;
 #[cfg(feature = "cloud")]
 use crate::cloud::CloudConfig;
-use crate::transport::metadata::UntranslatedPeer;
 #[allow(deprecated)]
 use crate::LegacyQueryResult;
 
+use crate::cluster::metadata::UntranslatedPeer;
 use crate::history;
 use crate::history::HistoryListener;
 pub use crate::transport::errors::TranslationError;

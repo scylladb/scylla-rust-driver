@@ -5,13 +5,11 @@ use uuid::Uuid;
 
 use super::tablets::TabletsInfo;
 use super::{ReplicaLocator, ReplicaSet};
+use crate::cluster::metadata::{Keyspace, Metadata, Peer, Strategy};
 use crate::connection::PoolConfig;
 use crate::routing::Token;
 use crate::test_utils::setup_tracing;
-use crate::transport::{
-    metadata::{Keyspace, Metadata, Peer, Strategy},
-    Node,
-};
+use crate::transport::Node;
 use crate::transport::{NodeAddr, NodeRef};
 
 use std::collections::HashSet;
