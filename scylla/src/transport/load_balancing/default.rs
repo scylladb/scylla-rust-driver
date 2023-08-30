@@ -4,9 +4,8 @@ pub use self::latency_awareness::LatencyAwarenessBuilder;
 use super::{FallbackPlan, LoadBalancingPolicy, NodeRef, RoutingInfo};
 use crate::cluster::ClusterData;
 use crate::{
-    cluster::metadata::Strategy,
-    sharding::Token,
-    transport::{locator::ReplicaSet, node::Node},
+    cluster::locator::ReplicaSet, cluster::metadata::Strategy, sharding::Token,
+    transport::node::Node,
 };
 use itertools::{Either, Itertools};
 use rand::{prelude::SliceRandom, thread_rng, Rng};
@@ -876,12 +875,12 @@ mod tests {
         ExpectedGroups, ExpectedGroupsBuilder,
     };
     use crate::{
+        cluster::locator::test::{KEYSPACE_NTS_RF_2, KEYSPACE_NTS_RF_3, KEYSPACE_SS_RF_2},
         cluster::ClusterData,
         load_balancing::{
             default::tests::framework::mock_cluster_data_for_token_aware_tests, RoutingInfo,
         },
         sharding::Token,
-        transport::locator::test::{KEYSPACE_NTS_RF_2, KEYSPACE_NTS_RF_3, KEYSPACE_SS_RF_2},
     };
 
     use super::{DefaultPolicy, NodeLocationPreference};
@@ -892,13 +891,13 @@ mod tests {
         use uuid::Uuid;
 
         use crate::{
+            cluster::locator::test::{id_to_invalid_addr, mock_metadata_for_token_aware_tests},
             cluster::{
                 metadata::{Metadata, Peer},
                 ClusterData,
             },
             load_balancing::{LoadBalancingPolicy, Plan, RoutingInfo},
             sharding::Token,
-            transport::locator::test::{id_to_invalid_addr, mock_metadata_for_token_aware_tests},
         };
 
         enum ExpectedGroup {
@@ -1199,7 +1198,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_default_policy_with_token_aware_statements() {
-        use crate::transport::locator::test::{A, B, C, D, E, F, G};
+        use crate::cluster::locator::test::{A, B, C, D, E, F, G};
 
         let cluster = mock_cluster_data_for_token_aware_tests().await;
         struct Test<'a> {
@@ -1669,7 +1668,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_default_policy_with_lwt_statements() {
-        use crate::transport::locator::test::{A, B, C, D, E, F, G};
+        use crate::cluster::locator::test::{A, B, C, D, E, F, G};
 
         let cluster = mock_cluster_data_for_token_aware_tests().await;
         struct Test<'a> {
@@ -2717,18 +2716,18 @@ mod latency_awareness {
         };
 
         use crate::{
-            cluster::ClusterData,
+            cluster::{
+                locator::test::{
+                    id_to_invalid_addr, A, B, C, D, E, F, G, KEYSPACE_NTS_RF_2, KEYSPACE_NTS_RF_3,
+                },
+                ClusterData,
+            },
             load_balancing::{
                 default::tests::test_default_policy_with_given_cluster_and_routing_info,
                 RoutingInfo,
             },
             sharding::Token,
-            transport::{
-                locator::test::{
-                    id_to_invalid_addr, A, B, C, D, E, F, G, KEYSPACE_NTS_RF_2, KEYSPACE_NTS_RF_3,
-                },
-                NodeAddr,
-            },
+            transport::NodeAddr,
             ExecutionProfile,
         };
         use crate::{

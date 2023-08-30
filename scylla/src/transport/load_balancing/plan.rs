@@ -105,10 +105,8 @@ impl<'a> Iterator for Plan<'a> {
 mod tests {
     use std::{net::SocketAddr, str::FromStr, sync::Arc};
 
-    use crate::transport::{
-        locator::test::{create_locator, mock_metadata_for_token_aware_tests},
-        Node, NodeAddr,
-    };
+    use crate::cluster::locator::test::{create_locator, mock_metadata_for_token_aware_tests};
+    use crate::transport::{Node, NodeAddr};
 
     use super::*;
 
