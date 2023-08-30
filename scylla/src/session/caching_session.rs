@@ -20,11 +20,11 @@ use std::fmt;
 use std::hash::BuildHasher;
 use std::sync::Arc;
 
-use super::iterator::QueryPager;
 #[allow(deprecated)]
 use crate::session::{
     CurrentDeserializationApi, DeserializationApiKind, GenericSession, LegacyDeserializationApi,
 };
+use crate::transport::iterator::QueryPager;
 
 /// Contains just the parts of a prepared statement that were returned
 /// from the database. All remaining parts (query string, page size,

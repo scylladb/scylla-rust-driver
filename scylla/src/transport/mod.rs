@@ -1,4 +1,3 @@
-pub(crate) mod caching_session;
 pub(crate) mod cluster;
 pub(crate) mod connection;
 pub(crate) mod connection_pool;
