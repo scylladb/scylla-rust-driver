@@ -24,19 +24,19 @@ use crate::transport::partitioner::{Partitioner, PartitionerHasher, PartitionerN
 
 /// Represents a statement prepared on the server.
 ///
-/// To prepare a statement, simply execute [`Session::prepare`](crate::transport::session::Session::prepare).
+/// To prepare a statement, simply execute [`Session::prepare`](crate::session::Session::prepare).
 ///
 /// If you plan on reusing the statement, or bounding some values to it during execution, always
 /// prefer using prepared statements over `Session::query_*` methods,
-/// e.g. [`Session::query_unpaged`](crate::transport::session::Session::query_unpaged).
+/// e.g. [`Session::query_unpaged`](crate::session::Session::query_unpaged).
 ///
 /// Benefits that prepared statements have to offer:
 /// * Performance - a prepared statement holds information about metadata
 ///   that allows to carry out a statement execution in a type safe manner.
 ///   When any of `Session::query_*` methods is called with non-empty bound values,
 ///   the driver has to prepare the statement before execution (to provide type safety).
-///   This implies 2 round trips per [`Session::query_unpaged`](crate::transport::session::Session::query_unpaged).
-///   On the other hand, the cost of [`Session::execute_unpaged`](crate::transport::session::Session::execute_unpaged)
+///   This implies 2 round trips per [`Session::query_unpaged`](crate::session::Session::query_unpaged).
+///   On the other hand, the cost of [`Session::execute_unpaged`](crate::session::Session::execute_unpaged)
 ///   is only 1 round trip.
 /// * Increased type-safety - bound values' types are validated with
 ///   the [`PreparedMetadata`] received from the server during the serialization.
@@ -48,7 +48,7 @@ use crate::transport::partitioner::{Partitioner, PartitionerHasher, PartitionerN
 /// # Clone implementation
 /// Cloning a prepared statement is a cheap operation. It only
 /// requires copying a couple of small fields and some [Arc] pointers.
-/// Always prefer cloning over executing [`Session::prepare`](crate::transport::session::Session::prepare)
+/// Always prefer cloning over executing [`Session::prepare`](crate::session::Session::prepare)
 /// multiple times to save some roundtrips.
 ///
 /// # Statement repreparation
@@ -57,7 +57,7 @@ use crate::transport::partitioner::{Partitioner, PartitionerHasher, PartitionerN
 /// the server will respond with an error. Users should not worry about it, since
 /// the driver handles it properly and tries to reprepare the statement.
 /// However, there are some cases when client-side prepared statement should be dropped
-/// and prepared once again via [`Session::prepare`](crate::transport::session::Session::prepare) -
+/// and prepared once again via [`Session::prepare`](crate::session::Session::prepare) -
 /// see the mention about altering schema below.
 ///
 /// # Altering schema

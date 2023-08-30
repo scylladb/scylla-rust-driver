@@ -1,6 +1,6 @@
 use anyhow::Result;
 use futures::TryStreamExt as _;
-use scylla::transport::session::Session;
+use scylla::session::Session;
 use scylla::SessionBuilder;
 use std::env;
 use std::fs;

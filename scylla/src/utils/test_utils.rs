@@ -1,9 +1,9 @@
 use crate::load_balancing::{FallbackPlan, LoadBalancingPolicy, RoutingInfo};
 use crate::query::Query;
 use crate::routing::Shard;
+use crate::session::session_builder::{GenericSessionBuilder, SessionBuilderKind};
 use crate::transport::connection::Connection;
 use crate::transport::errors::QueryError;
-use crate::transport::session_builder::{GenericSessionBuilder, SessionBuilderKind};
 use crate::transport::{ClusterData, NodeRef};
 use crate::{CachingSession, ExecutionProfile, Session};
 use std::sync::Arc;
@@ -77,7 +77,7 @@ pub(crate) fn create_new_session_builder() -> GenericSessionBuilder<impl Session
 
         #[cfg(scylla_cloud_tests)]
         {
-            use crate::transport::session_builder::CloudMode;
+            use crate::session::session_builder::CloudMode;
             use crate::CloudSessionBuilder;
             use std::path::Path;
 

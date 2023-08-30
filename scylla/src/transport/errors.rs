@@ -1,4 +1,4 @@
-//! This module contains various errors which can be returned by [`Session`](crate::transport::session::Session).
+//! This module contains various errors which can be returned by [`Session`](crate::session::Session).
 
 // Re-export DbError type and types that it depends on
 // so they can be found in `scylla::errors`.
@@ -780,8 +780,8 @@ pub enum ConnectionSetupRequestErrorKind {
     AuthFinishError(AuthError),
 
     /// User did not provide authentication while the cluster requires it.
-    /// See [`SessionBuilder::user`](crate::transport::session_builder::SessionBuilder::user)
-    /// and/or [`SessionBuilder::authenticator_provider`](crate::transport::session_builder::SessionBuilder::authenticator_provider).
+    /// See [`SessionBuilder::user`](crate::session::session_builder::SessionBuilder::user)
+    /// and/or [`SessionBuilder::authenticator_provider`](crate::session::session_builder::SessionBuilder::authenticator_provider).
     #[error("Authentication is required. You can use SessionBuilder::user(\"user\", \"pass\") to provide credentials or SessionBuilder::authenticator_provider to provide custom authenticator")]
     MissingAuthentication,
 }

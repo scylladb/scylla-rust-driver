@@ -51,10 +51,10 @@ use super::iterator::QueryPager;
 use super::locator::tablets::{RawTablet, TabletParsingError};
 use super::metadata::{PeerEndpoint, UntranslatedEndpoint, UntranslatedPeer};
 use super::query_result::QueryResult;
-use super::session::AddressTranslator;
 use super::NodeAddr;
 #[cfg(feature = "cloud")]
 use crate::cloud::CloudConfig;
+use crate::session::AddressTranslator;
 
 use crate::batch::{Batch, BatchStatement};
 use crate::frame::protocol_features::ProtocolFeatures;

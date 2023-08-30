@@ -2,7 +2,7 @@
 //!
 //! Host filters are essentially just a predicate over
 //! [`Peer`]s. Currently, they are used by the
-//! [`Session`](crate::transport::session::Session) to determine whether
+//! [`Session`](crate::session::Session) to determine whether
 //! connections should be opened to a given node or not.
 
 use std::collections::HashSet;

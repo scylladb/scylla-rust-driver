@@ -1,7 +1,7 @@
 use anyhow::{bail, Result};
 use futures::TryStreamExt as _;
+use scylla::session::Session;
 use scylla::transport::errors::QueryError;
-use scylla::transport::session::Session;
 use scylla::SessionBuilder;
 use std::env;
 use std::time::Duration;

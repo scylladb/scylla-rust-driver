@@ -21,9 +21,9 @@ use tokio::sync::mpsc;
 
 use super::execution_profile::ExecutionProfileInner;
 use super::query_result::ColumnSpecs;
-use super::session::RequestSpan;
 #[allow(deprecated)]
 use crate::cql_to_rust::{FromRow, FromRowError};
+use crate::session::RequestSpan;
 
 use crate::deserialize::DeserializeOwnedRow;
 use crate::frame::response::{

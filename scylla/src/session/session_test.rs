@@ -4,6 +4,7 @@ use crate::prepared_statement::PreparedStatement;
 use crate::query::Query;
 use crate::retry_policy::{QueryInfo, RetryDecision, RetryPolicy, RetrySession};
 use crate::routing::Token;
+use crate::session::Session;
 use crate::statement::Consistency;
 use crate::tracing::TracingInfo;
 use crate::transport::errors::{BadKeyspaceName, BadQuery, DbError, QueryError};
@@ -14,7 +15,6 @@ use crate::transport::metadata::{
 use crate::transport::partitioner::{
     calculate_token_for_partition_key, Murmur3Partitioner, Partitioner, PartitionerName,
 };
-use crate::transport::session::Session;
 use crate::utils::test_utils::{
     create_new_session_builder, scylla_supports_tablets, setup_tracing, supports_feature,
     unique_keyspace_name, PerformDDL,
@@ -37,7 +37,7 @@ use std::sync::Arc;
 use tokio::net::TcpListener;
 use uuid::Uuid;
 
-use super::query_result::QueryRowsResult;
+use crate::transport::query_result::QueryRowsResult;
 
 #[tokio::test]
 async fn test_connection_failure() {

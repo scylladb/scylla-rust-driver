@@ -1,6 +1,6 @@
 use anyhow::{anyhow, Result};
 use scylla::frame::response::result::Row;
-use scylla::transport::session::Session;
+use scylla::session::Session;
 use scylla::SessionBuilder;
 use std::env;
 

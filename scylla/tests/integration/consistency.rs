@@ -4,8 +4,8 @@ use scylla::load_balancing::{DefaultPolicy, LoadBalancingPolicy, RoutingInfo};
 use scylla::prepared_statement::PreparedStatement;
 use scylla::retry_policy::FallthroughRetryPolicy;
 use scylla::routing::{Shard, Token};
+use scylla::session::Session;
 use scylla::transport::NodeRef;
-use scylla::Session;
 use scylla_cql::frame::response::result::TableSpec;
 use tokio::sync::mpsc::{self, UnboundedReceiver, UnboundedSender};
 
