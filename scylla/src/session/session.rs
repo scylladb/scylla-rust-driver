@@ -41,6 +41,12 @@ use tokio::time::timeout;
 use tracing::{debug, error, trace, trace_span, Instrument};
 use uuid::Uuid;
 
+use crate::connection::QueryResponse;
+#[cfg(feature = "ssl")]
+use crate::connection::SslConfig;
+use crate::connection::{Connection, ConnectionConfig, VerifiedKeyspaceName};
+use crate::connection::{NonErrorQueryResponse, SelfIdentity};
+use crate::connection::{PoolConfig, PoolSize};
 use crate::frame::response::result;
 use crate::prepared_statement::PreparedStatement;
 use crate::query::Query;
@@ -48,12 +54,6 @@ use crate::routing::{Shard, Token};
 use crate::statement::{Consistency, PageSize, PagingState, PagingStateResponse};
 use crate::tracing::TracingInfo;
 use crate::transport::cluster::{Cluster, ClusterData, ClusterNeatDebug};
-use crate::transport::connection::NonErrorQueryResponse;
-use crate::transport::connection::QueryResponse;
-#[cfg(feature = "ssl")]
-use crate::transport::connection::SslConfig;
-use crate::transport::connection::{Connection, ConnectionConfig, VerifiedKeyspaceName};
-use crate::transport::connection_pool::PoolConfig;
 use crate::transport::errors::TracingProtocolError;
 use crate::transport::execution_profile::{
     ExecutionProfile, ExecutionProfileHandle, ExecutionProfileInner,
@@ -75,13 +75,11 @@ use crate::transport::query_result::RowsError;
 use crate::transport::retry_policy::{QueryInfo, RetryDecision, RetrySession};
 use crate::transport::speculative_execution;
 use crate::transport::Compression;
-use crate::transport::{NodeRef, SelfIdentity};
+use crate::transport::NodeRef;
 use crate::{
     batch::{Batch, BatchStatement},
     statement::StatementConfig,
 };
-
-pub use crate::transport::connection_pool::PoolSize;
 
 // This re-export is to preserve backward compatibility.
 // Those items are no longer here not to clutter session.rs with legacy things.

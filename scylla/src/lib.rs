@@ -255,6 +255,7 @@ pub mod authentication;
 #[cfg(feature = "cloud")]
 pub mod cloud;
 
+pub mod connection;
 pub mod history;
 pub mod routing;
 pub mod session;

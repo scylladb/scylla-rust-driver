@@ -5,10 +5,10 @@ use uuid::Uuid;
 
 use super::tablets::TabletsInfo;
 use super::{ReplicaLocator, ReplicaSet};
+use crate::connection::PoolConfig;
 use crate::routing::Token;
 use crate::test_utils::setup_tracing;
 use crate::transport::{
-    connection_pool::PoolConfig,
     metadata::{Keyspace, Metadata, Peer, Strategy},
     Node,
 };

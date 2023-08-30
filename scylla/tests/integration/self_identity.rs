@@ -5,7 +5,7 @@ use scylla_cql::frame::types;
 use std::sync::Arc;
 use tokio::sync::mpsc;
 
-use scylla::transport::SelfIdentity;
+use scylla::connection::SelfIdentity;
 use scylla_proxy::{
     Condition, ProxyError, Reaction, RequestOpcode, RequestReaction, RequestRule, ShardAwareness,
     WorkerError,

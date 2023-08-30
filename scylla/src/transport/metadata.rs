@@ -1,9 +1,8 @@
+use crate::connection::{Connection, ConnectionConfig, NodeConnectionPool, PoolConfig, PoolSize};
 use crate::deserialize::DeserializeOwnedRow;
 use crate::frame::response::event::Event;
 use crate::routing::Token;
 use crate::statement::query::Query;
-use crate::transport::connection::{Connection, ConnectionConfig};
-use crate::transport::connection_pool::{NodeConnectionPool, PoolConfig, PoolSize};
 use crate::transport::errors::{DbError, NewSessionError, QueryError};
 use crate::transport::host_filter::HostFilter;
 use crate::transport::iterator::QueryPager;

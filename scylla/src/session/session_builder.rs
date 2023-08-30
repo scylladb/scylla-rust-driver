@@ -1,11 +1,11 @@
 //! SessionBuilder provides an easy way to create new Sessions
 
+use crate::connection::SelfIdentity;
 #[allow(deprecated)]
 use crate::session::{
     AddressTranslator, CurrentDeserializationApi, GenericSession, LegacyDeserializationApi,
     SessionConfig,
 };
-use crate::transport::connection::SelfIdentity;
 use crate::transport::execution_profile::ExecutionProfileHandle;
 use crate::transport::Compression;
 
@@ -15,8 +15,8 @@ use crate::transport::errors::NewSessionError;
 #[cfg(feature = "cloud")]
 use crate::ExecutionProfile;
 
+use crate::connection::PoolSize;
 use crate::statement::Consistency;
-use crate::transport::connection_pool::PoolSize;
 use crate::transport::host_filter::HostFilter;
 use std::borrow::Borrow;
 use std::marker::PhantomData;
@@ -607,7 +607,7 @@ impl<K: SessionBuilderKind> GenericSessionBuilder<K> {
     /// # use scylla::{Session, SessionBuilder};
     /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
     /// use std::num::NonZeroUsize;
-    /// use scylla::session::PoolSize;
+    /// use scylla::connection::PoolSize;
     ///
     /// // This session will establish 4 connections to each node.
     /// // For Scylla clusters, this number will be divided across shards
@@ -1001,7 +1001,7 @@ impl<K: SessionBuilderKind> GenericSessionBuilder<K> {
     /// # Example
     /// ```
     /// # use scylla::{Session, SessionBuilder};
-    /// # use scylla::transport::SelfIdentity;
+    /// # use scylla::connection::SelfIdentity;
     /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
     ///     let (app_major, app_minor, app_patch) = (2, 1, 3);
     ///     let app_version = format!("{app_major}.{app_minor}.{app_patch}");
