@@ -1,6 +1,4 @@
 pub(crate) mod cluster;
-pub(crate) mod connection;
-pub(crate) mod connection_pool;
 pub mod downgrading_consistency_retry_policy;
 pub mod errors;
 pub mod execution_profile;
@@ -18,7 +16,6 @@ pub mod retry_policy;
 pub mod speculative_execution;
 
 pub use crate::frame::{Authenticator, Compression};
-pub use connection::SelfIdentity;
 pub use execution_profile::ExecutionProfile;
 pub use scylla_cql::frame::request::query::{PagingState, PagingStateResponse};
 

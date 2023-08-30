@@ -1,8 +1,8 @@
+use crate::connection::Connection;
 use crate::load_balancing::{FallbackPlan, LoadBalancingPolicy, RoutingInfo};
 use crate::query::Query;
 use crate::routing::Shard;
 use crate::session::session_builder::{GenericSessionBuilder, SessionBuilderKind};
-use crate::transport::connection::Connection;
 use crate::transport::errors::QueryError;
 use crate::transport::{ClusterData, NodeRef};
 use crate::{CachingSession, ExecutionProfile, Session};

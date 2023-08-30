@@ -30,6 +30,7 @@ use tokio_openssl::SslStream;
 pub(crate) use ssl_config::SslConfig;
 
 use crate::authentication::AuthenticatorProvider;
+use crate::session::AddressTranslator;
 use crate::transport::errors::{
     BadKeyspaceName, BrokenConnectionError, BrokenConnectionErrorKind, ConnectionError,
     ConnectionSetupRequestError, ConnectionSetupRequestErrorKind, CqlEventHandlingError, DbError,
@@ -46,15 +47,14 @@ use std::{
     net::{Ipv4Addr, Ipv6Addr},
 };
 
-use super::errors::{ProtocolError, SchemaVersionFetchError, UseKeyspaceProtocolError};
-use super::iterator::QueryPager;
-use super::locator::tablets::{RawTablet, TabletParsingError};
-use super::metadata::{PeerEndpoint, UntranslatedEndpoint, UntranslatedPeer};
-use super::query_result::QueryResult;
-use super::NodeAddr;
 #[cfg(feature = "cloud")]
 use crate::cloud::CloudConfig;
-use crate::session::AddressTranslator;
+use crate::transport::errors::{ProtocolError, SchemaVersionFetchError, UseKeyspaceProtocolError};
+use crate::transport::iterator::QueryPager;
+use crate::transport::locator::tablets::{RawTablet, TabletParsingError};
+use crate::transport::metadata::{PeerEndpoint, UntranslatedEndpoint, UntranslatedPeer};
+use crate::transport::query_result::QueryResult;
+use crate::transport::NodeAddr;
 
 use crate::batch::{Batch, BatchStatement};
 use crate::frame::protocol_features::ProtocolFeatures;
@@ -2391,10 +2391,9 @@ mod tests {
     use tokio::select;
     use tokio::sync::mpsc;
 
-    use super::ConnectionConfig;
+    use super::{open_connection, ConnectionConfig};
     use crate::query::Query;
     use crate::test_utils::setup_tracing;
-    use crate::transport::connection::open_connection;
     use crate::transport::metadata::UntranslatedEndpoint;
     use crate::transport::node::ResolvedContactPoint;
     use crate::utils::test_utils::{unique_keyspace_name, PerformDDL};
@@ -2785,9 +2784,7 @@ mod tests {
         // Then, the error from keepaliver will be propagated to the error receiver.
         let err = error_receiver.await.unwrap();
         let err_inner: &BrokenConnectionErrorKind = match err {
-            crate::transport::connection::ConnectionError::BrokenConnection(ref e) => {
-                e.downcast_ref().unwrap()
-            }
+            super::ConnectionError::BrokenConnection(ref e) => e.downcast_ref().unwrap(),
             _ => panic!("Bad error type. Expected keepalive timeout."),
         };
         assert_matches!(err_inner, BrokenConnectionErrorKind::KeepaliveTimeout(_));

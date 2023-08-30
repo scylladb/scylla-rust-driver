@@ -1,0 +1,17 @@
+// The purpose of connection::connection module is to not have any complex logic in mod.rs.
+// No code external to this module will ever see this awkward path, because the inner
+// connection module is pub(self), and its items are only accessible through the below
+// re-exports.
+#[allow(clippy::module_inception)]
+mod connection;
+pub use connection::SelfIdentity;
+#[cfg(feature = "ssl")]
+pub(crate) use connection::SslConfig;
+pub(crate) use connection::{
+    Connection, ConnectionConfig, NonErrorQueryResponse, QueryResponse, VerifiedKeyspaceName,
+};
+
+mod connection_pool;
+
+pub use connection_pool::PoolSize;
+pub(crate) use connection_pool::{NodeConnectionPool, PoolConfig};
