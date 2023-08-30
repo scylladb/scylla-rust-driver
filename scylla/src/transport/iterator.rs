@@ -22,6 +22,7 @@ use super::execution_profile::ExecutionProfileInner;
 use crate::cql_to_rust::{FromRow, FromRowError};
 use crate::session::RequestSpan;
 
+use crate::connection::{Connection, NonErrorQueryResponse, QueryResponse};
 use crate::frame::{
     response::{
         result,
@@ -33,7 +34,6 @@ use crate::history::{self, HistoryListener};
 use crate::statement::Consistency;
 use crate::statement::{prepared_statement::PreparedStatement, query::Query};
 use crate::transport::cluster::ClusterData;
-use crate::transport::connection::{Connection, NonErrorQueryResponse, QueryResponse};
 use crate::transport::load_balancing::{self, RoutingInfo};
 use crate::transport::metrics::Metrics;
 use crate::transport::retry_policy::{QueryInfo, RetryDecision, RetrySession};

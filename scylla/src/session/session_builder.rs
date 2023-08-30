@@ -1,7 +1,7 @@
 //! SessionBuilder provides an easy way to create new Sessions
 
+use crate::connection::{AddressTranslator, PoolSize};
 use crate::session::{Session, SessionConfig};
-use crate::transport::connection::AddressTranslator;
 use crate::transport::errors::NewSessionError;
 use crate::transport::execution_profile::ExecutionProfileHandle;
 use crate::transport::Compression;
@@ -12,7 +12,6 @@ use crate::cloud::{CloudConfig, CloudConfigError};
 use crate::ExecutionProfile;
 
 use crate::statement::Consistency;
-use crate::transport::connection_pool::PoolSize;
 use crate::transport::host_filter::HostFilter;
 use std::borrow::Borrow;
 use std::marker::PhantomData;

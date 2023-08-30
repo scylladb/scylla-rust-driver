@@ -39,12 +39,12 @@ use std::{
     net::{Ipv4Addr, Ipv6Addr},
 };
 
-use super::errors::{BadKeyspaceName, DbError, QueryError};
-use super::iterator::RowIterator;
-use super::metadata::{PeerEndpoint, UntranslatedEndpoint, UntranslatedPeer};
-use super::NodeAddr;
 #[cfg(feature = "cloud")]
 use crate::cloud::CloudConfig;
+use crate::transport::errors::{BadKeyspaceName, DbError, QueryError};
+use crate::transport::iterator::RowIterator;
+use crate::transport::metadata::{PeerEndpoint, UntranslatedEndpoint, UntranslatedPeer};
+use crate::transport::NodeAddr;
 
 use crate::batch::{Batch, BatchStatement};
 use crate::frame::protocol_features::ProtocolFeatures;
@@ -408,7 +408,7 @@ impl ConnectionConfig {
 }
 
 // Used to listen for fatal error in connection
-pub(crate) type ErrorReceiver = tokio::sync::oneshot::Receiver<QueryError>;
+pub(super) type ErrorReceiver = tokio::sync::oneshot::Receiver<QueryError>;
 
 impl Connection {
     // Returns new connection and ErrorReceiver which can be used to wait for a fatal error
@@ -1820,9 +1820,9 @@ mod tests {
     use tokio::select;
     use tokio::sync::mpsc;
 
+    use super::open_connection;
     use super::ConnectionConfig;
     use crate::query::Query;
-    use crate::transport::connection::open_connection;
     use crate::transport::metadata::UntranslatedEndpoint;
     use crate::transport::node::ResolvedContactPoint;
     use crate::utils::test_utils::unique_keyspace_name;
