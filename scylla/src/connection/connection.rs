@@ -67,7 +67,7 @@ use crate::frame::{
     FrameParams, SerializedRequest,
 };
 use crate::query::Query;
-use crate::routing::ShardInfo;
+use crate::routing::{Shard, ShardInfo, Sharder};
 use crate::statement::prepared_statement::PreparedStatement;
 use crate::statement::{Consistency, PageSize, PagingState, PagingStateResponse};
 
@@ -2084,6 +2084,28 @@ pub(crate) async fn open_connection(
     }
 
     Ok((connection, error_receiver))
+}
+
+pub(crate) async fn open_connection_to_shard_aware_port(
+    endpoint: UntranslatedEndpoint,
+    shard: Shard,
+    sharder: Sharder,
+    connection_config: &ConnectionConfig,
+) -> Result<(Connection, ErrorReceiver), ConnectionError> {
+    // Create iterator over all possible source ports for this shard
+    let source_port_iter = sharder.iter_source_ports_for_shard(shard);
+
+    for port in source_port_iter {
+        let connect_result = open_connection(endpoint.clone(), Some(port), connection_config).await;
+
+        match connect_result {
+            Err(err) if err.is_address_unavailable_for_use() => continue, // If we can't use this port, try the next one
+            result => return result,
+        }
+    }
+
+    // Tried all source ports for that shard, give up
+    Err(ConnectionError::NoSourcePortForShard(shard))
 }
 
 async fn perform_authenticate(
