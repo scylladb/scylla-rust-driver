@@ -3,10 +3,11 @@ use rand::thread_rng;
 use rand::Rng;
 use scylla::client::session::Session;
 use scylla::client::session_builder::SessionBuilder;
+use scylla::cluster::ClusterData;
 use scylla::load_balancing::{LoadBalancingPolicy, RoutingInfo};
 use scylla::routing::Shard;
 use scylla::transport::NodeRef;
-use scylla::transport::{ClusterData, ExecutionProfile};
+use scylla::ExecutionProfile;
 use std::{env, sync::Arc};
 
 /// Example load balancing policy that prefers nodes from favorite datacenter

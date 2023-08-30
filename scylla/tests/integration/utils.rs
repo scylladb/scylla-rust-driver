@@ -1,12 +1,13 @@
 use futures::Future;
 use scylla::client::session::Session;
 use scylla::client::session_builder::{GenericSessionBuilder, SessionBuilderKind};
+use scylla::cluster::ClusterData;
 use scylla::deserialize::DeserializeValue;
 use scylla::load_balancing::{FallbackPlan, LoadBalancingPolicy, RoutingInfo};
 use scylla::query::Query;
 use scylla::routing::Shard;
 use scylla::transport::errors::QueryError;
-use scylla::transport::{ClusterData, NodeRef};
+use scylla::transport::NodeRef;
 use scylla::ExecutionProfile;
 use std::collections::HashMap;
 use std::env;

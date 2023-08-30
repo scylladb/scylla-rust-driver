@@ -8,6 +8,7 @@ use crate::batch::{Batch, BatchStatement};
 #[cfg(feature = "cloud")]
 use crate::cloud::CloudConfig;
 use crate::cluster::metadata::UntranslatedPeer;
+use crate::cluster::{Cluster, ClusterData, ClusterNeatDebug};
 use crate::frame::response::result;
 use crate::history;
 use crate::history::HistoryListener;
@@ -23,7 +24,6 @@ use crate::routing::{Shard, Token};
 use crate::statement::StatementConfig;
 use crate::statement::{Consistency, PageSize, PagingState, PagingStateResponse};
 use crate::tracing::TracingInfo;
-use crate::transport::cluster::{Cluster, ClusterData, ClusterNeatDebug};
 pub use crate::transport::errors::TranslationError;
 use crate::transport::errors::{
     BadQuery, NewSessionError, ProtocolError, QueryError, TracingProtocolError, UserRequestError,

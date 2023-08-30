@@ -2,11 +2,12 @@ use self::latency_awareness::LatencyAwareness;
 pub use self::latency_awareness::LatencyAwarenessBuilder;
 
 use super::{FallbackPlan, LoadBalancingPolicy, NodeRef, RoutingInfo};
+use crate::cluster::ClusterData;
 use crate::{
     cluster::metadata::Strategy,
     routing::{Shard, Token},
     transport::errors::QueryError,
-    transport::{cluster::ClusterData, locator::ReplicaSet, node::Node},
+    transport::{locator::ReplicaSet, node::Node},
 };
 use itertools::{Either, Itertools};
 use rand::{prelude::SliceRandom, thread_rng, Rng};
@@ -1169,12 +1170,12 @@ mod tests {
         TABLE_SS_RF_2,
     };
     use crate::{
+        cluster::ClusterData,
         load_balancing::{
             default::tests::framework::mock_cluster_data_for_token_aware_tests, Plan, RoutingInfo,
         },
         routing::Token,
         test_utils::setup_tracing,
-        transport::ClusterData,
     };
 
     use super::{DefaultPolicy, NodeLocationPreference};
@@ -1185,18 +1186,17 @@ mod tests {
         use uuid::Uuid;
 
         use crate::{
-            cluster::metadata::{Metadata, Peer},
+            cluster::{
+                metadata::{Metadata, Peer},
+                ClusterData,
+            },
             load_balancing::{LoadBalancingPolicy, Plan, RoutingInfo},
             routing::Token,
             test_utils::setup_tracing,
-            transport::{
-                locator::{
-                    tablets::TabletsInfo,
-                    test::{id_to_invalid_addr, mock_metadata_for_token_aware_tests},
-                },
-                ClusterData,
-            },
+            transport::locator::test::{id_to_invalid_addr, mock_metadata_for_token_aware_tests},
         };
+
+        use super::TabletsInfo;
 
         #[derive(Debug)]
         enum ExpectedGroup {
@@ -3128,6 +3128,7 @@ mod latency_awareness {
         };
 
         use crate::{
+            cluster::ClusterData,
             load_balancing::default::NodeLocationPreference,
             routing::Shard,
             test_utils::setup_tracing,
@@ -3141,7 +3142,7 @@ mod latency_awareness {
             routing::Token,
             transport::{
                 locator::test::{id_to_invalid_addr, A, B, C, D, E, F, G},
-                ClusterData, NodeAddr,
+                NodeAddr,
             },
         };
         use tokio::time::Instant;

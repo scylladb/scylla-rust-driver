@@ -378,7 +378,7 @@ impl LoadBalancingPolicy for RoutingInfoReportingWrapper {
     fn pick<'a>(
         &'a self,
         query: &'a RoutingInfo,
-        cluster: &'a scylla::transport::ClusterData,
+        cluster: &'a scylla::cluster::ClusterData,
     ) -> Option<(NodeRef<'a>, Option<Shard>)> {
         self.routing_info_tx
             .send(OwnedRoutingInfo::from(query.clone()))
@@ -389,7 +389,7 @@ impl LoadBalancingPolicy for RoutingInfoReportingWrapper {
     fn fallback<'a>(
         &'a self,
         query: &'a RoutingInfo,
-        cluster: &'a scylla::transport::ClusterData,
+        cluster: &'a scylla::cluster::ClusterData,
     ) -> scylla::load_balancing::FallbackPlan<'a> {
         self.routing_info_tx
             .send(OwnedRoutingInfo::from(query.clone()))

@@ -1108,7 +1108,7 @@ impl PoolRefiller {
             .await
             .map_err(|_| QueryError::TimeoutError)?;
 
-            crate::transport::cluster::use_keyspace_result(use_keyspace_results.into_iter())
+            crate::cluster::use_keyspace_result(use_keyspace_results.into_iter())
         };
 
         tokio::task::spawn(async move {

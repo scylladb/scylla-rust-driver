@@ -5,13 +5,13 @@ use crate::utils::{setup_tracing, test_with_3_node_cluster, unique_keyspace_name
 use assert_matches::assert_matches;
 use scylla::batch::{Batch, BatchStatement, BatchType};
 use scylla::client::session_builder::SessionBuilder;
+use scylla::cluster::ClusterData;
 use scylla::load_balancing::{LoadBalancingPolicy, RoutingInfo};
 use scylla::query::Query;
 use scylla::retry_policy::{RetryPolicy, RetrySession};
 use scylla::routing::Shard;
 use scylla::speculative_execution::SpeculativeExecutionPolicy;
 use scylla::statement::SerialConsistency;
-use scylla::transport::ClusterData;
 use scylla::transport::NodeRef;
 use scylla::ExecutionProfile;
 use scylla_cql::Consistency;

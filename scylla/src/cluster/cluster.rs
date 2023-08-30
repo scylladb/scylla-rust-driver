@@ -1,12 +1,16 @@
 use crate::client::session::TABLET_CHANNEL_SIZE;
-/// Cluster manages up to date information and connections to database nodes
+use crate::cluster::metadata::{Keyspace, Metadata, MetadataReader, Strategy};
 use crate::frame::response::event::{Event, StatusChangeEvent};
 use crate::network::{Connection, PoolConfig, VerifiedKeyspaceName};
 use crate::prepared_statement::TokenCalculationError;
 use crate::routing::{Shard, Token};
 use crate::transport::errors::{BadQuery, NewSessionError, QueryError};
 use crate::transport::host_filter::HostFilter;
+use crate::transport::locator::tablets::{RawTablet, Tablet, TabletsInfo};
+use crate::transport::locator::ReplicaLocator;
 use crate::transport::node::Node;
+use crate::transport::node::{InternalKnownNode, NodeAddr, NodeRef};
+use crate::transport::partitioner::calculate_token_for_partition_key;
 use crate::transport::partitioner::PartitionerName;
 
 use arc_swap::ArcSwap;
@@ -21,15 +25,6 @@ use std::sync::Arc;
 use std::time::Duration;
 use tracing::{debug, warn};
 use uuid::Uuid;
-
-use super::locator::tablets::{RawTablet, Tablet, TabletsInfo};
-use super::node::{InternalKnownNode, NodeAddr};
-
-use super::NodeRef;
-use crate::cluster::metadata::{Keyspace, Metadata, MetadataReader, Strategy};
-
-use super::locator::ReplicaLocator;
-use super::partitioner::calculate_token_for_partition_key;
 
 /// Cluster manages up to date information and connections to database nodes.
 /// All data can be accessed by cloning Arc<ClusterData> in the `data` field
