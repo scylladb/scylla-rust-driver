@@ -106,6 +106,7 @@ pub mod authentication;
 pub mod cloud;
 
 pub mod history;
+pub mod session;
 pub mod sharding;
 pub mod statement;
 pub mod tracing;
@@ -125,14 +126,14 @@ pub use statement::query;
 pub use frame::response::cql_to_rust;
 pub use frame::response::cql_to_rust::FromRow;
 
+pub use session::SessionBuilder;
+pub use session::{IntoTypedRows, Session, SessionConfig};
 pub use transport::caching_session::CachingSession;
 pub use transport::execution_profile::ExecutionProfile;
 pub use transport::query_result::QueryResult;
-pub use transport::session::{IntoTypedRows, Session, SessionConfig};
-pub use transport::session_builder::SessionBuilder;
 
 #[cfg(feature = "cloud")]
-pub use transport::session_builder::CloudSessionBuilder;
+pub use session::CloudSessionBuilder;
 
 pub use transport::execution_profile;
 pub use transport::host_filter;

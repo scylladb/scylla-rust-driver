@@ -1,6 +1,6 @@
 use anyhow::Result;
 use scylla::macros::FromRow;
-use scylla::transport::session::{IntoTypedRows, Session};
+use scylla::session::{IntoTypedRows, Session};
 use scylla::SessionBuilder;
 use std::env;
 

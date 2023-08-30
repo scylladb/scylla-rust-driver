@@ -1,5 +1,5 @@
 #[cfg(test)]
-use crate::transport::session_builder::{GenericSessionBuilder, SessionBuilderKind};
+use crate::session::session_builder::{GenericSessionBuilder, SessionBuilderKind};
 #[cfg(test)]
 use crate::Session;
 #[cfg(test)]
@@ -73,7 +73,7 @@ pub fn create_new_session_builder() -> GenericSessionBuilder<impl SessionBuilder
 
         #[cfg(scylla_cloud_tests)]
         {
-            use crate::transport::session_builder::CloudMode;
+            use crate::session::session_builder::CloudMode;
             use crate::CloudSessionBuilder;
             use std::path::Path;
 

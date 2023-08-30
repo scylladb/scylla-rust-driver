@@ -1,7 +1,7 @@
 use crate::frame::response::cql_to_rust::{FromRow, FromRowError};
 use crate::frame::response::result::ColumnSpec;
 use crate::frame::response::result::Row;
-use crate::transport::session::{IntoTypedRows, TypedRowIter};
+use crate::session::{IntoTypedRows, TypedRowIter};
 use bytes::Bytes;
 use thiserror::Error;
 use uuid::Uuid;

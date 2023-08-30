@@ -5,7 +5,7 @@ use anyhow::Result;
 use chrono::{Duration, NaiveDate};
 use scylla::frame::response::result::CqlValue;
 use scylla::frame::value::{Date, Time, Timestamp};
-use scylla::transport::session::{IntoTypedRows, Session};
+use scylla::session::{IntoTypedRows, Session};
 use scylla::SessionBuilder;
 use std::env;
 

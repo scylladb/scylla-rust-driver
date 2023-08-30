@@ -1,5 +1,5 @@
 use anyhow::{anyhow, Result};
-use scylla::transport::session::Session;
+use scylla::session::Session;
 use scylla::SessionBuilder;
 use std::env;
 
