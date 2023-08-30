@@ -204,10 +204,10 @@ where
 #[cfg(test)]
 mod tests {
     use crate::{
-        sharding::Token,
-        transport::locator::test::{
+        cluster::locator::test::{
             create_ring, mock_metadata_for_token_aware_tests, A, B, C, D, E, F, G,
         },
+        sharding::Token,
     };
 
     use super::ReplicationInfo;

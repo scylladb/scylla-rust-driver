@@ -8,9 +8,9 @@ mod token_ring;
 use rand::{seq::IteratorRandom, Rng};
 pub use token_ring::TokenRing;
 
-use super::{Node, NodeRef};
 use crate::cluster::metadata::Strategy;
 use crate::sharding::Token;
+use crate::transport::{Node, NodeRef};
 use itertools::Itertools;
 use precomputed_replicas::PrecomputedReplicas;
 use replicas::{ReplicasArray, EMPTY_REPLICAS};
@@ -741,7 +741,7 @@ impl<'a> IntoIterator for ReplicasOrdered<'a> {
 
 #[cfg(test)]
 mod tests {
-    use crate::{sharding::Token, transport::locator::test::*};
+    use crate::{cluster::locator::test::*, sharding::Token};
 
     #[tokio::test]
     async fn test_replicas_ordered() {

@@ -215,11 +215,11 @@ mod tests {
     use std::collections::HashMap;
 
     use crate::{
-        cluster::metadata::{Keyspace, Strategy},
-        sharding::Token,
-        transport::locator::test::{
+        cluster::locator::test::{
             create_ring, mock_metadata_for_token_aware_tests, A, C, D, E, F, G,
         },
+        cluster::metadata::{Keyspace, Strategy},
+        sharding::Token,
     };
 
     use super::{PrecomputedReplicas, ReplicationInfo};

@@ -20,9 +20,9 @@ use tracing::instrument::WithSubscriber;
 use tracing::{debug, warn};
 use uuid::Uuid;
 
+use crate::cluster::locator::ReplicaLocator;
 use crate::cluster::metadata::{Keyspace, Metadata, MetadataReader, Strategy};
 
-use crate::transport::locator::ReplicaLocator;
 use crate::transport::node::{KnownNode, NodeAddr};
 use crate::transport::partitioner::calculate_token_for_partition_key;
 
