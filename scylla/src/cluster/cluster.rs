@@ -20,12 +20,11 @@ use tracing::instrument::WithSubscriber;
 use tracing::{debug, warn};
 use uuid::Uuid;
 
-use super::node::{KnownNode, NodeAddr};
-
 use crate::cluster::metadata::{Keyspace, Metadata, MetadataReader, Strategy};
 
-use super::locator::ReplicaLocator;
-use super::partitioner::calculate_token_for_partition_key;
+use crate::transport::locator::ReplicaLocator;
+use crate::transport::node::{KnownNode, NodeAddr};
+use crate::transport::partitioner::calculate_token_for_partition_key;
 
 /// Cluster manages up to date information and connections to database nodes.
 /// All data can be accessed by cloning Arc<ClusterData> in the `data` field

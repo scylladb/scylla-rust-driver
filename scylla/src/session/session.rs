@@ -28,6 +28,7 @@ use tokio::time::timeout;
 use tracing::{debug, trace, trace_span, Instrument};
 use uuid::Uuid;
 
+use crate::cluster::{Cluster, ClusterData, ClusterNeatDebug};
 use crate::connection::PoolConfig;
 use crate::connection::QueryResponse;
 #[cfg(feature = "ssl")]
@@ -46,7 +47,6 @@ use crate::query::Query;
 use crate::sharding::Token;
 use crate::statement::Consistency;
 use crate::tracing::{TracingEvent, TracingInfo};
-use crate::transport::cluster::{Cluster, ClusterData, ClusterNeatDebug};
 use crate::transport::errors::{NewSessionError, QueryError};
 use crate::transport::execution_profile::{
     ExecutionProfile, ExecutionProfileHandle, ExecutionProfileInner,

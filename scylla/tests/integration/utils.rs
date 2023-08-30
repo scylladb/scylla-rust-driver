@@ -22,7 +22,7 @@ impl LoadBalancingPolicy for FixedOrderLoadBalancer {
     fn pick<'a>(
         &'a self,
         _info: &'a scylla::load_balancing::RoutingInfo,
-        cluster: &'a scylla::transport::ClusterData,
+        cluster: &'a scylla::cluster::ClusterData,
     ) -> Option<scylla::transport::NodeRef<'a>> {
         cluster
             .get_nodes_info()
@@ -34,7 +34,7 @@ impl LoadBalancingPolicy for FixedOrderLoadBalancer {
     fn fallback<'a>(
         &'a self,
         _info: &'a scylla::load_balancing::RoutingInfo,
-        cluster: &'a scylla::transport::ClusterData,
+        cluster: &'a scylla::cluster::ClusterData,
     ) -> scylla::load_balancing::FallbackPlan<'a> {
         Box::new(
             cluster

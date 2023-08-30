@@ -1,4 +1,3 @@
-pub(crate) mod cluster;
 pub mod downgrading_consistency_retry_policy;
 pub mod execution_profile;
 pub mod host_filter;
@@ -26,5 +25,4 @@ mod cql_types_test;
 #[cfg(test)]
 mod cql_value_test;
 
-pub use cluster::ClusterData;
 pub use node::{KnownNode, Node, NodeAddr, NodeRef};

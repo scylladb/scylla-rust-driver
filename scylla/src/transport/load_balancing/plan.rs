@@ -1,7 +1,7 @@
 use tracing::error;
 
 use super::{FallbackPlan, LoadBalancingPolicy, NodeRef, RoutingInfo};
-use crate::transport::ClusterData;
+use crate::cluster::ClusterData;
 
 enum PlanState<'a> {
     Created,

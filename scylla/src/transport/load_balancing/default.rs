@@ -2,10 +2,11 @@ use self::latency_awareness::LatencyAwareness;
 pub use self::latency_awareness::LatencyAwarenessBuilder;
 
 use super::{FallbackPlan, LoadBalancingPolicy, NodeRef, RoutingInfo};
+use crate::cluster::ClusterData;
 use crate::{
     cluster::metadata::Strategy,
     sharding::Token,
-    transport::{cluster::ClusterData, locator::ReplicaSet, node::Node},
+    transport::{locator::ReplicaSet, node::Node},
 };
 use itertools::{Either, Itertools};
 use rand::{prelude::SliceRandom, thread_rng, Rng};
@@ -875,14 +876,12 @@ mod tests {
         ExpectedGroups, ExpectedGroupsBuilder,
     };
     use crate::{
+        cluster::ClusterData,
         load_balancing::{
             default::tests::framework::mock_cluster_data_for_token_aware_tests, RoutingInfo,
         },
         sharding::Token,
-        transport::{
-            locator::test::{KEYSPACE_NTS_RF_2, KEYSPACE_NTS_RF_3, KEYSPACE_SS_RF_2},
-            ClusterData,
-        },
+        transport::locator::test::{KEYSPACE_NTS_RF_2, KEYSPACE_NTS_RF_3, KEYSPACE_SS_RF_2},
     };
 
     use super::{DefaultPolicy, NodeLocationPreference};
@@ -893,13 +892,13 @@ mod tests {
         use uuid::Uuid;
 
         use crate::{
-            cluster::metadata::{Metadata, Peer},
-            load_balancing::{LoadBalancingPolicy, Plan, RoutingInfo},
-            sharding::Token,
-            transport::{
-                locator::test::{id_to_invalid_addr, mock_metadata_for_token_aware_tests},
+            cluster::{
+                metadata::{Metadata, Peer},
                 ClusterData,
             },
+            load_balancing::{LoadBalancingPolicy, Plan, RoutingInfo},
+            sharding::Token,
+            transport::locator::test::{id_to_invalid_addr, mock_metadata_for_token_aware_tests},
         };
 
         enum ExpectedGroup {
@@ -2718,9 +2717,7 @@ mod latency_awareness {
         };
 
         use crate::{
-            load_balancing::default::NodeLocationPreference, test_utils::create_new_session_builder,
-        };
-        use crate::{
+            cluster::ClusterData,
             load_balancing::{
                 default::tests::test_default_policy_with_given_cluster_and_routing_info,
                 RoutingInfo,
@@ -2730,9 +2727,12 @@ mod latency_awareness {
                 locator::test::{
                     id_to_invalid_addr, A, B, C, D, E, F, G, KEYSPACE_NTS_RF_2, KEYSPACE_NTS_RF_3,
                 },
-                ClusterData, NodeAddr,
+                NodeAddr,
             },
             ExecutionProfile,
+        };
+        use crate::{
+            load_balancing::default::NodeLocationPreference, test_utils::create_new_session_builder,
         };
         use std::time::Instant;
 
