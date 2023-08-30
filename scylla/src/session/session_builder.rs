@@ -1,11 +1,9 @@
 //! SessionBuilder provides an easy way to create new Sessions
 
-use crate::connection::Compression;
-use crate::connection::SelfIdentity;
+use crate::connection::{AddressTranslator, Compression, SelfIdentity};
 #[allow(deprecated)]
 use crate::session::{
-    AddressTranslator, CurrentDeserializationApi, GenericSession, LegacyDeserializationApi,
-    SessionConfig,
+    CurrentDeserializationApi, GenericSession, LegacyDeserializationApi, SessionConfig,
 };
 use crate::transport::execution_profile::ExecutionProfileHandle;
 
@@ -268,7 +266,7 @@ impl GenericSessionBuilder<DefaultMode> {
     /// # use std::net::SocketAddr;
     /// # use std::sync::Arc;
     /// # use scylla::{Session, SessionBuilder};
-    /// # use scylla::session::{AddressTranslator, TranslationError};
+    /// # use scylla::connection::{AddressTranslator, TranslationError};
     /// # use scylla::transport::metadata::UntranslatedPeer;
     /// struct IdentityTranslator;
     ///
@@ -298,7 +296,7 @@ impl GenericSessionBuilder<DefaultMode> {
     /// # use std::collections::HashMap;
     /// # use std::str::FromStr;
     /// # use scylla::{Session, SessionBuilder};
-    /// # use scylla::session::{AddressTranslator, TranslationError};
+    /// # use scylla::connection::{AddressTranslator, TranslationError};
     /// #
     /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
     /// let mut translation_rules = HashMap::new();
@@ -820,7 +818,7 @@ impl<K: SessionBuilderKind> GenericSessionBuilder<K> {
     /// # use std::net::SocketAddr;
     /// # use std::sync::Arc;
     /// # use scylla::{Session, SessionBuilder};
-    /// # use scylla::session::{AddressTranslator, TranslationError};
+    /// # use scylla::connection::{AddressTranslator, TranslationError};
     /// # use scylla::transport::host_filter::DcHostFilter;
     ///
     /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
