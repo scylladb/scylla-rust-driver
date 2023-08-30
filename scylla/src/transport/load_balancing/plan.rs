@@ -106,7 +106,7 @@ mod tests {
     use std::{net::SocketAddr, str::FromStr, sync::Arc};
 
     use crate::cluster::locator::test::{create_locator, mock_metadata_for_token_aware_tests};
-    use crate::transport::{Node, NodeAddr};
+    use crate::cluster::{Node, NodeAddr};
 
     use super::*;
 

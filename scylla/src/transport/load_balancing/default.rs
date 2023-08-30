@@ -4,8 +4,7 @@ pub use self::latency_awareness::LatencyAwarenessBuilder;
 use super::{FallbackPlan, LoadBalancingPolicy, NodeRef, RoutingInfo};
 use crate::cluster::ClusterData;
 use crate::{
-    cluster::locator::ReplicaSet, cluster::metadata::Strategy, sharding::Token,
-    transport::node::Node,
+    cluster::locator::ReplicaSet, cluster::metadata::Strategy, cluster::Node, sharding::Token,
 };
 use itertools::{Either, Itertools};
 use rand::{prelude::SliceRandom, thread_rng, Rng};
@@ -2134,7 +2133,7 @@ mod latency_awareness {
     use tracing::{instrument::WithSubscriber, trace};
     use uuid::Uuid;
 
-    use crate::{load_balancing::NodeRef, transport::node::Node};
+    use crate::{cluster::Node, load_balancing::NodeRef};
     use std::{
         collections::HashMap,
         ops::Deref,
@@ -2720,14 +2719,13 @@ mod latency_awareness {
                 locator::test::{
                     id_to_invalid_addr, A, B, C, D, E, F, G, KEYSPACE_NTS_RF_2, KEYSPACE_NTS_RF_3,
                 },
-                ClusterData,
+                ClusterData, NodeAddr,
             },
             load_balancing::{
                 default::tests::test_default_policy_with_given_cluster_and_routing_info,
                 RoutingInfo,
             },
             sharding::Token,
-            transport::NodeAddr,
             ExecutionProfile,
         };
         use crate::{

@@ -1,3 +1,4 @@
+use crate::cluster::Node;
 use crate::connection::{Connection, PoolConfig, VerifiedKeyspaceName};
 /// Cluster manages up to date information and connections to database nodes
 use crate::frame::response::event::{Event, StatusChangeEvent};
@@ -5,7 +6,7 @@ use crate::frame::value::ValueList;
 use crate::prepared_statement::TokenCalculationError;
 use crate::sharding::Token;
 use crate::transport::host_filter::HostFilter;
-use crate::transport::{errors::QueryError, node::Node, partitioner::PartitionerName};
+use crate::transport::{errors::QueryError, partitioner::PartitionerName};
 
 use arc_swap::ArcSwap;
 use futures::future::join_all;
@@ -23,7 +24,7 @@ use uuid::Uuid;
 use crate::cluster::locator::ReplicaLocator;
 use crate::cluster::metadata::{Keyspace, Metadata, MetadataReader, Strategy};
 
-use crate::transport::node::{KnownNode, NodeAddr};
+use crate::cluster::{KnownNode, NodeAddr};
 use crate::transport::partitioner::calculate_token_for_partition_key;
 
 /// Cluster manages up to date information and connections to database nodes.

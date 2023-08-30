@@ -1,8 +1,8 @@
 use itertools::Itertools;
 
 use super::TokenRing;
+use crate::cluster::Node;
 use crate::sharding::Token;
-use crate::transport::node::Node;
 
 use std::cmp;
 use std::collections::{BTreeSet, HashMap};

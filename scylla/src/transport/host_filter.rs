@@ -10,6 +10,7 @@ use std::io::Error;
 use std::net::{SocketAddr, ToSocketAddrs};
 
 use crate::cluster::metadata::Peer;
+use crate::cluster::NodeAddr;
 
 /// The `HostFilter` trait.
 pub trait HostFilter: Send + Sync {
@@ -55,11 +56,11 @@ impl AllowListHostFilter {
 impl HostFilter for AllowListHostFilter {
     fn accept(&self, peer: &Peer) -> bool {
         match peer.address {
-            super::NodeAddr::Translatable(addr) => self.allowed.contains(&addr),
+            NodeAddr::Translatable(addr) => self.allowed.contains(&addr),
             // If the address is Untranslatable, then the node either was originally
             // an ContactPoint, or a Translatable node for which the host filter
             // returned true.
-            super::NodeAddr::Untranslatable(_) => true,
+            NodeAddr::Untranslatable(_) => true,
         }
     }
 }

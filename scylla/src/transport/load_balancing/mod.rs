@@ -2,8 +2,7 @@
 //! `Session` can use any load balancing policy which implements the `LoadBalancingPolicy` trait\
 //! See [the book](https://rust-driver.docs.scylladb.com/stable/load-balancing/load-balancing.html) for more information
 
-use super::NodeRef;
-use crate::cluster::ClusterData;
+use crate::cluster::{ClusterData, NodeRef};
 use crate::sharding::Token;
 use scylla_cql::{errors::QueryError, frame::types};
 

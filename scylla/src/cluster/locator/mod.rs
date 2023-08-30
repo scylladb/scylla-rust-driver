@@ -9,8 +9,8 @@ use rand::{seq::IteratorRandom, Rng};
 pub use token_ring::TokenRing;
 
 use crate::cluster::metadata::Strategy;
+use crate::cluster::{Node, NodeRef};
 use crate::sharding::Token;
-use crate::transport::{Node, NodeRef};
 use itertools::Itertools;
 use precomputed_replicas::PrecomputedReplicas;
 use replicas::{ReplicasArray, EMPTY_REPLICAS};

@@ -29,7 +29,10 @@ use tokio::time::timeout;
 use tracing::{debug, trace, trace_span, Instrument};
 use uuid::Uuid;
 
+#[cfg(feature = "cloud")]
+use crate::cluster::CloudEndpoint;
 use crate::cluster::{Cluster, ClusterData, ClusterNeatDebug};
+use crate::cluster::{KnownNode, Node, NodeRef};
 use crate::connection::PoolConfig;
 use crate::connection::QueryResponse;
 #[cfg(feature = "ssl")]
@@ -56,15 +59,11 @@ use crate::transport::host_filter::HostFilter;
 use crate::transport::iterator::{PreparedIteratorConfig, RowIterator};
 use crate::transport::load_balancing::{self, RoutingInfo};
 use crate::transport::metrics::Metrics;
-#[cfg(feature = "cloud")]
-use crate::transport::node::CloudEndpoint;
-use crate::transport::node::Node;
 use crate::transport::partitioner::PartitionerName;
 use crate::transport::query_result::QueryResult;
 use crate::transport::retry_policy::{QueryInfo, RetryDecision, RetrySession};
 use crate::transport::speculative_execution;
 use crate::transport::Compression;
-use crate::transport::{KnownNode, NodeRef};
 use crate::{
     batch::{Batch, BatchStatement},
     statement::StatementConfig,
@@ -398,7 +397,7 @@ impl Session {
     /// # use std::error::Error;
     /// # async fn check_only_compiles() -> Result<(), Box<dyn Error>> {
     /// use scylla::{Session, SessionConfig};
-    /// use scylla::transport::KnownNode;
+    /// use scylla::cluster::KnownNode;
     ///
     /// let mut config = SessionConfig::new();
     /// config.known_nodes.push(KnownNode::Hostname("127.0.0.1:9042".to_string()));

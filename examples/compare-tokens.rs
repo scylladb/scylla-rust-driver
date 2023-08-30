@@ -1,7 +1,7 @@
 use anyhow::Result;
+use scylla::cluster::NodeAddr;
 use scylla::frame::value::ValueList;
 use scylla::sharding::Token;
-use scylla::transport::NodeAddr;
 use scylla::{Session, SessionBuilder};
 use std::env;
 
