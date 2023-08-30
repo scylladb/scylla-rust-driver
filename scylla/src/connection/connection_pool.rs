@@ -27,7 +27,7 @@ use tokio::sync::{broadcast, mpsc, Notify};
 use tracing::instrument::WithSubscriber;
 use tracing::{debug, trace, warn};
 
-use super::connection::open_connection;
+use super::connection::{open_connection, open_connection_to_shard_aware_port};
 
 /// The target size of a per-node connection pool.
 #[derive(Debug, Clone, Copy)]
@@ -1225,91 +1225,4 @@ struct OpenedConnectionEvent {
     result: Result<(Connection, ErrorReceiver), QueryError>,
     requested_shard: Option<Shard>,
     keyspace_name: Option<VerifiedKeyspaceName>,
-}
-
-async fn open_connection_to_shard_aware_port(
-    endpoint: UntranslatedEndpoint,
-    shard: Shard,
-    sharder: Sharder,
-    connection_config: &ConnectionConfig,
-) -> Result<(Connection, ErrorReceiver), QueryError> {
-    // Create iterator over all possible source ports for this shard
-    let source_port_iter = sharder.iter_source_ports_for_shard(shard);
-
-    for port in source_port_iter {
-        let connect_result =
-            open_connection(endpoint.clone(), Some(port), connection_config.clone()).await;
-
-        match connect_result {
-            Err(err) if err.is_address_unavailable_for_use() => continue, // If we can't use this port, try the next one
-            result => return result,
-        }
-    }
-
-    // Tried all source ports for that shard, give up
-    Err(QueryError::IoError(Arc::new(std::io::Error::new(
-        std::io::ErrorKind::AddrInUse,
-        "Could not find free source port for shard",
-    ))))
-}
-
-#[cfg(test)]
-mod tests {
-    use super::open_connection_to_shard_aware_port;
-    use crate::connection::ConnectionConfig;
-    use crate::sharding::{ShardCount, Sharder};
-    use crate::transport::metadata::UntranslatedEndpoint;
-    use crate::transport::node::ResolvedContactPoint;
-    use std::net::{SocketAddr, ToSocketAddrs};
-
-    // Open many connections to a node
-    // Port collision should occur
-    // If they are not handled this test will most likely fail
-    #[tokio::test]
-    #[cfg(not(scylla_cloud_tests))]
-    async fn many_connections() {
-        let connections_number = 512;
-
-        let connect_address: SocketAddr = std::env::var("SCYLLA_URI")
-            .unwrap_or_else(|_| "127.0.0.1:9042".to_string())
-            .to_socket_addrs()
-            .unwrap()
-            .next()
-            .unwrap();
-
-        let connection_config = ConnectionConfig {
-            compression: None,
-            tcp_nodelay: true,
-            #[cfg(feature = "ssl")]
-            ssl_config: None,
-            ..Default::default()
-        };
-
-        // This does not have to be the real sharder,
-        // the test is only about port collisions, not connecting
-        // to the right shard
-        let sharder = Sharder::new(ShardCount::new(3).unwrap(), 12);
-
-        // Open the connections
-        let mut conns = Vec::new();
-
-        for _ in 0..connections_number {
-            conns.push(open_connection_to_shard_aware_port(
-                UntranslatedEndpoint::ContactPoint(ResolvedContactPoint {
-                    address: connect_address,
-                    datacenter: None,
-                }),
-                0,
-                sharder.clone(),
-                &connection_config,
-            ));
-        }
-
-        let joined = futures::future::join_all(conns).await;
-
-        // Check that each connection managed to connect successfully
-        for res in joined {
-            res.unwrap();
-        }
-    }
 }
