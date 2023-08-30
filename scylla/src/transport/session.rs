@@ -47,13 +47,13 @@ use super::connection::SslConfig;
 use super::errors::TracingProtocolError;
 use super::execution_profile::{ExecutionProfile, ExecutionProfileHandle, ExecutionProfileInner};
 use super::iterator::QueryPager;
+use super::metadata::UntranslatedPeer;
 #[cfg(feature = "cloud")]
 use super::node::CloudEndpoint;
 use super::node::{InternalKnownNode, KnownNode};
 use super::partitioner::PartitionerName;
 use super::query_result::MaybeFirstRowError;
 use super::query_result::RowsError;
-use super::topology::UntranslatedPeer;
 use super::{NodeRef, SelfIdentity};
 use crate::frame::response::result;
 use crate::prepared_statement::PreparedStatement;
