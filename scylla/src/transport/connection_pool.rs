@@ -11,9 +11,9 @@ use crate::transport::{
 #[cfg(feature = "cloud")]
 use super::node::resolve_hostname;
 
+use super::metadata::{PeerEndpoint, UntranslatedEndpoint};
 #[cfg(feature = "cloud")]
 use super::node::ResolvedContactPoint;
-use super::topology::{PeerEndpoint, UntranslatedEndpoint};
 use super::NodeAddr;
 
 use arc_swap::ArcSwap;
@@ -1260,8 +1260,8 @@ mod tests {
     use super::open_connection_to_shard_aware_port;
     use crate::routing::{ShardCount, Sharder};
     use crate::transport::connection::ConnectionConfig;
+    use crate::transport::metadata::UntranslatedEndpoint;
     use crate::transport::node::ResolvedContactPoint;
-    use crate::transport::topology::UntranslatedEndpoint;
     use std::net::{SocketAddr, ToSocketAddrs};
 
     // Open many connections to a node

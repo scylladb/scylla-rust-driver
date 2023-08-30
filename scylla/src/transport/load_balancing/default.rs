@@ -4,7 +4,7 @@ pub use self::latency_awareness::LatencyAwarenessBuilder;
 use super::{FallbackPlan, LoadBalancingPolicy, NodeRef, RoutingInfo};
 use crate::{
     routing::Token,
-    transport::{cluster::ClusterData, locator::ReplicaSet, node::Node, topology::Strategy},
+    transport::{cluster::ClusterData, locator::ReplicaSet, metadata::Strategy, node::Node},
 };
 use itertools::{Either, Itertools};
 use rand::{prelude::SliceRandom, thread_rng, Rng};
@@ -896,7 +896,7 @@ mod tests {
             routing::Token,
             transport::{
                 locator::test::{id_to_invalid_addr, mock_metadata_for_token_aware_tests},
-                topology::{Metadata, Peer},
+                metadata::{Metadata, Peer},
                 ClusterData,
             },
         };

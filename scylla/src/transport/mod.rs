@@ -8,6 +8,7 @@ pub mod host_filter;
 pub mod iterator;
 pub mod load_balancing;
 pub mod locator;
+pub mod metadata;
 pub(crate) mod metrics;
 mod node;
 pub mod partitioner;
@@ -16,7 +17,6 @@ pub mod retry_policy;
 pub mod session;
 pub mod session_builder;
 pub mod speculative_execution;
-pub mod topology;
 
 pub use crate::frame::{Authenticator, Compression};
 pub use execution_profile::ExecutionProfile;

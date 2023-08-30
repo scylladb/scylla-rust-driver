@@ -8,7 +8,7 @@ mod token_ring;
 use rand::{seq::IteratorRandom, Rng};
 pub use token_ring::TokenRing;
 
-use super::{topology::Strategy, Node, NodeRef};
+use super::{metadata::Strategy, Node, NodeRef};
 use crate::routing::Token;
 use itertools::Itertools;
 use precomputed_replicas::PrecomputedReplicas;
