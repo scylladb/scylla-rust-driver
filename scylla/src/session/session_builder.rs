@@ -1,10 +1,10 @@
 //! SessionBuilder provides an easy way to create new Sessions
 
-use super::connection::AddressTranslator;
-use super::errors::NewSessionError;
-use super::execution_profile::ExecutionProfileHandle;
-use super::session::{Session, SessionConfig};
-use super::Compression;
+use crate::session::{Session, SessionConfig};
+use crate::transport::connection::AddressTranslator;
+use crate::transport::errors::NewSessionError;
+use crate::transport::execution_profile::ExecutionProfileHandle;
+use crate::transport::Compression;
 
 #[cfg(feature = "cloud")]
 use crate::cloud::{CloudConfig, CloudConfigError};
@@ -254,7 +254,7 @@ impl GenericSessionBuilder<DefaultMode> {
     /// # use std::net::SocketAddr;
     /// # use std::sync::Arc;
     /// # use scylla::{Session, SessionBuilder};
-    /// # use scylla::transport::session::{AddressTranslator, TranslationError};
+    /// # use scylla::session::{AddressTranslator, TranslationError};
     /// # use scylla::transport::metadata::UntranslatedPeer;
     /// struct IdentityTranslator;
     ///
@@ -284,7 +284,7 @@ impl GenericSessionBuilder<DefaultMode> {
     /// # use std::collections::HashMap;
     /// # use std::str::FromStr;
     /// # use scylla::{Session, SessionBuilder};
-    /// # use scylla::transport::session::{AddressTranslator, TranslationError};
+    /// # use scylla::session::{AddressTranslator, TranslationError};
     /// #
     /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
     /// let mut translation_rules = HashMap::new();
@@ -559,7 +559,7 @@ impl<K: SessionBuilderKind> GenericSessionBuilder<K> {
     /// # use scylla::{Session, SessionBuilder};
     /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
     /// use std::num::NonZeroUsize;
-    /// use scylla::transport::session::PoolSize;
+    /// use scylla::session::PoolSize;
     ///
     /// // This session will establish 4 connections to each node.
     /// // For Scylla clusters, this number will be divided across shards
@@ -772,7 +772,7 @@ impl<K: SessionBuilderKind> GenericSessionBuilder<K> {
     /// # use std::net::SocketAddr;
     /// # use std::sync::Arc;
     /// # use scylla::{Session, SessionBuilder};
-    /// # use scylla::transport::session::{AddressTranslator, TranslationError};
+    /// # use scylla::session::{AddressTranslator, TranslationError};
     /// # use scylla::transport::host_filter::DcHostFilter;
     ///
     /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {

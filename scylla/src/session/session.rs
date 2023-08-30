@@ -28,17 +28,6 @@ use tokio::time::timeout;
 use tracing::{debug, trace, trace_span, Instrument};
 use uuid::Uuid;
 
-use super::connection::QueryResponse;
-#[cfg(feature = "ssl")]
-use super::connection::SslConfig;
-use super::connection::{AddressTranslator, NonErrorQueryResponse};
-use super::errors::{NewSessionError, QueryError};
-use super::execution_profile::{ExecutionProfile, ExecutionProfileHandle, ExecutionProfileInner};
-#[cfg(feature = "cloud")]
-use super::node::CloudEndpoint;
-use super::node::KnownNode;
-use super::partitioner::PartitionerName;
-use super::NodeRef;
 use crate::cql_to_rust::FromRow;
 use crate::frame::response::cql_to_rust::FromRowError;
 use crate::frame::response::result;
@@ -51,23 +40,35 @@ use crate::sharding::Token;
 use crate::statement::Consistency;
 use crate::tracing::{TracingEvent, TracingInfo};
 use crate::transport::cluster::{Cluster, ClusterData, ClusterNeatDebug};
+use crate::transport::connection::QueryResponse;
+#[cfg(feature = "ssl")]
+use crate::transport::connection::SslConfig;
+use crate::transport::connection::{AddressTranslator, NonErrorQueryResponse};
 use crate::transport::connection::{Connection, ConnectionConfig, VerifiedKeyspaceName};
 use crate::transport::connection_pool::PoolConfig;
+use crate::transport::errors::{NewSessionError, QueryError};
+use crate::transport::execution_profile::{
+    ExecutionProfile, ExecutionProfileHandle, ExecutionProfileInner,
+};
 use crate::transport::host_filter::HostFilter;
 use crate::transport::iterator::{PreparedIteratorConfig, RowIterator};
 use crate::transport::load_balancing::{self, RoutingInfo};
 use crate::transport::metrics::Metrics;
+#[cfg(feature = "cloud")]
+use crate::transport::node::CloudEndpoint;
 use crate::transport::node::Node;
+use crate::transport::partitioner::PartitionerName;
 use crate::transport::query_result::QueryResult;
 use crate::transport::retry_policy::{QueryInfo, RetryDecision, RetrySession};
 use crate::transport::speculative_execution;
 use crate::transport::Compression;
+use crate::transport::{KnownNode, NodeRef};
 use crate::{
     batch::{Batch, BatchStatement},
     statement::StatementConfig,
 };
 
-pub use crate::transport::connection_pool::PoolSize;
+use crate::transport::connection_pool::PoolSize;
 
 use crate::authentication::AuthenticatorProvider;
 #[cfg(feature = "ssl")]
@@ -384,7 +385,7 @@ pub(crate) enum RunQueryResult<ResT> {
 impl Session {
     /// Estabilishes a CQL session with the database
     ///
-    /// Usually it's easier to use [SessionBuilder](crate::transport::session_builder::SessionBuilder)
+    /// Usually it's easier to use [SessionBuilder](crate::session_builder::SessionBuilder)
     /// instead of calling `Session::connect` directly, because it's more convenient.
     /// # Arguments
     /// * `config` - Connection configuration - known nodes, Compression, etc.
@@ -862,7 +863,7 @@ impl Session {
     /// Executes a previously prepared statement with previously received paging state
     /// # Arguments
     ///
-    /// * `prepared` - a statement prepared with [prepare](crate::transport::session::Session::prepare)
+    /// * `prepared` - a statement prepared with [prepare](crate::session::Session::prepare)
     /// * `values` - values bound to the query
     /// * `paging_state` - paging state from the previous query or None
     pub async fn execute_paged(

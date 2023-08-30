@@ -1,7 +1,7 @@
 pub(crate) mod caching_session;
-mod cluster;
+pub(crate) mod cluster;
 pub(crate) mod connection;
-mod connection_pool;
+pub(crate) mod connection_pool;
 pub mod downgrading_consistency_retry_policy;
 pub mod execution_profile;
 pub mod host_filter;
@@ -10,12 +10,10 @@ pub mod load_balancing;
 pub mod locator;
 pub mod metadata;
 pub(crate) mod metrics;
-mod node;
+pub(crate) mod node;
 pub mod partitioner;
 pub mod query_result;
 pub mod retry_policy;
-pub mod session;
-pub mod session_builder;
 pub mod speculative_execution;
 
 pub use crate::frame::{Authenticator, Compression};
@@ -26,8 +24,6 @@ pub use scylla_cql::errors;
 mod authenticate_test;
 #[cfg(test)]
 mod cql_collections_test;
-#[cfg(test)]
-mod session_test;
 
 #[cfg(test)]
 mod cql_types_test;

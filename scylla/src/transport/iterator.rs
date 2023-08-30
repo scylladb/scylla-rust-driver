@@ -19,8 +19,8 @@ use tracing::instrument::WithSubscriber;
 
 use super::errors::QueryError;
 use super::execution_profile::ExecutionProfileInner;
-use super::session::RequestSpan;
 use crate::cql_to_rust::{FromRow, FromRowError};
+use crate::session::RequestSpan;
 
 use crate::frame::{
     response::{
