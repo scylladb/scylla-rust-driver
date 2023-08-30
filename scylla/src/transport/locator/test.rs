@@ -9,7 +9,7 @@ use crate::routing::Token;
 use crate::test_utils::setup_tracing;
 use crate::transport::{
     connection_pool::PoolConfig,
-    topology::{Keyspace, Metadata, Peer, Strategy},
+    metadata::{Keyspace, Metadata, Peer, Strategy},
     Node,
 };
 use crate::transport::{NodeAddr, NodeRef};
