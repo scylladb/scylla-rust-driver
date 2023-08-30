@@ -6,12 +6,12 @@ use crate::sharding::{Shard, ShardCount, Sharder, Token};
 use crate::transport::errors::QueryError;
 
 #[cfg(feature = "cloud")]
-use crate::transport::node::resolve_hostname;
+use crate::cluster::resolve_hostname;
 
 use crate::cluster::metadata::{PeerEndpoint, UntranslatedEndpoint};
+use crate::cluster::NodeAddr;
 #[cfg(feature = "cloud")]
-use crate::transport::node::ResolvedContactPoint;
-use crate::transport::NodeAddr;
+use crate::cluster::ResolvedContactPoint;
 
 use arc_swap::ArcSwap;
 use futures::{future::RemoteHandle, stream::FuturesUnordered, Future, FutureExt, StreamExt};

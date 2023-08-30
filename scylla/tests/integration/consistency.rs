@@ -374,7 +374,7 @@ impl LoadBalancingPolicy for RoutingInfoReportingWrapper {
         &'a self,
         query: &'a RoutingInfo,
         cluster: &'a scylla::cluster::ClusterData,
-    ) -> Option<scylla::transport::NodeRef<'a>> {
+    ) -> Option<scylla::cluster::NodeRef<'a>> {
         self.routing_info_tx
             .send(OwnedRoutingInfo::from(query.clone()))
             .unwrap();

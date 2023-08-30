@@ -23,7 +23,7 @@ impl LoadBalancingPolicy for FixedOrderLoadBalancer {
         &'a self,
         _info: &'a scylla::load_balancing::RoutingInfo,
         cluster: &'a scylla::cluster::ClusterData,
-    ) -> Option<scylla::transport::NodeRef<'a>> {
+    ) -> Option<scylla::cluster::NodeRef<'a>> {
         cluster
             .get_nodes_info()
             .iter()
@@ -48,7 +48,7 @@ impl LoadBalancingPolicy for FixedOrderLoadBalancer {
         &self,
         _: &scylla::load_balancing::RoutingInfo,
         _: std::time::Duration,
-        _: scylla::transport::NodeRef<'_>,
+        _: scylla::cluster::NodeRef<'_>,
     ) {
     }
 
@@ -56,7 +56,7 @@ impl LoadBalancingPolicy for FixedOrderLoadBalancer {
         &self,
         _: &scylla::load_balancing::RoutingInfo,
         _: std::time::Duration,
-        _: scylla::transport::NodeRef<'_>,
+        _: scylla::cluster::NodeRef<'_>,
         _: &scylla_cql::errors::QueryError,
     ) {
     }

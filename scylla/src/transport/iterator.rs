@@ -23,6 +23,7 @@ use crate::cql_to_rust::{FromRow, FromRowError};
 use crate::session::RequestSpan;
 
 use crate::cluster::ClusterData;
+use crate::cluster::{Node, NodeRef};
 use crate::connection::{Connection, NonErrorQueryResponse, QueryResponse};
 use crate::frame::{
     response::{
@@ -37,7 +38,6 @@ use crate::statement::{prepared_statement::PreparedStatement, query::Query};
 use crate::transport::load_balancing::{self, RoutingInfo};
 use crate::transport::metrics::Metrics;
 use crate::transport::retry_policy::{QueryInfo, RetryDecision, RetrySession};
-use crate::transport::{Node, NodeRef};
 use tracing::{trace, trace_span, warn, Instrument};
 use uuid::Uuid;
 

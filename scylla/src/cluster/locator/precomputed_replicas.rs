@@ -15,8 +15,8 @@
 use super::replication_info::ReplicationInfo;
 use super::TokenRing;
 use crate::cluster::metadata::Strategy;
+use crate::cluster::Node;
 use crate::sharding::Token;
-use crate::transport::node::Node;
 
 use std::cmp;
 use std::collections::BTreeSet;

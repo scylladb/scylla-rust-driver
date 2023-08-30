@@ -18,7 +18,7 @@ impl LoadBalancingPolicy for CustomLoadBalancingPolicy {
         &'a self,
         _info: &'a RoutingInfo,
         cluster: &'a ClusterData,
-    ) -> Option<scylla::transport::NodeRef<'a>> {
+    ) -> Option<scylla::cluster::NodeRef<'a>> {
         self.fallback(_info, cluster).next()
     }
 

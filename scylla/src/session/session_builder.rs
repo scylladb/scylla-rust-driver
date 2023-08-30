@@ -949,8 +949,8 @@ mod tests {
     use scylla_cql::Consistency;
 
     use super::SessionBuilder;
+    use crate::cluster::KnownNode;
     use crate::transport::execution_profile::{defaults, ExecutionProfile};
-    use crate::transport::node::KnownNode;
     use crate::transport::Compression;
     use std::net::{IpAddr, Ipv4Addr, SocketAddr};
     use std::time::Duration;
