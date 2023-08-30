@@ -1,5 +1,5 @@
 use scylla::frame::response::result::Row;
-use scylla::transport::session::Session;
+use scylla::session::Session;
 use std::env;
 use std::future::Future;
 use std::pin::Pin;

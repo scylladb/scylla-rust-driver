@@ -4,6 +4,7 @@
 use crate::batch::batch_values;
 #[cfg(feature = "cloud")]
 use crate::cloud::CloudConfig;
+use crate::transport::metadata::UntranslatedPeer;
 #[allow(deprecated)]
 use crate::LegacyQueryResult;
 
@@ -40,21 +41,6 @@ use tokio::time::timeout;
 use tracing::{debug, error, trace, trace_span, Instrument};
 use uuid::Uuid;
 
-use super::connection::NonErrorQueryResponse;
-use super::connection::QueryResponse;
-#[cfg(feature = "ssl")]
-use super::connection::SslConfig;
-use super::errors::TracingProtocolError;
-use super::execution_profile::{ExecutionProfile, ExecutionProfileHandle, ExecutionProfileInner};
-use super::iterator::QueryPager;
-use super::metadata::UntranslatedPeer;
-#[cfg(feature = "cloud")]
-use super::node::CloudEndpoint;
-use super::node::{InternalKnownNode, KnownNode};
-use super::partitioner::PartitionerName;
-use super::query_result::MaybeFirstRowError;
-use super::query_result::RowsError;
-use super::{NodeRef, SelfIdentity};
 use crate::frame::response::result;
 use crate::prepared_statement::PreparedStatement;
 use crate::query::Query;
@@ -62,18 +48,34 @@ use crate::routing::{Shard, Token};
 use crate::statement::{Consistency, PageSize, PagingState, PagingStateResponse};
 use crate::tracing::TracingInfo;
 use crate::transport::cluster::{Cluster, ClusterData, ClusterNeatDebug};
+use crate::transport::connection::NonErrorQueryResponse;
+use crate::transport::connection::QueryResponse;
+#[cfg(feature = "ssl")]
+use crate::transport::connection::SslConfig;
 use crate::transport::connection::{Connection, ConnectionConfig, VerifiedKeyspaceName};
 use crate::transport::connection_pool::PoolConfig;
+use crate::transport::errors::TracingProtocolError;
+use crate::transport::execution_profile::{
+    ExecutionProfile, ExecutionProfileHandle, ExecutionProfileInner,
+};
 use crate::transport::host_filter::HostFilter;
+use crate::transport::iterator::QueryPager;
 #[allow(deprecated)]
 use crate::transport::iterator::{LegacyRowIterator, PreparedIteratorConfig};
 use crate::transport::load_balancing::{self, RoutingInfo};
 use crate::transport::metrics::Metrics;
+#[cfg(feature = "cloud")]
+use crate::transport::node::CloudEndpoint;
 use crate::transport::node::Node;
+use crate::transport::node::{InternalKnownNode, KnownNode};
+use crate::transport::partitioner::PartitionerName;
+use crate::transport::query_result::MaybeFirstRowError;
 use crate::transport::query_result::QueryResult;
+use crate::transport::query_result::RowsError;
 use crate::transport::retry_policy::{QueryInfo, RetryDecision, RetrySession};
 use crate::transport::speculative_execution;
 use crate::transport::Compression;
+use crate::transport::{NodeRef, SelfIdentity};
 use crate::{
     batch::{Batch, BatchStatement},
     statement::StatementConfig,
@@ -1017,7 +1019,7 @@ where
 {
     /// Estabilishes a CQL session with the database
     ///
-    /// Usually it's easier to use [SessionBuilder](crate::transport::session_builder::SessionBuilder)
+    /// Usually it's easier to use [SessionBuilder](crate::session::session_builder::SessionBuilder)
     /// instead of calling `Session::connect` directly, because it's more convenient.
     /// # Arguments
     /// * `config` - Connection configuration - known nodes, Compression, etc.

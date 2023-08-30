@@ -257,6 +257,7 @@ pub mod cloud;
 
 pub mod history;
 pub mod routing;
+pub mod session;
 pub mod statement;
 pub mod tracing;
 pub mod transport;
@@ -273,18 +274,17 @@ pub use statement::query;
 #[allow(deprecated)]
 pub use frame::response::cql_to_rust::{self, FromRow};
 
+#[cfg(feature = "cloud")]
+pub use session::CloudSessionBuilder;
+#[allow(deprecated)]
+pub use session::{IntoTypedRows, LegacySession, Session, SessionBuilder, SessionConfig};
+
 #[allow(deprecated)]
 pub use transport::caching_session::{CachingSession, GenericCachingSession, LegacyCachingSession};
 pub use transport::execution_profile::ExecutionProfile;
 #[allow(deprecated)]
 pub use transport::legacy_query_result::LegacyQueryResult;
 pub use transport::query_result::{QueryResult, QueryRowsResult};
-#[allow(deprecated)]
-pub use transport::session::{IntoTypedRows, LegacySession, Session, SessionConfig};
-pub use transport::session_builder::SessionBuilder;
-
-#[cfg(feature = "cloud")]
-pub use transport::session_builder::CloudSessionBuilder;
 
 pub use transport::execution_profile;
 pub use transport::host_filter;

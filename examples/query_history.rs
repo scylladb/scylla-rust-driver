@@ -5,7 +5,7 @@ use futures::StreamExt as _;
 use scylla::frame::response::result::Row;
 use scylla::history::{HistoryCollector, StructuredHistory};
 use scylla::query::Query;
-use scylla::transport::session::Session;
+use scylla::session::Session;
 use scylla::SessionBuilder;
 use std::env;
 use std::sync::Arc;
