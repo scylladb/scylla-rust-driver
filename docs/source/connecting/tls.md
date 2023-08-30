@@ -46,7 +46,8 @@ For example, if database certificate is in the file `ca.crt`:
 ```rust
 # extern crate scylla;
 # extern crate openssl;
-use scylla::{Session, SessionBuilder};
+use scylla::client::session::Session;
+use scylla::client::session_builder::SessionBuilder;
 use openssl::ssl::{SslContextBuilder, SslMethod, SslVerifyMode};
 use std::path::PathBuf;
 

@@ -1,6 +1,5 @@
 use crate::utils::{setup_tracing, test_with_3_node_cluster, unique_keyspace_name, PerformDDL};
 use scylla::prepared_statement::PreparedStatement;
-use scylla::{Session, SessionBuilder};
 use scylla_cql::frame::request::query::{PagingState, PagingStateResponse};
 use scylla_cql::frame::types;
 use scylla_proxy::{
@@ -13,6 +12,9 @@ use std::sync::Arc;
 #[ntest::timeout(20000)]
 #[cfg(not(scylla_cloud_tests))]
 async fn test_skip_result_metadata() {
+    use scylla::client::session::Session;
+    use scylla::client::session_builder::SessionBuilder;
+
     setup_tracing();
 
     const NO_METADATA_FLAG: i32 = 0x0004;

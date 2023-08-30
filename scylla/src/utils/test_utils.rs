@@ -1,11 +1,12 @@
+use crate::client::session::Session;
+use crate::client::session_builder::{GenericSessionBuilder, SessionBuilderKind};
 use crate::load_balancing::{FallbackPlan, LoadBalancingPolicy, RoutingInfo};
 use crate::query::Query;
 use crate::routing::Shard;
 use crate::transport::connection::Connection;
 use crate::transport::errors::QueryError;
-use crate::transport::session_builder::{GenericSessionBuilder, SessionBuilderKind};
 use crate::transport::{ClusterData, NodeRef};
-use crate::{CachingSession, ExecutionProfile, Session};
+use crate::{CachingSession, ExecutionProfile};
 use std::sync::Arc;
 use std::{num::NonZeroU32, time::Duration};
 use std::{
@@ -68,7 +69,7 @@ pub(crate) fn create_new_session_builder() -> GenericSessionBuilder<impl Session
     let session_builder = {
         #[cfg(not(scylla_cloud_tests))]
         {
-            use crate::SessionBuilder;
+            use crate::client::session_builder::SessionBuilder;
 
             let uri = std::env::var("SCYLLA_URI").unwrap_or_else(|_| "127.0.0.1:9042".to_string());
 
@@ -77,8 +78,7 @@ pub(crate) fn create_new_session_builder() -> GenericSessionBuilder<impl Session
 
         #[cfg(scylla_cloud_tests)]
         {
-            use crate::transport::session_builder::CloudMode;
-            use crate::CloudSessionBuilder;
+            use crate::client::session_builder::{CloudMode, CloudSessionBuilder};
             use std::path::Path;
 
             std::env::var("CLOUD_CONFIG_PATH")

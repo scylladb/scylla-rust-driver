@@ -5,7 +5,7 @@ use crate::utils::{
     scylla_supports_tablets, setup_tracing, test_with_3_node_cluster, unique_keyspace_name,
     PerformDDL,
 };
-use scylla::SessionBuilder;
+use scylla::client::session_builder::SessionBuilder;
 use tokio::sync::mpsc;
 
 use scylla_proxy::TargetShard;

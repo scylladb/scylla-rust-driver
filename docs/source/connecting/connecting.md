@@ -5,7 +5,8 @@ When creating a `Session` you can specify a few known nodes to which the driver 
 ```rust
 # extern crate scylla;
 # extern crate tokio;
-use scylla::{Session, SessionBuilder};
+use scylla::client::session::Session;
+use scylla::client::session_builder::SessionBuilder;
 use std::error::Error;
 use std::time::Duration;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
@@ -66,7 +67,7 @@ specify the secure connection bundle as follows:
 # fn check_only_compiles() {
 use std::path::Path;
 use std::error::Error;
-use scylla::CloudSessionBuilder;
+use scylla::client::session_builder::CloudSessionBuilder;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {

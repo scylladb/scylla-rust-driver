@@ -1,5 +1,6 @@
+use scylla::client::session::Session;
+use scylla::client::session_builder::SessionBuilder;
 use scylla::frame::response::result::Row;
-use scylla::transport::session::Session;
 use std::env;
 use std::future::Future;
 use std::pin::Pin;
@@ -34,12 +35,7 @@ async fn main() -> anyhow::Result<()> {
 
     println!("Connecting to {} ...", uri);
     let mut session: SessionService = SessionService {
-        session: Arc::new(
-            scylla::SessionBuilder::new()
-                .known_node(uri)
-                .build()
-                .await?,
-        ),
+        session: Arc::new(SessionBuilder::new().known_node(uri).build().await?),
     };
 
     let rows_result = session

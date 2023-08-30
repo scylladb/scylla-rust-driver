@@ -3,12 +3,12 @@ use rustyline::completion::{Completer, Pair};
 use rustyline::error::ReadlineError;
 use rustyline::{CompletionType, Config, Context, Editor};
 use rustyline_derive::{Helper, Highlighter, Hinter, Validator};
+use scylla::client::session::Session;
+use scylla::client::session_builder::SessionBuilder;
 use scylla::frame::response::result::Row;
 use scylla::transport::query_result::IntoRowsResultError;
-use scylla::transport::session::Session;
 use scylla::transport::Compression;
 use scylla::QueryResult;
-use scylla::SessionBuilder;
 use std::env;
 
 #[derive(Helper, Highlighter, Validator, Hinter)]

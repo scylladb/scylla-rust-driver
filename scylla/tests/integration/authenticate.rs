@@ -12,7 +12,7 @@ async fn authenticate_superuser() {
 
     println!("Connecting to {} with cassandra superuser ...", uri);
 
-    let session = scylla::SessionBuilder::new()
+    let session = scylla::client::session_builder::SessionBuilder::new()
         .known_node(uri)
         .user("cassandra", "cassandra")
         .build()
@@ -68,7 +68,7 @@ async fn custom_authentication() {
 
     println!("Connecting to {} with cassandra superuser ...", uri);
 
-    let session = scylla::SessionBuilder::new()
+    let session = scylla::client::session_builder::SessionBuilder::new()
         .known_node(uri)
         .authenticator_provider(Arc::new(CustomAuthenticatorProvider))
         .build()

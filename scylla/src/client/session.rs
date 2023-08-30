@@ -1,24 +1,61 @@
 //! `Session` is the main object used in the driver.\
 //! It manages all connections to the cluster and allows to perform queries.
 
+use crate::authentication::AuthenticatorProvider;
 use crate::batch::batch_values;
+use crate::batch::{Batch, BatchStatement};
 #[cfg(feature = "cloud")]
 use crate::cloud::CloudConfig;
-#[allow(deprecated)]
-use crate::LegacyQueryResult;
-
+use crate::frame::response::result;
 use crate::history;
 use crate::history::HistoryListener;
+use crate::prepared_statement::PreparedStatement;
+use crate::query::Query;
+use crate::routing::{Shard, Token};
+use crate::statement::StatementConfig;
+use crate::statement::{Consistency, PageSize, PagingState, PagingStateResponse};
+use crate::tracing::TracingInfo;
+use crate::transport::cluster::{Cluster, ClusterData, ClusterNeatDebug};
+#[cfg(feature = "ssl")]
+use crate::transport::connection::SslConfig;
+use crate::transport::connection::{
+    Connection, ConnectionConfig, NonErrorQueryResponse, QueryResponse, VerifiedKeyspaceName,
+};
+use crate::transport::connection_pool::PoolConfig;
+pub use crate::transport::connection_pool::PoolSize;
 pub use crate::transport::errors::TranslationError;
 use crate::transport::errors::{
-    BadQuery, NewSessionError, ProtocolError, QueryError, UserRequestError,
+    BadQuery, NewSessionError, ProtocolError, QueryError, TracingProtocolError, UserRequestError,
 };
+use crate::transport::execution_profile::{
+    ExecutionProfile, ExecutionProfileHandle, ExecutionProfileInner,
+};
+use crate::transport::host_filter::HostFilter;
+use crate::transport::iterator::QueryPager;
+#[allow(deprecated)]
+use crate::transport::iterator::{LegacyRowIterator, PreparedIteratorConfig};
+use crate::transport::load_balancing::{self, RoutingInfo};
+use crate::transport::metadata::UntranslatedPeer;
+use crate::transport::metrics::Metrics;
+#[cfg(feature = "cloud")]
+use crate::transport::node::CloudEndpoint;
+use crate::transport::node::{InternalKnownNode, KnownNode, Node};
+use crate::transport::partitioner::PartitionerName;
+use crate::transport::query_result::{MaybeFirstRowError, QueryResult, RowsError};
+use crate::transport::retry_policy::{QueryInfo, RetryDecision, RetrySession};
+use crate::transport::speculative_execution;
+use crate::transport::Compression;
+use crate::transport::{NodeRef, SelfIdentity};
 use crate::utils::pretty::{CommaSeparatedDisplayer, CqlValueDisplayer};
+#[allow(deprecated)]
+use crate::LegacyQueryResult;
 use arc_swap::ArcSwapOption;
 use async_trait::async_trait;
 use futures::future::join_all;
 use futures::future::try_join_all;
 use itertools::{Either, Itertools};
+#[cfg(feature = "ssl")]
+use openssl::ssl::SslContext;
 use scylla_cql::frame::response::result::RawMetadataAndRawRows;
 use scylla_cql::frame::response::result::{deser_cql_value, ColumnSpec};
 use scylla_cql::frame::response::NonErrorResponse;
@@ -40,55 +77,10 @@ use tokio::time::timeout;
 use tracing::{debug, error, trace, trace_span, Instrument};
 use uuid::Uuid;
 
-use super::connection::NonErrorQueryResponse;
-use super::connection::QueryResponse;
-#[cfg(feature = "ssl")]
-use super::connection::SslConfig;
-use super::errors::TracingProtocolError;
-use super::execution_profile::{ExecutionProfile, ExecutionProfileHandle, ExecutionProfileInner};
-use super::iterator::QueryPager;
-use super::metadata::UntranslatedPeer;
-#[cfg(feature = "cloud")]
-use super::node::CloudEndpoint;
-use super::node::{InternalKnownNode, KnownNode};
-use super::partitioner::PartitionerName;
-use super::query_result::MaybeFirstRowError;
-use super::query_result::RowsError;
-use super::{NodeRef, SelfIdentity};
-use crate::frame::response::result;
-use crate::prepared_statement::PreparedStatement;
-use crate::query::Query;
-use crate::routing::{Shard, Token};
-use crate::statement::{Consistency, PageSize, PagingState, PagingStateResponse};
-use crate::tracing::TracingInfo;
-use crate::transport::cluster::{Cluster, ClusterData, ClusterNeatDebug};
-use crate::transport::connection::{Connection, ConnectionConfig, VerifiedKeyspaceName};
-use crate::transport::connection_pool::PoolConfig;
-use crate::transport::host_filter::HostFilter;
-#[allow(deprecated)]
-use crate::transport::iterator::{LegacyRowIterator, PreparedIteratorConfig};
-use crate::transport::load_balancing::{self, RoutingInfo};
-use crate::transport::metrics::Metrics;
-use crate::transport::node::Node;
-use crate::transport::query_result::QueryResult;
-use crate::transport::retry_policy::{QueryInfo, RetryDecision, RetrySession};
-use crate::transport::speculative_execution;
-use crate::transport::Compression;
-use crate::{
-    batch::{Batch, BatchStatement},
-    statement::StatementConfig,
-};
-
-pub use crate::transport::connection_pool::PoolSize;
-
 // This re-export is to preserve backward compatibility.
 // Those items are no longer here not to clutter session.rs with legacy things.
 #[allow(deprecated)]
 pub use crate::transport::legacy_query_result::{IntoTypedRows, TypedRowIter};
-
-use crate::authentication::AuthenticatorProvider;
-#[cfg(feature = "ssl")]
-use openssl::ssl::SslContext;
 
 mod sealed {
     // This is a sealed trait - its whole purpose is to be unnameable.
@@ -363,7 +355,7 @@ impl SessionConfig {
     ///
     /// # Example
     /// ```
-    /// # use scylla::SessionConfig;
+    /// # use scylla::client::session::SessionConfig;
     /// let config = SessionConfig::new();
     /// ```
     pub fn new() -> Self {
@@ -407,7 +399,7 @@ impl SessionConfig {
     /// If the port is not explicitly specified, 9042 is used as default
     /// # Example
     /// ```
-    /// # use scylla::SessionConfig;
+    /// # use scylla::client::session::SessionConfig;
     /// let mut config = SessionConfig::new();
     /// config.add_known_node("127.0.0.1");
     /// config.add_known_node("db1.example.com:9042");
@@ -420,7 +412,7 @@ impl SessionConfig {
     /// Adds a known database server with an IP address
     /// # Example
     /// ```
-    /// # use scylla::SessionConfig;
+    /// # use scylla::client::session::SessionConfig;
     /// # use std::net::{SocketAddr, IpAddr, Ipv4Addr};
     /// let mut config = SessionConfig::new();
     /// config.add_known_node_addr(SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), 9042));
@@ -433,7 +425,7 @@ impl SessionConfig {
     /// If the port is not explicitly specified, 9042 is used as default
     /// # Example
     /// ```
-    /// # use scylla::SessionConfig;
+    /// # use scylla::client::session::SessionConfig;
     /// # use std::net::{SocketAddr, IpAddr, Ipv4Addr};
     /// let mut config = SessionConfig::new();
     /// config.add_known_nodes(&["127.0.0.1:9042", "db1.example.com"]);
@@ -447,7 +439,7 @@ impl SessionConfig {
     /// Adds a list of known database servers with IP addresses
     /// # Example
     /// ```
-    /// # use scylla::SessionConfig;
+    /// # use scylla::client::session::SessionConfig;
     /// # use std::net::{SocketAddr, IpAddr, Ipv4Addr};
     /// let addr1 = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(172, 17, 0, 3)), 9042);
     /// let addr2 = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(172, 17, 0, 4)), 9042);
@@ -500,7 +492,7 @@ impl GenericSession<CurrentDeserializationApi> {
     ///
     /// # Examples
     /// ```rust
-    /// # use scylla::Session;
+    /// # use scylla::client::session::Session;
     /// # use std::error::Error;
     /// # async fn check_only_compiles(session: &Session) -> Result<(), Box<dyn Error>> {
     /// // Insert an int and text into a table.
@@ -514,10 +506,9 @@ impl GenericSession<CurrentDeserializationApi> {
     /// # }
     /// ```
     /// ```rust
-    /// # use scylla::Session;
+    /// # use scylla::client::session::Session;
     /// # use std::error::Error;
     /// # async fn check_only_compiles(session: &Session) -> Result<(), Box<dyn Error>> {
-    /// use scylla::IntoTypedRows;
     ///
     /// // Read rows containing an int and text.
     /// // Keep in mind that all results come in one response (no paging is done!),
@@ -558,7 +549,7 @@ impl GenericSession<CurrentDeserializationApi> {
     /// # Example
     ///
     /// ```rust
-    /// # use scylla::Session;
+    /// # use scylla::client::session::Session;
     /// # use std::error::Error;
     /// # async fn check_only_compiles(session: &Session) -> Result<(), Box<dyn Error>> {
     /// use std::ops::ControlFlow;
@@ -623,10 +614,9 @@ impl GenericSession<CurrentDeserializationApi> {
     /// # Example
     ///
     /// ```rust
-    /// # use scylla::Session;
+    /// # use scylla::client::session::Session;
     /// # use std::error::Error;
     /// # async fn check_only_compiles(session: &Session) -> Result<(), Box<dyn Error>> {
-    /// use scylla::IntoTypedRows;
     /// use futures::stream::StreamExt;
     ///
     /// let mut rows_stream = session
@@ -676,7 +666,7 @@ impl GenericSession<CurrentDeserializationApi> {
     ///
     /// # Example
     /// ```rust
-    /// # use scylla::Session;
+    /// # use scylla::client::session::Session;
     /// # use std::error::Error;
     /// # async fn check_only_compiles(session: &Session) -> Result<(), Box<dyn Error>> {
     /// use scylla::prepared_statement::PreparedStatement;
@@ -705,14 +695,14 @@ impl GenericSession<CurrentDeserializationApi> {
     ///
     /// # Arguments
     ///
-    /// * `prepared` - a statement prepared with [prepare](crate::Session::prepare)
+    /// * `prepared` - a statement prepared with [prepare](crate::client::session::Session::prepare)
     /// * `values` - values bound to the query
     /// * `paging_state` - continuation based on a paging state received from a previous paged query or None
     ///
     /// # Example
     ///
     /// ```rust
-    /// # use scylla::Session;
+    /// # use scylla::client::session::Session;
     /// # use std::error::Error;
     /// # async fn check_only_compiles(session: &Session) -> Result<(), Box<dyn Error>> {
     /// use std::ops::ControlFlow;
@@ -781,12 +771,11 @@ impl GenericSession<CurrentDeserializationApi> {
     /// # Example
     ///
     /// ```rust
-    /// # use scylla::Session;
+    /// # use scylla::client::session::Session;
     /// # use futures::StreamExt as _;
     /// # use std::error::Error;
     /// # async fn check_only_compiles(session: &Session) -> Result<(), Box<dyn Error>> {
     /// use scylla::prepared_statement::PreparedStatement;
-    /// use scylla::IntoTypedRows;
     ///
     /// // Prepare the query for later execution
     /// let prepared: PreparedStatement = session
@@ -833,7 +822,7 @@ impl GenericSession<CurrentDeserializationApi> {
     ///
     /// # Example
     /// ```rust
-    /// # use scylla::Session;
+    /// # use scylla::client::session::Session;
     /// # use std::error::Error;
     /// # async fn check_only_compiles(session: &Session) -> Result<(), Box<dyn Error>> {
     /// use scylla::batch::Batch;
@@ -1017,7 +1006,7 @@ where
 {
     /// Estabilishes a CQL session with the database
     ///
-    /// Usually it's easier to use [SessionBuilder](crate::transport::session_builder::SessionBuilder)
+    /// Usually it's easier to use [SessionBuilder](crate::client::session_builder::SessionBuilder)
     /// instead of calling `Session::connect` directly, because it's more convenient.
     /// # Arguments
     /// * `config` - Connection configuration - known nodes, Compression, etc.
@@ -1027,7 +1016,7 @@ where
     /// ```rust
     /// # use std::error::Error;
     /// # async fn check_only_compiles() -> Result<(), Box<dyn Error>> {
-    /// use scylla::{Session, SessionConfig};
+    /// use scylla::client::session::{Session, SessionConfig};
     /// use scylla::transport::KnownNode;
     ///
     /// let mut config = SessionConfig::new();
@@ -1365,7 +1354,7 @@ where
     ///
     /// # Example
     /// ```rust
-    /// # use scylla::Session;
+    /// # use scylla::client::session::Session;
     /// # use std::error::Error;
     /// # async fn check_only_compiles(session: &Session) -> Result<(), Box<dyn Error>> {
     /// use scylla::prepared_statement::PreparedStatement;
@@ -1694,7 +1683,7 @@ where
     /// /// # Example
     /// ```rust
     /// # extern crate scylla;
-    /// # use scylla::Session;
+    /// # use scylla::client::session::Session;
     /// # use std::error::Error;
     /// # async fn check_only_compiles(session: &Session) -> Result<(), Box<dyn Error>> {
     /// use scylla::batch::Batch;
@@ -1755,7 +1744,8 @@ where
     /// * `case_sensitive` - if set to true the generated query will put keyspace name in quotes
     /// # Example
     /// ```rust
-    /// # use scylla::{Session, SessionBuilder};
+    /// # use scylla::client::session::Session;
+    /// # use scylla::client::session_builder::SessionBuilder;
     /// # use scylla::transport::Compression;
     /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
     /// # let session = SessionBuilder::new().known_node("127.0.0.1:9042").build().await?;

@@ -1,3 +1,5 @@
+use super::session::Session;
+use super::session_builder::SessionBuilder;
 use crate::batch::{Batch, BatchStatement};
 use crate::deserialize::DeserializeOwnedValue;
 use crate::prepared_statement::PreparedStatement;
@@ -14,14 +16,13 @@ use crate::transport::metadata::{
 use crate::transport::partitioner::{
     calculate_token_for_partition_key, Murmur3Partitioner, Partitioner, PartitionerName,
 };
-use crate::transport::session::Session;
 use crate::utils::test_utils::{
     create_new_session_builder, scylla_supports_tablets, setup_tracing, supports_feature,
     unique_keyspace_name, PerformDDL,
 };
+use crate::CachingSession;
 use crate::ExecutionProfile;
 use crate::{self as scylla, QueryResult};
-use crate::{CachingSession, SessionBuilder};
 use assert_matches::assert_matches;
 use futures::{FutureExt, StreamExt as _, TryStreamExt};
 use itertools::Itertools;
@@ -37,7 +38,7 @@ use std::sync::Arc;
 use tokio::net::TcpListener;
 use uuid::Uuid;
 
-use super::query_result::QueryRowsResult;
+use crate::transport::query_result::QueryRowsResult;
 
 #[tokio::test]
 async fn test_connection_failure() {

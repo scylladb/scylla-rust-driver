@@ -22,7 +22,7 @@ use std::sync::Arc;
 
 use super::iterator::QueryPager;
 #[allow(deprecated)]
-use super::session::{
+use crate::client::session::{
     CurrentDeserializationApi, DeserializationApiKind, GenericSession, LegacyDeserializationApi,
 };
 
@@ -341,13 +341,13 @@ where
 
 #[cfg(test)]
 mod tests {
+    use crate::client::session::Session;
     use crate::query::Query;
     use crate::statement::PagingState;
     use crate::test_utils::{
         create_new_session_builder, scylla_supports_tablets, setup_tracing, PerformDDL,
     };
     use crate::transport::partitioner::PartitionerName;
-    use crate::transport::session::Session;
     use crate::utils::test_utils::unique_keyspace_name;
     #[allow(deprecated)]
     use crate::LegacyCachingSession;

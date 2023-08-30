@@ -1,8 +1,8 @@
 use assert_matches::assert_matches;
 
+use scylla::client::session::Session;
 use scylla::frame::response::result::CqlValue;
 use scylla::frame::value::CqlDuration;
-use scylla::Session;
 
 use crate::utils::{create_new_session_builder, setup_tracing, unique_keyspace_name, PerformDDL};
 

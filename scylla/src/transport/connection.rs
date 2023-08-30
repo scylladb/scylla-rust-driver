@@ -51,8 +51,8 @@ use super::iterator::QueryPager;
 use super::locator::tablets::{RawTablet, TabletParsingError};
 use super::metadata::{PeerEndpoint, UntranslatedEndpoint, UntranslatedPeer};
 use super::query_result::QueryResult;
-use super::session::AddressTranslator;
 use super::NodeAddr;
+use crate::client::session::AddressTranslator;
 #[cfg(feature = "cloud")]
 use crate::cloud::CloudConfig;
 
@@ -2392,13 +2392,13 @@ mod tests {
     use tokio::sync::mpsc;
 
     use super::ConnectionConfig;
+    use crate::client::session_builder::SessionBuilder;
     use crate::query::Query;
     use crate::test_utils::setup_tracing;
     use crate::transport::connection::open_connection;
     use crate::transport::metadata::UntranslatedEndpoint;
     use crate::transport::node::ResolvedContactPoint;
     use crate::utils::test_utils::{unique_keyspace_name, PerformDDL};
-    use crate::SessionBuilder;
     use futures::{StreamExt, TryStreamExt};
     use std::collections::HashMap;
     use std::net::SocketAddr;

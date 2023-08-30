@@ -7,7 +7,7 @@ A lightweight transaction query can be expressed just like any other query, via 
 A lightweight transaction query is not a separate type - it can be expressed just like any other queries: via `SimpleQuery`, `PreparedStatement`, batches, and so on. The difference lays in the query string itself - when it contains a condition (e.g. `IF NOT EXISTS`), it becomes a lightweight transaction. It's important to remember that CQL specification requires a separate, additional consistency level to be defined for LWT queries - `serial_consistency_level`. The serial consistency level can only be set to two values: `SerialConsistency::Serial` or `SerialConsistency::LocalSerial`. The "local" variant makes the transaction consistent only within the same datacenter. For convenience, Scylla Rust Driver sets the default consistency level to `LocalSerial`, as it's more commonly used. For cross-datacenter consistency, please remember to always override the default with `SerialConsistency::Serial`.
 ```rust
 # extern crate scylla;
-# use scylla::Session;
+# use scylla::client::session::Session;
 # use std::error::Error;
 # async fn check_only_compiles(session: &Session) -> Result<(), Box<dyn Error>> {
 use scylla::query::Query;

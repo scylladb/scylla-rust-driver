@@ -1,10 +1,10 @@
 use anyhow::Result;
 use futures::StreamExt as _;
 use futures::TryStreamExt as _;
+use scylla::client::session::Session;
+use scylla::client::session_builder::SessionBuilder;
 use scylla::frame::response::result::Row;
-use scylla::transport::session::Session;
 use scylla::DeserializeRow;
-use scylla::SessionBuilder;
 use std::env;
 
 #[tokio::main]

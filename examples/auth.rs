@@ -1,5 +1,5 @@
 use anyhow::Result;
-use scylla::SessionBuilder;
+use scylla::client::session_builder::SessionBuilder;
 
 #[tokio::main]
 async fn main() -> Result<()> {

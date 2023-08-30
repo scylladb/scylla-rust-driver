@@ -7,7 +7,7 @@ return a `QueryResult` which contains a `tracing_id` if tracing was enabled.
 ```rust
 # extern crate scylla;
 # extern crate uuid;
-# use scylla::Session;
+# use scylla::client::session::Session;
 # use std::error::Error;
 # async fn check_only_compiles(session: &Session) -> Result<(), Box<dyn Error>> {
 use scylla::query::Query;
@@ -35,7 +35,7 @@ if let Some(id) = tracing_id {
 ```rust
 # extern crate scylla;
 # extern crate uuid;
-# use scylla::Session;
+# use scylla::client::session::Session;
 # use std::error::Error;
 # async fn check_only_compiles(session: &Session) -> Result<(), Box<dyn Error>> {
 use scylla::prepared_statement::PreparedStatement;
@@ -67,7 +67,7 @@ if let Some(id) = tracing_id {
 ```rust
 # extern crate scylla;
 # extern crate uuid;
-# use scylla::Session;
+# use scylla::client::session::Session;
 # use std::error::Error;
 # async fn check_only_compiles(session: &Session) -> Result<(), Box<dyn Error>> {
 use scylla::batch::Batch;

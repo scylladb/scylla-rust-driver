@@ -6,7 +6,7 @@
 ```rust
 # extern crate scylla;
 # extern crate futures;
-# use scylla::Session;
+# use scylla::client::session::Session;
 # use std::error::Error;
 # async fn check_only_compiles(session: &Session) -> Result<(), Box<dyn Error>> {
 use futures::TryStreamExt;
@@ -34,7 +34,7 @@ while let Some((list_value,)) = stream.try_next().await? {
 ```rust
 # extern crate scylla;
 # extern crate futures;
-# use scylla::Session;
+# use scylla::client::session::Session;
 # use std::error::Error;
 # async fn check_only_compiles(session: &Session) -> Result<(), Box<dyn Error>> {
 use futures::TryStreamExt;
@@ -59,7 +59,7 @@ while let Some((set_value,)) = stream.try_next().await? {
 ```rust
 # extern crate scylla;
 # extern crate futures;
-# use scylla::Session;
+# use scylla::client::session::Session;
 # use std::error::Error;
 # async fn check_only_compiles(session: &Session) -> Result<(), Box<dyn Error>> {
 use futures::TryStreamExt;
@@ -85,7 +85,7 @@ while let Some((set_value,)) = iter.try_next().await? {
 ```rust
 # extern crate scylla;
 # extern crate futures;
-# use scylla::Session;
+# use scylla::client::session::Session;
 # use std::error::Error;
 # async fn check_only_compiles(session: &Session) -> Result<(), Box<dyn Error>> {
 use futures::TryStreamExt;
@@ -114,7 +114,7 @@ while let Some((set_value,)) = iter.try_next().await? {
 ```rust
 # extern crate scylla;
 # extern crate futures;
-# use scylla::Session;
+# use scylla::client::session::Session;
 # use std::error::Error;
 # async fn check_only_compiles(session: &Session) -> Result<(), Box<dyn Error>> {
 use futures::TryStreamExt;
@@ -142,7 +142,7 @@ while let Some((map_value,)) = iter.try_next().await? {
 ```rust
 # extern crate scylla;
 # extern crate futures;
-# use scylla::Session;
+# use scylla::client::session::Session;
 # use std::error::Error;
 # async fn check_only_compiles(session: &Session) -> Result<(), Box<dyn Error>> {
 use futures::TryStreamExt;

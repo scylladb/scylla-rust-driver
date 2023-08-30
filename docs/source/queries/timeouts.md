@@ -17,7 +17,9 @@ However, setting per-statement timeout to `None` results in falling back to per-
 # extern crate scylla;
 # use std::error::Error;
 # async fn timeouts() -> Result<(), Box<dyn Error>> {
-use scylla::{Session, SessionBuilder, query::Query};
+use scylla::client::session::Session;
+use scylla::client::session_builder::SessionBuilder;
+use scylla::query::Query;
 use scylla::transport::ExecutionProfile;
 use std::time::Duration;
 

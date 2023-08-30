@@ -7,7 +7,8 @@ Here is a small example:
 # extern crate tokio;
 # extern crate futures;
 use futures::TryStreamExt;
-use scylla::{Session, SessionBuilder};
+use scylla::client::session::Session;
+use scylla::client::session_builder::SessionBuilder;
 use std::error::Error;
 
 #[tokio::main]

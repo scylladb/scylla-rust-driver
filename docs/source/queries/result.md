@@ -34,7 +34,7 @@ Additionally, [`QueryResult`](https://docs.rs/scylla/latest/scylla/transport/que
 
 ```rust
 # extern crate scylla;
-# use scylla::Session;
+# use scylla::client::session::Session;
 # use std::error::Error;
 # async fn check_only_compiles(session: &Session) -> Result<(), Box<dyn Error>> {
 // Parse row as a single column containing an int value
@@ -67,10 +67,9 @@ and [`QueryRowsResult`](https://docs.rs/scylla/latest/scylla/transport/query_res
 To properly handle `NULL` values parse column as an `Option<>`:
 ```rust
 # extern crate scylla;
-# use scylla::Session;
+# use scylla::client::session::Session;
 # use std::error::Error;
 # async fn check_only_compiles(session: &Session) -> Result<(), Box<dyn Error>> {
-use scylla::IntoTypedRows;
 
 // Parse row as two columns containing an int and text which might be null
 let rows_result = session
@@ -95,10 +94,9 @@ The struct must:
 Field names don't need to match column names.
 ```rust
 # extern crate scylla;
-# use scylla::Session;
+# use scylla::client::session::Session;
 # use std::error::Error;
 # async fn check_only_compiles(session: &Session) -> Result<(), Box<dyn Error>> {
-use scylla::IntoTypedRows;
 use scylla::macros::DeserializeRow;
 use scylla::deserialize::DeserializeRow;
 

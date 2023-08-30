@@ -15,7 +15,7 @@ They can be accessed at any moment using `Session::get_metrics()`
 ### Example
 ```rust
 # extern crate scylla;
-# use scylla::Session;
+# use scylla::client::session::Session;
 # use std::error::Error;
 # async fn check_only_compiles(session: &Session) -> Result<(), Box<dyn Error>> {
 let metrics = session.get_metrics();

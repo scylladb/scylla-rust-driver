@@ -1,23 +1,24 @@
 //! SessionBuilder provides an easy way to create new Sessions
 
-use super::connection::SelfIdentity;
-use super::execution_profile::ExecutionProfileHandle;
 #[allow(deprecated)]
 use super::session::{
     AddressTranslator, CurrentDeserializationApi, GenericSession, LegacyDeserializationApi,
     SessionConfig,
 };
-use super::Compression;
-
+use crate::authentication::{AuthenticatorProvider, PlainTextAuthenticator};
 #[cfg(feature = "cloud")]
 use crate::cloud::{CloudConfig, CloudConfigError};
+use crate::statement::Consistency;
+use crate::transport::connection::SelfIdentity;
+use crate::transport::connection_pool::PoolSize;
 use crate::transport::errors::NewSessionError;
+use crate::transport::execution_profile::ExecutionProfileHandle;
+use crate::transport::host_filter::HostFilter;
+use crate::transport::Compression;
 #[cfg(feature = "cloud")]
 use crate::ExecutionProfile;
-
-use crate::statement::Consistency;
-use crate::transport::connection_pool::PoolSize;
-use crate::transport::host_filter::HostFilter;
+#[cfg(feature = "ssl")]
+use openssl::ssl::SslContext;
 use std::borrow::Borrow;
 use std::marker::PhantomData;
 use std::net::SocketAddr;
@@ -26,10 +27,6 @@ use std::num::NonZeroU32;
 use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;
-
-use crate::authentication::{AuthenticatorProvider, PlainTextAuthenticator};
-#[cfg(feature = "ssl")]
-use openssl::ssl::SslContext;
 use tracing::warn;
 
 mod sealed {
@@ -63,7 +60,8 @@ pub type CloudSessionBuilder = GenericSessionBuilder<CloudMode>;
 /// # Example
 ///
 /// ```
-/// # use scylla::{Session, SessionBuilder};
+/// # use scylla::client::session::Session;
+/// # use scylla::client::session_builder::SessionBuilder;
 /// # use scylla::transport::Compression;
 /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
 /// let session: Session = SessionBuilder::new()
@@ -98,7 +96,8 @@ impl GenericSessionBuilder<DefaultMode> {
     /// Add a known node with a hostname
     /// # Examples
     /// ```
-    /// # use scylla::{Session, SessionBuilder};
+    /// # use scylla::client::session::Session;
+    /// # use scylla::client::session_builder::SessionBuilder;
     /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
     /// let session: Session = SessionBuilder::new()
     ///     .known_node("127.0.0.1:9042")
@@ -109,7 +108,8 @@ impl GenericSessionBuilder<DefaultMode> {
     /// ```
     ///
     /// ```
-    /// # use scylla::{Session, SessionBuilder};
+    /// # use scylla::client::session::Session;
+    /// # use scylla::client::session_builder::SessionBuilder;
     /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
     /// let session: Session = SessionBuilder::new()
     ///     .known_node("db1.example.com")
@@ -126,7 +126,8 @@ impl GenericSessionBuilder<DefaultMode> {
     /// Add a known node with an IP address
     /// # Example
     /// ```
-    /// # use scylla::{Session, SessionBuilder};
+    /// # use scylla::client::session::Session;
+    /// # use scylla::client::session_builder::SessionBuilder;
     /// # use std::net::{SocketAddr, IpAddr, Ipv4Addr};
     /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
     /// let session: Session = SessionBuilder::new()
@@ -144,7 +145,8 @@ impl GenericSessionBuilder<DefaultMode> {
     /// Add a list of known nodes with hostnames
     /// # Example
     /// ```
-    /// # use scylla::{Session, SessionBuilder};
+    /// # use scylla::client::session::Session;
+    /// # use scylla::client::session_builder::SessionBuilder;
     /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
     /// let session: Session = SessionBuilder::new()
     ///     .known_nodes(["127.0.0.1:9042", "db1.example.com"])
@@ -161,7 +163,8 @@ impl GenericSessionBuilder<DefaultMode> {
     /// Add a list of known nodes with IP addresses
     /// # Example
     /// ```
-    /// # use scylla::{Session, SessionBuilder};
+    /// # use scylla::client::session::Session;
+    /// # use scylla::client::session_builder::SessionBuilder;
     /// # use std::net::{SocketAddr, IpAddr, Ipv4Addr};
     /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
     /// let addr1 = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(172, 17, 0, 3)), 9042);
@@ -187,7 +190,8 @@ impl GenericSessionBuilder<DefaultMode> {
     ///
     /// # Example
     /// ```
-    /// # use scylla::{Session, SessionBuilder};
+    /// # use scylla::client::session::Session;
+    /// # use scylla::client::session_builder::SessionBuilder;
     /// # use scylla::transport::Compression;
     /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
     /// let session: Session = SessionBuilder::new()
@@ -213,7 +217,8 @@ impl GenericSessionBuilder<DefaultMode> {
     /// ```
     /// # use std::sync::Arc;
     /// use bytes::Bytes;
-    /// use scylla::{Session, SessionBuilder};
+    /// # use scylla::client::session::Session;
+    /// # use scylla::client::session_builder::SessionBuilder;
     /// use async_trait::async_trait;
     /// use scylla::authentication::{AuthenticatorProvider, AuthenticatorSession, AuthError};
     /// # use scylla::transport::Compression;
@@ -267,8 +272,9 @@ impl GenericSessionBuilder<DefaultMode> {
     /// # use async_trait::async_trait;
     /// # use std::net::SocketAddr;
     /// # use std::sync::Arc;
-    /// # use scylla::{Session, SessionBuilder};
-    /// # use scylla::transport::session::{AddressTranslator, TranslationError};
+    /// # use scylla::client::session::Session;
+    /// # use scylla::client::session_builder::SessionBuilder;
+    /// # use scylla::client::session::{AddressTranslator, TranslationError};
     /// # use scylla::transport::metadata::UntranslatedPeer;
     /// struct IdentityTranslator;
     ///
@@ -297,8 +303,9 @@ impl GenericSessionBuilder<DefaultMode> {
     /// # use std::sync::Arc;
     /// # use std::collections::HashMap;
     /// # use std::str::FromStr;
-    /// # use scylla::{Session, SessionBuilder};
-    /// # use scylla::transport::session::{AddressTranslator, TranslationError};
+    /// # use scylla::client::session::Session;
+    /// # use scylla::client::session_builder::SessionBuilder;
+    /// # use scylla::client::session::{AddressTranslator, TranslationError};
     /// #
     /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
     /// let mut translation_rules = HashMap::new();
@@ -328,7 +335,8 @@ impl GenericSessionBuilder<DefaultMode> {
     /// ```
     /// # use std::fs;
     /// # use std::path::PathBuf;
-    /// # use scylla::{Session, SessionBuilder};
+    /// # use scylla::client::session::Session;
+    /// # use scylla::client::session_builder::SessionBuilder;
     /// # use openssl::ssl::{SslContextBuilder, SslVerifyMode, SslMethod, SslFiletype};
     /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
     /// let certdir = fs::canonicalize(PathBuf::from("./examples/certs/scylla.crt"))?;
@@ -387,7 +395,8 @@ impl<K: SessionBuilderKind> GenericSessionBuilder<K> {
     ///
     /// # Example
     /// ```
-    /// # use scylla::{Session, SessionBuilder};
+    /// # use scylla::client::session::Session;
+    /// # use scylla::client::session_builder::SessionBuilder;
     /// # use scylla::transport::Compression;
     /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
     /// let session: Session = SessionBuilder::new()
@@ -408,7 +417,8 @@ impl<K: SessionBuilderKind> GenericSessionBuilder<K> {
     ///
     /// # Example
     /// ```
-    /// # use scylla::{Session, SessionBuilder};
+    /// # use scylla::client::session::Session;
+    /// # use scylla::client::session_builder::SessionBuilder;
     /// # use std::time::Duration;
     /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
     /// let session: Session = SessionBuilder::new()
@@ -428,7 +438,10 @@ impl<K: SessionBuilderKind> GenericSessionBuilder<K> {
     ///
     /// # Example
     /// ```
-    /// # use scylla::{statement::Consistency, ExecutionProfile, Session, SessionBuilder};
+    /// # use scylla::statement::Consistency;
+    /// # use scylla::transport::ExecutionProfile;
+    /// # use scylla::client::session::Session;
+    /// # use scylla::client::session_builder::SessionBuilder;
     /// # use std::time::Duration;
     /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
     /// let execution_profile = ExecutionProfile::builder()
@@ -456,7 +469,8 @@ impl<K: SessionBuilderKind> GenericSessionBuilder<K> {
     ///
     /// # Example
     /// ```
-    /// # use scylla::{Session, SessionBuilder};
+    /// # use scylla::client::session::Session;
+    /// # use scylla::client::session_builder::SessionBuilder;
     /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
     /// let session: Session = SessionBuilder::new()
     ///     .known_node("127.0.0.1:9042")
@@ -479,7 +493,8 @@ impl<K: SessionBuilderKind> GenericSessionBuilder<K> {
     ///
     /// # Example
     /// ```
-    /// # use scylla::{Session, SessionBuilder};
+    /// # use scylla::client::session::Session;
+    /// # use scylla::client::session_builder::SessionBuilder;
     /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
     /// let session: Session = SessionBuilder::new()
     ///     .known_node("127.0.0.1:9042")
@@ -503,11 +518,12 @@ impl<K: SessionBuilderKind> GenericSessionBuilder<K> {
 
     /// Set keyspace to be used on all connections.\
     /// Each connection will send `"USE <keyspace_name>"` before sending any requests.\
-    /// This can be later changed with [`crate::Session::use_keyspace`]
+    /// This can be later changed with [`crate::client::session::Session::use_keyspace`]
     ///
     /// # Example
     /// ```
-    /// # use scylla::{Session, SessionBuilder};
+    /// # use scylla::client::session::Session;
+    /// # use scylla::client::session_builder::SessionBuilder;
     /// # use scylla::transport::Compression;
     /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
     /// let session: Session = SessionBuilder::new()
@@ -531,7 +547,8 @@ impl<K: SessionBuilderKind> GenericSessionBuilder<K> {
     ///
     /// # Example
     /// ```
-    /// # use scylla::{LegacySession, SessionBuilder};
+    /// # use scylla::client::session::LegacySession;
+    /// # use scylla::client::session_builder::SessionBuilder;
     /// # use scylla::transport::Compression;
     /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
     /// let session: LegacySession = SessionBuilder::new()
@@ -560,7 +577,8 @@ impl<K: SessionBuilderKind> GenericSessionBuilder<K> {
     ///
     /// # Example
     /// ```
-    /// # use scylla::{Session, SessionBuilder};
+    /// # use scylla::client::session::Session;
+    /// # use scylla::client::session_builder::SessionBuilder;
     /// # use scylla::transport::Compression;
     /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
     /// let session: Session = SessionBuilder::new()
@@ -583,7 +601,8 @@ impl<K: SessionBuilderKind> GenericSessionBuilder<K> {
     ///
     /// # Example
     /// ```
-    /// # use scylla::{Session, SessionBuilder};
+    /// # use scylla::client::session::Session;
+    /// # use scylla::client::session_builder::SessionBuilder;
     /// # use std::time::Duration;
     /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
     /// let session: Session = SessionBuilder::new()
@@ -604,10 +623,11 @@ impl<K: SessionBuilderKind> GenericSessionBuilder<K> {
     ///
     /// # Example
     /// ```
-    /// # use scylla::{Session, SessionBuilder};
+    /// # use scylla::client::session::Session;
+    /// # use scylla::client::session_builder::SessionBuilder;
     /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
     /// use std::num::NonZeroUsize;
-    /// use scylla::transport::session::PoolSize;
+    /// use scylla::client::session::PoolSize;
     ///
     /// // This session will establish 4 connections to each node.
     /// // For Scylla clusters, this number will be divided across shards
@@ -648,7 +668,8 @@ impl<K: SessionBuilderKind> GenericSessionBuilder<K> {
     ///
     /// # Example
     /// ```
-    /// # use scylla::{Session, SessionBuilder};
+    /// # use scylla::client::session::Session;
+    /// # use scylla::client::session_builder::SessionBuilder;
     /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
     /// let session: Session = SessionBuilder::new()
     ///     .known_node("127.0.0.1:9042")
@@ -668,7 +689,8 @@ impl<K: SessionBuilderKind> GenericSessionBuilder<K> {
     ///
     /// # Example
     /// ```
-    /// # use scylla::{Session, SessionBuilder};
+    /// # use scylla::client::session::Session;
+    /// # use scylla::client::session_builder::SessionBuilder;
     /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
     /// let session: Session = SessionBuilder::new()
     ///     .known_node("127.0.0.1:9042")
@@ -691,7 +713,8 @@ impl<K: SessionBuilderKind> GenericSessionBuilder<K> {
     ///
     /// # Example
     /// ```
-    /// # use scylla::{Session, SessionBuilder};
+    /// # use scylla::client::session::Session;
+    /// # use scylla::client::session_builder::SessionBuilder;
     /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
     /// let session: Session = SessionBuilder::new()
     ///     .known_node("127.0.0.1:9042")
@@ -714,7 +737,8 @@ impl<K: SessionBuilderKind> GenericSessionBuilder<K> {
     ///
     /// # Example
     /// ```
-    /// # use scylla::{Session, SessionBuilder};
+    /// # use scylla::client::session::Session;
+    /// # use scylla::client::session_builder::SessionBuilder;
     /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
     /// let session: Session = SessionBuilder::new()
     ///     .known_node("127.0.0.1:9042")
@@ -744,7 +768,8 @@ impl<K: SessionBuilderKind> GenericSessionBuilder<K> {
     ///
     /// # Example
     /// ```
-    /// # use scylla::{Session, SessionBuilder};
+    /// # use scylla::client::session::Session;
+    /// # use scylla::client::session_builder::SessionBuilder;
     /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
     /// let session: Session = SessionBuilder::new()
     ///     .known_node("127.0.0.1:9042")
@@ -771,7 +796,8 @@ impl<K: SessionBuilderKind> GenericSessionBuilder<K> {
     ///
     /// # Example
     /// ```
-    /// # use scylla::{Session, SessionBuilder};
+    /// # use scylla::client::session::Session;
+    /// # use scylla::client::session_builder::SessionBuilder;
     /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
     /// let session: Session = SessionBuilder::new()
     ///     .known_node("127.0.0.1:9042")
@@ -791,7 +817,8 @@ impl<K: SessionBuilderKind> GenericSessionBuilder<K> {
     ///
     /// # Example
     /// ```
-    /// # use scylla::{Session, SessionBuilder};
+    /// # use scylla::client::session::Session;
+    /// # use scylla::client::session_builder::SessionBuilder;
     /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
     /// let session: Session = SessionBuilder::new()
     ///     .known_node("127.0.0.1:9042")
@@ -819,8 +846,9 @@ impl<K: SessionBuilderKind> GenericSessionBuilder<K> {
     /// # use async_trait::async_trait;
     /// # use std::net::SocketAddr;
     /// # use std::sync::Arc;
-    /// # use scylla::{Session, SessionBuilder};
-    /// # use scylla::transport::session::{AddressTranslator, TranslationError};
+    /// # use scylla::client::session::Session;
+    /// # use scylla::client::session_builder::SessionBuilder;
+    /// # use scylla::client::session::{AddressTranslator, TranslationError};
     /// # use scylla::transport::host_filter::DcHostFilter;
     ///
     /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
@@ -843,7 +871,8 @@ impl<K: SessionBuilderKind> GenericSessionBuilder<K> {
     ///
     /// # Example
     /// ```
-    /// # use scylla::{Session, SessionBuilder};
+    /// # use scylla::client::session::Session;
+    /// # use scylla::client::session_builder::SessionBuilder;
     /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
     /// let session: Session = SessionBuilder::new()
     ///     .known_node("127.0.0.1:9042")
@@ -859,7 +888,7 @@ impl<K: SessionBuilderKind> GenericSessionBuilder<K> {
     }
 
     /// Set the number of attempts to fetch [TracingInfo](crate::tracing::TracingInfo)
-    /// in [`Session::get_tracing_info`](crate::Session::get_tracing_info).
+    /// in [`Session::get_tracing_info`](crate::client::session::Session::get_tracing_info).
     /// The default is 5 attempts.
     ///
     /// Tracing info might not be available immediately on queried node - that's why
@@ -871,7 +900,8 @@ impl<K: SessionBuilderKind> GenericSessionBuilder<K> {
     ///
     /// # Example
     /// ```
-    /// # use scylla::{Session, SessionBuilder};
+    /// # use scylla::client::session::Session;
+    /// # use scylla::client::session_builder::SessionBuilder;
     /// # use std::num::NonZeroU32;
     /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
     /// let session: Session = SessionBuilder::new()
@@ -888,7 +918,7 @@ impl<K: SessionBuilderKind> GenericSessionBuilder<K> {
     }
 
     /// Set the delay between attempts to fetch [TracingInfo](crate::tracing::TracingInfo)
-    /// in [`Session::get_tracing_info`](crate::Session::get_tracing_info).
+    /// in [`Session::get_tracing_info`](crate::client::session::Session::get_tracing_info).
     /// The default is 3 milliseconds.
     ///
     /// Tracing info might not be available immediately on queried node - that's why
@@ -900,7 +930,8 @@ impl<K: SessionBuilderKind> GenericSessionBuilder<K> {
     ///
     /// # Example
     /// ```
-    /// # use scylla::{Session, SessionBuilder};
+    /// # use scylla::client::session::Session;
+    /// # use scylla::client::session_builder::SessionBuilder;
     /// # use std::time::Duration;
     /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
     /// let session: Session = SessionBuilder::new()
@@ -917,12 +948,14 @@ impl<K: SessionBuilderKind> GenericSessionBuilder<K> {
     }
 
     /// Set the consistency level of fetching [TracingInfo](crate::tracing::TracingInfo)
-    /// in [`Session::get_tracing_info`](crate::Session::get_tracing_info).
+    /// in [`Session::get_tracing_info`](crate::client::session::Session::get_tracing_info).
     /// The default is [`Consistency::One`].
     ///
     /// # Example
     /// ```
-    /// # use scylla::{Session, SessionBuilder, statement::Consistency};
+    /// # use scylla::statement::Consistency;
+    /// # use scylla::client::session::Session;
+    /// # use scylla::client::session_builder::SessionBuilder;
     /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
     /// let session: Session = SessionBuilder::new()
     ///     .known_node("127.0.0.1:9042")
@@ -952,7 +985,8 @@ impl<K: SessionBuilderKind> GenericSessionBuilder<K> {
     ///
     /// # Example
     /// ```
-    /// # use scylla::{Session, SessionBuilder};
+    /// # use scylla::client::session::Session;
+    /// # use scylla::client::session_builder::SessionBuilder;
     /// # use scylla::transport::Compression;
     /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
     /// let session: Session = SessionBuilder::new()
@@ -977,7 +1011,8 @@ impl<K: SessionBuilderKind> GenericSessionBuilder<K> {
     /// means that the metadata is refreshed every 20 seconds.
     /// # Example
     /// ```
-    /// # use scylla::{Session, SessionBuilder};
+    /// # use scylla::client::session::Session;
+    /// # use scylla::client::session_builder::SessionBuilder;
     /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
     ///     let session: Session = SessionBuilder::new()
     ///         .known_node("127.0.0.1:9042")
@@ -1000,7 +1035,8 @@ impl<K: SessionBuilderKind> GenericSessionBuilder<K> {
     ///
     /// # Example
     /// ```
-    /// # use scylla::{Session, SessionBuilder};
+    /// # use scylla::client::session::Session;
+    /// # use scylla::client::session_builder::SessionBuilder;
     /// # use scylla::transport::SelfIdentity;
     /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
     ///     let (app_major, app_minor, app_patch) = (2, 1, 3);

@@ -1,7 +1,8 @@
 use anyhow::Result;
+use scylla::client::session::Session;
+use scylla::client::session_builder::SessionBuilder;
 use scylla::routing::Token;
 use scylla::transport::NodeAddr;
-use scylla::{Session, SessionBuilder};
 use std::env;
 
 #[tokio::main]

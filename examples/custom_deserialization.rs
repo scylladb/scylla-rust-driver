@@ -1,8 +1,8 @@
 use anyhow::Result;
+use scylla::client::session::Session;
+use scylla::client::session_builder::SessionBuilder;
 use scylla::deserialize::DeserializeValue;
 use scylla::frame::response::result::ColumnType;
-use scylla::transport::session::Session;
-use scylla::SessionBuilder;
 use std::env;
 
 #[tokio::main]

@@ -16,7 +16,7 @@ However, for most use cases other types are more practical. See following sectio
 ```rust
 # extern crate scylla;
 # extern crate futures;
-# use scylla::Session;
+# use scylla::client::session::Session;
 # use std::error::Error;
 # async fn check_only_compiles(session: &Session) -> Result<(), Box<dyn Error>> {
 use scylla::frame::value::CqlTimestamp;
@@ -52,7 +52,7 @@ timezone information. Any precision finer than 1ms will be lost.
 # extern crate chrono;
 # extern crate scylla;
 # extern crate futures;
-# use scylla::Session;
+# use scylla::client::session::Session;
 # use std::error::Error;
 # async fn check_only_compiles(session: &Session) -> Result<(), Box<dyn Error>> {
 use chrono::{DateTime, NaiveDate, NaiveDateTime, NaiveTime, Utc};
@@ -93,7 +93,7 @@ than 1ms will also be lost.
 # extern crate scylla;
 # extern crate time;
 # extern crate futures;
-# use scylla::Session;
+# use scylla::client::session::Session;
 # use std::error::Error;
 # async fn check_only_compiles(session: &Session) -> Result<(), Box<dyn Error>> {
 use futures::TryStreamExt;

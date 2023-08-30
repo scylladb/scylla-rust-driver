@@ -1,13 +1,12 @@
 use anyhow::Result;
 use rand::thread_rng;
 use rand::Rng;
+use scylla::client::session::Session;
+use scylla::client::session_builder::SessionBuilder;
+use scylla::load_balancing::{LoadBalancingPolicy, RoutingInfo};
+use scylla::routing::Shard;
 use scylla::transport::NodeRef;
-use scylla::{
-    load_balancing::{LoadBalancingPolicy, RoutingInfo},
-    routing::Shard,
-    transport::{ClusterData, ExecutionProfile},
-    Session, SessionBuilder,
-};
+use scylla::transport::{ClusterData, ExecutionProfile};
 use std::{env, sync::Arc};
 
 /// Example load balancing policy that prefers nodes from favorite datacenter

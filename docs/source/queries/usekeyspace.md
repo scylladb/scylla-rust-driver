@@ -29,7 +29,7 @@ cqlsh:my_keyspace> SELECT * FROM other_keyspace.other_table;
 In the driver this can be achieved using `Session::use_keyspace`:
 ```rust
 # extern crate scylla;
-# use scylla::Session;
+# use scylla::client::session::Session;
 # use std::error::Error;
 # async fn check_only_compiles(session: &Session) -> Result<(), Box<dyn Error>> {
 session
@@ -53,7 +53,7 @@ It is also possible to send raw use keyspace query using `Session::query_*` inst
 
 ```rust
 # extern crate scylla;
-# use scylla::Session;
+# use scylla::client::session::Session;
 # use std::error::Error;
 # async fn check_only_compiles(session: &Session) -> Result<(), Box<dyn Error>> {
 session.query_unpaged("USE my_keyspace", &[]).await?;
@@ -78,7 +78,7 @@ Let's see what happens when there are two keyspaces with the same name but diffe
 
 ```rust
 # extern crate scylla;
-# use scylla::Session;
+# use scylla::client::session::Session;
 # use std::error::Error;
 # async fn check_only_compiles(session: &Session) -> Result<(), Box<dyn Error>> {
 // lowercase name without case sensitivity will use my_keyspace

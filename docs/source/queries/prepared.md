@@ -11,7 +11,7 @@ prepares the statement before execution. The reason for this is to provide type 
 
 ```rust
 # extern crate scylla;
-# use scylla::Session;
+# use scylla::client::session::Session;
 # use std::error::Error;
 # async fn check_only_compiles(session: &Session) -> Result<(), Box<dyn Error>> {
 use scylla::prepared_statement::PreparedStatement;
@@ -54,7 +54,7 @@ For example to change the consistency:
 
 ```rust
 # extern crate scylla;
-# use scylla::Session;
+# use scylla::client::session::Session;
 # use std::error::Error;
 # async fn check_only_compiles(session: &Session) -> Result<(), Box<dyn Error>> {
 use scylla::prepared_statement::PreparedStatement;
@@ -106,7 +106,7 @@ TABLE ks.prepare_table (
 
 ```rust
 # extern crate scylla;
-# use scylla::Session;
+# use scylla::client::session::Session;
 # use std::error::Error;
 # async fn check_only_compiles(session: &Session) -> Result<(), Box<dyn Error>> {
 use scylla::prepared_statement::PreparedStatement;

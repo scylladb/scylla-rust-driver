@@ -3,7 +3,7 @@
 Simple query takes query text and values and simply executes them on a `Session`:
 ```rust
 # extern crate scylla;
-# use scylla::Session;
+# use scylla::client::session::Session;
 # use std::error::Error;
 # async fn simple_query_example(session: &Session) -> Result<(), Box<dyn Error>> {
 // Insert a value into the table
@@ -33,7 +33,7 @@ As the first argument `Session::query_unpaged` takes anything implementing `Into
 You can create a query manually to set custom options. For example to change query consistency:
 ```rust
 # extern crate scylla;
-# use scylla::Session;
+# use scylla::client::session::Session;
 # use std::error::Error;
 # async fn check_only_compiles(session: &Session) -> Result<(), Box<dyn Error>> {
 use scylla::query::Query;
@@ -59,7 +59,7 @@ Each `?` in query text will be filled with the matching value.
 The easiest way is to pass values using a tuple:
 ```rust
 # extern crate scylla;
-# use scylla::Session;
+# use scylla::client::session::Session;
 # use std::error::Error;
 # async fn check_only_compiles(session: &Session) -> Result<(), Box<dyn Error>> {
 // Sending an integer and a string using a tuple
@@ -80,10 +80,9 @@ The result can then be operated on via helper methods which verify that the resu
 Here, we use the `rows` method to check that the response indeed contains rows with a single `int` column:
 ```rust
 # extern crate scylla;
-# use scylla::Session;
+# use scylla::client::session::Session;
 # use std::error::Error;
 # async fn check_only_compiles(session: &Session) -> Result<(), Box<dyn Error>> {
-use scylla::IntoTypedRows;
 
 // NOTE: using unpaged queries for SELECTs is discouraged in general.
 // Query results may be so big that it is not preferable to fetch them all at once.

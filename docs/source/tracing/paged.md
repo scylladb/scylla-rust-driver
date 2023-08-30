@@ -9,7 +9,7 @@ If tracing is enabled the row iterator will contain a list of tracing ids for al
 # extern crate scylla;
 # extern crate uuid;
 # extern crate futures;
-# use scylla::Session;
+# use scylla::client::session::Session;
 # use std::error::Error;
 # async fn check_only_compiles(session: &Session) -> Result<(), Box<dyn Error>> {
 use scylla::query::Query;
@@ -47,7 +47,7 @@ for id in tracing_ids {
 # extern crate scylla;
 # extern crate uuid;
 # extern crate futures;
-# use scylla::Session;
+# use scylla::client::session::Session;
 # use std::error::Error;
 # async fn check_only_compiles(session: &Session) -> Result<(), Box<dyn Error>> {
 use scylla::prepared_statement::PreparedStatement;

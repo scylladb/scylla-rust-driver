@@ -48,11 +48,12 @@ The behaviour is the same.
 To use in `Session`:
 ```rust
 # extern crate scylla;
-# use scylla::Session;
+# use scylla::client::session::Session;
 # use std::error::Error;
 # use std::sync::Arc;
 # async fn check_only_compiles() -> Result<(), Box<dyn Error>> {
-use scylla::{Session, SessionBuilder};
+use scylla::client::session::Session;
+use scylla::client::session_builder::SessionBuilder;
 use scylla::transport::ExecutionProfile;
 use scylla::transport::downgrading_consistency_retry_policy::DowngradingConsistencyRetryPolicy;
 
@@ -73,7 +74,7 @@ let session: Session = SessionBuilder::new()
 To use in a [simple query](../queries/simple.md):
 ```rust
 # extern crate scylla;
-# use scylla::Session;
+# use scylla::client::session::Session;
 # use std::error::Error;
 # use std::sync::Arc;
 # async fn check_only_compiles(session: &Session) -> Result<(), Box<dyn Error>> {
@@ -100,7 +101,7 @@ session.query_unpaged(my_query, (to_insert,)).await?;
 To use in a [prepared query](../queries/prepared.md):
 ```rust
 # extern crate scylla;
-# use scylla::Session;
+# use scylla::client::session::Session;
 # use std::error::Error;
 # use std::sync::Arc;
 # async fn check_only_compiles(session: &Session) -> Result<(), Box<dyn Error>> {

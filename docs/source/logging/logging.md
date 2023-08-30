@@ -16,7 +16,8 @@ To print the logs you can use the default subscriber:
 # extern crate tracing;
 # extern crate tracing_subscriber;
 # use std::error::Error;
-# use scylla::{Session, SessionBuilder};
+# use scylla::client::session::Session;
+# use scylla::client::session_builder::SessionBuilder;
 use tracing::info;
 
 #[tokio::main]
@@ -69,7 +70,8 @@ then you can setup `env_logger` os some other logger and it will output logs fro
 # extern crate tracing;
 # extern crate env_logger;
 # use std::error::Error;
-# use scylla::{Session, SessionBuilder};
+# use scylla::client::session::Session;
+# use scylla::client::session_builder::SessionBuilder;
 use tracing::info;
 
 #[tokio::main]

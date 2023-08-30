@@ -49,10 +49,10 @@ The newly created execution profile is then converted to a handle using
 # extern crate scylla;
 # use std::error::Error;
 # async fn check_only_compiles(uri: &str) -> Result<(), Box<dyn Error>> {
-use scylla::SessionBuilder;
+use scylla::client::session::Session;
+use scylla::client::session_builder::SessionBuilder;
 use scylla::load_balancing::DefaultPolicy;
 use scylla::transport::ExecutionProfile;
-use scylla::transport::session::Session;
 use std::sync::Arc;
 
 let policy = Arc::new(DefaultPolicy::default());

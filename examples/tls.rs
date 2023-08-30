@@ -1,7 +1,7 @@
 use anyhow::Result;
 use futures::TryStreamExt as _;
-use scylla::transport::session::Session;
-use scylla::SessionBuilder;
+use scylla::client::session::Session;
+use scylla::client::session_builder::SessionBuilder;
 use std::env;
 use std::fs;
 use std::path::PathBuf;

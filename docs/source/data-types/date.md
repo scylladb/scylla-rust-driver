@@ -15,7 +15,7 @@ However, for most use cases other types are more practical. See following sectio
 ```rust
 # extern crate scylla;
 # extern crate futures;
-# use scylla::Session;
+# use scylla::client::session::Session;
 # use std::error::Error;
 # async fn check_only_compiles(session: &Session) -> Result<(), Box<dyn Error>> {
 use scylla::frame::value::CqlDate;
@@ -51,7 +51,7 @@ If full range is not required and `chrono-04` feature is enabled,
 # extern crate chrono;
 # extern crate scylla;
 # extern crate futures;
-# use scylla::Session;
+# use scylla::client::session::Session;
 # use std::error::Error;
 # async fn check_only_compiles(session: &Session) -> Result<(), Box<dyn Error>> {
 use chrono::NaiveDate;
@@ -87,7 +87,7 @@ documentation to get more info.
 # extern crate scylla;
 # extern crate time;
 # extern crate futures;
-# use scylla::Session;
+# use scylla::client::session::Session;
 # use std::error::Error;
 # async fn check_only_compiles(session: &Session) -> Result<(), Box<dyn Error>> {
 use futures::TryStreamExt;

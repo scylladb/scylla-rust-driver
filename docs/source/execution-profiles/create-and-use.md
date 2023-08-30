@@ -6,7 +6,8 @@ To create an `ExecutionProfile` and attach it as default for `Session`:
 # extern crate scylla;
 # use std::error::Error;
 # async fn check_only_compiles() -> Result<(), Box<dyn Error>> {
-use scylla::{Session, SessionBuilder};
+use scylla::client::session::Session;
+use scylla::client::session_builder::SessionBuilder;
 use scylla::statement::Consistency;
 use scylla::transport::ExecutionProfile;
 

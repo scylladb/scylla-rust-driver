@@ -7,7 +7,7 @@
 ```rust
 # extern crate scylla;
 # extern crate futures;
-# use scylla::Session;
+# use scylla::client::session::Session;
 # use std::error::Error;
 # async fn check_only_compiles(session: &Session) -> Result<(), Box<dyn Error>> {
 use futures::TryStreamExt;
@@ -36,7 +36,7 @@ while let Some((bool_value,)) = iter.try_next().await? {
 ```rust
 # extern crate scylla;
 # extern crate futures;
-# use scylla::Session;
+# use scylla::client::session::Session;
 # use std::error::Error;
 # async fn check_only_compiles(session: &Session) -> Result<(), Box<dyn Error>> {
 use futures::TryStreamExt;
@@ -65,7 +65,7 @@ while let Some((tinyint_value,)) = iter.try_next().await? {
 ```rust
 # extern crate scylla;
 # extern crate futures;
-# use scylla::Session;
+# use scylla::client::session::Session;
 # use std::error::Error;
 # async fn check_only_compiles(session: &Session) -> Result<(), Box<dyn Error>> {
 use futures::TryStreamExt;
@@ -94,7 +94,7 @@ while let Some((smallint_value,)) = iter.try_next().await? {
 ```rust
 # extern crate scylla;
 # extern crate futures;
-# use scylla::Session;
+# use scylla::client::session::Session;
 # use std::error::Error;
 # async fn check_only_compiles(session: &Session) -> Result<(), Box<dyn Error>> {
 use futures::TryStreamExt;
@@ -123,7 +123,7 @@ while let Some((int_value,)) = iter.try_next().await? {
 ```rust
 # extern crate scylla;
 # extern crate futures;
-# use scylla::Session;
+# use scylla::client::session::Session;
 # use std::error::Error;
 # async fn check_only_compiles(session: &Session) -> Result<(), Box<dyn Error>> {
 use futures::TryStreamExt;
@@ -152,7 +152,7 @@ while let Some((bigint_value,)) = iter.try_next().await? {
 ```rust
 # extern crate scylla;
 # extern crate futures;
-# use scylla::Session;
+# use scylla::client::session::Session;
 # use std::error::Error;
 # async fn check_only_compiles(session: &Session) -> Result<(), Box<dyn Error>> {
 use futures::TryStreamExt;
@@ -181,7 +181,7 @@ while let Some((float_value,)) = iter.try_next().await? {
 ```rust
 # extern crate scylla;
 # extern crate futures;
-# use scylla::Session;
+# use scylla::client::session::Session;
 # use std::error::Error;
 # async fn check_only_compiles(session: &Session) -> Result<(), Box<dyn Error>> {
 use futures::TryStreamExt;

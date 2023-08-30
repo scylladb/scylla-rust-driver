@@ -10,7 +10,8 @@ To use the default authentication, specify credentials using the `user` method i
 # extern crate tokio;
 # use std::error::Error;
 # async fn check_only_compiles() -> Result<(), Box<dyn Error>> {
-use scylla::{Session, SessionBuilder};
+use scylla::client::session::Session;
+use scylla::client::session_builder::SessionBuilder;
 
 let session: Session = SessionBuilder::new()
     .known_node("127.0.0.1:9042")
@@ -21,7 +22,8 @@ let session: Session = SessionBuilder::new()
 # Ok(())
 # }
 ```
- ### Custom Authentication
+
+### Custom Authentication
 
 A custom authentication is defined by implementing the `AuthenticatorSession`.
 An `AuthenticatorSession` instance is created per session, so it is also necessary to define a `AuthenticatorProvider` for it.
@@ -79,7 +81,8 @@ impl AuthenticatorProvider for CustomAuthenticatorProvider {
 }
 
 async fn authentication_example() -> Result<(), Box<dyn Error>> {
-    use scylla::{Session, SessionBuilder};
+    use scylla::client::session::Session;
+    use scylla::client::session_builder::SessionBuilder;
 
     let _session: Session = SessionBuilder::new()
         .known_node("127.0.0.1:9042")

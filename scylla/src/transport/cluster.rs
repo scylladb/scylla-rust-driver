@@ -1,10 +1,10 @@
+use crate::client::session::TABLET_CHANNEL_SIZE;
 /// Cluster manages up to date information and connections to database nodes
 use crate::frame::response::event::{Event, StatusChangeEvent};
 use crate::prepared_statement::TokenCalculationError;
 use crate::routing::{Shard, Token};
 use crate::transport::errors::{BadQuery, NewSessionError, QueryError};
 use crate::transport::host_filter::HostFilter;
-use crate::transport::session::TABLET_CHANNEL_SIZE;
 use crate::transport::{
     connection::{Connection, VerifiedKeyspaceName},
     connection_pool::PoolConfig,
