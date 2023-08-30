@@ -1,3 +1,4 @@
+use crate::cluster::host_filter::HostFilter;
 use crate::cluster::Node;
 use crate::connection::{Connection, PoolConfig, VerifiedKeyspaceName};
 /// Cluster manages up to date information and connections to database nodes
@@ -5,7 +6,6 @@ use crate::frame::response::event::{Event, StatusChangeEvent};
 use crate::frame::value::ValueList;
 use crate::prepared_statement::TokenCalculationError;
 use crate::sharding::Token;
-use crate::transport::host_filter::HostFilter;
 use crate::transport::{errors::QueryError, partitioner::PartitionerName};
 
 use arc_swap::ArcSwap;
