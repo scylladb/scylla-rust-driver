@@ -126,9 +126,9 @@ pub use statement::query;
 pub use frame::response::cql_to_rust;
 pub use frame::response::cql_to_rust::FromRow;
 
+pub use session::CachingSession;
 pub use session::SessionBuilder;
 pub use session::{IntoTypedRows, Session, SessionConfig};
-pub use transport::caching_session::CachingSession;
 pub use transport::execution_profile::ExecutionProfile;
 pub use transport::query_result::QueryResult;
 
