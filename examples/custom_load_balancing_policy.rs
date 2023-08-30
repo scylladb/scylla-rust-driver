@@ -3,9 +3,10 @@ use rand::thread_rng;
 use rand::Rng;
 use scylla::transport::NodeRef;
 use scylla::{
+    cluster::ClusterData,
     load_balancing::{LoadBalancingPolicy, RoutingInfo},
     routing::Shard,
-    transport::{ClusterData, ExecutionProfile},
+    transport::ExecutionProfile,
     Session, SessionBuilder,
 };
 use std::{env, sync::Arc};
