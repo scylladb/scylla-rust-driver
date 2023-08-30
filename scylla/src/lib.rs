@@ -257,6 +257,7 @@ pub mod client;
 #[cfg(feature = "cloud")]
 pub mod cloud;
 
+pub mod cluster;
 pub mod history;
 mod network;
 pub mod routing;

@@ -30,11 +30,11 @@ use tokio::sync::{broadcast, mpsc};
 use tracing::{debug, error, trace, warn};
 use uuid::Uuid;
 
-use super::errors::{
+use crate::transport::errors::{
     KeyspaceStrategyError, KeyspacesMetadataError, MetadataError, PeersMetadataError,
     ProtocolError, TablesMetadataError, UdtMetadataError, ViewsMetadataError,
 };
-use super::node::{InternalKnownNode, NodeAddr, ResolvedContactPoint};
+use crate::transport::node::{InternalKnownNode, NodeAddr, ResolvedContactPoint};
 
 /// Allows to read current metadata from the cluster
 pub(crate) struct MetadataReader {
@@ -976,7 +976,7 @@ where
 
     let fut = async move {
         let pager = make_keyspace_filtered_query_pager(conn, query_str, keyspaces_to_fetch).await?;
-        let stream: super::iterator::TypedRowStream<R> =
+        let stream: crate::transport::iterator::TypedRowStream<R> =
             pager.rows_stream::<R>().map_err(convert_typecheck_error)?;
         Ok::<_, QueryError>(stream)
     };

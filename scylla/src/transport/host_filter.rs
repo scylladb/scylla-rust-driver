@@ -9,7 +9,7 @@ use std::collections::HashSet;
 use std::io::Error;
 use std::net::{SocketAddr, ToSocketAddrs};
 
-use crate::transport::metadata::Peer;
+use crate::cluster::metadata::Peer;
 
 /// The `HostFilter` trait.
 pub trait HostFilter: Send + Sync {

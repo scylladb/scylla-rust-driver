@@ -7,6 +7,7 @@ use crate::batch::batch_values;
 use crate::batch::{Batch, BatchStatement};
 #[cfg(feature = "cloud")]
 use crate::cloud::CloudConfig;
+use crate::cluster::metadata::UntranslatedPeer;
 use crate::frame::response::result;
 use crate::history;
 use crate::history::HistoryListener;
@@ -35,7 +36,6 @@ use crate::transport::iterator::QueryPager;
 #[allow(deprecated)]
 use crate::transport::iterator::{LegacyRowIterator, PreparedIteratorConfig};
 use crate::transport::load_balancing::{self, RoutingInfo};
-use crate::transport::metadata::UntranslatedPeer;
 use crate::transport::metrics::Metrics;
 #[cfg(feature = "cloud")]
 use crate::transport::node::CloudEndpoint;

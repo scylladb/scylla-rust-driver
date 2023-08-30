@@ -5,6 +5,7 @@ use crate::client::Compression;
 use crate::client::SelfIdentity;
 #[cfg(feature = "cloud")]
 use crate::cloud::CloudConfig;
+use crate::cluster::metadata::{PeerEndpoint, UntranslatedEndpoint, UntranslatedPeer};
 use crate::frame::protocol_features::ProtocolFeatures;
 use crate::frame::{
     self,
@@ -25,7 +26,6 @@ use crate::transport::errors::{
 use crate::transport::errors::{ProtocolError, SchemaVersionFetchError, UseKeyspaceProtocolError};
 use crate::transport::iterator::QueryPager;
 use crate::transport::locator::tablets::{RawTablet, TabletParsingError};
-use crate::transport::metadata::{PeerEndpoint, UntranslatedEndpoint, UntranslatedPeer};
 use crate::transport::query_result::QueryResult;
 use crate::transport::NodeAddr;
 use bytes::Bytes;
@@ -2267,9 +2267,9 @@ mod tests {
     use tokio::sync::mpsc;
 
     use super::{open_connection, ConnectionConfig};
+    use crate::cluster::metadata::UntranslatedEndpoint;
     use crate::query::Query;
     use crate::test_utils::setup_tracing;
-    use crate::transport::metadata::UntranslatedEndpoint;
     use crate::transport::node::ResolvedContactPoint;
     use crate::utils::test_utils::{unique_keyspace_name, PerformDDL};
     use futures::{StreamExt, TryStreamExt};
