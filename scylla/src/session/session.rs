@@ -42,6 +42,7 @@ use crate::connection::{
     AddressTranslator, Connection, ConnectionConfig, NonErrorQueryResponse, VerifiedKeyspaceName,
 };
 use crate::cql_to_rust::FromRow;
+use crate::execution::load_balancing::{self, RoutingInfo};
 use crate::frame::response::cql_to_rust::FromRowError;
 use crate::frame::response::result;
 use crate::frame::value::{
@@ -57,7 +58,6 @@ use crate::transport::execution_profile::{
     ExecutionProfile, ExecutionProfileHandle, ExecutionProfileInner,
 };
 use crate::transport::iterator::{PreparedIteratorConfig, RowIterator};
-use crate::transport::load_balancing::{self, RoutingInfo};
 use crate::transport::metrics::Metrics;
 use crate::transport::partitioner::PartitionerName;
 use crate::transport::query_result::QueryResult;
