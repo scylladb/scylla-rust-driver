@@ -1,7 +1,7 @@
 #[cfg(feature = "cloud")]
 use crate::cloud::set_ssl_config_for_scylla_cloud_host;
 
-use crate::routing::{Shard, ShardCount, Sharder, Token};
+use crate::sharding::{Shard, ShardCount, Sharder, Token};
 use crate::transport::errors::QueryError;
 use crate::transport::{
     connection,
@@ -1258,7 +1258,7 @@ async fn open_connection_to_shard_aware_port(
 #[cfg(test)]
 mod tests {
     use super::open_connection_to_shard_aware_port;
-    use crate::routing::{ShardCount, Sharder};
+    use crate::sharding::{ShardCount, Sharder};
     use crate::transport::connection::ConnectionConfig;
     use crate::transport::metadata::UntranslatedEndpoint;
     use crate::transport::node::ResolvedContactPoint;

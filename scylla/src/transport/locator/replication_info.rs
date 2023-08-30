@@ -1,7 +1,7 @@
 use itertools::Itertools;
 
 use super::TokenRing;
-use crate::routing::Token;
+use crate::sharding::Token;
 use crate::transport::node::Node;
 
 use std::cmp;
@@ -204,7 +204,7 @@ where
 #[cfg(test)]
 mod tests {
     use crate::{
-        routing::Token,
+        sharding::Token,
         transport::locator::test::{
             create_ring, mock_metadata_for_token_aware_tests, A, B, C, D, E, F, G,
         },

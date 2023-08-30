@@ -3,7 +3,7 @@ pub use self::latency_awareness::LatencyAwarenessBuilder;
 
 use super::{FallbackPlan, LoadBalancingPolicy, NodeRef, RoutingInfo};
 use crate::{
-    routing::Token,
+    sharding::Token,
     transport::{cluster::ClusterData, locator::ReplicaSet, metadata::Strategy, node::Node},
 };
 use itertools::{Either, Itertools};
@@ -877,7 +877,7 @@ mod tests {
         load_balancing::{
             default::tests::framework::mock_cluster_data_for_token_aware_tests, RoutingInfo,
         },
-        routing::Token,
+        sharding::Token,
         transport::{
             locator::test::{KEYSPACE_NTS_RF_2, KEYSPACE_NTS_RF_3, KEYSPACE_SS_RF_2},
             ClusterData,
@@ -893,7 +893,7 @@ mod tests {
 
         use crate::{
             load_balancing::{LoadBalancingPolicy, Plan, RoutingInfo},
-            routing::Token,
+            sharding::Token,
             transport::{
                 locator::test::{id_to_invalid_addr, mock_metadata_for_token_aware_tests},
                 metadata::{Metadata, Peer},
@@ -2724,7 +2724,7 @@ mod latency_awareness {
                 default::tests::test_default_policy_with_given_cluster_and_routing_info,
                 RoutingInfo,
             },
-            routing::Token,
+            sharding::Token,
             transport::{
                 locator::test::{
                     id_to_invalid_addr, A, B, C, D, E, F, G, KEYSPACE_NTS_RF_2, KEYSPACE_NTS_RF_3,

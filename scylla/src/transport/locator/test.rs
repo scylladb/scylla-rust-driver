@@ -3,7 +3,7 @@ use rand_chacha::ChaCha8Rng;
 use uuid::Uuid;
 
 use super::{ReplicaLocator, ReplicaSet};
-use crate::routing::Token;
+use crate::sharding::Token;
 use crate::transport::{
     connection_pool::PoolConfig,
     metadata::{Keyspace, Metadata, Peer, Strategy},

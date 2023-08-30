@@ -1,4 +1,4 @@
-use crate::routing::Token;
+use crate::sharding::Token;
 
 /// A token ring is a continuous hash ring. It defines association by hashing a key
 /// onto the ring and then walking the ring in one direction.
@@ -72,7 +72,7 @@ impl<ElemT> TokenRing<ElemT> {
 #[cfg(test)]
 mod tests {
     use super::TokenRing;
-    use crate::routing::Token;
+    use crate::sharding::Token;
 
     #[test]
     fn test_token_ring() {

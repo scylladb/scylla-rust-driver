@@ -47,7 +47,7 @@ use crate::frame::value::{
 };
 use crate::prepared_statement::PreparedStatement;
 use crate::query::Query;
-use crate::routing::Token;
+use crate::sharding::Token;
 use crate::statement::Consistency;
 use crate::tracing::{TracingEvent, TracingInfo};
 use crate::transport::cluster::{Cluster, ClusterData, ClusterNeatDebug};

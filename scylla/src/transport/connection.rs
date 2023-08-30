@@ -57,7 +57,7 @@ use crate::frame::{
     FrameParams, SerializedRequest,
 };
 use crate::query::Query;
-use crate::routing::ShardInfo;
+use crate::sharding::ShardInfo;
 use crate::statement::prepared_statement::PreparedStatement;
 use crate::statement::Consistency;
 use crate::transport::session::IntoTypedRows;
