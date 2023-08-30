@@ -39,8 +39,8 @@ use std::{
 
 use super::errors::{BadKeyspaceName, DbError, QueryError};
 use super::iterator::RowIterator;
+use super::metadata::{PeerEndpoint, UntranslatedEndpoint, UntranslatedPeer};
 use super::session::AddressTranslator;
-use super::topology::{PeerEndpoint, UntranslatedEndpoint, UntranslatedPeer};
 use super::NodeAddr;
 #[cfg(feature = "cloud")]
 use crate::cloud::CloudConfig;
@@ -1779,8 +1779,8 @@ mod tests {
     use super::ConnectionConfig;
     use crate::query::Query;
     use crate::transport::connection::open_connection;
+    use crate::transport::metadata::UntranslatedEndpoint;
     use crate::transport::node::ResolvedContactPoint;
-    use crate::transport::topology::UntranslatedEndpoint;
     use crate::utils::test_utils::unique_keyspace_name;
     use crate::{IntoTypedRows, SessionBuilder};
     use futures::{StreamExt, TryStreamExt};

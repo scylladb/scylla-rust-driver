@@ -37,11 +37,11 @@ use super::connection::QueryResponse;
 use super::connection::SslConfig;
 use super::errors::{NewSessionError, QueryError};
 use super::execution_profile::{ExecutionProfile, ExecutionProfileHandle, ExecutionProfileInner};
+use super::metadata::UntranslatedPeer;
 #[cfg(feature = "cloud")]
 use super::node::CloudEndpoint;
 use super::node::KnownNode;
 use super::partitioner::PartitionerName;
-use super::topology::UntranslatedPeer;
 use super::NodeRef;
 use crate::cql_to_rust::FromRow;
 use crate::frame::response::cql_to_rust::FromRowError;

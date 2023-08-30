@@ -8,9 +8,9 @@ use crate::transport::{
     connection::{Connection, VerifiedKeyspaceName},
     connection_pool::PoolConfig,
     errors::QueryError,
+    metadata::{Keyspace, Metadata, MetadataReader},
     node::Node,
     partitioner::PartitionerName,
-    topology::{Keyspace, Metadata, MetadataReader},
 };
 
 use arc_swap::ArcSwap;
@@ -29,8 +29,8 @@ use uuid::Uuid;
 use super::node::{KnownNode, NodeAddr};
 
 use super::locator::ReplicaLocator;
+use super::metadata::Strategy;
 use super::partitioner::calculate_token_for_partition_key;
-use super::topology::Strategy;
 
 /// Cluster manages up to date information and connections to database nodes.
 /// All data can be accessed by cloning Arc<ClusterData> in the `data` field

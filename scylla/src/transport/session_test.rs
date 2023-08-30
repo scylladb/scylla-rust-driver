@@ -10,12 +10,12 @@ use crate::statement::Consistency;
 use crate::tracing::TracingInfo;
 use crate::transport::cluster::Datacenter;
 use crate::transport::errors::{BadKeyspaceName, BadQuery, DbError, QueryError};
+use crate::transport::metadata::Strategy::NetworkTopologyStrategy;
+use crate::transport::metadata::{
+    CollectionType, ColumnKind, CqlType, NativeType, UserDefinedType,
+};
 use crate::transport::partitioner::{
     calculate_token_for_partition_key, Murmur3Partitioner, Partitioner, PartitionerName,
-};
-use crate::transport::topology::Strategy::NetworkTopologyStrategy;
-use crate::transport::topology::{
-    CollectionType, ColumnKind, CqlType, NativeType, UserDefinedType,
 };
 use crate::utils::test_utils::{
     create_new_session_builder, supports_feature, unique_keyspace_name,
