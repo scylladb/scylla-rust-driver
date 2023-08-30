@@ -1,3 +1,4 @@
+use super::caching_session::CachingSession;
 use super::session::Session;
 use super::session_builder::SessionBuilder;
 use crate::batch::{Batch, BatchStatement};
@@ -20,7 +21,6 @@ use crate::utils::test_utils::{
     create_new_session_builder, scylla_supports_tablets, setup_tracing, supports_feature,
     unique_keyspace_name, PerformDDL,
 };
-use crate::CachingSession;
 use crate::ExecutionProfile;
 use crate::{self as scylla, QueryResult};
 use assert_matches::assert_matches;

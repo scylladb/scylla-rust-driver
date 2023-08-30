@@ -20,11 +20,11 @@ use std::fmt;
 use std::hash::BuildHasher;
 use std::sync::Arc;
 
-use super::iterator::QueryPager;
 #[allow(deprecated)]
 use crate::client::session::{
     CurrentDeserializationApi, DeserializationApiKind, GenericSession, LegacyDeserializationApi,
 };
+use crate::transport::iterator::QueryPager;
 
 /// Contains just the parts of a prepared statement that were returned
 /// from the database. All remaining parts (query string, page size,
@@ -341,7 +341,11 @@ where
 
 #[cfg(test)]
 mod tests {
+    use crate::batch::{Batch, BatchStatement};
+    #[allow(deprecated)]
+    use crate::client::caching_session::LegacyCachingSession;
     use crate::client::session::Session;
+    use crate::prepared_statement::PreparedStatement;
     use crate::query::Query;
     use crate::statement::PagingState;
     use crate::test_utils::{
@@ -349,16 +353,11 @@ mod tests {
     };
     use crate::transport::partitioner::PartitionerName;
     use crate::utils::test_utils::unique_keyspace_name;
-    #[allow(deprecated)]
-    use crate::LegacyCachingSession;
-    use crate::{
-        batch::{Batch, BatchStatement},
-        prepared_statement::PreparedStatement,
-        CachingSession,
-    };
     use futures::TryStreamExt;
     use scylla_cql::frame::response::result::Row;
     use std::collections::BTreeSet;
+
+    use super::CachingSession;
 
     async fn new_for_test(with_tablet_support: bool) -> Session {
         let session = create_new_session_builder()
