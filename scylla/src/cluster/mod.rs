@@ -1,4 +1,5 @@
 mod cluster;
+pub mod host_filter;
 pub mod locator;
 pub mod metadata;
 mod node;

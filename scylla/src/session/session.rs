@@ -28,6 +28,7 @@ use tokio::time::timeout;
 use tracing::{debug, trace, trace_span, Instrument};
 use uuid::Uuid;
 
+use crate::cluster::host_filter::HostFilter;
 #[cfg(feature = "cloud")]
 use crate::cluster::CloudEndpoint;
 use crate::cluster::{Cluster, ClusterData, ClusterNeatDebug};
@@ -54,7 +55,6 @@ use crate::transport::errors::{NewSessionError, QueryError};
 use crate::transport::execution_profile::{
     ExecutionProfile, ExecutionProfileHandle, ExecutionProfileInner,
 };
-use crate::transport::host_filter::HostFilter;
 use crate::transport::iterator::{PreparedIteratorConfig, RowIterator};
 use crate::transport::load_balancing::{self, RoutingInfo};
 use crate::transport::metrics::Metrics;

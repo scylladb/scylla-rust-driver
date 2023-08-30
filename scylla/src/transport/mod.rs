@@ -1,6 +1,5 @@
 pub mod downgrading_consistency_retry_policy;
 pub mod execution_profile;
-pub mod host_filter;
 pub mod iterator;
 pub mod load_balancing;
 pub(crate) mod metrics;
