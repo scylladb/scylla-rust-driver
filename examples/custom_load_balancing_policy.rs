@@ -1,7 +1,8 @@
 use anyhow::Result;
 use scylla::{
+    cluster::ClusterData,
     load_balancing::{LoadBalancingPolicy, RoutingInfo},
-    transport::{ClusterData, ExecutionProfile},
+    transport::ExecutionProfile,
     Session, SessionBuilder,
 };
 use std::{env, sync::Arc};

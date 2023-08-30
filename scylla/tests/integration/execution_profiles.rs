@@ -9,11 +9,11 @@ use scylla::query::Query;
 use scylla::statement::SerialConsistency;
 use scylla::transport::NodeRef;
 use scylla::{
+    cluster::ClusterData,
     load_balancing::{LoadBalancingPolicy, RoutingInfo},
     retry_policy::{RetryPolicy, RetrySession},
     speculative_execution::SpeculativeExecutionPolicy,
     test_utils::unique_keyspace_name,
-    transport::ClusterData,
     ExecutionProfile, SessionBuilder,
 };
 use scylla_cql::Consistency;
