@@ -1,20 +1,17 @@
 #[cfg(feature = "cloud")]
 use crate::cloud::set_ssl_config_for_scylla_cloud_host;
 
+use crate::connection::{Connection, ConnectionConfig, ErrorReceiver, VerifiedKeyspaceName};
 use crate::sharding::{Shard, ShardCount, Sharder, Token};
 use crate::transport::errors::QueryError;
-use crate::transport::{
-    connection,
-    connection::{Connection, ConnectionConfig, ErrorReceiver, VerifiedKeyspaceName},
-};
 
 #[cfg(feature = "cloud")]
-use super::node::resolve_hostname;
+use crate::transport::node::resolve_hostname;
 
-use super::metadata::{PeerEndpoint, UntranslatedEndpoint};
+use crate::transport::metadata::{PeerEndpoint, UntranslatedEndpoint};
 #[cfg(feature = "cloud")]
-use super::node::ResolvedContactPoint;
-use super::NodeAddr;
+use crate::transport::node::ResolvedContactPoint;
+use crate::transport::NodeAddr;
 
 use arc_swap::ArcSwap;
 use futures::{future::RemoteHandle, stream::FuturesUnordered, Future, FutureExt, StreamExt};
@@ -29,6 +26,8 @@ use std::time::Duration;
 use tokio::sync::{broadcast, mpsc, Notify};
 use tracing::instrument::WithSubscriber;
 use tracing::{debug, trace, warn};
+
+use super::connection::open_connection;
 
 /// The target size of a per-node connection pool.
 #[derive(Debug, Clone, Copy)]
@@ -947,7 +946,7 @@ impl PoolRefiller {
             .boxed(),
             _ => async move {
                 let non_shard_aware_endpoint = endpoint_fut.await;
-                let result = connection::open_connection(non_shard_aware_endpoint, None, cfg).await;
+                let result = open_connection(non_shard_aware_endpoint, None, cfg).await;
                 OpenedConnectionEvent {
                     result,
                     requested_shard: None,
@@ -1239,8 +1238,7 @@ async fn open_connection_to_shard_aware_port(
 
     for port in source_port_iter {
         let connect_result =
-            connection::open_connection(endpoint.clone(), Some(port), connection_config.clone())
-                .await;
+            open_connection(endpoint.clone(), Some(port), connection_config.clone()).await;
 
         match connect_result {
             Err(err) if err.is_address_unavailable_for_use() => continue, // If we can't use this port, try the next one
@@ -1258,8 +1256,8 @@ async fn open_connection_to_shard_aware_port(
 #[cfg(test)]
 mod tests {
     use super::open_connection_to_shard_aware_port;
+    use crate::connection::ConnectionConfig;
     use crate::sharding::{ShardCount, Sharder};
-    use crate::transport::connection::ConnectionConfig;
     use crate::transport::metadata::UntranslatedEndpoint;
     use crate::transport::node::ResolvedContactPoint;
     use std::net::{SocketAddr, ToSocketAddrs};

@@ -28,6 +28,13 @@ use tokio::time::timeout;
 use tracing::{debug, trace, trace_span, Instrument};
 use uuid::Uuid;
 
+use crate::connection::PoolConfig;
+use crate::connection::QueryResponse;
+#[cfg(feature = "ssl")]
+use crate::connection::SslConfig;
+use crate::connection::{
+    AddressTranslator, Connection, ConnectionConfig, NonErrorQueryResponse, VerifiedKeyspaceName,
+};
 use crate::cql_to_rust::FromRow;
 use crate::frame::response::cql_to_rust::FromRowError;
 use crate::frame::response::result;
@@ -40,12 +47,6 @@ use crate::sharding::Token;
 use crate::statement::Consistency;
 use crate::tracing::{TracingEvent, TracingInfo};
 use crate::transport::cluster::{Cluster, ClusterData, ClusterNeatDebug};
-use crate::transport::connection::QueryResponse;
-#[cfg(feature = "ssl")]
-use crate::transport::connection::SslConfig;
-use crate::transport::connection::{AddressTranslator, NonErrorQueryResponse};
-use crate::transport::connection::{Connection, ConnectionConfig, VerifiedKeyspaceName};
-use crate::transport::connection_pool::PoolConfig;
 use crate::transport::errors::{NewSessionError, QueryError};
 use crate::transport::execution_profile::{
     ExecutionProfile, ExecutionProfileHandle, ExecutionProfileInner,
@@ -68,7 +69,7 @@ use crate::{
     statement::StatementConfig,
 };
 
-use crate::transport::connection_pool::PoolSize;
+use crate::connection::PoolSize;
 
 use crate::authentication::AuthenticatorProvider;
 #[cfg(feature = "ssl")]

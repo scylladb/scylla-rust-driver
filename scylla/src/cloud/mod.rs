@@ -11,7 +11,7 @@ use openssl::{
 use tracing::warn;
 use uuid::Uuid;
 
-use crate::transport::connection::{ConnectionConfig, SslConfig};
+use crate::connection::{ConnectionConfig, SslConfig};
 
 pub(crate) fn set_ssl_config_for_scylla_cloud_host(
     host_id: Option<Uuid>,
