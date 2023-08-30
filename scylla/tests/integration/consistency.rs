@@ -4,7 +4,7 @@ use scylla::execution_profile::{ExecutionProfileBuilder, ExecutionProfileHandle}
 use scylla::load_balancing::{DefaultPolicy, LoadBalancingPolicy, RoutingInfo};
 use scylla::prepared_statement::PreparedStatement;
 use scylla::retry_policy::FallthroughRetryPolicy;
-use scylla::routing::Token;
+use scylla::sharding::Token;
 use scylla::test_utils::unique_keyspace_name;
 use scylla::transport::session::Session;
 use tokio::sync::mpsc::{self, UnboundedReceiver, UnboundedSender};

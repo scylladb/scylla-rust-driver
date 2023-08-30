@@ -15,7 +15,7 @@ use crate::frame::types::{Consistency, SerialConsistency};
 use crate::frame::value::SerializedValues;
 use crate::history::HistoryListener;
 use crate::retry_policy::RetryPolicy;
-use crate::routing::Token;
+use crate::sharding::Token;
 use crate::transport::execution_profile::ExecutionProfileHandle;
 use crate::transport::partitioner::{Partitioner, PartitionerHasher, PartitionerName};
 

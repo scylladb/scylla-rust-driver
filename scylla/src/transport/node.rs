@@ -3,7 +3,7 @@ use tracing::warn;
 use uuid::Uuid;
 
 /// Node represents a cluster node along with it's data and connections
-use crate::routing::{Sharder, Token};
+use crate::sharding::{Sharder, Token};
 use crate::transport::connection::Connection;
 use crate::transport::connection::VerifiedKeyspaceName;
 use crate::transport::connection_pool::{NodeConnectionPool, PoolConfig};

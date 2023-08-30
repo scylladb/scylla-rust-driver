@@ -2,7 +2,7 @@ use bytes::Buf;
 use std::num::Wrapping;
 
 use crate::{
-    frame::value::SerializedValues, prepared_statement::TokenCalculationError, routing::Token,
+    frame::value::SerializedValues, prepared_statement::TokenCalculationError, sharding::Token,
 };
 
 #[allow(clippy::upper_case_acronyms)]

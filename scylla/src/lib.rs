@@ -106,7 +106,7 @@ pub mod authentication;
 pub mod cloud;
 
 pub mod history;
-pub mod routing;
+pub mod sharding;
 pub mod statement;
 pub mod tracing;
 pub mod transport;

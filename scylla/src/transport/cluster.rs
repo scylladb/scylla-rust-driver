@@ -2,7 +2,7 @@
 use crate::frame::response::event::{Event, StatusChangeEvent};
 use crate::frame::value::ValueList;
 use crate::prepared_statement::TokenCalculationError;
-use crate::routing::Token;
+use crate::sharding::Token;
 use crate::transport::host_filter::HostFilter;
 use crate::transport::{
     connection::{Connection, VerifiedKeyspaceName},

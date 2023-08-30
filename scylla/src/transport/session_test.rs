@@ -5,7 +5,7 @@ use crate::frame::value::ValueList;
 use crate::prepared_statement::PreparedStatement;
 use crate::query::Query;
 use crate::retry_policy::{QueryInfo, RetryDecision, RetryPolicy, RetrySession};
-use crate::routing::Token;
+use crate::sharding::Token;
 use crate::statement::Consistency;
 use crate::tracing::TracingInfo;
 use crate::transport::cluster::Datacenter;

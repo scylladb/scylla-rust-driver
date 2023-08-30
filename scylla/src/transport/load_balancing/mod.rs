@@ -3,7 +3,7 @@
 //! See [the book](https://rust-driver.docs.scylladb.com/stable/load-balancing/load-balancing.html) for more information
 
 use super::{cluster::ClusterData, NodeRef};
-use crate::routing::Token;
+use crate::sharding::Token;
 use scylla_cql::{errors::QueryError, frame::types};
 
 use std::time::Duration;
