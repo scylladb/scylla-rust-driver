@@ -1,8 +1,9 @@
 //! SessionBuilder provides an easy way to create new Sessions
 
+use super::connection::AddressTranslator;
 use super::errors::NewSessionError;
 use super::execution_profile::ExecutionProfileHandle;
-use super::session::{AddressTranslator, Session, SessionConfig};
+use super::session::{Session, SessionConfig};
 use super::Compression;
 
 #[cfg(feature = "cloud")]
