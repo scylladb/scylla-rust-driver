@@ -22,7 +22,7 @@ use std::{
     },
 };
 
-use super::topology::{PeerEndpoint, UntranslatedEndpoint};
+use super::metadata::{PeerEndpoint, UntranslatedEndpoint};
 
 /// This enum is introduced to support address translation only upon opening a connection,
 /// as well as to cope with a bug present in older Cassandra and Scylla releases.

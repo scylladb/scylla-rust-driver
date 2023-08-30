@@ -5,7 +5,7 @@ use super::{FallbackPlan, LoadBalancingPolicy, NodeRef, RoutingInfo};
 use crate::{
     routing::{Shard, Token},
     transport::errors::QueryError,
-    transport::{cluster::ClusterData, locator::ReplicaSet, node::Node, topology::Strategy},
+    transport::{cluster::ClusterData, locator::ReplicaSet, metadata::Strategy, node::Node},
 };
 use itertools::{Either, Itertools};
 use rand::{prelude::SliceRandom, thread_rng, Rng};
@@ -1192,7 +1192,7 @@ mod tests {
                     tablets::TabletsInfo,
                     test::{id_to_invalid_addr, mock_metadata_for_token_aware_tests},
                 },
-                topology::{Metadata, Peer},
+                metadata::{Metadata, Peer},
                 ClusterData,
             },
         };
@@ -2481,7 +2481,7 @@ mod tests {
             {
                 struct FHostFilter;
                 impl HostFilter for FHostFilter {
-                    fn accept(&self, peer: &crate::transport::topology::Peer) -> bool {
+                    fn accept(&self, peer: &crate::transport::metadata::Peer) -> bool {
                         peer.address != id_to_invalid_addr(F)
                     }
                 }
