@@ -107,6 +107,7 @@ pub mod cloud;
 
 pub mod cluster;
 pub mod connection;
+pub mod execution;
 pub mod history;
 pub mod session;
 pub mod sharding;
@@ -138,8 +139,8 @@ pub use transport::query_result::QueryResult;
 pub use session::CloudSessionBuilder;
 
 pub use cluster::host_filter;
+pub use execution::load_balancing;
 pub use transport::execution_profile;
-pub use transport::load_balancing;
 pub use transport::retry_policy;
 pub use transport::speculative_execution;
 
