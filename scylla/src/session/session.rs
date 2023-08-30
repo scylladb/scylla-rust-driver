@@ -41,12 +41,11 @@ use tokio::time::timeout;
 use tracing::{debug, error, trace, trace_span, Instrument};
 use uuid::Uuid;
 
-use crate::connection::Compression;
-use crate::connection::QueryResponse;
+use crate::cluster::{Cluster, ClusterData, ClusterNeatDebug};
 #[cfg(feature = "ssl")]
 use crate::connection::SslConfig;
+use crate::connection::{Compression, NonErrorQueryResponse, QueryResponse, SelfIdentity};
 use crate::connection::{Connection, ConnectionConfig, VerifiedKeyspaceName};
-use crate::connection::{NonErrorQueryResponse, SelfIdentity};
 use crate::connection::{PoolConfig, PoolSize};
 use crate::frame::response::result;
 use crate::prepared_statement::PreparedStatement;
@@ -54,7 +53,6 @@ use crate::query::Query;
 use crate::routing::{Shard, Token};
 use crate::statement::{Consistency, PageSize, PagingState, PagingStateResponse};
 use crate::tracing::TracingInfo;
-use crate::transport::cluster::{Cluster, ClusterData, ClusterNeatDebug};
 use crate::transport::errors::TracingProtocolError;
 use crate::transport::execution_profile::{
     ExecutionProfile, ExecutionProfileHandle, ExecutionProfileInner,

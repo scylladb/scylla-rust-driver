@@ -1,4 +1,3 @@
-pub(crate) mod cluster;
 pub mod downgrading_consistency_retry_policy;
 pub mod errors;
 pub mod execution_profile;
@@ -18,5 +17,4 @@ pub use crate::frame::Authenticator;
 pub use execution_profile::ExecutionProfile;
 pub use scylla_cql::frame::request::query::{PagingState, PagingStateResponse};
 
-pub use cluster::ClusterData;
 pub use node::{KnownNode, Node, NodeAddr, NodeRef};

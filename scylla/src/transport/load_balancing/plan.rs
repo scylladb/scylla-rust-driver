@@ -2,7 +2,8 @@ use rand::{thread_rng, Rng};
 use tracing::error;
 
 use super::{FallbackPlan, LoadBalancingPolicy, NodeRef, RoutingInfo};
-use crate::{routing::Shard, transport::ClusterData};
+use crate::cluster::ClusterData;
+use crate::routing::Shard;
 
 enum PlanState<'a> {
     Created,
@@ -34,7 +35,7 @@ enum PlanState<'a> {
 /// # use std::sync::Arc;
 /// # use scylla::load_balancing::LoadBalancingPolicy;
 /// # use scylla::load_balancing::RoutingInfo;
-/// # use scylla::transport::ClusterData;
+/// # use scylla::cluster::ClusterData;
 /// # use scylla::transport::NodeRef;
 /// # use scylla::routing::Shard;
 /// # use scylla::load_balancing::FallbackPlan;
