@@ -1,9 +1,9 @@
 use crate::utils::test_with_3_node_cluster;
 
+use scylla::execution::retries::FallthroughRetryPolicy;
 use scylla::execution::{ExecutionProfileBuilder, ExecutionProfileHandle};
 use scylla::load_balancing::{DefaultPolicy, LoadBalancingPolicy, RoutingInfo};
 use scylla::prepared_statement::PreparedStatement;
-use scylla::retry_policy::FallthroughRetryPolicy;
 use scylla::session::Session;
 use scylla::sharding::Token;
 use scylla::test_utils::unique_keyspace_name;

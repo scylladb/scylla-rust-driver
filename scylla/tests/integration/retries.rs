@@ -1,5 +1,5 @@
 use crate::utils::test_with_3_node_cluster;
-use scylla::retry_policy::FallthroughRetryPolicy;
+use scylla::execution::retries::FallthroughRetryPolicy;
 use scylla::session::Session;
 use scylla::speculative_execution::SimpleSpeculativeExecutionPolicy;
 use scylla::ExecutionProfile;

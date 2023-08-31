@@ -1,9 +1,7 @@
-pub mod downgrading_consistency_retry_policy;
 pub mod iterator;
 pub(crate) mod metrics;
 pub mod partitioner;
 pub mod query_result;
-pub mod retry_policy;
 
 pub use crate::frame::{Authenticator, Compression};
 pub use scylla_cql::errors;

@@ -1,8 +1,8 @@
 use anyhow::Result;
+use scylla::execution::retries::{DefaultRetryPolicy, FallthroughRetryPolicy};
 use scylla::execution::ExecutionProfile;
 use scylla::load_balancing;
 use scylla::query::Query;
-use scylla::retry_policy::{DefaultRetryPolicy, FallthroughRetryPolicy};
 use scylla::session::Session;
 use scylla::speculative_execution::PercentileSpeculativeExecutionPolicy;
 use scylla::statement::{Consistency, SerialConsistency};

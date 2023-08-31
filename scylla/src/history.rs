@@ -7,7 +7,7 @@ use std::{
     time::SystemTime,
 };
 
-use crate::retry_policy::RetryDecision;
+use crate::execution::retries::RetryDecision;
 use chrono::{DateTime, Utc};
 
 use scylla_cql::errors::QueryError;
@@ -456,7 +456,7 @@ mod tests {
     };
 
     use crate::{
-        query::Query, retry_policy::RetryDecision, utils::test_utils::unique_keyspace_name,
+        execution::retries::RetryDecision, query::Query, utils::test_utils::unique_keyspace_name,
     };
 
     use super::{

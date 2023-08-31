@@ -10,12 +10,12 @@ use uuid::Uuid;
 use scylla_cql::frame::response::result::ColumnSpec;
 
 use super::StatementConfig;
+use crate::execution::retries::RetryPolicy;
 use crate::execution::ExecutionProfileHandle;
 use crate::frame::response::result::PreparedMetadata;
 use crate::frame::types::{Consistency, SerialConsistency};
 use crate::frame::value::SerializedValues;
 use crate::history::HistoryListener;
-use crate::retry_policy::RetryPolicy;
 use crate::sharding::Token;
 use crate::transport::partitioner::{Partitioner, PartitionerHasher, PartitionerName};
 
@@ -239,7 +239,7 @@ impl PreparedStatement {
     /// A query is idempotent if it can be applied multiple times without changing the result of the initial application
     /// If set to `true` we can be sure that it is idempotent
     /// If set to `false` it is unknown whether it is idempotent
-    /// This is used in [`RetryPolicy`](crate::retry_policy::RetryPolicy) to decide if retrying a query is safe
+    /// This is used in [`RetryPolicy`](crate::execution::retries::RetryPolicy) to decide if retrying a query is safe
     pub fn set_is_idempotent(&mut self, is_idempotent: bool) {
         self.config.is_idempotent = is_idempotent;
     }

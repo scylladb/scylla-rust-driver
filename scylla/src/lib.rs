@@ -140,6 +140,5 @@ pub use session::CloudSessionBuilder;
 
 pub use cluster::host_filter;
 pub use execution::{load_balancing, speculative_execution};
-pub use transport::retry_policy;
 
 pub use transport::metrics::Metrics;
