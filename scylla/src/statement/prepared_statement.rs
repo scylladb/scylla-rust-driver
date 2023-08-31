@@ -1,5 +1,5 @@
+use crate::execution::errors::{BadQuery, QueryError};
 use bytes::{Bytes, BytesMut};
-use scylla_cql::errors::{BadQuery, QueryError};
 use smallvec::{smallvec, SmallVec};
 use std::convert::TryInto;
 use std::sync::Arc;

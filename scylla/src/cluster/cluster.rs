@@ -8,11 +8,11 @@ use crate::frame::value::ValueList;
 use crate::prepared_statement::TokenCalculationError;
 use crate::routing::{partitioner::PartitionerName, Token};
 
+use crate::execution::errors::{BadQuery, NewSessionError};
 use arc_swap::ArcSwap;
 use futures::future::join_all;
 use futures::{future::RemoteHandle, FutureExt};
 use itertools::Itertools;
-use scylla_cql::errors::{BadQuery, NewSessionError};
 use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::sync::Arc;

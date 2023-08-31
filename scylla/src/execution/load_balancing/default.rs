@@ -3,13 +3,14 @@ pub use self::latency_awareness::LatencyAwarenessBuilder;
 
 use super::{FallbackPlan, LoadBalancingPolicy, NodeRef, RoutingInfo};
 use crate::cluster::ClusterData;
+use crate::execution::errors::QueryError;
+use crate::statement::{Consistency, SerialConsistency};
 use crate::{
     cluster::locator::ReplicaSet, cluster::metadata::Strategy, cluster::Node, routing::Token,
 };
 use itertools::{Either, Itertools};
 use rand::{prelude::SliceRandom, thread_rng, Rng};
 use rand_pcg::Pcg32;
-use scylla_cql::{errors::QueryError, frame::types::SerialConsistency, Consistency};
 use std::{fmt, sync::Arc, time::Duration};
 use tracing::warn;
 
@@ -2127,9 +2128,9 @@ mod tests {
 }
 
 mod latency_awareness {
+    use crate::execution::errors::{DbError, QueryError};
     use futures::{future::RemoteHandle, FutureExt};
     use itertools::Either;
-    use scylla_cql::errors::{DbError, QueryError};
     use tracing::{instrument::WithSubscriber, trace};
     use uuid::Uuid;
 

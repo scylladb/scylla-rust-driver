@@ -72,7 +72,7 @@ impl<const NODE: u8> LoadBalancingPolicy for BoundToPredefinedNodePolicy<NODE> {
         _query: &RoutingInfo,
         _latency: std::time::Duration,
         _node: NodeRef<'_>,
-        _error: &scylla_cql::errors::QueryError,
+        _error: &scylla::execution::errors::QueryError,
     ) {
     }
 

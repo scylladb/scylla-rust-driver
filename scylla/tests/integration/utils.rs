@@ -57,7 +57,7 @@ impl LoadBalancingPolicy for FixedOrderLoadBalancer {
         _: &scylla::load_balancing::RoutingInfo,
         _: std::time::Duration,
         _: scylla::cluster::NodeRef<'_>,
-        _: &scylla_cql::errors::QueryError,
+        _: &scylla::execution::errors::QueryError,
     ) {
     }
 
