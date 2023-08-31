@@ -1,7 +1,7 @@
 use anyhow::{bail, Result};
 use scylla::execution::errors::QueryError;
-use scylla::session::{IntoTypedRows, Session};
 use scylla::SessionBuilder;
+use scylla::{IntoTypedRows, Session};
 use std::env;
 use std::time::Duration;
 

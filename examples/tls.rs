@@ -1,6 +1,6 @@
 use anyhow::Result;
-use scylla::session::{IntoTypedRows, Session};
 use scylla::SessionBuilder;
+use scylla::{IntoTypedRows, Session};
 use std::env;
 use std::fs;
 use std::path::PathBuf;

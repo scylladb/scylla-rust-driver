@@ -133,8 +133,8 @@ pub use frame::response::cql_to_rust::FromRow;
 pub use execution::ExecutionProfile;
 pub use session::CachingSession;
 pub use session::SessionBuilder;
-pub use session::{IntoTypedRows, Session, SessionConfig};
-pub use transport::query_result::QueryResult;
+pub use session::{Session, SessionConfig};
+pub use transport::query_result::{IntoTypedRows, QueryResult};
 
 #[cfg(feature = "cloud")]
 pub use session::CloudSessionBuilder;

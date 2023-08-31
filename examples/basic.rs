@@ -1,7 +1,7 @@
 use anyhow::Result;
 use scylla::macros::FromRow;
-use scylla::session::{IntoTypedRows, Session};
 use scylla::SessionBuilder;
+use scylla::{session::Session, IntoTypedRows};
 use std::env;
 
 #[tokio::main]
