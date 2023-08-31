@@ -1,7 +1,7 @@
 # Time
 `Time` is represented as [`chrono::Duration`](https://docs.rs/chrono/0.4.19/chrono/struct.Duration.html)
 
-Internally `Time` is represented as number of nanoseconds since midnight. 
+Internally `Time` is represented as number of nanoseconds since midnight.
 It can't be negative or exceed `86399999999999` (24 hours).
 
 When sending in a query it needs to be wrapped in `value::Time` to differentiate from [`Timestamp`](timestamp.md)
@@ -13,7 +13,7 @@ When sending in a query it needs to be wrapped in `value::Time` to differentiate
 # use std::error::Error;
 # async fn check_only_compiles(session: &Session) -> Result<(), Box<dyn Error>> {
 use scylla::IntoTypedRows;
-use scylla::frame::value::Time;
+use scylla::cql::value::Time;
 use chrono::Duration;
 
 // Insert some time into the table

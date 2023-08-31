@@ -14,7 +14,7 @@ If tracing is enabled the row iterator will contain a list of tracing ids for al
 # async fn check_only_compiles(session: &Session) -> Result<(), Box<dyn Error>> {
 use scylla::query::Query;
 use scylla::execution::iterator::RowIterator;
-use scylla::tracing::TracingInfo;
+use scylla::execution::tracing::TracingInfo;
 use futures::StreamExt;
 use uuid::Uuid;
 
@@ -50,7 +50,7 @@ for id in tracing_ids {
 # async fn check_only_compiles(session: &Session) -> Result<(), Box<dyn Error>> {
 use scylla::prepared_statement::PreparedStatement;
 use scylla::execution::iterator::RowIterator;
-use scylla::tracing::TracingInfo;
+use scylla::execution::tracing::TracingInfo;
 use futures::StreamExt;
 use uuid::Uuid;
 

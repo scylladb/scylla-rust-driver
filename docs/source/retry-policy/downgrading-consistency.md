@@ -52,8 +52,8 @@ To use in `Session`:
 # use std::error::Error;
 # async fn check_only_compiles() -> Result<(), Box<dyn Error>> {
 use scylla::{Session, SessionBuilder};
-use scylla::transport::ExecutionProfile;
-use scylla::transport::downgrading_consistency_retry_policy::DowngradingConsistencyRetryPolicy;
+use scylla::execution::ExecutionProfile;
+use scylla::execution::retries::DowngradingConsistencyRetryPolicy;
 
 let handle = ExecutionProfile::builder()
     .retry_policy(Box::new(DowngradingConsistencyRetryPolicy::new()))
@@ -76,8 +76,8 @@ To use in a [simple query](../queries/simple.md):
 # use std::error::Error;
 # async fn check_only_compiles(session: &Session) -> Result<(), Box<dyn Error>> {
 use scylla::query::Query;
-use scylla::transport::ExecutionProfile;
-use scylla::transport::downgrading_consistency_retry_policy::DowngradingConsistencyRetryPolicy;
+use scylla::execution::ExecutionProfile;
+use scylla::execution::retries::DowngradingConsistencyRetryPolicy;
 
 let handle = ExecutionProfile::builder()
     .retry_policy(Box::new(DowngradingConsistencyRetryPolicy::new()))
@@ -102,8 +102,8 @@ To use in a [prepared query](../queries/prepared.md):
 # use std::error::Error;
 # async fn check_only_compiles(session: &Session) -> Result<(), Box<dyn Error>> {
 use scylla::prepared_statement::PreparedStatement;
-use scylla::transport::ExecutionProfile;
-use scylla::transport::downgrading_consistency_retry_policy::DowngradingConsistencyRetryPolicy;
+use scylla::execution::ExecutionProfile;
+use scylla::execution::retries::DowngradingConsistencyRetryPolicy;
 
 let handle = ExecutionProfile::builder()
     .retry_policy(Box::new(DowngradingConsistencyRetryPolicy::new()))

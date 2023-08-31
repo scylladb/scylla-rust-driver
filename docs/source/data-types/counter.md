@@ -8,7 +8,7 @@
 # use std::error::Error;
 # async fn check_only_compiles(session: &Session) -> Result<(), Box<dyn Error>> {
 use scylla::IntoTypedRows;
-use scylla::frame::value::Counter;
+use scylla::cql::value::Counter;
 
 // Read counter from the table
 if let Some(rows) = session.query("SELECT c FROM keyspace.table", &[]).await?.rows {

@@ -89,7 +89,7 @@ session.query("INSERT INTO ks.tab (a) VALUES (0)", &[]).await?.result_not_rows()
 For more see [`QueryResult`](https://docs.rs/scylla/latest/scylla/transport/query_result/struct.QueryResult.html)
 
 ### `NULL` values
-`NULL` values will return an error when parsed as a Rust type. 
+`NULL` values will return an error when parsed as a Rust type.
 To properly handle `NULL` values parse column as an `Option<>`:
 ```rust
 # extern crate scylla;
@@ -123,7 +123,7 @@ Field names don't need to match column names.
 # async fn check_only_compiles(session: &Session) -> Result<(), Box<dyn Error>> {
 use scylla::IntoTypedRows;
 use scylla::macros::FromRow;
-use scylla::frame::response::cql_to_rust::FromRow;
+use scylla::cql::cql_to_rust::FromRow;
 
 #[derive(FromRow)]
 struct MyRow {

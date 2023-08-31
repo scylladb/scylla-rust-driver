@@ -9,7 +9,7 @@ balancing plan based on the query information and the state of the cluster.
 
 Load balancing policies do not influence to which nodes connections are
 being opened. For a node connection blacklist configuration refer to
-`scylla::transport::host_filter::HostFilter`, which can be set session-wide
+`scylla::cluster::host_filter::HostFilter`, which can be set session-wide
 using `SessionBuilder::host_filter` method.
 
 ## Plan
@@ -49,7 +49,7 @@ The newly created execution profile is then converted to a handle using
 # async fn check_only_compiles(uri: &str) -> Result<(), Box<dyn Error>> {
 use scylla::SessionBuilder;
 use scylla::load_balancing::DefaultPolicy;
-use scylla::transport::ExecutionProfile;
+use scylla::execution::ExecutionProfile;
 use scylla::session::Session;
 use std::sync::Arc;
 
