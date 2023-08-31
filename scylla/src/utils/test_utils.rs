@@ -92,3 +92,5 @@ pub fn create_new_session_builder() -> GenericSessionBuilder<impl SessionBuilder
         .tracing_info_fetch_attempts(NonZeroU32::new(50).unwrap())
         .tracing_info_fetch_interval(Duration::from_millis(200))
 }
+
+pub use scylla_cql::frame::{protocol_features::ProtocolFeatures, types};
