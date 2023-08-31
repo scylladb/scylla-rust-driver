@@ -4,11 +4,11 @@
 use anyhow::{anyhow, Result};
 use futures::StreamExt;
 use scylla::batch::Batch;
+use scylla::execution::iterator::RowIterator;
 use scylla::statement::{
     prepared_statement::PreparedStatement, query::Query, Consistency, SerialConsistency,
 };
 use scylla::tracing::TracingInfo;
-use scylla::transport::iterator::RowIterator;
 use scylla::QueryResult;
 use scylla::{Session, SessionBuilder};
 use std::env;

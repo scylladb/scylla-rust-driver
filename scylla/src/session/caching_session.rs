@@ -1,9 +1,9 @@
 use crate::batch::{Batch, BatchStatement};
+use crate::execution::iterator::RowIterator;
 use crate::frame::value::{BatchValues, ValueList};
 use crate::prepared_statement::PreparedStatement;
 use crate::query::Query;
 use crate::transport::errors::QueryError;
-use crate::transport::iterator::RowIterator;
 use crate::transport::partitioner::PartitionerName;
 use crate::{QueryResult, Session};
 use bytes::Bytes;

@@ -1,4 +1,5 @@
 mod execution_profile;
+pub mod iterator;
 pub mod load_balancing;
 pub mod retries;
 pub mod speculative_execution;

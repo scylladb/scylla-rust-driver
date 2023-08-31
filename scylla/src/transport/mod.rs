@@ -1,4 +1,3 @@
-pub mod iterator;
 pub(crate) mod metrics;
 pub mod partitioner;
 pub mod query_result;
