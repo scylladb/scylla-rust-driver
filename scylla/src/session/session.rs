@@ -43,6 +43,9 @@ use crate::cql_to_rust::FromRow;
 use crate::execution::iterator::{PreparedIteratorConfig, RowIterator};
 use crate::execution::load_balancing::{self, RoutingInfo};
 use crate::execution::retries::{QueryInfo, RetryDecision, RetrySession};
+use crate::execution::tracing::{
+    TracingEvent, TracingInfo, TRACES_EVENTS_QUERY_STR, TRACES_SESSION_QUERY_STR,
+};
 use crate::execution::{
     speculative_execution, ExecutionProfile, ExecutionProfileHandle, ExecutionProfileInner,
 };
@@ -55,7 +58,6 @@ use crate::prepared_statement::PreparedStatement;
 use crate::query::Query;
 use crate::sharding::Token;
 use crate::statement::Consistency;
-use crate::tracing::{TracingEvent, TracingInfo};
 use crate::transport::errors::{NewSessionError, QueryError};
 use crate::transport::metrics::Metrics;
 use crate::transport::partitioner::PartitionerName;
@@ -1343,12 +1345,12 @@ impl Session {
         consistency: Option<Consistency>,
     ) -> Result<Option<TracingInfo>, QueryError> {
         // Query system_traces.sessions for TracingInfo
-        let mut traces_session_query = Query::new(crate::tracing::TRACES_SESSION_QUERY_STR);
+        let mut traces_session_query = Query::new(TRACES_SESSION_QUERY_STR);
         traces_session_query.config.consistency = consistency;
         traces_session_query.set_page_size(1024);
 
         // Query system_traces.events for TracingEvents
-        let mut traces_events_query = Query::new(crate::tracing::TRACES_EVENTS_QUERY_STR);
+        let mut traces_events_query = Query::new(TRACES_EVENTS_QUERY_STR);
         traces_events_query.config.consistency = consistency;
         traces_events_query.set_page_size(1024);
 
