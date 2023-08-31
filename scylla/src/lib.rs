@@ -139,8 +139,7 @@ pub use transport::query_result::QueryResult;
 pub use session::CloudSessionBuilder;
 
 pub use cluster::host_filter;
-pub use execution::load_balancing;
+pub use execution::{load_balancing, speculative_execution};
 pub use transport::retry_policy;
-pub use transport::speculative_execution;
 
 pub use transport::metrics::Metrics;
