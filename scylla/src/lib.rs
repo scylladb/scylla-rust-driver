@@ -112,7 +112,6 @@ pub mod response;
 pub mod routing;
 pub mod session;
 pub mod statement;
-pub mod transport;
 
 #[cfg(test)]
 mod tests;
