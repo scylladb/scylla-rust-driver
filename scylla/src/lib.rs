@@ -128,8 +128,8 @@ pub use statement::batch;
 pub use statement::prepared_statement;
 pub use statement::query;
 
-pub use frame::response::cql_to_rust;
-pub use frame::response::cql_to_rust::FromRow;
+pub use cql::cql_to_rust;
+pub use cql::cql_to_rust::FromRow;
 
 pub use execution::ExecutionProfile;
 pub use response::{IntoTypedRows, QueryResult};

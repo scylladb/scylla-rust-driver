@@ -20,3 +20,9 @@ pub mod frame {
         }
     }
 }
+
+pub mod cql_to_rust {
+    pub use scylla_cql::cql_to_rust::{
+        CqlTypeError, FromCqlVal, FromCqlValError, FromRow, FromRowError,
+    };
+}
