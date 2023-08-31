@@ -129,10 +129,10 @@ pub use statement::query;
 pub use frame::response::cql_to_rust;
 pub use frame::response::cql_to_rust::FromRow;
 
+pub use execution::ExecutionProfile;
 pub use session::CachingSession;
 pub use session::SessionBuilder;
 pub use session::{IntoTypedRows, Session, SessionConfig};
-pub use transport::execution_profile::ExecutionProfile;
 pub use transport::query_result::QueryResult;
 
 #[cfg(feature = "cloud")]
@@ -140,7 +140,6 @@ pub use session::CloudSessionBuilder;
 
 pub use cluster::host_filter;
 pub use execution::load_balancing;
-pub use transport::execution_profile;
 pub use transport::retry_policy;
 pub use transport::speculative_execution;
 
