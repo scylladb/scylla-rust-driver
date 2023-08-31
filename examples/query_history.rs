@@ -2,7 +2,7 @@
 
 use anyhow::Result;
 use futures::StreamExt;
-use scylla::history::{HistoryCollector, StructuredHistory};
+use scylla::execution::history::{HistoryCollector, StructuredHistory};
 use scylla::query::Query;
 use scylla::session::Session;
 use scylla::SessionBuilder;

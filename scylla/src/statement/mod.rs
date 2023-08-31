@@ -1,7 +1,6 @@
 use std::{sync::Arc, time::Duration};
 
-use crate::execution::ExecutionProfileHandle;
-use crate::{execution::retries::RetryPolicy, history::HistoryListener};
+use crate::execution::{history::HistoryListener, retries::RetryPolicy, ExecutionProfileHandle};
 
 pub mod batch;
 pub mod prepared_statement;
