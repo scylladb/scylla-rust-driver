@@ -6,6 +6,7 @@ use connection::ErrorReceiver;
 
 pub use scylla_cql::frame::Compression;
 
+pub use crate::execution::errors::TranslationError;
 #[cfg(feature = "ssl")]
 pub(crate) use connection::SslConfig;
 pub use connection::{AddressTranslator, ConnectionConfig};
