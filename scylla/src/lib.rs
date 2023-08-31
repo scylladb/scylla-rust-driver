@@ -108,6 +108,7 @@ pub mod cloud;
 pub mod cluster;
 pub mod connection;
 pub mod execution;
+pub mod response;
 pub mod routing;
 pub mod session;
 pub mod statement;
