@@ -253,7 +253,7 @@ impl GenericSessionBuilder<DefaultMode> {
     /// # use std::net::SocketAddr;
     /// # use std::sync::Arc;
     /// # use scylla::{Session, SessionBuilder};
-    /// # use scylla::session::{AddressTranslator, TranslationError};
+    /// # use scylla::connection::{AddressTranslator, TranslationError};
     /// # use scylla::cluster::metadata::UntranslatedPeer;
     /// struct IdentityTranslator;
     ///
@@ -283,7 +283,7 @@ impl GenericSessionBuilder<DefaultMode> {
     /// # use std::collections::HashMap;
     /// # use std::str::FromStr;
     /// # use scylla::{Session, SessionBuilder};
-    /// # use scylla::session::{AddressTranslator, TranslationError};
+    /// # use scylla::connection::{AddressTranslator, TranslationError};
     /// #
     /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
     /// let mut translation_rules = HashMap::new();
@@ -558,7 +558,7 @@ impl<K: SessionBuilderKind> GenericSessionBuilder<K> {
     /// # use scylla::{Session, SessionBuilder};
     /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
     /// use std::num::NonZeroUsize;
-    /// use scylla::session::PoolSize;
+    /// use scylla::connection::PoolSize;
     ///
     /// // This session will establish 4 connections to each node.
     /// // For Scylla clusters, this number will be divided across shards
@@ -771,7 +771,7 @@ impl<K: SessionBuilderKind> GenericSessionBuilder<K> {
     /// # use std::net::SocketAddr;
     /// # use std::sync::Arc;
     /// # use scylla::{Session, SessionBuilder};
-    /// # use scylla::session::{AddressTranslator, TranslationError};
+    /// # use scylla::connection::{AddressTranslator, TranslationError};
     /// # use scylla::cluster::host_filter::DcHostFilter;
     ///
     /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
