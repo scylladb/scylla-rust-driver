@@ -4,7 +4,6 @@ pub(crate) mod metrics;
 pub mod partitioner;
 pub mod query_result;
 pub mod retry_policy;
-pub mod speculative_execution;
 
 pub use crate::frame::{Authenticator, Compression};
 pub use scylla_cql::errors;
