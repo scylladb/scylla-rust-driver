@@ -1,8 +1,10 @@
 use std::borrow::Cow;
 
+use bytes::BytesMut;
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
 
 use scylla_cql::frame::request::SerializableRequest;
+use scylla_cql::frame::types;
 use scylla_cql::frame::value::SerializedValues;
 use scylla_cql::frame::value::ValueList;
 use scylla_cql::frame::{request::query, Compression, SerializedRequest};
@@ -51,5 +53,37 @@ fn serialized_request_make_bench(c: &mut Criterion) {
     }
 }
 
-criterion_group!(benches, serialized_request_make_bench);
+fn types_benchmark(c: &mut Criterion) {
+    let mut buf = BytesMut::with_capacity(64);
+    c.bench_function("short", |b| {
+        b.iter(|| {
+            buf.clear();
+            types::write_short(-1, &mut buf);
+            types::read_short(&mut &buf[..]).unwrap();
+        })
+    });
+    c.bench_function("int", |b| {
+        b.iter(|| {
+            buf.clear();
+            types::write_int(-1, &mut buf);
+            types::read_int(&mut &buf[..]).unwrap();
+        })
+    });
+    c.bench_function("long", |b| {
+        b.iter(|| {
+            buf.clear();
+            types::write_long(-1, &mut buf);
+            types::read_long(&mut &buf[..]).unwrap();
+        })
+    });
+    c.bench_function("string", |b| {
+        b.iter(|| {
+            buf.clear();
+            types::write_string("hello, world", &mut buf).unwrap();
+            types::read_string(&mut &buf[..]).unwrap();
+        })
+    });
+}
+
+criterion_group!(benches, serialized_request_make_bench, types_benchmark);
 criterion_main!(benches);

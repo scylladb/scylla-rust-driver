@@ -1,43 +1,9 @@
 use criterion::{criterion_group, criterion_main, Criterion};
 
-use bytes::BytesMut;
 use scylla::{
-    frame::types,
     frame::value::ValueList,
     routing::partitioner::{calculate_token_for_partition_key, Murmur3Partitioner},
 };
-
-fn types_benchmark(c: &mut Criterion) {
-    let mut buf = BytesMut::with_capacity(64);
-    c.bench_function("short", |b| {
-        b.iter(|| {
-            buf.clear();
-            types::write_short(-1, &mut buf);
-            types::read_short(&mut &buf[..]).unwrap();
-        })
-    });
-    c.bench_function("int", |b| {
-        b.iter(|| {
-            buf.clear();
-            types::write_int(-1, &mut buf);
-            types::read_int(&mut &buf[..]).unwrap();
-        })
-    });
-    c.bench_function("long", |b| {
-        b.iter(|| {
-            buf.clear();
-            types::write_long(-1, &mut buf);
-            types::read_long(&mut &buf[..]).unwrap();
-        })
-    });
-    c.bench_function("string", |b| {
-        b.iter(|| {
-            buf.clear();
-            types::write_string("hello, world", &mut buf).unwrap();
-            types::read_string(&mut &buf[..]).unwrap();
-        })
-    });
-}
 
 fn calculate_token_bench(c: &mut Criterion) {
     let simple_pk = ("I'm prepared!!!",);
@@ -91,5 +57,5 @@ fn calculate_token_bench(c: &mut Criterion) {
     );
 }
 
-criterion_group!(benches, types_benchmark, calculate_token_bench);
+criterion_group!(benches, calculate_token_bench);
 criterion_main!(benches);
