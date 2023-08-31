@@ -9,12 +9,12 @@ use crate::frame::response::result::Row;
 use crate::frame::value::ValueList;
 use crate::prepared_statement::PreparedStatement;
 use crate::query::Query;
-use crate::sharding::Token;
-use crate::statement::Consistency;
-use crate::transport::errors::{BadKeyspaceName, BadQuery, DbError, QueryError};
-use crate::transport::partitioner::{
+use crate::routing::partitioner::{
     calculate_token_for_partition_key, Murmur3Partitioner, Partitioner, PartitionerName,
 };
+use crate::routing::Token;
+use crate::statement::Consistency;
+use crate::transport::errors::{BadKeyspaceName, BadQuery, DbError, QueryError};
 use crate::utils::test_utils::{
     create_new_session_builder, supports_feature, unique_keyspace_name,
 };

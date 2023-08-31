@@ -6,7 +6,7 @@ use super::{ReplicaLocator, ReplicaSet};
 use crate::cluster::metadata::{Keyspace, Metadata, Peer, Strategy};
 use crate::cluster::{Node, NodeAddr, NodeRef};
 use crate::connection::PoolConfig;
-use crate::sharding::Token;
+use crate::routing::Token;
 
 use std::collections::HashSet;
 use std::sync::Arc;

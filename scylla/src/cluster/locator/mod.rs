@@ -10,7 +10,7 @@ pub use token_ring::TokenRing;
 
 use crate::cluster::metadata::Strategy;
 use crate::cluster::{Node, NodeRef};
-use crate::sharding::Token;
+use crate::routing::Token;
 use itertools::Itertools;
 use precomputed_replicas::PrecomputedReplicas;
 use replicas::{ReplicasArray, EMPTY_REPLICAS};
@@ -741,7 +741,7 @@ impl<'a> IntoIterator for ReplicasOrdered<'a> {
 
 #[cfg(test)]
 mod tests {
-    use crate::{cluster::locator::test::*, sharding::Token};
+    use crate::{cluster::locator::test::*, routing::Token};
 
     #[tokio::test]
     async fn test_replicas_ordered() {

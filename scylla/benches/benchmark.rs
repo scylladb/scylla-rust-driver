@@ -4,7 +4,7 @@ use bytes::BytesMut;
 use scylla::{
     frame::types,
     frame::value::ValueList,
-    transport::partitioner::{calculate_token_for_partition_key, Murmur3Partitioner},
+    routing::partitioner::{calculate_token_for_partition_key, Murmur3Partitioner},
 };
 
 fn types_benchmark(c: &mut Criterion) {

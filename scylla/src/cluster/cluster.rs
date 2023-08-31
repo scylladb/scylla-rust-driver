@@ -5,8 +5,8 @@ use crate::connection::{Connection, PoolConfig, VerifiedKeyspaceName};
 use crate::frame::response::event::{Event, StatusChangeEvent};
 use crate::frame::value::ValueList;
 use crate::prepared_statement::TokenCalculationError;
-use crate::sharding::Token;
-use crate::transport::{errors::QueryError, partitioner::PartitionerName};
+use crate::routing::{partitioner::PartitionerName, Token};
+use crate::transport::errors::QueryError;
 
 use arc_swap::ArcSwap;
 use futures::future::join_all;
@@ -25,7 +25,7 @@ use crate::cluster::locator::ReplicaLocator;
 use crate::cluster::metadata::{Keyspace, Metadata, MetadataReader, Strategy};
 
 use crate::cluster::{KnownNode, NodeAddr};
-use crate::transport::partitioner::calculate_token_for_partition_key;
+use crate::routing::partitioner::calculate_token_for_partition_key;
 
 /// Cluster manages up to date information and connections to database nodes.
 /// All data can be accessed by cloning Arc<ClusterData> in the `data` field

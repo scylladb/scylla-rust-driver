@@ -57,8 +57,8 @@ use crate::frame::{
     FrameParams, SerializedRequest,
 };
 use crate::query::Query;
+use crate::routing::sharding::{Shard, ShardInfo, Sharder};
 use crate::session::IntoTypedRows;
-use crate::sharding::{Shard, ShardInfo, Sharder};
 use crate::statement::prepared_statement::PreparedStatement;
 use crate::statement::Consistency;
 use crate::transport::Compression;
@@ -2250,7 +2250,7 @@ mod tests {
         let _ = proxy.finish().await;
     }
 
-    use crate::sharding::{ShardCount, Sharder};
+    use crate::routing::sharding::{ShardCount, Sharder};
     use std::net::ToSocketAddrs;
 
     // Open many connections to a node

@@ -4,7 +4,7 @@ pub use self::latency_awareness::LatencyAwarenessBuilder;
 use super::{FallbackPlan, LoadBalancingPolicy, NodeRef, RoutingInfo};
 use crate::cluster::ClusterData;
 use crate::{
-    cluster::locator::ReplicaSet, cluster::metadata::Strategy, cluster::Node, sharding::Token,
+    cluster::locator::ReplicaSet, cluster::metadata::Strategy, cluster::Node, routing::Token,
 };
 use itertools::{Either, Itertools};
 use rand::{prelude::SliceRandom, thread_rng, Rng};
@@ -879,7 +879,7 @@ mod tests {
         load_balancing::{
             default::tests::framework::mock_cluster_data_for_token_aware_tests, RoutingInfo,
         },
-        sharding::Token,
+        routing::Token,
     };
 
     use super::{DefaultPolicy, NodeLocationPreference};
@@ -896,7 +896,7 @@ mod tests {
                 ClusterData,
             },
             load_balancing::{LoadBalancingPolicy, Plan, RoutingInfo},
-            sharding::Token,
+            routing::Token,
         };
 
         enum ExpectedGroup {
@@ -2725,7 +2725,7 @@ mod latency_awareness {
                 default::tests::test_default_policy_with_given_cluster_and_routing_info,
                 RoutingInfo,
             },
-            sharding::Token,
+            routing::Token,
             ExecutionProfile,
         };
         use crate::{

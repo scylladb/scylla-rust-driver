@@ -3,8 +3,8 @@ use crate::execution::iterator::RowIterator;
 use crate::frame::value::{BatchValues, ValueList};
 use crate::prepared_statement::PreparedStatement;
 use crate::query::Query;
+use crate::routing::partitioner::PartitionerName;
 use crate::transport::errors::QueryError;
-use crate::transport::partitioner::PartitionerName;
 use crate::{QueryResult, Session};
 use bytes::Bytes;
 use dashmap::DashMap;
@@ -217,8 +217,8 @@ where
 #[cfg(test)]
 mod tests {
     use crate::query::Query;
+    use crate::routing::partitioner::PartitionerName;
     use crate::test_utils::create_new_session_builder;
-    use crate::transport::partitioner::PartitionerName;
     use crate::utils::test_utils::unique_keyspace_name;
     use crate::{
         batch::{Batch, BatchStatement},

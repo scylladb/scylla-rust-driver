@@ -4,10 +4,7 @@ use std::convert::TryFrom;
 use std::num::NonZeroU16;
 use thiserror::Error;
 
-#[derive(PartialEq, Eq, PartialOrd, Ord, Clone, Copy, Debug)]
-pub struct Token {
-    pub value: i64,
-}
+use super::Token;
 
 pub type Shard = u32;
 pub type ShardCount = NonZeroU16;

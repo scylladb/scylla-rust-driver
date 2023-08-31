@@ -57,10 +57,10 @@ use crate::frame::value::{
 };
 use crate::prepared_statement::PreparedStatement;
 use crate::query::Query;
-use crate::sharding::Token;
+use crate::routing::partitioner::PartitionerName;
+use crate::routing::Token;
 use crate::statement::Consistency;
 use crate::transport::errors::{NewSessionError, QueryError};
-use crate::transport::partitioner::PartitionerName;
 use crate::transport::query_result::QueryResult;
 use crate::transport::Compression;
 use crate::{

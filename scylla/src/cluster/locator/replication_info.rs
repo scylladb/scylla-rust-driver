@@ -2,7 +2,7 @@ use itertools::Itertools;
 
 use super::TokenRing;
 use crate::cluster::Node;
-use crate::sharding::Token;
+use crate::routing::Token;
 
 use std::cmp;
 use std::collections::{BTreeSet, HashMap};
@@ -207,7 +207,7 @@ mod tests {
         cluster::locator::test::{
             create_ring, mock_metadata_for_token_aware_tests, A, B, C, D, E, F, G,
         },
-        sharding::Token,
+        routing::Token,
     };
 
     use super::ReplicationInfo;
