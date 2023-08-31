@@ -30,12 +30,10 @@ use crate::cluster::CloudEndpoint;
 use crate::cluster::{Cluster, ClusterData, ClusterNeatDebug};
 use crate::cluster::{KnownNode, Node, NodeRef};
 use crate::connection::PoolConfig;
-use crate::connection::QueryResponse;
 #[cfg(feature = "ssl")]
 use crate::connection::SslConfig;
-use crate::connection::{
-    AddressTranslator, Connection, ConnectionConfig, NonErrorQueryResponse, VerifiedKeyspaceName,
-};
+use crate::connection::{AddressTranslator, Connection, ConnectionConfig, VerifiedKeyspaceName};
+use crate::response::{NonErrorQueryResponse, QueryResponse};
 
 use crate::execution::errors::{NewSessionError, QueryError};
 use crate::execution::iterator::{PreparedIteratorConfig, RowIterator};
