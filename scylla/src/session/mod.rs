@@ -1,4 +1,5 @@
 mod caching_session;
+#[allow(clippy::module_inception)]
 mod session;
 pub mod session_builder;
 

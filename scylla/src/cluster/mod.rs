@@ -1,3 +1,4 @@
+#[allow(clippy::module_inception)]
 mod cluster;
 pub mod host_filter;
 pub mod locator;
