@@ -1,4 +1,4 @@
-use crate::frame::response::cql_to_rust::{FromRow, FromRowError};
+use crate::cql::cql_to_rust::{FromRow, FromRowError};
 use crate::frame::response::result::ColumnSpec;
 use crate::frame::response::result::Row;
 
