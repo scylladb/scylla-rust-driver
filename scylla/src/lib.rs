@@ -98,7 +98,7 @@ pub mod _macro_internal {
     pub use scylla_cql::_macro_internal::*;
 }
 
-pub use scylla_cql::frame;
+pub(crate) use scylla_cql::frame;
 pub use scylla_cql::macros::{self, *};
 
 pub mod authentication;

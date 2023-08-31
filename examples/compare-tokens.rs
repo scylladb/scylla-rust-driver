@@ -1,6 +1,6 @@
 use anyhow::Result;
 use scylla::cluster::NodeAddr;
-use scylla::frame::value::ValueList;
+use scylla::cql::ValueList;
 use scylla::routing::Token;
 use scylla::{Session, SessionBuilder};
 use std::env;

@@ -44,11 +44,9 @@ async fn main() -> anyhow::Result<()> {
         .call("SELECT keyspace_name, table_name FROM system_schema.tables;".into())
         .await?;
 
-    let print_text = |t: &Option<scylla::frame::response::result::CqlValue>| {
+    let print_text = |t: &Option<scylla::cql::value::CqlValue>| {
         t.as_ref()
-            .unwrap_or(&scylla::frame::response::result::CqlValue::Text(
-                "<null>".to_string(),
-            ))
+            .unwrap_or(&scylla::cql::value::CqlValue::Text("<null>".to_string()))
             .as_text()
             .unwrap_or(&"<null>".to_string())
             .clone()
