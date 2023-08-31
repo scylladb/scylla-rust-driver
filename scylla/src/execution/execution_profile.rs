@@ -166,14 +166,14 @@ use arc_swap::ArcSwap;
 use scylla_cql::{frame::types::SerialConsistency, Consistency};
 
 use crate::{
-    load_balancing::LoadBalancingPolicy, retry_policy::RetryPolicy,
+    execution::retries::RetryPolicy, load_balancing::LoadBalancingPolicy,
     speculative_execution::SpeculativeExecutionPolicy,
 };
 
 pub(crate) mod defaults {
+    use crate::execution::retries::{DefaultRetryPolicy, RetryPolicy};
     use crate::execution::ExecutionProfileInner;
     use crate::load_balancing::{self, LoadBalancingPolicy};
-    use crate::retry_policy::{DefaultRetryPolicy, RetryPolicy};
     use crate::speculative_execution::SpeculativeExecutionPolicy;
     use scylla_cql::frame::types::SerialConsistency;
     use scylla_cql::Consistency;
@@ -295,7 +295,7 @@ impl ExecutionProfileBuilder {
     }
 
     /// Sets the [`RetryPolicy`] to use by default on queries.
-    /// The default is [DefaultRetryPolicy](crate::transport::retry_policy::DefaultRetryPolicy).
+    /// The default is [DefaultRetryPolicy](crate::execution::retries::DefaultRetryPolicy).
     /// It is possible to implement a custom retry policy by implementing the trait [`RetryPolicy`].
     ///
     /// # Example

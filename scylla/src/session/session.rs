@@ -43,6 +43,7 @@ use crate::connection::{
 };
 use crate::cql_to_rust::FromRow;
 use crate::execution::load_balancing::{self, RoutingInfo};
+use crate::execution::retries::{QueryInfo, RetryDecision, RetrySession};
 use crate::execution::{
     speculative_execution, ExecutionProfile, ExecutionProfileHandle, ExecutionProfileInner,
 };
@@ -61,7 +62,6 @@ use crate::transport::iterator::{PreparedIteratorConfig, RowIterator};
 use crate::transport::metrics::Metrics;
 use crate::transport::partitioner::PartitionerName;
 use crate::transport::query_result::QueryResult;
-use crate::transport::retry_policy::{QueryInfo, RetryDecision, RetrySession};
 use crate::transport::Compression;
 use crate::{
     batch::{Batch, BatchStatement},
