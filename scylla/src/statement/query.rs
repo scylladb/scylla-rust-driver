@@ -1,8 +1,8 @@
 use super::StatementConfig;
+use crate::execution::ExecutionProfileHandle;
 use crate::frame::types::{Consistency, SerialConsistency};
 use crate::history::HistoryListener;
 use crate::retry_policy::RetryPolicy;
-use crate::transport::execution_profile::ExecutionProfileHandle;
 use std::sync::Arc;
 use std::time::Duration;
 

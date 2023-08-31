@@ -1,6 +1,6 @@
 use crate::utils::test_with_3_node_cluster;
 
-use scylla::execution_profile::{ExecutionProfileBuilder, ExecutionProfileHandle};
+use scylla::execution::{ExecutionProfileBuilder, ExecutionProfileHandle};
 use scylla::load_balancing::{DefaultPolicy, LoadBalancingPolicy, RoutingInfo};
 use scylla::prepared_statement::PreparedStatement;
 use scylla::retry_policy::FallthroughRetryPolicy;

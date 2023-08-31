@@ -17,7 +17,7 @@ use scylla::{
     Session,
     SessionBuilder,
     speculative_execution::PercentileSpeculativeExecutionPolicy,
-    transport::execution_profile::ExecutionProfile,
+    execution::ExecutionProfile,
 };
 
 let policy = PercentileSpeculativeExecutionPolicy  {

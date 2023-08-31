@@ -18,8 +18,8 @@ use tokio::sync::mpsc;
 use tracing::instrument::WithSubscriber;
 
 use super::errors::QueryError;
-use super::execution_profile::ExecutionProfileInner;
 use crate::cql_to_rust::{FromRow, FromRowError};
+use crate::execution::ExecutionProfileInner;
 use crate::session::RequestSpan;
 
 use crate::cluster::ClusterData;

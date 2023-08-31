@@ -1,9 +1,9 @@
 //! SessionBuilder provides an easy way to create new Sessions
 
 use crate::connection::{AddressTranslator, PoolSize};
+use crate::execution::ExecutionProfileHandle;
 use crate::session::{Session, SessionConfig};
 use crate::transport::errors::NewSessionError;
-use crate::transport::execution_profile::ExecutionProfileHandle;
 use crate::transport::Compression;
 
 #[cfg(feature = "cloud")]
@@ -950,7 +950,7 @@ mod tests {
 
     use super::SessionBuilder;
     use crate::cluster::KnownNode;
-    use crate::transport::execution_profile::{defaults, ExecutionProfile};
+    use crate::execution::{defaults, ExecutionProfile};
     use crate::transport::Compression;
     use std::net::{IpAddr, Ipv4Addr, SocketAddr};
     use std::time::Duration;

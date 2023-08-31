@@ -43,6 +43,7 @@ use crate::connection::{
 };
 use crate::cql_to_rust::FromRow;
 use crate::execution::load_balancing::{self, RoutingInfo};
+use crate::execution::{ExecutionProfile, ExecutionProfileHandle, ExecutionProfileInner};
 use crate::frame::response::cql_to_rust::FromRowError;
 use crate::frame::response::result;
 use crate::frame::value::{
@@ -54,9 +55,6 @@ use crate::sharding::Token;
 use crate::statement::Consistency;
 use crate::tracing::{TracingEvent, TracingInfo};
 use crate::transport::errors::{NewSessionError, QueryError};
-use crate::transport::execution_profile::{
-    ExecutionProfile, ExecutionProfileHandle, ExecutionProfileInner,
-};
 use crate::transport::iterator::{PreparedIteratorConfig, RowIterator};
 use crate::transport::metrics::Metrics;
 use crate::transport::partitioner::PartitionerName;
