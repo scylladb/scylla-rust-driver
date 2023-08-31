@@ -63,7 +63,7 @@
 //! # Ok(())
 //! # }
 //! ```
-//! But the driver will accept anything implementing the trait [ValueList](crate::frame::value::ValueList)
+//! But the driver will accept anything implementing the trait [ValueList](crate::cql::ValueList)
 //!
 //! ### Receiving results
 //! The easiest way to read rows returned by a query is to cast each row to a tuple of values:
@@ -107,6 +107,7 @@ pub mod cloud;
 
 pub mod cluster;
 pub mod connection;
+pub mod cql;
 pub mod execution;
 pub mod response;
 pub mod routing;
