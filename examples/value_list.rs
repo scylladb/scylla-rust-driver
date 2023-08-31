@@ -37,7 +37,7 @@ async fn main() {
 
     // You can also use type generics:
     #[derive(scylla::ValueList)]
-    struct MyTypeWithGenerics<S: scylla::frame::value::Value> {
+    struct MyTypeWithGenerics<S: scylla::cql::Value> {
         k: i32,
         my: Option<S>,
     }

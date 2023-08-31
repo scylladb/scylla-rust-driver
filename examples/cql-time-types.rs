@@ -3,8 +3,7 @@
 
 use anyhow::Result;
 use chrono::{Duration, NaiveDate};
-use scylla::frame::response::result::CqlValue;
-use scylla::frame::value::{Date, Time, Timestamp};
+use scylla::cql::value::{CqlValue, Date, Time, Timestamp};
 use scylla::SessionBuilder;
 use scylla::{IntoTypedRows, Session};
 use std::env;

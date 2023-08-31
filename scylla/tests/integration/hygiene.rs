@@ -19,9 +19,8 @@ macro_rules! test_crate {
         }
         #[test]
         fn test_rename() {
+            use _scylla::_macro_internal::{CqlValue, Value, ValueList};
             use _scylla::cql_to_rust::{FromCqlVal, FromRow};
-            use _scylla::frame::response::result::CqlValue;
-            use _scylla::frame::value::{Value, ValueList};
 
             pub fn derived<T>()
             where

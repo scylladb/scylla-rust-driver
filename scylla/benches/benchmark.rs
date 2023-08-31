@@ -1,7 +1,7 @@
 use criterion::{criterion_group, criterion_main, Criterion};
 
 use scylla::{
-    frame::value::ValueList,
+    cql::ValueList,
     routing::partitioner::{calculate_token_for_partition_key, Murmur3Partitioner},
 };
 

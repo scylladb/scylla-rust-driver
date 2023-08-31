@@ -1,6 +1,6 @@
 use anyhow::Result;
+use scylla::cql::value::CqlValue;
 use scylla::cql_to_rust::{FromCqlVal, FromCqlValError};
-use scylla::frame::response::result::CqlValue;
 use scylla::macros::impl_from_cql_value_from_method;
 use scylla::{Session, SessionBuilder};
 use std::env;
