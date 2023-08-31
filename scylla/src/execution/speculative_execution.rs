@@ -5,7 +5,8 @@ use futures::{
 use std::{future::Future, sync::Arc, time::Duration};
 use tracing::{trace_span, warn, Instrument};
 
-use crate::transport::{errors::QueryError, metrics::Metrics};
+use crate::execution::Metrics;
+use crate::transport::errors::QueryError;
 
 /// Context is passed as an argument to `SpeculativeExecutionPolicy` methods
 pub struct Context {

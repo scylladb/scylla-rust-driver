@@ -46,6 +46,7 @@ use crate::execution::retries::{QueryInfo, RetryDecision, RetrySession};
 use crate::execution::tracing::{
     TracingEvent, TracingInfo, TRACES_EVENTS_QUERY_STR, TRACES_SESSION_QUERY_STR,
 };
+use crate::execution::Metrics;
 use crate::execution::{
     speculative_execution, ExecutionProfile, ExecutionProfileHandle, ExecutionProfileInner,
 };
@@ -59,7 +60,6 @@ use crate::query::Query;
 use crate::sharding::Token;
 use crate::statement::Consistency;
 use crate::transport::errors::{NewSessionError, QueryError};
-use crate::transport::metrics::Metrics;
 use crate::transport::partitioner::PartitionerName;
 use crate::transport::query_result::QueryResult;
 use crate::transport::Compression;
