@@ -1251,7 +1251,7 @@ impl Connection {
 /// This interface allows to deal with such cases, by allowing to translate an address as sent
 /// by a ScyllaDB node to another address to be used by the driver for connection.
 ///
-/// Please note that the "known nodes" addresses provided while creating the [`Session`]
+/// Please note that the "known nodes" addresses provided while creating the [`crate::session::Session`]
 /// instance are not translated, only IP address retrieved from or sent by Cassandra nodes
 /// to the driver are.
 #[async_trait]

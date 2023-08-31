@@ -346,7 +346,7 @@ pub(crate) enum RunQueryResult<ResT> {
 impl Session {
     /// Estabilishes a CQL session with the database
     ///
-    /// Usually it's easier to use [SessionBuilder](crate::session_builder::SessionBuilder)
+    /// Usually it's easier to use [SessionBuilder](crate::session::SessionBuilder)
     /// instead of calling `Session::connect` directly, because it's more convenient.
     /// # Arguments
     /// * `config` - Connection configuration - known nodes, Compression, etc.
