@@ -108,8 +108,8 @@ pub mod cloud;
 pub mod cluster;
 pub mod connection;
 pub mod execution;
+pub mod routing;
 pub mod session;
-pub mod sharding;
 pub mod statement;
 pub mod transport;
 

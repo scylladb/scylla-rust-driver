@@ -16,8 +16,8 @@ use crate::execution::ExecutionProfileHandle;
 use crate::frame::response::result::PreparedMetadata;
 use crate::frame::types::{Consistency, SerialConsistency};
 use crate::frame::value::SerializedValues;
-use crate::sharding::Token;
-use crate::transport::partitioner::{Partitioner, PartitionerHasher, PartitionerName};
+use crate::routing::partitioner::{Partitioner, PartitionerHasher, PartitionerName};
+use crate::routing::Token;
 
 /// Represents a statement prepared on the server.
 #[derive(Debug)]

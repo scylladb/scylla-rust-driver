@@ -16,7 +16,7 @@ use super::replication_info::ReplicationInfo;
 use super::TokenRing;
 use crate::cluster::metadata::Strategy;
 use crate::cluster::Node;
-use crate::sharding::Token;
+use crate::routing::Token;
 
 use std::cmp;
 use std::collections::BTreeSet;
@@ -219,7 +219,7 @@ mod tests {
             create_ring, mock_metadata_for_token_aware_tests, A, C, D, E, F, G,
         },
         cluster::metadata::{Keyspace, Strategy},
-        sharding::Token,
+        routing::Token,
     };
 
     use super::{PrecomputedReplicas, ReplicationInfo};
