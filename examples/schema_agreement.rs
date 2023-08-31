@@ -1,6 +1,6 @@
 use anyhow::{bail, Result};
+use scylla::execution::errors::QueryError;
 use scylla::session::{IntoTypedRows, Session};
-use scylla::transport::errors::QueryError;
 use scylla::SessionBuilder;
 use std::env;
 use std::time::Duration;

@@ -3,6 +3,7 @@ use crate::batch::{Batch, BatchStatement};
 use crate::cluster::metadata::Strategy::NetworkTopologyStrategy;
 use crate::cluster::metadata::{CollectionType, ColumnKind, CqlType, NativeType, UserDefinedType};
 use crate::cluster::Datacenter;
+use crate::execution::errors::{BadKeyspaceName, BadQuery, DbError, QueryError};
 use crate::execution::retries::{QueryInfo, RetryDecision, RetryPolicy, RetrySession};
 use crate::execution::tracing::TracingInfo;
 use crate::frame::response::result::Row;
@@ -14,7 +15,6 @@ use crate::routing::partitioner::{
 };
 use crate::routing::Token;
 use crate::statement::Consistency;
-use crate::transport::errors::{BadKeyspaceName, BadQuery, DbError, QueryError};
 use crate::utils::test_utils::{
     create_new_session_builder, supports_feature, unique_keyspace_name,
 };

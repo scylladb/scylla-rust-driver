@@ -1,12 +1,12 @@
 use crate::cluster::host_filter::HostFilter;
 use crate::cluster::Node;
 use crate::connection::{Connection, PoolConfig, VerifiedKeyspaceName};
+use crate::execution::errors::QueryError;
 /// Cluster manages up to date information and connections to database nodes
 use crate::frame::response::event::{Event, StatusChangeEvent};
 use crate::frame::value::ValueList;
 use crate::prepared_statement::TokenCalculationError;
 use crate::routing::{partitioner::PartitionerName, Token};
-use crate::transport::errors::QueryError;
 
 use arc_swap::ArcSwap;
 use futures::future::join_all;
