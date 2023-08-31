@@ -28,6 +28,7 @@ use crate::connection::{Connection, NonErrorQueryResponse, QueryResponse};
 use crate::execution::history::{self, HistoryListener};
 use crate::execution::load_balancing::{self, RoutingInfo};
 use crate::execution::retries::{QueryInfo, RetryDecision, RetrySession};
+use crate::execution::Metrics;
 use crate::frame::{
     response::{
         result,
@@ -37,7 +38,6 @@ use crate::frame::{
 };
 use crate::statement::Consistency;
 use crate::statement::{prepared_statement::PreparedStatement, query::Query};
-use crate::transport::metrics::Metrics;
 use crate::utils::unzip_option;
 use tracing::{trace, trace_span, warn, Instrument};
 use uuid::Uuid;
