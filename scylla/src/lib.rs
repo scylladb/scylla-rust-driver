@@ -111,7 +111,6 @@ pub mod execution;
 pub mod session;
 pub mod sharding;
 pub mod statement;
-pub mod tracing;
 pub mod transport;
 
 pub(crate) mod utils;
