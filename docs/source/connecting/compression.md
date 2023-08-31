@@ -13,7 +13,7 @@ An example enabling `Snappy` compression algorithm:
 # extern crate scylla;
 # extern crate tokio;
 use scylla::{Session, SessionBuilder};
-use scylla::transport::Compression;
+use scylla::connection::Compression;
 use std::error::Error;
 
 #[tokio::main]

@@ -3,7 +3,7 @@ use rustyline::completion::{Completer, Pair};
 use rustyline::error::ReadlineError;
 use rustyline::{CompletionType, Config, Context, Editor};
 use rustyline_derive::{Helper, Highlighter, Hinter, Validator};
-use scylla::transport::Compression;
+use scylla::connection::Compression;
 use scylla::{QueryResult, Session, SessionBuilder};
 use std::env;
 
