@@ -10,3 +10,13 @@ pub mod value {
 }
 
 pub use value::{Value, ValueList};
+
+pub mod frame {
+    pub mod response {
+        pub mod result {
+            pub use scylla_cql::frame::response::result::{
+                ColumnSpec, ColumnType, PartitionKeyIndex, PreparedMetadata, Row, TableSpec,
+            };
+        }
+    }
+}
