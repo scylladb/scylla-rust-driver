@@ -17,10 +17,10 @@ use thiserror::Error;
 use tokio::sync::mpsc;
 use tracing::instrument::WithSubscriber;
 
-use super::errors::QueryError;
 use crate::cql_to_rust::{FromRow, FromRowError};
 use crate::execution::ExecutionProfileInner;
 use crate::session::RequestSpan;
+use crate::transport::errors::QueryError;
 
 use crate::cluster::ClusterData;
 use crate::cluster::{Node, NodeRef};
