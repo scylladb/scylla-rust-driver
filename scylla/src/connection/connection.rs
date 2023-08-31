@@ -58,10 +58,10 @@ use crate::frame::{
     FrameParams, SerializedRequest,
 };
 use crate::query::Query;
+use crate::response::IntoTypedRows;
 use crate::routing::sharding::{Shard, ShardInfo, Sharder};
 use crate::statement::prepared_statement::PreparedStatement;
 use crate::statement::Consistency;
-use crate::transport::query_result::IntoTypedRows;
 use crate::transport::Compression;
 use crate::QueryResult;
 

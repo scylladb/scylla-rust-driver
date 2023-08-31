@@ -15,12 +15,12 @@ use crate::routing::partitioner::{
 };
 use crate::routing::Token;
 use crate::statement::Consistency;
-use crate::transport::query_result::IntoTypedRows;
 use crate::utils::test_utils::{
     create_new_session_builder, supports_feature, unique_keyspace_name,
 };
 use crate::CachingSession;
 use crate::ExecutionProfile;
+use crate::IntoTypedRows;
 use crate::QueryResult;
 use crate::{Session, SessionBuilder};
 use assert_matches::assert_matches;

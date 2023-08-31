@@ -52,9 +52,9 @@ use crate::frame::value::{
 };
 use crate::prepared_statement::PreparedStatement;
 use crate::query::Query;
+use crate::response::QueryResult;
 use crate::routing::partitioner::PartitionerName;
 use crate::statement::Consistency;
-use crate::transport::query_result::QueryResult;
 use crate::transport::Compression;
 use crate::{
     batch::{Batch, BatchStatement},
