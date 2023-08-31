@@ -1,3 +1,4 @@
+pub mod errors;
 mod execution_profile;
 pub mod history;
 pub mod iterator;

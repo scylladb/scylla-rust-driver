@@ -5,9 +5,9 @@ use uuid::Uuid;
 use crate::connection::Connection;
 use crate::connection::VerifiedKeyspaceName;
 use crate::connection::{NodeConnectionPool, PoolConfig};
+use crate::execution::errors::QueryError;
 /// Node represents a cluster node along with it's data and connections
 use crate::routing::{sharding::Sharder, Token};
-use crate::transport::errors::QueryError;
 
 use std::fmt::Display;
 use std::io;

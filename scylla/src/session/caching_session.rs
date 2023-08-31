@@ -1,10 +1,10 @@
 use crate::batch::{Batch, BatchStatement};
+use crate::execution::errors::QueryError;
 use crate::execution::iterator::RowIterator;
 use crate::frame::value::{BatchValues, ValueList};
 use crate::prepared_statement::PreparedStatement;
 use crate::query::Query;
 use crate::routing::partitioner::PartitionerName;
-use crate::transport::errors::QueryError;
 use crate::{QueryResult, Session};
 use bytes::Bytes;
 use dashmap::DashMap;

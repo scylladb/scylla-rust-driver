@@ -1,9 +1,9 @@
 //! SessionBuilder provides an easy way to create new Sessions
 
 use crate::connection::{AddressTranslator, PoolSize};
+use crate::execution::errors::NewSessionError;
 use crate::execution::ExecutionProfileHandle;
 use crate::session::{Session, SessionConfig};
-use crate::transport::errors::NewSessionError;
 use crate::transport::Compression;
 
 #[cfg(feature = "cloud")]

@@ -43,8 +43,8 @@ use std::{
 use crate::cloud::CloudConfig;
 use crate::cluster::metadata::{PeerEndpoint, UntranslatedEndpoint, UntranslatedPeer};
 use crate::cluster::NodeAddr;
+use crate::execution::errors::{BadKeyspaceName, DbError, QueryError};
 use crate::execution::iterator::RowIterator;
-use crate::transport::errors::{BadKeyspaceName, DbError, QueryError};
 
 use crate::batch::{Batch, BatchStatement};
 use crate::frame::protocol_features::ProtocolFeatures;

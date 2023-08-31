@@ -41,6 +41,7 @@ use crate::connection::{
     AddressTranslator, Connection, ConnectionConfig, NonErrorQueryResponse, VerifiedKeyspaceName,
 };
 use crate::cql_to_rust::FromRow;
+use crate::execution::errors::{NewSessionError, QueryError};
 use crate::execution::iterator::{PreparedIteratorConfig, RowIterator};
 use crate::execution::load_balancing::{self, RoutingInfo};
 use crate::execution::retries::{QueryInfo, RetryDecision, RetrySession};
@@ -61,7 +62,6 @@ use crate::query::Query;
 use crate::routing::partitioner::PartitionerName;
 use crate::routing::Token;
 use crate::statement::Consistency;
-use crate::transport::errors::{NewSessionError, QueryError};
 use crate::transport::query_result::QueryResult;
 use crate::transport::Compression;
 use crate::{

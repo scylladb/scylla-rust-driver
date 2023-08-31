@@ -2,11 +2,11 @@
 use crate::cloud::set_ssl_config_for_scylla_cloud_host;
 
 use crate::connection::{Connection, ConnectionConfig, ErrorReceiver, VerifiedKeyspaceName};
+use crate::execution::errors::QueryError;
 use crate::routing::{
     sharding::{Shard, ShardCount, Sharder},
     Token,
 };
-use crate::transport::errors::QueryError;
 
 #[cfg(feature = "cloud")]
 use crate::cluster::resolve_hostname;

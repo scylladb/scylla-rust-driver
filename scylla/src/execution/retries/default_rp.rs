@@ -1,4 +1,4 @@
-use crate::transport::errors::{DbError, QueryError, WriteType};
+use crate::execution::errors::{DbError, QueryError, WriteType};
 
 use super::{QueryInfo, RetryDecision, RetryPolicy, RetrySession};
 
@@ -136,8 +136,8 @@ impl RetrySession for DefaultRetrySession {
 #[cfg(test)]
 mod tests {
     use super::{DefaultRetryPolicy, QueryInfo, RetryDecision, RetryPolicy};
+    use crate::execution::errors::{BadQuery, DbError, QueryError, WriteType};
     use crate::statement::Consistency;
-    use crate::transport::errors::{BadQuery, DbError, QueryError, WriteType};
     use bytes::Bytes;
     use std::io::ErrorKind;
     use std::sync::Arc;

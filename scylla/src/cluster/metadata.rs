@@ -1,10 +1,10 @@
 use crate::cluster::host_filter::HostFilter;
 use crate::cluster::resolve_contact_points;
 use crate::connection::{Connection, ConnectionConfig, NodeConnectionPool, PoolConfig, PoolSize};
+use crate::execution::errors::{DbError, QueryError};
 use crate::frame::response::event::Event;
 use crate::routing::Token;
 use crate::statement::query::Query;
-use crate::transport::errors::{DbError, QueryError};
 use crate::utils::parse::{ParseErrorCause, ParseResult, ParserState};
 
 use futures::future::{self, FutureExt};
