@@ -62,8 +62,9 @@ use crate::response::IntoTypedRows;
 use crate::routing::sharding::{Shard, ShardInfo, Sharder};
 use crate::statement::prepared_statement::PreparedStatement;
 use crate::statement::Consistency;
-use crate::transport::Compression;
 use crate::QueryResult;
+
+use super::Compression;
 
 // Queries for schema agreement
 const LOCAL_VERSION: &str = "SELECT schema_version FROM system.local WHERE key='local'";

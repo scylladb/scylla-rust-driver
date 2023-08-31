@@ -35,6 +35,7 @@ use crate::connection::SslConfig;
 use crate::connection::{AddressTranslator, Connection, ConnectionConfig, VerifiedKeyspaceName};
 use crate::response::{NonErrorQueryResponse, QueryResponse};
 
+use crate::connection::Compression;
 use crate::execution::errors::{NewSessionError, QueryError};
 use crate::execution::iterator::{PreparedIteratorConfig, RowIterator};
 use crate::execution::load_balancing::{self, RoutingInfo};
@@ -55,7 +56,6 @@ use crate::query::Query;
 use crate::response::QueryResult;
 use crate::routing::partitioner::PartitionerName;
 use crate::statement::Consistency;
-use crate::transport::Compression;
 use crate::{
     batch::{Batch, BatchStatement},
     statement::StatementConfig,
@@ -1198,7 +1198,7 @@ impl Session {
     /// # Example
     /// ```rust
     /// # use scylla::{Session, SessionBuilder};
-    /// # use scylla::transport::Compression;
+    /// # use scylla::connection::Compression;
     /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
     /// # let session = SessionBuilder::new().known_node("127.0.0.1:9042").build().await?;
     /// session
