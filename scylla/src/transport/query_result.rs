@@ -1,8 +1,9 @@
 use crate::frame::response::cql_to_rust::{FromRow, FromRowError};
 use crate::frame::response::result::ColumnSpec;
 use crate::frame::response::result::Row;
-use crate::session::{IntoTypedRows, TypedRowIter};
+
 use bytes::Bytes;
+use scylla_cql::frame::response::result;
 use thiserror::Error;
 use uuid::Uuid;
 
@@ -255,6 +256,38 @@ impl From<SingleRowError> for SingleRowTypedError {
             SingleRowError::RowsExpected(e) => SingleRowTypedError::RowsExpected(e),
             SingleRowError::BadNumberOfRows(r) => SingleRowTypedError::BadNumberOfRows(r),
         }
+    }
+}
+
+/// Trait used to implement `Vec<result::Row>::into_typed<RowT>`
+// This is the only way to add custom method to Vec
+pub trait IntoTypedRows {
+    fn into_typed<RowT: FromRow>(self) -> TypedRowIter<RowT>;
+}
+
+// Adds method Vec<result::Row>::into_typed<RowT>(self)
+// It transforms the Vec into iterator mapping to custom row type
+impl IntoTypedRows for Vec<result::Row> {
+    fn into_typed<RowT: FromRow>(self) -> TypedRowIter<RowT> {
+        TypedRowIter {
+            row_iter: self.into_iter(),
+            phantom_data: Default::default(),
+        }
+    }
+}
+
+/// Iterator over rows parsed as the given type\
+/// Returned by `rows.into_typed::<(...)>()`
+pub struct TypedRowIter<RowT: FromRow> {
+    row_iter: std::vec::IntoIter<result::Row>,
+    phantom_data: std::marker::PhantomData<RowT>,
+}
+
+impl<RowT: FromRow> Iterator for TypedRowIter<RowT> {
+    type Item = Result<RowT, FromRowError>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        self.row_iter.next().map(RowT::from_row)
     }
 }
 

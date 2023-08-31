@@ -3,6 +3,7 @@
 
 #[cfg(feature = "cloud")]
 use crate::cloud::CloudConfig;
+use crate::IntoTypedRows;
 
 use crate::execution::driver_tracing::RequestSpan;
 use crate::execution::history::{self, HistoryListener};
@@ -34,7 +35,7 @@ use crate::connection::SslConfig;
 use crate::connection::{
     AddressTranslator, Connection, ConnectionConfig, NonErrorQueryResponse, VerifiedKeyspaceName,
 };
-use crate::cql_to_rust::FromRow;
+
 use crate::execution::errors::{NewSessionError, QueryError};
 use crate::execution::iterator::{PreparedIteratorConfig, RowIterator};
 use crate::execution::load_balancing::{self, RoutingInfo};
@@ -46,7 +47,6 @@ use crate::execution::Metrics;
 use crate::execution::{
     speculative_execution, ExecutionProfile, ExecutionProfileHandle, ExecutionProfileInner,
 };
-use crate::frame::response::cql_to_rust::FromRowError;
 use crate::frame::response::result;
 use crate::frame::value::{
     BatchValues, BatchValuesFirstSerialized, BatchValuesIterator, ValueList,
@@ -334,38 +334,6 @@ impl SessionConfig {
 impl Default for SessionConfig {
     fn default() -> Self {
         Self::new()
-    }
-}
-
-/// Trait used to implement `Vec<result::Row>::into_typed<RowT>`
-// This is the only way to add custom method to Vec
-pub trait IntoTypedRows {
-    fn into_typed<RowT: FromRow>(self) -> TypedRowIter<RowT>;
-}
-
-// Adds method Vec<result::Row>::into_typed<RowT>(self)
-// It transforms the Vec into iterator mapping to custom row type
-impl IntoTypedRows for Vec<result::Row> {
-    fn into_typed<RowT: FromRow>(self) -> TypedRowIter<RowT> {
-        TypedRowIter {
-            row_iter: self.into_iter(),
-            phantom_data: Default::default(),
-        }
-    }
-}
-
-/// Iterator over rows parsed as the given type\
-/// Returned by `rows.into_typed::<(...)>()`
-pub struct TypedRowIter<RowT: FromRow> {
-    row_iter: std::vec::IntoIter<result::Row>,
-    phantom_data: std::marker::PhantomData<RowT>,
-}
-
-impl<RowT: FromRow> Iterator for TypedRowIter<RowT> {
-    type Item = Result<RowT, FromRowError>;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        self.row_iter.next().map(RowT::from_row)
     }
 }
 
