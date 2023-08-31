@@ -16,7 +16,7 @@ Priorities of execution profiles and directly set options:
 use scylla::{Session, SessionBuilder};
 use scylla::query::Query;
 use scylla::statement::Consistency;
-use scylla::transport::ExecutionProfile;
+use scylla::execution::ExecutionProfile;
 
 let session_profile = ExecutionProfile::builder()
     .consistency(Consistency::One)

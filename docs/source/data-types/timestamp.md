@@ -13,7 +13,7 @@ When sending in a query it needs to be wrapped in `value::Timestamp` to differen
 # use std::error::Error;
 # async fn check_only_compiles(session: &Session) -> Result<(), Box<dyn Error>> {
 use scylla::IntoTypedRows;
-use scylla::frame::value::Timestamp;
+use scylla::cql::value::Timestamp;
 use chrono::Duration;
 
 // Insert some timestamp into the table

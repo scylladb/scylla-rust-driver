@@ -1,7 +1,7 @@
 # Query values
 Query text is constant, but the values might change.
 You can pass changing values to a query by specifying a list of variables as bound values.\
-Each `?` in query text will be filled with the matching value. 
+Each `?` in query text will be filled with the matching value.
 
 > **Never** pass values by adding strings, this could lead to [SQL Injection](https://en.wikipedia.org/wiki/SQL_injection)
 
@@ -12,7 +12,7 @@ or a custom struct which derives from `ValueList`.
 A few examples:
 ```rust
 # extern crate scylla;
-# use scylla::{Session, ValueList, frame::response::result::CqlValue};
+# use scylla::{Session, ValueList, cql::value::CqlValue};
 # use std::error::Error;
 # use std::collections::HashMap;
 # async fn check_only_compiles(session: &Session) -> Result<(), Box<dyn Error>> {
@@ -94,7 +94,7 @@ Using `Unset` results in better performance:
 # use scylla::Session;
 # use std::error::Error;
 # async fn check_only_compiles(session: &Session) -> Result<(), Box<dyn Error>> {
-use scylla::frame::value::{MaybeUnset, Unset};
+use scylla::cql::value::{MaybeUnset, Unset};
 
 // Inserting a null results in suboptimal performance
 let null_i32: Option<i32> = None;

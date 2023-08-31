@@ -1,6 +1,6 @@
 # Date
 
-For most use cases `Date` can be represented as 
+For most use cases `Date` can be represented as
 [`chrono::NaiveDate`](https://docs.rs/chrono/0.4.19/chrono/naive/struct.NaiveDate.html).\
 `NaiveDate` supports dates from -262145-1-1 to 262143-12-31.
 
@@ -40,11 +40,10 @@ Internally `Date` is represented as number of days since -5877641-06-23 i.e. 2^3
 # use scylla::Session;
 # use std::error::Error;
 # async fn check_only_compiles(session: &Session) -> Result<(), Box<dyn Error>> {
-use scylla::frame::value::Date;
-use scylla::frame::response::result::CqlValue;
+use scylla::cql::value::{CqlValue, Date};
 
 // Insert date using raw u32 representation
-let to_insert: Date = Date(2_u32.pow(31)); // 1970-01-01 
+let to_insert: Date = Date(2_u32.pow(31)); // 1970-01-01
 session
     .query("INSERT INTO keyspace.table (a) VALUES(?)", (to_insert,))
     .await?;

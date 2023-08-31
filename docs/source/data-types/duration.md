@@ -1,5 +1,5 @@
 # Duration
-`Duration` is represented as [`CqlDuration`](https://docs.rs/scylla/latest/scylla/frame/value/struct.CqlDuration.html)\
+`Duration` is represented as [`CqlDuration`](https://docs.rs/scylla/latest/scylla/cql/value/struct.CqlDuration.html)\
 
 ```rust
 # extern crate scylla;
@@ -7,7 +7,7 @@
 # use std::error::Error;
 # async fn check_only_compiles(session: &Session) -> Result<(), Box<dyn Error>> {
 use scylla::IntoTypedRows;
-use scylla::frame::value::CqlDuration;
+use scylla::cql::value::CqlDuration;
 
 // Insert some ip address into the table
 let to_insert: CqlDuration = CqlDuration { months: 1, days: 2, nanoseconds: 3 };
