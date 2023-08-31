@@ -1,3 +1,4 @@
+pub(crate) mod driver_tracing;
 pub mod errors;
 mod execution_profile;
 pub mod history;
