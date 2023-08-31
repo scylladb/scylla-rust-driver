@@ -7,12 +7,12 @@ use crate::routing::Token;
 use crate::statement::query::Query;
 use crate::utils::parse::{ParseErrorCause, ParseResult, ParserState};
 
+use crate::execution::errors::NewSessionError;
 use futures::future::{self, FutureExt};
 use futures::stream::{self, StreamExt, TryStreamExt};
 use futures::Stream;
 use rand::seq::SliceRandom;
 use rand::{thread_rng, Rng};
-use scylla_cql::errors::NewSessionError;
 use scylla_cql::frame::response::result::Row;
 use scylla_cql::frame::value::ValueList;
 use scylla_macros::FromRow;

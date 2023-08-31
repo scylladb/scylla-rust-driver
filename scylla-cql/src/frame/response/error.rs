@@ -1,4 +1,4 @@
-use crate::errors::{DbError, OperationType, QueryError, WriteType};
+use crate::errors::{DbError, OperationType, WriteType};
 use crate::frame::frame_errors::ParseError;
 use crate::frame::protocol_features::ProtocolFeatures;
 use crate::frame::types;
@@ -78,12 +78,6 @@ impl Error {
         };
 
         Ok(Error { error, reason })
-    }
-}
-
-impl From<Error> for QueryError {
-    fn from(error: Error) -> QueryError {
-        QueryError::DbError(error.error, error.reason)
     }
 }
 

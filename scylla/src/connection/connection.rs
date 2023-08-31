@@ -1,7 +1,7 @@
+use crate::execution::errors::TranslationError;
 use async_trait::async_trait;
 use bytes::Bytes;
 use futures::{future::RemoteHandle, FutureExt};
-use scylla_cql::errors::TranslationError;
 use scylla_cql::frame::request::options::Options;
 use scylla_cql::frame::response::Error;
 use scylla_cql::frame::types::SerialConsistency;
@@ -1832,8 +1832,8 @@ impl VerifiedKeyspaceName {
 
 #[cfg(test)]
 mod tests {
+    use crate::execution::errors::QueryError;
     use assert_matches::assert_matches;
-    use scylla_cql::errors::QueryError;
     use scylla_cql::frame::protocol_features::{
         LWT_OPTIMIZATION_META_BIT_MASK_KEY, SCYLLA_LWT_ADD_METADATA_MARK_EXTENSION,
     };

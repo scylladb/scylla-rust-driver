@@ -409,7 +409,8 @@ impl RowIterator {
 // A separate module is used here so that the parent module cannot construct
 // SendAttemptedProof directly.
 mod checked_channel_sender {
-    use scylla_cql::{errors::QueryError, frame::response::result::Rows};
+    use crate::execution::errors::QueryError;
+    use scylla_cql::frame::response::result::Rows;
     use std::marker::PhantomData;
     use tokio::sync::mpsc;
     use uuid::Uuid;

@@ -5,7 +5,7 @@ pub mod event;
 pub mod result;
 pub mod supported;
 
-use crate::{errors::QueryError, frame::frame_errors::ParseError};
+use crate::frame::frame_errors::ParseError;
 use num_enum::TryFromPrimitive;
 
 use crate::frame::protocol_features::ProtocolFeatures;
@@ -63,9 +63,9 @@ impl Response {
         Ok(response)
     }
 
-    pub fn into_non_error_response(self) -> Result<NonErrorResponse, QueryError> {
+    pub fn into_non_error_response(self) -> Result<NonErrorResponse, Error> {
         Ok(match self {
-            Response::Error(err) => return Err(QueryError::from(err)),
+            Response::Error(err) => return Err(err),
             Response::Ready => NonErrorResponse::Ready,
             Response::Result(res) => NonErrorResponse::Result(res),
             Response::Authenticate(auth) => NonErrorResponse::Authenticate(auth),

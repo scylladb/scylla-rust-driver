@@ -1,6 +1,6 @@
 use assert_matches::assert_matches;
+use scylla::execution::errors::NewSessionError;
 use scylla::SessionBuilder;
-use scylla_cql::errors::NewSessionError;
 
 #[cfg(not(scylla_cloud_tests))]
 #[tokio::test]

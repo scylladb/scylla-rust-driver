@@ -12,7 +12,6 @@ use bytes::Bytes;
 use futures::future::join_all;
 use futures::future::try_join_all;
 use itertools::{Either, Itertools};
-pub use scylla_cql::errors::TranslationError;
 use scylla_cql::frame::response::result::{deser_cql_value, ColumnSpec, Rows};
 use scylla_cql::frame::response::NonErrorResponse;
 use std::borrow::Borrow;

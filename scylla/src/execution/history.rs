@@ -10,7 +10,7 @@ use std::{
 use crate::execution::retries::RetryDecision;
 use chrono::{DateTime, Utc};
 
-use scylla_cql::errors::QueryError;
+use crate::execution::errors::QueryError;
 use tracing::warn;
 
 /// Id of a single query, i.e. a single call to Session::query/execute/etc.
@@ -464,12 +464,12 @@ mod tests {
         SpeculativeId, StructuredHistory, TimePoint,
     };
     use crate::test_utils::create_new_session_builder;
+    use crate::{
+        execution::errors::{DbError, QueryError},
+        statement::Consistency,
+    };
     use chrono::{DateTime, NaiveDate, NaiveDateTime, NaiveTime, Utc};
     use futures::StreamExt;
-    use scylla_cql::{
-        errors::{DbError, QueryError},
-        Consistency,
-    };
 
     // Set a single time for all timestamps within StructuredHistory.
     // HistoryCollector sets the timestamp to current time which changes with each test.

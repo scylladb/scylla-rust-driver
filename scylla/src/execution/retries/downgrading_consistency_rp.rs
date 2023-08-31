@@ -1,6 +1,6 @@
-use scylla_cql::{
-    errors::{DbError, QueryError, WriteType},
-    Consistency,
+use crate::{
+    execution::errors::{DbError, QueryError, WriteType},
+    statement::Consistency,
 };
 use tracing::debug;
 
@@ -183,8 +183,8 @@ impl RetrySession for DowngradingConsistencyRetrySession {
 mod tests {
     use std::{io::ErrorKind, sync::Arc};
 
+    use crate::execution::errors::BadQuery;
     use bytes::Bytes;
-    use scylla_cql::errors::BadQuery;
 
     use super::*;
 
