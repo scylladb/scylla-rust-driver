@@ -113,6 +113,9 @@ pub mod session;
 pub mod statement;
 pub mod transport;
 
+#[cfg(test)]
+mod tests;
+
 pub(crate) mod utils;
 
 /// This module is NOT part of the public API (it is `pub` only for internal use of integration tests).

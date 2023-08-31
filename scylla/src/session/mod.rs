@@ -1,8 +1,6 @@
 mod caching_session;
 mod session;
 pub mod session_builder;
-#[cfg(test)]
-mod session_test;
 
 pub use caching_session::CachingSession;
 pub use session::*;
