@@ -10,12 +10,12 @@ use uuid::Uuid;
 use scylla_cql::frame::response::result::ColumnSpec;
 
 use super::StatementConfig;
+use crate::execution::history::HistoryListener;
 use crate::execution::retries::RetryPolicy;
 use crate::execution::ExecutionProfileHandle;
 use crate::frame::response::result::PreparedMetadata;
 use crate::frame::types::{Consistency, SerialConsistency};
 use crate::frame::value::SerializedValues;
-use crate::history::HistoryListener;
 use crate::sharding::Token;
 use crate::transport::partitioner::{Partitioner, PartitionerHasher, PartitionerName};
 

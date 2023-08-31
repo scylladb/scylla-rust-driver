@@ -108,7 +108,6 @@ pub mod cloud;
 pub mod cluster;
 pub mod connection;
 pub mod execution;
-pub mod history;
 pub mod session;
 pub mod sharding;
 pub mod statement;

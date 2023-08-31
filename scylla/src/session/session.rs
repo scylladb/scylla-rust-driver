@@ -4,8 +4,7 @@
 #[cfg(feature = "cloud")]
 use crate::cloud::CloudConfig;
 
-use crate::history;
-use crate::history::HistoryListener;
+use crate::execution::history::{self, HistoryListener};
 use crate::utils::pretty::{CommaSeparatedDisplayer, CqlValueDisplayer};
 use arc_swap::ArcSwapOption;
 use bytes::Bytes;
