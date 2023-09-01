@@ -142,7 +142,7 @@ fn write_int_length(v: usize, buf: &mut impl BufMut) -> Result<(), ParseError> {
 
 #[test]
 fn type_int() {
-    let vals = vec![i32::MIN, -1, 0, 1, i32::MAX];
+    let vals = [i32::MIN, -1, 0, 1, i32::MAX];
     for val in vals.iter() {
         let mut buf = Vec::new();
         write_int(*val, &mut buf);
@@ -161,7 +161,7 @@ pub fn write_long(v: i64, buf: &mut impl BufMut) {
 
 #[test]
 fn type_long() {
-    let vals = vec![i64::MIN, -1, 0, 1, i64::MAX];
+    let vals = [i64::MIN, -1, 0, 1, i64::MAX];
     for val in vals.iter() {
         let mut buf = Vec::new();
         write_long(*val, &mut buf);
@@ -192,7 +192,7 @@ fn write_short_length(v: usize, buf: &mut impl BufMut) -> Result<(), ParseError>
 
 #[test]
 fn type_short() {
-    let vals = vec![i16::MIN, -1, 0, 1, i16::MAX];
+    let vals = [i16::MIN, -1, 0, 1, i16::MAX];
     for val in vals.iter() {
         let mut buf = Vec::new();
         write_short(*val, &mut buf);
