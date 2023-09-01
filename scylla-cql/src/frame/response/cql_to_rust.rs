@@ -557,7 +557,7 @@ mod tests {
             .unwrap()
             .and_hms_opt(2, 0, 0)
             .unwrap();
-        let datetime_utc = DateTime::<Utc>::from_utc(naivedatetime_utc, Utc);
+        let datetime_utc = DateTime::<Utc>::from_naive_utc_and_offset(naivedatetime_utc, Utc);
 
         assert_eq!(
             datetime_utc,

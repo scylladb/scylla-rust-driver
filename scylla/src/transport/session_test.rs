@@ -646,7 +646,7 @@ async fn test_use_keyspace() {
         )))
     ));
 
-    let long_name: String = vec!['a'; 49].iter().collect();
+    let long_name: String = ['a'; 49].iter().collect();
     assert!(matches!(
         session.use_keyspace(long_name, false).await,
         Err(QueryError::BadQuery(BadQuery::BadKeyspaceName(

@@ -475,7 +475,7 @@ mod tests {
     // HistoryCollector sets the timestamp to current time which changes with each test.
     // Setting it to one makes it possible to test displaying consistently.
     fn set_one_time(mut history: StructuredHistory) -> StructuredHistory {
-        let the_time: TimePoint = DateTime::<Utc>::from_utc(
+        let the_time: TimePoint = DateTime::<Utc>::from_naive_utc_and_offset(
             NaiveDateTime::new(
                 NaiveDate::from_ymd_opt(2022, 2, 22).unwrap(),
                 NaiveTime::from_hms_opt(20, 22, 22).unwrap(),

@@ -125,7 +125,7 @@ fn datetime_serialization() {
             ((*test_val % 1000) as i32 * 1_000_000) as u32,
         )
         .expect("invalid or out-of-range datetime");
-        let test_datetime = DateTime::<Utc>::from_utc(native_datetime, Utc);
+        let test_datetime = DateTime::<Utc>::from_naive_utc_and_offset(native_datetime, Utc);
         let bytes: Vec<u8> = serialized(test_datetime);
 
         let mut expected_bytes: Vec<u8> = vec![0, 0, 0, 8];
