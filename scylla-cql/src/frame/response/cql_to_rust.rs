@@ -4,7 +4,7 @@ use bigdecimal::BigDecimal;
 use chrono::{DateTime, Duration, NaiveDate, TimeZone, Utc};
 use num_bigint::BigInt;
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
-use std::hash::Hash;
+use std::hash::{BuildHasher, Hash};
 use std::net::IpAddr;
 use thiserror::Error;
 use uuid::Uuid;
@@ -213,14 +213,16 @@ impl<T1: FromCqlVal<CqlValue> + Eq + Hash, T2: FromCqlVal<CqlValue>> FromCqlVal<
     }
 }
 
-impl<T: FromCqlVal<CqlValue> + Eq + Hash> FromCqlVal<CqlValue> for HashSet<T> {
+impl<T: FromCqlVal<CqlValue> + Eq + Hash, S: BuildHasher + Default> FromCqlVal<CqlValue>
+    for HashSet<T, S>
+{
     fn from_cql(cql_val: CqlValue) -> Result<Self, FromCqlValError> {
         cql_val
             .into_vec()
             .ok_or(FromCqlValError::BadCqlType)?
             .into_iter()
             .map(T::from_cql)
-            .collect::<Result<HashSet<T>, FromCqlValError>>()
+            .collect::<Result<HashSet<T, S>, FromCqlValError>>()
     }
 }
 
