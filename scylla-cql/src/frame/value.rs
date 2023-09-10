@@ -830,7 +830,8 @@ impl ValueList for [u8; 0] {
 // Implement ValueList for slices of Value types
 impl<T: Value> ValueList for &[T] {
     fn serialized(&self) -> SerializedResult<'_> {
-        let mut result = SerializedValues::with_capacity(self.len());
+        let size = std::mem::size_of_val(*self);
+        let mut result = SerializedValues::with_capacity(size);
         for val in *self {
             result.add_value(val)?;
         }
@@ -842,7 +843,9 @@ impl<T: Value> ValueList for &[T] {
 // Implement ValueList for Vec<Value>
 impl<T: Value> ValueList for Vec<T> {
     fn serialized(&self) -> SerializedResult<'_> {
-        let mut result = SerializedValues::with_capacity(self.len());
+        let slice = self.as_slice();
+        let size = std::mem::size_of_val(slice);
+        let mut result = SerializedValues::with_capacity(size);
         for val in self {
             result.add_value(val)?;
         }
@@ -894,20 +897,22 @@ impl_value_list_for_btree_map!(&str);
 // Further variants are done using a macro
 impl<T0: Value> ValueList for (T0,) {
     fn serialized(&self) -> SerializedResult<'_> {
-        let mut result = SerializedValues::with_capacity(1);
+        let size = std::mem::size_of_val(self);
+        let mut result = SerializedValues::with_capacity(size);
         result.add_value(&self.0)?;
         Ok(Cow::Owned(result))
     }
 }
 
 macro_rules! impl_value_list_for_tuple {
-    ( $($Ti:ident),* ; $($FieldI:tt),* ; $size: expr) => {
+    ( $($Ti:ident),* ; $($FieldI:tt),*) => {
         impl<$($Ti),+> ValueList for ($($Ti,)+)
         where
             $($Ti: Value),+
         {
             fn serialized(&self) -> SerializedResult<'_> {
-                let mut result = SerializedValues::with_capacity($size);
+                let size = std::mem::size_of_val(self);
+                let mut result = SerializedValues::with_capacity(size);
                 $(
                     result.add_value(&self.$FieldI) ?;
                 )*
@@ -917,28 +922,27 @@ macro_rules! impl_value_list_for_tuple {
     }
 }
 
-impl_value_list_for_tuple!(T0, T1; 0, 1; 2);
-impl_value_list_for_tuple!(T0, T1, T2; 0, 1, 2; 3);
-impl_value_list_for_tuple!(T0, T1, T2, T3; 0, 1, 2, 3; 4);
-impl_value_list_for_tuple!(T0, T1, T2, T3, T4; 0, 1, 2, 3, 4; 5);
-impl_value_list_for_tuple!(T0, T1, T2, T3, T4, T5; 0, 1, 2, 3, 4, 5; 6);
-impl_value_list_for_tuple!(T0, T1, T2, T3, T4, T5, T6; 0, 1, 2, 3, 4, 5, 6; 7);
-impl_value_list_for_tuple!(T0, T1, T2, T3, T4, T5, T6, T7; 0, 1, 2, 3, 4, 5, 6, 7; 8);
-impl_value_list_for_tuple!(T0, T1, T2, T3, T4, T5, T6, T7, T8; 0, 1, 2, 3, 4, 5, 6, 7, 8; 9);
-impl_value_list_for_tuple!(T0, T1, T2, T3, T4, T5, T6, T7, T8, T9;
-                           0, 1, 2, 3, 4, 5, 6, 7, 8, 9; 10);
+impl_value_list_for_tuple!(T0, T1; 0, 1);
+impl_value_list_for_tuple!(T0, T1, T2; 0, 1, 2);
+impl_value_list_for_tuple!(T0, T1, T2, T3; 0, 1, 2, 3);
+impl_value_list_for_tuple!(T0, T1, T2, T3, T4; 0, 1, 2, 3, 4);
+impl_value_list_for_tuple!(T0, T1, T2, T3, T4, T5; 0, 1, 2, 3, 4, 5);
+impl_value_list_for_tuple!(T0, T1, T2, T3, T4, T5, T6; 0, 1, 2, 3, 4, 5, 6);
+impl_value_list_for_tuple!(T0, T1, T2, T3, T4, T5, T6, T7; 0, 1, 2, 3, 4, 5, 6, 7);
+impl_value_list_for_tuple!(T0, T1, T2, T3, T4, T5, T6, T7, T8; 0, 1, 2, 3, 4, 5, 6, 7, 8);
+impl_value_list_for_tuple!(T0, T1, T2, T3, T4, T5, T6, T7, T8, T9; 0, 1, 2, 3, 4, 5, 6, 7, 8, 9);
 impl_value_list_for_tuple!(T0, T1, T2, T3, T4, T5, T6, T7, T8, T9, T10;
-                           0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10; 11);
+                           0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10);
 impl_value_list_for_tuple!(T0, T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11;
-                           0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11; 12);
+                           0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11);
 impl_value_list_for_tuple!(T0, T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, T12;
-                           0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12; 13);
+                           0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12);
 impl_value_list_for_tuple!(T0, T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, T12, T13;
-                           0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13; 14);
+                           0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13);
 impl_value_list_for_tuple!(T0, T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, T12, T13, T14;
-                           0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14; 15);
+                           0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14);
 impl_value_list_for_tuple!(T0, T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, T12, T13, T14, T15;
-                           0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15; 16);
+                           0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15);
 
 // Every &impl ValueList should also implement ValueList
 impl<T: ValueList> ValueList for &T {
