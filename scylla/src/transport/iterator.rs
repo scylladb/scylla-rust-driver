@@ -38,7 +38,6 @@ use crate::transport::load_balancing::{self, RoutingInfo};
 use crate::transport::metrics::Metrics;
 use crate::transport::retry_policy::{QueryInfo, RetryDecision, RetrySession};
 use crate::transport::{Node, NodeRef};
-use crate::utils::unzip_option;
 use tracing::{trace, trace_span, warn, Instrument};
 use uuid::Uuid;
 
@@ -246,7 +245,7 @@ impl RowIterator {
                     prepared_ref.get_partitioner_name(),
                     values_ref,
                 ) {
-                Ok(res) => unzip_option(res),
+                Ok(res) => res.unzip(),
                 Err(err) => {
                     let (proof, _res) = ProvingSender::from(sender).send(Err(err)).await;
                     return proof;

@@ -7,7 +7,6 @@ use crate::cloud::CloudConfig;
 use crate::history;
 use crate::history::HistoryListener;
 use crate::utils::pretty::{CommaSeparatedDisplayer, CqlValueDisplayer};
-use crate::utils::unzip_option;
 use arc_swap::ArcSwapOption;
 use async_trait::async_trait;
 use bytes::Bytes;
@@ -937,11 +936,12 @@ impl Session {
         let values_ref = &serialized_values;
         let paging_state_ref = &paging_state;
 
-        let (partition_key, token) =
-            unzip_option(prepared.extract_partition_key_and_calculate_token(
+        let (partition_key, token) = prepared
+            .extract_partition_key_and_calculate_token(
                 prepared.get_partitioner_name(),
                 &serialized_values,
-            )?);
+            )?
+            .unzip();
 
         let execution_profile = prepared
             .get_execution_profile_handle()
