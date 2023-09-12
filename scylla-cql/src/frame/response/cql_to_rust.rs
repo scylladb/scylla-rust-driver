@@ -200,12 +200,12 @@ impl<T: FromCqlVal<CqlValue>> FromCqlVal<CqlValue> for Vec<T> {
     }
 }
 
-impl<T1: FromCqlVal<CqlValue> + Eq + Hash, T2: FromCqlVal<CqlValue>> FromCqlVal<CqlValue>
-    for HashMap<T1, T2>
+impl<T1: FromCqlVal<CqlValue> + Eq + Hash, T2: FromCqlVal<CqlValue>, T3: BuildHasher + Default>
+    FromCqlVal<CqlValue> for HashMap<T1, T2, T3>
 {
     fn from_cql(cql_val: CqlValue) -> Result<Self, FromCqlValError> {
         let vec = cql_val.into_pair_vec().ok_or(FromCqlValError::BadCqlType)?;
-        let mut res = HashMap::with_capacity(vec.len());
+        let mut res = HashMap::with_capacity_and_hasher(vec.len(), T3::default());
         for (key, value) in vec {
             res.insert(T1::from_cql(key)?, T2::from_cql(value)?);
         }

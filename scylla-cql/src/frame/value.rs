@@ -853,8 +853,8 @@ impl<T: Value> ValueList for Vec<T> {
 
 // Implement ValueList for maps, which serializes named values
 macro_rules! impl_value_list_for_btree_map {
-    ($map_type:ident, $key_type:ty) => {
-        impl<T: Value> ValueList for $map_type<$key_type, T> {
+    ($key_type:ty) => {
+        impl<T: Value> ValueList for BTreeMap<$key_type, T> {
             fn serialized(&self) -> SerializedResult<'_> {
                 let mut result = SerializedValues::with_capacity(self.len());
                 for (key, val) in self {
@@ -869,8 +869,8 @@ macro_rules! impl_value_list_for_btree_map {
 
 // Implement ValueList for maps, which serializes named values
 macro_rules! impl_value_list_for_hash_map {
-    ($map_type:ident, $key_type:ty) => {
-        impl<T: Value, S: BuildHasher> ValueList for $map_type<$key_type, T, S> {
+    ($key_type:ty) => {
+        impl<T: Value, S: BuildHasher> ValueList for HashMap<$key_type, T, S> {
             fn serialized(&self) -> SerializedResult<'_> {
                 let mut result = SerializedValues::with_capacity(self.len());
                 for (key, val) in self {
@@ -883,10 +883,10 @@ macro_rules! impl_value_list_for_hash_map {
     };
 }
 
-impl_value_list_for_hash_map!(HashMap, String);
-impl_value_list_for_hash_map!(HashMap, &str);
-impl_value_list_for_btree_map!(BTreeMap, String);
-impl_value_list_for_btree_map!(BTreeMap, &str);
+impl_value_list_for_hash_map!(String);
+impl_value_list_for_hash_map!(&str);
+impl_value_list_for_btree_map!(String);
+impl_value_list_for_btree_map!(&str);
 
 // Implement ValueList for tuples of Values of size up to 16
 
