@@ -8,6 +8,7 @@ use num_bigint::BigInt;
 use std::borrow::Cow;
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::convert::TryInto;
+use std::mem::size_of;
 use std::net::IpAddr;
 use thiserror::Error;
 use uuid::Uuid;
@@ -22,6 +23,15 @@ use secrecy::{ExposeSecret, Secret, Zeroize};
 /// serialize() should write the Value as [bytes] to the provided buffer
 pub trait Value {
     fn serialize(&self, buf: &mut Vec<u8>) -> Result<(), ValueTooBig>;
+    /// A *hint* to callers indicating how much memory the serialized
+    /// form of this `Value` will take. This hint is not defined as a
+    /// lower bound, upper bound, nor is an exact size. Every implementation
+    /// is free to return the "best guess" available.
+    /// The default impl returns `std::mem::size_of::<i32>()` as every Value
+    /// at minimum has an i32 sized tag.
+    fn size_hint() -> usize {
+        std::mem::size_of::<i32>()
+    }
 }
 
 #[derive(Debug, Error, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -343,6 +353,10 @@ impl Value for i8 {
         buf.put_i8(*self);
         Ok(())
     }
+
+    fn size_hint() -> usize {
+        size_of::<i32>() + size_of::<Self>()
+    }
 }
 
 impl Value for i16 {
@@ -350,6 +364,9 @@ impl Value for i16 {
         buf.put_i32(2);
         buf.put_i16(*self);
         Ok(())
+    }
+    fn size_hint() -> usize {
+        size_of::<i32>() + size_of::<Self>()
     }
 }
 
@@ -359,6 +376,9 @@ impl Value for i32 {
         buf.put_i32(*self);
         Ok(())
     }
+    fn size_hint() -> usize {
+        size_of::<i32>() + size_of::<Self>()
+    }
 }
 
 impl Value for i64 {
@@ -366,6 +386,9 @@ impl Value for i64 {
         buf.put_i32(8);
         buf.put_i64(*self);
         Ok(())
+    }
+    fn size_hint() -> usize {
+        size_of::<i32>() + size_of::<Self>()
     }
 }
 
@@ -381,6 +404,10 @@ impl Value for BigDecimal {
         buf.extend_from_slice(&serialized);
 
         Ok(())
+    }
+    fn size_hint() -> usize {
+        // The i32 length, the scale, the BigInt
+        2 * size_of::<i32>() + 2 * size_of::<u64>()
     }
 }
 
@@ -399,6 +426,9 @@ impl Value for NaiveDate {
         buf.put_u32(days);
         Ok(())
     }
+    fn size_hint() -> usize {
+        size_of::<i32>() + size_of::<u32>()
+    }
 }
 
 impl Value for Date {
@@ -406,6 +436,9 @@ impl Value for Date {
         buf.put_i32(4);
         buf.put_u32(self.0);
         Ok(())
+    }
+    fn size_hint() -> usize {
+        size_of::<i32>() + size_of::<u32>()
     }
 }
 
@@ -415,6 +448,9 @@ impl Value for Timestamp {
         buf.put_i64(self.0.num_milliseconds());
         Ok(())
     }
+    fn size_hint() -> usize {
+        size_of::<i32>() + size_of::<i64>()
+    }
 }
 
 impl Value for Time {
@@ -422,6 +458,9 @@ impl Value for Time {
         buf.put_i32(8);
         buf.put_i64(self.0.num_nanoseconds().ok_or(ValueTooBig)?);
         Ok(())
+    }
+    fn size_hint() -> usize {
+        size_of::<i32>() + size_of::<i64>()
     }
 }
 
@@ -453,6 +492,9 @@ impl Value for bool {
 
         Ok(())
     }
+    fn size_hint() -> usize {
+        size_of::<i32>() + size_of::<Self>()
+    }
 }
 
 impl Value for f32 {
@@ -460,6 +502,9 @@ impl Value for f32 {
         buf.put_i32(4);
         buf.put_f32(*self);
         Ok(())
+    }
+    fn size_hint() -> usize {
+        size_of::<i32>() + size_of::<Self>()
     }
 }
 
@@ -469,6 +514,9 @@ impl Value for f64 {
         buf.put_f64(*self);
         Ok(())
     }
+    fn size_hint() -> usize {
+        size_of::<i32>() + size_of::<Self>()
+    }
 }
 
 impl Value for Uuid {
@@ -476,6 +524,9 @@ impl Value for Uuid {
         buf.put_i32(16);
         buf.extend_from_slice(self.as_bytes());
         Ok(())
+    }
+    fn size_hint() -> usize {
+        size_of::<i32>() + size_of::<Uuid>()
     }
 }
 
@@ -489,6 +540,10 @@ impl Value for BigInt {
 
         Ok(())
     }
+    fn size_hint() -> usize {
+        // Internally the smallest BigInt is [u64; 2]
+        size_of::<i32>() + 2 * size_of::<u64>()
+    }
 }
 
 impl Value for &str {
@@ -500,6 +555,12 @@ impl Value for &str {
         buf.put(str_bytes);
 
         Ok(())
+    }
+    fn size_hint() -> usize {
+        // 1i32 for the tag, 3i32 for additional characters. This optimizes
+        // for the likely case that strings will rarely be empty, and likely
+        // be at least a few characters
+        4 * size_of::<i32>()
     }
 }
 
@@ -529,6 +590,11 @@ impl<const N: usize> Value for [u8; N] {
 
         Ok(())
     }
+    fn size_hint() -> usize {
+        // 1i32 for the tag, 3i32 for additional bytes. This optimizes
+        // for the likely case that bytes will rarely be empty
+        2 * size_of::<i32>()
+    }
 }
 
 impl Value for IpAddr {
@@ -546,11 +612,19 @@ impl Value for IpAddr {
 
         Ok(())
     }
+    fn size_hint() -> usize {
+        // tag + ipv4 octects
+        size_of::<i32>() + size_of::<[u8; 4]>()
+    }
 }
 
 impl Value for String {
     fn serialize(&self, buf: &mut Vec<u8>) -> Result<(), ValueTooBig> {
         <&str as Value>::serialize(&self.as_str(), buf)
+    }
+
+    fn size_hint() -> usize {
+        <&str as Value>::size_hint()
     }
 }
 
@@ -565,6 +639,9 @@ impl<T: Value> Value for Option<T> {
             }
         }
     }
+    fn size_hint() -> usize {
+        <T as Value>::size_hint()
+    }
 }
 
 impl Value for Unset {
@@ -573,11 +650,17 @@ impl Value for Unset {
         buf.put_i32(-2);
         Ok(())
     }
+    fn size_hint() -> usize {
+        size_of::<i32>()
+    }
 }
 
 impl Value for Counter {
     fn serialize(&self, buf: &mut Vec<u8>) -> Result<(), ValueTooBig> {
         self.0.serialize(buf)
+    }
+    fn size_hint() -> usize {
+        size_of::<i32>() + size_of::<Self>()
     }
 }
 
@@ -596,6 +679,9 @@ impl Value for CqlDuration {
 
         Ok(())
     }
+    fn size_hint() -> usize {
+        size_of::<i32>() + 3 * size_of::<i64>()
+    }
 }
 
 impl<V: Value> Value for MaybeUnset<V> {
@@ -611,6 +697,9 @@ impl<V: Value> Value for MaybeUnset<V> {
 impl<T: Value + ?Sized> Value for &T {
     fn serialize(&self, buf: &mut Vec<u8>) -> Result<(), ValueTooBig> {
         <T as Value>::serialize(*self, buf)
+    }
+    fn size_hint() -> usize {
+        T::size_hint()
     }
 }
 
@@ -666,11 +755,19 @@ impl<V: Value> Value for HashSet<V> {
     fn serialize(&self, buf: &mut Vec<u8>) -> Result<(), ValueTooBig> {
         serialize_list_or_set(self.iter(), self.len(), buf)
     }
+    fn size_hint() -> usize {
+        // Size, number of keys, assume not empty
+        4 * size_of::<i32>()
+    }
 }
 
 impl<K: Value, V: Value> Value for HashMap<K, V> {
     fn serialize(&self, buf: &mut Vec<u8>) -> Result<(), ValueTooBig> {
         serialize_map(self.iter(), self.len(), buf)
+    }
+    fn size_hint() -> usize {
+        // Size, number of keys, assume not empty
+        4 * size_of::<i32>()
     }
 }
 
@@ -678,11 +775,19 @@ impl<V: Value> Value for BTreeSet<V> {
     fn serialize(&self, buf: &mut Vec<u8>) -> Result<(), ValueTooBig> {
         serialize_list_or_set(self.iter(), self.len(), buf)
     }
+    fn size_hint() -> usize {
+        // Size, number of keys, assume not empty
+        4 * size_of::<i32>()
+    }
 }
 
 impl<K: Value, V: Value> Value for BTreeMap<K, V> {
     fn serialize(&self, buf: &mut Vec<u8>) -> Result<(), ValueTooBig> {
         serialize_map(self.iter(), self.len(), buf)
+    }
+    fn size_hint() -> usize {
+        // Size, number of keys, assume not empty
+        4 * size_of::<i32>()
     }
 }
 
@@ -690,11 +795,18 @@ impl<T: Value> Value for Vec<T> {
     fn serialize(&self, buf: &mut Vec<u8>) -> Result<(), ValueTooBig> {
         serialize_list_or_set(self.iter(), self.len(), buf)
     }
+    fn size_hint() -> usize {
+        4 * size_of::<i32>()
+    }
 }
 
 impl<T: Value> Value for &[T] {
     fn serialize(&self, buf: &mut Vec<u8>) -> Result<(), ValueTooBig> {
         serialize_list_or_set(self.iter(), self.len(), buf)
+    }
+    fn size_hint() -> usize {
+        // Size, number of items, assume not empty
+        4 * size_of::<i32>()
     }
 }
 
@@ -761,6 +873,12 @@ impl Value for CqlValue {
     }
 }
 
+// utility macro
+macro_rules! _count {
+    () => (0usize);
+    ( $x:tt $($xs:tt)* ) => (1usize + _count!($($xs)*));
+}
+
 macro_rules! impl_value_for_tuple {
     ( $($Ti:ident),* ; $($FieldI:tt),* ) => {
     impl<$($Ti),+> Value for ($($Ti,)+)
@@ -780,6 +898,8 @@ macro_rules! impl_value_for_tuple {
 
                 Ok(())
             }
+
+            fn size_hint() -> usize { size_of::<i32>() + _count!($($FieldI)*) * size_of::<i32>() }
         }
     }
 }
@@ -829,7 +949,8 @@ impl ValueList for [u8; 0] {
 // Implement ValueList for slices of Value types
 impl<T: Value> ValueList for &[T] {
     fn serialized(&self) -> SerializedResult<'_> {
-        let mut result = SerializedValues::with_capacity(self.len());
+        let mut result = SerializedValues::with_capacity(self.len() * T::size_hint());
+
         for val in *self {
             result.add_value(val)?;
         }
@@ -841,7 +962,7 @@ impl<T: Value> ValueList for &[T] {
 // Implement ValueList for Vec<Value>
 impl<T: Value> ValueList for Vec<T> {
     fn serialized(&self) -> SerializedResult<'_> {
-        let mut result = SerializedValues::with_capacity(self.len());
+        let mut result = SerializedValues::with_capacity(self.len() * T::size_hint());
         for val in self {
             result.add_value(val)?;
         }
@@ -855,7 +976,12 @@ macro_rules! impl_value_list_for_map {
     ($map_type:ident, $key_type:ty) => {
         impl<T: Value> ValueList for $map_type<$key_type, T> {
             fn serialized(&self) -> SerializedResult<'_> {
-                let mut result = SerializedValues::with_capacity(self.len());
+                // Technically `4` is not the lower bound, but it's
+                // unlikely that the key and value are both empty
+                let mut result = SerializedValues::with_capacity(
+                    self.len() * <$key_type as Value>::size_hint()
+                        + self.len() * <T as Value>::size_hint(),
+                );
                 for (key, val) in self {
                     result.add_named_value(key, val)?;
                 }
@@ -877,7 +1003,7 @@ impl_value_list_for_map!(BTreeMap, &str);
 // Further variants are done using a macro
 impl<T0: Value> ValueList for (T0,) {
     fn serialized(&self) -> SerializedResult<'_> {
-        let mut result = SerializedValues::with_capacity(1);
+        let mut result = SerializedValues::with_capacity(<T0 as Value>::size_hint());
         result.add_value(&self.0)?;
         Ok(Cow::Owned(result))
     }
@@ -890,10 +1016,15 @@ macro_rules! impl_value_list_for_tuple {
             $($Ti: Value),+
         {
             fn serialized(&self) -> SerializedResult<'_> {
-                let mut result = SerializedValues::with_capacity($size);
+                let mut cap = size_of::<i32>();
+                $(
+                    cap += $Ti::size_hint();
+                )*
+                let mut result = SerializedValues::with_capacity(cap);
                 $(
                     result.add_value(&self.$FieldI) ?;
                 )*
+
                 Ok(Cow::Owned(result))
             }
         }
