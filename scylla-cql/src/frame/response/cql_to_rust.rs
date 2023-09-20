@@ -4,7 +4,7 @@ use bigdecimal::BigDecimal;
 use chrono::{DateTime, Duration, NaiveDate, TimeZone, Utc};
 use num_bigint::BigInt;
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
-use std::hash::Hash;
+use std::hash::{BuildHasher, Hash};
 use std::net::IpAddr;
 use thiserror::Error;
 use uuid::Uuid;
@@ -200,12 +200,12 @@ impl<T: FromCqlVal<CqlValue>> FromCqlVal<CqlValue> for Vec<T> {
     }
 }
 
-impl<T1: FromCqlVal<CqlValue> + Eq + Hash, T2: FromCqlVal<CqlValue>> FromCqlVal<CqlValue>
-    for HashMap<T1, T2>
+impl<T1: FromCqlVal<CqlValue> + Eq + Hash, T2: FromCqlVal<CqlValue>, T3: BuildHasher + Default>
+    FromCqlVal<CqlValue> for HashMap<T1, T2, T3>
 {
     fn from_cql(cql_val: CqlValue) -> Result<Self, FromCqlValError> {
         let vec = cql_val.into_pair_vec().ok_or(FromCqlValError::BadCqlType)?;
-        let mut res = HashMap::with_capacity(vec.len());
+        let mut res = HashMap::with_capacity_and_hasher(vec.len(), T3::default());
         for (key, value) in vec {
             res.insert(T1::from_cql(key)?, T2::from_cql(value)?);
         }
@@ -213,14 +213,16 @@ impl<T1: FromCqlVal<CqlValue> + Eq + Hash, T2: FromCqlVal<CqlValue>> FromCqlVal<
     }
 }
 
-impl<T: FromCqlVal<CqlValue> + Eq + Hash> FromCqlVal<CqlValue> for HashSet<T> {
+impl<T: FromCqlVal<CqlValue> + Eq + Hash, S: BuildHasher + Default> FromCqlVal<CqlValue>
+    for HashSet<T, S>
+{
     fn from_cql(cql_val: CqlValue) -> Result<Self, FromCqlValError> {
         cql_val
             .into_vec()
             .ok_or(FromCqlValError::BadCqlType)?
             .into_iter()
             .map(T::from_cql)
-            .collect::<Result<HashSet<T>, FromCqlValError>>()
+            .collect::<Result<HashSet<T, S>, FromCqlValError>>()
     }
 }
 

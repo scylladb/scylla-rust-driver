@@ -8,6 +8,7 @@ use num_bigint::BigInt;
 use std::borrow::Cow;
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::convert::TryInto;
+use std::hash::BuildHasher;
 use std::net::IpAddr;
 use thiserror::Error;
 use uuid::Uuid;
@@ -662,13 +663,13 @@ fn serialize_list_or_set<'a, V: 'a + Value>(
     Ok(())
 }
 
-impl<V: Value> Value for HashSet<V> {
+impl<V: Value, S: BuildHasher + Default> Value for HashSet<V, S> {
     fn serialize(&self, buf: &mut Vec<u8>) -> Result<(), ValueTooBig> {
         serialize_list_or_set(self.iter(), self.len(), buf)
     }
 }
 
-impl<K: Value, V: Value> Value for HashMap<K, V> {
+impl<K: Value, V: Value, S: BuildHasher> Value for HashMap<K, V, S> {
     fn serialize(&self, buf: &mut Vec<u8>) -> Result<(), ValueTooBig> {
         serialize_map(self.iter(), self.len(), buf)
     }
@@ -851,9 +852,9 @@ impl<T: Value> ValueList for Vec<T> {
 }
 
 // Implement ValueList for maps, which serializes named values
-macro_rules! impl_value_list_for_map {
-    ($map_type:ident, $key_type:ty) => {
-        impl<T: Value> ValueList for $map_type<$key_type, T> {
+macro_rules! impl_value_list_for_btree_map {
+    ($key_type:ty) => {
+        impl<T: Value> ValueList for BTreeMap<$key_type, T> {
             fn serialized(&self) -> SerializedResult<'_> {
                 let mut result = SerializedValues::with_capacity(self.len());
                 for (key, val) in self {
@@ -866,10 +867,26 @@ macro_rules! impl_value_list_for_map {
     };
 }
 
-impl_value_list_for_map!(HashMap, String);
-impl_value_list_for_map!(HashMap, &str);
-impl_value_list_for_map!(BTreeMap, String);
-impl_value_list_for_map!(BTreeMap, &str);
+// Implement ValueList for maps, which serializes named values
+macro_rules! impl_value_list_for_hash_map {
+    ($key_type:ty) => {
+        impl<T: Value, S: BuildHasher> ValueList for HashMap<$key_type, T, S> {
+            fn serialized(&self) -> SerializedResult<'_> {
+                let mut result = SerializedValues::with_capacity(self.len());
+                for (key, val) in self {
+                    result.add_named_value(key, val)?;
+                }
+
+                Ok(Cow::Owned(result))
+            }
+        }
+    };
+}
+
+impl_value_list_for_hash_map!(String);
+impl_value_list_for_hash_map!(&str);
+impl_value_list_for_btree_map!(String);
+impl_value_list_for_btree_map!(&str);
 
 // Implement ValueList for tuples of Values of size up to 16
 
