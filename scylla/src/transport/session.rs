@@ -1360,6 +1360,11 @@ impl Session {
     ///
     /// See [the book](https://rust-driver.docs.scylladb.com/stable/tracing/tracing.html)
     /// for more information about query tracing
+    ///
+    /// Does not query for the fields that are only present in the Scylla schema (
+    /// [request_size](TracingInfo::request_size), [response_size](TracingInfo::response_size),
+    /// [username](TracingInfo::username), [scylla_parent_id](TracingEvent::scylla_parent_id),
+    /// and [scylla_span_id](TracingEvent::scylla_span_id)).
     pub async fn get_tracing_info(&self, tracing_id: &Uuid) -> Result<TracingInfo, QueryError> {
         // tracing_info_fetch_attempts is NonZeroU32 so at least one attempt will be made
         for _ in 0..self.tracing_info_fetch_attempts.get() {
@@ -1396,9 +1401,15 @@ impl Session {
         self.keyspace_name.load_full()
     }
 
-    // Tries getting the tracing info
-    // If the queries return 0 rows then returns None - the information didn't reach this node yet
-    // If there is some other error returns this error
+    // Tries getting the tracing info from `system_traces`.
+    //
+    // If the queries return 0 rows then returns `Ok(None)` - the information didn't reach this
+    // node yet.
+    //
+    // If there is some other error returns `Err(that_error)`.
+    //
+    // Does not query for the fields that are only present in the Scylla schema (request_size,
+    // response_size, username, scylla_parent_id, and scylla_span_id).
     async fn try_getting_tracing_info(
         &self,
         tracing_id: &Uuid,
