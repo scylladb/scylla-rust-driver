@@ -40,3 +40,4 @@ harness = false
 secret = ["secrecy"]
 time = ["dep:time"]
 chrono = ["dep:chrono"]
+full-serialization = ["chrono", "time", "secret"]

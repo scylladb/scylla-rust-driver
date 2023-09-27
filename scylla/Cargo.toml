@@ -20,6 +20,7 @@ cloud = ["ssl", "scylla-cql/serde", "dep:serde_yaml", "dep:serde", "dep:url", "d
 secret = ["scylla-cql/secret"]
 chrono = ["scylla-cql/chrono"]
 time = ["scylla-cql/time"]
+full-serialization = ["chrono", "time", "secret"]
 
 [dependencies]
 scylla-macros = { version = "0.2.0", path = "../scylla-macros" }
