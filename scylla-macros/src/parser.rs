@@ -6,16 +6,32 @@ use syn::{Expr, Meta};
 pub(crate) fn parse_named_fields<'a>(
     input: &'a DeriveInput,
     current_derive: &str,
-) -> &'a FieldsNamed {
+) -> Result<&'a FieldsNamed, syn::Error> {
     match &input.data {
         Data::Struct(data) => match &data.fields {
-            Fields::Named(named_fields) => named_fields,
-            _ => panic!(
-                "derive({}) works only for structs with named fields. Tuples don't need derive.",
+            Fields::Named(named_fields) => Ok(named_fields),
+            _ => Err(syn::Error::new_spanned(
+                data.struct_token,
+                format!(
+                    "derive({}) works only for structs with named fields",
+                    current_derive
+                ),
+            )),
+        },
+        Data::Enum(e) => Err(syn::Error::new_spanned(
+            e.enum_token,
+            format!(
+                "derive({}) works only for structs with named fields",
                 current_derive
             ),
-        },
-        _ => panic!("derive({}) works only on structs!", current_derive),
+        )),
+        Data::Union(u) => Err(syn::Error::new_spanned(
+            u.union_token,
+            format!(
+                "derive({}) works only for structs with named fields",
+                current_derive
+            ),
+        )),
     }
 }
 
