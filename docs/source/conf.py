@@ -14,10 +14,10 @@ sys.path.insert(0, os.path.abspath('..'))
 # -- General configuration ------------------------------------------------
 
 # Build documentation for the following tags and branches
-TAGS = ['v0.9.0']
+TAGS = ['v0.9.0', 'v0.10.0']
 BRANCHES = ['main']
 # Set the latest version.
-LATEST_VERSION = 'v0.9.0'
+LATEST_VERSION = 'v0.10.0'
 # Set which versions are not released yet.
 UNSTABLE_VERSIONS = ['main']
 # Set which versions are deprecated

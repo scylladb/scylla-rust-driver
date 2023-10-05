@@ -1,7 +1,7 @@
 [tool.poetry]
 name = "sphinx-docs"
 description = "ScyllaDB Documentation"
-version = "0.9.0"
+version = "0.10.0"
 authors = ["ScyllaDB Documentation Contributors"]
 
 [tool.poetry.dependencies]
