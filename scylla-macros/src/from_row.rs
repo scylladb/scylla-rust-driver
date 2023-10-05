@@ -3,10 +3,10 @@ use quote::{quote, quote_spanned};
 use syn::{spanned::Spanned, DeriveInput};
 
 /// #[derive(FromRow)] derives FromRow for struct
-pub fn from_row_derive(tokens_input: TokenStream) -> TokenStream {
-    let item = syn::parse::<DeriveInput>(tokens_input).expect("No DeriveInput");
-    let path = crate::parser::get_path(&item).expect("No path");
-    let struct_fields = crate::parser::parse_named_fields(&item, "FromRow");
+pub fn from_row_derive(tokens_input: TokenStream) -> Result<TokenStream, syn::Error> {
+    let item = syn::parse::<DeriveInput>(tokens_input)?;
+    let path = crate::parser::get_path(&item)?;
+    let struct_fields = crate::parser::parse_named_fields(&item, "FromRow")?;
 
     let struct_name = &item.ident;
     let (impl_generics, ty_generics, where_clause) = item.generics.split_for_impl();
@@ -56,5 +56,5 @@ pub fn from_row_derive(tokens_input: TokenStream) -> TokenStream {
         }
     };
 
-    TokenStream::from(generated)
+    Ok(TokenStream::from(generated))
 }
