@@ -28,8 +28,6 @@ mod authenticate_test;
 mod cql_collections_test;
 #[cfg(test)]
 mod session_test;
-#[cfg(test)]
-mod silent_prepare_batch_test;
 
 #[cfg(test)]
 mod cql_types_test;
