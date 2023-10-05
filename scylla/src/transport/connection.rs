@@ -657,20 +657,6 @@ impl Connection {
     ) -> Result<QueryResponse, QueryError> {
         let serialized_values = values.serialized()?;
 
-        let values_size = serialized_values.size();
-        if values_size != 0 {
-            let prepared = self.prepare(query).await?;
-            return self
-                .execute_with_consistency(
-                    &prepared,
-                    values,
-                    consistency,
-                    serial_consistency,
-                    paging_state,
-                )
-                .await;
-        }
-
         let query_frame = query::Query {
             contents: Cow::Borrowed(&query.contents),
             parameters: query::QueryParameters {

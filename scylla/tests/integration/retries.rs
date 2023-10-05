@@ -46,7 +46,7 @@ async fn speculative_execution_is_fired() {
         q.set_is_idempotent(true); // this is to allow speculative execution to fire
 
         let drop_frame_rule = RequestRule(
-            Condition::RequestOpcode(RequestOpcode::Prepare)
+            Condition::RequestOpcode(RequestOpcode::Query)
                 .and(Condition::BodyContainsCaseSensitive(Box::new(*b"t"))),
             RequestReaction::drop_frame(),
         );
@@ -121,7 +121,7 @@ async fn retries_occur() {
         q.set_is_idempotent(true); // this is to allow retry to fire
 
         let forge_error_rule = RequestRule(
-            Condition::RequestOpcode(RequestOpcode::Prepare)
+            Condition::RequestOpcode(RequestOpcode::Query)
                 .and(Condition::BodyContainsCaseSensitive(Box::new(*b"INTO t"))),
             RequestReaction::forge().server_error(),
         );
