@@ -5,7 +5,7 @@ use byteorder::{BigEndian, ReadBytesExt};
 use bytes::{Buf, BufMut};
 use num_enum::TryFromPrimitive;
 use std::collections::HashMap;
-use std::convert::TryFrom;
+use std::convert::{Infallible, TryFrom};
 use std::convert::TryInto;
 use std::net::IpAddr;
 use std::net::SocketAddr;
@@ -98,6 +98,12 @@ impl From<std::str::Utf8Error> for ParseError {
     }
 }
 
+impl From<Infallible> for ParseError {
+    fn from(_: Infallible) -> Self {
+        ParseError::BadIncomingData("Unexpected Infallible Error".to_string())
+    }
+}
+
 impl From<std::array::TryFromSliceError> for ParseError {
     fn from(_err: std::array::TryFromSliceError) -> Self {
         ParseError::BadIncomingData("array try from slice failed".to_string())
@@ -174,8 +180,17 @@ pub fn read_short(buf: &mut &[u8]) -> Result<i16, ParseError> {
     Ok(v)
 }
 
+pub fn read_u16(buf: &mut &[u8]) -> Result<u16, ParseError> {
+    let v = buf.read_u16::<BigEndian>()?;
+    Ok(v)
+}
+
 pub fn write_short(v: i16, buf: &mut impl BufMut) {
     buf.put_i16(v);
+}
+
+pub fn write_u16(v: u16, buf: &mut impl BufMut) {
+    buf.put_u16(v);
 }
 
 pub(crate) fn read_short_length(buf: &mut &[u8]) -> Result<usize, ParseError> {
@@ -200,6 +215,15 @@ fn type_short() {
     }
 }
 
+#[test]
+fn type_u16() {
+    let vals = [0, 1, u16::MAX];
+    for val in vals.iter() {
+        let mut buf = Vec::new();
+        write_u16(*val, &mut buf);
+        assert_eq!(read_u16(&mut &buf[..]).unwrap(), *val);
+    }
+}
 // https://github.com/apache/cassandra/blob/trunk/doc/native_protocol_v4.spec#L208
 pub fn read_bytes_opt<'a>(buf: &mut &'a [u8]) -> Result<Option<&'a [u8]>, ParseError> {
     let len = read_int(buf)?;
