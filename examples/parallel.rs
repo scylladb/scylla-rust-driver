@@ -33,7 +33,6 @@ async fn main() -> Result<()> {
         let session = session.clone();
         let permit = sem.clone().acquire_owned().await;
         tokio::task::spawn(async move {
-            let i = i;
             session
                 .query(
                     format!(
