@@ -41,7 +41,6 @@ async fn main() -> Result<()> {
         let prepared = prepared.clone();
         let permit = sem.clone().acquire_owned().await;
         tokio::task::spawn(async move {
-            let i = i;
             session
                 .execute(&prepared, (i as i32, 2 * i as i32))
                 .await
