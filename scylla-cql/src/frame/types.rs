@@ -16,7 +16,7 @@ use uuid::Uuid;
 #[derive(Debug, Copy, Clone, Default, PartialEq, Eq, PartialOrd, Ord, TryFromPrimitive)]
 #[cfg_attr(feature = "serde", derive(serde::Deserialize))]
 #[cfg_attr(feature = "serde", serde(rename_all = "SCREAMING_SNAKE_CASE"))]
-#[repr(i16)]
+#[repr(u16)]
 pub enum Consistency {
     Any = 0x0000,
     One = 0x0001,
@@ -175,8 +175,8 @@ fn type_long() {
     }
 }
 
-pub fn read_short(buf: &mut &[u8]) -> Result<i16, ParseError> {
-    let v = buf.read_i16::<BigEndian>()?;
+pub fn read_short(buf: &mut &[u8]) -> Result<u16, ParseError> {
+    let v = buf.read_u16::<BigEndian>()?;
     Ok(v)
 }
 
@@ -185,11 +185,7 @@ pub fn read_u16(buf: &mut &[u8]) -> Result<u16, ParseError> {
     Ok(v)
 }
 
-pub fn write_short(v: i16, buf: &mut impl BufMut) {
-    buf.put_i16(v);
-}
-
-pub fn write_u16(v: u16, buf: &mut impl BufMut) {
+pub fn write_short(v: u16, buf: &mut impl BufMut) {
     buf.put_u16(v);
 }
 
@@ -200,14 +196,14 @@ pub(crate) fn read_short_length(buf: &mut &[u8]) -> Result<usize, ParseError> {
 }
 
 fn write_short_length(v: usize, buf: &mut impl BufMut) -> Result<(), ParseError> {
-    let v: i16 = v.try_into()?;
+    let v: u16 = v.try_into()?;
     write_short(v, buf);
     Ok(())
 }
 
 #[test]
 fn type_short() {
-    let vals = [i16::MIN, -1, 0, 1, i16::MAX];
+    let vals: [u16; 3] = [0, 1, u16::MAX];
     for val in vals.iter() {
         let mut buf = Vec::new();
         write_short(*val, &mut buf);
@@ -215,15 +211,6 @@ fn type_short() {
     }
 }
 
-#[test]
-fn type_u16() {
-    let vals = [0, 1, u16::MAX];
-    for val in vals.iter() {
-        let mut buf = Vec::new();
-        write_u16(*val, &mut buf);
-        assert_eq!(read_u16(&mut &buf[..]).unwrap(), *val);
-    }
-}
 // https://github.com/apache/cassandra/blob/trunk/doc/native_protocol_v4.spec#L208
 pub fn read_bytes_opt<'a>(buf: &mut &'a [u8]) -> Result<Option<&'a [u8]>, ParseError> {
     let len = read_int(buf)?;
@@ -488,11 +475,11 @@ pub fn read_consistency(buf: &mut &[u8]) -> Result<Consistency, ParseError> {
 }
 
 pub fn write_consistency(c: Consistency, buf: &mut impl BufMut) {
-    write_short(c as i16, buf);
+    write_short(c as u16, buf);
 }
 
 pub fn write_serial_consistency(c: SerialConsistency, buf: &mut impl BufMut) {
-    write_short(c as i16, buf);
+    write_short(c as u16, buf);
 }
 
 #[test]

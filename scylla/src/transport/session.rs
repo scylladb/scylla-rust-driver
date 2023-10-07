@@ -1145,9 +1145,10 @@ impl Session {
         // If users batch statements by shard, they will be rewarded with full shard awareness
 
         // check to ensure that we don't send a batch statement with more than u16::MAX queries
-        if batch.statements.len() > u16::MAX as usize {
+        let batch_statements_length = batch.statements.len();
+        if batch_statements_length > u16::MAX as usize {
             return Err(QueryError::BadQuery(
-                BadQuery::TooManyQueriesInBatchStatement,
+                BadQuery::TooManyQueriesInBatchStatement(batch_statements_length),
             ));
         }
         // Extract first serialized_value
