@@ -1661,7 +1661,10 @@ impl Session {
         QueryFut: Future<Output = Result<ResT, QueryError>>,
         ResT: AllowedRunQueryResTType,
     {
-        let mut last_error: Option<QueryError> = None;
+        // set default error as no known found as the query plan returns an empty iterator if there are no nodes in the plan
+        let mut last_error: Option<QueryError> = Some(QueryError::NoKnownNodeFoundError(
+            "Please confirm the supplied datacenters exists".to_string(),
+        ));
         let mut current_consistency: Consistency = context
             .consistency_set_on_statement
             .unwrap_or(execution_profile.consistency);

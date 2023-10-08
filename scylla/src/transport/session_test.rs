@@ -2,6 +2,7 @@ use crate as scylla;
 use crate::batch::{Batch, BatchStatement};
 use crate::frame::response::result::Row;
 use crate::frame::value::ValueList;
+use crate::load_balancing::DefaultPolicy;
 use crate::prepared_statement::PreparedStatement;
 use crate::query::Query;
 use crate::retry_policy::{QueryInfo, RetryDecision, RetryPolicy, RetrySession};
@@ -2856,4 +2857,37 @@ async fn test_manual_primary_key_computation() {
         )
         .await;
     }
+}
+
+#[tokio::test]
+async fn test_non_existent_dc_return_correct_error() {
+    let ks = "iot";
+
+    let host = "127.0.0.1";
+    let dc = "non existent dc";
+
+    let default_policy = DefaultPolicy::builder()
+        .prefer_datacenter(dc.to_string())
+        .build();
+
+    let profile = ExecutionProfile::builder()
+        .load_balancing_policy(default_policy)
+        .build();
+
+    let handle = profile.into_handle();
+
+    let session: Session = SessionBuilder::new()
+        .known_node(host)
+        .default_execution_profile_handle(handle)
+        .build()
+        .await
+        .expect("cannot create session");
+
+    let ks_stmt = format!("CREATE KEYSPACE IF NOT EXISTS {} WITH replication = {{'class': 'NetworkTopologyStrategy', '{}': 1}}", ks, dc);
+    let query_result = session.query(ks_stmt, &[]).await;
+
+    assert_matches!(
+        query_result.unwrap_err(),
+        QueryError::NoKnownNodeFoundError(_)
+    )
 }
