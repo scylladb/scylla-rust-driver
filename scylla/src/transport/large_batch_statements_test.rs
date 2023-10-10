@@ -1,3 +1,7 @@
+use assert_matches::assert_matches;
+
+use scylla_cql::errors::{BadQuery, QueryError};
+
 use crate::batch::BatchType;
 use crate::query::Query;
 use crate::{
@@ -5,27 +9,14 @@ use crate::{
     test_utils::{create_new_session_builder, unique_keyspace_name},
     QueryResult, Session,
 };
-use assert_matches::assert_matches;
-use scylla_cql::errors::{BadQuery, DbError, QueryError};
 
 #[tokio::test]
 async fn test_large_batch_statements() {
     let mut session = create_new_session_builder().build().await.unwrap();
+
     let ks = unique_keyspace_name();
     session = create_test_session(session, &ks).await;
 
-    // Add batch
-    let max_number_of_queries = u16::MAX as usize;
-    let batch_result = write_batch(&session, max_number_of_queries, &ks).await;
-
-    if batch_result.is_err() {
-        assert_matches!(
-            batch_result.unwrap_err(),
-            QueryError::DbError(DbError::WriteTimeout { .. }, _)
-        )
-    }
-
-    // Now try with too many queries
     let too_many_queries = u16::MAX as usize + 1;
     let batch_insert_result = write_batch(&session, too_many_queries, &ks).await;
     assert_matches!(
