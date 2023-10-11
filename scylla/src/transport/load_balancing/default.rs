@@ -2086,6 +2086,7 @@ mod latency_awareness {
     use futures::{future::RemoteHandle, FutureExt};
     use itertools::Either;
     use scylla_cql::errors::{DbError, QueryError};
+    use tokio::time::{Duration, Instant};
     use tracing::{instrument::WithSubscriber, trace, warn};
     use uuid::Uuid;
 
@@ -2097,7 +2098,6 @@ mod latency_awareness {
             atomic::{AtomicU64, Ordering},
             Arc, RwLock,
         },
-        time::{Duration, Instant},
     };
 
     #[derive(Debug)]
@@ -2122,7 +2122,7 @@ mod latency_awareness {
         }
     }
 
-    #[derive(Debug, Clone, Copy)]
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
     pub(super) struct TimestampedAverage {
         pub(super) timestamp: Instant,
         pub(super) average: Duration,
@@ -2714,7 +2714,7 @@ mod latency_awareness {
             },
             ExecutionProfile,
         };
-        use std::time::Instant;
+        use tokio::time::Instant;
 
         trait DefaultPolicyTestExt {
             fn set_nodes_latency_stats(
@@ -3433,6 +3433,25 @@ mod latency_awareness {
                 .unwrap();
 
             session.query("whatever", ()).await.unwrap_err();
+        }
+
+        #[tokio::test]
+        async fn timestamped_average_works_when_clock_stops() {
+            tokio::time::pause();
+            let avg = Some(TimestampedAverage {
+                timestamp: Instant::now(),
+                average: Duration::from_secs(123),
+                num_measures: 1,
+            });
+            let new_avg = TimestampedAverage::compute_next(avg, Duration::from_secs(456), 10.0);
+            assert_eq!(
+                new_avg,
+                Some(TimestampedAverage {
+                    timestamp: Instant::now(),
+                    average: Duration::from_secs(123),
+                    num_measures: 2,
+                }),
+            );
         }
     }
 }

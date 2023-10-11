@@ -27,7 +27,7 @@ bytes = "1.0.1"
 futures = "0.3.6"
 histogram = "0.6.9"
 num_enum = "0.6"
-tokio = { version = "1.27", features = ["net", "time", "io-util", "sync", "rt", "macros"] }
+tokio = { version = "1.27", features = ["net", "time", "io-util", "sync", "rt", "macros", "test-util"] }
 snap = "1.0"
 uuid = { version = "1.0", features = ["v4"] }
 rand = "0.8.3"
