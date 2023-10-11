@@ -60,6 +60,7 @@ use crate::transport::connection_pool::PoolConfig;
 use crate::transport::host_filter::HostFilter;
 use crate::transport::iterator::{PreparedIteratorConfig, RowIterator};
 use crate::transport::load_balancing::{self, RoutingInfo};
+use crate::transport::locator::ReplicationConfigs;
 use crate::transport::metrics::Metrics;
 use crate::transport::node::Node;
 use crate::transport::query_result::QueryResult;
@@ -285,6 +286,9 @@ pub struct SessionConfig {
     /// for e.g: if they do not want unexpected traffic
     /// or they expect the topology to change frequently.
     pub cluster_metadata_refresh_interval: Duration,
+
+    /// TODO(michael): Docs ...
+    pub replication_configs: ReplicationConfigs,
 }
 
 impl SessionConfig {
@@ -331,6 +335,7 @@ impl SessionConfig {
             tracing_info_fetch_interval: Duration::from_millis(3),
             tracing_info_fetch_consistency: Consistency::One,
             cluster_metadata_refresh_interval: Duration::from_secs(60),
+            replication_configs: ReplicationConfigs::default(),
         }
     }
 
@@ -524,6 +529,7 @@ impl Session {
             config.fetch_schema_metadata,
             config.host_filter,
             config.cluster_metadata_refresh_interval,
+            Some(&config.replication_configs),
         )
         .await?;
 

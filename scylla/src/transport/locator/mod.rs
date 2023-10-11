@@ -21,6 +21,23 @@ use std::{
 };
 use tracing::debug;
 
+/// TODO(michael): Docs
+#[derive(Debug, Default, Clone)]
+pub struct ReplicationConfigs {
+    // Keyspaces to exclude from precomuted replica sets
+    keyspaces_to_exclude: Vec<String>,
+}
+
+impl ReplicationConfigs {
+    pub fn exclude_keyspace(&mut self, keyspace: String) {
+        self.keyspaces_to_exclude.push(keyspace)
+    }
+
+    pub fn keyspaces_to_exclude(&self) -> &Vec<String> {
+        &self.keyspaces_to_exclude
+    }
+}
+
 /// `ReplicaLocator` provides a way to find the set of owning nodes for a given (token, replication
 /// strategy) pair. It does so by either using the precomputed token ranges, or doing the
 /// computation on the fly.

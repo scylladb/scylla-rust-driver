@@ -22,13 +22,14 @@ use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration;
+use std::vec;
 use tracing::instrument::WithSubscriber;
 use tracing::{debug, warn};
 use uuid::Uuid;
 
 use super::node::{KnownNode, NodeAddr};
 
-use super::locator::ReplicaLocator;
+use super::locator::{ReplicaLocator, ReplicationConfigs};
 use super::partitioner::calculate_token_for_partition_key;
 use super::topology::Strategy;
 
@@ -68,6 +69,7 @@ pub struct ClusterData {
     pub(crate) known_peers: HashMap<Uuid, Arc<Node>>, // Invariant: nonempty after Cluster::new()
     pub(crate) keyspaces: HashMap<String, Keyspace>,
     pub(crate) locator: ReplicaLocator,
+    pub(crate) replication_configs: ReplicationConfigs,
 }
 
 /// Enables printing [ClusterData] struct in a neat way, skipping the clutter involved by
@@ -145,6 +147,7 @@ impl Cluster {
         fetch_schema_metadata: bool,
         host_filter: Option<Arc<dyn HostFilter>>,
         cluster_metadata_refresh_interval: Duration,
+        replication_opts: Option<&ReplicationConfigs>,
     ) -> Result<Cluster, NewSessionError> {
         let (refresh_sender, refresh_receiver) = tokio::sync::mpsc::channel(32);
         let (use_keyspace_sender, use_keyspace_receiver) = tokio::sync::mpsc::channel(32);
@@ -171,6 +174,7 @@ impl Cluster {
             &HashMap::new(),
             &None,
             host_filter.as_deref(),
+            replication_opts,
         )
         .await;
         cluster_data.wait_until_all_pools_are_initialized().await;
@@ -274,6 +278,7 @@ impl ClusterData {
         known_peers: &HashMap<Uuid, Arc<Node>>,
         used_keyspace: &Option<VerifiedKeyspaceName>,
         host_filter: Option<&dyn HostFilter>,
+        replication_opts: Option<&ReplicationConfigs>,
     ) -> Self {
         // Create new updated known_peers and ring
         let mut new_known_peers: HashMap<Uuid, Arc<Node>> =
@@ -339,8 +344,16 @@ impl ClusterData {
         Self::update_rack_count(&mut datacenters);
 
         let keyspaces = metadata.keyspaces;
+        // Exclude these keyspaces from replica set precomputation
+        let keyspaces_to_exclude = match replication_opts {
+            Some(opts) => opts.keyspaces_to_exclude().to_vec(),
+            None => vec![],
+        };
         let (locator, keyspaces) = tokio::task::spawn_blocking(move || {
-            let keyspace_strategies = keyspaces.values().map(|ks| &ks.strategy);
+            let keyspace_strategies = keyspaces
+                .iter()
+                .filter(|(k, _)| !keyspaces_to_exclude.contains(k))
+                .map(|(_, ks)| &ks.strategy);
             let locator = ReplicaLocator::new(ring.into_iter(), keyspace_strategies);
             (locator, keyspaces)
         })
@@ -351,6 +364,10 @@ impl ClusterData {
             known_peers: new_known_peers,
             keyspaces,
             locator,
+            replication_configs: match replication_opts {
+                Some(opts) => opts.clone(),
+                None => ReplicationConfigs::default(),
+            },
         }
     }
 
@@ -662,6 +679,7 @@ impl ClusterWorker {
                 &cluster_data.known_peers,
                 &self.used_keyspace,
                 self.host_filter.as_deref(),
+                Some(&cluster_data.replication_configs),
             )
             .await,
         );
