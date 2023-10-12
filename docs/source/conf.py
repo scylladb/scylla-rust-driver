@@ -14,14 +14,14 @@ sys.path.insert(0, os.path.abspath('..'))
 # -- General configuration ------------------------------------------------
 
 # Build documentation for the following tags and branches
-TAGS = ['v0.9.0', 'v0.10.0']
+TAGS = ['v0.9.1', 'v0.10.1']
 BRANCHES = ['main']
 # Set the latest version.
-LATEST_VERSION = 'v0.10.0'
+LATEST_VERSION = 'v0.10.1'
 # Set which versions are not released yet.
 UNSTABLE_VERSIONS = ['main']
 # Set which versions are deprecated
-DEPRECATED_VERSIONS = ['v0.9.0']
+DEPRECATED_VERSIONS = ['v0.9.1']
 
 # Add any Sphinx extension module names here, as strings. They can be
 # extensions coming with Sphinx (named 'sphinx.ext.*') or your custom
