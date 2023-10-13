@@ -17,6 +17,11 @@ async fn test_large_batch_statements() {
     let ks = unique_keyspace_name();
     session = create_test_session(session, &ks).await;
 
+    let max_queries = u16::MAX as usize;
+    let batch_insert_result = write_batch(&session, max_queries, &ks).await;
+
+    assert!(batch_insert_result.is_ok());
+
     let too_many_queries = u16::MAX as usize + 1;
     let batch_insert_result = write_batch(&session, too_many_queries, &ks).await;
     assert_matches!(
