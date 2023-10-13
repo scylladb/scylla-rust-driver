@@ -2026,16 +2026,16 @@ mod tests {
                         async move {
                             conn.query(&q, (j, vec![j as u8; j as usize]), None)
                                 .await
-                                .unwrap()
+                                .unwrap();
                         }
                     });
-                    futures::future::join_all(futs).await;
+                    let _joined: Vec<()> = futures::future::join_all(futs).await;
                 }));
 
                 tokio::task::yield_now().await;
             }
 
-            futures::future::join_all(futs).await;
+            let _joined: Vec<()> = futures::future::try_join_all(futs).await.unwrap();
 
             // Check that everything was written properly
             let range_end = arithmetic_sequence_sum(NUM_BATCHES);
