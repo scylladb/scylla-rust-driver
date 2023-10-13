@@ -5,8 +5,8 @@ use byteorder::{BigEndian, ReadBytesExt};
 use bytes::{Buf, BufMut};
 use num_enum::TryFromPrimitive;
 use std::collections::HashMap;
+use std::convert::TryFrom;
 use std::convert::TryInto;
-use std::convert::{Infallible, TryFrom};
 use std::net::IpAddr;
 use std::net::SocketAddr;
 use std::str;
@@ -98,12 +98,6 @@ impl From<std::str::Utf8Error> for ParseError {
     }
 }
 
-impl From<Infallible> for ParseError {
-    fn from(_: Infallible) -> Self {
-        ParseError::BadIncomingData("Unexpected Infallible Error".to_string())
-    }
-}
-
 impl From<std::array::TryFromSliceError> for ParseError {
     fn from(_err: std::array::TryFromSliceError) -> Self {
         ParseError::BadIncomingData("array try from slice failed".to_string())
@@ -180,18 +174,13 @@ pub fn read_short(buf: &mut &[u8]) -> Result<u16, ParseError> {
     Ok(v)
 }
 
-pub fn read_u16(buf: &mut &[u8]) -> Result<u16, ParseError> {
-    let v = buf.read_u16::<BigEndian>()?;
-    Ok(v)
-}
-
 pub fn write_short(v: u16, buf: &mut impl BufMut) {
     buf.put_u16(v);
 }
 
 pub(crate) fn read_short_length(buf: &mut &[u8]) -> Result<usize, ParseError> {
     let v = read_short(buf)?;
-    let v: usize = v.try_into()?;
+    let v: usize = v.into();
     Ok(v)
 }
 

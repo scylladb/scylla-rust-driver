@@ -77,7 +77,7 @@ pub struct CqlDuration {
 
 #[derive(Debug, Error, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum SerializeValuesError {
-    #[error("Too many values to add, max 32 767 values can be sent in a request")]
+    #[error("Too many values to add, max 65,535 values can be sent in a request")]
     TooManyValues,
     #[error("Mixing named and not named values is not allowed")]
     MixingNamedAndNotNamedValues,

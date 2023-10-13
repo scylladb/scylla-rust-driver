@@ -20,7 +20,7 @@ async fn test_large_batch_statements() {
     let max_queries = u16::MAX as usize;
     let batch_insert_result = write_batch(&session, max_queries, &ks).await;
 
-    assert!(batch_insert_result.is_ok());
+    batch_insert_result.unwrap();
 
     let too_many_queries = u16::MAX as usize + 1;
     let batch_insert_result = write_batch(&session, too_many_queries, &ks).await;
@@ -51,7 +51,7 @@ async fn create_test_session(session: Session, ks: &String) -> Session {
 }
 
 async fn write_batch(session: &Session, n: usize, ks: &String) -> Result<QueryResult, QueryError> {
-    let mut batch_query = Batch::new(BatchType::Logged);
+    let mut batch_query = Batch::new(BatchType::Unlogged);
     let mut batch_values = Vec::new();
     for i in 0..n {
         let mut key = vec![0];
