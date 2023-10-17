@@ -18,7 +18,7 @@ async fn main() -> Result<()> {
     println!("Connecting to {} ...", uri);
 
     let profile1 = ExecutionProfile::builder()
-        .consistency(Consistency::EachQuorum)
+        .consistency(Consistency::LocalQuorum)
         .serial_consistency(Some(SerialConsistency::Serial))
         .request_timeout(Some(Duration::from_secs(42)))
         .load_balancing_policy(Arc::new(load_balancing::DefaultPolicy::default()))
