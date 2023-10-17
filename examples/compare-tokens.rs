@@ -17,16 +17,16 @@ async fn main() -> Result<()> {
 
     session
         .query(
-            "CREATE TABLE IF NOT EXISTS ks.t (pk bigint primary key)",
+            "CREATE TABLE IF NOT EXISTS ks.compare_tokens_example (pk bigint primary key)",
             &[],
         )
         .await?;
 
-    let prepared = session.prepare("INSERT INTO ks.t (pk) VALUES (?)").await?;
+    let prepared = session.prepare("INSERT INTO ks.compare_tokens_example (pk) VALUES (?)").await?;
 
     for pk in (0..100_i64).chain(99840..99936_i64) {
         session
-            .query("INSERT INTO ks.t (pk) VALUES (?)", (pk,))
+            .query("INSERT INTO ks.compare_tokens_example (pk) VALUES (?)", (pk,))
             .await?;
 
         let serialized_pk = (pk,).serialized()?.into_owned();
@@ -43,7 +43,7 @@ async fn main() -> Result<()> {
         );
 
         let qt = session
-            .query(format!("SELECT token(pk) FROM ks.t where pk = {}", pk), &[])
+            .query(format!("SELECT token(pk) FROM ks.compare_tokens_example where pk = {}", pk), &[])
             .await?
             .rows
             .unwrap()
