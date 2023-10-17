@@ -1,0 +1,87 @@
+# This workflow runs all driver examples to ensure that they run without errors
+name: Examples
+
+on:
+  push:
+    branches:
+    - main
+    - 'branch-*'
+  pull_request:
+    branches:
+    - main
+    - 'branch-*'
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: full
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    services:
+      scylladb:
+        image: scylladb/scylla
+        ports:
+          - 9042:9042
+        options:
+          --health-cmd "cqlsh --debug"
+          --health-interval 5s
+          --health-retries 10
+    env:
+      working-directory: ./scylla
+    steps:
+    - uses: actions/checkout@v3
+    - name: Check
+      run: cargo check --verbose --features "ssl"
+      working-directory: ${{env.working-directory}}
+    - name: Run allocations example
+      run: cargo run --example allocations
+    - name: Run auth example
+      run: cargo run --example auth
+    - name: Run basic example
+      run: cargo run --example basic
+    # - name: Run cloud example
+    #   run: cargo run --example cloud
+    - name: Run compare-tokens example
+      run: cargo run --example compare-tokens
+    - name: Run cql-time-types example
+      run: cargo run --example cql-time-types
+    - name: Run cqlsh-rs example
+      run: cargo run --example cqlsh-rs
+    - name: Run custom_deserialization example
+      run: cargo run --example custom_deserialization
+    - name: Run custom_load_balancing_policy example
+      run: cargo run --example custom_load_balancing_policy
+    - name: Run execution_profile example
+      run: cargo run --example execution_profile
+    - name: Run get_by_name example
+      run: cargo run --example get_by_name
+    - name: Run logging example
+      run: cargo run --example logging
+    - name: Run parallel-prepared example
+      run: cargo run --example parallel-prepared
+    - name: Run parallel example
+      run: cargo run --example parallel
+    - name: Run query_history example
+      run: cargo run --example query_history
+    - name: Run custom_load_balancing_policy example
+      run: cargo run --example custom_load_balancing_policy
+    - name: Run schema_agreement example
+      run: cargo run --example schema_agreement
+    - name: Run select-paging example
+      run: cargo run --example select-paging
+    - name: Run select-paging example
+      run: cargo run --example select-paging
+    - name: Run speculative-execution example
+      run: cargo run --example speculative-execution
+    # - name: Run tls example
+    #   run: cargo run --example tls
+    - name: Run tower example
+      run: cargo run --example tower
+    - name: Run custom_load_balancing_policy example
+      run: cargo run --example custom_load_balancing_policy
+    - name: Run user-defined-type example
+      run: cargo run --example user-defined-type
+    - name: Run value_list example
+      run: cargo run --example value_list
