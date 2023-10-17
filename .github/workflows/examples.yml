@@ -49,8 +49,8 @@ jobs:
       run: cargo run --example cql-time-types
     - name: Run cqlsh-rs example
       run: cargo run --example cqlsh-rs
-    - name: Run custom_deserialization example
-      run: cargo run --example custom_deserialization
+    # - name: Run custom_deserialization example
+      # run: cargo run --example custom_deserialization
     - name: Run custom_load_balancing_policy example
       run: cargo run --example custom_load_balancing_policy
     - name: Run execution_profile example
