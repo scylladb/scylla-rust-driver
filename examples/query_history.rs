@@ -17,11 +17,11 @@ async fn main() -> Result<()> {
 
     let session: Session = SessionBuilder::new().known_node(uri).build().await?;
 
-    session.query("CREATE KEYSPACE IF NOT EXISTS ks WITH REPLICATION = {'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}", &[]).await?;
+    session.query("CREATE KEYSPACE IF NOT EXISTS examples_ks WITH REPLICATION = {'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}", &[]).await?;
 
     session
         .query(
-            "CREATE TABLE IF NOT EXISTS ks.t (a int, b int, c text, primary key (a, b))",
+            "CREATE TABLE IF NOT EXISTS examples_ks.query_history (a int, b int, c text, primary key (a, b))",
             &[],
         )
         .await?;
@@ -47,11 +47,14 @@ async fn main() -> Result<()> {
     // The same works for other types of queries, e.g iterators
     for i in 0..32 {
         session
-            .query("INSERT INTO ks.t (a, b, c) VALUES (?, ?, 't')", (i, i))
+            .query(
+                "INSERT INTO examples_ks.query_history (a, b, c) VALUES (?, ?, 't')",
+                (i, i),
+            )
             .await?;
     }
 
-    let mut iter_query: Query = Query::new("SELECT * FROM ks.t");
+    let mut iter_query: Query = Query::new("SELECT * FROM examples_ks.query_history");
     iter_query.set_page_size(8);
     let iter_history_listener = Arc::new(HistoryCollector::new());
     iter_query.set_history_listener(iter_history_listener.clone());

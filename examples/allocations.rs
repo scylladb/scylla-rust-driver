@@ -131,12 +131,12 @@ async fn main() -> Result<()> {
     let session: Session = SessionBuilder::new().known_node(args.node).build().await?;
     let session = Arc::new(session);
 
-    session.query("CREATE KEYSPACE IF NOT EXISTS ks WITH REPLICATION = {'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}", &[]).await?;
+    session.query("CREATE KEYSPACE IF NOT EXISTS examples_ks WITH REPLICATION = {'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}", &[]).await?;
     session.await_schema_agreement().await.unwrap();
 
     session
         .query(
-            "CREATE TABLE IF NOT EXISTS ks.alloc_test (a int, b int, c text, primary key (a, b))",
+            "CREATE TABLE IF NOT EXISTS examples_ks.allocations (a int, b int, c text, primary key (a, b))",
             &[],
         )
         .await?;
@@ -145,13 +145,13 @@ async fn main() -> Result<()> {
 
     let prepared_inserts = Arc::new(
         session
-            .prepare("INSERT INTO ks.alloc_test (a, b, c) VALUES (?, ?, 'abc')")
+            .prepare("INSERT INTO examples_ks.allocations (a, b, c) VALUES (?, ?, 'abc')")
             .await?,
     );
 
     let prepared_selects = Arc::new(
         session
-            .prepare("SELECT * FROM ks.alloc_test WHERE a = ? and b = ?")
+            .prepare("SELECT * FROM examples_ks.allocations WHERE a = ? and b = ?")
             .await?,
     );
 

@@ -12,31 +12,31 @@ async fn main() -> Result<()> {
 
     let session: Session = SessionBuilder::new().known_node(uri).build().await?;
 
-    session.query("CREATE KEYSPACE IF NOT EXISTS ks WITH REPLICATION = {'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}", &[]).await?;
+    session.query("CREATE KEYSPACE IF NOT EXISTS examples_ks WITH REPLICATION = {'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}", &[]).await?;
 
     session
         .query(
-            "CREATE TABLE IF NOT EXISTS ks.hello (pk int, ck int, value text, primary key (pk, ck))",
+            "CREATE TABLE IF NOT EXISTS examples_ks.get_by_name (pk int, ck int, value text, primary key (pk, ck))",
             &[],
         )
         .await?;
 
     session
         .query(
-            "INSERT INTO ks.hello (pk, ck, value) VALUES (?, ?, ?)",
+            "INSERT INTO examples_ks.get_by_name (pk, ck, value) VALUES (?, ?, ?)",
             (3, 4, "def"),
         )
         .await?;
 
     session
         .query(
-            "INSERT INTO ks.hello (pk, ck, value) VALUES (1, 2, 'abc')",
+            "INSERT INTO examples_ks.get_by_name (pk, ck, value) VALUES (1, 2, 'abc')",
             &[],
         )
         .await?;
 
     let query_result = session
-        .query("SELECT pk, ck, value FROM ks.hello", &[])
+        .query("SELECT pk, ck, value FROM examples_ks.get_by_name", &[])
         .await?;
     let (ck_idx, _) = query_result
         .get_column_spec("ck")

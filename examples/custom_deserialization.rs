@@ -13,16 +13,19 @@ async fn main() -> Result<()> {
 
     let session: Session = SessionBuilder::new().known_node(uri).build().await?;
 
-    session.query("CREATE KEYSPACE IF NOT EXISTS ks WITH REPLICATION = {'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}", &[]).await?;
+    session.query("CREATE KEYSPACE IF NOT EXISTS examples_ks WITH REPLICATION = {'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}", &[]).await?;
     session
         .query(
-            "CREATE TABLE IF NOT EXISTS ks.t (pk int PRIMARY KEY, v text)",
+            "CREATE TABLE IF NOT EXISTS examples_ks.custom_deserialization (pk int primary key, v text)",
             &[],
         )
         .await?;
 
     session
-        .query("INSERT INTO ks.t (pk, v) VALUES (1, 'asdf')", ())
+        .query(
+            "INSERT INTO examples_ks.custom_deserialization (pk, v) VALUES (1, 'asdf')",
+            (),
+        )
         .await?;
 
     // You can implement FromCqlVal for your own types
@@ -38,7 +41,10 @@ async fn main() -> Result<()> {
     }
 
     let (v,) = session
-        .query("SELECT v FROM ks.t WHERE pk = 1", ())
+        .query(
+            "SELECT v FROM examples_ks.custom_deserialization WHERE pk = 1",
+            (),
+        )
         .await?
         .single_row_typed::<(MyType,)>()?;
     assert_eq!(v, MyType("asdf".to_owned()));
@@ -62,7 +68,10 @@ async fn main() -> Result<()> {
     impl_from_cql_value_from_method!(MyOtherType, into_my_other_type);
 
     let (v,) = session
-        .query("SELECT v FROM ks.t WHERE pk = 1", ())
+        .query(
+            "SELECT v FROM examples_ks.custom_deserialization WHERE pk = 1",
+            (),
+        )
         .await?
         .single_row_typed::<(MyOtherType,)>()?;
     assert_eq!(v, MyOtherType("asdf".to_owned()));

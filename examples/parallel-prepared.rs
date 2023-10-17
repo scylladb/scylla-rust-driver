@@ -14,18 +14,18 @@ async fn main() -> Result<()> {
     let session: Session = SessionBuilder::new().known_node(uri).build().await?;
     let session = Arc::new(session);
 
-    session.query("CREATE KEYSPACE IF NOT EXISTS ks WITH REPLICATION = {'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}", &[]).await?;
+    session.query("CREATE KEYSPACE IF NOT EXISTS examples_ks WITH REPLICATION = {'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}", &[]).await?;
 
     session
         .query(
-            "CREATE TABLE IF NOT EXISTS ks.t2 (a int, b int, c text, primary key (a, b))",
+            "CREATE TABLE IF NOT EXISTS examples_ks.parallel_prepared (a int, b int, c text, primary key (a, b))",
             &[],
         )
         .await?;
 
     let prepared = Arc::new(
         session
-            .prepare("INSERT INTO ks.t2 (a, b, c) VALUES (?, ?, 'abc')")
+            .prepare("INSERT INTO examples_ks.parallel_prepared (a, b, c) VALUES (?, ?, 'abc')")
             .await?,
     );
     println!("Prepared statement: {:#?}", prepared);

@@ -12,20 +12,25 @@ async fn main() -> Result<()> {
 
     let session: Session = SessionBuilder::new().known_node(uri).build().await?;
 
-    session.query("CREATE KEYSPACE IF NOT EXISTS ks WITH REPLICATION = {'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}", &[]).await?;
+    session.query("CREATE KEYSPACE IF NOT EXISTS examples_ks WITH REPLICATION = {'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}", &[]).await?;
 
     session
         .query(
-            "CREATE TABLE IF NOT EXISTS ks.t (pk bigint primary key)",
+            "CREATE TABLE IF NOT EXISTS examples_ks.compare_tokens (pk bigint primary key)",
             &[],
         )
         .await?;
 
-    let prepared = session.prepare("INSERT INTO ks.t (pk) VALUES (?)").await?;
+    let prepared = session
+        .prepare("INSERT INTO examples_ks.compare_tokens (pk) VALUES (?)")
+        .await?;
 
     for pk in (0..100_i64).chain(99840..99936_i64) {
         session
-            .query("INSERT INTO ks.t (pk) VALUES (?)", (pk,))
+            .query(
+                "INSERT INTO examples_ks.compare_tokens (pk) VALUES (?)",
+                (pk,),
+            )
             .await?;
 
         let t = prepared.calculate_token(&(pk,))?.unwrap().value;
@@ -34,14 +39,20 @@ async fn main() -> Result<()> {
             "Token endpoints for query: {:?}",
             session
                 .get_cluster_data()
-                .get_token_endpoints("ks", Token { value: t })
+                .get_token_endpoints("examples_ks", Token { value: t })
                 .iter()
                 .map(|n| n.address)
                 .collect::<Vec<NodeAddr>>()
         );
 
         let qt = session
-            .query(format!("SELECT token(pk) FROM ks.t where pk = {}", pk), &[])
+            .query(
+                format!(
+                    "SELECT token(pk) FROM examples_ks.compare_tokens where pk = {}",
+                    pk
+                ),
+                &[],
+            )
             .await?
             .rows
             .unwrap()
