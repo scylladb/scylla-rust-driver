@@ -15,7 +15,7 @@ env:
   RUST_BACKTRACE: full
 
 jobs:
-  tls:
+  Examples:
     runs-on: ubuntu-latest
     timeout-minutes: 60
     services:
@@ -45,8 +45,6 @@ jobs:
       # run: cargo run --example cloud
     # - name: Run compare-tokens example
       # run: cargo run --example compare-tokens
-    - name: Run config-data example
-      run: cargo run --example config-data
     - name: Run cql-time-types example
       run: cargo run --example cql-time-types
     - name: Run cqlsh-rs example
