@@ -33,35 +33,36 @@ async fn test_large_batch_statements() {
 async fn create_test_session(session: Session, ks: &String) -> Session {
     session
         .query(
-            format!("CREATE KEYSPACE IF NOT EXISTS {} WITH REPLICATION = {{ 'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1 }}",ks),
+            format!("CREATE KEYSPACE {} WITH REPLICATION = {{ 'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1 }}",ks),
             &[],
         )
         .await.unwrap();
-    session
-        .query(format!("DROP TABLE IF EXISTS {}.pairs;", ks), &[])
-        .await
-        .unwrap();
     session
         .query(
-            format!("CREATE TABLE IF NOT EXISTS {}.pairs (dummy int, k blob, v blob, primary key (dummy, k))", ks),
+            format!(
+                "CREATE TABLE {}.pairs (dummy int, k blob, v blob, primary key (dummy, k))",
+                ks
+            ),
             &[],
         )
-        .await.unwrap();
+        .await
+        .unwrap();
     session
 }
 
 async fn write_batch(session: &Session, n: usize, ks: &String) -> Result<QueryResult, QueryError> {
     let mut batch_query = Batch::new(BatchType::Unlogged);
     let mut batch_values = Vec::new();
+    let query = format!("INSERT INTO {}.pairs (dummy, k, v) VALUES (0, ?, ?)", ks);
+    let query = Query::new(query);
+    let prepared_statement = session.prepare(query).await.unwrap();
     for i in 0..n {
         let mut key = vec![0];
         key.extend(i.to_be_bytes().as_slice());
         let value = key.clone();
-        let query = format!("INSERT INTO {}.pairs (dummy, k, v) VALUES (0, ?, ?)", ks);
         let values = vec![key, value];
         batch_values.push(values);
-        let query = Query::new(query);
-        batch_query.append_statement(query);
+        batch_query.append_statement(prepared_statement.clone());
     }
     session.batch(&batch_query, batch_values).await
 }
