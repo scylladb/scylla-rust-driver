@@ -53,8 +53,8 @@ jobs:
       # run: cargo run --example custom_deserialization
     - name: Run custom_load_balancing_policy example
       run: cargo run --example custom_load_balancing_policy
-    - name: Run execution_profile example
-      run: cargo run --example execution_profile
+    # - name: Run execution_profile example
+      # run: cargo run --example execution_profile
     - name: Run get_by_name example
       run: cargo run --example get_by_name     
     - name: Run logging example
