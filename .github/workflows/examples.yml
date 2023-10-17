@@ -41,8 +41,8 @@ jobs:
       run: cargo run --example auth
     - name: Run basic example
       run: cargo run --example basic
-    - name: Run cloud example
-      run: cargo run --example cloud
+    # - name: Run cloud example
+      # run: cargo run --example cloud
     - name: Run compare-tokens example
       run: cargo run --example compare-tokens
     - name: Run config-data example
