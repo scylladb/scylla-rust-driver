@@ -76,6 +76,7 @@ pub use crate::transport::connection_pool::PoolSize;
 use crate::authentication::AuthenticatorProvider;
 #[cfg(feature = "ssl")]
 use openssl::ssl::SslContext;
+use scylla_cql::errors::BadQuery;
 
 /// Translates IP addresses received from ScyllaDB nodes into locally reachable addresses.
 ///
@@ -1143,6 +1144,13 @@ impl Session {
         // Shard-awareness behavior for batch will be to pick shard based on first batch statement's shard
         // If users batch statements by shard, they will be rewarded with full shard awareness
 
+        // check to ensure that we don't send a batch statement with more than u16::MAX queries
+        let batch_statements_length = batch.statements.len();
+        if batch_statements_length > u16::MAX as usize {
+            return Err(QueryError::BadQuery(
+                BadQuery::TooManyQueriesInBatchStatement(batch_statements_length),
+            ));
+        }
         // Extract first serialized_value
         let first_serialized_value = values.batch_values_iter().next_serialized().transpose()?;
         let first_serialized_value = first_serialized_value.as_deref();

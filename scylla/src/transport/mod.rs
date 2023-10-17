@@ -35,6 +35,8 @@ mod silent_prepare_batch_test;
 mod cql_types_test;
 #[cfg(test)]
 mod cql_value_test;
+#[cfg(test)]
+mod large_batch_statements_test;
 
 pub use cluster::ClusterData;
 pub use node::{KnownNode, Node, NodeAddr, NodeRef};
