@@ -46,9 +46,9 @@ pub enum QueryError {
     #[error("Request timeout: {0}")]
     RequestTimeout(String),
 
-    /// No known node found to perform query
-    #[error("No known node found: {0}")]
-    NoKnownNodeFoundError(String),
+    /// Empty Query Plan
+    #[error("Load balancing policy returned empty query plan. It can happen when the driver is provided with non-existing datacenter name")]
+    EmptyQueryPlan,
 
     /// Address translation failed
     #[error("Address translation failed: {0}")]
@@ -408,9 +408,9 @@ pub enum NewSessionError {
     #[error("Client timeout: {0}")]
     RequestTimeout(String),
 
-    /// No known node found to perform query
-    #[error("No known node found: {0}")]
-    NoKnownNodeFoundError(String),
+    /// Empty Query Plan
+    #[error("Load balancing policy returned empty query plan. It can happen when the driver is provided with non-existing datacenter name")]
+    EmptyQueryPlan,
 
     /// Address translation failed
     #[error("Address translation failed: {0}")]
@@ -490,7 +490,7 @@ impl From<QueryError> for NewSessionError {
             QueryError::UnableToAllocStreamId => NewSessionError::UnableToAllocStreamId,
             QueryError::RequestTimeout(msg) => NewSessionError::RequestTimeout(msg),
             QueryError::TranslationError(e) => NewSessionError::TranslationError(e),
-            QueryError::NoKnownNodeFoundError(e) => NewSessionError::NoKnownNodeFoundError(e),
+            QueryError::EmptyQueryPlan => NewSessionError::EmptyQueryPlan,
         }
     }
 }

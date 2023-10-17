@@ -2886,8 +2886,5 @@ async fn test_non_existent_dc_return_correct_error() {
     let ks_stmt = format!("CREATE KEYSPACE IF NOT EXISTS {} WITH replication = {{'class': 'NetworkTopologyStrategy', '{}': 1}}", ks, dc);
     let query_result = session.query(ks_stmt, &[]).await;
 
-    assert_matches!(
-        query_result.unwrap_err(),
-        QueryError::NoKnownNodeFoundError(_)
-    )
+    assert_matches!(query_result.unwrap_err(), QueryError::EmptyQueryPlan)
 }

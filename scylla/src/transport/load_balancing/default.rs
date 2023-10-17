@@ -2414,7 +2414,7 @@ mod latency_awareness {
                 | QueryError::IoError(_)
                 | QueryError::ProtocolError(_)
                 | QueryError::TimeoutError
-                | QueryError::NoKnownNodeFoundError(_)
+                | QueryError::EmptyQueryPlan
                 | QueryError::RequestTimeout(_) => true,
             }
         }

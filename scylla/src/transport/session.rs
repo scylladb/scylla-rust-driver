@@ -1661,15 +1661,15 @@ impl Session {
         QueryFut: Future<Output = Result<ResT, QueryError>>,
         ResT: AllowedRunQueryResTType,
     {
-        // set default error as no known found as the query plan returns an empty iterator if there are no nodes in the plan
-        let mut last_error: Option<QueryError> = Some(QueryError::NoKnownNodeFoundError(
-            "Please confirm the supplied datacenters exists".to_string(),
-        ));
+        let mut last_error: Option<QueryError> = None;
         let mut current_consistency: Consistency = context
             .consistency_set_on_statement
             .unwrap_or(execution_profile.consistency);
 
+        let mut query_plan_is_empty = true;
+
         'nodes_in_plan: for node in query_plan {
+            query_plan_is_empty = false;
             let span = trace_span!("Executing query", node = %node.address);
             'same_node_retries: loop {
                 trace!(parent: &span, "Execution started");
@@ -1770,6 +1770,10 @@ impl Session {
                     }
                 };
             }
+        }
+
+        if query_plan_is_empty {
+            return Some(Err(QueryError::EmptyQueryPlan));
         }
 
         last_error.map(Result::Err)
