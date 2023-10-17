@@ -275,7 +275,7 @@ impl<'a> ReplicaSet<'a> {
                 datacenter,
             } => replicas
                 .iter()
-                .filter(|node| node.datacenter.as_deref() == Some(datacenter))
+                .filter(|node| node.datacenter.as_deref() == Some(*datacenter))
                 .count(),
             ReplicaSetInner::ChainedNTS {
                 datacenter_repfactors,
@@ -317,7 +317,7 @@ impl<'a> ReplicaSet<'a> {
                     datacenter,
                 } => replicas
                     .iter()
-                    .filter(|node| node.datacenter.as_deref() == Some(datacenter))
+                    .filter(|node| node.datacenter.as_deref() == Some(*datacenter))
                     .nth(index),
                 ReplicaSetInner::ChainedNTS {
                     datacenter_repfactors,
@@ -466,7 +466,7 @@ impl<'a> Iterator for ReplicaSetIterator<'a> {
             } => {
                 while let Some(replica) = replicas.get(*idx) {
                     *idx += 1;
-                    if replica.datacenter.as_deref() == Some(datacenter) {
+                    if replica.datacenter.as_deref() == Some(*datacenter) {
                         return Some(replica);
                     }
                 }
