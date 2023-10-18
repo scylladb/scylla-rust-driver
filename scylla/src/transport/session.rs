@@ -561,7 +561,7 @@ impl Session {
     ///
     /// See [the book](https://rust-driver.docs.scylladb.com/stable/queries/simple.html) for more information
     /// # Arguments
-    /// * `query` - query to perform, can be just a `&str` or the [Query](crate::query::Query) struct.
+    /// * `query` - query to perform, can be just a `&str` or the [Query] struct.
     /// * `values` - values bound to the query, easiest way is to use a tuple of bound values
     ///
     /// # Examples
@@ -732,12 +732,12 @@ impl Session {
     /// This method will query all pages of the result\
     ///
     /// Returns an async iterator (stream) over all received rows\
-    /// Page size can be specified in the [Query](crate::query::Query) passed to the function
+    /// Page size can be specified in the [Query] passed to the function
     ///
     /// See [the book](https://rust-driver.docs.scylladb.com/stable/queries/paged.html) for more information
     ///
     /// # Arguments
-    /// * `query` - query to perform, can be just a `&str` or the [Query](crate::query::Query) struct.
+    /// * `query` - query to perform, can be just a `&str` or the [Query] struct.
     /// * `values` - values bound to the query, easiest way is to use a tuple of bound values
     ///
     /// # Example
@@ -799,7 +799,7 @@ impl Session {
     /// See [the book](https://rust-driver.docs.scylladb.com/stable/queries/prepared.html) for more information
     ///
     /// # Arguments
-    /// * `query` - query to prepare, can be just a `&str` or the [Query](crate::query::Query) struct.
+    /// * `query` - query to prepare, can be just a `&str` or the [Query] struct.
     ///
     /// # Example
     /// ```rust
@@ -876,7 +876,7 @@ impl Session {
             .as_deref()
     }
 
-    /// Execute a prepared query. Requires a [PreparedStatement](crate::prepared_statement::PreparedStatement)
+    /// Execute a prepared query. Requires a [PreparedStatement]
     /// generated using [`Session::prepare`](Session::prepare)\
     /// Returns only a single page of results, to receive multiple pages use [execute_iter](Session::execute_iter)
     ///
@@ -1036,7 +1036,7 @@ impl Session {
     /// This method will query all pages of the result\
     ///
     /// Returns an async iterator (stream) over all received rows\
-    /// Page size can be specified in the [PreparedStatement](crate::prepared_statement::PreparedStatement)
+    /// Page size can be specified in the [PreparedStatement]
     /// passed to the function
     ///
     /// See [the book](https://rust-driver.docs.scylladb.com/stable/queries/paged.html) for more information
@@ -1105,7 +1105,7 @@ impl Session {
     /// See [the book](https://rust-driver.docs.scylladb.com/stable/queries/batch.html) for more information
     ///
     /// # Arguments
-    /// * `batch` - [Batch](crate::batch::Batch) to be performed
+    /// * `batch` - [Batch] to be performed
     /// * `values` - List of values for each query, it's the easiest to use a tuple of tuples
     ///
     /// # Example
