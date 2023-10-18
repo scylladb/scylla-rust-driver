@@ -239,7 +239,7 @@ impl PreparedStatement {
     /// A query is idempotent if it can be applied multiple times without changing the result of the initial application
     /// If set to `true` we can be sure that it is idempotent
     /// If set to `false` it is unknown whether it is idempotent
-    /// This is used in [`RetryPolicy`](crate::retry_policy::RetryPolicy) to decide if retrying a query is safe
+    /// This is used in [`RetryPolicy`] to decide if retrying a query is safe
     pub fn set_is_idempotent(&mut self, is_idempotent: bool) {
         self.config.is_idempotent = is_idempotent;
     }
