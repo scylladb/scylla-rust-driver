@@ -13,7 +13,7 @@
 //!
 //! # Driver overview
 //! ### Connecting
-//! All driver activity revolves around the [Session](crate::Session)\
+//! All driver activity revolves around the [Session]\
 //! `Session` is created by specifying a few known nodes and connecting to them:
 //!
 //! ```rust,no_run
@@ -31,7 +31,7 @@
 //!    Ok(())
 //! }
 //! ```
-//! `Session` is usually created using the [SessionBuilder](crate::SessionBuilder).\
+//! `Session` is usually created using the [SessionBuilder].\
 //! All configuration options for a `Session` can be specified while building.
 //!
 //! ### Making queries
