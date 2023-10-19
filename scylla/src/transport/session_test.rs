@@ -2861,11 +2861,9 @@ async fn test_manual_primary_key_computation() {
 
 #[tokio::test]
 async fn test_non_existent_dc_return_correct_error() {
-    let ks = "iot";
+    let ks = unique_keyspace_name();
 
-    let host = "127.0.0.1";
     let dc = "non existent dc";
-
     let default_policy = DefaultPolicy::builder()
         .prefer_datacenter(dc.to_string())
         .build();
@@ -2876,14 +2874,13 @@ async fn test_non_existent_dc_return_correct_error() {
 
     let handle = profile.into_handle();
 
-    let session: Session = SessionBuilder::new()
-        .known_node(host)
+    let session: Session = create_new_session_builder()
         .default_execution_profile_handle(handle)
         .build()
         .await
         .expect("cannot create session");
 
-    let ks_stmt = format!("CREATE KEYSPACE IF NOT EXISTS {} WITH replication = {{'class': 'NetworkTopologyStrategy', '{}': 1}}", ks, dc);
+    let ks_stmt = format!("CREATE KEYSPACE IF NOT EXISTS {} WITH replication = {{'class': 'NetworkTopologyStrategy', 'replication_factor' : 1}}", ks);
     let query_result = session.query(ks_stmt, &[]).await;
 
     assert_matches!(query_result.unwrap_err(), QueryError::EmptyQueryPlan)
