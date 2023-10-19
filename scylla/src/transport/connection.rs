@@ -1833,6 +1833,7 @@ mod tests {
     use super::ConnectionConfig;
     use crate::query::Query;
     use crate::transport::connection::open_connection;
+    use crate::transport::connection::QueryResponse;
     use crate::transport::node::ResolvedContactPoint;
     use crate::transport::topology::UntranslatedEndpoint;
     use crate::utils::test_utils::unique_keyspace_name;
@@ -2024,9 +2025,13 @@ mod tests {
                         let q = Query::new("INSERT INTO t (p, v) VALUES (?, ?)");
                         let conn = conn.clone();
                         async move {
-                            conn.query(&q, (j, vec![j as u8; j as usize]), None)
+                            let response: QueryResponse = conn
+                                .query(&q, (j, vec![j as u8; j as usize]), None)
                                 .await
                                 .unwrap();
+                            // QueryResponse might contain an error - make sure that there were no errors
+                            let _nonerror_response =
+                                response.into_non_error_query_response().unwrap();
                         }
                     });
                     let _joined: Vec<()> = futures::future::join_all(futs).await;
