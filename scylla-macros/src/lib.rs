@@ -18,6 +18,15 @@ pub fn serialize_cql_derive(tokens_input: TokenStream) -> TokenStream {
     }
 }
 
+/// See the documentation for this item in the `scylla` crate.
+#[proc_macro_derive(SerializeRow, attributes(scylla))]
+pub fn serialize_row_derive(tokens_input: TokenStream) -> TokenStream {
+    match serialize::row::derive_serialize_row(tokens_input) {
+        Ok(t) => t.into_token_stream().into(),
+        Err(e) => e.into_compile_error().into(),
+    }
+}
+
 /// #[derive(FromRow)] derives FromRow for struct
 /// Works only on simple structs without generics etc
 #[proc_macro_derive(FromRow, attributes(scylla_crate))]

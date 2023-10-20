@@ -561,7 +561,12 @@ mod tests {
     use crate::frame::value::{MaybeUnset, SerializedValues, ValueList};
     use crate::types::serialize::RowWriter;
 
-    use super::{RowSerializationContext, SerializeRow};
+    use super::{
+        BuiltinSerializationError, BuiltinSerializationErrorKind, BuiltinTypeCheckError,
+        BuiltinTypeCheckErrorKind, RowSerializationContext, SerializeCql, SerializeRow,
+    };
+
+    use scylla_macros::SerializeRow;
 
     fn col_spec(name: &str, typ: ColumnType) -> ColumnSpec {
         ColumnSpec {
@@ -671,5 +676,166 @@ mod tests {
             erased_data_writer.value_count(),
         );
         assert_eq!(typed_data, erased_data);
+    }
+
+    fn do_serialize<T: SerializeRow>(t: T, columns: &[ColumnSpec]) -> Vec<u8> {
+        let ctx = RowSerializationContext { columns };
+        let mut ret = Vec::new();
+        let mut builder = RowWriter::new(&mut ret);
+        t.serialize(&ctx, &mut builder).unwrap();
+        ret
+    }
+
+    fn col(name: &str, typ: ColumnType) -> ColumnSpec {
+        ColumnSpec {
+            table_spec: TableSpec {
+                ks_name: "ks".to_string(),
+                table_name: "tbl".to_string(),
+            },
+            name: name.to_string(),
+            typ,
+        }
+    }
+
+    // Do not remove. It's not used in tests but we keep it here to check that
+    // we properly ignore warnings about unused variables, unnecessary `mut`s
+    // etc. that usually pop up when generating code for empty structs.
+    #[derive(SerializeRow)]
+    #[scylla(crate = crate)]
+    struct TestRowWithNoColumns {}
+
+    #[derive(SerializeRow, Debug, PartialEq, Eq, Default)]
+    #[scylla(crate = crate)]
+    struct TestRowWithColumnSorting {
+        a: String,
+        b: i32,
+        c: Vec<i64>,
+    }
+
+    #[test]
+    fn test_row_serialization_with_column_sorting_correct_order() {
+        let spec = [
+            col("a", ColumnType::Text),
+            col("b", ColumnType::Int),
+            col("c", ColumnType::List(Box::new(ColumnType::BigInt))),
+        ];
+
+        let reference = do_serialize(("Ala ma kota", 42i32, vec![1i64, 2i64, 3i64]), &spec);
+        let row = do_serialize(
+            TestRowWithColumnSorting {
+                a: "Ala ma kota".to_owned(),
+                b: 42,
+                c: vec![1, 2, 3],
+            },
+            &spec,
+        );
+
+        assert_eq!(reference, row);
+    }
+
+    #[test]
+    fn test_row_serialization_with_column_sorting_incorrect_order() {
+        // The order of two last columns is swapped
+        let spec = [
+            col("a", ColumnType::Text),
+            col("c", ColumnType::List(Box::new(ColumnType::BigInt))),
+            col("b", ColumnType::Int),
+        ];
+
+        let reference = do_serialize(("Ala ma kota", vec![1i64, 2i64, 3i64], 42i32), &spec);
+        let row = do_serialize(
+            TestRowWithColumnSorting {
+                a: "Ala ma kota".to_owned(),
+                b: 42,
+                c: vec![1, 2, 3],
+            },
+            &spec,
+        );
+
+        assert_eq!(reference, row);
+    }
+
+    #[test]
+    fn test_row_serialization_failing_type_check() {
+        let row = TestRowWithColumnSorting::default();
+        let mut data = Vec::new();
+        let mut row_writer = RowWriter::new(&mut data);
+
+        let spec_without_c = [
+            col("a", ColumnType::Text),
+            col("b", ColumnType::Int),
+            // Missing column c
+        ];
+
+        let ctx = RowSerializationContext {
+            columns: &spec_without_c,
+        };
+        let err = <_ as SerializeRow>::serialize(&row, &ctx, &mut row_writer).unwrap_err();
+        let err = err.0.downcast_ref::<BuiltinTypeCheckError>().unwrap();
+        assert!(matches!(
+            err.kind,
+            BuiltinTypeCheckErrorKind::ColumnMissingForValue { .. }
+        ));
+
+        let spec_duplicate_column = [
+            col("a", ColumnType::Text),
+            col("b", ColumnType::Int),
+            col("c", ColumnType::List(Box::new(ColumnType::BigInt))),
+            // Unexpected last column
+            col("d", ColumnType::Counter),
+        ];
+
+        let ctx = RowSerializationContext {
+            columns: &spec_duplicate_column,
+        };
+        let err = <_ as SerializeRow>::serialize(&row, &ctx, &mut row_writer).unwrap_err();
+        let err = err.0.downcast_ref::<BuiltinTypeCheckError>().unwrap();
+        assert!(matches!(
+            err.kind,
+            BuiltinTypeCheckErrorKind::MissingValueForColumn { .. }
+        ));
+
+        let spec_wrong_type = [
+            col("a", ColumnType::Text),
+            col("b", ColumnType::Int),
+            col("c", ColumnType::TinyInt), // Wrong type
+        ];
+
+        let ctx = RowSerializationContext {
+            columns: &spec_wrong_type,
+        };
+        let err = <_ as SerializeRow>::serialize(&row, &ctx, &mut row_writer).unwrap_err();
+        let err = err.0.downcast_ref::<BuiltinSerializationError>().unwrap();
+        assert!(matches!(
+            err.kind,
+            BuiltinSerializationErrorKind::ColumnSerializationFailed { .. }
+        ));
+    }
+
+    #[derive(SerializeRow)]
+    #[scylla(crate = crate)]
+    struct TestRowWithGenerics<'a, T: SerializeCql> {
+        a: &'a str,
+        b: T,
+    }
+
+    #[test]
+    fn test_row_serialization_with_generics() {
+        // A minimal smoke test just to test that it works.
+        fn check_with_type<T: SerializeCql + Copy>(typ: ColumnType, t: T) {
+            let spec = [col("a", ColumnType::Text), col("b", typ)];
+            let reference = do_serialize(("Ala ma kota", t), &spec);
+            let row = do_serialize(
+                TestRowWithGenerics {
+                    a: "Ala ma kota",
+                    b: t,
+                },
+                &spec,
+            );
+            assert_eq!(reference, row);
+        }
+
+        check_with_type(ColumnType::Int, 123_i32);
+        check_with_type(ColumnType::Double, 123_f64);
     }
 }
