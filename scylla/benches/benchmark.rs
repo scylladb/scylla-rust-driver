@@ -12,7 +12,7 @@ fn types_benchmark(c: &mut Criterion) {
     c.bench_function("short", |b| {
         b.iter(|| {
             buf.clear();
-            types::write_short(-1, &mut buf);
+            types::write_short(u16::MAX, &mut buf);
             types::read_short(&mut &buf[..]).unwrap();
         })
     });
