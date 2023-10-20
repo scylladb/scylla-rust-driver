@@ -183,6 +183,7 @@ impl<'buf> CellValueBuilder<'buf> {
 /// [`SerializeCql::serialize`](super::value::SerializeCql::serialize): either
 /// the method succeeds and returns a proof that it serialized itself
 /// into the given value, or it fails and returns an error or panics.
+#[derive(Debug)]
 pub struct WrittenCellProof<'buf> {
     /// Using *mut &'buf () is deliberate and makes WrittenCellProof invariant
     /// on the 'buf lifetime parameter.

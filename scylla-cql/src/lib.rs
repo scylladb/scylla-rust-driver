@@ -20,4 +20,16 @@ pub mod _macro_internal {
         SerializedResult, SerializedValues, Value, ValueList, ValueTooBig,
     };
     pub use crate::macros::*;
+
+    pub use crate::types::serialize::value::{
+        BuiltinSerializationError as BuiltinTypeSerializationError,
+        BuiltinSerializationErrorKind as BuiltinTypeSerializationErrorKind,
+        BuiltinTypeCheckError as BuiltinTypeTypeCheckError,
+        BuiltinTypeCheckErrorKind as BuiltinTypeTypeCheckErrorKind, SerializeCql,
+        UdtSerializationErrorKind, UdtTypeCheckErrorKind,
+    };
+    pub use crate::types::serialize::writers::WrittenCellProof;
+    pub use crate::types::serialize::{CellValueBuilder, CellWriter, SerializationError};
+
+    pub use crate::frame::response::result::ColumnType;
 }
