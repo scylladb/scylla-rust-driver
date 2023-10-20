@@ -1,5 +1,6 @@
 use bytes::{Bytes, BytesMut};
 use scylla_cql::errors::{BadQuery, QueryError};
+use scylla_cql::frame::types::RawValue;
 use smallvec::{smallvec, SmallVec};
 use std::convert::TryInto;
 use std::sync::Arc;
@@ -399,7 +400,7 @@ impl<'ps> PartitionKey<'ps> {
                     PartitionKeyExtractionError::NoPkIndexValue(pk_index.index, bound_values.len())
                 })?;
             // Add it in sequence order to pk_values
-            if let Some(v) = next_val {
+            if let RawValue::Value(v) = next_val {
                 let spec = &prepared_metadata.col_specs[pk_index.index as usize];
                 pk_values[pk_index.sequence as usize] = Some((v, spec));
             }

@@ -1,4 +1,4 @@
-use crate::frame::value::BatchValuesIterator;
+use crate::frame::{types::RawValue, value::BatchValuesIterator};
 
 use super::value::{
     BatchValues, CqlDate, CqlTime, CqlTimestamp, MaybeUnset, SerializeValuesError,
@@ -421,7 +421,10 @@ fn serialized_values() {
         values.write_to_request(&mut request);
         assert_eq!(request, vec![0, 1, 0, 0, 0, 1, 8]);
 
-        assert_eq!(values.iter().collect::<Vec<_>>(), vec![Some([8].as_ref())]);
+        assert_eq!(
+            values.iter().collect::<Vec<_>>(),
+            vec![RawValue::Value([8].as_ref())]
+        );
     }
 
     // Add second value
@@ -436,7 +439,10 @@ fn serialized_values() {
 
         assert_eq!(
             values.iter().collect::<Vec<_>>(),
-            vec![Some([8].as_ref()), Some([0, 16].as_ref())]
+            vec![
+                RawValue::Value([8].as_ref()),
+                RawValue::Value([0, 16].as_ref())
+            ]
         );
     }
 
@@ -468,7 +474,10 @@ fn serialized_values() {
 
         assert_eq!(
             values.iter().collect::<Vec<_>>(),
-            vec![Some([8].as_ref()), Some([0, 16].as_ref())]
+            vec![
+                RawValue::Value([8].as_ref()),
+                RawValue::Value([0, 16].as_ref())
+            ]
         );
     }
 }
@@ -498,9 +507,9 @@ fn slice_value_list() {
     assert_eq!(
         serialized.iter().collect::<Vec<_>>(),
         vec![
-            Some([0, 0, 0, 1].as_ref()),
-            Some([0, 0, 0, 2].as_ref()),
-            Some([0, 0, 0, 3].as_ref())
+            RawValue::Value([0, 0, 0, 1].as_ref()),
+            RawValue::Value([0, 0, 0, 2].as_ref()),
+            RawValue::Value([0, 0, 0, 3].as_ref())
         ]
     );
 }
@@ -515,9 +524,9 @@ fn vec_value_list() {
     assert_eq!(
         serialized.iter().collect::<Vec<_>>(),
         vec![
-            Some([0, 0, 0, 1].as_ref()),
-            Some([0, 0, 0, 2].as_ref()),
-            Some([0, 0, 0, 3].as_ref())
+            RawValue::Value([0, 0, 0, 1].as_ref()),
+            RawValue::Value([0, 0, 0, 2].as_ref()),
+            RawValue::Value([0, 0, 0, 3].as_ref())
         ]
     );
 }
@@ -530,7 +539,7 @@ fn tuple_value_list() {
 
         let serialized_vals: Vec<u8> = serialized
             .iter()
-            .map(|o: Option<&[u8]>| o.unwrap()[0])
+            .map(|o: RawValue| o.as_value().unwrap()[0])
             .collect();
 
         let expected: Vec<u8> = expected.collect();
@@ -604,9 +613,9 @@ fn ref_value_list() {
     assert_eq!(
         serialized.iter().collect::<Vec<_>>(),
         vec![
-            Some([0, 0, 0, 1].as_ref()),
-            Some([0, 0, 0, 2].as_ref()),
-            Some([0, 0, 0, 3].as_ref())
+            RawValue::Value([0, 0, 0, 1].as_ref()),
+            RawValue::Value([0, 0, 0, 2].as_ref()),
+            RawValue::Value([0, 0, 0, 3].as_ref())
         ]
     );
 }

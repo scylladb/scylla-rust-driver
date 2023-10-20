@@ -16,6 +16,7 @@ use chrono::{DateTime, NaiveDate, NaiveTime, TimeZone, Utc};
 
 use super::response::result::CqlValue;
 use super::types::vint_encode;
+use super::types::RawValue;
 
 #[cfg(feature = "secret")]
 use secrecy::{ExposeSecret, Secret, Zeroize};
@@ -366,7 +367,7 @@ impl SerializedValues {
         Ok(())
     }
 
-    pub fn iter(&self) -> impl Iterator<Item = Option<&[u8]>> {
+    pub fn iter(&self) -> impl Iterator<Item = RawValue> {
         SerializedValuesIterator {
             serialized_values: &self.serialized_values,
             contains_names: self.contains_names,
@@ -410,7 +411,7 @@ impl SerializedValues {
         })
     }
 
-    pub fn iter_name_value_pairs(&self) -> impl Iterator<Item = (Option<&str>, &[u8])> {
+    pub fn iter_name_value_pairs(&self) -> impl Iterator<Item = (Option<&str>, RawValue)> {
         let mut buf = &self.serialized_values[..];
         (0..self.values_num).map(move |_| {
             // `unwrap()`s here are safe, as we assume type-safety: if `SerializedValues` exits,
@@ -418,7 +419,7 @@ impl SerializedValues {
             let name = self
                 .contains_names
                 .then(|| types::read_string(&mut buf).unwrap());
-            let serialized = types::read_bytes(&mut buf).unwrap();
+            let serialized = types::read_value(&mut buf).unwrap();
             (name, serialized)
         })
     }
@@ -431,7 +432,7 @@ pub struct SerializedValuesIterator<'a> {
 }
 
 impl<'a> Iterator for SerializedValuesIterator<'a> {
-    type Item = Option<&'a [u8]>;
+    type Item = RawValue<'a>;
 
     fn next(&mut self) -> Option<Self::Item> {
         if self.serialized_values.is_empty() {
@@ -443,7 +444,7 @@ impl<'a> Iterator for SerializedValuesIterator<'a> {
             types::read_short_bytes(&mut self.serialized_values).expect("badly encoded value name");
         }
 
-        Some(types::read_bytes_opt(&mut self.serialized_values).expect("badly encoded value"))
+        Some(types::read_value(&mut self.serialized_values).expect("badly encoded value"))
     }
 }
 
