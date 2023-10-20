@@ -21,6 +21,13 @@ pub mod _macro_internal {
     };
     pub use crate::macros::*;
 
+    pub use crate::types::serialize::row::{
+        BuiltinSerializationError as BuiltinRowSerializationError,
+        BuiltinSerializationErrorKind as BuiltinRowSerializationErrorKind,
+        BuiltinTypeCheckError as BuiltinRowTypeCheckError,
+        BuiltinTypeCheckErrorKind as BuiltinRowTypeCheckErrorKind, RowSerializationContext,
+        SerializeRow,
+    };
     pub use crate::types::serialize::value::{
         BuiltinSerializationError as BuiltinTypeSerializationError,
         BuiltinSerializationErrorKind as BuiltinTypeSerializationErrorKind,
@@ -28,7 +35,9 @@ pub mod _macro_internal {
         BuiltinTypeCheckErrorKind as BuiltinTypeTypeCheckErrorKind, SerializeCql,
         UdtSerializationErrorKind, UdtTypeCheckErrorKind,
     };
-    pub use crate::types::serialize::{CellValueBuilder, CellWriter, SerializationError};
+    pub use crate::types::serialize::{
+        CellValueBuilder, CellWriter, RowWriter, SerializationError,
+    };
 
     pub use crate::frame::response::result::ColumnType;
 }

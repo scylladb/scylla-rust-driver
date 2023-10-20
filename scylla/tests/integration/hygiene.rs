@@ -64,7 +64,7 @@ macro_rules! test_crate {
             assert_eq!(sv, sv2);
         }
 
-        #[derive(_scylla::macros::SerializeCql)]
+        #[derive(_scylla::macros::SerializeCql, _scylla::macros::SerializeRow)]
         #[scylla(crate = _scylla)]
         struct TestStructNew {
             x: ::core::primitive::i32,
