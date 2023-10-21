@@ -190,7 +190,7 @@ impl<'b> DeserializableRequest for Batch<'b, BatchStatement<'b>, Vec<SerializedV
     fn deserialize(buf: &mut &[u8]) -> Result<Self, ParseError> {
         let batch_type = buf.get_u8().try_into()?;
 
-        let statements_count: usize = types::read_short(buf)?.try_into()?;
+        let statements_count: usize = types::read_short(buf)?.into();
         let statements_with_values = (0..statements_count)
             .map(|_| {
                 let batch_statement = BatchStatement::deserialize(buf)?;

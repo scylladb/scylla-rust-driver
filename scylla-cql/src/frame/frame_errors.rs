@@ -40,7 +40,7 @@ pub enum ParseError {
     #[error(transparent)]
     IoError(#[from] std::io::Error),
     #[error("type not yet implemented, id: {0}")]
-    TypeNotImplemented(i16),
+    TypeNotImplemented(u16),
     #[error(transparent)]
     SerializeValuesError(#[from] SerializeValuesError),
     #[error(transparent)]

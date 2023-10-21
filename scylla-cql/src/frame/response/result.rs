@@ -437,7 +437,7 @@ fn deser_type(buf: &mut &[u8]) -> StdResult<ColumnType, ParseError> {
         0x0030 => {
             let keyspace_name: String = types::read_string(buf)?.to_string();
             let type_name: String = types::read_string(buf)?.to_string();
-            let fields_size: usize = types::read_short(buf)?.try_into()?;
+            let fields_size: usize = types::read_short(buf)?.into();
 
             let mut field_types: Vec<(String, ColumnType)> = Vec::with_capacity(fields_size);
 
@@ -455,7 +455,7 @@ fn deser_type(buf: &mut &[u8]) -> StdResult<ColumnType, ParseError> {
             }
         }
         0x0031 => {
-            let len: usize = types::read_short(buf)?.try_into()?;
+            let len: usize = types::read_short(buf)?.into();
             let mut types = Vec::with_capacity(len);
             for _ in 0..len {
                 types.push(deser_type(buf)?);

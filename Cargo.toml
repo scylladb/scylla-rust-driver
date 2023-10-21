@@ -6,3 +6,4 @@ members = [
     "scylla-cql",
     "scylla-proxy",
 ]
+resolver = "2"

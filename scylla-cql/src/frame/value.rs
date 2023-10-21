@@ -63,7 +63,7 @@ pub struct Time(pub Duration);
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub struct SerializedValues {
     serialized_values: Vec<u8>,
-    values_num: i16,
+    values_num: u16,
     contains_names: bool,
 }
 
@@ -77,7 +77,7 @@ pub struct CqlDuration {
 
 #[derive(Debug, Error, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum SerializeValuesError {
-    #[error("Too many values to add, max 32 767 values can be sent in a request")]
+    #[error("Too many values to add, max 65,535 values can be sent in a request")]
     TooManyValues,
     #[error("Mixing named and not named values is not allowed")]
     MixingNamedAndNotNamedValues,
@@ -134,7 +134,7 @@ impl SerializedValues {
         if self.contains_names {
             return Err(SerializeValuesError::MixingNamedAndNotNamedValues);
         }
-        if self.values_num == i16::MAX {
+        if self.values_num == u16::MAX {
             return Err(SerializeValuesError::TooManyValues);
         }
 
@@ -158,7 +158,7 @@ impl SerializedValues {
             return Err(SerializeValuesError::MixingNamedAndNotNamedValues);
         }
         self.contains_names = true;
-        if self.values_num == i16::MAX {
+        if self.values_num == u16::MAX {
             return Err(SerializeValuesError::TooManyValues);
         }
 
@@ -184,7 +184,7 @@ impl SerializedValues {
     }
 
     pub fn write_to_request(&self, buf: &mut impl BufMut) {
-        buf.put_i16(self.values_num);
+        buf.put_u16(self.values_num);
         buf.put(&self.serialized_values[..]);
     }
 
@@ -192,7 +192,7 @@ impl SerializedValues {
         self.values_num == 0
     }
 
-    pub fn len(&self) -> i16 {
+    pub fn len(&self) -> u16 {
         self.values_num
     }
 
