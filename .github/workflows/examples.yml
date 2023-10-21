@@ -75,8 +75,8 @@ jobs:
       run: cargo run --example select-paging
     - name: Run speculative-execution example
       run: cargo run --example speculative-execution
-    # - name: Run tls example
-    #   run: cargo run --example tls
+    - name: Run tls example
+      run: cargo run --example tls
     - name: Run tower example
       run: cargo run --example tower
     - name: Run custom_load_balancing_policy example
