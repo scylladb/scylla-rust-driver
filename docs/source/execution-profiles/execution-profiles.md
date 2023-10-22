@@ -15,6 +15,19 @@ There are two classes of objects related to execution profiles: `ExecutionProfil
 At any moment, handles [can be remapped](remap.md) to point to another `ExecutionProfile`. This allows convenient switching between workloads for all `Sessions` and/or `Statements` that, for instance, share common characteristics.
 
 ```eval_rst
+use anyhow::Result;
+use scylla::load_balancing;
+use scylla::query::Query;
+use scylla::retry_policy::{DefaultRetryPolicy, FallthroughRetryPolicy};
+use scylla::speculative_execution::PercentileSpeculativeExecutionPolicy;
+use scylla::statement::{Consistency, SerialConsistency};
+use scylla::transport::session::Session;
+use scylla::transport::ExecutionProfile;
+use scylla::{SessionBuilder, SessionConfig};
+use std::env;
+use std::sync::Arc;
+use std::time::Duration;
+
 println!("Hello")
 ```
 
