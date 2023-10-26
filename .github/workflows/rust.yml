@@ -29,15 +29,15 @@ jobs:
     - name: Format check
       run: cargo fmt --verbose --all -- --check
     - name: Clippy check
-      run: cargo clippy --verbose --examples --tests -- -Aclippy::uninlined_format_args
+      run: cargo clippy --verbose --all-targets -- -Aclippy::uninlined_format_args
     - name: Cargo check without features
-      run: cargo check --manifest-path "scylla/Cargo.toml" --features ""
+      run: cargo check --all-targets --manifest-path "scylla/Cargo.toml" --features ""
     - name: Cargo check with secrecy feature
-      run: cargo check --manifest-path "scylla/Cargo.toml" --features "secret"
+      run: cargo check --all-targets --manifest-path "scylla/Cargo.toml" --features "secret"
     - name: Build scylla-cql
       run: cargo build --verbose --all-targets --manifest-path "scylla-cql/Cargo.toml"
     - name: Build
-      run: cargo build --verbose --examples
+      run: cargo build --verbose --all-targets
     - name: Run tests
       run: SCYLLA_URI=172.42.0.2:9042 SCYLLA_URI2=172.42.0.3:9042 SCYLLA_URI3=172.42.0.4:9042 cargo test --verbose
     - name: Stop the cluster
@@ -61,9 +61,9 @@ jobs:
     - name: Print Rust version
       run: rustc --version
     - name: MSRV cargo check with features
-      run: cargo check --verbose --examples --tests
+      run: cargo check --verbose --all-targets
     - name: MSRV cargo check without features
-      run: cargo check --verbose --manifest-path "scylla/Cargo.toml"
+      run: cargo check --verbose --all-targets --manifest-path "scylla/Cargo.toml"
     - name: MSRV cargo check scylla-cql
       run: cargo check --verbose --all-targets --manifest-path "scylla-cql/Cargo.toml"
 
