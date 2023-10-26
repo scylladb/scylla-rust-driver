@@ -60,12 +60,14 @@ jobs:
         rustup override set ${{ env.rust_min }}
     - name: Print Rust version
       run: rustc --version
+    - name: Use MSRV Cargo.lock
+      run: mv Cargo.lock.msrv Cargo.lock
     - name: MSRV cargo check with features
-      run: cargo check --verbose --all-targets
+      run: cargo check --verbose --all-targets --locked
     - name: MSRV cargo check without features
-      run: cargo check --verbose --all-targets --manifest-path "scylla/Cargo.toml"
+      run: cargo check --verbose --all-targets --locked --manifest-path "scylla/Cargo.toml"
     - name: MSRV cargo check scylla-cql
-      run: cargo check --verbose --all-targets --manifest-path "scylla-cql/Cargo.toml"
+      run: cargo check --verbose --all-targets --locked --manifest-path "scylla-cql/Cargo.toml"
 
   # Tests that docstrings generate docs without warnings
   cargo_docs:
