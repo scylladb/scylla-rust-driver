@@ -1,9 +1,23 @@
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
+use std::hash::BuildHasher;
+use std::net::IpAddr;
 use std::sync::Arc;
 
+use bigdecimal::BigDecimal;
+use num_bigint::BigInt;
 use thiserror::Error;
+use uuid::Uuid;
 
-use crate::frame::response::result::ColumnType;
-use crate::frame::value::Value;
+#[cfg(feature = "chrono")]
+use chrono::{DateTime, NaiveDate, NaiveTime, Utc};
+
+#[cfg(feature = "secret")]
+use secrecy::{Secret, Zeroize};
+
+use crate::frame::response::result::{ColumnType, CqlValue};
+use crate::frame::value::{
+    Counter, CqlDate, CqlDuration, CqlTime, CqlTimestamp, MaybeUnset, Unset, Value,
+};
 
 use super::{CellWriter, SerializationError};
 
@@ -29,19 +43,161 @@ pub trait SerializeCql {
     ) -> Result<W::WrittenCellProof, SerializationError>;
 }
 
-impl<T: Value> SerializeCql for T {
-    fn preliminary_type_check(_typ: &ColumnType) -> Result<(), SerializationError> {
-        Ok(())
-    }
+macro_rules! fallback_impl_contents {
+    () => {
+        fn preliminary_type_check(_typ: &ColumnType) -> Result<(), SerializationError> {
+            Ok(())
+        }
 
-    fn serialize<W: CellWriter>(
-        &self,
-        _typ: &ColumnType,
-        writer: W,
-    ) -> Result<W::WrittenCellProof, SerializationError> {
-        serialize_legacy_value(self, writer)
-    }
+        fn serialize<W: CellWriter>(
+            &self,
+            _typ: &ColumnType,
+            writer: W,
+        ) -> Result<W::WrittenCellProof, SerializationError> {
+            serialize_legacy_value(self, writer)
+        }
+    };
 }
+
+macro_rules! fallback_tuples {
+    () => {};
+    ($th:ident$(, $($tt:ident),*)?) => {
+        fallback_tuples!($($($tt),*)?);
+        impl<$th: Value$(, $($tt: Value),*)?> SerializeCql for ($th, $($($tt),*)?) {
+            fallback_impl_contents!();
+        }
+    };
+}
+
+impl SerializeCql for i8 {
+    fallback_impl_contents!();
+}
+impl SerializeCql for i16 {
+    fallback_impl_contents!();
+}
+impl SerializeCql for i32 {
+    fallback_impl_contents!();
+}
+impl SerializeCql for i64 {
+    fallback_impl_contents!();
+}
+impl SerializeCql for BigDecimal {
+    fallback_impl_contents!();
+}
+impl SerializeCql for CqlDate {
+    fallback_impl_contents!();
+}
+impl SerializeCql for CqlTimestamp {
+    fallback_impl_contents!();
+}
+impl SerializeCql for CqlTime {
+    fallback_impl_contents!();
+}
+#[cfg(feature = "chrono")]
+impl SerializeCql for NaiveDate {
+    fallback_impl_contents!();
+}
+#[cfg(feature = "chrono")]
+impl SerializeCql for DateTime<Utc> {
+    fallback_impl_contents!();
+}
+#[cfg(feature = "chrono")]
+impl SerializeCql for NaiveTime {
+    fallback_impl_contents!();
+}
+#[cfg(feature = "chrono")]
+impl SerializeCql for time::Date {
+    fallback_impl_contents!();
+}
+#[cfg(feature = "chrono")]
+impl SerializeCql for time::OffsetDateTime {
+    fallback_impl_contents!();
+}
+#[cfg(feature = "chrono")]
+impl SerializeCql for time::Time {
+    fallback_impl_contents!();
+}
+#[cfg(feature = "secret")]
+impl<V: Value + Zeroize> SerializeCql for Secret<V> {
+    fallback_impl_contents!();
+}
+impl SerializeCql for bool {
+    fallback_impl_contents!();
+}
+impl SerializeCql for f32 {
+    fallback_impl_contents!();
+}
+impl SerializeCql for f64 {
+    fallback_impl_contents!();
+}
+impl SerializeCql for Uuid {
+    fallback_impl_contents!();
+}
+impl SerializeCql for BigInt {
+    fallback_impl_contents!();
+}
+impl SerializeCql for &str {
+    fallback_impl_contents!();
+}
+impl SerializeCql for Vec<u8> {
+    fallback_impl_contents!();
+}
+impl SerializeCql for &[u8] {
+    fallback_impl_contents!();
+}
+impl<const N: usize> SerializeCql for [u8; N] {
+    fallback_impl_contents!();
+}
+impl SerializeCql for IpAddr {
+    fallback_impl_contents!();
+}
+impl SerializeCql for String {
+    fallback_impl_contents!();
+}
+impl<T: Value> SerializeCql for Option<T> {
+    fallback_impl_contents!();
+}
+impl SerializeCql for Unset {
+    fallback_impl_contents!();
+}
+impl SerializeCql for Counter {
+    fallback_impl_contents!();
+}
+impl SerializeCql for CqlDuration {
+    fallback_impl_contents!();
+}
+impl<V: Value> SerializeCql for MaybeUnset<V> {
+    fallback_impl_contents!();
+}
+impl<T: Value + ?Sized> SerializeCql for &T {
+    fallback_impl_contents!();
+}
+impl<T: Value + ?Sized> SerializeCql for Box<T> {
+    fallback_impl_contents!();
+}
+impl<V: Value, S: BuildHasher + Default> SerializeCql for HashSet<V, S> {
+    fallback_impl_contents!();
+}
+impl<K: Value, V: Value, S: BuildHasher> SerializeCql for HashMap<K, V, S> {
+    fallback_impl_contents!();
+}
+impl<V: Value> SerializeCql for BTreeSet<V> {
+    fallback_impl_contents!();
+}
+impl<K: Value, V: Value> SerializeCql for BTreeMap<K, V> {
+    fallback_impl_contents!();
+}
+impl<T: Value> SerializeCql for Vec<T> {
+    fallback_impl_contents!();
+}
+impl<T: Value> SerializeCql for &[T] {
+    fallback_impl_contents!();
+}
+impl SerializeCql for CqlValue {
+    fallback_impl_contents!();
+}
+
+fallback_tuples!(T0, T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, T12, T13, T14, T15);
 
 pub fn serialize_legacy_value<T: Value, W: CellWriter>(
     v: &T,
