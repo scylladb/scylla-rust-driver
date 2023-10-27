@@ -3,11 +3,15 @@ use proc_macro::TokenStream;
 use proc_macro2::Span;
 use syn::parse_quote;
 
+use super::Flavor;
+
 #[derive(FromAttributes)]
 #[darling(attributes(scylla))]
 struct Attributes {
     #[darling(rename = "crate")]
     crate_path: Option<syn::Path>,
+
+    flavor: Option<Flavor>,
 }
 
 impl Attributes {
@@ -36,7 +40,11 @@ pub fn derive_serialize_row(tokens_input: TokenStream) -> Result<syn::ItemImpl, 
 
     let fields = named_fields.named.iter().cloned().collect();
     let ctx = Context { attributes, fields };
-    let gen = ColumnSortingGenerator { ctx: &ctx };
+
+    let gen: Box<dyn Generator> = match ctx.attributes.flavor {
+        Some(Flavor::MatchByName) | None => Box::new(ColumnSortingGenerator { ctx: &ctx }),
+        Some(Flavor::EnforceOrder) => Box::new(ColumnOrderedGenerator { ctx: &ctx }),
+    };
 
     let preliminary_type_check_item = gen.generate_preliminary_type_check();
     let serialize_item = gen.generate_serialize();
@@ -82,13 +90,19 @@ impl Context {
     }
 }
 
+trait Generator {
+    fn generate_preliminary_type_check(&self) -> syn::TraitItemFn;
+    fn generate_serialize(&self) -> syn::TraitItemFn;
+    fn generate_is_empty(&self) -> syn::TraitItemFn;
+}
+
 // Generates an implementation of the trait which sorts the columns according
 // to how they are defined in prepared statement metadata.
 struct ColumnSortingGenerator<'a> {
     ctx: &'a Context,
 }
 
-impl<'a> ColumnSortingGenerator<'a> {
+impl<'a> Generator for ColumnSortingGenerator<'a> {
     fn generate_preliminary_type_check(&self) -> syn::TraitItemFn {
         // Need to:
         // - Check that all required columns are there and no more
@@ -234,6 +248,144 @@ impl<'a> ColumnSortingGenerator<'a> {
                 }
             }
         });
+
+        parse_quote! {
+            fn serialize<W: #crate_path::RowWriter>(
+                &self,
+                ctx: &#crate_path::RowSerializationContext,
+                writer: &mut W,
+            ) -> ::std::result::Result<(), #crate_path::SerializationError> {
+                #(#statements)*
+                ::std::result::Result::Ok(())
+            }
+        }
+    }
+
+    fn generate_is_empty(&self) -> syn::TraitItemFn {
+        let is_empty_struct = self.ctx.fields.is_empty();
+
+        parse_quote! {
+            fn is_empty(&self) -> bool {
+                #is_empty_struct
+            }
+        }
+    }
+}
+
+// Generates an implementation of the trait which requires the columns
+// to be placed in the same order as they are defined in the struct.
+struct ColumnOrderedGenerator<'a> {
+    ctx: &'a Context,
+}
+
+impl<'a> Generator for ColumnOrderedGenerator<'a> {
+    fn generate_preliminary_type_check(&self) -> syn::TraitItemFn {
+        let mut statements: Vec<syn::Stmt> = Vec::new();
+
+        let crate_path = self.ctx.attributes.crate_path();
+
+        statements.push(self.ctx.generate_mk_typck_err());
+
+        // Create an iterator over fields
+        statements.push(parse_quote! {
+            let mut column_iter = ctx.columns().iter();
+        });
+
+        // Go over all fields, check their names and then type check
+        for field in self.ctx.fields.iter() {
+            let name = field.ident.as_ref().unwrap().to_string();
+            let typ = &field.ty;
+            statements.push(parse_quote! {
+                match column_iter.next() {
+                    Some(spec) => {
+                        if spec.name == #name {
+                            match <#typ as #crate_path::SerializeCql>::preliminary_type_check(&spec.typ) {
+                                Ok(()) => {}
+                                Err(err) => {
+                                    return ::std::result::Result::Err(mk_typck_err(
+                                        #crate_path::BuiltinRowTypeCheckErrorKind::ColumnTypeCheckFailed {
+                                            name: <_ as ::std::clone::Clone>::clone(&spec.name),
+                                            err,
+                                        }
+                                    ));
+                                }
+                            }
+                        } else {
+                            return ::std::result::Result::Err(mk_typck_err(
+                                #crate_path::BuiltinRowTypeCheckErrorKind::ColumnNameMismatch {
+                                    rust_column_name: <_ as ::std::string::ToString>::to_string(#name),
+                                    db_column_name: <_ as ::std::clone::Clone>::clone(&spec.name),
+                                }
+                            ));
+                        }
+                    }
+                    None => {
+                        return ::std::result::Result::Err(mk_typck_err(
+                            #crate_path::BuiltinRowTypeCheckErrorKind::ColumnMissingForValue {
+                                name: <_ as ::std::string::ToString>::to_string(#name),
+                            }
+                        ));
+                    }
+                }
+            });
+        }
+
+        // Check whether there are some columns remaining
+        statements.push(parse_quote! {
+            if let Some(spec) = column_iter.next() {
+                return ::std::result::Result::Err(mk_typck_err(
+                    #crate_path::BuiltinRowTypeCheckErrorKind::MissingValueForColumn {
+                        name: <_ as ::std::clone::Clone>::clone(&spec.name),
+                    }
+                ));
+            }
+        });
+
+        // Concatenate generated code and return
+        parse_quote! {
+            fn preliminary_type_check(
+                ctx: &#crate_path::RowSerializationContext,
+            ) -> ::std::result::Result<(), #crate_path::SerializationError> {
+                #(#statements)*
+                ::std::result::Result::Ok(())
+            }
+        }
+    }
+
+    fn generate_serialize(&self) -> syn::TraitItemFn {
+        let mut statements: Vec<syn::Stmt> = Vec::new();
+
+        let crate_path = self.ctx.attributes.crate_path();
+
+        // Declare a helper lambda for creating errors
+        statements.push(self.ctx.generate_mk_ser_err());
+
+        // Create an iterator over fields
+        statements.push(parse_quote! {
+            let mut column_iter = ctx.columns().iter();
+        });
+
+        // Serialize each field
+        for field in self.ctx.fields.iter() {
+            let name = &field.ident;
+            let typ = &field.ty;
+            statements.push(parse_quote! {
+                if let Some(spec) = column_iter.next() {
+                    let cell_writer = <_ as #crate_path::RowWriter>::make_cell_writer(writer);
+                    match <#typ as #crate_path::SerializeCql>::serialize(&self.#name, &spec.typ, cell_writer) {
+                        Ok(_proof) => {},
+                        Err(err) => {
+                            return ::std::result::Result::Err(mk_ser_err(
+                                #crate_path::BuiltinRowSerializationErrorKind::ColumnSerializationFailed {
+                                    name: <_ as ::std::clone::Clone>::clone(&spec.name),
+                                    err,
+                                }
+                            ));
+                        }
+                    }
+                }
+            });
+        }
 
         parse_quote! {
             fn serialize<W: #crate_path::RowWriter>(

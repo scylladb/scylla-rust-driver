@@ -597,6 +597,12 @@ pub enum BuiltinTypeCheckErrorKind {
     /// A value required by the statement is not provided by the Rust type.
     ColumnMissingForValue { name: String },
 
+    /// A different column name was expected at given position.
+    ColumnNameMismatch {
+        rust_column_name: String,
+        db_column_name: String,
+    },
+
     /// One of the columns failed to type check.
     ColumnTypeCheckFailed {
         name: String,
@@ -622,6 +628,10 @@ impl Display for BuiltinTypeCheckErrorKind {
                     "value for column {name} was provided, but there is no bind marker for this column in the query"
                 )
             }
+            BuiltinTypeCheckErrorKind::ColumnNameMismatch { rust_column_name, db_column_name } => write!(
+                f,
+                "expected column with name {db_column_name} at given position, but the Rust field name is {rust_column_name}"
+            ),
             BuiltinTypeCheckErrorKind::ColumnTypeCheckFailed { name, err } => {
                 write!(f, "failed to check column {name}: {err}")
             }
@@ -869,6 +879,102 @@ mod tests {
             columns: &spec_wrong_type,
         };
         let err = TestRowWithColumnSorting::preliminary_type_check(&ctx).unwrap_err();
+        let err = err.0.downcast_ref::<BuiltinTypeCheckError>().unwrap();
+        assert!(matches!(
+            err.kind,
+            BuiltinTypeCheckErrorKind::ColumnTypeCheckFailed { .. }
+        ));
+    }
+
+    #[derive(SerializeRow, Debug, PartialEq, Eq)]
+    #[scylla(crate = crate, flavor = "enforce_order")]
+    struct TestRowWithEnforcedOrder {
+        a: String,
+        b: i32,
+        c: Vec<i64>,
+    }
+
+    #[test]
+    fn test_row_serialization_with_enforced_order_correct_order() {
+        let spec = [
+            col("a", ColumnType::Text),
+            col("b", ColumnType::Int),
+            col("c", ColumnType::List(Box::new(ColumnType::BigInt))),
+        ];
+
+        let reference = do_serialize(("Ala ma kota", 42i32, vec![1i64, 2i64, 3i64]), &spec);
+        let row = do_serialize(
+            TestRowWithEnforcedOrder {
+                a: "Ala ma kota".to_owned(),
+                b: 42,
+                c: vec![1, 2, 3],
+            },
+            &spec,
+        );
+
+        assert_eq!(reference, row);
+    }
+
+    #[test]
+    fn test_row_serialization_with_enforced_order_failing_type_check() {
+        // The order of two last columns is swapped
+        let spec = [
+            col("a", ColumnType::Text),
+            col("c", ColumnType::List(Box::new(ColumnType::BigInt))),
+            col("b", ColumnType::Int),
+        ];
+        let ctx = RowSerializationContext { columns: &spec };
+        let err = TestRowWithEnforcedOrder::preliminary_type_check(&ctx).unwrap_err();
+        let err = err.0.downcast_ref::<BuiltinTypeCheckError>().unwrap();
+        assert!(matches!(
+            err.kind,
+            BuiltinTypeCheckErrorKind::ColumnNameMismatch { .. }
+        ));
+
+        let spec_without_c = [
+            col("a", ColumnType::Text),
+            col("b", ColumnType::Int),
+            // Missing column c
+        ];
+
+        let ctx = RowSerializationContext {
+            columns: &spec_without_c,
+        };
+        let err = TestRowWithEnforcedOrder::preliminary_type_check(&ctx).unwrap_err();
+        let err = err.0.downcast_ref::<BuiltinTypeCheckError>().unwrap();
+        assert!(matches!(
+            err.kind,
+            BuiltinTypeCheckErrorKind::ColumnMissingForValue { .. }
+        ));
+
+        let spec_duplicate_column = [
+            col("a", ColumnType::Text),
+            col("b", ColumnType::Int),
+            col("c", ColumnType::List(Box::new(ColumnType::BigInt))),
+            // Unexpected last column
+            col("d", ColumnType::Counter),
+        ];
+
+        let ctx = RowSerializationContext {
+            columns: &spec_duplicate_column,
+        };
+        let err = TestRowWithEnforcedOrder::preliminary_type_check(&ctx).unwrap_err();
+        let err = err.0.downcast_ref::<BuiltinTypeCheckError>().unwrap();
+        assert!(matches!(
+            err.kind,
+            BuiltinTypeCheckErrorKind::MissingValueForColumn { .. }
+        ));
+
+        let spec_wrong_type = [
+            col("a", ColumnType::Text),
+            col("b", ColumnType::Int),
+            col("c", ColumnType::TinyInt), // Wrong type
+        ];
+
+        let ctx = RowSerializationContext {
+            columns: &spec_wrong_type,
+        };
+        let err = TestRowWithEnforcedOrder::preliminary_type_check(&ctx).unwrap_err();
         let err = err.0.downcast_ref::<BuiltinTypeCheckError>().unwrap();
         assert!(matches!(
             err.kind,
