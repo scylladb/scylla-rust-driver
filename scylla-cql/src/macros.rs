@@ -16,9 +16,7 @@ pub use scylla_macros::ValueList;
 /// Derive macro for the [`SerializeCql`](crate::types::serialize::value::SerializeCql) trait
 /// which serializes given Rust structure as a User Defined Type (UDT).
 ///
-/// At the moment, only structs with named fields are supported. The generated
-/// implementation of the trait will match the struct fields to UDT fields
-/// by name automatically.
+/// At the moment, only structs with named fields are supported.
 ///
 /// Serialization will fail if there are some fields in the UDT that don't match
 /// to any of the Rust struct fields, _or vice versa_.
@@ -49,6 +47,21 @@ pub use scylla_macros::ValueList;
 /// ```
 ///
 /// # Attributes
+///
+/// `#[scylla(flavor = "flavor_name")]`
+///
+/// Allows to choose one of the possible "flavors", i.e. the way how the
+/// generated code will approach serialization. Possible flavors are:
+///
+/// - `"match_by_name"` (default) - the generated implementation _does not
+///   require_ the fields in the Rust struct to be in the same order as the
+///   fields in the UDT. During serialization, the implementation will take
+///   care to serialize the fields in the order which the database expects.
+/// - `"enforce_order"` - the generated implementation _requires_ the fields
+///   in the Rust struct to be in the same order as the fields in the UDT.
+///   If the order is incorrect, type checking/serialization will fail.
+///   This is a less robust flavor than `"match_by_name"`, but should be
+///   slightly more performant as it doesn't need to perform lookups by name.
 ///
 /// `#[scylla(crate = crate_name)]`
 ///
