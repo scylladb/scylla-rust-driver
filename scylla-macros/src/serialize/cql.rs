@@ -3,11 +3,15 @@ use proc_macro::TokenStream;
 use proc_macro2::Span;
 use syn::parse_quote;
 
+use super::Flavor;
+
 #[derive(FromAttributes)]
 #[darling(attributes(scylla))]
 struct Attributes {
     #[darling(rename = "crate")]
     crate_path: Option<syn::Path>,
+
+    flavor: Option<Flavor>,
 }
 
 impl Attributes {
@@ -36,7 +40,11 @@ pub fn derive_serialize_cql(tokens_input: TokenStream) -> Result<syn::ItemImpl, 
 
     let fields = named_fields.named.iter().cloned().collect();
     let ctx = Context { attributes, fields };
-    let gen = FieldSortingGenerator { ctx: &ctx };
+
+    let gen: Box<dyn Generator> = match ctx.attributes.flavor {
+        Some(Flavor::MatchByName) | None => Box::new(FieldSortingGenerator { ctx: &ctx }),
+        Some(Flavor::EnforceOrder) => Box::new(FieldOrderedGenerator { ctx: &ctx }),
+    };
 
     let preliminary_type_check_item = gen.generate_preliminary_type_check();
     let serialize_item = gen.generate_serialize();
@@ -95,13 +103,18 @@ impl Context {
     }
 }
 
+trait Generator {
+    fn generate_preliminary_type_check(&self) -> syn::TraitItemFn;
+    fn generate_serialize(&self) -> syn::TraitItemFn;
+}
+
 // Generates an implementation of the trait which sorts the fields according
 // to how it is defined in the database.
 struct FieldSortingGenerator<'a> {
     ctx: &'a Context,
 }
 
-impl<'a> FieldSortingGenerator<'a> {
+impl<'a> Generator for FieldSortingGenerator<'a> {
     fn generate_preliminary_type_check(&self) -> syn::TraitItemFn {
         // Need to:
         // - Check that all required fields are there and no more
@@ -265,6 +278,160 @@ impl<'a> FieldSortingGenerator<'a> {
                 }
             }
         });
+
+        parse_quote! {
+            fn serialize<W: #crate_path::CellWriter>(
+                &self,
+                typ: &#crate_path::ColumnType,
+                writer: W,
+            ) -> ::std::result::Result<W::WrittenCellProof, #crate_path::SerializationError> {
+                #(#statements)*
+                let proof = <_ as #crate_path::CellValueBuilder>::finish(builder)
+                    .map_err(|_| #crate_path::SerializationError::new(
+                        #crate_path::BuiltinTypeSerializationError {
+                            rust_name: ::std::any::type_name::<Self>(),
+                            got: <_ as ::std::clone::Clone>::clone(typ),
+                            kind: #crate_path::BuiltinTypeSerializationErrorKind::SizeOverflow,
+                        }
+                    ))?;
+                ::std::result::Result::Ok(proof)
+            }
+        }
+    }
+}
+
+// Generates an implementation of the trait which requires the fields
+// to be placed in the same order as they are defined in the struct.
+struct FieldOrderedGenerator<'a> {
+    ctx: &'a Context,
+}
+
+impl<'a> Generator for FieldOrderedGenerator<'a> {
+    fn generate_preliminary_type_check(&self) -> syn::TraitItemFn {
+        let mut statements: Vec<syn::Stmt> = Vec::new();
+
+        let crate_path = self.ctx.attributes.crate_path();
+
+        // Declare a helper lambda for creating errors
+        statements.push(self.ctx.generate_mk_typck_err());
+
+        // Check that the type we want to serialize to is a UDT
+        statements.push(
+            self.ctx
+                .generate_udt_type_match(parse_quote!(#crate_path::UdtTypeCheckErrorKind::NotUdt)),
+        );
+
+        // Create an iterator over fields
+        statements.push(parse_quote! {
+            let mut field_iter = field_types.iter();
+        });
+
+        // Go over all fields, check their names and then serialize
+        for field in self.ctx.fields.iter() {
+            let name = field.ident.as_ref().unwrap().to_string();
+            let typ = &field.ty;
+            statements.push(parse_quote! {
+                match field_iter.next() {
+                    Some((field_name, typ)) => {
+                        if field_name == #name {
+                            match <#typ as #crate_path::SerializeCql>::preliminary_type_check(typ) {
+                                Ok(()) => {}
+                                Err(err) => {
+                                    return ::std::result::Result::Err(mk_typck_err(
+                                        #crate_path::UdtTypeCheckErrorKind::FieldTypeCheckFailed {
+                                            field_name: <_ as ::std::clone::Clone>::clone(field_name),
+                                            err,
+                                        }
+                                    ));
+                                }
+                            }
+                        } else {
+                            return ::std::result::Result::Err(mk_typck_err(
+                                #crate_path::UdtTypeCheckErrorKind::FieldNameMismatch {
+                                    rust_field_name: <_ as ::std::string::ToString>::to_string(#name),
+                                    db_field_name: <_ as ::std::clone::Clone>::clone(field_name),
+                                }
+                            ));
+                        }
+                    }
+                    None => {
+                        return ::std::result::Result::Err(mk_typck_err(
+                            #crate_path::UdtTypeCheckErrorKind::MissingField {
+                                field_name: <_ as ::std::string::ToString>::to_string(#name),
+                            }
+                        ));
+                    }
+                }
+            });
+        }
+
+        // Check whether there are some fields remaining
+        statements.push(parse_quote! {
+            if let Some((field_name, typ)) = field_iter.next() {
+                return ::std::result::Result::Err(mk_typck_err(
+                    #crate_path::UdtTypeCheckErrorKind::UnexpectedFieldInDestination {
+                        field_name: <_ as ::std::clone::Clone>::clone(field_name),
+                    }
+                ));
+            }
+        });
+
+        parse_quote! {
+            fn preliminary_type_check(
+                typ: &#crate_path::ColumnType,
+            ) -> ::std::result::Result<(), #crate_path::SerializationError> {
+                #(#statements)*
+                ::std::result::Result::Ok(())
+            }
+        }
+    }
+
+    fn generate_serialize(&self) -> syn::TraitItemFn {
+        let mut statements: Vec<syn::Stmt> = Vec::new();
+
+        let crate_path = self.ctx.attributes.crate_path();
+
+        // Declare a helper lambda for creating errors
+        statements.push(self.ctx.generate_mk_typck_err());
+        statements.push(self.ctx.generate_mk_ser_err());
+
+        // Check that the type we want to serialize to is a UDT
+        statements.push(
+            self.ctx
+                .generate_udt_type_match(parse_quote!(#crate_path::UdtTypeCheckErrorKind::NotUdt)),
+        );
+
+        // Turn the cell writer into a value builder
+        statements.push(parse_quote! {
+            let mut builder = <_ as #crate_path::CellWriter>::into_value_builder(writer);
+        });
+
+        // Create an iterator over fields
+        statements.push(parse_quote! {
+            let mut field_iter = field_types.iter();
+        });
+
+        // Serialize each field
+        for field in self.ctx.fields.iter() {
+            let name = &field.ident;
+            let typ = &field.ty;
+            statements.push(parse_quote! {
+                if let Some((field_name, typ)) = field_iter.next() {
+                    let sub_builder = <_ as #crate_path::CellValueBuilder>::make_sub_writer(&mut builder);
+                    match <#typ as #crate_path::SerializeCql>::serialize(&self.#name, typ, sub_builder) {
+                        Ok(_proof) => {},
+                        Err(err) => {
+                            return ::std::result::Result::Err(mk_ser_err(
+                                #crate_path::UdtSerializationErrorKind::FieldSerializationFailed {
+                                    field_name: <_ as ::std::clone::Clone>::clone(field_name),
+                                    err,
+                                }
+                            ));
+                        }
+                    }
+                }
+            });
+        }
 
         parse_quote! {
             fn serialize<W: #crate_path::CellWriter>(

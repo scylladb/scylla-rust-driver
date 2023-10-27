@@ -1508,6 +1508,12 @@ pub enum UdtTypeCheckErrorKind {
     /// The Rust data contains a field that is not present in the UDT
     UnexpectedFieldInDestination { field_name: String },
 
+    /// A different field name was expected at given position.
+    FieldNameMismatch {
+        rust_field_name: String,
+        db_field_name: String,
+    },
+
     /// One of the fields failed to type check.
     FieldTypeCheckFailed {
         field_name: String,
@@ -1535,6 +1541,10 @@ impl Display for UdtTypeCheckErrorKind {
             UdtTypeCheckErrorKind::UnexpectedFieldInDestination { field_name } => write!(
                 f,
                 "the field {field_name} present in the Rust data is not present in the CQL type"
+            ),
+            UdtTypeCheckErrorKind::FieldNameMismatch { rust_field_name, db_field_name } => write!(
+                f,
+                "expected field with name {db_field_name} at given position, but the Rust field name is {rust_field_name}"
             ),
             UdtTypeCheckErrorKind::FieldTypeCheckFailed { field_name, err } => {
                 write!(f, "field {field_name} failed to type check: {err}")
@@ -1792,6 +1802,156 @@ mod tests {
         };
 
         let err = TestUdtWithFieldSorting::preliminary_type_check(&typ_wrong_type).unwrap_err();
+        let err = err.0.downcast_ref::<BuiltinTypeCheckError>().unwrap();
+        assert!(matches!(
+            err.kind,
+            BuiltinTypeCheckErrorKind::UdtError(UdtTypeCheckErrorKind::FieldTypeCheckFailed { .. })
+        ));
+    }
+
+    #[derive(SerializeCql, Debug, PartialEq, Eq)]
+    #[scylla(crate = crate, flavor = "enforce_order")]
+    struct TestUdtWithEnforcedOrder {
+        a: String,
+        b: i32,
+        c: Vec<i64>,
+    }
+
+    #[test]
+    fn test_udt_serialization_with_enforced_order_correct_order() {
+        let typ = ColumnType::UserDefinedType {
+            type_name: "typ".to_string(),
+            keyspace: "ks".to_string(),
+            field_types: vec![
+                ("a".to_string(), ColumnType::Text),
+                ("b".to_string(), ColumnType::Int),
+                (
+                    "c".to_string(),
+                    ColumnType::List(Box::new(ColumnType::BigInt)),
+                ),
+            ],
+        };
+
+        let reference = do_serialize(
+            CqlValue::UserDefinedType {
+                keyspace: "ks".to_string(),
+                type_name: "typ".to_string(),
+                fields: vec![
+                    (
+                        "a".to_string(),
+                        Some(CqlValue::Text(String::from("Ala ma kota"))),
+                    ),
+                    ("b".to_string(), Some(CqlValue::Int(42))),
+                    (
+                        "c".to_string(),
+                        Some(CqlValue::List(vec![
+                            CqlValue::BigInt(1),
+                            CqlValue::BigInt(2),
+                            CqlValue::BigInt(3),
+                        ])),
+                    ),
+                ],
+            },
+            &typ,
+        );
+        let udt = do_serialize(
+            TestUdtWithEnforcedOrder {
+                a: "Ala ma kota".to_owned(),
+                b: 42,
+                c: vec![1, 2, 3],
+            },
+            &typ,
+        );
+
+        assert_eq!(reference, udt);
+    }
+
+    #[test]
+    fn test_udt_serialization_with_enforced_order_failing_type_check() {
+        let typ_not_udt = ColumnType::Ascii;
+
+        let err = TestUdtWithEnforcedOrder::preliminary_type_check(&typ_not_udt).unwrap_err();
+        let err = err.0.downcast_ref::<BuiltinTypeCheckError>().unwrap();
+        assert!(matches!(
+            err.kind,
+            BuiltinTypeCheckErrorKind::UdtError(UdtTypeCheckErrorKind::NotUdt)
+        ));
+
+        let typ = ColumnType::UserDefinedType {
+            type_name: "typ".to_string(),
+            keyspace: "ks".to_string(),
+            field_types: vec![
+                // Two first columns are swapped
+                ("b".to_string(), ColumnType::Int),
+                ("a".to_string(), ColumnType::Text),
+                (
+                    "c".to_string(),
+                    ColumnType::List(Box::new(ColumnType::BigInt)),
+                ),
+            ],
+        };
+
+        let err = TestUdtWithEnforcedOrder::preliminary_type_check(&typ).unwrap_err();
+        let err = err.0.downcast_ref::<BuiltinTypeCheckError>().unwrap();
+        assert!(matches!(
+            err.kind,
+            BuiltinTypeCheckErrorKind::UdtError(UdtTypeCheckErrorKind::FieldNameMismatch { .. })
+        ));
+
+        let typ_without_c = ColumnType::UserDefinedType {
+            type_name: "typ".to_string(),
+            keyspace: "ks".to_string(),
+            field_types: vec![
+                ("a".to_string(), ColumnType::Text),
+                ("b".to_string(), ColumnType::Int),
+                // Last field is missing
+            ],
+        };
+
+        let err = TestUdtWithEnforcedOrder::preliminary_type_check(&typ_without_c).unwrap_err();
+        let err = err.0.downcast_ref::<BuiltinTypeCheckError>().unwrap();
+        assert!(matches!(
+            err.kind,
+            BuiltinTypeCheckErrorKind::UdtError(UdtTypeCheckErrorKind::MissingField { .. })
+        ));
+
+        let typ_unexpected_field = ColumnType::UserDefinedType {
+            type_name: "typ".to_string(),
+            keyspace: "ks".to_string(),
+            field_types: vec![
+                ("a".to_string(), ColumnType::Text),
+                ("b".to_string(), ColumnType::Int),
+                (
+                    "c".to_string(),
+                    ColumnType::List(Box::new(ColumnType::BigInt)),
+                ),
+                // Unexpected field
+                ("d".to_string(), ColumnType::Counter),
+            ],
+        };
+
+        let err =
+            TestUdtWithEnforcedOrder::preliminary_type_check(&typ_unexpected_field).unwrap_err();
+        let err = err.0.downcast_ref::<BuiltinTypeCheckError>().unwrap();
+        assert!(matches!(
+            err.kind,
+            BuiltinTypeCheckErrorKind::UdtError(
+                UdtTypeCheckErrorKind::UnexpectedFieldInDestination { .. }
+            )
+        ));
+
+        let typ_unexpected_field = ColumnType::UserDefinedType {
+            type_name: "typ".to_string(),
+            keyspace: "ks".to_string(),
+            field_types: vec![
+                ("a".to_string(), ColumnType::Text),
+                ("b".to_string(), ColumnType::Int),
+                ("c".to_string(), ColumnType::TinyInt), // Wrong column type
+            ],
+        };
+
+        let err =
+            TestUdtWithEnforcedOrder::preliminary_type_check(&typ_unexpected_field).unwrap_err();
         let err = err.0.downcast_ref::<BuiltinTypeCheckError>().unwrap();
         assert!(matches!(
             err.kind,
