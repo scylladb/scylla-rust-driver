@@ -916,32 +916,11 @@ dependencies = [
 
 [[package]]
 name = "num_enum"
-version = "0.5.11"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1f646caf906c20226733ed5b1374287eb97e3c2a5c227ce668c1f2ce20ae57c9"
-dependencies = [
- "num_enum_derive 0.5.11",
-]
-
-[[package]]
-name = "num_enum"
 version = "0.6.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7a015b430d3c108a207fd776d2e2196aaf8b1cf8cf93253e3a097ff3085076a1"
 dependencies = [
- "num_enum_derive 0.6.1",
-]
-
-[[package]]
-name = "num_enum_derive"
-version = "0.5.11"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "dcbff9bc912032c62bf65ef1d5aea88983b420f4f839db1e9b0c281a25c9c799"
-dependencies = [
- "proc-macro-crate",
- "proc-macro2",
- "quote",
- "syn 1.0.109",
+ "num_enum_derive",
 ]
 
 [[package]]
@@ -1402,7 +1381,7 @@ dependencies = [
  "lz4_flex",
  "ntest",
  "num-bigint",
- "num_enum 0.6.1",
+ "num_enum",
  "openssl",
  "rand",
  "rand_chacha",
@@ -1438,7 +1417,7 @@ dependencies = [
  "criterion",
  "lz4_flex",
  "num-bigint",
- "num_enum 0.6.1",
+ "num_enum",
  "scylla-macros",
  "secrecy",
  "serde",
@@ -1469,7 +1448,7 @@ dependencies = [
  "futures",
  "ntest",
  "num-bigint",
- "num_enum 0.5.11",
+ "num_enum",
  "rand",
  "scylla-cql",
  "thiserror",
