@@ -1,8 +1,11 @@
+use std::borrow::Cow;
+use std::collections::BTreeMap;
+use std::hash::BuildHasher;
 use std::{collections::HashMap, sync::Arc};
 
 use thiserror::Error;
 
-use crate::frame::value::ValueList;
+use crate::frame::value::{SerializedValues, Value, ValueList};
 use crate::frame::{response::result::ColumnSpec, types::RawValue};
 
 use super::{CellWriter, RowWriter, SerializationError};
@@ -50,21 +53,83 @@ pub trait SerializeRow {
     ) -> Result<(), SerializationError>;
 }
 
-impl<T: ValueList> SerializeRow for T {
-    fn preliminary_type_check(
-        _ctx: &RowSerializationContext<'_>,
-    ) -> Result<(), SerializationError> {
-        Ok(())
-    }
-
-    fn serialize<W: RowWriter>(
-        &self,
-        ctx: &RowSerializationContext<'_>,
-        writer: &mut W,
-    ) -> Result<(), SerializationError> {
-        serialize_legacy_row(self, ctx, writer)
-    }
+macro_rules! fallback_impl_contents {
+    () => {
+        fn preliminary_type_check(
+            _ctx: &RowSerializationContext<'_>,
+        ) -> Result<(), SerializationError> {
+            Ok(())
+        }
+        fn serialize<W: RowWriter>(
+            &self,
+            ctx: &RowSerializationContext<'_>,
+            writer: &mut W,
+        ) -> Result<(), SerializationError> {
+            serialize_legacy_row(self, ctx, writer)
+        }
+    };
 }
+
+impl SerializeRow for () {
+    fallback_impl_contents!();
+}
+
+impl SerializeRow for [u8; 0] {
+    fallback_impl_contents!();
+}
+
+impl<T: Value> SerializeRow for &[T] {
+    fallback_impl_contents!();
+}
+
+impl<T: Value> SerializeRow for Vec<T> {
+    fallback_impl_contents!();
+}
+
+macro_rules! impl_serialize_row_for_hash_map {
+    ($key_type:ty) => {
+        impl<T: Value> SerializeRow for BTreeMap<$key_type, T> {
+            fallback_impl_contents!();
+        }
+    };
+}
+
+macro_rules! impl_serialize_row_for_btree_map {
+    ($key_type:ty) => {
+        impl<T: Value, S: BuildHasher> SerializeRow for HashMap<$key_type, T, S> {
+            fallback_impl_contents!();
+        }
+    };
+}
+
+impl_serialize_row_for_hash_map!(String);
+impl_serialize_row_for_hash_map!(&str);
+impl_serialize_row_for_btree_map!(String);
+impl_serialize_row_for_btree_map!(&str);
+
+impl<T: ValueList> SerializeRow for &T {
+    fallback_impl_contents!();
+}
+
+impl SerializeRow for SerializedValues {
+    fallback_impl_contents!();
+}
+
+impl<'b> SerializeRow for Cow<'b, SerializedValues> {
+    fallback_impl_contents!();
+}
+
+macro_rules! fallback_tuples {
+    () => {};
+    ($th:ident$(, $($tt:ident),*)?) => {
+        fallback_tuples!($($($tt),*)?);
+        impl<$th: Value$(, $($tt: Value),*)?> SerializeRow for ($th, $($($tt),*)?) {
+            fallback_impl_contents!();
+        }
+    };
+}
+
+fallback_tuples!(T0, T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, T12, T13, T14, T15);
 
 pub fn serialize_legacy_row<T: ValueList>(
     r: &T,
