@@ -191,9 +191,11 @@ async fn test_counter() {
     }
 }
 
-#[cfg(features = "chrono")]
+#[cfg(feature = "chrono")]
 #[tokio::test]
 async fn test_naive_date() {
+    use chrono::NaiveDate;
+
     let session: Session = init_test("chrono_naive_date_tests", "date").await;
 
     let min_naive_date: NaiveDate = NaiveDate::MIN;
@@ -354,7 +356,7 @@ async fn test_cql_date() {
         .unwrap_err();
 }
 
-#[cfg(features = "time")]
+#[cfg(feature = "time")]
 #[tokio::test]
 async fn test_date() {
     use time::{Date, Month::*};
@@ -408,12 +410,13 @@ async fn test_date() {
             .await
             .unwrap();
 
-        let (read_date,) = session
+        let read_date = session
             .query("SELECT val from time_date_tests", &[])
             .await
             .unwrap()
             .first_row_typed::<(Date,)>()
-            .unwrap();
+            .ok()
+            .map(|val| val.0);
 
         assert_eq!(read_date, *date);
 
