@@ -941,10 +941,10 @@ impl Value for CqlValue {
                 serialize_tuple(fields.iter().map(|(_, value)| value), buf)
             }
 
-            CqlValue::Date(d) => CqlDate(*d).serialize(buf),
+            CqlValue::Date(d) => d.serialize(buf),
             CqlValue::Duration(d) => d.serialize(buf),
-            CqlValue::Timestamp(t) => CqlTimestamp(*t).serialize(buf),
-            CqlValue::Time(t) => CqlTime(*t).serialize(buf),
+            CqlValue::Timestamp(t) => t.serialize(buf),
+            CqlValue::Time(t) => t.serialize(buf),
 
             CqlValue::Ascii(s) | CqlValue::Text(s) => s.serialize(buf),
             CqlValue::List(v) | CqlValue::Set(v) => v.serialize(buf),

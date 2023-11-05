@@ -77,7 +77,7 @@ async fn main() -> Result<()> {
     if let Some(rows) = session.query("SELECT d from ks.dates", &[]).await?.rows {
         for row in rows {
             let read_days: u32 = match row.columns[0] {
-                Some(CqlValue::Date(days)) => days,
+                Some(CqlValue::Date(CqlDate(days))) => days,
                 _ => panic!("oh no"),
             };
 

@@ -84,7 +84,7 @@ pub enum CqlValue {
     Decimal(BigDecimal),
     /// Days since -5877641-06-23 i.e. 2^31 days before unix epoch
     /// Can be converted to chrono::NaiveDate (-262145-1-1 to 262143-12-31) using as_date
-    Date(u32),
+    Date(CqlDate),
     Double(f64),
     Duration(CqlDuration),
     Empty,
@@ -93,7 +93,7 @@ pub enum CqlValue {
     BigInt(i64),
     Text(String),
     /// Milliseconds since unix epoch
-    Timestamp(i64),
+    Timestamp(CqlTimestamp),
     Inet(IpAddr),
     List(Vec<CqlValue>),
     Map(Vec<(CqlValue, CqlValue)>),
@@ -109,7 +109,7 @@ pub enum CqlValue {
     SmallInt(i16),
     TinyInt(i8),
     /// Nanoseconds since midnight
-    Time(i64),
+    Time(CqlTime),
     Timeuuid(Uuid),
     Tuple(Vec<Option<CqlValue>>),
     Uuid(Uuid),
@@ -126,7 +126,7 @@ impl CqlValue {
 
     pub fn as_cql_date(&self) -> Option<CqlDate> {
         match self {
-            Self::Date(d) => Some(CqlDate(*d)),
+            Self::Date(d) => Some(*d),
             _ => None,
         }
     }
@@ -143,7 +143,7 @@ impl CqlValue {
 
     pub fn as_cql_timestamp(&self) -> Option<CqlTimestamp> {
         match self {
-            Self::Timestamp(i) => Some(CqlTimestamp(*i)),
+            Self::Timestamp(i) => Some(*i),
             _ => None,
         }
     }
@@ -160,7 +160,7 @@ impl CqlValue {
 
     pub fn as_cql_time(&self) -> Option<CqlTime> {
         match self {
-            Self::Time(i) => Some(CqlTime(*i)),
+            Self::Time(i) => Some(*i),
             _ => None,
         }
     }
@@ -228,7 +228,6 @@ impl CqlValue {
     pub fn as_bigint(&self) -> Option<i64> {
         match self {
             Self::BigInt(i) => Some(*i),
-            Self::Timestamp(d) => Some(*d),
             _ => None,
         }
     }
@@ -635,7 +634,7 @@ pub fn deser_cql_value(typ: &ColumnType, buf: &mut &[u8]) -> StdResult<CqlValue,
             }
 
             let date_value = buf.read_u32::<BigEndian>()?;
-            CqlValue::Date(date_value)
+            CqlValue::Date(CqlDate(date_value))
         }
         Counter => {
             if buf.len() != 8 {
@@ -718,7 +717,7 @@ pub fn deser_cql_value(typ: &ColumnType, buf: &mut &[u8]) -> StdResult<CqlValue,
             }
             let millis = buf.read_i64::<BigEndian>()?;
 
-            CqlValue::Timestamp(millis)
+            CqlValue::Timestamp(CqlTimestamp(millis))
         }
         Time => {
             if buf.len() != 8 {
@@ -736,7 +735,7 @@ pub fn deser_cql_value(typ: &ColumnType, buf: &mut &[u8]) -> StdResult<CqlValue,
                 }));
             }
 
-            CqlValue::Time(nanoseconds)
+            CqlValue::Time(CqlTime(nanoseconds))
         }
         Timeuuid => {
             if buf.len() != 16 {
@@ -942,7 +941,7 @@ pub fn deserialize(buf: &mut &[u8]) -> StdResult<Result, ParseError> {
 #[cfg(test)]
 mod tests {
     use crate as scylla;
-    use crate::frame::value::{Counter, CqlDate, CqlDuration};
+    use crate::frame::value::{Counter, CqlDate, CqlDuration, CqlTime, CqlTimestamp};
     use bigdecimal::BigDecimal;
     use num_bigint::BigInt;
     use num_bigint::ToBigInt;
@@ -1242,13 +1241,16 @@ mod tests {
         let four_bytes: [u8; 4] = [12, 23, 34, 45];
         let date: CqlValue =
             super::deser_cql_value(&ColumnType::Date, &mut four_bytes.as_ref()).unwrap();
-        assert_eq!(date, CqlValue::Date(u32::from_be_bytes(four_bytes)));
+        assert_eq!(
+            date,
+            CqlValue::Date(CqlDate(u32::from_be_bytes(four_bytes)))
+        );
 
         // Date is parsed as u32 not i32, u32::MAX is u32::MAX
         let date: CqlValue =
             super::deser_cql_value(&ColumnType::Date, &mut u32::MAX.to_be_bytes().as_ref())
                 .unwrap();
-        assert_eq!(date, CqlValue::Date(u32::MAX));
+        assert_eq!(date, CqlValue::Date(CqlDate(u32::MAX)));
 
         // Trying to parse a 0, 3 or 5 byte array fails
         super::deser_cql_value(&ColumnType::Date, &mut [].as_ref()).unwrap();
@@ -1407,7 +1409,7 @@ mod tests {
             let bytes: [u8; 8] = test_val.to_be_bytes();
             let cql_value: CqlValue =
                 super::deser_cql_value(&ColumnType::Time, &mut &bytes[..]).unwrap();
-            assert_eq!(cql_value, CqlValue::Time(*test_val));
+            assert_eq!(cql_value, CqlValue::Time(CqlTime(*test_val)));
         }
 
         // Negative values cause an error
@@ -1506,7 +1508,7 @@ mod tests {
             let bytes: [u8; 8] = test_val.to_be_bytes();
             let cql_value: CqlValue =
                 super::deser_cql_value(&ColumnType::Timestamp, &mut &bytes[..]).unwrap();
-            assert_eq!(cql_value, CqlValue::Timestamp(*test_val));
+            assert_eq!(cql_value, CqlValue::Timestamp(CqlTimestamp(*test_val)));
         }
     }
 

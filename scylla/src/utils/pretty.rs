@@ -1,5 +1,8 @@
 use chrono::{LocalResult, TimeZone, Utc};
-use scylla_cql::frame::response::result::CqlValue;
+use scylla_cql::frame::{
+    response::result::CqlValue,
+    value::{CqlDate, CqlTime, CqlTimestamp},
+};
 
 use std::borrow::Borrow;
 use std::fmt::{Display, LowerHex, UpperHex};
@@ -50,7 +53,7 @@ where
             CqlValue::TinyInt(ti) => write!(f, "{}", ti)?,
             CqlValue::Varint(vi) => write!(f, "{}", vi)?,
             CqlValue::Counter(c) => write!(f, "{}", c.0)?,
-            CqlValue::Date(d) => {
+            CqlValue::Date(CqlDate(d)) => {
                 let days_since_epoch = chrono::Duration::days(*d as i64 - (1 << 31));
 
                 // TODO: chrono::NaiveDate does not handle the whole range
@@ -64,7 +67,7 @@ where
                 }
             }
             CqlValue::Duration(d) => write!(f, "{}mo{}d{}ns", d.months, d.days, d.nanoseconds)?,
-            CqlValue::Time(t) => {
+            CqlValue::Time(CqlTime(t)) => {
                 write!(
                     f,
                     "'{:02}:{:02}:{:02}.{:09}'",
@@ -74,7 +77,7 @@ where
                     t % 1_000_000_000,
                 )?;
             }
-            CqlValue::Timestamp(t) => {
+            CqlValue::Timestamp(CqlTimestamp(t)) => {
                 match Utc.timestamp_millis_opt(*t) {
                     LocalResult::Ambiguous(_, _) => unreachable!(), // not supposed to happen with timestamp_millis_opt
                     LocalResult::Single(d) => {
@@ -210,7 +213,7 @@ mod tests {
     use chrono::{NaiveDate, NaiveDateTime, NaiveTime};
 
     use scylla_cql::frame::response::result::CqlValue;
-    use scylla_cql::frame::value::CqlDuration;
+    use scylla_cql::frame::value::{CqlDate, CqlDuration, CqlTime, CqlTimestamp};
 
     use crate::utils::pretty::CqlValueDisplayer;
 
@@ -246,7 +249,10 @@ mod tests {
 
         // Time types are the most tricky
         assert_eq!(
-            format!("{}", CqlValueDisplayer(CqlValue::Date(40 + (1 << 31)))),
+            format!(
+                "{}",
+                CqlValueDisplayer(CqlValue::Date(CqlDate(40 + (1 << 31))))
+            ),
             "'1970-02-10'"
         );
         assert_eq!(
@@ -265,7 +271,7 @@ mod tests {
             .signed_duration_since(chrono::NaiveTime::MIN);
         let t = t.num_nanoseconds().unwrap();
         assert_eq!(
-            format!("{}", CqlValueDisplayer(CqlValue::Time(t))),
+            format!("{}", CqlValueDisplayer(CqlValue::Time(CqlTime(t)))),
             "'06:05:04.000000123'"
         );
 
@@ -275,10 +281,10 @@ mod tests {
         assert_eq!(
             format!(
                 "{}",
-                CqlValueDisplayer(CqlValue::Timestamp(
+                CqlValueDisplayer(CqlValue::Timestamp(CqlTimestamp(
                     t.signed_duration_since(NaiveDateTime::default())
                         .num_milliseconds()
-                ))
+                )))
             ),
             "'2005-04-02 19:37:42.000+0000'"
         );

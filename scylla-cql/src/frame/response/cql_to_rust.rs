@@ -136,6 +136,9 @@ impl_from_cql_value_from_method!(IpAddr, as_inet); // IpAddr::from_cql<CqlValue>
 impl_from_cql_value_from_method!(Uuid, as_uuid); // Uuid::from_cql<CqlValue>
 impl_from_cql_value_from_method!(BigDecimal, into_decimal); // BigDecimal::from_cql<CqlValue>
 impl_from_cql_value_from_method!(CqlDuration, as_cql_duration); // CqlDuration::from_cql<CqlValue>
+impl_from_cql_value_from_method!(CqlDate, as_cql_date); // CqlDate::from_cql<CqlValue>
+impl_from_cql_value_from_method!(CqlTime, as_cql_time); // CqlTime::from_cql<CqlValue>
+impl_from_cql_value_from_method!(CqlTimestamp, as_cql_timestamp); // CqlTimestamp::from_cql<CqlValue>
 
 impl<const N: usize> FromCqlVal<CqlValue> for [u8; N] {
     fn from_cql(cql_val: CqlValue) -> Result<Self, FromCqlValError> {
@@ -144,22 +147,11 @@ impl<const N: usize> FromCqlVal<CqlValue> for [u8; N] {
     }
 }
 
-impl FromCqlVal<CqlValue> for CqlDate {
-    fn from_cql(cql_val: CqlValue) -> Result<Self, FromCqlValError> {
-        match cql_val {
-            CqlValue::Date(d) => Ok(CqlDate(d)),
-            _ => Err(FromCqlValError::BadCqlType),
-        }
-    }
-}
-
 #[cfg(feature = "chrono")]
 impl FromCqlVal<CqlValue> for NaiveDate {
     fn from_cql(cql_val: CqlValue) -> Result<Self, FromCqlValError> {
         match cql_val {
-            CqlValue::Date(date_days) => CqlDate(date_days)
-                .try_into()
-                .map_err(|_| FromCqlValError::BadVal),
+            CqlValue::Date(cql_date) => cql_date.try_into().map_err(|_| FromCqlValError::BadVal),
             _ => Err(FromCqlValError::BadCqlType),
         }
     }
@@ -169,18 +161,7 @@ impl FromCqlVal<CqlValue> for NaiveDate {
 impl FromCqlVal<CqlValue> for time::Date {
     fn from_cql(cql_val: CqlValue) -> Result<Self, FromCqlValError> {
         match cql_val {
-            CqlValue::Date(date_days) => CqlDate(date_days)
-                .try_into()
-                .map_err(|_| FromCqlValError::BadVal),
-            _ => Err(FromCqlValError::BadCqlType),
-        }
-    }
-}
-
-impl FromCqlVal<CqlValue> for CqlTime {
-    fn from_cql(cql_val: CqlValue) -> Result<Self, FromCqlValError> {
-        match cql_val {
-            CqlValue::Time(d) => Ok(Self(d)),
+            CqlValue::Date(cql_date) => cql_date.try_into().map_err(|_| FromCqlValError::BadVal),
             _ => Err(FromCqlValError::BadCqlType),
         }
     }
@@ -190,7 +171,7 @@ impl FromCqlVal<CqlValue> for CqlTime {
 impl FromCqlVal<CqlValue> for NaiveTime {
     fn from_cql(cql_val: CqlValue) -> Result<Self, FromCqlValError> {
         match cql_val {
-            CqlValue::Time(d) => CqlTime(d).try_into().map_err(|_| FromCqlValError::BadVal),
+            CqlValue::Time(cql_time) => cql_time.try_into().map_err(|_| FromCqlValError::BadVal),
             _ => Err(FromCqlValError::BadCqlType),
         }
     }
@@ -200,16 +181,7 @@ impl FromCqlVal<CqlValue> for NaiveTime {
 impl FromCqlVal<CqlValue> for time::Time {
     fn from_cql(cql_val: CqlValue) -> Result<Self, FromCqlValError> {
         match cql_val {
-            CqlValue::Time(d) => CqlTime(d).try_into().map_err(|_| FromCqlValError::BadVal),
-            _ => Err(FromCqlValError::BadCqlType),
-        }
-    }
-}
-
-impl FromCqlVal<CqlValue> for CqlTimestamp {
-    fn from_cql(cql_val: CqlValue) -> Result<Self, FromCqlValError> {
-        match cql_val {
-            CqlValue::Timestamp(d) => Ok(Self(d)),
+            CqlValue::Time(cql_time) => cql_time.try_into().map_err(|_| FromCqlValError::BadVal),
             _ => Err(FromCqlValError::BadCqlType),
         }
     }
@@ -514,40 +486,40 @@ mod tests {
     fn naive_date_from_cql() {
         use chrono::NaiveDate;
 
-        let unix_epoch: CqlValue = CqlValue::Date(2_u32.pow(31));
+        let unix_epoch: CqlValue = CqlValue::Date(CqlDate(2_u32.pow(31)));
         assert_eq!(
             Ok(NaiveDate::from_ymd_opt(1970, 1, 1).unwrap()),
             NaiveDate::from_cql(unix_epoch)
         );
 
-        let before_epoch: CqlValue = CqlValue::Date(2_u32.pow(31) - 30);
+        let before_epoch: CqlValue = CqlValue::Date(CqlDate(2_u32.pow(31) - 30));
         assert_eq!(
             Ok(NaiveDate::from_ymd_opt(1969, 12, 2).unwrap()),
             NaiveDate::from_cql(before_epoch)
         );
 
-        let after_epoch: CqlValue = CqlValue::Date(2_u32.pow(31) + 30);
+        let after_epoch: CqlValue = CqlValue::Date(CqlDate(2_u32.pow(31) + 30));
         assert_eq!(
             Ok(NaiveDate::from_ymd_opt(1970, 1, 31).unwrap()),
             NaiveDate::from_cql(after_epoch)
         );
 
-        let min_date: CqlValue = CqlValue::Date(0);
+        let min_date: CqlValue = CqlValue::Date(CqlDate(0));
         assert!(NaiveDate::from_cql(min_date).is_err());
 
-        let max_date: CqlValue = CqlValue::Date(u32::MAX);
+        let max_date: CqlValue = CqlValue::Date(CqlDate(u32::MAX));
         assert!(NaiveDate::from_cql(max_date).is_err());
     }
 
     #[test]
     fn cql_date_from_cql() {
-        let unix_epoch: CqlValue = CqlValue::Date(2_u32.pow(31));
+        let unix_epoch: CqlValue = CqlValue::Date(CqlDate(2_u32.pow(31)));
         assert_eq!(Ok(CqlDate(2_u32.pow(31))), CqlDate::from_cql(unix_epoch));
 
-        let min_date: CqlValue = CqlValue::Date(0);
+        let min_date: CqlValue = CqlValue::Date(CqlDate(0));
         assert_eq!(Ok(CqlDate(0)), CqlDate::from_cql(min_date));
 
-        let max_date: CqlValue = CqlValue::Date(u32::MAX);
+        let max_date: CqlValue = CqlValue::Date(CqlDate(u32::MAX));
         assert_eq!(Ok(CqlDate(u32::MAX)), CqlDate::from_cql(max_date));
     }
 
@@ -555,32 +527,32 @@ mod tests {
     #[test]
     fn date_from_cql() {
         // UNIX epoch
-        let unix_epoch = CqlValue::Date(1 << 31);
+        let unix_epoch = CqlValue::Date(CqlDate(1 << 31));
         assert_eq!(
             Ok(time::Date::from_ordinal_date(1970, 1).unwrap()),
             time::Date::from_cql(unix_epoch)
         );
 
         // 7 days after UNIX epoch
-        let after_epoch = CqlValue::Date((1 << 31) + 7);
+        let after_epoch = CqlValue::Date(CqlDate((1 << 31) + 7));
         assert_eq!(
             Ok(time::Date::from_ordinal_date(1970, 8).unwrap()),
             time::Date::from_cql(after_epoch)
         );
 
         // 3 days before UNIX epoch
-        let before_epoch = CqlValue::Date((1 << 31) - 3);
+        let before_epoch = CqlValue::Date(CqlDate((1 << 31) - 3));
         assert_eq!(
             Ok(time::Date::from_ordinal_date(1969, 363).unwrap()),
             time::Date::from_cql(before_epoch)
         );
 
         // Min possible stored date. Since value is out of `time::Date` range, it should return `BadVal` error
-        let min_date = CqlValue::Date(u32::MIN);
+        let min_date = CqlValue::Date(CqlDate(u32::MIN));
         assert_eq!(Err(FromCqlValError::BadVal), time::Date::from_cql(min_date));
 
         // Max possible stored date. Since value is out of `time::Date` range, it should return `BadVal` error
-        let max_date = CqlValue::Date(u32::MAX);
+        let max_date = CqlValue::Date(CqlDate(u32::MAX));
         assert_eq!(Err(FromCqlValError::BadVal), time::Date::from_cql(max_date));
 
         // Different CQL type. Since value can't be casted, it should return `BadCqlType` error
@@ -607,10 +579,8 @@ mod tests {
     #[test]
     fn cql_time_from_cql() {
         let time_ns = 86399999999999;
-        assert_eq!(
-            time_ns,
-            CqlTime::from_cql(CqlValue::Time(time_ns)).unwrap().0,
-        );
+        let cql_value = CqlValue::Time(CqlTime(time_ns));
+        assert_eq!(time_ns, CqlTime::from_cql(cql_value).unwrap().0);
     }
 
     #[cfg(feature = "chrono")]
@@ -619,27 +589,31 @@ mod tests {
         use chrono::NaiveTime;
 
         // Midnight
-        let midnight = CqlValue::Time(0);
+        let midnight = CqlValue::Time(CqlTime(0));
         assert_eq!(Ok(NaiveTime::MIN), NaiveTime::from_cql(midnight));
 
         // 7:15:21.123456789
-        let morning = CqlValue::Time((7 * 3600 + 15 * 60 + 21) * 1_000_000_000 + 123_456_789);
+        let morning = CqlValue::Time(CqlTime(
+            (7 * 3600 + 15 * 60 + 21) * 1_000_000_000 + 123_456_789,
+        ));
         assert_eq!(
             Ok(NaiveTime::from_hms_nano_opt(7, 15, 21, 123_456_789).unwrap()),
             NaiveTime::from_cql(morning)
         );
 
         // 23:59:59.999999999
-        let late_night = CqlValue::Time((23 * 3600 + 59 * 60 + 59) * 1_000_000_000 + 999_999_999);
+        let late_night = CqlValue::Time(CqlTime(
+            (23 * 3600 + 59 * 60 + 59) * 1_000_000_000 + 999_999_999,
+        ));
         assert_eq!(
             Ok(NaiveTime::from_hms_nano_opt(23, 59, 59, 999_999_999).unwrap()),
             NaiveTime::from_cql(late_night)
         );
 
         // Bad values. Since value is out of `chrono::NaiveTime` range, it should return `BadVal` error
-        let bad_time1 = CqlValue::Time(-1);
+        let bad_time1 = CqlValue::Time(CqlTime(-1));
         assert_eq!(Err(FromCqlValError::BadVal), NaiveTime::from_cql(bad_time1));
-        let bad_time2 = CqlValue::Time(i64::MAX);
+        let bad_time2 = CqlValue::Time(CqlTime(i64::MAX));
         assert_eq!(Err(FromCqlValError::BadVal), NaiveTime::from_cql(bad_time2));
 
         // Different CQL type. Since value can't be casted, it should return `BadCqlType` error
@@ -654,30 +628,34 @@ mod tests {
     #[test]
     fn time_from_cql() {
         // Midnight
-        let midnight = CqlValue::Time(0);
+        let midnight = CqlValue::Time(CqlTime(0));
         assert_eq!(Ok(time::Time::MIDNIGHT), time::Time::from_cql(midnight));
 
         // 7:15:21.123456789
-        let morning = CqlValue::Time((7 * 3600 + 15 * 60 + 21) * 1_000_000_000 + 123_456_789);
+        let morning = CqlValue::Time(CqlTime(
+            (7 * 3600 + 15 * 60 + 21) * 1_000_000_000 + 123_456_789,
+        ));
         assert_eq!(
             Ok(time::Time::from_hms_nano(7, 15, 21, 123_456_789).unwrap()),
             time::Time::from_cql(morning)
         );
 
         // 23:59:59.999999999
-        let late_night = CqlValue::Time((23 * 3600 + 59 * 60 + 59) * 1_000_000_000 + 999_999_999);
+        let late_night = CqlValue::Time(CqlTime(
+            (23 * 3600 + 59 * 60 + 59) * 1_000_000_000 + 999_999_999,
+        ));
         assert_eq!(
             Ok(time::Time::from_hms_nano(23, 59, 59, 999_999_999).unwrap()),
             time::Time::from_cql(late_night)
         );
 
         // Bad values. Since value is out of `time::Time` range, it should return `BadVal` error
-        let bad_time1 = CqlValue::Time(-1);
+        let bad_time1 = CqlValue::Time(CqlTime(-1));
         assert_eq!(
             Err(FromCqlValError::BadVal),
             time::Time::from_cql(bad_time1)
         );
-        let bad_time2 = CqlValue::Time(i64::MAX);
+        let bad_time2 = CqlValue::Time(CqlTime(i64::MAX));
         assert_eq!(
             Err(FromCqlValError::BadVal),
             time::Time::from_cql(bad_time2)
@@ -696,7 +674,7 @@ mod tests {
         let timestamp_ms = 86399999999999;
         assert_eq!(
             timestamp_ms,
-            CqlTimestamp::from_cql(CqlValue::Timestamp(timestamp_ms))
+            CqlTimestamp::from_cql(CqlValue::Timestamp(CqlTimestamp(timestamp_ms)))
                 .unwrap()
                 .0,
         );
@@ -714,8 +692,10 @@ mod tests {
 
         assert_eq!(
             datetime_utc,
-            DateTime::<Utc>::from_cql(CqlValue::Timestamp(datetime_utc.timestamp_millis()))
-                .unwrap()
+            DateTime::<Utc>::from_cql(CqlValue::Timestamp(CqlTimestamp(
+                datetime_utc.timestamp_millis()
+            )))
+            .unwrap()
         );
     }
 
@@ -723,14 +703,14 @@ mod tests {
     #[test]
     fn offset_datetime_from_cql() {
         // UNIX epoch
-        let unix_epoch = CqlValue::Timestamp(0);
+        let unix_epoch = CqlValue::Timestamp(CqlTimestamp(0));
         assert_eq!(
             Ok(time::OffsetDateTime::UNIX_EPOCH),
             time::OffsetDateTime::from_cql(unix_epoch)
         );
 
         // 1 day 2 hours 3 minutes 4 seconds and 5 nanoseconds before UNIX epoch
-        let before_epoch = CqlValue::Timestamp(-(26 * 3600 + 3 * 60 + 4) * 1000 - 5);
+        let before_epoch = CqlValue::Timestamp(CqlTimestamp(-(26 * 3600 + 3 * 60 + 4) * 1000 - 5));
         assert_eq!(
             Ok(time::OffsetDateTime::UNIX_EPOCH
                 - time::Duration::new(26 * 3600 + 3 * 60 + 4, 5 * 1_000_000)),
@@ -738,7 +718,8 @@ mod tests {
         );
 
         // 6 days 7 hours 8 minutes 9 seconds and 10 nanoseconds after UNIX epoch
-        let after_epoch = CqlValue::Timestamp(((6 * 24 + 7) * 3600 + 8 * 60 + 9) * 1000 + 10);
+        let after_epoch =
+            CqlValue::Timestamp(CqlTimestamp(((6 * 24 + 7) * 3600 + 8 * 60 + 9) * 1000 + 10));
         assert_eq!(
             Ok(time::PrimitiveDateTime::new(
                 time::Date::from_ordinal_date(1970, 7).unwrap(),
@@ -749,14 +730,14 @@ mod tests {
         );
 
         // Min possible stored timestamp. Since value is out of `time::OffsetDateTime` range, it should return `BadVal` error
-        let min_timestamp = CqlValue::Timestamp(i64::MIN);
+        let min_timestamp = CqlValue::Timestamp(CqlTimestamp(i64::MIN));
         assert_eq!(
             Err(FromCqlValError::BadVal),
             time::OffsetDateTime::from_cql(min_timestamp)
         );
 
         // Max possible stored timestamp. Since value is out of `time::OffsetDateTime` range, it should return `BadVal` error
-        let max_timestamp = CqlValue::Timestamp(i64::MAX);
+        let max_timestamp = CqlValue::Timestamp(CqlTimestamp(i64::MAX));
         assert_eq!(
             Err(FromCqlValError::BadVal),
             time::OffsetDateTime::from_cql(max_timestamp)
