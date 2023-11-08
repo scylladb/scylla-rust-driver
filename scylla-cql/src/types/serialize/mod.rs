@@ -1,4 +1,4 @@
-use std::{any::Any, sync::Arc};
+use std::{error::Error, sync::Arc};
 
 pub mod row;
 pub mod value;
@@ -9,4 +9,4 @@ pub use writers::{
     CellWriter, CountingWriter, RowWriter,
 };
 
-type SerializationError = Arc<dyn Any + Send + Sync>;
+type SerializationError = Arc<dyn Error + Send + Sync>;
