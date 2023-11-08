@@ -128,7 +128,6 @@ impl RowIterator {
 
     pub(crate) async fn new_for_query(
         mut query: Query,
-        values: SerializedValues,
         execution_profile: Arc<ExecutionProfileInner>,
         cluster_data: Arc<ClusterData>,
         metrics: Arc<Metrics>,
@@ -162,29 +161,27 @@ impl RowIterator {
         let parent_span = tracing::Span::current();
         let worker_task = async move {
             let query_ref = &query;
-            let values_ref = &values;
 
             let choose_connection = |node: Arc<Node>| async move { node.random_connection().await };
 
             let page_query = |connection: Arc<Connection>,
                               consistency: Consistency,
-                              paging_state: Option<Bytes>| async move {
-                connection
-                    .query_with_consistency(
-                        query_ref,
-                        values_ref,
-                        consistency,
-                        serial_consistency,
-                        paging_state,
-                    )
-                    .await
+                              paging_state: Option<Bytes>| {
+                async move {
+                    connection
+                        .query_with_consistency(
+                            query_ref,
+                            consistency,
+                            serial_consistency,
+                            paging_state,
+                        )
+                        .await
+                }
             };
 
             let query_ref = &query;
-            let serialized_values_size = values.size();
 
-            let span_creator =
-                move || RequestSpan::new_query(&query_ref.contents, serialized_values_size);
+            let span_creator = move || RequestSpan::new_query(&query_ref.contents, 0);
 
             let worker = RowIteratorWorker {
                 sender: sender.into(),
@@ -337,7 +334,6 @@ impl RowIterator {
     pub(crate) async fn new_for_connection_query_iter(
         mut query: Query,
         connection: Arc<Connection>,
-        values: SerializedValues,
         consistency: Consistency,
         serial_consistency: Option<SerialConsistency>,
     ) -> Result<RowIterator, QueryError> {
@@ -352,6 +348,36 @@ impl RowIterator {
                 fetcher: |paging_state| {
                     connection.query_with_consistency(
                         &query,
+                        consistency,
+                        serial_consistency,
+                        paging_state,
+                    )
+                },
+            };
+            worker.work().await
+        };
+
+        Self::new_from_worker_future(worker_task, receiver).await
+    }
+
+    pub(crate) async fn new_for_connection_execute_iter(
+        mut prepared: PreparedStatement,
+        values: SerializedValues,
+        connection: Arc<Connection>,
+        consistency: Consistency,
+        serial_consistency: Option<SerialConsistency>,
+    ) -> Result<RowIterator, QueryError> {
+        if prepared.get_page_size().is_none() {
+            prepared.set_page_size(DEFAULT_ITER_PAGE_SIZE);
+        }
+        let (sender, receiver) = mpsc::channel::<Result<ReceivedPage, QueryError>>(1);
+
+        let worker_task = async move {
+            let worker = SingleConnectionRowIteratorWorker {
+                sender: sender.into(),
+                fetcher: |paging_state| {
+                    connection.execute_with_consistency(
+                        &prepared,
                         &values,
                         consistency,
                         serial_consistency,
