@@ -751,7 +751,7 @@ async fn query_peers(conn: &Arc<Connection>, connect_port: u16) -> Result<Vec<Pe
     peers_query.set_page_size(1024);
     let peers_query_stream = conn
         .clone()
-        .query_iter(peers_query, &[])
+        .query_iter(peers_query)
         .into_stream()
         .try_flatten()
         .and_then(|row_result| future::ok((NodeInfoSource::Peer, row_result)));
@@ -761,7 +761,7 @@ async fn query_peers(conn: &Arc<Connection>, connect_port: u16) -> Result<Vec<Pe
     local_query.set_page_size(1024);
     let local_query_stream = conn
         .clone()
-        .query_iter(local_query, &[])
+        .query_iter(local_query)
         .into_stream()
         .try_flatten()
         .and_then(|row_result| future::ok((NodeInfoSource::Local, row_result)));
@@ -871,7 +871,12 @@ fn query_filter_keyspace_name(
     query.set_page_size(1024);
     let fut = async move {
         let query_values = query_values?;
-        conn.query_iter(query, query_values).await
+        if query_values.is_empty() {
+            conn.query_iter(query).await
+        } else {
+            let prepared = conn.prepare(&query).await?;
+            conn.execute_iter(prepared, query_values).await
+        }
     };
     fut.into_stream().try_flatten()
 }
@@ -1601,7 +1606,7 @@ async fn query_table_partitioners(
 
     let rows = conn
         .clone()
-        .query_iter(partitioner_query, &[])
+        .query_iter(partitioner_query)
         .into_stream()
         .try_flatten();
 

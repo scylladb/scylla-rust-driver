@@ -659,16 +659,29 @@ impl Session {
                     let values_ref = &serialized_values;
                     let paging_state_ref = &paging_state;
                     async move {
-                        connection
-                            .query_with_consistency(
-                                query_ref,
-                                values_ref,
-                                consistency,
-                                serial_consistency,
-                                paging_state_ref.clone(),
-                            )
-                            .await
-                            .and_then(QueryResponse::into_non_error_query_response)
+                        if values_ref.is_empty() {
+                            connection
+                                .query_with_consistency(
+                                    query_ref,
+                                    consistency,
+                                    serial_consistency,
+                                    paging_state_ref.clone(),
+                                )
+                                .await
+                                .and_then(QueryResponse::into_non_error_query_response)
+                        } else {
+                            let prepared = connection.prepare(query_ref).await?;
+                            connection
+                                .execute_with_consistency(
+                                    &prepared,
+                                    values_ref,
+                                    consistency,
+                                    serial_consistency,
+                                    paging_state_ref.clone(),
+                                )
+                                .await
+                                .and_then(QueryResponse::into_non_error_query_response)
+                        }
                     }
                 },
                 &span,
@@ -774,14 +787,28 @@ impl Session {
             .unwrap_or_else(|| self.get_default_execution_profile_handle())
             .access();
 
-        RowIterator::new_for_query(
-            query,
-            serialized_values.into_owned(),
-            execution_profile,
-            self.cluster.get_data(),
-            self.metrics.clone(),
-        )
-        .await
+        if serialized_values.is_empty() {
+            RowIterator::new_for_query(
+                query,
+                execution_profile,
+                self.cluster.get_data(),
+                self.metrics.clone(),
+            )
+            .await
+        } else {
+            // Making RowIterator::new_for_query work with values is too hard (if even possible)
+            // so instead of sending one prepare to a specific connection on each iterator query,
+            // we fully prepare a statement beforehand.
+            let prepared = self.prepare(query).await?;
+            RowIterator::new_for_prepared_statement(PreparedIteratorConfig {
+                prepared,
+                values: serialized_values.into_owned(),
+                execution_profile,
+                cluster_data: self.cluster.get_data(),
+                metrics: self.metrics.clone(),
+            })
+            .await
+        }
     }
 
     /// Prepares a statement on the server side and returns a prepared statement,
