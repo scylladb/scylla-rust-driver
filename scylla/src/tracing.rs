@@ -18,6 +18,12 @@ pub struct TracingInfo {
     pub request: Option<String>,
     /// started_at is a timestamp - time since unix epoch
     pub started_at: Option<chrono::Duration>,
+    /// only present in Scylla
+    pub request_size: Option<i32>,
+    /// only present in Scylla
+    pub response_size: Option<i32>,
+    /// only present in Scylla
+    pub username: Option<String>,
 
     pub events: Vec<TracingEvent>,
 }
@@ -30,6 +36,10 @@ pub struct TracingEvent {
     pub source: Option<IpAddr>,
     pub source_elapsed: Option<i32>,
     pub thread: Option<String>,
+    /// only present in Scylla
+    pub scylla_parent_id: Option<i64>,
+    /// only present in Scylla
+    pub scylla_span_id: Option<i64>,
 }
 
 impl TracingInfo {
@@ -75,6 +85,9 @@ impl FromRow for TracingInfo {
             parameters,
             request,
             started_at,
+            request_size: None,
+            response_size: None,
+            username: None,
             events: Vec::new(),
         })
     }
@@ -97,6 +110,8 @@ impl FromRow for TracingEvent {
             source,
             source_elapsed,
             thread,
+            scylla_parent_id: None,
+            scylla_span_id: None,
         })
     }
 }

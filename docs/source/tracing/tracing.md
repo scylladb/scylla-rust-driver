@@ -17,7 +17,8 @@ Queries that support tracing:
 * [`Session::prepare()`](prepare.md)
 
 After obtaining the tracing id you can use `Session::get_tracing_info()` to query tracing information.\
-`TracingInfo` contains values that are the same in Scylla and Cassandra®, skipping any database-specific ones.\
+`Session::get_tracing_info()` returns a `TracingInfo` which only contains values that are the same
+in both Scylla and Cassandra®, skipping any database-specific ones.\
 If `TracingInfo` does not contain some needed value it's possible to query it manually from the tables
 `system_traces.sessions` and `system_traces.events`
 
