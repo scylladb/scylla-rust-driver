@@ -1000,11 +1000,14 @@ fn serialize_values<T: ValueList + SerializeRow>(
     let mut writer = BufBackedRowWriter::new(&mut new_serialized);
     <T as SerializeRow>::serialize(&vl, &ctx, &mut writer).unwrap();
     let value_count: u16 = writer.value_count().try_into().unwrap();
+    let is_empty = writer.value_count() == 0;
 
     // Prepend with value count, like `ValueList` does
     new_serialized[0..2].copy_from_slice(&value_count.to_be_bytes());
 
     assert_eq!(old_serialized, new_serialized);
+    assert_eq!(<T as SerializeRow>::is_empty(&vl), is_empty);
+    assert_eq!(serialized.is_empty(), is_empty);
 
     serialized
 }
@@ -1016,9 +1019,12 @@ fn serialize_values_only_new<T: SerializeRow>(vl: T, columns: &[ColumnSpec]) -> 
     let mut writer = BufBackedRowWriter::new(&mut serialized);
     <T as SerializeRow>::serialize(&vl, &ctx, &mut writer).unwrap();
     let value_count: u16 = writer.value_count().try_into().unwrap();
+    let is_empty = writer.value_count() == 0;
 
     // Prepend with value count, like `ValueList` does
     serialized[0..2].copy_from_slice(&value_count.to_be_bytes());
+
+    assert_eq!(<T as SerializeRow>::is_empty(&vl), is_empty);
 
     serialized
 }

@@ -53,6 +53,8 @@ pub trait SerializeRow {
         ctx: &RowSerializationContext<'_>,
         writer: &mut W,
     ) -> Result<(), SerializationError>;
+
+    fn is_empty(&self) -> bool;
 }
 
 macro_rules! fallback_impl_contents {
@@ -68,6 +70,10 @@ macro_rules! fallback_impl_contents {
             writer: &mut W,
         ) -> Result<(), SerializationError> {
             serialize_legacy_row(self, ctx, writer)
+        }
+        #[inline]
+        fn is_empty(&self) -> bool {
+            SerializedValues::is_empty(self)
         }
     };
 }
@@ -95,6 +101,11 @@ macro_rules! impl_serialize_row_for_unit {
         ) -> Result<(), SerializationError> {
             // Row is empty - do nothing
             Ok(())
+        }
+
+        #[inline]
+        fn is_empty(&self) -> bool {
+            true
         }
     };
 }
@@ -151,6 +162,11 @@ macro_rules! impl_serialize_row_for_slice {
                 )?;
             }
             Ok(())
+        }
+
+        #[inline]
+        fn is_empty(&self) -> bool {
+            <[T]>::is_empty(self.as_ref())
         }
     };
 }
@@ -227,6 +243,11 @@ macro_rules! impl_serialize_row_for_map {
 
             Ok(())
         }
+
+        #[inline]
+        fn is_empty(&self) -> bool {
+            Self::is_empty(self)
+        }
     };
 }
 
@@ -257,6 +278,11 @@ impl<T: SerializeRow> SerializeRow for &T {
         writer: &mut W,
     ) -> Result<(), SerializationError> {
         <T as SerializeRow>::serialize(self, ctx, writer)
+    }
+
+    #[inline]
+    fn is_empty(&self) -> bool {
+        <T as SerializeRow>::is_empty(self)
     }
 }
 
@@ -324,6 +350,11 @@ macro_rules! impl_tuple {
                     })?;
                 )*
                 Ok(())
+            }
+
+            #[inline]
+            fn is_empty(&self) -> bool {
+                $length == 0
             }
         }
     };
@@ -427,6 +458,14 @@ macro_rules! impl_serialize_row_via_value_list {
                 writer: &mut W,
             ) -> ::std::result::Result<(), $crate::types::serialize::SerializationError> {
                 $crate::types::serialize::row::serialize_legacy_row(self, ctx, writer)
+            }
+
+            #[inline]
+            fn is_empty(&self) -> bool {
+                match $crate::frame::value::ValueList::serialized(self) {
+                    Ok(s) => s.is_empty(),
+                    Err(e) => false
+                }
             }
         }
     };
