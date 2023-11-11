@@ -260,15 +260,18 @@ async fn consistency_is_correctly_set_in_cql_requests() {
         |proxy_uris, translation_map, mut running_proxy| async move {
             let request_rule = |tx| {
                 RequestRule(
-                    Condition::or(
-                        Condition::RequestOpcode(RequestOpcode::Execute),
+                    Condition::and(
+                        Condition::not(Condition::ConnectionRegisteredAnyEvent),
                         Condition::or(
-                            Condition::RequestOpcode(RequestOpcode::Batch),
-                            Condition::and(
-                                Condition::RequestOpcode(RequestOpcode::Query),
-                                Condition::BodyContainsCaseSensitive(Box::new(
-                                    *b"INTO consistency_tests",
-                                )),
+                            Condition::RequestOpcode(RequestOpcode::Execute),
+                            Condition::or(
+                                Condition::RequestOpcode(RequestOpcode::Batch),
+                                Condition::and(
+                                    Condition::RequestOpcode(RequestOpcode::Query),
+                                    Condition::BodyContainsCaseSensitive(Box::new(
+                                        *b"INTO consistency_tests",
+                                    )),
+                                ),
                             ),
                         ),
                     ),
