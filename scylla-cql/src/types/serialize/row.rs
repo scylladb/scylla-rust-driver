@@ -6,6 +6,7 @@ use std::{collections::HashMap, sync::Arc};
 
 use thiserror::Error;
 
+use crate::frame::response::result::PreparedMetadata;
 use crate::frame::value::{SerializedValues, ValueList};
 use crate::frame::{response::result::ColumnSpec, types::RawValue};
 
@@ -18,6 +19,13 @@ pub struct RowSerializationContext<'a> {
 }
 
 impl<'a> RowSerializationContext<'a> {
+    #[inline]
+    pub fn from_prepared(prepared: &'a PreparedMetadata) -> Self {
+        Self {
+            columns: prepared.col_specs.as_slice(),
+        }
+    }
+
     /// Returns column/bind marker specifications for given query.
     #[inline]
     pub fn columns(&self) -> &'a [ColumnSpec] {
