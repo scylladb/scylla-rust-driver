@@ -4,14 +4,19 @@ use std::fmt::Display;
 use std::hash::BuildHasher;
 use std::{collections::HashMap, sync::Arc};
 
+use bytes::BufMut;
 use thiserror::Error;
 
+use crate::frame::frame_errors::ParseError;
+use crate::frame::response::result::ColumnType;
 use crate::frame::response::result::PreparedMetadata;
+use crate::frame::types;
+use crate::frame::value::SerializeValuesError;
 use crate::frame::value::{LegacySerializedValues, ValueList};
 use crate::frame::{response::result::ColumnSpec, types::RawValue};
 
 use super::value::SerializeCql;
-use super::{RowWriter, SerializationError};
+use super::{CellWriter, RowWriter, SerializationError};
 
 /// Contains information needed to serialize a row.
 pub struct RowSerializationContext<'a> {
@@ -573,9 +578,160 @@ pub enum ValueListToSerializeRowAdapterError {
     NoBindMarkerWithName { name: String },
 }
 
+/// A buffer containing already serialized values.
+///
+/// It is not aware of the types of contained values,
+/// it is basically a byte buffer in the format expected by the CQL protocol.
+/// Usually there is no need for a user of a driver to use this struct, it is mostly internal.
+/// The exception are APIs like `ClusterData::compute_token` / `ClusterData::get_endpoints`.
+/// Allows adding new values to the buffer and iterating over the content.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub struct SerializedValues {
+    serialized_values: Vec<u8>,
+    element_count: u16,
+}
+
+impl SerializedValues {
+    pub const fn new() -> Self {
+        SerializedValues {
+            serialized_values: Vec::new(),
+            element_count: 0,
+        }
+    }
+
+    /// A const empty instance, useful for taking references
+    pub const EMPTY: &'static SerializedValues = &SerializedValues::new();
+
+    pub fn from_serializable<T: SerializeRow>(
+        ctx: &RowSerializationContext,
+        row: &T,
+    ) -> Result<Self, SerializationError> {
+        let mut data = Vec::new();
+        let element_count = {
+            let mut writer = RowWriter::new(&mut data);
+            row.serialize(ctx, &mut writer)?;
+            match writer.value_count().try_into() {
+                Ok(n) => n,
+                Err(_) => {
+                    return Err(SerializationError(Arc::new(
+                        SerializeValuesError::TooManyValues,
+                    )))
+                }
+            }
+        };
+
+        Ok(SerializedValues {
+            serialized_values: data,
+            element_count,
+        })
+    }
+
+    #[inline]
+    pub fn is_empty(&self) -> bool {
+        self.element_count() == 0
+    }
+
+    #[inline]
+    pub fn iter(&self) -> impl Iterator<Item = RawValue> {
+        SerializedValuesIterator {
+            serialized_values: &self.serialized_values,
+        }
+    }
+
+    #[inline]
+    pub fn element_count(&self) -> u16 {
+        // We initialize first two bytes in new() and BufBackedRowWriter does too,
+        // so this unwrap is safe
+        self.element_count
+    }
+
+    #[inline]
+    pub fn buffer_size(&self) -> usize {
+        self.serialized_values.len()
+    }
+
+    pub(crate) fn write_to_request(&self, buf: &mut impl BufMut) {
+        buf.put_u16(self.element_count);
+        buf.put(self.serialized_values.as_slice())
+    }
+
+    /// Serializes value and appends it to the list
+    pub fn add_value<T: SerializeCql>(
+        &mut self,
+        val: &T,
+        typ: &ColumnType,
+    ) -> Result<(), SerializationError> {
+        if self.element_count() == u16::MAX {
+            return Err(SerializationError(Arc::new(
+                SerializeValuesError::TooManyValues,
+            )));
+        }
+
+        let len_before_serialize: usize = self.serialized_values.len();
+
+        let writer = CellWriter::new(&mut self.serialized_values);
+        if let Err(e) = val.serialize(typ, writer) {
+            self.serialized_values.resize(len_before_serialize, 0);
+            Err(e)
+        } else {
+            self.element_count += 1;
+            Ok(())
+        }
+    }
+
+    /// Creates value list from the request frame
+    #[allow(dead_code)]
+    pub(crate) fn new_from_frame(buf: &mut &[u8]) -> Result<Self, ParseError> {
+        let values_num = types::read_short(buf)?;
+        let values_beg = *buf;
+        for _ in 0..values_num {
+            let _serialized = types::read_value(buf)?;
+        }
+
+        let values_len_in_buf = values_beg.len() - buf.len();
+        let values_in_frame = &values_beg[0..values_len_in_buf];
+        Ok(SerializedValues {
+            serialized_values: values_in_frame.to_vec(),
+            element_count: values_num,
+        })
+    }
+
+    // Temporary function, to be removed when we implement new batching API (right now it is needed in frame::request::mod.rs tests)
+    #[allow(dead_code)]
+    pub fn to_old_serialized_values(&self) -> LegacySerializedValues {
+        let mut frame = Vec::new();
+        self.write_to_request(&mut frame);
+        LegacySerializedValues::new_from_frame(&mut frame.as_slice(), false).unwrap()
+    }
+}
+
+impl Default for SerializedValues {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+#[derive(Clone, Copy)]
+pub struct SerializedValuesIterator<'a> {
+    serialized_values: &'a [u8],
+}
+
+impl<'a> Iterator for SerializedValuesIterator<'a> {
+    type Item = RawValue<'a>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.serialized_values.is_empty() {
+            return None;
+        }
+
+        Some(types::read_value(&mut self.serialized_values).expect("badly encoded value"))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use crate::frame::response::result::{ColumnSpec, ColumnType, TableSpec};
+    use crate::frame::types::RawValue;
     use crate::frame::value::{LegacySerializedValues, MaybeUnset, ValueList};
     use crate::types::serialize::RowWriter;
 
@@ -584,6 +740,7 @@ mod tests {
         BuiltinTypeCheckErrorKind, RowSerializationContext, SerializeCql, SerializeRow,
     };
 
+    use super::SerializedValues;
     use scylla_macros::SerializeRow;
 
     fn col_spec(name: &str, typ: ColumnType) -> ColumnSpec {
@@ -955,5 +1112,68 @@ mod tests {
             err.kind,
             BuiltinSerializationErrorKind::ColumnSerializationFailed { .. }
         ));
+    }
+
+    #[test]
+    fn test_empty_serialized_values() {
+        let values = SerializedValues::new();
+        assert!(values.is_empty());
+        assert_eq!(values.element_count(), 0);
+        assert_eq!(values.buffer_size(), 0);
+        assert_eq!(values.iter().count(), 0);
+    }
+
+    #[test]
+    fn test_serialized_values_content() {
+        let mut values = SerializedValues::new();
+        values.add_value(&1234i32, &ColumnType::Int).unwrap();
+        values.add_value(&"abcdefg", &ColumnType::Ascii).unwrap();
+        let mut buf = Vec::new();
+        values.write_to_request(&mut buf);
+        assert_eq!(
+            buf,
+            [
+                0, 2, // element count
+                0, 0, 0, 4, // size of int
+                0, 0, 4, 210, // content of int (1234)
+                0, 0, 0, 7, // size of string
+                97, 98, 99, 100, 101, 102, 103, // content of string ('abcdefg')
+            ]
+        )
+    }
+
+    #[test]
+    fn test_serialized_values_iter() {
+        let mut values = SerializedValues::new();
+        values.add_value(&1234i32, &ColumnType::Int).unwrap();
+        values.add_value(&"abcdefg", &ColumnType::Ascii).unwrap();
+
+        let mut iter = values.iter();
+        assert_eq!(iter.next(), Some(RawValue::Value(&[0, 0, 4, 210])));
+        assert_eq!(
+            iter.next(),
+            Some(RawValue::Value(&[97, 98, 99, 100, 101, 102, 103]))
+        );
+        assert_eq!(iter.next(), None);
+    }
+
+    #[test]
+    fn test_serialized_values_max_capacity() {
+        let mut values = SerializedValues::new();
+        for _ in 0..65535 {
+            values
+                .add_value(&123456789i64, &ColumnType::BigInt)
+                .unwrap();
+        }
+
+        // Adding this value should fail, we reached max capacity
+        values
+            .add_value(&123456789i64, &ColumnType::BigInt)
+            .unwrap_err();
+
+        assert_eq!(values.iter().count(), 65535);
+        assert!(values
+            .iter()
+            .all(|v| v == RawValue::Value(&[0, 0, 0, 0, 0x07, 0x5b, 0xcd, 0x15])))
     }
 }
