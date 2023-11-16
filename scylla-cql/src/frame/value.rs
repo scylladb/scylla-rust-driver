@@ -31,6 +31,10 @@ pub trait Value {
 #[error("Value too big to be sent in a request - max 2GiB allowed")]
 pub struct ValueTooBig;
 
+#[derive(Debug, Error, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+#[error("Value is too large to fit in the CQL type")]
+pub struct ValueOverflow;
+
 /// Represents an unset value
 pub struct Unset;
 
@@ -78,7 +82,7 @@ impl From<NaiveDate> for CqlDate {
 
 #[cfg(feature = "chrono")]
 impl TryInto<NaiveDate> for CqlDate {
-    type Error = ValueTooBig;
+    type Error = ValueOverflow;
 
     fn try_into(self) -> Result<NaiveDate, Self::Error> {
         let days_since_unix_epoch = self.0 as i64 - (1 << 31);
@@ -90,7 +94,7 @@ impl TryInto<NaiveDate> for CqlDate {
         NaiveDate::from_yo_opt(1970, 1)
             .unwrap()
             .checked_add_signed(duration_since_unix_epoch)
-            .ok_or(ValueTooBig)
+            .ok_or(ValueOverflow)
     }
 }
 
@@ -103,19 +107,19 @@ impl From<DateTime<Utc>> for CqlTimestamp {
 
 #[cfg(feature = "chrono")]
 impl TryInto<DateTime<Utc>> for CqlTimestamp {
-    type Error = ValueTooBig;
+    type Error = ValueOverflow;
 
     fn try_into(self) -> Result<DateTime<Utc>, Self::Error> {
         match Utc.timestamp_millis_opt(self.0) {
             chrono::LocalResult::Single(datetime) => Ok(datetime),
-            _ => Err(ValueTooBig),
+            _ => Err(ValueOverflow),
         }
     }
 }
 
 #[cfg(feature = "chrono")]
 impl TryFrom<NaiveTime> for CqlTime {
-    type Error = ValueTooBig;
+    type Error = ValueOverflow;
 
     fn try_from(value: NaiveTime) -> Result<Self, Self::Error> {
         let nanos = value
@@ -127,23 +131,23 @@ impl TryFrom<NaiveTime> for CqlTime {
         if nanos <= 86399999999999 {
             Ok(Self(nanos))
         } else {
-            Err(ValueTooBig)
+            Err(ValueOverflow)
         }
     }
 }
 
 #[cfg(feature = "chrono")]
 impl TryInto<NaiveTime> for CqlTime {
-    type Error = ValueTooBig;
+    type Error = ValueOverflow;
 
     fn try_into(self) -> Result<NaiveTime, Self::Error> {
         let secs = (self.0 / 1_000_000_000)
             .try_into()
-            .map_err(|_| ValueTooBig)?;
+            .map_err(|_| ValueOverflow)?;
         let nanos = (self.0 % 1_000_000_000)
             .try_into()
-            .map_err(|_| ValueTooBig)?;
-        NaiveTime::from_num_seconds_from_midnight_opt(secs, nanos).ok_or(ValueTooBig)
+            .map_err(|_| ValueOverflow)?;
+        NaiveTime::from_num_seconds_from_midnight_opt(secs, nanos).ok_or(ValueOverflow)
     }
 }
 
@@ -167,7 +171,7 @@ impl From<time::Date> for CqlDate {
 
 #[cfg(feature = "time")]
 impl TryInto<time::Date> for CqlDate {
-    type Error = ValueTooBig;
+    type Error = ValueOverflow;
 
     fn try_into(self) -> Result<time::Date, Self::Error> {
         const JULIAN_DAY_OFFSET: i64 =
@@ -175,9 +179,9 @@ impl TryInto<time::Date> for CqlDate {
 
         let julian_days = (self.0 as i64 - JULIAN_DAY_OFFSET)
             .try_into()
-            .map_err(|_| ValueTooBig)?;
+            .map_err(|_| ValueOverflow)?;
 
-        time::Date::from_julian_day(julian_days).map_err(|_| ValueTooBig)
+        time::Date::from_julian_day(julian_days).map_err(|_| ValueOverflow)
     }
 }
 
@@ -209,11 +213,11 @@ impl From<time::OffsetDateTime> for CqlTimestamp {
 
 #[cfg(feature = "time")]
 impl TryInto<time::OffsetDateTime> for CqlTimestamp {
-    type Error = ValueTooBig;
+    type Error = ValueOverflow;
 
     fn try_into(self) -> Result<time::OffsetDateTime, Self::Error> {
         time::OffsetDateTime::from_unix_timestamp_nanos(self.0 as i128 * 1_000_000)
-            .map_err(|_| ValueTooBig)
+            .map_err(|_| ValueOverflow)
     }
 }
 
@@ -231,7 +235,7 @@ impl From<time::Time> for CqlTime {
 
 #[cfg(feature = "time")]
 impl TryInto<time::Time> for CqlTime {
-    type Error = ValueTooBig;
+    type Error = ValueOverflow;
 
     fn try_into(self) -> Result<time::Time, Self::Error> {
         let h = self.0 / 3_600_000_000_000;
@@ -240,12 +244,12 @@ impl TryInto<time::Time> for CqlTime {
         let n = self.0 % 1_000_000_000;
 
         time::Time::from_hms_nano(
-            h.try_into().map_err(|_| ValueTooBig)?,
+            h.try_into().map_err(|_| ValueOverflow)?,
             m as u8,
             s as u8,
             n as u32,
         )
-        .map_err(|_| ValueTooBig)
+        .map_err(|_| ValueOverflow)
     }
 }
 
@@ -631,7 +635,9 @@ impl Value for time::OffsetDateTime {
 #[cfg(feature = "chrono")]
 impl Value for NaiveTime {
     fn serialize(&self, buf: &mut Vec<u8>) -> Result<(), ValueTooBig> {
-        CqlTime::try_from(*self)?.serialize(buf)
+        CqlTime::try_from(*self)
+            .map_err(|_| ValueTooBig)?
+            .serialize(buf)
     }
 }
 
