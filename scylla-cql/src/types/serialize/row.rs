@@ -9,7 +9,7 @@ use super::{CellWriter, RowWriter, SerializationError};
 
 /// Contains information needed to serialize a row.
 pub struct RowSerializationContext<'a> {
-    columns: &'a [ColumnSpec],
+    pub(crate) columns: &'a [ColumnSpec],
 }
 
 impl<'a> RowSerializationContext<'a> {

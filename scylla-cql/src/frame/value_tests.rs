@@ -1,8 +1,9 @@
 use crate::frame::{response::result::CqlValue, types::RawValue, value::BatchValuesIterator};
+use crate::types::serialize::row::{RowSerializationContext, SerializeRow};
 use crate::types::serialize::value::SerializeCql;
-use crate::types::serialize::BufBackedCellWriter;
+use crate::types::serialize::{BufBackedCellWriter, BufBackedRowWriter};
 
-use super::response::result::ColumnType;
+use super::response::result::{ColumnSpec, ColumnType, TableSpec};
 use super::value::{
     BatchValues, CqlDate, CqlDuration, CqlTime, CqlTimestamp, MaybeUnset, SerializeValuesError,
     SerializedValues, Unset, Value, ValueList, ValueTooBig,
@@ -937,9 +938,12 @@ fn empty_array_value_list() {
 #[test]
 fn slice_value_list() {
     let values: &[i32] = &[1, 2, 3];
-    let serialized: SerializedValues = <&[i32] as ValueList>::serialized(&values)
-        .unwrap()
-        .into_owned();
+    let cols = &[
+        col_spec("ala", ColumnType::Int),
+        col_spec("ma", ColumnType::Int),
+        col_spec("kota", ColumnType::Int),
+    ];
+    let serialized = serialize_values(values, cols);
 
     assert_eq!(
         serialized.iter().collect::<Vec<_>>(),
@@ -954,9 +958,12 @@ fn slice_value_list() {
 #[test]
 fn vec_value_list() {
     let values: Vec<i32> = vec![1, 2, 3];
-    let serialized: SerializedValues = <Vec<i32> as ValueList>::serialized(&values)
-        .unwrap()
-        .into_owned();
+    let cols = &[
+        col_spec("ala", ColumnType::Int),
+        col_spec("ma", ColumnType::Int),
+        col_spec("kota", ColumnType::Int),
+    ];
+    let serialized = serialize_values(values, cols);
 
     assert_eq!(
         serialized.iter().collect::<Vec<_>>(),
@@ -968,10 +975,63 @@ fn vec_value_list() {
     );
 }
 
+fn col_spec(name: &str, typ: ColumnType) -> ColumnSpec {
+    ColumnSpec {
+        table_spec: TableSpec {
+            ks_name: "ks".to_string(),
+            table_name: "tbl".to_string(),
+        },
+        name: name.to_string(),
+        typ,
+    }
+}
+
+fn serialize_values<T: ValueList + SerializeRow>(
+    vl: T,
+    columns: &[ColumnSpec],
+) -> SerializedValues {
+    let serialized = <T as ValueList>::serialized(&vl).unwrap().into_owned();
+    let mut old_serialized = Vec::new();
+    serialized.write_to_request(&mut old_serialized);
+
+    let ctx = RowSerializationContext { columns };
+    <T as SerializeRow>::preliminary_type_check(&ctx).unwrap();
+    let mut new_serialized = vec![0, 0];
+    let mut writer = BufBackedRowWriter::new(&mut new_serialized);
+    <T as SerializeRow>::serialize(&vl, &ctx, &mut writer).unwrap();
+    let value_count: u16 = writer.value_count().try_into().unwrap();
+
+    // Prepend with value count, like `ValueList` does
+    new_serialized[0..2].copy_from_slice(&value_count.to_be_bytes());
+
+    assert_eq!(old_serialized, new_serialized);
+
+    serialized
+}
+
+fn serialize_values_only_new<T: SerializeRow>(vl: T, columns: &[ColumnSpec]) -> Vec<u8> {
+    let ctx = RowSerializationContext { columns };
+    <T as SerializeRow>::preliminary_type_check(&ctx).unwrap();
+    let mut serialized = vec![0, 0];
+    let mut writer = BufBackedRowWriter::new(&mut serialized);
+    <T as SerializeRow>::serialize(&vl, &ctx, &mut writer).unwrap();
+    let value_count: u16 = writer.value_count().try_into().unwrap();
+
+    // Prepend with value count, like `ValueList` does
+    serialized[0..2].copy_from_slice(&value_count.to_be_bytes());
+
+    serialized
+}
+
 #[test]
 fn tuple_value_list() {
-    fn check_i8_tuple(tuple: impl ValueList, expected: core::ops::Range<u8>) {
-        let serialized: SerializedValues = tuple.serialized().unwrap().into_owned();
+    fn check_i8_tuple(tuple: impl ValueList + SerializeRow, expected: core::ops::Range<u8>) {
+        let typs = expected
+            .clone()
+            .enumerate()
+            .map(|(i, _)| col_spec(&format!("col_{i}"), ColumnType::TinyInt))
+            .collect::<Vec<_>>();
+        let serialized = serialize_values(tuple, &typs);
         assert_eq!(serialized.len() as usize, expected.len());
 
         let serialized_vals: Vec<u8> = serialized
@@ -984,6 +1044,7 @@ fn tuple_value_list() {
         assert_eq!(serialized_vals, expected);
     }
 
+    check_i8_tuple((), 1..1);
     check_i8_tuple((1_i8,), 1..2);
     check_i8_tuple((1_i8, 2_i8), 1..3);
     check_i8_tuple((1_i8, 2_i8, 3_i8), 1..4);
@@ -1041,11 +1102,47 @@ fn tuple_value_list() {
 }
 
 #[test]
+fn map_value_list() {
+    // The legacy ValueList would serialize this as a list of named values,
+    // whereas the new SerializeRow will order the values by their names.
+
+    // Note that the alphabetical order of the keys is "ala", "kota", "ma",
+    // but the impl sorts properly.
+    let row = BTreeMap::from_iter([("ala", 1), ("ma", 2), ("kota", 3)]);
+    let cols = &[
+        col_spec("ala", ColumnType::Int),
+        col_spec("ma", ColumnType::Int),
+        col_spec("kota", ColumnType::Int),
+    ];
+    let new_values = serialize_values_only_new(row.clone(), cols);
+    assert_eq!(
+        new_values,
+        vec![
+            0, 3, // value count: 3
+            0, 0, 0, 4, 0, 0, 0, 1, // ala: 1
+            0, 0, 0, 4, 0, 0, 0, 2, // ma: 2
+            0, 0, 0, 4, 0, 0, 0, 3, // kota: 3
+        ]
+    );
+
+    // While ValueList will serialize differently, the fallback SerializeRow impl
+    // should convert it to how serialized BTreeMap would look like if serialized
+    // directly through SerializeRow.
+    let ser = <_ as ValueList>::serialized(&row).unwrap();
+    let fallbacked = serialize_values_only_new(ser, cols);
+
+    assert_eq!(new_values, fallbacked);
+}
+
+#[test]
 fn ref_value_list() {
     let values: &[i32] = &[1, 2, 3];
-    let serialized: SerializedValues = <&&[i32] as ValueList>::serialized(&&values)
-        .unwrap()
-        .into_owned();
+    let typs = &[
+        col_spec("col_1", ColumnType::Int),
+        col_spec("col_2", ColumnType::Int),
+        col_spec("col_3", ColumnType::Int),
+    ];
+    let serialized = serialize_values::<&&[i32]>(&values, typs);
 
     assert_eq!(
         serialized.iter().collect::<Vec<_>>(),
