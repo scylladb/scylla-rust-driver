@@ -708,9 +708,9 @@ fn check_ref_tuple() {
     }
     let s = String::from("hello");
     let tuple: ((&str,),) = ((&s,),);
-    assert_has_batch_values(&tuple);
+    assert_has_batch_values::<&_>(&tuple);
     let tuple2: ((&str, &str), (&str, &str)) = ((&s, &s), (&s, &s));
-    assert_has_batch_values(&tuple2);
+    assert_has_batch_values::<&_>(&tuple2);
 }
 
 #[test]
