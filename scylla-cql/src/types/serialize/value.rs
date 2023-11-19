@@ -188,13 +188,28 @@ impl SerializeCql for &str {
     });
 }
 impl SerializeCql for Vec<u8> {
-    fallback_impl_contents!();
+    impl_exact_preliminary_type_check!(Blob);
+    impl_serialize_via_writer!(|me, typ, writer| {
+        writer
+            .set_value(me.as_ref())
+            .map_err(|_| mk_ser_err::<Self>(typ, BuiltinSerializationErrorKind::SizeOverflow))?
+    });
 }
 impl SerializeCql for &[u8] {
-    fallback_impl_contents!();
+    impl_exact_preliminary_type_check!(Blob);
+    impl_serialize_via_writer!(|me, typ, writer| {
+        writer
+            .set_value(me)
+            .map_err(|_| mk_ser_err::<Self>(typ, BuiltinSerializationErrorKind::SizeOverflow))?
+    });
 }
 impl<const N: usize> SerializeCql for [u8; N] {
-    fallback_impl_contents!();
+    impl_exact_preliminary_type_check!(Blob);
+    impl_serialize_via_writer!(|me, typ, writer| {
+        writer
+            .set_value(me.as_ref())
+            .map_err(|_| mk_ser_err::<Self>(typ, BuiltinSerializationErrorKind::SizeOverflow))?
+    });
 }
 impl SerializeCql for IpAddr {
     fallback_impl_contents!();
