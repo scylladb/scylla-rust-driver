@@ -180,7 +180,12 @@ impl SerializeCql for BigInt {
     fallback_impl_contents!();
 }
 impl SerializeCql for &str {
-    fallback_impl_contents!();
+    impl_exact_preliminary_type_check!(Ascii, Text);
+    impl_serialize_via_writer!(|me, typ, writer| {
+        writer
+            .set_value(me.as_bytes())
+            .map_err(|_| mk_ser_err::<Self>(typ, BuiltinSerializationErrorKind::SizeOverflow))?
+    });
 }
 impl SerializeCql for Vec<u8> {
     fallback_impl_contents!();
@@ -195,7 +200,12 @@ impl SerializeCql for IpAddr {
     fallback_impl_contents!();
 }
 impl SerializeCql for String {
-    fallback_impl_contents!();
+    impl_exact_preliminary_type_check!(Ascii, Text);
+    impl_serialize_via_writer!(|me, typ, writer| {
+        writer
+            .set_value(me.as_bytes())
+            .map_err(|_| mk_ser_err::<Self>(typ, BuiltinSerializationErrorKind::SizeOverflow))?
+    });
 }
 impl<T: Value> SerializeCql for Option<T> {
     fallback_impl_contents!();
@@ -317,6 +327,39 @@ fn mk_typck_err_named(
     })
 }
 
+/// Serialization of one of the built-in types failed.
+#[derive(Debug, Error, Clone)]
+#[error("Failed to serialize Rust type {rust_name} into CQL type {got:?}: {kind}")]
+pub struct BuiltinSerializationError {
+    /// Name of the Rust type being serialized.
+    pub rust_name: &'static str,
+
+    /// The CQL type that the Rust type was being serialized to.
+    pub got: ColumnType,
+
+    /// Detailed information about the failure.
+    pub kind: BuiltinSerializationErrorKind,
+}
+
+fn mk_ser_err<T>(
+    got: &ColumnType,
+    kind: impl Into<BuiltinSerializationErrorKind>,
+) -> SerializationError {
+    mk_ser_err_named(std::any::type_name::<T>(), got, kind)
+}
+
+fn mk_ser_err_named(
+    name: &'static str,
+    got: &ColumnType,
+    kind: impl Into<BuiltinSerializationErrorKind>,
+) -> SerializationError {
+    SerializationError::new(BuiltinSerializationError {
+        rust_name: name,
+        got: got.clone(),
+        kind: kind.into(),
+    })
+}
+
 /// Describes why type checking some of the built-in types has failed.
 #[derive(Debug, Clone)]
 #[non_exhaustive]
@@ -330,6 +373,28 @@ impl Display for BuiltinTypeCheckErrorKind {
         match self {
             BuiltinTypeCheckErrorKind::MismatchedType { expected } => {
                 write!(f, "expected one of the CQL types: {expected:?}")
+            }
+        }
+    }
+}
+
+/// Describes why serialization of some of the built-in types has failed.
+#[derive(Debug, Clone)]
+#[non_exhaustive]
+pub enum BuiltinSerializationErrorKind {
+    /// The size of the Rust value is too large to fit in the CQL serialization
+    /// format (over i32::MAX bytes).
+    SizeOverflow,
+}
+
+impl Display for BuiltinSerializationErrorKind {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            BuiltinSerializationErrorKind::SizeOverflow => {
+                write!(
+                    f,
+                    "the Rust value is too big to be serialized in the CQL protocol format"
+                )
             }
         }
     }
