@@ -48,22 +48,6 @@ pub trait SerializeCql {
     ) -> Result<W::WrittenCellProof, SerializationError>;
 }
 
-macro_rules! fallback_impl_contents {
-    () => {
-        fn preliminary_type_check(_typ: &ColumnType) -> Result<(), SerializationError> {
-            Ok(())
-        }
-
-        fn serialize<W: CellWriter>(
-            &self,
-            _typ: &ColumnType,
-            writer: W,
-        ) -> Result<W::WrittenCellProof, SerializationError> {
-            serialize_legacy_value(self, writer)
-        }
-    };
-}
-
 macro_rules! impl_exact_preliminary_type_check {
     ($($cql:tt),*) => {
         fn preliminary_type_check(typ: &ColumnType) -> Result<(), SerializationError> {
@@ -544,7 +528,250 @@ impl<'a, T: SerializeCql + 'a> SerializeCql for &'a [T] {
     }
 }
 impl SerializeCql for CqlValue {
-    fallback_impl_contents!();
+    fn preliminary_type_check(typ: &ColumnType) -> Result<(), SerializationError> {
+        match typ {
+            ColumnType::Custom(_) => Err(mk_typck_err::<Self>(
+                typ,
+                BuiltinTypeCheckErrorKind::CustomTypeUnsupported,
+            )),
+            _ => Ok(()),
+        }
+    }
+
+    fn serialize<W: CellWriter>(
+        &self,
+        typ: &ColumnType,
+        writer: W,
+    ) -> Result<W::WrittenCellProof, SerializationError> {
+        serialize_cql_value(self, typ, writer).map_err(fix_cql_value_name_in_err)
+    }
+}
+
+fn serialize_cql_value<W: CellWriter>(
+    value: &CqlValue,
+    typ: &ColumnType,
+    writer: W,
+) -> Result<W::WrittenCellProof, SerializationError> {
+    match value {
+        CqlValue::Ascii(a) => check_and_serialize(a, typ, writer),
+        CqlValue::Boolean(b) => check_and_serialize(b, typ, writer),
+        CqlValue::Blob(b) => check_and_serialize(b, typ, writer),
+        CqlValue::Counter(c) => check_and_serialize(c, typ, writer),
+        CqlValue::Decimal(d) => check_and_serialize(d, typ, writer),
+        CqlValue::Date(d) => check_and_serialize(d, typ, writer),
+        CqlValue::Double(d) => check_and_serialize(d, typ, writer),
+        CqlValue::Duration(d) => check_and_serialize(d, typ, writer),
+        CqlValue::Empty => {
+            if !typ.supports_special_empty_value() {
+                return Err(mk_typck_err::<CqlValue>(
+                    typ,
+                    BuiltinTypeCheckErrorKind::NotEmptyable,
+                ));
+            }
+            Ok(writer.set_value(&[]).unwrap())
+        }
+        CqlValue::Float(f) => check_and_serialize(f, typ, writer),
+        CqlValue::Int(i) => check_and_serialize(i, typ, writer),
+        CqlValue::BigInt(b) => check_and_serialize(b, typ, writer),
+        CqlValue::Text(t) => check_and_serialize(t, typ, writer),
+        CqlValue::Timestamp(t) => check_and_serialize(t, typ, writer),
+        CqlValue::Inet(i) => check_and_serialize(i, typ, writer),
+        CqlValue::List(l) => check_and_serialize(l, typ, writer),
+        CqlValue::Map(m) => serialize_mapping(
+            std::any::type_name::<CqlValue>(),
+            m.len(),
+            m.iter().map(|(ref k, ref v)| (k, v)),
+            typ,
+            writer,
+        ),
+        CqlValue::Set(s) => check_and_serialize(s, typ, writer),
+        CqlValue::UserDefinedType {
+            keyspace,
+            type_name,
+            fields,
+        } => serialize_udt(typ, keyspace, type_name, fields, writer),
+        CqlValue::SmallInt(s) => check_and_serialize(s, typ, writer),
+        CqlValue::TinyInt(t) => check_and_serialize(t, typ, writer),
+        CqlValue::Time(t) => check_and_serialize(t, typ, writer),
+        CqlValue::Timeuuid(t) => check_and_serialize(t, typ, writer),
+        CqlValue::Tuple(t) => {
+            // We allow serializing tuples that have less fields
+            // than the database tuple, but not the other way around.
+            let fields = match typ {
+                ColumnType::Tuple(fields) => {
+                    if fields.len() < t.len() {
+                        return Err(mk_typck_err::<CqlValue>(
+                            typ,
+                            TupleTypeCheckErrorKind::WrongElementCount {
+                                actual: t.len(),
+                                asked_for: fields.len(),
+                            },
+                        ));
+                    }
+                    fields
+                }
+                _ => {
+                    return Err(mk_typck_err::<CqlValue>(
+                        typ,
+                        TupleTypeCheckErrorKind::NotTuple,
+                    ))
+                }
+            };
+            serialize_tuple_like(typ, fields.iter(), t.iter(), writer)
+        }
+        CqlValue::Uuid(u) => check_and_serialize(u, typ, writer),
+        CqlValue::Varint(v) => check_and_serialize(v, typ, writer),
+    }
+}
+
+fn fix_cql_value_name_in_err(mut err: SerializationError) -> SerializationError {
+    // The purpose of this function is to change the `rust_name` field
+    // in the error to CqlValue. Most of the time, the `err` given to the
+    // function here will be the sole owner of the data, so theoretically
+    // we could fix this in place.
+
+    let rust_name = std::any::type_name::<CqlValue>();
+
+    match Arc::get_mut(&mut err.0) {
+        Some(err_mut) => {
+            if let Some(err) = err_mut.downcast_mut::<BuiltinTypeCheckError>() {
+                err.rust_name = rust_name;
+            } else if let Some(err) = err_mut.downcast_mut::<BuiltinSerializationError>() {
+                err.rust_name = rust_name;
+            }
+        }
+        None => {
+            // The `None` case shouldn't happen consisdering how we are using
+            // the function in the code now, but let's provide it here anyway
+            // for correctness.
+            if let Some(err) = err.0.downcast_ref::<BuiltinTypeCheckError>() {
+                if err.rust_name != rust_name {
+                    return SerializationError::new(BuiltinTypeCheckError {
+                        rust_name,
+                        ..err.clone()
+                    });
+                }
+            }
+            if let Some(err) = err.0.downcast_ref::<BuiltinSerializationError>() {
+                if err.rust_name != rust_name {
+                    return SerializationError::new(BuiltinSerializationError {
+                        rust_name,
+                        ..err.clone()
+                    });
+                }
+            }
+        }
+    };
+
+    err
+}
+
+fn check_and_serialize<V: SerializeCql, W: CellWriter>(
+    v: &V,
+    typ: &ColumnType,
+    writer: W,
+) -> Result<W::WrittenCellProof, SerializationError> {
+    V::preliminary_type_check(typ)?;
+    v.serialize(typ, writer)
+}
+
+fn serialize_udt<W: CellWriter>(
+    typ: &ColumnType,
+    keyspace: &str,
+    type_name: &str,
+    values: &[(String, Option<CqlValue>)],
+    writer: W,
+) -> Result<W::WrittenCellProof, SerializationError> {
+    let (dst_type_name, dst_keyspace, field_types) = match typ {
+        ColumnType::UserDefinedType {
+            type_name,
+            keyspace,
+            field_types,
+        } => (type_name, keyspace, field_types),
+        _ => return Err(mk_typck_err::<CqlValue>(typ, UdtTypeCheckErrorKind::NotUdt)),
+    };
+
+    if keyspace != dst_keyspace || type_name != dst_type_name {
+        return Err(mk_typck_err::<CqlValue>(
+            typ,
+            UdtTypeCheckErrorKind::NameMismatch {
+                keyspace: dst_keyspace.clone(),
+                type_name: dst_type_name.clone(),
+            },
+        ));
+    }
+
+    // Allow columns present in the CQL type which are not present in CqlValue,
+    // but not the other way around
+    let mut indexed_fields: HashMap<_, _> = values.iter().map(|(k, v)| (k.as_str(), v)).collect();
+
+    let mut builder = writer.into_value_builder();
+    for (fname, ftyp) in field_types {
+        // Take a value from the original list.
+        // If a field is missing, write null instead.
+        let fvalue = indexed_fields
+            .remove(fname.as_str())
+            .and_then(|x| x.as_ref());
+
+        let writer = builder.make_sub_writer();
+        match fvalue {
+            None => writer.set_null(),
+            Some(v) => serialize_cql_value(v, ftyp, writer).map_err(|err| {
+                let err = fix_cql_value_name_in_err(err);
+                mk_ser_err::<CqlValue>(
+                    typ,
+                    UdtSerializationErrorKind::FieldSerializationFailed {
+                        field_name: fname.clone(),
+                        err,
+                    },
+                )
+            })?,
+        };
+    }
+
+    // If there are some leftover fields, it's an error.
+    if !indexed_fields.is_empty() {
+        // In order to have deterministic errors, return an error about
+        // the lexicographically smallest field.
+        let fname = indexed_fields.keys().min().unwrap();
+        return Err(mk_typck_err::<CqlValue>(
+            typ,
+            UdtTypeCheckErrorKind::UnexpectedFieldInDestination {
+                field_name: fname.to_string(),
+            },
+        ));
+    }
+
+    builder
+        .finish()
+        .map_err(|_| mk_ser_err::<CqlValue>(typ, BuiltinSerializationErrorKind::SizeOverflow))
+}
+
+fn serialize_tuple_like<'t, W: CellWriter>(
+    typ: &ColumnType,
+    field_types: impl Iterator<Item = &'t ColumnType>,
+    field_values: impl Iterator<Item = &'t Option<CqlValue>>,
+    writer: W,
+) -> Result<W::WrittenCellProof, SerializationError> {
+    let mut builder = writer.into_value_builder();
+
+    for (index, (el, typ)) in field_values.zip(field_types).enumerate() {
+        let sub = builder.make_sub_writer();
+        match el {
+            None => sub.set_null(),
+            Some(el) => serialize_cql_value(el, typ, sub).map_err(|err| {
+                let err = fix_cql_value_name_in_err(err);
+                mk_ser_err::<CqlValue>(
+                    typ,
+                    TupleSerializationErrorKind::ElementSerializationFailed { index, err },
+                )
+            })?,
+        };
+    }
+
+    builder
+        .finish()
+        .map_err(|_| mk_ser_err::<CqlValue>(typ, BuiltinSerializationErrorKind::SizeOverflow))
 }
 
 macro_rules! impl_tuple {
@@ -868,6 +1095,9 @@ pub enum BuiltinTypeCheckErrorKind {
     /// Expected one from a list of particular types.
     MismatchedType { expected: &'static [ColumnType] },
 
+    /// Expected a type that can be empty.
+    NotEmptyable,
+
     /// A type check failure specific to a CQL set or list.
     SetOrListError(SetOrListTypeCheckErrorKind),
 
@@ -876,6 +1106,13 @@ pub enum BuiltinTypeCheckErrorKind {
 
     /// A type check failure specific to a CQL tuple.
     TupleError(TupleTypeCheckErrorKind),
+
+    /// A type check failure specific to a CQL UDT.
+    UdtError(UdtTypeCheckErrorKind),
+
+    /// Custom CQL type - unsupported
+    // TODO: Should we actually support it? Counters used to be implemented like that.
+    CustomTypeUnsupported,
 }
 
 impl From<SetOrListTypeCheckErrorKind> for BuiltinTypeCheckErrorKind {
@@ -896,15 +1133,31 @@ impl From<TupleTypeCheckErrorKind> for BuiltinTypeCheckErrorKind {
     }
 }
 
+impl From<UdtTypeCheckErrorKind> for BuiltinTypeCheckErrorKind {
+    fn from(value: UdtTypeCheckErrorKind) -> Self {
+        BuiltinTypeCheckErrorKind::UdtError(value)
+    }
+}
+
 impl Display for BuiltinTypeCheckErrorKind {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             BuiltinTypeCheckErrorKind::MismatchedType { expected } => {
                 write!(f, "expected one of the CQL types: {expected:?}")
             }
+            BuiltinTypeCheckErrorKind::NotEmptyable => {
+                write!(
+                    f,
+                    "the separate empty representation is not valid for this type"
+                )
+            }
             BuiltinTypeCheckErrorKind::SetOrListError(err) => err.fmt(f),
             BuiltinTypeCheckErrorKind::MapError(err) => err.fmt(f),
             BuiltinTypeCheckErrorKind::TupleError(err) => err.fmt(f),
+            BuiltinTypeCheckErrorKind::UdtError(err) => err.fmt(f),
+            BuiltinTypeCheckErrorKind::CustomTypeUnsupported => {
+                write!(f, "custom CQL types are unsupported")
+            }
         }
     }
 }
@@ -928,6 +1181,9 @@ pub enum BuiltinSerializationErrorKind {
 
     /// A serialization failure specific to a CQL tuple.
     TupleError(TupleSerializationErrorKind),
+
+    /// A serialization failure specific to a CQL UDT.
+    UdtError(UdtSerializationErrorKind),
 }
 
 impl From<SetOrListSerializationErrorKind> for BuiltinSerializationErrorKind {
@@ -945,6 +1201,12 @@ impl From<MapSerializationErrorKind> for BuiltinSerializationErrorKind {
 impl From<TupleSerializationErrorKind> for BuiltinSerializationErrorKind {
     fn from(value: TupleSerializationErrorKind) -> Self {
         BuiltinSerializationErrorKind::TupleError(value)
+    }
+}
+
+impl From<UdtSerializationErrorKind> for BuiltinSerializationErrorKind {
+    fn from(value: UdtSerializationErrorKind) -> Self {
+        BuiltinSerializationErrorKind::UdtError(value)
     }
 }
 
@@ -966,6 +1228,7 @@ impl Display for BuiltinSerializationErrorKind {
             BuiltinSerializationErrorKind::SetOrListError(err) => err.fmt(f),
             BuiltinSerializationErrorKind::MapError(err) => err.fmt(f),
             BuiltinSerializationErrorKind::TupleError(err) => err.fmt(f),
+            BuiltinSerializationErrorKind::UdtError(err) => err.fmt(f),
         }
     }
 }
@@ -1139,6 +1402,70 @@ impl Display for TupleSerializationErrorKind {
         match self {
             TupleSerializationErrorKind::ElementSerializationFailed { index, err } => {
                 write!(f, "element no. {index} failed to serialize: {err}")
+            }
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+#[non_exhaustive]
+pub enum UdtTypeCheckErrorKind {
+    /// The CQL type is not a user defined type.
+    NotUdt,
+
+    /// The name of the UDT being serialized to does not match.
+    NameMismatch { keyspace: String, type_name: String },
+
+    /// The Rust data contains a field that is not present in the UDT
+    UnexpectedFieldInDestination { field_name: String },
+
+    /// One of the fields failed to type check.
+    FieldTypeCheckFailed {
+        field_name: String,
+        err: SerializationError,
+    },
+}
+
+impl Display for UdtTypeCheckErrorKind {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            UdtTypeCheckErrorKind::NotUdt => write!(
+                f,
+                "the CQL type the tuple was attempted to be type checked against is not a UDT"
+            ),
+            UdtTypeCheckErrorKind::NameMismatch {
+                keyspace,
+                type_name,
+            } => write!(
+                f,
+                "the Rust UDT name does not match the actual CQL UDT name ({keyspace}.{type_name})"
+            ),
+            UdtTypeCheckErrorKind::UnexpectedFieldInDestination { field_name } => write!(
+                f,
+                "the field {field_name} present in the Rust data is not present in the CQL type"
+            ),
+            UdtTypeCheckErrorKind::FieldTypeCheckFailed { field_name, err } => {
+                write!(f, "field {field_name} failed to type check: {err}")
+            }
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+#[non_exhaustive]
+pub enum UdtSerializationErrorKind {
+    /// One of the fields failed to serialize.
+    FieldSerializationFailed {
+        field_name: String,
+        err: SerializationError,
+    },
+}
+
+impl Display for UdtSerializationErrorKind {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            UdtSerializationErrorKind::FieldSerializationFailed { field_name, err } => {
+                write!(f, "field {field_name} failed to serialize: {err}")
             }
         }
     }
