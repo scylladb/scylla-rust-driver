@@ -174,7 +174,8 @@ impl SerializeCql for f64 {
     impl_serialize_via_writer!(|me, writer| writer.set_value(me.to_be_bytes().as_slice()).unwrap());
 }
 impl SerializeCql for Uuid {
-    fallback_impl_contents!();
+    impl_exact_preliminary_type_check!(Uuid, Timeuuid);
+    impl_serialize_via_writer!(|me, writer| writer.set_value(me.as_bytes().as_ref()).unwrap());
 }
 impl SerializeCql for BigInt {
     fallback_impl_contents!();
