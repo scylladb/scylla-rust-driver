@@ -64,16 +64,6 @@ macro_rules! fallback_impl_contents {
     };
 }
 
-macro_rules! fallback_tuples {
-    () => {};
-    ($th:ident$(, $($tt:ident),*)?) => {
-        fallback_tuples!($($($tt),*)?);
-        impl<$th: Value$(, $($tt: Value),*)?> SerializeCql for ($th, $($($tt),*)?) {
-            fallback_impl_contents!();
-        }
-    };
-}
-
 macro_rules! impl_exact_preliminary_type_check {
     ($($cql:tt),*) => {
         fn preliminary_type_check(typ: &ColumnType) -> Result<(), SerializationError> {
@@ -503,7 +493,123 @@ impl SerializeCql for CqlValue {
     fallback_impl_contents!();
 }
 
-fallback_tuples!(T0, T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, T12, T13, T14, T15);
+macro_rules! impl_tuple {
+    (
+        $($typs:ident),*;
+        $($fidents:ident),*;
+        $($tidents:ident),*;
+        $length:expr
+    ) => {
+        impl<$($typs: SerializeCql),*> SerializeCql for ($($typs,)*) {
+            fn preliminary_type_check(typ: &ColumnType) -> Result<(), SerializationError> {
+                match typ {
+                    ColumnType::Tuple(typs) => match typs.as_slice() {
+                        [$($tidents),*, ..] => {
+                            let index = 0;
+                            $(
+                                <$typs as SerializeCql>::preliminary_type_check($tidents)
+                                    .map_err(|err|
+                                        mk_typck_err::<Self>(
+                                            typ,
+                                            TupleTypeCheckErrorKind::ElementTypeCheckFailed {
+                                                index,
+                                                err,
+                                            }
+                                        )
+                                    )?;
+                                let index = index + 1;
+                            )*
+                            let _ = index;
+                        }
+                        _ => return Err(mk_typck_err::<Self>(
+                            typ,
+                            TupleTypeCheckErrorKind::WrongElementCount {
+                                actual: $length,
+                                asked_for: typs.len(),
+                            }
+                        ))
+                    }
+                    _ => return Err(mk_typck_err::<Self>(
+                        typ,
+                        TupleTypeCheckErrorKind::NotTuple
+                    )),
+                };
+                Ok(())
+            }
+
+            fn serialize<W: CellWriter>(
+                &self,
+                typ: &ColumnType,
+                writer: W,
+            ) -> Result<W::WrittenCellProof, SerializationError> {
+                let ($($tidents,)*) = match typ {
+                    ColumnType::Tuple(typs) => match typs.as_slice() {
+                        [$($tidents),*] => ($($tidents,)*),
+                        _ => return Err(mk_typck_err::<Self>(
+                            typ,
+                            TupleTypeCheckErrorKind::WrongElementCount {
+                                actual: $length,
+                                asked_for: typs.len(),
+                            }
+                        ))
+                    }
+                    _ => return Err(mk_typck_err::<Self>(
+                        typ,
+                        TupleTypeCheckErrorKind::NotTuple,
+                    ))
+                };
+                let ($($fidents,)*) = self;
+                let mut builder = writer.into_value_builder();
+                let index = 0;
+                $(
+                    <$typs as SerializeCql>::serialize($fidents, $tidents, builder.make_sub_writer())
+                        .map_err(|err| mk_ser_err::<Self>(
+                            typ,
+                            TupleSerializationErrorKind::ElementSerializationFailed {
+                                index,
+                                err,
+                            }
+                        ))?;
+                    let index = index + 1;
+                )*
+                let _ = index;
+                builder
+                    .finish()
+                    .map_err(|_| mk_ser_err::<Self>(typ, BuiltinSerializationErrorKind::SizeOverflow))
+            }
+        }
+    };
+}
+
+macro_rules! impl_tuples {
+    (;;;$length:expr) => {};
+    (
+        $typ:ident$(, $($typs:ident),*)?;
+        $fident:ident$(, $($fidents:ident),*)?;
+        $tident:ident$(, $($tidents:ident),*)?;
+        $length:expr
+    ) => {
+        impl_tuples!(
+            $($($typs),*)?;
+            $($($fidents),*)?;
+            $($($tidents),*)?;
+            $length - 1
+        );
+        impl_tuple!(
+            $typ$(, $($typs),*)?;
+            $fident$(, $($fidents),*)?;
+            $tident$(, $($tidents),*)?;
+            $length
+        );
+    };
+}
+
+impl_tuples!(
+    T0, T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, T12, T13, T14, T15;
+    f0, f1, f2, f3, f4, f5, f6, f7, f8, f9, f10, f11, f12, f13, f14, f15;
+    t0, t1, t2, t3, t4, t5, t6, t7, t8, t9, t10, t11, t12, t13, t14, t15;
+    16
+);
 
 fn serialize_sequence<'t, T: SerializeCql + 't, W: CellWriter>(
     rust_name: &'static str,
@@ -713,6 +819,9 @@ pub enum BuiltinTypeCheckErrorKind {
 
     /// A type check failure specific to a CQL map.
     MapError(MapTypeCheckErrorKind),
+
+    /// A type check failure specific to a CQL tuple.
+    TupleError(TupleTypeCheckErrorKind),
 }
 
 impl From<SetOrListTypeCheckErrorKind> for BuiltinTypeCheckErrorKind {
@@ -727,6 +836,12 @@ impl From<MapTypeCheckErrorKind> for BuiltinTypeCheckErrorKind {
     }
 }
 
+impl From<TupleTypeCheckErrorKind> for BuiltinTypeCheckErrorKind {
+    fn from(value: TupleTypeCheckErrorKind) -> Self {
+        BuiltinTypeCheckErrorKind::TupleError(value)
+    }
+}
+
 impl Display for BuiltinTypeCheckErrorKind {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
@@ -735,6 +850,7 @@ impl Display for BuiltinTypeCheckErrorKind {
             }
             BuiltinTypeCheckErrorKind::SetOrListError(err) => err.fmt(f),
             BuiltinTypeCheckErrorKind::MapError(err) => err.fmt(f),
+            BuiltinTypeCheckErrorKind::TupleError(err) => err.fmt(f),
         }
     }
 }
@@ -755,6 +871,9 @@ pub enum BuiltinSerializationErrorKind {
 
     /// A serialization failure specific to a CQL map.
     MapError(MapSerializationErrorKind),
+
+    /// A serialization failure specific to a CQL tuple.
+    TupleError(TupleSerializationErrorKind),
 }
 
 impl From<SetOrListSerializationErrorKind> for BuiltinSerializationErrorKind {
@@ -766,6 +885,12 @@ impl From<SetOrListSerializationErrorKind> for BuiltinSerializationErrorKind {
 impl From<MapSerializationErrorKind> for BuiltinSerializationErrorKind {
     fn from(value: MapSerializationErrorKind) -> Self {
         BuiltinSerializationErrorKind::MapError(value)
+    }
+}
+
+impl From<TupleSerializationErrorKind> for BuiltinSerializationErrorKind {
+    fn from(value: TupleSerializationErrorKind) -> Self {
+        BuiltinSerializationErrorKind::TupleError(value)
     }
 }
 
@@ -786,6 +911,7 @@ impl Display for BuiltinSerializationErrorKind {
             }
             BuiltinSerializationErrorKind::SetOrListError(err) => err.fmt(f),
             BuiltinSerializationErrorKind::MapError(err) => err.fmt(f),
+            BuiltinSerializationErrorKind::TupleError(err) => err.fmt(f),
         }
     }
 }
@@ -901,6 +1027,64 @@ impl Display for SetOrListSerializationErrorKind {
             }
             SetOrListSerializationErrorKind::ElementSerializationFailed(err) => {
                 write!(f, "failed to serialize one of the elements: {err}")
+            }
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+#[non_exhaustive]
+pub enum TupleTypeCheckErrorKind {
+    /// The CQL type is not a tuple.
+    NotTuple,
+
+    /// The tuple has the wrong element count.
+    ///
+    /// Note that it is allowed to write a Rust tuple with less elements
+    /// than the corresponding CQL type, but not more. The additional, unknown
+    /// elements will be set to null.
+    WrongElementCount { actual: usize, asked_for: usize },
+
+    /// One of the tuple elements failed to type check.
+    ElementTypeCheckFailed {
+        index: usize,
+        err: SerializationError,
+    },
+}
+
+impl Display for TupleTypeCheckErrorKind {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            TupleTypeCheckErrorKind::NotTuple => write!(
+                f,
+                "the CQL type the tuple was attempted to be serialized to is not a tuple"
+            ),
+            TupleTypeCheckErrorKind::WrongElementCount { actual, asked_for } => write!(
+                f,
+                "wrong tuple element count: CQL type has {asked_for}, the Rust tuple has {actual}"
+            ),
+            TupleTypeCheckErrorKind::ElementTypeCheckFailed { index, err } => {
+                write!(f, "element no. {index} failed to type check: {err}")
+            }
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+#[non_exhaustive]
+pub enum TupleSerializationErrorKind {
+    /// One of the tuple elements failed to serialize.
+    ElementSerializationFailed {
+        index: usize,
+        err: SerializationError,
+    },
+}
+
+impl Display for TupleSerializationErrorKind {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            TupleSerializationErrorKind::ElementSerializationFailed { index, err } => {
+                write!(f, "element no. {index} failed to serialize: {err}")
             }
         }
     }
