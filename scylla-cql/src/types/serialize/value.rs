@@ -213,7 +213,13 @@ impl<const N: usize> SerializeCql for [u8; N] {
     });
 }
 impl SerializeCql for IpAddr {
-    fallback_impl_contents!();
+    impl_exact_preliminary_type_check!(Inet);
+    impl_serialize_via_writer!(|me, writer| {
+        match me {
+            IpAddr::V4(ip) => writer.set_value(&ip.octets()).unwrap(),
+            IpAddr::V6(ip) => writer.set_value(&ip.octets()).unwrap(),
+        }
+    });
 }
 impl SerializeCql for String {
     impl_exact_preliminary_type_check!(Ascii, Text);
