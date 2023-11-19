@@ -315,29 +315,185 @@ impl<T: Value + ?Sized> SerializeCql for &T {
 impl<T: Value + ?Sized> SerializeCql for Box<T> {
     fallback_impl_contents!();
 }
-impl<V: Value, S: BuildHasher + Default> SerializeCql for HashSet<V, S> {
-    fallback_impl_contents!();
+impl<V: SerializeCql, S: BuildHasher + Default> SerializeCql for HashSet<V, S> {
+    fn preliminary_type_check(typ: &ColumnType) -> Result<(), SerializationError> {
+        match typ {
+            ColumnType::Set(elt) => V::preliminary_type_check(elt).map_err(|err| {
+                mk_typck_err::<Self>(
+                    typ,
+                    SetOrListTypeCheckErrorKind::ElementTypeCheckFailed(err),
+                )
+            }),
+            _ => Err(mk_typck_err::<Self>(
+                typ,
+                SetOrListTypeCheckErrorKind::NotSetOrList,
+            )),
+        }
+    }
+
+    fn serialize<W: CellWriter>(
+        &self,
+        typ: &ColumnType,
+        writer: W,
+    ) -> Result<W::WrittenCellProof, SerializationError> {
+        serialize_sequence(
+            std::any::type_name::<Self>(),
+            self.len(),
+            self.iter(),
+            typ,
+            writer,
+        )
+    }
 }
 impl<K: Value, V: Value, S: BuildHasher> SerializeCql for HashMap<K, V, S> {
     fallback_impl_contents!();
 }
-impl<V: Value> SerializeCql for BTreeSet<V> {
-    fallback_impl_contents!();
+impl<V: SerializeCql> SerializeCql for BTreeSet<V> {
+    fn preliminary_type_check(typ: &ColumnType) -> Result<(), SerializationError> {
+        match typ {
+            ColumnType::Set(elt) => V::preliminary_type_check(elt).map_err(|err| {
+                mk_typck_err::<Self>(
+                    typ,
+                    SetOrListTypeCheckErrorKind::ElementTypeCheckFailed(err),
+                )
+            }),
+            _ => Err(mk_typck_err::<Self>(
+                typ,
+                SetOrListTypeCheckErrorKind::NotSetOrList,
+            )),
+        }
+    }
+
+    fn serialize<W: CellWriter>(
+        &self,
+        typ: &ColumnType,
+        writer: W,
+    ) -> Result<W::WrittenCellProof, SerializationError> {
+        serialize_sequence(
+            std::any::type_name::<Self>(),
+            self.len(),
+            self.iter(),
+            typ,
+            writer,
+        )
+    }
 }
 impl<K: Value, V: Value> SerializeCql for BTreeMap<K, V> {
     fallback_impl_contents!();
 }
-impl<T: Value> SerializeCql for Vec<T> {
-    fallback_impl_contents!();
+impl<T: SerializeCql> SerializeCql for Vec<T> {
+    fn preliminary_type_check(typ: &ColumnType) -> Result<(), SerializationError> {
+        match typ {
+            ColumnType::List(elt) | ColumnType::Set(elt) => {
+                T::preliminary_type_check(elt).map_err(|err| {
+                    mk_typck_err::<Self>(
+                        typ,
+                        SetOrListTypeCheckErrorKind::ElementTypeCheckFailed(err),
+                    )
+                })
+            }
+            _ => Err(mk_typck_err::<Self>(
+                typ,
+                SetOrListTypeCheckErrorKind::NotSetOrList,
+            )),
+        }
+    }
+
+    fn serialize<W: CellWriter>(
+        &self,
+        typ: &ColumnType,
+        writer: W,
+    ) -> Result<W::WrittenCellProof, SerializationError> {
+        serialize_sequence(
+            std::any::type_name::<Self>(),
+            self.len(),
+            self.iter(),
+            typ,
+            writer,
+        )
+    }
 }
-impl<T: Value> SerializeCql for &[T] {
-    fallback_impl_contents!();
+impl<'a, T: SerializeCql + 'a> SerializeCql for &'a [T] {
+    fn preliminary_type_check(typ: &ColumnType) -> Result<(), SerializationError> {
+        match typ {
+            ColumnType::List(elt) | ColumnType::Set(elt) => {
+                T::preliminary_type_check(elt).map_err(|err| {
+                    mk_typck_err::<Self>(
+                        typ,
+                        SetOrListTypeCheckErrorKind::ElementTypeCheckFailed(err),
+                    )
+                })
+            }
+            _ => Err(mk_typck_err::<Self>(
+                typ,
+                SetOrListTypeCheckErrorKind::NotSetOrList,
+            )),
+        }
+    }
+
+    fn serialize<W: CellWriter>(
+        &self,
+        typ: &ColumnType,
+        writer: W,
+    ) -> Result<W::WrittenCellProof, SerializationError> {
+        serialize_sequence(
+            std::any::type_name::<Self>(),
+            self.len(),
+            self.iter(),
+            typ,
+            writer,
+        )
+    }
 }
 impl SerializeCql for CqlValue {
     fallback_impl_contents!();
 }
 
 fallback_tuples!(T0, T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, T12, T13, T14, T15);
+
+fn serialize_sequence<'t, T: SerializeCql + 't, W: CellWriter>(
+    rust_name: &'static str,
+    len: usize,
+    iter: impl Iterator<Item = &'t T>,
+    typ: &ColumnType,
+    writer: W,
+) -> Result<W::WrittenCellProof, SerializationError> {
+    let elt = match typ {
+        ColumnType::List(elt) | ColumnType::Set(elt) => elt,
+        _ => {
+            return Err(mk_typck_err_named(
+                rust_name,
+                typ,
+                SetOrListTypeCheckErrorKind::NotSetOrList,
+            ));
+        }
+    };
+
+    let mut builder = writer.into_value_builder();
+
+    let element_count: i32 = len.try_into().map_err(|_| {
+        mk_ser_err_named(
+            rust_name,
+            typ,
+            SetOrListSerializationErrorKind::TooManyElements,
+        )
+    })?;
+    builder.append_bytes(&element_count.to_be_bytes());
+
+    for el in iter {
+        T::serialize(el, elt, builder.make_sub_writer()).map_err(|err| {
+            mk_ser_err_named(
+                rust_name,
+                typ,
+                SetOrListSerializationErrorKind::ElementSerializationFailed(err),
+            )
+        })?;
+    }
+
+    builder
+        .finish()
+        .map_err(|_| mk_ser_err_named(rust_name, typ, BuiltinSerializationErrorKind::SizeOverflow))
+}
 
 pub fn serialize_legacy_value<T: Value, W: CellWriter>(
     v: &T,
@@ -450,6 +606,15 @@ fn mk_ser_err_named(
 pub enum BuiltinTypeCheckErrorKind {
     /// Expected one from a list of particular types.
     MismatchedType { expected: &'static [ColumnType] },
+
+    /// A type check failure specific to a CQL set or list.
+    SetOrListError(SetOrListTypeCheckErrorKind),
+}
+
+impl From<SetOrListTypeCheckErrorKind> for BuiltinTypeCheckErrorKind {
+    fn from(value: SetOrListTypeCheckErrorKind) -> Self {
+        BuiltinTypeCheckErrorKind::SetOrListError(value)
+    }
 }
 
 impl Display for BuiltinTypeCheckErrorKind {
@@ -458,6 +623,7 @@ impl Display for BuiltinTypeCheckErrorKind {
             BuiltinTypeCheckErrorKind::MismatchedType { expected } => {
                 write!(f, "expected one of the CQL types: {expected:?}")
             }
+            BuiltinTypeCheckErrorKind::SetOrListError(err) => err.fmt(f),
         }
     }
 }
@@ -472,6 +638,15 @@ pub enum BuiltinSerializationErrorKind {
 
     /// The Rust value is out of range supported by the CQL type.
     ValueOverflow,
+
+    /// A serialization failure specific to a CQL set or list.
+    SetOrListError(SetOrListSerializationErrorKind),
+}
+
+impl From<SetOrListSerializationErrorKind> for BuiltinSerializationErrorKind {
+    fn from(value: SetOrListSerializationErrorKind) -> Self {
+        BuiltinSerializationErrorKind::SetOrListError(value)
+    }
 }
 
 impl Display for BuiltinSerializationErrorKind {
@@ -488,6 +663,59 @@ impl Display for BuiltinSerializationErrorKind {
                     f,
                     "the Rust value is out of range supported by the CQL type"
                 )
+            }
+            BuiltinSerializationErrorKind::SetOrListError(err) => err.fmt(f),
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+#[non_exhaustive]
+pub enum SetOrListTypeCheckErrorKind {
+    /// The CQL type is neither a set not a list.
+    NotSetOrList,
+
+    /// Checking the type of the set/list element failed.
+    ElementTypeCheckFailed(SerializationError),
+}
+
+impl Display for SetOrListTypeCheckErrorKind {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            SetOrListTypeCheckErrorKind::NotSetOrList => {
+                write!(
+                    f,
+                    "the CQL type the tuple was attempted to was neither a set or a list"
+                )
+            }
+            SetOrListTypeCheckErrorKind::ElementTypeCheckFailed(err) => {
+                write!(f, "failed to type check one of the elements: {err}")
+            }
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+#[non_exhaustive]
+pub enum SetOrListSerializationErrorKind {
+    /// The set/list contains too many items, exceeding the protocol limit (i32::MAX).
+    TooManyElements,
+
+    /// One of the elements of the set/list failed to serialize.
+    ElementSerializationFailed(SerializationError),
+}
+
+impl Display for SetOrListSerializationErrorKind {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            SetOrListSerializationErrorKind::TooManyElements => {
+                write!(
+                    f,
+                    "the collection contains too many elements to fit in CQL representation"
+                )
+            }
+            SetOrListSerializationErrorKind::ElementSerializationFailed(err) => {
+                write!(f, "failed to serialize one of the elements: {err}")
             }
         }
     }
