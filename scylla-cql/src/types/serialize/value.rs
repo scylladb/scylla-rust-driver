@@ -345,8 +345,35 @@ impl<V: SerializeCql, S: BuildHasher + Default> SerializeCql for HashSet<V, S> {
         )
     }
 }
-impl<K: Value, V: Value, S: BuildHasher> SerializeCql for HashMap<K, V, S> {
-    fallback_impl_contents!();
+impl<K: SerializeCql, V: SerializeCql, S: BuildHasher> SerializeCql for HashMap<K, V, S> {
+    fn preliminary_type_check(typ: &ColumnType) -> Result<(), SerializationError> {
+        match typ {
+            ColumnType::Map(k, v) => {
+                K::preliminary_type_check(k).map_err(|err| {
+                    mk_typck_err::<Self>(typ, MapTypeCheckErrorKind::KeyTypeCheckFailed(err))
+                })?;
+                V::preliminary_type_check(v).map_err(|err| {
+                    mk_typck_err::<Self>(typ, MapTypeCheckErrorKind::ValueTypeCheckFailed(err))
+                })?;
+                Ok(())
+            }
+            _ => Err(mk_typck_err::<Self>(typ, MapTypeCheckErrorKind::NotMap)),
+        }
+    }
+
+    fn serialize<W: CellWriter>(
+        &self,
+        typ: &ColumnType,
+        writer: W,
+    ) -> Result<W::WrittenCellProof, SerializationError> {
+        serialize_mapping(
+            std::any::type_name::<Self>(),
+            self.len(),
+            self.iter(),
+            typ,
+            writer,
+        )
+    }
 }
 impl<V: SerializeCql> SerializeCql for BTreeSet<V> {
     fn preliminary_type_check(typ: &ColumnType) -> Result<(), SerializationError> {
@@ -378,8 +405,35 @@ impl<V: SerializeCql> SerializeCql for BTreeSet<V> {
         )
     }
 }
-impl<K: Value, V: Value> SerializeCql for BTreeMap<K, V> {
-    fallback_impl_contents!();
+impl<K: SerializeCql, V: SerializeCql> SerializeCql for BTreeMap<K, V> {
+    fn preliminary_type_check(typ: &ColumnType) -> Result<(), SerializationError> {
+        match typ {
+            ColumnType::Map(k, v) => {
+                K::preliminary_type_check(k).map_err(|err| {
+                    mk_typck_err::<Self>(typ, MapTypeCheckErrorKind::KeyTypeCheckFailed(err))
+                })?;
+                V::preliminary_type_check(v).map_err(|err| {
+                    mk_typck_err::<Self>(typ, MapTypeCheckErrorKind::ValueTypeCheckFailed(err))
+                })?;
+                Ok(())
+            }
+            _ => Err(mk_typck_err::<Self>(typ, MapTypeCheckErrorKind::NotMap)),
+        }
+    }
+
+    fn serialize<W: CellWriter>(
+        &self,
+        typ: &ColumnType,
+        writer: W,
+    ) -> Result<W::WrittenCellProof, SerializationError> {
+        serialize_mapping(
+            std::any::type_name::<Self>(),
+            self.len(),
+            self.iter(),
+            typ,
+            writer,
+        )
+    }
 }
 impl<T: SerializeCql> SerializeCql for Vec<T> {
     fn preliminary_type_check(typ: &ColumnType) -> Result<(), SerializationError> {
@@ -486,6 +540,53 @@ fn serialize_sequence<'t, T: SerializeCql + 't, W: CellWriter>(
                 rust_name,
                 typ,
                 SetOrListSerializationErrorKind::ElementSerializationFailed(err),
+            )
+        })?;
+    }
+
+    builder
+        .finish()
+        .map_err(|_| mk_ser_err_named(rust_name, typ, BuiltinSerializationErrorKind::SizeOverflow))
+}
+
+fn serialize_mapping<'t, K: SerializeCql + 't, V: SerializeCql + 't, W: CellWriter>(
+    rust_name: &'static str,
+    len: usize,
+    iter: impl Iterator<Item = (&'t K, &'t V)>,
+    typ: &ColumnType,
+    writer: W,
+) -> Result<W::WrittenCellProof, SerializationError> {
+    let (ktyp, vtyp) = match typ {
+        ColumnType::Map(k, v) => (k, v),
+        _ => {
+            return Err(mk_typck_err_named(
+                rust_name,
+                typ,
+                MapTypeCheckErrorKind::NotMap,
+            ));
+        }
+    };
+
+    let mut builder = writer.into_value_builder();
+
+    let element_count: i32 = len.try_into().map_err(|_| {
+        mk_ser_err_named(rust_name, typ, MapSerializationErrorKind::TooManyElements)
+    })?;
+    builder.append_bytes(&element_count.to_be_bytes());
+
+    for (k, v) in iter {
+        K::serialize(k, ktyp, builder.make_sub_writer()).map_err(|err| {
+            mk_ser_err_named(
+                rust_name,
+                typ,
+                MapSerializationErrorKind::KeySerializationFailed(err),
+            )
+        })?;
+        V::serialize(v, vtyp, builder.make_sub_writer()).map_err(|err| {
+            mk_ser_err_named(
+                rust_name,
+                typ,
+                MapSerializationErrorKind::ValueSerializationFailed(err),
             )
         })?;
     }
@@ -609,11 +710,20 @@ pub enum BuiltinTypeCheckErrorKind {
 
     /// A type check failure specific to a CQL set or list.
     SetOrListError(SetOrListTypeCheckErrorKind),
+
+    /// A type check failure specific to a CQL map.
+    MapError(MapTypeCheckErrorKind),
 }
 
 impl From<SetOrListTypeCheckErrorKind> for BuiltinTypeCheckErrorKind {
     fn from(value: SetOrListTypeCheckErrorKind) -> Self {
         BuiltinTypeCheckErrorKind::SetOrListError(value)
+    }
+}
+
+impl From<MapTypeCheckErrorKind> for BuiltinTypeCheckErrorKind {
+    fn from(value: MapTypeCheckErrorKind) -> Self {
+        BuiltinTypeCheckErrorKind::MapError(value)
     }
 }
 
@@ -624,6 +734,7 @@ impl Display for BuiltinTypeCheckErrorKind {
                 write!(f, "expected one of the CQL types: {expected:?}")
             }
             BuiltinTypeCheckErrorKind::SetOrListError(err) => err.fmt(f),
+            BuiltinTypeCheckErrorKind::MapError(err) => err.fmt(f),
         }
     }
 }
@@ -641,11 +752,20 @@ pub enum BuiltinSerializationErrorKind {
 
     /// A serialization failure specific to a CQL set or list.
     SetOrListError(SetOrListSerializationErrorKind),
+
+    /// A serialization failure specific to a CQL map.
+    MapError(MapSerializationErrorKind),
 }
 
 impl From<SetOrListSerializationErrorKind> for BuiltinSerializationErrorKind {
     fn from(value: SetOrListSerializationErrorKind) -> Self {
         BuiltinSerializationErrorKind::SetOrListError(value)
+    }
+}
+
+impl From<MapSerializationErrorKind> for BuiltinSerializationErrorKind {
+    fn from(value: MapSerializationErrorKind) -> Self {
+        BuiltinSerializationErrorKind::MapError(value)
     }
 }
 
@@ -665,6 +785,71 @@ impl Display for BuiltinSerializationErrorKind {
                 )
             }
             BuiltinSerializationErrorKind::SetOrListError(err) => err.fmt(f),
+            BuiltinSerializationErrorKind::MapError(err) => err.fmt(f),
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+#[non_exhaustive]
+pub enum MapTypeCheckErrorKind {
+    /// The CQL type is not a map.
+    NotMap,
+
+    /// Checking the map key type failed.
+    KeyTypeCheckFailed(SerializationError),
+
+    /// Checking the map value type failed.
+    ValueTypeCheckFailed(SerializationError),
+}
+
+impl Display for MapTypeCheckErrorKind {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            MapTypeCheckErrorKind::NotMap => {
+                write!(
+                    f,
+                    "the CQL type the map was attempted to be serialized to was not map"
+                )
+            }
+            MapTypeCheckErrorKind::KeyTypeCheckFailed(err) => {
+                write!(f, "failed to type check one of the keys: {}", err)
+            }
+            MapTypeCheckErrorKind::ValueTypeCheckFailed(err) => {
+                write!(f, "failed to type check one of the values: {}", err)
+            }
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+#[non_exhaustive]
+pub enum MapSerializationErrorKind {
+    /// The many contains too many items, exceeding the protocol limit (i32::MAX).
+    TooManyElements,
+
+    /// One of the keys in the map failed to serialize.
+    KeySerializationFailed(SerializationError),
+
+    /// One of the values in the map failed to serialize.
+    ValueSerializationFailed(SerializationError),
+}
+
+impl Display for MapSerializationErrorKind {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            MapSerializationErrorKind::TooManyElements => {
+                write!(
+                    f,
+                    "the map contains too many elements to fit in CQL representation"
+                )
+            }
+            MapSerializationErrorKind::KeySerializationFailed(err) => {
+                write!(f, "failed to serialize one of the keys: {}", err)
+            }
+            MapSerializationErrorKind::ValueSerializationFailed(err) => {
+                write!(f, "failed to serialize one of the values: {}", err)
+            }
         }
     }
 }
