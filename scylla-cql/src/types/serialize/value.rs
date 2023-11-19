@@ -13,7 +13,7 @@ use uuid::Uuid;
 use chrono::{DateTime, NaiveDate, NaiveTime, Utc};
 
 #[cfg(feature = "secret")]
-use secrecy::{Secret, Zeroize};
+use secrecy::{ExposeSecret, Secret, Zeroize};
 
 use crate::frame::response::result::{ColumnType, CqlValue};
 use crate::frame::types::vint_encode;
@@ -194,8 +194,17 @@ impl SerializeCql for time::Time {
     });
 }
 #[cfg(feature = "secret")]
-impl<V: Value + Zeroize> SerializeCql for Secret<V> {
-    fallback_impl_contents!();
+impl<V: SerializeCql + Zeroize> SerializeCql for Secret<V> {
+    fn preliminary_type_check(typ: &ColumnType) -> Result<(), SerializationError> {
+        V::preliminary_type_check(typ)
+    }
+    fn serialize<W: CellWriter>(
+        &self,
+        typ: &ColumnType,
+        writer: W,
+    ) -> Result<W::WrittenCellProof, SerializationError> {
+        V::serialize(self.expose_secret(), typ, writer)
+    }
 }
 impl SerializeCql for bool {
     impl_exact_preliminary_type_check!(Boolean);
@@ -273,11 +282,26 @@ impl SerializeCql for String {
             .map_err(|_| mk_ser_err::<Self>(typ, BuiltinSerializationErrorKind::SizeOverflow))?
     });
 }
-impl<T: Value> SerializeCql for Option<T> {
-    fallback_impl_contents!();
+impl<T: SerializeCql> SerializeCql for Option<T> {
+    fn preliminary_type_check(typ: &ColumnType) -> Result<(), SerializationError> {
+        T::preliminary_type_check(typ)
+    }
+    fn serialize<W: CellWriter>(
+        &self,
+        typ: &ColumnType,
+        writer: W,
+    ) -> Result<W::WrittenCellProof, SerializationError> {
+        match self {
+            Some(v) => v.serialize(typ, writer),
+            None => Ok(writer.set_null()),
+        }
+    }
 }
 impl SerializeCql for Unset {
-    fallback_impl_contents!();
+    fn preliminary_type_check(_typ: &ColumnType) -> Result<(), SerializationError> {
+        Ok(()) // Fits everything
+    }
+    impl_serialize_via_writer!(|_me, writer| writer.set_unset());
 }
 impl SerializeCql for Counter {
     impl_exact_preliminary_type_check!(Counter);
@@ -296,14 +320,44 @@ impl SerializeCql for CqlDuration {
         writer.set_value(buf.as_slice()).unwrap()
     });
 }
-impl<V: Value> SerializeCql for MaybeUnset<V> {
-    fallback_impl_contents!();
+impl<V: SerializeCql> SerializeCql for MaybeUnset<V> {
+    fn preliminary_type_check(typ: &ColumnType) -> Result<(), SerializationError> {
+        V::preliminary_type_check(typ)
+    }
+    fn serialize<W: CellWriter>(
+        &self,
+        typ: &ColumnType,
+        writer: W,
+    ) -> Result<W::WrittenCellProof, SerializationError> {
+        match self {
+            MaybeUnset::Set(v) => v.serialize(typ, writer),
+            MaybeUnset::Unset => Ok(writer.set_unset()),
+        }
+    }
 }
-impl<T: Value + ?Sized> SerializeCql for &T {
-    fallback_impl_contents!();
+impl<T: SerializeCql + ?Sized> SerializeCql for &T {
+    fn preliminary_type_check(typ: &ColumnType) -> Result<(), SerializationError> {
+        T::preliminary_type_check(typ)
+    }
+    fn serialize<W: CellWriter>(
+        &self,
+        typ: &ColumnType,
+        writer: W,
+    ) -> Result<W::WrittenCellProof, SerializationError> {
+        T::serialize(*self, typ, writer)
+    }
 }
-impl<T: Value + ?Sized> SerializeCql for Box<T> {
-    fallback_impl_contents!();
+impl<T: SerializeCql + ?Sized> SerializeCql for Box<T> {
+    fn preliminary_type_check(typ: &ColumnType) -> Result<(), SerializationError> {
+        T::preliminary_type_check(typ)
+    }
+    fn serialize<W: CellWriter>(
+        &self,
+        typ: &ColumnType,
+        writer: W,
+    ) -> Result<W::WrittenCellProof, SerializationError> {
+        T::serialize(&**self, typ, writer)
+    }
 }
 impl<V: SerializeCql, S: BuildHasher + Default> SerializeCql for HashSet<V, S> {
     fn preliminary_type_check(typ: &ColumnType) -> Result<(), SerializationError> {
