@@ -9,6 +9,7 @@ use thiserror::Error;
 use crate::frame::value::{SerializedValues, Value, ValueList};
 use crate::frame::{response::result::ColumnSpec, types::RawValue};
 
+use super::value::SerializeCql;
 use super::{CellWriter, RowWriter, SerializationError};
 
 /// Contains information needed to serialize a row.
@@ -106,12 +107,56 @@ impl SerializeRow for [u8; 0] {
     impl_serialize_row_for_unit!();
 }
 
-impl<T: Value> SerializeRow for &[T] {
-    fallback_impl_contents!();
+macro_rules! impl_serialize_row_for_slice {
+    () => {
+        fn preliminary_type_check(
+            ctx: &RowSerializationContext<'_>,
+        ) -> Result<(), SerializationError> {
+            // While we don't know how many columns will be there during serialization,
+            // we can at least check that all provided columns match T.
+            for col in ctx.columns() {
+                <T as SerializeCql>::preliminary_type_check(&col.typ).map_err(|err| {
+                    mk_typck_err::<Self>(BuiltinTypeCheckErrorKind::ColumnTypeCheckFailed {
+                        name: col.name.clone(),
+                        err,
+                    })
+                })?;
+            }
+            Ok(())
+        }
+
+        fn serialize<W: RowWriter>(
+            &self,
+            ctx: &RowSerializationContext<'_>,
+            writer: &mut W,
+        ) -> Result<(), SerializationError> {
+            if ctx.columns().len() != self.len() {
+                return Err(mk_typck_err::<Self>(
+                    BuiltinTypeCheckErrorKind::WrongColumnCount {
+                        actual: self.len(),
+                        asked_for: ctx.columns().len(),
+                    },
+                ));
+            }
+            for (col, val) in ctx.columns().iter().zip(self.iter()) {
+                <T as SerializeCql>::serialize(val, &col.typ, writer.make_cell_writer()).map_err(
+                    |err| {
+                        mk_ser_err::<Self>(
+                            BuiltinSerializationErrorKind::ColumnSerializationFailed {
+                                name: col.name.clone(),
+                                err,
+                            },
+                        )
+                    },
+                )?;
+            }
+            Ok(())
+        }
+    };
 }
 
-impl<T: Value> SerializeRow for Vec<T> {
-    fallback_impl_contents!();
+impl<'a, T: SerializeCql + 'a> SerializeRow for &'a [T] {
+    impl_serialize_row_for_slice!();
 }
 
 macro_rules! impl_serialize_row_for_hash_map {
@@ -120,6 +165,10 @@ macro_rules! impl_serialize_row_for_hash_map {
             fallback_impl_contents!();
         }
     };
+}
+
+impl<T: SerializeCql> SerializeRow for Vec<T> {
+    impl_serialize_row_for_slice!();
 }
 
 macro_rules! impl_serialize_row_for_btree_map {
@@ -227,12 +276,44 @@ fn mk_typck_err_named(
     })
 }
 
+/// Failed to serialize values for a statement, represented by one of the types
+/// built into the driver.
+#[derive(Debug, Error, Clone)]
+#[error("Failed to serialize query arguments {rust_name}: {kind}")]
+pub struct BuiltinSerializationError {
+    /// Name of the Rust type used to represent the values.
+    pub rust_name: &'static str,
+
+    /// Detailed information about the failure.
+    pub kind: BuiltinSerializationErrorKind,
+}
+
+fn mk_ser_err<T>(kind: impl Into<BuiltinSerializationErrorKind>) -> SerializationError {
+    mk_ser_err_named(std::any::type_name::<T>(), kind)
+}
+
+fn mk_ser_err_named(
+    name: &'static str,
+    kind: impl Into<BuiltinSerializationErrorKind>,
+) -> SerializationError {
+    SerializationError::new(BuiltinSerializationError {
+        rust_name: name,
+        kind: kind.into(),
+    })
+}
+
 /// Describes why type checking values for a statement failed.
 #[derive(Debug, Clone)]
 #[non_exhaustive]
 pub enum BuiltinTypeCheckErrorKind {
     /// The Rust type expects `asked_for` column, but the query requires `actual`.
     WrongColumnCount { actual: usize, asked_for: usize },
+
+    /// One of the columns failed to type check.
+    ColumnTypeCheckFailed {
+        name: String,
+        err: SerializationError,
+    },
 }
 
 impl Display for BuiltinTypeCheckErrorKind {
@@ -240,6 +321,30 @@ impl Display for BuiltinTypeCheckErrorKind {
         match self {
             BuiltinTypeCheckErrorKind::WrongColumnCount { actual, asked_for } => {
                 write!(f, "wrong column count: the query requires {asked_for} columns, but {actual} were provided")
+            }
+            BuiltinTypeCheckErrorKind::ColumnTypeCheckFailed { name, err } => {
+                write!(f, "failed to check column {name}: {err}")
+            }
+        }
+    }
+}
+
+/// Describes why serializing values for a statement failed.
+#[derive(Debug, Clone)]
+#[non_exhaustive]
+pub enum BuiltinSerializationErrorKind {
+    /// One of the columns failed to serialize.
+    ColumnSerializationFailed {
+        name: String,
+        err: SerializationError,
+    },
+}
+
+impl Display for BuiltinSerializationErrorKind {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            BuiltinSerializationErrorKind::ColumnSerializationFailed { name, err } => {
+                write!(f, "failed to serialize column {name}: {err}")
             }
         }
     }
