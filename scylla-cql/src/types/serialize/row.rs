@@ -246,8 +246,18 @@ impl<T: SerializeCql, S: BuildHasher> SerializeRow for HashMap<&str, T, S> {
     impl_serialize_row_for_map!();
 }
 
-impl<T: ValueList> SerializeRow for &T {
-    fallback_impl_contents!();
+impl<T: SerializeRow> SerializeRow for &T {
+    fn preliminary_type_check(ctx: &RowSerializationContext<'_>) -> Result<(), SerializationError> {
+        <T as SerializeRow>::preliminary_type_check(ctx)
+    }
+
+    fn serialize<W: RowWriter>(
+        &self,
+        ctx: &RowSerializationContext<'_>,
+        writer: &mut W,
+    ) -> Result<(), SerializationError> {
+        <T as SerializeRow>::serialize(self, ctx, writer)
+    }
 }
 
 impl SerializeRow for SerializedValues {
