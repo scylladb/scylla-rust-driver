@@ -20,7 +20,7 @@ use crate::frame::value::{
     Counter, CqlDate, CqlDuration, CqlTime, CqlTimestamp, MaybeUnset, Unset, Value,
 };
 
-use super::{CellWriter, SerializationError};
+use super::{CellValueBuilder, CellWriter, SerializationError};
 
 pub trait SerializeCql {
     /// Given a CQL type, checks if it _might_ be possible to serialize to that type.
@@ -122,7 +122,19 @@ impl SerializeCql for i64 {
     impl_serialize_via_writer!(|me, writer| writer.set_value(me.to_be_bytes().as_slice()).unwrap());
 }
 impl SerializeCql for BigDecimal {
-    fallback_impl_contents!();
+    impl_exact_preliminary_type_check!(Decimal);
+    impl_serialize_via_writer!(|me, typ, writer| {
+        let mut builder = writer.into_value_builder();
+        let (value, scale) = me.as_bigint_and_exponent();
+        let scale: i32 = scale
+            .try_into()
+            .map_err(|_| mk_ser_err::<Self>(typ, BuiltinSerializationErrorKind::ValueOverflow))?;
+        builder.append_bytes(&scale.to_be_bytes());
+        builder.append_bytes(&value.to_signed_bytes_be());
+        builder
+            .finish()
+            .map_err(|_| mk_ser_err::<Self>(typ, BuiltinSerializationErrorKind::SizeOverflow))?
+    });
 }
 impl SerializeCql for CqlDate {
     fallback_impl_contents!();
@@ -178,7 +190,15 @@ impl SerializeCql for Uuid {
     impl_serialize_via_writer!(|me, writer| writer.set_value(me.as_bytes().as_ref()).unwrap());
 }
 impl SerializeCql for BigInt {
-    fallback_impl_contents!();
+    impl_exact_preliminary_type_check!(Varint);
+    impl_serialize_via_writer!(|me, typ, writer| {
+        // TODO: The allocation here can be avoided and we can reimplement
+        // `to_signed_bytes_be` by using `to_u64_digits` and a bit of custom
+        // logic. Need better tests in order to do this.
+        writer
+            .set_value(me.to_signed_bytes_be().as_slice())
+            .map_err(|_| mk_ser_err::<Self>(typ, BuiltinSerializationErrorKind::SizeOverflow))?
+    });
 }
 impl SerializeCql for &str {
     impl_exact_preliminary_type_check!(Ascii, Text);
@@ -407,6 +427,9 @@ pub enum BuiltinSerializationErrorKind {
     /// The size of the Rust value is too large to fit in the CQL serialization
     /// format (over i32::MAX bytes).
     SizeOverflow,
+
+    /// The Rust value is out of range supported by the CQL type.
+    ValueOverflow,
 }
 
 impl Display for BuiltinSerializationErrorKind {
@@ -416,6 +439,12 @@ impl Display for BuiltinSerializationErrorKind {
                 write!(
                     f,
                     "the Rust value is too big to be serialized in the CQL protocol format"
+                )
+            }
+            BuiltinSerializationErrorKind::ValueOverflow => {
+                write!(
+                    f,
+                    "the Rust value is out of range supported by the CQL type"
                 )
             }
         }
