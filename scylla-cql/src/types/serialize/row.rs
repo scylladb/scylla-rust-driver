@@ -6,7 +6,7 @@ use std::{collections::HashMap, sync::Arc};
 
 use thiserror::Error;
 
-use crate::frame::value::{SerializedValues, Value, ValueList};
+use crate::frame::value::{SerializedValues, ValueList};
 use crate::frame::{response::result::ColumnSpec, types::RawValue};
 
 use super::value::SerializeCql;
@@ -268,17 +268,96 @@ impl<'b> SerializeRow for Cow<'b, SerializedValues> {
     fallback_impl_contents!();
 }
 
-macro_rules! fallback_tuples {
-    () => {};
-    ($th:ident$(, $($tt:ident),*)?) => {
-        fallback_tuples!($($($tt),*)?);
-        impl<$th: Value$(, $($tt: Value),*)?> SerializeRow for ($th, $($($tt),*)?) {
-            fallback_impl_contents!();
+macro_rules! impl_tuple {
+    (
+        $($typs:ident),*;
+        $($fidents:ident),*;
+        $($tidents:ident),*;
+        $length:expr
+    ) => {
+        impl<$($typs: SerializeCql),*> SerializeRow for ($($typs,)*) {
+            fn preliminary_type_check(
+                ctx: &RowSerializationContext<'_>,
+            ) -> Result<(), SerializationError> {
+                match ctx.columns() {
+                    [$($tidents),*] => {
+                        $(
+                            <$typs as SerializeCql>::preliminary_type_check(&$tidents.typ).map_err(|err| {
+                                mk_typck_err::<Self>(BuiltinTypeCheckErrorKind::ColumnTypeCheckFailed {
+                                    name: $tidents.name.clone(),
+                                    err,
+                                })
+                            })?;
+                        )*
+                    }
+                    _ => return Err(mk_typck_err::<Self>(
+                        BuiltinTypeCheckErrorKind::WrongColumnCount {
+                            actual: $length,
+                            asked_for: ctx.columns().len(),
+                        },
+                    )),
+                };
+                Ok(())
+            }
+
+            fn serialize<W: RowWriter>(
+                &self,
+                ctx: &RowSerializationContext<'_>,
+                writer: &mut W,
+            ) -> Result<(), SerializationError> {
+                let ($($tidents,)*) = match ctx.columns() {
+                    [$($tidents),*] => ($($tidents,)*),
+                    _ => return Err(mk_typck_err::<Self>(
+                        BuiltinTypeCheckErrorKind::WrongColumnCount {
+                            actual: $length,
+                            asked_for: ctx.columns().len(),
+                        },
+                    )),
+                };
+                let ($($fidents,)*) = self;
+                $(
+                    <$typs as SerializeCql>::serialize($fidents, &$tidents.typ, writer.make_cell_writer()).map_err(|err| {
+                        mk_ser_err::<Self>(BuiltinSerializationErrorKind::ColumnSerializationFailed {
+                            name: $tidents.name.clone(),
+                            err,
+                        })
+                    })?;
+                )*
+                Ok(())
+            }
         }
     };
 }
 
-fallback_tuples!(T0, T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, T12, T13, T14, T15);
+macro_rules! impl_tuples {
+    (;;;$length:expr) => {};
+    (
+        $typ:ident$(, $($typs:ident),*)?;
+        $fident:ident$(, $($fidents:ident),*)?;
+        $tident:ident$(, $($tidents:ident),*)?;
+        $length:expr
+    ) => {
+        impl_tuples!(
+            $($($typs),*)?;
+            $($($fidents),*)?;
+            $($($tidents),*)?;
+            $length - 1
+        );
+        impl_tuple!(
+            $typ$(, $($typs),*)?;
+            $fident$(, $($fidents),*)?;
+            $tident$(, $($tidents),*)?;
+            $length
+        );
+    };
+}
+
+impl_tuples!(
+    T0, T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, T12, T13, T14, T15;
+    f0, f1, f2, f3, f4, f5, f6, f7, f8, f9, f10, f11, f12, f13, f14, f15;
+    t0, t1, t2, t3, t4, t5, t6, t7, t8, t9, t10, t11, t12, t13, t14, t15;
+    16
+);
 
 pub fn serialize_legacy_row<T: ValueList>(
     r: &T,
@@ -480,7 +559,14 @@ mod tests {
 
         let mut new_data = Vec::new();
         let mut new_data_writer = BufBackedRowWriter::new(&mut new_data);
-        let ctx = RowSerializationContext { columns: &[] };
+        let ctx = RowSerializationContext {
+            columns: &[
+                col_spec("a", ColumnType::Int),
+                col_spec("b", ColumnType::Text),
+                col_spec("c", ColumnType::BigInt),
+                col_spec("b", ColumnType::Ascii),
+            ],
+        };
         <_ as SerializeRow>::serialize(&row, &ctx, &mut new_data_writer).unwrap();
         assert_eq!(new_data_writer.value_count(), 4);
 
