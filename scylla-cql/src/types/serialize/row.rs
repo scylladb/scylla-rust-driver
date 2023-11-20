@@ -1,5 +1,5 @@
 use std::borrow::Cow;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashSet};
 use std::fmt::Display;
 use std::hash::BuildHasher;
 use std::{collections::HashMap, sync::Arc};
@@ -159,30 +159,92 @@ impl<'a, T: SerializeCql + 'a> SerializeRow for &'a [T] {
     impl_serialize_row_for_slice!();
 }
 
-macro_rules! impl_serialize_row_for_hash_map {
-    ($key_type:ty) => {
-        impl<T: Value> SerializeRow for BTreeMap<$key_type, T> {
-            fallback_impl_contents!();
-        }
-    };
-}
-
 impl<T: SerializeCql> SerializeRow for Vec<T> {
     impl_serialize_row_for_slice!();
 }
 
-macro_rules! impl_serialize_row_for_btree_map {
-    ($key_type:ty) => {
-        impl<T: Value, S: BuildHasher> SerializeRow for HashMap<$key_type, T, S> {
-            fallback_impl_contents!();
+macro_rules! impl_serialize_row_for_map {
+    () => {
+        fn preliminary_type_check(
+            ctx: &RowSerializationContext<'_>,
+        ) -> Result<(), SerializationError> {
+            // While we don't know the column count or their names,
+            // we can go over all columns and check that their types match T.
+            for col in ctx.columns() {
+                <T as SerializeCql>::preliminary_type_check(&col.typ).map_err(|err| {
+                    mk_typck_err::<Self>(BuiltinTypeCheckErrorKind::ColumnTypeCheckFailed {
+                        name: col.name.clone(),
+                        err,
+                    })
+                })?;
+            }
+            Ok(())
+        }
+
+        fn serialize<W: RowWriter>(
+            &self,
+            ctx: &RowSerializationContext<'_>,
+            writer: &mut W,
+        ) -> Result<(), SerializationError> {
+            // Unfortunately, column names aren't guaranteed to be unique.
+            // We need to track not-yet-used columns in order to see
+            // whether some values were not used at the end, and report an error.
+            let mut unused_columns: HashSet<&str> = self.keys().map(|k| k.as_ref()).collect();
+
+            for col in ctx.columns.iter() {
+                match self.get(col.name.as_str()) {
+                    None => {
+                        return Err(mk_typck_err::<Self>(
+                            BuiltinTypeCheckErrorKind::MissingValueForColumn {
+                                name: col.name.clone(),
+                            },
+                        ))
+                    }
+                    Some(v) => {
+                        <T as SerializeCql>::serialize(v, &col.typ, writer.make_cell_writer())
+                            .map_err(|err| {
+                                mk_typck_err::<Self>(
+                                    BuiltinTypeCheckErrorKind::ColumnTypeCheckFailed {
+                                        name: col.name.clone(),
+                                        err,
+                                    },
+                                )
+                            })?;
+                        let _ = unused_columns.remove(col.name.as_str());
+                    }
+                }
+            }
+
+            if !unused_columns.is_empty() {
+                // Report the lexicographically first value for deterministic error messages
+                let name = unused_columns.iter().min().unwrap();
+                return Err(mk_typck_err::<Self>(
+                    BuiltinTypeCheckErrorKind::ColumnMissingForValue {
+                        name: name.to_string(),
+                    },
+                ));
+            }
+
+            Ok(())
         }
     };
 }
 
-impl_serialize_row_for_hash_map!(String);
-impl_serialize_row_for_hash_map!(&str);
-impl_serialize_row_for_btree_map!(String);
-impl_serialize_row_for_btree_map!(&str);
+impl<T: SerializeCql> SerializeRow for BTreeMap<String, T> {
+    impl_serialize_row_for_map!();
+}
+
+impl<T: SerializeCql> SerializeRow for BTreeMap<&str, T> {
+    impl_serialize_row_for_map!();
+}
+
+impl<T: SerializeCql, S: BuildHasher> SerializeRow for HashMap<String, T, S> {
+    impl_serialize_row_for_map!();
+}
+
+impl<T: SerializeCql, S: BuildHasher> SerializeRow for HashMap<&str, T, S> {
+    impl_serialize_row_for_map!();
+}
 
 impl<T: ValueList> SerializeRow for &T {
     fallback_impl_contents!();
@@ -309,6 +371,13 @@ pub enum BuiltinTypeCheckErrorKind {
     /// The Rust type expects `asked_for` column, but the query requires `actual`.
     WrongColumnCount { actual: usize, asked_for: usize },
 
+    /// The Rust type provides a value for some column, but that column is not
+    /// present in the statement.
+    MissingValueForColumn { name: String },
+
+    /// A value required by the statement is not provided by the Rust type.
+    ColumnMissingForValue { name: String },
+
     /// One of the columns failed to type check.
     ColumnTypeCheckFailed {
         name: String,
@@ -321,6 +390,18 @@ impl Display for BuiltinTypeCheckErrorKind {
         match self {
             BuiltinTypeCheckErrorKind::WrongColumnCount { actual, asked_for } => {
                 write!(f, "wrong column count: the query requires {asked_for} columns, but {actual} were provided")
+            }
+            BuiltinTypeCheckErrorKind::MissingValueForColumn { name } => {
+                write!(
+                    f,
+                    "value for column {name} was not provided, but the query requires it"
+                )
+            }
+            BuiltinTypeCheckErrorKind::ColumnMissingForValue { name } => {
+                write!(
+                    f,
+                    "value for column {name} was provided, but there is no bind marker for this column in the query"
+                )
             }
             BuiltinTypeCheckErrorKind::ColumnTypeCheckFailed { name, err } => {
                 write!(f, "failed to check column {name}: {err}")
