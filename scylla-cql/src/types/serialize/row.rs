@@ -1,5 +1,6 @@
 use std::borrow::Cow;
 use std::collections::BTreeMap;
+use std::fmt::Display;
 use std::hash::BuildHasher;
 use std::{collections::HashMap, sync::Arc};
 
@@ -70,12 +71,39 @@ macro_rules! fallback_impl_contents {
     };
 }
 
+macro_rules! impl_serialize_row_for_unit {
+    () => {
+        fn preliminary_type_check(
+            ctx: &RowSerializationContext<'_>,
+        ) -> Result<(), SerializationError> {
+            if !ctx.columns().is_empty() {
+                return Err(mk_typck_err::<Self>(
+                    BuiltinTypeCheckErrorKind::WrongColumnCount {
+                        actual: 0,
+                        asked_for: ctx.columns().len(),
+                    },
+                ));
+            }
+            Ok(())
+        }
+
+        fn serialize<W: RowWriter>(
+            &self,
+            _ctx: &RowSerializationContext<'_>,
+            _writer: &mut W,
+        ) -> Result<(), SerializationError> {
+            // Row is empty - do nothing
+            Ok(())
+        }
+    };
+}
+
 impl SerializeRow for () {
-    fallback_impl_contents!();
+    impl_serialize_row_for_unit!();
 }
 
 impl SerializeRow for [u8; 0] {
-    fallback_impl_contents!();
+    impl_serialize_row_for_unit!();
 }
 
 impl<T: Value> SerializeRow for &[T] {
@@ -171,6 +199,50 @@ pub fn serialize_legacy_row<T: ValueList>(
     }
 
     Ok(())
+}
+
+/// Failed to type check values for a statement, represented by one of the types
+/// built into the driver.
+#[derive(Debug, Error, Clone)]
+#[error("Failed to type check query arguments {rust_name}: {kind}")]
+pub struct BuiltinTypeCheckError {
+    /// Name of the Rust type used to represent the values.
+    pub rust_name: &'static str,
+
+    /// Detailed information about the failure.
+    pub kind: BuiltinTypeCheckErrorKind,
+}
+
+fn mk_typck_err<T>(kind: impl Into<BuiltinTypeCheckErrorKind>) -> SerializationError {
+    mk_typck_err_named(std::any::type_name::<T>(), kind)
+}
+
+fn mk_typck_err_named(
+    name: &'static str,
+    kind: impl Into<BuiltinTypeCheckErrorKind>,
+) -> SerializationError {
+    SerializationError::new(BuiltinTypeCheckError {
+        rust_name: name,
+        kind: kind.into(),
+    })
+}
+
+/// Describes why type checking values for a statement failed.
+#[derive(Debug, Clone)]
+#[non_exhaustive]
+pub enum BuiltinTypeCheckErrorKind {
+    /// The Rust type expects `asked_for` column, but the query requires `actual`.
+    WrongColumnCount { actual: usize, asked_for: usize },
+}
+
+impl Display for BuiltinTypeCheckErrorKind {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            BuiltinTypeCheckErrorKind::WrongColumnCount { actual, asked_for } => {
+                write!(f, "wrong column count: the query requires {asked_for} columns, but {actual} were provided")
+            }
+        }
+    }
 }
 
 #[derive(Error, Debug)]
