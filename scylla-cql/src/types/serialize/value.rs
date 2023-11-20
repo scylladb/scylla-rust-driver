@@ -16,9 +16,13 @@ use chrono::{DateTime, NaiveDate, NaiveTime, Utc};
 use secrecy::{Secret, Zeroize};
 
 use crate::frame::response::result::{ColumnType, CqlValue};
+use crate::frame::types::vint_encode;
 use crate::frame::value::{
     Counter, CqlDate, CqlDuration, CqlTime, CqlTimestamp, MaybeUnset, Unset, Value,
 };
+
+#[cfg(feature = "chrono")]
+use crate::frame::value::ValueOverflow;
 
 use super::{CellValueBuilder, CellWriter, SerializationError};
 
@@ -137,37 +141,67 @@ impl SerializeCql for BigDecimal {
     });
 }
 impl SerializeCql for CqlDate {
-    fallback_impl_contents!();
+    impl_exact_preliminary_type_check!(Date);
+    impl_serialize_via_writer!(|me, writer| {
+        writer.set_value(me.0.to_be_bytes().as_slice()).unwrap()
+    });
 }
 impl SerializeCql for CqlTimestamp {
-    fallback_impl_contents!();
+    impl_exact_preliminary_type_check!(Timestamp);
+    impl_serialize_via_writer!(|me, writer| {
+        writer.set_value(me.0.to_be_bytes().as_slice()).unwrap()
+    });
 }
 impl SerializeCql for CqlTime {
-    fallback_impl_contents!();
+    impl_exact_preliminary_type_check!(Time);
+    impl_serialize_via_writer!(|me, writer| {
+        writer.set_value(me.0.to_be_bytes().as_slice()).unwrap()
+    });
 }
 #[cfg(feature = "chrono")]
 impl SerializeCql for NaiveDate {
-    fallback_impl_contents!();
+    impl_exact_preliminary_type_check!(Date);
+    impl_serialize_via_writer!(|me, typ, writer| {
+        <CqlDate as SerializeCql>::serialize(&(*me).into(), typ, writer)?
+    });
 }
 #[cfg(feature = "chrono")]
 impl SerializeCql for DateTime<Utc> {
-    fallback_impl_contents!();
+    impl_exact_preliminary_type_check!(Timestamp);
+    impl_serialize_via_writer!(|me, typ, writer| {
+        <CqlTimestamp as SerializeCql>::serialize(&(*me).into(), typ, writer)?
+    });
 }
 #[cfg(feature = "chrono")]
 impl SerializeCql for NaiveTime {
-    fallback_impl_contents!();
+    impl_exact_preliminary_type_check!(Time);
+    impl_serialize_via_writer!(|me, typ, writer| {
+        let cql_time = CqlTime::try_from(*me).map_err(|_: ValueOverflow| {
+            mk_ser_err::<Self>(typ, BuiltinSerializationErrorKind::ValueOverflow)
+        })?;
+        <CqlTime as SerializeCql>::serialize(&cql_time, typ, writer)?
+    });
 }
 #[cfg(feature = "chrono")]
 impl SerializeCql for time::Date {
-    fallback_impl_contents!();
+    impl_exact_preliminary_type_check!(Date);
+    impl_serialize_via_writer!(|me, typ, writer| {
+        <CqlDate as SerializeCql>::serialize(&(*me).into(), typ, writer)?
+    });
 }
 #[cfg(feature = "chrono")]
 impl SerializeCql for time::OffsetDateTime {
-    fallback_impl_contents!();
+    impl_exact_preliminary_type_check!(Timestamp);
+    impl_serialize_via_writer!(|me, typ, writer| {
+        <CqlTimestamp as SerializeCql>::serialize(&(*me).into(), typ, writer)?
+    });
 }
 #[cfg(feature = "chrono")]
 impl SerializeCql for time::Time {
-    fallback_impl_contents!();
+    impl_exact_preliminary_type_check!(Time);
+    impl_serialize_via_writer!(|me, typ, writer| {
+        <CqlTime as SerializeCql>::serialize(&(*me).into(), typ, writer)?
+    });
 }
 #[cfg(feature = "secret")]
 impl<V: Value + Zeroize> SerializeCql for Secret<V> {
@@ -262,7 +296,15 @@ impl SerializeCql for Counter {
     });
 }
 impl SerializeCql for CqlDuration {
-    fallback_impl_contents!();
+    impl_exact_preliminary_type_check!(Duration);
+    impl_serialize_via_writer!(|me, writer| {
+        // TODO: adjust vint_encode to use CellValueBuilder or something like that
+        let mut buf = Vec::with_capacity(27); // worst case size is 27
+        vint_encode(me.months as i64, &mut buf);
+        vint_encode(me.days as i64, &mut buf);
+        vint_encode(me.nanoseconds, &mut buf);
+        writer.set_value(buf.as_slice()).unwrap()
+    });
 }
 impl<V: Value> SerializeCql for MaybeUnset<V> {
     fallback_impl_contents!();
