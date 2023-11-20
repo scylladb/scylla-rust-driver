@@ -31,3 +31,5 @@ rand = "0.8.5"
 assert_matches = "1.5.0"
 ntest = "0.9.0"
 tracing-subscriber = { version = "0.3.14", features = ["env-filter"] }
+tokio = { version = "1.12", features = ["signal"] }
+
