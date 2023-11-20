@@ -1,4 +1,5 @@
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
+use std::fmt::Display;
 use std::hash::BuildHasher;
 use std::net::IpAddr;
 use std::sync::Arc;
@@ -69,17 +70,56 @@ macro_rules! fallback_tuples {
     };
 }
 
+macro_rules! impl_exact_preliminary_type_check {
+    ($($cql:tt),*) => {
+        fn preliminary_type_check(typ: &ColumnType) -> Result<(), SerializationError> {
+            match typ {
+                $(ColumnType::$cql)|* => Ok(()),
+                _ => Err(mk_typck_err::<Self>(
+                    typ,
+                    BuiltinTypeCheckErrorKind::MismatchedType {
+                        expected: &[$(ColumnType::$cql),*],
+                    }
+                ))
+            }
+        }
+    };
+}
+
+macro_rules! impl_serialize_via_writer {
+    (|$me:ident, $writer:ident| $e:expr) => {
+        impl_serialize_via_writer!(|$me, _typ, $writer| $e);
+    };
+    (|$me:ident, $typ:ident, $writer:ident| $e:expr) => {
+        fn serialize<W: CellWriter>(
+            &self,
+            typ: &ColumnType,
+            writer: W,
+        ) -> Result<W::WrittenCellProof, SerializationError> {
+            let $writer = writer;
+            let $typ = typ;
+            let $me = self;
+            let proof = $e;
+            Ok(proof)
+        }
+    };
+}
+
 impl SerializeCql for i8 {
-    fallback_impl_contents!();
+    impl_exact_preliminary_type_check!(TinyInt);
+    impl_serialize_via_writer!(|me, writer| writer.set_value(me.to_be_bytes().as_slice()).unwrap());
 }
 impl SerializeCql for i16 {
-    fallback_impl_contents!();
+    impl_exact_preliminary_type_check!(SmallInt);
+    impl_serialize_via_writer!(|me, writer| writer.set_value(me.to_be_bytes().as_slice()).unwrap());
 }
 impl SerializeCql for i32 {
-    fallback_impl_contents!();
+    impl_exact_preliminary_type_check!(Int);
+    impl_serialize_via_writer!(|me, writer| writer.set_value(me.to_be_bytes().as_slice()).unwrap());
 }
 impl SerializeCql for i64 {
-    fallback_impl_contents!();
+    impl_exact_preliminary_type_check!(BigInt);
+    impl_serialize_via_writer!(|me, writer| writer.set_value(me.to_be_bytes().as_slice()).unwrap());
 }
 impl SerializeCql for BigDecimal {
     fallback_impl_contents!();
@@ -122,13 +162,16 @@ impl<V: Value + Zeroize> SerializeCql for Secret<V> {
     fallback_impl_contents!();
 }
 impl SerializeCql for bool {
-    fallback_impl_contents!();
+    impl_exact_preliminary_type_check!(Boolean);
+    impl_serialize_via_writer!(|me, writer| writer.set_value(&[*me as u8]).unwrap());
 }
 impl SerializeCql for f32 {
-    fallback_impl_contents!();
+    impl_exact_preliminary_type_check!(Float);
+    impl_serialize_via_writer!(|me, writer| writer.set_value(me.to_be_bytes().as_slice()).unwrap());
 }
 impl SerializeCql for f64 {
-    fallback_impl_contents!();
+    impl_exact_preliminary_type_check!(Double);
+    impl_serialize_via_writer!(|me, writer| writer.set_value(me.to_be_bytes().as_slice()).unwrap());
 }
 impl SerializeCql for Uuid {
     fallback_impl_contents!();
@@ -161,7 +204,10 @@ impl SerializeCql for Unset {
     fallback_impl_contents!();
 }
 impl SerializeCql for Counter {
-    fallback_impl_contents!();
+    impl_exact_preliminary_type_check!(Counter);
+    impl_serialize_via_writer!(|me, writer| {
+        writer.set_value(me.0.to_be_bytes().as_slice()).unwrap()
+    });
 }
 impl SerializeCql for CqlDuration {
     fallback_impl_contents!();
@@ -235,6 +281,57 @@ pub fn serialize_legacy_value<T: Value, W: CellWriter>(
         _ => Err(SerializationError(Arc::new(
             ValueToSerializeCqlAdapterError::InvalidDeclaredSize { size: len },
         ))),
+    }
+}
+
+/// Type checking of one of the built-in types failed.
+#[derive(Debug, Error, Clone)]
+#[error("Failed to type check Rust type {rust_name} against CQL type {got:?}: {kind}")]
+pub struct BuiltinTypeCheckError {
+    /// Name of the Rust type being serialized.
+    pub rust_name: &'static str,
+
+    /// The CQL type that the Rust type was being serialized to.
+    pub got: ColumnType,
+
+    /// Detailed information about the failure.
+    pub kind: BuiltinTypeCheckErrorKind,
+}
+
+fn mk_typck_err<T>(
+    got: &ColumnType,
+    kind: impl Into<BuiltinTypeCheckErrorKind>,
+) -> SerializationError {
+    mk_typck_err_named(std::any::type_name::<T>(), got, kind)
+}
+
+fn mk_typck_err_named(
+    name: &'static str,
+    got: &ColumnType,
+    kind: impl Into<BuiltinTypeCheckErrorKind>,
+) -> SerializationError {
+    SerializationError::new(BuiltinTypeCheckError {
+        rust_name: name,
+        got: got.clone(),
+        kind: kind.into(),
+    })
+}
+
+/// Describes why type checking some of the built-in types has failed.
+#[derive(Debug, Clone)]
+#[non_exhaustive]
+pub enum BuiltinTypeCheckErrorKind {
+    /// Expected one from a list of particular types.
+    MismatchedType { expected: &'static [ColumnType] },
+}
+
+impl Display for BuiltinTypeCheckErrorKind {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            BuiltinTypeCheckErrorKind::MismatchedType { expected } => {
+                write!(f, "expected one of the CQL types: {expected:?}")
+            }
+        }
     }
 }
 
