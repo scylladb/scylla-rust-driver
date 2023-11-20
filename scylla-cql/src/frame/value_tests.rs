@@ -1,13 +1,18 @@
-use crate::frame::{types::RawValue, value::BatchValuesIterator};
+use crate::frame::{response::result::CqlValue, types::RawValue, value::BatchValuesIterator};
 use crate::types::serialize::value::SerializeCql;
 use crate::types::serialize::BufBackedCellWriter;
 
 use super::response::result::ColumnType;
 use super::value::{
-    BatchValues, CqlDate, CqlTime, CqlTimestamp, MaybeUnset, SerializeValuesError,
+    BatchValues, CqlDate, CqlDuration, CqlTime, CqlTimestamp, MaybeUnset, SerializeValuesError,
     SerializedValues, Unset, Value, ValueList, ValueTooBig,
 };
+use bigdecimal::BigDecimal;
 use bytes::BufMut;
+use num_bigint::BigInt;
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
+use std::hash::{BuildHasherDefault, Hasher};
+use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 use std::{borrow::Cow, convert::TryInto};
 use uuid::Uuid;
 
@@ -30,7 +35,13 @@ where
 }
 
 #[test]
-fn basic_serialization() {
+fn boolean_serialization() {
+    assert_eq!(serialized(true, ColumnType::Boolean), vec![0, 0, 0, 1, 1]);
+    assert_eq!(serialized(false, ColumnType::Boolean), vec![0, 0, 0, 1, 0]);
+}
+
+#[test]
+fn fixed_integral_serialization() {
     assert_eq!(serialized(8_i8, ColumnType::TinyInt), vec![0, 0, 0, 1, 8]);
     assert_eq!(
         serialized(16_i16, ColumnType::SmallInt),
@@ -44,7 +55,91 @@ fn basic_serialization() {
         serialized(64_i64, ColumnType::BigInt),
         vec![0, 0, 0, 8, 0, 0, 0, 0, 0, 0, 0, 64]
     );
+}
 
+#[test]
+fn counter_serialization() {
+    assert_eq!(
+        serialized(0x0123456789abcdef_i64, ColumnType::BigInt),
+        vec![0, 0, 0, 8, 0x01, 0x23, 0x45, 0x67, 0x89, 0xab, 0xcd, 0xef]
+    );
+}
+
+#[test]
+fn bigint_serialization() {
+    let cases_from_the_spec: &[(i64, Vec<u8>)] = &[
+        (0, vec![0x00]),
+        (1, vec![0x01]),
+        (127, vec![0x7F]),
+        (128, vec![0x00, 0x80]),
+        (129, vec![0x00, 0x81]),
+        (-1, vec![0xFF]),
+        (-128, vec![0x80]),
+        (-129, vec![0xFF, 0x7F]),
+    ];
+
+    for (i, b) in cases_from_the_spec {
+        let x = BigInt::from(*i);
+        let b_with_len = (b.len() as i32)
+            .to_be_bytes()
+            .iter()
+            .chain(b)
+            .cloned()
+            .collect::<Vec<_>>();
+        assert_eq!(serialized(x, ColumnType::Varint), b_with_len);
+    }
+}
+
+#[test]
+fn bigdecimal_serialization() {
+    // Bigint cases
+    let cases_from_the_spec: &[(i64, Vec<u8>)] = &[
+        (0, vec![0x00]),
+        (1, vec![0x01]),
+        (127, vec![0x7F]),
+        (128, vec![0x00, 0x80]),
+        (129, vec![0x00, 0x81]),
+        (-1, vec![0xFF]),
+        (-128, vec![0x80]),
+        (-129, vec![0xFF, 0x7F]),
+    ];
+
+    for exponent in -10_i32..10_i32 {
+        for (digits, serialized_digits) in cases_from_the_spec {
+            let repr = ((serialized_digits.len() + 4) as i32)
+                .to_be_bytes()
+                .iter()
+                .chain(&exponent.to_be_bytes())
+                .chain(serialized_digits)
+                .cloned()
+                .collect::<Vec<_>>();
+            let digits = BigInt::from(*digits);
+            let x = BigDecimal::new(digits, exponent as i64);
+            assert_eq!(serialized(x, ColumnType::Decimal), repr);
+        }
+    }
+}
+
+#[test]
+fn floating_point_serialization() {
+    assert_eq!(
+        serialized(123.456f32, ColumnType::Float),
+        [0, 0, 0, 4]
+            .into_iter()
+            .chain((123.456f32).to_be_bytes())
+            .collect::<Vec<_>>()
+    );
+    assert_eq!(
+        serialized(123.456f64, ColumnType::Double),
+        [0, 0, 0, 8]
+            .into_iter()
+            .chain((123.456f64).to_be_bytes())
+            .collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn text_serialization() {
     assert_eq!(
         serialized("abc", ColumnType::Text),
         vec![0, 0, 0, 3, 97, 98, 99]
@@ -82,6 +177,33 @@ fn cql_date_serialization() {
     assert_eq!(
         serialized(CqlDate(u32::MAX), ColumnType::Date),
         vec![0, 0, 0, 4, 255, 255, 255, 255]
+    );
+}
+
+#[test]
+fn vec_u8_slice_serialization() {
+    let val = vec![1u8, 1, 1, 1];
+    assert_eq!(
+        serialized(val, ColumnType::Blob),
+        vec![0, 0, 0, 4, 1, 1, 1, 1]
+    );
+}
+
+#[test]
+fn ipaddr_serialization() {
+    let ipv4 = IpAddr::V4(Ipv4Addr::new(1, 2, 3, 4));
+    assert_eq!(
+        serialized(ipv4, ColumnType::Inet),
+        vec![0, 0, 0, 4, 1, 2, 3, 4]
+    );
+
+    let ipv6 = IpAddr::V6(Ipv6Addr::new(1, 2, 3, 4, 5, 6, 7, 8));
+    assert_eq!(
+        serialized(ipv6, ColumnType::Inet),
+        vec![
+            0, 0, 0, 16, // serialized size
+            0, 1, 0, 2, 0, 3, 0, 4, 0, 5, 0, 6, 0, 7, 0, 8, // contents
+        ]
     );
 }
 
@@ -407,6 +529,228 @@ fn timeuuid_serialization() {
 
         assert_eq!(uuid_serialized, expected_serialized);
     }
+}
+
+#[test]
+fn cqlduration_serialization() {
+    let duration = CqlDuration {
+        months: 1,
+        days: 2,
+        nanoseconds: 3,
+    };
+    assert_eq!(
+        serialized(duration, ColumnType::Duration),
+        vec![0, 0, 0, 3, 2, 4, 6]
+    );
+}
+
+#[test]
+fn box_serialization() {
+    let x: Box<i32> = Box::new(123);
+    assert_eq!(
+        serialized(x, ColumnType::Int),
+        vec![0, 0, 0, 4, 0, 0, 0, 123]
+    );
+}
+
+#[test]
+fn vec_set_serialization() {
+    let m = vec!["ala", "ma", "kota"];
+    assert_eq!(
+        serialized(m, ColumnType::Set(Box::new(ColumnType::Text))),
+        vec![
+            0, 0, 0, 25, // 25 bytes
+            0, 0, 0, 3, // 3 items
+            0, 0, 0, 3, 97, 108, 97, // ala
+            0, 0, 0, 2, 109, 97, // ma
+            0, 0, 0, 4, 107, 111, 116, 97, // kota
+        ]
+    )
+}
+
+#[test]
+fn slice_set_serialization() {
+    let m = ["ala", "ma", "kota"];
+    assert_eq!(
+        serialized(m.as_ref(), ColumnType::Set(Box::new(ColumnType::Text))),
+        vec![
+            0, 0, 0, 25, // 25 bytes
+            0, 0, 0, 3, // 3 items
+            0, 0, 0, 3, 97, 108, 97, // ala
+            0, 0, 0, 2, 109, 97, // ma
+            0, 0, 0, 4, 107, 111, 116, 97, // kota
+        ]
+    )
+}
+
+// A deterministic hasher just for the tests.
+#[derive(Default)]
+struct DumbHasher {
+    state: u8,
+}
+
+impl Hasher for DumbHasher {
+    fn finish(&self) -> u64 {
+        self.state as u64
+    }
+
+    fn write(&mut self, bytes: &[u8]) {
+        for b in bytes {
+            self.state ^= b;
+        }
+    }
+}
+
+type DumbBuildHasher = BuildHasherDefault<DumbHasher>;
+
+#[test]
+fn hashset_serialization() {
+    let m: HashSet<&'static str, DumbBuildHasher> = ["ala", "ma", "kota"].into_iter().collect();
+    assert_eq!(
+        serialized(m, ColumnType::Set(Box::new(ColumnType::Text))),
+        vec![
+            0, 0, 0, 25, // 25 bytes
+            0, 0, 0, 3, // 3 items
+            0, 0, 0, 2, 109, 97, // ma
+            0, 0, 0, 4, 107, 111, 116, 97, // kota
+            0, 0, 0, 3, 97, 108, 97, // ala
+        ]
+    )
+}
+
+#[test]
+fn hashmap_serialization() {
+    let m: HashMap<&'static str, i32, DumbBuildHasher> =
+        [("ala", 1), ("ma", 2), ("kota", 3)].into_iter().collect();
+    assert_eq!(
+        serialized(
+            m,
+            ColumnType::Map(Box::new(ColumnType::Text), Box::new(ColumnType::Int))
+        ),
+        vec![
+            0, 0, 0, 49, // 49 bytes
+            0, 0, 0, 3, // 3 items
+            0, 0, 0, 2, 109, 97, // ma
+            0, 0, 0, 4, 0, 0, 0, 2, // 2
+            0, 0, 0, 4, 107, 111, 116, 97, // kota
+            0, 0, 0, 4, 0, 0, 0, 3, // 3
+            0, 0, 0, 3, 97, 108, 97, // ala
+            0, 0, 0, 4, 0, 0, 0, 1, // 1
+        ]
+    )
+}
+
+#[test]
+fn btreeset_serialization() {
+    let m: BTreeSet<&'static str> = ["ala", "ma", "kota"].into_iter().collect();
+    assert_eq!(
+        serialized(m, ColumnType::Set(Box::new(ColumnType::Text))),
+        vec![
+            0, 0, 0, 25, // 25 bytes
+            0, 0, 0, 3, // 3 items
+            0, 0, 0, 3, 97, 108, 97, // ala
+            0, 0, 0, 4, 107, 111, 116, 97, // kota
+            0, 0, 0, 2, 109, 97, // ma
+        ]
+    )
+}
+
+#[test]
+fn btreemap_serialization() {
+    let m: BTreeMap<&'static str, i32> = [("ala", 1), ("ma", 2), ("kota", 3)].into_iter().collect();
+    assert_eq!(
+        serialized(
+            m,
+            ColumnType::Map(Box::new(ColumnType::Text), Box::new(ColumnType::Int))
+        ),
+        vec![
+            0, 0, 0, 49, // 49 bytes
+            0, 0, 0, 3, // 3 items
+            0, 0, 0, 3, 97, 108, 97, // ala
+            0, 0, 0, 4, 0, 0, 0, 1, // 1
+            0, 0, 0, 4, 107, 111, 116, 97, // kota
+            0, 0, 0, 4, 0, 0, 0, 3, // 3
+            0, 0, 0, 2, 109, 97, // ma
+            0, 0, 0, 4, 0, 0, 0, 2, // 2
+        ]
+    )
+}
+
+#[test]
+fn cqlvalue_serialization() {
+    // We only check those variants here which have some custom logic,
+    // e.g. UDTs or tuples.
+
+    // Empty
+    assert_eq!(
+        serialized(CqlValue::Empty, ColumnType::Int),
+        vec![0, 0, 0, 0],
+    );
+
+    // UDTs
+    let udt = CqlValue::UserDefinedType {
+        keyspace: "ks".to_string(),
+        type_name: "t".to_string(),
+        fields: vec![
+            ("foo".to_string(), Some(CqlValue::Int(123))),
+            ("bar".to_string(), None),
+        ],
+    };
+    let typ = ColumnType::UserDefinedType {
+        type_name: "t".to_string(),
+        keyspace: "ks".to_string(),
+        field_types: vec![
+            ("foo".to_string(), ColumnType::Int),
+            ("bar".to_string(), ColumnType::Text),
+        ],
+    };
+
+    assert_eq!(
+        serialized(udt, typ.clone()),
+        vec![
+            0, 0, 0, 12, // size of the whole thing
+            0, 0, 0, 4, 0, 0, 0, 123, // foo: 123_i32
+            255, 255, 255, 255, // bar: null
+        ]
+    );
+
+    // Tuples
+    let tup = CqlValue::Tuple(vec![Some(CqlValue::Int(123)), None]);
+    let typ = ColumnType::Tuple(vec![ColumnType::Int, ColumnType::Text]);
+    assert_eq!(
+        serialized(tup, typ),
+        vec![
+            0, 0, 0, 12, // size of the whole thing
+            0, 0, 0, 4, 0, 0, 0, 123, // 123_i32
+            255, 255, 255, 255, // null
+        ]
+    );
+
+    // It's not required to specify all the values for the tuple,
+    // only some prefix is sufficient. The rest will be treated by the DB
+    // as nulls.
+    // TODO: Need a database test for that
+    let tup = CqlValue::Tuple(vec![Some(CqlValue::Int(123)), None]);
+    let typ = ColumnType::Tuple(vec![ColumnType::Int, ColumnType::Text, ColumnType::Counter]);
+    assert_eq!(
+        serialized(tup, typ),
+        vec![
+            0, 0, 0, 12, // size of the whole thing
+            0, 0, 0, 4, 0, 0, 0, 123, // 123_i32
+            255, 255, 255, 255, // null
+        ]
+    );
+}
+
+#[cfg(feature = "secret")]
+#[test]
+fn secret_serialization() {
+    use secrecy::Secret;
+    let secret = Secret::new(987654i32);
+    assert_eq!(
+        serialized(secret, ColumnType::Int),
+        vec![0, 0, 0, 4, 0x00, 0x0f, 0x12, 0x06]
+    );
 }
 
 #[test]
