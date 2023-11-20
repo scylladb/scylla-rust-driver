@@ -34,6 +34,13 @@ where
     result
 }
 
+fn serialized_only_new<T: SerializeCql>(val: T, typ: ColumnType) -> Vec<u8> {
+    let mut result: Vec<u8> = Vec::new();
+    let writer = BufBackedCellWriter::new(&mut result);
+    SerializeCql::serialize(&val, &typ, writer).unwrap();
+    result
+}
+
 #[test]
 fn boolean_serialization() {
     assert_eq!(serialized(true, ColumnType::Boolean), vec![0, 0, 0, 1, 1]);
@@ -707,6 +714,26 @@ fn cqlvalue_serialization() {
 
     assert_eq!(
         serialized(udt, typ.clone()),
+        vec![
+            0, 0, 0, 12, // size of the whole thing
+            0, 0, 0, 4, 0, 0, 0, 123, // foo: 123_i32
+            255, 255, 255, 255, // bar: null
+        ]
+    );
+
+    // Unlike the legacy Value trait, SerializeCql takes case of reordering
+    // the fields
+    let udt = CqlValue::UserDefinedType {
+        keyspace: "ks".to_string(),
+        type_name: "t".to_string(),
+        fields: vec![
+            ("bar".to_string(), None),
+            ("foo".to_string(), Some(CqlValue::Int(123))),
+        ],
+    };
+
+    assert_eq!(
+        serialized_only_new(udt, typ.clone()),
         vec![
             0, 0, 0, 12, // size of the whole thing
             0, 0, 0, 4, 0, 0, 0, 123, // foo: 123_i32
