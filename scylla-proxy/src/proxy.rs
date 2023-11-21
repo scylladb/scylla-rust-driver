@@ -10,7 +10,7 @@ use std::collections::HashMap;
 use std::fmt::Display;
 use std::future::Future;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
-use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::net::{TcpListener, TcpSocket, TcpStream};
@@ -631,6 +631,7 @@ impl Doorkeeper {
         let (tx_response, rx_response) = mpsc::unbounded_channel::<ResponseFrame>();
         let (tx_cluster, rx_cluster) = mpsc::unbounded_channel::<RequestFrame>();
         let (tx_driver, rx_driver) = mpsc::unbounded_channel::<ResponseFrame>();
+        let event_register_flag = Arc::new(AtomicBool::new(false));
 
         tokio::task::spawn(new_worker().receiver_from_driver(driver_read, tx_request));
         tokio::task::spawn(new_worker().sender_to_driver(
@@ -646,6 +647,7 @@ impl Doorkeeper {
             connection_no,
             self.node.request_rules().clone(),
             connection_close_tx.clone(),
+            event_register_flag.clone(),
         ));
         if let InternalNode::Real {
             ref response_rules, ..
@@ -666,6 +668,7 @@ impl Doorkeeper {
                 connection_no,
                 response_rules.clone(),
                 connection_close_tx.clone(),
+                event_register_flag.clone(),
             ));
         }
         debug!(
@@ -1052,6 +1055,7 @@ impl ProxyWorker {
         .await;
     }
 
+    #[allow(clippy::too_many_arguments)]
     async fn request_processor(
         self,
         mut requests_rx: mpsc::UnboundedReceiver<RequestFrame>,
@@ -1060,16 +1064,21 @@ impl ProxyWorker {
         connection_no: usize,
         request_rules: Arc<Mutex<Vec<RequestRule>>>,
         connection_close_signaler: ConnectionCloseSignaler,
+        event_registered_flag: Arc<AtomicBool>,
     ) {
         let shard = self.shard;
         self.run_until_interrupted("request_processor", |driver_addr, _, real_addr| async move {
             'mainloop: loop {
                 match requests_rx.recv().await {
                     Some(request) => {
+                        if request.opcode == RequestOpcode::Register {
+                            event_registered_flag.store(true, Ordering::Relaxed);
+                        }
                         let ctx = EvaluationContext {
                             connection_seq_no: connection_no,
                             opcode: FrameOpcode::Request(request.opcode),
                             frame_body: request.body.clone(),
+                            connection_has_events: event_registered_flag.load(Ordering::Relaxed),
                         };
                         let mut guard = request_rules.lock().unwrap();
                         '_ruleloop: for (i, request_rule) in guard.iter_mut().enumerate() {
@@ -1155,6 +1164,7 @@ impl ProxyWorker {
         .await;
     }
 
+    #[allow(clippy::too_many_arguments)]
     async fn response_processor(
         self,
         mut responses_rx: mpsc::UnboundedReceiver<ResponseFrame>,
@@ -1163,6 +1173,7 @@ impl ProxyWorker {
         connection_no: usize,
         response_rules: Arc<Mutex<Vec<ResponseRule>>>,
         connection_close_signaler: ConnectionCloseSignaler,
+        event_registered_flag: Arc<AtomicBool>,
     ) {
         let shard = self.shard;
         self.run_until_interrupted("request_processor", |driver_addr, _, real_addr| async move {
@@ -1173,6 +1184,7 @@ impl ProxyWorker {
                             connection_seq_no: connection_no,
                             opcode: FrameOpcode::Response(response.opcode),
                             frame_body: response.body.clone(),
+                            connection_has_events: event_registered_flag.load(Ordering::Relaxed),
                         };
                         let mut guard = response_rules.lock().unwrap();
                         '_ruleloop: for (i, response_rule) in guard.iter_mut().enumerate() {
@@ -1281,7 +1293,7 @@ pub fn get_exclusive_local_address() -> IpAddr {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::frame::read_request_frame;
+    use crate::frame::{read_frame, read_request_frame, FrameType};
     use crate::{Condition, Reaction as _, RequestReaction, ResponseOpcode, ResponseReaction};
     use assert_matches::assert_matches;
     use bytes::{BufMut, BytesMut};
@@ -2338,5 +2350,125 @@ mod tests {
 
             running_proxy.finish().await.unwrap();
         }
+    }
+
+    #[tokio::test]
+    #[ntest::timeout(1000)]
+    async fn proxy_ignores_control_connection_messages() {
+        let node1_real_addr = next_local_address_with_port(9876);
+        let node1_proxy_addr = next_local_address_with_port(9876);
+
+        let (request_feedback_tx, mut request_feedback_rx) = mpsc::unbounded_channel();
+        let (response_feedback_tx, mut response_feedback_rx) = mpsc::unbounded_channel();
+        let proxy = Proxy::new([Node::new(
+            node1_real_addr,
+            node1_proxy_addr,
+            ShardAwareness::Unaware,
+            Some(vec![RequestRule(
+                Condition::not(Condition::ConnectionRegisteredAnyEvent),
+                RequestReaction::noop().with_feedback_when_performed(request_feedback_tx),
+            )]),
+            Some(vec![ResponseRule(
+                Condition::not(Condition::ConnectionRegisteredAnyEvent),
+                ResponseReaction::noop().with_feedback_when_performed(response_feedback_tx),
+            )]),
+        )]);
+        let running_proxy = proxy.run().await.unwrap();
+
+        let mock_node_listener = TcpListener::bind(node1_real_addr).await.unwrap();
+
+        let (mut client_socket, mut server_socket) = join(
+            async { TcpStream::connect(node1_proxy_addr).await.unwrap() },
+            async { mock_node_listener.accept().await.unwrap().0 },
+        )
+        .await;
+
+        async fn perform_reqest_response<'a>(
+            req_opcode: RequestOpcode,
+            resp_opcode: ResponseOpcode,
+            client_socket_ref: &'a mut TcpStream,
+            server_socket_ref: &'a mut TcpStream,
+            body_base: &'a str,
+        ) {
+            let params = FrameParams {
+                flags: 0,
+                version: 0x04,
+                stream: 0,
+            };
+
+            write_frame(
+                params,
+                FrameOpcode::Request(req_opcode),
+                &(body_base.to_string() + "|request|").into(),
+                client_socket_ref,
+            )
+            .await
+            .unwrap();
+
+            let received_request = read_frame(server_socket_ref, FrameType::Request)
+                .await
+                .unwrap();
+            assert_eq!(received_request.1, FrameOpcode::Request(req_opcode));
+
+            write_frame(
+                params.for_response(),
+                FrameOpcode::Response(resp_opcode),
+                &(body_base.to_string() + "|response|").into(),
+                server_socket_ref,
+            )
+            .await
+            .unwrap();
+
+            let received_response = read_frame(client_socket_ref, FrameType::Response)
+                .await
+                .unwrap();
+            assert_eq!(received_response.1, FrameOpcode::Response(resp_opcode));
+        }
+
+        // Messages before REGISTER should be fed back to channels
+        for i in 0..5 {
+            perform_reqest_response(
+                RequestOpcode::Query,
+                ResponseOpcode::Result,
+                &mut client_socket,
+                &mut server_socket,
+                &format!("message_before_{i}"),
+            )
+            .await
+        }
+
+        perform_reqest_response(
+            RequestOpcode::Register,
+            ResponseOpcode::Result,
+            &mut client_socket,
+            &mut server_socket,
+            "message_register",
+        )
+        .await;
+
+        // Messages after REGISTER should be passed trough without feedback
+        for i in 0..5 {
+            perform_reqest_response(
+                RequestOpcode::Query,
+                ResponseOpcode::Result,
+                &mut client_socket,
+                &mut server_socket,
+                &format!("message_after_{i}"),
+            )
+            .await
+        }
+
+        running_proxy.finish().await.unwrap();
+
+        for _ in 0..5 {
+            let (feedback_request, _shard) = request_feedback_rx.recv().await.unwrap();
+            assert_eq!(feedback_request.opcode, RequestOpcode::Query);
+            let (feedback_response, _shard) = response_feedback_rx.recv().await.unwrap();
+            assert_eq!(feedback_response.opcode, ResponseOpcode::Result);
+        }
+
+        // Response to REGISTER and further requests / responses should be ignored
+        let _ = request_feedback_rx.try_recv().unwrap_err();
+        let _ = response_feedback_rx.try_recv().unwrap_err();
     }
 }

@@ -48,11 +48,15 @@ pub enum Condition {
 
     /// True for predefined number of evaluations, then always false.
     TrueForLimitedTimes(usize),
+
+    // True if any REGISTER was sent on this connection. Useful to filter out control connection messages.
+    ConnectionRegisteredAnyEvent,
 }
 
 /// The context in which [`Conditions`](Condition) are evaluated.
 pub(crate) struct EvaluationContext {
     pub(crate) connection_seq_no: usize,
+    pub(crate) connection_has_events: bool,
     pub(crate) opcode: FrameOpcode,
     pub(crate) frame_body: Bytes,
 }
@@ -110,7 +114,9 @@ impl Condition {
                     *times -= 1;
                 }
                 val
-            }
+            },
+
+            Condition::ConnectionRegisteredAnyEvent => ctx.connection_has_events
         }
     }
 
@@ -725,6 +731,7 @@ fn condition_case_insensitive_matching() {
         connection_seq_no: 42,
         opcode: FrameOpcode::Request(RequestOpcode::Options),
         frame_body: Bytes::from_static(b"\0\0x{0x223}Cassandra'sINEFFICIENCY\x12\x31"),
+        connection_has_events: false,
     };
 
     assert!(condition_matching.eval(&ctx));

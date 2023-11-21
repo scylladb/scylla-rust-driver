@@ -23,7 +23,7 @@ async fn test_consistent_shard_awareness() {
         }).unzip();
         for (i, tx) in feedback_txs.iter().cloned().enumerate() {
             running_proxy.running_nodes[i].change_request_rules(Some(vec![
-                RequestRule(Condition::RequestOpcode(RequestOpcode::Execute), RequestReaction::noop().with_feedback_when_performed(tx))
+                RequestRule(Condition::RequestOpcode(RequestOpcode::Execute).and(Condition::not(Condition::ConnectionRegisteredAnyEvent)), RequestReaction::noop().with_feedback_when_performed(tx))
             ]));
         }
 
