@@ -49,14 +49,14 @@ pub fn serialize_legacy_value<T: Value, W: CellWriter>(
 ) -> Result<W::WrittenCellProof, SerializationError> {
     // It's an inefficient and slightly tricky but correct implementation.
     let mut buf = Vec::new();
-    <T as Value>::serialize(v, &mut buf).map_err(|err| Arc::new(err) as SerializationError)?;
+    <T as Value>::serialize(v, &mut buf).map_err(|err| SerializationError(Arc::new(err)))?;
 
     // Analyze the output.
     // All this dance shows how unsafe our previous interface was...
     if buf.len() < 4 {
-        return Err(Arc::new(ValueToSerializeCqlAdapterError::TooShort {
-            size: buf.len(),
-        }));
+        return Err(SerializationError(Arc::new(
+            ValueToSerializeCqlAdapterError::TooShort { size: buf.len() },
+        )));
     }
 
     let (len_bytes, contents) = buf.split_at(4);
@@ -66,19 +66,19 @@ pub fn serialize_legacy_value<T: Value, W: CellWriter>(
         -1 => Ok(writer.set_null()),
         len if len >= 0 => {
             if contents.len() != len as usize {
-                Err(Arc::new(
+                Err(SerializationError(Arc::new(
                     ValueToSerializeCqlAdapterError::DeclaredVsActualSizeMismatch {
                         declared: len as usize,
                         actual: contents.len(),
                     },
-                ))
+                )))
             } else {
                 Ok(writer.set_value(contents))
             }
         }
-        _ => Err(Arc::new(
+        _ => Err(SerializationError(Arc::new(
             ValueToSerializeCqlAdapterError::InvalidDeclaredSize { size: len },
-        )),
+        ))),
     }
 }
 
