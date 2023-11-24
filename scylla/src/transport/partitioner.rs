@@ -1,4 +1,5 @@
 use bytes::Buf;
+use scylla_cql::frame::types::RawValue;
 use std::num::Wrapping;
 
 use crate::{
@@ -343,11 +344,14 @@ pub fn calculate_token_for_partition_key<P: Partitioner>(
 
     if serialized_partition_key_values.len() == 1 {
         let val = serialized_partition_key_values.iter().next().unwrap();
-        if let Some(val) = val {
+        if let RawValue::Value(val) = val {
             partitioner_hasher.write(val);
         }
     } else {
-        for val in serialized_partition_key_values.iter().flatten() {
+        for val in serialized_partition_key_values
+            .iter()
+            .filter_map(|rv| rv.as_value())
+        {
             let val_len_u16: u16 = val
                 .len()
                 .try_into()
