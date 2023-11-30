@@ -79,7 +79,9 @@ pub fn serialize_legacy_row<T: ValueList>(
         let _proof = match value {
             RawValue::Null => cell_writer.set_null(),
             RawValue::Unset => cell_writer.set_unset(),
-            RawValue::Value(v) => cell_writer.set_value(v),
+            // The unwrap below will succeed because the value was successfully
+            // deserialized from the CQL format, so it must have
+            RawValue::Value(v) => cell_writer.set_value(v).unwrap(),
         };
     };
 

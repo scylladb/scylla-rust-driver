@@ -73,7 +73,7 @@ pub fn serialize_legacy_value<T: Value, W: CellWriter>(
                     },
                 )))
             } else {
-                Ok(writer.set_value(contents))
+                Ok(writer.set_value(contents).unwrap()) // len <= i32::MAX, so unwrap will succeed
             }
         }
         _ => Err(SerializationError(Arc::new(
