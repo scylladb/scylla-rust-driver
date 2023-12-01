@@ -72,7 +72,7 @@ pub fn serialize_legacy_row<T: ValueList>(
     writer: &mut impl RowWriter,
 ) -> Result<(), SerializationError> {
     let serialized =
-        <T as ValueList>::serialized(r).map_err(|err| Arc::new(err) as SerializationError)?;
+        <T as ValueList>::serialized(r).map_err(|err| SerializationError(Arc::new(err)))?;
 
     let mut append_value = |value: RawValue| {
         let cell_writer = writer.make_cell_writer();
@@ -93,9 +93,11 @@ pub fn serialize_legacy_row<T: ValueList>(
 
         for col in ctx.columns() {
             let val = values_by_name.get(col.name.as_str()).ok_or_else(|| {
-                Arc::new(ValueListToSerializeRowAdapterError::NoBindMarkerWithName {
-                    name: col.name.clone(),
-                }) as SerializationError
+                SerializationError(Arc::new(
+                    ValueListToSerializeRowAdapterError::NoBindMarkerWithName {
+                        name: col.name.clone(),
+                    },
+                ))
             })?;
             append_value(*val);
         }
