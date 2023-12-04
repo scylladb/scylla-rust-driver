@@ -359,6 +359,97 @@ impl_tuples!(
     16
 );
 
+/// Implements the [`SerializeRow`] trait for a type, provided that the type
+/// already implements the legacy
+/// [`ValueList`](crate::frame::value::ValueList) trait.
+///
+/// # Note
+///
+/// The translation from one trait to another encounters a performance penalty
+/// and does not utilize the stronger guarantees of `SerializeRow`. Before
+/// resorting to this macro, you should consider other options instead:
+///
+/// - If the impl was generated using the `ValueList` procedural macro, you
+///   should switch to the `SerializeRow` procedural macro. *The new macro
+///   behaves differently by default, so please read its documentation first!*
+/// - If the impl was written by hand, it is still preferable to rewrite it
+///   manually. You have an opportunity to make your serialization logic
+///   type-safe and potentially improve performance.
+///
+/// Basically, you should consider using the macro if you have a hand-written
+/// impl and the moment it is not easy/not desirable to rewrite it.
+///
+/// # Example
+///
+/// ```rust
+/// # use std::borrow::Cow;
+/// # use scylla_cql::frame::value::{Value, ValueList, SerializedResult, SerializedValues};
+/// # use scylla_cql::impl_serialize_row_via_value_list;
+/// struct NoGenerics {}
+/// impl ValueList for NoGenerics {
+///     fn serialized(&self) -> SerializedResult<'_> {
+///         ().serialized()
+///     }
+/// }
+/// impl_serialize_row_via_value_list!(NoGenerics);
+///
+/// // Generic types are also supported. You must specify the bounds if the
+/// // struct/enum contains any.
+/// struct WithGenerics<T, U: Clone>(T, U);
+/// impl<T: Value, U: Clone + Value> ValueList for WithGenerics<T, U> {
+///     fn serialized(&self) -> SerializedResult<'_> {
+///         let mut values = SerializedValues::new();
+///         values.add_value(&self.0);
+///         values.add_value(&self.1.clone());
+///         Ok(Cow::Owned(values))
+///     }
+/// }
+/// impl_serialize_row_via_value_list!(WithGenerics<T, U: Clone>);
+/// ```
+#[macro_export]
+macro_rules! impl_serialize_row_via_value_list {
+    ($t:ident$(<$($targ:tt $(: $tbound:tt)?),*>)?) => {
+        impl $(<$($targ $(: $tbound)?),*>)? $crate::types::serialize::row::SerializeRow
+        for $t$(<$($targ),*>)?
+        where
+            Self: $crate::frame::value::ValueList,
+        {
+            fn preliminary_type_check(
+                _ctx: &$crate::types::serialize::row::RowSerializationContext<'_>,
+            ) -> ::std::result::Result<(), $crate::types::serialize::SerializationError> {
+                // No-op - the old interface didn't offer type safety
+                ::std::result::Result::Ok(())
+            }
+
+            fn serialize<W: $crate::types::serialize::writers::RowWriter>(
+                &self,
+                ctx: &$crate::types::serialize::row::RowSerializationContext<'_>,
+                writer: &mut W,
+            ) -> ::std::result::Result<(), $crate::types::serialize::SerializationError> {
+                $crate::types::serialize::row::serialize_legacy_row(self, ctx, writer)
+            }
+        }
+    };
+}
+
+/// Serializes an object implementing [`ValueList`] by using the [`RowWriter`]
+/// interface.
+///
+/// The function first serializes the value with [`ValueList::serialized`], then
+/// parses the result and serializes it again with given `RowWriter`. In case
+/// or serialized values with names, they are converted to serialized values
+/// without names, based on the information about the bind markers provided
+/// in the [`RowSerializationContext`].
+///
+/// It is a lazy and inefficient way to implement `RowWriter` via an existing
+/// `ValueList` impl.
+///
+/// Returns an error if `ValueList::serialized` call failed or, in case of
+/// named serialized values, some bind markers couldn't be matched to a
+/// named value.
+///
+/// See [`impl_serialize_row_via_value_list`] which generates a boilerplate
+/// [`SerializeRow`] implementation that uses this function.
 pub fn serialize_legacy_row<T: ValueList>(
     r: &T,
     ctx: &RowSerializationContext<'_>,

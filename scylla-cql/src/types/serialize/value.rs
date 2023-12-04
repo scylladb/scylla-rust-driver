@@ -983,6 +983,92 @@ fn serialize_mapping<'t, K: SerializeCql + 't, V: SerializeCql + 't, W: CellWrit
         .map_err(|_| mk_ser_err_named(rust_name, typ, BuiltinSerializationErrorKind::SizeOverflow))
 }
 
+/// Implements the [`SerializeCql`] trait for a type, provided that the type
+/// already implements the legacy [`Value`](crate::frame::value::Value) trait.
+///
+/// # Note
+///
+/// The translation from one trait to another encounters a performance penalty
+/// and does not utilize the stronger guarantees of `SerializeCql`. Before
+/// resorting to this macro, you should consider other options instead:
+///
+/// - If the impl was generated using the `Value` procedural macro, you should
+///   switch to the `SerializeCql` procedural macro. *The new macro behaves
+///   differently by default, so please read its documentation first!*
+/// - If the impl was written by hand, it is still preferable to rewrite it
+///   manually. You have an opportunity to make your serialization logic
+///   type-safe and potentially improve performance.
+///
+/// Basically, you should consider using the macro if you have a hand-written
+/// impl and the moment it is not easy/not desirable to rewrite it.
+///
+/// # Example
+///
+/// ```rust
+/// # use scylla_cql::frame::value::{Value, ValueTooBig};
+/// # use scylla_cql::impl_serialize_cql_via_value;
+/// struct NoGenerics {}
+/// impl Value for NoGenerics {
+///     fn serialize(&self, _buf: &mut Vec<u8>) -> Result<(), ValueTooBig> {
+///         Ok(())
+///     }
+/// }
+/// impl_serialize_cql_via_value!(NoGenerics);
+///
+/// // Generic types are also supported. You must specify the bounds if the
+/// // struct/enum contains any.
+/// struct WithGenerics<T, U: Clone>(T, U);
+/// impl<T: Value, U: Clone + Value> Value for WithGenerics<T, U> {
+///     fn serialize(&self, buf: &mut Vec<u8>) -> Result<(), ValueTooBig> {
+///         self.0.serialize(buf)?;
+///         self.1.clone().serialize(buf)?;
+///         Ok(())
+///     }
+/// }
+/// impl_serialize_cql_via_value!(WithGenerics<T, U: Clone>);
+/// ```
+#[macro_export]
+macro_rules! impl_serialize_cql_via_value {
+    ($t:ident$(<$($targ:tt $(: $tbound:tt)?),*>)?) => {
+        impl $(<$($targ $(: $tbound)?),*>)? $crate::types::serialize::value::SerializeCql
+        for $t$(<$($targ),*>)?
+        where
+            Self: $crate::frame::value::Value,
+        {
+            fn preliminary_type_check(
+                _typ: &$crate::frame::response::result::ColumnType,
+            ) -> ::std::result::Result<(), $crate::types::serialize::SerializationError> {
+                // No-op - the old interface didn't offer type safety
+                ::std::result::Result::Ok(())
+            }
+
+            fn serialize<W: $crate::types::serialize::writers::CellWriter>(
+                &self,
+                _typ: &$crate::frame::response::result::ColumnType,
+                writer: W,
+            ) -> ::std::result::Result<
+                W::WrittenCellProof,
+                $crate::types::serialize::SerializationError,
+            > {
+                $crate::types::serialize::value::serialize_legacy_value(self, writer)
+            }
+        }
+    };
+}
+
+/// Serializes a value implementing [`Value`] by using the [`CellWriter`]
+/// interface.
+///
+/// The function first serializes the value with [`Value::serialize`], then
+/// parses the result and serializes it again with given `CellWriter`. It is
+/// a lazy and inefficient way to implement `CellWriter` via an existing `Value`
+/// impl.
+///
+/// Returns an error if the result of the `Value::serialize` call was not
+/// a properly encoded `[value]` as defined in the CQL protocol spec.
+///
+/// See [`impl_serialize_cql_via_value`] which generates a boilerplate
+/// [`SerializeCql`] implementation that uses this function.
 pub fn serialize_legacy_value<T: Value, W: CellWriter>(
     v: &T,
     writer: W,
