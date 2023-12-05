@@ -19,7 +19,7 @@ async fn main() {
         .await
         .unwrap();
 
-    #[derive(scylla::ValueList)]
+    #[derive(scylla::SerializeRow)]
     struct MyType<'a> {
         k: i32,
         my: Option<&'a str>,
@@ -36,7 +36,7 @@ async fn main() {
         .unwrap();
 
     // You can also use type generics:
-    #[derive(scylla::ValueList)]
+    #[derive(scylla::SerializeRow)]
     struct MyTypeWithGenerics<S: scylla::frame::value::Value> {
         k: i32,
         my: Option<S>,
