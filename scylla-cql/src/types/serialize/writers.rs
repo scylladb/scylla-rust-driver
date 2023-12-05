@@ -1,5 +1,7 @@
 //! Contains types and traits used for safe serialization of values for a CQL statement.
 
+use thiserror::Error;
+
 /// An interface that facilitates writing values for a CQL query.
 pub trait RowWriter {
     type CellWriter<'a>: CellWriter
@@ -62,7 +64,10 @@ pub trait CellWriter {
     /// Prefer this to [`into_value_builder`](CellWriter::into_value_builder)
     /// if you have all of the contents of the value ready up front (e.g. for
     /// fixed size types).
-    fn set_value(self, contents: &[u8]) -> Self::WrittenCellProof;
+    ///
+    /// Fails if the contents size overflows the maximum allowed CQL cell size
+    /// (which is i32::MAX).
+    fn set_value(self, contents: &[u8]) -> Result<Self::WrittenCellProof, CellOverflowError>;
 
     /// Turns this writter into a [`CellValueBuilder`] which can be used
     /// to gradually initialize the CQL value.
@@ -94,8 +99,16 @@ pub trait CellValueBuilder {
     fn make_sub_writer(&mut self) -> Self::SubCellWriter<'_>;
 
     /// Finishes serializing the value.
-    fn finish(self) -> Self::WrittenCellProof;
+    ///
+    /// Fails if the constructed cell size overflows the maximum allowed
+    /// CQL cell size (which is i32::MAX).
+    fn finish(self) -> Result<Self::WrittenCellProof, CellOverflowError>;
 }
+
+/// There was an attempt to produce a CQL value over the maximum size limit (i32::MAX)
+#[derive(Debug, Clone, Copy, Error)]
+#[error("CQL cell overflowed the maximum allowed size of 2^31 - 1")]
+pub struct CellOverflowError;
 
 /// A row writer backed by a buffer (vec).
 pub struct BufBackedRowWriter<'buf> {
@@ -103,7 +116,7 @@ pub struct BufBackedRowWriter<'buf> {
     buf: &'buf mut Vec<u8>,
 
     // Number of values written so far.
-    value_count: u16,
+    value_count: usize,
 }
 
 impl<'buf> BufBackedRowWriter<'buf> {
@@ -119,8 +132,11 @@ impl<'buf> BufBackedRowWriter<'buf> {
     }
 
     /// Returns the number of values that were written so far.
+    ///
+    /// Note that the protocol allows at most u16::MAX to be written into a query,
+    /// but the writer's interface allows more to be written.
     #[inline]
-    pub fn value_count(&self) -> u16 {
+    pub fn value_count(&self) -> usize {
         self.value_count
     }
 }
@@ -130,10 +146,7 @@ impl<'buf> RowWriter for BufBackedRowWriter<'buf> {
 
     #[inline]
     fn make_cell_writer(&mut self) -> Self::CellWriter<'_> {
-        self.value_count = self
-            .value_count
-            .checked_add(1)
-            .expect("tried to serialize too many values for a query (more than u16::MAX)");
+        self.value_count += 1;
         BufBackedCellWriter::new(self.buf)
     }
 }
@@ -169,13 +182,11 @@ impl<'buf> CellWriter for BufBackedCellWriter<'buf> {
     }
 
     #[inline]
-    fn set_value(self, bytes: &[u8]) {
-        let value_len: i32 = bytes
-            .len()
-            .try_into()
-            .expect("value is too big to fit into a CQL [bytes] object (larger than i32::MAX)");
+    fn set_value(self, bytes: &[u8]) -> Result<(), CellOverflowError> {
+        let value_len: i32 = bytes.len().try_into().map_err(|_| CellOverflowError)?;
         self.buf.extend_from_slice(&value_len.to_be_bytes());
         self.buf.extend_from_slice(bytes);
+        Ok(())
     }
 
     #[inline]
@@ -226,49 +237,55 @@ impl<'buf> CellValueBuilder for BufBackedCellValueBuilder<'buf> {
     }
 
     #[inline]
-    fn finish(self) {
-        // TODO: Should this panic, or should we catch this error earlier?
-        // Vec<u8> will panic anyway if we overflow isize, so at least this
-        // behavior is consistent with what the stdlib does.
+    fn finish(self) -> Result<(), CellOverflowError> {
         let value_len: i32 = (self.buf.len() - self.starting_pos - 4)
             .try_into()
-            .expect("value is too big to fit into a CQL [bytes] object (larger than i32::MAX)");
+            .map_err(|_| CellOverflowError)?;
         self.buf[self.starting_pos..self.starting_pos + 4]
             .copy_from_slice(&value_len.to_be_bytes());
+        Ok(())
     }
 }
 
-/// A writer that does not actually write anything, just counts the bytes.
-///
-/// It can serve as a:
-///
-/// - [`RowWriter`]
-/// - [`CellWriter`]
-/// - [`CellValueBuilder`]
-pub struct CountingWriter<'buf> {
+/// A row writer that does not actually write anything, just counts the bytes.
+pub struct CountingRowWriter<'buf> {
     buf: &'buf mut usize,
 }
 
-impl<'buf> CountingWriter<'buf> {
+impl<'buf> CountingRowWriter<'buf> {
+    /// Creates a new writer which increments the counter under given reference
+    /// when bytes are appended.
+    #[inline]
+    pub fn new(buf: &'buf mut usize) -> Self {
+        CountingRowWriter { buf }
+    }
+}
+
+impl<'buf> RowWriter for CountingRowWriter<'buf> {
+    type CellWriter<'a> = CountingCellWriter<'a> where Self: 'a;
+
+    #[inline]
+    fn make_cell_writer(&mut self) -> Self::CellWriter<'_> {
+        CountingCellWriter::new(self.buf)
+    }
+}
+
+/// A cell writer that does not actually write anything, just counts the bytes.
+pub struct CountingCellWriter<'buf> {
+    buf: &'buf mut usize,
+}
+
+impl<'buf> CountingCellWriter<'buf> {
     /// Creates a new writer which increments the counter under given reference
     /// when bytes are appended.
     #[inline]
     fn new(buf: &'buf mut usize) -> Self {
-        CountingWriter { buf }
+        CountingCellWriter { buf }
     }
 }
 
-impl<'buf> RowWriter for CountingWriter<'buf> {
-    type CellWriter<'a> = CountingWriter<'a> where Self: 'a;
-
-    #[inline]
-    fn make_cell_writer(&mut self) -> Self::CellWriter<'_> {
-        CountingWriter::new(self.buf)
-    }
-}
-
-impl<'buf> CellWriter for CountingWriter<'buf> {
-    type ValueBuilder = CountingWriter<'buf>;
+impl<'buf> CellWriter for CountingCellWriter<'buf> {
+    type ValueBuilder = CountingCellValueBuilder<'buf>;
 
     type WrittenCellProof = ();
 
@@ -283,19 +300,39 @@ impl<'buf> CellWriter for CountingWriter<'buf> {
     }
 
     #[inline]
-    fn set_value(self, contents: &[u8]) {
+    fn set_value(self, contents: &[u8]) -> Result<(), CellOverflowError> {
+        if contents.len() > i32::MAX as usize {
+            return Err(CellOverflowError);
+        }
         *self.buf += 4 + contents.len();
+        Ok(())
     }
 
     #[inline]
     fn into_value_builder(self) -> Self::ValueBuilder {
         *self.buf += 4;
-        CountingWriter::new(self.buf)
+        CountingCellValueBuilder::new(self.buf)
     }
 }
 
-impl<'buf> CellValueBuilder for CountingWriter<'buf> {
-    type SubCellWriter<'a> = CountingWriter<'a>
+pub struct CountingCellValueBuilder<'buf> {
+    buf: &'buf mut usize,
+
+    starting_pos: usize,
+}
+
+impl<'buf> CountingCellValueBuilder<'buf> {
+    /// Creates a new builder which increments the counter under given reference
+    /// when bytes are appended.
+    #[inline]
+    fn new(buf: &'buf mut usize) -> Self {
+        let starting_pos = *buf;
+        CountingCellValueBuilder { buf, starting_pos }
+    }
+}
+
+impl<'buf> CellValueBuilder for CountingCellValueBuilder<'buf> {
+    type SubCellWriter<'a> = CountingCellWriter<'a>
     where
         Self: 'a;
 
@@ -308,17 +345,24 @@ impl<'buf> CellValueBuilder for CountingWriter<'buf> {
 
     #[inline]
     fn make_sub_writer(&mut self) -> Self::SubCellWriter<'_> {
-        CountingWriter::new(self.buf)
+        CountingCellWriter::new(self.buf)
     }
 
     #[inline]
-    fn finish(self) -> Self::WrittenCellProof {}
+    fn finish(self) -> Result<Self::WrittenCellProof, CellOverflowError> {
+        if *self.buf - self.starting_pos > i32::MAX as usize {
+            return Err(CellOverflowError);
+        }
+        Ok(())
+    }
 }
 
 #[cfg(test)]
 mod tests {
+    use crate::types::serialize::writers::CountingRowWriter;
+
     use super::{
-        BufBackedCellWriter, BufBackedRowWriter, CellValueBuilder, CellWriter, CountingWriter,
+        BufBackedCellWriter, BufBackedRowWriter, CellValueBuilder, CellWriter, CountingCellWriter,
         RowWriter,
     };
 
@@ -335,7 +379,7 @@ mod tests {
         c.check(writer);
 
         let mut byte_count = 0usize;
-        let counting_writer = CountingWriter::new(&mut byte_count);
+        let counting_writer = CountingCellWriter::new(&mut byte_count);
         c.check(counting_writer);
 
         assert_eq!(data.len(), byte_count);
@@ -349,9 +393,12 @@ mod tests {
             fn check<W: CellWriter>(&self, writer: W) {
                 let mut sub_writer = writer.into_value_builder();
                 sub_writer.make_sub_writer().set_null();
-                sub_writer.make_sub_writer().set_value(&[1, 2, 3, 4]);
+                sub_writer
+                    .make_sub_writer()
+                    .set_value(&[1, 2, 3, 4])
+                    .unwrap();
                 sub_writer.make_sub_writer().set_unset();
-                sub_writer.finish();
+                sub_writer.finish().unwrap();
             }
         }
 
@@ -395,7 +442,7 @@ mod tests {
         c.check(&mut writer);
 
         let mut byte_count = 0usize;
-        let mut counting_writer = CountingWriter::new(&mut byte_count);
+        let mut counting_writer = CountingRowWriter::new(&mut byte_count);
         c.check(&mut counting_writer);
 
         assert_eq!(data.len(), byte_count);
@@ -408,7 +455,7 @@ mod tests {
         impl RowSerializeCheck for Check {
             fn check<W: RowWriter>(&self, writer: &mut W) {
                 writer.make_cell_writer().set_null();
-                writer.make_cell_writer().set_value(&[1, 2, 3, 4]);
+                writer.make_cell_writer().set_value(&[1, 2, 3, 4]).unwrap();
                 writer.make_cell_writer().set_unset();
             }
         }

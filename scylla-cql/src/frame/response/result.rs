@@ -116,6 +116,31 @@ pub enum CqlValue {
     Varint(BigInt),
 }
 
+impl ColumnType {
+    // Returns true if the type allows a special, empty value in addition to its
+    // natural representation. For example, bigint represents a 32-bit integer,
+    // but it can also hold a 0-bit empty value.
+    //
+    // It looks like Cassandra 4.1.3 rejects empty values for some more types than
+    // Scylla: date, time, smallint and tinyint. We will only check against
+    // Scylla's set of types supported for empty values as it's smaller;
+    // with Cassandra, some rejects will just have to be rejected on the db side.
+    pub(crate) fn supports_special_empty_value(&self) -> bool {
+        #[allow(clippy::match_like_matches_macro)]
+        match self {
+            ColumnType::Counter
+            | ColumnType::Duration
+            | ColumnType::List(_)
+            | ColumnType::Map(_, _)
+            | ColumnType::Set(_)
+            | ColumnType::UserDefinedType { .. }
+            | ColumnType::Custom(_) => false,
+
+            _ => true,
+        }
+    }
+}
+
 impl CqlValue {
     pub fn as_ascii(&self) -> Option<&String> {
         match self {
