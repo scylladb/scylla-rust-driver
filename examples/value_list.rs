@@ -19,43 +19,43 @@ async fn main() {
         .await
         .unwrap();
 
-    #[derive(scylla::SerializeRow)]
-    struct MyType<'a> {
-        k: i32,
-        my: Option<&'a str>,
-    }
+    // #[derive(scylla::SerializeRow)]
+    // struct MyType<'a> {
+    //     k: i32,
+    //     my: Option<&'a str>,
+    // }
 
-    let to_insert = MyType {
-        k: 17,
-        my: Some("Some str"),
-    };
+    // let to_insert = MyType {
+    //     k: 17,
+    //     my: Some("Some str"),
+    // };
 
-    session
-        .query("INSERT INTO ks.my_type (k, my) VALUES (?, ?)", to_insert)
-        .await
-        .unwrap();
+    // session
+    //     .query("INSERT INTO ks.my_type (k, my) VALUES (?, ?)", to_insert)
+    //     .await
+    //     .unwrap();
 
-    // You can also use type generics:
-    #[derive(scylla::SerializeRow)]
-    struct MyTypeWithGenerics<S: scylla::frame::value::Value> {
-        k: i32,
-        my: Option<S>,
-    }
+    // // You can also use type generics:
+    // #[derive(scylla::SerializeRow)]
+    // struct MyTypeWithGenerics<S: scylla::frame::value::Value> {
+    //     k: i32,
+    //     my: Option<S>,
+    // }
 
-    let to_insert_2 = MyTypeWithGenerics {
-        k: 18,
-        my: Some("Some string".to_owned()),
-    };
+    // let to_insert_2 = MyTypeWithGenerics {
+    //     k: 18,
+    //     my: Some("Some string".to_owned()),
+    // };
 
-    session
-        .query("INSERT INTO ks.my_type (k, my) VALUES (?, ?)", to_insert_2)
-        .await
-        .unwrap();
+    // session
+    //     .query("INSERT INTO ks.my_type (k, my) VALUES (?, ?)", to_insert_2)
+    //     .await
+    //     .unwrap();
 
-    let q = session
-        .query("SELECT * FROM ks.my_type", &[])
-        .await
-        .unwrap();
+    // let q = session
+    //     .query("SELECT * FROM ks.my_type", &[])
+    //     .await
+    //     .unwrap();
 
-    println!("Q: {:?}", q.rows);
+    // println!("Q: {:?}", q.rows);
 }
