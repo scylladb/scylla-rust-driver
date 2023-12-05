@@ -3,11 +3,11 @@ use std::borrow::Cow;
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
 
 use scylla_cql::frame::request::SerializableRequest;
-use scylla_cql::frame::value::SerializedValues;
+use scylla_cql::frame::value::LegacySerializedValues;
 use scylla_cql::frame::value::ValueList;
 use scylla_cql::frame::{request::query, Compression, SerializedRequest};
 
-fn make_query<'a>(contents: &'a str, values: &'a SerializedValues) -> query::Query<'a> {
+fn make_query<'a>(contents: &'a str, values: &'a LegacySerializedValues) -> query::Query<'a> {
     query::Query {
         contents: Cow::Borrowed(contents),
         parameters: query::QueryParameters {

@@ -17,7 +17,7 @@ pub mod _macro_internal {
     };
     pub use crate::frame::response::result::{CqlValue, Row};
     pub use crate::frame::value::{
-        SerializedResult, SerializedValues, Value, ValueList, ValueTooBig,
+        LegacySerializedValues, SerializedResult, Value, ValueList, ValueTooBig,
     };
     pub use crate::macros::*;
 

@@ -22,7 +22,7 @@ pub use startup::Startup;
 use self::batch::BatchStatement;
 
 use super::types::SerialConsistency;
-use super::value::SerializedValues;
+use super::value::LegacySerializedValues;
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord, TryFromPrimitive)]
 #[repr(u8)]
@@ -59,7 +59,7 @@ pub trait DeserializableRequest: SerializableRequest + Sized {
 pub enum Request<'r> {
     Query(Query<'r>),
     Execute(Execute<'r>),
-    Batch(Batch<'r, BatchStatement<'r>, Vec<SerializedValues>>),
+    Batch(Batch<'r, BatchStatement<'r>, Vec<LegacySerializedValues>>),
 }
 
 impl<'r> Request<'r> {
@@ -113,7 +113,7 @@ mod tests {
                 DeserializableRequest, SerializableRequest,
             },
             types::{self, SerialConsistency},
-            value::SerializedValues,
+            value::LegacySerializedValues,
         },
         Consistency,
     };
@@ -129,7 +129,7 @@ mod tests {
             page_size: Some(323),
             paging_state: Some(vec![2, 1, 3, 7].into()),
             values: {
-                let mut vals = SerializedValues::new();
+                let mut vals = LegacySerializedValues::new();
                 vals.add_value(&2137).unwrap();
                 Cow::Owned(vals)
             },
@@ -156,7 +156,7 @@ mod tests {
             page_size: None,
             paging_state: None,
             values: {
-                let mut vals = SerializedValues::new();
+                let mut vals = LegacySerializedValues::new();
                 vals.add_named_value("the_answer", &42).unwrap();
                 vals.add_named_value("really?", &2137).unwrap();
                 Cow::Owned(vals)
@@ -212,7 +212,7 @@ mod tests {
             timestamp: None,
             page_size: None,
             paging_state: None,
-            values: Cow::Owned(SerializedValues::new()),
+            values: Cow::Owned(LegacySerializedValues::new()),
         };
         let query = Query {
             contents: contents.clone(),

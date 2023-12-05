@@ -5,8 +5,8 @@ use crate::types::serialize::{CellWriter, RowWriter};
 
 use super::response::result::{ColumnSpec, ColumnType, TableSpec};
 use super::value::{
-    BatchValues, CqlDate, CqlDuration, CqlTime, CqlTimestamp, MaybeUnset, SerializeValuesError,
-    SerializedValues, Unset, Value, ValueList, ValueTooBig,
+    BatchValues, CqlDate, CqlDuration, CqlTime, CqlTimestamp, LegacySerializedValues, MaybeUnset,
+    SerializeValuesError, Unset, Value, ValueList, ValueTooBig,
 };
 use bigdecimal::BigDecimal;
 use bytes::BufMut;
@@ -832,7 +832,7 @@ fn ref_value() {
 
 #[test]
 fn empty_serialized_values() {
-    const EMPTY: SerializedValues = SerializedValues::new();
+    const EMPTY: LegacySerializedValues = LegacySerializedValues::new();
     assert_eq!(EMPTY.len(), 0);
     assert!(EMPTY.is_empty());
     assert_eq!(EMPTY.iter().next(), None);
@@ -844,7 +844,7 @@ fn empty_serialized_values() {
 
 #[test]
 fn serialized_values() {
-    let mut values = SerializedValues::new();
+    let mut values = LegacySerializedValues::new();
     assert!(values.is_empty());
 
     // Add first value
@@ -920,14 +920,14 @@ fn serialized_values() {
 
 #[test]
 fn unit_value_list() {
-    let serialized_unit: SerializedValues =
+    let serialized_unit: LegacySerializedValues =
         <() as ValueList>::serialized(&()).unwrap().into_owned();
     assert!(serialized_unit.is_empty());
 }
 
 #[test]
 fn empty_array_value_list() {
-    let serialized_arr: SerializedValues = <[u8; 0] as ValueList>::serialized(&[])
+    let serialized_arr: LegacySerializedValues = <[u8; 0] as ValueList>::serialized(&[])
         .unwrap()
         .into_owned();
     assert!(serialized_arr.is_empty());
@@ -987,7 +987,7 @@ fn col_spec(name: &str, typ: ColumnType) -> ColumnSpec {
 fn serialize_values<T: ValueList + SerializeRow>(
     vl: T,
     columns: &[ColumnSpec],
-) -> SerializedValues {
+) -> LegacySerializedValues {
     let serialized = <T as ValueList>::serialized(&vl).unwrap().into_owned();
     let mut old_serialized = Vec::new();
     serialized.write_to_request(&mut old_serialized);
@@ -1158,11 +1158,11 @@ fn ref_value_list() {
 
 #[test]
 fn serialized_values_value_list() {
-    let mut ser_values = SerializedValues::new();
+    let mut ser_values = LegacySerializedValues::new();
     ser_values.add_value(&1_i32).unwrap();
     ser_values.add_value(&"qwertyuiop").unwrap();
 
-    let ser_ser_values: Cow<SerializedValues> = ser_values.serialized().unwrap();
+    let ser_ser_values: Cow<LegacySerializedValues> = ser_values.serialized().unwrap();
     assert!(matches!(ser_ser_values, Cow::Borrowed(_)));
 
     assert_eq!(&ser_values, ser_ser_values.as_ref());
@@ -1170,9 +1170,9 @@ fn serialized_values_value_list() {
 
 #[test]
 fn cow_serialized_values_value_list() {
-    let cow_ser_values: Cow<SerializedValues> = Cow::Owned(SerializedValues::new());
+    let cow_ser_values: Cow<LegacySerializedValues> = Cow::Owned(LegacySerializedValues::new());
 
-    let serialized: Cow<SerializedValues> = cow_ser_values.serialized().unwrap();
+    let serialized: Cow<LegacySerializedValues> = cow_ser_values.serialized().unwrap();
     assert!(matches!(serialized, Cow::Borrowed(_)));
 
     assert_eq!(cow_ser_values.as_ref(), serialized.as_ref());

@@ -3,7 +3,7 @@ use scylla_cql::frame::types::RawValue;
 use std::num::Wrapping;
 
 use crate::{
-    frame::value::SerializedValues, prepared_statement::TokenCalculationError, routing::Token,
+    frame::value::LegacySerializedValues, prepared_statement::TokenCalculationError, routing::Token,
 };
 
 #[allow(clippy::upper_case_acronyms)]
@@ -337,7 +337,7 @@ impl PartitionerHasher for CDCPartitionerHasher {
 /// NOTE: the provided values must completely constitute partition key
 /// and be in the order defined in CREATE TABLE statement.
 pub fn calculate_token_for_partition_key<P: Partitioner>(
-    serialized_partition_key_values: &SerializedValues,
+    serialized_partition_key_values: &LegacySerializedValues,
     partitioner: &P,
 ) -> Result<Token, TokenCalculationError> {
     let mut partitioner_hasher = partitioner.build_hasher();

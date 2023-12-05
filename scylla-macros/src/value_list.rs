@@ -17,7 +17,7 @@ pub fn value_list_derive(tokens_input: TokenStream) -> Result<TokenStream, syn::
     let generated = quote! {
         impl #impl_generics #path::ValueList for #struct_name #ty_generics #where_clause {
             fn serialized(&self) -> #path::SerializedResult {
-                let mut result = #path::SerializedValues::with_capacity(#values_len);
+                let mut result = #path::LegacySerializedValues::with_capacity(#values_len);
                 #(
                     result.add_value(&self.#field_name)?;
                 )*
