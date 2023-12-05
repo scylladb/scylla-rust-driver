@@ -27,7 +27,7 @@ use crate::frame::{
         result,
         result::{ColumnSpec, Row, Rows},
     },
-    value::SerializedValues,
+    value::LegacySerializedValues,
 };
 use crate::history::{self, HistoryListener};
 use crate::statement::Consistency;
@@ -73,7 +73,7 @@ struct ReceivedPage {
 
 pub(crate) struct PreparedIteratorConfig {
     pub(crate) prepared: PreparedStatement,
-    pub(crate) values: SerializedValues,
+    pub(crate) values: LegacySerializedValues,
     pub(crate) execution_profile: Arc<ExecutionProfileInner>,
     pub(crate) cluster_data: Arc<ClusterData>,
     pub(crate) metrics: Arc<Metrics>,
@@ -362,7 +362,7 @@ impl RowIterator {
 
     pub(crate) async fn new_for_connection_execute_iter(
         mut prepared: PreparedStatement,
-        values: SerializedValues,
+        values: LegacySerializedValues,
         connection: Arc<Connection>,
         consistency: Consistency,
         serial_consistency: Option<SerialConsistency>,

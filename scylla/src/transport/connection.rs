@@ -4,7 +4,7 @@ use scylla_cql::errors::TranslationError;
 use scylla_cql::frame::request::options::Options;
 use scylla_cql::frame::response::Error;
 use scylla_cql::frame::types::SerialConsistency;
-use scylla_cql::frame::value::SerializedValues;
+use scylla_cql::frame::value::LegacySerializedValues;
 use socket2::{SockRef, TcpKeepalive};
 use tokio::io::{split, AsyncRead, AsyncWrite, AsyncWriteExt, BufReader, BufWriter};
 use tokio::net::{TcpSocket, TcpStream};
@@ -651,7 +651,7 @@ impl Connection {
             parameters: query::QueryParameters {
                 consistency,
                 serial_consistency,
-                values: Cow::Borrowed(SerializedValues::EMPTY),
+                values: Cow::Borrowed(LegacySerializedValues::EMPTY),
                 page_size: query.get_page_size(),
                 paging_state,
                 timestamp: query.get_timestamp(),

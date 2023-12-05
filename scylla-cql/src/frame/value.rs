@@ -256,7 +256,7 @@ impl TryInto<time::Time> for CqlTime {
 /// Keeps a buffer with serialized Values
 /// Allows adding new Values and iterating over serialized ones
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
-pub struct SerializedValues {
+pub struct LegacySerializedValues {
     serialized_values: Vec<u8>,
     values_num: u16,
     contains_names: bool,
@@ -282,27 +282,27 @@ pub enum SerializeValuesError {
     ParseError,
 }
 
-pub type SerializedResult<'a> = Result<Cow<'a, SerializedValues>, SerializeValuesError>;
+pub type SerializedResult<'a> = Result<Cow<'a, LegacySerializedValues>, SerializeValuesError>;
 
 /// Represents list of values to be sent in a query
 /// gets serialized and but into request
 pub trait ValueList {
-    /// Provides a view of ValueList as SerializedValues
-    /// returns `Cow<SerializedValues>` to make impl ValueList for SerializedValues efficient
+    /// Provides a view of ValueList as LegacySerializedValues
+    /// returns `Cow<LegacySerializedValues>` to make impl ValueList for LegacySerializedValues efficient
     fn serialized(&self) -> SerializedResult<'_>;
 
     fn write_to_request(&self, buf: &mut impl BufMut) -> Result<(), SerializeValuesError> {
         let serialized = self.serialized()?;
-        SerializedValues::write_to_request(&serialized, buf);
+        LegacySerializedValues::write_to_request(&serialized, buf);
 
         Ok(())
     }
 }
 
-impl SerializedValues {
+impl LegacySerializedValues {
     /// Creates empty value list
     pub const fn new() -> Self {
-        SerializedValues {
+        LegacySerializedValues {
             serialized_values: Vec::new(),
             values_num: 0,
             contains_names: false,
@@ -310,7 +310,7 @@ impl SerializedValues {
     }
 
     pub fn with_capacity(capacity: usize) -> Self {
-        SerializedValues {
+        LegacySerializedValues {
             serialized_values: Vec::with_capacity(capacity),
             values_num: 0,
             contains_names: false,
@@ -322,7 +322,7 @@ impl SerializedValues {
     }
 
     /// A const empty instance, useful for taking references
-    pub const EMPTY: &'static SerializedValues = &SerializedValues::new();
+    pub const EMPTY: &'static LegacySerializedValues = &LegacySerializedValues::new();
 
     /// Serializes value and appends it to the list
     pub fn add_value(&mut self, val: &impl Value) -> Result<(), SerializeValuesError> {
@@ -372,7 +372,7 @@ impl SerializedValues {
     }
 
     pub fn iter(&self) -> impl Iterator<Item = RawValue> {
-        SerializedValuesIterator {
+        LegacySerializedValuesIterator {
             serialized_values: &self.serialized_values,
             contains_names: self.contains_names,
         }
@@ -408,7 +408,7 @@ impl SerializedValues {
 
         let values_len_in_buf = values_beg.len() - buf.len();
         let values_in_frame = &values_beg[0..values_len_in_buf];
-        Ok(SerializedValues {
+        Ok(LegacySerializedValues {
             serialized_values: values_in_frame.to_vec(),
             values_num,
             contains_names,
@@ -418,7 +418,7 @@ impl SerializedValues {
     pub fn iter_name_value_pairs(&self) -> impl Iterator<Item = (Option<&str>, RawValue)> {
         let mut buf = &self.serialized_values[..];
         (0..self.values_num).map(move |_| {
-            // `unwrap()`s here are safe, as we assume type-safety: if `SerializedValues` exits,
+            // `unwrap()`s here are safe, as we assume type-safety: if `LegacySerializedValues` exits,
             // we have a guarantee that the layout of the serialized values is valid.
             let name = self
                 .contains_names
@@ -430,12 +430,12 @@ impl SerializedValues {
 }
 
 #[derive(Clone, Copy)]
-pub struct SerializedValuesIterator<'a> {
+pub struct LegacySerializedValuesIterator<'a> {
     serialized_values: &'a [u8],
     contains_names: bool,
 }
 
-impl<'a> Iterator for SerializedValuesIterator<'a> {
+impl<'a> Iterator for LegacySerializedValuesIterator<'a> {
     type Item = RawValue<'a>;
 
     fn next(&mut self) -> Option<Self::Item> {
@@ -1030,14 +1030,14 @@ impl_value_for_tuple!(T0, T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, T12, T13
 // Implement ValueList for the unit type
 impl ValueList for () {
     fn serialized(&self) -> SerializedResult<'_> {
-        Ok(Cow::Owned(SerializedValues::new()))
+        Ok(Cow::Owned(LegacySerializedValues::new()))
     }
 }
 
 // Implement ValueList for &[] - u8 because otherwise rust can't infer type
 impl ValueList for [u8; 0] {
     fn serialized(&self) -> SerializedResult<'_> {
-        Ok(Cow::Owned(SerializedValues::new()))
+        Ok(Cow::Owned(LegacySerializedValues::new()))
     }
 }
 
@@ -1045,7 +1045,7 @@ impl ValueList for [u8; 0] {
 impl<T: Value> ValueList for &[T] {
     fn serialized(&self) -> SerializedResult<'_> {
         let size = std::mem::size_of_val(*self);
-        let mut result = SerializedValues::with_capacity(size);
+        let mut result = LegacySerializedValues::with_capacity(size);
         for val in *self {
             result.add_value(val)?;
         }
@@ -1059,7 +1059,7 @@ impl<T: Value> ValueList for Vec<T> {
     fn serialized(&self) -> SerializedResult<'_> {
         let slice = self.as_slice();
         let size = std::mem::size_of_val(slice);
-        let mut result = SerializedValues::with_capacity(size);
+        let mut result = LegacySerializedValues::with_capacity(size);
         for val in self {
             result.add_value(val)?;
         }
@@ -1073,7 +1073,7 @@ macro_rules! impl_value_list_for_btree_map {
     ($key_type:ty) => {
         impl<T: Value> ValueList for BTreeMap<$key_type, T> {
             fn serialized(&self) -> SerializedResult<'_> {
-                let mut result = SerializedValues::with_capacity(self.len());
+                let mut result = LegacySerializedValues::with_capacity(self.len());
                 for (key, val) in self {
                     result.add_named_value(key, val)?;
                 }
@@ -1089,7 +1089,7 @@ macro_rules! impl_value_list_for_hash_map {
     ($key_type:ty) => {
         impl<T: Value, S: BuildHasher> ValueList for HashMap<$key_type, T, S> {
             fn serialized(&self) -> SerializedResult<'_> {
-                let mut result = SerializedValues::with_capacity(self.len());
+                let mut result = LegacySerializedValues::with_capacity(self.len());
                 for (key, val) in self {
                     result.add_named_value(key, val)?;
                 }
@@ -1112,7 +1112,7 @@ impl_value_list_for_btree_map!(&str);
 impl<T0: Value> ValueList for (T0,) {
     fn serialized(&self) -> SerializedResult<'_> {
         let size = std::mem::size_of_val(self);
-        let mut result = SerializedValues::with_capacity(size);
+        let mut result = LegacySerializedValues::with_capacity(size);
         result.add_value(&self.0)?;
         Ok(Cow::Owned(result))
     }
@@ -1126,7 +1126,7 @@ macro_rules! impl_value_list_for_tuple {
         {
             fn serialized(&self) -> SerializedResult<'_> {
                 let size = std::mem::size_of_val(self);
-                let mut result = SerializedValues::with_capacity(size);
+                let mut result = LegacySerializedValues::with_capacity(size);
                 $(
                     result.add_value(&self.$FieldI) ?;
                 )*
@@ -1165,13 +1165,13 @@ impl<T: ValueList> ValueList for &T {
     }
 }
 
-impl ValueList for SerializedValues {
+impl ValueList for LegacySerializedValues {
     fn serialized(&self) -> SerializedResult<'_> {
         Ok(Cow::Borrowed(self))
     }
 }
 
-impl<'b> ValueList for Cow<'b, SerializedValues> {
+impl<'b> ValueList for Cow<'b, LegacySerializedValues> {
     fn serialized(&self) -> SerializedResult<'_> {
         Ok(Cow::Borrowed(self.as_ref()))
     }
@@ -1346,17 +1346,20 @@ impl<'a, T: BatchValues + ?Sized> BatchValues for &'a T {
 
 /// Allows reusing already-serialized first value
 ///
-/// We'll need to build a `SerializedValues` for the first ~`ValueList` of a batch to figure out the shard (#448).
+/// We'll need to build a `LegacySerializedValues` for the first ~`ValueList` of a batch to figure out the shard (#448).
 /// Once that is done, we can use that instead of re-serializing.
 ///
 /// This struct implements both `BatchValues` and `BatchValuesIterator` for that purpose
 pub struct BatchValuesFirstSerialized<'f, T> {
-    first: Option<&'f SerializedValues>,
+    first: Option<&'f LegacySerializedValues>,
     rest: T,
 }
 
 impl<'f, T: BatchValues> BatchValuesFirstSerialized<'f, T> {
-    pub fn new(batch_values: T, already_serialized_first: Option<&'f SerializedValues>) -> Self {
+    pub fn new(
+        batch_values: T,
+        already_serialized_first: Option<&'f LegacySerializedValues>,
+    ) -> Self {
         Self {
             first: already_serialized_first,
             rest: batch_values,

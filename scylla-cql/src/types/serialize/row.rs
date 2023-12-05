@@ -7,7 +7,7 @@ use std::{collections::HashMap, sync::Arc};
 use thiserror::Error;
 
 use crate::frame::response::result::PreparedMetadata;
-use crate::frame::value::{SerializedValues, ValueList};
+use crate::frame::value::{LegacySerializedValues, ValueList};
 use crate::frame::{response::result::ColumnSpec, types::RawValue};
 
 use super::value::SerializeCql;
@@ -81,7 +81,7 @@ macro_rules! fallback_impl_contents {
         }
         #[inline]
         fn is_empty(&self) -> bool {
-            SerializedValues::is_empty(self)
+            LegacySerializedValues::is_empty(self)
         }
     };
 }
@@ -294,11 +294,11 @@ impl<T: SerializeRow> SerializeRow for &T {
     }
 }
 
-impl SerializeRow for SerializedValues {
+impl SerializeRow for LegacySerializedValues {
     fallback_impl_contents!();
 }
 
-impl<'b> SerializeRow for Cow<'b, SerializedValues> {
+impl<'b> SerializeRow for Cow<'b, LegacySerializedValues> {
     fallback_impl_contents!();
 }
 
@@ -422,7 +422,7 @@ impl_tuples!(
 ///
 /// ```rust
 /// # use std::borrow::Cow;
-/// # use scylla_cql::frame::value::{Value, ValueList, SerializedResult, SerializedValues};
+/// # use scylla_cql::frame::value::{Value, ValueList, SerializedResult, LegacySerializedValues};
 /// # use scylla_cql::impl_serialize_row_via_value_list;
 /// struct NoGenerics {}
 /// impl ValueList for NoGenerics {
@@ -437,7 +437,7 @@ impl_tuples!(
 /// struct WithGenerics<T, U: Clone>(T, U);
 /// impl<T: Value, U: Clone + Value> ValueList for WithGenerics<T, U> {
 ///     fn serialized(&self) -> SerializedResult<'_> {
-///         let mut values = SerializedValues::new();
+///         let mut values = LegacySerializedValues::new();
 ///         values.add_value(&self.0);
 ///         values.add_value(&self.1.clone());
 ///         Ok(Cow::Owned(values))
@@ -677,7 +677,7 @@ pub enum ValueListToSerializeRowAdapterError {
 #[cfg(test)]
 mod tests {
     use crate::frame::response::result::{ColumnSpec, ColumnType, TableSpec};
-    use crate::frame::value::{MaybeUnset, SerializedValues, ValueList};
+    use crate::frame::value::{LegacySerializedValues, MaybeUnset, ValueList};
     use crate::types::serialize::BufBackedRowWriter;
 
     use super::{
@@ -738,7 +738,7 @@ mod tests {
         let mut sorted_row_data = Vec::new();
         <_ as ValueList>::write_to_request(&sorted_row, &mut sorted_row_data).unwrap();
 
-        let mut unsorted_row = SerializedValues::new();
+        let mut unsorted_row = LegacySerializedValues::new();
         unsorted_row.add_named_value("a", &1i32).unwrap();
         unsorted_row.add_named_value("b", &"Ala ma kota").unwrap();
         unsorted_row

@@ -1216,7 +1216,7 @@ impl Session {
         let first_value_token = statement_info.token;
 
         // Reuse first serialized value when serializing query, and delegate to `BatchValues::write_next_to_request`
-        // directly for others (if they weren't already serialized, possibly don't even allocate the `SerializedValues`)
+        // directly for others (if they weren't already serialized, possibly don't even allocate the `LegacySerializedValues`)
         let values = BatchValuesFirstSerialized::new(&values, first_serialized_value);
         let values_ref = &values;
 

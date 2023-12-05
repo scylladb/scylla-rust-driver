@@ -6,7 +6,7 @@ use bytes::{Buf, BufMut, Bytes};
 use crate::{
     frame::request::{RequestOpcode, SerializableRequest},
     frame::types,
-    frame::value::SerializedValues,
+    frame::value::LegacySerializedValues,
 };
 
 use super::DeserializableRequest;
@@ -61,7 +61,7 @@ pub struct QueryParameters<'a> {
     pub timestamp: Option<i64>,
     pub page_size: Option<i32>,
     pub paging_state: Option<Bytes>,
-    pub values: Cow<'a, SerializedValues>,
+    pub values: Cow<'a, LegacySerializedValues>,
 }
 
 impl Default for QueryParameters<'_> {
@@ -72,7 +72,7 @@ impl Default for QueryParameters<'_> {
             timestamp: None,
             page_size: None,
             paging_state: None,
-            values: Cow::Borrowed(SerializedValues::EMPTY),
+            values: Cow::Borrowed(LegacySerializedValues::EMPTY),
         }
     }
 }
@@ -152,9 +152,9 @@ impl<'q> QueryParameters<'q> {
         let values_have_names_flag = (flags & FLAG_WITH_NAMES_FOR_VALUES) != 0;
 
         let values = Cow::Owned(if values_flag {
-            SerializedValues::new_from_frame(buf, values_have_names_flag)?
+            LegacySerializedValues::new_from_frame(buf, values_have_names_flag)?
         } else {
-            SerializedValues::new()
+            LegacySerializedValues::new()
         });
 
         let page_size = page_size_flag.then(|| types::read_int(buf)).transpose()?;
