@@ -105,6 +105,39 @@ pub trait CellValueBuilder {
     fn finish(self) -> Result<Self::WrittenCellProof, CellOverflowError>;
 }
 
+/// An object that indicates a type-level proof that something was written
+/// by a [`CellWriter`] or [`CellValueBuilder`] with lifetime parameter `'buf`.
+///
+/// This type is returned by [`set_null`](CellWriter::set_null),
+/// [`set_unset`](CellWriter::set_unset),
+/// [`set_value`](CellWriter::set_value)
+/// and also [`CellValueBuilder::finish`] - generally speaking, after
+/// the value is fully initialized and the `CellWriter` is destroyed.
+///
+/// The purpose of this type is to enforce the contract of
+/// [`SerializeCql::serialize`](super::value::SerializeCql::serialize): either
+/// the method succeeds and returns a proof that it serialized itself
+/// into the given value, or it fails and returns an error or panics.
+pub struct WrittenCellProof<'buf> {
+    /// Using *mut &'buf () is deliberate and makes WrittenCellProof invariant
+    /// on the 'buf lifetime parameter.
+    /// Ref: <https://doc.rust-lang.org/reference/subtyping.html>
+    _phantom: std::marker::PhantomData<*mut &'buf ()>,
+}
+
+impl<'buf> WrittenCellProof<'buf> {
+    /// A shorthand for creating the proof.
+    ///
+    /// Do not make it public! It's important that only the row writer defined
+    /// in this module is able to create a proof.
+    #[inline]
+    fn new() -> Self {
+        WrittenCellProof {
+            _phantom: std::marker::PhantomData,
+        }
+    }
+}
+
 /// There was an attempt to produce a CQL value over the maximum size limit (i32::MAX)
 #[derive(Debug, Clone, Copy, Error)]
 #[error("CQL cell overflowed the maximum allowed size of 2^31 - 1")]
@@ -169,24 +202,26 @@ impl<'buf> BufBackedCellWriter<'buf> {
 impl<'buf> CellWriter for BufBackedCellWriter<'buf> {
     type ValueBuilder = BufBackedCellValueBuilder<'buf>;
 
-    type WrittenCellProof = ();
+    type WrittenCellProof = WrittenCellProof<'buf>;
 
     #[inline]
-    fn set_null(self) {
+    fn set_null(self) -> Self::WrittenCellProof {
         self.buf.extend_from_slice(&(-1i32).to_be_bytes());
+        WrittenCellProof::new()
     }
 
     #[inline]
-    fn set_unset(self) {
+    fn set_unset(self) -> Self::WrittenCellProof {
         self.buf.extend_from_slice(&(-2i32).to_be_bytes());
+        WrittenCellProof::new()
     }
 
     #[inline]
-    fn set_value(self, bytes: &[u8]) -> Result<(), CellOverflowError> {
+    fn set_value(self, bytes: &[u8]) -> Result<Self::WrittenCellProof, CellOverflowError> {
         let value_len: i32 = bytes.len().try_into().map_err(|_| CellOverflowError)?;
         self.buf.extend_from_slice(&value_len.to_be_bytes());
         self.buf.extend_from_slice(bytes);
-        Ok(())
+        Ok(WrittenCellProof::new())
     }
 
     #[inline]
@@ -224,7 +259,7 @@ impl<'buf> CellValueBuilder for BufBackedCellValueBuilder<'buf> {
     where
         Self: 'a;
 
-    type WrittenCellProof = ();
+    type WrittenCellProof = WrittenCellProof<'buf>;
 
     #[inline]
     fn append_bytes(&mut self, bytes: &[u8]) {
@@ -237,13 +272,13 @@ impl<'buf> CellValueBuilder for BufBackedCellValueBuilder<'buf> {
     }
 
     #[inline]
-    fn finish(self) -> Result<(), CellOverflowError> {
+    fn finish(self) -> Result<Self::WrittenCellProof, CellOverflowError> {
         let value_len: i32 = (self.buf.len() - self.starting_pos - 4)
             .try_into()
             .map_err(|_| CellOverflowError)?;
         self.buf[self.starting_pos..self.starting_pos + 4]
             .copy_from_slice(&value_len.to_be_bytes());
-        Ok(())
+        Ok(WrittenCellProof::new())
     }
 }
 
