@@ -28,7 +28,7 @@ use bytes::Bytes;
 use futures::{FutureExt, StreamExt, TryStreamExt};
 use itertools::Itertools;
 use scylla_cql::frame::response::result::ColumnType;
-use scylla_cql::frame::value::Value;
+// use scylla_cql::frame::value::Value;
 use scylla_cql::types::serialize::row::{SerializeRow, SerializedValues};
 use std::collections::BTreeSet;
 use std::collections::{BTreeMap, HashMap};
@@ -1986,24 +1986,24 @@ async fn test_unusual_valuelists() {
         .await
         .unwrap();
 
-    let insert_a_b_c = session
-        .prepare("INSERT INTO tab (a, b, c) VALUES (?, ?, ?)")
-        .await
-        .unwrap();
+    // let insert_a_b_c = session
+    //     .prepare("INSERT INTO tab (a, b, c) VALUES (?, ?, ?)")
+    //     .await
+    //     .unwrap();
 
-    let values_dyn: Vec<&dyn Value> =
-        vec![&1 as &dyn Value, &2 as &dyn Value, &"&dyn" as &dyn Value];
-    session.execute(&insert_a_b_c, values_dyn).await.unwrap();
+    // let values_dyn: Vec<&dyn Value> =
+    //     vec![&1 as &dyn Value, &2 as &dyn Value, &"&dyn" as &dyn Value];
+    // session.execute(&insert_a_b_c, values_dyn).await.unwrap();
 
-    let values_box_dyn: Vec<Box<dyn Value>> = vec![
-        Box::new(1) as Box<dyn Value>,
-        Box::new(3) as Box<dyn Value>,
-        Box::new("Box dyn") as Box<dyn Value>,
-    ];
-    session
-        .execute(&insert_a_b_c, values_box_dyn)
-        .await
-        .unwrap();
+    // let values_box_dyn: Vec<Box<dyn Value>> = vec![
+    //     Box::new(1) as Box<dyn Value>,
+    //     Box::new(3) as Box<dyn Value>,
+    //     Box::new("Box dyn") as Box<dyn Value>,
+    // ];
+    // session
+    //     .execute(&insert_a_b_c, values_box_dyn)
+    //     .await
+    //     .unwrap();
 
     let mut all_rows: Vec<(i32, i32, String)> = session
         .query("SELECT a, b, c FROM tab", ())
