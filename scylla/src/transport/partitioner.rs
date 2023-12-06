@@ -1,10 +1,8 @@
 use bytes::Buf;
-use scylla_cql::frame::types::RawValue;
+use scylla_cql::{frame::types::RawValue, types::serialize::row::SerializedValues};
 use std::num::Wrapping;
 
-use crate::{
-    frame::value::LegacySerializedValues, prepared_statement::TokenCalculationError, routing::Token,
-};
+use crate::{prepared_statement::TokenCalculationError, routing::Token};
 
 #[allow(clippy::upper_case_acronyms)]
 #[derive(Clone, PartialEq, Debug, Default)]
@@ -337,12 +335,12 @@ impl PartitionerHasher for CDCPartitionerHasher {
 /// NOTE: the provided values must completely constitute partition key
 /// and be in the order defined in CREATE TABLE statement.
 pub fn calculate_token_for_partition_key<P: Partitioner>(
-    serialized_partition_key_values: &LegacySerializedValues,
+    serialized_partition_key_values: &SerializedValues,
     partitioner: &P,
 ) -> Result<Token, TokenCalculationError> {
     let mut partitioner_hasher = partitioner.build_hasher();
 
-    if serialized_partition_key_values.len() == 1 {
+    if serialized_partition_key_values.element_count() == 1 {
         let val = serialized_partition_key_values.iter().next().unwrap();
         if let RawValue::Value(val) = val {
             partitioner_hasher.write(val);

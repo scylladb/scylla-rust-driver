@@ -12,6 +12,7 @@ use bytes::Bytes;
 use futures::Stream;
 use scylla_cql::frame::response::NonErrorResponse;
 use scylla_cql::frame::types::SerialConsistency;
+use scylla_cql::types::serialize::row::SerializedValues;
 use std::result::Result;
 use thiserror::Error;
 use tokio::sync::mpsc;
@@ -22,12 +23,9 @@ use super::execution_profile::ExecutionProfileInner;
 use super::session::RequestSpan;
 use crate::cql_to_rust::{FromRow, FromRowError};
 
-use crate::frame::{
-    response::{
-        result,
-        result::{ColumnSpec, Row, Rows},
-    },
-    value::LegacySerializedValues,
+use crate::frame::response::{
+    result,
+    result::{ColumnSpec, Row, Rows},
 };
 use crate::history::{self, HistoryListener};
 use crate::statement::Consistency;
@@ -73,7 +71,7 @@ struct ReceivedPage {
 
 pub(crate) struct PreparedIteratorConfig {
     pub(crate) prepared: PreparedStatement,
-    pub(crate) values: LegacySerializedValues,
+    pub(crate) values: SerializedValues,
     pub(crate) execution_profile: Arc<ExecutionProfileInner>,
     pub(crate) cluster_data: Arc<ClusterData>,
     pub(crate) metrics: Arc<Metrics>,
@@ -181,7 +179,11 @@ impl RowIterator {
 
             let query_ref = &query;
 
-            let span_creator = move || RequestSpan::new_query(&query_ref.contents, 0);
+            let span_creator = move || {
+                let span = RequestSpan::new_query(&query_ref.contents);
+                span.record_request_size(0);
+                span
+            };
 
             let worker = RowIteratorWorker {
                 sender: sender.into(),
@@ -278,7 +280,7 @@ impl RowIterator {
                     .await
             };
 
-            let serialized_values_size = config.values.size();
+            let serialized_values_size = config.values.buffer_size();
 
             let replicas: Option<smallvec::SmallVec<[_; 8]>> =
                 if let (Some(keyspace), Some(token)) =
@@ -362,7 +364,7 @@ impl RowIterator {
 
     pub(crate) async fn new_for_connection_execute_iter(
         mut prepared: PreparedStatement,
-        values: LegacySerializedValues,
+        values: SerializedValues,
         connection: Arc<Connection>,
         consistency: Consistency,
         serial_consistency: Option<SerialConsistency>,

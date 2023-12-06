@@ -15,7 +15,6 @@ use rand::seq::SliceRandom;
 use rand::{thread_rng, Rng};
 use scylla_cql::errors::NewSessionError;
 use scylla_cql::frame::response::result::Row;
-use scylla_cql::frame::value::ValueList;
 use scylla_macros::FromRow;
 use std::borrow::BorrowMut;
 use std::cell::Cell;
@@ -854,28 +853,29 @@ async fn create_peer_from_row(
     }))
 }
 
-fn query_filter_keyspace_name(
+fn query_filter_keyspace_name<'a>(
     conn: &Arc<Connection>,
-    query_str: &str,
-    keyspaces_to_fetch: &[String],
-) -> impl Stream<Item = Result<Row, QueryError>> {
-    let keyspaces = &[keyspaces_to_fetch] as &[&[String]];
-    let (query_str, query_values) = if !keyspaces_to_fetch.is_empty() {
-        (format!("{query_str} where keyspace_name in ?"), keyspaces)
-    } else {
-        (query_str.into(), &[] as &[&[String]])
-    };
-    let query_values = query_values.serialized().map(|sv| sv.into_owned());
-    let mut query = Query::new(query_str);
+    query_str: &'a str,
+    keyspaces_to_fetch: &'a [String],
+) -> impl Stream<Item = Result<Row, QueryError>> + 'a {
     let conn = conn.clone();
-    query.set_page_size(1024);
+
     let fut = async move {
-        let query_values = query_values?;
-        if query_values.is_empty() {
+        if keyspaces_to_fetch.is_empty() {
+            let mut query = Query::new(query_str);
+            query.set_page_size(1024);
+
             conn.query_iter(query).await
         } else {
+            let keyspaces = &[keyspaces_to_fetch] as &[&[String]];
+            let query_str = format!("{query_str} where keyspace_name in ?");
+
+            let mut query = Query::new(query_str);
+            query.set_page_size(1024);
+
             let prepared = conn.prepare(&query).await?;
-            conn.execute_iter(prepared, query_values).await
+            let serialized_values = prepared.serialize_values(&keyspaces)?;
+            conn.execute_iter(prepared, serialized_values).await
         }
     };
     fut.into_stream().try_flatten()

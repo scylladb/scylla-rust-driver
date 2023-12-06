@@ -4,7 +4,7 @@ use scylla_cql::errors::TranslationError;
 use scylla_cql::frame::request::options::Options;
 use scylla_cql::frame::response::Error;
 use scylla_cql::frame::types::SerialConsistency;
-use scylla_cql::frame::value::LegacySerializedValues;
+use scylla_cql::types::serialize::row::SerializedValues;
 use socket2::{SockRef, TcpKeepalive};
 use tokio::io::{split, AsyncRead, AsyncWrite, AsyncWriteExt, BufReader, BufWriter};
 use tokio::net::{TcpSocket, TcpStream};
@@ -53,7 +53,7 @@ use crate::frame::{
     request::{self, batch, execute, query, register, SerializableRequest},
     response::{event::Event, result, NonErrorResponse, Response, ResponseOpcode},
     server_event_type::EventType,
-    value::{BatchValues, BatchValuesIterator, ValueList},
+    value::{BatchValues, BatchValuesIterator},
     FrameParams, SerializedRequest,
 };
 use crate::query::Query;
@@ -651,7 +651,7 @@ impl Connection {
             parameters: query::QueryParameters {
                 consistency,
                 serial_consistency,
-                values: Cow::Borrowed(LegacySerializedValues::EMPTY),
+                values: Cow::Owned(SerializedValues::new()),
                 page_size: query.get_page_size(),
                 paging_state,
                 timestamp: query.get_timestamp(),
@@ -666,13 +666,13 @@ impl Connection {
     pub(crate) async fn execute(
         &self,
         prepared: PreparedStatement,
-        values: impl ValueList,
+        values: SerializedValues,
         paging_state: Option<Bytes>,
     ) -> Result<QueryResponse, QueryError> {
         // This method is used only for driver internal queries, so no need to consult execution profile here.
         self.execute_with_consistency(
             &prepared,
-            values,
+            &values,
             prepared
                 .config
                 .determine_consistency(self.config.default_consistency),
@@ -685,19 +685,17 @@ impl Connection {
     pub(crate) async fn execute_with_consistency(
         &self,
         prepared_statement: &PreparedStatement,
-        values: impl ValueList,
+        values: &SerializedValues,
         consistency: Consistency,
         serial_consistency: Option<SerialConsistency>,
         paging_state: Option<Bytes>,
     ) -> Result<QueryResponse, QueryError> {
-        let serialized_values = values.serialized()?;
-
         let execute_frame = execute::Execute {
             id: prepared_statement.get_id().to_owned(),
             parameters: query::QueryParameters {
                 consistency,
                 serial_consistency,
-                values: serialized_values,
+                values: Cow::Borrowed(values),
                 page_size: prepared_statement.get_page_size(),
                 timestamp: prepared_statement.get_timestamp(),
                 paging_state,
@@ -744,17 +742,16 @@ impl Connection {
     pub(crate) async fn execute_iter(
         self: Arc<Self>,
         prepared_statement: PreparedStatement,
-        values: impl ValueList,
+        values: SerializedValues,
     ) -> Result<RowIterator, QueryError> {
         let consistency = prepared_statement
             .config
             .determine_consistency(self.config.default_consistency);
         let serial_consistency = prepared_statement.config.serial_consistency.flatten();
-        let serialized = values.serialized()?.into_owned();
 
         RowIterator::new_for_connection_execute_iter(
             prepared_statement,
-            serialized,
+            values,
             self,
             consistency,
             serial_consistency,
@@ -1938,7 +1935,8 @@ mod tests {
         let prepared = connection.prepare(&insert_query).await.unwrap();
         for v in &values {
             let prepared_clone = prepared.clone();
-            let fut = async { connection.execute(prepared_clone, (*v,), None).await };
+            let values = prepared_clone.serialize_values(&(*v,)).unwrap();
+            let fut = async { connection.execute(prepared_clone, values, None).await };
             insert_futures.push(fut);
         }
 
@@ -2036,10 +2034,11 @@ mod tests {
                         let conn = conn.clone();
                         async move {
                             let prepared = conn.prepare(&q).await.unwrap();
-                            let response = conn
-                                .execute(prepared.clone(), (j, vec![j as u8; j as usize]), None)
-                                .await
+                            let values = prepared
+                                .serialize_values(&(j, vec![j as u8; j as usize]))
                                 .unwrap();
+                            let response =
+                                conn.execute(prepared.clone(), values, None).await.unwrap();
                             // QueryResponse might contain an error - make sure that there were no errors
                             let _nonerror_response =
                                 response.into_non_error_query_response().unwrap();

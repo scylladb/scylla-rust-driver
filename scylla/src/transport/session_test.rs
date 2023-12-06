@@ -1,7 +1,6 @@
 use crate as scylla;
 use crate::batch::{Batch, BatchStatement};
 use crate::frame::response::result::Row;
-use crate::frame::value::ValueList;
 use crate::prepared_statement::PreparedStatement;
 use crate::query::Query;
 use crate::retry_policy::{QueryInfo, RetryDecision, RetryPolicy, RetrySession};
@@ -28,7 +27,9 @@ use assert_matches::assert_matches;
 use bytes::Bytes;
 use futures::{FutureExt, StreamExt, TryStreamExt};
 use itertools::Itertools;
+use scylla_cql::frame::response::result::ColumnType;
 use scylla_cql::frame::value::Value;
+use scylla_cql::types::serialize::row::{SerializeRow, SerializedValues};
 use std::collections::BTreeSet;
 use std::collections::{BTreeMap, HashMap};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -208,7 +209,9 @@ async fn test_prepared_statement() {
         .unwrap();
 
     let values = (17_i32, 16_i32, "I'm prepared!!!");
-    let serialized_values = values.serialized().unwrap().into_owned();
+    let serialized_values_complex_pk = prepared_complex_pk_statement
+        .serialize_values(&values)
+        .unwrap();
 
     session.execute(&prepared_statement, &values).await.unwrap();
     session
@@ -231,15 +234,14 @@ async fn test_prepared_statement() {
                 .as_bigint()
                 .unwrap(),
         };
-        let prepared_token = Murmur3Partitioner.hash_one(
-            &prepared_statement
-                .compute_partition_key(&serialized_values)
-                .unwrap(),
-        );
+        let prepared_token = Murmur3Partitioner
+            .hash_one(&prepared_statement.compute_partition_key(&values).unwrap());
         assert_eq!(token, prepared_token);
+        let mut pk = SerializedValues::new();
+        pk.add_value(&17_i32, &ColumnType::Int).unwrap();
         let cluster_data_token = session
             .get_cluster_data()
-            .compute_token(&ks, "t2", (17_i32,))
+            .compute_token(&ks, "t2", &pk)
             .unwrap();
         assert_eq!(token, cluster_data_token);
     }
@@ -259,13 +261,13 @@ async fn test_prepared_statement() {
         };
         let prepared_token = Murmur3Partitioner.hash_one(
             &prepared_complex_pk_statement
-                .compute_partition_key(&serialized_values)
+                .compute_partition_key(&values)
                 .unwrap(),
         );
         assert_eq!(token, prepared_token);
         let cluster_data_token = session
             .get_cluster_data()
-            .compute_token(&ks, "complex_pk", &serialized_values)
+            .compute_token(&ks, "complex_pk", &serialized_values_complex_pk)
             .unwrap();
         assert_eq!(token, cluster_data_token);
     }
@@ -321,7 +323,8 @@ async fn test_prepared_statement() {
     }
     // Check that ValueList macro works
     {
-        #[derive(scylla::ValueList, scylla::FromRow, PartialEq, Debug, Clone)]
+        #[derive(scylla::SerializeRow, scylla::FromRow, PartialEq, Debug, Clone)]
+        #[scylla(crate = crate)]
         struct ComplexPk {
             a: i32,
             b: i32,
@@ -510,7 +513,7 @@ async fn test_token_calculation() {
             s.push('a');
         }
         let values = (&s,);
-        let serialized_values = values.serialized().unwrap().into_owned();
+        let serialized_values = prepared_statement.serialize_values(&values).unwrap();
         session.execute(&prepared_statement, &values).await.unwrap();
 
         let rs = session
@@ -529,11 +532,8 @@ async fn test_token_calculation() {
                 .as_bigint()
                 .unwrap(),
         };
-        let prepared_token = Murmur3Partitioner.hash_one(
-            &prepared_statement
-                .compute_partition_key(&serialized_values)
-                .unwrap(),
-        );
+        let prepared_token = Murmur3Partitioner
+            .hash_one(&prepared_statement.compute_partition_key(&values).unwrap());
         assert_eq!(token, prepared_token);
         let cluster_data_token = session
             .get_cluster_data()
@@ -2776,23 +2776,22 @@ async fn test_manual_primary_key_computation() {
     async fn assert_tokens_equal(
         session: &Session,
         prepared: &PreparedStatement,
-        pk_values_in_pk_order: impl ValueList,
-        all_values_in_query_order: impl ValueList,
+        pk_values_in_pk_order: impl SerializeRow,
+        all_values_in_query_order: impl SerializeRow,
     ) {
         let serialized_values_in_pk_order =
-            pk_values_in_pk_order.serialized().unwrap().into_owned();
-        let serialized_values_in_query_order =
-            all_values_in_query_order.serialized().unwrap().into_owned();
+            prepared.serialize_values(&pk_values_in_pk_order).unwrap();
+
+        let token_by_prepared = prepared
+            .calculate_token(&all_values_in_query_order)
+            .unwrap()
+            .unwrap();
 
         session
-            .execute(prepared, &serialized_values_in_query_order)
+            .execute(prepared, all_values_in_query_order)
             .await
             .unwrap();
 
-        let token_by_prepared = prepared
-            .calculate_token(&serialized_values_in_query_order)
-            .unwrap()
-            .unwrap();
         let token_by_hand =
             calculate_token_for_partition_key(&serialized_values_in_pk_order, &Murmur3Partitioner)
                 .unwrap();

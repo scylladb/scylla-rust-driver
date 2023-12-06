@@ -16,6 +16,7 @@ use itertools::{Either, Itertools};
 pub use scylla_cql::errors::TranslationError;
 use scylla_cql::frame::response::result::{deser_cql_value, ColumnSpec, Rows};
 use scylla_cql::frame::response::NonErrorResponse;
+use scylla_cql::types::serialize::row::SerializeRow;
 use std::borrow::Borrow;
 use std::collections::HashMap;
 use std::fmt::Display;
@@ -46,9 +47,7 @@ use super::NodeRef;
 use crate::cql_to_rust::FromRow;
 use crate::frame::response::cql_to_rust::FromRowError;
 use crate::frame::response::result;
-use crate::frame::value::{
-    BatchValues, BatchValuesFirstSerialized, BatchValuesIterator, ValueList,
-};
+use crate::frame::value::{BatchValues, BatchValuesFirstSerialized, BatchValuesIterator};
 use crate::prepared_statement::PreparedStatement;
 use crate::query::Query;
 use crate::routing::Token;
@@ -603,7 +602,7 @@ impl Session {
     pub async fn query(
         &self,
         query: impl Into<Query>,
-        values: impl ValueList,
+        values: impl SerializeRow,
     ) -> Result<QueryResult, QueryError> {
         self.query_paged(query, values, None).await
     }
@@ -617,11 +616,10 @@ impl Session {
     pub async fn query_paged(
         &self,
         query: impl Into<Query>,
-        values: impl ValueList,
+        values: impl SerializeRow,
         paging_state: Option<Bytes>,
     ) -> Result<QueryResult, QueryError> {
         let query: Query = query.into();
-        let serialized_values = values.serialized()?;
 
         let execution_profile = query
             .get_execution_profile_handle()
@@ -640,7 +638,8 @@ impl Session {
             ..Default::default()
         };
 
-        let span = RequestSpan::new_query(&query.contents, serialized_values.size());
+        let span = RequestSpan::new_query(&query.contents);
+        let span_ref = &span;
         let run_query_result = self
             .run_query(
                 statement_info,
@@ -656,10 +655,11 @@ impl Session {
                         .unwrap_or(execution_profile.serial_consistency);
                     // Needed to avoid moving query and values into async move block
                     let query_ref = &query;
-                    let values_ref = &serialized_values;
+                    let values_ref = &values;
                     let paging_state_ref = &paging_state;
                     async move {
                         if values_ref.is_empty() {
+                            span_ref.record_request_size(0);
                             connection
                                 .query_with_consistency(
                                     query_ref,
@@ -671,10 +671,12 @@ impl Session {
                                 .and_then(QueryResponse::into_non_error_query_response)
                         } else {
                             let prepared = connection.prepare(query_ref).await?;
+                            let serialized = prepared.serialize_values(values_ref)?;
+                            span_ref.record_request_size(serialized.buffer_size());
                             connection
                                 .execute_with_consistency(
                                     &prepared,
-                                    values_ref,
+                                    &serialized,
                                     consistency,
                                     serial_consistency,
                                     paging_state_ref.clone(),
@@ -777,17 +779,16 @@ impl Session {
     pub async fn query_iter(
         &self,
         query: impl Into<Query>,
-        values: impl ValueList,
+        values: impl SerializeRow,
     ) -> Result<RowIterator, QueryError> {
         let query: Query = query.into();
-        let serialized_values = values.serialized()?;
 
         let execution_profile = query
             .get_execution_profile_handle()
             .unwrap_or_else(|| self.get_default_execution_profile_handle())
             .access();
 
-        if serialized_values.is_empty() {
+        if values.is_empty() {
             RowIterator::new_for_query(
                 query,
                 execution_profile,
@@ -800,9 +801,10 @@ impl Session {
             // so instead of sending one prepare to a specific connection on each iterator query,
             // we fully prepare a statement beforehand.
             let prepared = self.prepare(query).await?;
+            let values = prepared.serialize_values(&values)?;
             RowIterator::new_for_prepared_statement(PreparedIteratorConfig {
                 prepared,
-                values: serialized_values.into_owned(),
+                values,
                 execution_profile,
                 cluster_data: self.cluster.get_data(),
                 metrics: self.metrics.clone(),
@@ -943,7 +945,7 @@ impl Session {
     pub async fn execute(
         &self,
         prepared: &PreparedStatement,
-        values: impl ValueList,
+        values: impl SerializeRow,
     ) -> Result<QueryResult, QueryError> {
         self.execute_paged(prepared, values, None).await
     }
@@ -957,10 +959,10 @@ impl Session {
     pub async fn execute_paged(
         &self,
         prepared: &PreparedStatement,
-        values: impl ValueList,
+        values: impl SerializeRow,
         paging_state: Option<Bytes>,
     ) -> Result<QueryResult, QueryError> {
-        let serialized_values = values.serialized()?;
+        let serialized_values = prepared.serialize_values(&values)?;
         let values_ref = &serialized_values;
         let paging_state_ref = &paging_state;
 
@@ -993,7 +995,7 @@ impl Session {
         let span = RequestSpan::new_prepared(
             partition_key.as_ref().map(|pk| pk.iter()),
             token,
-            serialized_values.size(),
+            serialized_values.buffer_size(),
         );
 
         if !span.span().is_disabled() {
@@ -1103,10 +1105,10 @@ impl Session {
     pub async fn execute_iter(
         &self,
         prepared: impl Into<PreparedStatement>,
-        values: impl ValueList,
+        values: impl SerializeRow,
     ) -> Result<RowIterator, QueryError> {
         let prepared = prepared.into();
-        let serialized_values = values.serialized()?;
+        let serialized_values = prepared.serialize_values(&values)?;
 
         let execution_profile = prepared
             .get_execution_profile_handle()
@@ -1115,7 +1117,7 @@ impl Session {
 
         RowIterator::new_for_prepared_statement(PreparedIteratorConfig {
             prepared,
-            values: serialized_values.into_owned(),
+            values: serialized_values,
             execution_profile,
             cluster_data: self.cluster.get_data(),
             metrics: self.metrics.clone(),
@@ -1918,7 +1920,7 @@ pub(crate) struct RequestSpan {
 }
 
 impl RequestSpan {
-    pub(crate) fn new_query(contents: &str, request_size: usize) -> Self {
+    pub(crate) fn new_query(contents: &str) -> Self {
         use tracing::field::Empty;
 
         let span = trace_span!(
@@ -1926,7 +1928,7 @@ impl RequestSpan {
             kind = "unprepared",
             contents = contents,
             //
-            request_size = request_size,
+            request_size = Empty,
             result_size = Empty,
             result_rows = Empty,
             replicas = Empty,
@@ -2038,6 +2040,10 @@ impl RequestSpan {
         }
         self.span
             .record("replicas", tracing::field::display(&ReplicaIps(replicas)));
+    }
+
+    pub(crate) fn record_request_size(&self, size: usize) {
+        self.span.record("request_size", size);
     }
 
     pub(crate) fn inc_speculative_executions(&self) {
