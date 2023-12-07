@@ -3,7 +3,6 @@ use std::sync::Arc;
 
 use crate::utils::test_with_3_node_cluster;
 use assert_matches::assert_matches;
-use scylla::batch::BatchStatement;
 use scylla::batch::{Batch, BatchType};
 use scylla::query::Query;
 use scylla::statement::SerialConsistency;
@@ -173,7 +172,8 @@ async fn test_execution_profiles() {
 
         let mut query = Query::from(format!("INSERT INTO {}.t (a, b, c) VALUES (1, 2, 'abc')", ks));
         let mut prepared = session.prepare(format!("INSERT INTO {}.t (a, b, c) VALUES (1, 2, 'abc')", ks)).await.unwrap();
-        let mut batch = Batch::new_with_statements(BatchType::Unlogged, vec![BatchStatement::Query(query.clone())]);
+        let mut batch = Batch::new(BatchType::Unlogged);
+        batch.append_query(query.clone());
 
         while profile_rx.try_recv().is_ok() {}
         consistency_rx.try_recv().unwrap_err();
@@ -194,7 +194,7 @@ async fn test_execution_profiles() {
         assert_matches!((report1, report2), ((Report::LoadBalancing, 1), (Report::RetryPolicy, 1)) | ((Report::RetryPolicy, 1), (Report::LoadBalancing, 1)));
         profile_rx.try_recv().unwrap_err();
 
-        session.batch(&batch, ((),)).await.unwrap();
+        session.batch(&batch).await.unwrap();
         let report1 = profile_rx.recv().await.unwrap();
         let report2 = profile_rx.recv().await.unwrap();
         assert_matches!((report1, report2), ((Report::LoadBalancing, 1), (Report::RetryPolicy, 1)) | ((Report::RetryPolicy, 1), (Report::LoadBalancing, 1)));
@@ -216,7 +216,7 @@ async fn test_execution_profiles() {
         profile_rx.try_recv().unwrap_err();
 
         batch.set_execution_profile_handle(Some(profile2.clone().into_handle()));
-        session.batch(&batch, ((),)).await.unwrap();
+        session.batch(&batch).await.unwrap();
         let report1 = profile_rx.recv().await.unwrap();
         let report2 = profile_rx.recv().await.unwrap();
         assert_matches!((report1, report2), ((Report::LoadBalancing, 2), (Report::RetryPolicy, 2)) | ((Report::RetryPolicy, 2), (Report::LoadBalancing, 2)));
@@ -238,7 +238,7 @@ async fn test_execution_profiles() {
         profile_rx.try_recv().unwrap_err();
 
         batch.set_execution_profile_handle(None);
-        session.batch(&batch, ((),)).await.unwrap();
+        session.batch(&batch).await.unwrap();
         let report1 = profile_rx.recv().await.unwrap();
         let report2 = profile_rx.recv().await.unwrap();
         assert_matches!((report1, report2), ((Report::LoadBalancing, 1), (Report::RetryPolicy, 1)) | ((Report::RetryPolicy, 1), (Report::LoadBalancing, 1)));
@@ -267,7 +267,7 @@ async fn test_execution_profiles() {
         assert_matches!(report_consistency, Consistency::One);
         consistency_rx.try_recv().unwrap_err();
 
-        session.batch(&batch, ((),)).await.unwrap_err();
+        session.batch(&batch).await.unwrap_err();
         let report_consistency = consistency_rx.recv().await.unwrap();
         assert_matches!(report_consistency, Consistency::One);
         consistency_rx.try_recv().unwrap_err();
@@ -286,7 +286,7 @@ async fn test_execution_profiles() {
         consistency_rx.try_recv().unwrap_err();
 
         batch.set_execution_profile_handle(Some(profile2.clone().into_handle()));
-        session.batch(&batch, ((),)).await.unwrap_err();
+        session.batch(&batch).await.unwrap_err();
         let report_consistency = consistency_rx.recv().await.unwrap();
         assert_matches!(report_consistency, Consistency::Two);
         consistency_rx.try_recv().unwrap_err();
@@ -305,7 +305,7 @@ async fn test_execution_profiles() {
         consistency_rx.try_recv().unwrap_err();
 
         batch.set_consistency(Consistency::Three);
-        session.batch(&batch, ((),)).await.unwrap_err();
+        session.batch(&batch).await.unwrap_err();
         let report_consistency = consistency_rx.recv().await.unwrap();
         assert_matches!(report_consistency, Consistency::Three);
         consistency_rx.try_recv().unwrap_err();

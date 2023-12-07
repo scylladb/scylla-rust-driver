@@ -16,7 +16,7 @@ use itertools::{Either, Itertools};
 pub use scylla_cql::errors::TranslationError;
 use scylla_cql::frame::response::result::{deser_cql_value, ColumnSpec, Rows};
 use scylla_cql::frame::response::NonErrorResponse;
-use scylla_cql::types::serialize::row::SerializeRow;
+use scylla_cql::types::serialize::row::{SerializeRow, SerializedValues};
 use std::borrow::Borrow;
 use std::collections::HashMap;
 use std::fmt::Display;
@@ -47,7 +47,6 @@ use super::NodeRef;
 use crate::cql_to_rust::FromRow;
 use crate::frame::response::cql_to_rust::FromRowError;
 use crate::frame::response::result;
-use crate::frame::value::{BatchValues, BatchValuesFirstSerialized, BatchValuesIterator};
 use crate::prepared_statement::PreparedStatement;
 use crate::query::Query;
 use crate::routing::Token;
@@ -1165,11 +1164,7 @@ impl Session {
     /// # Ok(())
     /// # }
     /// ```
-    pub async fn batch(
-        &self,
-        batch: &Batch,
-        values: impl BatchValues,
-    ) -> Result<QueryResult, QueryError> {
+    pub async fn batch(&self, batch: &Batch) -> Result<QueryResult, QueryError> {
         // Shard-awareness behavior for batch will be to pick shard based on first batch statement's shard
         // If users batch statements by shard, they will be rewarded with full shard awareness
 
@@ -1180,9 +1175,6 @@ impl Session {
                 BadQuery::TooManyQueriesInBatchStatement(batch_statements_length),
             ));
         }
-        // Extract first serialized_value
-        let first_serialized_value = values.batch_values_iter().next_serialized().transpose()?;
-        let first_serialized_value = first_serialized_value.as_deref();
 
         let execution_profile = batch
             .get_execution_profile_handle()
@@ -1199,13 +1191,19 @@ impl Session {
             .serial_consistency
             .unwrap_or(execution_profile.serial_consistency);
 
-        let statement_info = match (first_serialized_value, batch.statements.first()) {
-            (Some(first_serialized_value), Some(BatchStatement::PreparedStatement(ps))) => {
+        let statement_info = match batch.statements.first() {
+            Some(BatchStatement::PreparedStatement { statement, values }) => {
+                let token = statement
+                    .extract_partition_key_and_calculate_token(
+                        statement.get_partitioner_name(),
+                        &values,
+                    )?
+                    .map(|(_, t)| t);
                 RoutingInfo {
                     consistency,
                     serial_consistency,
-                    token: ps.calculate_token(first_serialized_value)?,
-                    keyspace: ps.get_keyspace_name(),
+                    token,
+                    keyspace: statement.get_keyspace_name(),
                     is_confirmed_lwt: false,
                 }
             }
@@ -1216,11 +1214,6 @@ impl Session {
             },
         };
         let first_value_token = statement_info.token;
-
-        // Reuse first serialized value when serializing query, and delegate to `BatchValues::write_next_to_request`
-        // directly for others (if they weren't already serialized, possibly don't even allocate the `LegacySerializedValues`)
-        let values = BatchValuesFirstSerialized::new(&values, first_serialized_value);
-        let values_ref = &values;
 
         let span = RequestSpan::new_batch();
 
@@ -1246,12 +1239,7 @@ impl Session {
                         .unwrap_or(execution_profile.serial_consistency);
                     async move {
                         connection
-                            .batch_with_consistency(
-                                batch,
-                                values_ref,
-                                consistency,
-                                serial_consistency,
-                            )
+                            .batch_with_consistency(batch, consistency, serial_consistency)
                             .await
                     }
                 },
@@ -1305,7 +1293,10 @@ impl Session {
                 .map(|statement| async move {
                     if let BatchStatement::Query(query) = statement {
                         let prepared = self.prepare(query.clone()).await?;
-                        *statement = BatchStatement::PreparedStatement(prepared);
+                        *statement = BatchStatement::PreparedStatement {
+                            statement: prepared,
+                            values: SerializedValues::new(),
+                        };
                     }
                     Ok::<(), QueryError>(())
                 }),

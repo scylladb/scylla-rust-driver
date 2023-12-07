@@ -22,7 +22,6 @@ pub use startup::Startup;
 use self::batch::BatchStatement;
 
 use super::types::SerialConsistency;
-use super::value::LegacySerializedValues;
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord, TryFromPrimitive)]
 #[repr(u8)]
@@ -59,7 +58,7 @@ pub trait DeserializableRequest: SerializableRequest + Sized {
 pub enum Request<'r> {
     Query(Query<'r>),
     Execute(Execute<'r>),
-    Batch(Batch<'r, BatchStatement<'r>, Vec<LegacySerializedValues>>),
+    Batch(Batch<'r, BatchStatement<'r>>),
 }
 
 impl<'r> Request<'r> {
@@ -100,7 +99,7 @@ impl<'r> Request<'r> {
 
 #[cfg(test)]
 mod tests {
-    use std::{borrow::Cow, ops::Deref};
+    use std::borrow::Cow;
 
     use bytes::Bytes;
 
@@ -176,9 +175,12 @@ mod tests {
         let statements = vec![
             BatchStatement::Query {
                 text: query.contents,
+                values: query.parameters.values.clone(),
             },
+            // Not execute's values, because named values are not supported in batches.
             BatchStatement::Prepared {
                 id: Cow::Borrowed(&execute.id),
+                values: query.parameters.values,
             },
         ];
         let batch = Batch {
@@ -187,22 +189,6 @@ mod tests {
             consistency: Consistency::EachQuorum,
             serial_consistency: Some(SerialConsistency::LocalSerial),
             timestamp: Some(32432),
-
-            // Not execute's values, because named values are not supported in batches.
-            values: vec![
-                query
-                    .parameters
-                    .values
-                    .deref()
-                    .clone()
-                    .into_old_serialized_values(),
-                query
-                    .parameters
-                    .values
-                    .deref()
-                    .clone()
-                    .into_old_serialized_values(),
-            ],
         };
         {
             let mut buf = Vec::new();
@@ -264,6 +250,7 @@ mod tests {
         // Batch
         let statements = vec![BatchStatement::Query {
             text: query.contents,
+            values: query.parameters.values,
         }];
         let batch = Batch {
             statements: Cow::Owned(statements),
@@ -271,13 +258,6 @@ mod tests {
             consistency: Consistency::EachQuorum,
             serial_consistency: None,
             timestamp: None,
-
-            values: vec![query
-                .parameters
-                .values
-                .deref()
-                .clone()
-                .into_old_serialized_values()],
         };
         {
             let mut buf = Vec::new();

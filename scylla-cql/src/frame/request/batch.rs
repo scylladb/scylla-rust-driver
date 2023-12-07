@@ -1,11 +1,13 @@
 use bytes::{Buf, BufMut};
 use std::{borrow::Cow, convert::TryInto};
 
-use crate::frame::{
-    frame_errors::ParseError,
-    request::{RequestOpcode, SerializableRequest},
-    types::{self, SerialConsistency},
-    value::{BatchValues, BatchValuesIterator, LegacySerializedValues},
+use crate::{
+    frame::{
+        frame_errors::ParseError,
+        request::{RequestOpcode, SerializableRequest},
+        types::{self, SerialConsistency},
+    },
+    types::serialize::row::SerializedValues,
 };
 
 use super::DeserializableRequest;
@@ -16,18 +18,16 @@ const FLAG_WITH_DEFAULT_TIMESTAMP: u8 = 0x20;
 const ALL_FLAGS: u8 = FLAG_WITH_SERIAL_CONSISTENCY | FLAG_WITH_DEFAULT_TIMESTAMP;
 
 #[cfg_attr(test, derive(Debug, PartialEq, Eq))]
-pub struct Batch<'b, Statement, Values>
+pub struct Batch<'b, Statement>
 where
     BatchStatement<'b>: From<&'b Statement>,
     Statement: Clone,
-    Values: BatchValues,
 {
     pub statements: Cow<'b, [Statement]>,
     pub batch_type: BatchType,
     pub consistency: types::Consistency,
     pub serial_consistency: Option<types::SerialConsistency>,
     pub timestamp: Option<i64>,
-    pub values: Values,
 }
 
 /// The type of a batch.
@@ -64,15 +64,20 @@ impl TryFrom<u8> for BatchType {
 
 #[derive(Debug, Clone, Eq, PartialEq, PartialOrd, Ord)]
 pub enum BatchStatement<'a> {
-    Query { text: Cow<'a, str> },
-    Prepared { id: Cow<'a, [u8]> },
+    Query {
+        text: Cow<'a, str>,
+        values: Cow<'a, SerializedValues>,
+    },
+    Prepared {
+        id: Cow<'a, [u8]>,
+        values: Cow<'a, SerializedValues>,
+    },
 }
 
-impl<Statement, Values> SerializableRequest for Batch<'_, Statement, Values>
+impl<Statement> SerializableRequest for Batch<'_, Statement>
 where
     for<'s> BatchStatement<'s>: From<&'s Statement>,
     Statement: Clone,
-    Values: BatchValues,
 {
     const OPCODE: RequestOpcode = RequestOpcode::Batch;
 
@@ -83,36 +88,9 @@ where
         // Serializing queries
         types::write_short(self.statements.len().try_into()?, buf);
 
-        let counts_mismatch_err = |n_values: usize, n_statements: usize| {
-            ParseError::BadDataToSerialize(format!(
-                "Length of provided values must be equal to number of batch statements \
-                    (got {n_values} values, {n_statements} statements)"
-            ))
-        };
-        let mut n_serialized_statements = 0usize;
-        let mut value_lists = self.values.batch_values_iter();
-        for (idx, statement) in self.statements.iter().enumerate() {
-            BatchStatement::from(statement).serialize(buf)?;
-            value_lists
-                .write_next_to_request(buf)
-                .ok_or_else(|| counts_mismatch_err(idx, self.statements.len()))??;
-            n_serialized_statements += 1;
-        }
-        // At this point, we have all statements serialized. If any values are still left, we have a mismatch.
-        if value_lists.skip_next().is_some() {
-            return Err(counts_mismatch_err(
-                n_serialized_statements + 1 /*skipped above*/ + value_lists.count(),
-                n_serialized_statements,
-            ));
-        }
-        if n_serialized_statements != self.statements.len() {
-            // We want to check this to avoid propagating an invalid construction of self.statements_count as a
-            // hard-to-debug silent fail
-            return Err(ParseError::BadDataToSerialize(format!(
-                "Invalid Batch constructed: not as many statements serialized as announced \
-                    (batch.statement_count: {announced_statement_count}, {n_serialized_statements}",
-                announced_statement_count = self.statements.len()
-            )));
+        for statement in self.statements.iter() {
+            let stmt = BatchStatement::from(statement);
+            stmt.serialize(buf)?;
         }
 
         // Serializing consistency
@@ -146,11 +124,13 @@ impl BatchStatement<'_> {
         match kind {
             0 => {
                 let text = Cow::Owned(types::read_long_string(buf)?.to_owned());
-                Ok(BatchStatement::Query { text })
+                let values = Cow::Owned(SerializedValues::new_from_frame(buf)?);
+                Ok(BatchStatement::Query { text, values })
             }
             1 => {
                 let id = types::read_short_bytes(buf)?.to_vec().into();
-                Ok(BatchStatement::Prepared { id })
+                let values = Cow::Owned(SerializedValues::new_from_frame(buf)?);
+                Ok(BatchStatement::Prepared { id, values })
             }
             _ => Err(ParseError::BadIncomingData(format!(
                 "Unexpected batch statement kind: {}",
@@ -163,13 +143,15 @@ impl BatchStatement<'_> {
 impl BatchStatement<'_> {
     fn serialize(&self, buf: &mut impl BufMut) -> Result<(), ParseError> {
         match self {
-            Self::Query { text } => {
+            Self::Query { text, values } => {
                 buf.put_u8(0);
                 types::write_long_string(text, buf)?;
+                values.write_to_request(buf);
             }
-            Self::Prepared { id } => {
+            Self::Prepared { id, values } => {
                 buf.put_u8(1);
                 types::write_short_bytes(id, buf)?;
+                values.write_to_request(buf);
             }
         }
 
@@ -180,25 +162,28 @@ impl BatchStatement<'_> {
 impl<'s, 'b> From<&'s BatchStatement<'b>> for BatchStatement<'s> {
     fn from(value: &'s BatchStatement) -> Self {
         match value {
-            BatchStatement::Query { text } => BatchStatement::Query { text: text.clone() },
-            BatchStatement::Prepared { id } => BatchStatement::Prepared { id: id.clone() },
+            BatchStatement::Query { text, values } => BatchStatement::Query {
+                text: text.clone(),
+                values: values.clone(),
+            },
+            BatchStatement::Prepared { id, values } => BatchStatement::Prepared {
+                id: id.clone(),
+                values: values.clone(),
+            },
         }
     }
 }
 
-impl<'b> DeserializableRequest for Batch<'b, BatchStatement<'b>, Vec<LegacySerializedValues>> {
+impl<'b> DeserializableRequest for Batch<'b, BatchStatement<'b>> {
     fn deserialize(buf: &mut &[u8]) -> Result<Self, ParseError> {
         let batch_type = buf.get_u8().try_into()?;
 
         let statements_count: usize = types::read_short(buf)?.into();
-        let statements_with_values = (0..statements_count)
+        let statements = (0..statements_count)
             .map(|_| {
                 let batch_statement = BatchStatement::deserialize(buf)?;
 
-                // As stated in CQL protocol v4 specification, values names in Batch are broken and should be never used.
-                let values = LegacySerializedValues::new_from_frame(buf, false)?;
-
-                Ok((batch_statement, values))
+                Ok(batch_statement)
             })
             .collect::<Result<Vec<_>, ParseError>>()?;
 
@@ -233,16 +218,12 @@ impl<'b> DeserializableRequest for Batch<'b, BatchStatement<'b>, Vec<LegacySeria
             .then(|| types::read_long(buf))
             .transpose()?;
 
-        let (statements, values): (Vec<BatchStatement>, Vec<LegacySerializedValues>) =
-            statements_with_values.into_iter().unzip();
-
         Ok(Self {
+            statements: Cow::Owned(statements),
             batch_type,
             consistency,
             serial_consistency,
             timestamp,
-            statements: Cow::Owned(statements),
-            values,
         })
     }
 }

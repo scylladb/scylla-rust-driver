@@ -9,7 +9,6 @@ use scylla::test_utils::unique_keyspace_name;
 use scylla::transport::session::Session;
 use tokio::sync::mpsc::{self, UnboundedReceiver, UnboundedSender};
 
-use scylla::statement::batch::BatchStatement;
 use scylla::statement::query::Query;
 use scylla::{
     batch::{Batch, BatchType},
@@ -100,7 +99,7 @@ async fn batch_consistency_set_directly(
     let mut batch = batch.clone();
     batch.set_consistency(c);
     batch.set_serial_consistency(sc);
-    session.batch(&batch, ((1,),)).await.unwrap();
+    session.batch(&batch).await.unwrap();
 }
 
 // The following functions perform a request with consistencies set on a per-statement execution profile.
@@ -133,7 +132,7 @@ async fn batch_consistency_set_on_exec_profile(
 ) {
     let mut batch = batch.clone();
     batch.set_execution_profile_handle(Some(profile));
-    session.batch(&batch, ((1,),)).await.unwrap();
+    session.batch(&batch).await.unwrap();
 }
 
 // For all consistencies (as defined by `pairs_of_all_consistencies()`) and every method of setting consistencies
@@ -166,10 +165,8 @@ async fn check_for_all_consistencies_and_setting_options<
     // We will be using these requests:
     let query = Query::from(QUERY_STR);
     let prepared = session.prepare(QUERY_STR).await.unwrap();
-    let batch = Batch::new_with_statements(
-        BatchType::Logged,
-        vec![BatchStatement::Query(Query::from(QUERY_STR))],
-    );
+    let mut batch = Batch::new(BatchType::Logged);
+    batch.append_statement(prepared.clone(), (1,)).unwrap();
 
     for (consistency, serial_consistency) in pairs_of_all_consistencies() {
         // Some checks are double, because both non-paged and paged executions are done.
@@ -241,10 +238,7 @@ async fn check_for_all_consistencies_and_setting_options<
             .unwrap();
         rx = check_consistencies(consistency, serial_consistency, rx).await;
 
-        session_with_consistencies
-            .batch(&batch, ((1,),))
-            .await
-            .unwrap();
+        session_with_consistencies.batch(&batch).await.unwrap();
         rx = check_consistencies(consistency, serial_consistency, rx).await;
     }
 }

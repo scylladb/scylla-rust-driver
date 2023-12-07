@@ -27,7 +27,7 @@ pub(crate) use ssl_config::SslConfig;
 
 use crate::authentication::AuthenticatorProvider;
 use scylla_cql::frame::response::authenticate::Authenticate;
-use std::collections::{BTreeSet, HashMap, HashSet};
+use std::collections::{BTreeSet, HashMap};
 use std::convert::TryFrom;
 use std::io::ErrorKind;
 use std::net::{IpAddr, SocketAddr};
@@ -53,7 +53,6 @@ use crate::frame::{
     request::{self, batch, execute, query, register, SerializableRequest},
     response::{event::Event, result, NonErrorResponse, Response, ResponseOpcode},
     server_event_type::EventType,
-    value::{BatchValues, BatchValuesIterator},
     FrameParams, SerializedRequest,
 };
 use crate::query::Query;
@@ -760,14 +759,9 @@ impl Connection {
     }
 
     #[allow(dead_code)]
-    pub(crate) async fn batch(
-        &self,
-        batch: &Batch,
-        values: impl BatchValues,
-    ) -> Result<QueryResult, QueryError> {
+    pub(crate) async fn batch(&self, batch: &Batch) -> Result<QueryResult, QueryError> {
         self.batch_with_consistency(
             batch,
-            values,
             batch
                 .config
                 .determine_consistency(self.config.default_consistency),
@@ -778,16 +772,12 @@ impl Connection {
 
     pub(crate) async fn batch_with_consistency(
         &self,
-        init_batch: &Batch,
-        values: impl BatchValues,
+        batch: &Batch,
         consistency: Consistency,
         serial_consistency: Option<SerialConsistency>,
     ) -> Result<QueryResult, QueryError> {
-        let batch = self.prepare_batch(init_batch, &values).await?;
-
         let batch_frame = batch::Batch {
             statements: Cow::Borrowed(&batch.statements),
-            values,
             batch_type: batch.get_type(),
             consistency,
             serial_consistency,
@@ -804,8 +794,10 @@ impl Connection {
                     DbError::Unprepared { statement_id } => {
                         debug!("Connection::batch: got DbError::Unprepared - repreparing statement with id {:?}", statement_id);
                         let prepared_statement = batch.statements.iter().find_map(|s| match s {
-                            BatchStatement::PreparedStatement(s) if *s.get_id() == statement_id => {
-                                Some(s)
+                            BatchStatement::PreparedStatement { statement, .. }
+                                if *statement.get_id() == statement_id =>
+                            {
+                                Some(statement)
                             }
                             _ => None,
                         });
@@ -826,58 +818,6 @@ impl Connection {
                 )),
             };
         }
-    }
-
-    async fn prepare_batch<'b>(
-        &self,
-        init_batch: &'b Batch,
-        values: impl BatchValues,
-    ) -> Result<Cow<'b, Batch>, QueryError> {
-        let mut to_prepare = HashSet::<&str>::new();
-
-        {
-            let mut values_iter = values.batch_values_iter();
-            for stmt in &init_batch.statements {
-                if let BatchStatement::Query(query) = stmt {
-                    let value = values_iter.next_serialized().transpose()?;
-                    if let Some(v) = value {
-                        if v.len() > 0 {
-                            to_prepare.insert(&query.contents);
-                        }
-                    }
-                } else {
-                    values_iter.skip_next();
-                }
-            }
-        }
-
-        if to_prepare.is_empty() {
-            return Ok(Cow::Borrowed(init_batch));
-        }
-
-        let mut prepared_queries = HashMap::<&str, PreparedStatement>::new();
-
-        for query in &to_prepare {
-            let prepared = self.prepare(&Query::new(query.to_string())).await?;
-            prepared_queries.insert(query, prepared);
-        }
-
-        let mut batch: Cow<Batch> = Cow::Owned(Default::default());
-        batch.to_mut().config = init_batch.config.clone();
-        for stmt in &init_batch.statements {
-            match stmt {
-                BatchStatement::Query(query) => match prepared_queries.get(query.contents.as_str())
-                {
-                    Some(prepared) => batch.to_mut().append_statement(prepared.clone()),
-                    None => batch.to_mut().append_statement(query.clone()),
-                },
-                BatchStatement::PreparedStatement(prepared) => {
-                    batch.to_mut().append_statement(prepared.clone());
-                }
-            }
-        }
-
-        Ok(batch)
     }
 
     pub(crate) async fn use_keyspace(

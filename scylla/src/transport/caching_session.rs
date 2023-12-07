@@ -1,5 +1,4 @@
 use crate::batch::{Batch, BatchStatement};
-use crate::frame::value::BatchValues;
 use crate::prepared_statement::PreparedStatement;
 use crate::query::Query;
 use crate::transport::errors::QueryError;
@@ -10,7 +9,7 @@ use bytes::Bytes;
 use dashmap::DashMap;
 use futures::future::try_join_all;
 use scylla_cql::frame::response::result::PreparedMetadata;
-use scylla_cql::types::serialize::row::SerializeRow;
+use scylla_cql::types::serialize::row::{SerializeRow, SerializedValues};
 use std::collections::hash_map::RandomState;
 use std::hash::BuildHasher;
 
@@ -105,22 +104,18 @@ where
 
     /// Does the same thing as [`Session::batch`] but uses the prepared statement cache\
     /// Prepares batch using CachingSession::prepare_batch if needed and then executes it
-    pub async fn batch(
-        &self,
-        batch: &Batch,
-        values: impl BatchValues,
-    ) -> Result<QueryResult, QueryError> {
+    pub async fn batch(&self, batch: &Batch) -> Result<QueryResult, QueryError> {
         let all_prepared: bool = batch
             .statements
             .iter()
-            .all(|stmt| matches!(stmt, BatchStatement::PreparedStatement(_)));
+            .all(|stmt| matches!(stmt, BatchStatement::PreparedStatement { .. }));
 
         if all_prepared {
-            self.session.batch(batch, &values).await
+            self.session.batch(batch).await
         } else {
             let prepared_batch: Batch = self.prepare_batch(batch).await?;
 
-            self.session.batch(&prepared_batch, &values).await
+            self.session.batch(&prepared_batch).await
         }
     }
 
@@ -137,7 +132,10 @@ where
                 .map(|statement| async move {
                     if let BatchStatement::Query(query) = statement {
                         let prepared = self.add_prepared_statement(&*query).await?;
-                        *statement = BatchStatement::PreparedStatement(prepared);
+                        *statement = BatchStatement::PreparedStatement {
+                            statement: prepared,
+                            values: SerializedValues::new(),
+                        };
                     }
                     Ok::<(), QueryError>(())
                 }),
@@ -449,7 +447,7 @@ mod tests {
         let assert_batch_prepared = |b: &Batch| {
             for stmt in &b.statements {
                 match stmt {
-                    BatchStatement::PreparedStatement(_) => {}
+                    BatchStatement::PreparedStatement { .. } => {}
                     _ => panic!("Unprepared statement in prepared batch!"),
                 }
             }

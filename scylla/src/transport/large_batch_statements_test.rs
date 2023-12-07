@@ -52,7 +52,6 @@ async fn create_test_session(session: Session, ks: &String) -> Session {
 
 async fn write_batch(session: &Session, n: usize, ks: &String) -> Result<QueryResult, QueryError> {
     let mut batch_query = Batch::new(BatchType::Unlogged);
-    let mut batch_values = Vec::new();
     let query = format!("INSERT INTO {}.pairs (dummy, k, v) VALUES (0, ?, ?)", ks);
     let query = Query::new(query);
     let prepared_statement = session.prepare(query).await.unwrap();
@@ -61,8 +60,7 @@ async fn write_batch(session: &Session, n: usize, ks: &String) -> Result<QueryRe
         key.extend(i.to_be_bytes().as_slice());
         let value = key.clone();
         let values = vec![key, value];
-        batch_values.push(values);
-        batch_query.append_statement(prepared_statement.clone());
+        batch_query.append_statement(prepared_statement.clone(), values);
     }
-    session.batch(&batch_query, batch_values).await
+    session.batch(&batch_query).await
 }

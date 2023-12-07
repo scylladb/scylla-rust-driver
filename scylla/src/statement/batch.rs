@@ -1,6 +1,9 @@
 use std::borrow::Cow;
 use std::sync::Arc;
 
+use scylla_cql::types::serialize::row::{SerializeRow, SerializedValues};
+use scylla_cql::types::serialize::SerializationError;
+
 use crate::history::HistoryListener;
 use crate::retry_policy::RetryPolicy;
 use crate::statement::{prepared_statement::PreparedStatement, query::Query};
@@ -17,7 +20,7 @@ pub use crate::frame::request::batch::BatchType;
 pub struct Batch {
     pub(crate) config: StatementConfig,
 
-    pub statements: Vec<BatchStatement>,
+    pub(crate) statements: Vec<BatchStatement>,
     batch_type: BatchType,
 }
 
@@ -30,18 +33,21 @@ impl Batch {
         }
     }
 
-    /// Creates a new, empty `Batch` of `batch_type` type with the provided statements.
-    pub fn new_with_statements(batch_type: BatchType, statements: Vec<BatchStatement>) -> Self {
-        Self {
-            batch_type,
-            statements,
-            ..Default::default()
-        }
+    pub fn append_query(&mut self, query: impl Into<Query>) {
+        self.statements.push(BatchStatement::Query(query.into()));
     }
-
     /// Appends a new statement to the batch.
-    pub fn append_statement(&mut self, statement: impl Into<BatchStatement>) {
-        self.statements.push(statement.into());
+    pub fn append_statement(
+        &mut self,
+        statement: PreparedStatement,
+        values: impl SerializeRow,
+    ) -> Result<(), SerializationError> {
+        let serialized = statement.serialize_values(&values)?;
+        self.statements.push(BatchStatement::PreparedStatement {
+            statement,
+            values: serialized,
+        });
+        Ok(())
     }
 
     /// Gets type of batch.
@@ -156,27 +162,12 @@ impl Default for Batch {
 
 /// This enum represents a CQL statement, that can be part of batch.
 #[derive(Clone)]
-pub enum BatchStatement {
+pub(crate) enum BatchStatement {
     Query(Query),
-    PreparedStatement(PreparedStatement),
-}
-
-impl From<&str> for BatchStatement {
-    fn from(s: &str) -> Self {
-        BatchStatement::Query(Query::from(s))
-    }
-}
-
-impl From<Query> for BatchStatement {
-    fn from(q: Query) -> Self {
-        BatchStatement::Query(q)
-    }
-}
-
-impl From<PreparedStatement> for BatchStatement {
-    fn from(p: PreparedStatement) -> Self {
-        BatchStatement::PreparedStatement(p)
-    }
+    PreparedStatement {
+        statement: PreparedStatement,
+        values: SerializedValues,
+    },
 }
 
 impl<'a: 'b, 'b> From<&'a BatchStatement>
@@ -187,11 +178,13 @@ impl<'a: 'b, 'b> From<&'a BatchStatement>
             BatchStatement::Query(query) => {
                 scylla_cql::frame::request::batch::BatchStatement::Query {
                     text: Cow::Borrowed(&query.contents),
+                    values: Cow::Owned(SerializedValues::new()),
                 }
             }
-            BatchStatement::PreparedStatement(prepared) => {
+            BatchStatement::PreparedStatement { statement, values } => {
                 scylla_cql::frame::request::batch::BatchStatement::Prepared {
-                    id: Cow::Borrowed(prepared.get_id()),
+                    id: Cow::Borrowed(statement.get_id()),
+                    values: Cow::Borrowed(values),
                 }
             }
         }
