@@ -249,42 +249,21 @@ impl<'buf> CellValueBuilder for BufBackedCellValueBuilder<'buf> {
 
 #[cfg(test)]
 mod tests {
-    use super::{
-        BufBackedCellWriter, BufBackedRowWriter, CellValueBuilder, CellWriter,
-        RowWriter,
-    };
-
-    // We want to perform the same computation for both buf backed writer
-    // and counting writer, but Rust does not support generic closures.
-    // This trait comes to the rescue.
-    trait CellSerializeCheck {
-        fn check<W: CellWriter>(&self, writer: W);
-    }
-
-    fn check_cell_serialize<C: CellSerializeCheck>(c: C) -> Vec<u8> {
-        let mut data = Vec::new();
-        let writer = BufBackedCellWriter::new(&mut data);
-        c.check(writer);
-        data
-    }
+    use super::{BufBackedCellWriter, BufBackedRowWriter, CellValueBuilder, CellWriter, RowWriter};
 
     #[test]
     fn test_cell_writer() {
-        struct Check;
-        impl CellSerializeCheck for Check {
-            fn check<W: CellWriter>(&self, writer: W) {
-                let mut sub_writer = writer.into_value_builder();
-                sub_writer.make_sub_writer().set_null();
-                sub_writer
-                    .make_sub_writer()
-                    .set_value(&[1, 2, 3, 4])
-                    .unwrap();
-                sub_writer.make_sub_writer().set_unset();
-                sub_writer.finish().unwrap();
-            }
-        }
+        let mut data = Vec::new();
+        let writer = BufBackedCellWriter::new(&mut data);
+        let mut sub_writer = writer.into_value_builder();
+        sub_writer.make_sub_writer().set_null();
+        sub_writer
+            .make_sub_writer()
+            .set_value(&[1, 2, 3, 4])
+            .unwrap();
+        sub_writer.make_sub_writer().set_unset();
+        sub_writer.finish().unwrap();
 
-        let data = check_cell_serialize(Check);
         assert_eq!(
             data,
             [
@@ -298,14 +277,10 @@ mod tests {
 
     #[test]
     fn test_poisoned_appender() {
-        struct Check;
-        impl CellSerializeCheck for Check {
-            fn check<W: CellWriter>(&self, writer: W) {
-                let _ = writer.into_value_builder();
-            }
-        }
+        let mut data = Vec::new();
+        let writer = BufBackedCellWriter::new(&mut data);
+        let _ = writer.into_value_builder();
 
-        let data = check_cell_serialize(Check);
         assert_eq!(
             data,
             [
@@ -314,30 +289,14 @@ mod tests {
         );
     }
 
-    trait RowSerializeCheck {
-        fn check<W: RowWriter>(&self, writer: &mut W);
-    }
-
-    fn check_row_serialize<C: RowSerializeCheck>(c: C) -> Vec<u8> {
-        let mut data = Vec::new();
-        let mut writer = BufBackedRowWriter::new(&mut data);
-        c.check(&mut writer);
-
-        data
-    }
-
     #[test]
     fn test_row_writer() {
-        struct Check;
-        impl RowSerializeCheck for Check {
-            fn check<W: RowWriter>(&self, writer: &mut W) {
-                writer.make_cell_writer().set_null();
-                writer.make_cell_writer().set_value(&[1, 2, 3, 4]).unwrap();
-                writer.make_cell_writer().set_unset();
-            }
-        }
+        let mut data = Vec::new();
+        let mut writer = BufBackedRowWriter::new(&mut data);
+        writer.make_cell_writer().set_null();
+        writer.make_cell_writer().set_value(&[1, 2, 3, 4]).unwrap();
+        writer.make_cell_writer().set_unset();
 
-        let data = check_row_serialize(Check);
         assert_eq!(
             data,
             [
