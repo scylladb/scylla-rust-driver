@@ -51,18 +51,16 @@ pub trait SerializeCql {
     ) -> Result<WrittenCellProof<'b>, SerializationError>;
 }
 
-macro_rules! impl_exact_preliminary_type_check {
-    ($($cql:tt),*) => {
-        fn preliminary_type_check(typ: &ColumnType) -> Result<(), SerializationError> {
-            match typ {
-                $(ColumnType::$cql)|* => Ok(()),
-                _ => Err(mk_typck_err::<Self>(
-                    typ,
-                    BuiltinTypeCheckErrorKind::MismatchedType {
-                        expected: &[$(ColumnType::$cql),*],
-                    }
-                ))
-            }
+macro_rules! exact_type_check {
+    ($typ:ident, $($cql:tt),*) => {
+        match $typ {
+            $(ColumnType::$cql)|* => {},
+            _ => return Err(mk_typck_err::<Self>(
+                $typ,
+                BuiltinTypeCheckErrorKind::MismatchedType {
+                    expected: &[$(ColumnType::$cql),*],
+                }
+            ))
         }
     };
 }
@@ -87,24 +85,32 @@ macro_rules! impl_serialize_via_writer {
 }
 
 impl SerializeCql for i8 {
-    impl_exact_preliminary_type_check!(TinyInt);
-    impl_serialize_via_writer!(|me, writer| writer.set_value(me.to_be_bytes().as_slice()).unwrap());
+    impl_serialize_via_writer!(|me, typ, writer| {
+        exact_type_check!(typ, TinyInt);
+        writer.set_value(me.to_be_bytes().as_slice()).unwrap()
+    });
 }
 impl SerializeCql for i16 {
-    impl_exact_preliminary_type_check!(SmallInt);
-    impl_serialize_via_writer!(|me, writer| writer.set_value(me.to_be_bytes().as_slice()).unwrap());
+    impl_serialize_via_writer!(|me, typ, writer| {
+        exact_type_check!(typ, SmallInt);
+        writer.set_value(me.to_be_bytes().as_slice()).unwrap()
+    });
 }
 impl SerializeCql for i32 {
-    impl_exact_preliminary_type_check!(Int);
-    impl_serialize_via_writer!(|me, writer| writer.set_value(me.to_be_bytes().as_slice()).unwrap());
+    impl_serialize_via_writer!(|me, typ, writer| {
+        exact_type_check!(typ, Int);
+        writer.set_value(me.to_be_bytes().as_slice()).unwrap()
+    });
 }
 impl SerializeCql for i64 {
-    impl_exact_preliminary_type_check!(BigInt);
-    impl_serialize_via_writer!(|me, writer| writer.set_value(me.to_be_bytes().as_slice()).unwrap());
+    impl_serialize_via_writer!(|me, typ, writer| {
+        exact_type_check!(typ, BigInt);
+        writer.set_value(me.to_be_bytes().as_slice()).unwrap()
+    });
 }
 impl SerializeCql for BigDecimal {
-    impl_exact_preliminary_type_check!(Decimal);
     impl_serialize_via_writer!(|me, typ, writer| {
+        exact_type_check!(typ, Decimal);
         let mut builder = writer.into_value_builder();
         let (value, scale) = me.as_bigint_and_exponent();
         let scale: i32 = scale
@@ -118,41 +124,41 @@ impl SerializeCql for BigDecimal {
     });
 }
 impl SerializeCql for CqlDate {
-    impl_exact_preliminary_type_check!(Date);
-    impl_serialize_via_writer!(|me, writer| {
+    impl_serialize_via_writer!(|me, typ, writer| {
+        exact_type_check!(typ, Date);
         writer.set_value(me.0.to_be_bytes().as_slice()).unwrap()
     });
 }
 impl SerializeCql for CqlTimestamp {
-    impl_exact_preliminary_type_check!(Timestamp);
-    impl_serialize_via_writer!(|me, writer| {
+    impl_serialize_via_writer!(|me, typ, writer| {
+        exact_type_check!(typ, Timestamp);
         writer.set_value(me.0.to_be_bytes().as_slice()).unwrap()
     });
 }
 impl SerializeCql for CqlTime {
-    impl_exact_preliminary_type_check!(Time);
-    impl_serialize_via_writer!(|me, writer| {
+    impl_serialize_via_writer!(|me, typ, writer| {
+        exact_type_check!(typ, Time);
         writer.set_value(me.0.to_be_bytes().as_slice()).unwrap()
     });
 }
 #[cfg(feature = "chrono")]
 impl SerializeCql for NaiveDate {
-    impl_exact_preliminary_type_check!(Date);
     impl_serialize_via_writer!(|me, typ, writer| {
+        exact_type_check!(typ, Date);
         <CqlDate as SerializeCql>::serialize(&(*me).into(), typ, writer)?
     });
 }
 #[cfg(feature = "chrono")]
 impl SerializeCql for DateTime<Utc> {
-    impl_exact_preliminary_type_check!(Timestamp);
     impl_serialize_via_writer!(|me, typ, writer| {
+        exact_type_check!(typ, Timestamp);
         <CqlTimestamp as SerializeCql>::serialize(&(*me).into(), typ, writer)?
     });
 }
 #[cfg(feature = "chrono")]
 impl SerializeCql for NaiveTime {
-    impl_exact_preliminary_type_check!(Time);
     impl_serialize_via_writer!(|me, typ, writer| {
+        exact_type_check!(typ, Time);
         let cql_time = CqlTime::try_from(*me).map_err(|_: ValueOverflow| {
             mk_ser_err::<Self>(typ, BuiltinSerializationErrorKind::ValueOverflow)
         })?;
@@ -161,22 +167,22 @@ impl SerializeCql for NaiveTime {
 }
 #[cfg(feature = "chrono")]
 impl SerializeCql for time::Date {
-    impl_exact_preliminary_type_check!(Date);
     impl_serialize_via_writer!(|me, typ, writer| {
+        exact_type_check!(typ, Date);
         <CqlDate as SerializeCql>::serialize(&(*me).into(), typ, writer)?
     });
 }
 #[cfg(feature = "chrono")]
 impl SerializeCql for time::OffsetDateTime {
-    impl_exact_preliminary_type_check!(Timestamp);
     impl_serialize_via_writer!(|me, typ, writer| {
+        exact_type_check!(typ, Timestamp);
         <CqlTimestamp as SerializeCql>::serialize(&(*me).into(), typ, writer)?
     });
 }
 #[cfg(feature = "chrono")]
 impl SerializeCql for time::Time {
-    impl_exact_preliminary_type_check!(Time);
     impl_serialize_via_writer!(|me, typ, writer| {
+        exact_type_check!(typ, Time);
         <CqlTime as SerializeCql>::serialize(&(*me).into(), typ, writer)?
     });
 }
@@ -194,24 +200,32 @@ impl<V: SerializeCql + Zeroize> SerializeCql for Secret<V> {
     }
 }
 impl SerializeCql for bool {
-    impl_exact_preliminary_type_check!(Boolean);
-    impl_serialize_via_writer!(|me, writer| writer.set_value(&[*me as u8]).unwrap());
+    impl_serialize_via_writer!(|me, typ, writer| {
+        exact_type_check!(typ, Boolean);
+        writer.set_value(&[*me as u8]).unwrap()
+    });
 }
 impl SerializeCql for f32 {
-    impl_exact_preliminary_type_check!(Float);
-    impl_serialize_via_writer!(|me, writer| writer.set_value(me.to_be_bytes().as_slice()).unwrap());
+    impl_serialize_via_writer!(|me, typ, writer| {
+        exact_type_check!(typ, Float);
+        writer.set_value(me.to_be_bytes().as_slice()).unwrap()
+    });
 }
 impl SerializeCql for f64 {
-    impl_exact_preliminary_type_check!(Double);
-    impl_serialize_via_writer!(|me, writer| writer.set_value(me.to_be_bytes().as_slice()).unwrap());
+    impl_serialize_via_writer!(|me, typ, writer| {
+        exact_type_check!(typ, Double);
+        writer.set_value(me.to_be_bytes().as_slice()).unwrap()
+    });
 }
 impl SerializeCql for Uuid {
-    impl_exact_preliminary_type_check!(Uuid, Timeuuid);
-    impl_serialize_via_writer!(|me, writer| writer.set_value(me.as_bytes().as_ref()).unwrap());
+    impl_serialize_via_writer!(|me, typ, writer| {
+        exact_type_check!(typ, Uuid, Timeuuid);
+        writer.set_value(me.as_bytes().as_ref()).unwrap()
+    });
 }
 impl SerializeCql for BigInt {
-    impl_exact_preliminary_type_check!(Varint);
     impl_serialize_via_writer!(|me, typ, writer| {
+        exact_type_check!(typ, Varint);
         // TODO: The allocation here can be avoided and we can reimplement
         // `to_signed_bytes_be` by using `to_u64_digits` and a bit of custom
         // logic. Need better tests in order to do this.
@@ -221,40 +235,40 @@ impl SerializeCql for BigInt {
     });
 }
 impl SerializeCql for &str {
-    impl_exact_preliminary_type_check!(Ascii, Text);
     impl_serialize_via_writer!(|me, typ, writer| {
+        exact_type_check!(typ, Ascii, Text);
         writer
             .set_value(me.as_bytes())
             .map_err(|_| mk_ser_err::<Self>(typ, BuiltinSerializationErrorKind::SizeOverflow))?
     });
 }
 impl SerializeCql for Vec<u8> {
-    impl_exact_preliminary_type_check!(Blob);
     impl_serialize_via_writer!(|me, typ, writer| {
+        exact_type_check!(typ, Blob);
         writer
             .set_value(me.as_ref())
             .map_err(|_| mk_ser_err::<Self>(typ, BuiltinSerializationErrorKind::SizeOverflow))?
     });
 }
 impl SerializeCql for &[u8] {
-    impl_exact_preliminary_type_check!(Blob);
     impl_serialize_via_writer!(|me, typ, writer| {
+        exact_type_check!(typ, Blob);
         writer
             .set_value(me)
             .map_err(|_| mk_ser_err::<Self>(typ, BuiltinSerializationErrorKind::SizeOverflow))?
     });
 }
 impl<const N: usize> SerializeCql for [u8; N] {
-    impl_exact_preliminary_type_check!(Blob);
     impl_serialize_via_writer!(|me, typ, writer| {
+        exact_type_check!(typ, Blob);
         writer
             .set_value(me.as_ref())
             .map_err(|_| mk_ser_err::<Self>(typ, BuiltinSerializationErrorKind::SizeOverflow))?
     });
 }
 impl SerializeCql for IpAddr {
-    impl_exact_preliminary_type_check!(Inet);
-    impl_serialize_via_writer!(|me, writer| {
+    impl_serialize_via_writer!(|me, typ, writer| {
+        exact_type_check!(typ, Inet);
         match me {
             IpAddr::V4(ip) => writer.set_value(&ip.octets()).unwrap(),
             IpAddr::V6(ip) => writer.set_value(&ip.octets()).unwrap(),
@@ -262,8 +276,8 @@ impl SerializeCql for IpAddr {
     });
 }
 impl SerializeCql for String {
-    impl_exact_preliminary_type_check!(Ascii, Text);
     impl_serialize_via_writer!(|me, typ, writer| {
+        exact_type_check!(typ, Ascii, Text);
         writer
             .set_value(me.as_bytes())
             .map_err(|_| mk_ser_err::<Self>(typ, BuiltinSerializationErrorKind::SizeOverflow))?
@@ -291,14 +305,14 @@ impl SerializeCql for Unset {
     impl_serialize_via_writer!(|_me, writer| writer.set_unset());
 }
 impl SerializeCql for Counter {
-    impl_exact_preliminary_type_check!(Counter);
-    impl_serialize_via_writer!(|me, writer| {
+    impl_serialize_via_writer!(|me, typ, writer| {
+        exact_type_check!(typ, Counter);
         writer.set_value(me.0.to_be_bytes().as_slice()).unwrap()
     });
 }
 impl SerializeCql for CqlDuration {
-    impl_exact_preliminary_type_check!(Duration);
-    impl_serialize_via_writer!(|me, writer| {
+    impl_serialize_via_writer!(|me, typ, writer| {
+        exact_type_check!(typ, Duration);
         // TODO: adjust vint_encode to use CellValueBuilder or something like that
         let mut buf = Vec::with_capacity(27); // worst case size is 27
         vint_encode(me.months as i64, &mut buf);
