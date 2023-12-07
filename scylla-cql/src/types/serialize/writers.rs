@@ -12,6 +12,26 @@ pub struct RowWriter<'buf> {
 }
 
 impl<'buf> RowWriter<'buf> {
+    /// Creates a new row writer based on an existing Vec.
+    ///
+    /// The newly created row writer will append data to the end of the vec.
+    #[inline]
+    pub fn new(buf: &'buf mut Vec<u8>) -> Self {
+        Self {
+            buf,
+            value_count: 0,
+        }
+    }
+
+    /// Returns the number of values that were written so far.
+    ///
+    /// Note that the protocol allows at most u16::MAX to be written into a query,
+    /// but the writer's interface allows more to be written.
+    #[inline]
+    pub fn value_count(&self) -> usize {
+        self.value_count
+    }
+
     /// Appends a new value to the sequence and returns an object that allows
     /// to fill it in.
     #[inline]
@@ -44,6 +64,14 @@ pub struct CellWriter<'buf> {
 }
 
 impl<'buf> CellWriter<'buf> {
+    /// Creates a new cell writer based on an existing Vec.
+    ///
+    /// The newly created row writer will append data to the end of the vec.
+    #[inline]
+    pub fn new(buf: &'buf mut Vec<u8>) -> Self {
+        Self { buf }
+    }
+
     /// Sets this value to be null, consuming this object.
     #[inline]
     pub fn set_null(self) -> WrittenCellProof<'buf> {
@@ -101,6 +129,19 @@ pub struct CellValueBuilder<'buf> {
 }
 
 impl<'buf> CellValueBuilder<'buf> {
+    #[inline]
+    fn new(buf: &'buf mut Vec<u8>) -> Self {
+        // "Length" of a [bytes] frame can either be a non-negative i32,
+        // -1 (null) or -1 (not set). Push an invalid value here. It will be
+        // overwritten eventually either by set_null, set_unset or Drop.
+        // If the CellSerializer is not dropped as it should, this will trigger
+        // an error on the DB side and the serialized data
+        // won't be misinterpreted.
+        let starting_pos = buf.len();
+        buf.extend_from_slice(&(-3i32).to_be_bytes());
+        Self { buf, starting_pos }
+    }
+
     /// Appends raw bytes to this cell.
     #[inline]
     pub fn append_bytes(&mut self, bytes: &[u8]) {
@@ -166,53 +207,6 @@ impl<'buf> WrittenCellProof<'buf> {
 #[derive(Debug, Clone, Copy, Error)]
 #[error("CQL cell overflowed the maximum allowed size of 2^31 - 1")]
 pub struct CellOverflowError;
-
-impl<'buf> RowWriter<'buf> {
-    /// Creates a new row writer based on an existing Vec.
-    ///
-    /// The newly created row writer will append data to the end of the vec.
-    #[inline]
-    pub fn new(buf: &'buf mut Vec<u8>) -> Self {
-        Self {
-            buf,
-            value_count: 0,
-        }
-    }
-
-    /// Returns the number of values that were written so far.
-    ///
-    /// Note that the protocol allows at most u16::MAX to be written into a query,
-    /// but the writer's interface allows more to be written.
-    #[inline]
-    pub fn value_count(&self) -> usize {
-        self.value_count
-    }
-}
-
-impl<'buf> CellWriter<'buf> {
-    /// Creates a new cell writer based on an existing Vec.
-    ///
-    /// The newly created row writer will append data to the end of the vec.
-    #[inline]
-    pub fn new(buf: &'buf mut Vec<u8>) -> Self {
-        Self { buf }
-    }
-}
-
-impl<'buf> CellValueBuilder<'buf> {
-    #[inline]
-    fn new(buf: &'buf mut Vec<u8>) -> Self {
-        // "Length" of a [bytes] frame can either be a non-negative i32,
-        // -1 (null) or -1 (not set). Push an invalid value here. It will be
-        // overwritten eventually either by set_null, set_unset or Drop.
-        // If the CellSerializer is not dropped as it should, this will trigger
-        // an error on the DB side and the serialized data
-        // won't be misinterpreted.
-        let starting_pos = buf.len();
-        buf.extend_from_slice(&(-3i32).to_be_bytes());
-        Self { buf, starting_pos }
-    }
-}
 
 #[cfg(test)]
 mod tests {
