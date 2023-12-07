@@ -24,7 +24,10 @@ use crate::frame::value::{
 #[cfg(feature = "chrono")]
 use crate::frame::value::ValueOverflow;
 
-use super::{CellValueBuilder, CellWriter, SerializationError};
+use super::writers::WrittenCellProof;
+use super::{
+    BufBackedCellWriter as CellWriter, CellValueBuilder, CellWriter as _, SerializationError,
+};
 
 pub trait SerializeCql {
     /// Given a CQL type, checks if it _might_ be possible to serialize to that type.
@@ -41,11 +44,11 @@ pub trait SerializeCql {
     ///
     /// The function may assume that `preliminary_type_check` was called,
     /// though it must not do anything unsafe if this assumption does not hold.
-    fn serialize<W: CellWriter>(
+    fn serialize<'b>(
         &self,
         typ: &ColumnType,
-        writer: W,
-    ) -> Result<W::WrittenCellProof, SerializationError>;
+        writer: CellWriter<'b>,
+    ) -> Result<WrittenCellProof<'b>, SerializationError>;
 }
 
 macro_rules! impl_exact_preliminary_type_check {
@@ -69,11 +72,11 @@ macro_rules! impl_serialize_via_writer {
         impl_serialize_via_writer!(|$me, _typ, $writer| $e);
     };
     (|$me:ident, $typ:ident, $writer:ident| $e:expr) => {
-        fn serialize<W: CellWriter>(
+        fn serialize<'b>(
             &self,
             typ: &ColumnType,
-            writer: W,
-        ) -> Result<W::WrittenCellProof, SerializationError> {
+            writer: CellWriter<'b>,
+        ) -> Result<WrittenCellProof<'b>, SerializationError> {
             let $writer = writer;
             let $typ = typ;
             let $me = self;
@@ -182,11 +185,11 @@ impl<V: SerializeCql + Zeroize> SerializeCql for Secret<V> {
     fn preliminary_type_check(typ: &ColumnType) -> Result<(), SerializationError> {
         V::preliminary_type_check(typ)
     }
-    fn serialize<W: CellWriter>(
+    fn serialize<'b>(
         &self,
         typ: &ColumnType,
-        writer: W,
-    ) -> Result<W::WrittenCellProof, SerializationError> {
+        writer: CellWriter<'b>,
+    ) -> Result<WrittenCellProof<'b>, SerializationError> {
         V::serialize(self.expose_secret(), typ, writer)
     }
 }
@@ -270,11 +273,11 @@ impl<T: SerializeCql> SerializeCql for Option<T> {
     fn preliminary_type_check(typ: &ColumnType) -> Result<(), SerializationError> {
         T::preliminary_type_check(typ)
     }
-    fn serialize<W: CellWriter>(
+    fn serialize<'b>(
         &self,
         typ: &ColumnType,
-        writer: W,
-    ) -> Result<W::WrittenCellProof, SerializationError> {
+        writer: CellWriter<'b>,
+    ) -> Result<WrittenCellProof<'b>, SerializationError> {
         match self {
             Some(v) => v.serialize(typ, writer),
             None => Ok(writer.set_null()),
@@ -308,11 +311,11 @@ impl<V: SerializeCql> SerializeCql for MaybeUnset<V> {
     fn preliminary_type_check(typ: &ColumnType) -> Result<(), SerializationError> {
         V::preliminary_type_check(typ)
     }
-    fn serialize<W: CellWriter>(
+    fn serialize<'b>(
         &self,
         typ: &ColumnType,
-        writer: W,
-    ) -> Result<W::WrittenCellProof, SerializationError> {
+        writer: CellWriter<'b>,
+    ) -> Result<WrittenCellProof<'b>, SerializationError> {
         match self {
             MaybeUnset::Set(v) => v.serialize(typ, writer),
             MaybeUnset::Unset => Ok(writer.set_unset()),
@@ -323,11 +326,11 @@ impl<T: SerializeCql + ?Sized> SerializeCql for &T {
     fn preliminary_type_check(typ: &ColumnType) -> Result<(), SerializationError> {
         T::preliminary_type_check(typ)
     }
-    fn serialize<W: CellWriter>(
+    fn serialize<'b>(
         &self,
         typ: &ColumnType,
-        writer: W,
-    ) -> Result<W::WrittenCellProof, SerializationError> {
+        writer: CellWriter<'b>,
+    ) -> Result<WrittenCellProof<'b>, SerializationError> {
         T::serialize(*self, typ, writer)
     }
 }
@@ -335,11 +338,11 @@ impl<T: SerializeCql + ?Sized> SerializeCql for Box<T> {
     fn preliminary_type_check(typ: &ColumnType) -> Result<(), SerializationError> {
         T::preliminary_type_check(typ)
     }
-    fn serialize<W: CellWriter>(
+    fn serialize<'b>(
         &self,
         typ: &ColumnType,
-        writer: W,
-    ) -> Result<W::WrittenCellProof, SerializationError> {
+        writer: CellWriter<'b>,
+    ) -> Result<WrittenCellProof<'b>, SerializationError> {
         T::serialize(&**self, typ, writer)
     }
 }
@@ -359,11 +362,11 @@ impl<V: SerializeCql, S: BuildHasher + Default> SerializeCql for HashSet<V, S> {
         }
     }
 
-    fn serialize<W: CellWriter>(
+    fn serialize<'b>(
         &self,
         typ: &ColumnType,
-        writer: W,
-    ) -> Result<W::WrittenCellProof, SerializationError> {
+        writer: CellWriter<'b>,
+    ) -> Result<WrittenCellProof<'b>, SerializationError> {
         serialize_sequence(
             std::any::type_name::<Self>(),
             self.len(),
@@ -389,11 +392,11 @@ impl<K: SerializeCql, V: SerializeCql, S: BuildHasher> SerializeCql for HashMap<
         }
     }
 
-    fn serialize<W: CellWriter>(
+    fn serialize<'b>(
         &self,
         typ: &ColumnType,
-        writer: W,
-    ) -> Result<W::WrittenCellProof, SerializationError> {
+        writer: CellWriter<'b>,
+    ) -> Result<WrittenCellProof<'b>, SerializationError> {
         serialize_mapping(
             std::any::type_name::<Self>(),
             self.len(),
@@ -419,11 +422,11 @@ impl<V: SerializeCql> SerializeCql for BTreeSet<V> {
         }
     }
 
-    fn serialize<W: CellWriter>(
+    fn serialize<'b>(
         &self,
         typ: &ColumnType,
-        writer: W,
-    ) -> Result<W::WrittenCellProof, SerializationError> {
+        writer: CellWriter<'b>,
+    ) -> Result<WrittenCellProof<'b>, SerializationError> {
         serialize_sequence(
             std::any::type_name::<Self>(),
             self.len(),
@@ -449,11 +452,11 @@ impl<K: SerializeCql, V: SerializeCql> SerializeCql for BTreeMap<K, V> {
         }
     }
 
-    fn serialize<W: CellWriter>(
+    fn serialize<'b>(
         &self,
         typ: &ColumnType,
-        writer: W,
-    ) -> Result<W::WrittenCellProof, SerializationError> {
+        writer: CellWriter<'b>,
+    ) -> Result<WrittenCellProof<'b>, SerializationError> {
         serialize_mapping(
             std::any::type_name::<Self>(),
             self.len(),
@@ -481,11 +484,11 @@ impl<T: SerializeCql> SerializeCql for Vec<T> {
         }
     }
 
-    fn serialize<W: CellWriter>(
+    fn serialize<'b>(
         &self,
         typ: &ColumnType,
-        writer: W,
-    ) -> Result<W::WrittenCellProof, SerializationError> {
+        writer: CellWriter<'b>,
+    ) -> Result<WrittenCellProof<'b>, SerializationError> {
         serialize_sequence(
             std::any::type_name::<Self>(),
             self.len(),
@@ -513,11 +516,11 @@ impl<'a, T: SerializeCql + 'a> SerializeCql for &'a [T] {
         }
     }
 
-    fn serialize<W: CellWriter>(
+    fn serialize<'b>(
         &self,
         typ: &ColumnType,
-        writer: W,
-    ) -> Result<W::WrittenCellProof, SerializationError> {
+        writer: CellWriter<'b>,
+    ) -> Result<WrittenCellProof<'b>, SerializationError> {
         serialize_sequence(
             std::any::type_name::<Self>(),
             self.len(),
@@ -538,20 +541,20 @@ impl SerializeCql for CqlValue {
         }
     }
 
-    fn serialize<W: CellWriter>(
+    fn serialize<'b>(
         &self,
         typ: &ColumnType,
-        writer: W,
-    ) -> Result<W::WrittenCellProof, SerializationError> {
+        writer: CellWriter<'b>,
+    ) -> Result<WrittenCellProof<'b>, SerializationError> {
         serialize_cql_value(self, typ, writer).map_err(fix_cql_value_name_in_err)
     }
 }
 
-fn serialize_cql_value<W: CellWriter>(
+fn serialize_cql_value<'b>(
     value: &CqlValue,
     typ: &ColumnType,
-    writer: W,
-) -> Result<W::WrittenCellProof, SerializationError> {
+    writer: CellWriter<'b>,
+) -> Result<WrittenCellProof<'b>, SerializationError> {
     match value {
         CqlValue::Ascii(a) => check_and_serialize(a, typ, writer),
         CqlValue::Boolean(b) => check_and_serialize(b, typ, writer),
@@ -666,22 +669,22 @@ fn fix_cql_value_name_in_err(mut err: SerializationError) -> SerializationError 
     err
 }
 
-fn check_and_serialize<V: SerializeCql, W: CellWriter>(
+fn check_and_serialize<'b, V: SerializeCql>(
     v: &V,
     typ: &ColumnType,
-    writer: W,
-) -> Result<W::WrittenCellProof, SerializationError> {
+    writer: CellWriter<'b>,
+) -> Result<WrittenCellProof<'b>, SerializationError> {
     V::preliminary_type_check(typ)?;
     v.serialize(typ, writer)
 }
 
-fn serialize_udt<W: CellWriter>(
+fn serialize_udt<'b>(
     typ: &ColumnType,
     keyspace: &str,
     type_name: &str,
     values: &[(String, Option<CqlValue>)],
-    writer: W,
-) -> Result<W::WrittenCellProof, SerializationError> {
+    writer: CellWriter<'b>,
+) -> Result<WrittenCellProof<'b>, SerializationError> {
     let (dst_type_name, dst_keyspace, field_types) = match typ {
         ColumnType::UserDefinedType {
             type_name,
@@ -747,12 +750,12 @@ fn serialize_udt<W: CellWriter>(
         .map_err(|_| mk_ser_err::<CqlValue>(typ, BuiltinSerializationErrorKind::SizeOverflow))
 }
 
-fn serialize_tuple_like<'t, W: CellWriter>(
+fn serialize_tuple_like<'t, 'b>(
     typ: &ColumnType,
     field_types: impl Iterator<Item = &'t ColumnType>,
     field_values: impl Iterator<Item = &'t Option<CqlValue>>,
-    writer: W,
-) -> Result<W::WrittenCellProof, SerializationError> {
+    writer: CellWriter<'b>,
+) -> Result<WrittenCellProof<'b>, SerializationError> {
     let mut builder = writer.into_value_builder();
 
     for (index, (el, typ)) in field_values.zip(field_types).enumerate() {
@@ -818,11 +821,11 @@ macro_rules! impl_tuple {
                 Ok(())
             }
 
-            fn serialize<W: CellWriter>(
+            fn serialize<'b>(
                 &self,
                 typ: &ColumnType,
-                writer: W,
-            ) -> Result<W::WrittenCellProof, SerializationError> {
+                writer: CellWriter<'b>,
+            ) -> Result<WrittenCellProof<'b>, SerializationError> {
                 let ($($tidents,)*) = match typ {
                     ColumnType::Tuple(typs) => match typs.as_slice() {
                         [$($tidents),*] => ($($tidents,)*),
@@ -892,13 +895,13 @@ impl_tuples!(
     16
 );
 
-fn serialize_sequence<'t, T: SerializeCql + 't, W: CellWriter>(
+fn serialize_sequence<'t, 'b, T: SerializeCql + 't>(
     rust_name: &'static str,
     len: usize,
     iter: impl Iterator<Item = &'t T>,
     typ: &ColumnType,
-    writer: W,
-) -> Result<W::WrittenCellProof, SerializationError> {
+    writer: CellWriter<'b>,
+) -> Result<WrittenCellProof<'b>, SerializationError> {
     let elt = match typ {
         ColumnType::List(elt) | ColumnType::Set(elt) => elt,
         _ => {
@@ -936,13 +939,13 @@ fn serialize_sequence<'t, T: SerializeCql + 't, W: CellWriter>(
         .map_err(|_| mk_ser_err_named(rust_name, typ, BuiltinSerializationErrorKind::SizeOverflow))
 }
 
-fn serialize_mapping<'t, K: SerializeCql + 't, V: SerializeCql + 't, W: CellWriter>(
+fn serialize_mapping<'t, 'b, K: SerializeCql + 't, V: SerializeCql + 't>(
     rust_name: &'static str,
     len: usize,
     iter: impl Iterator<Item = (&'t K, &'t V)>,
     typ: &ColumnType,
-    writer: W,
-) -> Result<W::WrittenCellProof, SerializationError> {
+    writer: CellWriter<'b>,
+) -> Result<WrittenCellProof<'b>, SerializationError> {
     let (ktyp, vtyp) = match typ {
         ColumnType::Map(k, v) => (k, v),
         _ => {
@@ -1009,7 +1012,7 @@ fn serialize_mapping<'t, K: SerializeCql + 't, V: SerializeCql + 't, W: CellWrit
 /// # use scylla_cql::impl_serialize_cql_via_value;
 /// struct NoGenerics {}
 /// impl Value for NoGenerics {
-///     fn serialize(&self, _buf: &mut Vec<u8>) -> Result<(), ValueTooBig> {
+///     fn serialize<'b>(&self, _buf: &mut Vec<u8>) -> Result<(), ValueTooBig> {
 ///         Ok(())
 ///     }
 /// }
@@ -1019,7 +1022,7 @@ fn serialize_mapping<'t, K: SerializeCql + 't, V: SerializeCql + 't, W: CellWrit
 /// // struct/enum contains any.
 /// struct WithGenerics<T, U: Clone>(T, U);
 /// impl<T: Value, U: Clone + Value> Value for WithGenerics<T, U> {
-///     fn serialize(&self, buf: &mut Vec<u8>) -> Result<(), ValueTooBig> {
+///     fn serialize<'b>(&self, buf: &mut Vec<u8>) -> Result<(), ValueTooBig> {
 ///         self.0.serialize(buf)?;
 ///         self.1.clone().serialize(buf)?;
 ///         Ok(())
@@ -1042,12 +1045,12 @@ macro_rules! impl_serialize_cql_via_value {
                 ::std::result::Result::Ok(())
             }
 
-            fn serialize<W: $crate::types::serialize::writers::CellWriter>(
+            fn serialize<'b>(
                 &self,
                 _typ: &$crate::frame::response::result::ColumnType,
-                writer: W,
+                writer: $crate::types::serialize::writers::BufBackedCellWriter<'b>,
             ) -> ::std::result::Result<
-                W::WrittenCellProof,
+                $crate::types::serialize::writers::WrittenCellProof<'b>,
                 $crate::types::serialize::SerializationError,
             > {
                 $crate::types::serialize::value::serialize_legacy_value(self, writer)
@@ -1069,10 +1072,10 @@ macro_rules! impl_serialize_cql_via_value {
 ///
 /// See [`impl_serialize_cql_via_value`] which generates a boilerplate
 /// [`SerializeCql`] implementation that uses this function.
-pub fn serialize_legacy_value<T: Value, W: CellWriter>(
+pub fn serialize_legacy_value<'b, T: Value>(
     v: &T,
-    writer: W,
-) -> Result<W::WrittenCellProof, SerializationError> {
+    writer: CellWriter<'b>,
+) -> Result<WrittenCellProof<'b>, SerializationError> {
     // It's an inefficient and slightly tricky but correct implementation.
     let mut buf = Vec::new();
     <T as Value>::serialize(v, &mut buf).map_err(|err| SerializationError(Arc::new(err)))?;
