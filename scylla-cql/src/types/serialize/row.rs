@@ -10,7 +10,7 @@ use crate::frame::value::{SerializedValues, ValueList};
 use crate::frame::{response::result::ColumnSpec, types::RawValue};
 
 use super::value::SerializeCql;
-use super::{CellWriter, RowWriter, SerializationError};
+use super::{BufBackedRowWriter as RowWriter, CellWriter, RowWriter as _, SerializationError};
 
 /// Contains information needed to serialize a row.
 pub struct RowSerializationContext<'a> {
@@ -48,10 +48,10 @@ pub trait SerializeRow {
     ///
     /// The function may assume that `preliminary_type_check` was called,
     /// though it must not do anything unsafe if this assumption does not hold.
-    fn serialize<W: RowWriter>(
+    fn serialize(
         &self,
         ctx: &RowSerializationContext<'_>,
-        writer: &mut W,
+        writer: &mut RowWriter,
     ) -> Result<(), SerializationError>;
 
     fn is_empty(&self) -> bool;
@@ -64,10 +64,10 @@ macro_rules! fallback_impl_contents {
         ) -> Result<(), SerializationError> {
             Ok(())
         }
-        fn serialize<W: RowWriter>(
+        fn serialize(
             &self,
             ctx: &RowSerializationContext<'_>,
-            writer: &mut W,
+            writer: &mut RowWriter,
         ) -> Result<(), SerializationError> {
             serialize_legacy_row(self, ctx, writer)
         }
@@ -94,10 +94,10 @@ macro_rules! impl_serialize_row_for_unit {
             Ok(())
         }
 
-        fn serialize<W: RowWriter>(
+        fn serialize(
             &self,
             _ctx: &RowSerializationContext<'_>,
-            _writer: &mut W,
+            _writer: &mut RowWriter,
         ) -> Result<(), SerializationError> {
             // Row is empty - do nothing
             Ok(())
@@ -136,10 +136,10 @@ macro_rules! impl_serialize_row_for_slice {
             Ok(())
         }
 
-        fn serialize<W: RowWriter>(
+        fn serialize(
             &self,
             ctx: &RowSerializationContext<'_>,
-            writer: &mut W,
+            writer: &mut RowWriter,
         ) -> Result<(), SerializationError> {
             if ctx.columns().len() != self.len() {
                 return Err(mk_typck_err::<Self>(
@@ -197,10 +197,10 @@ macro_rules! impl_serialize_row_for_map {
             Ok(())
         }
 
-        fn serialize<W: RowWriter>(
+        fn serialize(
             &self,
             ctx: &RowSerializationContext<'_>,
-            writer: &mut W,
+            writer: &mut RowWriter,
         ) -> Result<(), SerializationError> {
             // Unfortunately, column names aren't guaranteed to be unique.
             // We need to track not-yet-used columns in order to see
@@ -272,10 +272,10 @@ impl<T: SerializeRow> SerializeRow for &T {
         <T as SerializeRow>::preliminary_type_check(ctx)
     }
 
-    fn serialize<W: RowWriter>(
+    fn serialize(
         &self,
         ctx: &RowSerializationContext<'_>,
-        writer: &mut W,
+        writer: &mut RowWriter,
     ) -> Result<(), SerializationError> {
         <T as SerializeRow>::serialize(self, ctx, writer)
     }
@@ -326,10 +326,10 @@ macro_rules! impl_tuple {
                 Ok(())
             }
 
-            fn serialize<W: RowWriter>(
+            fn serialize(
                 &self,
                 ctx: &RowSerializationContext<'_>,
-                writer: &mut W,
+                writer: &mut RowWriter,
             ) -> Result<(), SerializationError> {
                 let ($($tidents,)*) = match ctx.columns() {
                     [$($tidents),*] => ($($tidents,)*),
@@ -452,10 +452,10 @@ macro_rules! impl_serialize_row_via_value_list {
                 ::std::result::Result::Ok(())
             }
 
-            fn serialize<W: $crate::types::serialize::writers::RowWriter>(
+            fn serialize(
                 &self,
                 ctx: &$crate::types::serialize::row::RowSerializationContext<'_>,
-                writer: &mut W,
+                writer: &mut $crate::types::serialize::writers::BufBackedRowWriter,
             ) -> ::std::result::Result<(), $crate::types::serialize::SerializationError> {
                 $crate::types::serialize::row::serialize_legacy_row(self, ctx, writer)
             }
@@ -492,7 +492,7 @@ macro_rules! impl_serialize_row_via_value_list {
 pub fn serialize_legacy_row<T: ValueList>(
     r: &T,
     ctx: &RowSerializationContext<'_>,
-    writer: &mut impl RowWriter,
+    writer: &mut RowWriter,
 ) -> Result<(), SerializationError> {
     let serialized =
         <T as ValueList>::serialized(r).map_err(|err| SerializationError(Arc::new(err)))?;
