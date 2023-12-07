@@ -3,14 +3,22 @@
 use thiserror::Error;
 
 /// An interface that facilitates writing values for a CQL query.
-pub trait RowWriter {
-    type CellWriter<'a>: CellWriter
-    where
-        Self: 'a;
+pub struct RowWriter<'buf> {
+    // Buffer that this value should be serialized to.
+    buf: &'buf mut Vec<u8>,
 
+    // Number of values written so far.
+    value_count: usize,
+}
+
+impl<'buf> RowWriter<'buf> {
     /// Appends a new value to the sequence and returns an object that allows
     /// to fill it in.
-    fn make_cell_writer(&mut self) -> Self::CellWriter<'_>;
+    #[inline]
+    pub fn make_cell_writer(&mut self) -> CellWriter<'_> {
+        self.value_count += 1;
+        CellWriter::new(self.buf)
+    }
 }
 
 /// Represents a handle to a CQL value that needs to be written into.
@@ -19,11 +27,11 @@ pub trait RowWriter {
 /// (via [`set_null`](CellWriter::set_null),
 /// [`set_unset`](CellWriter::set_unset)
 /// or [`set_value`](CellWriter::set_value) or transformed into
-/// the [`CellWriter::ValueBuilder`] in order to gradually initialize
+/// the [`CellValueBuilder`] in order to gradually initialize
 /// the value when the contents are not available straight away.
 ///
 /// After the value is fully initialized, the handle is consumed and
-/// a [`WrittenCellProof`](CellWriter::WrittenCellProof) object is returned
+/// a [`WrittenCellProof`] object is returned
 /// in its stead. This is a type-level proof that the value was fully initialized
 /// and is used in [`SerializeCql::serialize`](`super::value::SerializeCql::serialize`)
 /// in order to enforce the implementor to fully initialize the provided handle
@@ -31,33 +39,24 @@ pub trait RowWriter {
 ///
 /// Dropping this type without calling any of its methods will result
 /// in nothing being written.
-pub trait CellWriter {
-    /// The type of the value builder, returned by the [`CellWriter::set_value`]
-    /// method.
-    type ValueBuilder: CellValueBuilder<WrittenCellProof = Self::WrittenCellProof>;
+pub struct CellWriter<'buf> {
+    buf: &'buf mut Vec<u8>,
+}
 
-    /// An object that serves as a proof that the cell was fully initialized.
-    ///
-    /// This type is returned by [`set_null`](CellWriter::set_null),
-    /// [`set_unset`](CellWriter::set_unset),
-    /// [`set_value`](CellWriter::set_value)
-    /// and also [`CellValueBuilder::finish`] - generally speaking, after
-    /// the value is fully initialized and the `CellWriter` is destroyed.
-    ///
-    /// The purpose of this type is to enforce the contract of
-    /// [`SerializeCql::serialize`](super::value::SerializeCql::serialize): either
-    /// the method succeeds and returns a proof that it serialized itself
-    /// into the given value, or it fails and returns an error or panics.
-    /// The exact type of [`WrittenCellProof`](CellWriter::WrittenCellProof)
-    /// is not important as the value is not used at all - it's only
-    /// a compile-time check.
-    type WrittenCellProof;
-
+impl<'buf> CellWriter<'buf> {
     /// Sets this value to be null, consuming this object.
-    fn set_null(self) -> Self::WrittenCellProof;
+    #[inline]
+    pub fn set_null(self) -> WrittenCellProof<'buf> {
+        self.buf.extend_from_slice(&(-1i32).to_be_bytes());
+        WrittenCellProof::new()
+    }
 
     /// Sets this value to represent an unset value, consuming this object.
-    fn set_unset(self) -> Self::WrittenCellProof;
+    #[inline]
+    pub fn set_unset(self) -> WrittenCellProof<'buf> {
+        self.buf.extend_from_slice(&(-2i32).to_be_bytes());
+        WrittenCellProof::new()
+    }
 
     /// Sets this value to a non-zero, non-unset value with given contents.
     ///
@@ -67,7 +66,13 @@ pub trait CellWriter {
     ///
     /// Fails if the contents size overflows the maximum allowed CQL cell size
     /// (which is i32::MAX).
-    fn set_value(self, contents: &[u8]) -> Result<Self::WrittenCellProof, CellOverflowError>;
+    #[inline]
+    pub fn set_value(self, contents: &[u8]) -> Result<WrittenCellProof<'buf>, CellOverflowError> {
+        let value_len: i32 = contents.len().try_into().map_err(|_| CellOverflowError)?;
+        self.buf.extend_from_slice(&value_len.to_be_bytes());
+        self.buf.extend_from_slice(contents);
+        Ok(WrittenCellProof::new())
+    }
 
     /// Turns this writter into a [`CellValueBuilder`] which can be used
     /// to gradually initialize the CQL value.
@@ -75,7 +80,10 @@ pub trait CellWriter {
     /// This method should be used if you don't have all of the data
     /// up front, e.g. when serializing compound types such as collections
     /// or UDTs.
-    fn into_value_builder(self) -> Self::ValueBuilder;
+    #[inline]
+    pub fn into_value_builder(self) -> CellValueBuilder<'buf> {
+        CellValueBuilder::new(self.buf)
+    }
 }
 
 /// Allows appending bytes to a non-null, non-unset cell.
@@ -84,25 +92,41 @@ pub trait CellWriter {
 /// serialized. Failing to drop this value will result in a payload that will
 /// not be parsed by the database correctly, but otherwise should not cause
 /// data to be misinterpreted.
-pub trait CellValueBuilder {
-    type SubCellWriter<'a>: CellWriter
-    where
-        Self: 'a;
+pub struct CellValueBuilder<'buf> {
+    // Buffer that this value should be serialized to.
+    buf: &'buf mut Vec<u8>,
 
-    type WrittenCellProof;
+    // Starting position of the value in the buffer.
+    starting_pos: usize,
+}
 
+impl<'buf> CellValueBuilder<'buf> {
     /// Appends raw bytes to this cell.
-    fn append_bytes(&mut self, bytes: &[u8]);
+    #[inline]
+    pub fn append_bytes(&mut self, bytes: &[u8]) {
+        self.buf.extend_from_slice(bytes);
+    }
 
     /// Appends a sub-value to the end of the current contents of the cell
     /// and returns an object that allows to fill it in.
-    fn make_sub_writer(&mut self) -> Self::SubCellWriter<'_>;
+    #[inline]
+    pub fn make_sub_writer(&mut self) -> CellWriter<'_> {
+        CellWriter::new(self.buf)
+    }
 
     /// Finishes serializing the value.
     ///
     /// Fails if the constructed cell size overflows the maximum allowed
     /// CQL cell size (which is i32::MAX).
-    fn finish(self) -> Result<Self::WrittenCellProof, CellOverflowError>;
+    #[inline]
+    pub fn finish(self) -> Result<WrittenCellProof<'buf>, CellOverflowError> {
+        let value_len: i32 = (self.buf.len() - self.starting_pos - 4)
+            .try_into()
+            .map_err(|_| CellOverflowError)?;
+        self.buf[self.starting_pos..self.starting_pos + 4]
+            .copy_from_slice(&value_len.to_be_bytes());
+        Ok(WrittenCellProof::new())
+    }
 }
 
 /// An object that indicates a type-level proof that something was written
@@ -143,16 +167,7 @@ impl<'buf> WrittenCellProof<'buf> {
 #[error("CQL cell overflowed the maximum allowed size of 2^31 - 1")]
 pub struct CellOverflowError;
 
-/// A row writer backed by a buffer (vec).
-pub struct BufBackedRowWriter<'buf> {
-    // Buffer that this value should be serialized to.
-    buf: &'buf mut Vec<u8>,
-
-    // Number of values written so far.
-    value_count: usize,
-}
-
-impl<'buf> BufBackedRowWriter<'buf> {
+impl<'buf> RowWriter<'buf> {
     /// Creates a new row writer based on an existing Vec.
     ///
     /// The newly created row writer will append data to the end of the vec.
@@ -174,72 +189,17 @@ impl<'buf> BufBackedRowWriter<'buf> {
     }
 }
 
-impl<'buf> RowWriter for BufBackedRowWriter<'buf> {
-    type CellWriter<'a> = BufBackedCellWriter<'a> where Self: 'a;
-
-    #[inline]
-    fn make_cell_writer(&mut self) -> Self::CellWriter<'_> {
-        self.value_count += 1;
-        BufBackedCellWriter::new(self.buf)
-    }
-}
-
-/// A cell writer backed by a buffer (vec).
-pub struct BufBackedCellWriter<'buf> {
-    buf: &'buf mut Vec<u8>,
-}
-
-impl<'buf> BufBackedCellWriter<'buf> {
+impl<'buf> CellWriter<'buf> {
     /// Creates a new cell writer based on an existing Vec.
     ///
     /// The newly created row writer will append data to the end of the vec.
     #[inline]
     pub fn new(buf: &'buf mut Vec<u8>) -> Self {
-        BufBackedCellWriter { buf }
+        Self { buf }
     }
 }
 
-impl<'buf> CellWriter for BufBackedCellWriter<'buf> {
-    type ValueBuilder = BufBackedCellValueBuilder<'buf>;
-
-    type WrittenCellProof = WrittenCellProof<'buf>;
-
-    #[inline]
-    fn set_null(self) -> Self::WrittenCellProof {
-        self.buf.extend_from_slice(&(-1i32).to_be_bytes());
-        WrittenCellProof::new()
-    }
-
-    #[inline]
-    fn set_unset(self) -> Self::WrittenCellProof {
-        self.buf.extend_from_slice(&(-2i32).to_be_bytes());
-        WrittenCellProof::new()
-    }
-
-    #[inline]
-    fn set_value(self, bytes: &[u8]) -> Result<Self::WrittenCellProof, CellOverflowError> {
-        let value_len: i32 = bytes.len().try_into().map_err(|_| CellOverflowError)?;
-        self.buf.extend_from_slice(&value_len.to_be_bytes());
-        self.buf.extend_from_slice(bytes);
-        Ok(WrittenCellProof::new())
-    }
-
-    #[inline]
-    fn into_value_builder(self) -> Self::ValueBuilder {
-        BufBackedCellValueBuilder::new(self.buf)
-    }
-}
-
-/// A cell value builder backed by a buffer (vec).
-pub struct BufBackedCellValueBuilder<'buf> {
-    // Buffer that this value should be serialized to.
-    buf: &'buf mut Vec<u8>,
-
-    // Starting position of the value in the buffer.
-    starting_pos: usize,
-}
-
-impl<'buf> BufBackedCellValueBuilder<'buf> {
+impl<'buf> CellValueBuilder<'buf> {
     #[inline]
     fn new(buf: &'buf mut Vec<u8>) -> Self {
         // "Length" of a [bytes] frame can either be a non-negative i32,
@@ -250,46 +210,18 @@ impl<'buf> BufBackedCellValueBuilder<'buf> {
         // won't be misinterpreted.
         let starting_pos = buf.len();
         buf.extend_from_slice(&(-3i32).to_be_bytes());
-        BufBackedCellValueBuilder { buf, starting_pos }
-    }
-}
-
-impl<'buf> CellValueBuilder for BufBackedCellValueBuilder<'buf> {
-    type SubCellWriter<'a> = BufBackedCellWriter<'a>
-    where
-        Self: 'a;
-
-    type WrittenCellProof = WrittenCellProof<'buf>;
-
-    #[inline]
-    fn append_bytes(&mut self, bytes: &[u8]) {
-        self.buf.extend_from_slice(bytes);
-    }
-
-    #[inline]
-    fn make_sub_writer(&mut self) -> Self::SubCellWriter<'_> {
-        BufBackedCellWriter::new(self.buf)
-    }
-
-    #[inline]
-    fn finish(self) -> Result<Self::WrittenCellProof, CellOverflowError> {
-        let value_len: i32 = (self.buf.len() - self.starting_pos - 4)
-            .try_into()
-            .map_err(|_| CellOverflowError)?;
-        self.buf[self.starting_pos..self.starting_pos + 4]
-            .copy_from_slice(&value_len.to_be_bytes());
-        Ok(WrittenCellProof::new())
+        Self { buf, starting_pos }
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{BufBackedCellWriter, BufBackedRowWriter, CellValueBuilder, CellWriter, RowWriter};
+    use super::{CellWriter, RowWriter};
 
     #[test]
     fn test_cell_writer() {
         let mut data = Vec::new();
-        let writer = BufBackedCellWriter::new(&mut data);
+        let writer = CellWriter::new(&mut data);
         let mut sub_writer = writer.into_value_builder();
         sub_writer.make_sub_writer().set_null();
         sub_writer
@@ -313,7 +245,7 @@ mod tests {
     #[test]
     fn test_poisoned_appender() {
         let mut data = Vec::new();
-        let writer = BufBackedCellWriter::new(&mut data);
+        let writer = CellWriter::new(&mut data);
         let _ = writer.into_value_builder();
 
         assert_eq!(
@@ -327,7 +259,7 @@ mod tests {
     #[test]
     fn test_row_writer() {
         let mut data = Vec::new();
-        let mut writer = BufBackedRowWriter::new(&mut data);
+        let mut writer = RowWriter::new(&mut data);
         writer.make_cell_writer().set_null();
         writer.make_cell_writer().set_value(&[1, 2, 3, 4]).unwrap();
         writer.make_cell_writer().set_unset();

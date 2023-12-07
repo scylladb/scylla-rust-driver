@@ -10,7 +10,7 @@ use crate::frame::value::{SerializedValues, ValueList};
 use crate::frame::{response::result::ColumnSpec, types::RawValue};
 
 use super::value::SerializeCql;
-use super::{BufBackedRowWriter as RowWriter, CellWriter, RowWriter as _, SerializationError};
+use super::{RowWriter, SerializationError};
 
 /// Contains information needed to serialize a row.
 pub struct RowSerializationContext<'a> {
@@ -455,7 +455,7 @@ macro_rules! impl_serialize_row_via_value_list {
             fn serialize(
                 &self,
                 ctx: &$crate::types::serialize::row::RowSerializationContext<'_>,
-                writer: &mut $crate::types::serialize::writers::BufBackedRowWriter,
+                writer: &mut $crate::types::serialize::writers::RowWriter,
             ) -> ::std::result::Result<(), $crate::types::serialize::SerializationError> {
                 $crate::types::serialize::row::serialize_legacy_row(self, ctx, writer)
             }
@@ -660,7 +660,7 @@ pub enum ValueListToSerializeRowAdapterError {
 mod tests {
     use crate::frame::response::result::{ColumnSpec, ColumnType, TableSpec};
     use crate::frame::value::{MaybeUnset, SerializedValues, ValueList};
-    use crate::types::serialize::BufBackedRowWriter;
+    use crate::types::serialize::RowWriter;
 
     use super::{RowSerializationContext, SerializeRow};
 
@@ -688,7 +688,7 @@ mod tests {
         <_ as ValueList>::write_to_request(&row, &mut legacy_data).unwrap();
 
         let mut new_data = Vec::new();
-        let mut new_data_writer = BufBackedRowWriter::new(&mut new_data);
+        let mut new_data_writer = RowWriter::new(&mut new_data);
         let ctx = RowSerializationContext {
             columns: &[
                 col_spec("a", ColumnType::Int),
@@ -725,7 +725,7 @@ mod tests {
         unsorted_row.add_named_value("c", &None::<i64>).unwrap();
 
         let mut unsorted_row_data = Vec::new();
-        let mut unsorted_row_data_writer = BufBackedRowWriter::new(&mut unsorted_row_data);
+        let mut unsorted_row_data_writer = RowWriter::new(&mut unsorted_row_data);
         let ctx = RowSerializationContext {
             columns: &[
                 col_spec("a", ColumnType::Int),

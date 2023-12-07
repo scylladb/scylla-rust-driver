@@ -25,9 +25,7 @@ use crate::frame::value::{
 use crate::frame::value::ValueOverflow;
 
 use super::writers::WrittenCellProof;
-use super::{
-    BufBackedCellWriter as CellWriter, CellValueBuilder, CellWriter as _, SerializationError,
-};
+use super::{CellWriter, SerializationError};
 
 pub trait SerializeCql {
     /// Given a CQL type, checks if it _might_ be possible to serialize to that type.
@@ -1048,7 +1046,7 @@ macro_rules! impl_serialize_cql_via_value {
             fn serialize<'b>(
                 &self,
                 _typ: &$crate::frame::response::result::ColumnType,
-                writer: $crate::types::serialize::writers::BufBackedCellWriter<'b>,
+                writer: $crate::types::serialize::writers::CellWriter<'b>,
             ) -> ::std::result::Result<
                 $crate::types::serialize::writers::WrittenCellProof<'b>,
                 $crate::types::serialize::SerializationError,
@@ -1576,7 +1574,7 @@ pub enum ValueToSerializeCqlAdapterError {
 mod tests {
     use crate::frame::response::result::ColumnType;
     use crate::frame::value::{MaybeUnset, Value};
-    use crate::types::serialize::BufBackedCellWriter;
+    use crate::types::serialize::CellWriter;
 
     use super::SerializeCql;
 
@@ -1585,7 +1583,7 @@ mod tests {
         <V as Value>::serialize(&v, &mut legacy_data).unwrap();
 
         let mut new_data = Vec::new();
-        let new_data_writer = BufBackedCellWriter::new(&mut new_data);
+        let new_data_writer = CellWriter::new(&mut new_data);
         <V as SerializeCql>::serialize(&v, &ColumnType::Int, new_data_writer).unwrap();
 
         assert_eq!(legacy_data, new_data);

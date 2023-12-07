@@ -1,7 +1,7 @@
 use crate::frame::{response::result::CqlValue, types::RawValue, value::BatchValuesIterator};
 use crate::types::serialize::row::{RowSerializationContext, SerializeRow};
 use crate::types::serialize::value::SerializeCql;
-use crate::types::serialize::{BufBackedCellWriter, BufBackedRowWriter};
+use crate::types::serialize::{CellWriter, RowWriter};
 
 use super::response::result::{ColumnSpec, ColumnType, TableSpec};
 use super::value::{
@@ -27,7 +27,7 @@ where
     T::preliminary_type_check(&typ).unwrap();
 
     let mut new_result: Vec<u8> = Vec::new();
-    let writer = BufBackedCellWriter::new(&mut new_result);
+    let writer = CellWriter::new(&mut new_result);
     SerializeCql::serialize(&val, &typ, writer).unwrap();
 
     assert_eq!(result, new_result);
@@ -37,7 +37,7 @@ where
 
 fn serialized_only_new<T: SerializeCql>(val: T, typ: ColumnType) -> Vec<u8> {
     let mut result: Vec<u8> = Vec::new();
-    let writer = BufBackedCellWriter::new(&mut result);
+    let writer = CellWriter::new(&mut result);
     SerializeCql::serialize(&val, &typ, writer).unwrap();
     result
 }
@@ -997,7 +997,7 @@ fn serialize_values<T: ValueList + SerializeRow>(
     let ctx = RowSerializationContext { columns };
     <T as SerializeRow>::preliminary_type_check(&ctx).unwrap();
     let mut new_serialized = vec![0, 0];
-    let mut writer = BufBackedRowWriter::new(&mut new_serialized);
+    let mut writer = RowWriter::new(&mut new_serialized);
     <T as SerializeRow>::serialize(&vl, &ctx, &mut writer).unwrap();
     let value_count: u16 = writer.value_count().try_into().unwrap();
     let is_empty = writer.value_count() == 0;
@@ -1016,7 +1016,7 @@ fn serialize_values_only_new<T: SerializeRow>(vl: T, columns: &[ColumnSpec]) -> 
     let ctx = RowSerializationContext { columns };
     <T as SerializeRow>::preliminary_type_check(&ctx).unwrap();
     let mut serialized = vec![0, 0];
-    let mut writer = BufBackedRowWriter::new(&mut serialized);
+    let mut writer = RowWriter::new(&mut serialized);
     <T as SerializeRow>::serialize(&vl, &ctx, &mut writer).unwrap();
     let value_count: u16 = writer.value_count().try_into().unwrap();
     let is_empty = writer.value_count() == 0;
