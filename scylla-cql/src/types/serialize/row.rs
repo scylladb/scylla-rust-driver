@@ -42,7 +42,11 @@ pub trait SerializeRow {
     /// Sometimes, a row cannot be fully type checked right away without knowing
     /// the exact values of the columns (e.g. when deserializing to `CqlValue`),
     /// but it's fine to do full type checking later in `serialize`.
-    fn preliminary_type_check(ctx: &RowSerializationContext<'_>) -> Result<(), SerializationError>;
+    fn preliminary_type_check(
+        _ctx: &RowSerializationContext<'_>,
+    ) -> Result<(), SerializationError> {
+        Ok(())
+    }
 
     /// Serializes the row according to the information in the given context.
     ///

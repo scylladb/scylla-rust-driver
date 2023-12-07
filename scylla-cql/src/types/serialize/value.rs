@@ -36,7 +36,9 @@ pub trait SerializeCql {
     /// Some types cannot be type checked without knowing the exact value,
     /// this is the case e.g. for `CqlValue`. It's also fine to do it later in
     /// `serialize`.
-    fn preliminary_type_check(typ: &ColumnType) -> Result<(), SerializationError>;
+    fn preliminary_type_check(_typ: &ColumnType) -> Result<(), SerializationError> {
+        Ok(())
+    }
 
     /// Serializes the value to given CQL type.
     ///
