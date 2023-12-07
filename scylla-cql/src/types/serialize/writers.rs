@@ -247,122 +247,10 @@ impl<'buf> CellValueBuilder for BufBackedCellValueBuilder<'buf> {
     }
 }
 
-/// A row writer that does not actually write anything, just counts the bytes.
-pub struct CountingRowWriter<'buf> {
-    buf: &'buf mut usize,
-}
-
-impl<'buf> CountingRowWriter<'buf> {
-    /// Creates a new writer which increments the counter under given reference
-    /// when bytes are appended.
-    #[inline]
-    pub fn new(buf: &'buf mut usize) -> Self {
-        CountingRowWriter { buf }
-    }
-}
-
-impl<'buf> RowWriter for CountingRowWriter<'buf> {
-    type CellWriter<'a> = CountingCellWriter<'a> where Self: 'a;
-
-    #[inline]
-    fn make_cell_writer(&mut self) -> Self::CellWriter<'_> {
-        CountingCellWriter::new(self.buf)
-    }
-}
-
-/// A cell writer that does not actually write anything, just counts the bytes.
-pub struct CountingCellWriter<'buf> {
-    buf: &'buf mut usize,
-}
-
-impl<'buf> CountingCellWriter<'buf> {
-    /// Creates a new writer which increments the counter under given reference
-    /// when bytes are appended.
-    #[inline]
-    fn new(buf: &'buf mut usize) -> Self {
-        CountingCellWriter { buf }
-    }
-}
-
-impl<'buf> CellWriter for CountingCellWriter<'buf> {
-    type ValueBuilder = CountingCellValueBuilder<'buf>;
-
-    type WrittenCellProof = ();
-
-    #[inline]
-    fn set_null(self) {
-        *self.buf += 4;
-    }
-
-    #[inline]
-    fn set_unset(self) {
-        *self.buf += 4;
-    }
-
-    #[inline]
-    fn set_value(self, contents: &[u8]) -> Result<(), CellOverflowError> {
-        if contents.len() > i32::MAX as usize {
-            return Err(CellOverflowError);
-        }
-        *self.buf += 4 + contents.len();
-        Ok(())
-    }
-
-    #[inline]
-    fn into_value_builder(self) -> Self::ValueBuilder {
-        *self.buf += 4;
-        CountingCellValueBuilder::new(self.buf)
-    }
-}
-
-pub struct CountingCellValueBuilder<'buf> {
-    buf: &'buf mut usize,
-
-    starting_pos: usize,
-}
-
-impl<'buf> CountingCellValueBuilder<'buf> {
-    /// Creates a new builder which increments the counter under given reference
-    /// when bytes are appended.
-    #[inline]
-    fn new(buf: &'buf mut usize) -> Self {
-        let starting_pos = *buf;
-        CountingCellValueBuilder { buf, starting_pos }
-    }
-}
-
-impl<'buf> CellValueBuilder for CountingCellValueBuilder<'buf> {
-    type SubCellWriter<'a> = CountingCellWriter<'a>
-    where
-        Self: 'a;
-
-    type WrittenCellProof = ();
-
-    #[inline]
-    fn append_bytes(&mut self, bytes: &[u8]) {
-        *self.buf += bytes.len();
-    }
-
-    #[inline]
-    fn make_sub_writer(&mut self) -> Self::SubCellWriter<'_> {
-        CountingCellWriter::new(self.buf)
-    }
-
-    #[inline]
-    fn finish(self) -> Result<Self::WrittenCellProof, CellOverflowError> {
-        if *self.buf - self.starting_pos > i32::MAX as usize {
-            return Err(CellOverflowError);
-        }
-        Ok(())
-    }
-}
-
 #[cfg(test)]
 mod tests {
-    use crate::types::serialize::writers::CountingRowWriter;
-
     use super::{
-        BufBackedCellWriter, BufBackedRowWriter, CellValueBuilder, CellWriter, CountingCellWriter,
+        BufBackedCellWriter, BufBackedRowWriter, CellValueBuilder, CellWriter,
         RowWriter,
     };
 
@@ -377,12 +265,6 @@ mod tests {
         let mut data = Vec::new();
         let writer = BufBackedCellWriter::new(&mut data);
         c.check(writer);
-
-        let mut byte_count = 0usize;
-        let counting_writer = CountingCellWriter::new(&mut byte_count);
-        c.check(counting_writer);
-
-        assert_eq!(data.len(), byte_count);
         data
     }
 
@@ -441,11 +323,6 @@ mod tests {
         let mut writer = BufBackedRowWriter::new(&mut data);
         c.check(&mut writer);
 
-        let mut byte_count = 0usize;
-        let mut counting_writer = CountingRowWriter::new(&mut byte_count);
-        c.check(&mut counting_writer);
-
-        assert_eq!(data.len(), byte_count);
         data
     }
 
