@@ -639,4 +639,37 @@ mod tests {
         // Skip the value count
         assert_eq!(&sorted_row_data[2..], unsorted_row_data);
     }
+
+    #[test]
+    fn test_dyn_serialize_row() {
+        let row = (
+            1i32,
+            "Ala ma kota",
+            None::<i64>,
+            MaybeUnset::Unset::<String>,
+        );
+        let ctx = RowSerializationContext {
+            columns: &[
+                col_spec("a", ColumnType::Int),
+                col_spec("b", ColumnType::Text),
+                col_spec("c", ColumnType::BigInt),
+                col_spec("d", ColumnType::Ascii),
+            ],
+        };
+
+        let mut typed_data = Vec::new();
+        let mut typed_data_writer = RowWriter::new(&mut typed_data);
+        <_ as SerializeRow>::serialize(&row, &ctx, &mut typed_data_writer).unwrap();
+
+        let row = &row as &dyn SerializeRow;
+        let mut erased_data = Vec::new();
+        let mut erased_data_writer = RowWriter::new(&mut erased_data);
+        <_ as SerializeRow>::serialize(&row, &ctx, &mut erased_data_writer).unwrap();
+
+        assert_eq!(
+            typed_data_writer.value_count(),
+            erased_data_writer.value_count(),
+        );
+        assert_eq!(typed_data, erased_data);
+    }
 }

@@ -1392,4 +1392,19 @@ mod tests {
         check_compat(None::<i32>);
         check_compat(MaybeUnset::Unset::<i32>);
     }
+
+    #[test]
+    fn test_dyn_serialize_cql() {
+        let v: i32 = 123;
+        let mut typed_data = Vec::new();
+        let typed_data_writer = CellWriter::new(&mut typed_data);
+        <_ as SerializeCql>::serialize(&v, &ColumnType::Int, typed_data_writer).unwrap();
+
+        let v = &v as &dyn SerializeCql;
+        let mut erased_data = Vec::new();
+        let erased_data_writer = CellWriter::new(&mut erased_data);
+        <_ as SerializeCql>::serialize(&v, &ColumnType::Int, erased_data_writer).unwrap();
+
+        assert_eq!(typed_data, erased_data);
+    }
 }
