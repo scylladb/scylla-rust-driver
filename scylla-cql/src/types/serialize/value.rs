@@ -28,22 +28,7 @@ use super::writers::WrittenCellProof;
 use super::{CellWriter, SerializationError};
 
 pub trait SerializeCql {
-    /// Given a CQL type, checks if it _might_ be possible to serialize to that type.
-    ///
-    /// This function is intended to serve as an optimization in the future,
-    /// if we were ever to introduce prepared statements parametrized by types.
-    ///
-    /// Some types cannot be type checked without knowing the exact value,
-    /// this is the case e.g. for `CqlValue`. It's also fine to do it later in
-    /// `serialize`.
-    fn preliminary_type_check(_typ: &ColumnType) -> Result<(), SerializationError> {
-        Ok(())
-    }
-
     /// Serializes the value to given CQL type.
-    ///
-    /// The function may assume that `preliminary_type_check` was called,
-    /// though it must not do anything unsafe if this assumption does not hold.
     fn serialize<'b>(
         &self,
         typ: &ColumnType,
@@ -572,7 +557,6 @@ fn check_and_serialize<'b, V: SerializeCql>(
     typ: &ColumnType,
     writer: CellWriter<'b>,
 ) -> Result<WrittenCellProof<'b>, SerializationError> {
-    V::preliminary_type_check(typ)?;
     v.serialize(typ, writer)
 }
 

@@ -24,8 +24,6 @@ where
     let mut result: Vec<u8> = Vec::new();
     Value::serialize(&val, &mut result).unwrap();
 
-    T::preliminary_type_check(&typ).unwrap();
-
     let mut new_result: Vec<u8> = Vec::new();
     let writer = CellWriter::new(&mut new_result);
     SerializeCql::serialize(&val, &typ, writer).unwrap();
@@ -995,7 +993,6 @@ fn serialize_values<T: ValueList + SerializeRow>(
     serialized.write_to_request(&mut old_serialized);
 
     let ctx = RowSerializationContext { columns };
-    <T as SerializeRow>::preliminary_type_check(&ctx).unwrap();
     let mut new_serialized = vec![0, 0];
     let mut writer = RowWriter::new(&mut new_serialized);
     <T as SerializeRow>::serialize(&vl, &ctx, &mut writer).unwrap();
@@ -1014,7 +1011,6 @@ fn serialize_values<T: ValueList + SerializeRow>(
 
 fn serialize_values_only_new<T: SerializeRow>(vl: T, columns: &[ColumnSpec]) -> Vec<u8> {
     let ctx = RowSerializationContext { columns };
-    <T as SerializeRow>::preliminary_type_check(&ctx).unwrap();
     let mut serialized = vec![0, 0];
     let mut writer = RowWriter::new(&mut serialized);
     <T as SerializeRow>::serialize(&vl, &ctx, &mut writer).unwrap();

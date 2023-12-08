@@ -33,25 +33,7 @@ impl<'a> RowSerializationContext<'a> {
 }
 
 pub trait SerializeRow {
-    /// Checks if it _might_ be possible to serialize the row according to the
-    /// information in the context.
-    ///
-    /// This function is intended to serve as an optimization in the future,
-    /// if we were ever to introduce prepared statements parametrized by types.
-    ///
-    /// Sometimes, a row cannot be fully type checked right away without knowing
-    /// the exact values of the columns (e.g. when deserializing to `CqlValue`),
-    /// but it's fine to do full type checking later in `serialize`.
-    fn preliminary_type_check(
-        _ctx: &RowSerializationContext<'_>,
-    ) -> Result<(), SerializationError> {
-        Ok(())
-    }
-
     /// Serializes the row according to the information in the given context.
-    ///
-    /// The function may assume that `preliminary_type_check` was called,
-    /// though it must not do anything unsafe if this assumption does not hold.
     fn serialize(
         &self,
         ctx: &RowSerializationContext<'_>,
