@@ -210,7 +210,7 @@ impl<T: SerializeCql, S: BuildHasher> SerializeRow for HashMap<&str, T, S> {
     impl_serialize_row_for_map!();
 }
 
-impl<T: SerializeRow> SerializeRow for &T {
+impl<T: SerializeRow + ?Sized> SerializeRow for &T {
     fn serialize(
         &self,
         ctx: &RowSerializationContext<'_>,
