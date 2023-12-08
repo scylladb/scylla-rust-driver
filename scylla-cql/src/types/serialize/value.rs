@@ -363,12 +363,7 @@ impl<T: SerializeCql + ?Sized> SerializeCql for Box<T> {
 impl<V: SerializeCql, S: BuildHasher + Default> SerializeCql for HashSet<V, S> {
     fn preliminary_type_check(typ: &ColumnType) -> Result<(), SerializationError> {
         match typ {
-            ColumnType::Set(elt) => V::preliminary_type_check(elt).map_err(|err| {
-                mk_typck_err::<Self>(
-                    typ,
-                    SetOrListTypeCheckErrorKind::ElementTypeCheckFailed(err),
-                )
-            }),
+            ColumnType::Set(_) => Ok(()),
             _ => Err(mk_typck_err::<Self>(
                 typ,
                 SetOrListTypeCheckErrorKind::NotSetOrList,
@@ -393,15 +388,7 @@ impl<V: SerializeCql, S: BuildHasher + Default> SerializeCql for HashSet<V, S> {
 impl<K: SerializeCql, V: SerializeCql, S: BuildHasher> SerializeCql for HashMap<K, V, S> {
     fn preliminary_type_check(typ: &ColumnType) -> Result<(), SerializationError> {
         match typ {
-            ColumnType::Map(k, v) => {
-                K::preliminary_type_check(k).map_err(|err| {
-                    mk_typck_err::<Self>(typ, MapTypeCheckErrorKind::KeyTypeCheckFailed(err))
-                })?;
-                V::preliminary_type_check(v).map_err(|err| {
-                    mk_typck_err::<Self>(typ, MapTypeCheckErrorKind::ValueTypeCheckFailed(err))
-                })?;
-                Ok(())
-            }
+            ColumnType::Map(_, _) => Ok(()),
             _ => Err(mk_typck_err::<Self>(typ, MapTypeCheckErrorKind::NotMap)),
         }
     }
@@ -423,12 +410,7 @@ impl<K: SerializeCql, V: SerializeCql, S: BuildHasher> SerializeCql for HashMap<
 impl<V: SerializeCql> SerializeCql for BTreeSet<V> {
     fn preliminary_type_check(typ: &ColumnType) -> Result<(), SerializationError> {
         match typ {
-            ColumnType::Set(elt) => V::preliminary_type_check(elt).map_err(|err| {
-                mk_typck_err::<Self>(
-                    typ,
-                    SetOrListTypeCheckErrorKind::ElementTypeCheckFailed(err),
-                )
-            }),
+            ColumnType::Set(_) => Ok(()),
             _ => Err(mk_typck_err::<Self>(
                 typ,
                 SetOrListTypeCheckErrorKind::NotSetOrList,
@@ -453,15 +435,7 @@ impl<V: SerializeCql> SerializeCql for BTreeSet<V> {
 impl<K: SerializeCql, V: SerializeCql> SerializeCql for BTreeMap<K, V> {
     fn preliminary_type_check(typ: &ColumnType) -> Result<(), SerializationError> {
         match typ {
-            ColumnType::Map(k, v) => {
-                K::preliminary_type_check(k).map_err(|err| {
-                    mk_typck_err::<Self>(typ, MapTypeCheckErrorKind::KeyTypeCheckFailed(err))
-                })?;
-                V::preliminary_type_check(v).map_err(|err| {
-                    mk_typck_err::<Self>(typ, MapTypeCheckErrorKind::ValueTypeCheckFailed(err))
-                })?;
-                Ok(())
-            }
+            ColumnType::Map(_, _) => Ok(()),
             _ => Err(mk_typck_err::<Self>(typ, MapTypeCheckErrorKind::NotMap)),
         }
     }
@@ -483,14 +457,7 @@ impl<K: SerializeCql, V: SerializeCql> SerializeCql for BTreeMap<K, V> {
 impl<T: SerializeCql> SerializeCql for Vec<T> {
     fn preliminary_type_check(typ: &ColumnType) -> Result<(), SerializationError> {
         match typ {
-            ColumnType::List(elt) | ColumnType::Set(elt) => {
-                T::preliminary_type_check(elt).map_err(|err| {
-                    mk_typck_err::<Self>(
-                        typ,
-                        SetOrListTypeCheckErrorKind::ElementTypeCheckFailed(err),
-                    )
-                })
-            }
+            ColumnType::List(_) | ColumnType::Set(_) => Ok(()),
             _ => Err(mk_typck_err::<Self>(
                 typ,
                 SetOrListTypeCheckErrorKind::NotSetOrList,
@@ -515,14 +482,7 @@ impl<T: SerializeCql> SerializeCql for Vec<T> {
 impl<'a, T: SerializeCql + 'a> SerializeCql for &'a [T] {
     fn preliminary_type_check(typ: &ColumnType) -> Result<(), SerializationError> {
         match typ {
-            ColumnType::List(elt) | ColumnType::Set(elt) => {
-                T::preliminary_type_check(elt).map_err(|err| {
-                    mk_typck_err::<Self>(
-                        typ,
-                        SetOrListTypeCheckErrorKind::ElementTypeCheckFailed(err),
-                    )
-                })
-            }
+            ColumnType::List(_) | ColumnType::Set(_) => Ok(()),
             _ => Err(mk_typck_err::<Self>(
                 typ,
                 SetOrListTypeCheckErrorKind::NotSetOrList,
@@ -803,21 +763,8 @@ macro_rules! impl_tuple {
                 match typ {
                     ColumnType::Tuple(typs) => match typs.as_slice() {
                         [$($tidents),*, ..] => {
-                            let index = 0;
-                            $(
-                                <$typs as SerializeCql>::preliminary_type_check($tidents)
-                                    .map_err(|err|
-                                        mk_typck_err::<Self>(
-                                            typ,
-                                            TupleTypeCheckErrorKind::ElementTypeCheckFailed {
-                                                index,
-                                                err,
-                                            }
-                                        )
-                                    )?;
-                                let index = index + 1;
-                            )*
-                            let _ = index;
+                            // Suppress the "unused" warning
+                            let _ = ($($tidents),*,);
                         }
                         _ => return Err(mk_typck_err::<Self>(
                             typ,
@@ -1341,12 +1288,6 @@ impl Display for BuiltinSerializationErrorKind {
 pub enum MapTypeCheckErrorKind {
     /// The CQL type is not a map.
     NotMap,
-
-    /// Checking the map key type failed.
-    KeyTypeCheckFailed(SerializationError),
-
-    /// Checking the map value type failed.
-    ValueTypeCheckFailed(SerializationError),
 }
 
 impl Display for MapTypeCheckErrorKind {
@@ -1357,12 +1298,6 @@ impl Display for MapTypeCheckErrorKind {
                     f,
                     "the CQL type the map was attempted to be serialized to was not map"
                 )
-            }
-            MapTypeCheckErrorKind::KeyTypeCheckFailed(err) => {
-                write!(f, "failed to type check one of the keys: {}", err)
-            }
-            MapTypeCheckErrorKind::ValueTypeCheckFailed(err) => {
-                write!(f, "failed to type check one of the values: {}", err)
             }
         }
     }
@@ -1405,9 +1340,6 @@ impl Display for MapSerializationErrorKind {
 pub enum SetOrListTypeCheckErrorKind {
     /// The CQL type is neither a set not a list.
     NotSetOrList,
-
-    /// Checking the type of the set/list element failed.
-    ElementTypeCheckFailed(SerializationError),
 }
 
 impl Display for SetOrListTypeCheckErrorKind {
@@ -1418,9 +1350,6 @@ impl Display for SetOrListTypeCheckErrorKind {
                     f,
                     "the CQL type the tuple was attempted to was neither a set or a list"
                 )
-            }
-            SetOrListTypeCheckErrorKind::ElementTypeCheckFailed(err) => {
-                write!(f, "failed to type check one of the elements: {err}")
             }
         }
     }
@@ -1464,12 +1393,6 @@ pub enum TupleTypeCheckErrorKind {
     /// than the corresponding CQL type, but not more. The additional, unknown
     /// elements will be set to null.
     WrongElementCount { actual: usize, asked_for: usize },
-
-    /// One of the tuple elements failed to type check.
-    ElementTypeCheckFailed {
-        index: usize,
-        err: SerializationError,
-    },
 }
 
 impl Display for TupleTypeCheckErrorKind {
@@ -1483,9 +1406,6 @@ impl Display for TupleTypeCheckErrorKind {
                 f,
                 "wrong tuple element count: CQL type has {asked_for}, the Rust tuple has {actual}"
             ),
-            TupleTypeCheckErrorKind::ElementTypeCheckFailed { index, err } => {
-                write!(f, "element no. {index} failed to type check: {err}")
-            }
         }
     }
 }
@@ -1521,12 +1441,6 @@ pub enum UdtTypeCheckErrorKind {
 
     /// The Rust data contains a field that is not present in the UDT
     UnexpectedFieldInDestination { field_name: String },
-
-    /// One of the fields failed to type check.
-    FieldTypeCheckFailed {
-        field_name: String,
-        err: SerializationError,
-    },
 }
 
 impl Display for UdtTypeCheckErrorKind {
@@ -1547,9 +1461,6 @@ impl Display for UdtTypeCheckErrorKind {
                 f,
                 "the field {field_name} present in the Rust data is not present in the CQL type"
             ),
-            UdtTypeCheckErrorKind::FieldTypeCheckFailed { field_name, err } => {
-                write!(f, "field {field_name} failed to type check: {err}")
-            }
         }
     }
 }
