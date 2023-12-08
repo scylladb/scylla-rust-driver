@@ -439,14 +439,14 @@ fn serialize_cql_value<'b>(
         ));
     }
     match value {
-        CqlValue::Ascii(a) => check_and_serialize(a, typ, writer),
-        CqlValue::Boolean(b) => check_and_serialize(b, typ, writer),
-        CqlValue::Blob(b) => check_and_serialize(b, typ, writer),
-        CqlValue::Counter(c) => check_and_serialize(c, typ, writer),
-        CqlValue::Decimal(d) => check_and_serialize(d, typ, writer),
-        CqlValue::Date(d) => check_and_serialize(d, typ, writer),
-        CqlValue::Double(d) => check_and_serialize(d, typ, writer),
-        CqlValue::Duration(d) => check_and_serialize(d, typ, writer),
+        CqlValue::Ascii(a) => <_ as SerializeCql>::serialize(&a, typ, writer),
+        CqlValue::Boolean(b) => <_ as SerializeCql>::serialize(&b, typ, writer),
+        CqlValue::Blob(b) => <_ as SerializeCql>::serialize(&b, typ, writer),
+        CqlValue::Counter(c) => <_ as SerializeCql>::serialize(&c, typ, writer),
+        CqlValue::Decimal(d) => <_ as SerializeCql>::serialize(&d, typ, writer),
+        CqlValue::Date(d) => <_ as SerializeCql>::serialize(&d, typ, writer),
+        CqlValue::Double(d) => <_ as SerializeCql>::serialize(&d, typ, writer),
+        CqlValue::Duration(d) => <_ as SerializeCql>::serialize(&d, typ, writer),
         CqlValue::Empty => {
             if !typ.supports_special_empty_value() {
                 return Err(mk_typck_err::<CqlValue>(
@@ -456,13 +456,13 @@ fn serialize_cql_value<'b>(
             }
             Ok(writer.set_value(&[]).unwrap())
         }
-        CqlValue::Float(f) => check_and_serialize(f, typ, writer),
-        CqlValue::Int(i) => check_and_serialize(i, typ, writer),
-        CqlValue::BigInt(b) => check_and_serialize(b, typ, writer),
-        CqlValue::Text(t) => check_and_serialize(t, typ, writer),
-        CqlValue::Timestamp(t) => check_and_serialize(t, typ, writer),
-        CqlValue::Inet(i) => check_and_serialize(i, typ, writer),
-        CqlValue::List(l) => check_and_serialize(l, typ, writer),
+        CqlValue::Float(f) => <_ as SerializeCql>::serialize(&f, typ, writer),
+        CqlValue::Int(i) => <_ as SerializeCql>::serialize(&i, typ, writer),
+        CqlValue::BigInt(b) => <_ as SerializeCql>::serialize(&b, typ, writer),
+        CqlValue::Text(t) => <_ as SerializeCql>::serialize(&t, typ, writer),
+        CqlValue::Timestamp(t) => <_ as SerializeCql>::serialize(&t, typ, writer),
+        CqlValue::Inet(i) => <_ as SerializeCql>::serialize(&i, typ, writer),
+        CqlValue::List(l) => <_ as SerializeCql>::serialize(&l, typ, writer),
         CqlValue::Map(m) => serialize_mapping(
             std::any::type_name::<CqlValue>(),
             m.len(),
@@ -470,16 +470,16 @@ fn serialize_cql_value<'b>(
             typ,
             writer,
         ),
-        CqlValue::Set(s) => check_and_serialize(s, typ, writer),
+        CqlValue::Set(s) => <_ as SerializeCql>::serialize(&s, typ, writer),
         CqlValue::UserDefinedType {
             keyspace,
             type_name,
             fields,
         } => serialize_udt(typ, keyspace, type_name, fields, writer),
-        CqlValue::SmallInt(s) => check_and_serialize(s, typ, writer),
-        CqlValue::TinyInt(t) => check_and_serialize(t, typ, writer),
-        CqlValue::Time(t) => check_and_serialize(t, typ, writer),
-        CqlValue::Timeuuid(t) => check_and_serialize(t, typ, writer),
+        CqlValue::SmallInt(s) => <_ as SerializeCql>::serialize(&s, typ, writer),
+        CqlValue::TinyInt(t) => <_ as SerializeCql>::serialize(&t, typ, writer),
+        CqlValue::Time(t) => <_ as SerializeCql>::serialize(&t, typ, writer),
+        CqlValue::Timeuuid(t) => <_ as SerializeCql>::serialize(&t, typ, writer),
         CqlValue::Tuple(t) => {
             // We allow serializing tuples that have less fields
             // than the database tuple, but not the other way around.
@@ -505,8 +505,8 @@ fn serialize_cql_value<'b>(
             };
             serialize_tuple_like(typ, fields.iter(), t.iter(), writer)
         }
-        CqlValue::Uuid(u) => check_and_serialize(u, typ, writer),
-        CqlValue::Varint(v) => check_and_serialize(v, typ, writer),
+        CqlValue::Uuid(u) => <_ as SerializeCql>::serialize(&u, typ, writer),
+        CqlValue::Varint(v) => <_ as SerializeCql>::serialize(&v, typ, writer),
     }
 }
 
@@ -550,14 +550,6 @@ fn fix_cql_value_name_in_err(mut err: SerializationError) -> SerializationError 
     };
 
     err
-}
-
-fn check_and_serialize<'b, V: SerializeCql>(
-    v: &V,
-    typ: &ColumnType,
-    writer: CellWriter<'b>,
-) -> Result<WrittenCellProof<'b>, SerializationError> {
-    v.serialize(typ, writer)
 }
 
 fn serialize_udt<'b>(
