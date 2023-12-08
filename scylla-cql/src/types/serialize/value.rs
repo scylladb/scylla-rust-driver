@@ -188,9 +188,6 @@ impl SerializeCql for time::Time {
 }
 #[cfg(feature = "secret")]
 impl<V: SerializeCql + Zeroize> SerializeCql for Secret<V> {
-    fn preliminary_type_check(typ: &ColumnType) -> Result<(), SerializationError> {
-        V::preliminary_type_check(typ)
-    }
     fn serialize<'b>(
         &self,
         typ: &ColumnType,
@@ -284,9 +281,6 @@ impl SerializeCql for String {
     });
 }
 impl<T: SerializeCql> SerializeCql for Option<T> {
-    fn preliminary_type_check(typ: &ColumnType) -> Result<(), SerializationError> {
-        T::preliminary_type_check(typ)
-    }
     fn serialize<'b>(
         &self,
         typ: &ColumnType,
@@ -299,9 +293,6 @@ impl<T: SerializeCql> SerializeCql for Option<T> {
     }
 }
 impl SerializeCql for Unset {
-    fn preliminary_type_check(_typ: &ColumnType) -> Result<(), SerializationError> {
-        Ok(()) // Fits everything
-    }
     impl_serialize_via_writer!(|_me, writer| writer.set_unset());
 }
 impl SerializeCql for Counter {
@@ -322,9 +313,6 @@ impl SerializeCql for CqlDuration {
     });
 }
 impl<V: SerializeCql> SerializeCql for MaybeUnset<V> {
-    fn preliminary_type_check(typ: &ColumnType) -> Result<(), SerializationError> {
-        V::preliminary_type_check(typ)
-    }
     fn serialize<'b>(
         &self,
         typ: &ColumnType,
@@ -337,9 +325,6 @@ impl<V: SerializeCql> SerializeCql for MaybeUnset<V> {
     }
 }
 impl<T: SerializeCql + ?Sized> SerializeCql for &T {
-    fn preliminary_type_check(typ: &ColumnType) -> Result<(), SerializationError> {
-        T::preliminary_type_check(typ)
-    }
     fn serialize<'b>(
         &self,
         typ: &ColumnType,
@@ -349,9 +334,6 @@ impl<T: SerializeCql + ?Sized> SerializeCql for &T {
     }
 }
 impl<T: SerializeCql + ?Sized> SerializeCql for Box<T> {
-    fn preliminary_type_check(typ: &ColumnType) -> Result<(), SerializationError> {
-        T::preliminary_type_check(typ)
-    }
     fn serialize<'b>(
         &self,
         typ: &ColumnType,
@@ -451,10 +433,6 @@ impl<'a, T: SerializeCql + 'a> SerializeCql for &'a [T] {
     }
 }
 impl SerializeCql for CqlValue {
-    fn preliminary_type_check(_typ: &ColumnType) -> Result<(), SerializationError> {
-        Ok(())
-    }
-
     fn serialize<'b>(
         &self,
         typ: &ColumnType,
@@ -922,13 +900,6 @@ macro_rules! impl_serialize_cql_via_value {
         where
             Self: $crate::frame::value::Value,
         {
-            fn preliminary_type_check(
-                _typ: &$crate::frame::response::result::ColumnType,
-            ) -> ::std::result::Result<(), $crate::types::serialize::SerializationError> {
-                // No-op - the old interface didn't offer type safety
-                ::std::result::Result::Ok(())
-            }
-
             fn serialize<'b>(
                 &self,
                 _typ: &$crate::frame::response::result::ColumnType,
