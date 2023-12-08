@@ -545,14 +545,8 @@ impl<'a, T: SerializeCql + 'a> SerializeCql for &'a [T] {
     }
 }
 impl SerializeCql for CqlValue {
-    fn preliminary_type_check(typ: &ColumnType) -> Result<(), SerializationError> {
-        match typ {
-            ColumnType::Custom(_) => Err(mk_typck_err::<Self>(
-                typ,
-                BuiltinTypeCheckErrorKind::CustomTypeUnsupported,
-            )),
-            _ => Ok(()),
-        }
+    fn preliminary_type_check(_typ: &ColumnType) -> Result<(), SerializationError> {
+        Ok(())
     }
 
     fn serialize<'b>(
@@ -569,6 +563,12 @@ fn serialize_cql_value<'b>(
     typ: &ColumnType,
     writer: CellWriter<'b>,
 ) -> Result<WrittenCellProof<'b>, SerializationError> {
+    if let ColumnType::Custom(_) = typ {
+        return Err(mk_typck_err::<CqlValue>(
+            typ,
+            BuiltinTypeCheckErrorKind::CustomTypeUnsupported,
+        ));
+    }
     match value {
         CqlValue::Ascii(a) => check_and_serialize(a, typ, writer),
         CqlValue::Boolean(b) => check_and_serialize(b, typ, writer),
