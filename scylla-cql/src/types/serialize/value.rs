@@ -361,16 +361,6 @@ impl<T: SerializeCql + ?Sized> SerializeCql for Box<T> {
     }
 }
 impl<V: SerializeCql, S: BuildHasher + Default> SerializeCql for HashSet<V, S> {
-    fn preliminary_type_check(typ: &ColumnType) -> Result<(), SerializationError> {
-        match typ {
-            ColumnType::Set(_) => Ok(()),
-            _ => Err(mk_typck_err::<Self>(
-                typ,
-                SetOrListTypeCheckErrorKind::NotSetOrList,
-            )),
-        }
-    }
-
     fn serialize<'b>(
         &self,
         typ: &ColumnType,
@@ -386,13 +376,6 @@ impl<V: SerializeCql, S: BuildHasher + Default> SerializeCql for HashSet<V, S> {
     }
 }
 impl<K: SerializeCql, V: SerializeCql, S: BuildHasher> SerializeCql for HashMap<K, V, S> {
-    fn preliminary_type_check(typ: &ColumnType) -> Result<(), SerializationError> {
-        match typ {
-            ColumnType::Map(_, _) => Ok(()),
-            _ => Err(mk_typck_err::<Self>(typ, MapTypeCheckErrorKind::NotMap)),
-        }
-    }
-
     fn serialize<'b>(
         &self,
         typ: &ColumnType,
@@ -408,16 +391,6 @@ impl<K: SerializeCql, V: SerializeCql, S: BuildHasher> SerializeCql for HashMap<
     }
 }
 impl<V: SerializeCql> SerializeCql for BTreeSet<V> {
-    fn preliminary_type_check(typ: &ColumnType) -> Result<(), SerializationError> {
-        match typ {
-            ColumnType::Set(_) => Ok(()),
-            _ => Err(mk_typck_err::<Self>(
-                typ,
-                SetOrListTypeCheckErrorKind::NotSetOrList,
-            )),
-        }
-    }
-
     fn serialize<'b>(
         &self,
         typ: &ColumnType,
@@ -433,13 +406,6 @@ impl<V: SerializeCql> SerializeCql for BTreeSet<V> {
     }
 }
 impl<K: SerializeCql, V: SerializeCql> SerializeCql for BTreeMap<K, V> {
-    fn preliminary_type_check(typ: &ColumnType) -> Result<(), SerializationError> {
-        match typ {
-            ColumnType::Map(_, _) => Ok(()),
-            _ => Err(mk_typck_err::<Self>(typ, MapTypeCheckErrorKind::NotMap)),
-        }
-    }
-
     fn serialize<'b>(
         &self,
         typ: &ColumnType,
@@ -455,16 +421,6 @@ impl<K: SerializeCql, V: SerializeCql> SerializeCql for BTreeMap<K, V> {
     }
 }
 impl<T: SerializeCql> SerializeCql for Vec<T> {
-    fn preliminary_type_check(typ: &ColumnType) -> Result<(), SerializationError> {
-        match typ {
-            ColumnType::List(_) | ColumnType::Set(_) => Ok(()),
-            _ => Err(mk_typck_err::<Self>(
-                typ,
-                SetOrListTypeCheckErrorKind::NotSetOrList,
-            )),
-        }
-    }
-
     fn serialize<'b>(
         &self,
         typ: &ColumnType,
@@ -480,16 +436,6 @@ impl<T: SerializeCql> SerializeCql for Vec<T> {
     }
 }
 impl<'a, T: SerializeCql + 'a> SerializeCql for &'a [T] {
-    fn preliminary_type_check(typ: &ColumnType) -> Result<(), SerializationError> {
-        match typ {
-            ColumnType::List(_) | ColumnType::Set(_) => Ok(()),
-            _ => Err(mk_typck_err::<Self>(
-                typ,
-                SetOrListTypeCheckErrorKind::NotSetOrList,
-            )),
-        }
-    }
-
     fn serialize<'b>(
         &self,
         typ: &ColumnType,
@@ -759,29 +705,6 @@ macro_rules! impl_tuple {
         $length:expr
     ) => {
         impl<$($typs: SerializeCql),*> SerializeCql for ($($typs,)*) {
-            fn preliminary_type_check(typ: &ColumnType) -> Result<(), SerializationError> {
-                match typ {
-                    ColumnType::Tuple(typs) => match typs.as_slice() {
-                        [$($tidents),*, ..] => {
-                            // Suppress the "unused" warning
-                            let _ = ($($tidents),*,);
-                        }
-                        _ => return Err(mk_typck_err::<Self>(
-                            typ,
-                            TupleTypeCheckErrorKind::WrongElementCount {
-                                actual: $length,
-                                asked_for: typs.len(),
-                            }
-                        ))
-                    }
-                    _ => return Err(mk_typck_err::<Self>(
-                        typ,
-                        TupleTypeCheckErrorKind::NotTuple
-                    )),
-                };
-                Ok(())
-            }
-
             fn serialize<'b>(
                 &self,
                 typ: &ColumnType,
