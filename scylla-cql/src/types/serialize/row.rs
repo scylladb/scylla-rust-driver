@@ -223,8 +223,8 @@ macro_rules! impl_serialize_row_for_map {
                     Some(v) => {
                         <T as SerializeCql>::serialize(v, &col.typ, writer.make_cell_writer())
                             .map_err(|err| {
-                                mk_typck_err::<Self>(
-                                    BuiltinTypeCheckErrorKind::ColumnTypeCheckFailed {
+                                mk_ser_err::<Self>(
+                                    BuiltinSerializationErrorKind::ColumnSerializationFailed {
                                         name: col.name.clone(),
                                         err,
                                     },
