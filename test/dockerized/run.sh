@@ -9,7 +9,7 @@ fi
 
 IMAGE_NAME="scylla_rust_driver_testing"
 
-# Build a new image with embeded driver source files and deletes the
+# Build a new image with embedded driver source files and deletes the
 # previously built image
 docker tag "$IMAGE_NAME:latest" "$IMAGE_NAME:previous" &>/dev/null
 if docker build -f test/dockerized/Dockerfile -t "$IMAGE_NAME:latest" . ; then

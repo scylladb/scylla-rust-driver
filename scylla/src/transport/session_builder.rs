@@ -708,7 +708,7 @@ impl<K: SessionBuilderKind> GenericSessionBuilder<K> {
     pub fn keepalive_timeout(mut self, timeout: Duration) -> Self {
         if timeout <= Duration::from_secs(1) {
             warn!(
-                "Setting the keepalive timeout to low values ({:?}) is not recommended as it may aggresively close connections. Consider setting it above 5 seconds.",
+                "Setting the keepalive timeout to low values ({:?}) is not recommended as it may aggressively close connections. Consider setting it above 5 seconds.",
                 timeout
             );
         }

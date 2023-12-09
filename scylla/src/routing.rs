@@ -102,7 +102,7 @@ impl Sharder {
 pub enum ShardingError {
     #[error("ShardInfo parameters missing")]
     MissingShardInfoParameter,
-    #[error("ShardInfo parameters missing after unwraping")]
+    #[error("ShardInfo parameters missing after unwrapping")]
     MissingUnwrapedShardInfoParameter,
     #[error("ShardInfo contains an invalid number of shards (0)")]
     ZeroShards,

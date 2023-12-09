@@ -381,7 +381,7 @@ mod tests {
         for expected_row in expected_rows.iter() {
             if !selected_rows.contains(expected_row) {
                 panic!(
-                    "Expected {:?} to contain row: {:?}, but they didnt",
+                    "Expected {:?} to contain row: {:?}, but they didn't",
                     selected_rows, expected_row
                 );
             }

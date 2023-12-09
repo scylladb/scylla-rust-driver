@@ -724,7 +724,7 @@ async fn test_use_keyspace_case_sensitivity() {
         .await
         .unwrap();
 
-    // Use uppercase keyspace without case sesitivity
+    // Use uppercase keyspace without case sensitivity
     // Should select the lowercase one
     session.use_keyspace(ks_upper.clone(), false).await.unwrap();
 
@@ -740,7 +740,7 @@ async fn test_use_keyspace_case_sensitivity() {
 
     assert_eq!(rows, vec!["lowercase".to_string()]);
 
-    // Use uppercase keyspace with case sesitivity
+    // Use uppercase keyspace with case sensitivity
     // Should select the uppercase one
     session.use_keyspace(ks_upper, true).await.unwrap();
 
@@ -2221,7 +2221,7 @@ async fn assert_test_batch_table_rows_contain(sess: &Session, expected_rows: &[(
     for expected_row in expected_rows.iter() {
         if !selected_rows.contains(expected_row) {
             panic!(
-                "Expected {:?} to contain row: {:?}, but they didnt",
+                "Expected {:?} to contain row: {:?}, but they didn't",
                 selected_rows, expected_row
             );
         }

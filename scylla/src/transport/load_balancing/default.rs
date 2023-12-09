@@ -987,7 +987,7 @@ mod tests {
                     // and just `assert_eq` them
                     let mut got = got.iter();
                     for (group_id, expected) in self.groups.iter().enumerate() {
-                        // Collect the nodes that consistute the group
+                        // Collect the nodes that constitute the group
                         // in the actual plan
                         let got_group: Vec<_> = (&mut got).take(expected.len()).copied().collect();
 

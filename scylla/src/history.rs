@@ -56,7 +56,7 @@ pub trait HistoryListener: Debug + Send + Sync {
         node_addr: SocketAddr,
     ) -> AttemptId;
 
-    /// Log that an attempt succeded.
+    /// Log that an attempt succeeded.
     fn log_attempt_success(&self, attempt_id: AttemptId);
 
     /// Log that an attempt ended with an error. The error and decision whether to retry the attempt are also included in the log.

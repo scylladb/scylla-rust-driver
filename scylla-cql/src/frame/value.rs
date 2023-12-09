@@ -493,7 +493,7 @@ pub trait BatchValuesIterator<'a> {
 
 /// Implements `BatchValuesIterator` from an `Iterator` over references to things that implement `ValueList`
 ///
-/// Essentially used internally by this lib to provide implementors of `BatchValuesIterator` for cases
+/// Essentially used internally by this lib to provide implementers of `BatchValuesIterator` for cases
 /// that always serialize the same concrete `ValueList` type
 pub struct BatchValuesIteratorFromIterator<IT: Iterator> {
     it: IT,

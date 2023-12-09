@@ -431,8 +431,8 @@ impl RunningProxy {
         }
     }
 
-    /// Attempts to fetch the first error that has occured in proxy since last check.
-    /// If no errors occured, returns Ok(()).
+    /// Attempts to fetch the first error that has occurred in proxy since last check.
+    /// If no errors occurred, returns Ok(()).
     pub fn sanity_check(&mut self) -> Result<(), ProxyError> {
         match self.error_sink.try_recv() {
             Ok(err) => Err(err),
@@ -444,13 +444,13 @@ impl RunningProxy {
         }
     }
 
-    /// Waits until an error occurs in proxy. If proxy finishes with no errors occured, returns Err(()).
+    /// Waits until an error occurs in proxy. If proxy finishes with no errors occurred, returns Err(()).
     pub async fn wait_for_error(&mut self) -> Option<ProxyError> {
         self.error_sink.recv().await
     }
 
     /// Requests termination of all proxy workers and awaits its completion.
-    /// Returns the first error that occured in proxy.
+    /// Returns the first error that occurred in proxy.
     pub async fn finish(mut self) -> Result<(), ProxyError> {
         self.terminate_signaler.send(()).map_err(|err| {
             ProxyError::AwaitFinishFailure(format!(
@@ -768,7 +768,7 @@ impl Doorkeeper {
 
         // If ShardAwareness is aware (QueryNode or FixedNum variants) and the
         // proxy succeeded to know the shards count (in FixedNum we get it for
-        // free, in QueryNode the initial Options query succceeded and Supported
+        // free, in QueryNode the initial Options query succeeded and Supported
         // contained SCYLLA_SHARDS_NUM), then upon opening each connection to the
         // node, the proxy issues another Options requests and acknowledges the
         // shard it got connected to.
@@ -2446,7 +2446,7 @@ mod tests {
         )
         .await;
 
-        // Messages after REGISTER should be passed trough without feedback
+        // Messages after REGISTER should be passed through without feedback
         for i in 0..5 {
             perform_reqest_response(
                 RequestOpcode::Query,

@@ -290,7 +290,7 @@ mod ssl_config {
     /// This struct encapsulates all Ssl-regarding configuration and helps pass it tidily through the code.
     //
     // There are 3 possible options for SslConfig, whose behaviour is somewhat subtle.
-    // Option 1: No ssl configuration. Then it is None everytime.
+    // Option 1: No ssl configuration. Then it is None every time.
     // Option 2: User-provided global SslContext. Then, a SslConfig is created upon Session creation
     // and henceforth stored in the ConnectionConfig.
     // Option 3: Serverless Cloud. The Option<SslConfig> remains None in ConnectionConfig until it reaches
@@ -1334,7 +1334,7 @@ impl Connection {
         // or passing the negotiated features via a channel/mutex/etc.
         // Fortunately, events do not need information about protocol features
         // to be serialized (yet), therefore I'm leaving this problem for
-        // future implementors.
+        // future implementers.
         let features = ProtocolFeatures::default(); // TODO: Use the right features
 
         let response = Self::parse_response(task_response, compression, &features)?.response;
