@@ -63,6 +63,12 @@ macro_rules! test_crate {
             let sv2 = tuple_with_same_layout.serialized().unwrap().into_owned();
             assert_eq!(sv, sv2);
         }
+
+        #[derive(_scylla::macros::SerializeCql, _scylla::macros::SerializeRow)]
+        #[scylla(crate = _scylla)]
+        struct TestStructNew {
+            x: ::core::primitive::i32,
+        }
     };
 }
 

@@ -1309,8 +1309,17 @@ pub enum UdtTypeCheckErrorKind {
     /// The name of the UDT being serialized to does not match.
     NameMismatch { keyspace: String, type_name: String },
 
+    /// One of the fields that is required to be present by the Rust struct was not present in the CQL UDT type.
+    MissingField { field_name: String },
+
     /// The Rust data contains a field that is not present in the UDT
     UnexpectedFieldInDestination { field_name: String },
+
+    /// A different field name was expected at given position.
+    FieldNameMismatch {
+        rust_field_name: String,
+        db_field_name: String,
+    },
 }
 
 impl Display for UdtTypeCheckErrorKind {
@@ -1327,9 +1336,16 @@ impl Display for UdtTypeCheckErrorKind {
                 f,
                 "the Rust UDT name does not match the actual CQL UDT name ({keyspace}.{type_name})"
             ),
+            UdtTypeCheckErrorKind::MissingField { field_name } => {
+                write!(f, "the field {field_name} is missing from the CQL UDT type")
+            }
             UdtTypeCheckErrorKind::UnexpectedFieldInDestination { field_name } => write!(
                 f,
                 "the field {field_name} present in the Rust data is not present in the CQL type"
+            ),
+            UdtTypeCheckErrorKind::FieldNameMismatch { rust_field_name, db_field_name } => write!(
+                f,
+                "expected field with name {db_field_name} at given position, but the Rust field name is {rust_field_name}"
             ),
         }
     }
@@ -1369,11 +1385,17 @@ pub enum ValueToSerializeCqlAdapterError {
 
 #[cfg(test)]
 mod tests {
-    use crate::frame::response::result::ColumnType;
+    use crate::frame::response::result::{ColumnType, CqlValue};
     use crate::frame::value::{MaybeUnset, Value};
+    use crate::types::serialize::value::{
+        BuiltinSerializationError, BuiltinSerializationErrorKind, BuiltinTypeCheckError,
+        BuiltinTypeCheckErrorKind,
+    };
     use crate::types::serialize::CellWriter;
 
-    use super::SerializeCql;
+    use scylla_macros::SerializeCql;
+
+    use super::{SerializeCql, UdtSerializationErrorKind, UdtTypeCheckErrorKind};
 
     fn check_compat<V: Value + SerializeCql>(v: V) {
         let mut legacy_data = Vec::new();
@@ -1406,5 +1428,414 @@ mod tests {
         <_ as SerializeCql>::serialize(&v, &ColumnType::Int, erased_data_writer).unwrap();
 
         assert_eq!(typed_data, erased_data);
+    }
+
+    fn do_serialize<T: SerializeCql>(t: T, typ: &ColumnType) -> Vec<u8> {
+        let mut ret = Vec::new();
+        let writer = CellWriter::new(&mut ret);
+        t.serialize(typ, writer).unwrap();
+        ret
+    }
+
+    // Do not remove. It's not used in tests but we keep it here to check that
+    // we properly ignore warnings about unused variables, unnecessary `mut`s
+    // etc. that usually pop up when generating code for empty structs.
+    #[derive(SerializeCql)]
+    #[scylla(crate = crate)]
+    struct TestUdtWithNoFields {}
+
+    #[derive(SerializeCql, Debug, PartialEq, Eq, Default)]
+    #[scylla(crate = crate)]
+    struct TestUdtWithFieldSorting {
+        a: String,
+        b: i32,
+        c: Vec<i64>,
+    }
+
+    #[test]
+    fn test_udt_serialization_with_field_sorting_correct_order() {
+        let typ = ColumnType::UserDefinedType {
+            type_name: "typ".to_string(),
+            keyspace: "ks".to_string(),
+            field_types: vec![
+                ("a".to_string(), ColumnType::Text),
+                ("b".to_string(), ColumnType::Int),
+                (
+                    "c".to_string(),
+                    ColumnType::List(Box::new(ColumnType::BigInt)),
+                ),
+            ],
+        };
+
+        let reference = do_serialize(
+            CqlValue::UserDefinedType {
+                keyspace: "ks".to_string(),
+                type_name: "typ".to_string(),
+                fields: vec![
+                    (
+                        "a".to_string(),
+                        Some(CqlValue::Text(String::from("Ala ma kota"))),
+                    ),
+                    ("b".to_string(), Some(CqlValue::Int(42))),
+                    (
+                        "c".to_string(),
+                        Some(CqlValue::List(vec![
+                            CqlValue::BigInt(1),
+                            CqlValue::BigInt(2),
+                            CqlValue::BigInt(3),
+                        ])),
+                    ),
+                ],
+            },
+            &typ,
+        );
+        let udt = do_serialize(
+            TestUdtWithFieldSorting {
+                a: "Ala ma kota".to_owned(),
+                b: 42,
+                c: vec![1, 2, 3],
+            },
+            &typ,
+        );
+
+        assert_eq!(reference, udt);
+    }
+
+    #[test]
+    fn test_udt_serialization_with_field_sorting_incorrect_order() {
+        let typ = ColumnType::UserDefinedType {
+            type_name: "typ".to_string(),
+            keyspace: "ks".to_string(),
+            field_types: vec![
+                // Two first columns are swapped
+                ("b".to_string(), ColumnType::Int),
+                ("a".to_string(), ColumnType::Text),
+                (
+                    "c".to_string(),
+                    ColumnType::List(Box::new(ColumnType::BigInt)),
+                ),
+            ],
+        };
+
+        let reference = do_serialize(
+            CqlValue::UserDefinedType {
+                keyspace: "ks".to_string(),
+                type_name: "typ".to_string(),
+                fields: vec![
+                    // FIXME: UDTs in CqlValue should also honor the order
+                    // For now, it's swapped here as well
+                    ("b".to_string(), Some(CqlValue::Int(42))),
+                    (
+                        "a".to_string(),
+                        Some(CqlValue::Text(String::from("Ala ma kota"))),
+                    ),
+                    (
+                        "c".to_string(),
+                        Some(CqlValue::List(vec![
+                            CqlValue::BigInt(1),
+                            CqlValue::BigInt(2),
+                            CqlValue::BigInt(3),
+                        ])),
+                    ),
+                ],
+            },
+            &typ,
+        );
+        let udt = do_serialize(
+            TestUdtWithFieldSorting {
+                a: "Ala ma kota".to_owned(),
+                b: 42,
+                c: vec![1, 2, 3],
+            },
+            &typ,
+        );
+
+        assert_eq!(reference, udt);
+    }
+
+    #[test]
+    fn test_udt_serialization_failing_type_check() {
+        let typ_not_udt = ColumnType::Ascii;
+        let udt = TestUdtWithFieldSorting::default();
+        let mut data = Vec::new();
+
+        let err = udt
+            .serialize(&typ_not_udt, CellWriter::new(&mut data))
+            .unwrap_err();
+        let err = err.0.downcast_ref::<BuiltinTypeCheckError>().unwrap();
+        assert!(matches!(
+            err.kind,
+            BuiltinTypeCheckErrorKind::UdtError(UdtTypeCheckErrorKind::NotUdt)
+        ));
+
+        let typ_without_c = ColumnType::UserDefinedType {
+            type_name: "typ".to_string(),
+            keyspace: "ks".to_string(),
+            field_types: vec![
+                ("a".to_string(), ColumnType::Text),
+                ("b".to_string(), ColumnType::Int),
+                // Last field is missing
+            ],
+        };
+
+        let err = udt
+            .serialize(&typ_without_c, CellWriter::new(&mut data))
+            .unwrap_err();
+        let err = err.0.downcast_ref::<BuiltinTypeCheckError>().unwrap();
+        assert!(matches!(
+            err.kind,
+            BuiltinTypeCheckErrorKind::UdtError(UdtTypeCheckErrorKind::MissingField { .. })
+        ));
+
+        let typ_unexpected_field = ColumnType::UserDefinedType {
+            type_name: "typ".to_string(),
+            keyspace: "ks".to_string(),
+            field_types: vec![
+                ("a".to_string(), ColumnType::Text),
+                ("b".to_string(), ColumnType::Int),
+                (
+                    "c".to_string(),
+                    ColumnType::List(Box::new(ColumnType::BigInt)),
+                ),
+                // Unexpected field
+                ("d".to_string(), ColumnType::Counter),
+            ],
+        };
+
+        let err = udt
+            .serialize(&typ_unexpected_field, CellWriter::new(&mut data))
+            .unwrap_err();
+        let err = err.0.downcast_ref::<BuiltinTypeCheckError>().unwrap();
+        assert!(matches!(
+            err.kind,
+            BuiltinTypeCheckErrorKind::UdtError(
+                UdtTypeCheckErrorKind::UnexpectedFieldInDestination { .. }
+            )
+        ));
+
+        let typ_wrong_type = ColumnType::UserDefinedType {
+            type_name: "typ".to_string(),
+            keyspace: "ks".to_string(),
+            field_types: vec![
+                ("a".to_string(), ColumnType::Text),
+                ("b".to_string(), ColumnType::Int),
+                ("c".to_string(), ColumnType::TinyInt), // Wrong column type
+            ],
+        };
+
+        let err = udt
+            .serialize(&typ_wrong_type, CellWriter::new(&mut data))
+            .unwrap_err();
+        let err = err.0.downcast_ref::<BuiltinSerializationError>().unwrap();
+        assert!(matches!(
+            err.kind,
+            BuiltinSerializationErrorKind::UdtError(
+                UdtSerializationErrorKind::FieldSerializationFailed { .. }
+            )
+        ));
+    }
+
+    #[derive(SerializeCql)]
+    #[scylla(crate = crate)]
+    struct TestUdtWithGenerics<'a, T: SerializeCql> {
+        a: &'a str,
+        b: T,
+    }
+
+    #[test]
+    fn test_udt_serialization_with_generics() {
+        // A minimal smoke test just to test that it works.
+        fn check_with_type<T: SerializeCql>(typ: ColumnType, t: T, cql_t: CqlValue) {
+            let typ = ColumnType::UserDefinedType {
+                type_name: "typ".to_string(),
+                keyspace: "ks".to_string(),
+                field_types: vec![("a".to_string(), ColumnType::Text), ("b".to_string(), typ)],
+            };
+            let reference = do_serialize(
+                CqlValue::UserDefinedType {
+                    keyspace: "ks".to_string(),
+                    type_name: "typ".to_string(),
+                    fields: vec![
+                        (
+                            "a".to_string(),
+                            Some(CqlValue::Text(String::from("Ala ma kota"))),
+                        ),
+                        ("b".to_string(), Some(cql_t)),
+                    ],
+                },
+                &typ,
+            );
+            let udt = do_serialize(
+                TestUdtWithGenerics {
+                    a: "Ala ma kota",
+                    b: t,
+                },
+                &typ,
+            );
+            assert_eq!(reference, udt);
+        }
+
+        check_with_type(ColumnType::Int, 123_i32, CqlValue::Int(123_i32));
+        check_with_type(ColumnType::Double, 123_f64, CqlValue::Double(123_f64));
+    }
+
+    #[derive(SerializeCql, Debug, PartialEq, Eq, Default)]
+    #[scylla(crate = crate, flavor = "enforce_order")]
+    struct TestUdtWithEnforcedOrder {
+        a: String,
+        b: i32,
+        c: Vec<i64>,
+    }
+
+    #[test]
+    fn test_udt_serialization_with_enforced_order_correct_order() {
+        let typ = ColumnType::UserDefinedType {
+            type_name: "typ".to_string(),
+            keyspace: "ks".to_string(),
+            field_types: vec![
+                ("a".to_string(), ColumnType::Text),
+                ("b".to_string(), ColumnType::Int),
+                (
+                    "c".to_string(),
+                    ColumnType::List(Box::new(ColumnType::BigInt)),
+                ),
+            ],
+        };
+
+        let reference = do_serialize(
+            CqlValue::UserDefinedType {
+                keyspace: "ks".to_string(),
+                type_name: "typ".to_string(),
+                fields: vec![
+                    (
+                        "a".to_string(),
+                        Some(CqlValue::Text(String::from("Ala ma kota"))),
+                    ),
+                    ("b".to_string(), Some(CqlValue::Int(42))),
+                    (
+                        "c".to_string(),
+                        Some(CqlValue::List(vec![
+                            CqlValue::BigInt(1),
+                            CqlValue::BigInt(2),
+                            CqlValue::BigInt(3),
+                        ])),
+                    ),
+                ],
+            },
+            &typ,
+        );
+        let udt = do_serialize(
+            TestUdtWithEnforcedOrder {
+                a: "Ala ma kota".to_owned(),
+                b: 42,
+                c: vec![1, 2, 3],
+            },
+            &typ,
+        );
+
+        assert_eq!(reference, udt);
+    }
+
+    #[test]
+    fn test_udt_serialization_with_enforced_order_failing_type_check() {
+        let typ_not_udt = ColumnType::Ascii;
+        let udt = TestUdtWithEnforcedOrder::default();
+
+        let mut data = Vec::new();
+
+        let err = <_ as SerializeCql>::serialize(&udt, &typ_not_udt, CellWriter::new(&mut data))
+            .unwrap_err();
+        let err = err.0.downcast_ref::<BuiltinTypeCheckError>().unwrap();
+        assert!(matches!(
+            err.kind,
+            BuiltinTypeCheckErrorKind::UdtError(UdtTypeCheckErrorKind::NotUdt)
+        ));
+
+        let typ = ColumnType::UserDefinedType {
+            type_name: "typ".to_string(),
+            keyspace: "ks".to_string(),
+            field_types: vec![
+                // Two first columns are swapped
+                ("b".to_string(), ColumnType::Int),
+                ("a".to_string(), ColumnType::Text),
+                (
+                    "c".to_string(),
+                    ColumnType::List(Box::new(ColumnType::BigInt)),
+                ),
+            ],
+        };
+
+        let err =
+            <_ as SerializeCql>::serialize(&udt, &typ, CellWriter::new(&mut data)).unwrap_err();
+        let err = err.0.downcast_ref::<BuiltinTypeCheckError>().unwrap();
+        assert!(matches!(
+            err.kind,
+            BuiltinTypeCheckErrorKind::UdtError(UdtTypeCheckErrorKind::FieldNameMismatch { .. })
+        ));
+
+        let typ_without_c = ColumnType::UserDefinedType {
+            type_name: "typ".to_string(),
+            keyspace: "ks".to_string(),
+            field_types: vec![
+                ("a".to_string(), ColumnType::Text),
+                ("b".to_string(), ColumnType::Int),
+                // Last field is missing
+            ],
+        };
+
+        let err = <_ as SerializeCql>::serialize(&udt, &typ_without_c, CellWriter::new(&mut data))
+            .unwrap_err();
+        let err = err.0.downcast_ref::<BuiltinTypeCheckError>().unwrap();
+        assert!(matches!(
+            err.kind,
+            BuiltinTypeCheckErrorKind::UdtError(UdtTypeCheckErrorKind::MissingField { .. })
+        ));
+
+        let typ_unexpected_field = ColumnType::UserDefinedType {
+            type_name: "typ".to_string(),
+            keyspace: "ks".to_string(),
+            field_types: vec![
+                ("a".to_string(), ColumnType::Text),
+                ("b".to_string(), ColumnType::Int),
+                (
+                    "c".to_string(),
+                    ColumnType::List(Box::new(ColumnType::BigInt)),
+                ),
+                // Unexpected field
+                ("d".to_string(), ColumnType::Counter),
+            ],
+        };
+
+        let err =
+            <_ as SerializeCql>::serialize(&udt, &typ_unexpected_field, CellWriter::new(&mut data))
+                .unwrap_err();
+        let err = err.0.downcast_ref::<BuiltinTypeCheckError>().unwrap();
+        assert!(matches!(
+            err.kind,
+            BuiltinTypeCheckErrorKind::UdtError(
+                UdtTypeCheckErrorKind::UnexpectedFieldInDestination { .. }
+            )
+        ));
+
+        let typ_unexpected_field = ColumnType::UserDefinedType {
+            type_name: "typ".to_string(),
+            keyspace: "ks".to_string(),
+            field_types: vec![
+                ("a".to_string(), ColumnType::Text),
+                ("b".to_string(), ColumnType::Int),
+                ("c".to_string(), ColumnType::TinyInt), // Wrong column type
+            ],
+        };
+
+        let err =
+            <_ as SerializeCql>::serialize(&udt, &typ_unexpected_field, CellWriter::new(&mut data))
+                .unwrap_err();
+        let err = err.0.downcast_ref::<BuiltinSerializationError>().unwrap();
+        assert!(matches!(
+            err.kind,
+            BuiltinSerializationErrorKind::UdtError(
+                UdtSerializationErrorKind::FieldSerializationFailed { .. }
+            )
+        ));
     }
 }
