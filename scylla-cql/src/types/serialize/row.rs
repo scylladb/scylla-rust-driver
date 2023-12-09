@@ -10,7 +10,7 @@ use crate::frame::value::{SerializedValues, ValueList};
 use crate::frame::{response::result::ColumnSpec, types::RawValue};
 
 use super::value::SerializeCql;
-use super::{CellWriter, RowWriter, SerializationError};
+use super::{RowWriter, SerializationError};
 
 /// Contains information needed to serialize a row.
 pub struct RowSerializationContext<'a> {
@@ -33,25 +33,11 @@ impl<'a> RowSerializationContext<'a> {
 }
 
 pub trait SerializeRow {
-    /// Checks if it _might_ be possible to serialize the row according to the
-    /// information in the context.
-    ///
-    /// This function is intended to serve as an optimization in the future,
-    /// if we were ever to introduce prepared statements parametrized by types.
-    ///
-    /// Sometimes, a row cannot be fully type checked right away without knowing
-    /// the exact values of the columns (e.g. when deserializing to `CqlValue`),
-    /// but it's fine to do full type checking later in `serialize`.
-    fn preliminary_type_check(ctx: &RowSerializationContext<'_>) -> Result<(), SerializationError>;
-
     /// Serializes the row according to the information in the given context.
-    ///
-    /// The function may assume that `preliminary_type_check` was called,
-    /// though it must not do anything unsafe if this assumption does not hold.
-    fn serialize<W: RowWriter>(
+    fn serialize(
         &self,
         ctx: &RowSerializationContext<'_>,
-        writer: &mut W,
+        writer: &mut RowWriter,
     ) -> Result<(), SerializationError>;
 
     fn is_empty(&self) -> bool;
@@ -59,15 +45,10 @@ pub trait SerializeRow {
 
 macro_rules! fallback_impl_contents {
     () => {
-        fn preliminary_type_check(
-            _ctx: &RowSerializationContext<'_>,
-        ) -> Result<(), SerializationError> {
-            Ok(())
-        }
-        fn serialize<W: RowWriter>(
+        fn serialize(
             &self,
             ctx: &RowSerializationContext<'_>,
-            writer: &mut W,
+            writer: &mut RowWriter,
         ) -> Result<(), SerializationError> {
             serialize_legacy_row(self, ctx, writer)
         }
@@ -80,8 +61,10 @@ macro_rules! fallback_impl_contents {
 
 macro_rules! impl_serialize_row_for_unit {
     () => {
-        fn preliminary_type_check(
+        fn serialize(
+            &self,
             ctx: &RowSerializationContext<'_>,
+            _writer: &mut RowWriter,
         ) -> Result<(), SerializationError> {
             if !ctx.columns().is_empty() {
                 return Err(mk_typck_err::<Self>(
@@ -91,14 +74,6 @@ macro_rules! impl_serialize_row_for_unit {
                     },
                 ));
             }
-            Ok(())
-        }
-
-        fn serialize<W: RowWriter>(
-            &self,
-            _ctx: &RowSerializationContext<'_>,
-            _writer: &mut W,
-        ) -> Result<(), SerializationError> {
             // Row is empty - do nothing
             Ok(())
         }
@@ -120,26 +95,10 @@ impl SerializeRow for [u8; 0] {
 
 macro_rules! impl_serialize_row_for_slice {
     () => {
-        fn preliminary_type_check(
-            ctx: &RowSerializationContext<'_>,
-        ) -> Result<(), SerializationError> {
-            // While we don't know how many columns will be there during serialization,
-            // we can at least check that all provided columns match T.
-            for col in ctx.columns() {
-                <T as SerializeCql>::preliminary_type_check(&col.typ).map_err(|err| {
-                    mk_typck_err::<Self>(BuiltinTypeCheckErrorKind::ColumnTypeCheckFailed {
-                        name: col.name.clone(),
-                        err,
-                    })
-                })?;
-            }
-            Ok(())
-        }
-
-        fn serialize<W: RowWriter>(
+        fn serialize(
             &self,
             ctx: &RowSerializationContext<'_>,
-            writer: &mut W,
+            writer: &mut RowWriter,
         ) -> Result<(), SerializationError> {
             if ctx.columns().len() != self.len() {
                 return Err(mk_typck_err::<Self>(
@@ -181,26 +140,10 @@ impl<T: SerializeCql> SerializeRow for Vec<T> {
 
 macro_rules! impl_serialize_row_for_map {
     () => {
-        fn preliminary_type_check(
-            ctx: &RowSerializationContext<'_>,
-        ) -> Result<(), SerializationError> {
-            // While we don't know the column count or their names,
-            // we can go over all columns and check that their types match T.
-            for col in ctx.columns() {
-                <T as SerializeCql>::preliminary_type_check(&col.typ).map_err(|err| {
-                    mk_typck_err::<Self>(BuiltinTypeCheckErrorKind::ColumnTypeCheckFailed {
-                        name: col.name.clone(),
-                        err,
-                    })
-                })?;
-            }
-            Ok(())
-        }
-
-        fn serialize<W: RowWriter>(
+        fn serialize(
             &self,
             ctx: &RowSerializationContext<'_>,
-            writer: &mut W,
+            writer: &mut RowWriter,
         ) -> Result<(), SerializationError> {
             // Unfortunately, column names aren't guaranteed to be unique.
             // We need to track not-yet-used columns in order to see
@@ -219,8 +162,8 @@ macro_rules! impl_serialize_row_for_map {
                     Some(v) => {
                         <T as SerializeCql>::serialize(v, &col.typ, writer.make_cell_writer())
                             .map_err(|err| {
-                                mk_typck_err::<Self>(
-                                    BuiltinTypeCheckErrorKind::ColumnTypeCheckFailed {
+                                mk_ser_err::<Self>(
+                                    BuiltinSerializationErrorKind::ColumnSerializationFailed {
                                         name: col.name.clone(),
                                         err,
                                     },
@@ -267,15 +210,11 @@ impl<T: SerializeCql, S: BuildHasher> SerializeRow for HashMap<&str, T, S> {
     impl_serialize_row_for_map!();
 }
 
-impl<T: SerializeRow> SerializeRow for &T {
-    fn preliminary_type_check(ctx: &RowSerializationContext<'_>) -> Result<(), SerializationError> {
-        <T as SerializeRow>::preliminary_type_check(ctx)
-    }
-
-    fn serialize<W: RowWriter>(
+impl<T: SerializeRow + ?Sized> SerializeRow for &T {
+    fn serialize(
         &self,
         ctx: &RowSerializationContext<'_>,
-        writer: &mut W,
+        writer: &mut RowWriter,
     ) -> Result<(), SerializationError> {
         <T as SerializeRow>::serialize(self, ctx, writer)
     }
@@ -302,34 +241,10 @@ macro_rules! impl_tuple {
         $length:expr
     ) => {
         impl<$($typs: SerializeCql),*> SerializeRow for ($($typs,)*) {
-            fn preliminary_type_check(
-                ctx: &RowSerializationContext<'_>,
-            ) -> Result<(), SerializationError> {
-                match ctx.columns() {
-                    [$($tidents),*] => {
-                        $(
-                            <$typs as SerializeCql>::preliminary_type_check(&$tidents.typ).map_err(|err| {
-                                mk_typck_err::<Self>(BuiltinTypeCheckErrorKind::ColumnTypeCheckFailed {
-                                    name: $tidents.name.clone(),
-                                    err,
-                                })
-                            })?;
-                        )*
-                    }
-                    _ => return Err(mk_typck_err::<Self>(
-                        BuiltinTypeCheckErrorKind::WrongColumnCount {
-                            actual: $length,
-                            asked_for: ctx.columns().len(),
-                        },
-                    )),
-                };
-                Ok(())
-            }
-
-            fn serialize<W: RowWriter>(
+            fn serialize(
                 &self,
                 ctx: &RowSerializationContext<'_>,
-                writer: &mut W,
+                writer: &mut RowWriter,
             ) -> Result<(), SerializationError> {
                 let ($($tidents,)*) = match ctx.columns() {
                     [$($tidents),*] => ($($tidents,)*),
@@ -445,17 +360,10 @@ macro_rules! impl_serialize_row_via_value_list {
         where
             Self: $crate::frame::value::ValueList,
         {
-            fn preliminary_type_check(
-                _ctx: &$crate::types::serialize::row::RowSerializationContext<'_>,
-            ) -> ::std::result::Result<(), $crate::types::serialize::SerializationError> {
-                // No-op - the old interface didn't offer type safety
-                ::std::result::Result::Ok(())
-            }
-
-            fn serialize<W: $crate::types::serialize::writers::RowWriter>(
+            fn serialize(
                 &self,
                 ctx: &$crate::types::serialize::row::RowSerializationContext<'_>,
-                writer: &mut W,
+                writer: &mut $crate::types::serialize::writers::RowWriter,
             ) -> ::std::result::Result<(), $crate::types::serialize::SerializationError> {
                 $crate::types::serialize::row::serialize_legacy_row(self, ctx, writer)
             }
@@ -492,7 +400,7 @@ macro_rules! impl_serialize_row_via_value_list {
 pub fn serialize_legacy_row<T: ValueList>(
     r: &T,
     ctx: &RowSerializationContext<'_>,
-    writer: &mut impl RowWriter,
+    writer: &mut RowWriter,
 ) -> Result<(), SerializationError> {
     let serialized =
         <T as ValueList>::serialized(r).map_err(|err| SerializationError(Arc::new(err)))?;
@@ -596,12 +504,6 @@ pub enum BuiltinTypeCheckErrorKind {
 
     /// A value required by the statement is not provided by the Rust type.
     ColumnMissingForValue { name: String },
-
-    /// One of the columns failed to type check.
-    ColumnTypeCheckFailed {
-        name: String,
-        err: SerializationError,
-    },
 }
 
 impl Display for BuiltinTypeCheckErrorKind {
@@ -621,9 +523,6 @@ impl Display for BuiltinTypeCheckErrorKind {
                     f,
                     "value for column {name} was provided, but there is no bind marker for this column in the query"
                 )
-            }
-            BuiltinTypeCheckErrorKind::ColumnTypeCheckFailed { name, err } => {
-                write!(f, "failed to check column {name}: {err}")
             }
         }
     }
@@ -660,7 +559,7 @@ pub enum ValueListToSerializeRowAdapterError {
 mod tests {
     use crate::frame::response::result::{ColumnSpec, ColumnType, TableSpec};
     use crate::frame::value::{MaybeUnset, SerializedValues, ValueList};
-    use crate::types::serialize::BufBackedRowWriter;
+    use crate::types::serialize::RowWriter;
 
     use super::{RowSerializationContext, SerializeRow};
 
@@ -688,7 +587,7 @@ mod tests {
         <_ as ValueList>::write_to_request(&row, &mut legacy_data).unwrap();
 
         let mut new_data = Vec::new();
-        let mut new_data_writer = BufBackedRowWriter::new(&mut new_data);
+        let mut new_data_writer = RowWriter::new(&mut new_data);
         let ctx = RowSerializationContext {
             columns: &[
                 col_spec("a", ColumnType::Int),
@@ -725,7 +624,7 @@ mod tests {
         unsorted_row.add_named_value("c", &None::<i64>).unwrap();
 
         let mut unsorted_row_data = Vec::new();
-        let mut unsorted_row_data_writer = BufBackedRowWriter::new(&mut unsorted_row_data);
+        let mut unsorted_row_data_writer = RowWriter::new(&mut unsorted_row_data);
         let ctx = RowSerializationContext {
             columns: &[
                 col_spec("a", ColumnType::Int),
@@ -739,5 +638,38 @@ mod tests {
 
         // Skip the value count
         assert_eq!(&sorted_row_data[2..], unsorted_row_data);
+    }
+
+    #[test]
+    fn test_dyn_serialize_row() {
+        let row = (
+            1i32,
+            "Ala ma kota",
+            None::<i64>,
+            MaybeUnset::Unset::<String>,
+        );
+        let ctx = RowSerializationContext {
+            columns: &[
+                col_spec("a", ColumnType::Int),
+                col_spec("b", ColumnType::Text),
+                col_spec("c", ColumnType::BigInt),
+                col_spec("d", ColumnType::Ascii),
+            ],
+        };
+
+        let mut typed_data = Vec::new();
+        let mut typed_data_writer = RowWriter::new(&mut typed_data);
+        <_ as SerializeRow>::serialize(&row, &ctx, &mut typed_data_writer).unwrap();
+
+        let row = &row as &dyn SerializeRow;
+        let mut erased_data = Vec::new();
+        let mut erased_data_writer = RowWriter::new(&mut erased_data);
+        <_ as SerializeRow>::serialize(&row, &ctx, &mut erased_data_writer).unwrap();
+
+        assert_eq!(
+            typed_data_writer.value_count(),
+            erased_data_writer.value_count(),
+        );
+        assert_eq!(typed_data, erased_data);
     }
 }

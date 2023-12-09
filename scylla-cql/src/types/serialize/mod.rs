@@ -6,10 +6,7 @@ pub mod row;
 pub mod value;
 pub mod writers;
 
-pub use writers::{
-    BufBackedCellValueBuilder, BufBackedCellWriter, BufBackedRowWriter, CellValueBuilder,
-    CellWriter, CountingCellWriter, RowWriter,
-};
+pub use writers::{CellValueBuilder, CellWriter, RowWriter};
 #[derive(Debug, Clone, Error)]
 pub struct SerializationError(Arc<dyn Error + Send + Sync>);
 
