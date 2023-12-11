@@ -181,7 +181,11 @@ impl RowIterator {
 
             let query_ref = &query;
 
-            let span_creator = move || RequestSpan::new_query(&query_ref.contents, 0);
+            let span_creator = move || {
+                let span = RequestSpan::new_query(&query_ref.contents);
+                span.record_request_size(0);
+                span
+            };
 
             let worker = RowIteratorWorker {
                 sender: sender.into(),

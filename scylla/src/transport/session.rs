@@ -640,7 +640,8 @@ impl Session {
             ..Default::default()
         };
 
-        let span = RequestSpan::new_query(&query.contents, serialized_values.size());
+        let span = RequestSpan::new_query(&query.contents);
+        let span_ref = &span;
         let run_query_result = self
             .run_query(
                 statement_info,
@@ -660,6 +661,7 @@ impl Session {
                     let paging_state_ref = &paging_state;
                     async move {
                         if values_ref.is_empty() {
+                            span_ref.record_request_size(0);
                             connection
                                 .query_with_consistency(
                                     query_ref,
@@ -671,6 +673,7 @@ impl Session {
                                 .and_then(QueryResponse::into_non_error_query_response)
                         } else {
                             let prepared = connection.prepare(query_ref).await?;
+                            span_ref.record_request_size(values_ref.size());
                             connection
                                 .execute_with_consistency(
                                     &prepared,
@@ -1918,7 +1921,7 @@ pub(crate) struct RequestSpan {
 }
 
 impl RequestSpan {
-    pub(crate) fn new_query(contents: &str, request_size: usize) -> Self {
+    pub(crate) fn new_query(contents: &str) -> Self {
         use tracing::field::Empty;
 
         let span = trace_span!(
@@ -1926,7 +1929,7 @@ impl RequestSpan {
             kind = "unprepared",
             contents = contents,
             //
-            request_size = request_size,
+            request_size = Empty,
             result_size = Empty,
             result_rows = Empty,
             replicas = Empty,
@@ -2038,6 +2041,10 @@ impl RequestSpan {
         }
         self.span
             .record("replicas", tracing::field::display(&ReplicaIps(replicas)));
+    }
+
+    pub(crate) fn record_request_size(&self, size: usize) {
+        self.span.record("request_size", size);
     }
 
     pub(crate) fn inc_speculative_executions(&self) {
