@@ -804,7 +804,7 @@ impl Session {
             let values = prepared.serialize_values(&values)?;
             RowIterator::new_for_prepared_statement(PreparedIteratorConfig {
                 prepared,
-                values: values.to_old_serialized_values(),
+                values,
                 execution_profile,
                 cluster_data: self.cluster.get_data(),
                 metrics: self.metrics.clone(),
@@ -1115,7 +1115,7 @@ impl Session {
 
         RowIterator::new_for_prepared_statement(PreparedIteratorConfig {
             prepared,
-            values: serialized_values.to_old_serialized_values(),
+            values: serialized_values,
             execution_profile,
             cluster_data: self.cluster.get_data(),
             metrics: self.metrics.clone(),

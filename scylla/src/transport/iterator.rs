@@ -12,6 +12,7 @@ use bytes::Bytes;
 use futures::Stream;
 use scylla_cql::frame::response::NonErrorResponse;
 use scylla_cql::frame::types::SerialConsistency;
+use scylla_cql::types::serialize::row::SerializedValues;
 use std::result::Result;
 use thiserror::Error;
 use tokio::sync::mpsc;
@@ -73,7 +74,7 @@ struct ReceivedPage {
 
 pub(crate) struct PreparedIteratorConfig {
     pub(crate) prepared: PreparedStatement,
-    pub(crate) values: LegacySerializedValues,
+    pub(crate) values: SerializedValues,
     pub(crate) execution_profile: Arc<ExecutionProfileInner>,
     pub(crate) cluster_data: Arc<ClusterData>,
     pub(crate) metrics: Arc<Metrics>,
@@ -240,11 +241,12 @@ impl RowIterator {
         let worker_task = async move {
             let prepared_ref = &config.prepared;
             let values_ref = &config.values;
+            let old_values = values_ref.to_old_serialized_values();
 
             let (partition_key, token) = match prepared_ref
                 .extract_partition_key_and_calculate_token(
                     prepared_ref.get_partitioner_name(),
-                    values_ref,
+                    &old_values,
                 ) {
                 Ok(res) => res.unzip(),
                 Err(err) => {
@@ -274,7 +276,7 @@ impl RowIterator {
                 connection
                     .execute_with_consistency(
                         prepared_ref,
-                        values_ref,
+                        &values_ref.to_old_serialized_values(),
                         consistency,
                         serial_consistency,
                         paging_state,
@@ -282,7 +284,7 @@ impl RowIterator {
                     .await
             };
 
-            let serialized_values_size = config.values.size();
+            let serialized_values_size = config.values.buffer_size();
 
             let replicas: Option<smallvec::SmallVec<[_; 8]>> =
                 if let (Some(keyspace), Some(token)) =
