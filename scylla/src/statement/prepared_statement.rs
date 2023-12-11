@@ -15,7 +15,6 @@ use scylla_cql::frame::response::result::ColumnSpec;
 use super::StatementConfig;
 use crate::frame::response::result::PreparedMetadata;
 use crate::frame::types::{Consistency, SerialConsistency};
-use crate::frame::value::LegacySerializedValues;
 use crate::history::HistoryListener;
 use crate::retry_policy::RetryPolicy;
 use crate::routing::Token;
@@ -139,8 +138,7 @@ impl PreparedStatement {
         bound_values: &impl SerializeRow,
     ) -> Result<Bytes, PartitionKeyError> {
         let serialized = self.serialize_values(bound_values)?;
-        let old_serialized = serialized.to_old_serialized_values();
-        let partition_key = self.extract_partition_key(&old_serialized)?;
+        let partition_key = self.extract_partition_key(&serialized)?;
         let mut buf = BytesMut::new();
         let mut writer = |chunk: &[u8]| buf.extend_from_slice(chunk);
 
@@ -154,7 +152,7 @@ impl PreparedStatement {
     /// This is a preparation step necessary for calculating token based on a prepared statement.
     pub(crate) fn extract_partition_key<'ps>(
         &'ps self,
-        bound_values: &'ps LegacySerializedValues,
+        bound_values: &'ps SerializedValues,
     ) -> Result<PartitionKey, PartitionKeyExtractionError> {
         PartitionKey::new(self.get_prepared_metadata(), bound_values)
     }
@@ -162,7 +160,7 @@ impl PreparedStatement {
     pub(crate) fn extract_partition_key_and_calculate_token<'ps>(
         &'ps self,
         partitioner_name: &'ps PartitionerName,
-        serialized_values: &'ps LegacySerializedValues,
+        serialized_values: &'ps SerializedValues,
     ) -> Result<Option<(PartitionKey<'ps>, Token)>, QueryError> {
         if !self.is_token_aware() {
             return Ok(None);
@@ -196,7 +194,7 @@ impl PreparedStatement {
     pub fn calculate_token(&self, values: &impl SerializeRow) -> Result<Option<Token>, QueryError> {
         self.extract_partition_key_and_calculate_token(
             &self.partitioner_name,
-            &self.serialize_values(values)?.to_old_serialized_values(),
+            &self.serialize_values(values)?,
         )
         .map(|opt| opt.map(|(_pk, token)| token))
     }
@@ -401,7 +399,7 @@ impl<'ps> PartitionKey<'ps> {
 
     fn new(
         prepared_metadata: &'ps PreparedMetadata,
-        bound_values: &'ps LegacySerializedValues,
+        bound_values: &'ps SerializedValues,
     ) -> Result<Self, PartitionKeyExtractionError> {
         // Iterate on values using sorted pk_indexes (see deser_prepared_metadata),
         // and use PartitionKeyIndex.sequence to insert the value in pk_values with the correct order.
@@ -418,7 +416,10 @@ impl<'ps> PartitionKey<'ps> {
             let next_val = values_iter
                 .nth((pk_index.index - values_iter_offset) as usize)
                 .ok_or_else(|| {
-                    PartitionKeyExtractionError::NoPkIndexValue(pk_index.index, bound_values.len())
+                    PartitionKeyExtractionError::NoPkIndexValue(
+                        pk_index.index,
+                        bound_values.element_count(),
+                    )
                 })?;
             // Add it in sequence order to pk_values
             if let RawValue::Value(v) = next_val {
@@ -477,11 +478,11 @@ impl<'ps> PartitionKey<'ps> {
 
 #[cfg(test)]
 mod tests {
-    use scylla_cql::frame::{
-        response::result::{
+    use scylla_cql::{
+        frame::response::result::{
             ColumnSpec, ColumnType, PartitionKeyIndex, PreparedMetadata, TableSpec,
         },
-        value::LegacySerializedValues,
+        types::serialize::row::SerializedValues,
     };
 
     use crate::prepared_statement::PartitionKey;
@@ -532,12 +533,14 @@ mod tests {
             ],
             [4, 0, 3],
         );
-        let mut values = LegacySerializedValues::new();
-        values.add_value(&67i8).unwrap();
-        values.add_value(&42i16).unwrap();
-        values.add_value(&23i32).unwrap();
-        values.add_value(&89i64).unwrap();
-        values.add_value(&[1u8, 2, 3, 4, 5]).unwrap();
+        let mut values = SerializedValues::new();
+        values.add_value(&67i8, &ColumnType::TinyInt).unwrap();
+        values.add_value(&42i16, &ColumnType::SmallInt).unwrap();
+        values.add_value(&23i32, &ColumnType::Int).unwrap();
+        values.add_value(&89i64, &ColumnType::BigInt).unwrap();
+        values
+            .add_value(&[1u8, 2, 3, 4, 5], &ColumnType::Blob)
+            .unwrap();
 
         let pk = PartitionKey::new(&meta, &values).unwrap();
         let pk_cols = Vec::from_iter(pk.iter());

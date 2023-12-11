@@ -963,16 +963,11 @@ impl Session {
         paging_state: Option<Bytes>,
     ) -> Result<QueryResult, QueryError> {
         let serialized_values = prepared.serialize_values(&values)?;
-        let old_serialized_values = serialized_values.to_old_serialized_values();
         let values_ref = &serialized_values;
-        let old_values_ref = &old_serialized_values;
         let paging_state_ref = &paging_state;
 
         let (partition_key, token) = prepared
-            .extract_partition_key_and_calculate_token(
-                prepared.get_partitioner_name(),
-                old_values_ref,
-            )?
+            .extract_partition_key_and_calculate_token(prepared.get_partitioner_name(), values_ref)?
             .unzip();
 
         let execution_profile = prepared

@@ -238,12 +238,11 @@ impl RowIterator {
         let worker_task = async move {
             let prepared_ref = &config.prepared;
             let values_ref = &config.values;
-            let old_values = values_ref.to_old_serialized_values();
 
             let (partition_key, token) = match prepared_ref
                 .extract_partition_key_and_calculate_token(
                     prepared_ref.get_partitioner_name(),
-                    &old_values,
+                    values_ref,
                 ) {
                 Ok(res) => res.unzip(),
                 Err(err) => {
