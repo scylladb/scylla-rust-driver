@@ -432,20 +432,39 @@ pub fn serialize_legacy_row<T: ValueList>(
     if !serialized.has_names() {
         serialized.iter().for_each(append_value);
     } else {
-        let values_by_name = serialized
+        let mut values_by_name = serialized
             .iter_name_value_pairs()
-            .map(|(k, v)| (k.unwrap(), v))
+            .map(|(k, v)| (k.unwrap(), (v, false)))
             .collect::<HashMap<_, _>>();
+        let mut unused_count = values_by_name.len();
 
         for col in ctx.columns() {
-            let val = values_by_name.get(col.name.as_str()).ok_or_else(|| {
+            let (val, visited) = values_by_name.get_mut(col.name.as_str()).ok_or_else(|| {
                 SerializationError(Arc::new(
-                    ValueListToSerializeRowAdapterError::NoBindMarkerWithName {
+                    ValueListToSerializeRowAdapterError::ValueMissingForBindMarker {
                         name: col.name.clone(),
                     },
                 ))
             })?;
+            if !*visited {
+                *visited = true;
+                unused_count -= 1;
+            }
             append_value(*val);
+        }
+
+        if unused_count != 0 {
+            // Choose the lexicographically earliest name for the sake
+            // of deterministic errors
+            let name = values_by_name
+                .iter()
+                .filter_map(|(k, (_, visited))| (!visited).then_some(k))
+                .min()
+                .unwrap()
+                .to_string();
+            return Err(SerializationError::new(
+                ValueListToSerializeRowAdapterError::NoBindMarkerWithName { name },
+            ));
         }
     }
 
@@ -574,6 +593,9 @@ impl Display for BuiltinSerializationErrorKind {
 
 #[derive(Error, Debug)]
 pub enum ValueListToSerializeRowAdapterError {
+    #[error("Missing named value for column {name}")]
+    ValueMissingForBindMarker { name: String },
+
     #[error("There is no bind marker with name {name}, but a value for it was provided")]
     NoBindMarkerWithName { name: String },
 }
