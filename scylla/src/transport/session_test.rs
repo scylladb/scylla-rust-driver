@@ -1,7 +1,6 @@
 use crate as scylla;
 use crate::batch::{Batch, BatchStatement};
 use crate::frame::response::result::Row;
-use crate::frame::value::ValueList;
 use crate::prepared_statement::PreparedStatement;
 use crate::query::Query;
 use crate::retry_policy::{QueryInfo, RetryDecision, RetryPolicy, RetrySession};
@@ -210,7 +209,6 @@ async fn test_prepared_statement() {
         .unwrap();
 
     let values = (17_i32, 16_i32, "I'm prepared!!!");
-    let serialized_values = values.serialized().unwrap().into_owned();
     let serialized_values_complex_pk = prepared_complex_pk_statement
         .serialize_values(&values)
         .unwrap();
@@ -236,11 +234,8 @@ async fn test_prepared_statement() {
                 .as_bigint()
                 .unwrap(),
         };
-        let prepared_token = Murmur3Partitioner.hash_one(
-            &prepared_statement
-                .compute_partition_key(&serialized_values)
-                .unwrap(),
-        );
+        let prepared_token = Murmur3Partitioner
+            .hash_one(&prepared_statement.compute_partition_key(&values).unwrap());
         assert_eq!(token, prepared_token);
         let mut pk = SerializedValues::new();
         pk.add_value(&17_i32, &ColumnType::Int).unwrap();
@@ -266,7 +261,7 @@ async fn test_prepared_statement() {
         };
         let prepared_token = Murmur3Partitioner.hash_one(
             &prepared_complex_pk_statement
-                .compute_partition_key(&serialized_values)
+                .compute_partition_key(&values)
                 .unwrap(),
         );
         assert_eq!(token, prepared_token);
@@ -518,8 +513,7 @@ async fn test_token_calculation() {
             s.push('a');
         }
         let values = (&s,);
-        let serialized_values = values.serialized().unwrap().into_owned();
-        let new_serialized_values = prepared_statement.serialize_values(&values).unwrap();
+        let serialized_values = prepared_statement.serialize_values(&values).unwrap();
         session.execute(&prepared_statement, &values).await.unwrap();
 
         let rs = session
@@ -538,15 +532,12 @@ async fn test_token_calculation() {
                 .as_bigint()
                 .unwrap(),
         };
-        let prepared_token = Murmur3Partitioner.hash_one(
-            &prepared_statement
-                .compute_partition_key(&serialized_values)
-                .unwrap(),
-        );
+        let prepared_token = Murmur3Partitioner
+            .hash_one(&prepared_statement.compute_partition_key(&values).unwrap());
         assert_eq!(token, prepared_token);
         let cluster_data_token = session
             .get_cluster_data()
-            .compute_token(&ks, "t3", &new_serialized_values)
+            .compute_token(&ks, "t3", &serialized_values)
             .unwrap();
         assert_eq!(token, cluster_data_token);
     }
