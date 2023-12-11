@@ -3,6 +3,7 @@ use crate::frame::value::Value;
 use crate::test_utils::create_new_session_builder;
 use crate::utils::test_utils::unique_keyspace_name;
 use crate::{frame::response::result::CqlValue, IntoTypedRows, Session};
+use scylla_cql::types::serialize::value::SerializeCql;
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
 async fn connect() -> Session {
@@ -33,7 +34,7 @@ async fn insert_and_select<InsertT, SelectT>(
     to_insert: &InsertT,
     expected: &SelectT,
 ) where
-    InsertT: Value,
+    InsertT: Value + SerializeCql,
     SelectT: FromCqlVal<Option<CqlValue>> + PartialEq + std::fmt::Debug,
 {
     session
