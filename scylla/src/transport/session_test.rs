@@ -326,9 +326,12 @@ async fn test_prepared_statement() {
         assert!(e.is_none());
         assert_eq!((a, b, c, d), (17, 16, &String::from("I'm prepared!!!"), 7))
     }
-    // Check that ValueList macro works
+    // Check that SerializeRow macro works
     {
-        #[derive(scylla::ValueList, scylla::FromRow, PartialEq, Debug, Clone)]
+        #[derive(
+            scylla::ValueList, scylla::SerializeRow, scylla::FromRow, PartialEq, Debug, Clone,
+        )]
+        #[scylla(crate = crate)]
         struct ComplexPk {
             a: i32,
             b: i32,
