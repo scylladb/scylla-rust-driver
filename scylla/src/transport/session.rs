@@ -47,9 +47,7 @@ use super::NodeRef;
 use crate::cql_to_rust::FromRow;
 use crate::frame::response::cql_to_rust::FromRowError;
 use crate::frame::response::result;
-use crate::frame::value::{
-    BatchValues, BatchValuesFirstSerialized, BatchValuesIterator, ValueList,
-};
+use crate::frame::value::{BatchValues, BatchValuesFirstSerialized, BatchValuesIterator};
 use crate::prepared_statement::PreparedStatement;
 use crate::query::Query;
 use crate::routing::Token;
@@ -604,10 +602,9 @@ impl Session {
     pub async fn query(
         &self,
         query: impl Into<Query>,
-        values: impl ValueList,
+        values: impl SerializeRow,
     ) -> Result<QueryResult, QueryError> {
-        self.query_paged(query, values.serialized()?.as_ref(), None)
-            .await
+        self.query_paged(query, values, None).await
     }
 
     /// Queries the database with a custom paging state.
