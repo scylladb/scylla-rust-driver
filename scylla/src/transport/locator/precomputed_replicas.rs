@@ -10,7 +10,7 @@
 //! to compute those lists for each strategy used in cluster.
 //!
 //! Notes on Network Topology Strategy precomputation:
-//! The optimization mentioned above works ony if requested `replication factor` is <= `rack count`.
+//! The optimization mentioned above works only if requested `replication factor` is <= `rack count`.
 
 use super::replication_info::ReplicationInfo;
 use super::TokenRing;

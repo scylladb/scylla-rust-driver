@@ -47,7 +47,7 @@ impl<ElemT> TokenRing<ElemT> {
     /// Provides an iterator over the ring's elements starting at the given token.
     /// The iterator traverses the whole ring in the direction of increasing tokens.
     /// After reaching the maximum token it wraps around and continues from the lowest one.
-    /// The iterator visits each member once, it doesn't have an infinte length.
+    /// The iterator visits each member once, it doesn't have an infinite length.
     /// To access the token along with the element you can use `ring_range_full`.
     pub fn ring_range(&self, token: Token) -> impl Iterator<Item = &ElemT> {
         self.ring_range_full(token).map(|(_t, e)| e)

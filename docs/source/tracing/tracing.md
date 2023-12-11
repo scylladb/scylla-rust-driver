@@ -1,6 +1,6 @@
 # Query tracing
 
-The driver has utilites for monitoring the execution of queries.
+The driver has utilities for monitoring the execution of queries.
 There are two separate ways to get information about what happened with a query: `Tracing` and `Query Execution History`.
 
 ### Tracing

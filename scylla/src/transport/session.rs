@@ -116,7 +116,7 @@ impl AddressTranslator for HashMap<SocketAddr, SocketAddr> {
 }
 
 #[async_trait]
-// Notice: this is unefficient, but what else can we do with such poor representation as str?
+// Notice: this is inefficient, but what else can we do with such poor representation as str?
 // After all, the cluster size is small enough to make this irrelevant.
 impl AddressTranslator for HashMap<&'static str, &'static str> {
     async fn translate_address(
@@ -444,7 +444,7 @@ pub(crate) enum RunQueryResult<ResT> {
 /// Represents a CQL session, which can be used to communicate
 /// with the database
 impl Session {
-    /// Estabilishes a CQL session with the database
+    /// Establishes a CQL session with the database
     ///
     /// Usually it's easier to use [SessionBuilder](crate::transport::session_builder::SessionBuilder)
     /// instead of calling `Session::connect` directly, because it's more convenient.

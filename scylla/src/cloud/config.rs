@@ -184,13 +184,13 @@ mod deserialize {
         // +optional
         apiVersion: Option<String>,
 
-        // Datacenters is a map of referencable names to datacenter configs.
+        // Datacenters is a map of referenceable names to datacenter configs.
         datacenters: HashMap<String, Datacenter>,
 
-        // AuthInfos is a map of referencable names to authentication configs.
+        // AuthInfos is a map of referenceable names to authentication configs.
         authInfos: HashMap<String, AuthInfo>,
 
-        // Contexts is a map of referencable names to context configs.
+        // Contexts is a map of referenceable names to context configs.
         contexts: HashMap<String, Context>,
 
         // CurrentContext is the name of the context that you would like to use by default.

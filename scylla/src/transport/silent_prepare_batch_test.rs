@@ -102,7 +102,7 @@ async fn assert_test_batch_table_rows_contain(sess: &Session, expected_rows: &[(
     for expected_row in expected_rows.iter() {
         if !selected_rows.contains(expected_row) {
             panic!(
-                "Expected {:?} to contain row: {:?}, but they didnt",
+                "Expected {:?} to contain row: {:?}, but they didn't",
                 selected_rows, expected_row
             );
         }

@@ -145,7 +145,7 @@ impl PreparedStatement {
         Ok(buf.freeze())
     }
 
-    /// Determines which values consistute the partition key and puts them in order.
+    /// Determines which values constitute the partition key and puts them in order.
     ///
     /// This is a preparation step necessary for calculating token based on a prepared statement.
     pub(crate) fn extract_partition_key<'ps>(

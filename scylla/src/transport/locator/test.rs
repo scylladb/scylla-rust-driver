@@ -496,7 +496,7 @@ fn test_replica_set_choose(locator: &ReplicaLocator) {
             || locator.replicas_for_token(Token { value: 75 }, &strategy, None);
 
         // Verify that after a certain number of random selections, the set of selected replicas
-        // will contain all nodes in the ring (replica set was created usin a strategy with
+        // will contain all nodes in the ring (replica set was created using a strategy with
         // replication factors higher than node count).
         let mut chosen_replicas = HashSet::new();
         for _ in 0..32 {

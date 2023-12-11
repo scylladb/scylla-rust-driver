@@ -54,7 +54,7 @@ impl<'buf> RowWriter<'buf> {
 /// a [`WrittenCellProof`] object is returned
 /// in its stead. This is a type-level proof that the value was fully initialized
 /// and is used in [`SerializeCql::serialize`](`super::value::SerializeCql::serialize`)
-/// in order to enforce the implementor to fully initialize the provided handle
+/// in order to enforce the implementer to fully initialize the provided handle
 /// to CQL value.
 ///
 /// Dropping this type without calling any of its methods will result
