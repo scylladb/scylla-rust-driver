@@ -754,7 +754,7 @@ impl Connection {
 
         RowIterator::new_for_connection_execute_iter(
             prepared_statement,
-            values.to_old_serialized_values(),
+            values,
             self,
             consistency,
             serial_consistency,

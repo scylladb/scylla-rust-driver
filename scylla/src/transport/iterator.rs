@@ -23,12 +23,9 @@ use super::execution_profile::ExecutionProfileInner;
 use super::session::RequestSpan;
 use crate::cql_to_rust::{FromRow, FromRowError};
 
-use crate::frame::{
-    response::{
-        result,
-        result::{ColumnSpec, Row, Rows},
-    },
-    value::LegacySerializedValues,
+use crate::frame::response::{
+    result,
+    result::{ColumnSpec, Row, Rows},
 };
 use crate::history::{self, HistoryListener};
 use crate::statement::Consistency;
@@ -368,7 +365,7 @@ impl RowIterator {
 
     pub(crate) async fn new_for_connection_execute_iter(
         mut prepared: PreparedStatement,
-        values: LegacySerializedValues,
+        values: SerializedValues,
         connection: Arc<Connection>,
         consistency: Consistency,
         serial_consistency: Option<SerialConsistency>,
@@ -378,13 +375,15 @@ impl RowIterator {
         }
         let (sender, receiver) = mpsc::channel::<Result<ReceivedPage, QueryError>>(1);
 
+        let old_values = values.to_old_serialized_values();
+
         let worker_task = async move {
             let worker = SingleConnectionRowIteratorWorker {
                 sender: sender.into(),
                 fetcher: |paging_state| {
                     connection.execute_with_consistency(
                         &prepared,
-                        &values,
+                        &old_values,
                         consistency,
                         serial_consistency,
                         paging_state,
