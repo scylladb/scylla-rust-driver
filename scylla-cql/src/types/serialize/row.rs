@@ -680,7 +680,6 @@ impl SerializedValues {
     }
 
     /// Creates value list from the request frame
-    #[allow(dead_code)]
     pub(crate) fn new_from_frame(buf: &mut &[u8]) -> Result<Self, ParseError> {
         let values_num = types::read_short(buf)?;
         let values_beg = *buf;
@@ -697,7 +696,6 @@ impl SerializedValues {
     }
 
     // Temporary function, to be removed when we implement new batching API (right now it is needed in frame::request::mod.rs tests)
-    #[allow(dead_code)]
     pub fn to_old_serialized_values(&self) -> LegacySerializedValues {
         let mut frame = Vec::new();
         self.write_to_request(&mut frame);

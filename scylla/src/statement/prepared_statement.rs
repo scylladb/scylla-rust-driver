@@ -338,7 +338,6 @@ impl PreparedStatement {
         self.config.execution_profile_handle.as_ref()
     }
 
-    #[allow(dead_code)]
     pub(crate) fn serialize_values(
         &self,
         values: &impl SerializeRow,
