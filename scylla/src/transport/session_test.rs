@@ -28,7 +28,9 @@ use assert_matches::assert_matches;
 use bytes::Bytes;
 use futures::{FutureExt, StreamExt, TryStreamExt};
 use itertools::Itertools;
+use scylla_cql::frame::response::result::ColumnType;
 use scylla_cql::frame::value::Value;
+use scylla_cql::types::serialize::row::SerializedValues;
 use std::collections::BTreeSet;
 use std::collections::{BTreeMap, HashMap};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -209,6 +211,9 @@ async fn test_prepared_statement() {
 
     let values = (17_i32, 16_i32, "I'm prepared!!!");
     let serialized_values = values.serialized().unwrap().into_owned();
+    let serialized_values_complex_pk = prepared_complex_pk_statement
+        .serialize_values(&values)
+        .unwrap();
 
     session.execute(&prepared_statement, &values).await.unwrap();
     session
@@ -237,9 +242,11 @@ async fn test_prepared_statement() {
                 .unwrap(),
         );
         assert_eq!(token, prepared_token);
+        let mut pk = SerializedValues::new();
+        pk.add_value(&17_i32, &ColumnType::Int).unwrap();
         let cluster_data_token = session
             .get_cluster_data()
-            .compute_token(&ks, "t2", (17_i32,))
+            .compute_token(&ks, "t2", &pk)
             .unwrap();
         assert_eq!(token, cluster_data_token);
     }
@@ -265,7 +272,7 @@ async fn test_prepared_statement() {
         assert_eq!(token, prepared_token);
         let cluster_data_token = session
             .get_cluster_data()
-            .compute_token(&ks, "complex_pk", &serialized_values)
+            .compute_token(&ks, "complex_pk", &serialized_values_complex_pk)
             .unwrap();
         assert_eq!(token, cluster_data_token);
     }
@@ -511,6 +518,7 @@ async fn test_token_calculation() {
         }
         let values = (&s,);
         let serialized_values = values.serialized().unwrap().into_owned();
+        let new_serialized_values = prepared_statement.serialize_values(&values).unwrap();
         session.execute(&prepared_statement, &values).await.unwrap();
 
         let rs = session
@@ -537,7 +545,7 @@ async fn test_token_calculation() {
         assert_eq!(token, prepared_token);
         let cluster_data_token = session
             .get_cluster_data()
-            .compute_token(&ks, "t3", &serialized_values)
+            .compute_token(&ks, "t3", &new_serialized_values)
             .unwrap();
         assert_eq!(token, cluster_data_token);
     }

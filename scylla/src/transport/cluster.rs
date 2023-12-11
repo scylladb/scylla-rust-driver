@@ -1,6 +1,5 @@
 /// Cluster manages up to date information and connections to database nodes
 use crate::frame::response::event::{Event, StatusChangeEvent};
-use crate::frame::value::ValueList;
 use crate::prepared_statement::TokenCalculationError;
 use crate::routing::Token;
 use crate::transport::host_filter::HostFilter;
@@ -391,7 +390,7 @@ impl ClusterData {
         &self,
         keyspace: &str,
         table: &str,
-        partition_key: impl ValueList,
+        partition_key: &SerializedValues,
     ) -> Result<Token, BadQuery> {
         let partitioner = self
             .keyspaces
@@ -401,7 +400,7 @@ impl ClusterData {
             .and_then(PartitionerName::from_str)
             .unwrap_or_default();
 
-        calculate_token_for_partition_key(&partition_key.serialized().unwrap(), &partitioner)
+        calculate_token_for_partition_key(&partition_key.to_old_serialized_values(), &partitioner)
             .map_err(|err| match err {
                 TokenCalculationError::ValueTooLong(values_len) => {
                     BadQuery::ValuesTooLongForKey(values_len, u16::MAX.into())
@@ -441,7 +440,7 @@ impl ClusterData {
     ) -> Result<Vec<Arc<Node>>, BadQuery> {
         Ok(self.get_token_endpoints(
             keyspace,
-            self.compute_token(keyspace, table, partition_key.to_old_serialized_values())?,
+            self.compute_token(keyspace, table, partition_key)?,
         ))
     }
 
