@@ -948,10 +948,9 @@ impl Session {
     pub async fn execute(
         &self,
         prepared: &PreparedStatement,
-        values: impl ValueList,
+        values: impl SerializeRow,
     ) -> Result<QueryResult, QueryError> {
-        self.execute_paged(prepared, values.serialized()?.as_ref(), None)
-            .await
+        self.execute_paged(prepared, values, None).await
     }
 
     /// Executes a previously prepared statement with previously received paging state

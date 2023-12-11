@@ -29,8 +29,8 @@ use bytes::Bytes;
 use futures::{FutureExt, StreamExt, TryStreamExt};
 use itertools::Itertools;
 use scylla_cql::frame::response::result::ColumnType;
-use scylla_cql::frame::value::Value;
 use scylla_cql::types::serialize::row::SerializedValues;
+use scylla_cql::types::serialize::value::SerializeCql;
 use std::collections::BTreeSet;
 use std::collections::{BTreeMap, HashMap};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -1999,14 +1999,17 @@ async fn test_unusual_valuelists() {
         .await
         .unwrap();
 
-    let values_dyn: Vec<&dyn Value> =
-        vec![&1 as &dyn Value, &2 as &dyn Value, &"&dyn" as &dyn Value];
+    let values_dyn: Vec<&dyn SerializeCql> = vec![
+        &1 as &dyn SerializeCql,
+        &2 as &dyn SerializeCql,
+        &"&dyn" as &dyn SerializeCql,
+    ];
     session.execute(&insert_a_b_c, values_dyn).await.unwrap();
 
-    let values_box_dyn: Vec<Box<dyn Value>> = vec![
-        Box::new(1) as Box<dyn Value>,
-        Box::new(3) as Box<dyn Value>,
-        Box::new("Box dyn") as Box<dyn Value>,
+    let values_box_dyn: Vec<Box<dyn SerializeCql>> = vec![
+        Box::new(1) as Box<dyn SerializeCql>,
+        Box::new(3) as Box<dyn SerializeCql>,
+        Box::new("Box dyn") as Box<dyn SerializeCql>,
     ];
     session
         .execute(&insert_a_b_c, values_box_dyn)
