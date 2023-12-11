@@ -5,6 +5,7 @@ use scylla_cql::frame::request::options::Options;
 use scylla_cql::frame::response::Error;
 use scylla_cql::frame::types::SerialConsistency;
 use scylla_cql::frame::value::LegacySerializedValues;
+use scylla_cql::types::serialize::row::SerializedValues;
 use socket2::{SockRef, TcpKeepalive};
 use tokio::io::{split, AsyncRead, AsyncWrite, AsyncWriteExt, BufReader, BufWriter};
 use tokio::net::{TcpSocket, TcpStream};
@@ -744,17 +745,16 @@ impl Connection {
     pub(crate) async fn execute_iter(
         self: Arc<Self>,
         prepared_statement: PreparedStatement,
-        values: impl ValueList,
+        values: SerializedValues,
     ) -> Result<RowIterator, QueryError> {
         let consistency = prepared_statement
             .config
             .determine_consistency(self.config.default_consistency);
         let serial_consistency = prepared_statement.config.serial_consistency.flatten();
-        let serialized = values.serialized()?.into_owned();
 
         RowIterator::new_for_connection_execute_iter(
             prepared_statement,
-            serialized,
+            values.to_old_serialized_values(),
             self,
             consistency,
             serial_consistency,

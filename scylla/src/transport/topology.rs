@@ -875,8 +875,7 @@ fn query_filter_keyspace_name<'a>(
 
             let prepared = conn.prepare(&query).await?;
             let serialized_values = prepared.serialize_values(&keyspaces)?;
-            conn.execute_iter(prepared, &serialized_values.to_old_serialized_values())
-                .await
+            conn.execute_iter(prepared, serialized_values).await
         }
     };
     fut.into_stream().try_flatten()
