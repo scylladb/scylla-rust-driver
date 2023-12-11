@@ -1,12 +1,14 @@
 use std::borrow::Cow;
 
-use crate::frame::{frame_errors::ParseError, types::SerialConsistency};
+use crate::{
+    frame::{frame_errors::ParseError, types::SerialConsistency},
+    types::serialize::row::SerializedValues,
+};
 use bytes::{Buf, BufMut, Bytes};
 
 use crate::{
     frame::request::{RequestOpcode, SerializableRequest},
     frame::types,
-    frame::value::LegacySerializedValues,
 };
 
 use super::DeserializableRequest;
@@ -61,7 +63,7 @@ pub struct QueryParameters<'a> {
     pub timestamp: Option<i64>,
     pub page_size: Option<i32>,
     pub paging_state: Option<Bytes>,
-    pub values: Cow<'a, LegacySerializedValues>,
+    pub values: Cow<'a, SerializedValues>,
 }
 
 impl Default for QueryParameters<'_> {
@@ -72,7 +74,7 @@ impl Default for QueryParameters<'_> {
             timestamp: None,
             page_size: None,
             paging_state: None,
-            values: Cow::Borrowed(LegacySerializedValues::EMPTY),
+            values: Cow::Borrowed(SerializedValues::EMPTY),
         }
     }
 }
@@ -100,10 +102,6 @@ impl QueryParameters<'_> {
 
         if self.timestamp.is_some() {
             flags |= FLAG_WITH_DEFAULT_TIMESTAMP;
-        }
-
-        if self.values.has_names() {
-            flags |= FLAG_WITH_NAMES_FOR_VALUES;
         }
 
         buf.put_u8(flags);
@@ -151,10 +149,16 @@ impl<'q> QueryParameters<'q> {
         let default_timestamp_flag = (flags & FLAG_WITH_DEFAULT_TIMESTAMP) != 0;
         let values_have_names_flag = (flags & FLAG_WITH_NAMES_FOR_VALUES) != 0;
 
+        if values_have_names_flag {
+            return Err(ParseError::BadIncomingData(
+                "Named values in frame are currently unsupported".to_string(),
+            ));
+        }
+
         let values = Cow::Owned(if values_flag {
-            LegacySerializedValues::new_from_frame(buf, values_have_names_flag)?
+            SerializedValues::new_from_frame(buf)?
         } else {
-            LegacySerializedValues::new()
+            SerializedValues::new()
         });
 
         let page_size = page_size_flag.then(|| types::read_int(buf)).transpose()?;
