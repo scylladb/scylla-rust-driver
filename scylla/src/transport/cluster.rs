@@ -18,6 +18,7 @@ use futures::future::join_all;
 use futures::{future::RemoteHandle, FutureExt};
 use itertools::Itertools;
 use scylla_cql::errors::{BadQuery, NewSessionError};
+use scylla_cql::types::serialize::row::SerializedValues;
 use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -436,11 +437,11 @@ impl ClusterData {
         &self,
         keyspace: &str,
         table: &str,
-        partition_key: impl ValueList,
+        partition_key: &SerializedValues,
     ) -> Result<Vec<Arc<Node>>, BadQuery> {
         Ok(self.get_token_endpoints(
             keyspace,
-            self.compute_token(keyspace, table, partition_key)?,
+            self.compute_token(keyspace, table, partition_key.to_old_serialized_values())?,
         ))
     }
 
