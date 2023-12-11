@@ -184,19 +184,19 @@ impl PreparedStatement {
         Ok(Some((partition_key, token)))
     }
 
-    /// Calculates the token for given prepared statement and serialized values.
+    /// Calculates the token for given prepared statement and values.
     ///
     /// Returns the token that would be computed for executing the provided
     /// prepared statement with the provided values.
     // As this function creates a `PartitionKey`, it is intended rather for external usage (by users).
     // For internal purposes, `PartitionKey::calculate_token()` is preferred, as `PartitionKey`
     // is either way used internally, among others for display in traces.
-    pub fn calculate_token(
-        &self,
-        serialized_values: &LegacySerializedValues,
-    ) -> Result<Option<Token>, QueryError> {
-        self.extract_partition_key_and_calculate_token(&self.partitioner_name, serialized_values)
-            .map(|opt| opt.map(|(_pk, token)| token))
+    pub fn calculate_token(&self, values: &impl SerializeRow) -> Result<Option<Token>, QueryError> {
+        self.extract_partition_key_and_calculate_token(
+            &self.partitioner_name,
+            &self.serialize_values(values)?.to_old_serialized_values(),
+        )
+        .map(|opt| opt.map(|(_pk, token)| token))
     }
 
     /// Returns the name of the keyspace this statement is operating on.
