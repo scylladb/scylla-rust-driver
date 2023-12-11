@@ -667,13 +667,13 @@ impl Connection {
     pub(crate) async fn execute(
         &self,
         prepared: PreparedStatement,
-        values: impl ValueList,
+        values: SerializedValues,
         paging_state: Option<Bytes>,
     ) -> Result<QueryResponse, QueryError> {
         // This method is used only for driver internal queries, so no need to consult execution profile here.
         self.execute_with_consistency(
             &prepared,
-            values,
+            &values.to_old_serialized_values(),
             prepared
                 .config
                 .determine_consistency(self.config.default_consistency),
@@ -1938,7 +1938,8 @@ mod tests {
         let prepared = connection.prepare(&insert_query).await.unwrap();
         for v in &values {
             let prepared_clone = prepared.clone();
-            let fut = async { connection.execute(prepared_clone, (*v,), None).await };
+            let values = prepared_clone.serialize_values(&(*v,)).unwrap();
+            let fut = async { connection.execute(prepared_clone, values, None).await };
             insert_futures.push(fut);
         }
 
@@ -2036,10 +2037,11 @@ mod tests {
                         let conn = conn.clone();
                         async move {
                             let prepared = conn.prepare(&q).await.unwrap();
-                            let response = conn
-                                .execute(prepared.clone(), (j, vec![j as u8; j as usize]), None)
-                                .await
+                            let values = prepared
+                                .serialize_values(&(j, vec![j as u8; j as usize]))
                                 .unwrap();
+                            let response =
+                                conn.execute(prepared.clone(), values, None).await.unwrap();
                             // QueryResponse might contain an error - make sure that there were no errors
                             let _nonerror_response =
                                 response.into_non_error_query_response().unwrap();
