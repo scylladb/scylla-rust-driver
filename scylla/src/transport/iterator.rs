@@ -273,7 +273,7 @@ impl RowIterator {
                 connection
                     .execute_with_consistency(
                         prepared_ref,
-                        &values_ref.to_old_serialized_values(),
+                        values_ref,
                         consistency,
                         serial_consistency,
                         paging_state,
@@ -375,15 +375,13 @@ impl RowIterator {
         }
         let (sender, receiver) = mpsc::channel::<Result<ReceivedPage, QueryError>>(1);
 
-        let old_values = values.to_old_serialized_values();
-
         let worker_task = async move {
             let worker = SingleConnectionRowIteratorWorker {
                 sender: sender.into(),
                 fetcher: |paging_state| {
                     connection.execute_with_consistency(
                         &prepared,
-                        &old_values,
+                        &values,
                         consistency,
                         serial_consistency,
                         paging_state,

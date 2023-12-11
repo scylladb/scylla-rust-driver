@@ -54,7 +54,7 @@ use crate::frame::{
     request::{self, batch, execute, query, register, SerializableRequest},
     response::{event::Event, result, NonErrorResponse, Response, ResponseOpcode},
     server_event_type::EventType,
-    value::{BatchValues, BatchValuesIterator, ValueList},
+    value::{BatchValues, BatchValuesIterator},
     FrameParams, SerializedRequest,
 };
 use crate::query::Query;
@@ -673,7 +673,7 @@ impl Connection {
         // This method is used only for driver internal queries, so no need to consult execution profile here.
         self.execute_with_consistency(
             &prepared,
-            &values.to_old_serialized_values(),
+            &values,
             prepared
                 .config
                 .determine_consistency(self.config.default_consistency),
@@ -686,19 +686,17 @@ impl Connection {
     pub(crate) async fn execute_with_consistency(
         &self,
         prepared_statement: &PreparedStatement,
-        values: impl ValueList,
+        values: &SerializedValues,
         consistency: Consistency,
         serial_consistency: Option<SerialConsistency>,
         paging_state: Option<Bytes>,
     ) -> Result<QueryResponse, QueryError> {
-        let serialized_values = values.serialized()?;
-
         let execute_frame = execute::Execute {
             id: prepared_statement.get_id().to_owned(),
             parameters: query::QueryParameters {
                 consistency,
                 serial_consistency,
-                values: serialized_values,
+                values: Cow::Owned(values.to_old_serialized_values()),
                 page_size: prepared_statement.get_page_size(),
                 timestamp: prepared_statement.get_timestamp(),
                 paging_state,
