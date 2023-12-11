@@ -16,6 +16,7 @@ use itertools::{Either, Itertools};
 pub use scylla_cql::errors::TranslationError;
 use scylla_cql::frame::response::result::{deser_cql_value, ColumnSpec, Rows};
 use scylla_cql::frame::response::NonErrorResponse;
+use scylla_cql::types::serialize::row::SerializeRow;
 use std::borrow::Borrow;
 use std::collections::HashMap;
 use std::fmt::Display;
@@ -605,7 +606,8 @@ impl Session {
         query: impl Into<Query>,
         values: impl ValueList,
     ) -> Result<QueryResult, QueryError> {
-        self.query_paged(query, values, None).await
+        self.query_paged(query, values.serialized()?.as_ref(), None)
+            .await
     }
 
     /// Queries the database with a custom paging state.
@@ -617,11 +619,10 @@ impl Session {
     pub async fn query_paged(
         &self,
         query: impl Into<Query>,
-        values: impl ValueList,
+        values: impl SerializeRow,
         paging_state: Option<Bytes>,
     ) -> Result<QueryResult, QueryError> {
         let query: Query = query.into();
-        let serialized_values = values.serialized()?;
 
         let execution_profile = query
             .get_execution_profile_handle()
@@ -657,7 +658,7 @@ impl Session {
                         .unwrap_or(execution_profile.serial_consistency);
                     // Needed to avoid moving query and values into async move block
                     let query_ref = &query;
-                    let values_ref = &serialized_values;
+                    let values_ref = &values;
                     let paging_state_ref = &paging_state;
                     async move {
                         if values_ref.is_empty() {
@@ -673,11 +674,12 @@ impl Session {
                                 .and_then(QueryResponse::into_non_error_query_response)
                         } else {
                             let prepared = connection.prepare(query_ref).await?;
-                            span_ref.record_request_size(values_ref.size());
+                            let serialized = prepared.serialize_values(values_ref)?;
+                            span_ref.record_request_size(serialized.buffer_size());
                             connection
                                 .execute_with_consistency(
                                     &prepared,
-                                    values_ref,
+                                    &serialized.to_old_serialized_values(),
                                     consistency,
                                     serial_consistency,
                                     paging_state_ref.clone(),
