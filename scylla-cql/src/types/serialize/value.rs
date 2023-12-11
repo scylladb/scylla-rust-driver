@@ -1,3 +1,5 @@
+//! Contains the [`SerializeCql`] trait and its implementations.
+
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::fmt::Display;
 use std::hash::BuildHasher;
@@ -27,8 +29,28 @@ use crate::frame::value::ValueOverflow;
 use super::writers::WrittenCellProof;
 use super::{CellWriter, SerializationError};
 
+/// A type that can be serialized and sent along with a CQL statement.
+///
+/// This is a low-level trait that is exposed to the specifics to the CQL
+/// protocol and usually does not have to be implemented directly. See the
+/// chapter on "Query Values" in the driver docs for information about how
+/// this trait is supposed to be used.
 pub trait SerializeCql {
     /// Serializes the value to given CQL type.
+    ///
+    /// The value should produce a `[value]`, according to the [CQL protocol
+    /// specification](https://github.com/apache/cassandra/blob/trunk/doc/native_protocol_v4.spec),
+    /// containing the serialized value. See section 6 of the document on how
+    /// the contents of the `[value]` should look like.
+    ///
+    /// The value produced should match the type provided by `typ`. If the
+    /// value cannot be serialized to that type, an error should be returned.
+    ///
+    /// The [`CellWriter`] provided to the method ensures that the value produced
+    /// will be properly framed (i.e. incorrectly written value should not
+    /// cause the rest of the request to be misinterpreted), but otherwise
+    /// the implementor of the trait is responsible for producing the a value
+    /// in a correct format.
     fn serialize<'b>(
         &self,
         typ: &ColumnType,
@@ -1014,7 +1036,10 @@ fn mk_ser_err_named(
 #[non_exhaustive]
 pub enum BuiltinTypeCheckErrorKind {
     /// Expected one from a list of particular types.
-    MismatchedType { expected: &'static [ColumnType] },
+    MismatchedType {
+        /// The list of types that the Rust type can serialize as.
+        expected: &'static [ColumnType],
+    },
 
     /// Expected a type that can be empty.
     NotEmptyable,
@@ -1154,6 +1179,7 @@ impl Display for BuiltinSerializationErrorKind {
     }
 }
 
+/// Describes why type checking of a map type failed.
 #[derive(Debug, Clone)]
 #[non_exhaustive]
 pub enum MapTypeCheckErrorKind {
@@ -1174,6 +1200,7 @@ impl Display for MapTypeCheckErrorKind {
     }
 }
 
+/// Describes why serialization of a map type failed.
 #[derive(Debug, Clone)]
 #[non_exhaustive]
 pub enum MapSerializationErrorKind {
@@ -1206,6 +1233,7 @@ impl Display for MapSerializationErrorKind {
     }
 }
 
+/// Describes why type checking of a set or list type failed.
 #[derive(Debug, Clone)]
 #[non_exhaustive]
 pub enum SetOrListTypeCheckErrorKind {
@@ -1226,6 +1254,7 @@ impl Display for SetOrListTypeCheckErrorKind {
     }
 }
 
+/// Describes why serialization of a set or list type failed.
 #[derive(Debug, Clone)]
 #[non_exhaustive]
 pub enum SetOrListSerializationErrorKind {
@@ -1252,6 +1281,7 @@ impl Display for SetOrListSerializationErrorKind {
     }
 }
 
+/// Describes why type checking of a tuple failed.
 #[derive(Debug, Clone)]
 #[non_exhaustive]
 pub enum TupleTypeCheckErrorKind {
@@ -1263,7 +1293,13 @@ pub enum TupleTypeCheckErrorKind {
     /// Note that it is allowed to write a Rust tuple with less elements
     /// than the corresponding CQL type, but not more. The additional, unknown
     /// elements will be set to null.
-    WrongElementCount { actual: usize, asked_for: usize },
+    WrongElementCount {
+        /// The number of elements that the Rust tuple has.
+        actual: usize,
+
+        /// The number of elements that the CQL tuple type has.
+        asked_for: usize,
+    },
 }
 
 impl Display for TupleTypeCheckErrorKind {
@@ -1281,12 +1317,16 @@ impl Display for TupleTypeCheckErrorKind {
     }
 }
 
+/// Describes why serialize of a tuple failed.
 #[derive(Debug, Clone)]
 #[non_exhaustive]
 pub enum TupleSerializationErrorKind {
     /// One of the tuple elements failed to serialize.
     ElementSerializationFailed {
+        /// Index of the tuple element that failed to serialize.
         index: usize,
+
+        /// The error that caused the tuple field serialization to fail.
         err: SerializationError,
     },
 }
@@ -1301,6 +1341,7 @@ impl Display for TupleSerializationErrorKind {
     }
 }
 
+/// Describes why type checking of a user defined type failed.
 #[derive(Debug, Clone)]
 #[non_exhaustive]
 pub enum UdtTypeCheckErrorKind {
@@ -1308,17 +1349,32 @@ pub enum UdtTypeCheckErrorKind {
     NotUdt,
 
     /// The name of the UDT being serialized to does not match.
-    NameMismatch { keyspace: String, type_name: String },
+    NameMismatch {
+        /// Keyspace in which the UDT was defined.
+        keyspace: String,
+
+        /// Name of the UDT.
+        type_name: String,
+    },
 
     /// The Rust data does not have a field that is required in the CQL UDT type.
-    ValueMissingForUdtField { field_name: String },
+    ValueMissingForUdtField {
+        /// Name of field that the CQL UDT requires but is missing in the Rust struct.
+        field_name: String,
+    },
 
     /// The Rust data contains a field that is not present in the UDT.
-    NoSuchFieldInUdt { field_name: String },
+    NoSuchFieldInUdt {
+        /// Name of the Rust struct field that is missing in the UDT.
+        field_name: String,
+    },
 
     /// A different field name was expected at given position.
     FieldNameMismatch {
+        /// The name of the Rust field.
         rust_field_name: String,
+
+        /// The name of the CQL UDT field.
         db_field_name: String,
     },
 }
@@ -1352,12 +1408,16 @@ impl Display for UdtTypeCheckErrorKind {
     }
 }
 
+/// Describes why serialization of a user defined type failed.
 #[derive(Debug, Clone)]
 #[non_exhaustive]
 pub enum UdtSerializationErrorKind {
     /// One of the fields failed to serialize.
     FieldSerializationFailed {
+        /// Name of the field which failed to serialize.
         field_name: String,
+
+        /// The error that caused the UDT field serialization to fail.
         err: SerializationError,
     },
 }
@@ -1372,19 +1432,37 @@ impl Display for UdtSerializationErrorKind {
     }
 }
 
+/// Describes a failure to translate the output of the [`Value`] legacy trait
+/// into an output of the [`SerializeCql`] trait.
 #[derive(Error, Debug)]
 pub enum ValueToSerializeCqlAdapterError {
+    /// The value is too bit to be serialized as it exceeds the maximum 2GB size limit.
     #[error("The value is too big to be serialized as it exceeds the maximum 2GB size limit")]
     TooBig,
 
+    /// Output produced by the Value trait is less than 4 bytes in size and cannot be considered to be a proper CQL-encoded value.
     #[error("Output produced by the Value trait is too short to be considered a value: {size} < 4 minimum bytes")]
-    TooShort { size: usize },
+    TooShort {
+        /// Size of the produced data.
+        size: usize,
+    },
 
+    /// Mismatch between the value size written at the beginning and the actual size of the data appended to the Vec.
     #[error("Mismatch between the declared value size vs. actual size: {declared} != {actual}")]
-    DeclaredVsActualSizeMismatch { declared: usize, actual: usize },
+    DeclaredVsActualSizeMismatch {
+        /// The declared size of the output.
+        declared: usize,
 
+        /// The actual size of the output.
+        actual: usize,
+    },
+
+    /// The value size written at the beginning is invalid (it is negative and less than -2).
     #[error("Invalid declared value size: {size}")]
-    InvalidDeclaredSize { size: i32 },
+    InvalidDeclaredSize {
+        /// Declared size of the output.
+        size: i32,
+    },
 }
 
 #[cfg(test)]
