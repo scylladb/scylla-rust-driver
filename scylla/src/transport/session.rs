@@ -950,7 +950,8 @@ impl Session {
         prepared: &PreparedStatement,
         values: impl ValueList,
     ) -> Result<QueryResult, QueryError> {
-        self.execute_paged(prepared, values, None).await
+        self.execute_paged(prepared, values.serialized()?.as_ref(), None)
+            .await
     }
 
     /// Executes a previously prepared statement with previously received paging state
@@ -962,18 +963,16 @@ impl Session {
     pub async fn execute_paged(
         &self,
         prepared: &PreparedStatement,
-        values: impl ValueList,
+        values: impl SerializeRow,
         paging_state: Option<Bytes>,
     ) -> Result<QueryResult, QueryError> {
-        let serialized_values = values.serialized()?;
-        let values_ref = &serialized_values;
+        let serialized_values = prepared.serialize_values(&values)?;
+        let old_serialized_values = serialized_values.to_old_serialized_values();
+        let values_ref = &old_serialized_values;
         let paging_state_ref = &paging_state;
 
         let (partition_key, token) = prepared
-            .extract_partition_key_and_calculate_token(
-                prepared.get_partitioner_name(),
-                &serialized_values,
-            )?
+            .extract_partition_key_and_calculate_token(prepared.get_partitioner_name(), values_ref)?
             .unzip();
 
         let execution_profile = prepared
@@ -998,7 +997,7 @@ impl Session {
         let span = RequestSpan::new_prepared(
             partition_key.as_ref().map(|pk| pk.iter()),
             token,
-            serialized_values.size(),
+            serialized_values.buffer_size(),
         );
 
         if !span.span().is_disabled() {
