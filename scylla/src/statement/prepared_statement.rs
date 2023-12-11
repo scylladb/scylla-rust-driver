@@ -1,6 +1,8 @@
 use bytes::{Bytes, BytesMut};
 use scylla_cql::errors::{BadQuery, QueryError};
 use scylla_cql::frame::types::RawValue;
+use scylla_cql::types::serialize::row::{RowSerializationContext, SerializeRow, SerializedValues};
+use scylla_cql::types::serialize::SerializationError;
 use smallvec::{smallvec, SmallVec};
 use std::convert::TryInto;
 use std::sync::Arc;
@@ -334,6 +336,15 @@ impl PreparedStatement {
     /// Borrows the execution profile handle associated with this query.
     pub fn get_execution_profile_handle(&self) -> Option<&ExecutionProfileHandle> {
         self.config.execution_profile_handle.as_ref()
+    }
+
+    #[allow(dead_code)]
+    pub(crate) fn serialize_values(
+        &self,
+        values: &impl SerializeRow,
+    ) -> Result<SerializedValues, SerializationError> {
+        let ctx = RowSerializationContext::from_prepared(self.get_prepared_metadata());
+        SerializedValues::from_serializable(&ctx, values)
     }
 }
 
