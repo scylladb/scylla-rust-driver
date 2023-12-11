@@ -782,17 +782,16 @@ impl Session {
     pub async fn query_iter(
         &self,
         query: impl Into<Query>,
-        values: impl ValueList,
+        values: impl SerializeRow,
     ) -> Result<RowIterator, QueryError> {
         let query: Query = query.into();
-        let serialized_values = values.serialized()?;
 
         let execution_profile = query
             .get_execution_profile_handle()
             .unwrap_or_else(|| self.get_default_execution_profile_handle())
             .access();
 
-        if serialized_values.is_empty() {
+        if values.is_empty() {
             RowIterator::new_for_query(
                 query,
                 execution_profile,
@@ -805,9 +804,10 @@ impl Session {
             // so instead of sending one prepare to a specific connection on each iterator query,
             // we fully prepare a statement beforehand.
             let prepared = self.prepare(query).await?;
+            let values = prepared.serialize_values(&values)?;
             RowIterator::new_for_prepared_statement(PreparedIteratorConfig {
                 prepared,
-                values: serialized_values.into_owned(),
+                values: values.to_old_serialized_values(),
                 execution_profile,
                 cluster_data: self.cluster.get_data(),
                 metrics: self.metrics.clone(),
