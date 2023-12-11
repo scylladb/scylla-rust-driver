@@ -1,8 +1,8 @@
 use crate as scylla;
 use crate::cql_to_rust::FromCqlVal;
 use crate::frame::response::result::CqlValue;
-use crate::frame::value::{Counter, CqlDate, CqlTime, CqlTimestamp, Value};
-use crate::macros::{FromUserType, IntoUserType};
+use crate::frame::value::{Counter, CqlDate, CqlTime, CqlTimestamp};
+use crate::macros::FromUserType;
 use crate::test_utils::create_new_session_builder;
 use crate::transport::session::IntoTypedRows;
 use crate::transport::session::Session;
@@ -66,7 +66,7 @@ async fn init_test(table_name: &str, type_name: &str) -> Session {
 // Expected values and bound values are computed using T::from_str
 async fn run_tests<T>(tests: &[&str], type_name: &str)
 where
-    T: Value + SerializeCql + FromCqlVal<CqlValue> + FromStr + Debug + Clone + PartialEq,
+    T: SerializeCql + FromCqlVal<CqlValue> + FromStr + Debug + Clone + PartialEq,
 {
     let session: Session = init_test(type_name, type_name).await;
     session.await_schema_agreement().await.unwrap();
@@ -1363,7 +1363,7 @@ async fn test_udt_after_schema_update() {
         .await
         .unwrap();
 
-    #[derive(IntoUserType, SerializeCql, FromUserType, Debug, PartialEq)]
+    #[derive(SerializeCql, FromUserType, Debug, PartialEq)]
     #[scylla(crate = crate)]
     struct UdtV1 {
         pub first: i32,
