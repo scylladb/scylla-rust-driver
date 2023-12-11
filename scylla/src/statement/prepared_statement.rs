@@ -136,9 +136,11 @@ impl PreparedStatement {
     /// [Self::calculate_token()].
     pub fn compute_partition_key(
         &self,
-        bound_values: &LegacySerializedValues,
+        bound_values: &impl SerializeRow,
     ) -> Result<Bytes, PartitionKeyError> {
-        let partition_key = self.extract_partition_key(bound_values)?;
+        let serialized = self.serialize_values(bound_values)?;
+        let old_serialized = serialized.to_old_serialized_values();
+        let partition_key = self.extract_partition_key(&old_serialized)?;
         let mut buf = BytesMut::new();
         let mut writer = |chunk: &[u8]| buf.extend_from_slice(chunk);
 
@@ -360,12 +362,14 @@ pub enum TokenCalculationError {
     ValueTooLong(usize),
 }
 
-#[derive(Clone, Debug, Error, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Clone, Debug, Error)]
 pub enum PartitionKeyError {
     #[error(transparent)]
     PartitionKeyExtraction(PartitionKeyExtractionError),
     #[error(transparent)]
     TokenCalculation(TokenCalculationError),
+    #[error(transparent)]
+    Serialization(SerializationError),
 }
 
 impl From<PartitionKeyExtractionError> for PartitionKeyError {
@@ -377,6 +381,12 @@ impl From<PartitionKeyExtractionError> for PartitionKeyError {
 impl From<TokenCalculationError> for PartitionKeyError {
     fn from(err: TokenCalculationError) -> Self {
         Self::TokenCalculation(err)
+    }
+}
+
+impl From<SerializationError> for PartitionKeyError {
+    fn from(err: SerializationError) -> Self {
+        Self::Serialization(err)
     }
 }
 
