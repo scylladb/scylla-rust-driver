@@ -909,7 +909,8 @@ pub fn serialize_legacy_value<'b, T: Value>(
 ) -> Result<WrittenCellProof<'b>, SerializationError> {
     // It's an inefficient and slightly tricky but correct implementation.
     let mut buf = Vec::new();
-    <T as Value>::serialize(v, &mut buf).map_err(|err| SerializationError(Arc::new(err)))?;
+    <T as Value>::serialize(v, &mut buf)
+        .map_err(|_| SerializationError::new(ValueToSerializeCqlAdapterError::TooBig))?;
 
     // Analyze the output.
     // All this dance shows how unsafe our previous interface was...
@@ -1373,6 +1374,9 @@ impl Display for UdtSerializationErrorKind {
 
 #[derive(Error, Debug)]
 pub enum ValueToSerializeCqlAdapterError {
+    #[error("The value is too big to be serialized as it exceeds the maximum 2GB size limit")]
+    TooBig,
+
     #[error("Output produced by the Value trait is too short to be considered a value: {size} < 4 minimum bytes")]
     TooShort { size: usize },
 
