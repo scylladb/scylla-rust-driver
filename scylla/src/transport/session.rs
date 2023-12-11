@@ -1107,10 +1107,10 @@ impl Session {
     pub async fn execute_iter(
         &self,
         prepared: impl Into<PreparedStatement>,
-        values: impl ValueList,
+        values: impl SerializeRow,
     ) -> Result<RowIterator, QueryError> {
         let prepared = prepared.into();
-        let serialized_values = values.serialized()?;
+        let serialized_values = prepared.serialize_values(&values)?;
 
         let execution_profile = prepared
             .get_execution_profile_handle()
@@ -1119,7 +1119,7 @@ impl Session {
 
         RowIterator::new_for_prepared_statement(PreparedIteratorConfig {
             prepared,
-            values: serialized_values.into_owned(),
+            values: serialized_values.to_old_serialized_values(),
             execution_profile,
             cluster_data: self.cluster.get_data(),
             metrics: self.metrics.clone(),
