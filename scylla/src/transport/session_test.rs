@@ -328,9 +328,7 @@ async fn test_prepared_statement() {
     }
     // Check that SerializeRow macro works
     {
-        #[derive(
-            scylla::ValueList, scylla::SerializeRow, scylla::FromRow, PartialEq, Debug, Clone,
-        )]
+        #[derive(scylla::SerializeRow, scylla::FromRow, PartialEq, Debug, Clone)]
         #[scylla(crate = crate)]
         struct ComplexPk {
             a: i32,
