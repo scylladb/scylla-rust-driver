@@ -29,7 +29,7 @@ use bytes::Bytes;
 use futures::{FutureExt, StreamExt, TryStreamExt};
 use itertools::Itertools;
 use scylla_cql::frame::response::result::ColumnType;
-use scylla_cql::types::serialize::row::SerializedValues;
+use scylla_cql::types::serialize::row::{SerializeRow, SerializedValues};
 use scylla_cql::types::serialize::value::SerializeCql;
 use std::collections::BTreeSet;
 use std::collections::{BTreeMap, HashMap};
@@ -2788,26 +2788,24 @@ async fn test_manual_primary_key_computation() {
     async fn assert_tokens_equal(
         session: &Session,
         prepared: &PreparedStatement,
-        pk_values_in_pk_order: impl ValueList,
-        all_values_in_query_order: impl ValueList,
+        serialized_pk_values_in_pk_order: &SerializedValues,
+        all_values_in_query_order: impl SerializeRow,
     ) {
-        let serialized_values_in_pk_order =
-            pk_values_in_pk_order.serialized().unwrap().into_owned();
-        let serialized_values_in_query_order =
-            all_values_in_query_order.serialized().unwrap().into_owned();
+        let token_by_prepared = prepared
+            .calculate_token(&all_values_in_query_order)
+            .unwrap()
+            .unwrap();
 
         session
-            .execute(prepared, &serialized_values_in_query_order)
+            .execute(prepared, all_values_in_query_order)
             .await
             .unwrap();
 
-        let token_by_prepared = prepared
-            .calculate_token(&serialized_values_in_query_order)
-            .unwrap()
-            .unwrap();
-        let token_by_hand =
-            calculate_token_for_partition_key(&serialized_values_in_pk_order, &Murmur3Partitioner)
-                .unwrap();
+        let token_by_hand = calculate_token_for_partition_key(
+            serialized_pk_values_in_pk_order,
+            &Murmur3Partitioner,
+        )
+        .unwrap();
         println!(
             "by_prepared: {}, by_hand: {}",
             token_by_prepared.value, token_by_hand.value
@@ -2831,13 +2829,16 @@ async fn test_manual_primary_key_computation() {
             .await
             .unwrap();
 
-        let pk_values_in_pk_order = (17_i32,);
+        let mut pk_values_in_pk_order = SerializedValues::new();
+        pk_values_in_pk_order
+            .add_value(&17_i32, &ColumnType::Int)
+            .unwrap();
         let all_values_in_query_order = (17_i32, 16_i32, "I'm prepared!!!");
 
         assert_tokens_equal(
             &session,
             &prepared_simple_pk,
-            pk_values_in_pk_order,
+            &pk_values_in_pk_order,
             all_values_in_query_order,
         )
         .await;
@@ -2857,13 +2858,22 @@ async fn test_manual_primary_key_computation() {
             .await
             .unwrap();
 
-        let pk_values_in_pk_order = (17_i32, 16_i32, "I'm prepared!!!");
+        let mut pk_values_in_pk_order = SerializedValues::new();
+        pk_values_in_pk_order
+            .add_value(&17_i32, &ColumnType::Int)
+            .unwrap();
+        pk_values_in_pk_order
+            .add_value(&16_i32, &ColumnType::Int)
+            .unwrap();
+        pk_values_in_pk_order
+            .add_value(&"I'm prepared!!!", &ColumnType::Ascii)
+            .unwrap();
         let all_values_in_query_order = (17_i32, "I'm prepared!!!", 16_i32);
 
         assert_tokens_equal(
             &session,
             &prepared_complex_pk,
-            pk_values_in_pk_order,
+            &pk_values_in_pk_order,
             all_values_in_query_order,
         )
         .await;

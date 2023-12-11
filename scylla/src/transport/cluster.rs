@@ -400,12 +400,11 @@ impl ClusterData {
             .and_then(PartitionerName::from_str)
             .unwrap_or_default();
 
-        calculate_token_for_partition_key(&partition_key.to_old_serialized_values(), &partitioner)
-            .map_err(|err| match err {
-                TokenCalculationError::ValueTooLong(values_len) => {
-                    BadQuery::ValuesTooLongForKey(values_len, u16::MAX.into())
-                }
-            })
+        calculate_token_for_partition_key(partition_key, &partitioner).map_err(|err| match err {
+            TokenCalculationError::ValueTooLong(values_len) => {
+                BadQuery::ValuesTooLongForKey(values_len, u16::MAX.into())
+            }
+        })
     }
 
     /// Access to replicas owning a given token
