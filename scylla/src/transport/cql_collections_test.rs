@@ -1,5 +1,4 @@
 use crate::cql_to_rust::FromCqlVal;
-use crate::frame::value::Value;
 use crate::test_utils::create_new_session_builder;
 use crate::utils::test_utils::unique_keyspace_name;
 use crate::{frame::response::result::CqlValue, IntoTypedRows, Session};
@@ -34,7 +33,7 @@ async fn insert_and_select<InsertT, SelectT>(
     to_insert: &InsertT,
     expected: &SelectT,
 ) where
-    InsertT: Value + SerializeCql,
+    InsertT: SerializeCql,
     SelectT: FromCqlVal<Option<CqlValue>> + PartialEq + std::fmt::Debug,
 {
     session
