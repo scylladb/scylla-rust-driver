@@ -632,11 +632,11 @@ fn serialize_tuple_like<'t, 'b>(
 ) -> Result<WrittenCellProof<'b>, SerializationError> {
     let mut builder = writer.into_value_builder();
 
-    for (index, (el, typ)) in field_values.zip(field_types).enumerate() {
+    for (index, (el, el_typ)) in field_values.zip(field_types).enumerate() {
         let sub = builder.make_sub_writer();
         match el {
             None => sub.set_null(),
-            Some(el) => serialize_cql_value(el, typ, sub).map_err(|err| {
+            Some(el) => serialize_cql_value(el, el_typ, sub).map_err(|err| {
                 let err = fix_cql_value_name_in_err(err);
                 mk_ser_err::<CqlValue>(
                     typ,
