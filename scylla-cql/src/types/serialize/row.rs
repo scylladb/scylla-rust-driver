@@ -750,10 +750,12 @@ impl<'a> Iterator for SerializedValuesIterator<'a> {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeMap;
+
     use crate::frame::response::result::{ColumnSpec, ColumnType, TableSpec};
     use crate::frame::types::RawValue;
     use crate::frame::value::{LegacySerializedValues, MaybeUnset, ValueList};
-    use crate::types::serialize::RowWriter;
+    use crate::types::serialize::{RowWriter, SerializationError};
 
     use super::{
         BuiltinSerializationError, BuiltinSerializationErrorKind, BuiltinTypeCheckError,
@@ -881,6 +883,13 @@ mod tests {
         ret
     }
 
+    fn do_serialize_err<T: SerializeRow>(t: T, columns: &[ColumnSpec]) -> SerializationError {
+        let ctx = RowSerializationContext { columns };
+        let mut ret = Vec::new();
+        let mut builder = RowWriter::new(&mut ret);
+        t.serialize(&ctx, &mut builder).unwrap_err()
+    }
+
     fn col(name: &str, typ: ColumnType) -> ColumnSpec {
         ColumnSpec {
             table_spec: TableSpec {
@@ -890,6 +899,123 @@ mod tests {
             name: name.to_string(),
             typ,
         }
+    }
+
+    fn get_typeck_err(err: &SerializationError) -> &BuiltinTypeCheckError {
+        match err.0.downcast_ref() {
+            Some(err) => err,
+            None => panic!("not a BuiltinTypeCheckError: {}", err),
+        }
+    }
+
+    fn get_ser_err(err: &SerializationError) -> &BuiltinSerializationError {
+        match err.0.downcast_ref() {
+            Some(err) => err,
+            None => panic!("not a BuiltinSerializationError: {}", err),
+        }
+    }
+
+    #[test]
+    fn test_tuple_errors() {
+        // Unit
+        #[allow(clippy::let_unit_value)] // The let binding below is intentional
+        let v = ();
+        let spec = [col("a", ColumnType::Text)];
+        let err = do_serialize_err(v, &spec);
+        let err = get_typeck_err(&err);
+        assert_eq!(err.rust_name, std::any::type_name::<()>());
+        assert!(matches!(
+            err.kind,
+            BuiltinTypeCheckErrorKind::WrongColumnCount {
+                actual: 0,
+                asked_for: 1,
+            }
+        ));
+
+        // Non-unit tuple
+        // Count mismatch
+        let v = ("Ala ma kota",);
+        let spec = [col("a", ColumnType::Text), col("b", ColumnType::Text)];
+        let err = do_serialize_err(v, &spec);
+        let err = get_typeck_err(&err);
+        assert_eq!(err.rust_name, std::any::type_name::<(&str,)>());
+        assert!(matches!(
+            err.kind,
+            BuiltinTypeCheckErrorKind::WrongColumnCount {
+                actual: 1,
+                asked_for: 2,
+            }
+        ));
+
+        // Serialization of one of the element fails
+        let v = ("Ala ma kota", 123_i32);
+        let spec = [col("a", ColumnType::Text), col("b", ColumnType::Text)];
+        let err = do_serialize_err(v, &spec);
+        let err = get_ser_err(&err);
+        assert_eq!(err.rust_name, std::any::type_name::<(&str, i32)>());
+        let BuiltinSerializationErrorKind::ColumnSerializationFailed { name, err: _ } = &err.kind;
+        assert_eq!(name, "b");
+    }
+
+    #[test]
+    fn test_slice_errors() {
+        // Non-unit tuple
+        // Count mismatch
+        let v = vec!["Ala ma kota"];
+        let spec = [col("a", ColumnType::Text), col("b", ColumnType::Text)];
+        let err = do_serialize_err(v, &spec);
+        let err = get_typeck_err(&err);
+        assert_eq!(err.rust_name, std::any::type_name::<Vec<&str>>());
+        assert!(matches!(
+            err.kind,
+            BuiltinTypeCheckErrorKind::WrongColumnCount {
+                actual: 1,
+                asked_for: 2,
+            }
+        ));
+
+        // Serialization of one of the element fails
+        let v = vec!["Ala ma kota", "Kot ma pchły"];
+        let spec = [col("a", ColumnType::Text), col("b", ColumnType::Int)];
+        let err = do_serialize_err(v, &spec);
+        let err = get_ser_err(&err);
+        assert_eq!(err.rust_name, std::any::type_name::<Vec<&str>>());
+        let BuiltinSerializationErrorKind::ColumnSerializationFailed { name, err: _ } = &err.kind;
+        assert_eq!(name, "b");
+    }
+
+    #[test]
+    fn test_map_errors() {
+        // Missing value for a bind marker
+        let v: BTreeMap<_, _> = vec![("a", 123_i32)].into_iter().collect();
+        let spec = [col("a", ColumnType::Int), col("b", ColumnType::Text)];
+        let err = do_serialize_err(v, &spec);
+        let err = get_typeck_err(&err);
+        assert_eq!(err.rust_name, std::any::type_name::<BTreeMap<&str, i32>>());
+        let BuiltinTypeCheckErrorKind::ValueMissingForColumn { name } = &err.kind else {
+            panic!("unexpected error kind: {}", err.kind)
+        };
+        assert_eq!(name, "b");
+
+        // Additional value, not present in the query
+        let v: BTreeMap<_, _> = vec![("a", 123_i32), ("b", 456_i32)].into_iter().collect();
+        let spec = [col("a", ColumnType::Int)];
+        let err = do_serialize_err(v, &spec);
+        let err = get_typeck_err(&err);
+        assert_eq!(err.rust_name, std::any::type_name::<BTreeMap<&str, i32>>());
+        let BuiltinTypeCheckErrorKind::NoColumnWithName { name } = &err.kind else {
+            panic!("unexpected error kind: {}", err.kind)
+        };
+        assert_eq!(name, "b");
+
+        // Serialization of one of the element fails
+        let v: BTreeMap<_, _> = vec![("a", 123_i32), ("b", 456_i32)].into_iter().collect();
+        let spec = [col("a", ColumnType::Int), col("b", ColumnType::Text)];
+        let err = do_serialize_err(v, &spec);
+        let err = get_ser_err(&err);
+        assert_eq!(err.rust_name, std::any::type_name::<BTreeMap<&str, i32>>());
+        let BuiltinSerializationErrorKind::ColumnSerializationFailed { name, err: _ } = &err.kind;
+        assert_eq!(name, "b");
     }
 
     // Do not remove. It's not used in tests but we keep it here to check that

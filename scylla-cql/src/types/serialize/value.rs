@@ -1389,14 +1389,20 @@ pub enum ValueToSerializeCqlAdapterError {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeMap;
+
     use crate::frame::response::result::{ColumnType, CqlValue};
-    use crate::frame::value::{MaybeUnset, Value};
+    use crate::frame::value::{MaybeUnset, Unset, Value};
     use crate::types::serialize::value::{
         BuiltinSerializationError, BuiltinSerializationErrorKind, BuiltinTypeCheckError,
-        BuiltinTypeCheckErrorKind,
+        BuiltinTypeCheckErrorKind, MapSerializationErrorKind, MapTypeCheckErrorKind,
+        SetOrListSerializationErrorKind, SetOrListTypeCheckErrorKind, TupleSerializationErrorKind,
+        TupleTypeCheckErrorKind,
     };
-    use crate::types::serialize::CellWriter;
+    use crate::types::serialize::{CellWriter, SerializationError};
 
+    use bigdecimal::BigDecimal;
+    use num_bigint::BigInt;
     use scylla_macros::SerializeCql;
 
     use super::{SerializeCql, UdtSerializationErrorKind, UdtTypeCheckErrorKind};
@@ -1439,6 +1445,434 @@ mod tests {
         let writer = CellWriter::new(&mut ret);
         t.serialize(typ, writer).unwrap();
         ret
+    }
+
+    fn do_serialize_err<T: SerializeCql>(t: T, typ: &ColumnType) -> SerializationError {
+        let mut ret = Vec::new();
+        let writer = CellWriter::new(&mut ret);
+        t.serialize(typ, writer).unwrap_err()
+    }
+
+    fn get_typeck_err(err: &SerializationError) -> &BuiltinTypeCheckError {
+        match err.0.downcast_ref() {
+            Some(err) => err,
+            None => panic!("not a BuiltinTypeCheckError: {}", err),
+        }
+    }
+
+    fn get_ser_err(err: &SerializationError) -> &BuiltinSerializationError {
+        match err.0.downcast_ref() {
+            Some(err) => err,
+            None => panic!("not a BuiltinSerializationError: {}", err),
+        }
+    }
+
+    #[test]
+    fn test_native_errors() {
+        // Simple type mismatch
+        let v = 123_i32;
+        let err = do_serialize_err(v, &ColumnType::Double);
+        let err = get_typeck_err(&err);
+        assert_eq!(err.rust_name, std::any::type_name::<i32>());
+        assert_eq!(err.got, ColumnType::Double);
+        assert!(matches!(
+            err.kind,
+            BuiltinTypeCheckErrorKind::MismatchedType {
+                expected: &[ColumnType::Int],
+            },
+        ));
+
+        // str (and also Uuid) are interesting because they accept two types,
+        // also check str here
+        let v = "Ala ma kota";
+        let err = do_serialize_err(v, &ColumnType::Double);
+        let err = get_typeck_err(&err);
+        assert_eq!(err.rust_name, std::any::type_name::<&str>());
+        assert_eq!(err.got, ColumnType::Double);
+        assert!(matches!(
+            err.kind,
+            BuiltinTypeCheckErrorKind::MismatchedType {
+                expected: &[ColumnType::Ascii, ColumnType::Text],
+            },
+        ));
+
+        // We'll skip testing for SizeOverflow as this would require producing
+        // a value which is at least 2GB in size.
+
+        // Value overflow (type out of representable range)
+        let v = BigDecimal::new(BigInt::from(123), 1i64 << 40);
+        let err = do_serialize_err(v, &ColumnType::Decimal);
+        let err = get_ser_err(&err);
+        assert_eq!(err.rust_name, std::any::type_name::<BigDecimal>());
+        assert_eq!(err.got, ColumnType::Decimal);
+        assert!(matches!(
+            err.kind,
+            BuiltinSerializationErrorKind::ValueOverflow,
+        ));
+    }
+
+    #[test]
+    fn test_set_or_list_errors() {
+        // Not a set or list
+        let v = vec![123_i32];
+        let err = do_serialize_err(v, &ColumnType::Double);
+        let err = get_typeck_err(&err);
+        assert_eq!(err.rust_name, std::any::type_name::<Vec<i32>>());
+        assert_eq!(err.got, ColumnType::Double);
+        assert!(matches!(
+            err.kind,
+            BuiltinTypeCheckErrorKind::SetOrListError(SetOrListTypeCheckErrorKind::NotSetOrList),
+        ));
+
+        // Trick: Unset is a ZST, so [Unset; 1 << 33] is a ZST, too.
+        // While it's probably incorrect to use Unset in a collection, this
+        // allows us to trigger the right error without going out of memory.
+        // Such an array is also created instantaneously.
+        let v = &[Unset; 1 << 33] as &[Unset];
+        let typ = ColumnType::List(Box::new(ColumnType::Int));
+        let err = do_serialize_err(v, &typ);
+        let err = get_ser_err(&err);
+        assert_eq!(err.rust_name, std::any::type_name::<&[Unset]>());
+        assert_eq!(err.got, typ);
+        assert!(matches!(
+            err.kind,
+            BuiltinSerializationErrorKind::SetOrListError(
+                SetOrListSerializationErrorKind::TooManyElements
+            ),
+        ));
+
+        // Error during serialization of an element
+        let v = vec![123_i32];
+        let typ = ColumnType::List(Box::new(ColumnType::Double));
+        let err = do_serialize_err(v, &typ);
+        let err = get_ser_err(&err);
+        assert_eq!(err.rust_name, std::any::type_name::<Vec<i32>>());
+        assert_eq!(err.got, typ);
+        let BuiltinSerializationErrorKind::SetOrListError(
+            SetOrListSerializationErrorKind::ElementSerializationFailed(err),
+        ) = &err.kind
+        else {
+            panic!("unexpected error kind: {}", err.kind)
+        };
+        let err = get_typeck_err(err);
+        assert!(matches!(
+            err.kind,
+            BuiltinTypeCheckErrorKind::MismatchedType {
+                expected: &[ColumnType::Int],
+            }
+        ));
+    }
+
+    #[test]
+    fn test_map_errors() {
+        // Not a map
+        let v = BTreeMap::from([("foo", "bar")]);
+        let err = do_serialize_err(v, &ColumnType::Double);
+        let err = get_typeck_err(&err);
+        assert_eq!(err.rust_name, std::any::type_name::<BTreeMap<&str, &str>>());
+        assert_eq!(err.got, ColumnType::Double);
+        assert!(matches!(
+            err.kind,
+            BuiltinTypeCheckErrorKind::MapError(MapTypeCheckErrorKind::NotMap),
+        ));
+
+        // It's not practical to check the TooManyElements error as it would
+        // require allocating a huge amount of memory.
+
+        // Error during serialization of a key
+        let v = BTreeMap::from([(123_i32, 456_i32)]);
+        let typ = ColumnType::Map(Box::new(ColumnType::Double), Box::new(ColumnType::Int));
+        let err = do_serialize_err(v, &typ);
+        let err = get_ser_err(&err);
+        assert_eq!(err.rust_name, std::any::type_name::<BTreeMap<i32, i32>>());
+        assert_eq!(err.got, typ);
+        let BuiltinSerializationErrorKind::MapError(
+            MapSerializationErrorKind::KeySerializationFailed(err),
+        ) = &err.kind
+        else {
+            panic!("unexpected error kind: {}", err.kind)
+        };
+        let err = get_typeck_err(err);
+        assert!(matches!(
+            err.kind,
+            BuiltinTypeCheckErrorKind::MismatchedType {
+                expected: &[ColumnType::Int],
+            }
+        ));
+
+        // Error during serialization of a value
+        let v = BTreeMap::from([(123_i32, 456_i32)]);
+        let typ = ColumnType::Map(Box::new(ColumnType::Int), Box::new(ColumnType::Double));
+        let err = do_serialize_err(v, &typ);
+        let err = get_ser_err(&err);
+        assert_eq!(err.rust_name, std::any::type_name::<BTreeMap<i32, i32>>());
+        assert_eq!(err.got, typ);
+        let BuiltinSerializationErrorKind::MapError(
+            MapSerializationErrorKind::ValueSerializationFailed(err),
+        ) = &err.kind
+        else {
+            panic!("unexpected error kind: {}", err.kind)
+        };
+        let err = get_typeck_err(err);
+        assert!(matches!(
+            err.kind,
+            BuiltinTypeCheckErrorKind::MismatchedType {
+                expected: &[ColumnType::Int],
+            }
+        ));
+    }
+
+    #[test]
+    fn test_tuple_errors() {
+        // Not a tuple
+        let v = (123_i32, 456_i32, 789_i32);
+        let err = do_serialize_err(v, &ColumnType::Double);
+        let err = get_typeck_err(&err);
+        assert_eq!(err.rust_name, std::any::type_name::<(i32, i32, i32)>());
+        assert_eq!(err.got, ColumnType::Double);
+        assert!(matches!(
+            err.kind,
+            BuiltinTypeCheckErrorKind::TupleError(TupleTypeCheckErrorKind::NotTuple),
+        ));
+
+        // The Rust tuple has more elements than the CQL type
+        let v = (123_i32, 456_i32, 789_i32);
+        let typ = ColumnType::Tuple(vec![ColumnType::Int; 2]);
+        let err = do_serialize_err(v, &typ);
+        let err = get_typeck_err(&err);
+        assert_eq!(err.rust_name, std::any::type_name::<(i32, i32, i32)>());
+        assert_eq!(err.got, typ);
+        assert!(matches!(
+            err.kind,
+            BuiltinTypeCheckErrorKind::TupleError(TupleTypeCheckErrorKind::WrongElementCount {
+                actual: 3,
+                asked_for: 2,
+            }),
+        ));
+
+        // Error during serialization of one of the elements
+        let v = (123_i32, "Ala ma kota", 789.0_f64);
+        let typ = ColumnType::Tuple(vec![ColumnType::Int, ColumnType::Text, ColumnType::Uuid]);
+        let err = do_serialize_err(v, &typ);
+        let err = get_ser_err(&err);
+        assert_eq!(err.rust_name, std::any::type_name::<(i32, &str, f64)>());
+        assert_eq!(err.got, typ);
+        let BuiltinSerializationErrorKind::TupleError(
+            TupleSerializationErrorKind::ElementSerializationFailed { index: 2, err },
+        ) = &err.kind
+        else {
+            panic!("unexpected error kind: {}", err.kind)
+        };
+        let err = get_typeck_err(err);
+        assert!(matches!(
+            err.kind,
+            BuiltinTypeCheckErrorKind::MismatchedType {
+                expected: &[ColumnType::Double],
+            }
+        ));
+    }
+
+    #[test]
+    fn test_cql_value_errors() {
+        // Tried to encode Empty value into a non-emptyable type
+        let v = CqlValue::Empty;
+        let err = do_serialize_err(v, &ColumnType::Counter);
+        let err = get_typeck_err(&err);
+        assert_eq!(err.rust_name, std::any::type_name::<CqlValue>());
+        assert_eq!(err.got, ColumnType::Counter);
+        assert!(matches!(err.kind, BuiltinTypeCheckErrorKind::NotEmptyable));
+
+        // Handle tuples and UDTs in separate tests, as they have some
+        // custom logic
+    }
+
+    #[test]
+    fn test_cql_value_tuple_errors() {
+        // Not a tuple
+        let v = CqlValue::Tuple(vec![
+            Some(CqlValue::Int(123_i32)),
+            Some(CqlValue::Int(456_i32)),
+            Some(CqlValue::Int(789_i32)),
+        ]);
+        let err = do_serialize_err(v, &ColumnType::Double);
+        let err = get_typeck_err(&err);
+        assert_eq!(err.rust_name, std::any::type_name::<CqlValue>());
+        assert_eq!(err.got, ColumnType::Double);
+        assert!(matches!(
+            err.kind,
+            BuiltinTypeCheckErrorKind::TupleError(TupleTypeCheckErrorKind::NotTuple),
+        ));
+
+        // The Rust tuple has more elements than the CQL type
+        let v = CqlValue::Tuple(vec![
+            Some(CqlValue::Int(123_i32)),
+            Some(CqlValue::Int(456_i32)),
+            Some(CqlValue::Int(789_i32)),
+        ]);
+        let typ = ColumnType::Tuple(vec![ColumnType::Int; 2]);
+        let err = do_serialize_err(v, &typ);
+        let err = get_typeck_err(&err);
+        assert_eq!(err.rust_name, std::any::type_name::<CqlValue>());
+        assert_eq!(err.got, typ);
+        assert!(matches!(
+            err.kind,
+            BuiltinTypeCheckErrorKind::TupleError(TupleTypeCheckErrorKind::WrongElementCount {
+                actual: 3,
+                asked_for: 2,
+            }),
+        ));
+
+        // Error during serialization of one of the elements
+        let v = CqlValue::Tuple(vec![
+            Some(CqlValue::Int(123_i32)),
+            Some(CqlValue::Text("Ala ma kota".to_string())),
+            Some(CqlValue::Double(789_f64)),
+        ]);
+        let typ = ColumnType::Tuple(vec![ColumnType::Int, ColumnType::Text, ColumnType::Uuid]);
+        let err = do_serialize_err(v, &typ);
+        let err = get_ser_err(&err);
+        assert_eq!(err.rust_name, std::any::type_name::<CqlValue>());
+        assert_eq!(err.got, typ);
+        let BuiltinSerializationErrorKind::TupleError(
+            TupleSerializationErrorKind::ElementSerializationFailed { index: 2, err },
+        ) = &err.kind
+        else {
+            panic!("unexpected error kind: {}", err.kind)
+        };
+        let err = get_typeck_err(err);
+        assert!(matches!(
+            err.kind,
+            BuiltinTypeCheckErrorKind::MismatchedType {
+                expected: &[ColumnType::Double],
+            }
+        ));
+    }
+
+    #[test]
+    fn test_cql_value_udt_errors() {
+        // Not a UDT
+        let v = CqlValue::UserDefinedType {
+            keyspace: "ks".to_string(),
+            type_name: "udt".to_string(),
+            fields: vec![
+                ("a".to_string(), Some(CqlValue::Int(123_i32))),
+                ("b".to_string(), Some(CqlValue::Int(456_i32))),
+                ("c".to_string(), Some(CqlValue::Int(789_i32))),
+            ],
+        };
+        let err = do_serialize_err(v, &ColumnType::Double);
+        let err = get_typeck_err(&err);
+        assert_eq!(err.rust_name, std::any::type_name::<CqlValue>());
+        assert_eq!(err.got, ColumnType::Double);
+        assert!(matches!(
+            err.kind,
+            BuiltinTypeCheckErrorKind::UdtError(UdtTypeCheckErrorKind::NotUdt),
+        ));
+
+        // Wrong type name
+        let v = CqlValue::UserDefinedType {
+            keyspace: "ks".to_string(),
+            type_name: "udt".to_string(),
+            fields: vec![
+                ("a".to_string(), Some(CqlValue::Int(123_i32))),
+                ("b".to_string(), Some(CqlValue::Int(456_i32))),
+                ("c".to_string(), Some(CqlValue::Int(789_i32))),
+            ],
+        };
+        let typ = ColumnType::UserDefinedType {
+            type_name: "udt2".to_string(),
+            keyspace: "ks".to_string(),
+            field_types: vec![
+                ("a".to_string(), ColumnType::Int),
+                ("b".to_string(), ColumnType::Int),
+                ("c".to_string(), ColumnType::Int),
+            ],
+        };
+        let err = do_serialize_err(v, &typ);
+        let err = get_typeck_err(&err);
+        assert_eq!(err.rust_name, std::any::type_name::<CqlValue>());
+        assert_eq!(err.got, typ);
+        let BuiltinTypeCheckErrorKind::UdtError(UdtTypeCheckErrorKind::NameMismatch {
+            keyspace,
+            type_name,
+        }) = &err.kind
+        else {
+            panic!("unexpected error kind: {}", err.kind)
+        };
+        assert_eq!(keyspace, "ks");
+        assert_eq!(type_name, "udt2");
+
+        // Some fields are missing from the CQL type
+        let v = CqlValue::UserDefinedType {
+            keyspace: "ks".to_string(),
+            type_name: "udt".to_string(),
+            fields: vec![
+                ("a".to_string(), Some(CqlValue::Int(123_i32))),
+                ("b".to_string(), Some(CqlValue::Int(456_i32))),
+                ("c".to_string(), Some(CqlValue::Int(789_i32))),
+            ],
+        };
+        let typ = ColumnType::UserDefinedType {
+            type_name: "udt".to_string(),
+            keyspace: "ks".to_string(),
+            field_types: vec![
+                ("a".to_string(), ColumnType::Int),
+                ("b".to_string(), ColumnType::Int),
+                // c is missing
+            ],
+        };
+        let err = do_serialize_err(v, &typ);
+        let err = get_typeck_err(&err);
+        assert_eq!(err.rust_name, std::any::type_name::<CqlValue>());
+        assert_eq!(err.got, typ);
+        let BuiltinTypeCheckErrorKind::UdtError(UdtTypeCheckErrorKind::NoSuchFieldInUdt {
+            field_name,
+        }) = &err.kind
+        else {
+            panic!("unexpected error kind: {}", err.kind)
+        };
+        assert_eq!(field_name, "c");
+
+        // It is allowed for a Rust UDT to have less fields than the CQL UDT,
+        // so skip UnexpectedFieldInDestination.
+
+        // Error during serialization of one of the fields
+        let v = CqlValue::UserDefinedType {
+            keyspace: "ks".to_string(),
+            type_name: "udt".to_string(),
+            fields: vec![
+                ("a".to_string(), Some(CqlValue::Int(123_i32))),
+                ("b".to_string(), Some(CqlValue::Int(456_i32))),
+                ("c".to_string(), Some(CqlValue::Int(789_i32))),
+            ],
+        };
+        let typ = ColumnType::UserDefinedType {
+            type_name: "udt".to_string(),
+            keyspace: "ks".to_string(),
+            field_types: vec![
+                ("a".to_string(), ColumnType::Int),
+                ("b".to_string(), ColumnType::Int),
+                ("c".to_string(), ColumnType::Double),
+            ],
+        };
+        let err = do_serialize_err(v, &typ);
+        let err = get_ser_err(&err);
+        assert_eq!(err.rust_name, std::any::type_name::<CqlValue>());
+        assert_eq!(err.got, typ);
+        let BuiltinSerializationErrorKind::UdtError(
+            UdtSerializationErrorKind::FieldSerializationFailed { field_name, err },
+        ) = &err.kind
+        else {
+            panic!("unexpected error kind: {}", err.kind)
+        };
+        assert_eq!(field_name, "c");
+        let err = get_typeck_err(err);
+        assert!(matches!(
+            err.kind,
+            BuiltinTypeCheckErrorKind::MismatchedType {
+                expected: &[ColumnType::Int],
+            }
+        ));
     }
 
     // Do not remove. It's not used in tests but we keep it here to check that
