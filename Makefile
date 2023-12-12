@@ -19,15 +19,15 @@ fmt-check:
 
 .PHONY: check
 check:
-	cargo check --examples --tests
+	cargo check --all-targets
 
 .PHONY: check-without-features
 check-without-features:
-	cargo check --manifest-path "scylla/Cargo.toml" --features ""
+	cargo check --manifest-path "scylla/Cargo.toml" --features "" --all-targets
 
 .PHONY: clippy
 clippy:
-	RUSTFLAGS=-Dwarnings cargo clippy --examples --tests -- -Aclippy::uninlined_format_args
+	RUSTFLAGS=-Dwarnings cargo clippy --all-targets -- -Aclippy::uninlined_format_args
 
 .PHONY: test
 test: up
@@ -42,7 +42,7 @@ dockerized-test: up
 
 .PHONY: build
 build:
-	cargo build --examples
+	cargo build --examples --benches
 
 .PHONY: docs
 docs:
