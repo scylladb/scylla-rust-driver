@@ -37,10 +37,10 @@ Now it can be sent and received just like any other CQL value:
 # use std::error::Error;
 # async fn check_only_compiles(session: &Session) -> Result<(), Box<dyn Error>> {
 use scylla::IntoTypedRows;
-use scylla::macros::{FromUserType, IntoUserType};
+use scylla::macros::{FromUserType, IntoUserType, SerializeCql};
 use scylla::cql_to_rust::FromCqlVal;
 
-#[derive(Debug, IntoUserType, FromUserType)]
+#[derive(Debug, IntoUserType, FromUserType, SerializeCql)]
 struct MyType {
     int_val: i32,
     text_val: Option<String>,
