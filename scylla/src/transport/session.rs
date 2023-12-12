@@ -1666,7 +1666,10 @@ impl Session {
             .consistency_set_on_statement
             .unwrap_or(execution_profile.consistency);
 
+        let mut query_plan_is_empty = true;
+
         'nodes_in_plan: for node in query_plan {
+            query_plan_is_empty = false;
             let span = trace_span!("Executing query", node = %node.address);
             'same_node_retries: loop {
                 trace!(parent: &span, "Execution started");
@@ -1767,6 +1770,10 @@ impl Session {
                     }
                 };
             }
+        }
+
+        if query_plan_is_empty {
+            return Some(Err(QueryError::EmptyQueryPlan));
         }
 
         last_error.map(Result::Err)

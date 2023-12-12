@@ -46,6 +46,10 @@ pub enum QueryError {
     #[error("Request timeout: {0}")]
     RequestTimeout(String),
 
+    /// Empty Query Plan
+    #[error("Load balancing policy returned empty query plan. It can happen when the driver is provided with non-existing datacenter name")]
+    EmptyQueryPlan,
+
     /// Address translation failed
     #[error("Address translation failed: {0}")]
     TranslationError(#[from] TranslationError),
@@ -404,6 +408,10 @@ pub enum NewSessionError {
     #[error("Client timeout: {0}")]
     RequestTimeout(String),
 
+    /// Empty Query Plan
+    #[error("Load balancing policy returned empty query plan. It can happen when the driver is provided with non-existing datacenter name")]
+    EmptyQueryPlan,
+
     /// Address translation failed
     #[error("Address translation failed: {0}")]
     TranslationError(#[from] TranslationError),
@@ -482,6 +490,7 @@ impl From<QueryError> for NewSessionError {
             QueryError::UnableToAllocStreamId => NewSessionError::UnableToAllocStreamId,
             QueryError::RequestTimeout(msg) => NewSessionError::RequestTimeout(msg),
             QueryError::TranslationError(e) => NewSessionError::TranslationError(e),
+            QueryError::EmptyQueryPlan => NewSessionError::EmptyQueryPlan,
         }
     }
 }
