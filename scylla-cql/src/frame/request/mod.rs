@@ -22,7 +22,7 @@ pub use startup::Startup;
 use self::batch::BatchStatement;
 
 use super::types::SerialConsistency;
-use super::value::SerializedValues;
+use super::value::LegacySerializedValues;
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord, TryFromPrimitive)]
 #[repr(u8)]
@@ -59,7 +59,7 @@ pub trait DeserializableRequest: SerializableRequest + Sized {
 pub enum Request<'r> {
     Query(Query<'r>),
     Execute(Execute<'r>),
-    Batch(Batch<'r, BatchStatement<'r>, Vec<SerializedValues>>),
+    Batch(Batch<'r, BatchStatement<'r>, Vec<LegacySerializedValues>>),
 }
 
 impl<'r> Request<'r> {
@@ -112,9 +112,10 @@ mod tests {
                 query::{Query, QueryParameters},
                 DeserializableRequest, SerializableRequest,
             },
+            response::result::ColumnType,
             types::{self, SerialConsistency},
-            value::SerializedValues,
         },
+        types::serialize::row::SerializedValues,
         Consistency,
     };
 
@@ -130,7 +131,7 @@ mod tests {
             paging_state: Some(vec![2, 1, 3, 7].into()),
             values: {
                 let mut vals = SerializedValues::new();
-                vals.add_value(&2137).unwrap();
+                vals.add_value(&2137, &ColumnType::Int).unwrap();
                 Cow::Owned(vals)
             },
         };
@@ -157,8 +158,8 @@ mod tests {
             paging_state: None,
             values: {
                 let mut vals = SerializedValues::new();
-                vals.add_named_value("the_answer", &42).unwrap();
-                vals.add_named_value("really?", &2137).unwrap();
+                vals.add_value(&42, &ColumnType::Int).unwrap();
+                vals.add_value(&2137, &ColumnType::Int).unwrap();
                 Cow::Owned(vals)
             },
         };
@@ -189,8 +190,8 @@ mod tests {
 
             // Not execute's values, because named values are not supported in batches.
             values: vec![
-                query.parameters.values.deref().clone(),
-                query.parameters.values.deref().clone(),
+                query.parameters.values.deref().to_old_serialized_values(),
+                query.parameters.values.deref().to_old_serialized_values(),
             ],
         };
         {
@@ -212,7 +213,7 @@ mod tests {
             timestamp: None,
             page_size: None,
             paging_state: None,
-            values: Cow::Owned(SerializedValues::new()),
+            values: Cow::Borrowed(SerializedValues::EMPTY),
         };
         let query = Query {
             contents: contents.clone(),
@@ -261,7 +262,7 @@ mod tests {
             serial_consistency: None,
             timestamp: None,
 
-            values: vec![query.parameters.values.deref().clone()],
+            values: vec![query.parameters.values.deref().to_old_serialized_values()],
         };
         {
             let mut buf = Vec::new();

@@ -1,5 +1,4 @@
 use anyhow::Result;
-use scylla::frame::value::ValueList;
 use scylla::routing::Token;
 use scylla::transport::NodeAddr;
 use scylla::{Session, SessionBuilder};
@@ -29,8 +28,7 @@ async fn main() -> Result<()> {
             .query("INSERT INTO ks.t (pk) VALUES (?)", (pk,))
             .await?;
 
-        let serialized_pk = (pk,).serialized()?.into_owned();
-        let t = prepared.calculate_token(&serialized_pk)?.unwrap().value;
+        let t = prepared.calculate_token(&(pk,))?.unwrap().value;
 
         println!(
             "Token endpoints for query: {:?}",

@@ -12,6 +12,7 @@ use bytes::Bytes;
 use futures::Stream;
 use scylla_cql::frame::response::NonErrorResponse;
 use scylla_cql::frame::types::SerialConsistency;
+use scylla_cql::types::serialize::row::SerializedValues;
 use std::result::Result;
 use thiserror::Error;
 use tokio::sync::mpsc;
@@ -22,12 +23,9 @@ use super::execution_profile::ExecutionProfileInner;
 use super::session::RequestSpan;
 use crate::cql_to_rust::{FromRow, FromRowError};
 
-use crate::frame::{
-    response::{
-        result,
-        result::{ColumnSpec, Row, Rows},
-    },
-    value::SerializedValues,
+use crate::frame::response::{
+    result,
+    result::{ColumnSpec, Row, Rows},
 };
 use crate::history::{self, HistoryListener};
 use crate::statement::Consistency;
@@ -128,7 +126,6 @@ impl RowIterator {
 
     pub(crate) async fn new_for_query(
         mut query: Query,
-        values: SerializedValues,
         execution_profile: Arc<ExecutionProfileInner>,
         cluster_data: Arc<ClusterData>,
         metrics: Arc<Metrics>,
@@ -162,29 +159,31 @@ impl RowIterator {
         let parent_span = tracing::Span::current();
         let worker_task = async move {
             let query_ref = &query;
-            let values_ref = &values;
 
             let choose_connection = |node: Arc<Node>| async move { node.random_connection().await };
 
             let page_query = |connection: Arc<Connection>,
                               consistency: Consistency,
-                              paging_state: Option<Bytes>| async move {
-                connection
-                    .query_with_consistency(
-                        query_ref,
-                        values_ref,
-                        consistency,
-                        serial_consistency,
-                        paging_state,
-                    )
-                    .await
+                              paging_state: Option<Bytes>| {
+                async move {
+                    connection
+                        .query_with_consistency(
+                            query_ref,
+                            consistency,
+                            serial_consistency,
+                            paging_state,
+                        )
+                        .await
+                }
             };
 
             let query_ref = &query;
-            let serialized_values_size = values.size();
 
-            let span_creator =
-                move || RequestSpan::new_query(&query_ref.contents, serialized_values_size);
+            let span_creator = move || {
+                let span = RequestSpan::new_query(&query_ref.contents);
+                span.record_request_size(0);
+                span
+            };
 
             let worker = RowIteratorWorker {
                 sender: sender.into(),
@@ -281,7 +280,7 @@ impl RowIterator {
                     .await
             };
 
-            let serialized_values_size = config.values.size();
+            let serialized_values_size = config.values.buffer_size();
 
             let replicas: Option<smallvec::SmallVec<[_; 8]>> =
                 if let (Some(keyspace), Some(token)) =
@@ -337,7 +336,6 @@ impl RowIterator {
     pub(crate) async fn new_for_connection_query_iter(
         mut query: Query,
         connection: Arc<Connection>,
-        values: SerializedValues,
         consistency: Consistency,
         serial_consistency: Option<SerialConsistency>,
     ) -> Result<RowIterator, QueryError> {
@@ -352,6 +350,36 @@ impl RowIterator {
                 fetcher: |paging_state| {
                     connection.query_with_consistency(
                         &query,
+                        consistency,
+                        serial_consistency,
+                        paging_state,
+                    )
+                },
+            };
+            worker.work().await
+        };
+
+        Self::new_from_worker_future(worker_task, receiver).await
+    }
+
+    pub(crate) async fn new_for_connection_execute_iter(
+        mut prepared: PreparedStatement,
+        values: SerializedValues,
+        connection: Arc<Connection>,
+        consistency: Consistency,
+        serial_consistency: Option<SerialConsistency>,
+    ) -> Result<RowIterator, QueryError> {
+        if prepared.get_page_size().is_none() {
+            prepared.set_page_size(DEFAULT_ITER_PAGE_SIZE);
+        }
+        let (sender, receiver) = mpsc::channel::<Result<ReceivedPage, QueryError>>(1);
+
+        let worker_task = async move {
+            let worker = SingleConnectionRowIteratorWorker {
+                sender: sender.into(),
+                fetcher: |paging_state| {
+                    connection.execute_with_consistency(
+                        &prepared,
                         &values,
                         consistency,
                         serial_consistency,

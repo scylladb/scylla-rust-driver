@@ -3,6 +3,7 @@
 use crate::frame::frame_errors::{FrameError, ParseError};
 use crate::frame::protocol_features::ProtocolFeatures;
 use crate::frame::value::SerializeValuesError;
+use crate::types::serialize::SerializationError;
 use crate::Consistency;
 use bytes::Bytes;
 use std::io::ErrorKind;
@@ -340,6 +341,9 @@ pub enum BadQuery {
     #[error("Serializing values failed: {0} ")]
     SerializeValuesError(#[from] SerializeValuesError),
 
+    #[error("Serializing values failed: {0} ")]
+    SerializationError(#[from] SerializationError),
+
     /// Serialized values are too long to compute partition key
     #[error("Serialized values are too long to compute partition key! Length: {0}, Max allowed length: {1}")]
     ValuesTooLongForKey(usize, usize),
@@ -440,6 +444,12 @@ impl From<std::io::Error> for QueryError {
 impl From<SerializeValuesError> for QueryError {
     fn from(serialized_err: SerializeValuesError) -> QueryError {
         QueryError::BadQuery(BadQuery::SerializeValuesError(serialized_err))
+    }
+}
+
+impl From<SerializationError> for QueryError {
+    fn from(serialized_err: SerializationError) -> QueryError {
+        QueryError::BadQuery(BadQuery::SerializationError(serialized_err))
     }
 }
 

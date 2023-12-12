@@ -5,7 +5,7 @@ use crate::frame::{
     frame_errors::ParseError,
     request::{RequestOpcode, SerializableRequest},
     types::{self, SerialConsistency},
-    value::{BatchValues, BatchValuesIterator, SerializedValues},
+    value::{BatchValues, BatchValuesIterator, LegacySerializedValues},
 };
 
 use super::DeserializableRequest;
@@ -186,7 +186,7 @@ impl<'s, 'b> From<&'s BatchStatement<'b>> for BatchStatement<'s> {
     }
 }
 
-impl<'b> DeserializableRequest for Batch<'b, BatchStatement<'b>, Vec<SerializedValues>> {
+impl<'b> DeserializableRequest for Batch<'b, BatchStatement<'b>, Vec<LegacySerializedValues>> {
     fn deserialize(buf: &mut &[u8]) -> Result<Self, ParseError> {
         let batch_type = buf.get_u8().try_into()?;
 
@@ -196,7 +196,7 @@ impl<'b> DeserializableRequest for Batch<'b, BatchStatement<'b>, Vec<SerializedV
                 let batch_statement = BatchStatement::deserialize(buf)?;
 
                 // As stated in CQL protocol v4 specification, values names in Batch are broken and should be never used.
-                let values = SerializedValues::new_from_frame(buf, false)?;
+                let values = LegacySerializedValues::new_from_frame(buf, false)?;
 
                 Ok((batch_statement, values))
             })
@@ -233,7 +233,7 @@ impl<'b> DeserializableRequest for Batch<'b, BatchStatement<'b>, Vec<SerializedV
             .then(|| types::read_long(buf))
             .transpose()?;
 
-        let (statements, values): (Vec<BatchStatement>, Vec<SerializedValues>) =
+        let (statements, values): (Vec<BatchStatement>, Vec<LegacySerializedValues>) =
             statements_with_values.into_iter().unzip();
 
         Ok(Self {

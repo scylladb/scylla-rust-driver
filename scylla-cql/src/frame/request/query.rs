@@ -1,12 +1,14 @@
 use std::borrow::Cow;
 
-use crate::frame::{frame_errors::ParseError, types::SerialConsistency};
+use crate::{
+    frame::{frame_errors::ParseError, types::SerialConsistency},
+    types::serialize::row::SerializedValues,
+};
 use bytes::{Buf, BufMut, Bytes};
 
 use crate::{
     frame::request::{RequestOpcode, SerializableRequest},
     frame::types,
-    frame::value::SerializedValues,
 };
 
 use super::DeserializableRequest;
@@ -102,10 +104,6 @@ impl QueryParameters<'_> {
             flags |= FLAG_WITH_DEFAULT_TIMESTAMP;
         }
 
-        if self.values.has_names() {
-            flags |= FLAG_WITH_NAMES_FOR_VALUES;
-        }
-
         buf.put_u8(flags);
 
         if !self.values.is_empty() {
@@ -151,8 +149,14 @@ impl<'q> QueryParameters<'q> {
         let default_timestamp_flag = (flags & FLAG_WITH_DEFAULT_TIMESTAMP) != 0;
         let values_have_names_flag = (flags & FLAG_WITH_NAMES_FOR_VALUES) != 0;
 
+        if values_have_names_flag {
+            return Err(ParseError::BadIncomingData(
+                "Named values in frame are currently unsupported".to_string(),
+            ));
+        }
+
         let values = Cow::Owned(if values_flag {
-            SerializedValues::new_from_frame(buf, values_have_names_flag)?
+            SerializedValues::new_from_frame(buf)?
         } else {
             SerializedValues::new()
         });

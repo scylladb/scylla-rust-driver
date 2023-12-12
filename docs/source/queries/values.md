@@ -12,7 +12,7 @@ or a custom struct which derives from `ValueList`.
 A few examples:
 ```rust
 # extern crate scylla;
-# use scylla::{Session, ValueList, frame::response::result::CqlValue};
+# use scylla::{Session, ValueList, SerializeRow, frame::response::result::CqlValue};
 # use std::error::Error;
 # use std::collections::HashMap;
 # async fn check_only_compiles(session: &Session) -> Result<(), Box<dyn Error>> {
@@ -34,7 +34,7 @@ session
 
 // Sending an integer and a string using a named struct.
 // The values will be passed in the order from the struct definition
-#[derive(ValueList)]
+#[derive(ValueList, SerializeRow)]
 struct IntString {
     first_col: i32,
     second_col: String,

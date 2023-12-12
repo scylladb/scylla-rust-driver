@@ -1,6 +1,6 @@
 use anyhow::Result;
-use scylla::macros::{FromUserType, IntoUserType};
-use scylla::{IntoTypedRows, Session, SessionBuilder};
+use scylla::macros::FromUserType;
+use scylla::{IntoTypedRows, SerializeCql, Session, SessionBuilder};
 use std::env;
 
 #[tokio::main]
@@ -29,7 +29,7 @@ async fn main() -> Result<()> {
 
     // Define custom struct that matches User Defined Type created earlier
     // wrapping field in Option will gracefully handle null field values
-    #[derive(Debug, IntoUserType, FromUserType)]
+    #[derive(Debug, FromUserType, SerializeCql)]
     struct MyType {
         int_val: i32,
         text_val: Option<String>,

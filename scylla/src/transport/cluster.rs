@@ -1,6 +1,5 @@
 /// Cluster manages up to date information and connections to database nodes
 use crate::frame::response::event::{Event, StatusChangeEvent};
-use crate::frame::value::ValueList;
 use crate::prepared_statement::TokenCalculationError;
 use crate::routing::Token;
 use crate::transport::host_filter::HostFilter;
@@ -18,6 +17,7 @@ use futures::future::join_all;
 use futures::{future::RemoteHandle, FutureExt};
 use itertools::Itertools;
 use scylla_cql::errors::{BadQuery, NewSessionError};
+use scylla_cql::types::serialize::row::SerializedValues;
 use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -390,7 +390,7 @@ impl ClusterData {
         &self,
         keyspace: &str,
         table: &str,
-        partition_key: impl ValueList,
+        partition_key: &SerializedValues,
     ) -> Result<Token, BadQuery> {
         let partitioner = self
             .keyspaces
@@ -400,12 +400,11 @@ impl ClusterData {
             .and_then(PartitionerName::from_str)
             .unwrap_or_default();
 
-        calculate_token_for_partition_key(&partition_key.serialized().unwrap(), &partitioner)
-            .map_err(|err| match err {
-                TokenCalculationError::ValueTooLong(values_len) => {
-                    BadQuery::ValuesTooLongForKey(values_len, u16::MAX.into())
-                }
-            })
+        calculate_token_for_partition_key(partition_key, &partitioner).map_err(|err| match err {
+            TokenCalculationError::ValueTooLong(values_len) => {
+                BadQuery::ValuesTooLongForKey(values_len, u16::MAX.into())
+            }
+        })
     }
 
     /// Access to replicas owning a given token
@@ -436,7 +435,7 @@ impl ClusterData {
         &self,
         keyspace: &str,
         table: &str,
-        partition_key: impl ValueList,
+        partition_key: &SerializedValues,
     ) -> Result<Vec<Arc<Node>>, BadQuery> {
         Ok(self.get_token_endpoints(
             keyspace,
