@@ -38,7 +38,7 @@ pub struct Query<'q> {
 impl SerializableRequest for Query<'_> {
     const OPCODE: RequestOpcode = RequestOpcode::Query;
 
-    fn serialize(&self, buf: &mut impl BufMut) -> Result<(), ParseError> {
+    fn serialize(&self, buf: &mut Vec<u8>) -> Result<(), ParseError> {
         types::write_long_string(&self.contents, buf)?;
         self.parameters.serialize(buf)?;
         Ok(())

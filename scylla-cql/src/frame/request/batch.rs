@@ -76,7 +76,7 @@ where
 {
     const OPCODE: RequestOpcode = RequestOpcode::Batch;
 
-    fn serialize(&self, buf: &mut impl BufMut) -> Result<(), ParseError> {
+    fn serialize(&self, buf: &mut Vec<u8>) -> Result<(), ParseError> {
         // Serializing type of batch
         buf.put_u8(self.batch_type as u8);
 

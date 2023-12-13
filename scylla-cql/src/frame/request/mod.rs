@@ -8,7 +8,7 @@ pub mod register;
 pub mod startup;
 
 use crate::{frame::frame_errors::ParseError, Consistency};
-use bytes::{BufMut, Bytes};
+use bytes::Bytes;
 use num_enum::TryFromPrimitive;
 
 pub use auth_response::AuthResponse;
@@ -40,7 +40,7 @@ pub enum RequestOpcode {
 pub trait SerializableRequest {
     const OPCODE: RequestOpcode;
 
-    fn serialize(&self, buf: &mut impl BufMut) -> Result<(), ParseError>;
+    fn serialize(&self, buf: &mut Vec<u8>) -> Result<(), ParseError>;
 
     fn to_bytes(&self) -> Result<Bytes, ParseError> {
         let mut v = Vec::new();
