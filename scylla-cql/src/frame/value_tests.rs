@@ -1,12 +1,12 @@
-use crate::frame::{response::result::CqlValue, types::RawValue, value::BatchValuesIterator};
+use crate::frame::{response::result::CqlValue, types::RawValue, value::LegacyBatchValuesIterator};
 use crate::types::serialize::row::{RowSerializationContext, SerializeRow};
 use crate::types::serialize::value::SerializeCql;
 use crate::types::serialize::{CellWriter, RowWriter};
 
 use super::response::result::{ColumnSpec, ColumnType, TableSpec};
 use super::value::{
-    BatchValues, CqlDate, CqlDuration, CqlTime, CqlTimestamp, LegacySerializedValues, MaybeUnset,
-    SerializeValuesError, Unset, Value, ValueList, ValueTooBig,
+    CqlDate, CqlDuration, CqlTime, CqlTimestamp, LegacyBatchValues, LegacySerializedValues,
+    MaybeUnset, SerializeValuesError, Unset, Value, ValueList, ValueTooBig,
 };
 use bigdecimal::BigDecimal;
 use bytes::BufMut;
@@ -1235,7 +1235,7 @@ fn vec_batch_values() {
 
 #[test]
 fn tuple_batch_values() {
-    fn check_twoi32_tuple(tuple: impl BatchValues, size: usize) {
+    fn check_twoi32_tuple(tuple: impl LegacyBatchValues, size: usize) {
         let mut it = tuple.batch_values_iter();
         for i in 0..size {
             let mut request: Vec<u8> = Vec::new();
@@ -1428,8 +1428,8 @@ fn ref_batch_values() {
     let batch_values: &[&[i8]] = &[&[1, 2], &[2, 3, 4, 5], &[6]];
 
     return check_ref_bv::<&&&&&[&[i8]]>(&&&&batch_values);
-    fn check_ref_bv<B: BatchValues>(batch_values: B) {
-        let mut it = <B as BatchValues>::batch_values_iter(&batch_values);
+    fn check_ref_bv<B: LegacyBatchValues>(batch_values: B) {
+        let mut it = <B as LegacyBatchValues>::batch_values_iter(&batch_values);
 
         let mut request: Vec<u8> = Vec::new();
         it.write_next_to_request(&mut request).unwrap().unwrap();
@@ -1440,7 +1440,7 @@ fn ref_batch_values() {
 #[test]
 #[allow(clippy::needless_borrow)]
 fn check_ref_tuple() {
-    fn assert_has_batch_values<BV: BatchValues>(bv: BV) {
+    fn assert_has_batch_values<BV: LegacyBatchValues>(bv: BV) {
         let mut it = bv.batch_values_iter();
         let mut request: Vec<u8> = Vec::new();
         while let Some(res) = it.write_next_to_request(&mut request) {
@@ -1457,7 +1457,7 @@ fn check_ref_tuple() {
 #[test]
 fn check_batch_values_iterator_is_not_lending() {
     // This is an interesting property if we want to improve the batch shard selection heuristic
-    fn f(bv: impl BatchValues) {
+    fn f(bv: impl LegacyBatchValues) {
         let mut it = bv.batch_values_iter();
         let mut it2 = bv.batch_values_iter();
         // Make sure we can hold all these at the same time

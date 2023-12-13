@@ -47,7 +47,9 @@ use super::NodeRef;
 use crate::cql_to_rust::FromRow;
 use crate::frame::response::cql_to_rust::FromRowError;
 use crate::frame::response::result;
-use crate::frame::value::{BatchValues, BatchValuesFirstSerialized, BatchValuesIterator};
+use crate::frame::value::{
+    LegacyBatchValues, LegacyBatchValuesFirstSerialized, LegacyBatchValuesIterator,
+};
 use crate::prepared_statement::PreparedStatement;
 use crate::query::Query;
 use crate::routing::Token;
@@ -1165,7 +1167,7 @@ impl Session {
     pub async fn batch(
         &self,
         batch: &Batch,
-        values: impl BatchValues,
+        values: impl LegacyBatchValues,
     ) -> Result<QueryResult, QueryError> {
         // Shard-awareness behavior for batch will be to pick shard based on first batch statement's shard
         // If users batch statements by shard, they will be rewarded with full shard awareness
@@ -1216,7 +1218,7 @@ impl Session {
 
         // Reuse first serialized value when serializing query, and delegate to `BatchValues::write_next_to_request`
         // directly for others (if they weren't already serialized, possibly don't even allocate the `LegacySerializedValues`)
-        let values = BatchValuesFirstSerialized::new(&values, first_serialized_value);
+        let values = LegacyBatchValuesFirstSerialized::new(&values, first_serialized_value);
         let values_ref = &values;
 
         let span = RequestSpan::new_batch();

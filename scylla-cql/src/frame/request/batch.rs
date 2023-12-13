@@ -5,7 +5,7 @@ use crate::frame::{
     frame_errors::ParseError,
     request::{RequestOpcode, SerializableRequest},
     types::{self, SerialConsistency},
-    value::{BatchValues, BatchValuesIterator, LegacySerializedValues},
+    value::{LegacyBatchValues, LegacyBatchValuesIterator, LegacySerializedValues},
 };
 
 use super::DeserializableRequest;
@@ -20,7 +20,7 @@ pub struct Batch<'b, Statement, Values>
 where
     BatchStatement<'b>: From<&'b Statement>,
     Statement: Clone,
-    Values: BatchValues,
+    Values: LegacyBatchValues,
 {
     pub statements: Cow<'b, [Statement]>,
     pub batch_type: BatchType,
@@ -72,7 +72,7 @@ impl<Statement, Values> SerializableRequest for Batch<'_, Statement, Values>
 where
     for<'s> BatchStatement<'s>: From<&'s Statement>,
     Statement: Clone,
-    Values: BatchValues,
+    Values: LegacyBatchValues,
 {
     const OPCODE: RequestOpcode = RequestOpcode::Batch;
 

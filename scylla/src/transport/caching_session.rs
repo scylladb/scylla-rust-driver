@@ -1,5 +1,5 @@
 use crate::batch::{Batch, BatchStatement};
-use crate::frame::value::BatchValues;
+use crate::frame::value::LegacyBatchValues;
 use crate::prepared_statement::PreparedStatement;
 use crate::query::Query;
 use crate::transport::errors::QueryError;
@@ -108,7 +108,7 @@ where
     pub async fn batch(
         &self,
         batch: &Batch,
-        values: impl BatchValues,
+        values: impl LegacyBatchValues,
     ) -> Result<QueryResult, QueryError> {
         let all_prepared: bool = batch
             .statements

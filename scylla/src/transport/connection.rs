@@ -53,7 +53,7 @@ use crate::frame::{
     request::{self, batch, execute, query, register, SerializableRequest},
     response::{event::Event, result, NonErrorResponse, Response, ResponseOpcode},
     server_event_type::EventType,
-    value::{BatchValues, BatchValuesIterator},
+    value::{LegacyBatchValues, LegacyBatchValuesIterator},
     FrameParams, SerializedRequest,
 };
 use crate::query::Query;
@@ -763,7 +763,7 @@ impl Connection {
     pub(crate) async fn batch(
         &self,
         batch: &Batch,
-        values: impl BatchValues,
+        values: impl LegacyBatchValues,
     ) -> Result<QueryResult, QueryError> {
         self.batch_with_consistency(
             batch,
@@ -779,7 +779,7 @@ impl Connection {
     pub(crate) async fn batch_with_consistency(
         &self,
         init_batch: &Batch,
-        values: impl BatchValues,
+        values: impl LegacyBatchValues,
         consistency: Consistency,
         serial_consistency: Option<SerialConsistency>,
     ) -> Result<QueryResult, QueryError> {
@@ -831,7 +831,7 @@ impl Connection {
     async fn prepare_batch<'b>(
         &self,
         init_batch: &'b Batch,
-        values: impl BatchValues,
+        values: impl LegacyBatchValues,
     ) -> Result<Cow<'b, Batch>, QueryError> {
         let mut to_prepare = HashSet::<&str>::new();
 
