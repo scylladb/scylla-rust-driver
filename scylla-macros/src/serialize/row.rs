@@ -166,7 +166,7 @@ impl<'a> Generator for ColumnSortingGenerator<'a> {
                         }
                     )*
                     _ => return ::std::result::Result::Err(mk_typck_err(
-                        #crate_path::BuiltinRowTypeCheckErrorKind::MissingValueForColumn {
+                        #crate_path::BuiltinRowTypeCheckErrorKind::NoColumnWithName {
                             name: <_ as ::std::clone::Clone>::clone(&&spec.name),
                         }
                     )),
@@ -181,7 +181,7 @@ impl<'a> Generator for ColumnSortingGenerator<'a> {
                 #(
                     if !#visited_flag_names {
                         return ::std::result::Result::Err(mk_typck_err(
-                            #crate_path::BuiltinRowTypeCheckErrorKind::ColumnMissingForValue {
+                            #crate_path::BuiltinRowTypeCheckErrorKind::ValueMissingForColumn {
                                 name: <_ as ::std::string::ToString>::to_string(#rust_field_names),
                             }
                         ));
@@ -267,7 +267,7 @@ impl<'a> Generator for ColumnOrderedGenerator<'a> {
                     }
                     None => {
                         return ::std::result::Result::Err(mk_typck_err(
-                            #crate_path::BuiltinRowTypeCheckErrorKind::ColumnMissingForValue {
+                            #crate_path::BuiltinRowTypeCheckErrorKind::ValueMissingForColumn {
                                 name: <_ as ::std::string::ToString>::to_string(#rust_field_name),
                             }
                         ));
@@ -280,7 +280,7 @@ impl<'a> Generator for ColumnOrderedGenerator<'a> {
         statements.push(parse_quote! {
             if let Some(spec) = column_iter.next() {
                 return ::std::result::Result::Err(mk_typck_err(
-                    #crate_path::BuiltinRowTypeCheckErrorKind::MissingValueForColumn {
+                    #crate_path::BuiltinRowTypeCheckErrorKind::NoColumnWithName {
                         name: <_ as ::std::clone::Clone>::clone(&spec.name),
                     }
                 ));

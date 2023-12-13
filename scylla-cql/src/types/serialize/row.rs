@@ -167,7 +167,7 @@ macro_rules! impl_serialize_row_for_map {
                 match self.get(col.name.as_str()) {
                     None => {
                         return Err(mk_typck_err::<Self>(
-                            BuiltinTypeCheckErrorKind::MissingValueForColumn {
+                            BuiltinTypeCheckErrorKind::ValueMissingForColumn {
                                 name: col.name.clone(),
                             },
                         ))
@@ -191,7 +191,7 @@ macro_rules! impl_serialize_row_for_map {
                 // Report the lexicographically first value for deterministic error messages
                 let name = unused_columns.iter().min().unwrap();
                 return Err(mk_typck_err::<Self>(
-                    BuiltinTypeCheckErrorKind::ColumnMissingForValue {
+                    BuiltinTypeCheckErrorKind::NoColumnWithName {
                         name: name.to_string(),
                     },
                 ));
@@ -513,10 +513,10 @@ pub enum BuiltinTypeCheckErrorKind {
 
     /// The Rust type provides a value for some column, but that column is not
     /// present in the statement.
-    MissingValueForColumn { name: String },
+    NoColumnWithName { name: String },
 
     /// A value required by the statement is not provided by the Rust type.
-    ColumnMissingForValue { name: String },
+    ValueMissingForColumn { name: String },
 
     /// A different column name was expected at given position.
     ColumnNameMismatch {
@@ -531,16 +531,16 @@ impl Display for BuiltinTypeCheckErrorKind {
             BuiltinTypeCheckErrorKind::WrongColumnCount { actual, asked_for } => {
                 write!(f, "wrong column count: the query requires {asked_for} columns, but {actual} were provided")
             }
-            BuiltinTypeCheckErrorKind::MissingValueForColumn { name } => {
-                write!(
-                    f,
-                    "value for column {name} was not provided, but the query requires it"
-                )
-            }
-            BuiltinTypeCheckErrorKind::ColumnMissingForValue { name } => {
+            BuiltinTypeCheckErrorKind::NoColumnWithName { name } => {
                 write!(
                     f,
                     "value for column {name} was provided, but there is no bind marker for this column in the query"
+                )
+            }
+            BuiltinTypeCheckErrorKind::ValueMissingForColumn { name } => {
+                write!(
+                    f,
+                    "value for column {name} was not provided, but the query requires it"
                 )
             }
             BuiltinTypeCheckErrorKind::ColumnNameMismatch { rust_column_name, db_column_name } => write!(
@@ -947,7 +947,7 @@ mod tests {
         let err = err.0.downcast_ref::<BuiltinTypeCheckError>().unwrap();
         assert!(matches!(
             err.kind,
-            BuiltinTypeCheckErrorKind::ColumnMissingForValue { .. }
+            BuiltinTypeCheckErrorKind::ValueMissingForColumn { .. }
         ));
 
         let spec_duplicate_column = [
@@ -965,7 +965,7 @@ mod tests {
         let err = err.0.downcast_ref::<BuiltinTypeCheckError>().unwrap();
         assert!(matches!(
             err.kind,
-            BuiltinTypeCheckErrorKind::MissingValueForColumn { .. }
+            BuiltinTypeCheckErrorKind::NoColumnWithName { .. }
         ));
 
         let spec_wrong_type = [
@@ -1074,7 +1074,7 @@ mod tests {
         let err = err.0.downcast_ref::<BuiltinTypeCheckError>().unwrap();
         assert!(matches!(
             err.kind,
-            BuiltinTypeCheckErrorKind::ColumnMissingForValue { .. }
+            BuiltinTypeCheckErrorKind::ValueMissingForColumn { .. }
         ));
 
         let spec_duplicate_column = [
@@ -1092,7 +1092,7 @@ mod tests {
         let err = err.0.downcast_ref::<BuiltinTypeCheckError>().unwrap();
         assert!(matches!(
             err.kind,
-            BuiltinTypeCheckErrorKind::MissingValueForColumn { .. }
+            BuiltinTypeCheckErrorKind::NoColumnWithName { .. }
         ));
 
         let spec_wrong_type = [

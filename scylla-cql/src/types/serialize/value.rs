@@ -613,7 +613,7 @@ fn serialize_udt<'b>(
         let fname = indexed_fields.keys().min().unwrap();
         return Err(mk_typck_err::<CqlValue>(
             typ,
-            UdtTypeCheckErrorKind::UnexpectedFieldInDestination {
+            UdtTypeCheckErrorKind::NoSuchFieldInUdt {
                 field_name: fname.to_string(),
             },
         ));
@@ -1309,11 +1309,11 @@ pub enum UdtTypeCheckErrorKind {
     /// The name of the UDT being serialized to does not match.
     NameMismatch { keyspace: String, type_name: String },
 
-    /// One of the fields that is required to be present by the Rust struct was not present in the CQL UDT type.
-    MissingField { field_name: String },
+    /// The Rust data does not have a field that is required in the CQL UDT type.
+    ValueMissingForUdtField { field_name: String },
 
-    /// The Rust data contains a field that is not present in the UDT
-    UnexpectedFieldInDestination { field_name: String },
+    /// The Rust data contains a field that is not present in the UDT.
+    NoSuchFieldInUdt { field_name: String },
 
     /// A different field name was expected at given position.
     FieldNameMismatch {
@@ -1336,12 +1336,12 @@ impl Display for UdtTypeCheckErrorKind {
                 f,
                 "the Rust UDT name does not match the actual CQL UDT name ({keyspace}.{type_name})"
             ),
-            UdtTypeCheckErrorKind::MissingField { field_name } => {
-                write!(f, "the field {field_name} is missing from the CQL UDT type")
+            UdtTypeCheckErrorKind::ValueMissingForUdtField { field_name } => {
+                write!(f, "the field {field_name} is missing in the Rust data but is required by the CQL UDT type")
             }
-            UdtTypeCheckErrorKind::UnexpectedFieldInDestination { field_name } => write!(
+            UdtTypeCheckErrorKind::NoSuchFieldInUdt { field_name } => write!(
                 f,
-                "the field {field_name} present in the Rust data is not present in the CQL type"
+                "the field {field_name} that is present in the Rust data is not present in the CQL type"
             ),
             UdtTypeCheckErrorKind::FieldNameMismatch { rust_field_name, db_field_name } => write!(
                 f,
@@ -1584,7 +1584,9 @@ mod tests {
         let err = err.0.downcast_ref::<BuiltinTypeCheckError>().unwrap();
         assert!(matches!(
             err.kind,
-            BuiltinTypeCheckErrorKind::UdtError(UdtTypeCheckErrorKind::MissingField { .. })
+            BuiltinTypeCheckErrorKind::UdtError(
+                UdtTypeCheckErrorKind::ValueMissingForUdtField { .. }
+            )
         ));
 
         let typ_unexpected_field = ColumnType::UserDefinedType {
@@ -1608,9 +1610,7 @@ mod tests {
         let err = err.0.downcast_ref::<BuiltinTypeCheckError>().unwrap();
         assert!(matches!(
             err.kind,
-            BuiltinTypeCheckErrorKind::UdtError(
-                UdtTypeCheckErrorKind::UnexpectedFieldInDestination { .. }
-            )
+            BuiltinTypeCheckErrorKind::UdtError(UdtTypeCheckErrorKind::NoSuchFieldInUdt { .. })
         ));
 
         let typ_wrong_type = ColumnType::UserDefinedType {
@@ -1788,7 +1788,9 @@ mod tests {
         let err = err.0.downcast_ref::<BuiltinTypeCheckError>().unwrap();
         assert!(matches!(
             err.kind,
-            BuiltinTypeCheckErrorKind::UdtError(UdtTypeCheckErrorKind::MissingField { .. })
+            BuiltinTypeCheckErrorKind::UdtError(
+                UdtTypeCheckErrorKind::ValueMissingForUdtField { .. }
+            )
         ));
 
         let typ_unexpected_field = ColumnType::UserDefinedType {
@@ -1812,9 +1814,7 @@ mod tests {
         let err = err.0.downcast_ref::<BuiltinTypeCheckError>().unwrap();
         assert!(matches!(
             err.kind,
-            BuiltinTypeCheckErrorKind::UdtError(
-                UdtTypeCheckErrorKind::UnexpectedFieldInDestination { .. }
-            )
+            BuiltinTypeCheckErrorKind::UdtError(UdtTypeCheckErrorKind::NoSuchFieldInUdt { .. })
         ));
 
         let typ_unexpected_field = ColumnType::UserDefinedType {

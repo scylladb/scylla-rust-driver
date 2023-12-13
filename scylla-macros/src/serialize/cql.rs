@@ -189,7 +189,7 @@ impl<'a> Generator for FieldSortingGenerator<'a> {
                         }
                     )*
                     _ => return ::std::result::Result::Err(mk_typck_err(
-                        #crate_path::UdtTypeCheckErrorKind::UnexpectedFieldInDestination {
+                        #crate_path::UdtTypeCheckErrorKind::NoSuchFieldInUdt {
                             field_name: <_ as ::std::clone::Clone>::clone(field_name),
                         }
                     )),
@@ -204,7 +204,7 @@ impl<'a> Generator for FieldSortingGenerator<'a> {
                 #(
                     if !#visited_flag_names {
                         return ::std::result::Result::Err(mk_typck_err(
-                            #crate_path::UdtTypeCheckErrorKind::MissingField {
+                            #crate_path::UdtTypeCheckErrorKind::ValueMissingForUdtField {
                                 field_name: <_ as ::std::string::ToString>::to_string(#rust_field_names),
                             }
                         ));
@@ -299,7 +299,7 @@ impl<'a> Generator for FieldOrderedGenerator<'a> {
                     }
                     None => {
                         return ::std::result::Result::Err(mk_typck_err(
-                            #crate_path::UdtTypeCheckErrorKind::MissingField {
+                            #crate_path::UdtTypeCheckErrorKind::ValueMissingForUdtField {
                                 field_name: <_ as ::std::string::ToString>::to_string(#rust_field_name),
                             }
                         ));
@@ -312,7 +312,7 @@ impl<'a> Generator for FieldOrderedGenerator<'a> {
         statements.push(parse_quote! {
             if let Some((field_name, typ)) = field_iter.next() {
                 return ::std::result::Result::Err(mk_typck_err(
-                    #crate_path::UdtTypeCheckErrorKind::UnexpectedFieldInDestination {
+                    #crate_path::UdtTypeCheckErrorKind::NoSuchFieldInUdt {
                         field_name: <_ as ::std::clone::Clone>::clone(field_name),
                     }
                 ));
