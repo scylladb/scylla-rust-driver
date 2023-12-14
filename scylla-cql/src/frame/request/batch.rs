@@ -1,11 +1,18 @@
 use bytes::{Buf, BufMut};
 use std::{borrow::Cow, convert::TryInto};
 
-use crate::frame::{
-    frame_errors::ParseError,
-    request::{RequestOpcode, SerializableRequest},
-    types::{self, SerialConsistency},
-    value::{LegacyBatchValues, LegacyBatchValuesIterator, LegacySerializedValues},
+use crate::{
+    frame::{
+        frame_errors::ParseError,
+        request::{RequestOpcode, SerializableRequest},
+        types::{self, SerialConsistency},
+        value::SerializeValuesError,
+    },
+    types::serialize::{
+        raw_batch::{RawBatchValues, RawBatchValuesIterator},
+        row::SerializedValues,
+        RowWriter, SerializationError,
+    },
 };
 
 use super::DeserializableRequest;
@@ -20,7 +27,7 @@ pub struct Batch<'b, Statement, Values>
 where
     BatchStatement<'b>: From<&'b Statement>,
     Statement: Clone,
-    Values: LegacyBatchValues,
+    Values: RawBatchValues,
 {
     pub statements: Cow<'b, [Statement]>,
     pub batch_type: BatchType,
@@ -72,7 +79,7 @@ impl<Statement, Values> SerializableRequest for Batch<'_, Statement, Values>
 where
     for<'s> BatchStatement<'s>: From<&'s Statement>,
     Statement: Clone,
-    Values: LegacyBatchValues,
+    Values: RawBatchValues,
 {
     const OPCODE: RequestOpcode = RequestOpcode::Batch;
 
@@ -93,9 +100,23 @@ where
         let mut value_lists = self.values.batch_values_iter();
         for (idx, statement) in self.statements.iter().enumerate() {
             BatchStatement::from(statement).serialize(buf)?;
+
+            // Reserve two bytes for length
+            let length_pos = buf.len();
+            buf.extend_from_slice(&[0, 0]);
+            let mut row_writer = RowWriter::new(buf);
             value_lists
-                .write_next_to_request(buf)
+                .serialize_next(&mut row_writer)
                 .ok_or_else(|| counts_mismatch_err(idx, self.statements.len()))??;
+            // Go back and put the length
+            let count: u16 = match row_writer.value_count().try_into() {
+                Ok(n) => n,
+                Err(_) => {
+                    return Err(SerializationError::new(SerializeValuesError::TooManyValues).into())
+                }
+            };
+            buf[length_pos..length_pos + 2].copy_from_slice(&count.to_be_bytes());
+
             n_serialized_statements += 1;
         }
         // At this point, we have all statements serialized. If any values are still left, we have a mismatch.
@@ -186,7 +207,7 @@ impl<'s, 'b> From<&'s BatchStatement<'b>> for BatchStatement<'s> {
     }
 }
 
-impl<'b> DeserializableRequest for Batch<'b, BatchStatement<'b>, Vec<LegacySerializedValues>> {
+impl<'b> DeserializableRequest for Batch<'b, BatchStatement<'b>, Vec<SerializedValues>> {
     fn deserialize(buf: &mut &[u8]) -> Result<Self, ParseError> {
         let batch_type = buf.get_u8().try_into()?;
 
@@ -196,7 +217,7 @@ impl<'b> DeserializableRequest for Batch<'b, BatchStatement<'b>, Vec<LegacySeria
                 let batch_statement = BatchStatement::deserialize(buf)?;
 
                 // As stated in CQL protocol v4 specification, values names in Batch are broken and should be never used.
-                let values = LegacySerializedValues::new_from_frame(buf, false)?;
+                let values = SerializedValues::new_from_frame(buf)?;
 
                 Ok((batch_statement, values))
             })
@@ -233,7 +254,7 @@ impl<'b> DeserializableRequest for Batch<'b, BatchStatement<'b>, Vec<LegacySeria
             .then(|| types::read_long(buf))
             .transpose()?;
 
-        let (statements, values): (Vec<BatchStatement>, Vec<LegacySerializedValues>) =
+        let (statements, values): (Vec<BatchStatement>, Vec<SerializedValues>) =
             statements_with_values.into_iter().unzip();
 
         Ok(Self {

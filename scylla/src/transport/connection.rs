@@ -4,7 +4,9 @@ use scylla_cql::errors::TranslationError;
 use scylla_cql::frame::request::options::Options;
 use scylla_cql::frame::response::Error;
 use scylla_cql::frame::types::SerialConsistency;
-use scylla_cql::types::serialize::row::SerializedValues;
+use scylla_cql::types::serialize::batch::{BatchValues, BatchValuesIterator};
+use scylla_cql::types::serialize::raw_batch::RawBatchValuesAdapter;
+use scylla_cql::types::serialize::row::{RowSerializationContext, SerializedValues};
 use socket2::{SockRef, TcpKeepalive};
 use tokio::io::{split, AsyncRead, AsyncWrite, AsyncWriteExt, BufReader, BufWriter};
 use tokio::net::{TcpSocket, TcpStream};
@@ -53,7 +55,6 @@ use crate::frame::{
     request::{self, batch, execute, query, register, SerializableRequest},
     response::{event::Event, result, NonErrorResponse, Response, ResponseOpcode},
     server_event_type::EventType,
-    value::{LegacyBatchValues, LegacyBatchValuesIterator},
     FrameParams, SerializedRequest,
 };
 use crate::query::Query;
@@ -763,7 +764,7 @@ impl Connection {
     pub(crate) async fn batch(
         &self,
         batch: &Batch,
-        values: impl LegacyBatchValues,
+        values: impl BatchValues,
     ) -> Result<QueryResult, QueryError> {
         self.batch_with_consistency(
             batch,
@@ -779,11 +780,20 @@ impl Connection {
     pub(crate) async fn batch_with_consistency(
         &self,
         init_batch: &Batch,
-        values: impl LegacyBatchValues,
+        values: impl BatchValues,
         consistency: Consistency,
         serial_consistency: Option<SerialConsistency>,
     ) -> Result<QueryResult, QueryError> {
         let batch = self.prepare_batch(init_batch, &values).await?;
+
+        let contexts = batch.statements.iter().map(|bs| match bs {
+            BatchStatement::Query(_) => RowSerializationContext::empty(),
+            BatchStatement::PreparedStatement(ps) => {
+                RowSerializationContext::from_prepared(ps.get_prepared_metadata())
+            }
+        });
+
+        let values = RawBatchValuesAdapter::new(values, contexts);
 
         let batch_frame = batch::Batch {
             statements: Cow::Borrowed(&batch.statements),
@@ -831,7 +841,7 @@ impl Connection {
     async fn prepare_batch<'b>(
         &self,
         init_batch: &'b Batch,
-        values: impl LegacyBatchValues,
+        values: impl BatchValues,
     ) -> Result<Cow<'b, Batch>, QueryError> {
         let mut to_prepare = HashSet::<&str>::new();
 
@@ -839,11 +849,8 @@ impl Connection {
             let mut values_iter = values.batch_values_iter();
             for stmt in &init_batch.statements {
                 if let BatchStatement::Query(query) = stmt {
-                    let value = values_iter.next_serialized().transpose()?;
-                    if let Some(v) = value {
-                        if v.len() > 0 {
-                            to_prepare.insert(&query.contents);
-                        }
+                    if let Some(false) = values_iter.is_empty_next() {
+                        to_prepare.insert(&query.contents);
                     }
                 } else {
                     values_iter.skip_next();

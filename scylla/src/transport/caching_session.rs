@@ -1,5 +1,4 @@
 use crate::batch::{Batch, BatchStatement};
-use crate::frame::value::LegacyBatchValues;
 use crate::prepared_statement::PreparedStatement;
 use crate::query::Query;
 use crate::transport::errors::QueryError;
@@ -10,6 +9,7 @@ use bytes::Bytes;
 use dashmap::DashMap;
 use futures::future::try_join_all;
 use scylla_cql::frame::response::result::PreparedMetadata;
+use scylla_cql::types::serialize::batch::BatchValues;
 use scylla_cql::types::serialize::row::SerializeRow;
 use std::collections::hash_map::RandomState;
 use std::hash::BuildHasher;
@@ -108,7 +108,7 @@ where
     pub async fn batch(
         &self,
         batch: &Batch,
-        values: impl LegacyBatchValues,
+        values: impl BatchValues,
     ) -> Result<QueryResult, QueryError> {
         let all_prepared: bool = batch
             .statements

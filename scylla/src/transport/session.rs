@@ -1,6 +1,7 @@
 //! `Session` is the main object used in the driver.\
 //! It manages all connections to the cluster and allows to perform queries.
 
+use crate::batch::batch_values;
 #[cfg(feature = "cloud")]
 use crate::cloud::CloudConfig;
 
@@ -16,7 +17,8 @@ use itertools::{Either, Itertools};
 pub use scylla_cql::errors::TranslationError;
 use scylla_cql::frame::response::result::{deser_cql_value, ColumnSpec, Rows};
 use scylla_cql::frame::response::NonErrorResponse;
-use scylla_cql::types::serialize::row::SerializeRow;
+use scylla_cql::types::serialize::batch::{BatchValues, BatchValuesIterator};
+use scylla_cql::types::serialize::row::{RowSerializationContext, SerializeRow, SerializedValues};
 use std::borrow::Borrow;
 use std::collections::HashMap;
 use std::fmt::Display;
@@ -47,9 +49,6 @@ use super::NodeRef;
 use crate::cql_to_rust::FromRow;
 use crate::frame::response::cql_to_rust::FromRowError;
 use crate::frame::response::result;
-use crate::frame::value::{
-    LegacyBatchValues, LegacyBatchValuesFirstSerialized, LegacyBatchValuesIterator,
-};
 use crate::prepared_statement::PreparedStatement;
 use crate::query::Query;
 use crate::routing::Token;
@@ -1167,7 +1166,7 @@ impl Session {
     pub async fn batch(
         &self,
         batch: &Batch,
-        values: impl LegacyBatchValues,
+        values: impl BatchValues,
     ) -> Result<QueryResult, QueryError> {
         // Shard-awareness behavior for batch will be to pick shard based on first batch statement's shard
         // If users batch statements by shard, they will be rewarded with full shard awareness
@@ -1196,15 +1195,25 @@ impl Session {
             .unwrap_or(execution_profile.serial_consistency);
 
         let (first_serialized_value, first_value_token, keyspace_name) = {
-            // Extract first serialized_value
-            let first_serialized_value =
-                values.batch_values_iter().next_serialized().transpose()?;
+            let mut values_iter = values.batch_values_iter();
 
             // The temporary "p" is necessary because lifetimes
-            let p = match (first_serialized_value, batch.statements.first()) {
-                (Some(first_serialized_value), Some(BatchStatement::PreparedStatement(ps))) => {
-                    let token = ps.calculate_token(&first_serialized_value)?;
-                    (Some(first_serialized_value), token, ps.get_keyspace_name())
+            let p = match batch.statements.first() {
+                Some(BatchStatement::PreparedStatement(ps)) => {
+                    let ctx = RowSerializationContext::from_prepared(ps.get_prepared_metadata());
+                    let (first_serialized_value, did_write) =
+                        SerializedValues::from_closure(|writer| {
+                            values_iter
+                                .serialize_next(&ctx, writer)
+                                .transpose()
+                                .map(|o| o.is_some())
+                        })?;
+                    if did_write {
+                        let token = ps.calculate_token_untyped(&first_serialized_value)?;
+                        (Some(first_serialized_value), token, ps.get_keyspace_name())
+                    } else {
+                        (None, None, None)
+                    }
                 }
                 _ => (None, None, None),
             };
@@ -1221,7 +1230,7 @@ impl Session {
         // Reuse first serialized value when serializing query, and delegate to `BatchValues::write_next_to_request`
         // directly for others (if they weren't already serialized, possibly don't even allocate the `LegacySerializedValues`)
         let values =
-            LegacyBatchValuesFirstSerialized::new(&values, first_serialized_value.as_deref());
+            batch_values::new_batch_values_first_serialized(&values, first_serialized_value);
         let values_ref = &values;
 
         let span = RequestSpan::new_batch();

@@ -212,7 +212,6 @@ pub(crate) mod batch_values {
         rest: BV,
     }
 
-    #[allow(dead_code)]
     pub(crate) fn new_batch_values_first_serialized(
         rest: impl BatchValues,
         first: Option<SerializedValues>,

@@ -7,6 +7,7 @@ pub mod query;
 pub mod register;
 pub mod startup;
 
+use crate::types::serialize::row::SerializedValues;
 use crate::{frame::frame_errors::ParseError, Consistency};
 use bytes::Bytes;
 use num_enum::TryFromPrimitive;
@@ -22,7 +23,6 @@ pub use startup::Startup;
 use self::batch::BatchStatement;
 
 use super::types::SerialConsistency;
-use super::value::LegacySerializedValues;
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord, TryFromPrimitive)]
 #[repr(u8)]
@@ -59,7 +59,7 @@ pub trait DeserializableRequest: SerializableRequest + Sized {
 pub enum Request<'r> {
     Query(Query<'r>),
     Execute(Execute<'r>),
-    Batch(Batch<'r, BatchStatement<'r>, Vec<LegacySerializedValues>>),
+    Batch(Batch<'r, BatchStatement<'r>, Vec<SerializedValues>>),
 }
 
 impl<'r> Request<'r> {
@@ -190,8 +190,8 @@ mod tests {
 
             // Not execute's values, because named values are not supported in batches.
             values: vec![
-                query.parameters.values.deref().to_old_serialized_values(),
-                query.parameters.values.deref().to_old_serialized_values(),
+                query.parameters.values.deref().clone(),
+                query.parameters.values.deref().clone(),
             ],
         };
         {
@@ -262,7 +262,7 @@ mod tests {
             serial_consistency: None,
             timestamp: None,
 
-            values: vec![query.parameters.values.deref().to_old_serialized_values()],
+            values: vec![query.parameters.values.deref().clone()],
         };
         {
             let mut buf = Vec::new();
