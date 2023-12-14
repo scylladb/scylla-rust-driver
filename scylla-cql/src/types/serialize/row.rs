@@ -794,14 +794,6 @@ impl SerializedValues {
             element_count: values_num,
         })
     }
-
-    /// Temporary function, to be removed when we implement new batching API (right now it is needed in frame::request::mod.rs tests)
-    // TODO: Remove
-    pub fn to_old_serialized_values(&self) -> LegacySerializedValues {
-        let mut frame = Vec::new();
-        self.write_to_request(&mut frame);
-        LegacySerializedValues::new_from_frame(&mut frame.as_slice(), false).unwrap()
-    }
 }
 
 impl Default for SerializedValues {
