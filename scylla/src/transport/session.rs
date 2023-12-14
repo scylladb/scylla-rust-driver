@@ -1179,8 +1179,6 @@ impl Session {
                 BadQuery::TooManyQueriesInBatchStatement(batch_statements_length),
             ));
         }
-        // Extract first serialized_value
-        let first_serialized_value = values.batch_values_iter().next_serialized().transpose()?;
 
         let execution_profile = batch
             .get_execution_profile_handle()
@@ -1197,14 +1195,19 @@ impl Session {
             .serial_consistency
             .unwrap_or(execution_profile.serial_consistency);
 
-        let (first_value_token, keyspace_name) =
-            match (first_serialized_value.as_deref(), batch.statements.first()) {
+        let (first_serialized_value, first_value_token, keyspace_name) = {
+            // Extract first serialized_value
+            let first_serialized_value =
+                values.batch_values_iter().next_serialized().transpose()?;
+
+            match (first_serialized_value, batch.statements.first()) {
                 (Some(first_serialized_value), Some(BatchStatement::PreparedStatement(ps))) => {
-                    let token = ps.calculate_token(first_serialized_value)?;
-                    (token, ps.get_keyspace_name())
+                    let token = ps.calculate_token(&first_serialized_value)?;
+                    (Some(first_serialized_value), token, ps.get_keyspace_name())
                 }
-                _ => (None, None),
-            };
+                _ => (None, None, None),
+            }
+        };
         let statement_info = RoutingInfo {
             consistency,
             serial_consistency,
