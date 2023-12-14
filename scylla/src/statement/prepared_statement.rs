@@ -192,11 +192,17 @@ impl PreparedStatement {
     // For internal purposes, `PartitionKey::calculate_token()` is preferred, as `PartitionKey`
     // is either way used internally, among others for display in traces.
     pub fn calculate_token(&self, values: &impl SerializeRow) -> Result<Option<Token>, QueryError> {
-        self.extract_partition_key_and_calculate_token(
-            &self.partitioner_name,
-            &self.serialize_values(values)?,
-        )
-        .map(|opt| opt.map(|(_pk, token)| token))
+        self.calculate_token_untyped(&self.serialize_values(values)?)
+    }
+
+    // A version of calculate_token which skips serialization and uses SerializedValues directly.
+    // Not type-safe, so not exposed to users.
+    pub(crate) fn calculate_token_untyped(
+        &self,
+        values: &SerializedValues,
+    ) -> Result<Option<Token>, QueryError> {
+        self.extract_partition_key_and_calculate_token(&self.partitioner_name, values)
+            .map(|opt| opt.map(|(_pk, token)| token))
     }
 
     /// Returns the name of the keyspace this statement is operating on.
