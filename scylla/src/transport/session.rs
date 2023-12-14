@@ -1181,7 +1181,6 @@ impl Session {
         }
         // Extract first serialized_value
         let first_serialized_value = values.batch_values_iter().next_serialized().transpose()?;
-        let first_serialized_value = first_serialized_value.as_deref();
 
         let execution_profile = batch
             .get_execution_profile_handle()
@@ -1199,7 +1198,7 @@ impl Session {
             .unwrap_or(execution_profile.serial_consistency);
 
         let (first_value_token, keyspace_name) =
-            match (first_serialized_value, batch.statements.first()) {
+            match (first_serialized_value.as_deref(), batch.statements.first()) {
                 (Some(first_serialized_value), Some(BatchStatement::PreparedStatement(ps))) => {
                     let token = ps.calculate_token(first_serialized_value)?;
                     (token, ps.get_keyspace_name())
@@ -1216,7 +1215,8 @@ impl Session {
 
         // Reuse first serialized value when serializing query, and delegate to `BatchValues::write_next_to_request`
         // directly for others (if they weren't already serialized, possibly don't even allocate the `LegacySerializedValues`)
-        let values = LegacyBatchValuesFirstSerialized::new(&values, first_serialized_value);
+        let values =
+            LegacyBatchValuesFirstSerialized::new(&values, first_serialized_value.as_deref());
         let values_ref = &values;
 
         let span = RequestSpan::new_batch();
