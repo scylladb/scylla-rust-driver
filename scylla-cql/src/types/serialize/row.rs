@@ -734,6 +734,11 @@ impl SerializedValues {
         buf.put(self.serialized_values.as_slice())
     }
 
+    // Gets the serialized values as raw bytes, without the preceding u16 length.
+    pub(crate) fn get_contents(&self) -> &[u8] {
+        &self.serialized_values
+    }
+
     /// Serializes value and appends it to the list
     pub fn add_value<T: SerializeCql>(
         &mut self,
