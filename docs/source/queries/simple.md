@@ -22,6 +22,11 @@ session
 > 
 > When page size is set, `query` will return only the first page of results.
 
+> ***Warning***\
+> If the values are not empty, driver first needs to send a `PREPARE` request
+> in order to fetch information required to serialize values. This will affect
+> performance because 2 round trips will be required instead of 1.
+
 ### First argument - the query
 As the first argument `Session::query` takes anything implementing `Into<Query>`.\
 You can create a query manually to set custom options. For example to change query consistency:

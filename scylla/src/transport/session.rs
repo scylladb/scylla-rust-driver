@@ -558,6 +558,10 @@ impl Session {
     ///
     /// This is the easiest way to make a query, but performance is worse than that of prepared queries.
     ///
+    /// It is discouraged to use this method with non-empty values argument (`is_empty()` method from `SerializeRow`
+    /// trait returns false). In such case, query first needs to be prepared (on a single connection), so
+    /// driver will perform 2 round trips instead of 1. Please use [`Session::execute()`] instead.
+    ///
     /// See [the book](https://rust-driver.docs.scylladb.com/stable/queries/simple.html) for more information
     /// # Arguments
     /// * `query` - query to perform, can be just a `&str` or the [Query] struct.
@@ -608,6 +612,11 @@ impl Session {
     }
 
     /// Queries the database with a custom paging state.
+    ///
+    /// It is discouraged to use this method with non-empty values argument (`is_empty()` method from `SerializeRow`
+    /// trait returns false). In such case, query first needs to be prepared (on a single connection), so
+    /// driver will perform 2 round trips instead of 1. Please use [`Session::execute_paged()`] instead.
+    ///
     /// # Arguments
     ///
     /// * `query` - query to be performed
@@ -748,6 +757,10 @@ impl Session {
     ///
     /// Returns an async iterator (stream) over all received rows\
     /// Page size can be specified in the [Query] passed to the function
+    ///
+    /// It is discouraged to use this method with non-empty values argument (`is_empty()` method from `SerializeRow`
+    /// trait returns false). In such case, query first needs to be prepared (on a single connection), so
+    /// driver will initially perform 2 round trips instead of 1. Please use [`Session::execute_iter()`] instead.
     ///
     /// See [the book](https://rust-driver.docs.scylladb.com/stable/queries/paged.html) for more information
     ///
@@ -1127,6 +1140,11 @@ impl Session {
     /// Batch doesn't return any rows
     ///
     /// Batch values must contain values for each of the queries
+    ///
+    /// Avoid using non-empty values (`SerializeRow::is_empty()` return false) for simple queries
+    /// inside the batch. Such queries will first need to be prepared, so the driver will need to
+    /// send (numer_of_unprepared_queries_with_values + 1) requests instead of 1 request, severly
+    /// affecting performance.
     ///
     /// See [the book](https://rust-driver.docs.scylladb.com/stable/queries/batch.html) for more information
     ///
