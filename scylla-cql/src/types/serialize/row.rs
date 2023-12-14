@@ -34,6 +34,13 @@ impl<'a> RowSerializationContext<'a> {
         }
     }
 
+    /// Constructs an empty `RowSerializationContext`, as if for a statement
+    /// with no bind markers.
+    #[inline]
+    pub const fn empty() -> Self {
+        Self { columns: &[] }
+    }
+
     /// Returns column/bind marker specifications for given query.
     #[inline]
     pub fn columns(&self) -> &'a [ColumnSpec] {
