@@ -197,3 +197,93 @@ impl<'a: 'b, 'b> From<&'a BatchStatement>
         }
     }
 }
+
+pub(crate) mod batch_values {
+    use scylla_cql::types::serialize::batch::BatchValues;
+    use scylla_cql::types::serialize::batch::BatchValuesIterator;
+    use scylla_cql::types::serialize::row::RowSerializationContext;
+    use scylla_cql::types::serialize::row::SerializedValues;
+    use scylla_cql::types::serialize::{RowWriter, SerializationError};
+
+    struct BatchValuesFirstSerialized<BV> {
+        // Contains the first value of BV in a serialized form.
+        // The first value in the iterator returned from `rest` should be skipped!
+        first: Option<SerializedValues>,
+        rest: BV,
+    }
+
+    #[allow(dead_code)]
+    pub(crate) fn new_batch_values_first_serialized(
+        rest: impl BatchValues,
+        first: Option<SerializedValues>,
+    ) -> impl BatchValues {
+        BatchValuesFirstSerialized { first, rest }
+    }
+
+    impl<BV> BatchValues for BatchValuesFirstSerialized<BV>
+    where
+        BV: BatchValues,
+    {
+        type BatchValuesIter<'r> = BatchValuesFirstSerializedIterator<'r, BV::BatchValuesIter<'r>>
+    where
+        Self: 'r;
+
+        fn batch_values_iter(&self) -> Self::BatchValuesIter<'_> {
+            BatchValuesFirstSerializedIterator {
+                first: self.first.as_ref(),
+                rest: self.rest.batch_values_iter(),
+            }
+        }
+    }
+
+    struct BatchValuesFirstSerializedIterator<'f, BVI> {
+        first: Option<&'f SerializedValues>,
+        rest: BVI,
+    }
+
+    impl<'f, BVI> BatchValuesIterator<'f> for BatchValuesFirstSerializedIterator<'f, BVI>
+    where
+        BVI: BatchValuesIterator<'f>,
+    {
+        #[inline]
+        fn serialize_next(
+            &mut self,
+            ctx: &RowSerializationContext<'_>,
+            writer: &mut RowWriter,
+        ) -> Option<Result<(), SerializationError>> {
+            match self.first.take() {
+                Some(sr) => {
+                    writer.append_serialize_row(sr);
+                    self.rest.skip_next();
+                    Some(Ok(()))
+                }
+                None => self.rest.serialize_next(ctx, writer),
+            }
+        }
+
+        #[inline]
+        fn is_empty_next(&mut self) -> Option<bool> {
+            match self.first.take() {
+                Some(s) => {
+                    self.rest.skip_next();
+                    Some(s.is_empty())
+                }
+                None => self.rest.is_empty_next(),
+            }
+        }
+
+        #[inline]
+        fn skip_next(&mut self) -> Option<()> {
+            self.first = None;
+            self.rest.skip_next()
+        }
+
+        #[inline]
+        fn count(self) -> usize
+        where
+            Self: Sized,
+        {
+            self.rest.count()
+        }
+    }
+}
