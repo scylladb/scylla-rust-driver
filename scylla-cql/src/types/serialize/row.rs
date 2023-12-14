@@ -691,16 +691,14 @@ impl SerializedValues {
         row: &T,
     ) -> Result<Self, SerializationError> {
         let mut data = Vec::new();
-        let element_count = {
-            let mut writer = RowWriter::new(&mut data);
-            row.serialize(ctx, &mut writer)?;
-            match writer.value_count().try_into() {
-                Ok(n) => n,
-                Err(_) => {
-                    return Err(SerializationError(Arc::new(
-                        SerializeValuesError::TooManyValues,
-                    )))
-                }
+        let mut writer = RowWriter::new(&mut data);
+        row.serialize(ctx, &mut writer)?;
+        let element_count = match writer.value_count().try_into() {
+            Ok(n) => n,
+            Err(_) => {
+                return Err(SerializationError(Arc::new(
+                    SerializeValuesError::TooManyValues,
+                )))
             }
         };
 
