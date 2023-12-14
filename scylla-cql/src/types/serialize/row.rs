@@ -690,9 +690,17 @@ impl SerializedValues {
         ctx: &RowSerializationContext,
         row: &T,
     ) -> Result<Self, SerializationError> {
+        Self::from_closure(|writer| row.serialize(ctx, writer)).map(|(sr, _)| sr)
+    }
+
+    /// Constructs `SerializedValues` via given closure.
+    pub fn from_closure<F, R>(f: F) -> Result<(Self, R), SerializationError>
+    where
+        F: FnOnce(&mut RowWriter) -> Result<R, SerializationError>,
+    {
         let mut data = Vec::new();
         let mut writer = RowWriter::new(&mut data);
-        row.serialize(ctx, &mut writer)?;
+        let ret = f(&mut writer)?;
         let element_count = match writer.value_count().try_into() {
             Ok(n) => n,
             Err(_) => {
@@ -702,10 +710,13 @@ impl SerializedValues {
             }
         };
 
-        Ok(SerializedValues {
-            serialized_values: data,
-            element_count,
-        })
+        Ok((
+            SerializedValues {
+                serialized_values: data,
+                element_count,
+            },
+            ret,
+        ))
     }
 
     /// Returns `true` if the row contains no elements.
