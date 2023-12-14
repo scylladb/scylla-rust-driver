@@ -199,11 +199,61 @@ impl<'a: 'b, 'b> From<&'a BatchStatement>
 }
 
 pub(crate) mod batch_values {
+    use scylla_cql::errors::QueryError;
     use scylla_cql::types::serialize::batch::BatchValues;
     use scylla_cql::types::serialize::batch::BatchValuesIterator;
     use scylla_cql::types::serialize::row::RowSerializationContext;
     use scylla_cql::types::serialize::row::SerializedValues;
     use scylla_cql::types::serialize::{RowWriter, SerializationError};
+
+    use crate::routing::Token;
+
+    use super::BatchStatement;
+
+    // Takes an optional reference to the first statement in the batch and
+    // the batch values, and tries to compute the token for the statement.
+    // Returns the (optional) token and batch values. If the function needed
+    // to serialize values for the first statement, the returned batch values
+    // will cache the results of the serialization.
+    //
+    // NOTE: Batch values returned by this function might not type check
+    // the first statement when it is serialized! However, if they don't,
+    // then the first row was already checked by the function. It is assumed
+    // that `statement` holds the first prepared statement of the batch (if
+    // there is one), and that it will be used later to serialize the values.
+    pub(crate) fn peek_first_token<'bv>(
+        values: impl BatchValues + 'bv,
+        statement: Option<&BatchStatement>,
+    ) -> Result<(Option<Token>, impl BatchValues + 'bv), QueryError> {
+        let mut values_iter = values.batch_values_iter();
+        let (token, first_values) = match statement {
+            Some(BatchStatement::PreparedStatement(ps)) => {
+                let ctx = RowSerializationContext::from_prepared(ps.get_prepared_metadata());
+                let (first_values, did_write) = SerializedValues::from_closure(|writer| {
+                    values_iter
+                        .serialize_next(&ctx, writer)
+                        .transpose()
+                        .map(|o| o.is_some())
+                })?;
+                if did_write {
+                    let token = ps.calculate_token_untyped(&first_values)?;
+                    (token, Some(first_values))
+                } else {
+                    (None, None)
+                }
+            }
+            _ => (None, None),
+        };
+
+        // Need to do it explicitly, otherwise the next line will complain
+        // that `values_iter` still borrows `values`.
+        std::mem::drop(values_iter);
+
+        // Reuse the already serialized first value via `BatchValuesFirstSerialized`.
+        let values = BatchValuesFirstSerialized::new(values, first_values);
+
+        Ok((token, values))
+    }
 
     struct BatchValuesFirstSerialized<BV> {
         // Contains the first value of BV in a serialized form.
@@ -212,11 +262,10 @@ pub(crate) mod batch_values {
         rest: BV,
     }
 
-    pub(crate) fn new_batch_values_first_serialized(
-        rest: impl BatchValues,
-        first: Option<SerializedValues>,
-    ) -> impl BatchValues {
-        BatchValuesFirstSerialized { first, rest }
+    impl<BV> BatchValuesFirstSerialized<BV> {
+        fn new(rest: BV, first: Option<SerializedValues>) -> Self {
+            Self { first, rest }
+        }
     }
 
     impl<BV> BatchValues for BatchValuesFirstSerialized<BV>

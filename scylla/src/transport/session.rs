@@ -17,8 +17,8 @@ use itertools::{Either, Itertools};
 pub use scylla_cql::errors::TranslationError;
 use scylla_cql::frame::response::result::{deser_cql_value, ColumnSpec, Rows};
 use scylla_cql::frame::response::NonErrorResponse;
-use scylla_cql::types::serialize::batch::{BatchValues, BatchValuesIterator};
-use scylla_cql::types::serialize::row::{RowSerializationContext, SerializeRow, SerializedValues};
+use scylla_cql::types::serialize::batch::BatchValues;
+use scylla_cql::types::serialize::row::SerializeRow;
 use std::borrow::Borrow;
 use std::collections::HashMap;
 use std::fmt::Display;
@@ -1194,31 +1194,15 @@ impl Session {
             .serial_consistency
             .unwrap_or(execution_profile.serial_consistency);
 
-        let (first_serialized_value, first_value_token, keyspace_name) = {
-            let mut values_iter = values.batch_values_iter();
-
-            // The temporary "p" is necessary because lifetimes
-            let p = match batch.statements.first() {
-                Some(BatchStatement::PreparedStatement(ps)) => {
-                    let ctx = RowSerializationContext::from_prepared(ps.get_prepared_metadata());
-                    let (first_serialized_value, did_write) =
-                        SerializedValues::from_closure(|writer| {
-                            values_iter
-                                .serialize_next(&ctx, writer)
-                                .transpose()
-                                .map(|o| o.is_some())
-                        })?;
-                    if did_write {
-                        let token = ps.calculate_token_untyped(&first_serialized_value)?;
-                        (Some(first_serialized_value), token, ps.get_keyspace_name())
-                    } else {
-                        (None, None, None)
-                    }
-                }
-                _ => (None, None, None),
-            };
-            p
+        let keyspace_name = match batch.statements.first() {
+            Some(BatchStatement::PreparedStatement(ps)) => ps.get_keyspace_name(),
+            _ => None,
         };
+
+        let (first_value_token, values) =
+            batch_values::peek_first_token(values, batch.statements.first())?;
+        let values_ref = &values;
+
         let statement_info = RoutingInfo {
             consistency,
             serial_consistency,
@@ -1226,12 +1210,6 @@ impl Session {
             keyspace: keyspace_name,
             is_confirmed_lwt: false,
         };
-
-        // Reuse first serialized value when serializing query, and delegate to `BatchValues::write_next_to_request`
-        // directly for others (if they weren't already serialized, possibly don't even allocate the `LegacySerializedValues`)
-        let values =
-            batch_values::new_batch_values_first_serialized(&values, first_serialized_value);
-        let values_ref = &values;
 
         let span = RequestSpan::new_batch();
 
