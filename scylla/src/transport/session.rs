@@ -1198,23 +1198,21 @@ impl Session {
             .serial_consistency
             .unwrap_or(execution_profile.serial_consistency);
 
-        let statement_info = match (first_serialized_value, batch.statements.first()) {
-            (Some(first_serialized_value), Some(BatchStatement::PreparedStatement(ps))) => {
-                RoutingInfo {
-                    consistency,
-                    serial_consistency,
-                    token: ps.calculate_token(first_serialized_value)?,
-                    keyspace: ps.get_keyspace_name(),
-                    is_confirmed_lwt: false,
+        let (first_value_token, keyspace_name) =
+            match (first_serialized_value, batch.statements.first()) {
+                (Some(first_serialized_value), Some(BatchStatement::PreparedStatement(ps))) => {
+                    let token = ps.calculate_token(first_serialized_value)?;
+                    (token, ps.get_keyspace_name())
                 }
-            }
-            _ => RoutingInfo {
-                consistency,
-                serial_consistency,
-                ..Default::default()
-            },
+                _ => (None, None),
+            };
+        let statement_info = RoutingInfo {
+            consistency,
+            serial_consistency,
+            token: first_value_token,
+            keyspace: keyspace_name,
+            is_confirmed_lwt: false,
         };
-        let first_value_token = statement_info.token;
 
         // Reuse first serialized value when serializing query, and delegate to `BatchValues::write_next_to_request`
         // directly for others (if they weren't already serialized, possibly don't even allocate the `LegacySerializedValues`)
