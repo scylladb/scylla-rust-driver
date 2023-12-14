@@ -1200,13 +1200,15 @@ impl Session {
             let first_serialized_value =
                 values.batch_values_iter().next_serialized().transpose()?;
 
-            match (first_serialized_value, batch.statements.first()) {
+            // The temporary "p" is necessary because lifetimes
+            let p = match (first_serialized_value, batch.statements.first()) {
                 (Some(first_serialized_value), Some(BatchStatement::PreparedStatement(ps))) => {
                     let token = ps.calculate_token(&first_serialized_value)?;
                     (Some(first_serialized_value), token, ps.get_keyspace_name())
                 }
                 _ => (None, None, None),
-            }
+            };
+            p
         };
         let statement_info = RoutingInfo {
             consistency,
