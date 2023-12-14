@@ -1,3 +1,5 @@
+//! Contains the [`SerializeRow`] trait and its implementations.
+
 use std::borrow::Cow;
 use std::collections::{BTreeMap, HashSet};
 use std::fmt::Display;
@@ -24,6 +26,7 @@ pub struct RowSerializationContext<'a> {
 }
 
 impl<'a> RowSerializationContext<'a> {
+    /// Creates the serialization context from prepared statement metadata.
     #[inline]
     pub fn from_prepared(prepared: &'a PreparedMetadata) -> Self {
         Self {
@@ -45,14 +48,30 @@ impl<'a> RowSerializationContext<'a> {
     }
 }
 
+/// Represents a set of values that can be sent along a CQL statement.
+///
+/// This is a low-level trait that is exposed to the specifics to the CQL
+/// protocol and usually does not have to be implemented directly. See the
+/// chapter on "Query Values" in the driver docs for information about how
+/// this trait is supposed to be used.
 pub trait SerializeRow {
     /// Serializes the row according to the information in the given context.
+    ///
+    /// It's the trait's responsibility to produce values in the order as
+    /// specified in given serialization context.
     fn serialize(
         &self,
         ctx: &RowSerializationContext<'_>,
         writer: &mut RowWriter,
     ) -> Result<(), SerializationError>;
 
+    /// Returns whether this row contains any values or not.
+    ///
+    /// This method is used before executing a simple statement in order to check
+    /// whether there are any values provided to it. If there are some, then
+    /// the query will be prepared first in order to obtain information about
+    /// the bind marker types and names so that the values can be properly
+    /// type checked and serialized.
     fn is_empty(&self) -> bool;
 }
 
@@ -167,7 +186,7 @@ macro_rules! impl_serialize_row_for_map {
                 match self.get(col.name.as_str()) {
                     None => {
                         return Err(mk_typck_err::<Self>(
-                            BuiltinTypeCheckErrorKind::MissingValueForColumn {
+                            BuiltinTypeCheckErrorKind::ValueMissingForColumn {
                                 name: col.name.clone(),
                             },
                         ))
@@ -191,7 +210,7 @@ macro_rules! impl_serialize_row_for_map {
                 // Report the lexicographically first value for deterministic error messages
                 let name = unused_columns.iter().min().unwrap();
                 return Err(mk_typck_err::<Self>(
-                    BuiltinTypeCheckErrorKind::ColumnMissingForValue {
+                    BuiltinTypeCheckErrorKind::NoColumnWithName {
                         name: name.to_string(),
                     },
                 ));
@@ -424,7 +443,8 @@ pub fn serialize_legacy_row<T: ValueList>(
             RawValue::Null => cell_writer.set_null(),
             RawValue::Unset => cell_writer.set_unset(),
             // The unwrap below will succeed because the value was successfully
-            // deserialized from the CQL format, so it must have
+            // deserialized from the CQL format, so it must have had correct
+            // size.
             RawValue::Value(v) => cell_writer.set_value(v).unwrap(),
         };
     };
@@ -432,20 +452,39 @@ pub fn serialize_legacy_row<T: ValueList>(
     if !serialized.has_names() {
         serialized.iter().for_each(append_value);
     } else {
-        let values_by_name = serialized
+        let mut values_by_name = serialized
             .iter_name_value_pairs()
-            .map(|(k, v)| (k.unwrap(), v))
+            .map(|(k, v)| (k.unwrap(), (v, false)))
             .collect::<HashMap<_, _>>();
+        let mut unused_count = values_by_name.len();
 
         for col in ctx.columns() {
-            let val = values_by_name.get(col.name.as_str()).ok_or_else(|| {
+            let (val, visited) = values_by_name.get_mut(col.name.as_str()).ok_or_else(|| {
                 SerializationError(Arc::new(
-                    ValueListToSerializeRowAdapterError::NoBindMarkerWithName {
+                    ValueListToSerializeRowAdapterError::ValueMissingForBindMarker {
                         name: col.name.clone(),
                     },
                 ))
             })?;
+            if !*visited {
+                *visited = true;
+                unused_count -= 1;
+            }
             append_value(*val);
+        }
+
+        if unused_count != 0 {
+            // Choose the lexicographically earliest name for the sake
+            // of deterministic errors
+            let name = values_by_name
+                .iter()
+                .filter_map(|(k, (_, visited))| (!visited).then_some(k))
+                .min()
+                .unwrap()
+                .to_string();
+            return Err(SerializationError::new(
+                ValueListToSerializeRowAdapterError::NoBindMarkerWithName { name },
+            ));
         }
     }
 
@@ -508,19 +547,35 @@ fn mk_ser_err_named(
 #[derive(Debug, Clone)]
 #[non_exhaustive]
 pub enum BuiltinTypeCheckErrorKind {
-    /// The Rust type expects `asked_for` column, but the query requires `actual`.
-    WrongColumnCount { actual: usize, asked_for: usize },
+    /// The Rust type expects `actual` column, but the statement requires `asked_for`.
+    WrongColumnCount {
+        /// The number of values that the Rust type provides.
+        actual: usize,
+
+        /// The number of columns that the statement requires.
+        asked_for: usize,
+    },
 
     /// The Rust type provides a value for some column, but that column is not
     /// present in the statement.
-    MissingValueForColumn { name: String },
+    NoColumnWithName {
+        /// Name of the column that is missing in the statement.
+        name: String,
+    },
 
     /// A value required by the statement is not provided by the Rust type.
-    ColumnMissingForValue { name: String },
+    ValueMissingForColumn {
+        /// Name of the column for which the Rust type doesn't
+        /// provide a value.
+        name: String,
+    },
 
     /// A different column name was expected at given position.
     ColumnNameMismatch {
+        /// Name of the column, as expected by the Rust type.
         rust_column_name: String,
+
+        /// Name of the column for which the DB requested a value.
         db_column_name: String,
     },
 }
@@ -531,16 +586,16 @@ impl Display for BuiltinTypeCheckErrorKind {
             BuiltinTypeCheckErrorKind::WrongColumnCount { actual, asked_for } => {
                 write!(f, "wrong column count: the query requires {asked_for} columns, but {actual} were provided")
             }
-            BuiltinTypeCheckErrorKind::MissingValueForColumn { name } => {
-                write!(
-                    f,
-                    "value for column {name} was not provided, but the query requires it"
-                )
-            }
-            BuiltinTypeCheckErrorKind::ColumnMissingForValue { name } => {
+            BuiltinTypeCheckErrorKind::NoColumnWithName { name } => {
                 write!(
                     f,
                     "value for column {name} was provided, but there is no bind marker for this column in the query"
+                )
+            }
+            BuiltinTypeCheckErrorKind::ValueMissingForColumn { name } => {
+                write!(
+                    f,
+                    "value for column {name} was not provided, but the query requires it"
                 )
             }
             BuiltinTypeCheckErrorKind::ColumnNameMismatch { rust_column_name, db_column_name } => write!(
@@ -557,7 +612,10 @@ impl Display for BuiltinTypeCheckErrorKind {
 pub enum BuiltinSerializationErrorKind {
     /// One of the columns failed to serialize.
     ColumnSerializationFailed {
+        /// Name of the column that failed to serialize.
         name: String,
+
+        /// The error that caused the column serialization to fail.
         err: SerializationError,
     },
 }
@@ -572,10 +630,27 @@ impl Display for BuiltinSerializationErrorKind {
     }
 }
 
+/// Describes a failure to translate the output of the [`ValueList`] legacy trait
+/// into an output of the [`SerializeRow`] trait.
 #[derive(Error, Debug)]
 pub enum ValueListToSerializeRowAdapterError {
+    /// The values generated by the [`ValueList`] trait were provided in
+    /// name-value pairs, and there is a column in the statement for which
+    /// there is no corresponding named value.
+    #[error("Missing named value for column {name}")]
+    ValueMissingForBindMarker {
+        /// Name of the bind marker for which there is no value.
+        name: String,
+    },
+
+    /// The values generated by the [`ValueList`] trait were provided in
+    /// name-value pairs, and there is a named value which does not match
+    /// to any of the columns.
     #[error("There is no bind marker with name {name}, but a value for it was provided")]
-    NoBindMarkerWithName { name: String },
+    NoBindMarkerWithName {
+        /// Name of the value that does not match to any of the bind markers.
+        name: String,
+    },
 }
 
 /// A buffer containing already serialized values.
@@ -592,6 +667,7 @@ pub struct SerializedValues {
 }
 
 impl SerializedValues {
+    /// Constructs a new, empty `SerializedValues`.
     pub const fn new() -> Self {
         SerializedValues {
             serialized_values: Vec::new(),
@@ -602,6 +678,7 @@ impl SerializedValues {
     /// A const empty instance, useful for taking references
     pub const EMPTY: &'static SerializedValues = &SerializedValues::new();
 
+    /// Constructs `SerializedValues` from given [`SerializeRow`] object.
     pub fn from_serializable<T: SerializeRow>(
         ctx: &RowSerializationContext,
         row: &T,
@@ -626,11 +703,13 @@ impl SerializedValues {
         })
     }
 
+    /// Returns `true` if the row contains no elements.
     #[inline]
     pub fn is_empty(&self) -> bool {
         self.element_count() == 0
     }
 
+    /// Returns an iterator over the values serialized into the object so far.
     #[inline]
     pub fn iter(&self) -> impl Iterator<Item = RawValue> {
         SerializedValuesIterator {
@@ -638,13 +717,13 @@ impl SerializedValues {
         }
     }
 
+    /// Returns the number of values written so far.
     #[inline]
     pub fn element_count(&self) -> u16 {
-        // We initialize first two bytes in new() and BufBackedRowWriter does too,
-        // so this unwrap is safe
         self.element_count
     }
 
+    /// Returns the total serialized size of the values written so far.
     #[inline]
     pub fn buffer_size(&self) -> usize {
         self.serialized_values.len()
@@ -695,7 +774,8 @@ impl SerializedValues {
         })
     }
 
-    // Temporary function, to be removed when we implement new batching API (right now it is needed in frame::request::mod.rs tests)
+    /// Temporary function, to be removed when we implement new batching API (right now it is needed in frame::request::mod.rs tests)
+    // TODO: Remove
     pub fn to_old_serialized_values(&self) -> LegacySerializedValues {
         let mut frame = Vec::new();
         self.write_to_request(&mut frame);
@@ -709,6 +789,7 @@ impl Default for SerializedValues {
     }
 }
 
+/// An iterator over raw values in some [`SerializedValues`].
 #[derive(Clone, Copy)]
 pub struct SerializedValuesIterator<'a> {
     serialized_values: &'a [u8],
@@ -728,10 +809,12 @@ impl<'a> Iterator for SerializedValuesIterator<'a> {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeMap;
+
     use crate::frame::response::result::{ColumnSpec, ColumnType, TableSpec};
     use crate::frame::types::RawValue;
     use crate::frame::value::{LegacySerializedValues, MaybeUnset, ValueList};
-    use crate::types::serialize::RowWriter;
+    use crate::types::serialize::{RowWriter, SerializationError};
 
     use super::{
         BuiltinSerializationError, BuiltinSerializationErrorKind, BuiltinTypeCheckError,
@@ -859,6 +942,13 @@ mod tests {
         ret
     }
 
+    fn do_serialize_err<T: SerializeRow>(t: T, columns: &[ColumnSpec]) -> SerializationError {
+        let ctx = RowSerializationContext { columns };
+        let mut ret = Vec::new();
+        let mut builder = RowWriter::new(&mut ret);
+        t.serialize(&ctx, &mut builder).unwrap_err()
+    }
+
     fn col(name: &str, typ: ColumnType) -> ColumnSpec {
         ColumnSpec {
             table_spec: TableSpec {
@@ -868,6 +958,123 @@ mod tests {
             name: name.to_string(),
             typ,
         }
+    }
+
+    fn get_typeck_err(err: &SerializationError) -> &BuiltinTypeCheckError {
+        match err.0.downcast_ref() {
+            Some(err) => err,
+            None => panic!("not a BuiltinTypeCheckError: {}", err),
+        }
+    }
+
+    fn get_ser_err(err: &SerializationError) -> &BuiltinSerializationError {
+        match err.0.downcast_ref() {
+            Some(err) => err,
+            None => panic!("not a BuiltinSerializationError: {}", err),
+        }
+    }
+
+    #[test]
+    fn test_tuple_errors() {
+        // Unit
+        #[allow(clippy::let_unit_value)] // The let binding below is intentional
+        let v = ();
+        let spec = [col("a", ColumnType::Text)];
+        let err = do_serialize_err(v, &spec);
+        let err = get_typeck_err(&err);
+        assert_eq!(err.rust_name, std::any::type_name::<()>());
+        assert!(matches!(
+            err.kind,
+            BuiltinTypeCheckErrorKind::WrongColumnCount {
+                actual: 0,
+                asked_for: 1,
+            }
+        ));
+
+        // Non-unit tuple
+        // Count mismatch
+        let v = ("Ala ma kota",);
+        let spec = [col("a", ColumnType::Text), col("b", ColumnType::Text)];
+        let err = do_serialize_err(v, &spec);
+        let err = get_typeck_err(&err);
+        assert_eq!(err.rust_name, std::any::type_name::<(&str,)>());
+        assert!(matches!(
+            err.kind,
+            BuiltinTypeCheckErrorKind::WrongColumnCount {
+                actual: 1,
+                asked_for: 2,
+            }
+        ));
+
+        // Serialization of one of the element fails
+        let v = ("Ala ma kota", 123_i32);
+        let spec = [col("a", ColumnType::Text), col("b", ColumnType::Text)];
+        let err = do_serialize_err(v, &spec);
+        let err = get_ser_err(&err);
+        assert_eq!(err.rust_name, std::any::type_name::<(&str, i32)>());
+        let BuiltinSerializationErrorKind::ColumnSerializationFailed { name, err: _ } = &err.kind;
+        assert_eq!(name, "b");
+    }
+
+    #[test]
+    fn test_slice_errors() {
+        // Non-unit tuple
+        // Count mismatch
+        let v = vec!["Ala ma kota"];
+        let spec = [col("a", ColumnType::Text), col("b", ColumnType::Text)];
+        let err = do_serialize_err(v, &spec);
+        let err = get_typeck_err(&err);
+        assert_eq!(err.rust_name, std::any::type_name::<Vec<&str>>());
+        assert!(matches!(
+            err.kind,
+            BuiltinTypeCheckErrorKind::WrongColumnCount {
+                actual: 1,
+                asked_for: 2,
+            }
+        ));
+
+        // Serialization of one of the element fails
+        let v = vec!["Ala ma kota", "Kot ma pchły"];
+        let spec = [col("a", ColumnType::Text), col("b", ColumnType::Int)];
+        let err = do_serialize_err(v, &spec);
+        let err = get_ser_err(&err);
+        assert_eq!(err.rust_name, std::any::type_name::<Vec<&str>>());
+        let BuiltinSerializationErrorKind::ColumnSerializationFailed { name, err: _ } = &err.kind;
+        assert_eq!(name, "b");
+    }
+
+    #[test]
+    fn test_map_errors() {
+        // Missing value for a bind marker
+        let v: BTreeMap<_, _> = vec![("a", 123_i32)].into_iter().collect();
+        let spec = [col("a", ColumnType::Int), col("b", ColumnType::Text)];
+        let err = do_serialize_err(v, &spec);
+        let err = get_typeck_err(&err);
+        assert_eq!(err.rust_name, std::any::type_name::<BTreeMap<&str, i32>>());
+        let BuiltinTypeCheckErrorKind::ValueMissingForColumn { name } = &err.kind else {
+            panic!("unexpected error kind: {}", err.kind)
+        };
+        assert_eq!(name, "b");
+
+        // Additional value, not present in the query
+        let v: BTreeMap<_, _> = vec![("a", 123_i32), ("b", 456_i32)].into_iter().collect();
+        let spec = [col("a", ColumnType::Int)];
+        let err = do_serialize_err(v, &spec);
+        let err = get_typeck_err(&err);
+        assert_eq!(err.rust_name, std::any::type_name::<BTreeMap<&str, i32>>());
+        let BuiltinTypeCheckErrorKind::NoColumnWithName { name } = &err.kind else {
+            panic!("unexpected error kind: {}", err.kind)
+        };
+        assert_eq!(name, "b");
+
+        // Serialization of one of the element fails
+        let v: BTreeMap<_, _> = vec![("a", 123_i32), ("b", 456_i32)].into_iter().collect();
+        let spec = [col("a", ColumnType::Int), col("b", ColumnType::Text)];
+        let err = do_serialize_err(v, &spec);
+        let err = get_ser_err(&err);
+        assert_eq!(err.rust_name, std::any::type_name::<BTreeMap<&str, i32>>());
+        let BuiltinSerializationErrorKind::ColumnSerializationFailed { name, err: _ } = &err.kind;
+        assert_eq!(name, "b");
     }
 
     // Do not remove. It's not used in tests but we keep it here to check that
@@ -947,7 +1154,7 @@ mod tests {
         let err = err.0.downcast_ref::<BuiltinTypeCheckError>().unwrap();
         assert!(matches!(
             err.kind,
-            BuiltinTypeCheckErrorKind::ColumnMissingForValue { .. }
+            BuiltinTypeCheckErrorKind::ValueMissingForColumn { .. }
         ));
 
         let spec_duplicate_column = [
@@ -965,7 +1172,7 @@ mod tests {
         let err = err.0.downcast_ref::<BuiltinTypeCheckError>().unwrap();
         assert!(matches!(
             err.kind,
-            BuiltinTypeCheckErrorKind::MissingValueForColumn { .. }
+            BuiltinTypeCheckErrorKind::NoColumnWithName { .. }
         ));
 
         let spec_wrong_type = [
@@ -1074,7 +1281,7 @@ mod tests {
         let err = err.0.downcast_ref::<BuiltinTypeCheckError>().unwrap();
         assert!(matches!(
             err.kind,
-            BuiltinTypeCheckErrorKind::ColumnMissingForValue { .. }
+            BuiltinTypeCheckErrorKind::ValueMissingForColumn { .. }
         ));
 
         let spec_duplicate_column = [
@@ -1092,7 +1299,7 @@ mod tests {
         let err = err.0.downcast_ref::<BuiltinTypeCheckError>().unwrap();
         assert!(matches!(
             err.kind,
-            BuiltinTypeCheckErrorKind::MissingValueForColumn { .. }
+            BuiltinTypeCheckErrorKind::NoColumnWithName { .. }
         ));
 
         let spec_wrong_type = [

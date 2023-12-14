@@ -36,6 +36,7 @@ pub struct ValueTooBig;
 pub struct ValueOverflow;
 
 /// Represents an unset value
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub struct Unset;
 
 /// Represents an counter value
