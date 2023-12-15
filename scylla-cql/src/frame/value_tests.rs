@@ -1,12 +1,13 @@
-use crate::frame::{response::result::CqlValue, types::RawValue, value::BatchValuesIterator};
+use crate::frame::{response::result::CqlValue, types::RawValue, value::LegacyBatchValuesIterator};
+use crate::types::serialize::batch::{BatchValues, BatchValuesIterator, LegacyBatchValuesAdapter};
 use crate::types::serialize::row::{RowSerializationContext, SerializeRow};
 use crate::types::serialize::value::SerializeCql;
 use crate::types::serialize::{CellWriter, RowWriter};
 
 use super::response::result::{ColumnSpec, ColumnType, TableSpec};
 use super::value::{
-    BatchValues, CqlDate, CqlDuration, CqlTime, CqlTimestamp, LegacySerializedValues, MaybeUnset,
-    SerializeValuesError, Unset, Value, ValueList, ValueTooBig,
+    CqlDate, CqlDuration, CqlTime, CqlTimestamp, LegacyBatchValues, LegacySerializedValues,
+    MaybeUnset, SerializeValuesError, Unset, Value, ValueList, ValueTooBig,
 };
 use bigdecimal::BigDecimal;
 use bytes::BufMut;
@@ -1178,19 +1179,79 @@ fn cow_serialized_values_value_list() {
     assert_eq!(cow_ser_values.as_ref(), serialized.as_ref());
 }
 
+fn make_batch_value_iters<'bv, BV: BatchValues + LegacyBatchValues>(
+    bv: &'bv BV,
+    adapter_bv: &'bv LegacyBatchValuesAdapter<&'bv BV>,
+) -> (
+    BV::LegacyBatchValuesIter<'bv>,
+    BV::BatchValuesIter<'bv>,
+    <LegacyBatchValuesAdapter<&'bv BV> as BatchValues>::BatchValuesIter<'bv>,
+) {
+    (
+        <BV as LegacyBatchValues>::batch_values_iter(bv),
+        <BV as BatchValues>::batch_values_iter(bv),
+        <_ as BatchValues>::batch_values_iter(adapter_bv),
+    )
+}
+
+fn serialize_batch_value_iterators<'a>(
+    (legacy_bvi, bvi, bvi_adapted): &mut (
+        impl LegacyBatchValuesIterator<'a>,
+        impl BatchValuesIterator<'a>,
+        impl BatchValuesIterator<'a>,
+    ),
+    columns: &[ColumnSpec],
+) -> Vec<u8> {
+    let mut legacy_data = Vec::new();
+    legacy_bvi
+        .write_next_to_request(&mut legacy_data)
+        .unwrap()
+        .unwrap();
+
+    fn serialize_bvi<'bv>(
+        bvi: &mut impl BatchValuesIterator<'bv>,
+        ctx: &RowSerializationContext,
+    ) -> Vec<u8> {
+        let mut data = vec![0, 0];
+        let mut writer = RowWriter::new(&mut data);
+        bvi.serialize_next(ctx, &mut writer).unwrap().unwrap();
+        let value_count: u16 = writer.value_count().try_into().unwrap();
+        data[0..2].copy_from_slice(&value_count.to_be_bytes());
+        data
+    }
+
+    let ctx = RowSerializationContext { columns };
+    let data = serialize_bvi(bvi, &ctx);
+    let adapted_data = serialize_bvi(bvi_adapted, &ctx);
+
+    assert_eq!(legacy_data, data);
+    assert_eq!(adapted_data, data);
+    data
+}
+
 #[test]
 fn slice_batch_values() {
     let batch_values: &[&[i8]] = &[&[1, 2], &[2, 3, 4, 5], &[6]];
-    let mut it = batch_values.batch_values_iter();
+    let legacy_batch_values = LegacyBatchValuesAdapter(&batch_values);
+
+    let mut iters = make_batch_value_iters(&batch_values, &legacy_batch_values);
     {
-        let mut request: Vec<u8> = Vec::new();
-        it.write_next_to_request(&mut request).unwrap().unwrap();
+        let cols = &[
+            col_spec("a", ColumnType::TinyInt),
+            col_spec("b", ColumnType::TinyInt),
+        ];
+        let request = serialize_batch_value_iterators(&mut iters, cols);
         assert_eq!(request, vec![0, 2, 0, 0, 0, 1, 1, 0, 0, 0, 1, 2]);
     }
 
     {
-        let mut request: Vec<u8> = Vec::new();
-        it.write_next_to_request(&mut request).unwrap().unwrap();
+        let cols = &[
+            col_spec("a", ColumnType::TinyInt),
+            col_spec("b", ColumnType::TinyInt),
+            col_spec("c", ColumnType::TinyInt),
+            col_spec("d", ColumnType::TinyInt),
+        ];
+        let request = serialize_batch_value_iterators(&mut iters, cols);
         assert_eq!(
             request,
             vec![0, 4, 0, 0, 0, 1, 2, 0, 0, 0, 1, 3, 0, 0, 0, 1, 4, 0, 0, 0, 1, 5]
@@ -1198,28 +1259,42 @@ fn slice_batch_values() {
     }
 
     {
-        let mut request: Vec<u8> = Vec::new();
-        it.write_next_to_request(&mut request).unwrap().unwrap();
+        let cols = &[col_spec("a", ColumnType::TinyInt)];
+        let request = serialize_batch_value_iterators(&mut iters, cols);
         assert_eq!(request, vec![0, 1, 0, 0, 0, 1, 6]);
     }
 
-    assert_eq!(it.write_next_to_request(&mut Vec::new()), None);
+    assert_eq!(iters.0.write_next_to_request(&mut Vec::new()), None);
+
+    let ctx = RowSerializationContext { columns: &[] };
+    let mut data = Vec::new();
+    let mut writer = RowWriter::new(&mut data);
+    assert!(iters.1.serialize_next(&ctx, &mut writer).is_none());
 }
 
 #[test]
 fn vec_batch_values() {
     let batch_values: Vec<Vec<i8>> = vec![vec![1, 2], vec![2, 3, 4, 5], vec![6]];
+    let legacy_batch_values = LegacyBatchValuesAdapter(&batch_values);
 
-    let mut it = batch_values.batch_values_iter();
+    let mut iters = make_batch_value_iters(&batch_values, &legacy_batch_values);
     {
-        let mut request: Vec<u8> = Vec::new();
-        it.write_next_to_request(&mut request).unwrap().unwrap();
+        let cols = &[
+            col_spec("a", ColumnType::TinyInt),
+            col_spec("b", ColumnType::TinyInt),
+        ];
+        let request = serialize_batch_value_iterators(&mut iters, cols);
         assert_eq!(request, vec![0, 2, 0, 0, 0, 1, 1, 0, 0, 0, 1, 2]);
     }
 
     {
-        let mut request: Vec<u8> = Vec::new();
-        it.write_next_to_request(&mut request).unwrap().unwrap();
+        let cols = &[
+            col_spec("a", ColumnType::TinyInt),
+            col_spec("b", ColumnType::TinyInt),
+            col_spec("c", ColumnType::TinyInt),
+            col_spec("d", ColumnType::TinyInt),
+        ];
+        let request = serialize_batch_value_iterators(&mut iters, cols);
         assert_eq!(
             request,
             vec![0, 4, 0, 0, 0, 1, 2, 0, 0, 0, 1, 3, 0, 0, 0, 1, 4, 0, 0, 0, 1, 5]
@@ -1227,19 +1302,24 @@ fn vec_batch_values() {
     }
 
     {
-        let mut request: Vec<u8> = Vec::new();
-        it.write_next_to_request(&mut request).unwrap().unwrap();
+        let cols = &[col_spec("a", ColumnType::TinyInt)];
+        let request = serialize_batch_value_iterators(&mut iters, cols);
         assert_eq!(request, vec![0, 1, 0, 0, 0, 1, 6]);
     }
 }
 
 #[test]
 fn tuple_batch_values() {
-    fn check_twoi32_tuple(tuple: impl BatchValues, size: usize) {
-        let mut it = tuple.batch_values_iter();
+    fn check_twoi32_tuple(tuple: impl BatchValues + LegacyBatchValues, size: usize) {
+        let legacy_tuple = LegacyBatchValuesAdapter(&tuple);
+        let mut iters = make_batch_value_iters(&tuple, &legacy_tuple);
         for i in 0..size {
-            let mut request: Vec<u8> = Vec::new();
-            it.write_next_to_request(&mut request).unwrap().unwrap();
+            let cols = &[
+                col_spec("a", ColumnType::Int),
+                col_spec("b", ColumnType::Int),
+            ];
+
+            let request = serialize_batch_value_iterators(&mut iters, cols);
 
             let mut expected: Vec<u8> = Vec::new();
             let i: i32 = i.try_into().unwrap();
@@ -1426,13 +1506,17 @@ fn tuple_batch_values() {
 #[allow(clippy::needless_borrow)]
 fn ref_batch_values() {
     let batch_values: &[&[i8]] = &[&[1, 2], &[2, 3, 4, 5], &[6]];
+    let cols = &[
+        col_spec("a", ColumnType::TinyInt),
+        col_spec("b", ColumnType::TinyInt),
+    ];
 
-    return check_ref_bv::<&&&&&[&[i8]]>(&&&&batch_values);
-    fn check_ref_bv<B: BatchValues>(batch_values: B) {
-        let mut it = <B as BatchValues>::batch_values_iter(&batch_values);
+    return check_ref_bv::<&&&&&[&[i8]]>(&&&&batch_values, cols);
+    fn check_ref_bv<B: BatchValues + LegacyBatchValues>(batch_values: B, cols: &[ColumnSpec]) {
+        let legacy_batch_values = LegacyBatchValuesAdapter(&batch_values);
+        let mut iters = make_batch_value_iters(&batch_values, &legacy_batch_values);
 
-        let mut request: Vec<u8> = Vec::new();
-        it.write_next_to_request(&mut request).unwrap().unwrap();
+        let request = serialize_batch_value_iterators(&mut iters, cols);
         assert_eq!(request, vec![0, 2, 0, 0, 0, 1, 1, 0, 0, 0, 1, 2]);
     }
 }
@@ -1440,24 +1524,38 @@ fn ref_batch_values() {
 #[test]
 #[allow(clippy::needless_borrow)]
 fn check_ref_tuple() {
-    fn assert_has_batch_values<BV: BatchValues>(bv: BV) {
-        let mut it = bv.batch_values_iter();
-        let mut request: Vec<u8> = Vec::new();
-        while let Some(res) = it.write_next_to_request(&mut request) {
-            res.unwrap()
+    fn assert_has_batch_values<BV: BatchValues + LegacyBatchValues>(
+        bv: BV,
+        cols: &[&[ColumnSpec]],
+    ) {
+        let legacy_bv = LegacyBatchValuesAdapter(&bv);
+        let mut iters = make_batch_value_iters(&bv, &legacy_bv);
+        for cols in cols {
+            serialize_batch_value_iterators(&mut iters, cols);
         }
     }
     let s = String::from("hello");
     let tuple: ((&str,),) = ((&s,),);
-    assert_has_batch_values::<&_>(&tuple);
+    let cols: &[&[ColumnSpec]] = &[&[col_spec("a", ColumnType::Text)]];
+    assert_has_batch_values::<&_>(&tuple, cols);
     let tuple2: ((&str, &str), (&str, &str)) = ((&s, &s), (&s, &s));
-    assert_has_batch_values::<&_>(&tuple2);
+    let cols: &[&[ColumnSpec]] = &[
+        &[
+            col_spec("a", ColumnType::Text),
+            col_spec("b", ColumnType::Text),
+        ],
+        &[
+            col_spec("a", ColumnType::Text),
+            col_spec("b", ColumnType::Text),
+        ],
+    ];
+    assert_has_batch_values::<&_>(&tuple2, cols);
 }
 
 #[test]
 fn check_batch_values_iterator_is_not_lending() {
     // This is an interesting property if we want to improve the batch shard selection heuristic
-    fn f(bv: impl BatchValues) {
+    fn f(bv: impl LegacyBatchValues) {
         let mut it = bv.batch_values_iter();
         let mut it2 = bv.batch_values_iter();
         // Make sure we can hold all these at the same time
@@ -1469,5 +1567,24 @@ fn check_batch_values_iterator_is_not_lending() {
         ];
         let _ = v;
     }
-    f(((10,), (11,)))
+    fn g(bv: impl BatchValues) {
+        let mut it = bv.batch_values_iter();
+        let mut it2 = bv.batch_values_iter();
+
+        let columns = &[col_spec("a", ColumnType::Int)];
+        let ctx = RowSerializationContext { columns };
+        let mut data = Vec::new();
+        let mut writer = RowWriter::new(&mut data);
+
+        // Make sure we can hold all these at the same time
+        let v = vec![
+            it.serialize_next(&ctx, &mut writer).unwrap().unwrap(),
+            it2.serialize_next(&ctx, &mut writer).unwrap().unwrap(),
+            it.serialize_next(&ctx, &mut writer).unwrap().unwrap(),
+            it2.serialize_next(&ctx, &mut writer).unwrap().unwrap(),
+        ];
+        let _ = v;
+    }
+    f(((10,), (11,)));
+    g(((10,), (11,)));
 }

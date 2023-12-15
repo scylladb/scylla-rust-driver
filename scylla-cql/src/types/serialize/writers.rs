@@ -2,6 +2,8 @@
 
 use thiserror::Error;
 
+use super::row::SerializedValues;
+
 /// An interface that facilitates writing values for a CQL query.
 pub struct RowWriter<'buf> {
     // Buffer that this value should be serialized to.
@@ -38,6 +40,14 @@ impl<'buf> RowWriter<'buf> {
     pub fn make_cell_writer(&mut self) -> CellWriter<'_> {
         self.value_count += 1;
         CellWriter::new(self.buf)
+    }
+
+    /// Appends the values from an existing [`SerializedValues`] object to the
+    /// current `RowWriter`.
+    #[inline]
+    pub fn append_serialize_row(&mut self, sv: &SerializedValues) {
+        self.value_count += sv.element_count() as usize;
+        self.buf.extend_from_slice(sv.get_contents())
     }
 }
 

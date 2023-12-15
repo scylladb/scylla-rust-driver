@@ -34,6 +34,13 @@ impl<'a> RowSerializationContext<'a> {
         }
     }
 
+    /// Constructs an empty `RowSerializationContext`, as if for a statement
+    /// with no bind markers.
+    #[inline]
+    pub const fn empty() -> Self {
+        Self { columns: &[] }
+    }
+
     /// Returns column/bind marker specifications for given query.
     #[inline]
     pub fn columns(&self) -> &'a [ColumnSpec] {
@@ -683,24 +690,33 @@ impl SerializedValues {
         ctx: &RowSerializationContext,
         row: &T,
     ) -> Result<Self, SerializationError> {
+        Self::from_closure(|writer| row.serialize(ctx, writer)).map(|(sr, _)| sr)
+    }
+
+    /// Constructs `SerializedValues` via given closure.
+    pub fn from_closure<F, R>(f: F) -> Result<(Self, R), SerializationError>
+    where
+        F: FnOnce(&mut RowWriter) -> Result<R, SerializationError>,
+    {
         let mut data = Vec::new();
-        let element_count = {
-            let mut writer = RowWriter::new(&mut data);
-            row.serialize(ctx, &mut writer)?;
-            match writer.value_count().try_into() {
-                Ok(n) => n,
-                Err(_) => {
-                    return Err(SerializationError(Arc::new(
-                        SerializeValuesError::TooManyValues,
-                    )))
-                }
+        let mut writer = RowWriter::new(&mut data);
+        let ret = f(&mut writer)?;
+        let element_count = match writer.value_count().try_into() {
+            Ok(n) => n,
+            Err(_) => {
+                return Err(SerializationError(Arc::new(
+                    SerializeValuesError::TooManyValues,
+                )))
             }
         };
 
-        Ok(SerializedValues {
-            serialized_values: data,
-            element_count,
-        })
+        Ok((
+            SerializedValues {
+                serialized_values: data,
+                element_count,
+            },
+            ret,
+        ))
     }
 
     /// Returns `true` if the row contains no elements.
@@ -732,6 +748,11 @@ impl SerializedValues {
     pub(crate) fn write_to_request(&self, buf: &mut impl BufMut) {
         buf.put_u16(self.element_count);
         buf.put(self.serialized_values.as_slice())
+    }
+
+    // Gets the serialized values as raw bytes, without the preceding u16 length.
+    pub(crate) fn get_contents(&self) -> &[u8] {
+        &self.serialized_values
     }
 
     /// Serializes value and appends it to the list
@@ -772,14 +793,6 @@ impl SerializedValues {
             serialized_values: values_in_frame.to_vec(),
             element_count: values_num,
         })
-    }
-
-    /// Temporary function, to be removed when we implement new batching API (right now it is needed in frame::request::mod.rs tests)
-    // TODO: Remove
-    pub fn to_old_serialized_values(&self) -> LegacySerializedValues {
-        let mut frame = Vec::new();
-        self.write_to_request(&mut frame);
-        LegacySerializedValues::new_from_frame(&mut frame.as_slice(), false).unwrap()
     }
 }
 

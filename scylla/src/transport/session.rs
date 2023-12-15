@@ -1,6 +1,7 @@
 //! `Session` is the main object used in the driver.\
 //! It manages all connections to the cluster and allows to perform queries.
 
+use crate::batch::batch_values;
 #[cfg(feature = "cloud")]
 use crate::cloud::CloudConfig;
 
@@ -16,6 +17,7 @@ use itertools::{Either, Itertools};
 pub use scylla_cql::errors::TranslationError;
 use scylla_cql::frame::response::result::{deser_cql_value, ColumnSpec, Rows};
 use scylla_cql::frame::response::NonErrorResponse;
+use scylla_cql::types::serialize::batch::BatchValues;
 use scylla_cql::types::serialize::row::SerializeRow;
 use std::borrow::Borrow;
 use std::collections::HashMap;
@@ -47,7 +49,6 @@ use super::NodeRef;
 use crate::cql_to_rust::FromRow;
 use crate::frame::response::cql_to_rust::FromRowError;
 use crate::frame::response::result;
-use crate::frame::value::{BatchValues, BatchValuesFirstSerialized, BatchValuesIterator};
 use crate::prepared_statement::PreparedStatement;
 use crate::query::Query;
 use crate::routing::Token;
@@ -1195,9 +1196,6 @@ impl Session {
                 BadQuery::TooManyQueriesInBatchStatement(batch_statements_length),
             ));
         }
-        // Extract first serialized_value
-        let first_serialized_value = values.batch_values_iter().next_serialized().transpose()?;
-        let first_serialized_value = first_serialized_value.as_deref();
 
         let execution_profile = batch
             .get_execution_profile_handle()
@@ -1214,28 +1212,22 @@ impl Session {
             .serial_consistency
             .unwrap_or(execution_profile.serial_consistency);
 
-        let statement_info = match (first_serialized_value, batch.statements.first()) {
-            (Some(first_serialized_value), Some(BatchStatement::PreparedStatement(ps))) => {
-                RoutingInfo {
-                    consistency,
-                    serial_consistency,
-                    token: ps.calculate_token(first_serialized_value)?,
-                    keyspace: ps.get_keyspace_name(),
-                    is_confirmed_lwt: false,
-                }
-            }
-            _ => RoutingInfo {
-                consistency,
-                serial_consistency,
-                ..Default::default()
-            },
+        let keyspace_name = match batch.statements.first() {
+            Some(BatchStatement::PreparedStatement(ps)) => ps.get_keyspace_name(),
+            _ => None,
         };
-        let first_value_token = statement_info.token;
 
-        // Reuse first serialized value when serializing query, and delegate to `BatchValues::write_next_to_request`
-        // directly for others (if they weren't already serialized, possibly don't even allocate the `LegacySerializedValues`)
-        let values = BatchValuesFirstSerialized::new(&values, first_serialized_value);
+        let (first_value_token, values) =
+            batch_values::peek_first_token(values, batch.statements.first())?;
         let values_ref = &values;
+
+        let statement_info = RoutingInfo {
+            consistency,
+            serial_consistency,
+            token: first_value_token,
+            keyspace: keyspace_name,
+            is_confirmed_lwt: false,
+        };
 
         let span = RequestSpan::new_batch();
 
