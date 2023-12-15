@@ -8,17 +8,25 @@ For example let's say `my_type` was created using this query:
 CREATE TYPE ks.my_type (int_val int, text_val text)
 ```
 
-To use this type in the driver, create a matching struct and derive `IntoUserType` and `FromUserType`:
+To use this type in the driver, create a matching struct and derive:
+- `SerializeCql`: in order to be able to use this struct in query parameters. \
+    This macro requires fields of UDT and struct to have matching names, but the order
+    of the fields is not required to be the same. \
+    Note: you can use different name using `rename` attribute - see `SerializeCql` macro documentation.
+- `FromUserType`:  in order to be able to use this struct in query results. \
+    This macro requires fields of UDT and struct to be in the same *ORDER*. \
+    This mismatch between `SerializeCql` and `FromUserType` requirements is a temporary situation - in the future `FromUserType` (or  the macro that replaces it) will also require matching names.
 
 ```rust
 # extern crate scylla;
 # async fn check_only_compiles() {
-use scylla::macros::{FromUserType, IntoUserType};
+use scylla::macros::{FromUserType, SerializeCql};
 
 // Define a custom struct that matches the User Defined Type created earlier.
-// Fields must be in the same order as they are in the database.
+// Fields must be in the same order as they are in the database and also
+// have the same names.
 // Wrapping a field in Option will gracefully handle null field values.
-#[derive(Debug, IntoUserType, FromUserType)]
+#[derive(Debug, FromUserType, SerializeCql)]
 struct MyType {
     int_val: i32,
     text_val: Option<String>,
@@ -27,8 +35,13 @@ struct MyType {
 ```
 
 > ***Important***\
-> Fields in the Rust struct must be defined in the same order as they are in the database.
-> When sending and receiving values, the driver will (de)serialize fields one after another, without looking at field names.
+> For deserialization, fields in the Rust struct must be defined in the same order as they are in the database.
+> When receiving values, the driver will (de)serialize fields one after another, without looking at field names.
+
+> ***Important***\
+> For serialization, by default fields in the Rust struct must be defined with the same names as they are in the database.
+> The driver will serialize the fields in the order defined by the UDT, matching Rust fields by name.
+> You can change this behaviour using macro attributes, see `SerializeCql` macro documentation for more information.
 
 Now it can be sent and received just like any other CQL value:
 ```rust
@@ -37,10 +50,10 @@ Now it can be sent and received just like any other CQL value:
 # use std::error::Error;
 # async fn check_only_compiles(session: &Session) -> Result<(), Box<dyn Error>> {
 use scylla::IntoTypedRows;
-use scylla::macros::{FromUserType, IntoUserType, SerializeCql};
+use scylla::macros::{FromUserType, SerializeCql};
 use scylla::cql_to_rust::FromCqlVal;
 
-#[derive(Debug, IntoUserType, FromUserType, SerializeCql)]
+#[derive(Debug, FromUserType, SerializeCql)]
 struct MyType {
     int_val: i32,
     text_val: Option<String>,

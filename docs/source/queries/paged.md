@@ -5,6 +5,14 @@ allow to receive the whole result page by page.
 `Session::query_iter` and `Session::execute_iter` take a [simple query](simple.md) or a [prepared query](prepared.md)
 and return an `async` iterator over result `Rows`.
 
+> ***Warning***\
+> In case of unprepared variant (`Session::query_iter`) if the values are not empty
+> driver will first fully prepare a query (which means issuing additional request to each
+> node in a cluster). This will have a performance penalty - how big it is depends on
+> the size of your cluster (more nodes - more requests) and the size of returned
+> result (more returned pages - more amortized penalty). In any case, it is preferable to
+> use `Session::execute_iter`.
+
 ### Examples
 Use `query_iter` to perform a [simple query](simple.md) with paging:
 ```rust
@@ -118,6 +126,11 @@ let res2 = session
 # Ok(())
 # }
 ```
+
+> ***Warning***\
+> If the values are not empty, driver first needs to send a `PREPARE` request
+> in order to fetch information required to serialize values. This will affect
+> performance because 2 round trips will be required instead of 1.
 
 On a `PreparedStatement`:
 ```rust
