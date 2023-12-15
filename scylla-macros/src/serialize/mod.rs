@@ -3,8 +3,9 @@ use darling::FromMeta;
 pub(crate) mod cql;
 pub(crate) mod row;
 
-#[derive(Copy, Clone, PartialEq, Eq)]
+#[derive(Copy, Clone, PartialEq, Eq, Default)]
 enum Flavor {
+    #[default]
     MatchByName,
     EnforceOrder,
 }

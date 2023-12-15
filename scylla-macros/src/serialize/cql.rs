@@ -13,7 +13,8 @@ struct Attributes {
     #[darling(rename = "crate")]
     crate_path: Option<syn::Path>,
 
-    flavor: Option<Flavor>,
+    #[darling(default)]
+    flavor: Flavor,
 }
 
 impl Attributes {
@@ -76,8 +77,8 @@ pub fn derive_serialize_cql(tokens_input: TokenStream) -> Result<syn::ItemImpl, 
     ctx.validate()?;
 
     let gen: Box<dyn Generator> = match ctx.attributes.flavor {
-        Some(Flavor::MatchByName) | None => Box::new(FieldSortingGenerator { ctx: &ctx }),
-        Some(Flavor::EnforceOrder) => Box::new(FieldOrderedGenerator { ctx: &ctx }),
+        Flavor::MatchByName => Box::new(FieldSortingGenerator { ctx: &ctx }),
+        Flavor::EnforceOrder => Box::new(FieldOrderedGenerator { ctx: &ctx }),
     };
 
     let serialize_item = gen.generate_serialize();
