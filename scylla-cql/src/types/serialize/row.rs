@@ -1381,4 +1381,52 @@ mod tests {
             .iter()
             .all(|v| v == RawValue::Value(&[0, 0, 0, 0, 0x07, 0x5b, 0xcd, 0x15])))
     }
+
+    #[derive(SerializeRow, Debug)]
+    #[scylla(crate = crate)]
+    struct TestRowWithColumnRename {
+        a: String,
+        #[scylla(rename = "x")]
+        b: i32,
+    }
+
+    #[derive(SerializeRow, Debug)]
+    #[scylla(crate = crate, flavor = "enforce_order")]
+    struct TestRowWithColumnRenameAndEnforceOrder {
+        a: String,
+        #[scylla(rename = "x")]
+        b: i32,
+    }
+
+    #[test]
+    fn test_row_serialization_with_column_rename() {
+        let spec = [col("x", ColumnType::Int), col("a", ColumnType::Text)];
+
+        let reference = do_serialize((42i32, "Ala ma kota"), &spec);
+        let row = do_serialize(
+            TestRowWithColumnRename {
+                a: "Ala ma kota".to_owned(),
+                b: 42,
+            },
+            &spec,
+        );
+
+        assert_eq!(reference, row);
+    }
+
+    #[test]
+    fn test_row_serialization_with_column_rename_and_enforce_order() {
+        let spec = [col("a", ColumnType::Text), col("x", ColumnType::Int)];
+
+        let reference = do_serialize(("Ala ma kota", 42i32), &spec);
+        let row = do_serialize(
+            TestRowWithColumnRenameAndEnforceOrder {
+                a: "Ala ma kota".to_owned(),
+                b: 42,
+            },
+            &spec,
+        );
+
+        assert_eq!(reference, row);
+    }
 }
