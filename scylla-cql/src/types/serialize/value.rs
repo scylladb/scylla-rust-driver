@@ -2434,4 +2434,43 @@ mod tests {
 
         assert_eq!(reference, udt);
     }
+
+    #[derive(SerializeCql, Debug)]
+    #[scylla(crate = crate, flavor = "enforce_order", skip_name_checks)]
+    struct TestUdtWithSkippedNameChecks {
+        a: String,
+        b: i32,
+    }
+
+    #[test]
+    fn test_udt_serialization_with_skipped_name_checks() {
+        let typ = ColumnType::UserDefinedType {
+            type_name: "typ".to_string(),
+            keyspace: "ks".to_string(),
+            field_types: vec![
+                ("a".to_string(), ColumnType::Text),
+                ("x".to_string(), ColumnType::Int),
+            ],
+        };
+
+        let mut reference = Vec::new();
+        // Total length of the struct is 23
+        reference.extend_from_slice(&23i32.to_be_bytes());
+        // Field 'a'
+        reference.extend_from_slice(&("Ala ma kota".len() as i32).to_be_bytes());
+        reference.extend_from_slice("Ala ma kota".as_bytes());
+        // Field 'x'
+        reference.extend_from_slice(&4i32.to_be_bytes());
+        reference.extend_from_slice(&42i32.to_be_bytes());
+
+        let udt = do_serialize(
+            TestUdtWithFieldRenameAndEnforceOrder {
+                a: "Ala ma kota".to_owned(),
+                b: 42,
+            },
+            &typ,
+        );
+
+        assert_eq!(reference, udt);
+    }
 }

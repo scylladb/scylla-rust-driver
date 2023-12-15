@@ -87,6 +87,15 @@ pub use scylla_macros::ValueList;
 /// macro itself, so in those cases the user must provide an alternative path
 /// to either the `scylla` or `scylla-cql` crate.
 ///
+/// `#[scylla(skip_name_checks)]
+///
+/// _Specific only to the `enforce_order` flavor._
+///
+/// Skips checking Rust field names against names of the UDT fields. With this
+/// annotation, the generated implementation will allow mismatch between Rust
+/// struct field names and UDT field names, i.e. it's OK if i-th field has a
+/// different name in Rust and in the UDT. Fields are still being type-checked.
+///
 /// # Field attributes
 ///
 /// `#[scylla(rename = "name_in_the_udt")]`
