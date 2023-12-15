@@ -2354,4 +2354,84 @@ mod tests {
             )
         ));
     }
+
+    #[derive(SerializeCql, Debug)]
+    #[scylla(crate = crate)]
+    struct TestUdtWithFieldRename {
+        a: String,
+        #[scylla(rename = "x")]
+        b: i32,
+    }
+
+    #[derive(SerializeCql, Debug)]
+    #[scylla(crate = crate, flavor = "enforce_order")]
+    struct TestUdtWithFieldRenameAndEnforceOrder {
+        a: String,
+        #[scylla(rename = "x")]
+        b: i32,
+    }
+
+    #[test]
+    fn test_udt_serialization_with_field_rename() {
+        let typ = ColumnType::UserDefinedType {
+            type_name: "typ".to_string(),
+            keyspace: "ks".to_string(),
+            field_types: vec![
+                ("x".to_string(), ColumnType::Int),
+                ("a".to_string(), ColumnType::Text),
+            ],
+        };
+
+        let mut reference = Vec::new();
+        // Total length of the struct is 23
+        reference.extend_from_slice(&23i32.to_be_bytes());
+        // Field 'x'
+        reference.extend_from_slice(&4i32.to_be_bytes());
+        reference.extend_from_slice(&42i32.to_be_bytes());
+        // Field 'a'
+        reference.extend_from_slice(&("Ala ma kota".len() as i32).to_be_bytes());
+        reference.extend_from_slice("Ala ma kota".as_bytes());
+
+        let udt = do_serialize(
+            TestUdtWithFieldRename {
+                a: "Ala ma kota".to_owned(),
+                b: 42,
+            },
+            &typ,
+        );
+
+        assert_eq!(reference, udt);
+    }
+
+    #[test]
+    fn test_udt_serialization_with_field_rename_and_enforce_order() {
+        let typ = ColumnType::UserDefinedType {
+            type_name: "typ".to_string(),
+            keyspace: "ks".to_string(),
+            field_types: vec![
+                ("a".to_string(), ColumnType::Text),
+                ("x".to_string(), ColumnType::Int),
+            ],
+        };
+
+        let mut reference = Vec::new();
+        // Total length of the struct is 23
+        reference.extend_from_slice(&23i32.to_be_bytes());
+        // Field 'a'
+        reference.extend_from_slice(&("Ala ma kota".len() as i32).to_be_bytes());
+        reference.extend_from_slice("Ala ma kota".as_bytes());
+        // Field 'x'
+        reference.extend_from_slice(&4i32.to_be_bytes());
+        reference.extend_from_slice(&42i32.to_be_bytes());
+
+        let udt = do_serialize(
+            TestUdtWithFieldRenameAndEnforceOrder {
+                a: "Ala ma kota".to_owned(),
+                b: 42,
+            },
+            &typ,
+        );
+
+        assert_eq!(reference, udt);
+    }
 }

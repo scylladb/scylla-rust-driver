@@ -46,7 +46,7 @@ pub use scylla_macros::ValueList;
 /// }
 /// ```
 ///
-/// # Attributes
+/// # Struct attributes
 ///
 /// `#[scylla(flavor = "flavor_name")]`
 ///
@@ -86,6 +86,13 @@ pub use scylla_macros::ValueList;
 /// It's not possible to automatically resolve those issues in the procedural
 /// macro itself, so in those cases the user must provide an alternative path
 /// to either the `scylla` or `scylla-cql` crate.
+/// 
+/// # Field attributes
+/// 
+/// `#[scylla(rename = "name_in_the_udt")]`
+/// 
+/// Serializes the field to the UDT struct field with given name instead of
+/// its Rust name.
 pub use scylla_macros::SerializeCql;
 
 /// Derive macro for the [`SerializeRow`](crate::types::serialize::row::SerializeRow) trait
