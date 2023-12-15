@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use darling::FromAttributes;
 use proc_macro::TokenStream;
 use proc_macro2::Span;
@@ -11,7 +13,11 @@ struct Attributes {
     #[darling(rename = "crate")]
     crate_path: Option<syn::Path>,
 
-    flavor: Option<Flavor>,
+    #[darling(default)]
+    flavor: Flavor,
+
+    #[darling(default)]
+    skip_name_checks: bool,
 }
 
 impl Attributes {
@@ -23,9 +29,30 @@ impl Attributes {
     }
 }
 
+struct Field {
+    ident: syn::Ident,
+    ty: syn::Type,
+    attrs: FieldAttributes,
+}
+
+impl Field {
+    fn field_name(&self) -> String {
+        match &self.attrs.rename {
+            Some(name) => name.clone(),
+            None => self.ident.to_string(),
+        }
+    }
+}
+
+#[derive(FromAttributes)]
+#[darling(attributes(scylla))]
+struct FieldAttributes {
+    rename: Option<String>,
+}
+
 struct Context {
     attributes: Attributes,
-    fields: Vec<syn::Field>,
+    fields: Vec<Field>,
 }
 
 pub fn derive_serialize_cql(tokens_input: TokenStream) -> Result<syn::ItemImpl, syn::Error> {
@@ -38,12 +65,23 @@ pub fn derive_serialize_cql(tokens_input: TokenStream) -> Result<syn::ItemImpl, 
     let crate_path = attributes.crate_path();
     let implemented_trait: syn::Path = parse_quote!(#crate_path::SerializeCql);
 
-    let fields = named_fields.named.iter().cloned().collect();
+    let fields = named_fields
+        .named
+        .iter()
+        .map(|f| {
+            FieldAttributes::from_attributes(&f.attrs).map(|attrs| Field {
+                ident: f.ident.clone().unwrap(),
+                ty: f.ty.clone(),
+                attrs,
+            })
+        })
+        .collect::<Result<_, _>>()?;
     let ctx = Context { attributes, fields };
+    ctx.validate(&input.ident)?;
 
     let gen: Box<dyn Generator> = match ctx.attributes.flavor {
-        Some(Flavor::MatchByName) | None => Box::new(FieldSortingGenerator { ctx: &ctx }),
-        Some(Flavor::EnforceOrder) => Box::new(FieldOrderedGenerator { ctx: &ctx }),
+        Flavor::MatchByName => Box::new(FieldSortingGenerator { ctx: &ctx }),
+        Flavor::EnforceOrder => Box::new(FieldOrderedGenerator { ctx: &ctx }),
     };
 
     let serialize_item = gen.generate_serialize();
@@ -57,6 +95,49 @@ pub fn derive_serialize_cql(tokens_input: TokenStream) -> Result<syn::ItemImpl, 
 }
 
 impl Context {
+    fn validate(&self, struct_ident: &syn::Ident) -> Result<(), syn::Error> {
+        let mut errors = darling::Error::accumulator();
+
+        if self.attributes.skip_name_checks {
+            // Skipping name checks is only available in enforce_order mode
+            if self.attributes.flavor != Flavor::EnforceOrder {
+                let err = darling::Error::custom(
+                    "the `skip_name_checks` attribute is only allowed with the `enforce_order` flavor",
+                )
+                .with_span(struct_ident);
+                errors.push(err);
+            }
+
+            // `rename` annotations don't make sense with skipped name checks
+            for field in self.fields.iter() {
+                if field.attrs.rename.is_some() {
+                    let err = darling::Error::custom(
+                        "the `rename` annotations don't make sense with `skip_name_checks` attribute",
+                    )
+                    .with_span(&field.ident);
+                    errors.push(err);
+                }
+            }
+        }
+
+        // Check for name collisions
+        let mut used_names = HashMap::<String, &Field>::new();
+        for field in self.fields.iter() {
+            let field_name = field.field_name();
+            if let Some(other_field) = used_names.get(&field_name) {
+                let other_field_ident = &other_field.ident;
+                let msg = format!("the UDT field name `{field_name}` used by this struct field is already used by field `{other_field_ident}`");
+                let err = darling::Error::custom(msg).with_span(&field.ident);
+                errors.push(err);
+            } else {
+                used_names.insert(field_name, field);
+            }
+        }
+
+        errors.finish()?;
+        Ok(())
+    }
+
     fn generate_udt_type_match(&self, err: syn::Expr) -> syn::Stmt {
         let crate_path = self.attributes.crate_path();
 
@@ -126,9 +207,11 @@ impl<'a> Generator for FieldSortingGenerator<'a> {
             .iter()
             .map(|f| f.ident.clone())
             .collect::<Vec<_>>();
-        let rust_field_names = rust_field_idents
+        let rust_field_names = self
+            .ctx
+            .fields
             .iter()
-            .map(|i| i.as_ref().unwrap().to_string())
+            .map(|f| f.field_name())
             .collect::<Vec<_>>();
         let udt_field_names = rust_field_names.clone(); // For now, it's the same
         let field_types = self.ctx.fields.iter().map(|f| &f.ty).collect::<Vec<_>>();
@@ -269,13 +352,18 @@ impl<'a> Generator for FieldOrderedGenerator<'a> {
 
         // Serialize each field
         for field in self.ctx.fields.iter() {
-            let rust_field_ident = field.ident.as_ref().unwrap();
-            let rust_field_name = rust_field_ident.to_string();
+            let rust_field_ident = &field.ident;
+            let rust_field_name = field.field_name();
             let typ = &field.ty;
+            let name_check_expression: syn::Expr = if !self.ctx.attributes.skip_name_checks {
+                parse_quote! { field_name == #rust_field_name }
+            } else {
+                parse_quote! { true }
+            };
             statements.push(parse_quote! {
                 match field_iter.next() {
                     Some((field_name, typ)) => {
-                        if field_name == #rust_field_name {
+                        if #name_check_expression {
                             let sub_builder = #crate_path::CellValueBuilder::make_sub_writer(&mut builder);
                             match <#typ as #crate_path::SerializeCql>::serialize(&self.#rust_field_ident, typ, sub_builder) {
                                 Ok(_proof) => {},

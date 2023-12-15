@@ -46,7 +46,7 @@ pub use scylla_macros::ValueList;
 /// }
 /// ```
 ///
-/// # Attributes
+/// # Struct attributes
 ///
 /// `#[scylla(flavor = "flavor_name")]`
 ///
@@ -86,6 +86,22 @@ pub use scylla_macros::ValueList;
 /// It's not possible to automatically resolve those issues in the procedural
 /// macro itself, so in those cases the user must provide an alternative path
 /// to either the `scylla` or `scylla-cql` crate.
+///
+/// `#[scylla(skip_name_checks)]
+///
+/// _Specific only to the `enforce_order` flavor._
+///
+/// Skips checking Rust field names against names of the UDT fields. With this
+/// annotation, the generated implementation will allow mismatch between Rust
+/// struct field names and UDT field names, i.e. it's OK if i-th field has a
+/// different name in Rust and in the UDT. Fields are still being type-checked.
+///
+/// # Field attributes
+///
+/// `#[scylla(rename = "name_in_the_udt")]`
+///
+/// Serializes the field to the UDT struct field with given name instead of
+/// its Rust name.
 pub use scylla_macros::SerializeCql;
 
 /// Derive macro for the [`SerializeRow`](crate::types::serialize::row::SerializeRow) trait
@@ -123,7 +139,7 @@ pub use scylla_macros::SerializeCql;
 /// }
 /// ```
 ///
-/// # Attributes
+/// # Struct attributes
 ///
 /// `#[scylla(flavor = "flavor_name")]`
 ///
@@ -163,6 +179,23 @@ pub use scylla_macros::SerializeCql;
 /// It's not possible to automatically resolve those issues in the procedural
 /// macro itself, so in those cases the user must provide an alternative path
 /// to either the `scylla` or `scylla-cql` crate.
+///
+/// `#[scylla(skip_name_checks)]
+///
+/// _Specific only to the `enforce_order` flavor._
+///
+/// Skips checking Rust field names against names of the columns / bind markers.
+/// With this annotation, the generated implementation will allow mismatch
+/// between Rust struct field names and the column / bind markers, i.e. it's
+/// OK if i-th Rust struct field has a different name than the column / bind
+/// marker. The values are still being type-checked.
+///
+/// # Field attributes
+///
+/// `#[scylla(rename = "column_or_bind_marker_name")]`
+///
+/// Serializes the field to the column / bind marker with given name instead of
+/// its Rust name.
 pub use scylla_macros::SerializeRow;
 
 // Reexports for derive(IntoUserType)
