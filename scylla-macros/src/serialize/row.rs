@@ -15,6 +15,9 @@ struct Attributes {
 
     #[darling(default)]
     flavor: Flavor,
+
+    #[darling(default)]
+    skip_name_checks: bool,
 }
 
 impl Attributes {
@@ -74,7 +77,7 @@ pub fn derive_serialize_row(tokens_input: TokenStream) -> Result<syn::ItemImpl, 
         })
         .collect::<Result<_, _>>()?;
     let ctx = Context { attributes, fields };
-    ctx.validate()?;
+    ctx.validate(&input.ident)?;
 
     let gen: Box<dyn Generator> = match ctx.attributes.flavor {
         Flavor::MatchByName => Box::new(ColumnSortingGenerator { ctx: &ctx }),
@@ -94,8 +97,30 @@ pub fn derive_serialize_row(tokens_input: TokenStream) -> Result<syn::ItemImpl, 
 }
 
 impl Context {
-    fn validate(&self) -> Result<(), syn::Error> {
+    fn validate(&self, struct_ident: &syn::Ident) -> Result<(), syn::Error> {
         let mut errors = darling::Error::accumulator();
+
+        if self.attributes.skip_name_checks {
+            // Skipping name checks is only available in enforce_order mode
+            if self.attributes.flavor != Flavor::EnforceOrder {
+                let err = darling::Error::custom(
+                    "the `skip_name_checks` attribute is only allowed with the `enforce_order` flavor",
+                )
+                .with_span(struct_ident);
+                errors.push(err);
+            }
+
+            // `rename` annotations don't make sense with skipped name checks
+            for field in self.fields.iter() {
+                if field.attrs.rename.is_some() {
+                    let err = darling::Error::custom(
+                        "the `rename` annotations don't make sense with `skip_name_checks` attribute",
+                    )
+                    .with_span(&field.ident);
+                    errors.push(err);
+                }
+            }
+        }
 
         // Check for name collisions
         let mut used_names = HashMap::<String, &Field>::new();
@@ -298,10 +323,15 @@ impl<'a> Generator for ColumnOrderedGenerator<'a> {
             let rust_field_ident = &field.ident;
             let rust_field_name = field.column_name();
             let typ = &field.ty;
+            let name_check_expression: syn::Expr = if !self.ctx.attributes.skip_name_checks {
+                parse_quote! { spec.name == #rust_field_name }
+            } else {
+                parse_quote! { true }
+            };
             statements.push(parse_quote! {
                 match column_iter.next() {
                     Some(spec) => {
-                        if spec.name == #rust_field_name {
+                        if #name_check_expression {
                             let cell_writer = #crate_path::RowWriter::make_cell_writer(writer);
                             match <#typ as #crate_path::SerializeCql>::serialize(&self.#rust_field_ident, &spec.typ, cell_writer) {
                                 Ok(_proof) => {},

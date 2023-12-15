@@ -180,6 +180,16 @@ pub use scylla_macros::SerializeCql;
 /// macro itself, so in those cases the user must provide an alternative path
 /// to either the `scylla` or `scylla-cql` crate.
 ///
+/// `#[scylla(skip_name_checks)]
+///
+/// _Specific only to the `enforce_order` flavor._
+///
+/// Skips checking Rust field names against names of the columns / bind markers.
+/// With this annotation, the generated implementation will allow mismatch
+/// between Rust struct field names and the column / bind markers, i.e. it's
+/// OK if i-th Rust struct field has a different name than the column / bind
+/// marker. The values are still being type-checked.
+///
 /// # Field attributes
 ///
 /// `#[scylla(rename = "column_or_bind_marker_name")]`

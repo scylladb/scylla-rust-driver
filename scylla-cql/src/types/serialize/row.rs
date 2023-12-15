@@ -1429,4 +1429,27 @@ mod tests {
 
         assert_eq!(reference, row);
     }
+
+    #[derive(SerializeRow, Debug)]
+    #[scylla(crate = crate, flavor = "enforce_order", skip_name_checks)]
+    struct TestRowWithSkippedNameChecks {
+        a: String,
+        b: i32,
+    }
+
+    #[test]
+    fn test_row_serialization_with_skipped_name_checks() {
+        let spec = [col("a", ColumnType::Text), col("x", ColumnType::Int)];
+
+        let reference = do_serialize(("Ala ma kota", 42i32), &spec);
+        let row = do_serialize(
+            TestRowWithSkippedNameChecks {
+                a: "Ala ma kota".to_owned(),
+                b: 42,
+            },
+            &spec,
+        );
+
+        assert_eq!(reference, row);
+    }
 }
