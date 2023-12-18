@@ -912,6 +912,26 @@ macro_rules! impl_serialize_cql_via_value {
     };
 }
 
+/// Implements [`SerializeCql`] if the type wrapped over implements [`Value`].
+///
+/// See the [`impl_serialize_cql_via_value`] macro on information about
+/// the properties of the [`SerializeCql`] implementation.
+pub struct ValueAdapter<T>(pub T);
+
+impl<T> SerializeCql for ValueAdapter<T>
+where
+    T: Value,
+{
+    #[inline]
+    fn serialize<'b>(
+        &self,
+        _typ: &ColumnType,
+        writer: CellWriter<'b>,
+    ) -> Result<WrittenCellProof<'b>, SerializationError> {
+        serialize_legacy_value(&self.0, writer)
+    }
+}
+
 /// Serializes a value implementing [`Value`] by using the [`CellWriter`]
 /// interface.
 ///
@@ -1470,12 +1490,12 @@ mod tests {
     use std::collections::BTreeMap;
 
     use crate::frame::response::result::{ColumnType, CqlValue};
-    use crate::frame::value::{MaybeUnset, Unset, Value};
+    use crate::frame::value::{MaybeUnset, Unset, Value, ValueTooBig};
     use crate::types::serialize::value::{
         BuiltinSerializationError, BuiltinSerializationErrorKind, BuiltinTypeCheckError,
         BuiltinTypeCheckErrorKind, MapSerializationErrorKind, MapTypeCheckErrorKind,
         SetOrListSerializationErrorKind, SetOrListTypeCheckErrorKind, TupleSerializationErrorKind,
-        TupleTypeCheckErrorKind,
+        TupleTypeCheckErrorKind, ValueAdapter,
     };
     use crate::types::serialize::{CellWriter, SerializationError};
 
@@ -1529,6 +1549,26 @@ mod tests {
         let mut ret = Vec::new();
         let writer = CellWriter::new(&mut ret);
         t.serialize(typ, writer).unwrap_err()
+    }
+
+    #[test]
+    fn test_legacy_wrapper() {
+        struct Foo;
+        impl Value for Foo {
+            fn serialize(&self, buf: &mut Vec<u8>) -> Result<(), ValueTooBig> {
+                let s = "Ala ma kota";
+                buf.extend_from_slice(&(s.len() as i32).to_be_bytes());
+                buf.extend_from_slice(s.as_bytes());
+                Ok(())
+            }
+        }
+
+        let buf = do_serialize(ValueAdapter(Foo), &ColumnType::Text);
+        let expected = vec![
+            0, 0, 0, 11, // Length of the value
+            65, 108, 97, 32, 109, 97, 32, 107, 111, 116, 97, // The string
+        ];
+        assert_eq!(buf, expected);
     }
 
     fn get_typeck_err(err: &SerializationError) -> &BuiltinTypeCheckError {

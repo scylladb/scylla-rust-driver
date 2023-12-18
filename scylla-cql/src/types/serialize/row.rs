@@ -418,6 +418,34 @@ macro_rules! impl_serialize_row_via_value_list {
     };
 }
 
+/// Implements [`SerializeRow`] if the type wrapped over implements [`ValueList`].
+///
+/// See the [`impl_serialize_row_via_value_list`] macro on information about
+/// the properties of the [`SerializeRow`] implementation.
+pub struct ValueListAdapter<T>(pub T);
+
+impl<T> SerializeRow for ValueListAdapter<T>
+where
+    T: ValueList,
+{
+    #[inline]
+    fn serialize(
+        &self,
+        ctx: &RowSerializationContext<'_>,
+        writer: &mut RowWriter,
+    ) -> Result<(), SerializationError> {
+        serialize_legacy_row(&self.0, ctx, writer)
+    }
+
+    #[inline]
+    fn is_empty(&self) -> bool {
+        match self.0.serialized() {
+            Ok(s) => s.is_empty(),
+            Err(_) => false,
+        }
+    }
+}
+
 /// Serializes an object implementing [`ValueList`] by using the [`RowWriter`]
 /// interface.
 ///
@@ -822,11 +850,13 @@ impl<'a> Iterator for SerializedValuesIterator<'a> {
 
 #[cfg(test)]
 mod tests {
+    use std::borrow::Cow;
     use std::collections::BTreeMap;
 
     use crate::frame::response::result::{ColumnSpec, ColumnType, TableSpec};
     use crate::frame::types::RawValue;
-    use crate::frame::value::{LegacySerializedValues, MaybeUnset, ValueList};
+    use crate::frame::value::{LegacySerializedValues, MaybeUnset, SerializedResult, ValueList};
+    use crate::types::serialize::row::ValueListAdapter;
     use crate::types::serialize::{RowWriter, SerializationError};
 
     use super::{
@@ -971,6 +1001,30 @@ mod tests {
             name: name.to_string(),
             typ,
         }
+    }
+
+    #[test]
+    fn test_legacy_wrapper() {
+        struct Foo;
+        impl ValueList for Foo {
+            fn serialized(&self) -> SerializedResult<'_> {
+                let mut values = LegacySerializedValues::new();
+                values.add_value(&123i32)?;
+                values.add_value(&321i32)?;
+                Ok(Cow::Owned(values))
+            }
+        }
+
+        let columns = &[
+            col_spec("a", ColumnType::Int),
+            col_spec("b", ColumnType::Int),
+        ];
+        let buf = do_serialize(ValueListAdapter(Foo), columns);
+        let expected = vec![
+            0, 0, 0, 4, 0, 0, 0, 123, // First value
+            0, 0, 0, 4, 0, 0, 1, 65, // Second value
+        ];
+        assert_eq!(buf, expected);
     }
 
     fn get_typeck_err(err: &SerializationError) -> &BuiltinTypeCheckError {
