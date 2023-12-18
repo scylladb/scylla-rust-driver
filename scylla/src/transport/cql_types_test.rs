@@ -1491,3 +1491,207 @@ async fn test_empty() {
 
     assert_eq!(empty, CqlValue::Empty);
 }
+
+#[tokio::test]
+async fn test_udt_with_missing_field() {
+    let table_name = "udt_tests";
+    let type_name = "usertype1";
+
+    let session: Session = create_new_session_builder().build().await.unwrap();
+    let ks = unique_keyspace_name();
+
+    session
+        .query(
+            format!(
+                "CREATE KEYSPACE IF NOT EXISTS {} WITH REPLICATION = \
+            {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}}",
+                ks
+            ),
+            &[],
+        )
+        .await
+        .unwrap();
+    session.use_keyspace(ks, false).await.unwrap();
+
+    session
+        .query(format!("DROP TABLE IF EXISTS {}", table_name), &[])
+        .await
+        .unwrap();
+
+    session
+        .query(format!("DROP TYPE IF EXISTS {}", type_name), &[])
+        .await
+        .unwrap();
+
+    session
+        .query(
+            format!(
+                "CREATE TYPE IF NOT EXISTS {} (first int, second boolean, third float, fourth blob)",
+                type_name
+            ),
+            &[],
+        )
+        .await
+        .unwrap();
+
+    session
+        .query(
+            format!(
+                "CREATE TABLE IF NOT EXISTS {} (id int PRIMARY KEY, val {})",
+                table_name, type_name
+            ),
+            &[],
+        )
+        .await
+        .unwrap();
+
+    let mut id = 0;
+
+    async fn verify_insert_select_identity<TQ, TR>(
+        session: &Session,
+        table_name: &str,
+        id: i32,
+        element: TQ,
+        expected: TR,
+    ) where
+        TQ: SerializeCql,
+        TR: FromCqlVal<CqlValue> + PartialEq + Debug,
+    {
+        session
+            .query(
+                format!("INSERT INTO {}(id,val) VALUES (?,?)", table_name),
+                &(id, &element),
+            )
+            .await
+            .unwrap();
+        let result = session
+            .query(
+                format!("SELECT val from {} WHERE id = ?", table_name),
+                &(id,),
+            )
+            .await
+            .unwrap()
+            .rows
+            .unwrap()
+            .into_typed::<(TR,)>()
+            .next()
+            .unwrap()
+            .unwrap()
+            .0;
+        assert_eq!(expected, result);
+    }
+
+    #[derive(FromUserType, Debug, PartialEq)]
+    struct UdtFull {
+        pub first: i32,
+        pub second: bool,
+        pub third: Option<f32>,
+        pub fourth: Option<Vec<u8>>,
+    }
+
+    #[derive(SerializeCql)]
+    #[scylla(crate = crate)]
+    struct UdtV1 {
+        pub first: i32,
+        pub second: bool,
+    }
+
+    verify_insert_select_identity(
+        &session,
+        table_name,
+        id,
+        UdtV1 {
+            first: 3,
+            second: true,
+        },
+        UdtFull {
+            first: 3,
+            second: true,
+            third: None,
+            fourth: None,
+        },
+    )
+    .await;
+
+    id += 1;
+
+    #[derive(SerializeCql)]
+    #[scylla(crate = crate)]
+    struct UdtV2 {
+        pub first: i32,
+        pub second: bool,
+        pub third: Option<f32>,
+    }
+
+    verify_insert_select_identity(
+        &session,
+        table_name,
+        id,
+        UdtV2 {
+            first: 3,
+            second: true,
+            third: Some(123.45),
+        },
+        UdtFull {
+            first: 3,
+            second: true,
+            third: Some(123.45),
+            fourth: None,
+        },
+    )
+    .await;
+
+    id += 1;
+
+    #[derive(SerializeCql)]
+    #[scylla(crate = crate)]
+    struct UdtV3 {
+        pub first: i32,
+        pub second: bool,
+        pub fourth: Option<Vec<u8>>,
+    }
+
+    verify_insert_select_identity(
+        &session,
+        table_name,
+        id,
+        UdtV3 {
+            first: 3,
+            second: true,
+            fourth: Some(vec![3, 6, 9]),
+        },
+        UdtFull {
+            first: 3,
+            second: true,
+            third: None,
+            fourth: Some(vec![3, 6, 9]),
+        },
+    )
+    .await;
+
+    id += 1;
+
+    #[derive(SerializeCql)]
+    #[scylla(crate = crate, flavor="enforce_order")]
+    struct UdtV4 {
+        pub first: i32,
+        pub second: bool,
+    }
+
+    verify_insert_select_identity(
+        &session,
+        table_name,
+        id,
+        UdtV4 {
+            first: 3,
+            second: true,
+        },
+        UdtFull {
+            first: 3,
+            second: true,
+            third: None,
+            fourth: None,
+        },
+    )
+    .await;
+}

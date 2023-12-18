@@ -1490,7 +1490,7 @@ mod tests {
     use std::collections::BTreeMap;
 
     use crate::frame::response::result::{ColumnType, CqlValue};
-    use crate::frame::value::{MaybeUnset, Unset, Value, ValueTooBig};
+    use crate::frame::value::{Counter, MaybeUnset, Unset, Value, ValueTooBig};
     use crate::types::serialize::value::{
         BuiltinSerializationError, BuiltinSerializationErrorKind, BuiltinTypeCheckError,
         BuiltinTypeCheckErrorKind, MapSerializationErrorKind, MapTypeCheckErrorKind,
@@ -2110,6 +2110,95 @@ mod tests {
     }
 
     #[test]
+    fn test_udt_serialization_with_missing_rust_fields_at_end() {
+        let udt = TestUdtWithFieldSorting::default();
+
+        let typ_normal = ColumnType::UserDefinedType {
+            type_name: "typ".to_string(),
+            keyspace: "ks".to_string(),
+            field_types: vec![
+                ("a".to_string(), ColumnType::Text),
+                ("b".to_string(), ColumnType::Int),
+                (
+                    "c".to_string(),
+                    ColumnType::List(Box::new(ColumnType::BigInt)),
+                ),
+            ],
+        };
+
+        let typ_unexpected_field = ColumnType::UserDefinedType {
+            type_name: "typ".to_string(),
+            keyspace: "ks".to_string(),
+            field_types: vec![
+                ("a".to_string(), ColumnType::Text),
+                ("b".to_string(), ColumnType::Int),
+                (
+                    "c".to_string(),
+                    ColumnType::List(Box::new(ColumnType::BigInt)),
+                ),
+                // Unexpected fields
+                ("d".to_string(), ColumnType::Counter),
+                ("e".to_string(), ColumnType::Counter),
+            ],
+        };
+
+        let result_normal = do_serialize(&udt, &typ_normal);
+        let result_additional_field = do_serialize(&udt, &typ_unexpected_field);
+
+        assert_eq!(result_normal, result_additional_field);
+    }
+
+    #[derive(SerializeCql, Debug, PartialEq, Default)]
+    #[scylla(crate = crate)]
+    struct TestUdtWithFieldSorting2 {
+        a: String,
+        b: i32,
+        d: Option<Counter>,
+        c: Vec<i64>,
+    }
+
+    #[derive(SerializeCql, Debug, PartialEq, Default)]
+    #[scylla(crate = crate)]
+    struct TestUdtWithFieldSorting3 {
+        a: String,
+        b: i32,
+        d: Option<Counter>,
+        e: Option<f32>,
+        c: Vec<i64>,
+    }
+
+    #[test]
+    fn test_udt_serialization_with_missing_rust_field_in_middle() {
+        let udt = TestUdtWithFieldSorting::default();
+        let udt2 = TestUdtWithFieldSorting2::default();
+        let udt3 = TestUdtWithFieldSorting3::default();
+
+        let typ = ColumnType::UserDefinedType {
+            type_name: "typ".to_string(),
+            keyspace: "ks".to_string(),
+            field_types: vec![
+                ("a".to_string(), ColumnType::Text),
+                ("b".to_string(), ColumnType::Int),
+                // Unexpected fields
+                ("d".to_string(), ColumnType::Counter),
+                ("e".to_string(), ColumnType::Float),
+                // Remaining normal field
+                (
+                    "c".to_string(),
+                    ColumnType::List(Box::new(ColumnType::BigInt)),
+                ),
+            ],
+        };
+
+        let result_1 = do_serialize(udt, &typ);
+        let result_2 = do_serialize(udt2, &typ);
+        let result_3 = do_serialize(udt3, &typ);
+
+        assert_eq!(result_1, result_2);
+        assert_eq!(result_2, result_3);
+    }
+
+    #[test]
     fn test_udt_serialization_failing_type_check() {
         let typ_not_udt = ColumnType::Ascii;
         let udt = TestUdtWithFieldSorting::default();
@@ -2143,30 +2232,6 @@ mod tests {
             BuiltinTypeCheckErrorKind::UdtError(
                 UdtTypeCheckErrorKind::ValueMissingForUdtField { .. }
             )
-        ));
-
-        let typ_unexpected_field = ColumnType::UserDefinedType {
-            type_name: "typ".to_string(),
-            keyspace: "ks".to_string(),
-            field_types: vec![
-                ("a".to_string(), ColumnType::Text),
-                ("b".to_string(), ColumnType::Int),
-                (
-                    "c".to_string(),
-                    ColumnType::List(Box::new(ColumnType::BigInt)),
-                ),
-                // Unexpected field
-                ("d".to_string(), ColumnType::Counter),
-            ],
-        };
-
-        let err = udt
-            .serialize(&typ_unexpected_field, CellWriter::new(&mut data))
-            .unwrap_err();
-        let err = err.0.downcast_ref::<BuiltinTypeCheckError>().unwrap();
-        assert!(matches!(
-            err.kind,
-            BuiltinTypeCheckErrorKind::UdtError(UdtTypeCheckErrorKind::NoSuchFieldInUdt { .. })
         ));
 
         let typ_wrong_type = ColumnType::UserDefinedType {
@@ -2293,6 +2358,44 @@ mod tests {
     }
 
     #[test]
+    fn test_udt_serialization_with_enforced_order_additional_field() {
+        let udt = TestUdtWithEnforcedOrder::default();
+
+        let typ_normal = ColumnType::UserDefinedType {
+            type_name: "typ".to_string(),
+            keyspace: "ks".to_string(),
+            field_types: vec![
+                ("a".to_string(), ColumnType::Text),
+                ("b".to_string(), ColumnType::Int),
+                (
+                    "c".to_string(),
+                    ColumnType::List(Box::new(ColumnType::BigInt)),
+                ),
+            ],
+        };
+
+        let typ_unexpected_field = ColumnType::UserDefinedType {
+            type_name: "typ".to_string(),
+            keyspace: "ks".to_string(),
+            field_types: vec![
+                ("a".to_string(), ColumnType::Text),
+                ("b".to_string(), ColumnType::Int),
+                (
+                    "c".to_string(),
+                    ColumnType::List(Box::new(ColumnType::BigInt)),
+                ),
+                // Unexpected field
+                ("d".to_string(), ColumnType::Counter),
+            ],
+        };
+
+        let result_normal = do_serialize(&udt, &typ_normal);
+        let result_additional_field = do_serialize(&udt, &typ_unexpected_field);
+
+        assert_eq!(result_normal, result_additional_field);
+    }
+
+    #[test]
     fn test_udt_serialization_with_enforced_order_failing_type_check() {
         let typ_not_udt = ColumnType::Ascii;
         let udt = TestUdtWithEnforcedOrder::default();
@@ -2347,30 +2450,6 @@ mod tests {
             BuiltinTypeCheckErrorKind::UdtError(
                 UdtTypeCheckErrorKind::ValueMissingForUdtField { .. }
             )
-        ));
-
-        let typ_unexpected_field = ColumnType::UserDefinedType {
-            type_name: "typ".to_string(),
-            keyspace: "ks".to_string(),
-            field_types: vec![
-                ("a".to_string(), ColumnType::Text),
-                ("b".to_string(), ColumnType::Int),
-                (
-                    "c".to_string(),
-                    ColumnType::List(Box::new(ColumnType::BigInt)),
-                ),
-                // Unexpected field
-                ("d".to_string(), ColumnType::Counter),
-            ],
-        };
-
-        let err =
-            <_ as SerializeCql>::serialize(&udt, &typ_unexpected_field, CellWriter::new(&mut data))
-                .unwrap_err();
-        let err = err.0.downcast_ref::<BuiltinTypeCheckError>().unwrap();
-        assert!(matches!(
-            err.kind,
-            BuiltinTypeCheckErrorKind::UdtError(UdtTypeCheckErrorKind::NoSuchFieldInUdt { .. })
         ));
 
         let typ_unexpected_field = ColumnType::UserDefinedType {
@@ -2512,5 +2591,105 @@ mod tests {
         );
 
         assert_eq!(reference, udt);
+    }
+
+    #[derive(SerializeCql, Debug, PartialEq, Eq, Default)]
+    #[scylla(crate = crate, force_exact_match)]
+    struct TestStrictUdtWithFieldSorting {
+        a: String,
+        b: i32,
+        c: Vec<i64>,
+    }
+
+    #[test]
+    fn test_strict_udt_with_field_sorting_rejects_additional_field() {
+        let udt = TestStrictUdtWithFieldSorting::default();
+        let mut data = Vec::new();
+
+        let typ_unexpected_field = ColumnType::UserDefinedType {
+            type_name: "typ".to_string(),
+            keyspace: "ks".to_string(),
+            field_types: vec![
+                ("a".to_string(), ColumnType::Text),
+                ("b".to_string(), ColumnType::Int),
+                (
+                    "c".to_string(),
+                    ColumnType::List(Box::new(ColumnType::BigInt)),
+                ),
+                // Unexpected field
+                ("d".to_string(), ColumnType::Counter),
+            ],
+        };
+
+        let err = udt
+            .serialize(&typ_unexpected_field, CellWriter::new(&mut data))
+            .unwrap_err();
+        let err = err.0.downcast_ref::<BuiltinTypeCheckError>().unwrap();
+        assert!(matches!(
+            err.kind,
+            BuiltinTypeCheckErrorKind::UdtError(UdtTypeCheckErrorKind::NoSuchFieldInUdt { .. })
+        ));
+
+        let typ_unexpected_field_middle = ColumnType::UserDefinedType {
+            type_name: "typ".to_string(),
+            keyspace: "ks".to_string(),
+            field_types: vec![
+                ("a".to_string(), ColumnType::Text),
+                ("b".to_string(), ColumnType::Int),
+                // Unexpected field
+                ("b_c".to_string(), ColumnType::Counter),
+                (
+                    "c".to_string(),
+                    ColumnType::List(Box::new(ColumnType::BigInt)),
+                ),
+            ],
+        };
+
+        let err = udt
+            .serialize(&typ_unexpected_field_middle, CellWriter::new(&mut data))
+            .unwrap_err();
+        let err = err.0.downcast_ref::<BuiltinTypeCheckError>().unwrap();
+        assert!(matches!(
+            err.kind,
+            BuiltinTypeCheckErrorKind::UdtError(UdtTypeCheckErrorKind::NoSuchFieldInUdt { .. })
+        ));
+    }
+
+    #[derive(SerializeCql, Debug, PartialEq, Eq, Default)]
+    #[scylla(crate = crate, flavor = "enforce_order", force_exact_match)]
+    struct TestStrictUdtWithEnforcedOrder {
+        a: String,
+        b: i32,
+        c: Vec<i64>,
+    }
+
+    #[test]
+    fn test_strict_udt_with_enforced_order_rejects_additional_field() {
+        let udt = TestStrictUdtWithEnforcedOrder::default();
+        let mut data = Vec::new();
+
+        let typ_unexpected_field = ColumnType::UserDefinedType {
+            type_name: "typ".to_string(),
+            keyspace: "ks".to_string(),
+            field_types: vec![
+                ("a".to_string(), ColumnType::Text),
+                ("b".to_string(), ColumnType::Int),
+                (
+                    "c".to_string(),
+                    ColumnType::List(Box::new(ColumnType::BigInt)),
+                ),
+                // Unexpected field
+                ("d".to_string(), ColumnType::Counter),
+            ],
+        };
+
+        let err =
+            <_ as SerializeCql>::serialize(&udt, &typ_unexpected_field, CellWriter::new(&mut data))
+                .unwrap_err();
+        let err = err.0.downcast_ref::<BuiltinTypeCheckError>().unwrap();
+        assert!(matches!(
+            err.kind,
+            BuiltinTypeCheckErrorKind::UdtError(UdtTypeCheckErrorKind::NoSuchFieldInUdt { .. })
+        ));
     }
 }
