@@ -18,6 +18,9 @@ struct Attributes {
 
     #[darling(default)]
     skip_name_checks: bool,
+
+    #[darling(default)]
+    force_exact_match: bool,
 }
 
 impl Attributes {
@@ -216,6 +219,37 @@ impl<'a> Generator for FieldSortingGenerator<'a> {
         let udt_field_names = rust_field_names.clone(); // For now, it's the same
         let field_types = self.ctx.fields.iter().map(|f| &f.ty).collect::<Vec<_>>();
 
+        let missing_rust_field_expression: syn::Expr = if self.ctx.attributes.force_exact_match {
+            parse_quote! {
+                return ::std::result::Result::Err(mk_typck_err(
+                    #crate_path::UdtTypeCheckErrorKind::NoSuchFieldInUdt {
+                        field_name: <_ as ::std::clone::Clone>::clone(field_name),
+                    }
+                ))
+            }
+        } else {
+            parse_quote! {
+                skipped_fields += 1
+            }
+        };
+
+        let serialize_missing_nulls_statement: syn::Stmt = if self.ctx.attributes.force_exact_match
+        {
+            // Not sure if there is better way to create no-op statement
+            // parse_quote!{} / parse_quote!{ ; } doesn't work
+            parse_quote! {
+                ();
+            }
+        } else {
+            parse_quote! {
+                while skipped_fields > 0 {
+                    let sub_builder = #crate_path::CellValueBuilder::make_sub_writer(&mut builder);
+                    sub_builder.set_null();
+                    skipped_fields -= 1;
+                }
+            }
+        };
+
         // Declare helper lambdas for creating errors
         statements.push(self.ctx.generate_mk_typck_err());
         statements.push(self.ctx.generate_mk_ser_err());
@@ -241,6 +275,16 @@ impl<'a> Generator for FieldSortingGenerator<'a> {
             let mut remaining_count = #field_count;
         });
 
+        // We want to send nulls for missing rust fields in the middle, but send
+        // nothing for those fields at the end of UDT. While executing the loop
+        // we don't know if there will be any more present fields. The solution is
+        // to count how many fields we missed and send them when we find any present field.
+        if !self.ctx.attributes.force_exact_match {
+            statements.push(parse_quote! {
+                let mut skipped_fields = 0;
+            });
+        }
+
         // Turn the cell writer into a value builder
         statements.push(parse_quote! {
             let mut builder = #crate_path::CellWriter::into_value_builder(writer);
@@ -253,6 +297,7 @@ impl<'a> Generator for FieldSortingGenerator<'a> {
                 match ::std::string::String::as_str(field_name) {
                     #(
                         #udt_field_names => {
+                            #serialize_missing_nulls_statement
                             let sub_builder = #crate_path::CellValueBuilder::make_sub_writer(&mut builder);
                             match <#field_types as #crate_path::SerializeCql>::serialize(&self.#rust_field_idents, field_type, sub_builder) {
                                 ::std::result::Result::Ok(_proof) => {}
@@ -271,11 +316,7 @@ impl<'a> Generator for FieldSortingGenerator<'a> {
                             }
                         }
                     )*
-                    _ => return ::std::result::Result::Err(mk_typck_err(
-                        #crate_path::UdtTypeCheckErrorKind::NoSuchFieldInUdt {
-                            field_name: <_ as ::std::clone::Clone>::clone(field_name),
-                        }
-                    )),
+                    _ => #missing_rust_field_expression,
                 }
             }
         });
@@ -396,16 +437,18 @@ impl<'a> Generator for FieldOrderedGenerator<'a> {
             });
         }
 
-        // Check whether there are some fields remaining
-        statements.push(parse_quote! {
-            if let Some((field_name, typ)) = field_iter.next() {
-                return ::std::result::Result::Err(mk_typck_err(
-                    #crate_path::UdtTypeCheckErrorKind::NoSuchFieldInUdt {
-                        field_name: <_ as ::std::clone::Clone>::clone(field_name),
-                    }
-                ));
-            }
-        });
+        if self.ctx.attributes.force_exact_match {
+            // Check whether there are some fields remaining
+            statements.push(parse_quote! {
+                if let Some((field_name, typ)) = field_iter.next() {
+                    return ::std::result::Result::Err(mk_typck_err(
+                        #crate_path::UdtTypeCheckErrorKind::NoSuchFieldInUdt {
+                            field_name: <_ as ::std::clone::Clone>::clone(field_name),
+                        }
+                    ));
+                }
+            });
+        }
 
         parse_quote! {
             fn serialize<'b>(

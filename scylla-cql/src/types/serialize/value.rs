@@ -2145,30 +2145,6 @@ mod tests {
             )
         ));
 
-        let typ_unexpected_field = ColumnType::UserDefinedType {
-            type_name: "typ".to_string(),
-            keyspace: "ks".to_string(),
-            field_types: vec![
-                ("a".to_string(), ColumnType::Text),
-                ("b".to_string(), ColumnType::Int),
-                (
-                    "c".to_string(),
-                    ColumnType::List(Box::new(ColumnType::BigInt)),
-                ),
-                // Unexpected field
-                ("d".to_string(), ColumnType::Counter),
-            ],
-        };
-
-        let err = udt
-            .serialize(&typ_unexpected_field, CellWriter::new(&mut data))
-            .unwrap_err();
-        let err = err.0.downcast_ref::<BuiltinTypeCheckError>().unwrap();
-        assert!(matches!(
-            err.kind,
-            BuiltinTypeCheckErrorKind::UdtError(UdtTypeCheckErrorKind::NoSuchFieldInUdt { .. })
-        ));
-
         let typ_wrong_type = ColumnType::UserDefinedType {
             type_name: "typ".to_string(),
             keyspace: "ks".to_string(),
@@ -2347,30 +2323,6 @@ mod tests {
             BuiltinTypeCheckErrorKind::UdtError(
                 UdtTypeCheckErrorKind::ValueMissingForUdtField { .. }
             )
-        ));
-
-        let typ_unexpected_field = ColumnType::UserDefinedType {
-            type_name: "typ".to_string(),
-            keyspace: "ks".to_string(),
-            field_types: vec![
-                ("a".to_string(), ColumnType::Text),
-                ("b".to_string(), ColumnType::Int),
-                (
-                    "c".to_string(),
-                    ColumnType::List(Box::new(ColumnType::BigInt)),
-                ),
-                // Unexpected field
-                ("d".to_string(), ColumnType::Counter),
-            ],
-        };
-
-        let err =
-            <_ as SerializeCql>::serialize(&udt, &typ_unexpected_field, CellWriter::new(&mut data))
-                .unwrap_err();
-        let err = err.0.downcast_ref::<BuiltinTypeCheckError>().unwrap();
-        assert!(matches!(
-            err.kind,
-            BuiltinTypeCheckErrorKind::UdtError(UdtTypeCheckErrorKind::NoSuchFieldInUdt { .. })
         ));
 
         let typ_unexpected_field = ColumnType::UserDefinedType {
