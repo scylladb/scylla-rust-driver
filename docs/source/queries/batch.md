@@ -17,7 +17,7 @@ use scylla::prepared_statement::PreparedStatement;
 let mut batch: Batch = Default::default();
 
 // Add a simple statement to the batch using its text
-batch.append_statement("INSERT INTO ks.tab(a, b) VALUES(?, ?)");
+batch.append_statement("INSERT INTO ks.tab(a, b) VALUES(1, 2)");
 
 // Add a simple statement created manually to the batch
 let simple: Query = Query::new("INSERT INTO ks.tab (a, b) VALUES(3, 4)");
@@ -30,7 +30,7 @@ let prepared: PreparedStatement = session
 batch.append_statement(prepared);
 
 // Specify bound values to use with each statement
-let batch_values = ((1_i32, 2_i32),
+let batch_values = ((),
                     (),
                     (5_i32,));
 
@@ -39,6 +39,13 @@ session.batch(&batch, batch_values).await?;
 # Ok(())
 # }
 ```
+
+> ***Warning***\
+> Using simple statements with bind markers in batches is strongly discouraged.
+> For each simple statement with a non-empty list of values in the batch,
+> the driver will send a prepare request, and it will be done **sequentially**.
+> Results of preparation are not cached between `Session::batch` calls.
+> Consider preparing the statements before putting them into the batch.
 
 ### Preparing a batch
 Instead of preparing each statement individually, it's possible to prepare a whole batch at once:
@@ -129,6 +136,8 @@ let batch_values = ((1_i32, 2_i32), // Tuple with two values for the first state
                     ());            // Empty tuple/unit for the third statement
 
 // Run the batch
+// Note that the driver will prepare the first two statements, due to them
+// not being prepared and having a non-empty list of values.
 session.batch(&batch, batch_values).await?;
 # Ok(())
 # }
