@@ -8,7 +8,7 @@
     - [Connecting and running a simple query](quickstart/example.md)
 
 - [Migration guides](migration-guides/migration-guides.md)
-    - [Adjusting code to changes in serialization API introduced in 0.11](migration-guides/0.11-deserialization.md)
+    - [Adjusting code to changes in serialization API introduced in 0.11](migration-guides/0.11-serialization.md)
 
 - [Connecting to the cluster](connecting/connecting.md)
     - [Compression](connecting/compression.md)
