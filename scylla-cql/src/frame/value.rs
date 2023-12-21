@@ -52,8 +52,52 @@ pub enum MaybeUnset<V> {
 }
 
 /// Represents timeuuid (uuid V1) value
-#[derive(Debug, Clone, Copy)]
+///
+/// This type has custom comparison logic which follows Scylla/Cassandra semantics.
+/// For details, see [`Ord` implementation](#impl-Ord-for-CqlTimeuuid).
+#[derive(Debug, Clone, Copy, Eq)]
 pub struct CqlTimeuuid(Uuid);
+
+/// [`Uuid`] delegate methods
+impl CqlTimeuuid {
+    pub fn as_bytes(&self) -> &[u8; 16] {
+        self.0.as_bytes()
+    }
+}
+
+impl CqlTimeuuid {
+    /// Read 8 most significant bytes of timeuuid from serialized bytes
+    fn msb(&self) -> u64 {
+        // Scylla and Cassandra use a standard UUID memory layout for MSB:
+        // 4 bytes    2 bytes    2 bytes
+        // time_low - time_mid - time_hi_and_version
+        let bytes = self.0.as_bytes();
+        ((bytes[6] & 0x0F) as u64) << 56
+            | (bytes[7] as u64) << 48
+            | (bytes[4] as u64) << 40
+            | (bytes[5] as u64) << 32
+            | (bytes[0] as u64) << 24
+            | (bytes[1] as u64) << 16
+            | (bytes[2] as u64) << 8
+            | (bytes[3] as u64)
+    }
+
+    fn lsb(&self) -> u64 {
+        let bytes = self.0.as_bytes();
+        (bytes[8] as u64) << 56
+            | (bytes[9] as u64) << 48
+            | (bytes[10] as u64) << 40
+            | (bytes[11] as u64) << 32
+            | (bytes[12] as u64) << 24
+            | (bytes[13] as u64) << 16
+            | (bytes[14] as u64) << 8
+            | (bytes[15] as u64)
+    }
+
+    fn lsb_signed(&self) -> u64 {
+        self.lsb() ^ 0x8080808080808080
+    }
+}
 
 impl std::str::FromStr for CqlTimeuuid {
     type Err = uuid::Error;
@@ -78,6 +122,35 @@ impl From<CqlTimeuuid> for Uuid {
 impl From<Uuid> for CqlTimeuuid {
     fn from(value: Uuid) -> Self {
         Self(value)
+    }
+}
+
+/// Compare two values of timeuuid type.
+///
+/// Cassandra legacy requires:
+/// - converting 8 most significant bytes to date, which is then compared.
+/// - masking off UUID version from the 8 ms-bytes during compare, to
+///   treat possible non-version-1 UUID the same way as UUID.
+/// - using signed compare for least significant bits.
+impl Ord for CqlTimeuuid {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        let mut res = self.msb().cmp(&other.msb());
+        if let std::cmp::Ordering::Equal = res {
+            res = self.lsb_signed().cmp(&other.lsb_signed());
+        }
+        res
+    }
+}
+
+impl PartialOrd for CqlTimeuuid {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl PartialEq for CqlTimeuuid {
+    fn eq(&self, other: &Self) -> bool {
+        self.cmp(other) == std::cmp::Ordering::Equal
     }
 }
 
