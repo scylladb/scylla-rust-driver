@@ -51,6 +51,36 @@ pub enum MaybeUnset<V> {
     Set(V),
 }
 
+/// Represents timeuuid (uuid V1) value
+#[derive(Debug, Clone, Copy)]
+pub struct CqlTimeuuid(Uuid);
+
+impl std::str::FromStr for CqlTimeuuid {
+    type Err = uuid::Error;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        Ok(Self(Uuid::from_str(s)?))
+    }
+}
+
+impl AsRef<Uuid> for CqlTimeuuid {
+    fn as_ref(&self) -> &Uuid {
+        &self.0
+    }
+}
+
+impl From<CqlTimeuuid> for Uuid {
+    fn from(value: CqlTimeuuid) -> Self {
+        value.0
+    }
+}
+
+impl From<Uuid> for CqlTimeuuid {
+    fn from(value: Uuid) -> Self {
+        Self(value)
+    }
+}
+
 /// Native CQL date representation that allows for a bigger range of dates (-262145-1-1 to 262143-12-31).
 ///
 /// Represented as number of days since -5877641-06-23 i.e. 2^31 days before unix epoch.
