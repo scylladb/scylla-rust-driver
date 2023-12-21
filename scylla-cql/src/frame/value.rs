@@ -63,6 +63,54 @@ impl CqlTimeuuid {
     pub fn as_bytes(&self) -> &[u8; 16] {
         self.0.as_bytes()
     }
+
+    pub fn as_u128(&self) -> u128 {
+        self.0.as_u128()
+    }
+
+    pub fn as_fields(&self) -> (u32, u16, u16, &[u8; 8]) {
+        self.0.as_fields()
+    }
+
+    pub fn as_u64_pair(&self) -> (u64, u64) {
+        self.0.as_u64_pair()
+    }
+
+    pub fn from_slice(b: &[u8]) -> Result<Self, uuid::Error> {
+        Ok(Self(Uuid::from_slice(b)?))
+    }
+
+    pub fn from_slice_le(b: &[u8]) -> Result<Self, uuid::Error> {
+        Ok(Self(Uuid::from_slice_le(b)?))
+    }
+
+    pub fn from_bytes(bytes: [u8; 16]) -> Self {
+        Self(Uuid::from_bytes(bytes))
+    }
+
+    pub fn from_bytes_le(bytes: [u8; 16]) -> Self {
+        Self(Uuid::from_bytes_le(bytes))
+    }
+
+    pub fn from_fields(d1: u32, d2: u16, d3: u16, d4: &[u8; 8]) -> Self {
+        Self(Uuid::from_fields(d1, d2, d3, d4))
+    }
+
+    pub fn from_fields_le(d1: u32, d2: u16, d3: u16, d4: &[u8; 8]) -> Self {
+        Self(Uuid::from_fields_le(d1, d2, d3, d4))
+    }
+
+    pub fn from_u128(v: u128) -> Self {
+        Self(Uuid::from_u128(v))
+    }
+
+    pub fn from_u128_le(v: u128) -> Self {
+        Self(Uuid::from_u128_le(v))
+    }
+
+    pub fn from_u64_pair(high_bits: u64, low_bits: u64) -> Self {
+        Self(Uuid::from_u64_pair(high_bits, low_bits))
+    }
 }
 
 impl CqlTimeuuid {
