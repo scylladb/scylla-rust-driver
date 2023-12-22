@@ -155,6 +155,12 @@ impl std::str::FromStr for CqlTimeuuid {
     }
 }
 
+impl std::fmt::Display for CqlTimeuuid {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
 impl AsRef<Uuid> for CqlTimeuuid {
     fn as_ref(&self) -> &Uuid {
         &self.0
