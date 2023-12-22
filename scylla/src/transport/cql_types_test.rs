@@ -8,6 +8,7 @@ use crate::transport::session::IntoTypedRows;
 use crate::transport::session::Session;
 use crate::utils::test_utils::unique_keyspace_name;
 use bigdecimal::BigDecimal;
+use itertools::Itertools;
 use num_bigint::BigInt;
 use scylla_cql::frame::value::CqlTimeuuid;
 use scylla_cql::types::serialize::value::SerializeCql;
@@ -1146,6 +1147,84 @@ async fn test_timeuuid() {
             .unwrap();
 
         assert_eq!(read_timeuuid.as_bytes(), timeuuid_bytes);
+    }
+}
+
+#[tokio::test]
+async fn test_timeuuid_ordering() {
+    let session: Session = create_new_session_builder().build().await.unwrap();
+    let ks = unique_keyspace_name();
+
+    session
+        .query(
+            format!(
+                "CREATE KEYSPACE IF NOT EXISTS {} WITH REPLICATION = \
+            {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}}",
+                ks
+            ),
+            &[],
+        )
+        .await
+        .unwrap();
+    session.use_keyspace(ks, false).await.unwrap();
+
+    session
+        .query(
+            "CREATE TABLE tab (p int, t timeuuid, PRIMARY KEY (p, t))",
+            (),
+        )
+        .await
+        .unwrap();
+
+    // Timeuuid values, sorted in the same order as Scylla/Cassandra sorts them.
+    let sorted_timeuuid_vals: Vec<CqlTimeuuid> = vec![
+        CqlTimeuuid::from_str("00000000-0000-1000-8080-808080808080").unwrap(),
+        CqlTimeuuid::from_str("00000000-0000-1000-ffff-ffffffffffff").unwrap(),
+        CqlTimeuuid::from_str("00000000-0000-1000-0000-000000000000").unwrap(),
+        CqlTimeuuid::from_str("fed35080-0efb-11ee-a1ca-00006490e9a4").unwrap(),
+        CqlTimeuuid::from_str("00000257-0efc-11ee-9547-00006490e9a6").unwrap(),
+        CqlTimeuuid::from_str("ffffffff-ffff-1fff-ffff-ffffffffffef").unwrap(),
+        CqlTimeuuid::from_str("ffffffff-ffff-1fff-ffff-ffffffffffff").unwrap(),
+        CqlTimeuuid::from_str("ffffffff-ffff-1fff-0000-000000000000").unwrap(),
+        CqlTimeuuid::from_str("ffffffff-ffff-1fff-7f7f-7f7f7f7f7f7f").unwrap(),
+    ];
+
+    // Generate all permutations.
+    let perms = Itertools::permutations(sorted_timeuuid_vals.iter(), sorted_timeuuid_vals.len())
+        .collect::<Vec<_>>();
+    // Ensure that all of the permutations were generated.
+    assert_eq!(362880, perms.len());
+
+    // Verify that Scylla really sorts timeuuids as defined in sorted_timeuuid_vals
+    let prepared = session
+        .prepare("INSERT INTO tab (p, t) VALUES (0, ?)")
+        .await
+        .unwrap();
+    for timeuuid_val in &perms[0] {
+        session.execute(&prepared, (timeuuid_val,)).await.unwrap();
+    }
+
+    let scylla_order_timeuuids: Vec<CqlTimeuuid> = session
+        .query("SELECT t FROM tab WHERE p = 0", ())
+        .await
+        .unwrap()
+        .rows_typed::<(CqlTimeuuid,)>()
+        .unwrap()
+        .map(|r| r.unwrap().0)
+        .collect();
+
+    assert_eq!(sorted_timeuuid_vals, scylla_order_timeuuids);
+
+    for perm in perms {
+        // Test if rust timeuuid values are sorted in the same way as in Scylla
+        let mut rust_sorted_timeuuids: Vec<CqlTimeuuid> = perm
+            .clone()
+            .into_iter()
+            .map(|x| x.to_owned())
+            .collect::<Vec<_>>();
+        rust_sorted_timeuuids.sort();
+
+        assert_eq!(sorted_timeuuid_vals, rust_sorted_timeuuids);
     }
 }
 
