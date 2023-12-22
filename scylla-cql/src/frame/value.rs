@@ -860,6 +860,12 @@ impl Value for Uuid {
     }
 }
 
+impl Value for CqlTimeuuid {
+    fn serialize(&self, buf: &mut Vec<u8>) -> Result<(), ValueTooBig> {
+        self.0.serialize(buf)
+    }
+}
+
 impl Value for BigInt {
     fn serialize(&self, buf: &mut Vec<u8>) -> Result<(), ValueTooBig> {
         let serialized = self.to_signed_bytes_be();

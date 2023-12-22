@@ -1,5 +1,5 @@
 use super::result::{CqlValue, Row};
-use crate::frame::value::{Counter, CqlDate, CqlDuration, CqlTime, CqlTimestamp};
+use crate::frame::value::{Counter, CqlDate, CqlDuration, CqlTime, CqlTimestamp, CqlTimeuuid};
 use bigdecimal::BigDecimal;
 use num_bigint::BigInt;
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
@@ -134,6 +134,7 @@ impl_from_cql_value_from_method!(String, into_string); // String::from_cql<CqlVa
 impl_from_cql_value_from_method!(Vec<u8>, into_blob); // Vec<u8>::from_cql<CqlValue>
 impl_from_cql_value_from_method!(IpAddr, as_inet); // IpAddr::from_cql<CqlValue>
 impl_from_cql_value_from_method!(Uuid, as_uuid); // Uuid::from_cql<CqlValue>
+impl_from_cql_value_from_method!(CqlTimeuuid, as_timeuuid); // CqlTimeuuid::from_cql<CqlValue>
 impl_from_cql_value_from_method!(BigDecimal, into_decimal); // BigDecimal::from_cql<CqlValue>
 impl_from_cql_value_from_method!(CqlDuration, as_cql_duration); // CqlDuration::from_cql<CqlValue>
 impl_from_cql_value_from_method!(CqlDate, as_cql_date); // CqlDate::from_cql<CqlValue>
@@ -390,7 +391,7 @@ impl_tuple_from_cql!(T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, T12, T13, T14
 mod tests {
     use super::{CqlValue, FromCqlVal, FromCqlValError, FromRow, FromRowError, Row};
     use crate as scylla;
-    use crate::frame::value::{Counter, CqlDate, CqlDuration, CqlTime, CqlTimestamp};
+    use crate::frame::value::{Counter, CqlDate, CqlDuration, CqlTime, CqlTimestamp, CqlTimeuuid};
     use crate::macros::FromRow;
     use bigdecimal::BigDecimal;
     use num_bigint::{BigInt, ToBigInt};
@@ -753,7 +754,9 @@ mod tests {
 
     #[test]
     fn uuid_from_cql() {
-        let test_uuid: Uuid = Uuid::parse_str("8e14e760-7fa8-11eb-bc66-000000000001").unwrap();
+        let uuid_str = "8e14e760-7fa8-11eb-bc66-000000000001";
+        let test_uuid: Uuid = Uuid::parse_str(uuid_str).unwrap();
+        let test_time_uuid = CqlTimeuuid::from_str(uuid_str).unwrap();
 
         assert_eq!(
             test_uuid,
@@ -761,8 +764,8 @@ mod tests {
         );
 
         assert_eq!(
-            test_uuid,
-            Uuid::from_cql(CqlValue::Timeuuid(test_uuid)).unwrap()
+            test_time_uuid,
+            CqlTimeuuid::from_cql(CqlValue::Timeuuid(test_time_uuid)).unwrap()
         );
     }
 
