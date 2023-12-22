@@ -231,7 +231,6 @@ impl CqlValue {
     pub fn as_uuid(&self) -> Option<Uuid> {
         match self {
             Self::Uuid(u) => Some(*u),
-            Self::Timeuuid(u) => Some(*u.as_ref()),
             _ => None,
         }
     }

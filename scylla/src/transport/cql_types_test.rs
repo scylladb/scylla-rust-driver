@@ -9,13 +9,13 @@ use crate::transport::session::Session;
 use crate::utils::test_utils::unique_keyspace_name;
 use bigdecimal::BigDecimal;
 use num_bigint::BigInt;
+use scylla_cql::frame::value::CqlTimeuuid;
 use scylla_cql::types::serialize::value::SerializeCql;
 use scylla_macros::SerializeCql;
 use std::cmp::PartialEq;
 use std::fmt::Debug;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 use std::str::FromStr;
-use uuid::Uuid;
 
 // Used to prepare a table for test
 // Creates a new keyspace
@@ -1111,13 +1111,13 @@ async fn test_timeuuid() {
             .await
             .unwrap();
 
-        let (read_timeuuid,): (Uuid,) = session
+        let (read_timeuuid,): (CqlTimeuuid,) = session
             .query("SELECT val from timeuuid_tests", &[])
             .await
             .unwrap()
             .rows
             .unwrap()
-            .into_typed::<(Uuid,)>()
+            .into_typed::<(CqlTimeuuid,)>()
             .next()
             .unwrap()
             .unwrap();
@@ -1125,7 +1125,7 @@ async fn test_timeuuid() {
         assert_eq!(read_timeuuid.as_bytes(), timeuuid_bytes);
 
         // Insert timeuuid as a bound value and verify that it matches
-        let test_uuid: Uuid = Uuid::from_slice(timeuuid_bytes.as_ref()).unwrap();
+        let test_uuid: CqlTimeuuid = CqlTimeuuid::from_slice(timeuuid_bytes.as_ref()).unwrap();
         session
             .query(
                 "INSERT INTO timeuuid_tests (id, val) VALUES (0, ?)",
@@ -1134,13 +1134,13 @@ async fn test_timeuuid() {
             .await
             .unwrap();
 
-        let (read_timeuuid,): (Uuid,) = session
+        let (read_timeuuid,): (CqlTimeuuid,) = session
             .query("SELECT val from timeuuid_tests", &[])
             .await
             .unwrap()
             .rows
             .unwrap()
-            .into_typed::<(Uuid,)>()
+            .into_typed::<(CqlTimeuuid,)>()
             .next()
             .unwrap()
             .unwrap();

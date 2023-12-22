@@ -223,7 +223,7 @@ impl SerializeCql for f64 {
 }
 impl SerializeCql for Uuid {
     impl_serialize_via_writer!(|me, typ, writer| {
-        exact_type_check!(typ, Uuid, Timeuuid);
+        exact_type_check!(typ, Uuid);
         writer.set_value(me.as_bytes().as_ref()).unwrap()
     });
 }
