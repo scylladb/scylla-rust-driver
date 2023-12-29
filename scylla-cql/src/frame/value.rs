@@ -941,7 +941,7 @@ fn serialize_empty(buf: &mut Vec<u8>) -> Result<(), ValueTooBig> {
 impl Value for CqlValue {
     fn serialize(&self, buf: &mut Vec<u8>) -> Result<(), ValueTooBig> {
         match self {
-            CqlValue::Map(m) => serialize_map(m.iter().map(|(k, v)| (k, v)), m.len(), buf),
+            CqlValue::Map(m) => serialize_map(m.iter().map(|p| (&p.0, &p.1)), m.len(), buf),
             CqlValue::Tuple(t) => serialize_tuple(t.iter(), buf),
 
             // A UDT value is composed of successive [bytes] values, one for each field of the UDT
