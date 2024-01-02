@@ -45,7 +45,7 @@ async fn main() -> Result<()> {
             .await?
             .rows
             .unwrap()
-            .get(0)
+            .first()
             .expect("token query no rows!")
             .columns[0]
             .as_ref()

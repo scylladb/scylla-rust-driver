@@ -488,7 +488,7 @@ fn serialize_cql_value<'b>(
         CqlValue::Map(m) => serialize_mapping(
             std::any::type_name::<CqlValue>(),
             m.len(),
-            m.iter().map(|(ref k, ref v)| (k, v)),
+            m.iter().map(|p| (&p.0, &p.1)),
             typ,
             writer,
         ),
