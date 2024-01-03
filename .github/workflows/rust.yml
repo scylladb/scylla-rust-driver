@@ -26,6 +26,7 @@ jobs:
       run: |
         sudo sh -c "echo 2097152 >> /proc/sys/fs/aio-max-nr"
         docker compose -f test/cluster/docker-compose.yml up -d --wait
+    - uses: Swatinem/rust-cache@v2
     - name: Format check
       run: cargo fmt --verbose --all -- --check
     - name: Clippy check
@@ -64,6 +65,7 @@ jobs:
       run: |
         rustup install ${{ env.rust_min }}
         rustup override set ${{ env.rust_min }}
+    - uses: Swatinem/rust-cache@v2
     - name: Print Rust version
       run: rustc --version
     - name: Use MSRV Cargo.lock
@@ -80,5 +82,6 @@ jobs:
     runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@v3
+    - uses: Swatinem/rust-cache@v2
     - name: Compile docs
       run: RUSTDOCFLAGS=-Dwarnings cargo doc

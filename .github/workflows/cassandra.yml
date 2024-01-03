@@ -25,6 +25,7 @@ jobs:
       run: |
         docker compose -f test/cluster/cassandra/docker-compose.yml up -d --wait
       # A separate step for building to separate measuring time of compilation and testing
+    - uses: Swatinem/rust-cache@v2
     - name: Build the project
       run: cargo build --verbose --tests --features "full-serialization"
     - name: Run tests on cassandra
