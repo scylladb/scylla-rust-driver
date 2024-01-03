@@ -7,7 +7,6 @@ use std::net::IpAddr;
 use std::sync::Arc;
 
 use bigdecimal::BigDecimal;
-use num_bigint::BigInt;
 use thiserror::Error;
 use uuid::Uuid;
 
@@ -242,7 +241,8 @@ impl SerializeCql for CqlVarint {
             .map_err(|_| mk_ser_err::<Self>(typ, BuiltinSerializationErrorKind::SizeOverflow))?
     });
 }
-impl SerializeCql for BigInt {
+#[cfg(feature = "num-bigint-03")]
+impl SerializeCql for num_bigint_03::BigInt {
     impl_serialize_via_writer!(|me, typ, writer| {
         exact_type_check!(typ, Varint);
         // TODO: The allocation here can be avoided and we can reimplement
@@ -1514,8 +1514,8 @@ mod tests {
     };
     use crate::types::serialize::{CellWriter, SerializationError};
 
+    use bigdecimal::num_bigint::BigInt;
     use bigdecimal::BigDecimal;
-    use num_bigint::BigInt;
     use scylla_macros::SerializeCql;
 
     use super::{SerializeCql, UdtSerializationErrorKind, UdtTypeCheckErrorKind};

@@ -2,7 +2,6 @@ use crate::frame::frame_errors::ParseError;
 use crate::frame::types;
 use bigdecimal::BigDecimal;
 use bytes::BufMut;
-use num_bigint::BigInt;
 use std::borrow::Cow;
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::convert::TryInto;
@@ -306,15 +305,17 @@ impl CqlVarint {
     }
 }
 
-impl From<BigInt> for CqlVarint {
-    fn from(value: BigInt) -> Self {
+#[cfg(feature = "num-bigint-03")]
+impl From<num_bigint_03::BigInt> for CqlVarint {
+    fn from(value: num_bigint_03::BigInt) -> Self {
         Self(value.to_signed_bytes_be())
     }
 }
 
-impl From<CqlVarint> for BigInt {
+#[cfg(feature = "num-bigint-03")]
+impl From<CqlVarint> for num_bigint_03::BigInt {
     fn from(val: CqlVarint) -> Self {
-        BigInt::from_signed_bytes_be(&val.0)
+        num_bigint_03::BigInt::from_signed_bytes_be(&val.0)
     }
 }
 
@@ -1007,7 +1008,8 @@ impl Value for CqlVarint {
     }
 }
 
-impl Value for BigInt {
+#[cfg(feature = "num-bigint-03")]
+impl Value for num_bigint_03::BigInt {
     fn serialize(&self, buf: &mut Vec<u8>) -> Result<(), ValueTooBig> {
         let serialized = self.to_signed_bytes_be();
         let serialized_len: i32 = serialized.len().try_into().map_err(|_| ValueTooBig)?;

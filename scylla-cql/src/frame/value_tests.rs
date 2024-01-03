@@ -12,7 +12,6 @@ use super::value::{
 };
 use bigdecimal::BigDecimal;
 use bytes::BufMut;
-use num_bigint::BigInt;
 use std::collections::hash_map::DefaultHasher;
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::hash::{BuildHasherDefault, Hash, Hasher};
@@ -110,13 +109,14 @@ fn cql_varint_normalization() {
     }
 }
 
+#[cfg(feature = "num-bigint-03")]
 #[test]
-fn cql_varint_normalization_with_bigint() {
+fn cql_varint_normalization_with_bigint03() {
     let test_cases = cql_varint_normalization_test_cases();
 
     for test in test_cases {
-        let non_normalized: BigInt = CqlVarint::from_signed_bytes_be(test.0).into();
-        let normalized: BigInt = CqlVarint::from_signed_bytes_be(test.1).into();
+        let non_normalized: num_bigint_03::BigInt = CqlVarint::from_signed_bytes_be(test.0).into();
+        let normalized: num_bigint_03::BigInt = CqlVarint::from_signed_bytes_be(test.1).into();
 
         assert_eq!(non_normalized, normalized);
     }
@@ -147,8 +147,9 @@ fn cql_varint_serialization() {
     }
 }
 
+#[cfg(feature = "num-bigint-03")]
 #[test]
-fn bigint_serialization() {
+fn bigint03_serialization() {
     let cases_from_the_spec: &[(i64, Vec<u8>)] = &[
         (0, vec![0x00]),
         (1, vec![0x01]),
@@ -161,7 +162,7 @@ fn bigint_serialization() {
     ];
 
     for (i, b) in cases_from_the_spec {
-        let x = BigInt::from(*i);
+        let x = num_bigint_03::BigInt::from(*i);
         let b_with_len = (b.len() as i32)
             .to_be_bytes()
             .iter()
@@ -195,7 +196,7 @@ fn bigdecimal_serialization() {
                 .chain(serialized_digits)
                 .cloned()
                 .collect::<Vec<_>>();
-            let digits = BigInt::from(*digits);
+            let digits = bigdecimal::num_bigint::BigInt::from(*digits);
             let x = BigDecimal::new(digits, exponent as i64);
             assert_eq!(serialized(x, ColumnType::Decimal), repr);
         }

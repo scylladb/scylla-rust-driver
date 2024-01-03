@@ -672,7 +672,7 @@ pub fn deser_cql_value(typ: &ColumnType, buf: &mut &[u8]) -> StdResult<CqlValue,
         }
         Decimal => {
             let scale = types::read_int(buf)? as i64;
-            let int_value = num_bigint::BigInt::from_signed_bytes_be(buf);
+            let int_value = bigdecimal::num_bigint::BigInt::from_signed_bytes_be(buf);
             let big_decimal: BigDecimal = BigDecimal::from((int_value, scale));
 
             CqlValue::Decimal(big_decimal)
@@ -968,8 +968,6 @@ mod tests {
     use crate as scylla;
     use crate::frame::value::{Counter, CqlDate, CqlDuration, CqlTime, CqlTimestamp, CqlTimeuuid};
     use bigdecimal::BigDecimal;
-    use num_bigint::BigInt;
-    use num_bigint::ToBigInt;
     use scylla::frame::response::result::{ColumnType, CqlValue};
     use std::str::FromStr;
     use uuid::Uuid;
@@ -1029,10 +1027,13 @@ mod tests {
         assert_eq!(double_serialize, CqlValue::Double(double));
     }
 
+    #[cfg(feature = "num-bigint-03")]
     #[test]
     fn test_varint() {
+        use num_bigint_03::ToBigInt;
+
         struct Test<'a> {
-            value: BigInt,
+            value: num_bigint_03::BigInt,
             encoding: &'a [u8],
         }
 

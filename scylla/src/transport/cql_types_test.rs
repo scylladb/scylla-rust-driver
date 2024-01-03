@@ -9,7 +9,6 @@ use crate::transport::session::Session;
 use crate::utils::test_utils::unique_keyspace_name;
 use bigdecimal::BigDecimal;
 use itertools::Itertools;
-use num_bigint::BigInt;
 use scylla_cql::frame::value::{CqlTimeuuid, CqlVarint};
 use scylla_cql::types::serialize::value::SerializeCql;
 use scylla_macros::SerializeCql;
@@ -104,6 +103,7 @@ where
     }
 }
 
+#[cfg(feature = "num-bigint-03")]
 #[tokio::test]
 async fn test_varint() {
     let tests = [
@@ -119,7 +119,7 @@ async fn test_varint() {
         "-123456789012345678901234567890",
     ];
 
-    run_tests::<BigInt>(&tests, "varint").await;
+    run_tests::<num_bigint_03::BigInt>(&tests, "varint").await;
 }
 
 #[tokio::test]
