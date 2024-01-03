@@ -215,6 +215,70 @@ impl std::hash::Hash for CqlTimeuuid {
     }
 }
 
+/// Native CQL `varint` representation.
+///
+/// Represented as two's-complement binary in big-endian order.
+///
+/// This type is a raw representation in bytes. It's the default
+/// implementation of `varint` type - independent of any
+/// external crates and crate features.
+///
+/// # DB data format
+/// Notice that [constructors](CqlVarint#impl-CqlVarint)
+/// don't perform any normalization on the provided data.
+/// This means that underlying bytes may contain leading zeros.
+///
+/// Currently, Scylla and Cassandra support non-normalized `varint` values.
+/// Bytes provided by the user via constructor are passed to DB as is.
+#[derive(Clone, Debug)]
+pub struct CqlVarint(Vec<u8>);
+
+/// Constructors from bytes
+impl CqlVarint {
+    /// Creates a [`CqlVarint`] from an array of bytes in
+    /// two's complement big-endian binary representation.
+    ///
+    /// See: disclaimer about [non-normalized values](CqlVarint#db-data-format).
+    pub fn from_signed_bytes_be(digits: Vec<u8>) -> Self {
+        Self(digits)
+    }
+
+    /// Creates a [`CqlVarint`] from a slice of bytes in
+    /// two's complement binary big-endian representation.
+    ///
+    /// See: disclaimer about [non-normalized values](CqlVarint#db-data-format).
+    pub fn from_signed_bytes_be_slice(digits: &[u8]) -> Self {
+        Self::from_signed_bytes_be(digits.to_vec())
+    }
+}
+
+/// Conversion to bytes
+impl CqlVarint {
+    /// Converts [`CqlVarint`] to an array of bytes in two's
+    /// complement binary big-endian representation.
+    pub fn into_signed_bytes_be(self) -> Vec<u8> {
+        self.0
+    }
+
+    /// Returns a slice of bytes in two's complement
+    /// binary big-endian representation.
+    pub fn as_signed_bytes_be_slice(&self) -> &[u8] {
+        &self.0
+    }
+}
+
+impl From<BigInt> for CqlVarint {
+    fn from(value: BigInt) -> Self {
+        Self(value.to_signed_bytes_be())
+    }
+}
+
+impl From<CqlVarint> for BigInt {
+    fn from(val: CqlVarint) -> Self {
+        BigInt::from_signed_bytes_be(&val.0)
+    }
+}
+
 /// Native CQL date representation that allows for a bigger range of dates (-262145-1-1 to 262143-12-31).
 ///
 /// Represented as number of days since -5877641-06-23 i.e. 2^31 days before unix epoch.
