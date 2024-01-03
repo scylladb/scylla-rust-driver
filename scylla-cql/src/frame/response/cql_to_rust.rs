@@ -159,6 +159,16 @@ impl FromCqlVal<CqlValue> for num_bigint_03::BigInt {
     }
 }
 
+#[cfg(feature = "num-bigint-04")]
+impl FromCqlVal<CqlValue> for num_bigint_04::BigInt {
+    fn from_cql(cql_val: CqlValue) -> Result<Self, FromCqlValError> {
+        match cql_val {
+            CqlValue::Varint(cql_varint) => Ok(cql_varint.into()),
+            _ => Err(FromCqlValError::BadCqlType),
+        }
+    }
+}
+
 #[cfg(feature = "chrono")]
 impl FromCqlVal<CqlValue> for NaiveDate {
     fn from_cql(cql_val: CqlValue) -> Result<Self, FromCqlValError> {
@@ -470,13 +480,25 @@ mod tests {
 
     #[cfg(feature = "num-bigint-03")]
     #[test]
-    fn varint_from_cql() {
+    fn varint03_from_cql() {
         use num_bigint_03::ToBigInt;
 
         let big_int = 0.to_bigint().unwrap();
         assert_eq!(
             Ok(big_int),
             num_bigint_03::BigInt::from_cql(CqlValue::Varint(0.to_bigint().unwrap().into()))
+        );
+    }
+
+    #[cfg(feature = "num-bigint-04")]
+    #[test]
+    fn varint04_from_cql() {
+        use num_bigint_04::ToBigInt;
+
+        let big_int = 0.to_bigint().unwrap();
+        assert_eq!(
+            Ok(big_int),
+            num_bigint_04::BigInt::from_cql(CqlValue::Varint(0.to_bigint().unwrap().into()))
         );
     }
 

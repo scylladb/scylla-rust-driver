@@ -147,10 +147,8 @@ fn cql_varint_serialization() {
     }
 }
 
-#[cfg(feature = "num-bigint-03")]
-#[test]
-fn bigint03_serialization() {
-    let cases_from_the_spec: &[(i64, Vec<u8>)] = &[
+fn varint_test_cases_from_spec() -> Vec<(i64, Vec<u8>)> {
+    vec![
         (0, vec![0x00]),
         (1, vec![0x01]),
         (127, vec![0x7F]),
@@ -159,10 +157,18 @@ fn bigint03_serialization() {
         (-1, vec![0xFF]),
         (-128, vec![0x80]),
         (-129, vec![0xFF, 0x7F]),
-    ];
+    ]
+}
+
+#[cfg(any(feature = "num-bigint-03", feature = "num-bigint-04"))]
+fn generic_num_bigint_serialization<B>()
+where
+    B: From<i64> + Value + SerializeCql,
+{
+    let cases_from_the_spec: &[(i64, Vec<u8>)] = &varint_test_cases_from_spec();
 
     for (i, b) in cases_from_the_spec {
-        let x = num_bigint_03::BigInt::from(*i);
+        let x = B::from(*i);
         let b_with_len = (b.len() as i32)
             .to_be_bytes()
             .iter()
@@ -173,19 +179,22 @@ fn bigint03_serialization() {
     }
 }
 
+#[cfg(feature = "num-bigint-03")]
+#[test]
+fn bigint03_serialization() {
+    generic_num_bigint_serialization::<num_bigint_03::BigInt>()
+}
+
+#[cfg(feature = "num-bigint-04")]
+#[test]
+fn bigint04_serialization() {
+    generic_num_bigint_serialization::<num_bigint_04::BigInt>()
+}
+
 #[test]
 fn bigdecimal_serialization() {
     // Bigint cases
-    let cases_from_the_spec: &[(i64, Vec<u8>)] = &[
-        (0, vec![0x00]),
-        (1, vec![0x01]),
-        (127, vec![0x7F]),
-        (128, vec![0x00, 0x80]),
-        (129, vec![0x00, 0x81]),
-        (-1, vec![0xFF]),
-        (-128, vec![0x80]),
-        (-129, vec![0xFF, 0x7F]),
-    ];
+    let cases_from_the_spec: &[(i64, Vec<u8>)] = &varint_test_cases_from_spec();
 
     for exponent in -10_i32..10_i32 {
         for (digits, serialized_digits) in cases_from_the_spec {

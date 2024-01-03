@@ -319,6 +319,20 @@ impl From<CqlVarint> for num_bigint_03::BigInt {
     }
 }
 
+#[cfg(feature = "num-bigint-04")]
+impl From<num_bigint_04::BigInt> for CqlVarint {
+    fn from(value: num_bigint_04::BigInt) -> Self {
+        Self(value.to_signed_bytes_be())
+    }
+}
+
+#[cfg(feature = "num-bigint-04")]
+impl From<CqlVarint> for num_bigint_04::BigInt {
+    fn from(val: CqlVarint) -> Self {
+        num_bigint_04::BigInt::from_signed_bytes_be(&val.0)
+    }
+}
+
 /// Compares two [`CqlVarint`] values after normalization.
 ///
 /// # Example
@@ -1010,6 +1024,19 @@ impl Value for CqlVarint {
 
 #[cfg(feature = "num-bigint-03")]
 impl Value for num_bigint_03::BigInt {
+    fn serialize(&self, buf: &mut Vec<u8>) -> Result<(), ValueTooBig> {
+        let serialized = self.to_signed_bytes_be();
+        let serialized_len: i32 = serialized.len().try_into().map_err(|_| ValueTooBig)?;
+
+        buf.put_i32(serialized_len);
+        buf.extend_from_slice(&serialized);
+
+        Ok(())
+    }
+}
+
+#[cfg(feature = "num-bigint-04")]
+impl Value for num_bigint_04::BigInt {
     fn serialize(&self, buf: &mut Vec<u8>) -> Result<(), ValueTooBig> {
         let serialized = self.to_signed_bytes_be();
         let serialized_len: i32 = serialized.len().try_into().map_err(|_| ValueTooBig)?;

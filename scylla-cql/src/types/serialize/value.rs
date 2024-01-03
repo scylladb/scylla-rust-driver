@@ -253,6 +253,16 @@ impl SerializeCql for num_bigint_03::BigInt {
             .map_err(|_| mk_ser_err::<Self>(typ, BuiltinSerializationErrorKind::SizeOverflow))?
     });
 }
+#[cfg(feature = "num-bigint-04")]
+impl SerializeCql for num_bigint_04::BigInt {
+    impl_serialize_via_writer!(|me, typ, writer| {
+        exact_type_check!(typ, Varint);
+        // TODO: See above comment for num-bigint-03.
+        writer
+            .set_value(me.to_signed_bytes_be().as_slice())
+            .map_err(|_| mk_ser_err::<Self>(typ, BuiltinSerializationErrorKind::SizeOverflow))?
+    });
+}
 impl SerializeCql for &str {
     impl_serialize_via_writer!(|me, typ, writer| {
         exact_type_check!(typ, Ascii, Text);

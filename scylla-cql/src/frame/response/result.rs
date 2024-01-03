@@ -1027,16 +1027,14 @@ mod tests {
         assert_eq!(double_serialize, CqlValue::Double(double));
     }
 
-    #[cfg(feature = "num-bigint-03")]
-    #[test]
-    fn test_varint() {
-        use num_bigint_03::ToBigInt;
+    #[cfg(any(feature = "num-bigint-03", feature = "num-bigint-04"))]
+    struct VarintTestCase {
+        value: i32,
+        encoding: Vec<u8>,
+    }
 
-        struct Test<'a> {
-            value: num_bigint_03::BigInt,
-            encoding: &'a [u8],
-        }
-
+    #[cfg(any(feature = "num-bigint-03", feature = "num-bigint-04"))]
+    fn varint_test_cases_from_spec() -> Vec<VarintTestCase> {
         /*
             Table taken from CQL Binary Protocol v4 spec
 
@@ -1051,44 +1049,65 @@ mod tests {
              -128 |     0x80
              -129 |   0xFF7F
         */
-        let tests = [
-            Test {
-                value: 0.to_bigint().unwrap(),
-                encoding: &[0x00],
+        vec![
+            VarintTestCase {
+                value: 0,
+                encoding: vec![0x00],
             },
-            Test {
-                value: 1.to_bigint().unwrap(),
-                encoding: &[0x01],
+            VarintTestCase {
+                value: 1,
+                encoding: vec![0x01],
             },
-            Test {
-                value: 127.to_bigint().unwrap(),
-                encoding: &[0x7F],
+            VarintTestCase {
+                value: 127,
+                encoding: vec![0x7F],
             },
-            Test {
-                value: 128.to_bigint().unwrap(),
-                encoding: &[0x00, 0x80],
+            VarintTestCase {
+                value: 128,
+                encoding: vec![0x00, 0x80],
             },
-            Test {
-                value: 129.to_bigint().unwrap(),
-                encoding: &[0x00, 0x81],
+            VarintTestCase {
+                value: 129,
+                encoding: vec![0x00, 0x81],
             },
-            Test {
-                value: (-1).to_bigint().unwrap(),
-                encoding: &[0xFF],
+            VarintTestCase {
+                value: -1,
+                encoding: vec![0xFF],
             },
-            Test {
-                value: (-128).to_bigint().unwrap(),
-                encoding: &[0x80],
+            VarintTestCase {
+                value: -128,
+                encoding: vec![0x80],
             },
-            Test {
-                value: (-129).to_bigint().unwrap(),
-                encoding: &[0xFF, 0x7F],
+            VarintTestCase {
+                value: -129,
+                encoding: vec![0xFF, 0x7F],
             },
-        ];
+        ]
+    }
+
+    #[cfg(feature = "num-bigint-03")]
+    #[test]
+    fn test_bigint03() {
+        use num_bigint_03::ToBigInt;
+
+        let tests = varint_test_cases_from_spec();
 
         for t in tests.iter() {
             let value = super::deser_cql_value(&ColumnType::Varint, &mut &*t.encoding).unwrap();
-            assert_eq!(CqlValue::Varint(t.value.clone().into()), value);
+            assert_eq!(CqlValue::Varint(t.value.to_bigint().unwrap().into()), value);
+        }
+    }
+
+    #[cfg(feature = "num-bigint-04")]
+    #[test]
+    fn test_bigint04() {
+        use num_bigint_04::ToBigInt;
+
+        let tests = varint_test_cases_from_spec();
+
+        for t in tests.iter() {
+            let value = super::deser_cql_value(&ColumnType::Varint, &mut &*t.encoding).unwrap();
+            assert_eq!(CqlValue::Varint(t.value.to_bigint().unwrap().into()), value);
         }
     }
 

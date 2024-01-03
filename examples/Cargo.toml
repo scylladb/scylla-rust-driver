@@ -10,7 +10,7 @@ futures = "0.3.6"
 openssl = "0.10.32"
 rustyline = "9"
 rustyline-derive = "0.6"
-scylla = {path = "../scylla", features = ["ssl", "cloud", "chrono", "time", "num-bigint-03"]}
+scylla = {path = "../scylla", features = ["ssl", "cloud", "chrono", "time", "num-bigint-03", "num-bigint-04"]}
 tokio = {version = "1.1.0", features = ["full"]}
 tracing = "0.1.25"
 tracing-subscriber = { version = "0.3.14", features = ["env-filter"] }

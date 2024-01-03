@@ -103,10 +103,9 @@ where
     }
 }
 
-#[cfg(feature = "num-bigint-03")]
-#[tokio::test]
-async fn test_varint() {
-    let tests = [
+#[cfg(any(feature = "num-bigint-03", feature = "num-bigint-04"))]
+fn varint_test_cases() -> Vec<&'static str> {
+    vec![
         "0",
         "1",
         "127",
@@ -117,9 +116,21 @@ async fn test_varint() {
         "-129",
         "123456789012345678901234567890",
         "-123456789012345678901234567890",
-    ];
+    ]
+}
 
+#[cfg(feature = "num-bigint-03")]
+#[tokio::test]
+async fn test_varint03() {
+    let tests = varint_test_cases();
     run_tests::<num_bigint_03::BigInt>(&tests, "varint").await;
+}
+
+#[cfg(feature = "num-bigint-04")]
+#[tokio::test]
+async fn test_varint04() {
+    let tests = varint_test_cases();
+    run_tests::<num_bigint_04::BigInt>(&tests, "varint").await;
 }
 
 #[tokio::test]
