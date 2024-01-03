@@ -10,7 +10,7 @@ use crate::utils::test_utils::unique_keyspace_name;
 use bigdecimal::BigDecimal;
 use itertools::Itertools;
 use num_bigint::BigInt;
-use scylla_cql::frame::value::CqlTimeuuid;
+use scylla_cql::frame::value::{CqlTimeuuid, CqlVarint};
 use scylla_cql::types::serialize::value::SerializeCql;
 use scylla_macros::SerializeCql;
 use std::cmp::PartialEq;
@@ -120,6 +120,88 @@ async fn test_varint() {
     ];
 
     run_tests::<BigInt>(&tests, "varint").await;
+}
+
+#[tokio::test]
+async fn test_cql_varint() {
+    let tests = [
+        vec![0x00],       // 0
+        vec![0x01],       // 1
+        vec![0x00, 0x01], // 1 (with leading zeros)
+        vec![0x7F],       // 127
+        vec![0x00, 0x80], // 128
+        vec![0x00, 0x81], // 129
+        vec![0xFF],       // -1
+        vec![0x80],       // -128
+        vec![0xFF, 0x7F], // -129
+        vec![
+            0x01, 0x8E, 0xE9, 0x0F, 0xF6, 0xC3, 0x73, 0xE0, 0xEE, 0x4E, 0x3F, 0x0A, 0xD2,
+        ], // 123456789012345678901234567890
+        vec![
+            0xFE, 0x71, 0x16, 0xF0, 0x09, 0x3C, 0x8C, 0x1F, 0x11, 0xB1, 0xC0, 0xF5, 0x2E,
+        ], // -123456789012345678901234567890
+    ];
+
+    let table_name = "cql_varint_tests";
+    let session: Session = create_new_session_builder().build().await.unwrap();
+    let ks = unique_keyspace_name();
+
+    session
+        .query(
+            format!(
+                "CREATE KEYSPACE IF NOT EXISTS {} WITH REPLICATION = \
+            {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}}",
+                ks
+            ),
+            &[],
+        )
+        .await
+        .unwrap();
+    session.use_keyspace(ks, false).await.unwrap();
+
+    session
+        .query(
+            format!(
+                "CREATE TABLE IF NOT EXISTS {} (id int PRIMARY KEY, val varint)",
+                table_name
+            ),
+            &[],
+        )
+        .await
+        .unwrap();
+
+    let prepared_insert = session
+        .prepare(format!(
+            "INSERT INTO {} (id, val) VALUES (0, ?)",
+            table_name
+        ))
+        .await
+        .unwrap();
+    let prepared_select = session
+        .prepare(format!("SELECT val FROM {} WHERE id = 0", table_name))
+        .await
+        .unwrap();
+
+    for test in tests {
+        let cql_varint = CqlVarint::from_signed_bytes_be_slice(&test);
+        session
+            .execute(&prepared_insert, (&cql_varint,))
+            .await
+            .unwrap();
+
+        let read_values: Vec<CqlVarint> = session
+            .execute(&prepared_select, &[])
+            .await
+            .unwrap()
+            .rows
+            .unwrap()
+            .into_typed::<(CqlVarint,)>()
+            .map(Result::unwrap)
+            .map(|row| row.0)
+            .collect::<Vec<_>>();
+
+        assert_eq!(read_values, vec![cql_varint])
+    }
 }
 
 #[tokio::test]

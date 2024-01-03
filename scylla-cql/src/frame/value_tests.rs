@@ -1,4 +1,4 @@
-use crate::frame::value::CqlTimeuuid;
+use crate::frame::value::{CqlTimeuuid, CqlVarint};
 use crate::frame::{response::result::CqlValue, types::RawValue, value::LegacyBatchValuesIterator};
 use crate::types::serialize::batch::{BatchValues, BatchValuesIterator, LegacyBatchValuesAdapter};
 use crate::types::serialize::row::{RowSerializationContext, SerializeRow};
@@ -7,8 +7,8 @@ use crate::types::serialize::{CellWriter, RowWriter};
 
 use super::response::result::{ColumnSpec, ColumnType, TableSpec};
 use super::value::{
-    CqlDate, CqlDuration, CqlTime, CqlTimestamp, CqlVarint, LegacyBatchValues,
-    LegacySerializedValues, MaybeUnset, SerializeValuesError, Unset, Value, ValueList, ValueTooBig,
+    CqlDate, CqlDuration, CqlTime, CqlTimestamp, LegacyBatchValues, LegacySerializedValues,
+    MaybeUnset, SerializeValuesError, Unset, Value, ValueList, ValueTooBig,
 };
 use bigdecimal::BigDecimal;
 use bytes::BufMut;
@@ -119,6 +119,31 @@ fn cql_varint_normalization_with_bigint() {
         let normalized: BigInt = CqlVarint::from_signed_bytes_be(test.1).into();
 
         assert_eq!(non_normalized, normalized);
+    }
+}
+
+#[test]
+fn cql_varint_serialization() {
+    let cases_from_the_spec: &[Vec<u8>] = &[
+        vec![0x00],
+        vec![0x01],
+        vec![0x7F],
+        vec![0x00, 0x80],
+        vec![0x00, 0x81],
+        vec![0xFF],
+        vec![0x80],
+        vec![0xFF, 0x7F],
+    ];
+
+    for b in cases_from_the_spec {
+        let x = CqlVarint::from_signed_bytes_be_slice(b);
+        let b_with_len = (b.len() as i32)
+            .to_be_bytes()
+            .iter()
+            .chain(b)
+            .cloned()
+            .collect::<Vec<_>>();
+        assert_eq!(serialized(x, ColumnType::Varint), b_with_len);
     }
 }
 
