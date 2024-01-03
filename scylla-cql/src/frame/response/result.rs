@@ -1,12 +1,13 @@
 use crate::cql_to_rust::{FromRow, FromRowError};
 use crate::frame::response::event::SchemaChangeEvent;
 use crate::frame::types::vint_decode;
-use crate::frame::value::{Counter, CqlDate, CqlDuration, CqlTime, CqlTimestamp, CqlTimeuuid};
+use crate::frame::value::{
+    Counter, CqlDate, CqlDuration, CqlTime, CqlTimestamp, CqlTimeuuid, CqlVarint,
+};
 use crate::frame::{frame_errors::ParseError, types};
 use bigdecimal::BigDecimal;
 use byteorder::{BigEndian, ReadBytesExt};
 use bytes::{Buf, Bytes};
-use num_bigint::BigInt;
 use std::{
     convert::{TryFrom, TryInto},
     net::IpAddr,
@@ -113,7 +114,7 @@ pub enum CqlValue {
     Timeuuid(CqlTimeuuid),
     Tuple(Vec<Option<CqlValue>>),
     Uuid(Uuid),
-    Varint(BigInt),
+    Varint(CqlVarint),
 }
 
 impl ColumnType {
@@ -363,7 +364,7 @@ impl CqlValue {
         }
     }
 
-    pub fn into_varint(self) -> Option<BigInt> {
+    pub fn into_cql_varint(self) -> Option<CqlVarint> {
         match self {
             Self::Varint(i) => Some(i),
             _ => None,
@@ -810,7 +811,7 @@ pub fn deser_cql_value(typ: &ColumnType, buf: &mut &[u8]) -> StdResult<CqlValue,
             let uuid = uuid::Uuid::from_slice(buf).expect("Deserializing Uuid failed.");
             CqlValue::Uuid(uuid)
         }
-        Varint => CqlValue::Varint(num_bigint::BigInt::from_signed_bytes_be(buf)),
+        Varint => CqlValue::Varint(CqlVarint::from_signed_bytes_be(buf.to_vec())),
         List(type_name) => {
             let len: usize = types::read_int(buf)?.try_into()?;
             let mut res = Vec::with_capacity(len);
@@ -1086,7 +1087,7 @@ mod tests {
 
         for t in tests.iter() {
             let value = super::deser_cql_value(&ColumnType::Varint, &mut &*t.encoding).unwrap();
-            assert_eq!(CqlValue::Varint(t.value.clone()), value);
+            assert_eq!(CqlValue::Varint(t.value.clone().into()), value);
         }
     }
 

@@ -995,6 +995,18 @@ impl Value for CqlTimeuuid {
     }
 }
 
+impl Value for CqlVarint {
+    fn serialize(&self, buf: &mut Vec<u8>) -> Result<(), ValueTooBig> {
+        let serialized = &self.0;
+        let serialized_len: i32 = serialized.len().try_into().map_err(|_| ValueTooBig)?;
+
+        buf.put_i32(serialized_len);
+        buf.extend_from_slice(serialized);
+
+        Ok(())
+    }
+}
+
 impl Value for BigInt {
     fn serialize(&self, buf: &mut Vec<u8>) -> Result<(), ValueTooBig> {
         let serialized = self.to_signed_bytes_be();

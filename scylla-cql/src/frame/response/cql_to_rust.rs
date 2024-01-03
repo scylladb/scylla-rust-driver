@@ -1,5 +1,7 @@
 use super::result::{CqlValue, Row};
-use crate::frame::value::{Counter, CqlDate, CqlDuration, CqlTime, CqlTimestamp, CqlTimeuuid};
+use crate::frame::value::{
+    Counter, CqlDate, CqlDuration, CqlTime, CqlTimestamp, CqlTimeuuid, CqlVarint,
+};
 use bigdecimal::BigDecimal;
 use num_bigint::BigInt;
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
@@ -125,7 +127,7 @@ impl_from_cql_value_from_method!(i32, as_int); // i32::from_cql<CqlValue>
 impl_from_cql_value_from_method!(i64, as_bigint); // i64::from_cql<CqlValue>
 impl_from_cql_value_from_method!(Counter, as_counter); // Counter::from_cql<CqlValue>
 impl_from_cql_value_from_method!(i16, as_smallint); // i16::from_cql<CqlValue>
-impl_from_cql_value_from_method!(BigInt, into_varint); // BigInt::from_cql<CqlValue>
+impl_from_cql_value_from_method!(CqlVarint, into_cql_varint); // CqlVarint::from_cql<CqlValue>
 impl_from_cql_value_from_method!(i8, as_tinyint); // i8::from_cql<CqlValue>
 impl_from_cql_value_from_method!(f32, as_float); // f32::from_cql<CqlValue>
 impl_from_cql_value_from_method!(f64, as_double); // f64::from_cql<CqlValue>
@@ -145,6 +147,15 @@ impl<const N: usize> FromCqlVal<CqlValue> for [u8; N] {
     fn from_cql(cql_val: CqlValue) -> Result<Self, FromCqlValError> {
         let val = cql_val.into_blob().ok_or(FromCqlValError::BadCqlType)?;
         val.try_into().map_err(|_| FromCqlValError::BadVal)
+    }
+}
+
+impl FromCqlVal<CqlValue> for BigInt {
+    fn from_cql(cql_val: CqlValue) -> Result<Self, FromCqlValError> {
+        match cql_val {
+            CqlValue::Varint(cql_varint) => Ok(cql_varint.into()),
+            _ => Err(FromCqlValError::BadCqlType),
+        }
     }
 }
 
@@ -463,7 +474,7 @@ mod tests {
         let big_int = 0.to_bigint().unwrap();
         assert_eq!(
             Ok(big_int),
-            BigInt::from_cql(CqlValue::Varint(0.to_bigint().unwrap()))
+            BigInt::from_cql(CqlValue::Varint(0.to_bigint().unwrap().into()))
         );
     }
 
