@@ -2692,4 +2692,51 @@ mod tests {
             BuiltinTypeCheckErrorKind::UdtError(UdtTypeCheckErrorKind::NoSuchFieldInUdt { .. })
         ));
     }
+
+    #[derive(SerializeCql, Debug)]
+    #[scylla(crate = crate, flavor = "enforce_order", skip_name_checks)]
+    struct TestUdtWithSkippedFields {
+        a: String,
+        b: i32,
+        #[scylla(skip)]
+        #[allow(dead_code)]
+        skipped: Vec<String>,
+        c: Vec<i64>,
+    }
+
+    #[test]
+    fn test_row_serialization_with_skipped_field() {
+        let typ = ColumnType::UserDefinedType {
+            type_name: "typ".to_string(),
+            keyspace: "ks".to_string(),
+            field_types: vec![
+                ("a".to_string(), ColumnType::Text),
+                ("b".to_string(), ColumnType::Int),
+                (
+                    "c".to_string(),
+                    ColumnType::List(Box::new(ColumnType::BigInt)),
+                ),
+            ],
+        };
+
+        let reference = do_serialize(
+            TestUdtWithFieldSorting {
+                a: "Ala ma kota".to_owned(),
+                b: 42,
+                c: vec![1, 2, 3],
+            },
+            &typ,
+        );
+        let row = do_serialize(
+            TestUdtWithSkippedFields {
+                a: "Ala ma kota".to_owned(),
+                b: 42,
+                skipped: vec!["abcd".to_owned(), "efgh".to_owned()],
+                c: vec![1, 2, 3],
+            },
+            &typ,
+        );
+
+        assert_eq!(reference, row);
+    }
 }

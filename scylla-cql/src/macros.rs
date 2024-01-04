@@ -117,6 +117,10 @@ pub use scylla_macros::ValueList;
 ///
 /// Serializes the field to the UDT struct field with given name instead of
 /// its Rust name.
+///
+/// `#[scylla(skip)]`
+///
+/// Don't use the field during serialization.
 pub use scylla_macros::SerializeCql;
 
 /// Derive macro for the [`SerializeRow`](crate::types::serialize::row::SerializeRow) trait
