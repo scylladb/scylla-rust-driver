@@ -51,6 +51,9 @@ impl Field {
 #[darling(attributes(scylla))]
 struct FieldAttributes {
     rename: Option<String>,
+
+    #[darling(default)]
+    skip: bool,
 }
 
 struct Context {
@@ -78,6 +81,9 @@ pub fn derive_serialize_cql(tokens_input: TokenStream) -> Result<syn::ItemImpl, 
                 attrs,
             })
         })
+        // Filter the fields now instead of at the places that use them later
+        // as it's less error prone - we just filter in one place instead of N places.
+        .filter(|f| f.as_ref().map(|f| !f.attrs.skip).unwrap_or(true))
         .collect::<Result<_, _>>()?;
     let ctx = Context { attributes, fields };
     ctx.validate(&input.ident)?;
