@@ -655,6 +655,7 @@ impl Connection {
                 values: Cow::Borrowed(SerializedValues::EMPTY),
                 page_size: query.get_page_size(),
                 paging_state,
+                skip_metadata: false,
                 timestamp: query.get_timestamp(),
             },
         };
@@ -699,6 +700,7 @@ impl Connection {
                 values: Cow::Borrowed(values),
                 page_size: prepared_statement.get_page_size(),
                 timestamp: prepared_statement.get_timestamp(),
+                skip_metadata: prepared_statement.get_use_cached_result_metadata(),
                 paging_state,
             },
         };

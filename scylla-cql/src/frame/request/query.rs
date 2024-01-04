@@ -63,6 +63,7 @@ pub struct QueryParameters<'a> {
     pub timestamp: Option<i64>,
     pub page_size: Option<i32>,
     pub paging_state: Option<Bytes>,
+    pub skip_metadata: bool,
     pub values: Cow<'a, SerializedValues>,
 }
 
@@ -74,6 +75,7 @@ impl Default for QueryParameters<'_> {
             timestamp: None,
             page_size: None,
             paging_state: None,
+            skip_metadata: false,
             values: Cow::Borrowed(SerializedValues::EMPTY),
         }
     }
@@ -86,6 +88,10 @@ impl QueryParameters<'_> {
         let mut flags = 0;
         if !self.values.is_empty() {
             flags |= FLAG_VALUES;
+        }
+
+        if self.skip_metadata {
+            flags |= FLAG_SKIP_METADATA;
         }
 
         if self.page_size.is_some() {
@@ -143,6 +149,7 @@ impl<'q> QueryParameters<'q> {
             )));
         }
         let values_flag = (flags & FLAG_VALUES) != 0;
+        let skip_metadata = (flags & FLAG_SKIP_METADATA) != 0;
         let page_size_flag = (flags & FLAG_PAGE_SIZE) != 0;
         let paging_state_flag = (flags & FLAG_WITH_PAGING_STATE) != 0;
         let serial_consistency_flag = (flags & FLAG_WITH_SERIAL_CONSISTENCY) != 0;
@@ -192,6 +199,7 @@ impl<'q> QueryParameters<'q> {
             timestamp,
             page_size,
             paging_state,
+            skip_metadata,
             values,
         })
     }
