@@ -215,6 +215,10 @@ pub use scylla_macros::SerializeCql;
 ///
 /// Serializes the field to the column / bind marker with given name instead of
 /// its Rust name.
+///
+/// `#[scylla(skip)]`
+///
+/// Don't use the field during serialization.
 pub use scylla_macros::SerializeRow;
 
 // Reexports for derive(IntoUserType)
