@@ -27,9 +27,14 @@ jobs:
         options: --health-cmd "cqlsh --debug scylladb" --health-interval 5s --health-retries 10
     steps:
     - uses: actions/checkout@v3
+    - uses: dtolnay/rust-toolchain@master
+      with:
+        toolchain: stable
     - uses: Swatinem/rust-cache@v2
     - name: Install mdbook
-      run: cargo install mdbook --no-default-features
+      uses: taiki-e/install-action@v2
+      with:
+        tool: mdbook
     - name: Build the project
       run: cargo build --verbose --examples
     - name: Build the book

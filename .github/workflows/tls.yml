@@ -32,6 +32,9 @@ jobs:
       working-directory: ./scylla
     steps:
     - uses: actions/checkout@v3
+    - uses: dtolnay/rust-toolchain@master
+      with:
+        toolchain: stable
     - uses: Swatinem/rust-cache@v2
     - name: Check
       run: cargo check --verbose --features "ssl"

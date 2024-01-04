@@ -30,6 +30,9 @@ jobs:
           ccm create serverless -i 127.0.1. -n 1 --scylla -v release:5.1.6
           ccm start  --sni-proxy --sni-port 7777
 
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: stable
       - uses: Swatinem/rust-cache@v2
       - name: Check
         run: cargo check --verbose
