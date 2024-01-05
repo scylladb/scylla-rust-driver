@@ -2,6 +2,7 @@ use bytes::Bytes;
 use futures::{future::RemoteHandle, FutureExt};
 use scylla_cql::errors::TranslationError;
 use scylla_cql::frame::request::options::Options;
+use scylla_cql::frame::response::result::ResultMetadata;
 use scylla_cql::frame::response::Error;
 use scylla_cql::frame::types::SerialConsistency;
 use scylla_cql::types::serialize::batch::{BatchValues, BatchValuesIterator};
@@ -521,14 +522,14 @@ impl Connection {
         options: HashMap<String, String>,
     ) -> Result<Response, QueryError> {
         Ok(self
-            .send_request(&request::Startup { options }, false, false)
+            .send_request(&request::Startup { options }, false, false, None)
             .await?
             .response)
     }
 
     pub(crate) async fn get_options(&self) -> Result<Response, QueryError> {
         Ok(self
-            .send_request(&request::Options {}, false, false)
+            .send_request(&request::Options {}, false, false, None)
             .await?
             .response)
     }
@@ -541,6 +542,7 @@ impl Connection {
                 },
                 true,
                 query.config.tracing,
+                None,
             )
             .await?;
 
@@ -592,7 +594,7 @@ impl Connection {
         &self,
         response: Option<Vec<u8>>,
     ) -> Result<QueryResponse, QueryError> {
-        self.send_request(&request::AuthResponse { response }, false, false)
+        self.send_request(&request::AuthResponse { response }, false, false, None)
             .await
     }
 
@@ -661,7 +663,7 @@ impl Connection {
             },
         };
 
-        self.send_request(&query_frame, true, query.config.tracing)
+        self.send_request(&query_frame, true, query.config.tracing, None)
             .await
     }
 
@@ -706,8 +708,17 @@ impl Connection {
             },
         };
 
+        let cached_metadata = prepared_statement
+            .get_use_cached_result_metadata()
+            .then(|| prepared_statement.get_result_metadata());
+
         let query_response = self
-            .send_request(&execute_frame, true, prepared_statement.config.tracing)
+            .send_request(
+                &execute_frame,
+                true,
+                prepared_statement.config.tracing,
+                cached_metadata,
+            )
             .await?;
 
         match &query_response.response {
@@ -719,8 +730,13 @@ impl Connection {
                 // Repreparation of a statement is needed
                 self.reprepare(prepared_statement.get_statement(), prepared_statement)
                     .await?;
-                self.send_request(&execute_frame, true, prepared_statement.config.tracing)
-                    .await
+                self.send_request(
+                    &execute_frame,
+                    true,
+                    prepared_statement.config.tracing,
+                    cached_metadata,
+                )
+                .await
             }
             _ => Ok(query_response),
         }
@@ -809,7 +825,7 @@ impl Connection {
 
         loop {
             let query_response = self
-                .send_request(&batch_frame, true, batch.config.tracing)
+                .send_request(&batch_frame, true, batch.config.tracing, None)
                 .await?;
 
             return match query_response.response {
@@ -931,7 +947,7 @@ impl Connection {
         };
 
         match self
-            .send_request(&register_frame, true, false)
+            .send_request(&register_frame, true, false, None)
             .await?
             .response
         {
@@ -961,6 +977,7 @@ impl Connection {
         request: &impl SerializableRequest,
         compress: bool,
         tracing: bool,
+        cached_metadata: Option<&ResultMetadata>,
     ) -> Result<QueryResponse, QueryError> {
         let compression = if compress {
             self.config.compression
@@ -977,6 +994,7 @@ impl Connection {
             task_response,
             self.config.compression,
             &self.features.protocol_features,
+            cached_metadata,
         )
     }
 
@@ -984,6 +1002,7 @@ impl Connection {
         task_response: TaskResponse,
         compression: Option<Compression>,
         features: &ProtocolFeatures,
+        cached_metadata: Option<&ResultMetadata>,
     ) -> Result<QueryResponse, QueryError> {
         let body_with_ext = frame::parse_response_body_extensions(
             task_response.params.flags,
@@ -998,8 +1017,12 @@ impl Connection {
             );
         }
 
-        let response =
-            Response::deserialize(features, task_response.opcode, &mut &*body_with_ext.body)?;
+        let response = Response::deserialize(
+            features,
+            task_response.opcode,
+            &mut &*body_with_ext.body,
+            cached_metadata,
+        )?;
 
         Ok(QueryResponse {
             response,
@@ -1353,7 +1376,7 @@ impl Connection {
         // future implementers.
         let features = ProtocolFeatures::default(); // TODO: Use the right features
 
-        let response = Self::parse_response(task_response, compression, &features)?.response;
+        let response = Self::parse_response(task_response, compression, &features, None)?.response;
         let event = match response {
             Response::Event(e) => e,
             _ => {
