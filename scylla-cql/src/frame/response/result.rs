@@ -386,7 +386,7 @@ pub struct ColumnSpec {
     pub typ: ColumnType,
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug, Clone, Default)]
 pub struct ResultMetadata {
     col_count: usize,
     pub paging_state: Option<Bytes>,

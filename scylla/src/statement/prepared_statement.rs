@@ -10,7 +10,7 @@ use std::time::Duration;
 use thiserror::Error;
 use uuid::Uuid;
 
-use scylla_cql::frame::response::result::{ColumnSpec, PartitionKeyIndex};
+use scylla_cql::frame::response::result::{ColumnSpec, PartitionKeyIndex, ResultMetadata};
 
 use super::StatementConfig;
 use crate::frame::response::result::PreparedMetadata;
@@ -37,6 +37,7 @@ pub struct PreparedStatement {
 #[derive(Debug)]
 struct PreparedStatementSharedData {
     metadata: PreparedMetadata,
+    result_metadata: ResultMetadata,
     statement: String,
 }
 
@@ -59,6 +60,7 @@ impl PreparedStatement {
         id: Bytes,
         is_lwt: bool,
         metadata: PreparedMetadata,
+        result_metadata: ResultMetadata,
         statement: String,
         page_size: Option<i32>,
         config: StatementConfig,
@@ -67,6 +69,7 @@ impl PreparedStatement {
             id,
             shared: Arc::new(PreparedStatementSharedData {
                 metadata,
+                result_metadata,
                 statement,
             }),
             prepare_tracing_ids: Vec::new(),
@@ -335,6 +338,16 @@ impl PreparedStatement {
     /// Access info about partition key indexes of the bind variables of this statement
     pub fn get_variable_pk_indexes(&self) -> &[PartitionKeyIndex] {
         &self.shared.metadata.pk_indexes
+    }
+
+    /// Access metadata about the result of prepared statement returned by the database
+    pub(crate) fn get_result_metadata(&self) -> &ResultMetadata {
+        &self.shared.result_metadata
+    }
+
+    /// Access column specifications of the result set returned after the execution of this statement
+    pub fn get_result_set_col_specs(&self) -> &[ColumnSpec] {
+        &self.shared.result_metadata.col_specs
     }
 
     /// Get the name of the partitioner used for this statement.

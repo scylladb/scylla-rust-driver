@@ -8,7 +8,7 @@ use crate::{QueryResult, Session};
 use bytes::Bytes;
 use dashmap::DashMap;
 use futures::future::try_join_all;
-use scylla_cql::frame::response::result::PreparedMetadata;
+use scylla_cql::frame::response::result::{PreparedMetadata, ResultMetadata};
 use scylla_cql::types::serialize::batch::BatchValues;
 use scylla_cql::types::serialize::row::SerializeRow;
 use std::collections::hash_map::RandomState;
@@ -23,6 +23,7 @@ struct RawPreparedStatementData {
     id: Bytes,
     is_confirmed_lwt: bool,
     metadata: PreparedMetadata,
+    result_metadata: ResultMetadata,
     partitioner_name: PartitionerName,
 }
 
@@ -168,6 +169,7 @@ where
                 raw.id.clone(),
                 raw.is_confirmed_lwt,
                 raw.metadata.clone(),
+                raw.result_metadata.clone(),
                 query.contents,
                 page_size,
                 query.config,
@@ -195,6 +197,7 @@ where
                 id: prepared.get_id().clone(),
                 is_confirmed_lwt: prepared.is_confirmed_lwt(),
                 metadata: prepared.get_prepared_metadata().clone(),
+                result_metadata: prepared.get_result_metadata().clone(),
                 partitioner_name: prepared.get_partitioner_name().clone(),
             };
             self.cache.insert(query_contents, raw);
