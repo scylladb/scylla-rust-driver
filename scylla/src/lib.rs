@@ -99,6 +99,7 @@ pub mod _macro_internal {
 }
 
 pub mod macros;
+#[doc(inline)]
 pub use macros::*;
 
 pub use scylla_cql::frame;
