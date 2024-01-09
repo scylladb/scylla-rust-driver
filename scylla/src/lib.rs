@@ -98,8 +98,10 @@ pub mod _macro_internal {
     pub use scylla_cql::_macro_internal::*;
 }
 
+pub mod macros;
+pub use macros::*;
+
 pub use scylla_cql::frame;
-pub use scylla_cql::macros::{self, *};
 pub use scylla_cql::types::serialize;
 
 pub mod authentication;
