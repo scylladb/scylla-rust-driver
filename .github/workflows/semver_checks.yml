@@ -7,6 +7,9 @@ on:
     branches:
     - main
     - 'branch-*'
+  push:
+    tags:
+      - v*.*.*
 
 env:
   CARGO_TERM_COLOR: always
@@ -79,3 +82,14 @@ jobs:
       env:
         GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         GH_REPO: ${{ github.repository }}
+
+  semver-push-tag:
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push'
+    timeout-minutes: 30
+    steps:
+    - uses: actions/checkout@v3
+    - name: Install semver-checks
+      run: cargo install cargo-semver-checks --no-default-features
+    - name: Run semver-checks to see if it agrees with version updates
+      run: make semver-version
