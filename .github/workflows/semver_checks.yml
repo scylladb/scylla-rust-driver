@@ -33,7 +33,7 @@ jobs:
       id: semver-pr-check
       run: cargo semver-checks --workspace --baseline-rev "$PR_BASE"
       continue-on-error: true
-    - run: gh secret list
+    - run: gh auth status
       env:
         GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         GH_REPO: ${{ github.repository }}
