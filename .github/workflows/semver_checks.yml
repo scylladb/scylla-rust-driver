@@ -1,0 +1,36 @@
+# This workflow tests smver compatibilty.
+# For PRs it checks if PR makes any API breaking changes, and assings appropriate label if so.
+name: Semver checks
+
+on:
+  push:
+  pull_request:
+    branches:
+    - main
+    - 'branch-*'
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: full
+
+jobs:
+  semver-pull-request:
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    permissions:
+      issues: write
+    timeout-minutes: 30
+    steps:
+    - uses: actions/checkout@v3
+    - name: Install semver-checks
+      run: cargo install cargo-semver-checks --no-default-features
+    - name: Verify the API compatibilty with PR base
+      id: semver-pr-check
+      run: cargo semver-checks --workspace --baseline-rev ${{ github.event.pull_request.base.sha }}
+      continue-on-error: true
+    - name: Remove breaking label on success
+      run: gh pr edit ${{ github.event.number }} --remove-label semver-checks-breaking
+      if: steps.semver-pr-check.outcome != 'success'
+    - name: Add breaking label on failure
+      run: gh pr edit ${{ github.event.number }} --add-label semver-checks-breaking
+      if: steps.semver-pr-check.outcome == 'success'
