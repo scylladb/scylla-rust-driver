@@ -136,7 +136,7 @@ pub use transport::session_builder::SessionBuilder;
 pub use transport::session_builder::CloudSessionBuilder;
 
 pub use transport::execution_profile;
-pub use transport::host_filter;
+pub use transport::host_filter as host_filterr;
 pub use transport::load_balancing;
 pub use transport::retry_policy;
 pub use transport::speculative_execution;
