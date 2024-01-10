@@ -33,13 +33,13 @@ jobs:
       continue-on-error: true
     - name: Remove breaking label on success
       run: gh pr edit "$PR_ID" --remove-label semver-checks-breaking
-      if: steps.semver-pr-check.outcome != 'success'
+      if: steps.semver-pr-check.outcome == 'success'
       env:
         GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         GH_REPO: ${{ github.repository }}
     - name: Add breaking label on failure
       run: gh pr edit "$PR_ID" --add-label semver-checks-breaking
-      if: steps.semver-pr-check.outcome == 'success'
+      if: steps.semver-pr-check.outcome != 'success'
       env:
         GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         GH_REPO: ${{ github.repository }}
