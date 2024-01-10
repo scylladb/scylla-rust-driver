@@ -11,31 +11,35 @@ on:
 env:
   CARGO_TERM_COLOR: always
   RUST_BACKTRACE: full
+  PR_BASE: ${{ github.event.pull_request.base.sha }}
+  PR_ID: ${{ github.event.number }}
 
 jobs:
   semver-pull-request:
     runs-on: ubuntu-latest
     if: github.event_name == 'pull_request'
+    permissions: write-all
     timeout-minutes: 30
     steps:
     - uses: actions/checkout@v3
+    # I don't know any way to do this using checkout action
+    - name: Fetch PR base
+      run: git fetch origin "$PR_BASE"
     - name: Install semver-checks
       run: cargo install cargo-semver-checks --no-default-features
     - name: Verify the API compatibilty with PR base
       id: semver-pr-check
-      run: cargo semver-checks --workspace --baseline-rev ${{ github.event.pull_request.base.sha }}
+      run: cargo semver-checks --workspace --baseline-rev "$PR_BASE"
       continue-on-error: true
     - name: Remove breaking label on success
       run: gh pr edit "$NUMBER" --remove-label semver-checks-breaking
       if: steps.semver-pr-check.outcome != 'success'
       env:
-        NUMBER: ${{ github.event.number }}
         GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         GH_REPO: ${{ github.repository }}
     - name: Add breaking label on failure
       run: gh pr edit "$NUMBER" --add-label semver-checks-breaking
       if: steps.semver-pr-check.outcome == 'success'
       env:
-        NUMBER: ${{ github.event.number }}
         GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         GH_REPO: ${{ github.repository }}
