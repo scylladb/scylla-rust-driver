@@ -1282,7 +1282,7 @@ mod tests {
         let connection_config = ConnectionConfig {
             compression: None,
             tcp_nodelay: true,
-            #[cfg(feature = "ssl")]
+            #[cfg(any(feature = "ssl", feature = "rustls"))]
             ssl_config: None,
             ..Default::default()
         };

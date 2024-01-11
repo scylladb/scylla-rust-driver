@@ -23,8 +23,10 @@ use std::sync::atomic::AtomicU64;
 use std::time::Duration;
 #[cfg(feature = "ssl")]
 use tokio_openssl::SslStream;
+#[cfg(feature = "rustls")]
+use tokio_rustls::TlsConnector;
 
-#[cfg(feature = "ssl")]
+#[cfg(any(feature = "ssl", feature = "rustls"))]
 pub(crate) use ssl_config::SslConfig;
 
 use crate::authentication::AuthenticatorProvider;
@@ -280,12 +282,19 @@ impl NonErrorQueryResponse {
         })
     }
 }
-#[cfg(feature = "ssl")]
+#[cfg(any(feature = "ssl", feature = "rustls"))]
 mod ssl_config {
+    #[cfg(feature = "ssl")]
     use openssl::{
         error::ErrorStack,
         ssl::{Ssl, SslContext},
     };
+    #[cfg(feature = "rustls")]
+    use std::{net::IpAddr, sync::Arc};
+    #[cfg(feature = "rustls")]
+    use tokio_rustls::rustls::pki_types::ServerName;
+    #[cfg(feature = "rustls")]
+    use tokio_rustls::rustls::ClientConfig;
     #[cfg(feature = "cloud")]
     use uuid::Uuid;
 
@@ -299,6 +308,7 @@ mod ssl_config {
     // NodeConnectionPool::new(). Inside that function, the field is mutated to contain SslConfig specific
     // for the particular node. (The SslConfig must be different, because SNIs differ for different nodes.)
     // Thenceforth, all connections to that node share the same SslConfig.
+    #[cfg(feature = "ssl")]
     #[derive(Clone)]
     pub struct SslConfig {
         context: SslContext,
@@ -306,6 +316,7 @@ mod ssl_config {
         sni: Option<String>,
     }
 
+    #[cfg(feature = "ssl")]
     impl SslConfig {
         // Used in case when the user provided their own SslContext to be used in all connections.
         pub fn new_with_global_context(context: SslContext) -> Self {
@@ -345,6 +356,58 @@ mod ssl_config {
             Ok(ssl)
         }
     }
+
+    #[cfg(feature = "rustls")]
+    #[derive(Clone)]
+    pub struct SslConfig {
+        config: Arc<ClientConfig>,
+        #[cfg(feature = "cloud")]
+        sni: Option<ServerName<'static>>,
+    }
+
+    impl SslConfig {
+        // Used in case when the user provided their own ClientConfig to be used in all connections.
+        pub fn new_with_global_config(config: &Arc<ClientConfig>) -> Self {
+            Self {
+                config: config.clone(),
+                #[cfg(feature = "cloud")]
+                sni: None,
+            }
+        }
+
+        // Used in case of Serverless Cloud connections.
+        #[cfg(feature = "cloud")]
+        pub(crate) fn new_for_sni(
+            config: &Arc<ClientConfig>,
+            domain_name: &str,
+            host_id: Option<Uuid>,
+        ) -> Self {
+            Self {
+                config: config.clone(),
+                #[cfg(feature = "cloud")]
+                sni: Some(if let Some(host_id) = host_id {
+                    ServerName::try_from(&format!("{}.{}", host_id, domain_name))
+                        .expect("invalid DNS name")
+                        .to_owned()
+                } else {
+                    ServerName::try_from(domain_name.into().expect("invalid DNS name")).to_owned()
+                }),
+            }
+        }
+
+        pub(crate) fn server_name(&self, node_addr: IpAddr) -> ServerName<'static> {
+            #[cfg(feature = "cloud")]
+            if let Some(sni) = self.sni.as_ref() {
+                return sni.clone();
+            }
+            ServerName::IpAddress(node_addr.into())
+        }
+
+        // A reference to the rustls Client Config to produce a TlsConnection
+        pub(crate) fn config(&self) -> &Arc<ClientConfig> {
+            &self.config
+        }
+    }
 }
 
 #[derive(Clone)]
@@ -352,7 +415,7 @@ pub struct ConnectionConfig {
     pub compression: Option<Compression>,
     pub tcp_nodelay: bool,
     pub tcp_keepalive_interval: Option<Duration>,
-    #[cfg(feature = "ssl")]
+    #[cfg(any(feature = "ssl", feature = "rustls"))]
     pub ssl_config: Option<SslConfig>,
     pub connect_timeout: std::time::Duration,
     // should be Some only in control connections,
@@ -375,7 +438,7 @@ impl Default for ConnectionConfig {
             tcp_nodelay: true,
             tcp_keepalive_interval: None,
             event_sender: None,
-            #[cfg(feature = "ssl")]
+            #[cfg(any(feature = "ssl", feature = "rustls"))]
             ssl_config: None,
             connect_timeout: std::time::Duration::from_secs(5),
             default_consistency: Default::default(),
@@ -393,7 +456,7 @@ impl Default for ConnectionConfig {
 }
 
 impl ConnectionConfig {
-    #[cfg(feature = "ssl")]
+    #[cfg(any(feature = "ssl", feature = "rustls"))]
     pub fn is_ssl(&self) -> bool {
         #[cfg(feature = "cloud")]
         if self.cloud_config.is_some() {
@@ -402,7 +465,7 @@ impl ConnectionConfig {
         self.ssl_config.is_some()
     }
 
-    #[cfg(not(feature = "ssl"))]
+    #[cfg(not(any(feature = "ssl", feature = "rustls")))]
     pub fn is_ssl(&self) -> bool {
         false
     }
@@ -1019,6 +1082,27 @@ impl Connection {
             let ssl = ssl_config.new_ssl()?;
             let mut stream = SslStream::new(ssl, stream)?;
             let _pin = Pin::new(&mut stream).connect().await;
+
+            let (task, handle) = Self::router(
+                config,
+                stream,
+                receiver,
+                error_sender,
+                orphan_notification_receiver,
+                router_handle,
+                node_address,
+            )
+            .remote_handle();
+            tokio::task::spawn(task.with_current_subscriber());
+            return Ok(handle);
+        }
+
+        #[cfg(feature = "rustls")]
+        if let Some(rustls_config) = &config.ssl_config {
+            let connector = TlsConnector::from(rustls_config.config().clone());
+            let stream = connector
+                .connect(rustls_config.server_name(node_address), stream)
+                .await?;
 
             let (task, handle) = Self::router(
                 config,
