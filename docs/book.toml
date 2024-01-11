@@ -12,3 +12,12 @@ edition = "2021"
 [output.html]
 default-theme = "ayu"
 git-repository-url = "https://github.com/scylladb/scylla-rust-driver"
+
+[preprocessor.sphinx]
+command = '''bash -c '
+if test -f "./docs/sphinx_preprocessor.py"; then
+    python ./docs/sphinx_preprocessor.py "$@" 
+else 
+    python ./sphinx_preprocessor.py "$@"
+fi' run_preprocessor
+'''
