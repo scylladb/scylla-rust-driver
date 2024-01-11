@@ -72,17 +72,20 @@ But they are removed when building the book
 cargo install mdbook
 ```
 
-Build the book (simple method, contains `Sphinx` artifacts):
+Book build process uses preprocessor to remove Sphinx artifacts.
+Due to limitation of mdbook, it can only be built either from main directory,
+using `mdbook X docs` or from `docs` directory, using `mdbook X`, where
+`X` is mdbook command such as `build` / `serve` / `test` etc.
+
+If the book is built from another directory (e.g. scylla, using `mdbook build ../docs`),
+preprocessor won't be found, so the result will contain Sphinx artifacts.
+
+Build the book.
 ```bash
 mdbook build docs
 # HTML will be in docs/book
 ```
 
-To build the release version use a script which automatically removes `Sphinx` chunks:
-```bash
-python3 docs/build_book.py
-# HTML will be in docs/book/scriptbuild/book
-```
 
 Or serve it on a local http server (automatically refreshes on changes)
 ```bash

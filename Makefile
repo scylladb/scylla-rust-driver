@@ -46,7 +46,7 @@ build:
 
 .PHONY: docs
 docs:
-	./docs/build_book.py
+	mdbook build docs
 
 .PHONY: up
 up:
