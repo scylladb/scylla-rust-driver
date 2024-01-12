@@ -958,6 +958,23 @@ impl Value for i64 {
     }
 }
 
+impl Value for CqlDecimal {
+    fn serialize(&self, buf: &mut Vec<u8>) -> Result<(), ValueTooBig> {
+        let (bytes, scale) = self.as_signed_be_bytes_slice_and_exponent();
+
+        if bytes.len() > (i32::MAX - 4) as usize {
+            return Err(ValueTooBig);
+        }
+        let serialized_len: i32 = bytes.len() as i32 + 4;
+
+        buf.put_i32(serialized_len);
+        buf.put_i32(scale);
+        buf.extend_from_slice(bytes);
+
+        Ok(())
+    }
+}
+
 impl Value for BigDecimal {
     fn serialize(&self, buf: &mut Vec<u8>) -> Result<(), ValueTooBig> {
         let (value, scale) = self.as_bigint_and_exponent();

@@ -19,8 +19,8 @@ use secrecy::{ExposeSecret, Secret, Zeroize};
 use crate::frame::response::result::{ColumnType, CqlValue};
 use crate::frame::types::vint_encode;
 use crate::frame::value::{
-    Counter, CqlDate, CqlDuration, CqlTime, CqlTimestamp, CqlTimeuuid, CqlVarint, MaybeUnset,
-    Unset, Value,
+    Counter, CqlDate, CqlDecimal, CqlDuration, CqlTime, CqlTimestamp, CqlTimeuuid, CqlVarint,
+    MaybeUnset, Unset, Value,
 };
 
 #[cfg(feature = "chrono")]
@@ -113,6 +113,18 @@ impl SerializeCql for i64 {
     impl_serialize_via_writer!(|me, typ, writer| {
         exact_type_check!(typ, BigInt);
         writer.set_value(me.to_be_bytes().as_slice()).unwrap()
+    });
+}
+impl SerializeCql for CqlDecimal {
+    impl_serialize_via_writer!(|me, typ, writer| {
+        exact_type_check!(typ, Decimal);
+        let mut builder = writer.into_value_builder();
+        let (bytes, scale) = me.as_signed_be_bytes_slice_and_exponent();
+        builder.append_bytes(&scale.to_be_bytes());
+        builder.append_bytes(bytes);
+        builder
+            .finish()
+            .map_err(|_| mk_ser_err::<Self>(typ, BuiltinSerializationErrorKind::SizeOverflow))?
     });
 }
 impl SerializeCql for BigDecimal {

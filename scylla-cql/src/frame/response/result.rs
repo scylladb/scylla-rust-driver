@@ -2,10 +2,9 @@ use crate::cql_to_rust::{FromRow, FromRowError};
 use crate::frame::response::event::SchemaChangeEvent;
 use crate::frame::types::vint_decode;
 use crate::frame::value::{
-    Counter, CqlDate, CqlDuration, CqlTime, CqlTimestamp, CqlTimeuuid, CqlVarint,
+    Counter, CqlDate, CqlDecimal, CqlDuration, CqlTime, CqlTimestamp, CqlTimeuuid, CqlVarint,
 };
 use crate::frame::{frame_errors::ParseError, types};
-use bigdecimal::BigDecimal;
 use byteorder::{BigEndian, ReadBytesExt};
 use bytes::{Buf, Bytes};
 use std::{
@@ -82,7 +81,7 @@ pub enum CqlValue {
     Boolean(bool),
     Blob(Vec<u8>),
     Counter(Counter),
-    Decimal(BigDecimal),
+    Decimal(CqlDecimal),
     /// Days since -5877641-06-23 i.e. 2^31 days before unix epoch
     /// Can be converted to chrono::NaiveDate (-262145-1-1 to 262143-12-31) using as_date
     Date(CqlDate),
@@ -371,7 +370,7 @@ impl CqlValue {
         }
     }
 
-    pub fn into_decimal(self) -> Option<BigDecimal> {
+    pub fn into_cql_decimal(self) -> Option<CqlDecimal> {
         match self {
             Self::Decimal(i) => Some(i),
             _ => None,
@@ -671,9 +670,10 @@ pub fn deser_cql_value(typ: &ColumnType, buf: &mut &[u8]) -> StdResult<CqlValue,
             CqlValue::Counter(crate::frame::value::Counter(buf.read_i64::<BigEndian>()?))
         }
         Decimal => {
-            let scale = types::read_int(buf)? as i64;
-            let int_value = bigdecimal::num_bigint::BigInt::from_signed_bytes_be(buf);
-            let big_decimal: BigDecimal = BigDecimal::from((int_value, scale));
+            let scale = types::read_int(buf)?;
+            let bytes = buf.to_vec();
+            let big_decimal: CqlDecimal =
+                CqlDecimal::from_signed_be_bytes_and_exponent(bytes, scale);
 
             CqlValue::Decimal(big_decimal)
         }
@@ -1139,7 +1139,10 @@ mod tests {
 
         for t in tests.iter() {
             let value = super::deser_cql_value(&ColumnType::Decimal, &mut &*t.encoding).unwrap();
-            assert_eq!(CqlValue::Decimal(t.value.clone()), value);
+            assert_eq!(
+                CqlValue::Decimal(t.value.clone().try_into().unwrap()),
+                value
+            );
         }
     }
 
