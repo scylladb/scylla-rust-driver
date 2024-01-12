@@ -365,6 +365,7 @@ mod ssl_config {
         sni: Option<ServerName<'static>>,
     }
 
+    #[cfg(feature = "rustls")]
     impl SslConfig {
         // Used in case when the user provided their own ClientConfig to be used in all connections.
         pub fn new_with_global_config(config: &Arc<ClientConfig>) -> Self {

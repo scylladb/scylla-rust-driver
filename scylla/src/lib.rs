@@ -145,6 +145,3 @@ pub use transport::metrics::Metrics;
 
 #[cfg(all(feature = "ssl", feature = "rustls"))]
 compile_error!("both rustls and ssl should not be enabled together.");
-
-#[cfg(all(feature = "cloud", not(any(feature = "ssl", feature = "rustls"))))]
-compile_error!("cloud feature requires either the rustls or ssl feature.");

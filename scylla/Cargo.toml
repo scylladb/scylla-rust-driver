@@ -14,10 +14,10 @@ all-features = true
 rustdoc-args = ["--cfg", "docsrs"]
 
 [features]
-default = ["rustls"]
+default = []
 ssl = ["dep:tokio-openssl", "dep:openssl"]
 rustls = ["dep:tokio-rustls"]
-cloud = ["scylla-cql/serde", "dep:serde_yaml", "dep:serde", "dep:url", "dep:base64"]
+cloud = ["ssl", "scylla-cql/serde", "dep:serde_yaml", "dep:serde", "dep:url", "dep:base64"]
 secret = ["scylla-cql/secret"]
 chrono = ["scylla-cql/chrono"]
 time = ["scylla-cql/time"]
