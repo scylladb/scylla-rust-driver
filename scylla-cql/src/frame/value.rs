@@ -365,6 +365,83 @@ impl std::hash::Hash for CqlVarint {
     }
 }
 
+/// Native CQL `decimal` representation.
+///
+/// Represented as a pair:
+/// - a [`CqlVarint`] value
+/// - 32-bit integer which determines the position of the decimal point
+///
+/// # DB data format
+/// Notice that [constructors](CqlDecimal#impl-CqlDecimal)
+/// don't perform any normalization on the provided data.
+/// For more details, see [`CqlVarint`] documentation.
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct CqlDecimal {
+    int_val: CqlVarint,
+    scale: i32,
+}
+
+/// Constructors
+impl CqlDecimal {
+    /// Creates a [`CqlDecimal`] from an array of bytes
+    /// representing [`CqlVarint`] and a 32-bit scale.
+    ///
+    /// See: disclaimer about [non-normalized values](CqlVarint#db-data-format).
+    pub fn from_signed_be_bytes_and_exponent(bytes: Vec<u8>, scale: i32) -> Self {
+        Self {
+            int_val: CqlVarint::from_signed_bytes_be(bytes),
+            scale,
+        }
+    }
+
+    /// Creates a [`CqlDecimal`] from a slice of bytes
+    /// representing [`CqlVarint`] and a 32-bit scale.
+    ///
+    /// See: disclaimer about [non-normalized values](CqlVarint#db-data-format).
+    pub fn from_signed_be_bytes_slice_and_exponent(bytes: &[u8], scale: i32) -> Self {
+        Self::from_signed_be_bytes_and_exponent(bytes.to_vec(), scale)
+    }
+}
+
+/// Conversion to raw bytes
+impl CqlDecimal {
+    /// Returns a slice of bytes in two's complement
+    /// binary big-endian representation and a scale.
+    pub fn as_signed_be_bytes_slice_and_exponent(&self) -> (&[u8], i32) {
+        (self.int_val.as_signed_bytes_be_slice(), self.scale)
+    }
+
+    /// Converts [`CqlDecimal`] to an array of bytes in two's
+    /// complement binary big-endian representation and a scale.
+    pub fn into_signed_be_bytes_and_exponent(self) -> (Vec<u8>, i32) {
+        (self.int_val.into_signed_bytes_be(), self.scale)
+    }
+}
+
+impl From<CqlDecimal> for BigDecimal {
+    fn from(value: CqlDecimal) -> Self {
+        Self::from((
+            bigdecimal::num_bigint::BigInt::from_signed_bytes_be(
+                value.int_val.as_signed_bytes_be_slice(),
+            ),
+            value.scale as i64,
+        ))
+    }
+}
+
+impl TryFrom<BigDecimal> for CqlDecimal {
+    type Error = <i64 as TryInto<i32>>::Error;
+
+    fn try_from(value: BigDecimal) -> Result<Self, Self::Error> {
+        let (bigint, scale) = value.into_bigint_and_exponent();
+        let bytes = bigint.to_signed_bytes_be();
+        Ok(Self::from_signed_be_bytes_and_exponent(
+            bytes,
+            scale.try_into()?,
+        ))
+    }
+}
+
 /// Native CQL date representation that allows for a bigger range of dates (-262145-1-1 to 262143-12-31).
 ///
 /// Represented as number of days since -5877641-06-23 i.e. 2^31 days before unix epoch.
