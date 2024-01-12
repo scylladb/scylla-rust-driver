@@ -26,18 +26,18 @@ async fn main() -> Result<()> {
         .build()
         .await?;
 
-    session.query("CREATE KEYSPACE IF NOT EXISTS ks WITH REPLICATION = {'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}", &[]).await?;
+    session.query("CREATE KEYSPACE IF NOT EXISTS examples_ks WITH REPLICATION = {'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}", &[]).await?;
 
     session
         .query(
-            "CREATE TABLE IF NOT EXISTS ks.tracing_example (val text primary key)",
+            "CREATE TABLE IF NOT EXISTS examples_ks.tracing (val text primary key)",
             &[],
         )
         .await?;
 
     // QUERY
     // Create a simple query and enable tracing for it
-    let mut query: Query = Query::new("SELECT val from ks.tracing_example");
+    let mut query: Query = Query::new("SELECT val from examples_ks.tracing");
     query.set_tracing(true);
     query.set_serial_consistency(Some(SerialConsistency::LocalSerial));
 
@@ -101,7 +101,7 @@ async fn main() -> Result<()> {
     // BATCH
     // Create a simple batch and enable tracing
     let mut batch: Batch = Batch::default();
-    batch.append_statement("INSERT INTO ks.tracing_example (val) VALUES('val')");
+    batch.append_statement("INSERT INTO examples_ks.tracing (val) VALUES('val')");
     batch.set_tracing(true);
 
     // Run the batch and print its tracing_id

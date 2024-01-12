@@ -11,18 +11,18 @@ async fn main() -> Result<()> {
 
     let session: Session = SessionBuilder::new().known_node(uri).build().await?;
 
-    session.query("CREATE KEYSPACE IF NOT EXISTS ks WITH REPLICATION = {'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}", &[]).await?;
+    session.query("CREATE KEYSPACE IF NOT EXISTS examples_ks WITH REPLICATION = {'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}", &[]).await?;
 
     session
         .query(
-            "CREATE TYPE IF NOT EXISTS ks.my_type (int_val int, text_val text)",
+            "CREATE TYPE IF NOT EXISTS examples_ks.my_type (int_val int, text_val text)",
             &[],
         )
         .await?;
 
     session
         .query(
-            "CREATE TABLE IF NOT EXISTS ks.udt_tab (k int, my my_type, primary key (k))",
+            "CREATE TABLE IF NOT EXISTS examples_ks.user_defined_type_table (k int, my my_type, primary key (k))",
             &[],
         )
         .await?;
@@ -42,11 +42,18 @@ async fn main() -> Result<()> {
 
     // It can be inserted like a normal value
     session
-        .query("INSERT INTO ks.udt_tab (k, my) VALUES (5, ?)", (to_insert,))
+        .query(
+            "INSERT INTO examples_ks.user_defined_type_table (k, my) VALUES (5, ?)",
+            (to_insert,),
+        )
         .await?;
 
     // And read like any normal value
-    if let Some(rows) = session.query("SELECT my FROM ks.udt_tab", &[]).await?.rows {
+    if let Some(rows) = session
+        .query("SELECT my FROM examples_ks.user_defined_type_table", &[])
+        .await?
+        .rows
+    {
         for row in rows.into_typed::<(MyType,)>() {
             let (my_type_value,): (MyType,) = row?;
             println!("{:?}", my_type_value)

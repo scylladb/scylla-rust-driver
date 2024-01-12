@@ -14,11 +14,11 @@ async fn main() -> Result<()> {
     let session: Session = SessionBuilder::new().known_node(uri).build().await?;
     let session = Arc::new(session);
 
-    session.query("CREATE KEYSPACE IF NOT EXISTS ks WITH REPLICATION = {'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}", &[]).await?;
+    session.query("CREATE KEYSPACE IF NOT EXISTS examples_ks WITH REPLICATION = {'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}", &[]).await?;
 
     session
         .query(
-            "CREATE TABLE IF NOT EXISTS ks.t2 (a int, b int, c text, primary key (a, b))",
+            "CREATE TABLE IF NOT EXISTS examples_ks.parallel (a int, b int, c text, primary key (a, b))",
             &[],
         )
         .await?;
@@ -36,7 +36,7 @@ async fn main() -> Result<()> {
             session
                 .query(
                     format!(
-                        "INSERT INTO ks.t2 (a, b, c) VALUES ({}, {}, 'abc')",
+                        "INSERT INTO examples_ks.parallel (a, b, c) VALUES ({}, {}, 'abc')",
                         i,
                         2 * i
                     ),

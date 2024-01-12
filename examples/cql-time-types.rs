@@ -17,14 +17,14 @@ async fn main() -> Result<()> {
 
     let session: Session = SessionBuilder::new().known_node(uri).build().await?;
 
-    session.query("CREATE KEYSPACE IF NOT EXISTS ks WITH REPLICATION = {'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}", &[]).await?;
+    session.query("CREATE KEYSPACE IF NOT EXISTS examples_ks WITH REPLICATION = {'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}", &[]).await?;
 
     // Date
     // Date is a year, month and day in the range -5877641-06-23 to -5877641-06-23
 
     session
         .query(
-            "CREATE TABLE IF NOT EXISTS ks.dates (d date primary key)",
+            "CREATE TABLE IF NOT EXISTS examples_ks.dates (d date primary key)",
             &[],
         )
         .await?;
@@ -34,10 +34,17 @@ async fn main() -> Result<()> {
     let chrono_date = NaiveDate::from_ymd_opt(2020, 2, 20).unwrap();
 
     session
-        .query("INSERT INTO ks.dates (d) VALUES (?)", (chrono_date,))
+        .query(
+            "INSERT INTO examples_ks.dates (d) VALUES (?)",
+            (chrono_date,),
+        )
         .await?;
 
-    if let Some(rows) = session.query("SELECT d from ks.dates", &[]).await?.rows {
+    if let Some(rows) = session
+        .query("SELECT d from examples_ks.dates", &[])
+        .await?
+        .rows
+    {
         for row in rows.into_typed::<(NaiveDate,)>() {
             let (read_date,): (NaiveDate,) = match row {
                 Ok(read_date) => read_date,
@@ -54,10 +61,14 @@ async fn main() -> Result<()> {
     let time_date = time::Date::from_calendar_date(2020, time::Month::March, 21).unwrap();
 
     session
-        .query("INSERT INTO ks.dates (d) VALUES (?)", (time_date,))
+        .query("INSERT INTO examples_ks.dates (d) VALUES (?)", (time_date,))
         .await?;
 
-    if let Some(rows) = session.query("SELECT d from ks.dates", &[]).await?.rows {
+    if let Some(rows) = session
+        .query("SELECT d from examples_ks.dates", &[])
+        .await?
+        .rows
+    {
         for row in rows.into_typed::<(time::Date,)>() {
             let (read_date,) = match row {
                 Ok(read_date) => read_date,
@@ -71,10 +82,17 @@ async fn main() -> Result<()> {
     // Dates outside this range must be represented in the raw form - an u32 describing days since -5877641-06-23
     let example_big_date: CqlDate = CqlDate(u32::MAX);
     session
-        .query("INSERT INTO ks.dates (d) VALUES (?)", (example_big_date,))
+        .query(
+            "INSERT INTO examples_ks.dates (d) VALUES (?)",
+            (example_big_date,),
+        )
         .await?;
 
-    if let Some(rows) = session.query("SELECT d from ks.dates", &[]).await?.rows {
+    if let Some(rows) = session
+        .query("SELECT d from examples_ks.dates", &[])
+        .await?
+        .rows
+    {
         for row in rows {
             let read_days: u32 = match row.columns[0] {
                 Some(CqlValue::Date(CqlDate(days))) => days,
@@ -90,7 +108,7 @@ async fn main() -> Result<()> {
 
     session
         .query(
-            "CREATE TABLE IF NOT EXISTS ks.times (t time primary key)",
+            "CREATE TABLE IF NOT EXISTS examples_ks.times (t time primary key)",
             &[],
         )
         .await?;
@@ -102,10 +120,17 @@ async fn main() -> Result<()> {
     let chrono_time = NaiveTime::from_hms_nano_opt(1, 2, 3, 456_789_012).unwrap();
 
     session
-        .query("INSERT INTO ks.times (t) VALUES (?)", (chrono_time,))
+        .query(
+            "INSERT INTO examples_ks.times (t) VALUES (?)",
+            (chrono_time,),
+        )
         .await?;
 
-    if let Some(rows) = session.query("SELECT t from ks.times", &[]).await?.rows {
+    if let Some(rows) = session
+        .query("SELECT t from examples_ks.times", &[])
+        .await?
+        .rows
+    {
         for row in rows.into_typed::<(NaiveTime,)>() {
             let (read_time,) = row?;
 
@@ -117,10 +142,14 @@ async fn main() -> Result<()> {
     let time_time = time::Time::from_hms_nano(2, 3, 4, 567_890_123).unwrap();
 
     session
-        .query("INSERT INTO ks.times (t) VALUES (?)", (time_time,))
+        .query("INSERT INTO examples_ks.times (t) VALUES (?)", (time_time,))
         .await?;
 
-    if let Some(rows) = session.query("SELECT t from ks.times", &[]).await?.rows {
+    if let Some(rows) = session
+        .query("SELECT t from examples_ks.times", &[])
+        .await?
+        .rows
+    {
         for row in rows.into_typed::<(time::Time,)>() {
             let (read_time,) = row?;
 
@@ -132,10 +161,14 @@ async fn main() -> Result<()> {
     let time_time = CqlTime(((3 * 60 + 4) * 60 + 5) * 1_000_000_000 + 678_901_234);
 
     session
-        .query("INSERT INTO ks.times (t) VALUES (?)", (time_time,))
+        .query("INSERT INTO examples_ks.times (t) VALUES (?)", (time_time,))
         .await?;
 
-    if let Some(rows) = session.query("SELECT t from ks.times", &[]).await?.rows {
+    if let Some(rows) = session
+        .query("SELECT t from examples_ks.times", &[])
+        .await?
+        .rows
+    {
         for row in rows.into_typed::<(CqlTime,)>() {
             let (read_time,) = row?;
 
@@ -148,7 +181,7 @@ async fn main() -> Result<()> {
 
     session
         .query(
-            "CREATE TABLE IF NOT EXISTS ks.timestamps (t timestamp primary key)",
+            "CREATE TABLE IF NOT EXISTS examples_ks.timestamps (t timestamp primary key)",
             &[],
         )
         .await?;
@@ -161,13 +194,13 @@ async fn main() -> Result<()> {
 
     session
         .query(
-            "INSERT INTO ks.timestamps (t) VALUES (?)",
+            "INSERT INTO examples_ks.timestamps (t) VALUES (?)",
             (chrono_datetime,),
         )
         .await?;
 
     if let Some(rows) = session
-        .query("SELECT t from ks.timestamps", &[])
+        .query("SELECT t from examples_ks.timestamps", &[])
         .await?
         .rows
     {
@@ -185,11 +218,14 @@ async fn main() -> Result<()> {
     let time_datetime = time::OffsetDateTime::now_utc();
 
     session
-        .query("INSERT INTO ks.timestamps (t) VALUES (?)", (time_datetime,))
+        .query(
+            "INSERT INTO examples_ks.timestamps (t) VALUES (?)",
+            (time_datetime,),
+        )
         .await?;
 
     if let Some(rows) = session
-        .query("SELECT t from ks.timestamps", &[])
+        .query("SELECT t from examples_ks.timestamps", &[])
         .await?
         .rows
     {
@@ -207,11 +243,14 @@ async fn main() -> Result<()> {
     let cql_datetime = CqlTimestamp(1 << 31);
 
     session
-        .query("INSERT INTO ks.timestamps (t) VALUES (?)", (cql_datetime,))
+        .query(
+            "INSERT INTO examples_ks.timestamps (t) VALUES (?)",
+            (cql_datetime,),
+        )
         .await?;
 
     if let Some(rows) = session
-        .query("SELECT t from ks.timestamps", &[])
+        .query("SELECT t from examples_ks.timestamps", &[])
         .await?
         .rows
     {

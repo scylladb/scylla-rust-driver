@@ -11,11 +11,11 @@ async fn main() -> Result<()> {
 
     let session: Session = SessionBuilder::new().known_node(uri).build().await?;
 
-    session.query("CREATE KEYSPACE IF NOT EXISTS ks WITH REPLICATION = {'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}", &[]).await?;
+    session.query("CREATE KEYSPACE IF NOT EXISTS examples_ks WITH REPLICATION = {'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}", &[]).await?;
 
     session
         .query(
-            "CREATE TABLE IF NOT EXISTS ks.t (a int, b int, c text, primary key (a, b))",
+            "CREATE TABLE IF NOT EXISTS examples_ks.select_paging (a int, b int, c text, primary key (a, b))",
             &[],
         )
         .await?;
@@ -23,7 +23,7 @@ async fn main() -> Result<()> {
     for i in 0..16_i32 {
         session
             .query(
-                "INSERT INTO ks.t (a, b, c) VALUES (?, ?, 'abc')",
+                "INSERT INTO examples_ks.select_paging (a, b, c) VALUES (?, ?, 'abc')",
                 (i, 2 * i),
             )
             .await?;
@@ -31,7 +31,7 @@ async fn main() -> Result<()> {
 
     // Iterate through select result with paging
     let mut rows_stream = session
-        .query_iter("SELECT a, b, c FROM ks.t", &[])
+        .query_iter("SELECT a, b, c FROM examples_ks.select_paging", &[])
         .await?
         .into_typed::<(i32, i32, String)>();
 
@@ -40,7 +40,7 @@ async fn main() -> Result<()> {
         println!("a, b, c: {}, {}, {}", a, b, c);
     }
 
-    let paged_query = Query::new("SELECT a, b, c FROM ks.t").with_page_size(6);
+    let paged_query = Query::new("SELECT a, b, c FROM examples_ks.select_paging").with_page_size(6);
     let res1 = session.query(paged_query.clone(), &[]).await?;
     println!(
         "Paging state: {:#?} ({} rows)",
@@ -65,7 +65,7 @@ async fn main() -> Result<()> {
     );
 
     let paged_prepared = session
-        .prepare(Query::new("SELECT a, b, c FROM ks.t").with_page_size(7))
+        .prepare(Query::new("SELECT a, b, c FROM examples_ks.select_paging").with_page_size(7))
         .await?;
     let res4 = session.execute(&paged_prepared, &[]).await?;
     println!(
