@@ -7,8 +7,8 @@ use crate::types::serialize::{CellWriter, RowWriter};
 
 use super::response::result::{ColumnSpec, ColumnType, TableSpec};
 use super::value::{
-    CqlDate, CqlDuration, CqlTime, CqlTimestamp, LegacyBatchValues, LegacySerializedValues,
-    MaybeUnset, SerializeValuesError, Unset, Value, ValueList, ValueTooBig,
+    CqlDate, CqlDuration, CqlTime, CqlTimestamp, CqlVarint, LegacyBatchValues,
+    LegacySerializedValues, MaybeUnset, SerializeValuesError, Unset, Value, ValueList, ValueTooBig,
 };
 use bigdecimal::BigDecimal;
 use bytes::BufMut;
@@ -79,6 +79,47 @@ fn counter_serialization() {
         serialized(0x0123456789abcdef_i64, ColumnType::BigInt),
         vec![0, 0, 0, 8, 0x01, 0x23, 0x45, 0x67, 0x89, 0xab, 0xcd, 0xef]
     );
+}
+
+fn cql_varint_normalization_test_cases() -> [(Vec<u8>, Vec<u8>); 11] {
+    [
+        (vec![], vec![0x00]),                 // 0
+        (vec![0x00], vec![0x00]),             // 0
+        (vec![0x00, 0x00], vec![0x00]),       // 0
+        (vec![0x01], vec![0x01]),             // 1
+        (vec![0x00, 0x01], vec![0x01]),       // 1
+        (vec![0x7f], vec![0x7f]),             // 127
+        (vec![0x00, 0x7f], vec![0x7f]),       // 127
+        (vec![0x80], vec![0x80]),             // -128
+        (vec![0x00, 0x80], vec![0x00, 0x80]), // 128
+        (vec![0xff], vec![0xff]),             // -1
+        (vec![0x00, 0xff], vec![0x00, 0xff]), // 255
+    ]
+}
+
+#[test]
+fn cql_varint_normalization() {
+    let test_cases = cql_varint_normalization_test_cases();
+
+    for test in test_cases {
+        let non_normalized = CqlVarint::from_signed_bytes_be(test.0);
+        let normalized = CqlVarint::from_signed_bytes_be(test.1);
+
+        assert_eq!(non_normalized, normalized);
+        assert_eq!(compute_hash(&non_normalized), compute_hash(&normalized));
+    }
+}
+
+#[test]
+fn cql_varint_normalization_with_bigint() {
+    let test_cases = cql_varint_normalization_test_cases();
+
+    for test in test_cases {
+        let non_normalized: BigInt = CqlVarint::from_signed_bytes_be(test.0).into();
+        let normalized: BigInt = CqlVarint::from_signed_bytes_be(test.1).into();
+
+        assert_eq!(non_normalized, normalized);
+    }
 }
 
 #[test]
