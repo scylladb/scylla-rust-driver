@@ -292,9 +292,7 @@ mod ssl_config {
     #[cfg(feature = "rustls")]
     use std::{net::IpAddr, sync::Arc};
     #[cfg(feature = "rustls")]
-    use tokio_rustls::rustls::pki_types::ServerName;
-    #[cfg(feature = "rustls")]
-    use tokio_rustls::rustls::ClientConfig;
+    use tokio_rustls::rustls::{pki_types::ServerName, ClientConfig};
     #[cfg(feature = "cloud")]
     use uuid::Uuid;
 

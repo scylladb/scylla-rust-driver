@@ -30,7 +30,7 @@ jobs:
     - name: Install mdbook
       run: cargo install mdbook --no-default-features
     - name: Build the project
-      run: cargo build --verbose --examples
+      run: cargo build --verbose --features ssl --features cloud --examples 
     - name: Build the book
       run: mdbook build docs
     - name: Build the book using the script

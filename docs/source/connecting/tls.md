@@ -1,11 +1,12 @@
 # TLS
 
-Driver uses the [`openssl`](https://github.com/sfackler/rust-openssl) crate for TLS functionality.\
-It was chosen because [`rustls`](https://github.com/ctz/rustls) doesn't support certificates for ip addresses
-(see [issue](https://github.com/briansmith/webpki/issues/54)), which is a common use case for Scylla.
+Enabling TLS can be done with the [`openssl`](https://github.com/sfackler/rust-openssl) crate or
+the [`rustls`](https://github.com/rustls/rustls) crate.
 
+Using the `openssl` crate with the `ssl` feature easily supports most common use cases.
 
-### Enabling feature
+### Enabling OpenSSL
+
 `openssl` is not a pure Rust library so you need enable a feature and install the proper package.
 
 To enable the `tls` feature add in `Cargo.toml`:
@@ -37,7 +38,7 @@ Then install the package with `openssl`:
     pacman -S openssl pkg-config
     ```
 
-### Using TLS
+### Using TLS with OpenSSL
 To use tls you will have to create an openssl 
 [`SslContext`](https://docs.rs/openssl/0.10.33/openssl/ssl/struct.SslContext.html)
 and pass it to `SessionBuilder`
@@ -67,3 +68,11 @@ let session: Session = SessionBuilder::new()
 ```
 
 See the full [example](https://github.com/scylladb/scylla-rust-driver/blob/main/examples/tls.rs) for more details
+
+### Using TLS with rustls
+
+Rustls is a pure Rust crate and does not require installing and C packages. However,
+Rustls is a more strict and requires more boilerplate for less secure setups, such as
+certifcates with empty common names.
+
+See the full [example](https://github.com/scylladb/scylla-rust-driver/blob/main/examples/rustls.rs) for more details
