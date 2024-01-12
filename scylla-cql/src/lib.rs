@@ -1,7 +1,19 @@
 pub mod errors;
 pub mod frame;
 #[macro_use]
-pub mod macros;
+pub mod macros {
+    pub use scylla_macros::FromRow;
+    pub use scylla_macros::FromUserType;
+    pub use scylla_macros::IntoUserType;
+    pub use scylla_macros::SerializeCql;
+    pub use scylla_macros::SerializeRow;
+    pub use scylla_macros::ValueList;
+
+    // Reexports for derive(IntoUserType)
+    pub use bytes::{BufMut, Bytes, BytesMut};
+
+    pub use crate::impl_from_cql_value_from_method;
+}
 
 pub mod types;
 
