@@ -1,13 +1,22 @@
 /// #[derive(FromRow)] derives FromRow for struct
 /// Works only on simple structs without generics etc
+///
+/// ---
+///
 pub use scylla_cql::macros::FromRow;
 
 /// #[derive(FromUserType)] allows to parse struct as a User Defined Type
 /// Works only on simple structs without generics etc
+///
+/// ---
+///
 pub use scylla_cql::macros::FromUserType;
 
 /// #[derive(IntoUserType)] allows to pass struct a User Defined Type Value in queries
 /// Works only on simple structs without generics etc
+///
+/// ---
+///
 pub use scylla_cql::macros::IntoUserType;
 
 /// Derive macro for the [`SerializeCql`](crate::serialize::value::SerializeCql) trait
@@ -117,6 +126,9 @@ pub use scylla_cql::macros::IntoUserType;
 /// `#[scylla(skip)]`
 ///
 /// Don't use the field during serialization.
+///
+/// ---
+///
 pub use scylla_cql::macros::SerializeCql;
 
 /// Derive macro for the [`SerializeRow`](crate::serialize::row::SerializeRow) trait
@@ -214,9 +226,15 @@ pub use scylla_cql::macros::SerializeCql;
 /// `#[scylla(skip)]`
 ///
 /// Don't use the field during serialization.
+///
+/// ---
+///
 pub use scylla_cql::macros::SerializeRow;
 
 /// #[derive(ValueList)] allows to pass struct as a list of values for a query
+///
+/// ---
+///
 pub use scylla_cql::macros::ValueList;
 
 pub use scylla_cql::macros::impl_from_cql_value_from_method;
