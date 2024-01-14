@@ -54,6 +54,38 @@ Starting a cluster without running any test is possible with `make up`.
 Before sending a pull request, it is a good idea to run `make ci` locally (or `make dockerized-ci` if on macOS).
 It will perform a format check, `cargo check`, linter check (clippy), build and `cargo test`.
 
+### min_rust workflow and Cargo.lock.msrv
+
+There is min_rust job defined in rust.yml workflow that checks if the driver compiles with our current MSRV.
+Bumping MSRV is generally not considered a breaking change, so our dependencies are free to do it,
+and do it regularly. This resulted in failures in this job.
+We could pin versions of problematic crates in `Cargo.toml`, but it would affect version selection
+for client applications. It would also force people that use non-ancient versions of Rust to use older
+versions of dependencies, which is not desirable.
+
+We opted for a different approach. There is `Cargo.lock.msrv` file in repository, which is used only by min_rust job - 
+it is renamed to `Cargo.lock` before building the driver with `--locked` flag.
+
+This solution is good for us (because we don't have to fix breakage so often) and for users of the driver on modern versions
+of Rust - for them the driver will just work.
+Users on old versions of Rust will potentially have to pin indirect dependencies to specific versions - but that shouldn't be
+that much of a problem, it's just few `cargo update` commands.
+
+If your PR added / removed / updated a dependency, you will need to also update `Cargo.lock.msrv` file.
+There are a few scenarios:
+ - If you just bumped version of one of crates in the workspace: rename `Cargo.lock.msrv` to `Cargo.lock`,
+    run `cargo check --all-targets --all-features --offline`, rename the file back.
+ - If you added / removed / updated dependency in one of `Cargo.toml` files it should be enough to
+    rename `Cargo.lock.msrv` to `Cargo.lock`, run `cargo check --all-targets --all-features`
+    and rename the file back.
+ - If previous methods didn't work or you want to recreate the file (which we should do once in a while):
+      1. Switch to MSRV version (e.g. `rustup install <current-msrv> && rustup default <current-msrv>`). Check `README.md` file for current MSRV.
+      2. Remove your `Cargo.lock`
+      3. Run `cargo check --all-targets --all-features`
+      4. If you got an error about one of dependencies not working with this version of Rust, update it's version in `Cargo.lock`,
+         using command like `cargo update -p toml_datetime --precise 0.6.3` and go back to step 3.
+      5. Rename `Cargo.lock` to `Cargo.lock.msrv`.
+
 ## Contributing to the book
 
 The documentation book is written using [mdbook](https://github.com/rust-lang/mdBook)\
