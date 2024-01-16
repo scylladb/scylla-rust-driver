@@ -29,7 +29,7 @@ This is what query execution history was made for.
 It allows to follow what the driver was thinking - all query attempts, retry decisions, speculative executions.
 More information is available in the [Query Execution History](query-history.md) chapter.
 
-```eval_rst
+```{eval-rst}
 .. toctree::
    :hidden:
    :glob:

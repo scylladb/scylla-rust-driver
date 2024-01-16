@@ -168,11 +168,9 @@ And only if latency awareness is enabled:
 
 If no preferred datacenter is specified, all nodes are treated as local ones.
 
-Replicas in the same priority groups are shuffled[^*]. Non-replicas are randomly
+Replicas in the same priority groups are shuffled[^1]. Non-replicas are randomly
 rotated (similarly to a round robin with a random index).
 
-[^*]: There is an optimisation implemented for LWT requests[^**] that routes them
-to the replicas in the ring order (as it prevents contention due to Paxos conflicts),
-so replicas in that case are not shuffled in groups at all.
-
-[^**]: In order for the optimisation to be applied, LWT statements must be prepared before.
+[^1]: There is an optimisation implemented for LWT requests that routes them
+to the replicas in the ring order (as it prevents contention due to Paxos conflicts), so replicas in that case are not shuffled in groups at all.
+In order for the optimisation to be applied, LWT statements must be prepared before.

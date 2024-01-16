@@ -34,7 +34,7 @@ Database types and their Rust equivalents:
 * `UDT (User defined type)` <----> Custom user structs with macros
 
 
-```eval_rst
+```{eval-rst}
 .. toctree::
    :hidden:
    :glob:

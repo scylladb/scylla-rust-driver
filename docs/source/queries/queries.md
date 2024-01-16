@@ -21,7 +21,7 @@ Additionally there is special functionality to enable `USE KEYSPACE` queries:
 
 Queries are fully asynchronous - you can run as many of them in parallel as you wish.
 
-```eval_rst
+```{eval-rst}
 .. toctree::
    :hidden:
    :glob:

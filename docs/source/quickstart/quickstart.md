@@ -11,7 +11,7 @@ Topics Include:
 * [Install Scylla with Docker](scylla-docker.md)
 
 
-```eval_rst
+```{eval-rst}
 .. toctree::
    :hidden:
    :glob:

@@ -3,7 +3,6 @@ import os
 import sys
 from datetime import date
 
-from recommonmark.transform import AutoStructify
 from pygments.lexers.configs import TOMLLexer
 from pygments.lexers.rust import RustLexer
 from sphinx.highlighting import lexers
@@ -36,14 +35,14 @@ extensions = [
     'sphinx.ext.extlinks',
     'sphinx_sitemap',
     'sphinx_scylladb_theme',
-    'sphinx_multiversion',  # optional
-    'recommonmark',  # optional
+    'sphinx_multiversion',
+    'sphinx_scylladb_markdown'
 ]
 
 # The suffix(es) of source filenames.
 # You can specify multiple suffix as a list of string:
 #
-source_suffix = ['.rst', '.md']
+source_suffix = ['.rst']
 autosectionlabel_prefix_document = True
 
 # The master toctree document.
@@ -64,14 +63,8 @@ pygments_style = 'sphinx'
 
 # Setup Sphinx
 def setup(sphinx):
-    sphinx.add_config_value('recommonmark_config', {
-        'enable_eval_rst': True,
-        'enable_auto_toc_tree': False,
-    }, True)
-    sphinx.add_transform(AutoStructify)
     lexers['rust'] = RustLexer()
     lexers['toml'] = TOMLLexer()
-
 
 # -- Options for not found extension
 
@@ -80,6 +73,11 @@ notfound_template =  '404.html'
 
 # Prefix added to all the URLs generated in the 404 page.
 notfound_urls_prefix = ''
+
+# -- Options for markdown extension
+scylladb_markdown_enable = True
+scylladb_markdown_recommonmark_versions = ['v0.10.1', 'v0.11.1']
+suppress_warnings = ["myst.header","myst.xref_missing"]
 
 # -- Options for multiversion extension
 

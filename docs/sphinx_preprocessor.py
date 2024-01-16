@@ -2,7 +2,7 @@ import json
 import sys
 
 def remove_sphinx_markdown(md_file_text):
-    text_split = md_file_text.split("```eval_rst")
+    text_split = md_file_text.split("```{eval-rst}")
     
     result = text_split[0]
 

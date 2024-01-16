@@ -85,7 +85,7 @@ contexts:
 currentContext: default
 ```
 
-```eval_rst
+```{eval-rst}
 .. toctree::
    :hidden:
    :glob:
