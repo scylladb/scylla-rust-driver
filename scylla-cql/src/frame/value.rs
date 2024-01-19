@@ -154,6 +154,13 @@ impl PartialEq for CqlTimeuuid {
     }
 }
 
+impl std::hash::Hash for CqlTimeuuid {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.lsb_signed().hash(state);
+        self.msb().hash(state);
+    }
+}
+
 /// Native CQL date representation that allows for a bigger range of dates (-262145-1-1 to 262143-12-31).
 ///
 /// Represented as number of days since -5877641-06-23 i.e. 2^31 days before unix epoch.
