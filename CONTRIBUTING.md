@@ -42,7 +42,7 @@ When on non-Linux machine, however, it can be impossible to connect to container
 If you are using macOS, we provide a `dockerized-test` make target for running tests inside another Docker container:
 ```bash
 make dockerized-test
-````
+```
 If working on Windows, run tests in WSL.
 
 The above commands will leave a running ScyllaDB cluster in the background.
