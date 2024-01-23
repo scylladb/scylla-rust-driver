@@ -37,6 +37,10 @@ other nodes in this cluster and connect to them as well.
 
 ## Best practices for using Session
 
+:::{warning}
+Always try to use only a single Session object per apllication because creating them is very expensive!
+:::
+
 The driver maintains its own pool of connections to each node and each connection is capable of handling multiple requests in parallel. Driver will also route requests to nodes / shards that actually own the data (unless the load balancing policy that you use doesn't support it).
 
 For those reasons, we recommend using one instance of `Session` per application.
