@@ -22,6 +22,17 @@ def remove_sphinx_markdown(md_file_text, name):
             in_eval_rst = True
             continue
 
+        # mdbook doesn't support other types of admonitions
+        if line == ":::{warning}": 
+            line = '<div class="warning">'
+        elif line == ":::":
+            line = '</div>'
+
+        if line.startswith(':::'):
+            print(f"Unknown admonition marker in chapter {name}: {line}", file=sys.stderr)
+            sys.exit(1)
+
+
         output_lines.append(line)
     
     if len(rst_section_content) > 0:
