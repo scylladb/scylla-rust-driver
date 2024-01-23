@@ -17,7 +17,7 @@ def remove_sphinx_markdown(md_file_text, name):
                 in_eval_rst = False
             continue
 
-        if line.startswith("```{eval_rst}"):
+        if line.startswith("```{eval-rst}"):
             rst_section_content.append(line)
             in_eval_rst = True
             continue
@@ -48,6 +48,7 @@ def remove_sphinx_markdown(md_file_text, name):
 
 def process_section(section):
     if 'Chapter' in section:
+        print(f'Processing chapter {section['Chapter']['name']}', file=sys.stderr)
         section['Chapter']['content'] = remove_sphinx_markdown(section['Chapter']['content'], section['Chapter']['name'])
         for s in section['Chapter']['sub_items']:
             process_section(s)
@@ -57,7 +58,7 @@ if __name__ == '__main__':
         if sys.argv[1] == "supports": 
             # then we are good to return an exit status code of 0, since the other argument will just be the renderer's name
             sys.exit(0)
-
+    print('SphinxToMdBook preprocessor running', file=sys.stderr)
     # load both the context and the book representations from stdin
     context, book = json.load(sys.stdin)
 
