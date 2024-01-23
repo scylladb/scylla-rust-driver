@@ -115,7 +115,7 @@ node being down or overloaded. The load balancing policy can use this
 information to update its internal state and avoid contacting the same node
 again until it's recovered.
 
-```eval_rst
+```{eval-rst}
 .. toctree::
    :hidden:
    :glob:

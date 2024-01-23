@@ -42,7 +42,7 @@ prepared.set_is_idempotent(true);
 # }
 ```
 
-```eval_rst
+```{eval-rst}
 .. toctree::
    :hidden:
    :glob:
