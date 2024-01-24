@@ -25,6 +25,8 @@ use std::time::Duration;
 use crate::authentication::{AuthenticatorProvider, PlainTextAuthenticator};
 #[cfg(feature = "ssl")]
 use openssl::ssl::SslContext;
+#[cfg(feature = "rustls")]
+use tokio_rustls::rustls::ClientConfig;
 use tracing::warn;
 
 mod sealed {
@@ -332,6 +334,38 @@ impl GenericSessionBuilder<DefaultMode> {
     #[cfg(feature = "ssl")]
     pub fn ssl_context(mut self, ssl_context: Option<SslContext>) -> Self {
         self.config.ssl_context = ssl_context;
+        self
+    }
+
+    /// rustls feature
+    /// Provide SessionBuilder with ClientConfig from rustls crate that will be
+    /// used to create an ssl connection to the database.
+    /// If set to None SSL connection won't be used.
+    /// Default is None.
+    ///
+    /// # Example
+    /// ```
+    /// # use std::fs;
+    /// # use std::path::PathBuf;
+    /// # use scylla::{Session, SessionBuilder};
+    /// # use openssl::ssl::{SslContextBuilder, SslVerifyMode, SslMethod, SslFiletype};
+    /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
+    /// let certdir = fs::canonicalize(PathBuf::from("./examples/certs/scylla.crt"))?;
+    /// let mut context_builder = SslContextBuilder::new(SslMethod::tls())?;
+    /// context_builder.set_certificate_file(certdir.as_path(), SslFiletype::PEM)?;
+    /// context_builder.set_verify(SslVerifyMode::NONE);
+    ///
+    /// let session: Session = SessionBuilder::new()
+    ///     .known_node("127.0.0.1:9042")
+    ///     .ssl_context(Some(context_builder.build()))
+    ///     .build()
+    ///     .await?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    #[cfg(feature = "rustls")]
+    pub fn rustls_config(mut self, config: Option<Arc<ClientConfig>>) -> Self {
+        self.config.rustls_config = config;
         self
     }
 }

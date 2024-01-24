@@ -32,8 +32,13 @@ jobs:
       working-directory: ./scylla
     steps:
     - uses: actions/checkout@v3
-    - name: Check
+    - name: Check OpenSSL
       run: cargo check --verbose --features "ssl"
       working-directory: ${{env.working-directory}}
-    - name: Run tls example
-      run: cargo run --example tls
+    - name: Check OpenSSL
+      run: cargo check --verbose --features "rustls"
+      working-directory: ${{env.working-directory}}
+    - name: Run OpenSSL example
+      run: cargo run --features "ssl" --example tls
+    - name: Run rustls example
+      run: cargo run --features "rustls" --example rustls

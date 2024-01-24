@@ -36,7 +36,7 @@ use uuid::Uuid;
 
 use super::connection::NonErrorQueryResponse;
 use super::connection::QueryResponse;
-#[cfg(feature = "ssl")]
+#[cfg(any(feature = "ssl", feature = "rustls"))]
 use super::connection::SslConfig;
 use super::errors::{NewSessionError, QueryError};
 use super::execution_profile::{ExecutionProfile, ExecutionProfileHandle, ExecutionProfileInner};
@@ -77,6 +77,8 @@ use crate::authentication::AuthenticatorProvider;
 #[cfg(feature = "ssl")]
 use openssl::ssl::SslContext;
 use scylla_cql::errors::BadQuery;
+#[cfg(feature = "rustls")]
+use tokio_rustls::rustls::ClientConfig;
 
 /// Translates IP addresses received from ScyllaDB nodes into locally reachable addresses.
 ///
@@ -196,6 +198,10 @@ pub struct SessionConfig {
     #[cfg(feature = "ssl")]
     pub ssl_context: Option<SslContext>,
 
+    /// Provide our Session with TLS
+    #[cfg(feature = "rustls")]
+    pub rustls_config: Option<Arc<ClientConfig>>,
+
     pub authenticator: Option<Arc<dyn AuthenticatorProvider>>,
 
     pub connect_timeout: Duration,
@@ -312,6 +318,8 @@ impl SessionConfig {
             keyspace_case_sensitive: false,
             #[cfg(feature = "ssl")]
             ssl_context: None,
+            #[cfg(feature = "rustls")]
+            rustls_config: None,
             authenticator: None,
             connect_timeout: Duration::from_secs(5),
             connection_pool_size: Default::default(),
@@ -499,6 +507,11 @@ impl Session {
             tcp_keepalive_interval: config.tcp_keepalive_interval,
             #[cfg(feature = "ssl")]
             ssl_config: config.ssl_context.map(SslConfig::new_with_global_context),
+            #[cfg(feature = "rustls")]
+            ssl_config: config
+                .rustls_config
+                .as_ref()
+                .map(SslConfig::new_with_global_config),
             authenticator: config.authenticator.clone(),
             connect_timeout: config.connect_timeout,
             event_sender: None,
