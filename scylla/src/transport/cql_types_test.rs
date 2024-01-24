@@ -196,21 +196,14 @@ async fn test_counter() {
 #[cfg(feature = "chrono")]
 #[tokio::test]
 async fn test_naive_date() {
+    use chrono::Datelike;
     use chrono::NaiveDate;
 
     let session: Session = init_test("chrono_naive_date_tests", "date").await;
 
     let min_naive_date: NaiveDate = NaiveDate::MIN;
-    assert_eq!(
-        min_naive_date,
-        NaiveDate::from_ymd_opt(-262144, 1, 1).unwrap()
-    );
-
-    let max_naive_date: NaiveDate = NaiveDate::MAX;
-    assert_eq!(
-        max_naive_date,
-        NaiveDate::from_ymd_opt(262143, 12, 31).unwrap()
-    );
+    let min_naive_date_string = min_naive_date.format("%Y-%m-%d").to_string();
+    let min_naive_date_out_of_range_string = (min_naive_date.year() - 1).to_string() + "-12-31";
 
     let tests = [
         // Basic test values
@@ -235,12 +228,12 @@ async fn test_naive_date() {
             Some(NaiveDate::from_ymd_opt(-1, 12, 31).unwrap()),
         ),
         // min/max values allowed by NaiveDate
-        ("-262144-01-01", Some(min_naive_date)),
+        (min_naive_date_string.as_str(), Some(min_naive_date)),
         // NOTICE: dropped for Cassandra 4 compatibility
         //("262143-12-31", Some(max_naive_date)),
 
-        // 1 less/more than min/max values allowed by NaiveDate
-        ("-262145-12-31", None),
+        // Slightly less/more than min/max values allowed by NaiveDate
+        (min_naive_date_out_of_range_string.as_str(), None),
         // NOTICE: dropped for Cassandra 4 compatibility
         //("262144-01-01", None),
         // min/max values allowed by the database
