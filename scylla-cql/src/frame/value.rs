@@ -230,7 +230,10 @@ impl std::hash::Hash for CqlTimeuuid {
 ///
 /// Currently, Scylla and Cassandra support non-normalized `varint` values.
 /// Bytes provided by the user via constructor are passed to DB as is.
-#[derive(Clone, Debug)]
+///
+/// The implementation of [`PartialEq`], however, normalizes the underlying bytes
+/// before comparison. For details, check [examples](#impl-PartialEq-for-CqlVarint).
+#[derive(Clone, Eq, Debug)]
 pub struct CqlVarint(Vec<u8>);
 
 /// Constructors from bytes
@@ -267,6 +270,42 @@ impl CqlVarint {
     }
 }
 
+impl CqlVarint {
+    fn as_normalized_slice(&self) -> &[u8] {
+        let digits = self.0.as_slice();
+        if digits.is_empty() {
+            // num-bigint crate normalizes empty vector to 0.
+            // We will follow the same approach.
+            return &[0];
+        }
+
+        let non_zero_position = match digits.iter().position(|b| *b != 0) {
+            Some(pos) => pos,
+            None => {
+                // Vector is filled with zeros. Represent it as 0.
+                return &[0];
+            }
+        };
+
+        if non_zero_position > 0 {
+            // There were some leading zeros.
+            // Now, there are two cases:
+            let zeros_to_remove = if digits[non_zero_position] > 0x7f {
+                // Most significant bit is 1, so we need to include one of the leading
+                // zeros as originally it represented a positive number.
+                non_zero_position - 1
+            } else {
+                // Most significant bit is 0 - positive number with no leading zeros.
+                non_zero_position
+            };
+            return &digits[zeros_to_remove..];
+        }
+
+        // There were no leading zeros at all - leave as is.
+        digits
+    }
+}
+
 impl From<BigInt> for CqlVarint {
     fn from(value: BigInt) -> Self {
         Self(value.to_signed_bytes_be())
@@ -276,6 +315,25 @@ impl From<BigInt> for CqlVarint {
 impl From<CqlVarint> for BigInt {
     fn from(val: CqlVarint) -> Self {
         BigInt::from_signed_bytes_be(&val.0)
+    }
+}
+
+/// Compares two [`CqlVarint`] values after normalization.
+///
+/// # Example
+///
+/// ```rust
+/// # use scylla_cql::frame::value::CqlVarint;
+/// let non_normalized_bytes = vec![0x00, 0x01];
+/// let normalized_bytes = vec![0x01];
+/// assert_eq!(
+///     CqlVarint::from_signed_bytes_be(non_normalized_bytes),
+///     CqlVarint::from_signed_bytes_be(normalized_bytes)
+/// );
+/// ```
+impl PartialEq for CqlVarint {
+    fn eq(&self, other: &Self) -> bool {
+        self.as_normalized_slice() == other.as_normalized_slice()
     }
 }
 
