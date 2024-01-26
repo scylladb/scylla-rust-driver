@@ -222,6 +222,12 @@ impl std::hash::Hash for CqlTimeuuid {
 /// implementation of `varint` type - independent of any
 /// external crates and crate features.
 ///
+/// The type is not very useful in most use cases.
+/// However, users can make use of more complex types
+/// such as `num_bigint::BigInt` (v0.3/v0.4).
+/// The library support (e.g. conversion from [`CqlValue`]) for these types is
+/// enabled via `num-bigint-03` and `num-bigint-04` crate features.
+///
 /// # DB data format
 /// Notice that [constructors](CqlVarint#impl-CqlVarint)
 /// don't perform any normalization on the provided data.
