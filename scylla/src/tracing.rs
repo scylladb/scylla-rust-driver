@@ -1,7 +1,7 @@
 use itertools::Itertools;
+use scylla_cql::frame::value::CqlTimeuuid;
 use std::collections::HashMap;
 use std::net::IpAddr;
-use uuid::Uuid;
 
 use crate::cql_to_rust::{FromRow, FromRowError};
 use crate::frame::response::result::Row;
@@ -26,7 +26,7 @@ pub struct TracingInfo {
 /// A single event happening during a traced query
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TracingEvent {
-    pub event_id: Uuid,
+    pub event_id: CqlTimeuuid,
     pub activity: Option<String>,
     pub source: Option<IpAddr>,
     pub source_elapsed: Option<i32>,
@@ -85,7 +85,7 @@ impl FromRow for TracingInfo {
 impl FromRow for TracingEvent {
     fn from_row(row: Row) -> Result<TracingEvent, FromRowError> {
         let (event_id, activity, source, source_elapsed, thread) = <(
-            Uuid,
+            CqlTimeuuid,
             Option<String>,
             Option<IpAddr>,
             Option<i32>,

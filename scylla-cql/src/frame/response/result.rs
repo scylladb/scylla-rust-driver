@@ -1,7 +1,7 @@
 use crate::cql_to_rust::{FromRow, FromRowError};
 use crate::frame::response::event::SchemaChangeEvent;
 use crate::frame::types::vint_decode;
-use crate::frame::value::{Counter, CqlDate, CqlDuration, CqlTime, CqlTimestamp};
+use crate::frame::value::{Counter, CqlDate, CqlDuration, CqlTime, CqlTimestamp, CqlTimeuuid};
 use crate::frame::{frame_errors::ParseError, types};
 use bigdecimal::BigDecimal;
 use byteorder::{BigEndian, ReadBytesExt};
@@ -110,7 +110,7 @@ pub enum CqlValue {
     TinyInt(i8),
     /// Nanoseconds since midnight
     Time(CqlTime),
-    Timeuuid(Uuid),
+    Timeuuid(CqlTimeuuid),
     Tuple(Vec<Option<CqlValue>>),
     Uuid(Uuid),
     Varint(BigInt),
@@ -231,7 +231,6 @@ impl CqlValue {
     pub fn as_uuid(&self) -> Option<Uuid> {
         match self {
             Self::Uuid(u) => Some(*u),
-            Self::Timeuuid(u) => Some(*u),
             _ => None,
         }
     }
@@ -285,7 +284,7 @@ impl CqlValue {
         }
     }
 
-    pub fn as_timeuuid(&self) -> Option<Uuid> {
+    pub fn as_timeuuid(&self) -> Option<CqlTimeuuid> {
         match self {
             Self::Timeuuid(u) => Some(*u),
             _ => None,
@@ -770,7 +769,7 @@ pub fn deser_cql_value(typ: &ColumnType, buf: &mut &[u8]) -> StdResult<CqlValue,
                 )));
             }
             let uuid = uuid::Uuid::from_slice(buf).expect("Deserializing Uuid failed.");
-            CqlValue::Timeuuid(uuid)
+            CqlValue::Timeuuid(CqlTimeuuid::from(uuid))
         }
         Duration => {
             let months = i32::try_from(vint_decode(buf)?)?;
@@ -966,7 +965,7 @@ pub fn deserialize(buf: &mut &[u8]) -> StdResult<Result, ParseError> {
 #[cfg(test)]
 mod tests {
     use crate as scylla;
-    use crate::frame::value::{Counter, CqlDate, CqlDuration, CqlTime, CqlTimestamp};
+    use crate::frame::value::{Counter, CqlDate, CqlDuration, CqlTime, CqlTimestamp, CqlTimeuuid};
     use bigdecimal::BigDecimal;
     use num_bigint::BigInt;
     use num_bigint::ToBigInt;
@@ -993,9 +992,10 @@ mod tests {
         let uuid_serialize = super::deser_cql_value(&ColumnType::Uuid, uuid_slice).unwrap();
         assert_eq!(uuid_serialize, CqlValue::Uuid(my_uuid));
 
+        let my_timeuuid = CqlTimeuuid::from_str("00000000000000000000000000000001").unwrap();
         let time_uuid_serialize =
             super::deser_cql_value(&ColumnType::Timeuuid, uuid_slice).unwrap();
-        assert_eq!(time_uuid_serialize, CqlValue::Timeuuid(my_uuid));
+        assert_eq!(time_uuid_serialize, CqlValue::Timeuuid(my_timeuuid));
 
         let my_ip = "::1".parse().unwrap();
         let ip_buf: Vec<u8> = vec![0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1];
@@ -1754,7 +1754,7 @@ mod tests {
             match cql_val {
                 CqlValue::Timeuuid(uuid) => {
                     assert_eq!(uuid.as_bytes(), uuid_bytes);
-                    assert_eq!(Uuid::parse_str(uuid_str).unwrap(), uuid);
+                    assert_eq!(CqlTimeuuid::from_str(uuid_str).unwrap(), uuid);
                 }
                 _ => panic!("Timeuuid parsed as wrong CqlValue"),
             }

@@ -1,3 +1,4 @@
+use crate::frame::value::CqlTimeuuid;
 use crate::frame::{response::result::CqlValue, types::RawValue, value::LegacyBatchValuesIterator};
 use crate::types::serialize::batch::{BatchValues, BatchValuesIterator, LegacyBatchValuesAdapter};
 use crate::types::serialize::row::{RowSerializationContext, SerializeRow};
@@ -12,9 +13,11 @@ use super::value::{
 use bigdecimal::BigDecimal;
 use bytes::BufMut;
 use num_bigint::BigInt;
+use std::collections::hash_map::DefaultHasher;
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
-use std::hash::{BuildHasherDefault, Hasher};
+use std::hash::{BuildHasherDefault, Hash, Hasher};
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
+use std::str::FromStr;
 use std::{borrow::Cow, convert::TryInto};
 use uuid::Uuid;
 
@@ -536,6 +539,24 @@ fn timeuuid_serialization() {
 
         assert_eq!(uuid_serialized, expected_serialized);
     }
+}
+
+#[test]
+fn timeuuid_ordering_properties() {
+    let x = CqlTimeuuid::from_str("00000000-0000-1000-8080-808080808080").unwrap();
+    let y = CqlTimeuuid::from_str("00000000-0000-2000-8080-808080808080").unwrap();
+
+    let cmp_res = x.cmp(&y);
+    assert_eq!(std::cmp::Ordering::Equal, cmp_res);
+
+    assert_eq!(x, y);
+
+    let compute_hash = |x: &CqlTimeuuid| {
+        let mut hasher = DefaultHasher::new();
+        x.hash(&mut hasher);
+        hasher.finish()
+    };
+    assert_eq!(compute_hash(&x), compute_hash(&y));
 }
 
 #[test]

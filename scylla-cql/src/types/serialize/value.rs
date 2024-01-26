@@ -20,7 +20,7 @@ use secrecy::{ExposeSecret, Secret, Zeroize};
 use crate::frame::response::result::{ColumnType, CqlValue};
 use crate::frame::types::vint_encode;
 use crate::frame::value::{
-    Counter, CqlDate, CqlDuration, CqlTime, CqlTimestamp, MaybeUnset, Unset, Value,
+    Counter, CqlDate, CqlDuration, CqlTime, CqlTimestamp, CqlTimeuuid, MaybeUnset, Unset, Value,
 };
 
 #[cfg(feature = "chrono")]
@@ -223,7 +223,13 @@ impl SerializeCql for f64 {
 }
 impl SerializeCql for Uuid {
     impl_serialize_via_writer!(|me, typ, writer| {
-        exact_type_check!(typ, Uuid, Timeuuid);
+        exact_type_check!(typ, Uuid);
+        writer.set_value(me.as_bytes().as_ref()).unwrap()
+    });
+}
+impl SerializeCql for CqlTimeuuid {
+    impl_serialize_via_writer!(|me, typ, writer| {
+        exact_type_check!(typ, Timeuuid);
         writer.set_value(me.as_bytes().as_ref()).unwrap()
     });
 }

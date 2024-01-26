@@ -20,7 +20,8 @@ Database types and their Rust equivalents:
 * `Counter` <----> `value::Counter`
 * `Blob` <----> `Vec<u8>`
 * `Inet` <----> `std::net::IpAddr`
-* `Uuid`, `Timeuuid` <----> `uuid::Uuid`
+* `Uuid` <----> `uuid::Uuid`
+* `Timeuuid` <----> `value::CqlTimeuuid`
 * `Date` <----> `value::CqlDate`, `chrono::NaiveDate`, `time::Date`
 * `Time` <----> `value::CqlTime`, `chrono::NaiveTime`, `time::Time`
 * `Timestamp` <----> `value::CqlTimestamp`, `chrono::DateTime<Utc>`, `time::OffsetDateTime`
@@ -45,6 +46,7 @@ Database types and their Rust equivalents:
    blob
    inet
    uuid
+   timeuuid
    date
    time
    timestamp
