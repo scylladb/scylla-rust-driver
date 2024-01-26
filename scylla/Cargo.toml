@@ -22,7 +22,8 @@ chrono = ["scylla-cql/chrono"]
 time = ["scylla-cql/time"]
 num-bigint-03 = ["scylla-cql/num-bigint-03"]
 num-bigint-04 = ["scylla-cql/num-bigint-04"]
-full-serialization = ["chrono", "time", "secret", "num-bigint-03", "num-bigint-04"]
+bigdecimal-04 = ["scylla-cql/bigdecimal-04"]
+full-serialization = ["chrono", "time", "secret", "num-bigint-03", "num-bigint-04", "bigdecimal-04"]
 
 [dependencies]
 scylla-macros = { version = "0.3.0", path = "../scylla-macros" }
@@ -38,7 +39,6 @@ uuid = { version = "1.0", features = ["v4"] }
 rand = "0.8.3"
 thiserror = "1.0"
 itertools = "0.11.0"
-bigdecimal = "0.4"
 tracing = "0.1.36"
 chrono = { version = "0.4.20", default-features = false, features = ["clock"] }
 openssl = { version = "0.10.32", optional = true }
@@ -60,6 +60,7 @@ socket2 = { version = "0.5.3", features = ["all"] }
 [dev-dependencies]
 num-bigint-03 = { package = "num-bigint", version = "0.3" }
 num-bigint-04 = { package = "num-bigint", version = "0.4" }
+bigdecimal-04 = { package = "bigdecimal", version = "0.4" }
 scylla-proxy = { version = "0.0.3", path = "../scylla-proxy" }
 ntest = "0.9.0"
 criterion = "0.4" # Note: v0.5 needs at least rust 1.70.0

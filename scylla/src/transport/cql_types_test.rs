@@ -7,7 +7,6 @@ use crate::test_utils::create_new_session_builder;
 use crate::transport::session::IntoTypedRows;
 use crate::transport::session::Session;
 use crate::utils::test_utils::unique_keyspace_name;
-use bigdecimal::BigDecimal;
 use itertools::Itertools;
 use scylla_cql::frame::value::{CqlTimeuuid, CqlVarint};
 use scylla_cql::types::serialize::value::SerializeCql;
@@ -218,6 +217,7 @@ async fn test_cql_varint() {
     }
 }
 
+#[cfg(feature = "bigdecimal-04")]
 #[tokio::test]
 async fn test_decimal() {
     let tests = [
@@ -229,7 +229,7 @@ async fn test_decimal() {
         "-123456789012345678901234567890.1234567890",
     ];
 
-    run_tests::<BigDecimal>(&tests, "decimal").await;
+    run_tests::<bigdecimal_04::BigDecimal>(&tests, "decimal").await;
 }
 
 #[tokio::test]

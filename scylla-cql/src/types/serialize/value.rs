@@ -6,7 +6,6 @@ use std::hash::BuildHasher;
 use std::net::IpAddr;
 use std::sync::Arc;
 
-use bigdecimal::BigDecimal;
 use thiserror::Error;
 use uuid::Uuid;
 
@@ -127,7 +126,8 @@ impl SerializeCql for CqlDecimal {
             .map_err(|_| mk_ser_err::<Self>(typ, BuiltinSerializationErrorKind::SizeOverflow))?
     });
 }
-impl SerializeCql for BigDecimal {
+#[cfg(feature = "bigdecimal-04")]
+impl SerializeCql for bigdecimal_04::BigDecimal {
     impl_serialize_via_writer!(|me, typ, writer| {
         exact_type_check!(typ, Decimal);
         let mut builder = writer.into_value_builder();
@@ -1536,8 +1536,6 @@ mod tests {
     };
     use crate::types::serialize::{CellWriter, SerializationError};
 
-    use bigdecimal::num_bigint::BigInt;
-    use bigdecimal::BigDecimal;
     use scylla_macros::SerializeCql;
 
     use super::{SerializeCql, UdtSerializationErrorKind, UdtTypeCheckErrorKind};
@@ -1653,6 +1651,13 @@ mod tests {
 
         // We'll skip testing for SizeOverflow as this would require producing
         // a value which is at least 2GB in size.
+    }
+
+    #[cfg(feature = "bigdecimal-04")]
+    #[test]
+    fn test_native_errors_bigdecimal_04() {
+        use bigdecimal_04::num_bigint::BigInt;
+        use bigdecimal_04::BigDecimal;
 
         // Value overflow (type out of representable range)
         let v = BigDecimal::new(BigInt::from(123), 1i64 << 40);

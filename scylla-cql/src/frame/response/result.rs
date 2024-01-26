@@ -967,7 +967,6 @@ pub fn deserialize(buf: &mut &[u8]) -> StdResult<Result, ParseError> {
 mod tests {
     use crate as scylla;
     use crate::frame::value::{Counter, CqlDate, CqlDuration, CqlTime, CqlTimestamp, CqlTimeuuid};
-    use bigdecimal::BigDecimal;
     use scylla::frame::response::result::{ColumnType, CqlValue};
     use std::str::FromStr;
     use uuid::Uuid;
@@ -1111,8 +1110,10 @@ mod tests {
         }
     }
 
+    #[cfg(feature = "bigdecimal-04")]
     #[test]
     fn test_decimal() {
+        use bigdecimal_04::BigDecimal;
         struct Test<'a> {
             value: BigDecimal,
             encoding: &'a [u8],

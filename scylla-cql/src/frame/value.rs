@@ -1,6 +1,5 @@
 use crate::frame::frame_errors::ParseError;
 use crate::frame::types;
-use bigdecimal::BigDecimal;
 use bytes::BufMut;
 use std::borrow::Cow;
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
@@ -371,6 +370,12 @@ impl std::hash::Hash for CqlVarint {
 /// - a [`CqlVarint`] value
 /// - 32-bit integer which determines the position of the decimal point
 ///
+/// The type is not very useful in most use cases.
+/// However, users can make use of more complex types
+/// such as `bigdecimal::BigDecimal` (v0.4).
+/// The library support (e.g. conversion from [`CqlValue`]) for the type is
+/// enabled via `bigdecimal-04` crate feature.
+///
 /// # DB data format
 /// Notice that [constructors](CqlDecimal#impl-CqlDecimal)
 /// don't perform any normalization on the provided data.
@@ -418,10 +423,11 @@ impl CqlDecimal {
     }
 }
 
-impl From<CqlDecimal> for BigDecimal {
+#[cfg(feature = "bigdecimal-04")]
+impl From<CqlDecimal> for bigdecimal_04::BigDecimal {
     fn from(value: CqlDecimal) -> Self {
         Self::from((
-            bigdecimal::num_bigint::BigInt::from_signed_bytes_be(
+            bigdecimal_04::num_bigint::BigInt::from_signed_bytes_be(
                 value.int_val.as_signed_bytes_be_slice(),
             ),
             value.scale as i64,
@@ -429,10 +435,11 @@ impl From<CqlDecimal> for BigDecimal {
     }
 }
 
-impl TryFrom<BigDecimal> for CqlDecimal {
+#[cfg(feature = "bigdecimal-04")]
+impl TryFrom<bigdecimal_04::BigDecimal> for CqlDecimal {
     type Error = <i64 as TryInto<i32>>::Error;
 
-    fn try_from(value: BigDecimal) -> Result<Self, Self::Error> {
+    fn try_from(value: bigdecimal_04::BigDecimal) -> Result<Self, Self::Error> {
         let (bigint, scale) = value.into_bigint_and_exponent();
         let bytes = bigint.to_signed_bytes_be();
         Ok(Self::from_signed_be_bytes_and_exponent(
@@ -975,7 +982,8 @@ impl Value for CqlDecimal {
     }
 }
 
-impl Value for BigDecimal {
+#[cfg(feature = "bigdecimal-04")]
+impl Value for bigdecimal_04::BigDecimal {
     fn serialize(&self, buf: &mut Vec<u8>) -> Result<(), ValueTooBig> {
         let (value, scale) = self.as_bigint_and_exponent();
 
