@@ -337,6 +337,13 @@ impl PartialEq for CqlVarint {
     }
 }
 
+/// Computes the hash of normalized [`CqlVarint`].
+impl std::hash::Hash for CqlVarint {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.as_normalized_slice().hash(state)
+    }
+}
+
 /// Native CQL date representation that allows for a bigger range of dates (-262145-1-1 to 262143-12-31).
 ///
 /// Represented as number of days since -5877641-06-23 i.e. 2^31 days before unix epoch.
