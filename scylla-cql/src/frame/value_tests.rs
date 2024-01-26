@@ -44,6 +44,12 @@ fn serialized_only_new<T: SerializeCql>(val: T, typ: ColumnType) -> Vec<u8> {
     result
 }
 
+fn compute_hash<T: Hash>(x: &T) -> u64 {
+    let mut hasher = DefaultHasher::new();
+    x.hash(&mut hasher);
+    hasher.finish()
+}
+
 #[test]
 fn boolean_serialization() {
     assert_eq!(serialized(true, ColumnType::Boolean), vec![0, 0, 0, 1, 1]);
@@ -550,12 +556,6 @@ fn timeuuid_ordering_properties() {
     assert_eq!(std::cmp::Ordering::Equal, cmp_res);
 
     assert_eq!(x, y);
-
-    let compute_hash = |x: &CqlTimeuuid| {
-        let mut hasher = DefaultHasher::new();
-        x.hash(&mut hasher);
-        hasher.finish()
-    };
     assert_eq!(compute_hash(&x), compute_hash(&y));
 }
 
