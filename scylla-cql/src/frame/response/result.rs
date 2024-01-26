@@ -1,12 +1,13 @@
 use crate::cql_to_rust::{FromRow, FromRowError};
 use crate::frame::response::event::SchemaChangeEvent;
 use crate::frame::types::vint_decode;
-use crate::frame::value::{Counter, CqlDate, CqlDuration, CqlTime, CqlTimestamp, CqlTimeuuid};
+use crate::frame::value::{
+    Counter, CqlDate, CqlDuration, CqlTime, CqlTimestamp, CqlTimeuuid, CqlVarint,
+};
 use crate::frame::{frame_errors::ParseError, types};
 use bigdecimal::BigDecimal;
 use byteorder::{BigEndian, ReadBytesExt};
 use bytes::{Buf, Bytes};
-use num_bigint::BigInt;
 use std::{
     convert::{TryFrom, TryInto},
     net::IpAddr,
@@ -113,7 +114,7 @@ pub enum CqlValue {
     Timeuuid(CqlTimeuuid),
     Tuple(Vec<Option<CqlValue>>),
     Uuid(Uuid),
-    Varint(BigInt),
+    Varint(CqlVarint),
 }
 
 impl ColumnType {
@@ -363,7 +364,7 @@ impl CqlValue {
         }
     }
 
-    pub fn into_varint(self) -> Option<BigInt> {
+    pub fn into_cql_varint(self) -> Option<CqlVarint> {
         match self {
             Self::Varint(i) => Some(i),
             _ => None,
@@ -671,7 +672,7 @@ pub fn deser_cql_value(typ: &ColumnType, buf: &mut &[u8]) -> StdResult<CqlValue,
         }
         Decimal => {
             let scale = types::read_int(buf)? as i64;
-            let int_value = num_bigint::BigInt::from_signed_bytes_be(buf);
+            let int_value = bigdecimal::num_bigint::BigInt::from_signed_bytes_be(buf);
             let big_decimal: BigDecimal = BigDecimal::from((int_value, scale));
 
             CqlValue::Decimal(big_decimal)
@@ -810,7 +811,7 @@ pub fn deser_cql_value(typ: &ColumnType, buf: &mut &[u8]) -> StdResult<CqlValue,
             let uuid = uuid::Uuid::from_slice(buf).expect("Deserializing Uuid failed.");
             CqlValue::Uuid(uuid)
         }
-        Varint => CqlValue::Varint(num_bigint::BigInt::from_signed_bytes_be(buf)),
+        Varint => CqlValue::Varint(CqlVarint::from_signed_bytes_be(buf.to_vec())),
         List(type_name) => {
             let len: usize = types::read_int(buf)?.try_into()?;
             let mut res = Vec::with_capacity(len);
@@ -967,8 +968,6 @@ mod tests {
     use crate as scylla;
     use crate::frame::value::{Counter, CqlDate, CqlDuration, CqlTime, CqlTimestamp, CqlTimeuuid};
     use bigdecimal::BigDecimal;
-    use num_bigint::BigInt;
-    use num_bigint::ToBigInt;
     use scylla::frame::response::result::{ColumnType, CqlValue};
     use std::str::FromStr;
     use uuid::Uuid;
@@ -1028,13 +1027,14 @@ mod tests {
         assert_eq!(double_serialize, CqlValue::Double(double));
     }
 
-    #[test]
-    fn test_varint() {
-        struct Test<'a> {
-            value: BigInt,
-            encoding: &'a [u8],
-        }
+    #[cfg(any(feature = "num-bigint-03", feature = "num-bigint-04"))]
+    struct VarintTestCase {
+        value: i32,
+        encoding: Vec<u8>,
+    }
 
+    #[cfg(any(feature = "num-bigint-03", feature = "num-bigint-04"))]
+    fn varint_test_cases_from_spec() -> Vec<VarintTestCase> {
         /*
             Table taken from CQL Binary Protocol v4 spec
 
@@ -1049,44 +1049,65 @@ mod tests {
              -128 |     0x80
              -129 |   0xFF7F
         */
-        let tests = [
-            Test {
-                value: 0.to_bigint().unwrap(),
-                encoding: &[0x00],
+        vec![
+            VarintTestCase {
+                value: 0,
+                encoding: vec![0x00],
             },
-            Test {
-                value: 1.to_bigint().unwrap(),
-                encoding: &[0x01],
+            VarintTestCase {
+                value: 1,
+                encoding: vec![0x01],
             },
-            Test {
-                value: 127.to_bigint().unwrap(),
-                encoding: &[0x7F],
+            VarintTestCase {
+                value: 127,
+                encoding: vec![0x7F],
             },
-            Test {
-                value: 128.to_bigint().unwrap(),
-                encoding: &[0x00, 0x80],
+            VarintTestCase {
+                value: 128,
+                encoding: vec![0x00, 0x80],
             },
-            Test {
-                value: 129.to_bigint().unwrap(),
-                encoding: &[0x00, 0x81],
+            VarintTestCase {
+                value: 129,
+                encoding: vec![0x00, 0x81],
             },
-            Test {
-                value: (-1).to_bigint().unwrap(),
-                encoding: &[0xFF],
+            VarintTestCase {
+                value: -1,
+                encoding: vec![0xFF],
             },
-            Test {
-                value: (-128).to_bigint().unwrap(),
-                encoding: &[0x80],
+            VarintTestCase {
+                value: -128,
+                encoding: vec![0x80],
             },
-            Test {
-                value: (-129).to_bigint().unwrap(),
-                encoding: &[0xFF, 0x7F],
+            VarintTestCase {
+                value: -129,
+                encoding: vec![0xFF, 0x7F],
             },
-        ];
+        ]
+    }
+
+    #[cfg(feature = "num-bigint-03")]
+    #[test]
+    fn test_bigint03() {
+        use num_bigint_03::ToBigInt;
+
+        let tests = varint_test_cases_from_spec();
 
         for t in tests.iter() {
             let value = super::deser_cql_value(&ColumnType::Varint, &mut &*t.encoding).unwrap();
-            assert_eq!(CqlValue::Varint(t.value.clone()), value);
+            assert_eq!(CqlValue::Varint(t.value.to_bigint().unwrap().into()), value);
+        }
+    }
+
+    #[cfg(feature = "num-bigint-04")]
+    #[test]
+    fn test_bigint04() {
+        use num_bigint_04::ToBigInt;
+
+        let tests = varint_test_cases_from_spec();
+
+        for t in tests.iter() {
+            let value = super::deser_cql_value(&ColumnType::Varint, &mut &*t.encoding).unwrap();
+            assert_eq!(CqlValue::Varint(t.value.to_bigint().unwrap().into()), value);
         }
     }
 

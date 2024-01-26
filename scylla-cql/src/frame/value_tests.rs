@@ -1,4 +1,4 @@
-use crate::frame::value::CqlTimeuuid;
+use crate::frame::value::{CqlTimeuuid, CqlVarint};
 use crate::frame::{response::result::CqlValue, types::RawValue, value::LegacyBatchValuesIterator};
 use crate::types::serialize::batch::{BatchValues, BatchValuesIterator, LegacyBatchValuesAdapter};
 use crate::types::serialize::row::{RowSerializationContext, SerializeRow};
@@ -12,7 +12,6 @@ use super::value::{
 };
 use bigdecimal::BigDecimal;
 use bytes::BufMut;
-use num_bigint::BigInt;
 use std::collections::hash_map::DefaultHasher;
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::hash::{BuildHasherDefault, Hash, Hasher};
@@ -42,6 +41,12 @@ fn serialized_only_new<T: SerializeCql>(val: T, typ: ColumnType) -> Vec<u8> {
     let writer = CellWriter::new(&mut result);
     SerializeCql::serialize(&val, &typ, writer).unwrap();
     result
+}
+
+fn compute_hash<T: Hash>(x: &T) -> u64 {
+    let mut hasher = DefaultHasher::new();
+    x.hash(&mut hasher);
+    hasher.finish()
 }
 
 #[test]
@@ -75,21 +80,63 @@ fn counter_serialization() {
     );
 }
 
+fn cql_varint_normalization_test_cases() -> [(Vec<u8>, Vec<u8>); 11] {
+    [
+        (vec![], vec![0x00]),                 // 0
+        (vec![0x00], vec![0x00]),             // 0
+        (vec![0x00, 0x00], vec![0x00]),       // 0
+        (vec![0x01], vec![0x01]),             // 1
+        (vec![0x00, 0x01], vec![0x01]),       // 1
+        (vec![0x7f], vec![0x7f]),             // 127
+        (vec![0x00, 0x7f], vec![0x7f]),       // 127
+        (vec![0x80], vec![0x80]),             // -128
+        (vec![0x00, 0x80], vec![0x00, 0x80]), // 128
+        (vec![0xff], vec![0xff]),             // -1
+        (vec![0x00, 0xff], vec![0x00, 0xff]), // 255
+    ]
+}
+
 #[test]
-fn bigint_serialization() {
-    let cases_from_the_spec: &[(i64, Vec<u8>)] = &[
-        (0, vec![0x00]),
-        (1, vec![0x01]),
-        (127, vec![0x7F]),
-        (128, vec![0x00, 0x80]),
-        (129, vec![0x00, 0x81]),
-        (-1, vec![0xFF]),
-        (-128, vec![0x80]),
-        (-129, vec![0xFF, 0x7F]),
+fn cql_varint_normalization() {
+    let test_cases = cql_varint_normalization_test_cases();
+
+    for test in test_cases {
+        let non_normalized = CqlVarint::from_signed_bytes_be(test.0);
+        let normalized = CqlVarint::from_signed_bytes_be(test.1);
+
+        assert_eq!(non_normalized, normalized);
+        assert_eq!(compute_hash(&non_normalized), compute_hash(&normalized));
+    }
+}
+
+#[cfg(feature = "num-bigint-03")]
+#[test]
+fn cql_varint_normalization_with_bigint03() {
+    let test_cases = cql_varint_normalization_test_cases();
+
+    for test in test_cases {
+        let non_normalized: num_bigint_03::BigInt = CqlVarint::from_signed_bytes_be(test.0).into();
+        let normalized: num_bigint_03::BigInt = CqlVarint::from_signed_bytes_be(test.1).into();
+
+        assert_eq!(non_normalized, normalized);
+    }
+}
+
+#[test]
+fn cql_varint_serialization() {
+    let cases_from_the_spec: &[Vec<u8>] = &[
+        vec![0x00],
+        vec![0x01],
+        vec![0x7F],
+        vec![0x00, 0x80],
+        vec![0x00, 0x81],
+        vec![0xFF],
+        vec![0x80],
+        vec![0xFF, 0x7F],
     ];
 
-    for (i, b) in cases_from_the_spec {
-        let x = BigInt::from(*i);
+    for b in cases_from_the_spec {
+        let x = CqlVarint::from_signed_bytes_be_slice(b);
         let b_with_len = (b.len() as i32)
             .to_be_bytes()
             .iter()
@@ -100,10 +147,8 @@ fn bigint_serialization() {
     }
 }
 
-#[test]
-fn bigdecimal_serialization() {
-    // Bigint cases
-    let cases_from_the_spec: &[(i64, Vec<u8>)] = &[
+fn varint_test_cases_from_spec() -> Vec<(i64, Vec<u8>)> {
+    vec![
         (0, vec![0x00]),
         (1, vec![0x01]),
         (127, vec![0x7F]),
@@ -112,7 +157,44 @@ fn bigdecimal_serialization() {
         (-1, vec![0xFF]),
         (-128, vec![0x80]),
         (-129, vec![0xFF, 0x7F]),
-    ];
+    ]
+}
+
+#[cfg(any(feature = "num-bigint-03", feature = "num-bigint-04"))]
+fn generic_num_bigint_serialization<B>()
+where
+    B: From<i64> + Value + SerializeCql,
+{
+    let cases_from_the_spec: &[(i64, Vec<u8>)] = &varint_test_cases_from_spec();
+
+    for (i, b) in cases_from_the_spec {
+        let x = B::from(*i);
+        let b_with_len = (b.len() as i32)
+            .to_be_bytes()
+            .iter()
+            .chain(b)
+            .cloned()
+            .collect::<Vec<_>>();
+        assert_eq!(serialized(x, ColumnType::Varint), b_with_len);
+    }
+}
+
+#[cfg(feature = "num-bigint-03")]
+#[test]
+fn bigint03_serialization() {
+    generic_num_bigint_serialization::<num_bigint_03::BigInt>()
+}
+
+#[cfg(feature = "num-bigint-04")]
+#[test]
+fn bigint04_serialization() {
+    generic_num_bigint_serialization::<num_bigint_04::BigInt>()
+}
+
+#[test]
+fn bigdecimal_serialization() {
+    // Bigint cases
+    let cases_from_the_spec: &[(i64, Vec<u8>)] = &varint_test_cases_from_spec();
 
     for exponent in -10_i32..10_i32 {
         for (digits, serialized_digits) in cases_from_the_spec {
@@ -123,7 +205,7 @@ fn bigdecimal_serialization() {
                 .chain(serialized_digits)
                 .cloned()
                 .collect::<Vec<_>>();
-            let digits = BigInt::from(*digits);
+            let digits = bigdecimal::num_bigint::BigInt::from(*digits);
             let x = BigDecimal::new(digits, exponent as i64);
             assert_eq!(serialized(x, ColumnType::Decimal), repr);
         }
@@ -550,12 +632,6 @@ fn timeuuid_ordering_properties() {
     assert_eq!(std::cmp::Ordering::Equal, cmp_res);
 
     assert_eq!(x, y);
-
-    let compute_hash = |x: &CqlTimeuuid| {
-        let mut hasher = DefaultHasher::new();
-        x.hash(&mut hasher);
-        hasher.finish()
-    };
     assert_eq!(compute_hash(&x), compute_hash(&y));
 }
 

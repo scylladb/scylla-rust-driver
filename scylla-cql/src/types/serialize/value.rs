@@ -7,7 +7,6 @@ use std::net::IpAddr;
 use std::sync::Arc;
 
 use bigdecimal::BigDecimal;
-use num_bigint::BigInt;
 use thiserror::Error;
 use uuid::Uuid;
 
@@ -20,7 +19,8 @@ use secrecy::{ExposeSecret, Secret, Zeroize};
 use crate::frame::response::result::{ColumnType, CqlValue};
 use crate::frame::types::vint_encode;
 use crate::frame::value::{
-    Counter, CqlDate, CqlDuration, CqlTime, CqlTimestamp, CqlTimeuuid, MaybeUnset, Unset, Value,
+    Counter, CqlDate, CqlDuration, CqlTime, CqlTimestamp, CqlTimeuuid, CqlVarint, MaybeUnset,
+    Unset, Value,
 };
 
 #[cfg(feature = "chrono")]
@@ -233,12 +233,31 @@ impl SerializeCql for CqlTimeuuid {
         writer.set_value(me.as_bytes().as_ref()).unwrap()
     });
 }
-impl SerializeCql for BigInt {
+impl SerializeCql for CqlVarint {
+    impl_serialize_via_writer!(|me, typ, writer| {
+        exact_type_check!(typ, Varint);
+        writer
+            .set_value(me.as_signed_bytes_be_slice())
+            .map_err(|_| mk_ser_err::<Self>(typ, BuiltinSerializationErrorKind::SizeOverflow))?
+    });
+}
+#[cfg(feature = "num-bigint-03")]
+impl SerializeCql for num_bigint_03::BigInt {
     impl_serialize_via_writer!(|me, typ, writer| {
         exact_type_check!(typ, Varint);
         // TODO: The allocation here can be avoided and we can reimplement
         // `to_signed_bytes_be` by using `to_u64_digits` and a bit of custom
         // logic. Need better tests in order to do this.
+        writer
+            .set_value(me.to_signed_bytes_be().as_slice())
+            .map_err(|_| mk_ser_err::<Self>(typ, BuiltinSerializationErrorKind::SizeOverflow))?
+    });
+}
+#[cfg(feature = "num-bigint-04")]
+impl SerializeCql for num_bigint_04::BigInt {
+    impl_serialize_via_writer!(|me, typ, writer| {
+        exact_type_check!(typ, Varint);
+        // TODO: See above comment for num-bigint-03.
         writer
             .set_value(me.to_signed_bytes_be().as_slice())
             .map_err(|_| mk_ser_err::<Self>(typ, BuiltinSerializationErrorKind::SizeOverflow))?
@@ -1505,8 +1524,8 @@ mod tests {
     };
     use crate::types::serialize::{CellWriter, SerializationError};
 
+    use bigdecimal::num_bigint::BigInt;
     use bigdecimal::BigDecimal;
-    use num_bigint::BigInt;
     use scylla_macros::SerializeCql;
 
     use super::{SerializeCql, UdtSerializationErrorKind, UdtTypeCheckErrorKind};

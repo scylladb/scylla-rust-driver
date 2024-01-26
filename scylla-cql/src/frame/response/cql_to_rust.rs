@@ -1,7 +1,8 @@
 use super::result::{CqlValue, Row};
-use crate::frame::value::{Counter, CqlDate, CqlDuration, CqlTime, CqlTimestamp, CqlTimeuuid};
+use crate::frame::value::{
+    Counter, CqlDate, CqlDuration, CqlTime, CqlTimestamp, CqlTimeuuid, CqlVarint,
+};
 use bigdecimal::BigDecimal;
-use num_bigint::BigInt;
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::hash::{BuildHasher, Hash};
 use std::net::IpAddr;
@@ -125,7 +126,7 @@ impl_from_cql_value_from_method!(i32, as_int); // i32::from_cql<CqlValue>
 impl_from_cql_value_from_method!(i64, as_bigint); // i64::from_cql<CqlValue>
 impl_from_cql_value_from_method!(Counter, as_counter); // Counter::from_cql<CqlValue>
 impl_from_cql_value_from_method!(i16, as_smallint); // i16::from_cql<CqlValue>
-impl_from_cql_value_from_method!(BigInt, into_varint); // BigInt::from_cql<CqlValue>
+impl_from_cql_value_from_method!(CqlVarint, into_cql_varint); // CqlVarint::from_cql<CqlValue>
 impl_from_cql_value_from_method!(i8, as_tinyint); // i8::from_cql<CqlValue>
 impl_from_cql_value_from_method!(f32, as_float); // f32::from_cql<CqlValue>
 impl_from_cql_value_from_method!(f64, as_double); // f64::from_cql<CqlValue>
@@ -145,6 +146,26 @@ impl<const N: usize> FromCqlVal<CqlValue> for [u8; N] {
     fn from_cql(cql_val: CqlValue) -> Result<Self, FromCqlValError> {
         let val = cql_val.into_blob().ok_or(FromCqlValError::BadCqlType)?;
         val.try_into().map_err(|_| FromCqlValError::BadVal)
+    }
+}
+
+#[cfg(feature = "num-bigint-03")]
+impl FromCqlVal<CqlValue> for num_bigint_03::BigInt {
+    fn from_cql(cql_val: CqlValue) -> Result<Self, FromCqlValError> {
+        match cql_val {
+            CqlValue::Varint(cql_varint) => Ok(cql_varint.into()),
+            _ => Err(FromCqlValError::BadCqlType),
+        }
+    }
+}
+
+#[cfg(feature = "num-bigint-04")]
+impl FromCqlVal<CqlValue> for num_bigint_04::BigInt {
+    fn from_cql(cql_val: CqlValue) -> Result<Self, FromCqlValError> {
+        match cql_val {
+            CqlValue::Varint(cql_varint) => Ok(cql_varint.into()),
+            _ => Err(FromCqlValError::BadCqlType),
+        }
     }
 }
 
@@ -394,7 +415,6 @@ mod tests {
     use crate::frame::value::{Counter, CqlDate, CqlDuration, CqlTime, CqlTimestamp, CqlTimeuuid};
     use crate::macros::FromRow;
     use bigdecimal::BigDecimal;
-    use num_bigint::{BigInt, ToBigInt};
     use std::collections::HashSet;
     use std::net::{IpAddr, Ipv4Addr};
     use std::str::FromStr;
@@ -458,12 +478,27 @@ mod tests {
         assert_eq!(Ok(ip_addr), IpAddr::from_cql(CqlValue::Inet(ip_addr)));
     }
 
+    #[cfg(feature = "num-bigint-03")]
     #[test]
-    fn varint_from_cql() {
+    fn varint03_from_cql() {
+        use num_bigint_03::ToBigInt;
+
         let big_int = 0.to_bigint().unwrap();
         assert_eq!(
             Ok(big_int),
-            BigInt::from_cql(CqlValue::Varint(0.to_bigint().unwrap()))
+            num_bigint_03::BigInt::from_cql(CqlValue::Varint(0.to_bigint().unwrap().into()))
+        );
+    }
+
+    #[cfg(feature = "num-bigint-04")]
+    #[test]
+    fn varint04_from_cql() {
+        use num_bigint_04::ToBigInt;
+
+        let big_int = 0.to_bigint().unwrap();
+        assert_eq!(
+            Ok(big_int),
+            num_bigint_04::BigInt::from_cql(CqlValue::Varint(0.to_bigint().unwrap().into()))
         );
     }
 

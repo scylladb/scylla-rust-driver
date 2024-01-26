@@ -2,7 +2,6 @@ use crate::frame::frame_errors::ParseError;
 use crate::frame::types;
 use bigdecimal::BigDecimal;
 use bytes::BufMut;
-use num_bigint::BigInt;
 use std::borrow::Cow;
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::convert::TryInto;
@@ -212,6 +211,157 @@ impl std::hash::Hash for CqlTimeuuid {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
         self.lsb_signed().hash(state);
         self.msb().hash(state);
+    }
+}
+
+/// Native CQL `varint` representation.
+///
+/// Represented as two's-complement binary in big-endian order.
+///
+/// This type is a raw representation in bytes. It's the default
+/// implementation of `varint` type - independent of any
+/// external crates and crate features.
+///
+/// The type is not very useful in most use cases.
+/// However, users can make use of more complex types
+/// such as `num_bigint::BigInt` (v0.3/v0.4).
+/// The library support (e.g. conversion from [`CqlValue`]) for these types is
+/// enabled via `num-bigint-03` and `num-bigint-04` crate features.
+///
+/// # DB data format
+/// Notice that [constructors](CqlVarint#impl-CqlVarint)
+/// don't perform any normalization on the provided data.
+/// This means that underlying bytes may contain leading zeros.
+///
+/// Currently, Scylla and Cassandra support non-normalized `varint` values.
+/// Bytes provided by the user via constructor are passed to DB as is.
+///
+/// The implementation of [`PartialEq`], however, normalizes the underlying bytes
+/// before comparison. For details, check [examples](#impl-PartialEq-for-CqlVarint).
+#[derive(Clone, Eq, Debug)]
+pub struct CqlVarint(Vec<u8>);
+
+/// Constructors from bytes
+impl CqlVarint {
+    /// Creates a [`CqlVarint`] from an array of bytes in
+    /// two's complement big-endian binary representation.
+    ///
+    /// See: disclaimer about [non-normalized values](CqlVarint#db-data-format).
+    pub fn from_signed_bytes_be(digits: Vec<u8>) -> Self {
+        Self(digits)
+    }
+
+    /// Creates a [`CqlVarint`] from a slice of bytes in
+    /// two's complement binary big-endian representation.
+    ///
+    /// See: disclaimer about [non-normalized values](CqlVarint#db-data-format).
+    pub fn from_signed_bytes_be_slice(digits: &[u8]) -> Self {
+        Self::from_signed_bytes_be(digits.to_vec())
+    }
+}
+
+/// Conversion to bytes
+impl CqlVarint {
+    /// Converts [`CqlVarint`] to an array of bytes in two's
+    /// complement binary big-endian representation.
+    pub fn into_signed_bytes_be(self) -> Vec<u8> {
+        self.0
+    }
+
+    /// Returns a slice of bytes in two's complement
+    /// binary big-endian representation.
+    pub fn as_signed_bytes_be_slice(&self) -> &[u8] {
+        &self.0
+    }
+}
+
+impl CqlVarint {
+    fn as_normalized_slice(&self) -> &[u8] {
+        let digits = self.0.as_slice();
+        if digits.is_empty() {
+            // num-bigint crate normalizes empty vector to 0.
+            // We will follow the same approach.
+            return &[0];
+        }
+
+        let non_zero_position = match digits.iter().position(|b| *b != 0) {
+            Some(pos) => pos,
+            None => {
+                // Vector is filled with zeros. Represent it as 0.
+                return &[0];
+            }
+        };
+
+        if non_zero_position > 0 {
+            // There were some leading zeros.
+            // Now, there are two cases:
+            let zeros_to_remove = if digits[non_zero_position] > 0x7f {
+                // Most significant bit is 1, so we need to include one of the leading
+                // zeros as originally it represented a positive number.
+                non_zero_position - 1
+            } else {
+                // Most significant bit is 0 - positive number with no leading zeros.
+                non_zero_position
+            };
+            return &digits[zeros_to_remove..];
+        }
+
+        // There were no leading zeros at all - leave as is.
+        digits
+    }
+}
+
+#[cfg(feature = "num-bigint-03")]
+impl From<num_bigint_03::BigInt> for CqlVarint {
+    fn from(value: num_bigint_03::BigInt) -> Self {
+        Self(value.to_signed_bytes_be())
+    }
+}
+
+#[cfg(feature = "num-bigint-03")]
+impl From<CqlVarint> for num_bigint_03::BigInt {
+    fn from(val: CqlVarint) -> Self {
+        num_bigint_03::BigInt::from_signed_bytes_be(&val.0)
+    }
+}
+
+#[cfg(feature = "num-bigint-04")]
+impl From<num_bigint_04::BigInt> for CqlVarint {
+    fn from(value: num_bigint_04::BigInt) -> Self {
+        Self(value.to_signed_bytes_be())
+    }
+}
+
+#[cfg(feature = "num-bigint-04")]
+impl From<CqlVarint> for num_bigint_04::BigInt {
+    fn from(val: CqlVarint) -> Self {
+        num_bigint_04::BigInt::from_signed_bytes_be(&val.0)
+    }
+}
+
+/// Compares two [`CqlVarint`] values after normalization.
+///
+/// # Example
+///
+/// ```rust
+/// # use scylla_cql::frame::value::CqlVarint;
+/// let non_normalized_bytes = vec![0x00, 0x01];
+/// let normalized_bytes = vec![0x01];
+/// assert_eq!(
+///     CqlVarint::from_signed_bytes_be(non_normalized_bytes),
+///     CqlVarint::from_signed_bytes_be(normalized_bytes)
+/// );
+/// ```
+impl PartialEq for CqlVarint {
+    fn eq(&self, other: &Self) -> bool {
+        self.as_normalized_slice() == other.as_normalized_slice()
+    }
+}
+
+/// Computes the hash of normalized [`CqlVarint`].
+impl std::hash::Hash for CqlVarint {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.as_normalized_slice().hash(state)
     }
 }
 
@@ -866,7 +1016,33 @@ impl Value for CqlTimeuuid {
     }
 }
 
-impl Value for BigInt {
+impl Value for CqlVarint {
+    fn serialize(&self, buf: &mut Vec<u8>) -> Result<(), ValueTooBig> {
+        let serialized = &self.0;
+        let serialized_len: i32 = serialized.len().try_into().map_err(|_| ValueTooBig)?;
+
+        buf.put_i32(serialized_len);
+        buf.extend_from_slice(serialized);
+
+        Ok(())
+    }
+}
+
+#[cfg(feature = "num-bigint-03")]
+impl Value for num_bigint_03::BigInt {
+    fn serialize(&self, buf: &mut Vec<u8>) -> Result<(), ValueTooBig> {
+        let serialized = self.to_signed_bytes_be();
+        let serialized_len: i32 = serialized.len().try_into().map_err(|_| ValueTooBig)?;
+
+        buf.put_i32(serialized_len);
+        buf.extend_from_slice(&serialized);
+
+        Ok(())
+    }
+}
+
+#[cfg(feature = "num-bigint-04")]
+impl Value for num_bigint_04::BigInt {
     fn serialize(&self, buf: &mut Vec<u8>) -> Result<(), ValueTooBig> {
         let serialized = self.to_signed_bytes_be();
         let serialized_len: i32 = serialized.len().try_into().map_err(|_| ValueTooBig)?;

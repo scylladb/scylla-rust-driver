@@ -51,7 +51,11 @@ where
             CqlValue::Inet(i) => write!(f, "'{}'", i)?,
             CqlValue::SmallInt(si) => write!(f, "{}", si)?,
             CqlValue::TinyInt(ti) => write!(f, "{}", ti)?,
-            CqlValue::Varint(vi) => write!(f, "{}", vi)?,
+            CqlValue::Varint(vi) => write!(
+                f,
+                "blobAsVarint(0x{:x})",
+                HexBytes(vi.as_signed_bytes_be_slice())
+            )?,
             CqlValue::Counter(c) => write!(f, "{}", c.0)?,
             CqlValue::Date(CqlDate(d)) => {
                 let days_since_epoch = chrono::Duration::days(*d as i64 - (1 << 31));
