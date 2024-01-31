@@ -886,9 +886,13 @@ impl Value for BigDecimal {
         let (value, scale) = self.as_bigint_and_exponent();
 
         let serialized = value.to_signed_bytes_be();
-        let serialized_len: i32 = serialized.len().try_into().map_err(|_| ValueTooBig)?;
 
-        buf.put_i32(serialized_len + 4);
+        if serialized.len() > (i32::MAX - 4) as usize {
+            return Err(ValueTooBig);
+        }
+        let serialized_len: i32 = serialized.len() as i32 + 4;
+
+        buf.put_i32(serialized_len);
         buf.put_i32(scale.try_into().map_err(|_| ValueTooBig)?);
         buf.extend_from_slice(&serialized);
 
