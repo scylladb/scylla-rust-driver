@@ -12,7 +12,7 @@ scylla = "0.11"
 tokio = { version = "1.12", features = ["full"] }
 futures = "0.3.6"
 uuid = "1.0"
-bigdecimal = "0.2.0"
+bigdecimal = "0.4"
 num-bigint = "0.3"
 tracing = "0.1.36"
 tracing-subscriber = { version = "0.3.14", features = ["env-filter"] }
