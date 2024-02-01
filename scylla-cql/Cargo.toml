@@ -19,9 +19,9 @@ secrecy = { version = "0.7.0", optional = true }
 snap = "1.0"
 uuid = "1.0"
 thiserror = "1.0"
-bigdecimal = "0.2.0"
 num-bigint-03 = { package = "num-bigint", version = "0.3", optional = true }
 num-bigint-04 = { package = "num-bigint", version = "0.4", optional = true }
+bigdecimal-04 = { package = "bigdecimal", version = "0.4", optional = true }
 chrono = { version = "0.4.27", default-features = false, optional = true }
 lz4_flex = { version = "0.11.1" }
 async-trait = "0.1.57"
@@ -43,4 +43,5 @@ time = ["dep:time"]
 chrono = ["dep:chrono"]
 num-bigint-03 = ["dep:num-bigint-03"]
 num-bigint-04 = ["dep:num-bigint-04"]
-full-serialization = ["chrono", "time", "secret", "num-bigint-03", "num-bigint-04"]
+bigdecimal-04 = ["dep:bigdecimal-04"]
+full-serialization = ["chrono", "time", "secret", "num-bigint-03", "num-bigint-04", "bigdecimal-04"]

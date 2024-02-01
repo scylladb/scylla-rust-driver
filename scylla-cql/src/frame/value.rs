@@ -1,6 +1,5 @@
 use crate::frame::frame_errors::ParseError;
 use crate::frame::types;
-use bigdecimal::BigDecimal;
 use bytes::BufMut;
 use std::borrow::Cow;
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
@@ -362,6 +361,91 @@ impl PartialEq for CqlVarint {
 impl std::hash::Hash for CqlVarint {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
         self.as_normalized_slice().hash(state)
+    }
+}
+
+/// Native CQL `decimal` representation.
+///
+/// Represented as a pair:
+/// - a [`CqlVarint`] value
+/// - 32-bit integer which determines the position of the decimal point
+///
+/// The type is not very useful in most use cases.
+/// However, users can make use of more complex types
+/// such as `bigdecimal::BigDecimal` (v0.4).
+/// The library support (e.g. conversion from [`CqlValue`]) for the type is
+/// enabled via `bigdecimal-04` crate feature.
+///
+/// # DB data format
+/// Notice that [constructors](CqlDecimal#impl-CqlDecimal)
+/// don't perform any normalization on the provided data.
+/// For more details, see [`CqlVarint`] documentation.
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct CqlDecimal {
+    int_val: CqlVarint,
+    scale: i32,
+}
+
+/// Constructors
+impl CqlDecimal {
+    /// Creates a [`CqlDecimal`] from an array of bytes
+    /// representing [`CqlVarint`] and a 32-bit scale.
+    ///
+    /// See: disclaimer about [non-normalized values](CqlVarint#db-data-format).
+    pub fn from_signed_be_bytes_and_exponent(bytes: Vec<u8>, scale: i32) -> Self {
+        Self {
+            int_val: CqlVarint::from_signed_bytes_be(bytes),
+            scale,
+        }
+    }
+
+    /// Creates a [`CqlDecimal`] from a slice of bytes
+    /// representing [`CqlVarint`] and a 32-bit scale.
+    ///
+    /// See: disclaimer about [non-normalized values](CqlVarint#db-data-format).
+    pub fn from_signed_be_bytes_slice_and_exponent(bytes: &[u8], scale: i32) -> Self {
+        Self::from_signed_be_bytes_and_exponent(bytes.to_vec(), scale)
+    }
+}
+
+/// Conversion to raw bytes
+impl CqlDecimal {
+    /// Returns a slice of bytes in two's complement
+    /// binary big-endian representation and a scale.
+    pub fn as_signed_be_bytes_slice_and_exponent(&self) -> (&[u8], i32) {
+        (self.int_val.as_signed_bytes_be_slice(), self.scale)
+    }
+
+    /// Converts [`CqlDecimal`] to an array of bytes in two's
+    /// complement binary big-endian representation and a scale.
+    pub fn into_signed_be_bytes_and_exponent(self) -> (Vec<u8>, i32) {
+        (self.int_val.into_signed_bytes_be(), self.scale)
+    }
+}
+
+#[cfg(feature = "bigdecimal-04")]
+impl From<CqlDecimal> for bigdecimal_04::BigDecimal {
+    fn from(value: CqlDecimal) -> Self {
+        Self::from((
+            bigdecimal_04::num_bigint::BigInt::from_signed_bytes_be(
+                value.int_val.as_signed_bytes_be_slice(),
+            ),
+            value.scale as i64,
+        ))
+    }
+}
+
+#[cfg(feature = "bigdecimal-04")]
+impl TryFrom<bigdecimal_04::BigDecimal> for CqlDecimal {
+    type Error = <i64 as TryInto<i32>>::Error;
+
+    fn try_from(value: bigdecimal_04::BigDecimal) -> Result<Self, Self::Error> {
+        let (bigint, scale) = value.into_bigint_and_exponent();
+        let bytes = bigint.to_signed_bytes_be();
+        Ok(Self::from_signed_be_bytes_and_exponent(
+            bytes,
+            scale.try_into()?,
+        ))
     }
 }
 
@@ -881,14 +965,36 @@ impl Value for i64 {
     }
 }
 
-impl Value for BigDecimal {
+impl Value for CqlDecimal {
+    fn serialize(&self, buf: &mut Vec<u8>) -> Result<(), ValueTooBig> {
+        let (bytes, scale) = self.as_signed_be_bytes_slice_and_exponent();
+
+        if bytes.len() > (i32::MAX - 4) as usize {
+            return Err(ValueTooBig);
+        }
+        let serialized_len: i32 = bytes.len() as i32 + 4;
+
+        buf.put_i32(serialized_len);
+        buf.put_i32(scale);
+        buf.extend_from_slice(bytes);
+
+        Ok(())
+    }
+}
+
+#[cfg(feature = "bigdecimal-04")]
+impl Value for bigdecimal_04::BigDecimal {
     fn serialize(&self, buf: &mut Vec<u8>) -> Result<(), ValueTooBig> {
         let (value, scale) = self.as_bigint_and_exponent();
 
         let serialized = value.to_signed_bytes_be();
-        let serialized_len: i32 = serialized.len().try_into().map_err(|_| ValueTooBig)?;
 
-        buf.put_i32(serialized_len + 4);
+        if serialized.len() > (i32::MAX - 4) as usize {
+            return Err(ValueTooBig);
+        }
+        let serialized_len: i32 = serialized.len() as i32 + 4;
+
+        buf.put_i32(serialized_len);
         buf.put_i32(scale.try_into().map_err(|_| ValueTooBig)?);
         buf.extend_from_slice(&serialized);
 

@@ -21,7 +21,7 @@ num_enum = "0.5"
 tokio = { version = "1.12", features = ["net", "time", "io-util", "sync", "rt", "macros", "rt-multi-thread"] }
 uuid = "1.0"
 thiserror = "1.0.32"
-bigdecimal = "0.2.0"
+bigdecimal = "0.4"
 num-bigint = "0.3"
 tracing = "0.1.25"
 chrono = { version = "0.4", default-features = false }

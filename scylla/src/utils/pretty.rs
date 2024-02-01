@@ -42,7 +42,15 @@ where
             CqlValue::Text(t) => write!(f, "{}", CqlStringLiteralDisplayer(t))?,
             CqlValue::Blob(b) => write!(f, "0x{:x}", HexBytes(b))?,
             CqlValue::Empty => write!(f, "0x")?,
-            CqlValue::Decimal(d) => write!(f, "{}", d)?,
+            CqlValue::Decimal(d) => {
+                let (bytes, scale) = d.as_signed_be_bytes_slice_and_exponent();
+                write!(
+                    f,
+                    "blobAsDecimal(0x{:x}{:x})",
+                    HexBytes(&scale.to_be_bytes()),
+                    HexBytes(bytes)
+                )?
+            }
             CqlValue::Float(fl) => write!(f, "{}", fl)?,
             CqlValue::Double(d) => write!(f, "{}", d)?,
             CqlValue::Boolean(b) => write!(f, "{}", b)?,
@@ -211,13 +219,10 @@ where
 
 #[cfg(test)]
 mod tests {
-    use std::str::FromStr;
-
-    use bigdecimal::BigDecimal;
     use chrono::{NaiveDate, NaiveDateTime, NaiveTime};
 
     use scylla_cql::frame::response::result::CqlValue;
-    use scylla_cql::frame::value::{CqlDate, CqlDuration, CqlTime, CqlTimestamp};
+    use scylla_cql::frame::value::{CqlDate, CqlDecimal, CqlDuration, CqlTime, CqlTimestamp};
 
     use crate::utils::pretty::CqlValueDisplayer;
 
@@ -231,9 +236,12 @@ mod tests {
         assert_eq!(
             format!(
                 "{}",
-                CqlValueDisplayer(CqlValue::Decimal(BigDecimal::from_str("123.456").unwrap()))
+                // 123.456
+                CqlValueDisplayer(CqlValue::Decimal(
+                    CqlDecimal::from_signed_be_bytes_and_exponent(vec![0x01, 0xE2, 0x40], 3)
+                ))
             ),
-            "123.456"
+            "blobAsDecimal(0x0000000301e240)"
         );
         assert_eq!(
             format!("{}", CqlValueDisplayer(CqlValue::Float(12.75))),

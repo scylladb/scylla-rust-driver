@@ -6,7 +6,6 @@ use std::hash::BuildHasher;
 use std::net::IpAddr;
 use std::sync::Arc;
 
-use bigdecimal::BigDecimal;
 use thiserror::Error;
 use uuid::Uuid;
 
@@ -19,8 +18,8 @@ use secrecy::{ExposeSecret, Secret, Zeroize};
 use crate::frame::response::result::{ColumnType, CqlValue};
 use crate::frame::types::vint_encode;
 use crate::frame::value::{
-    Counter, CqlDate, CqlDuration, CqlTime, CqlTimestamp, CqlTimeuuid, CqlVarint, MaybeUnset,
-    Unset, Value,
+    Counter, CqlDate, CqlDecimal, CqlDuration, CqlTime, CqlTimestamp, CqlTimeuuid, CqlVarint,
+    MaybeUnset, Unset, Value,
 };
 
 #[cfg(feature = "chrono")]
@@ -115,7 +114,20 @@ impl SerializeCql for i64 {
         writer.set_value(me.to_be_bytes().as_slice()).unwrap()
     });
 }
-impl SerializeCql for BigDecimal {
+impl SerializeCql for CqlDecimal {
+    impl_serialize_via_writer!(|me, typ, writer| {
+        exact_type_check!(typ, Decimal);
+        let mut builder = writer.into_value_builder();
+        let (bytes, scale) = me.as_signed_be_bytes_slice_and_exponent();
+        builder.append_bytes(&scale.to_be_bytes());
+        builder.append_bytes(bytes);
+        builder
+            .finish()
+            .map_err(|_| mk_ser_err::<Self>(typ, BuiltinSerializationErrorKind::SizeOverflow))?
+    });
+}
+#[cfg(feature = "bigdecimal-04")]
+impl SerializeCql for bigdecimal_04::BigDecimal {
     impl_serialize_via_writer!(|me, typ, writer| {
         exact_type_check!(typ, Decimal);
         let mut builder = writer.into_value_builder();
@@ -1524,8 +1536,6 @@ mod tests {
     };
     use crate::types::serialize::{CellWriter, SerializationError};
 
-    use bigdecimal::num_bigint::BigInt;
-    use bigdecimal::BigDecimal;
     use scylla_macros::SerializeCql;
 
     use super::{SerializeCql, UdtSerializationErrorKind, UdtTypeCheckErrorKind};
@@ -1641,6 +1651,13 @@ mod tests {
 
         // We'll skip testing for SizeOverflow as this would require producing
         // a value which is at least 2GB in size.
+    }
+
+    #[cfg(feature = "bigdecimal-04")]
+    #[test]
+    fn test_native_errors_bigdecimal_04() {
+        use bigdecimal_04::num_bigint::BigInt;
+        use bigdecimal_04::BigDecimal;
 
         // Value overflow (type out of representable range)
         let v = BigDecimal::new(BigInt::from(123), 1i64 << 40);

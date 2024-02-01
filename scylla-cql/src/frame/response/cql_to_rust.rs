@@ -1,8 +1,7 @@
 use super::result::{CqlValue, Row};
 use crate::frame::value::{
-    Counter, CqlDate, CqlDuration, CqlTime, CqlTimestamp, CqlTimeuuid, CqlVarint,
+    Counter, CqlDate, CqlDecimal, CqlDuration, CqlTime, CqlTimestamp, CqlTimeuuid, CqlVarint,
 };
-use bigdecimal::BigDecimal;
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::hash::{BuildHasher, Hash};
 use std::net::IpAddr;
@@ -136,7 +135,7 @@ impl_from_cql_value_from_method!(Vec<u8>, into_blob); // Vec<u8>::from_cql<CqlVa
 impl_from_cql_value_from_method!(IpAddr, as_inet); // IpAddr::from_cql<CqlValue>
 impl_from_cql_value_from_method!(Uuid, as_uuid); // Uuid::from_cql<CqlValue>
 impl_from_cql_value_from_method!(CqlTimeuuid, as_timeuuid); // CqlTimeuuid::from_cql<CqlValue>
-impl_from_cql_value_from_method!(BigDecimal, into_decimal); // BigDecimal::from_cql<CqlValue>
+impl_from_cql_value_from_method!(CqlDecimal, into_cql_decimal); // CqlDecimal::from_cql<CqlValue>
 impl_from_cql_value_from_method!(CqlDuration, as_cql_duration); // CqlDuration::from_cql<CqlValue>
 impl_from_cql_value_from_method!(CqlDate, as_cql_date); // CqlDate::from_cql<CqlValue>
 impl_from_cql_value_from_method!(CqlTime, as_cql_time); // CqlTime::from_cql<CqlValue>
@@ -164,6 +163,16 @@ impl FromCqlVal<CqlValue> for num_bigint_04::BigInt {
     fn from_cql(cql_val: CqlValue) -> Result<Self, FromCqlValError> {
         match cql_val {
             CqlValue::Varint(cql_varint) => Ok(cql_varint.into()),
+            _ => Err(FromCqlValError::BadCqlType),
+        }
+    }
+}
+
+#[cfg(feature = "bigdecimal-04")]
+impl FromCqlVal<CqlValue> for bigdecimal_04::BigDecimal {
+    fn from_cql(cql_val: CqlValue) -> Result<Self, FromCqlValError> {
+        match cql_val {
+            CqlValue::Decimal(cql_decimal) => Ok(cql_decimal.into()),
             _ => Err(FromCqlValError::BadCqlType),
         }
     }
@@ -414,7 +423,6 @@ mod tests {
     use crate as scylla;
     use crate::frame::value::{Counter, CqlDate, CqlDuration, CqlTime, CqlTimestamp, CqlTimeuuid};
     use crate::macros::FromRow;
-    use bigdecimal::BigDecimal;
     use std::collections::HashSet;
     use std::net::{IpAddr, Ipv4Addr};
     use std::str::FromStr;
@@ -502,12 +510,13 @@ mod tests {
         );
     }
 
+    #[cfg(feature = "bigdecimal-04")]
     #[test]
     fn decimal_from_cql() {
-        let decimal = BigDecimal::from_str("123.4").unwrap();
+        let decimal = bigdecimal_04::BigDecimal::from_str("123.4").unwrap();
         assert_eq!(
             Ok(decimal.clone()),
-            BigDecimal::from_cql(CqlValue::Decimal(decimal))
+            bigdecimal_04::BigDecimal::from_cql(CqlValue::Decimal(decimal.try_into().unwrap()))
         );
     }
 

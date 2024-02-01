@@ -10,7 +10,6 @@ use super::value::{
     CqlDate, CqlDuration, CqlTime, CqlTimestamp, LegacyBatchValues, LegacySerializedValues,
     MaybeUnset, SerializeValuesError, Unset, Value, ValueList, ValueTooBig,
 };
-use bigdecimal::BigDecimal;
 use bytes::BufMut;
 use std::collections::hash_map::DefaultHasher;
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
@@ -147,6 +146,11 @@ fn cql_varint_serialization() {
     }
 }
 
+#[cfg(any(
+    feature = "num-bigint-03",
+    feature = "num-bigint-04",
+    feature = "bigdecimal-04"
+))]
 fn varint_test_cases_from_spec() -> Vec<(i64, Vec<u8>)> {
     vec![
         (0, vec![0x00]),
@@ -191,8 +195,9 @@ fn bigint04_serialization() {
     generic_num_bigint_serialization::<num_bigint_04::BigInt>()
 }
 
+#[cfg(feature = "bigdecimal-04")]
 #[test]
-fn bigdecimal_serialization() {
+fn bigdecimal04_serialization() {
     // Bigint cases
     let cases_from_the_spec: &[(i64, Vec<u8>)] = &varint_test_cases_from_spec();
 
@@ -205,8 +210,8 @@ fn bigdecimal_serialization() {
                 .chain(serialized_digits)
                 .cloned()
                 .collect::<Vec<_>>();
-            let digits = bigdecimal::num_bigint::BigInt::from(*digits);
-            let x = BigDecimal::new(digits, exponent as i64);
+            let digits = bigdecimal_04::num_bigint::BigInt::from(*digits);
+            let x = bigdecimal_04::BigDecimal::new(digits, exponent as i64);
             assert_eq!(serialized(x, ColumnType::Decimal), repr);
         }
     }
