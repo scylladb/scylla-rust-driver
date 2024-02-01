@@ -26,7 +26,7 @@ bigdecimal-04 = ["scylla-cql/bigdecimal-04"]
 full-serialization = ["chrono", "time", "secret", "num-bigint-03", "num-bigint-04", "bigdecimal-04"]
 
 [dependencies]
-scylla-macros = { version = "0.3.0", path = "../scylla-macros" }
+scylla-macros = { version = "0.4.0", path = "../scylla-macros" }
 scylla-cql = { version = "0.0.11", path = "../scylla-cql" }
 byteorder = "1.3.4"
 bytes = "1.0.1"
