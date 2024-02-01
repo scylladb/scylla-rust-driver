@@ -3,11 +3,14 @@ use std::collections::HashMap;
 const RATE_LIMIT_ERROR_EXTENSION: &str = "SCYLLA_RATE_LIMIT_ERROR";
 pub const SCYLLA_LWT_ADD_METADATA_MARK_EXTENSION: &str = "SCYLLA_LWT_ADD_METADATA_MARK";
 pub const LWT_OPTIMIZATION_META_BIT_MASK_KEY: &str = "LWT_OPTIMIZATION_META_BIT_MASK";
+const TABLETS_ROUTING_V1_KEY: &str = "TABLETS_ROUTING_V1";
+
 #[derive(Default, Clone, Copy, Debug, PartialEq, Eq)]
 #[non_exhaustive]
 pub struct ProtocolFeatures {
     pub rate_limit_error: Option<i32>,
     pub lwt_optimization_meta_bit_mask: Option<u32>,
+    pub tablets_v1_supported: bool,
 }
 
 // TODO: Log information about options which failed to parse
@@ -19,6 +22,7 @@ impl ProtocolFeatures {
             lwt_optimization_meta_bit_mask: Self::maybe_parse_lwt_optimization_meta_bit_mask(
                 supported,
             ),
+            tablets_v1_supported: Self::check_tablets_routing_v1_support(supported),
         }
     }
 
@@ -37,6 +41,10 @@ impl ProtocolFeatures {
         mask_str.parse::<u32>().ok()
     }
 
+    fn check_tablets_routing_v1_support(supported: &HashMap<String, Vec<String>>) -> bool {
+        supported.contains_key(TABLETS_ROUTING_V1_KEY)
+    }
+
     // Looks up a field which starts with `key=` and returns the rest
     fn get_cql_extension_field<'a>(vals: &'a [String], key: &str) -> Option<&'a str> {
         vals.iter()
@@ -52,6 +60,10 @@ impl ProtocolFeatures {
                 SCYLLA_LWT_ADD_METADATA_MARK_EXTENSION.to_string(),
                 format!("{}={}", LWT_OPTIMIZATION_META_BIT_MASK_KEY, mask),
             );
+        }
+
+        if self.tablets_v1_supported {
+            options.insert(TABLETS_ROUTING_V1_KEY.to_string(), String::new());
         }
     }
 
