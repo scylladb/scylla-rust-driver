@@ -32,6 +32,13 @@ jobs:
     # has permissions.
     permissions: {} 
     timeout-minutes: 30
+    # This is to prevent a situation, when job A triggered by push 1 finishes
+    # after job B triggered by push 2. That could result in incorrectly assigning
+    # or removing a PR label.
+    concurrency:
+      # Can't use `env.PR_ID` because concurrency doesn't have access to env context.
+      group: semver-pull-request-check-${{ github.event.number }}
+      cancel-in-progress: true
     outputs:
       exitcode: ${{ steps.semver-pr-check.outputs.exitcode }}
       output: ${{ steps.semver-pr-check.outputs.output }}
