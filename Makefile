@@ -48,6 +48,14 @@ build:
 docs:
 	mdbook build docs
 
+.PHONY: semver-rev
+semver-rev:
+	./scripts/semver-checks.sh $(if $(rev),--baseline-rev $(rev),--baseline-rev main)
+
+.PHONY: semver-version
+semver-version:
+	./scripts/semver-checks.sh $(if $(version),--baseline-version $(version),)
+
 .PHONY: up
 up:
 	$(COMPOSE) up -d --wait
