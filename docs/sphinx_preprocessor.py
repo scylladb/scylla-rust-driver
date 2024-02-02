@@ -48,7 +48,7 @@ def remove_sphinx_markdown(md_file_text, name):
 
 def process_section(section):
     if 'Chapter' in section:
-        print(f'Processing chapter {section['Chapter']['name']}', file=sys.stderr)
+        print(f'Processing chapter {section["Chapter"]["name"]}', file=sys.stderr)
         section['Chapter']['content'] = remove_sphinx_markdown(section['Chapter']['content'], section['Chapter']['name'])
         for s in section['Chapter']['sub_items']:
             process_section(s)
