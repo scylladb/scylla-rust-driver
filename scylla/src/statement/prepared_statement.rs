@@ -10,7 +10,7 @@ use std::time::Duration;
 use thiserror::Error;
 use uuid::Uuid;
 
-use scylla_cql::frame::response::result::ColumnSpec;
+use scylla_cql::frame::response::result::{ColumnSpec, PartitionKeyIndex};
 
 use super::StatementConfig;
 use crate::frame::response::result::PreparedMetadata;
@@ -301,9 +301,19 @@ impl PreparedStatement {
         self.partitioner_name = partitioner_name;
     }
 
-    /// Access metadata about this prepared statement as returned by the database
-    pub fn get_prepared_metadata(&self) -> &PreparedMetadata {
+    /// Access metadata about the bind variables of this statement as returned by the database
+    pub(crate) fn get_prepared_metadata(&self) -> &PreparedMetadata {
         &self.shared.metadata
+    }
+
+    /// Access column specifications of the bind variables of this statement
+    pub fn get_variable_col_specs(&self) -> &[ColumnSpec] {
+        &self.shared.metadata.col_specs
+    }
+
+    /// Access info about partition key indexes of the bind variables of this statement
+    pub fn get_variable_pk_indexes(&self) -> &[PartitionKeyIndex] {
+        &self.shared.metadata.pk_indexes
     }
 
     /// Get the name of the partitioner used for this statement.
