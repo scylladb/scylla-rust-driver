@@ -270,6 +270,27 @@ impl PreparedStatement {
         self.config.tracing
     }
 
+    /// Make use of cached metadata to decode results
+    /// of the statement's execution.
+    ///
+    /// If true, the driver will request the server not to
+    /// attach the result metadata in response to the statement execution.
+    ///
+    /// The driver will cache the result metadata received from the server
+    /// after statement preparation and will use it
+    /// to deserialize the results of statement execution.
+    ///
+    /// This option is false by default.
+    pub fn set_use_cached_result_metadata(&mut self, use_cached_metadata: bool) {
+        self.config.skip_result_metadata = use_cached_metadata;
+    }
+
+    /// Gets the information whether the driver uses cached metadata
+    /// to decode the results of the statement's execution.
+    pub fn get_use_cached_result_metadata(&self) -> bool {
+        self.config.skip_result_metadata
+    }
+
     /// Sets the default timestamp for this statement in microseconds.
     /// If not None, it will replace the server side assigned timestamp as default timestamp
     /// If a statement contains a `USING TIMESTAMP` clause, calling this method won't change
