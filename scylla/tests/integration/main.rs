@@ -6,4 +6,5 @@ mod new_session;
 mod retries;
 mod shards;
 mod silent_prepare_query;
+mod skip_metadata_optimization;
 pub(crate) mod utils;
