@@ -51,7 +51,9 @@ jobs:
     - name: Build
       run: cargo build --verbose --all-targets --features "full-serialization"
     - name: Run tests
-      run: SCYLLA_URI=172.42.0.2:9042 SCYLLA_URI2=172.42.0.3:9042 SCYLLA_URI3=172.42.0.4:9042 cargo test --verbose --features "full-serialization"
+      run: |
+        cargo clean
+        SCYLLA_URI=172.42.0.2:9042 SCYLLA_URI2=172.42.0.3:9042 SCYLLA_URI3=172.42.0.4:9042 cargo test --verbose --features "full-serialization"
     - name: Stop the cluster
       if: ${{ always() }}
       run: docker compose -f test/cluster/docker-compose.yml stop
