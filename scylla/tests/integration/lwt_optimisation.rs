@@ -2,9 +2,10 @@ use crate::utils::{setup_tracing, test_with_3_node_cluster};
 
 use scylla::frame::types;
 use scylla::retry_policy::FallthroughRetryPolicy;
+use scylla::test_utils::unique_keyspace_name;
 use scylla::transport::session::Session;
-use scylla::{frame::protocol_features::ProtocolFeatures, test_utils::unique_keyspace_name};
 use scylla::{ExecutionProfile, SessionBuilder};
+use scylla_cql::frame::protocol_features::ProtocolFeatures;
 use std::sync::Arc;
 use tokio::sync::mpsc;
 
