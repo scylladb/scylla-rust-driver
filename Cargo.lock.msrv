@@ -66,17 +66,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9b34d609dfbaf33d6889b2b7106d3ca345eacad44200913df5ba02bfd31d2ba9"
 
 [[package]]
-name = "async-trait"
-version = "0.1.73"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bc00ceb34980c03614e35a3a4e218276a0a824e911d07651cd0d858a51e8c0f0"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn 2.0.32",
-]
-
-[[package]]
 name = "atty"
 version = "0.2.14"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1421,7 +1410,6 @@ version = "0.12.0"
 dependencies = [
  "arc-swap",
  "assert_matches",
- "async-trait",
  "base64",
  "bigdecimal",
  "byteorder",
@@ -1462,7 +1450,6 @@ dependencies = [
 name = "scylla-cql"
 version = "0.1.0"
 dependencies = [
- "async-trait",
  "bigdecimal",
  "byteorder",
  "bytes",
