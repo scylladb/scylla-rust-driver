@@ -197,31 +197,44 @@ impl GenericSessionBuilder<DefaultMode> {
     /// # Example
     /// ```
     /// # use std::sync::Arc;
+    /// # use std::pin::Pin;
+    /// # use std::future::Future;
     /// use bytes::Bytes;
     /// use scylla::{Session, SessionBuilder};
-    /// use async_trait::async_trait;
     /// use scylla::authentication::{AuthenticatorProvider, AuthenticatorSession, AuthError};
     /// # use scylla::transport::Compression;
     ///
     /// struct CustomAuthenticator;
     ///
-    /// #[async_trait]
     /// impl AuthenticatorSession for CustomAuthenticator {
-    ///     async fn evaluate_challenge(&mut self, token: Option<&[u8]>) -> Result<Option<Vec<u8>>, AuthError> {
-    ///         Ok(None)
+    ///     fn evaluate_challenge<'a>(
+    ///         &'a mut self,
+    ///         token: Option<&'a [u8]>,
+    ///     ) -> Pin<Box<dyn Future<Output = Result<Option<Vec<u8>>, AuthError>> + Send + 'a>> {
+    ///         Box::pin(async move { Ok(None) })
     ///     }
     ///
-    ///     async fn success(&mut self, token: Option<&[u8]>) -> Result<(), AuthError> {
-    ///         Ok(())
+    ///     fn success<'a>(
+    ///         &'a mut self,
+    ///         token: Option<&'a [u8]>
+    ///     ) -> Pin<Box<dyn Future<Output = Result<(), AuthError>> + Send + 'a>> {
+    ///         Box::pin(async move { Ok(()) })
     ///     }
     /// }
     ///
     /// struct CustomAuthenticatorProvider;
     ///
-    /// #[async_trait]
     /// impl AuthenticatorProvider for CustomAuthenticatorProvider {
-    ///     async fn start_authentication_session(&self, _authenticator_name: &str) -> Result<(Option<Vec<u8>>, Box<dyn AuthenticatorSession>), AuthError> {
-    ///         Ok((None, Box::new(CustomAuthenticator)))
+    ///     fn start_authentication_session<'a>(
+    ///         &'a self,
+    ///         authenticator_name: &'a str,
+    ///     ) -> Pin<Box<dyn Future<Output = Result<(Option<Vec<u8>>, Box<dyn AuthenticatorSession>), AuthError>> + Send + 'a>> {
+    ///         Box::pin(async move {
+    ///             Ok((
+    ///                 None,
+    ///                 Box::new(CustomAuthenticator) as Box<dyn AuthenticatorSession>
+    ///             ))
+    ///         })
     ///     }
     /// }
     ///
@@ -249,7 +262,8 @@ impl GenericSessionBuilder<DefaultMode> {
     ///
     /// # Example
     /// ```
-    /// # use async_trait::async_trait;
+    /// # use std::pin::Pin;
+    /// # use std::future::Future;
     /// # use std::net::SocketAddr;
     /// # use std::sync::Arc;
     /// # use scylla::{Session, SessionBuilder};
@@ -257,13 +271,12 @@ impl GenericSessionBuilder<DefaultMode> {
     /// # use scylla::transport::topology::UntranslatedPeer;
     /// struct IdentityTranslator;
     ///
-    /// #[async_trait]
     /// impl AddressTranslator for IdentityTranslator {
-    ///     async fn translate_address(
-    ///         &self,
-    ///         untranslated_peer: &UntranslatedPeer
-    ///     ) -> Result<SocketAddr, TranslationError> {
-    ///         Ok(untranslated_peer.untranslated_address)
+    ///     fn translate_address<'a>(
+    ///         &'a self,
+    ///         untranslated_peer: &'a UntranslatedPeer
+    ///     ) -> Pin<Box<dyn Future<Output = Result<SocketAddr, TranslationError>> + Send + 'a>> {
+    ///         Box::pin(async move { Ok(untranslated_peer.untranslated_address) })
     ///     }
     /// }
     ///
@@ -767,7 +780,6 @@ impl<K: SessionBuilderKind> GenericSessionBuilder<K> {
     ///
     /// # Example
     /// ```
-    /// # use async_trait::async_trait;
     /// # use std::net::SocketAddr;
     /// # use std::sync::Arc;
     /// # use scylla::{Session, SessionBuilder};
