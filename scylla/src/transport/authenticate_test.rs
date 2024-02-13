@@ -1,4 +1,6 @@
-use crate::authentication::{AuthError, AuthenticatorProvider, AuthenticatorSession};
+use crate::authentication::{
+    AuthError, AuthInitialResponseAndSession, AuthenticatorProvider, AuthenticatorSession,
+};
 use crate::utils::futures::BoxedFuture;
 use crate::utils::test_utils::unique_keyspace_name;
 use async_trait::async_trait;
@@ -52,7 +54,7 @@ impl AuthenticatorProvider for CustomAuthenticatorProvider {
     async fn start_authentication_session(
         &self,
         _authenticator_name: &str,
-    ) -> Result<(Option<Vec<u8>>, Box<dyn AuthenticatorSession>), AuthError> {
+    ) -> Result<AuthInitialResponseAndSession, AuthError> {
         let mut response = BytesMut::new();
         let cred = "\0cassandra\0cassandra";
 

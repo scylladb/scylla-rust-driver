@@ -6,6 +6,9 @@ use crate::utils::futures::BoxedFuture;
 /// Type to represent an authentication error message.
 pub type AuthError = String;
 
+/// Type to represent an initial auth response with an authenticator session.
+pub(crate) type AuthInitialResponseAndSession = (Option<Vec<u8>>, Box<dyn AuthenticatorSession>);
+
 /// Trait used to represent a user-defined custom authentication.
 pub trait AuthenticatorSession: Send + Sync {
     /// To handle an authentication challenge initiated by the server.
@@ -36,7 +39,7 @@ pub trait AuthenticatorProvider: Sync + Send {
     async fn start_authentication_session(
         &self,
         authenticator_name: &str,
-    ) -> Result<(Option<Vec<u8>>, Box<dyn AuthenticatorSession>), AuthError>;
+    ) -> Result<AuthInitialResponseAndSession, AuthError>;
 }
 
 struct PlainTextAuthenticatorSession;
@@ -77,7 +80,7 @@ impl AuthenticatorProvider for PlainTextAuthenticator {
     async fn start_authentication_session(
         &self,
         _authenticator_name: &str,
-    ) -> Result<(Option<Vec<u8>>, Box<dyn AuthenticatorSession>), AuthError> {
+    ) -> Result<AuthInitialResponseAndSession, AuthError> {
         let mut response = BytesMut::new();
         let username_as_bytes = self.username.as_bytes();
         let password_as_bytes = self.password.as_bytes();
