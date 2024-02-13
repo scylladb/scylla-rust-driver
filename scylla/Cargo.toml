@@ -32,7 +32,6 @@ byteorder = "1.3.4"
 bytes = "1.0.1"
 futures = "0.3.6"
 histogram = "0.6.9"
-num_enum = "0.6"
 tokio = { version = "1.27", features = ["net", "time", "io-util", "sync", "rt", "macros"] }
 snap = "1.0"
 uuid = { version = "1.0", features = ["v4"] }
