@@ -1,4 +1,4 @@
-use super::response;
+use super::TryFromPrimitiveError;
 use crate::cql_to_rust::CqlTypeError;
 use crate::frame::value::SerializeValuesError;
 use crate::types::serialize::SerializationError;
@@ -25,7 +25,7 @@ pub enum FrameError {
     #[error(transparent)]
     StdIoError(#[from] std::io::Error),
     #[error("Unrecognized opcode{0}")]
-    TryFromPrimitiveError(#[from] num_enum::TryFromPrimitiveError<response::ResponseOpcode>),
+    TryFromPrimitiveError(#[from] TryFromPrimitiveError<u8>),
     #[error("Error compressing lz4 data {0}")]
     Lz4CompressError(#[from] lz4_flex::block::CompressError),
     #[error("Error decompressing lz4 data {0}")]
