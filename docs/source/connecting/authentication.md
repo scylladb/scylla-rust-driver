@@ -32,49 +32,57 @@ Finally, to make use of the custom authentication, use the `authenticator_provid
 # extern crate scylla_cql;
 # extern crate tokio;
 # extern crate bytes;
-# extern crate async_trait;
 # use std::error::Error;
 # use std::sync::Arc;
+# use std::pin::Pin;
+# use std::future::Future;
 use bytes::{BufMut, BytesMut};
-use async_trait::async_trait;
 use scylla::authentication::{AuthError, AuthenticatorProvider, AuthenticatorSession};
 
 struct CustomAuthenticator;
 
-#[async_trait]
 impl AuthenticatorSession for CustomAuthenticator {
     // to handle an authentication challenge initiated by the server.
     // The information contained in the token parameter is authentication protocol specific.
     // It may be NULL or empty. 
-    async fn evaluate_challenge(
-        &mut self,
-        _token: Option<&[u8]>,
-    ) -> Result<Option<Vec<u8>>, AuthError> {
-        Err("Challenges are not expected".to_string())
+    fn evaluate_challenge<'a>(
+        &'a mut self,
+        token: Option<&'a [u8]>,
+    ) -> Pin<Box<dyn Future<Output = Result<Option<Vec<u8>>, AuthError>> + Send + 'a>> {
+        Box::pin(async move {
+            Err("Challenges are not expected".to_string())
+        })
     }
 
     // to handle the success phase of exchange. The token parameters contain information that may be used to finalize the request.
-    async fn success(&mut self, _token: Option<&[u8]>) -> Result<(), AuthError> {
-        Ok(())
+    fn success<'a>(
+        &'a mut self,
+        token: Option<&'a [u8]>
+    ) -> Pin<Box<dyn Future<Output = Result<(), AuthError>> + Send + 'a>> {
+        Box::pin(async move { Ok(()) })
     }
 }
 
 struct CustomAuthenticatorProvider;
 
-#[async_trait]
 impl AuthenticatorProvider for CustomAuthenticatorProvider {
-    async fn start_authentication_session(
-        &self,
-        _name: &str,
-    ) -> Result<(Option<Vec<u8>>, Box<dyn AuthenticatorSession>), AuthError> {
-        let mut response = BytesMut::new();
-        let cred = "\0cassandra\0cassandra";
-        let cred_length = 20;
+    fn start_authentication_session<'a>(
+        &'a self,
+        authenticator_name: &'a str,
+    ) -> Pin<Box<dyn Future<Output = Result<(Option<Vec<u8>>, Box<dyn AuthenticatorSession>), AuthError>> + Send + 'a>> {
+        Box::pin(async move {
+            let mut response = BytesMut::new();
+            let cred = "\0cassandra\0cassandra";
+            let cred_length = 20;
 
-        response.put_i32(cred_length);
-        response.put_slice(cred.as_bytes());
+            response.put_i32(cred_length);
+            response.put_slice(cred.as_bytes());
 
-        Ok((Some(response.to_vec()), Box::new(CustomAuthenticator)))
+            Ok((
+                Some(response.to_vec()),
+                Box::new(CustomAuthenticator) as Box<dyn AuthenticatorSession>
+            ))
+        })
     }
 }
 
