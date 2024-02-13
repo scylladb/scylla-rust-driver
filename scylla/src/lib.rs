@@ -114,8 +114,15 @@ pub mod frame {
     }
 
     pub mod response {
+        pub use scylla_cql::frame::response::cql_to_rust;
         pub(crate) use scylla_cql::frame::response::*;
-        pub use scylla_cql::frame::response::{cql_to_rust, result};
+
+        pub mod result {
+            pub(crate) use scylla_cql::frame::response::result::*;
+            pub use scylla_cql::frame::response::result::{
+                ColumnSpec, ColumnType, CqlValue, PartitionKeyIndex, Row, TableSpec,
+            };
+        }
     }
 }
 
