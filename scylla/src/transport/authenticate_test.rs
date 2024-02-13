@@ -1,4 +1,5 @@
 use crate::authentication::{AuthError, AuthenticatorProvider, AuthenticatorSession};
+use crate::utils::futures::BoxedFuture;
 use crate::utils::test_utils::unique_keyspace_name;
 use async_trait::async_trait;
 use bytes::{BufMut, BytesMut};
@@ -28,17 +29,19 @@ async fn authenticate_superuser() {
 
 struct CustomAuthenticator;
 
-#[async_trait]
 impl AuthenticatorSession for CustomAuthenticator {
-    async fn evaluate_challenge(
-        &mut self,
-        _token: Option<&[u8]>,
-    ) -> Result<Option<Vec<u8>>, AuthError> {
-        Err("Challenges are not expected".to_string())
+    fn evaluate_challenge<'a>(
+        &'a mut self,
+        _token: Option<&'a [u8]>,
+    ) -> BoxedFuture<'_, Result<Option<Vec<u8>>, AuthError>> {
+        Box::pin(async move { Err("Challenges are not expected".to_string()) })
     }
 
-    async fn success(&mut self, _token: Option<&[u8]>) -> Result<(), AuthError> {
-        Ok(())
+    fn success<'a>(
+        &'a mut self,
+        _token: Option<&'a [u8]>,
+    ) -> BoxedFuture<'_, Result<(), AuthError>> {
+        Box::pin(async move { Ok(()) })
     }
 }
 

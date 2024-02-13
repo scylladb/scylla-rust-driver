@@ -1,23 +1,25 @@
 use async_trait::async_trait;
 use bytes::{BufMut, BytesMut};
 
+use crate::utils::futures::BoxedFuture;
+
 /// Type to represent an authentication error message.
 pub type AuthError = String;
 
 /// Trait used to represent a user-defined custom authentication.
-#[async_trait]
 pub trait AuthenticatorSession: Send + Sync {
     /// To handle an authentication challenge initiated by the server.
     /// The information contained in the token parameter is authentication protocol specific.
     /// It may be NULL or empty.
-    async fn evaluate_challenge(
-        &mut self,
-        token: Option<&[u8]>,
-    ) -> Result<Option<Vec<u8>>, AuthError>;
+    fn evaluate_challenge<'a>(
+        &'a mut self,
+        token: Option<&'a [u8]>,
+    ) -> BoxedFuture<'_, Result<Option<Vec<u8>>, AuthError>>;
 
     /// To handle the success phase of exchange.
     /// The token parameters contain information that may be used to finalize the request.
-    async fn success(&mut self, token: Option<&[u8]>) -> Result<(), AuthError>;
+    fn success<'a>(&'a mut self, token: Option<&'a [u8]>)
+        -> BoxedFuture<'_, Result<(), AuthError>>;
 }
 
 /// Trait used to represent a factory of [`AuthenticatorSession`] instances.
@@ -39,17 +41,21 @@ pub trait AuthenticatorProvider: Sync + Send {
 
 struct PlainTextAuthenticatorSession;
 
-#[async_trait]
 impl AuthenticatorSession for PlainTextAuthenticatorSession {
-    async fn evaluate_challenge(
-        &mut self,
-        _token: Option<&[u8]>,
-    ) -> Result<Option<Vec<u8>>, AuthError> {
-        Err("Challenges are not expected during PlainTextAuthentication".to_string())
+    fn evaluate_challenge<'a>(
+        &'a mut self,
+        _token: Option<&'a [u8]>,
+    ) -> BoxedFuture<'_, Result<Option<Vec<u8>>, AuthError>> {
+        Box::pin(async move {
+            Err("Challenges are not expected during PlainTextAuthentication".to_string())
+        })
     }
 
-    async fn success(&mut self, _token: Option<&[u8]>) -> Result<(), AuthError> {
-        Ok(())
+    fn success<'a>(
+        &'a mut self,
+        _token: Option<&'a [u8]>,
+    ) -> BoxedFuture<'_, Result<(), AuthError>> {
+        Box::pin(async move { Ok(()) })
     }
 }
 
