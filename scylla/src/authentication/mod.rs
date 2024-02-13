@@ -1,4 +1,3 @@
-use async_trait::async_trait;
 use bytes::{BufMut, BytesMut};
 
 use crate::utils::futures::BoxedFuture;
@@ -32,14 +31,13 @@ pub trait AuthenticatorSession: Send + Sync {
 ///
 /// Default: [`PlainTextAuthenticator`] is the default authenticator which requires username and
 /// password. It can be set by using SessionBuilder::user(\"user\", \"pass\") method.
-#[async_trait]
 pub trait AuthenticatorProvider: Sync + Send {
     /// A pair of initial response and boxed [`AuthenticatorSession`]
     /// should be returned if authentication is required by the server.
-    async fn start_authentication_session(
-        &self,
-        authenticator_name: &str,
-    ) -> Result<AuthInitialResponseAndSession, AuthError>;
+    fn start_authentication_session<'a>(
+        &'a self,
+        authenticator_name: &'a str,
+    ) -> BoxedFuture<'_, Result<AuthInitialResponseAndSession, AuthError>>;
 }
 
 struct PlainTextAuthenticatorSession;
@@ -75,24 +73,25 @@ impl PlainTextAuthenticator {
     }
 }
 
-#[async_trait]
 impl AuthenticatorProvider for PlainTextAuthenticator {
-    async fn start_authentication_session(
-        &self,
-        _authenticator_name: &str,
-    ) -> Result<AuthInitialResponseAndSession, AuthError> {
-        let mut response = BytesMut::new();
-        let username_as_bytes = self.username.as_bytes();
-        let password_as_bytes = self.password.as_bytes();
+    fn start_authentication_session<'a>(
+        &'a self,
+        _authenticator_name: &'a str,
+    ) -> BoxedFuture<'_, Result<AuthInitialResponseAndSession, AuthError>> {
+        Box::pin(async move {
+            let mut response = BytesMut::new();
+            let username_as_bytes = self.username.as_bytes();
+            let password_as_bytes = self.password.as_bytes();
 
-        response.put_u8(0);
-        response.put_slice(username_as_bytes);
-        response.put_u8(0);
-        response.put_slice(password_as_bytes);
+            response.put_u8(0);
+            response.put_slice(username_as_bytes);
+            response.put_u8(0);
+            response.put_slice(password_as_bytes);
 
-        Ok((
-            Some(response.to_vec()),
-            Box::new(PlainTextAuthenticatorSession),
-        ))
+            Ok((
+                Some(response.to_vec()),
+                Box::new(PlainTextAuthenticatorSession) as Box<dyn AuthenticatorSession>,
+            ))
+        })
     }
 }

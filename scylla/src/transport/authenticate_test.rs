@@ -3,7 +3,6 @@ use crate::authentication::{
 };
 use crate::utils::futures::BoxedFuture;
 use crate::utils::test_utils::unique_keyspace_name;
-use async_trait::async_trait;
 use bytes::{BufMut, BytesMut};
 use std::sync::Arc;
 
@@ -49,18 +48,22 @@ impl AuthenticatorSession for CustomAuthenticator {
 
 struct CustomAuthenticatorProvider;
 
-#[async_trait]
 impl AuthenticatorProvider for CustomAuthenticatorProvider {
-    async fn start_authentication_session(
-        &self,
-        _authenticator_name: &str,
-    ) -> Result<AuthInitialResponseAndSession, AuthError> {
-        let mut response = BytesMut::new();
-        let cred = "\0cassandra\0cassandra";
+    fn start_authentication_session<'a>(
+        &'a self,
+        _authenticator_name: &'a str,
+    ) -> BoxedFuture<'_, Result<AuthInitialResponseAndSession, AuthError>> {
+        Box::pin(async move {
+            let mut response = BytesMut::new();
+            let cred = "\0cassandra\0cassandra";
 
-        response.put_slice(cred.as_bytes());
+            response.put_slice(cred.as_bytes());
 
-        Ok((Some(response.to_vec()), Box::new(CustomAuthenticator)))
+            Ok((
+                Some(response.to_vec()),
+                Box::new(CustomAuthenticator) as Box<dyn AuthenticatorSession>,
+            ))
+        })
     }
 }
 
