@@ -7,9 +7,9 @@ use crate::cloud::CloudConfig;
 
 use crate::history;
 use crate::history::HistoryListener;
+use crate::utils::futures::BoxedFuture;
 use crate::utils::pretty::{CommaSeparatedDisplayer, CqlValueDisplayer};
 use arc_swap::ArcSwapOption;
-use async_trait::async_trait;
 use bytes::Bytes;
 use futures::future::join_all;
 use futures::future::try_join_all;
@@ -94,44 +94,45 @@ use scylla_cql::errors::BadQuery;
 /// Please note that the "known nodes" addresses provided while creating the [`Session`]
 /// instance are not translated, only IP address retrieved from or sent by Cassandra nodes
 /// to the driver are.
-#[async_trait]
 pub trait AddressTranslator: Send + Sync {
-    async fn translate_address(
-        &self,
-        untranslated_peer: &UntranslatedPeer,
-    ) -> Result<SocketAddr, TranslationError>;
+    fn translate_address<'a>(
+        &'a self,
+        untranslated_peer: &'a UntranslatedPeer,
+    ) -> BoxedFuture<'_, Result<SocketAddr, TranslationError>>;
 }
 
-#[async_trait]
 impl AddressTranslator for HashMap<SocketAddr, SocketAddr> {
-    async fn translate_address(
-        &self,
-        untranslated_peer: &UntranslatedPeer,
-    ) -> Result<SocketAddr, TranslationError> {
-        match self.get(&untranslated_peer.untranslated_address) {
-            Some(&translated_addr) => Ok(translated_addr),
-            None => Err(TranslationError::NoRuleForAddress),
-        }
+    fn translate_address<'a>(
+        &'a self,
+        untranslated_peer: &'a UntranslatedPeer,
+    ) -> BoxedFuture<'_, Result<SocketAddr, TranslationError>> {
+        Box::pin(async move {
+            match self.get(&untranslated_peer.untranslated_address) {
+                Some(&translated_addr) => Ok(translated_addr),
+                None => Err(TranslationError::NoRuleForAddress),
+            }
+        })
     }
 }
 
-#[async_trait]
 // Notice: this is inefficient, but what else can we do with such poor representation as str?
 // After all, the cluster size is small enough to make this irrelevant.
 impl AddressTranslator for HashMap<&'static str, &'static str> {
-    async fn translate_address(
-        &self,
-        untranslated_peer: &UntranslatedPeer,
-    ) -> Result<SocketAddr, TranslationError> {
-        for (&rule_addr_str, &translated_addr_str) in self.iter() {
-            if let Ok(rule_addr) = SocketAddr::from_str(rule_addr_str) {
-                if rule_addr == untranslated_peer.untranslated_address {
-                    return SocketAddr::from_str(translated_addr_str)
-                        .map_err(|_| TranslationError::InvalidAddressInRule);
+    fn translate_address<'a>(
+        &'a self,
+        untranslated_peer: &'a UntranslatedPeer,
+    ) -> BoxedFuture<'_, Result<SocketAddr, TranslationError>> {
+        Box::pin(async move {
+            for (&rule_addr_str, &translated_addr_str) in self.iter() {
+                if let Ok(rule_addr) = SocketAddr::from_str(rule_addr_str) {
+                    if rule_addr == untranslated_peer.untranslated_address {
+                        return SocketAddr::from_str(translated_addr_str)
+                            .map_err(|_| TranslationError::InvalidAddressInRule);
+                    }
                 }
             }
-        }
-        Err(TranslationError::NoRuleForAddress)
+            Err(TranslationError::NoRuleForAddress)
+        })
     }
 }
 
