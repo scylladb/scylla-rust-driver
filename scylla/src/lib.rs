@@ -122,6 +122,8 @@ pub(crate) mod utils;
 #[doc(hidden)]
 pub use utils::test_utils;
 
+pub use utils::futures::BoxedFuture;
+
 pub use statement::batch;
 pub use statement::prepared_statement;
 pub use statement::query;
