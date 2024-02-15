@@ -1,30 +1,23 @@
 use histogram::Histogram;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
+use std::sync::{Arc, Mutex};
 
 const ORDER_TYPE: Ordering = Ordering::Relaxed;
 
 #[derive(Debug)]
-pub enum MetricsError<'a> {
-    Poison(PoisonError<MutexGuard<'a, Histogram>>),
-    Histogram(&'static str),
+pub struct MetricsError {
+    cause: &'static str,
 }
 
-impl<'a> From<PoisonError<MutexGuard<'a, Histogram>>> for MetricsError<'a> {
-    fn from(err: PoisonError<MutexGuard<'_, Histogram>>) -> MetricsError {
-        MetricsError::Poison(err)
-    }
-}
-
-impl From<&'static str> for MetricsError<'_> {
+impl From<&'static str> for MetricsError {
     fn from(err: &'static str) -> MetricsError {
-        MetricsError::Histogram(err)
+        MetricsError { cause: err }
     }
 }
 
-impl std::fmt::Display for MetricsError<'_> {
+impl std::fmt::Display for MetricsError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{:?}", self)
+        write!(f, "metrics error: {}", self.cause)
     }
 }
 
