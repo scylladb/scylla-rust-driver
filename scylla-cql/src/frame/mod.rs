@@ -11,6 +11,7 @@ mod value_tests;
 
 use crate::frame::frame_errors::FrameError;
 use bytes::{Buf, BufMut, Bytes};
+use thiserror::Error;
 use tokio::io::{AsyncRead, AsyncReadExt};
 use uuid::Uuid;
 
@@ -257,6 +258,14 @@ fn decompress(mut comp_body: &[u8], compression: Compression) -> Result<Vec<u8>,
             .decompress_vec(comp_body)
             .map_err(|_| FrameError::FrameDecompression),
     }
+}
+
+/// An error type for parsing an enum value from a primitive.
+#[derive(Error, Debug, Clone, PartialEq, Eq)]
+#[error("No discrimant in enum `{enum_name}` matches the value `{primitive:?}`")]
+pub struct TryFromPrimitiveError<T: Copy + std::fmt::Debug> {
+    enum_name: &'static str,
+    primitive: T,
 }
 
 #[cfg(test)]

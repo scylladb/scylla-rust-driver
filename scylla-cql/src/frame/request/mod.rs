@@ -10,7 +10,6 @@ pub mod startup;
 use crate::types::serialize::row::SerializedValues;
 use crate::{frame::frame_errors::ParseError, Consistency};
 use bytes::Bytes;
-use num_enum::TryFromPrimitive;
 
 pub use auth_response::AuthResponse;
 pub use batch::Batch;
@@ -23,8 +22,9 @@ pub use startup::Startup;
 use self::batch::BatchStatement;
 
 use super::types::SerialConsistency;
+use super::TryFromPrimitiveError;
 
-#[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord, TryFromPrimitive)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord)]
 #[repr(u8)]
 pub enum RequestOpcode {
     Startup = 0x01,
@@ -35,6 +35,27 @@ pub enum RequestOpcode {
     Register = 0x0B,
     Batch = 0x0D,
     AuthResponse = 0x0F,
+}
+
+impl TryFrom<u8> for RequestOpcode {
+    type Error = TryFromPrimitiveError<u8>;
+
+    fn try_from(value: u8) -> Result<Self, Self::Error> {
+        match value {
+            0x01 => Ok(Self::Startup),
+            0x05 => Ok(Self::Options),
+            0x07 => Ok(Self::Query),
+            0x09 => Ok(Self::Prepare),
+            0x0A => Ok(Self::Execute),
+            0x0B => Ok(Self::Register),
+            0x0D => Ok(Self::Batch),
+            0x0F => Ok(Self::AuthResponse),
+            _ => Err(TryFromPrimitiveError {
+                enum_name: "RequestOpcode",
+                primitive: value,
+            }),
+        }
+    }
 }
 
 pub trait SerializableRequest {

@@ -1,9 +1,9 @@
 //! CQL binary protocol in-wire types.
 
 use super::frame_errors::ParseError;
+use super::TryFromPrimitiveError;
 use byteorder::{BigEndian, ReadBytesExt};
 use bytes::{Buf, BufMut};
-use num_enum::TryFromPrimitive;
 use std::collections::HashMap;
 use std::convert::TryFrom;
 use std::convert::TryInto;
@@ -13,7 +13,7 @@ use std::str;
 use thiserror::Error;
 use uuid::Uuid;
 
-#[derive(Debug, Copy, Clone, Default, PartialEq, Eq, PartialOrd, Ord, TryFromPrimitive)]
+#[derive(Debug, Copy, Clone, Default, PartialEq, Eq, PartialOrd, Ord)]
 #[cfg_attr(feature = "serde", derive(serde::Deserialize))]
 #[cfg_attr(feature = "serde", serde(rename_all = "SCREAMING_SNAKE_CASE"))]
 #[repr(u16)]
@@ -35,13 +35,52 @@ pub enum Consistency {
     LocalSerial = 0x0009,
 }
 
-#[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord, TryFromPrimitive)]
+impl TryFrom<u16> for Consistency {
+    type Error = TryFromPrimitiveError<u16>;
+
+    fn try_from(value: u16) -> Result<Self, Self::Error> {
+        match value {
+            0x0000 => Ok(Consistency::Any),
+            0x0001 => Ok(Consistency::One),
+            0x0002 => Ok(Consistency::Two),
+            0x0003 => Ok(Consistency::Three),
+            0x0004 => Ok(Consistency::Quorum),
+            0x0005 => Ok(Consistency::All),
+            0x0006 => Ok(Consistency::LocalQuorum),
+            0x0007 => Ok(Consistency::EachQuorum),
+            0x000A => Ok(Consistency::LocalOne),
+            0x0008 => Ok(Consistency::Serial),
+            0x0009 => Ok(Consistency::LocalSerial),
+            _ => Err(TryFromPrimitiveError {
+                enum_name: "Consistency",
+                primitive: value,
+            }),
+        }
+    }
+}
+
+#[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord)]
 #[cfg_attr(feature = "serde", derive(serde::Deserialize))]
 #[cfg_attr(feature = "serde", serde(rename_all = "SCREAMING_SNAKE_CASE"))]
 #[repr(i16)]
 pub enum SerialConsistency {
     Serial = 0x0008,
     LocalSerial = 0x0009,
+}
+
+impl TryFrom<i16> for SerialConsistency {
+    type Error = TryFromPrimitiveError<i16>;
+
+    fn try_from(value: i16) -> Result<Self, Self::Error> {
+        match value {
+            0x0008 => Ok(Self::Serial),
+            0x0009 => Ok(Self::LocalSerial),
+            _ => Err(TryFromPrimitiveError {
+                enum_name: "SerialConsistency",
+                primitive: value,
+            }),
+        }
+    }
 }
 
 impl Consistency {
