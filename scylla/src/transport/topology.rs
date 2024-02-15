@@ -26,7 +26,6 @@ use std::num::NonZeroUsize;
 use std::str::FromStr;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
-use strum_macros::EnumString;
 use tokio::sync::{broadcast, mpsc};
 use tracing::{debug, error, trace, warn};
 use uuid::Uuid;
@@ -348,13 +347,30 @@ pub enum CollectionType {
     Set(Box<CqlType>),
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, EnumString)]
-#[strum(serialize_all = "snake_case")]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ColumnKind {
     Regular,
     Static,
     Clustering,
     PartitionKey,
+}
+
+/// [ColumnKind] parse error
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ColumnKindFromStrError;
+
+impl std::str::FromStr for ColumnKind {
+    type Err = ColumnKindFromStrError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "regular" => Ok(Self::Regular),
+            "static" => Ok(Self::Static),
+            "clustering" => Ok(Self::Clustering),
+            "partition_key" => Ok(Self::PartitionKey),
+            _ => Err(ColumnKindFromStrError),
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
