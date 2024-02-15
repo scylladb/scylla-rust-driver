@@ -44,8 +44,6 @@ openssl = { version = "0.10.32", optional = true }
 tokio-openssl = { version = "0.6.1", optional = true }
 arc-swap = "1.3.0"
 dashmap = "5.2"
-strum = "0.23"
-strum_macros = "0.23"
 lz4_flex = { version = "0.11.1" }
 smallvec = "1.8.0"
 async-trait = "0.1.56"
