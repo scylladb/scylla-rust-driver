@@ -26,7 +26,6 @@ use std::num::NonZeroUsize;
 use std::str::FromStr;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
-use strum_macros::EnumString;
 use tokio::sync::{broadcast, mpsc};
 use tracing::{debug, error, trace, warn};
 use uuid::Uuid;
@@ -255,8 +254,7 @@ pub struct MissingUserDefinedType {
     pub keyspace: String,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, EnumString)]
-#[strum(serialize_all = "lowercase")]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum NativeType {
     Ascii,
     Boolean,
@@ -278,6 +276,40 @@ pub enum NativeType {
     Timeuuid,
     Uuid,
     Varint,
+}
+
+/// [NativeType] parse error
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct NativeTypeFromStrError;
+
+impl std::str::FromStr for NativeType {
+    type Err = NativeTypeFromStrError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "ascii" => Ok(Self::Ascii),
+            "boolean" => Ok(Self::Boolean),
+            "blob" => Ok(Self::Blob),
+            "counter" => Ok(Self::Counter),
+            "date" => Ok(Self::Date),
+            "decimal" => Ok(Self::Decimal),
+            "double" => Ok(Self::Double),
+            "duration" => Ok(Self::Duration),
+            "float" => Ok(Self::Float),
+            "int" => Ok(Self::Int),
+            "bigint" => Ok(Self::BigInt),
+            "text" => Ok(Self::Text),
+            "timestamp" => Ok(Self::Timestamp),
+            "inet" => Ok(Self::Inet),
+            "smallint" => Ok(Self::SmallInt),
+            "tinyint" => Ok(Self::TinyInt),
+            "time" => Ok(Self::Time),
+            "timeuuid" => Ok(Self::Timeuuid),
+            "uuid" => Ok(Self::Uuid),
+            "varint" => Ok(Self::Varint),
+            _ => Err(NativeTypeFromStrError),
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -315,13 +347,30 @@ pub enum CollectionType {
     Set(Box<CqlType>),
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, EnumString)]
-#[strum(serialize_all = "snake_case")]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ColumnKind {
     Regular,
     Static,
     Clustering,
     PartitionKey,
+}
+
+/// [ColumnKind] parse error
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ColumnKindFromStrError;
+
+impl std::str::FromStr for ColumnKind {
+    type Err = ColumnKindFromStrError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "regular" => Ok(Self::Regular),
+            "static" => Ok(Self::Static),
+            "clustering" => Ok(Self::Clustering),
+            "partition_key" => Ok(Self::PartitionKey),
+            _ => Err(ColumnKindFromStrError),
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
