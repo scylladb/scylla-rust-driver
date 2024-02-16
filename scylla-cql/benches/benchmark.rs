@@ -14,6 +14,7 @@ fn make_query(contents: &str, values: SerializedValues) -> query::Query<'_> {
             consistency: scylla_cql::Consistency::LocalQuorum,
             serial_consistency: None,
             values: Cow::Owned(values),
+            skip_metadata: false,
             page_size: None,
             paging_state: None,
             timestamp: None,

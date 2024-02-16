@@ -150,6 +150,7 @@ mod tests {
             timestamp: None,
             page_size: Some(323),
             paging_state: Some(vec![2, 1, 3, 7].into()),
+            skip_metadata: false,
             values: {
                 let mut vals = SerializedValues::new();
                 vals.add_value(&2137, &ColumnType::Int).unwrap();
@@ -177,6 +178,7 @@ mod tests {
             timestamp: Some(3423434),
             page_size: None,
             paging_state: None,
+            skip_metadata: false,
             values: {
                 let mut vals = SerializedValues::new();
                 vals.add_value(&42, &ColumnType::Int).unwrap();
@@ -234,6 +236,7 @@ mod tests {
             timestamp: None,
             page_size: None,
             paging_state: None,
+            skip_metadata: false,
             values: Cow::Borrowed(SerializedValues::EMPTY),
         };
         let query = Query {

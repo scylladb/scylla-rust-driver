@@ -10,7 +10,7 @@ use std::time::Duration;
 use thiserror::Error;
 use uuid::Uuid;
 
-use scylla_cql::frame::response::result::ColumnSpec;
+use scylla_cql::frame::response::result::{ColumnSpec, PartitionKeyIndex, ResultMetadata};
 
 use super::StatementConfig;
 use crate::frame::response::result::PreparedMetadata;
@@ -37,6 +37,7 @@ pub struct PreparedStatement {
 #[derive(Debug)]
 struct PreparedStatementSharedData {
     metadata: PreparedMetadata,
+    result_metadata: ResultMetadata,
     statement: String,
 }
 
@@ -59,6 +60,7 @@ impl PreparedStatement {
         id: Bytes,
         is_lwt: bool,
         metadata: PreparedMetadata,
+        result_metadata: ResultMetadata,
         statement: String,
         page_size: Option<i32>,
         config: StatementConfig,
@@ -67,6 +69,7 @@ impl PreparedStatement {
             id,
             shared: Arc::new(PreparedStatementSharedData {
                 metadata,
+                result_metadata,
                 statement,
             }),
             prepare_tracing_ids: Vec::new(),
@@ -270,6 +273,27 @@ impl PreparedStatement {
         self.config.tracing
     }
 
+    /// Make use of cached metadata to decode results
+    /// of the statement's execution.
+    ///
+    /// If true, the driver will request the server not to
+    /// attach the result metadata in response to the statement execution.
+    ///
+    /// The driver will cache the result metadata received from the server
+    /// after statement preparation and will use it
+    /// to deserialize the results of statement execution.
+    ///
+    /// This option is false by default.
+    pub fn set_use_cached_result_metadata(&mut self, use_cached_metadata: bool) {
+        self.config.skip_result_metadata = use_cached_metadata;
+    }
+
+    /// Gets the information whether the driver uses cached metadata
+    /// to decode the results of the statement's execution.
+    pub fn get_use_cached_result_metadata(&self) -> bool {
+        self.config.skip_result_metadata
+    }
+
     /// Sets the default timestamp for this statement in microseconds.
     /// If not None, it will replace the server side assigned timestamp as default timestamp
     /// If a statement contains a `USING TIMESTAMP` clause, calling this method won't change
@@ -301,9 +325,29 @@ impl PreparedStatement {
         self.partitioner_name = partitioner_name;
     }
 
-    /// Access metadata about this prepared statement as returned by the database
-    pub fn get_prepared_metadata(&self) -> &PreparedMetadata {
+    /// Access metadata about the bind variables of this statement as returned by the database
+    pub(crate) fn get_prepared_metadata(&self) -> &PreparedMetadata {
         &self.shared.metadata
+    }
+
+    /// Access column specifications of the bind variables of this statement
+    pub fn get_variable_col_specs(&self) -> &[ColumnSpec] {
+        &self.shared.metadata.col_specs
+    }
+
+    /// Access info about partition key indexes of the bind variables of this statement
+    pub fn get_variable_pk_indexes(&self) -> &[PartitionKeyIndex] {
+        &self.shared.metadata.pk_indexes
+    }
+
+    /// Access metadata about the result of prepared statement returned by the database
+    pub(crate) fn get_result_metadata(&self) -> &ResultMetadata {
+        &self.shared.result_metadata
+    }
+
+    /// Access column specifications of the result set returned after the execution of this statement
+    pub fn get_result_set_col_specs(&self) -> &[ColumnSpec] {
+        &self.shared.result_metadata.col_specs
     }
 
     /// Get the name of the partitioner used for this statement.

@@ -386,7 +386,7 @@ pub struct ColumnSpec {
     pub typ: ColumnType,
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug, Clone, Default)]
 pub struct ResultMetadata {
     col_count: usize,
     pub paging_state: Option<Bytes>,
@@ -886,16 +886,28 @@ pub fn deser_cql_value(typ: &ColumnType, buf: &mut &[u8]) -> StdResult<CqlValue,
     })
 }
 
-fn deser_rows(buf: &mut &[u8]) -> StdResult<Rows, ParseError> {
-    let metadata = deser_result_metadata(buf)?;
+fn deser_rows(
+    buf: &mut &[u8],
+    cached_metadata: Option<&ResultMetadata>,
+) -> StdResult<Rows, ParseError> {
+    let server_metadata = deser_result_metadata(buf)?;
+
+    let metadata = match cached_metadata {
+        Some(metadata) => metadata.clone(),
+        None => {
+            // No cached_metadata provided. Server is supposed to provide the result metadata.
+            if server_metadata.col_count != server_metadata.col_specs.len() {
+                return Err(ParseError::BadIncomingData(format!(
+                    "Bad result metadata provided in the response. Expected {} column specifications, received: {}",
+                    server_metadata.col_count,
+                    server_metadata.col_specs.len()
+                )));
+            }
+            server_metadata
+        }
+    };
 
     let original_size = buf.len();
-
-    // TODO: the protocol allows an optimization (which must be explicitly requested on query by
-    // the driver) where the column metadata is not sent with the result.
-    // Implement this optimization. We'll then need to take the column types by a parameter.
-    // Beware of races; our column types may be outdated.
-    assert!(metadata.col_count == metadata.col_specs.len());
 
     let rows_count: usize = types::read_int(buf)?.try_into()?;
 
@@ -946,11 +958,14 @@ fn deser_schema_change(buf: &mut &[u8]) -> StdResult<SchemaChange, ParseError> {
     })
 }
 
-pub fn deserialize(buf: &mut &[u8]) -> StdResult<Result, ParseError> {
+pub fn deserialize(
+    buf: &mut &[u8],
+    cached_metadata: Option<&ResultMetadata>,
+) -> StdResult<Result, ParseError> {
     use self::Result::*;
     Ok(match types::read_int(buf)? {
         0x0001 => Void,
-        0x0002 => Rows(deser_rows(buf)?),
+        0x0002 => Rows(deser_rows(buf, cached_metadata)?),
         0x0003 => SetKeyspace(deser_set_keyspace(buf)?),
         0x0004 => Prepared(deser_prepared(buf)?),
         0x0005 => SchemaChange(deser_schema_change(buf)?),

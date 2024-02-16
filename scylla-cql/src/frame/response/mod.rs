@@ -5,13 +5,13 @@ pub mod event;
 pub mod result;
 pub mod supported;
 
-use crate::{errors::QueryError, frame::frame_errors::ParseError};
-
-use crate::frame::protocol_features::ProtocolFeatures;
 pub use error::Error;
 pub use supported::Supported;
 
-use super::TryFromPrimitiveError;
+use crate::frame::protocol_features::ProtocolFeatures;
+use crate::frame::response::result::ResultMetadata;
+use crate::frame::TryFromPrimitiveError;
+use crate::{errors::QueryError, frame::frame_errors::ParseError};
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord)]
 #[repr(u8)]
@@ -64,6 +64,7 @@ impl Response {
         features: &ProtocolFeatures,
         opcode: ResponseOpcode,
         buf: &mut &[u8],
+        cached_metadata: Option<&ResultMetadata>,
     ) -> Result<Response, ParseError> {
         let response = match opcode {
             ResponseOpcode::Error => Response::Error(Error::deserialize(features, buf)?),
@@ -72,7 +73,7 @@ impl Response {
                 Response::Authenticate(authenticate::Authenticate::deserialize(buf)?)
             }
             ResponseOpcode::Supported => Response::Supported(Supported::deserialize(buf)?),
-            ResponseOpcode::Result => Response::Result(result::deserialize(buf)?),
+            ResponseOpcode::Result => Response::Result(result::deserialize(buf, cached_metadata)?),
             ResponseOpcode::Event => Response::Event(event::Event::deserialize(buf)?),
             ResponseOpcode::AuthChallenge => {
                 Response::AuthChallenge(authenticate::AuthChallenge::deserialize(buf)?)
