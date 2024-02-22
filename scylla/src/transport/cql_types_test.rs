@@ -448,7 +448,7 @@ async fn test_cql_date() {
         .unwrap_err();
 }
 
-#[cfg(feature = "time")]
+#[cfg(feature = "time-03")]
 #[tokio::test]
 async fn test_date() {
     use time::{Date, Month::*};
@@ -705,7 +705,7 @@ async fn test_naive_time() {
         .unwrap_err();
 }
 
-#[cfg(feature = "time")]
+#[cfg(feature = "time-03")]
 #[tokio::test]
 async fn test_time() {
     use time::Time;
@@ -1016,7 +1016,7 @@ async fn test_date_time() {
         .unwrap_err();
 }
 
-#[cfg(feature = "time")]
+#[cfg(feature = "time-03")]
 #[tokio::test]
 async fn test_offset_date_time() {
     use time::{Date, Month::*, OffsetDateTime, PrimitiveDateTime, Time, UtcOffset};
