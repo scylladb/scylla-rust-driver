@@ -871,10 +871,10 @@ fn cqlvalue_serialization() {
     );
 }
 
-#[cfg(feature = "secret")]
+#[cfg(feature = "secrecy-08")]
 #[test]
 fn secret_serialization() {
-    use secrecy::Secret;
+    use secrecy_08::Secret;
     let secret = Secret::new(987654i32);
     assert_eq!(
         serialized(secret, ColumnType::Int),

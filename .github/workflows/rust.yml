@@ -35,7 +35,7 @@ jobs:
     - name: Cargo check with all serialization features
       run: cargo check --all-targets --manifest-path "scylla/Cargo.toml" --features "full-serialization"
     - name: Cargo check with secret feature
-      run: cargo check --all-targets --manifest-path "scylla/Cargo.toml" --features "secret"
+      run: cargo check --all-targets --manifest-path "scylla/Cargo.toml" --features "secrecy-08"
     - name: Cargo check with chrono feature
       run: cargo check --all-targets --manifest-path "scylla/Cargo.toml" --features "chrono"
     - name: Cargo check with time feature

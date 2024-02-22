@@ -12,8 +12,8 @@ use uuid::Uuid;
 #[cfg(feature = "chrono")]
 use chrono::{DateTime, NaiveDate, NaiveTime, Utc};
 
-#[cfg(feature = "secret")]
-use secrecy::{ExposeSecret, Secret, Zeroize};
+#[cfg(feature = "secrecy-08")]
+use secrecy_08::{ExposeSecret, Secret, Zeroize};
 
 use crate::frame::response::result::{ColumnType, CqlValue};
 use crate::frame::types::vint_encode;
@@ -205,7 +205,7 @@ impl SerializeCql for time::Time {
         <CqlTime as SerializeCql>::serialize(&(*me).into(), typ, writer)?
     });
 }
-#[cfg(feature = "secret")]
+#[cfg(feature = "secrecy-08")]
 impl<V: SerializeCql + Zeroize> SerializeCql for Secret<V> {
     fn serialize<'b>(
         &self,
