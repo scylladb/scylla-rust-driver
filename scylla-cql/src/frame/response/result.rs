@@ -12,9 +12,6 @@ use std::borrow::Cow;
 use std::{convert::TryInto, net::IpAddr, result::Result as StdResult, str};
 use uuid::Uuid;
 
-#[cfg(feature = "chrono")]
-use chrono::{DateTime, NaiveDate, Utc};
-
 #[derive(Debug)]
 pub struct SetKeyspace {
     pub keyspace_name: String,
@@ -187,8 +184,8 @@ impl CqlValue {
         }
     }
 
-    #[cfg(feature = "chrono")]
-    pub fn as_naive_date(&self) -> Option<NaiveDate> {
+    #[cfg(feature = "chrono-04")]
+    pub fn as_naive_date(&self) -> Option<chrono_04::NaiveDate> {
         self.as_cql_date().and_then(|date| date.try_into().ok())
     }
 
@@ -205,8 +202,8 @@ impl CqlValue {
         }
     }
 
-    #[cfg(feature = "chrono")]
-    pub fn as_datetime(&self) -> Option<DateTime<Utc>> {
+    #[cfg(feature = "chrono-04")]
+    pub fn as_datetime(&self) -> Option<chrono_04::DateTime<chrono_04::Utc>> {
         self.as_cql_timestamp().and_then(|ts| ts.try_into().ok())
     }
 
@@ -223,8 +220,8 @@ impl CqlValue {
         }
     }
 
-    #[cfg(feature = "chrono")]
-    pub fn as_naive_time(&self) -> Option<chrono::NaiveTime> {
+    #[cfg(feature = "chrono-04")]
+    pub fn as_naive_time(&self) -> Option<chrono_04::NaiveTime> {
         self.as_cql_time().and_then(|ts| ts.try_into().ok())
     }
 
@@ -1272,10 +1269,10 @@ mod tests {
         assert_eq!(date.as_cql_date(), Some(max_date));
     }
 
-    #[cfg(feature = "chrono")]
+    #[cfg(feature = "chrono-04")]
     #[test]
-    fn test_naive_date_from_cql() {
-        use chrono::NaiveDate;
+    fn test_naive_date_04_from_cql() {
+        use chrono_04::NaiveDate;
 
         // 2^31 when converted to NaiveDate is 1970-01-01
         let unix_epoch = NaiveDate::from_ymd_opt(1970, 1, 1).unwrap();
@@ -1395,10 +1392,10 @@ mod tests {
         }
     }
 
-    #[cfg(feature = "chrono")]
+    #[cfg(feature = "chrono-04")]
     #[test]
-    fn test_naive_time_from_cql() {
-        use chrono::NaiveTime;
+    fn test_naive_time_04_from_cql() {
+        use chrono_04::NaiveTime;
 
         // 0 when converted to NaiveTime is 0:0:0.0
         let midnight = NaiveTime::from_hms_nano_opt(0, 0, 0, 0).unwrap();
@@ -1486,10 +1483,10 @@ mod tests {
         }
     }
 
-    #[cfg(feature = "chrono")]
+    #[cfg(feature = "chrono-04")]
     #[test]
-    fn test_datetime_from_cql() {
-        use chrono::{DateTime, NaiveDate, NaiveDateTime, NaiveTime};
+    fn test_datetime_04_from_cql() {
+        use chrono_04::{DateTime, NaiveDate, NaiveDateTime, NaiveTime};
 
         // 0 when converted to DateTime is 1970-01-01 0:00:00.00
         let unix_epoch = DateTime::from_timestamp(0, 0).unwrap();

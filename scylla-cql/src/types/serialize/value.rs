@@ -9,9 +9,6 @@ use std::sync::Arc;
 use thiserror::Error;
 use uuid::Uuid;
 
-#[cfg(feature = "chrono")]
-use chrono::{DateTime, NaiveDate, NaiveTime, Utc};
-
 use crate::frame::response::result::{ColumnType, CqlValue};
 use crate::frame::types::vint_encode;
 use crate::frame::value::{
@@ -19,7 +16,7 @@ use crate::frame::value::{
     MaybeUnset, Unset, Value,
 };
 
-#[cfg(feature = "chrono")]
+#[cfg(feature = "chrono-04")]
 use crate::frame::value::ValueOverflow;
 
 use super::writers::WrittenCellProof;
@@ -157,22 +154,22 @@ impl SerializeValue for CqlTime {
         writer.set_value(me.0.to_be_bytes().as_slice()).unwrap()
     });
 }
-#[cfg(feature = "chrono")]
-impl SerializeValue for NaiveDate {
+#[cfg(feature = "chrono-04")]
+impl SerializeValue for chrono_04::NaiveDate {
     impl_serialize_via_writer!(|me, typ, writer| {
         exact_type_check!(typ, Date);
         <CqlDate as SerializeValue>::serialize(&(*me).into(), typ, writer)?
     });
 }
-#[cfg(feature = "chrono")]
-impl SerializeValue for DateTime<Utc> {
+#[cfg(feature = "chrono-04")]
+impl SerializeValue for chrono_04::DateTime<chrono_04::Utc> {
     impl_serialize_via_writer!(|me, typ, writer| {
         exact_type_check!(typ, Timestamp);
         <CqlTimestamp as SerializeValue>::serialize(&(*me).into(), typ, writer)?
     });
 }
-#[cfg(feature = "chrono")]
-impl SerializeValue for NaiveTime {
+#[cfg(feature = "chrono-04")]
+impl SerializeValue for chrono_04::NaiveTime {
     impl_serialize_via_writer!(|me, typ, writer| {
         exact_type_check!(typ, Time);
         let cql_time = CqlTime::try_from(*me).map_err(|_: ValueOverflow| {

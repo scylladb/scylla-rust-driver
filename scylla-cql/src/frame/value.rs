@@ -9,9 +9,6 @@ use std::net::IpAddr;
 use thiserror::Error;
 use uuid::Uuid;
 
-#[cfg(feature = "chrono")]
-use chrono::{DateTime, NaiveDate, NaiveTime, TimeZone, Utc};
-
 use super::response::result::CqlValue;
 use super::types::vint_encode;
 use super::types::RawValue;
@@ -464,10 +461,10 @@ pub struct CqlTimestamp(pub i64);
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub struct CqlTime(pub i64);
 
-#[cfg(feature = "chrono")]
-impl From<NaiveDate> for CqlDate {
-    fn from(value: NaiveDate) -> Self {
-        let unix_epoch = NaiveDate::from_yo_opt(1970, 1).unwrap();
+#[cfg(feature = "chrono-04")]
+impl From<chrono_04::NaiveDate> for CqlDate {
+    fn from(value: chrono_04::NaiveDate) -> Self {
+        let unix_epoch = chrono_04::NaiveDate::from_yo_opt(1970, 1).unwrap();
 
         // `NaiveDate` range is -262145-01-01 to 262143-12-31
         // Both values are well within supported range
@@ -477,50 +474,52 @@ impl From<NaiveDate> for CqlDate {
     }
 }
 
-#[cfg(feature = "chrono")]
-impl TryInto<NaiveDate> for CqlDate {
+#[cfg(feature = "chrono-04")]
+impl TryInto<chrono_04::NaiveDate> for CqlDate {
     type Error = ValueOverflow;
 
-    fn try_into(self) -> Result<NaiveDate, Self::Error> {
+    fn try_into(self) -> Result<chrono_04::NaiveDate, Self::Error> {
         let days_since_unix_epoch = self.0 as i64 - (1 << 31);
 
         // date_days is u32 then converted to i64 then we subtract 2^31;
         // Max value is 2^31, min value is -2^31. Both values can safely fit in chrono::Duration, this call won't panic
-        let duration_since_unix_epoch = chrono::Duration::try_days(days_since_unix_epoch).unwrap();
+        let duration_since_unix_epoch =
+            chrono_04::Duration::try_days(days_since_unix_epoch).unwrap();
 
-        NaiveDate::from_yo_opt(1970, 1)
+        chrono_04::NaiveDate::from_yo_opt(1970, 1)
             .unwrap()
             .checked_add_signed(duration_since_unix_epoch)
             .ok_or(ValueOverflow)
     }
 }
 
-#[cfg(feature = "chrono")]
-impl From<DateTime<Utc>> for CqlTimestamp {
-    fn from(value: DateTime<Utc>) -> Self {
+#[cfg(feature = "chrono-04")]
+impl From<chrono_04::DateTime<chrono_04::Utc>> for CqlTimestamp {
+    fn from(value: chrono_04::DateTime<chrono_04::Utc>) -> Self {
         Self(value.timestamp_millis())
     }
 }
 
-#[cfg(feature = "chrono")]
-impl TryInto<DateTime<Utc>> for CqlTimestamp {
+#[cfg(feature = "chrono-04")]
+impl TryInto<chrono_04::DateTime<chrono_04::Utc>> for CqlTimestamp {
     type Error = ValueOverflow;
 
-    fn try_into(self) -> Result<DateTime<Utc>, Self::Error> {
-        match Utc.timestamp_millis_opt(self.0) {
-            chrono::LocalResult::Single(datetime) => Ok(datetime),
+    fn try_into(self) -> Result<chrono_04::DateTime<chrono_04::Utc>, Self::Error> {
+        use chrono_04::TimeZone;
+        match chrono_04::Utc.timestamp_millis_opt(self.0) {
+            chrono_04::LocalResult::Single(datetime) => Ok(datetime),
             _ => Err(ValueOverflow),
         }
     }
 }
 
-#[cfg(feature = "chrono")]
-impl TryFrom<NaiveTime> for CqlTime {
+#[cfg(feature = "chrono-04")]
+impl TryFrom<chrono_04::NaiveTime> for CqlTime {
     type Error = ValueOverflow;
 
-    fn try_from(value: NaiveTime) -> Result<Self, Self::Error> {
+    fn try_from(value: chrono_04::NaiveTime) -> Result<Self, Self::Error> {
         let nanos = value
-            .signed_duration_since(chrono::NaiveTime::MIN)
+            .signed_duration_since(chrono_04::NaiveTime::MIN)
             .num_nanoseconds()
             .unwrap();
 
@@ -533,18 +532,18 @@ impl TryFrom<NaiveTime> for CqlTime {
     }
 }
 
-#[cfg(feature = "chrono")]
-impl TryInto<NaiveTime> for CqlTime {
+#[cfg(feature = "chrono-04")]
+impl TryInto<chrono_04::NaiveTime> for CqlTime {
     type Error = ValueOverflow;
 
-    fn try_into(self) -> Result<NaiveTime, Self::Error> {
+    fn try_into(self) -> Result<chrono_04::NaiveTime, Self::Error> {
         let secs = (self.0 / 1_000_000_000)
             .try_into()
             .map_err(|_| ValueOverflow)?;
         let nanos = (self.0 % 1_000_000_000)
             .try_into()
             .map_err(|_| ValueOverflow)?;
-        NaiveTime::from_num_seconds_from_midnight_opt(secs, nanos).ok_or(ValueOverflow)
+        chrono_04::NaiveTime::from_num_seconds_from_midnight_opt(secs, nanos).ok_or(ValueOverflow)
     }
 }
 
@@ -1007,8 +1006,8 @@ impl Value for bigdecimal_04::BigDecimal {
     }
 }
 
-#[cfg(feature = "chrono")]
-impl Value for NaiveDate {
+#[cfg(feature = "chrono-04")]
+impl Value for chrono_04::NaiveDate {
     fn serialize(&self, buf: &mut Vec<u8>) -> Result<(), ValueTooBig> {
         CqlDate::from(*self).serialize(buf)
     }
@@ -1045,8 +1044,8 @@ impl Value for CqlTime {
     }
 }
 
-#[cfg(feature = "chrono")]
-impl Value for DateTime<Utc> {
+#[cfg(feature = "chrono-04")]
+impl Value for chrono_04::DateTime<chrono_04::Utc> {
     fn serialize(&self, buf: &mut Vec<u8>) -> Result<(), ValueTooBig> {
         CqlTimestamp::from(*self).serialize(buf)
     }
@@ -1059,8 +1058,8 @@ impl Value for time_03::OffsetDateTime {
     }
 }
 
-#[cfg(feature = "chrono")]
-impl Value for NaiveTime {
+#[cfg(feature = "chrono-04")]
+impl Value for chrono_04::NaiveTime {
     fn serialize(&self, buf: &mut Vec<u8>) -> Result<(), ValueTooBig> {
         CqlTime::try_from(*self)
             .map_err(|_| ValueTooBig)?

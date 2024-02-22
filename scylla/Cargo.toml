@@ -25,13 +25,13 @@ cloud = [
     "dep:base64",
 ]
 secrecy-08 = ["scylla-cql/secrecy-08"]
-chrono = ["scylla-cql/chrono"]
+chrono-04 = ["scylla-cql/chrono-04"]
 time-03 = ["scylla-cql/time-03"]
 num-bigint-03 = ["scylla-cql/num-bigint-03"]
 num-bigint-04 = ["scylla-cql/num-bigint-04"]
 bigdecimal-04 = ["scylla-cql/bigdecimal-04"]
 full-serialization = [
-    "chrono",
+    "chrono-04",
     "time-03",
     "secrecy-08",
     "num-bigint-03",

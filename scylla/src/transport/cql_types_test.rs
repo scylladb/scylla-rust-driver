@@ -293,9 +293,9 @@ async fn test_counter() {
     }
 }
 
-#[cfg(feature = "chrono")]
+#[cfg(feature = "chrono-04")]
 #[tokio::test]
-async fn test_naive_date() {
+async fn test_naive_date_04() {
     setup_tracing();
     use chrono::Datelike;
     use chrono::NaiveDate;
@@ -620,9 +620,9 @@ async fn test_cql_time() {
     }
 }
 
-#[cfg(feature = "chrono")]
+#[cfg(feature = "chrono-04")]
 #[tokio::test]
-async fn test_naive_time() {
+async fn test_naive_time_04() {
     setup_tracing();
     use chrono::NaiveTime;
 
@@ -842,9 +842,9 @@ async fn test_cql_timestamp() {
     }
 }
 
-#[cfg(feature = "chrono")]
+#[cfg(feature = "chrono-04")]
 #[tokio::test]
-async fn test_date_time() {
+async fn test_date_time_04() {
     setup_tracing();
     use chrono::{DateTime, NaiveDate, NaiveDateTime, NaiveTime, Utc};
 
