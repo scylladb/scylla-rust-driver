@@ -27,6 +27,7 @@ use tracing::instrument::WithSubscriber;
 use tracing::{debug, warn};
 use uuid::Uuid;
 
+use super::locator::tablets::{RawTablet, Tablet, TabletsInfo};
 use super::node::{KnownNode, NodeAddr};
 use super::NodeRef;
 
@@ -116,6 +117,10 @@ struct ClusterWorker {
     // Channel used to receive signals that control connection is broken
     control_connection_repair_channel: tokio::sync::broadcast::Receiver<()>,
 
+    // Channel used to receive info about new tablets from custom payload in responses
+    // sent by server.
+    tablets_channel: tokio::sync::mpsc::Receiver<(TableSpec, RawTablet)>,
+
     // Keyspace send in "USE <keyspace name>" when opening each connection
     used_keyspace: Option<VerifiedKeyspaceName>,
 
@@ -147,6 +152,7 @@ impl Cluster {
         fetch_schema_metadata: bool,
         host_filter: Option<Arc<dyn HostFilter>>,
         cluster_metadata_refresh_interval: Duration,
+        tablet_receiver: tokio::sync::mpsc::Receiver<(TableSpec, RawTablet)>,
     ) -> Result<Cluster, NewSessionError> {
         let (refresh_sender, refresh_receiver) = tokio::sync::mpsc::channel(32);
         let (use_keyspace_sender, use_keyspace_receiver) = tokio::sync::mpsc::channel(32);
@@ -173,6 +179,7 @@ impl Cluster {
             &HashMap::new(),
             &None,
             host_filter.as_deref(),
+            TabletsInfo::new(),
         )
         .await;
         cluster_data.wait_until_all_pools_are_initialized().await;
@@ -188,6 +195,7 @@ impl Cluster {
             refresh_channel: refresh_receiver,
             server_events_channel: server_events_receiver,
             control_connection_repair_channel: control_connection_repair_receiver,
+            tablets_channel: tablet_receiver,
 
             use_keyspace_channel: use_keyspace_receiver,
             used_keyspace: None,
@@ -276,6 +284,7 @@ impl ClusterData {
         known_peers: &HashMap<Uuid, Arc<Node>>,
         used_keyspace: &Option<VerifiedKeyspaceName>,
         host_filter: Option<&dyn HostFilter>,
+        tablets: TabletsInfo,
     ) -> Self {
         // Create new updated known_peers and ring
         let mut new_known_peers: HashMap<Uuid, Arc<Node>> =
@@ -343,7 +352,7 @@ impl ClusterData {
         let keyspaces = metadata.keyspaces;
         let (locator, keyspaces) = tokio::task::spawn_blocking(move || {
             let keyspace_strategies = keyspaces.values().map(|ks| &ks.strategy);
-            let locator = ReplicaLocator::new(ring.into_iter(), keyspace_strategies);
+            let locator = ReplicaLocator::new(ring.into_iter(), keyspace_strategies, tablets);
             (locator, keyspaces)
         })
         .await
@@ -484,6 +493,15 @@ impl ClusterData {
         // By an invariant `self.known_peers` is nonempty, so the returned iterator
         // is nonempty, too.
     }
+
+    fn update_tablets(&mut self, raw_tablets: Vec<(TableSpec, RawTablet)>) {
+        let replica_translator = |uuid: Uuid| self.known_peers.get(&uuid).cloned();
+
+        for (table, raw_tablet) in raw_tablets.into_iter() {
+            let tablet = Tablet::from_raw_tablet(&raw_tablet, replica_translator);
+            self.locator.tablets.add_tablet(table, tablet);
+        }
+    }
 }
 
 impl ClusterWorker {
@@ -506,6 +524,8 @@ impl ClusterWorker {
                 })
                 .unwrap_or_else(Instant::now);
 
+            let mut tablets = Vec::new();
+
             let sleep_future = tokio::time::sleep_until(sleep_until);
             tokio::pin!(sleep_future);
 
@@ -516,6 +536,17 @@ impl ClusterWorker {
                         Some(request) => cur_request = Some(request),
                         None => return, // If refresh_channel was closed then cluster was dropped, we can stop working
                     }
+                }
+                tablets_count = self.tablets_channel.recv_many(&mut tablets, 8192) => {
+                    if tablets_count == 0 {
+                        // If the channel was closed then cluster was dropped, we can stop working
+                        return;
+                    }
+                    let mut new_cluster_data: ClusterData = self.cluster_data.load().as_ref().clone();
+                    new_cluster_data.update_tablets(tablets);
+                    self.update_cluster_data(Arc::new(new_cluster_data));
+
+                    continue;
                 }
                 recv_res = self.server_events_channel.recv() => {
                     if let Some(event) = recv_res {
@@ -672,6 +703,7 @@ impl ClusterWorker {
                 &cluster_data.known_peers,
                 &self.used_keyspace,
                 self.host_filter.as_deref(),
+                cluster_data.locator.tablets.clone(),
             )
             .await,
         );

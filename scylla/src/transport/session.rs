@@ -494,6 +494,8 @@ impl Session {
             return Err(NewSessionError::EmptyKnownNodesList);
         }
 
+        let (tablet_sender, tablet_receiver) = tokio::sync::mpsc::channel(8192);
+
         let connection_config = ConnectionConfig {
             compression: config.compression,
             tcp_nodelay: config.tcp_nodelay,
@@ -510,6 +512,7 @@ impl Session {
             enable_write_coalescing: config.enable_write_coalescing,
             keepalive_interval: config.keepalive_interval,
             keepalive_timeout: config.keepalive_timeout,
+            tablet_sender: Some(tablet_sender),
         };
 
         let pool_config = PoolConfig {
@@ -526,6 +529,7 @@ impl Session {
             config.fetch_schema_metadata,
             config.host_filter,
             config.cluster_metadata_refresh_interval,
+            tablet_receiver,
         )
         .await?;
 
