@@ -304,10 +304,10 @@ fn ipaddr_serialization() {
     );
 }
 
-#[cfg(feature = "chrono")]
+#[cfg(feature = "chrono-04")]
 #[test]
 fn naive_date_serialization() {
-    use chrono::NaiveDate;
+    use chrono_04::NaiveDate;
     // 1970-01-31 is 2^31
     let unix_epoch: NaiveDate = NaiveDate::from_ymd_opt(1970, 1, 1).unwrap();
     assert_eq!(
@@ -410,10 +410,10 @@ fn cql_time_serialization() {
     }
 }
 
-#[cfg(feature = "chrono")]
+#[cfg(feature = "chrono-04")]
 #[test]
 fn naive_time_serialization() {
-    use chrono::NaiveTime;
+    use chrono_04::NaiveTime;
 
     let midnight_time: i64 = 0;
     let max_time: i64 = 24 * 60 * 60 * 1_000_000_000 - 1;
@@ -490,10 +490,10 @@ fn cql_timestamp_serialization() {
     }
 }
 
-#[cfg(feature = "chrono")]
+#[cfg(feature = "chrono-04")]
 #[test]
 fn naive_date_time_serialization() {
-    use chrono::NaiveDateTime;
+    use chrono_04::NaiveDateTime;
     let test_cases = [
         (
             // Max time serialized without error

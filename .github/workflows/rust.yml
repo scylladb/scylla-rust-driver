@@ -37,7 +37,7 @@ jobs:
     - name: Cargo check with secret feature
       run: cargo check --all-targets --manifest-path "scylla/Cargo.toml" --features "secrecy-08"
     - name: Cargo check with chrono feature
-      run: cargo check --all-targets --manifest-path "scylla/Cargo.toml" --features "chrono"
+      run: cargo check --all-targets --manifest-path "scylla/Cargo.toml" --features "chrono-04"
     - name: Cargo check with time feature
       run: cargo check --all-targets --manifest-path "scylla/Cargo.toml" --features "time-03"
     - name: Cargo check with num-bigint-03 feature

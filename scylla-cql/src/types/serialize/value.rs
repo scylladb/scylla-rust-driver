@@ -9,8 +9,8 @@ use std::sync::Arc;
 use thiserror::Error;
 use uuid::Uuid;
 
-#[cfg(feature = "chrono")]
-use chrono::{DateTime, NaiveDate, NaiveTime, Utc};
+#[cfg(feature = "chrono-04")]
+use chrono_04::{DateTime, NaiveDate, NaiveTime, Utc};
 
 #[cfg(feature = "secrecy-08")]
 use secrecy_08::{ExposeSecret, Secret, Zeroize};
@@ -22,7 +22,7 @@ use crate::frame::value::{
     MaybeUnset, Unset, Value,
 };
 
-#[cfg(feature = "chrono")]
+#[cfg(feature = "chrono-04")]
 use crate::frame::value::ValueOverflow;
 
 use super::writers::WrittenCellProof;
@@ -160,21 +160,21 @@ impl SerializeCql for CqlTime {
         writer.set_value(me.0.to_be_bytes().as_slice()).unwrap()
     });
 }
-#[cfg(feature = "chrono")]
+#[cfg(feature = "chrono-04")]
 impl SerializeCql for NaiveDate {
     impl_serialize_via_writer!(|me, typ, writer| {
         exact_type_check!(typ, Date);
         <CqlDate as SerializeCql>::serialize(&(*me).into(), typ, writer)?
     });
 }
-#[cfg(feature = "chrono")]
+#[cfg(feature = "chrono-04")]
 impl SerializeCql for DateTime<Utc> {
     impl_serialize_via_writer!(|me, typ, writer| {
         exact_type_check!(typ, Timestamp);
         <CqlTimestamp as SerializeCql>::serialize(&(*me).into(), typ, writer)?
     });
 }
-#[cfg(feature = "chrono")]
+#[cfg(feature = "chrono-04")]
 impl SerializeCql for NaiveTime {
     impl_serialize_via_writer!(|me, typ, writer| {
         exact_type_check!(typ, Time);

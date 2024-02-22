@@ -8,8 +8,8 @@ use std::net::IpAddr;
 use thiserror::Error;
 use uuid::Uuid;
 
-#[cfg(feature = "chrono")]
-use chrono::{DateTime, NaiveDate, NaiveTime, Utc};
+#[cfg(feature = "chrono-04")]
+use chrono_04::{DateTime, NaiveDate, NaiveTime, Utc};
 
 #[cfg(feature = "secrecy-08")]
 use secrecy_08::{Secret, Zeroize};
@@ -178,7 +178,7 @@ impl FromCqlVal<CqlValue> for bigdecimal_04::BigDecimal {
     }
 }
 
-#[cfg(feature = "chrono")]
+#[cfg(feature = "chrono-04")]
 impl FromCqlVal<CqlValue> for NaiveDate {
     fn from_cql(cql_val: CqlValue) -> Result<Self, FromCqlValError> {
         match cql_val {
@@ -198,7 +198,7 @@ impl FromCqlVal<CqlValue> for time_03::Date {
     }
 }
 
-#[cfg(feature = "chrono")]
+#[cfg(feature = "chrono-04")]
 impl FromCqlVal<CqlValue> for NaiveTime {
     fn from_cql(cql_val: CqlValue) -> Result<Self, FromCqlValError> {
         match cql_val {
@@ -218,7 +218,7 @@ impl FromCqlVal<CqlValue> for time_03::Time {
     }
 }
 
-#[cfg(feature = "chrono")]
+#[cfg(feature = "chrono-04")]
 impl FromCqlVal<CqlValue> for DateTime<Utc> {
     fn from_cql(cql_val: CqlValue) -> Result<Self, FromCqlValError> {
         cql_val
@@ -526,10 +526,10 @@ mod tests {
         assert_eq!(Ok(counter), Counter::from_cql(CqlValue::Counter(counter)));
     }
 
-    #[cfg(feature = "chrono")]
+    #[cfg(feature = "chrono-04")]
     #[test]
     fn naive_date_from_cql() {
-        use chrono::NaiveDate;
+        use chrono_04::NaiveDate;
 
         let unix_epoch: CqlValue = CqlValue::Date(CqlDate(2_u32.pow(31)));
         assert_eq!(
@@ -634,10 +634,10 @@ mod tests {
         assert_eq!(time_ns, CqlTime::from_cql(cql_value).unwrap().0);
     }
 
-    #[cfg(feature = "chrono")]
+    #[cfg(feature = "chrono-04")]
     #[test]
     fn naive_time_from_cql() {
-        use chrono::NaiveTime;
+        use chrono_04::NaiveTime;
 
         // Midnight
         let midnight = CqlValue::Time(CqlTime(0));
@@ -661,7 +661,7 @@ mod tests {
             NaiveTime::from_cql(late_night)
         );
 
-        // Bad values. Since value is out of `chrono::NaiveTime` range, it should return `BadVal` error
+        // Bad values. Since value is out of `chrono_04::NaiveTime` range, it should return `BadVal` error
         let bad_time1 = CqlValue::Time(CqlTime(-1));
         assert_eq!(Err(FromCqlValError::BadVal), NaiveTime::from_cql(bad_time1));
         let bad_time2 = CqlValue::Time(CqlTime(i64::MAX));
@@ -734,10 +734,10 @@ mod tests {
         );
     }
 
-    #[cfg(feature = "chrono")]
+    #[cfg(feature = "chrono-04")]
     #[test]
     fn datetime_from_cql() {
-        use chrono::{DateTime, NaiveDate, Utc};
+        use chrono_04::{DateTime, NaiveDate, Utc};
         let naivedatetime_utc = NaiveDate::from_ymd_opt(2022, 12, 31)
             .unwrap()
             .and_hms_opt(2, 0, 0)

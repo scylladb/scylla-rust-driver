@@ -15,8 +15,8 @@ use std::{
 };
 use uuid::Uuid;
 
-#[cfg(feature = "chrono")]
-use chrono::{DateTime, NaiveDate, Utc};
+#[cfg(feature = "chrono-04")]
+use chrono_04::{DateTime, NaiveDate, Utc};
 
 #[derive(Debug)]
 pub struct SetKeyspace {
@@ -156,7 +156,7 @@ impl CqlValue {
         }
     }
 
-    #[cfg(feature = "chrono")]
+    #[cfg(feature = "chrono-04")]
     pub fn as_naive_date(&self) -> Option<NaiveDate> {
         self.as_cql_date().and_then(|date| date.try_into().ok())
     }
@@ -173,7 +173,7 @@ impl CqlValue {
         }
     }
 
-    #[cfg(feature = "chrono")]
+    #[cfg(feature = "chrono-04")]
     pub fn as_datetime(&self) -> Option<DateTime<Utc>> {
         self.as_cql_timestamp().and_then(|ts| ts.try_into().ok())
     }
@@ -190,8 +190,8 @@ impl CqlValue {
         }
     }
 
-    #[cfg(feature = "chrono")]
-    pub fn as_naive_time(&self) -> Option<chrono::NaiveTime> {
+    #[cfg(feature = "chrono-04")]
+    pub fn as_naive_time(&self) -> Option<chrono_04::NaiveTime> {
         self.as_cql_time().and_then(|ts| ts.try_into().ok())
     }
 
@@ -1362,10 +1362,10 @@ mod tests {
         assert_eq!(date.as_cql_date(), Some(max_date));
     }
 
-    #[cfg(feature = "chrono")]
+    #[cfg(feature = "chrono-04")]
     #[test]
     fn test_naive_date_from_cql() {
-        use chrono::NaiveDate;
+        use chrono_04::NaiveDate;
 
         // 2^31 when converted to NaiveDate is 1970-01-01
         let unix_epoch = NaiveDate::from_ymd_opt(1970, 1, 1).unwrap();
@@ -1485,10 +1485,10 @@ mod tests {
         }
     }
 
-    #[cfg(feature = "chrono")]
+    #[cfg(feature = "chrono-04")]
     #[test]
     fn test_naive_time_from_cql() {
-        use chrono::NaiveTime;
+        use chrono_04::NaiveTime;
 
         // 0 when converted to NaiveTime is 0:0:0.0
         let midnight = NaiveTime::from_hms_nano_opt(0, 0, 0, 0).unwrap();
@@ -1577,10 +1577,10 @@ mod tests {
         }
     }
 
-    #[cfg(feature = "chrono")]
+    #[cfg(feature = "chrono-04")]
     #[test]
     fn test_datetime_from_cql() {
-        use chrono::{NaiveDate, NaiveDateTime, NaiveTime};
+        use chrono_04::{NaiveDate, NaiveDateTime, NaiveTime};
 
         // 0 when converted to DateTime is 1970-01-01 0:00:00.00
         let unix_epoch = NaiveDateTime::from_timestamp_opt(0, 0).unwrap().and_utc();
