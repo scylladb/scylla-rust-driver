@@ -616,10 +616,10 @@ impl_emptiable_strict_type!(
 );
 
 // secrecy
-#[cfg(feature = "secret")]
-impl<'frame, T> DeserializeValue<'frame> for secrecy::Secret<T>
+#[cfg(feature = "secrecy-08")]
+impl<'frame, T> DeserializeValue<'frame> for secrecy_08::Secret<T>
 where
-    T: DeserializeValue<'frame> + secrecy::Zeroize,
+    T: DeserializeValue<'frame> + secrecy_08::Zeroize,
 {
     fn type_check(typ: &ColumnType) -> Result<(), TypeCheckError> {
         <T as DeserializeValue<'frame>>::type_check(typ)
@@ -629,7 +629,7 @@ where
         typ: &'frame ColumnType,
         v: Option<FrameSlice<'frame>>,
     ) -> Result<Self, DeserializationError> {
-        <T as DeserializeValue<'frame>>::deserialize(typ, v).map(secrecy::Secret::new)
+        <T as DeserializeValue<'frame>>::deserialize(typ, v).map(secrecy_08::Secret::new)
     }
 }
 

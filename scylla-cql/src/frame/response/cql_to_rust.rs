@@ -11,9 +11,6 @@ use uuid::Uuid;
 #[cfg(feature = "chrono")]
 use chrono::{DateTime, NaiveDate, NaiveTime, Utc};
 
-#[cfg(feature = "secret")]
-use secrecy::{Secret, Zeroize};
-
 #[derive(Error, Debug, Clone, PartialEq, Eq)]
 pub enum FromRowError {
     #[error("{err} in the column with index {column}")]
@@ -240,10 +237,10 @@ impl FromCqlVal<CqlValue> for time::OffsetDateTime {
     }
 }
 
-#[cfg(feature = "secret")]
-impl<V: FromCqlVal<CqlValue> + Zeroize> FromCqlVal<CqlValue> for Secret<V> {
+#[cfg(feature = "secrecy-08")]
+impl<V: FromCqlVal<CqlValue> + secrecy_08::Zeroize> FromCqlVal<CqlValue> for secrecy_08::Secret<V> {
     fn from_cql(cql_val: CqlValue) -> Result<Self, FromCqlValError> {
-        Ok(Secret::new(FromCqlVal::from_cql(cql_val)?))
+        Ok(secrecy_08::Secret::new(FromCqlVal::from_cql(cql_val)?))
     }
 }
 

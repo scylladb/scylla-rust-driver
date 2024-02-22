@@ -16,9 +16,6 @@ use super::response::result::CqlValue;
 use super::types::vint_encode;
 use super::types::RawValue;
 
-#[cfg(feature = "secret")]
-use secrecy::{ExposeSecret, Secret, Zeroize};
-
 /// Every value being sent in a query must implement this trait
 /// serialize() should write the Value as [bytes] to the provided buffer
 pub trait Value {
@@ -1076,9 +1073,10 @@ impl Value for time::Time {
     }
 }
 
-#[cfg(feature = "secret")]
-impl<V: Value + Zeroize> Value for Secret<V> {
+#[cfg(feature = "secrecy-08")]
+impl<V: Value + secrecy_08::Zeroize> Value for secrecy_08::Secret<V> {
     fn serialize(&self, buf: &mut Vec<u8>) -> Result<(), ValueTooBig> {
+        use secrecy_08::ExposeSecret;
         self.expose_secret().serialize(buf)
     }
 }

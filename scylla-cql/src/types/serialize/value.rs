@@ -12,9 +12,6 @@ use uuid::Uuid;
 #[cfg(feature = "chrono")]
 use chrono::{DateTime, NaiveDate, NaiveTime, Utc};
 
-#[cfg(feature = "secret")]
-use secrecy::{ExposeSecret, Secret, Zeroize};
-
 use crate::frame::response::result::{ColumnType, CqlValue};
 use crate::frame::types::vint_encode;
 use crate::frame::value::{
@@ -205,13 +202,14 @@ impl SerializeValue for time::Time {
         <CqlTime as SerializeValue>::serialize(&(*me).into(), typ, writer)?
     });
 }
-#[cfg(feature = "secret")]
-impl<V: SerializeValue + Zeroize> SerializeValue for Secret<V> {
+#[cfg(feature = "secrecy-08")]
+impl<V: SerializeValue + secrecy_08::Zeroize> SerializeValue for secrecy_08::Secret<V> {
     fn serialize<'b>(
         &self,
         typ: &ColumnType,
         writer: CellWriter<'b>,
     ) -> Result<WrittenCellProof<'b>, SerializationError> {
+        use secrecy_08::ExposeSecret;
         V::serialize(self.expose_secret(), typ, writer)
     }
 }
