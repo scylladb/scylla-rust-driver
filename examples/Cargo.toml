@@ -14,7 +14,7 @@ scylla = { path = "../scylla", features = [
     "ssl",
     "cloud",
     "chrono",
-    "time",
+    "time-03",
     "num-bigint-03",
     "num-bigint-04",
     "bigdecimal-04",

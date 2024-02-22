@@ -192,8 +192,8 @@ impl CqlValue {
         self.as_cql_date().and_then(|date| date.try_into().ok())
     }
 
-    #[cfg(feature = "time")]
-    pub fn as_date(&self) -> Option<time::Date> {
+    #[cfg(feature = "time-03")]
+    pub fn as_date(&self) -> Option<time_03::Date> {
         self.as_cql_date().and_then(|date| date.try_into().ok())
     }
 
@@ -209,8 +209,8 @@ impl CqlValue {
         self.as_cql_timestamp().and_then(|ts| ts.try_into().ok())
     }
 
-    #[cfg(feature = "time")]
-    pub fn as_offset_date_time(&self) -> Option<time::OffsetDateTime> {
+    #[cfg(feature = "time-03")]
+    pub fn as_offset_date_time(&self) -> Option<time_03::OffsetDateTime> {
         self.as_cql_timestamp().and_then(|ts| ts.try_into().ok())
     }
 
@@ -226,8 +226,8 @@ impl CqlValue {
         self.as_cql_time().and_then(|ts| ts.try_into().ok())
     }
 
-    #[cfg(feature = "time")]
-    pub fn as_time(&self) -> Option<time::Time> {
+    #[cfg(feature = "time-03")]
+    pub fn as_time(&self) -> Option<time_03::Time> {
         self.as_cql_time().and_then(|ts| ts.try_into().ok())
     }
 
@@ -1318,13 +1318,13 @@ mod tests {
         );
     }
 
-    #[cfg(feature = "time")]
+    #[cfg(feature = "time-03")]
     #[test]
-    fn test_date_from_cql() {
-        use time::Date;
-        use time::Month::*;
+    fn test_date_03_from_cql() {
+        use time_03::Date;
+        use time_03::Month::*;
 
-        // 2^31 when converted to time::Date is 1970-01-01
+        // 2^31 when converted to time_03::Date is 1970-01-01
         let unix_epoch = Date::from_calendar_date(1970, January, 1).unwrap();
         let date =
             super::deser_cql_value(&ColumnType::Date, &mut (1u32 << 31).to_be_bytes().as_ref())
@@ -1332,7 +1332,7 @@ mod tests {
 
         assert_eq!(date.as_date(), Some(unix_epoch));
 
-        // 2^31 - 30 when converted to time::Date is 1969-12-02
+        // 2^31 - 30 when converted to time_03::Date is 1969-12-02
         let before_epoch = Date::from_calendar_date(1969, December, 2).unwrap();
         let date = super::deser_cql_value(
             &ColumnType::Date,
@@ -1342,7 +1342,7 @@ mod tests {
 
         assert_eq!(date.as_date(), Some(before_epoch));
 
-        // 2^31 + 30 when converted to time::Date is 1970-01-31
+        // 2^31 + 30 when converted to time_03::Date is 1970-01-31
         let after_epoch = Date::from_calendar_date(1970, January, 31).unwrap();
         let date = super::deser_cql_value(
             &ColumnType::Date,
@@ -1431,10 +1431,10 @@ mod tests {
         assert_eq!(time.as_naive_time(), Some(midnight));
     }
 
-    #[cfg(feature = "time")]
+    #[cfg(feature = "time-03")]
     #[test]
-    fn test_primitive_time_from_cql() {
-        use time::Time;
+    fn test_primitive_time_03_from_cql() {
+        use time_03::Time;
 
         // 0 when converted to NaiveTime is 0:0:0.0
         let midnight = Time::from_hms_nano(0, 0, 0, 0).unwrap();
@@ -1542,10 +1542,10 @@ mod tests {
         );
     }
 
-    #[cfg(feature = "time")]
+    #[cfg(feature = "time-03")]
     #[test]
-    fn test_offset_datetime_from_cql() {
-        use time::{Date, Month::*, OffsetDateTime, PrimitiveDateTime, Time};
+    fn test_offset_datetime_03_from_cql() {
+        use time_03::{Date, Month::*, OffsetDateTime, PrimitiveDateTime, Time};
 
         // 0 when converted to OffsetDateTime is 1970-01-01 0:00:00.00
         let unix_epoch = OffsetDateTime::from_unix_timestamp(0).unwrap();

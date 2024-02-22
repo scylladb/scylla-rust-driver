@@ -26,13 +26,13 @@ chrono = { version = "0.4.32", default-features = false, optional = true }
 lz4_flex = { version = "0.11.1" }
 async-trait = "0.1.57"
 serde = { version = "1.0", features = ["derive"], optional = true }
-time = { version = "0.3", optional = true }
+time-03 = { package = "time", version = "0.3", optional = true }
 
 [dev-dependencies]
 assert_matches = "1.5.0"
 criterion = "0.4"        # Note: v0.5 needs at least rust 1.70.0
 # Use large-dates feature to test potential edge cases
-time = { version = "0.3.21", features = ["large-dates"] }
+time-03 = { package = "time", version = "0.3.21", features = ["large-dates"] }
 uuid = { version = "1.0", features = ["v4"] }
 
 [[bench]]
@@ -41,14 +41,14 @@ harness = false
 
 [features]
 secrecy-08 = ["dep:secrecy-08"]
-time = ["dep:time"]
+time-03 = ["dep:time-03"]
 chrono = ["dep:chrono"]
 num-bigint-03 = ["dep:num-bigint-03"]
 num-bigint-04 = ["dep:num-bigint-04"]
 bigdecimal-04 = ["dep:bigdecimal-04"]
 full-serialization = [
     "chrono",
-    "time",
+    "time-03",
     "secrecy-08",
     "num-bigint-03",
     "num-bigint-04",

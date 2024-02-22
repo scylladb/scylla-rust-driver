@@ -335,11 +335,11 @@ fn naive_date_serialization() {
     assert_eq!((2_u32.pow(31) + 30).to_be_bytes(), [128, 0, 0, 30]);
 }
 
-#[cfg(feature = "time")]
+#[cfg(feature = "time-03")]
 #[test]
-fn date_serialization() {
+fn date_03_serialization() {
     // 1970-01-31 is 2^31
-    let unix_epoch = time::Date::from_ordinal_date(1970, 1).unwrap();
+    let unix_epoch = time_03::Date::from_ordinal_date(1970, 1).unwrap();
     assert_eq!(
         serialized(unix_epoch, ColumnType::Date),
         vec![0, 0, 0, 4, 128, 0, 0, 0]
@@ -347,7 +347,8 @@ fn date_serialization() {
     assert_eq!(2_u32.pow(31).to_be_bytes(), [128, 0, 0, 0]);
 
     // 1969-12-02 is 2^31 - 30
-    let before_epoch = time::Date::from_calendar_date(1969, time::Month::December, 2).unwrap();
+    let before_epoch =
+        time_03::Date::from_calendar_date(1969, time_03::Month::December, 2).unwrap();
     assert_eq!(
         serialized(before_epoch, ColumnType::Date),
         vec![0, 0, 0, 4, 127, 255, 255, 226]
@@ -355,15 +356,16 @@ fn date_serialization() {
     assert_eq!((2_u32.pow(31) - 30).to_be_bytes(), [127, 255, 255, 226]);
 
     // 1970-01-31 is 2^31 + 30
-    let after_epoch = time::Date::from_calendar_date(1970, time::Month::January, 31).unwrap();
+    let after_epoch = time_03::Date::from_calendar_date(1970, time_03::Month::January, 31).unwrap();
     assert_eq!(
         serialized(after_epoch, ColumnType::Date),
         vec![0, 0, 0, 4, 128, 0, 0, 30]
     );
     assert_eq!((2_u32.pow(31) + 30).to_be_bytes(), [128, 0, 0, 30]);
 
-    // Min date represented by time::Date (without large-dates feature)
-    let long_before_epoch = time::Date::from_calendar_date(-9999, time::Month::January, 1).unwrap();
+    // Min date represented by time_03::Date (without large-dates feature)
+    let long_before_epoch =
+        time_03::Date::from_calendar_date(-9999, time_03::Month::January, 1).unwrap();
     let days_till_epoch = (unix_epoch - long_before_epoch).whole_days();
     assert_eq!(
         (2_u32.pow(31) - days_till_epoch as u32).to_be_bytes(),
@@ -374,8 +376,9 @@ fn date_serialization() {
         vec![0, 0, 0, 4, 127, 189, 75, 125]
     );
 
-    // Max date represented by time::Date (without large-dates feature)
-    let long_after_epoch = time::Date::from_calendar_date(9999, time::Month::December, 31).unwrap();
+    // Max date represented by time_03::Date (without large-dates feature)
+    let long_after_epoch =
+        time_03::Date::from_calendar_date(9999, time_03::Month::December, 31).unwrap();
     let days_since_epoch = (long_after_epoch - unix_epoch).whole_days();
     assert_eq!(
         (2_u32.pow(31) + days_since_epoch as u32).to_be_bytes(),
@@ -446,20 +449,20 @@ fn naive_time_serialization() {
     )
 }
 
-#[cfg(feature = "time")]
+#[cfg(feature = "time-03")]
 #[test]
-fn time_serialization() {
+fn time_03_serialization() {
     let midnight_time: i64 = 0;
     let max_time: i64 = 24 * 60 * 60 * 1_000_000_000 - 1;
     let any_time: i64 = (3600 + 2 * 60 + 3) * 1_000_000_000 + 4;
     let test_cases = [
-        (time::Time::MIDNIGHT, midnight_time.to_be_bytes()),
+        (time_03::Time::MIDNIGHT, midnight_time.to_be_bytes()),
         (
-            time::Time::from_hms_nano(23, 59, 59, 999_999_999).unwrap(),
+            time_03::Time::from_hms_nano(23, 59, 59, 999_999_999).unwrap(),
             max_time.to_be_bytes(),
         ),
         (
-            time::Time::from_hms_nano(1, 2, 3, 4).unwrap(),
+            time_03::Time::from_hms_nano(1, 2, 3, 4).unwrap(),
             any_time.to_be_bytes(),
         ),
     ];
@@ -541,14 +544,14 @@ fn date_time_serialization() {
     }
 }
 
-#[cfg(feature = "time")]
+#[cfg(feature = "time-03")]
 #[test]
-fn offset_date_time_serialization() {
-    use time::{Date, Month, OffsetDateTime, PrimitiveDateTime, Time};
+fn offset_date_time_03_serialization() {
+    use time_03::{Date, Month, OffsetDateTime, PrimitiveDateTime, Time};
     let offset_max =
-        PrimitiveDateTime::MAX.assume_offset(time::UtcOffset::from_hms(-23, -59, -59).unwrap());
+        PrimitiveDateTime::MAX.assume_offset(time_03::UtcOffset::from_hms(-23, -59, -59).unwrap());
     let offset_min =
-        PrimitiveDateTime::MIN.assume_offset(time::UtcOffset::from_hms(23, 59, 59).unwrap());
+        PrimitiveDateTime::MIN.assume_offset(time_03::UtcOffset::from_hms(23, 59, 59).unwrap());
     let test_cases = [
         (
             // Max time serialized without error

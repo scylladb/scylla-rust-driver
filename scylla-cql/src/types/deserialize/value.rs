@@ -421,7 +421,7 @@ impl_emptiable_strict_type!(
     }
 );
 
-#[cfg(any(feature = "chrono", feature = "time"))]
+#[cfg(any(feature = "chrono", feature = "time-03"))]
 fn get_days_since_epoch_from_date_column<T>(
     typ: &ColumnType,
     v: Option<FrameSlice<'_>>,
@@ -449,14 +449,14 @@ impl_emptiable_strict_type!(
     }
 );
 
-#[cfg(feature = "time")]
+#[cfg(feature = "time-03")]
 impl_emptiable_strict_type!(
-    time::Date,
+    time_03::Date,
     Date,
     |typ: &'frame ColumnType, v: Option<FrameSlice<'frame>>| {
         let days_since_epoch =
-            time::Duration::days(get_days_since_epoch_from_date_column::<Self>(typ, v)?);
-        time::Date::from_calendar_date(1970, time::Month::January, 1)
+            time_03::Duration::days(get_days_since_epoch_from_date_column::<Self>(typ, v)?);
+        time_03::Date::from_calendar_date(1970, time_03::Month::January, 1)
             .unwrap()
             .checked_add(days_since_epoch)
             .ok_or_else(|| {
@@ -508,14 +508,14 @@ impl_emptiable_strict_type!(
     }
 );
 
-#[cfg(feature = "time")]
+#[cfg(feature = "time-03")]
 impl_emptiable_strict_type!(
-    time::Time,
+    time_03::Time,
     Time,
     |typ: &'frame ColumnType, v: Option<FrameSlice<'frame>>| {
-        let nanoseconds = get_nanos_from_time_column::<time::Time>(typ, v)?;
+        let nanoseconds = get_nanos_from_time_column::<time_03::Time>(typ, v)?;
 
-        let time: time::Time = CqlTime(nanoseconds).try_into().map_err(|_| {
+        let time: time_03::Time = CqlTime(nanoseconds).try_into().map_err(|_| {
             mk_deser_err::<Self>(typ, BuiltinDeserializationErrorKind::ValueOverflow)
         })?;
         Ok(time)
@@ -560,13 +560,13 @@ impl_emptiable_strict_type!(
     }
 );
 
-#[cfg(feature = "time")]
+#[cfg(feature = "time-03")]
 impl_emptiable_strict_type!(
-    time::OffsetDateTime,
+    time_03::OffsetDateTime,
     Timestamp,
     |typ: &'frame ColumnType, v: Option<FrameSlice<'frame>>| {
         let millis = get_millis_from_timestamp_column::<Self>(typ, v)?;
-        time::OffsetDateTime::from_unix_timestamp_nanos(millis as i128 * 1_000_000)
+        time_03::OffsetDateTime::from_unix_timestamp_nanos(millis as i128 * 1_000_000)
             .map_err(|_| mk_deser_err::<Self>(typ, BuiltinDeserializationErrorKind::ValueOverflow))
     }
 );
@@ -1979,10 +1979,10 @@ pub(super) mod tests {
             &mut Bytes::new(),
         );
 
-        #[cfg(feature = "time")]
+        #[cfg(feature = "time-03")]
         assert_ser_de_identity(
             &ColumnType::Date,
-            &time::Date::from_ordinal_date(1999, 99).unwrap(),
+            &time_03::Date::from_ordinal_date(1999, 99).unwrap(),
             &mut Bytes::new(),
         );
 
@@ -1996,10 +1996,10 @@ pub(super) mod tests {
             &mut Bytes::new(),
         );
 
-        #[cfg(feature = "time")]
+        #[cfg(feature = "time-03")]
         assert_ser_de_identity(
             &ColumnType::Time,
-            &time::Time::from_hms_micro(21, 37, 21, 37).unwrap(),
+            &time_03::Time::from_hms_micro(21, 37, 21, 37).unwrap(),
             &mut Bytes::new(),
         );
 
@@ -2017,10 +2017,10 @@ pub(super) mod tests {
             &mut Bytes::new(),
         );
 
-        #[cfg(feature = "time")]
+        #[cfg(feature = "time-03")]
         assert_ser_de_identity(
             &ColumnType::Timestamp,
-            &time::OffsetDateTime::from_unix_timestamp(0xdead_cafe).unwrap(),
+            &time_03::OffsetDateTime::from_unix_timestamp(0xdead_cafe).unwrap(),
             &mut Bytes::new(),
         );
     }

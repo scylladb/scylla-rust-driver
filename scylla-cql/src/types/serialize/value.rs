@@ -181,22 +181,22 @@ impl SerializeValue for NaiveTime {
         <CqlTime as SerializeValue>::serialize(&cql_time, typ, writer)?
     });
 }
-#[cfg(feature = "time")]
-impl SerializeValue for time::Date {
+#[cfg(feature = "time-03")]
+impl SerializeValue for time_03::Date {
     impl_serialize_via_writer!(|me, typ, writer| {
         exact_type_check!(typ, Date);
         <CqlDate as SerializeValue>::serialize(&(*me).into(), typ, writer)?
     });
 }
-#[cfg(feature = "time")]
-impl SerializeValue for time::OffsetDateTime {
+#[cfg(feature = "time-03")]
+impl SerializeValue for time_03::OffsetDateTime {
     impl_serialize_via_writer!(|me, typ, writer| {
         exact_type_check!(typ, Timestamp);
         <CqlTimestamp as SerializeValue>::serialize(&(*me).into(), typ, writer)?
     });
 }
-#[cfg(feature = "time")]
-impl SerializeValue for time::Time {
+#[cfg(feature = "time-03")]
+impl SerializeValue for time_03::Time {
     impl_serialize_via_writer!(|me, typ, writer| {
         exact_type_check!(typ, Time);
         <CqlTime as SerializeValue>::serialize(&(*me).into(), typ, writer)?

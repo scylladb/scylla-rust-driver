@@ -185,8 +185,8 @@ impl FromCqlVal<CqlValue> for NaiveDate {
     }
 }
 
-#[cfg(feature = "time")]
-impl FromCqlVal<CqlValue> for time::Date {
+#[cfg(feature = "time-03")]
+impl FromCqlVal<CqlValue> for time_03::Date {
     fn from_cql(cql_val: CqlValue) -> Result<Self, FromCqlValError> {
         match cql_val {
             CqlValue::Date(cql_date) => cql_date.try_into().map_err(|_| FromCqlValError::BadVal),
@@ -205,8 +205,8 @@ impl FromCqlVal<CqlValue> for NaiveTime {
     }
 }
 
-#[cfg(feature = "time")]
-impl FromCqlVal<CqlValue> for time::Time {
+#[cfg(feature = "time-03")]
+impl FromCqlVal<CqlValue> for time_03::Time {
     fn from_cql(cql_val: CqlValue) -> Result<Self, FromCqlValError> {
         match cql_val {
             CqlValue::Time(cql_time) => cql_time.try_into().map_err(|_| FromCqlValError::BadVal),
@@ -226,8 +226,8 @@ impl FromCqlVal<CqlValue> for DateTime<Utc> {
     }
 }
 
-#[cfg(feature = "time")]
-impl FromCqlVal<CqlValue> for time::OffsetDateTime {
+#[cfg(feature = "time-03")]
+impl FromCqlVal<CqlValue> for time_03::OffsetDateTime {
     fn from_cql(cql_val: CqlValue) -> Result<Self, FromCqlValError> {
         cql_val
             .as_cql_timestamp()
@@ -565,43 +565,49 @@ mod tests {
         assert_eq!(Ok(CqlDate(u32::MAX)), CqlDate::from_cql(max_date));
     }
 
-    #[cfg(feature = "time")]
+    #[cfg(feature = "time-03")]
     #[test]
-    fn date_from_cql() {
+    fn date_03_from_cql() {
         // UNIX epoch
         let unix_epoch = CqlValue::Date(CqlDate(1 << 31));
         assert_eq!(
-            Ok(time::Date::from_ordinal_date(1970, 1).unwrap()),
-            time::Date::from_cql(unix_epoch)
+            Ok(time_03::Date::from_ordinal_date(1970, 1).unwrap()),
+            time_03::Date::from_cql(unix_epoch)
         );
 
         // 7 days after UNIX epoch
         let after_epoch = CqlValue::Date(CqlDate((1 << 31) + 7));
         assert_eq!(
-            Ok(time::Date::from_ordinal_date(1970, 8).unwrap()),
-            time::Date::from_cql(after_epoch)
+            Ok(time_03::Date::from_ordinal_date(1970, 8).unwrap()),
+            time_03::Date::from_cql(after_epoch)
         );
 
         // 3 days before UNIX epoch
         let before_epoch = CqlValue::Date(CqlDate((1 << 31) - 3));
         assert_eq!(
-            Ok(time::Date::from_ordinal_date(1969, 363).unwrap()),
-            time::Date::from_cql(before_epoch)
+            Ok(time_03::Date::from_ordinal_date(1969, 363).unwrap()),
+            time_03::Date::from_cql(before_epoch)
         );
 
-        // Min possible stored date. Since value is out of `time::Date` range, it should return `BadVal` error
+        // Min possible stored date. Since value is out of `time_03::Date` range, it should return `BadVal` error
         let min_date = CqlValue::Date(CqlDate(u32::MIN));
-        assert_eq!(Err(FromCqlValError::BadVal), time::Date::from_cql(min_date));
+        assert_eq!(
+            Err(FromCqlValError::BadVal),
+            time_03::Date::from_cql(min_date)
+        );
 
-        // Max possible stored date. Since value is out of `time::Date` range, it should return `BadVal` error
+        // Max possible stored date. Since value is out of `time_03::Date` range, it should return `BadVal` error
         let max_date = CqlValue::Date(CqlDate(u32::MAX));
-        assert_eq!(Err(FromCqlValError::BadVal), time::Date::from_cql(max_date));
+        assert_eq!(
+            Err(FromCqlValError::BadVal),
+            time_03::Date::from_cql(max_date)
+        );
 
-        // Different CQL type. Since value can't be casted, it should return `BadCqlType` error
+        // Different CQL type. Since value can't be cast, it should return `BadCqlType` error
         let bad_type = CqlValue::Double(0.5);
         assert_eq!(
             Err(FromCqlValError::BadCqlType),
-            time::Date::from_cql(bad_type)
+            time_03::Date::from_cql(bad_type)
         );
     }
 
@@ -658,7 +664,7 @@ mod tests {
         let bad_time2 = CqlValue::Time(CqlTime(i64::MAX));
         assert_eq!(Err(FromCqlValError::BadVal), NaiveTime::from_cql(bad_time2));
 
-        // Different CQL type. Since value can't be casted, it should return `BadCqlType` error
+        // Different CQL type. Since value can't be cast, it should return `BadCqlType` error
         let bad_type = CqlValue::Double(0.5);
         assert_eq!(
             Err(FromCqlValError::BadCqlType),
@@ -666,20 +672,23 @@ mod tests {
         );
     }
 
-    #[cfg(feature = "time")]
+    #[cfg(feature = "time-03")]
     #[test]
-    fn time_from_cql() {
+    fn time_03_from_cql() {
         // Midnight
         let midnight = CqlValue::Time(CqlTime(0));
-        assert_eq!(Ok(time::Time::MIDNIGHT), time::Time::from_cql(midnight));
+        assert_eq!(
+            Ok(time_03::Time::MIDNIGHT),
+            time_03::Time::from_cql(midnight)
+        );
 
         // 7:15:21.123456789
         let morning = CqlValue::Time(CqlTime(
             (7 * 3600 + 15 * 60 + 21) * 1_000_000_000 + 123_456_789,
         ));
         assert_eq!(
-            Ok(time::Time::from_hms_nano(7, 15, 21, 123_456_789).unwrap()),
-            time::Time::from_cql(morning)
+            Ok(time_03::Time::from_hms_nano(7, 15, 21, 123_456_789).unwrap()),
+            time_03::Time::from_cql(morning)
         );
 
         // 23:59:59.999999999
@@ -687,27 +696,27 @@ mod tests {
             (23 * 3600 + 59 * 60 + 59) * 1_000_000_000 + 999_999_999,
         ));
         assert_eq!(
-            Ok(time::Time::from_hms_nano(23, 59, 59, 999_999_999).unwrap()),
-            time::Time::from_cql(late_night)
+            Ok(time_03::Time::from_hms_nano(23, 59, 59, 999_999_999).unwrap()),
+            time_03::Time::from_cql(late_night)
         );
 
-        // Bad values. Since value is out of `time::Time` range, it should return `BadVal` error
+        // Bad values. Since value is out of `time_03::Time` range, it should return `BadVal` error
         let bad_time1 = CqlValue::Time(CqlTime(-1));
         assert_eq!(
             Err(FromCqlValError::BadVal),
-            time::Time::from_cql(bad_time1)
+            time_03::Time::from_cql(bad_time1)
         );
         let bad_time2 = CqlValue::Time(CqlTime(i64::MAX));
         assert_eq!(
             Err(FromCqlValError::BadVal),
-            time::Time::from_cql(bad_time2)
+            time_03::Time::from_cql(bad_time2)
         );
 
-        // Different CQL type. Since value can't be casted, it should return `BadCqlType` error
+        // Different CQL type. Since value can't be cast, it should return `BadCqlType` error
         let bad_type = CqlValue::Double(0.5);
         assert_eq!(
             Err(FromCqlValError::BadCqlType),
-            time::Time::from_cql(bad_type)
+            time_03::Time::from_cql(bad_type)
         );
     }
 
@@ -741,55 +750,55 @@ mod tests {
         );
     }
 
-    #[cfg(feature = "time")]
+    #[cfg(feature = "time-03")]
     #[test]
-    fn offset_datetime_from_cql() {
+    fn offset_datetime_03_from_cql() {
         // UNIX epoch
         let unix_epoch = CqlValue::Timestamp(CqlTimestamp(0));
         assert_eq!(
-            Ok(time::OffsetDateTime::UNIX_EPOCH),
-            time::OffsetDateTime::from_cql(unix_epoch)
+            Ok(time_03::OffsetDateTime::UNIX_EPOCH),
+            time_03::OffsetDateTime::from_cql(unix_epoch)
         );
 
         // 1 day 2 hours 3 minutes 4 seconds and 5 nanoseconds before UNIX epoch
         let before_epoch = CqlValue::Timestamp(CqlTimestamp(-(26 * 3600 + 3 * 60 + 4) * 1000 - 5));
         assert_eq!(
-            Ok(time::OffsetDateTime::UNIX_EPOCH
-                - time::Duration::new(26 * 3600 + 3 * 60 + 4, 5 * 1_000_000)),
-            time::OffsetDateTime::from_cql(before_epoch)
+            Ok(time_03::OffsetDateTime::UNIX_EPOCH
+                - time_03::Duration::new(26 * 3600 + 3 * 60 + 4, 5 * 1_000_000)),
+            time_03::OffsetDateTime::from_cql(before_epoch)
         );
 
         // 6 days 7 hours 8 minutes 9 seconds and 10 nanoseconds after UNIX epoch
         let after_epoch =
             CqlValue::Timestamp(CqlTimestamp(((6 * 24 + 7) * 3600 + 8 * 60 + 9) * 1000 + 10));
         assert_eq!(
-            Ok(time::PrimitiveDateTime::new(
-                time::Date::from_ordinal_date(1970, 7).unwrap(),
-                time::Time::from_hms_milli(7, 8, 9, 10).unwrap()
+            Ok(time_03::PrimitiveDateTime::new(
+                time_03::Date::from_ordinal_date(1970, 7).unwrap(),
+                time_03::Time::from_hms_milli(7, 8, 9, 10).unwrap()
             )
             .assume_utc()),
-            time::OffsetDateTime::from_cql(after_epoch)
+            time_03::OffsetDateTime::from_cql(after_epoch)
         );
 
-        // Min possible stored timestamp. Since value is out of `time::OffsetDateTime` range, it should return `BadVal` error
+        // Min possible stored timestamp. Since value is out of `time_03::OffsetDateTime` range, it should return `BadVal` error
         let min_timestamp = CqlValue::Timestamp(CqlTimestamp(i64::MIN));
         assert_eq!(
             Err(FromCqlValError::BadVal),
-            time::OffsetDateTime::from_cql(min_timestamp)
+            time_03::OffsetDateTime::from_cql(min_timestamp)
         );
 
-        // Max possible stored timestamp. Since value is out of `time::OffsetDateTime` range, it should return `BadVal` error
+        // Max possible stored timestamp. Since value is out of `time_03::OffsetDateTime` range, it should return `BadVal` error
         let max_timestamp = CqlValue::Timestamp(CqlTimestamp(i64::MAX));
         assert_eq!(
             Err(FromCqlValError::BadVal),
-            time::OffsetDateTime::from_cql(max_timestamp)
+            time_03::OffsetDateTime::from_cql(max_timestamp)
         );
 
-        // Different CQL type. Since value can't be casted, it should return `BadCqlType` error
+        // Different CQL type. Since value can't be cast, it should return `BadCqlType` error
         let bad_type = CqlValue::Double(0.5);
         assert_eq!(
             Err(FromCqlValError::BadCqlType),
-            time::OffsetDateTime::from_cql(bad_type)
+            time_03::OffsetDateTime::from_cql(bad_type)
         );
     }
 

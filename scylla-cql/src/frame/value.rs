@@ -548,17 +548,19 @@ impl TryInto<NaiveTime> for CqlTime {
     }
 }
 
-#[cfg(feature = "time")]
-impl From<time::Date> for CqlDate {
-    fn from(value: time::Date) -> Self {
+#[cfg(feature = "time-03")]
+impl From<time_03::Date> for CqlDate {
+    fn from(value: time_03::Date) -> Self {
         const JULIAN_DAY_OFFSET: i64 =
-            (1 << 31) - time::OffsetDateTime::UNIX_EPOCH.date().to_julian_day() as i64;
+            (1 << 31) - time_03::OffsetDateTime::UNIX_EPOCH.date().to_julian_day() as i64;
 
         // Statically assert that no possible value will ever overflow
-        const _: () =
-            assert!(time::Date::MAX.to_julian_day() as i64 + JULIAN_DAY_OFFSET < u32::MAX as i64);
-        const _: () =
-            assert!(time::Date::MIN.to_julian_day() as i64 + JULIAN_DAY_OFFSET > u32::MIN as i64);
+        const _: () = assert!(
+            time_03::Date::MAX.to_julian_day() as i64 + JULIAN_DAY_OFFSET < u32::MAX as i64
+        );
+        const _: () = assert!(
+            time_03::Date::MIN.to_julian_day() as i64 + JULIAN_DAY_OFFSET > u32::MIN as i64
+        );
 
         let days = value.to_julian_day() as i64 + JULIAN_DAY_OFFSET;
 
@@ -566,29 +568,29 @@ impl From<time::Date> for CqlDate {
     }
 }
 
-#[cfg(feature = "time")]
-impl TryInto<time::Date> for CqlDate {
+#[cfg(feature = "time-03")]
+impl TryInto<time_03::Date> for CqlDate {
     type Error = ValueOverflow;
 
-    fn try_into(self) -> Result<time::Date, Self::Error> {
+    fn try_into(self) -> Result<time_03::Date, Self::Error> {
         const JULIAN_DAY_OFFSET: i64 =
-            (1 << 31) - time::OffsetDateTime::UNIX_EPOCH.date().to_julian_day() as i64;
+            (1 << 31) - time_03::OffsetDateTime::UNIX_EPOCH.date().to_julian_day() as i64;
 
         let julian_days = (self.0 as i64 - JULIAN_DAY_OFFSET)
             .try_into()
             .map_err(|_| ValueOverflow)?;
 
-        time::Date::from_julian_day(julian_days).map_err(|_| ValueOverflow)
+        time_03::Date::from_julian_day(julian_days).map_err(|_| ValueOverflow)
     }
 }
 
-#[cfg(feature = "time")]
-impl From<time::OffsetDateTime> for CqlTimestamp {
-    fn from(value: time::OffsetDateTime) -> Self {
+#[cfg(feature = "time-03")]
+impl From<time_03::OffsetDateTime> for CqlTimestamp {
+    fn from(value: time_03::OffsetDateTime) -> Self {
         // Statically assert that no possible value will ever overflow. OffsetDateTime doesn't allow offset to overflow
         // the UTC PrimitiveDateTime value value
         const _: () = assert!(
-            time::PrimitiveDateTime::MAX
+            time_03::PrimitiveDateTime::MAX
                 .assume_utc()
                 .unix_timestamp_nanos()
                 // Nanos to millis
@@ -596,7 +598,7 @@ impl From<time::OffsetDateTime> for CqlTimestamp {
                 < i64::MAX as i128
         );
         const _: () = assert!(
-            time::PrimitiveDateTime::MIN
+            time_03::PrimitiveDateTime::MIN
                 .assume_utc()
                 .unix_timestamp_nanos()
                 / 1_000_000
@@ -608,19 +610,19 @@ impl From<time::OffsetDateTime> for CqlTimestamp {
     }
 }
 
-#[cfg(feature = "time")]
-impl TryInto<time::OffsetDateTime> for CqlTimestamp {
+#[cfg(feature = "time-03")]
+impl TryInto<time_03::OffsetDateTime> for CqlTimestamp {
     type Error = ValueOverflow;
 
-    fn try_into(self) -> Result<time::OffsetDateTime, Self::Error> {
-        time::OffsetDateTime::from_unix_timestamp_nanos(self.0 as i128 * 1_000_000)
+    fn try_into(self) -> Result<time_03::OffsetDateTime, Self::Error> {
+        time_03::OffsetDateTime::from_unix_timestamp_nanos(self.0 as i128 * 1_000_000)
             .map_err(|_| ValueOverflow)
     }
 }
 
-#[cfg(feature = "time")]
-impl From<time::Time> for CqlTime {
-    fn from(value: time::Time) -> Self {
+#[cfg(feature = "time-03")]
+impl From<time_03::Time> for CqlTime {
+    fn from(value: time_03::Time) -> Self {
         let (h, m, s, n) = value.as_hms_nano();
 
         // no need for checked arithmetic as all these types are guaranteed to fit in i64 without overflow
@@ -630,17 +632,17 @@ impl From<time::Time> for CqlTime {
     }
 }
 
-#[cfg(feature = "time")]
-impl TryInto<time::Time> for CqlTime {
+#[cfg(feature = "time-03")]
+impl TryInto<time_03::Time> for CqlTime {
     type Error = ValueOverflow;
 
-    fn try_into(self) -> Result<time::Time, Self::Error> {
+    fn try_into(self) -> Result<time_03::Time, Self::Error> {
         let h = self.0 / 3_600_000_000_000;
         let m = self.0 / 60_000_000_000 % 60;
         let s = self.0 / 1_000_000_000 % 60;
         let n = self.0 % 1_000_000_000;
 
-        time::Time::from_hms_nano(
+        time_03::Time::from_hms_nano(
             h.try_into().map_err(|_| ValueOverflow)?,
             m as u8,
             s as u8,
@@ -1020,8 +1022,8 @@ impl Value for CqlDate {
     }
 }
 
-#[cfg(feature = "time")]
-impl Value for time::Date {
+#[cfg(feature = "time-03")]
+impl Value for time_03::Date {
     fn serialize(&self, buf: &mut Vec<u8>) -> Result<(), ValueTooBig> {
         CqlDate::from(*self).serialize(buf)
     }
@@ -1050,8 +1052,8 @@ impl Value for DateTime<Utc> {
     }
 }
 
-#[cfg(feature = "time")]
-impl Value for time::OffsetDateTime {
+#[cfg(feature = "time-03")]
+impl Value for time_03::OffsetDateTime {
     fn serialize(&self, buf: &mut Vec<u8>) -> Result<(), ValueTooBig> {
         CqlTimestamp::from(*self).serialize(buf)
     }
@@ -1066,8 +1068,8 @@ impl Value for NaiveTime {
     }
 }
 
-#[cfg(feature = "time")]
-impl Value for time::Time {
+#[cfg(feature = "time-03")]
+impl Value for time_03::Time {
     fn serialize(&self, buf: &mut Vec<u8>) -> Result<(), ValueTooBig> {
         CqlTime::from(*self).serialize(buf)
     }
