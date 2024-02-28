@@ -71,8 +71,6 @@ jobs:
         echo "Semver checks exitcode: " $exitcode
         echo "SEMVER_STDOUT_EOF" >> $GITHUB_OUTPUT
         echo "exitcode=$exitcode" >> $GITHUB_OUTPUT
-        exit "$exitcode"
-      continue-on-error: true
 
   semver-pull-request-label:
     runs-on: ubuntu-latest
