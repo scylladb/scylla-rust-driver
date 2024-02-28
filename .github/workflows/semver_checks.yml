@@ -66,7 +66,7 @@ jobs:
         set +e
         echo "output<<SEMVER_STDOUT_EOF" >> $GITHUB_OUTPUT
         # Weird sed strip ANSI colors from output
-        make semver-rev rev="$PR_BASE" |& tee /dev/tty | sed -r "s/\x1B\[([0-9]{1,2}(;[0-9]{1,2})?)?[mGK]//g" >> $GITHUB_OUTPUT
+        make semver-rev rev="$PR_BASE" |& tee /proc/self/fd/2 | sed -r "s/\x1B\[([0-9]{1,2}(;[0-9]{1,2})?)?[mGK]//g" >> $GITHUB_OUTPUT
         exitcode=${PIPESTATUS[0]}
         echo "SEMVER_STDOUT_EOF" >> $GITHUB_OUTPUT
 
