@@ -1,4 +1,5 @@
 use anyhow::Result;
+use scylla::transport::NodeRef;
 use scylla::{
     load_balancing::{LoadBalancingPolicy, RoutingInfo},
     transport::{ClusterData, ExecutionProfile},
@@ -13,11 +14,7 @@ struct CustomLoadBalancingPolicy {
 }
 
 impl LoadBalancingPolicy for CustomLoadBalancingPolicy {
-    fn pick<'a>(
-        &'a self,
-        _info: &'a RoutingInfo,
-        cluster: &'a ClusterData,
-    ) -> Option<scylla::transport::NodeRef<'a>> {
+    fn pick<'a>(&'a self, _info: &'a RoutingInfo, cluster: &'a ClusterData) -> Option<NodeRef<'a>> {
         self.fallback(_info, cluster).next()
     }
 

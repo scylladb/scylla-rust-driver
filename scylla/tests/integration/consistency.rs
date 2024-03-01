@@ -7,6 +7,7 @@ use scylla::retry_policy::FallthroughRetryPolicy;
 use scylla::routing::Token;
 use scylla::test_utils::unique_keyspace_name;
 use scylla::transport::session::Session;
+use scylla::transport::NodeRef;
 use tokio::sync::mpsc::{self, UnboundedReceiver, UnboundedSender};
 
 use scylla::statement::batch::BatchStatement;
@@ -377,7 +378,7 @@ impl LoadBalancingPolicy for RoutingInfoReportingWrapper {
         &'a self,
         query: &'a RoutingInfo,
         cluster: &'a scylla::transport::ClusterData,
-    ) -> Option<scylla::transport::NodeRef<'a>> {
+    ) -> Option<NodeRef<'a>> {
         self.routing_info_tx
             .send(OwnedRoutingInfo::from(query.clone()))
             .unwrap();
