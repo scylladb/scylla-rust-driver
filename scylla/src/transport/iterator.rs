@@ -546,7 +546,7 @@ where
 
         self.log_query_start();
 
-        'nodes_in_plan: for node in query_plan {
+        'nodes_in_plan: for (node, _shard) in query_plan {
             let span =
                 trace_span!(parent: &self.parent_span, "Executing query", node = %node.address);
             // For each node in the plan choose a connection to use

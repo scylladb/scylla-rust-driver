@@ -1,15 +1,15 @@
 use tracing::error;
 
 use super::{FallbackPlan, LoadBalancingPolicy, NodeRef, RoutingInfo};
-use crate::transport::ClusterData;
+use crate::{routing::Shard, transport::ClusterData};
 
 enum PlanState<'a> {
     Created,
     PickedNone, // This always means an abnormal situation: it means that no nodes satisfied locality/node filter requirements.
-    Picked(NodeRef<'a>),
+    Picked((NodeRef<'a>, Shard)),
     Fallback {
         iter: FallbackPlan<'a>,
-        node_to_filter_out: NodeRef<'a>,
+        node_to_filter_out: (NodeRef<'a>, Shard),
     },
 }
 
@@ -44,15 +44,15 @@ impl<'a> Plan<'a> {
 }
 
 impl<'a> Iterator for Plan<'a> {
-    type Item = NodeRef<'a>;
+    type Item = (NodeRef<'a>, Shard);
 
     fn next(&mut self) -> Option<Self::Item> {
         match &mut self.state {
             PlanState::Created => {
                 let picked = self.policy.pick(self.routing_info, self.cluster);
                 if let Some(picked) = picked {
-                    self.state = PlanState::Picked(picked.0);
-                    Some(picked.0)
+                    self.state = PlanState::Picked(picked);
+                    Some(picked)
                 } else {
                     // `pick()` returned None, which semantically means that a first node cannot be computed _cheaply_.
                     // This, however, does not imply that fallback would return an empty plan, too.
@@ -64,9 +64,9 @@ impl<'a> Iterator for Plan<'a> {
                     if let Some(node) = first_fallback_node {
                         self.state = PlanState::Fallback {
                             iter,
-                            node_to_filter_out: node.0,
+                            node_to_filter_out: node,
                         };
-                        Some(node.0)
+                        Some(node)
                     } else {
                         error!("Load balancing policy returned an empty plan! The query cannot be executed. Routing info: {:?}", self.routing_info);
                         self.state = PlanState::PickedNone;
@@ -77,7 +77,7 @@ impl<'a> Iterator for Plan<'a> {
             PlanState::Picked(node) => {
                 self.state = PlanState::Fallback {
                     iter: self.policy.fallback(self.routing_info, self.cluster),
-                    node_to_filter_out: node,
+                    node_to_filter_out: *node,
                 };
 
                 self.next()
@@ -87,10 +87,10 @@ impl<'a> Iterator for Plan<'a> {
                 node_to_filter_out,
             } => {
                 for node in iter {
-                    if node.0 == *node_to_filter_out {
+                    if node == *node_to_filter_out {
                         continue;
                     } else {
-                        return Some(node.0);
+                        return Some(node);
                     }
                 }
 
@@ -105,7 +105,6 @@ impl<'a> Iterator for Plan<'a> {
 mod tests {
     use std::{net::SocketAddr, str::FromStr, sync::Arc};
 
-    use crate::routing::Shard;
     use crate::transport::{
         locator::test::{create_locator, mock_metadata_for_token_aware_tests},
         Node, NodeAddr,
@@ -168,12 +167,8 @@ mod tests {
         let routing_info = RoutingInfo::default();
         let plan = Plan::new(&policy, &routing_info, &cluster_data);
         assert_eq!(
-            Vec::from_iter(plan.cloned()),
-            policy
-                .expected_nodes
-                .into_iter()
-                .map(|(node, _shard)| node)
-                .collect::<Vec<_>>()
+            Vec::from_iter(plan.map(|(node, shard)| (node.clone(), shard))),
+            policy.expected_nodes
         );
     }
 }

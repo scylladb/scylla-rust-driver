@@ -1163,7 +1163,8 @@ mod tests {
             cluster: &ClusterData,
         ) -> Vec<u16> {
             let plan = Plan::new(policy, query_info, cluster);
-            plan.map(|node| node.address.port()).collect::<Vec<_>>()
+            plan.map(|(node, _shard)| node.address.port())
+                .collect::<Vec<_>>()
         }
     }
 

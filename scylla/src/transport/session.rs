@@ -51,7 +51,7 @@ use crate::frame::response::cql_to_rust::FromRowError;
 use crate::frame::response::result;
 use crate::prepared_statement::PreparedStatement;
 use crate::query::Query;
-use crate::routing::Token;
+use crate::routing::{Shard, Token};
 use crate::statement::Consistency;
 use crate::tracing::{TracingEvent, TracingInfo};
 use crate::transport::cluster::{Cluster, ClusterData, ClusterNeatDebug};
@@ -1550,16 +1550,16 @@ impl Session {
             // can be shared safely.
             struct SharedPlan<'a, I>
             where
-                I: Iterator<Item = NodeRef<'a>>,
+                I: Iterator<Item = (NodeRef<'a>, Shard)>,
             {
                 iter: std::sync::Mutex<I>,
             }
 
             impl<'a, I> Iterator for &SharedPlan<'a, I>
             where
-                I: Iterator<Item = NodeRef<'a>>,
+                I: Iterator<Item = (NodeRef<'a>, Shard)>,
             {
-                type Item = NodeRef<'a>;
+                type Item = (NodeRef<'a>, Shard);
 
                 fn next(&mut self) -> Option<Self::Item> {
                     self.iter.lock().unwrap().next()
@@ -1686,7 +1686,7 @@ impl Session {
 
     async fn execute_query<'a, ConnFut, QueryFut, ResT>(
         &'a self,
-        query_plan: impl Iterator<Item = NodeRef<'a>>,
+        query_plan: impl Iterator<Item = (NodeRef<'a>, Shard)>,
         choose_connection: impl Fn(Arc<Node>) -> ConnFut,
         do_query: impl Fn(Arc<Connection>, Consistency, &ExecutionProfileInner) -> QueryFut,
         execution_profile: &ExecutionProfileInner,
@@ -1702,7 +1702,7 @@ impl Session {
             .consistency_set_on_statement
             .unwrap_or(execution_profile.consistency);
 
-        'nodes_in_plan: for node in query_plan {
+        'nodes_in_plan: for (node, _shard) in query_plan {
             let span = trace_span!("Executing query", node = %node.address);
             'same_node_retries: loop {
                 trace!(parent: &span, "Execution started");
