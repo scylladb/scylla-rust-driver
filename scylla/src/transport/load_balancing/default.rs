@@ -452,7 +452,9 @@ impl DefaultPolicy {
                     .into_iter(),
             ),
         };
-        replica_iter.filter(move |node: &NodeRef<'a>| predicate(node))
+        replica_iter
+            .filter(move |(node, _shard)| predicate(node))
+            .map(|(node, _shard)| node)
     }
 
     fn pick_replica<'a>(
@@ -506,7 +508,7 @@ impl DefaultPolicy {
                     .into_replicas_ordered()
                     .into_iter()
                     .next()
-                    .and_then(|primary_replica| {
+                    .and_then(|(primary_replica, _shard)| {
                         predicate(&primary_replica).then_some(primary_replica)
                     })
             }
@@ -541,9 +543,13 @@ impl DefaultPolicy {
 
         if let Some(fixed) = self.fixed_shuffle_seed {
             let mut gen = Pcg32::new(fixed, 0);
-            replica_set.choose_filtered(&mut gen, predicate)
+            replica_set
+                .choose_filtered(&mut gen, |(node, _shard)| predicate(node))
+                .map(|(node, _shard)| node)
         } else {
-            replica_set.choose_filtered(&mut thread_rng(), predicate)
+            replica_set
+                .choose_filtered(&mut thread_rng(), |(node, _shard)| predicate(node))
+                .map(|(node, _shard)| node)
         }
     }
 

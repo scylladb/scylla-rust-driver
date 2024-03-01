@@ -427,7 +427,7 @@ impl ClusterData {
             .replica_locator()
             .replicas_for_token(token, strategy, None);
 
-        replica_set.into_iter()
+        replica_set.into_iter().map(|(node, _shard)| node)
     }
 
     /// Access to replicas owning a given partition key (similar to `nodetool getendpoints`)

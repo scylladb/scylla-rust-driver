@@ -9,7 +9,7 @@ use rand::{seq::IteratorRandom, Rng};
 pub use token_ring::TokenRing;
 
 use super::{topology::Strategy, Node, NodeRef};
-use crate::routing::Token;
+use crate::routing::{Shard, Token};
 use itertools::Itertools;
 use precomputed_replicas::PrecomputedReplicas;
 use replicas::{ReplicasArray, EMPTY_REPLICAS};
@@ -85,16 +85,20 @@ impl ReplicaLocator {
                 if let Some(datacenter) = datacenter {
                     let replicas = self.get_simple_strategy_replicas(token, *replication_factor);
 
-                    return ReplicaSetInner::FilteredSimple {
-                        replicas,
-                        datacenter,
-                    }
-                    .into();
+                    return ReplicaSet {
+                        inner: ReplicaSetInner::FilteredSimple {
+                            replicas,
+                            datacenter,
+                        },
+                        token,
+                    };
                 } else {
-                    return ReplicaSetInner::Plain(
-                        self.get_simple_strategy_replicas(token, *replication_factor),
-                    )
-                    .into();
+                    return ReplicaSet {
+                        inner: ReplicaSetInner::Plain(
+                            self.get_simple_strategy_replicas(token, *replication_factor),
+                        ),
+                        token,
+                    };
                 }
             }
             Strategy::NetworkTopologyStrategy {
@@ -102,21 +106,28 @@ impl ReplicaLocator {
             } => {
                 if let Some(dc) = datacenter {
                     if let Some(repfactor) = datacenter_repfactors.get(dc) {
-                        return ReplicaSetInner::Plain(
-                            self.get_network_strategy_replicas(token, dc, *repfactor),
-                        )
-                        .into();
+                        return ReplicaSet {
+                            inner: ReplicaSetInner::Plain(
+                                self.get_network_strategy_replicas(token, dc, *repfactor),
+                            ),
+                            token,
+                        };
                     } else {
                         debug!("Datacenter ({}) does not exist!", dc);
-                        return EMPTY_REPLICAS.into();
+                        return ReplicaSet {
+                            inner: ReplicaSetInner::Plain(EMPTY_REPLICAS),
+                            token,
+                        };
                     }
                 } else {
-                    return ReplicaSetInner::ChainedNTS {
-                        datacenter_repfactors,
-                        locator: self,
+                    return ReplicaSet {
+                        inner: ReplicaSetInner::ChainedNTS {
+                            datacenter_repfactors,
+                            locator: self,
+                            token,
+                        },
                         token,
-                    }
-                    .into();
+                    };
                 }
             }
             Strategy::Other { name, .. } => {
@@ -211,6 +222,14 @@ impl ReplicaLocator {
     }
 }
 
+fn with_computed_shard(node: NodeRef, token: Token) -> (NodeRef, Shard) {
+    let shard = node
+        .sharder()
+        .map(|sharder| sharder.shard_of(token))
+        .unwrap_or(0);
+    (node, shard)
+}
+
 #[derive(Debug)]
 enum ReplicaSetInner<'a> {
     Plain(ReplicasArray<'a>),
@@ -238,6 +257,7 @@ enum ReplicaSetInner<'a> {
 #[derive(Debug)]
 pub struct ReplicaSet<'a> {
     inner: ReplicaSetInner<'a>,
+    token: Token,
 }
 
 impl<'a> ReplicaSet<'a> {
@@ -245,8 +265,8 @@ impl<'a> ReplicaSet<'a> {
     pub fn choose_filtered<R>(
         self,
         rng: &mut R,
-        predicate: impl Fn(&NodeRef<'a>) -> bool,
-    ) -> Option<NodeRef<'a>>
+        predicate: impl Fn(&(NodeRef<'a>, Shard)) -> bool,
+    ) -> Option<(NodeRef<'a>, Shard)>
     where
         R: Rng + ?Sized,
     {
@@ -303,7 +323,7 @@ impl<'a> ReplicaSet<'a> {
         self.len() == 0
     }
 
-    fn choose<R>(&self, rng: &mut R) -> Option<NodeRef<'a>>
+    fn choose<R>(&self, rng: &mut R) -> Option<(NodeRef<'a>, Shard)>
     where
         R: Rng + ?Sized,
     {
@@ -312,14 +332,17 @@ impl<'a> ReplicaSet<'a> {
             let index = rng.gen_range(0..len);
 
             match &self.inner {
-                ReplicaSetInner::Plain(replicas) => replicas.get(index),
+                ReplicaSetInner::Plain(replicas) => replicas
+                    .get(index)
+                    .map(|node| with_computed_shard(node, self.token)),
                 ReplicaSetInner::FilteredSimple {
                     replicas,
                     datacenter,
                 } => replicas
                     .iter()
                     .filter(|node| node.datacenter.as_deref() == Some(*datacenter))
-                    .nth(index),
+                    .nth(index)
+                    .map(|node| with_computed_shard(node, self.token)),
                 ReplicaSetInner::ChainedNTS {
                     datacenter_repfactors,
                     locator,
@@ -339,7 +362,8 @@ impl<'a> ReplicaSet<'a> {
                         if nodes_to_skip < repfactor {
                             return locator
                                 .get_network_strategy_replicas(*token, datacenter, repfactor)
-                                .get(nodes_to_skip);
+                                .get(nodes_to_skip)
+                                .map(|node| with_computed_shard(node, self.token));
                         }
 
                         nodes_to_skip -= repfactor;
@@ -355,7 +379,7 @@ impl<'a> ReplicaSet<'a> {
 }
 
 impl<'a> IntoIterator for ReplicaSet<'a> {
-    type Item = NodeRef<'a>;
+    type Item = (NodeRef<'a>, Shard);
     type IntoIter = ReplicaSetIterator<'a>;
 
     /// Converts the replica set into iterator. Order defined by that iterator does not have to
@@ -400,23 +424,9 @@ impl<'a> IntoIterator for ReplicaSet<'a> {
             }
         };
 
-        ReplicaSetIterator { inner }
-    }
-}
-
-impl<'a> From<ReplicaSetInner<'a>> for ReplicaSet<'a> {
-    fn from(item: ReplicaSetInner<'a>) -> Self {
-        Self { inner: item }
-    }
-}
-
-impl<'a, T> From<T> for ReplicaSet<'a>
-where
-    T: Into<ReplicasArray<'a>>,
-{
-    fn from(item: T) -> Self {
-        Self {
-            inner: ReplicaSetInner::Plain(item.into()),
+        ReplicaSetIterator {
+            inner,
+            token: self.token,
         }
     }
 }
@@ -445,17 +455,18 @@ enum ReplicaSetIteratorInner<'a> {
 /// Iterator that returns replicas from some replica set.
 pub struct ReplicaSetIterator<'a> {
     inner: ReplicaSetIteratorInner<'a>,
+    token: Token,
 }
 
 impl<'a> Iterator for ReplicaSetIterator<'a> {
-    type Item = NodeRef<'a>;
+    type Item = (NodeRef<'a>, Shard);
 
     fn next(&mut self) -> Option<Self::Item> {
         match &mut self.inner {
             ReplicaSetIteratorInner::Plain { replicas, idx } => {
                 if let Some(replica) = replicas.get(*idx) {
                     *idx += 1;
-                    return Some(replica);
+                    return Some(with_computed_shard(replica, self.token));
                 }
 
                 None
@@ -468,7 +479,7 @@ impl<'a> Iterator for ReplicaSetIterator<'a> {
                 while let Some(replica) = replicas.get(*idx) {
                     *idx += 1;
                     if replica.datacenter.as_deref() == Some(*datacenter) {
-                        return Some(replica);
+                        return Some(with_computed_shard(replica, self.token));
                     }
                 }
 
@@ -484,7 +495,7 @@ impl<'a> Iterator for ReplicaSetIterator<'a> {
             } => {
                 if let Some(replica) = replicas.get(*replicas_idx) {
                     *replicas_idx += 1;
-                    Some(replica)
+                    Some(with_computed_shard(replica, self.token))
                 } else if *datacenter_idx + 1 < locator.datacenters.len() {
                     *datacenter_idx += 1;
                     *replicas_idx = 0;
@@ -590,7 +601,12 @@ enum ReplicasOrderedIteratorInner<'a> {
     },
 }
 
-enum ReplicasOrderedNTSIterator<'a> {
+struct ReplicasOrderedNTSIterator<'a> {
+    token: Token,
+    inner: ReplicasOrderedNTSIteratorInner<'a>,
+}
+
+enum ReplicasOrderedNTSIteratorInner<'a> {
     FreshForPick {
         datacenter_repfactors: &'a HashMap<String, usize>,
         locator: &'a ReplicaLocator,
@@ -609,11 +625,11 @@ enum ReplicasOrderedNTSIterator<'a> {
 }
 
 impl<'a> Iterator for ReplicasOrderedNTSIterator<'a> {
-    type Item = NodeRef<'a>;
+    type Item = (NodeRef<'a>, Shard);
 
     fn next(&mut self) -> Option<Self::Item> {
-        match *self {
-            Self::FreshForPick {
+        match self.inner {
+            ReplicasOrderedNTSIteratorInner::FreshForPick {
                 datacenter_repfactors,
                 locator,
                 token,
@@ -625,19 +641,19 @@ impl<'a> Iterator for ReplicasOrderedNTSIterator<'a> {
                     if let Some(dc) = &node.datacenter {
                         if datacenter_repfactors.get(dc).is_some() {
                             // ...then this node must be the primary replica.
-                            *self = Self::Picked {
+                            self.inner = ReplicasOrderedNTSIteratorInner::Picked {
                                 datacenter_repfactors,
                                 locator,
                                 token,
                                 picked: node,
                             };
-                            return Some(node);
+                            return Some(with_computed_shard(node, self.token));
                         }
                     }
                 }
                 None
             }
-            Self::Picked {
+            ReplicasOrderedNTSIteratorInner::Picked {
                 datacenter_repfactors,
                 locator,
                 token,
@@ -674,19 +690,19 @@ impl<'a> Iterator for ReplicasOrderedNTSIterator<'a> {
                     "all_replicas somehow contained a node that wasn't present in the global ring!"
                 );
 
-                *self = Self::ComputedFallback {
+                self.inner = ReplicasOrderedNTSIteratorInner::ComputedFallback {
                     replicas: ReplicasArray::Owned(replicas_ordered),
                     idx: 0,
                 };
                 self.next()
             }
-            Self::ComputedFallback {
+            ReplicasOrderedNTSIteratorInner::ComputedFallback {
                 ref replicas,
                 ref mut idx,
             } => {
                 if let Some(replica) = replicas.get(*idx) {
                     *idx += 1;
-                    Some(replica)
+                    Some(with_computed_shard(replica, self.token))
                 } else {
                     None
                 }
@@ -696,7 +712,7 @@ impl<'a> Iterator for ReplicasOrderedNTSIterator<'a> {
 }
 
 impl<'a> Iterator for ReplicasOrderedIterator<'a> {
-    type Item = NodeRef<'a>;
+    type Item = (NodeRef<'a>, Shard);
 
     fn next(&mut self) -> Option<Self::Item> {
         match &mut self.inner {
@@ -711,7 +727,7 @@ impl<'a> Iterator for ReplicasOrderedIterator<'a> {
 }
 
 impl<'a> IntoIterator for ReplicasOrdered<'a> {
-    type Item = NodeRef<'a>;
+    type Item = (NodeRef<'a>, Shard);
     type IntoIter = ReplicasOrderedIterator<'a>;
 
     fn into_iter(self) -> Self::IntoIter {
@@ -728,10 +744,13 @@ impl<'a> IntoIterator for ReplicasOrdered<'a> {
                     locator,
                     token,
                 } => ReplicasOrderedIteratorInner::PolyDatacenterNTS {
-                    replicas_ordered_iter: ReplicasOrderedNTSIterator::FreshForPick {
-                        datacenter_repfactors,
-                        locator,
-                        token,
+                    replicas_ordered_iter: ReplicasOrderedNTSIterator {
+                        token: replica_set.token,
+                        inner: ReplicasOrderedNTSIteratorInner::FreshForPick {
+                            datacenter_repfactors,
+                            locator,
+                            token,
+                        },
                     },
                 },
             },
@@ -756,7 +775,7 @@ mod tests {
             let replicas_ordered = replica_set.into_replicas_ordered();
             let ids: Vec<_> = replicas_ordered
                 .into_iter()
-                .map(|node| node.address.port())
+                .map(|(node, _shard)| node.address.port())
                 .collect();
             assert_eq!(expected, ids);
         };
