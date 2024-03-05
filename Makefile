@@ -27,7 +27,7 @@ check-without-features:
 
 .PHONY: clippy
 clippy:
-	RUSTFLAGS=-Dwarnings cargo clippy --all-targets -- -Aclippy::uninlined_format_args
+	RUSTFLAGS=-Dwarnings cargo clippy --all-targets
 
 .PHONY: test
 test: up

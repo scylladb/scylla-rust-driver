@@ -29,7 +29,7 @@ jobs:
     - name: Format check
       run: cargo fmt --verbose --all -- --check
     - name: Clippy check
-      run: cargo clippy --verbose --all-targets -- -Aclippy::uninlined_format_args
+      run: cargo clippy --verbose --all-targets
     - name: Cargo check without features
       run: cargo check --all-targets --manifest-path "scylla/Cargo.toml" --features ""
     - name: Cargo check with all serialization features
