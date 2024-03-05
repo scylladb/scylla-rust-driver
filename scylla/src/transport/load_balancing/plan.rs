@@ -51,8 +51,8 @@ impl<'a> Iterator for Plan<'a> {
             PlanState::Created => {
                 let picked = self.policy.pick(self.routing_info, self.cluster);
                 if let Some(picked) = picked {
-                    self.state = PlanState::Picked(picked);
-                    Some(picked)
+                    self.state = PlanState::Picked(picked.0);
+                    Some(picked.0)
                 } else {
                     // `pick()` returned None, which semantically means that a first node cannot be computed _cheaply_.
                     // This, however, does not imply that fallback would return an empty plan, too.
@@ -64,9 +64,9 @@ impl<'a> Iterator for Plan<'a> {
                     if let Some(node) = first_fallback_node {
                         self.state = PlanState::Fallback {
                             iter,
-                            node_to_filter_out: node,
+                            node_to_filter_out: node.0,
                         };
-                        Some(node)
+                        Some(node.0)
                     } else {
                         error!("Load balancing policy returned an empty plan! The query cannot be executed. Routing info: {:?}", self.routing_info);
                         self.state = PlanState::PickedNone;
@@ -87,10 +87,10 @@ impl<'a> Iterator for Plan<'a> {
                 node_to_filter_out,
             } => {
                 for node in iter {
-                    if node == *node_to_filter_out {
+                    if node.0 == *node_to_filter_out {
                         continue;
                     } else {
-                        return Some(node);
+                        return Some(node.0);
                     }
                 }
 
@@ -105,6 +105,7 @@ impl<'a> Iterator for Plan<'a> {
 mod tests {
     use std::{net::SocketAddr, str::FromStr, sync::Arc};
 
+    use crate::routing::Shard;
     use crate::transport::{
         locator::test::{create_locator, mock_metadata_for_token_aware_tests},
         Node, NodeAddr,
@@ -112,24 +113,27 @@ mod tests {
 
     use super::*;
 
-    fn expected_nodes() -> Vec<Arc<Node>> {
-        vec![Arc::new(Node::new_for_test(
-            NodeAddr::Translatable(SocketAddr::from_str("127.0.0.1:9042").unwrap()),
-            None,
-            None,
-        ))]
+    fn expected_nodes() -> Vec<(Arc<Node>, Shard)> {
+        vec![(
+            Arc::new(Node::new_for_test(
+                NodeAddr::Translatable(SocketAddr::from_str("127.0.0.1:9042").unwrap()),
+                None,
+                None,
+            )),
+            42,
+        )]
     }
 
     #[derive(Debug)]
     struct PickingNonePolicy {
-        expected_nodes: Vec<Arc<Node>>,
+        expected_nodes: Vec<(Arc<Node>, Shard)>,
     }
     impl LoadBalancingPolicy for PickingNonePolicy {
         fn pick<'a>(
             &'a self,
             _query: &'a RoutingInfo,
             _cluster: &'a ClusterData,
-        ) -> Option<NodeRef<'a>> {
+        ) -> Option<(NodeRef<'a>, Shard)> {
             None
         }
 
@@ -138,7 +142,11 @@ mod tests {
             _query: &'a RoutingInfo,
             _cluster: &'a ClusterData,
         ) -> FallbackPlan<'a> {
-            Box::new(self.expected_nodes.iter())
+            Box::new(
+                self.expected_nodes
+                    .iter()
+                    .map(|(node_ref, shard)| (node_ref, *shard)),
+            )
         }
 
         fn name(&self) -> String {
@@ -159,6 +167,13 @@ mod tests {
         };
         let routing_info = RoutingInfo::default();
         let plan = Plan::new(&policy, &routing_info, &cluster_data);
-        assert_eq!(Vec::from_iter(plan.cloned()), policy.expected_nodes);
+        assert_eq!(
+            Vec::from_iter(plan.cloned()),
+            policy
+                .expected_nodes
+                .into_iter()
+                .map(|(node, _shard)| node)
+                .collect::<Vec<_>>()
+        );
     }
 }

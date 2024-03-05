@@ -4,7 +4,7 @@ use scylla::execution_profile::{ExecutionProfileBuilder, ExecutionProfileHandle}
 use scylla::load_balancing::{DefaultPolicy, LoadBalancingPolicy, RoutingInfo};
 use scylla::prepared_statement::PreparedStatement;
 use scylla::retry_policy::FallthroughRetryPolicy;
-use scylla::routing::Token;
+use scylla::routing::{Shard, Token};
 use scylla::test_utils::unique_keyspace_name;
 use scylla::transport::session::Session;
 use scylla::transport::NodeRef;
@@ -378,7 +378,7 @@ impl LoadBalancingPolicy for RoutingInfoReportingWrapper {
         &'a self,
         query: &'a RoutingInfo,
         cluster: &'a scylla::transport::ClusterData,
-    ) -> Option<NodeRef<'a>> {
+    ) -> Option<(NodeRef<'a>, Shard)> {
         self.routing_info_tx
             .send(OwnedRoutingInfo::from(query.clone()))
             .unwrap();
