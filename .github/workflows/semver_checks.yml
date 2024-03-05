@@ -63,11 +63,16 @@ jobs:
     - name: Verify the API compatibilty with PR base
       id: semver-pr-check
       run: |
-        set +e
+        set -e # So that failed commands exit the script
+        set -o pipefail # So that if a command in a pipe fails, the whole command fails
+
         echo "output<<SEMVER_STDOUT_EOF" >> $GITHUB_OUTPUT
+        SEMVER_REV_OUTPUT=$(make semver-rev rev="$PR_BASE" 2>&1) && true # "&& true" preserves exit code but cancels effects of set -e
+        exitcode=$?
+
         # Weird sed strip ANSI colors from output
-        make semver-rev rev="$PR_BASE" |& tee /proc/self/fd/2 | sed -r "s/\x1B\[([0-9]{1,2}(;[0-9]{1,2})?)?[mGK]//g" >> $GITHUB_OUTPUT
-        exitcode=${PIPESTATUS[0]}
+        # If any of the commands below fail, `set -e` and `set -o pipefail` should exit the script
+        echo "${SEMVER_REV_OUTPUT}" | tee /proc/self/fd/2 | sed -r "s/\x1B\[([0-9]{1,2}(;[0-9]{1,2})?)?[mGK]//g" >> $GITHUB_OUTPUT
         echo "SEMVER_STDOUT_EOF" >> $GITHUB_OUTPUT
 
         echo "Semver checks exitcode: " $exitcode
