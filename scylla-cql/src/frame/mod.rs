@@ -15,7 +15,7 @@ use thiserror::Error;
 use tokio::io::{AsyncRead, AsyncReadExt};
 use uuid::Uuid;
 
-use std::convert::TryFrom;
+use std::{collections::HashMap, convert::TryFrom};
 
 use request::SerializableRequest;
 use response::ResponseOpcode;
@@ -169,6 +169,7 @@ pub struct ResponseBodyWithExtensions {
     pub trace_id: Option<Uuid>,
     pub warnings: Vec<String>,
     pub body: Bytes,
+    pub custom_payload: Option<HashMap<String, Vec<u8>>>,
 }
 
 pub fn parse_response_body_extensions(
@@ -204,20 +205,22 @@ pub fn parse_response_body_extensions(
         Vec::new()
     };
 
-    if flags & FLAG_CUSTOM_PAYLOAD != 0 {
-        // TODO: Do something useful with the custom payload map
-        // For now, just skip it
+    let custom_payload = if flags & FLAG_CUSTOM_PAYLOAD != 0 {
         let body_len = body.len();
         let buf = &mut &*body;
-        types::read_bytes_map(buf)?;
+        let payload_map = types::read_bytes_map(buf)?;
         let buf_len = buf.len();
         body.advance(body_len - buf_len);
-    }
+        Some(payload_map)
+    } else {
+        None
+    };
 
     Ok(ResponseBodyWithExtensions {
         trace_id,
         warnings,
         body,
+        custom_payload,
     })
 }
 
