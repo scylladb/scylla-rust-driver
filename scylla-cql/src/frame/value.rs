@@ -489,7 +489,7 @@ impl TryInto<NaiveDate> for CqlDate {
 
         // date_days is u32 then converted to i64 then we subtract 2^31;
         // Max value is 2^31, min value is -2^31. Both values can safely fit in chrono::Duration, this call won't panic
-        let duration_since_unix_epoch = chrono::Duration::days(days_since_unix_epoch);
+        let duration_since_unix_epoch = chrono::Duration::try_days(days_since_unix_epoch).unwrap();
 
         NaiveDate::from_yo_opt(1970, 1)
             .unwrap()

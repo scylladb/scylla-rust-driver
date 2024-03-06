@@ -66,7 +66,12 @@ where
             )?,
             CqlValue::Counter(c) => write!(f, "{}", c.0)?,
             CqlValue::Date(CqlDate(d)) => {
-                let days_since_epoch = chrono::Duration::days(*d as i64 - (1 << 31));
+                // This is basically a copy of the code used in `impl TryInto<NaiveDate> for CqlDate` impl
+                // in scylla-cql. We can't call this impl because it is behind chrono feature in scylla-cql.
+
+                // date_days is u32 then converted to i64 then we subtract 2^31;
+                // Max value is 2^31, min value is -2^31. Both values can safely fit in chrono::Duration, this call won't panic
+                let days_since_epoch = chrono::Duration::try_days(*d as i64 - (1 << 31)).unwrap();
 
                 // TODO: chrono::NaiveDate does not handle the whole range
                 // supported by the `date` datatype
