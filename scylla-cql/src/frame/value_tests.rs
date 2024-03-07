@@ -489,7 +489,7 @@ fn cql_timestamp_serialization() {
 
 #[cfg(feature = "chrono")]
 #[test]
-fn naive_date_time_serialization() {
+fn date_time_serialization() {
     use chrono::{DateTime, Utc};
     let test_cases: [(DateTime<Utc>, [u8; 8]); 7] = [
         (
