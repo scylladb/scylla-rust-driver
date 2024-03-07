@@ -21,7 +21,7 @@ thiserror = "1.0"
 num-bigint-03 = { package = "num-bigint", version = "0.3", optional = true }
 num-bigint-04 = { package = "num-bigint", version = "0.4", optional = true }
 bigdecimal-04 = { package = "bigdecimal", version = "0.4", optional = true }
-chrono = { version = "0.4.27", default-features = false, optional = true }
+chrono = { version = "0.4.32", default-features = false, optional = true }
 lz4_flex = { version = "0.11.1" }
 async-trait = "0.1.57"
 serde = { version = "1.0", features = ["derive"], optional = true }

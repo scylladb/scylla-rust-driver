@@ -1580,10 +1580,10 @@ mod tests {
     #[cfg(feature = "chrono")]
     #[test]
     fn test_datetime_from_cql() {
-        use chrono::{NaiveDate, NaiveDateTime, NaiveTime};
+        use chrono::{DateTime, NaiveDate, NaiveDateTime, NaiveTime};
 
         // 0 when converted to DateTime is 1970-01-01 0:00:00.00
-        let unix_epoch = NaiveDateTime::from_timestamp_opt(0, 0).unwrap().and_utc();
+        let unix_epoch = DateTime::from_timestamp(0, 0).unwrap();
         let date = super::deser_cql_value(&ColumnType::Timestamp, &mut 0i64.to_be_bytes().as_ref())
             .unwrap();
 

@@ -489,47 +489,46 @@ fn cql_timestamp_serialization() {
 
 #[cfg(feature = "chrono")]
 #[test]
-fn naive_date_time_serialization() {
-    use chrono::NaiveDateTime;
-    let test_cases = [
+fn date_time_serialization() {
+    use chrono::{DateTime, Utc};
+    let test_cases: [(DateTime<Utc>, [u8; 8]); 7] = [
         (
             // Max time serialized without error
-            NaiveDateTime::MAX,
-            NaiveDateTime::MAX.timestamp_millis().to_be_bytes(),
+            DateTime::<Utc>::MAX_UTC,
+            DateTime::<Utc>::MAX_UTC.timestamp_millis().to_be_bytes(),
         ),
         (
             // Min time serialized without error
-            NaiveDateTime::MIN,
-            NaiveDateTime::MIN.timestamp_millis().to_be_bytes(),
+            DateTime::<Utc>::MIN_UTC,
+            DateTime::<Utc>::MIN_UTC.timestamp_millis().to_be_bytes(),
         ),
         (
             // UNIX epoch baseline
-            NaiveDateTime::from_timestamp_opt(0, 0).unwrap(),
+            DateTime::from_timestamp(0, 0).unwrap(),
             0i64.to_be_bytes(),
         ),
         (
             // One second since UNIX epoch
-            NaiveDateTime::from_timestamp_opt(1, 0).unwrap(),
+            DateTime::from_timestamp(1, 0).unwrap(),
             1000i64.to_be_bytes(),
         ),
         (
             // 1 nanosecond since UNIX epoch, lost during serialization
-            NaiveDateTime::from_timestamp_opt(0, 1).unwrap(),
+            DateTime::from_timestamp(0, 1).unwrap(),
             0i64.to_be_bytes(),
         ),
         (
             // 1 millisecond since UNIX epoch
-            NaiveDateTime::from_timestamp_opt(0, 1_000_000).unwrap(),
+            DateTime::from_timestamp(0, 1_000_000).unwrap(),
             1i64.to_be_bytes(),
         ),
         (
             // 2 days before UNIX epoch
-            NaiveDateTime::from_timestamp_opt(-2 * 24 * 60 * 60, 0).unwrap(),
+            DateTime::from_timestamp(-2 * 24 * 60 * 60, 0).unwrap(),
             (-2 * 24i64 * 60 * 60 * 1000).to_be_bytes(),
         ),
     ];
-    for (datetime, expected) in test_cases {
-        let test_datetime = datetime.and_utc();
+    for (test_datetime, expected) in test_cases {
         let bytes: Vec<u8> = serialized(test_datetime, ColumnType::Timestamp);
 
         let mut expected_bytes: Vec<u8> = vec![0, 0, 0, 8];

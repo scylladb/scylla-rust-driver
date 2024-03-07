@@ -861,10 +861,7 @@ async fn test_date_time() {
     let session = init_test("chrono_datetime_tests", "timestamp").await;
 
     let tests = [
-        (
-            "0",
-            NaiveDateTime::from_timestamp_opt(0, 0).unwrap().and_utc(),
-        ),
+        ("0", DateTime::from_timestamp(0, 0).unwrap()),
         (
             "2001-02-03T04:05:06.789+0000",
             NaiveDateTime::new(
