@@ -86,12 +86,29 @@ jobs:
     needs: semver-pull-request-check
     timeout-minutes: 3
     steps:
+    - name: Get ID of comment if posted previously.
+      uses: peter-evans/find-comment@v3
+      id: find-comment
+      with:
+          issue-number: ${{ env.PR_ID }}
+          comment-author: 'github-actions[bot]'
+          body-includes: semver
     - name: Remove breaking label on success
       run: gh pr edit "$PR_ID" --remove-label semver-checks-breaking
       if: needs.semver-pull-request-check.outputs.exitcode == '0'
       env:
         GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         GH_REPO: ${{ github.repository }}
+    - name: Report that there were no breaks
+      uses: peter-evans/create-or-update-comment@v4
+      with:
+          issue-number: ${{ env.PR_ID }}
+          comment-id: ${{ steps.find-comment.outputs.comment-id }}
+          body: |
+            `cargo semver-checks` found no API-breaking changes in this PR! 🎉🥳
+            Checked commit: ${{ env.PR_HEAD }}
+          edit-mode: replace
+      if: needs.semver-pull-request-check.outputs.exitcode == '0'
     - name: Add breaking label on failure
       run: gh pr edit "$PR_ID" --add-label semver-checks-breaking
       if: needs.semver-pull-request-check.outputs.exitcode != '0'
@@ -99,25 +116,25 @@ jobs:
         GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         GH_REPO: ${{ github.repository }}
     - name: Post report on semver break
-      run: |
-        gh pr comment "$PR_ID" --body "\
-        \`cargo semver-checks\` detected some API incompatibilities in this PR.
-        See the following report for details:
-        <details>
-        <summary>cargo semver-checks output</summary>
+      uses: peter-evans/create-or-update-comment@v4
+      with:
+          issue-number: ${{ env.PR_ID }}
+          comment-id: ${{ steps.find-comment.outputs.comment-id }}
+          body: |
+            `cargo semver-checks` detected some API incompatibilities in this PR.
+            Checked commit: ${{ env.PR_HEAD }}
 
-        \`\`\`
-        $SEMVER_OUTPUT
-        \`\`\`
+            See the following report for details:
+            <details>
+            <summary>cargo semver-checks output</summary>
 
-        </details>
-        "
+            ```
+            ${{ needs.semver-pull-request-check.outputs.output }}
+            ```
+
+            </details>
+          edit-mode: replace
       if: needs.semver-pull-request-check.outputs.exitcode != '0'
-      env:
-        GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        GH_REPO: ${{ github.repository }}
-        SEMVER_OUTPUT: ${{ needs.semver-pull-request-check.outputs.output }}
-
 
   semver-push-tag:
     runs-on: ubuntu-latest
