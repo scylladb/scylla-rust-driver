@@ -1,5 +1,5 @@
 use crate::utils::{setup_tracing, test_with_3_node_cluster};
-use scylla::{LegacySession, SessionBuilder};
+use scylla::{Session, SessionBuilder};
 use scylla_cql::frame::request::options;
 use scylla_cql::frame::types;
 use std::sync::Arc;
@@ -50,11 +50,11 @@ async fn test_given_self_identity(self_identity: SelfIdentity<'static>) {
             )]));
 
             // DB preparation phase
-            let _session: LegacySession = SessionBuilder::new()
+            let _session: Session = SessionBuilder::new()
                 .known_node(proxy_uris[0].as_str())
                 .address_translator(Arc::new(translation_map))
                 .custom_identity(self_identity.clone())
-                .build_legacy()
+                .build()
                 .await
                 .unwrap();
 

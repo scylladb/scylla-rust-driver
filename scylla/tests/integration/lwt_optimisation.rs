@@ -1,8 +1,8 @@
 use crate::utils::{setup_tracing, test_with_3_node_cluster};
 use scylla::retry_policy::FallthroughRetryPolicy;
-use scylla::test_utils::scylla_supports_tablets_legacy;
+use scylla::test_utils::scylla_supports_tablets;
 use scylla::test_utils::unique_keyspace_name;
-use scylla::transport::session::LegacySession;
+use scylla::transport::session::Session;
 use scylla::{ExecutionProfile, SessionBuilder};
 use scylla_cql::frame::protocol_features::ProtocolFeatures;
 use scylla_cql::frame::types;
@@ -52,11 +52,11 @@ async fn if_lwt_optimisation_mark_offered_then_negotiatied_and_lwt_routed_optima
             .into_handle();
 
         // DB preparation phase
-        let session: LegacySession = SessionBuilder::new()
+        let session: Session = SessionBuilder::new()
             .known_node(proxy_uris[0].as_str())
             .default_execution_profile_handle(handle)
             .address_translator(Arc::new(translation_map))
-            .build_legacy()
+            .build()
             .await
             .unwrap();
 
@@ -70,7 +70,7 @@ async fn if_lwt_optimisation_mark_offered_then_negotiatied_and_lwt_routed_optima
         // Create schema
         let ks = unique_keyspace_name();
         let mut create_ks = format!("CREATE KEYSPACE IF NOT EXISTS {} WITH REPLICATION = {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 3}}", ks);
-        if scylla_supports_tablets_legacy(&session).await {
+        if scylla_supports_tablets(&session).await {
             create_ks += " and TABLETS = { 'enabled': false}";
         }
         session.query_unpaged(create_ks, &[]).await.unwrap();

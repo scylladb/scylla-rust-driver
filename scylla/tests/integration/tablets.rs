@@ -16,7 +16,7 @@ use scylla::test_utils::unique_keyspace_name;
 use scylla::transport::ClusterData;
 use scylla::transport::Node;
 use scylla::transport::NodeRef;
-use scylla::{ExecutionProfile, LegacyQueryResult, LegacySession};
+use scylla::{ExecutionProfile, QueryResult, Session};
 
 use scylla::transport::errors::QueryError;
 use scylla_proxy::{
@@ -28,7 +28,7 @@ use tokio::sync::mpsc;
 use tracing::info;
 use uuid::Uuid;
 
-#[derive(scylla::FromRow)]
+#[derive(scylla::DeserializeRow)]
 struct SelectedTablet {
     last_token: i64,
     replicas: Vec<(Uuid, i32)>,
@@ -40,7 +40,7 @@ struct Tablet {
     replicas: Vec<(Arc<Node>, i32)>,
 }
 
-async fn get_tablets(session: &LegacySession, ks: &str, table: &str) -> Vec<Tablet> {
+async fn get_tablets(session: &Session, ks: &str, table: &str) -> Vec<Tablet> {
     let cluster_data = session.get_cluster_data();
     let endpoints = cluster_data.get_nodes_info();
     for endpoint in endpoints.iter() {
@@ -55,8 +55,10 @@ async fn get_tablets(session: &LegacySession, ks: &str, table: &str) -> Vec<Tabl
         "select last_token, replicas from system.tablets WHERE keyspace_name = ? and table_name = ? ALLOW FILTERING",
         &(ks, table)).await.unwrap();
 
-    let mut selected_tablets = selected_tablets_response
+    let mut selected_tablets: Vec<SelectedTablet> = selected_tablets_response
         .into_typed::<SelectedTablet>()
+        .unwrap()
+        .into_stream()
         .try_collect::<Vec<_>>()
         .await
         .unwrap();
@@ -179,11 +181,11 @@ impl LoadBalancingPolicy for SingleTargetLBP {
 }
 
 async fn send_statement_everywhere(
-    session: &LegacySession,
+    session: &Session,
     cluster: &ClusterData,
     statement: &PreparedStatement,
     values: &dyn SerializeRow,
-) -> Result<Vec<LegacyQueryResult>, QueryError> {
+) -> Result<Vec<QueryResult>, QueryError> {
     let tasks = cluster.get_nodes_info().iter().flat_map(|node| {
         let shard_count: u16 = node.sharder().unwrap().nr_shards.into();
         (0..shard_count).map(|shard| {
@@ -205,10 +207,10 @@ async fn send_statement_everywhere(
 }
 
 async fn send_unprepared_query_everywhere(
-    session: &LegacySession,
+    session: &Session,
     cluster: &ClusterData,
     query: &Query,
-) -> Result<Vec<LegacyQueryResult>, QueryError> {
+) -> Result<Vec<QueryResult>, QueryError> {
     let tasks = cluster.get_nodes_info().iter().flat_map(|node| {
         let shard_count: u16 = node.sharder().unwrap().nr_shards.into();
         (0..shard_count).map(|shard| {
@@ -247,7 +249,7 @@ fn count_tablet_feedbacks(
         .count()
 }
 
-async fn prepare_schema(session: &LegacySession, ks: &str, table: &str, tablet_count: usize) {
+async fn prepare_schema(session: &Session, ks: &str, table: &str, tablet_count: usize) {
     session
         .query_unpaged(
             format!(
@@ -294,11 +296,11 @@ async fn test_default_policy_is_tablet_aware() {
             let session = scylla::SessionBuilder::new()
                 .known_node(proxy_uris[0].as_str())
                 .address_translator(Arc::new(translation_map))
-                .build_legacy()
+                .build()
                 .await
                 .unwrap();
 
-            if !scylla::test_utils::scylla_supports_tablets_legacy(&session).await {
+            if !scylla::test_utils::scylla_supports_tablets(&session).await {
                 tracing::warn!("Skipping test because this Scylla version doesn't support tablets");
                 return running_proxy;
             }
@@ -416,6 +418,8 @@ async fn test_default_policy_is_tablet_aware() {
 #[tokio::test]
 #[ntest::timeout(30000)]
 async fn test_tablet_feedback_not_sent_for_unprepared_queries() {
+    use scylla::test_utils::scylla_supports_tablets;
+
     setup_tracing();
     const TABLET_COUNT: usize = 16;
 
@@ -425,11 +429,11 @@ async fn test_tablet_feedback_not_sent_for_unprepared_queries() {
             let session = scylla::SessionBuilder::new()
                 .known_node(proxy_uris[0].as_str())
                 .address_translator(Arc::new(translation_map))
-                .build_legacy()
+                .build()
                 .await
                 .unwrap();
 
-            if !scylla::test_utils::scylla_supports_tablets_legacy(&session).await {
+            if !scylla_supports_tablets(&session).await {
                 tracing::warn!("Skipping test because this Scylla version doesn't support tablets");
                 return running_proxy;
             }
@@ -488,6 +492,8 @@ async fn test_tablet_feedback_not_sent_for_unprepared_queries() {
 #[ntest::timeout(30000)]
 #[ignore]
 async fn test_lwt_optimization_works_with_tablets() {
+    use scylla::test_utils::scylla_supports_tablets;
+
     setup_tracing();
     const TABLET_COUNT: usize = 16;
 
@@ -497,11 +503,11 @@ async fn test_lwt_optimization_works_with_tablets() {
             let session = scylla::SessionBuilder::new()
                 .known_node(proxy_uris[0].as_str())
                 .address_translator(Arc::new(translation_map))
-                .build_legacy()
+                .build()
                 .await
                 .unwrap();
 
-            if !scylla::test_utils::scylla_supports_tablets_legacy(&session).await {
+            if !scylla_supports_tablets(&session).await {
                 tracing::warn!("Skipping test because this Scylla version doesn't support tablets");
                 return running_proxy;
             }
