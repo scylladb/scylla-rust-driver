@@ -25,7 +25,7 @@ use scylla_cql::{
         response::CqlResponseKind,
         value::SerializeValuesError,
     },
-    types::serialize::SerializationError,
+    types::{deserialize::TypeCheckError, serialize::SerializationError},
 };
 
 use thiserror::Error;
@@ -436,7 +436,7 @@ pub enum PeersMetadataError {
 pub enum KeyspacesMetadataError {
     /// system_schema.keyspaces has invalid column type.
     #[error("system_schema.keyspaces has invalid column type: {0}")]
-    SchemaKeyspacesInvalidColumnType(FromRowError),
+    SchemaKeyspacesInvalidColumnType(TypeCheckError),
 
     /// Bad keyspace replication strategy.
     #[error("Bad keyspace <{keyspace}> replication strategy: {error}")]
@@ -474,7 +474,7 @@ pub enum KeyspaceStrategyError {
 pub enum UdtMetadataError {
     /// system_schema.types has invalid column type.
     #[error("system_schema.types has invalid column type: {0}")]
-    SchemaTypesInvalidColumnType(FromRowError),
+    SchemaTypesInvalidColumnType(TypeCheckError),
 
     /// Circular UDT dependency detected.
     #[error("Detected circular dependency between user defined types - toposort is impossible!")]
@@ -487,11 +487,11 @@ pub enum UdtMetadataError {
 pub enum TablesMetadataError {
     /// system_schema.tables has invalid column type.
     #[error("system_schema.tables has invalid column type: {0}")]
-    SchemaTablesInvalidColumnType(FromRowError),
+    SchemaTablesInvalidColumnType(TypeCheckError),
 
     /// system_schema.columns has invalid column type.
     #[error("system_schema.columns has invalid column type: {0}")]
-    SchemaColumnsInvalidColumnType(FromRowError),
+    SchemaColumnsInvalidColumnType(TypeCheckError),
 
     /// Unknown column kind.
     #[error("Unknown column kind '{column_kind}' for {keyspace_name}.{table_name}.{column_name}")]
@@ -509,7 +509,7 @@ pub enum TablesMetadataError {
 pub enum ViewsMetadataError {
     /// system_schema.views has invalid column type.
     #[error("system_schema.views has invalid column type: {0}")]
-    SchemaViewsInvalidColumnType(FromRowError),
+    SchemaViewsInvalidColumnType(TypeCheckError),
 }
 
 /// Error caused by caller creating an invalid query
