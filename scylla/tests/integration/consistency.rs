@@ -6,8 +6,8 @@ use scylla::prepared_statement::PreparedStatement;
 use scylla::retry_policy::FallthroughRetryPolicy;
 use scylla::routing::{Shard, Token};
 use scylla::test_utils::unique_keyspace_name;
-use scylla::transport::session::LegacySession;
 use scylla::transport::NodeRef;
+use scylla::Session;
 use scylla_cql::frame::response::result::TableSpec;
 use tokio::sync::mpsc::{self, UnboundedReceiver, UnboundedSender};
 
@@ -59,7 +59,7 @@ fn pairs_of_all_consistencies() -> impl Iterator<Item = (Consistency, Option<Ser
 const CREATE_TABLE_STR: &str = "CREATE TABLE consistency_tests (a int, b int, PRIMARY KEY (a, b))";
 const QUERY_STR: &str = "INSERT INTO consistency_tests (a, b) VALUES (?, 1)";
 
-async fn create_schema(session: &LegacySession, ks: &str) {
+async fn create_schema(session: &Session, ks: &str) {
     session.query_unpaged(format!("CREATE KEYSPACE IF NOT EXISTS {} WITH REPLICATION = {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 3}}", ks), &[]).await.unwrap();
     session.use_keyspace(ks, false).await.unwrap();
 
@@ -68,7 +68,7 @@ async fn create_schema(session: &LegacySession, ks: &str) {
 
 // The following functions perform a request with consistencies set directly on a statement.
 async fn query_consistency_set_directly(
-    session: &LegacySession,
+    session: &Session,
     query: &Query,
     c: Consistency,
     sc: Option<SerialConsistency>,
@@ -81,7 +81,7 @@ async fn query_consistency_set_directly(
 }
 
 async fn execute_consistency_set_directly(
-    session: &LegacySession,
+    session: &Session,
     prepared: &PreparedStatement,
     c: Consistency,
     sc: Option<SerialConsistency>,
@@ -94,7 +94,7 @@ async fn execute_consistency_set_directly(
 }
 
 async fn batch_consistency_set_directly(
-    session: &LegacySession,
+    session: &Session,
     batch: &Batch,
     c: Consistency,
     sc: Option<SerialConsistency>,
@@ -107,7 +107,7 @@ async fn batch_consistency_set_directly(
 
 // The following functions perform a request with consistencies set on a per-statement execution profile.
 async fn query_consistency_set_on_exec_profile(
-    session: &LegacySession,
+    session: &Session,
     query: &Query,
     profile: ExecutionProfileHandle,
 ) {
@@ -118,7 +118,7 @@ async fn query_consistency_set_on_exec_profile(
 }
 
 async fn execute_consistency_set_on_exec_profile(
-    session: &LegacySession,
+    session: &Session,
     prepared: &PreparedStatement,
     profile: ExecutionProfileHandle,
 ) {
@@ -129,7 +129,7 @@ async fn execute_consistency_set_on_exec_profile(
 }
 
 async fn batch_consistency_set_on_exec_profile(
-    session: &LegacySession,
+    session: &Session,
     batch: &Batch,
     profile: ExecutionProfileHandle,
 ) {
@@ -159,7 +159,7 @@ async fn check_for_all_consistencies_and_setting_options<
     let session = session_builder
         .clone()
         .default_execution_profile_handle(base_for_every_profile.clone().build().into_handle())
-        .build_legacy()
+        .build()
         .await
         .unwrap();
     create_schema(&session, ks).await;
@@ -212,7 +212,7 @@ async fn check_for_all_consistencies_and_setting_options<
         let session_with_consistencies = session_builder
             .clone()
             .default_execution_profile_handle(handle)
-            .build_legacy()
+            .build()
             .await
             .unwrap();
         session_with_consistencies
@@ -473,7 +473,7 @@ async fn consistency_allows_for_paxos_selects() {
 
     let session = SessionBuilder::new()
         .known_node(uri.as_str())
-        .build_legacy()
+        .build()
         .await
         .unwrap();
 

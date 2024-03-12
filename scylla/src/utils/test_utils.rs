@@ -2,7 +2,7 @@ use scylla_cql::frame::response::result::Row;
 
 #[cfg(test)]
 use crate::transport::session_builder::{GenericSessionBuilder, SessionBuilderKind};
-use crate::{LegacySession, Session};
+use crate::Session;
 #[cfg(test)]
 use std::{num::NonZeroU32, time::Duration};
 use std::{
@@ -27,7 +27,7 @@ pub fn unique_keyspace_name() -> String {
 }
 
 #[cfg(test)]
-pub(crate) async fn supports_feature(session: &LegacySession, feature: &str) -> bool {
+pub(crate) async fn supports_feature(session: &Session, feature: &str) -> bool {
     // Cassandra doesn't have a concept of features, so first detect
     // if there is the `supported_features` column in system.local
 
@@ -48,7 +48,10 @@ pub(crate) async fn supports_feature(session: &LegacySession, feature: &str) -> 
         .query_unpaged("SELECT supported_features FROM system.local", ())
         .await
         .unwrap()
-        .single_row_typed()
+        .into_rows_result()
+        .unwrap()
+        .unwrap()
+        .single_row()
         .unwrap();
 
     features
@@ -92,20 +95,6 @@ pub fn create_new_session_builder() -> GenericSessionBuilder<impl SessionBuilder
     session_builder
         .tracing_info_fetch_attempts(NonZeroU32::new(200).unwrap())
         .tracing_info_fetch_interval(Duration::from_millis(50))
-}
-
-pub async fn scylla_supports_tablets_legacy(session: &LegacySession) -> bool {
-    let result = session
-        .query_unpaged(
-            "select column_name from system_schema.columns where 
-                keyspace_name = 'system_schema'
-                and table_name = 'scylla_keyspaces'
-                and column_name = 'initial_tablets'",
-            &[],
-        )
-        .await
-        .unwrap();
-    result.single_row().is_ok()
 }
 
 pub async fn scylla_supports_tablets(session: &Session) -> bool {

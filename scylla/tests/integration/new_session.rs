@@ -16,7 +16,7 @@ async fn proceed_if_only_some_hostnames_are_invalid() {
 
     let session = SessionBuilder::new()
         .known_nodes([uri1, uri2, uri3])
-        .build_legacy()
+        .build()
         .await
         .unwrap();
     session

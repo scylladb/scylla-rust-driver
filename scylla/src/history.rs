@@ -469,8 +469,8 @@ mod tests {
     use crate::test_utils::create_new_session_builder;
     use assert_matches::assert_matches;
     use chrono::{DateTime, NaiveDate, NaiveDateTime, NaiveTime, Utc};
-    use futures::StreamExt;
-    use scylla_cql::Consistency;
+    use futures::StreamExt as _;
+    use scylla_cql::{frame::response::result::Row, Consistency};
 
     // Set a single time for all timestamps within StructuredHistory.
     // HistoryCollector sets the timestamp to current time which changes with each test.
@@ -917,7 +917,7 @@ mod tests {
     #[tokio::test]
     async fn successful_query_history() {
         setup_tracing();
-        let session = create_new_session_builder().build_legacy().await.unwrap();
+        let session = create_new_session_builder().build().await.unwrap();
 
         let mut query = Query::new("SELECT * FROM system.local");
         let history_collector = Arc::new(HistoryCollector::new());
@@ -984,7 +984,7 @@ mod tests {
     #[tokio::test]
     async fn failed_query_history() {
         setup_tracing();
-        let session = create_new_session_builder().build_legacy().await.unwrap();
+        let session = create_new_session_builder().build().await.unwrap();
 
         let mut query = Query::new("This isnt even CQL");
         let history_collector = Arc::new(HistoryCollector::new());
@@ -1021,7 +1021,7 @@ mod tests {
     #[tokio::test]
     async fn iterator_query_history() {
         setup_tracing();
-        let session = create_new_session_builder().build_legacy().await.unwrap();
+        let session = create_new_session_builder().build().await.unwrap();
         let ks = unique_keyspace_name();
         session
         .query_unpaged(format!("CREATE KEYSPACE {} WITH REPLICATION = {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}}", ks), &[])
@@ -1045,7 +1045,12 @@ mod tests {
         let history_collector = Arc::new(HistoryCollector::new());
         iter_query.set_history_listener(history_collector.clone());
 
-        let mut rows_iterator = session.query_iter(iter_query, ()).await.unwrap();
+        let mut rows_iterator = session
+            .query_iter(iter_query, ())
+            .await
+            .unwrap()
+            .rows_stream::<Row>()
+            .unwrap();
         while let Some(_row) = rows_iterator.next().await {
             // Receive rows...
         }

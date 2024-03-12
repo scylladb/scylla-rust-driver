@@ -1,17 +1,14 @@
 use crate as scylla;
-use crate::cql_to_rust::FromCqlVal;
 use crate::frame::response::result::CqlValue;
 use crate::frame::value::{Counter, CqlDate, CqlTime, CqlTimestamp};
-use crate::macros::FromUserType;
-use crate::test_utils::{
-    create_new_session_builder, scylla_supports_tablets_legacy, setup_tracing,
-};
-use crate::transport::session::LegacySession;
+use crate::test_utils::{create_new_session_builder, scylla_supports_tablets, setup_tracing};
+use crate::transport::session::Session;
 use crate::utils::test_utils::unique_keyspace_name;
 use itertools::Itertools;
 use scylla_cql::frame::value::{CqlTimeuuid, CqlVarint};
+use scylla_cql::types::deserialize::value::DeserializeValue;
 use scylla_cql::types::serialize::value::SerializeValue;
-use scylla_macros::SerializeValue;
+use scylla_macros::{DeserializeValue, SerializeValue};
 use std::cmp::PartialEq;
 use std::fmt::Debug;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
@@ -24,8 +21,8 @@ async fn init_test_maybe_without_tablets(
     table_name: &str,
     type_name: &str,
     supports_tablets: bool,
-) -> LegacySession {
-    let session: LegacySession = create_new_session_builder().build_legacy().await.unwrap();
+) -> Session {
+    let session: Session = create_new_session_builder().build().await.unwrap();
     let ks = unique_keyspace_name();
 
     let mut create_ks = format!(
@@ -34,7 +31,7 @@ async fn init_test_maybe_without_tablets(
         ks
     );
 
-    if !supports_tablets && scylla_supports_tablets_legacy(&session).await {
+    if !supports_tablets && scylla_supports_tablets(&session).await {
         create_ks += " AND TABLETS = {'enabled': false}"
     }
 
@@ -63,7 +60,7 @@ async fn init_test_maybe_without_tablets(
 // Used to prepare a table for test
 // Creates a new keyspace
 // Drops and creates table {table_name} (id int PRIMARY KEY, val {type_name})
-async fn init_test(table_name: &str, type_name: &str) -> LegacySession {
+async fn init_test(table_name: &str, type_name: &str) -> Session {
     init_test_maybe_without_tablets(table_name, type_name, true).await
 }
 
@@ -77,9 +74,9 @@ async fn init_test(table_name: &str, type_name: &str) -> LegacySession {
 // Expected values and bound values are computed using T::from_str
 async fn run_tests<T>(tests: &[&str], type_name: &str)
 where
-    T: SerializeValue + FromCqlVal<CqlValue> + FromStr + Debug + Clone + PartialEq,
+    T: SerializeValue + for<'r> DeserializeValue<'r, 'r> + FromStr + Debug + Clone + PartialEq,
 {
-    let session: LegacySession = init_test(type_name, type_name).await;
+    let session: Session = init_test(type_name, type_name).await;
     session.await_schema_agreement().await.unwrap();
 
     for test in tests.iter() {
@@ -102,7 +99,10 @@ where
             .query_unpaged(select_values, &[])
             .await
             .unwrap()
-            .rows_typed::<(T,)>()
+            .into_rows_result()
+            .unwrap()
+            .unwrap()
+            .rows::<(T,)>()
             .unwrap()
             .map(Result::unwrap)
             .map(|row| row.0)
@@ -170,7 +170,7 @@ async fn test_cql_varint() {
     ];
 
     let table_name = "cql_varint_tests";
-    let session: LegacySession = create_new_session_builder().build_legacy().await.unwrap();
+    let session: Session = create_new_session_builder().build().await.unwrap();
     let ks = unique_keyspace_name();
 
     session
@@ -220,7 +220,10 @@ async fn test_cql_varint() {
             .execute_unpaged(&prepared_select, &[])
             .await
             .unwrap()
-            .rows_typed::<(CqlVarint,)>()
+            .into_rows_result()
+            .unwrap()
+            .unwrap()
+            .rows::<(CqlVarint,)>()
             .unwrap()
             .map(Result::unwrap)
             .map(|row| row.0)
@@ -280,7 +283,7 @@ async fn test_counter() {
 
     // Can't use run_tests, because counters are special and can't be inserted
     let type_name = "counter";
-    let session: LegacySession = init_test_maybe_without_tablets(type_name, type_name, false).await;
+    let session: Session = init_test_maybe_without_tablets(type_name, type_name, false).await;
 
     for (i, test) in tests.iter().enumerate() {
         let update_bound_value = format!("UPDATE {} SET val = val + ? WHERE id = ?", type_name);
@@ -295,7 +298,10 @@ async fn test_counter() {
             .query_unpaged(select_values, (i as i32,))
             .await
             .unwrap()
-            .rows_typed::<(Counter,)>()
+            .into_rows_result()
+            .unwrap()
+            .unwrap()
+            .rows::<(Counter,)>()
             .unwrap()
             .map(Result::unwrap)
             .map(|row| row.0)
@@ -313,7 +319,7 @@ async fn test_naive_date_04() {
     use chrono::Datelike;
     use chrono::NaiveDate;
 
-    let session: LegacySession = init_test("chrono_naive_date_tests", "date").await;
+    let session: Session = init_test("chrono_naive_date_tests", "date").await;
 
     let min_naive_date: NaiveDate = NaiveDate::MIN;
     let min_naive_date_string = min_naive_date.format("%Y-%m-%d").to_string();
@@ -371,7 +377,10 @@ async fn test_naive_date_04() {
             .query_unpaged("SELECT val from chrono_naive_date_tests", &[])
             .await
             .unwrap()
-            .rows_typed::<(NaiveDate,)>()
+            .into_rows_result()
+            .unwrap()
+            .unwrap()
+            .rows::<(NaiveDate,)>()
             .unwrap()
             .next()
             .unwrap()
@@ -394,7 +403,10 @@ async fn test_naive_date_04() {
                 .query_unpaged("SELECT val from chrono_naive_date_tests", &[])
                 .await
                 .unwrap()
-                .single_row_typed::<(NaiveDate,)>()
+                .into_rows_result()
+                .unwrap()
+                .unwrap()
+                .single_row::<(NaiveDate,)>()
                 .unwrap();
             assert_eq!(read_date, *naive_date);
         }
@@ -406,7 +418,7 @@ async fn test_cql_date() {
     setup_tracing();
     // Tests value::Date which allows to insert dates outside NaiveDate range
 
-    let session: LegacySession = init_test("cql_date_tests", "date").await;
+    let session: Session = init_test("cql_date_tests", "date").await;
 
     let tests = [
         ("1970-01-01", CqlDate(2_u32.pow(31))),
@@ -429,15 +441,14 @@ async fn test_cql_date() {
             .await
             .unwrap();
 
-        let read_date: CqlDate = session
+        let (read_date,): (CqlDate,) = session
             .query_unpaged("SELECT val from cql_date_tests", &[])
             .await
             .unwrap()
-            .rows
-            .unwrap()[0]
-            .columns[0]
-            .as_ref()
-            .map(|cql_val| cql_val.as_cql_date().unwrap())
+            .into_rows_result()
+            .unwrap()
+            .unwrap()
+            .single_row::<(CqlDate,)>()
             .unwrap();
 
         assert_eq!(read_date, *date);
@@ -467,7 +478,7 @@ async fn test_date_03() {
     setup_tracing();
     use time::{Date, Month::*};
 
-    let session: LegacySession = init_test("time_date_tests", "date").await;
+    let session: Session = init_test("time_date_tests", "date").await;
 
     let tests = [
         // Basic test values
@@ -520,7 +531,10 @@ async fn test_date_03() {
             .query_unpaged("SELECT val from time_date_tests", &[])
             .await
             .unwrap()
-            .first_row_typed::<(Date,)>()
+            .into_rows_result()
+            .unwrap()
+            .unwrap()
+            .first_row::<(Date,)>()
             .ok()
             .map(|val| val.0);
 
@@ -540,7 +554,10 @@ async fn test_date_03() {
                 .query_unpaged("SELECT val from time_date_tests", &[])
                 .await
                 .unwrap()
-                .first_row_typed::<(Date,)>()
+                .into_rows_result()
+                .unwrap()
+                .unwrap()
+                .first_row::<(Date,)>()
                 .unwrap();
             assert_eq!(read_date, *date);
         }
@@ -553,7 +570,7 @@ async fn test_cql_time() {
     // CqlTime is an i64 - nanoseconds since midnight
     // in range 0..=86399999999999
 
-    let session: LegacySession = init_test("cql_time_tests", "time").await;
+    let session: Session = init_test("cql_time_tests", "time").await;
 
     let max_time: i64 = 24 * 60 * 60 * 1_000_000_000 - 1;
     assert_eq!(max_time, 86399999999999);
@@ -583,7 +600,10 @@ async fn test_cql_time() {
             .query_unpaged("SELECT val from cql_time_tests", &[])
             .await
             .unwrap()
-            .single_row_typed::<(CqlTime,)>()
+            .into_rows_result()
+            .unwrap()
+            .unwrap()
+            .single_row::<(CqlTime,)>()
             .unwrap();
 
         assert_eq!(read_time, *time_duration);
@@ -601,7 +621,10 @@ async fn test_cql_time() {
             .query_unpaged("SELECT val from cql_time_tests", &[])
             .await
             .unwrap()
-            .single_row_typed::<(CqlTime,)>()
+            .into_rows_result()
+            .unwrap()
+            .unwrap()
+            .single_row::<(CqlTime,)>()
             .unwrap();
 
         assert_eq!(read_time, *time_duration);
@@ -679,7 +702,10 @@ async fn test_naive_time_04() {
             .query_unpaged("SELECT val from chrono_time_tests", &[])
             .await
             .unwrap()
-            .first_row_typed::<(NaiveTime,)>()
+            .into_rows_result()
+            .unwrap()
+            .unwrap()
+            .first_row::<(NaiveTime,)>()
             .unwrap();
 
         assert_eq!(read_time, *time);
@@ -697,7 +723,10 @@ async fn test_naive_time_04() {
             .query_unpaged("SELECT val from chrono_time_tests", &[])
             .await
             .unwrap()
-            .first_row_typed::<(NaiveTime,)>()
+            .into_rows_result()
+            .unwrap()
+            .unwrap()
+            .first_row::<(NaiveTime,)>()
             .unwrap();
         assert_eq!(read_time, *time);
     }
@@ -759,7 +788,10 @@ async fn test_time_03() {
             .query_unpaged("SELECT val from time_time_tests", &[])
             .await
             .unwrap()
-            .first_row_typed::<(Time,)>()
+            .into_rows_result()
+            .unwrap()
+            .unwrap()
+            .first_row::<(Time,)>()
             .unwrap();
 
         assert_eq!(read_time, *time);
@@ -777,7 +809,10 @@ async fn test_time_03() {
             .query_unpaged("SELECT val from time_time_tests", &[])
             .await
             .unwrap()
-            .first_row_typed::<(Time,)>()
+            .into_rows_result()
+            .unwrap()
+            .unwrap()
+            .first_row::<(Time,)>()
             .unwrap();
         assert_eq!(read_time, *time);
     }
@@ -786,7 +821,7 @@ async fn test_time_03() {
 #[tokio::test]
 async fn test_cql_timestamp() {
     setup_tracing();
-    let session: LegacySession = init_test("cql_timestamp_tests", "timestamp").await;
+    let session: Session = init_test("cql_timestamp_tests", "timestamp").await;
 
     //let epoch_date = NaiveDate::from_ymd_opt(1970, 1, 1).unwrap();
 
@@ -830,7 +865,10 @@ async fn test_cql_timestamp() {
             .query_unpaged("SELECT val from cql_timestamp_tests", &[])
             .await
             .unwrap()
-            .single_row_typed::<(CqlTimestamp,)>()
+            .into_rows_result()
+            .unwrap()
+            .unwrap()
+            .single_row::<(CqlTimestamp,)>()
             .unwrap();
 
         assert_eq!(read_timestamp, *timestamp_duration);
@@ -848,7 +886,10 @@ async fn test_cql_timestamp() {
             .query_unpaged("SELECT val from cql_timestamp_tests", &[])
             .await
             .unwrap()
-            .single_row_typed::<(CqlTimestamp,)>()
+            .into_rows_result()
+            .unwrap()
+            .unwrap()
+            .single_row::<(CqlTimestamp,)>()
             .unwrap();
 
         assert_eq!(read_timestamp, *timestamp_duration);
@@ -925,7 +966,10 @@ async fn test_date_time_04() {
             .query_unpaged("SELECT val from chrono_datetime_tests", &[])
             .await
             .unwrap()
-            .first_row_typed::<(DateTime<Utc>,)>()
+            .into_rows_result()
+            .unwrap()
+            .unwrap()
+            .first_row::<(DateTime<Utc>,)>()
             .unwrap();
 
         assert_eq!(read_datetime, *datetime);
@@ -943,7 +987,10 @@ async fn test_date_time_04() {
             .query_unpaged("SELECT val from chrono_datetime_tests", &[])
             .await
             .unwrap()
-            .first_row_typed::<(DateTime<Utc>,)>()
+            .into_rows_result()
+            .unwrap()
+            .unwrap()
+            .first_row::<(DateTime<Utc>,)>()
             .unwrap();
         assert_eq!(read_datetime, *datetime);
     }
@@ -971,7 +1018,10 @@ async fn test_date_time_04() {
         .query_unpaged("SELECT val from chrono_datetime_tests", &[])
         .await
         .unwrap()
-        .first_row_typed::<(DateTime<Utc>,)>()
+        .into_rows_result()
+        .unwrap()
+        .unwrap()
+        .first_row::<(DateTime<Utc>,)>()
         .unwrap();
     assert_eq!(read_datetime, nanosecond_precision_1st_half_rounded);
 
@@ -997,7 +1047,10 @@ async fn test_date_time_04() {
         .query_unpaged("SELECT val from chrono_datetime_tests", &[])
         .await
         .unwrap()
-        .first_row_typed::<(DateTime<Utc>,)>()
+        .into_rows_result()
+        .unwrap()
+        .unwrap()
+        .first_row::<(DateTime<Utc>,)>()
         .unwrap();
     assert_eq!(read_datetime, nanosecond_precision_2nd_half_rounded);
 
@@ -1086,7 +1139,10 @@ async fn test_offset_date_time_03() {
             .query_unpaged("SELECT val from time_datetime_tests", &[])
             .await
             .unwrap()
-            .first_row_typed::<(OffsetDateTime,)>()
+            .into_rows_result()
+            .unwrap()
+            .unwrap()
+            .first_row::<(OffsetDateTime,)>()
             .unwrap();
 
         assert_eq!(read_datetime, *datetime);
@@ -1104,7 +1160,10 @@ async fn test_offset_date_time_03() {
             .query_unpaged("SELECT val from time_datetime_tests", &[])
             .await
             .unwrap()
-            .first_row_typed::<(OffsetDateTime,)>()
+            .into_rows_result()
+            .unwrap()
+            .unwrap()
+            .first_row::<(OffsetDateTime,)>()
             .unwrap();
         assert_eq!(read_datetime, *datetime);
     }
@@ -1132,7 +1191,10 @@ async fn test_offset_date_time_03() {
         .query_unpaged("SELECT val from time_datetime_tests", &[])
         .await
         .unwrap()
-        .first_row_typed::<(OffsetDateTime,)>()
+        .into_rows_result()
+        .unwrap()
+        .unwrap()
+        .first_row::<(OffsetDateTime,)>()
         .unwrap();
     assert_eq!(read_datetime, nanosecond_precision_1st_half_rounded);
 
@@ -1158,7 +1220,10 @@ async fn test_offset_date_time_03() {
         .query_unpaged("SELECT val from time_datetime_tests", &[])
         .await
         .unwrap()
-        .first_row_typed::<(OffsetDateTime,)>()
+        .into_rows_result()
+        .unwrap()
+        .unwrap()
+        .first_row::<(OffsetDateTime,)>()
         .unwrap();
     assert_eq!(read_datetime, nanosecond_precision_2nd_half_rounded);
 }
@@ -1166,7 +1231,7 @@ async fn test_offset_date_time_03() {
 #[tokio::test]
 async fn test_timeuuid() {
     setup_tracing();
-    let session: LegacySession = init_test("timeuuid_tests", "timeuuid").await;
+    let session: Session = init_test("timeuuid_tests", "timeuuid").await;
 
     // A few random timeuuids generated manually
     let tests = [
@@ -1207,7 +1272,10 @@ async fn test_timeuuid() {
             .query_unpaged("SELECT val from timeuuid_tests", &[])
             .await
             .unwrap()
-            .single_row_typed::<(CqlTimeuuid,)>()
+            .into_rows_result()
+            .unwrap()
+            .unwrap()
+            .single_row::<(CqlTimeuuid,)>()
             .unwrap();
 
         assert_eq!(read_timeuuid.as_bytes(), timeuuid_bytes);
@@ -1226,7 +1294,10 @@ async fn test_timeuuid() {
             .query_unpaged("SELECT val from timeuuid_tests", &[])
             .await
             .unwrap()
-            .single_row_typed::<(CqlTimeuuid,)>()
+            .into_rows_result()
+            .unwrap()
+            .unwrap()
+            .single_row::<(CqlTimeuuid,)>()
             .unwrap();
 
         assert_eq!(read_timeuuid.as_bytes(), timeuuid_bytes);
@@ -1236,7 +1307,7 @@ async fn test_timeuuid() {
 #[tokio::test]
 async fn test_timeuuid_ordering() {
     setup_tracing();
-    let session: LegacySession = create_new_session_builder().build_legacy().await.unwrap();
+    let session: Session = create_new_session_builder().build().await.unwrap();
     let ks = unique_keyspace_name();
 
     session
@@ -1295,7 +1366,10 @@ async fn test_timeuuid_ordering() {
         .query_unpaged("SELECT t FROM tab WHERE p = 0", ())
         .await
         .unwrap()
-        .rows_typed::<(CqlTimeuuid,)>()
+        .into_rows_result()
+        .unwrap()
+        .unwrap()
+        .rows::<(CqlTimeuuid,)>()
         .unwrap()
         .map(|r| r.unwrap().0)
         .collect();
@@ -1318,7 +1392,7 @@ async fn test_timeuuid_ordering() {
 #[tokio::test]
 async fn test_inet() {
     setup_tracing();
-    let session: LegacySession = init_test("inet_tests", "inet").await;
+    let session: Session = init_test("inet_tests", "inet").await;
 
     let tests = [
         ("0.0.0.0", IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0))),
@@ -1374,7 +1448,10 @@ async fn test_inet() {
             .query_unpaged("SELECT val from inet_tests WHERE id = 0", &[])
             .await
             .unwrap()
-            .single_row_typed::<(IpAddr,)>()
+            .into_rows_result()
+            .unwrap()
+            .unwrap()
+            .single_row::<(IpAddr,)>()
             .unwrap();
 
         assert_eq!(read_inet, *inet);
@@ -1389,7 +1466,10 @@ async fn test_inet() {
             .query_unpaged("SELECT val from inet_tests WHERE id = 0", &[])
             .await
             .unwrap()
-            .single_row_typed::<(IpAddr,)>()
+            .into_rows_result()
+            .unwrap()
+            .unwrap()
+            .single_row::<(IpAddr,)>()
             .unwrap();
 
         assert_eq!(read_inet, *inet);
@@ -1399,7 +1479,7 @@ async fn test_inet() {
 #[tokio::test]
 async fn test_blob() {
     setup_tracing();
-    let session: LegacySession = init_test("blob_tests", "blob").await;
+    let session: Session = init_test("blob_tests", "blob").await;
 
     let long_blob: Vec<u8> = vec![0x11; 1234];
     let mut long_blob_str: String = "0x".to_string();
@@ -1440,7 +1520,10 @@ async fn test_blob() {
             .query_unpaged("SELECT val from blob_tests WHERE id = 0", &[])
             .await
             .unwrap()
-            .single_row_typed::<(Vec<u8>,)>()
+            .into_rows_result()
+            .unwrap()
+            .unwrap()
+            .single_row::<(Vec<u8>,)>()
             .unwrap();
 
         assert_eq!(read_blob, *blob);
@@ -1455,7 +1538,10 @@ async fn test_blob() {
             .query_unpaged("SELECT val from blob_tests WHERE id = 0", &[])
             .await
             .unwrap()
-            .single_row_typed::<(Vec<u8>,)>()
+            .into_rows_result()
+            .unwrap()
+            .unwrap()
+            .single_row::<(Vec<u8>,)>()
             .unwrap();
 
         assert_eq!(read_blob, *blob);
@@ -1468,7 +1554,7 @@ async fn test_udt_after_schema_update() {
     let table_name = "udt_tests";
     let type_name = "usertype1";
 
-    let session: LegacySession = create_new_session_builder().build_legacy().await.unwrap();
+    let session: Session = create_new_session_builder().build().await.unwrap();
     let ks = unique_keyspace_name();
 
     session
@@ -1516,7 +1602,7 @@ async fn test_udt_after_schema_update() {
         .await
         .unwrap();
 
-    #[derive(SerializeValue, FromUserType, Debug, PartialEq)]
+    #[derive(SerializeValue, DeserializeValue, Debug, PartialEq)]
     #[scylla(crate = crate)]
     struct UdtV1 {
         first: i32,
@@ -1543,7 +1629,10 @@ async fn test_udt_after_schema_update() {
         .query_unpaged(format!("SELECT val from {} WHERE id = 0", table_name), &[])
         .await
         .unwrap()
-        .single_row_typed::<(UdtV1,)>()
+        .into_rows_result()
+        .unwrap()
+        .unwrap()
+        .single_row::<(UdtV1,)>()
         .unwrap();
 
     assert_eq!(read_udt, v1);
@@ -1560,7 +1649,10 @@ async fn test_udt_after_schema_update() {
         .query_unpaged(format!("SELECT val from {} WHERE id = 0", table_name), &[])
         .await
         .unwrap()
-        .single_row_typed::<(UdtV1,)>()
+        .into_rows_result()
+        .unwrap()
+        .unwrap()
+        .single_row::<(UdtV1,)>()
         .unwrap();
 
     assert_eq!(read_udt, v1);
@@ -1570,7 +1662,7 @@ async fn test_udt_after_schema_update() {
         .await
         .unwrap();
 
-    #[derive(FromUserType, Debug, PartialEq)]
+    #[derive(DeserializeValue, Debug, PartialEq)]
     struct UdtV2 {
         first: i32,
         second: bool,
@@ -1581,7 +1673,10 @@ async fn test_udt_after_schema_update() {
         .query_unpaged(format!("SELECT val from {} WHERE id = 0", table_name), &[])
         .await
         .unwrap()
-        .single_row_typed::<(UdtV2,)>()
+        .into_rows_result()
+        .unwrap()
+        .unwrap()
+        .single_row::<(UdtV2,)>()
         .unwrap();
 
     assert_eq!(
@@ -1597,7 +1692,7 @@ async fn test_udt_after_schema_update() {
 #[tokio::test]
 async fn test_empty() {
     setup_tracing();
-    let session: LegacySession = init_test("empty_tests", "int").await;
+    let session: Session = init_test("empty_tests", "int").await;
 
     session
         .query_unpaged(
@@ -1611,7 +1706,10 @@ async fn test_empty() {
         .query_unpaged("SELECT val FROM empty_tests WHERE id = 0", ())
         .await
         .unwrap()
-        .first_row_typed::<(CqlValue,)>()
+        .into_rows_result()
+        .unwrap()
+        .unwrap()
+        .first_row::<(CqlValue,)>()
         .unwrap();
 
     assert_eq!(empty, CqlValue::Empty);
@@ -1628,7 +1726,10 @@ async fn test_empty() {
         .query_unpaged("SELECT val FROM empty_tests WHERE id = 1", ())
         .await
         .unwrap()
-        .first_row_typed::<(CqlValue,)>()
+        .into_rows_result()
+        .unwrap()
+        .unwrap()
+        .first_row::<(CqlValue,)>()
         .unwrap();
 
     assert_eq!(empty, CqlValue::Empty);
@@ -1640,7 +1741,7 @@ async fn test_udt_with_missing_field() {
     let table_name = "udt_tests";
     let type_name = "usertype1";
 
-    let session: LegacySession = create_new_session_builder().build_legacy().await.unwrap();
+    let session: Session = create_new_session_builder().build().await.unwrap();
     let ks = unique_keyspace_name();
 
     session
@@ -1691,14 +1792,14 @@ async fn test_udt_with_missing_field() {
     let mut id = 0;
 
     async fn verify_insert_select_identity<TQ, TR>(
-        session: &LegacySession,
+        session: &Session,
         table_name: &str,
         id: i32,
         element: TQ,
         expected: TR,
     ) where
         TQ: SerializeValue,
-        TR: FromCqlVal<CqlValue> + PartialEq + Debug,
+        TR: for<'r> DeserializeValue<'r, 'r> + PartialEq + Debug,
     {
         session
             .query_unpaged(
@@ -1714,13 +1815,16 @@ async fn test_udt_with_missing_field() {
             )
             .await
             .unwrap()
-            .single_row_typed::<(TR,)>()
+            .into_rows_result()
+            .unwrap()
+            .unwrap()
+            .single_row::<(TR,)>()
             .unwrap()
             .0;
         assert_eq!(expected, result);
     }
 
-    #[derive(FromUserType, Debug, PartialEq)]
+    #[derive(DeserializeValue, Debug, PartialEq)]
     struct UdtFull {
         first: i32,
         second: bool,

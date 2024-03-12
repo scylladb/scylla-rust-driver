@@ -460,7 +460,12 @@ mod tests {
             .unwrap()
             .into_stream();
 
-        let rows = iter.try_collect::<Vec<_>>().await.unwrap().len();
+        let rows = iter
+            .into_stream()
+            .try_collect::<Vec<_>>()
+            .await
+            .unwrap()
+            .len();
 
         assert_eq!(1, rows);
         assert_eq!(1, session.cache.len());
