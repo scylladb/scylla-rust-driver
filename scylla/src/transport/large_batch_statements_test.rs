@@ -7,13 +7,13 @@ use crate::transport::errors::{BadQuery, QueryError};
 use crate::{
     batch::Batch,
     test_utils::{create_new_session_builder, unique_keyspace_name},
-    LegacyQueryResult, LegacySession,
+    QueryResult, Session,
 };
 
 #[tokio::test]
 async fn test_large_batch_statements() {
     setup_tracing();
-    let mut session = create_new_session_builder().build_legacy().await.unwrap();
+    let mut session = create_new_session_builder().build().await.unwrap();
 
     let ks = unique_keyspace_name();
     session = create_test_session(session, &ks).await;
@@ -31,7 +31,7 @@ async fn test_large_batch_statements() {
     )
 }
 
-async fn create_test_session(session: LegacySession, ks: &String) -> LegacySession {
+async fn create_test_session(session: Session, ks: &String) -> Session {
     session
         .query_unpaged(
             format!("CREATE KEYSPACE {} WITH REPLICATION = {{ 'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1 }}",ks),
@@ -51,11 +51,7 @@ async fn create_test_session(session: LegacySession, ks: &String) -> LegacySessi
     session
 }
 
-async fn write_batch(
-    session: &LegacySession,
-    n: usize,
-    ks: &String,
-) -> Result<LegacyQueryResult, QueryError> {
+async fn write_batch(session: &Session, n: usize, ks: &String) -> Result<QueryResult, QueryError> {
     let mut batch_query = Batch::new(BatchType::Unlogged);
     let mut batch_values = Vec::new();
     let query = format!("INSERT INTO {}.pairs (dummy, k, v) VALUES (0, ?, ?)", ks);

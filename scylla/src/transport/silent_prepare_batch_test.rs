@@ -2,14 +2,14 @@ use crate::{
     batch::Batch,
     prepared_statement::PreparedStatement,
     test_utils::{create_new_session_builder, setup_tracing, unique_keyspace_name},
-    LegacySession,
+    Session,
 };
 use std::collections::BTreeSet;
 
 #[tokio::test]
 async fn test_quietly_prepare_batch() {
     setup_tracing();
-    let session = create_new_session_builder().build_legacy().await.unwrap();
+    let session = create_new_session_builder().build().await.unwrap();
 
     let ks = unique_keyspace_name();
     session.query_unpaged(format!("CREATE KEYSPACE IF NOT EXISTS {} WITH REPLICATION = {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}}", ks), &[]).await.unwrap();
@@ -91,12 +91,15 @@ async fn test_quietly_prepare_batch() {
     }
 }
 
-async fn assert_test_batch_table_rows_contain(sess: &LegacySession, expected_rows: &[(i32, i32)]) {
+async fn assert_test_batch_table_rows_contain(sess: &Session, expected_rows: &[(i32, i32)]) {
     let selected_rows: BTreeSet<(i32, i32)> = sess
         .query_unpaged("SELECT a, b FROM test_batch_table", ())
         .await
         .unwrap()
-        .rows_typed::<(i32, i32)>()
+        .into_rows_result()
+        .unwrap()
+        .unwrap()
+        .rows::<(i32, i32)>()
         .unwrap()
         .map(|r| r.unwrap())
         .collect();

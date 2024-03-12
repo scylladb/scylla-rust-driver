@@ -469,7 +469,6 @@ mod tests {
     use crate::test_utils::create_new_session_builder;
     use assert_matches::assert_matches;
     use chrono::{DateTime, NaiveDate, NaiveDateTime, NaiveTime, Utc};
-    use futures::StreamExt;
     use scylla_cql::Consistency;
 
     // Set a single time for all timestamps within StructuredHistory.
@@ -917,7 +916,7 @@ mod tests {
     #[tokio::test]
     async fn successful_query_history() {
         setup_tracing();
-        let session = create_new_session_builder().build_legacy().await.unwrap();
+        let session = create_new_session_builder().build().await.unwrap();
 
         let mut query = Query::new("SELECT * FROM system.local");
         let history_collector = Arc::new(HistoryCollector::new());
@@ -984,7 +983,7 @@ mod tests {
     #[tokio::test]
     async fn failed_query_history() {
         setup_tracing();
-        let session = create_new_session_builder().build_legacy().await.unwrap();
+        let session = create_new_session_builder().build().await.unwrap();
 
         let mut query = Query::new("This isnt even CQL");
         let history_collector = Arc::new(HistoryCollector::new());
@@ -1021,7 +1020,7 @@ mod tests {
     #[tokio::test]
     async fn iterator_query_history() {
         setup_tracing();
-        let session = create_new_session_builder().build_legacy().await.unwrap();
+        let session = create_new_session_builder().build().await.unwrap();
         let ks = unique_keyspace_name();
         session
         .query_unpaged(format!("CREATE KEYSPACE {} WITH REPLICATION = {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}}", ks), &[])

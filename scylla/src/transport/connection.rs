@@ -2448,7 +2448,7 @@ mod tests {
             // Preparation phase
             let session = SessionBuilder::new()
                 .known_node_addr(addr)
-                .build_legacy()
+                .build()
                 .await
                 .unwrap();
             session.query_unpaged(format!("CREATE KEYSPACE IF NOT EXISTS {} WITH REPLICATION = {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}}", ks.clone()), &[]).await.unwrap();
@@ -2547,7 +2547,7 @@ mod tests {
             // Preparation phase
             let session = SessionBuilder::new()
                 .known_node_addr(addr)
-                .build_legacy()
+                .build()
                 .await
                 .unwrap();
             session.query_unpaged(format!("CREATE KEYSPACE IF NOT EXISTS {} WITH REPLICATION = {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}}", ks.clone()), &[]).await.unwrap();
@@ -2622,9 +2622,10 @@ mod tests {
                 .query_unpaged("SELECT p, v FROM t")
                 .await
                 .unwrap()
-                .into_legacy_result()
+                .into_rows_result()
                 .unwrap()
-                .rows_typed::<(i32, Vec<u8>)>()
+                .unwrap()
+                .rows::<(i32, Vec<u8>)>()
                 .unwrap()
                 .collect::<Result<Vec<_>, _>>()
                 .unwrap();
