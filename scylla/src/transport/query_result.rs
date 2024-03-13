@@ -262,7 +262,7 @@ impl From<SingleRowError> for SingleRowTypedError {
 mod tests {
     use super::*;
     use crate::{
-        frame::response::result::{ColumnSpec, ColumnType, CqlValue, Row, TableSpec},
+        frame::response::result::{ColumnSpec, ColumnType, CqlValue, Row},
         test_utils::setup_tracing,
     };
     use std::convert::TryInto;
@@ -295,10 +295,7 @@ mod tests {
     }
 
     fn make_not_rows_query_result() -> QueryResult {
-        let table_spec = TableSpec::owned("some_keyspace".to_string(), "some_table".to_string());
-
         let column_spec = ColumnSpec {
-            table_spec,
             name: "column0".to_string(),
             typ: ColumnType::Int,
         };
