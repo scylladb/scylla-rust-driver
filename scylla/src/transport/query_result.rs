@@ -3,6 +3,7 @@ use crate::frame::response::result::ColumnSpec;
 use crate::frame::response::result::Row;
 use crate::transport::session::{IntoTypedRows, TypedRowIter};
 use bytes::Bytes;
+use scylla_cql::frame::response::result::TableSpec;
 use thiserror::Error;
 use uuid::Uuid;
 
@@ -21,6 +22,8 @@ pub struct QueryResult {
     pub tracing_id: Option<Uuid>,
     /// Paging state returned from the server
     pub paging_state: Option<Bytes>,
+    /// Table specification returned from the server
+    pub table_spec: Option<TableSpec<'static>>,
     /// Column specification returned from the server
     pub col_specs: Vec<ColumnSpec>,
     /// The original size of the serialized rows in request
@@ -305,6 +308,7 @@ mod tests {
             warnings: vec![],
             tracing_id: None,
             paging_state: None,
+            table_spec: None,
             col_specs: vec![column_spec],
             serialized_size: 0,
         }
