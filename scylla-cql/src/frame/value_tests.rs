@@ -5,7 +5,7 @@ use crate::types::serialize::row::{RowSerializationContext, SerializeRow};
 use crate::types::serialize::value::SerializeCql;
 use crate::types::serialize::{CellWriter, RowWriter};
 
-use super::response::result::{ColumnSpec, ColumnType, TableSpec};
+use super::response::result::{ColumnSpec, ColumnType};
 use super::value::{
     CqlDate, CqlDuration, CqlTime, CqlTimestamp, LegacyBatchValues, LegacySerializedValues,
     MaybeUnset, SerializeValuesError, Unset, Value, ValueList, ValueTooBig,
@@ -1077,10 +1077,6 @@ fn vec_value_list() {
 
 fn col_spec(name: &str, typ: ColumnType) -> ColumnSpec {
     ColumnSpec {
-        table_spec: TableSpec {
-            ks_name: "ks".to_string(),
-            table_name: "tbl".to_string(),
-        },
         name: name.to_string(),
         typ,
     }

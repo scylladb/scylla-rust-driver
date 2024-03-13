@@ -211,17 +211,17 @@ impl PreparedStatement {
     /// Returns the name of the keyspace this statement is operating on.
     pub fn get_keyspace_name(&self) -> Option<&str> {
         self.get_prepared_metadata()
-            .col_specs
-            .first()
-            .map(|col_spec| col_spec.table_spec.ks_name.as_str())
+            .table_spec
+            .as_ref()
+            .map(|spec| spec.ks_name.as_str())
     }
 
     /// Returns the name of the table this statement is operating on.
     pub fn get_table_name(&self) -> Option<&str> {
         self.get_prepared_metadata()
-            .col_specs
-            .first()
-            .map(|col_spec| col_spec.table_spec.table_name.as_str())
+            .table_spec
+            .as_ref()
+            .map(|spec| spec.table_name.as_str())
     }
 
     /// Sets the consistency to be used when executing this statement.
@@ -549,7 +549,6 @@ mod tests {
             .enumerate()
             .map(|(i, typ)| ColumnSpec {
                 name: format!("col_{}", i),
-                table_spec: table_spec.clone(),
                 typ,
             })
             .collect();
@@ -565,6 +564,7 @@ mod tests {
         PreparedMetadata {
             flags: 0,
             col_count: col_specs.len(),
+            table_spec: Some(table_spec),
             col_specs,
             pk_indexes,
         }
