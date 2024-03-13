@@ -2,8 +2,8 @@
 
 ## Introduction
 
-The driver uses a load balancing policy to determine which node(s) to contact
-when executing a query. Load balancing policies implement the
+The driver uses a load balancing policy to determine which node(s) and shard(s)
+to contact when executing a query. Load balancing policies implement the
 `LoadBalancingPolicy` trait, which contains methods to generate a load
 balancing plan based on the query information and the state of the cluster.
 
@@ -12,12 +12,14 @@ being opened. For a node connection blacklist configuration refer to
 `scylla::transport::host_filter::HostFilter`, which can be set session-wide
 using `SessionBuilder::host_filter` method.
 
+In this chapter, "target" will refer to a pair `<node, optional shard>`.
+
 ## Plan
 
 When a query is prepared to be sent to the database, the load balancing policy
-constructs a load balancing plan. This plan is essentially a list of nodes to
+constructs a load balancing plan. This plan is essentially a list of targets to
 which the driver will try to send the query. The first elements of the plan are
-the nodes which are the best to contact (e.g. they might be replicas for the
+the targets which are the best to contact (e.g. they might be replicas for the
 requested data or have the best latency).
 
 ## Policy
@@ -84,17 +86,16 @@ first element of the load balancing plan is needed, so it's usually unnecessary
 to compute entire load balancing plan. To optimize this common case, the
 `LoadBalancingPolicy` trait provides two methods: `pick` and `fallback`.
 
-`pick` returns the first node to contact for a given query, which is usually
-the best based on a particular load balancing policy. If `pick` returns `None`,
-then `fallback` will not be called.
+`pick` returns the first target to contact for a given query, which is usually
+the best based on a particular load balancing policy.
 
-`fallback`, returns an iterator that provides the rest of the nodes in the load
-balancing plan. `fallback` is called only when using the initial picked node
-fails (or when executing speculatively).
+`fallback`, returns an iterator that provides the rest of the targets in the
+load balancing plan. `fallback` is called when using the initial picked
+target fails (or when executing speculatively) or when `pick` returned `None`.
 
-It's possible for the `fallback` method to include the same node that was
+It's possible for the `fallback` method to include the same target that was
 returned by the `pick` method. In such cases, the query execution layer filters
-out the picked node from the iterator returned by `fallback`.
+out the picked target from the iterator returned by `fallback`.
 
 ### `on_query_success` and `on_query_failure`:
 

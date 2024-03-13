@@ -41,16 +41,17 @@ pub struct RoutingInfo<'a> {
 /// (or when speculative execution is triggered).
 pub type FallbackPlan<'a> = Box<dyn Iterator<Item = (NodeRef<'a>, Shard)> + Send + Sync + 'a>;
 
-/// Policy that decides which nodes to contact for each query.
+/// Policy that decides which nodes and shards to contact for each query.
 ///
 /// When a query is prepared to be sent to ScyllaDB/Cassandra, a `LoadBalancingPolicy`
-/// implementation constructs a load balancing plan. That plan is a list of nodes to which
-/// the driver will try to send the query. The first elements of the plan are the nodes which are
+/// implementation constructs a load balancing plan. That plan is a list of
+/// targets (target is a node + an optional shard) to which
+/// the driver will try to send the query. The first elements of the plan are the targets which are
 /// the best to contact (e.g. they might have the lowest latency).
 ///
-/// Most queries are send on the first try, so the query execution layer rarely needs to know more
-/// than one node from plan. To better optimize that case, `LoadBalancingPolicy` has two methods:
-/// `pick` and `fallback`. `pick` returns a first node to contact for a given query, `fallback`
+/// Most queries are sent on the first try, so the query execution layer rarely needs to know more
+/// than one target from plan. To better optimize that case, `LoadBalancingPolicy` has two methods:
+/// `pick` and `fallback`. `pick` returns the first target to contact for a given query, `fallback`
 /// returns the rest of the load balancing plan.
 ///
 /// `fallback` is called not only if a send to `pick`ed node failed (or when executing
