@@ -106,7 +106,10 @@ mod tests {
     use std::{net::SocketAddr, str::FromStr, sync::Arc};
 
     use crate::transport::{
-        locator::test::{create_locator, mock_metadata_for_token_aware_tests},
+        locator::{
+            test::{create_locator, mock_metadata_for_token_aware_tests},
+            ReplicationConfigs,
+        },
         Node, NodeAddr,
     };
 
@@ -156,6 +159,7 @@ mod tests {
             known_peers: Default::default(),
             keyspaces: Default::default(),
             locator,
+            replication_configs: ReplicationConfigs::default(),
         };
         let routing_info = RoutingInfo::default();
         let plan = Plan::new(&policy, &routing_info, &cluster_data);

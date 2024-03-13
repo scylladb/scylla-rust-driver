@@ -1090,7 +1090,15 @@ mod tests {
         // based on locator mock cluster
         pub(crate) async fn mock_cluster_data_for_token_aware_tests() -> ClusterData {
             let metadata = mock_metadata_for_token_aware_tests();
-            ClusterData::new(metadata, &Default::default(), &HashMap::new(), &None, None).await
+            ClusterData::new(
+                metadata,
+                &Default::default(),
+                &HashMap::new(),
+                &None,
+                None,
+                None,
+            )
+            .await
         }
 
         // creates ClusterData with info about 5 nodes living in 2 different datacenters
@@ -1114,7 +1122,15 @@ mod tests {
                 keyspaces: HashMap::new(),
             };
 
-            ClusterData::new(info, &Default::default(), &HashMap::new(), &None, None).await
+            ClusterData::new(
+                info,
+                &Default::default(),
+                &HashMap::new(),
+                &None,
+                None,
+                None,
+            )
+            .await
         }
 
         pub(crate) fn get_plan_and_collect_node_identifiers(
