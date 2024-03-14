@@ -1,5 +1,5 @@
 use crate::cql_to_rust::FromCqlVal;
-use crate::test_utils::create_new_session_builder;
+use crate::test_utils::{create_new_session_builder, setup_tracing};
 use crate::utils::test_utils::unique_keyspace_name;
 use crate::{frame::response::result::CqlValue, Session};
 use scylla_cql::types::serialize::value::SerializeCql;
@@ -57,6 +57,7 @@ async fn insert_and_select<InsertT, SelectT>(
 
 #[tokio::test]
 async fn test_cql_list() {
+    setup_tracing();
     let session: Session = connect().await;
 
     let table_name: &str = "test_cql_list_tab";
@@ -89,6 +90,7 @@ async fn test_cql_list() {
 
 #[tokio::test]
 async fn test_cql_set() {
+    setup_tracing();
     let session: Session = connect().await;
 
     let table_name: &str = "test_cql_set_tab";
@@ -152,6 +154,7 @@ async fn test_cql_set() {
 
 #[tokio::test]
 async fn test_cql_map() {
+    setup_tracing();
     let session: Session = connect().await;
 
     let table_name: &str = "test_cql_map_tab";
@@ -202,6 +205,7 @@ async fn test_cql_map() {
 
 #[tokio::test]
 async fn test_cql_tuple() {
+    setup_tracing();
     let session: Session = connect().await;
 
     let table_name: &str = "test_cql_tuple_tab";

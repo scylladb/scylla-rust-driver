@@ -205,6 +205,7 @@ where
 mod tests {
     use crate::{
         routing::Token,
+        test_utils::setup_tracing,
         transport::locator::test::{
             create_ring, mock_metadata_for_token_aware_tests, A, B, C, D, E, F, G,
         },
@@ -214,6 +215,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_simple_strategy() {
+        setup_tracing();
         let ring = create_ring(&mock_metadata_for_token_aware_tests());
         let replication_info = ReplicationInfo::new(ring);
 
@@ -248,6 +250,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_network_topology_strategy() {
+        setup_tracing();
         let ring = create_ring(&mock_metadata_for_token_aware_tests());
         let replication_info = ReplicationInfo::new(ring);
 

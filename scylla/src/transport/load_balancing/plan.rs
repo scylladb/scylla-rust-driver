@@ -105,9 +105,12 @@ impl<'a> Iterator for Plan<'a> {
 mod tests {
     use std::{net::SocketAddr, str::FromStr, sync::Arc};
 
-    use crate::transport::{
-        locator::test::{create_locator, mock_metadata_for_token_aware_tests},
-        Node, NodeAddr,
+    use crate::{
+        test_utils::setup_tracing,
+        transport::{
+            locator::test::{create_locator, mock_metadata_for_token_aware_tests},
+            Node, NodeAddr,
+        },
     };
 
     use super::*;
@@ -155,6 +158,7 @@ mod tests {
 
     #[tokio::test]
     async fn plan_calls_fallback_even_if_pick_returned_none() {
+        setup_tracing();
         let policy = PickingNonePolicy {
             expected_nodes: expected_nodes(),
         };

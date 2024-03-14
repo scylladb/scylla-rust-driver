@@ -72,10 +72,11 @@ impl<ElemT> TokenRing<ElemT> {
 #[cfg(test)]
 mod tests {
     use super::TokenRing;
-    use crate::routing::Token;
+    use crate::{routing::Token, test_utils::setup_tracing};
 
     #[test]
     fn test_token_ring() {
+        setup_tracing();
         let ring_data = [
             (Token { value: -30 }, -3),
             (Token { value: -20 }, -2),

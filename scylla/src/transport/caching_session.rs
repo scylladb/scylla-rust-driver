@@ -218,7 +218,7 @@ where
 #[cfg(test)]
 mod tests {
     use crate::query::Query;
-    use crate::test_utils::create_new_session_builder;
+    use crate::test_utils::{create_new_session_builder, setup_tracing};
     use crate::transport::partitioner::PartitionerName;
     use crate::utils::test_utils::unique_keyspace_name;
     use crate::{
@@ -281,6 +281,7 @@ mod tests {
     /// to the cache and a random query is removed
     #[tokio::test]
     async fn test_full() {
+        setup_tracing();
         let session = create_caching_session().await;
 
         let first_query = "select * from test_table";
@@ -315,6 +316,7 @@ mod tests {
     /// Checks that the same prepared statement is reused when executing the same query twice
     #[tokio::test]
     async fn test_execute_cached() {
+        setup_tracing();
         let session = create_caching_session().await;
         let result = session
             .execute("select * from test_table", &[])
@@ -336,6 +338,7 @@ mod tests {
     /// Checks that caching works with execute_iter
     #[tokio::test]
     async fn test_execute_iter_cached() {
+        setup_tracing();
         let session = create_caching_session().await;
 
         assert!(session.cache.is_empty());
@@ -354,6 +357,7 @@ mod tests {
     /// Checks that caching works with execute_paged
     #[tokio::test]
     async fn test_execute_paged_cached() {
+        setup_tracing();
         let session = create_caching_session().await;
 
         assert!(session.cache.is_empty());
@@ -392,6 +396,7 @@ mod tests {
     /// This test checks that we can construct a CachingSession with custom HashBuilder implementations
     #[tokio::test]
     async fn test_custom_hasher() {
+        setup_tracing();
         #[derive(Default, Clone)]
         struct CustomBuildHasher;
         impl std::hash::BuildHasher for CustomBuildHasher {
@@ -423,6 +428,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_batch() {
+        setup_tracing();
         let session: CachingSession = create_caching_session().await;
 
         session
@@ -545,6 +551,7 @@ mod tests {
     // Reproduces #597
     #[tokio::test]
     async fn test_parameters_caching() {
+        setup_tracing();
         let session: CachingSession = CachingSession::from(new_for_test().await, 100);
 
         session
@@ -592,6 +599,7 @@ mod tests {
     // Checks whether the PartitionerName is cached properly.
     #[tokio::test]
     async fn test_partitioner_name_caching() {
+        setup_tracing();
         if option_env!("CDC") == Some("disabled") {
             return;
         }

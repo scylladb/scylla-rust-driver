@@ -1262,6 +1262,7 @@ async fn open_connection_to_shard_aware_port(
 mod tests {
     use super::open_connection_to_shard_aware_port;
     use crate::routing::{ShardCount, Sharder};
+    use crate::test_utils::setup_tracing;
     use crate::transport::connection::ConnectionConfig;
     use crate::transport::node::ResolvedContactPoint;
     use crate::transport::topology::UntranslatedEndpoint;
@@ -1273,6 +1274,7 @@ mod tests {
     #[tokio::test]
     #[cfg(not(scylla_cloud_tests))]
     async fn many_connections() {
+        setup_tracing();
         let connections_number = 512;
 
         let connect_address: SocketAddr = std::env::var("SCYLLA_URI")

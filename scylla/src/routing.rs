@@ -135,12 +135,15 @@ impl<'a> TryFrom<&'a HashMap<String, Vec<String>>> for ShardInfo {
 
 #[cfg(test)]
 mod tests {
+    use crate::test_utils::setup_tracing;
+
     use super::Token;
     use super::{ShardCount, Sharder};
     use std::collections::HashSet;
 
     #[test]
     fn test_shard_of() {
+        setup_tracing();
         /* Test values taken from the gocql driver.  */
         let sharder = Sharder::new(ShardCount::new(4).unwrap(), 12);
         assert_eq!(
@@ -159,6 +162,7 @@ mod tests {
 
     #[test]
     fn test_iter_source_ports_for_shard() {
+        setup_tracing();
         let nr_shards = 4;
         let max_port_num = 65535;
         let min_port_num = (49152 + nr_shards - 1) / nr_shards * nr_shards;

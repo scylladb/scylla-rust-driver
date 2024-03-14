@@ -4,6 +4,7 @@ use scylla_cql::errors::{BadQuery, QueryError};
 
 use crate::batch::BatchType;
 use crate::query::Query;
+use crate::test_utils::setup_tracing;
 use crate::{
     batch::Batch,
     test_utils::{create_new_session_builder, unique_keyspace_name},
@@ -12,6 +13,7 @@ use crate::{
 
 #[tokio::test]
 async fn test_large_batch_statements() {
+    setup_tracing();
     let mut session = create_new_session_builder().build().await.unwrap();
 
     let ks = unique_keyspace_name();

@@ -216,6 +216,7 @@ mod tests {
 
     use crate::{
         routing::Token,
+        test_utils::setup_tracing,
         transport::{
             locator::test::{create_ring, mock_metadata_for_token_aware_tests, A, C, D, E, F, G},
             topology::{Keyspace, Strategy},
@@ -226,6 +227,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_simple_stategy() {
+        setup_tracing();
         let mut metadata = mock_metadata_for_token_aware_tests();
         metadata.keyspaces = [(
             "SimpleStrategy{rf=2}".into(),
@@ -284,6 +286,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_network_topology_strategy() {
+        setup_tracing();
         let metadata = mock_metadata_for_token_aware_tests();
         let ring = create_ring(&metadata);
         let replication_info = ReplicationInfo::new(ring);

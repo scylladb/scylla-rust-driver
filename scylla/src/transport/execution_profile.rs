@@ -272,7 +272,7 @@ impl ExecutionProfileBuilder {
     }
 
     /// Sets the load balancing policy.
-    /// The default is DefaultPolicy (token-aware round robin).
+    /// The default is DefaultPolicy.
     ///
     /// # Example
     /// ```

@@ -3,7 +3,7 @@ use crate::cql_to_rust::FromCqlVal;
 use crate::frame::response::result::CqlValue;
 use crate::frame::value::{Counter, CqlDate, CqlTime, CqlTimestamp};
 use crate::macros::FromUserType;
-use crate::test_utils::create_new_session_builder;
+use crate::test_utils::{create_new_session_builder, setup_tracing};
 use crate::transport::session::Session;
 use crate::utils::test_utils::unique_keyspace_name;
 use itertools::Itertools;
@@ -122,6 +122,7 @@ fn varint_test_cases() -> Vec<&'static str> {
 #[cfg(feature = "num-bigint-03")]
 #[tokio::test]
 async fn test_varint03() {
+    setup_tracing();
     let tests = varint_test_cases();
     run_tests::<num_bigint_03::BigInt>(&tests, "varint").await;
 }
@@ -129,12 +130,14 @@ async fn test_varint03() {
 #[cfg(feature = "num-bigint-04")]
 #[tokio::test]
 async fn test_varint04() {
+    setup_tracing();
     let tests = varint_test_cases();
     run_tests::<num_bigint_04::BigInt>(&tests, "varint").await;
 }
 
 #[tokio::test]
 async fn test_cql_varint() {
+    setup_tracing();
     let tests = [
         vec![0x00],       // 0
         vec![0x01],       // 1
@@ -217,6 +220,7 @@ async fn test_cql_varint() {
 #[cfg(feature = "bigdecimal-04")]
 #[tokio::test]
 async fn test_decimal() {
+    setup_tracing();
     let tests = [
         "4.2",
         "0",
@@ -231,6 +235,7 @@ async fn test_decimal() {
 
 #[tokio::test]
 async fn test_bool() {
+    setup_tracing();
     let tests = ["true", "false"];
 
     run_tests::<bool>(&tests, "boolean").await;
@@ -238,6 +243,7 @@ async fn test_bool() {
 
 #[tokio::test]
 async fn test_float() {
+    setup_tracing();
     let max = f32::MAX.to_string();
     let min = f32::MIN.to_string();
     let tests = [
@@ -255,6 +261,7 @@ async fn test_float() {
 
 #[tokio::test]
 async fn test_counter() {
+    setup_tracing();
     let big_increment = i64::MAX.to_string();
     let tests = ["1", "997", big_increment.as_str()];
 
@@ -289,6 +296,7 @@ async fn test_counter() {
 #[cfg(feature = "chrono")]
 #[tokio::test]
 async fn test_naive_date() {
+    setup_tracing();
     use chrono::Datelike;
     use chrono::NaiveDate;
 
@@ -382,6 +390,7 @@ async fn test_naive_date() {
 
 #[tokio::test]
 async fn test_cql_date() {
+    setup_tracing();
     // Tests value::Date which allows to insert dates outside NaiveDate range
 
     let session: Session = init_test("cql_date_tests", "date").await;
@@ -442,6 +451,7 @@ async fn test_cql_date() {
 #[cfg(feature = "time")]
 #[tokio::test]
 async fn test_date() {
+    setup_tracing();
     use time::{Date, Month::*};
 
     let session: Session = init_test("time_date_tests", "date").await;
@@ -526,6 +536,7 @@ async fn test_date() {
 
 #[tokio::test]
 async fn test_cql_time() {
+    setup_tracing();
     // CqlTime is an i64 - nanoseconds since midnight
     // in range 0..=86399999999999
 
@@ -612,6 +623,7 @@ async fn test_cql_time() {
 #[cfg(feature = "chrono")]
 #[tokio::test]
 async fn test_naive_time() {
+    setup_tracing();
     use chrono::NaiveTime;
 
     let session = init_test("chrono_time_tests", "time").await;
@@ -691,6 +703,7 @@ async fn test_naive_time() {
 #[cfg(feature = "time")]
 #[tokio::test]
 async fn test_time() {
+    setup_tracing();
     use time::Time;
 
     let session = init_test("time_time_tests", "time").await;
@@ -759,6 +772,7 @@ async fn test_time() {
 
 #[tokio::test]
 async fn test_cql_timestamp() {
+    setup_tracing();
     let session: Session = init_test("cql_timestamp_tests", "timestamp").await;
 
     //let epoch_date = NaiveDate::from_ymd_opt(1970, 1, 1).unwrap();
@@ -831,6 +845,7 @@ async fn test_cql_timestamp() {
 #[cfg(feature = "chrono")]
 #[tokio::test]
 async fn test_date_time() {
+    setup_tracing();
     use chrono::{DateTime, NaiveDate, NaiveDateTime, NaiveTime, Utc};
 
     let session = init_test("chrono_datetime_tests", "timestamp").await;
@@ -991,6 +1006,7 @@ async fn test_date_time() {
 #[cfg(feature = "time")]
 #[tokio::test]
 async fn test_offset_date_time() {
+    setup_tracing();
     use time::{Date, Month::*, OffsetDateTime, PrimitiveDateTime, Time, UtcOffset};
 
     let session = init_test("time_datetime_tests", "timestamp").await;
@@ -1136,6 +1152,7 @@ async fn test_offset_date_time() {
 
 #[tokio::test]
 async fn test_timeuuid() {
+    setup_tracing();
     let session: Session = init_test("timeuuid_tests", "timeuuid").await;
 
     // A few random timeuuids generated manually
@@ -1205,6 +1222,7 @@ async fn test_timeuuid() {
 
 #[tokio::test]
 async fn test_timeuuid_ordering() {
+    setup_tracing();
     let session: Session = create_new_session_builder().build().await.unwrap();
     let ks = unique_keyspace_name();
 
@@ -1283,6 +1301,7 @@ async fn test_timeuuid_ordering() {
 
 #[tokio::test]
 async fn test_inet() {
+    setup_tracing();
     let session: Session = init_test("inet_tests", "inet").await;
 
     let tests = [
@@ -1363,6 +1382,7 @@ async fn test_inet() {
 
 #[tokio::test]
 async fn test_blob() {
+    setup_tracing();
     let session: Session = init_test("blob_tests", "blob").await;
 
     let long_blob: Vec<u8> = vec![0x11; 1234];
@@ -1428,6 +1448,7 @@ async fn test_blob() {
 
 #[tokio::test]
 async fn test_udt_after_schema_update() {
+    setup_tracing();
     let table_name = "udt_tests";
     let type_name = "usertype1";
 
@@ -1559,6 +1580,7 @@ async fn test_udt_after_schema_update() {
 
 #[tokio::test]
 async fn test_empty() {
+    setup_tracing();
     let session: Session = init_test("empty_tests", "int").await;
 
     session
@@ -1598,6 +1620,7 @@ async fn test_empty() {
 
 #[tokio::test]
 async fn test_udt_with_missing_field() {
+    setup_tracing();
     let table_name = "udt_tests";
     let type_name = "usertype1";
 

@@ -368,7 +368,7 @@ mod tests {
     use rand::Rng;
     use rand_pcg::Pcg32;
 
-    use crate::transport::partitioner::PartitionerHasher;
+    use crate::{test_utils::setup_tracing, transport::partitioner::PartitionerHasher};
 
     use super::{CDCPartitioner, Murmur3Partitioner, Partitioner};
 
@@ -379,6 +379,7 @@ mod tests {
 
     #[test]
     fn test_murmur3_partitioner() {
+        setup_tracing();
         for s in [
             ("test", -6017608668500074083),
             ("xd", 4507812186440344727),
@@ -396,6 +397,7 @@ mod tests {
 
     #[test]
     fn partitioners_output_same_result_no_matter_how_input_is_partitioned() {
+        setup_tracing();
         let inputs: &[&[u8]] = &[
             b"",
             b"0",
@@ -454,6 +456,7 @@ mod tests {
 
     #[test]
     fn test_cdc_partitioner() {
+        setup_tracing();
         for s in [
             ("test", -9223372036854775808),
             ("xd", -9223372036854775808),

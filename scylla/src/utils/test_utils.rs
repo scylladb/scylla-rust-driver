@@ -92,3 +92,11 @@ pub fn create_new_session_builder() -> GenericSessionBuilder<impl SessionBuilder
         .tracing_info_fetch_attempts(NonZeroU32::new(50).unwrap())
         .tracing_info_fetch_interval(Duration::from_millis(200))
 }
+
+#[cfg(test)]
+pub(crate) fn setup_tracing() {
+    let _ = tracing_subscriber::fmt::fmt()
+        .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+        .with_writer(tracing_subscriber::fmt::TestWriter::new())
+        .try_init();
+}

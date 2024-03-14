@@ -456,7 +456,8 @@ mod tests {
     };
 
     use crate::{
-        query::Query, retry_policy::RetryDecision, utils::test_utils::unique_keyspace_name,
+        query::Query, retry_policy::RetryDecision, test_utils::setup_tracing,
+        utils::test_utils::unique_keyspace_name,
     };
 
     use super::{
@@ -589,6 +590,7 @@ mod tests {
 
     #[test]
     fn empty_history() {
+        setup_tracing();
         let history_collector = HistoryCollector::new();
         let history: StructuredHistory = history_collector.clone_structured_history();
 
@@ -601,6 +603,7 @@ mod tests {
 
     #[test]
     fn empty_query() {
+        setup_tracing();
         let history_collector = HistoryCollector::new();
 
         let _query_id: QueryId = history_collector.log_query_start();
@@ -625,6 +628,7 @@ mod tests {
 
     #[test]
     fn one_attempt() {
+        setup_tracing();
         let history_collector = HistoryCollector::new();
 
         let query_id: QueryId = history_collector.log_query_start();
@@ -659,6 +663,7 @@ mod tests {
 
     #[test]
     fn two_error_atempts() {
+        setup_tracing();
         let history_collector = HistoryCollector::new();
 
         let query_id: QueryId = history_collector.log_query_start();
@@ -709,6 +714,7 @@ mod tests {
 
     #[test]
     fn empty_fibers() {
+        setup_tracing();
         let history_collector = HistoryCollector::new();
 
         let query_id: QueryId = history_collector.log_query_start();
@@ -750,6 +756,7 @@ mod tests {
 
     #[test]
     fn complex() {
+        setup_tracing();
         let history_collector = HistoryCollector::new();
 
         let query_id: QueryId = history_collector.log_query_start();
@@ -854,6 +861,7 @@ mod tests {
 
     #[test]
     fn multiple_queries() {
+        setup_tracing();
         let history_collector = HistoryCollector::new();
 
         let query1_id: QueryId = history_collector.log_query_start();
@@ -908,6 +916,7 @@ mod tests {
 
     #[tokio::test]
     async fn successful_query_history() {
+        setup_tracing();
         let session = create_new_session_builder().build().await.unwrap();
 
         let mut query = Query::new("SELECT * FROM system.local");
@@ -974,6 +983,7 @@ mod tests {
 
     #[tokio::test]
     async fn failed_query_history() {
+        setup_tracing();
         let session = create_new_session_builder().build().await.unwrap();
 
         let mut query = Query::new("This isnt even CQL");
@@ -1010,6 +1020,7 @@ mod tests {
 
     #[tokio::test]
     async fn iterator_query_history() {
+        setup_tracing();
         let session = create_new_session_builder().build().await.unwrap();
         let ks = unique_keyspace_name();
         session
