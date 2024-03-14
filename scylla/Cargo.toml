@@ -70,3 +70,6 @@ time = "0.3"
 [[bench]]
 name = "benchmark"
 harness = false
+
+[lints.rust]
+unreachable_pub = "warn"

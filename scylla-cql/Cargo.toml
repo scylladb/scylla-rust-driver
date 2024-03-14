@@ -44,3 +44,6 @@ num-bigint-03 = ["dep:num-bigint-03"]
 num-bigint-04 = ["dep:num-bigint-04"]
 bigdecimal-04 = ["dep:bigdecimal-04"]
 full-serialization = ["chrono", "time", "secret", "num-bigint-03", "num-bigint-04", "bigdecimal-04"]
+
+[lints.rust]
+unreachable_pub = "warn"
