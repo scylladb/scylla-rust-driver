@@ -4,6 +4,9 @@ use bytes::Bytes;
 use rand::{Rng, RngCore};
 use tokio::sync::mpsc;
 
+#[cfg(test)]
+use crate::setup_tracing;
+
 use crate::{
     frame::{FrameOpcode, FrameParams, RequestFrame, RequestOpcode, ResponseFrame, ResponseOpcode},
     TargetShard,
@@ -725,6 +728,7 @@ pub struct ResponseRule(pub Condition, pub ResponseReaction);
 
 #[test]
 fn condition_case_insensitive_matching() {
+    setup_tracing();
     let mut condition_matching =
         Condition::BodyContainsCaseInsensitive(Box::new(*b"cassandra'sInefficiency"));
     let mut condition_nonmatching =
