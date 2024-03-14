@@ -1482,8 +1482,8 @@ async fn test_udt_after_schema_update() {
     #[derive(SerializeCql, FromUserType, Debug, PartialEq)]
     #[scylla(crate = crate)]
     struct UdtV1 {
-        pub first: i32,
-        pub second: bool,
+        first: i32,
+        second: bool,
     }
 
     let v1 = UdtV1 {
@@ -1535,9 +1535,9 @@ async fn test_udt_after_schema_update() {
 
     #[derive(FromUserType, Debug, PartialEq)]
     struct UdtV2 {
-        pub first: i32,
-        pub second: bool,
-        pub third: Option<String>,
+        first: i32,
+        second: bool,
+        third: Option<String>,
     }
 
     let (read_udt,): (UdtV2,) = session
@@ -1683,17 +1683,17 @@ async fn test_udt_with_missing_field() {
 
     #[derive(FromUserType, Debug, PartialEq)]
     struct UdtFull {
-        pub first: i32,
-        pub second: bool,
-        pub third: Option<f32>,
-        pub fourth: Option<Vec<u8>>,
+        first: i32,
+        second: bool,
+        third: Option<f32>,
+        fourth: Option<Vec<u8>>,
     }
 
     #[derive(SerializeCql)]
     #[scylla(crate = crate)]
     struct UdtV1 {
-        pub first: i32,
-        pub second: bool,
+        first: i32,
+        second: bool,
     }
 
     verify_insert_select_identity(
@@ -1718,9 +1718,9 @@ async fn test_udt_with_missing_field() {
     #[derive(SerializeCql)]
     #[scylla(crate = crate)]
     struct UdtV2 {
-        pub first: i32,
-        pub second: bool,
-        pub third: Option<f32>,
+        first: i32,
+        second: bool,
+        third: Option<f32>,
     }
 
     verify_insert_select_identity(
@@ -1746,9 +1746,9 @@ async fn test_udt_with_missing_field() {
     #[derive(SerializeCql)]
     #[scylla(crate = crate)]
     struct UdtV3 {
-        pub first: i32,
-        pub second: bool,
-        pub fourth: Option<Vec<u8>>,
+        first: i32,
+        second: bool,
+        fourth: Option<Vec<u8>>,
     }
 
     verify_insert_select_identity(
@@ -1774,8 +1774,8 @@ async fn test_udt_with_missing_field() {
     #[derive(SerializeCql)]
     #[scylla(crate = crate, flavor="enforce_order")]
     struct UdtV4 {
-        pub first: i32,
-        pub second: bool,
+        first: i32,
+        second: bool,
     }
 
     verify_insert_select_identity(

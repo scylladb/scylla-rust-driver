@@ -23,7 +23,7 @@ macro_rules! test_crate {
             use _scylla::frame::response::result::CqlValue;
             use _scylla::frame::value::{Value, ValueList};
 
-            pub fn derived<T>()
+            fn derived<T>()
             where
                 T: FromRow + FromCqlVal<CqlValue> + Value + ValueList,
             {

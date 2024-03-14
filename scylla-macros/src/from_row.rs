@@ -3,7 +3,7 @@ use quote::{quote, quote_spanned};
 use syn::{spanned::Spanned, DeriveInput};
 
 /// #[derive(FromRow)] derives FromRow for struct
-pub fn from_row_derive(tokens_input: TokenStream) -> Result<TokenStream, syn::Error> {
+pub(crate) fn from_row_derive(tokens_input: TokenStream) -> Result<TokenStream, syn::Error> {
     let item = syn::parse::<DeriveInput>(tokens_input)?;
     let path = crate::parser::get_path(&item)?;
     let struct_fields = crate::parser::parse_named_fields(&item, "FromRow")?;

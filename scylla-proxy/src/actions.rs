@@ -8,10 +8,7 @@ use crate::{
     frame::{FrameOpcode, FrameParams, RequestFrame, RequestOpcode, ResponseFrame, ResponseOpcode},
     TargetShard,
 };
-use scylla_cql::{
-    errors::{DbError, WriteType},
-    Consistency,
-};
+use scylla_cql::errors::DbError;
 
 /// Specifies when an associated [Reaction] will be performed.
 /// Conditions are subject to logic, with `not()`, `and()` and `or()`
@@ -407,8 +404,13 @@ impl RequestReaction {
     }
 }
 
-struct ExampleDbErrors;
-impl ExampleDbErrors {
+pub mod example_db_errors {
+    use bytes::Bytes;
+    use scylla_cql::{
+        errors::{DbError, WriteType},
+        Consistency,
+    };
+
     pub fn syntax_error() -> DbError {
         DbError::SyntaxError
     }
@@ -507,84 +509,84 @@ pub struct ResponseForger;
 
 impl ResponseForger {
     pub fn syntax_error(&self) -> RequestReaction {
-        RequestReaction::forge_with_error(ExampleDbErrors::syntax_error())
+        RequestReaction::forge_with_error(example_db_errors::syntax_error())
     }
     pub fn invalid(&self) -> RequestReaction {
-        RequestReaction::forge_with_error(ExampleDbErrors::invalid())
+        RequestReaction::forge_with_error(example_db_errors::invalid())
     }
     pub fn already_exists(&self) -> RequestReaction {
-        RequestReaction::forge_with_error(ExampleDbErrors::already_exists())
+        RequestReaction::forge_with_error(example_db_errors::already_exists())
     }
     pub fn function_failure(&self) -> RequestReaction {
-        RequestReaction::forge_with_error(ExampleDbErrors::function_failure())
+        RequestReaction::forge_with_error(example_db_errors::function_failure())
     }
     pub fn authentication_error(&self) -> RequestReaction {
-        RequestReaction::forge_with_error(ExampleDbErrors::authentication_error())
+        RequestReaction::forge_with_error(example_db_errors::authentication_error())
     }
     pub fn unauthorized(&self) -> RequestReaction {
-        RequestReaction::forge_with_error(ExampleDbErrors::unauthorized())
+        RequestReaction::forge_with_error(example_db_errors::unauthorized())
     }
     pub fn config_error(&self) -> RequestReaction {
-        RequestReaction::forge_with_error(ExampleDbErrors::config_error())
+        RequestReaction::forge_with_error(example_db_errors::config_error())
     }
     pub fn unavailable(&self) -> RequestReaction {
-        RequestReaction::forge_with_error(ExampleDbErrors::unavailable())
+        RequestReaction::forge_with_error(example_db_errors::unavailable())
     }
     pub fn overloaded(&self) -> RequestReaction {
-        RequestReaction::forge_with_error(ExampleDbErrors::overloaded())
+        RequestReaction::forge_with_error(example_db_errors::overloaded())
     }
     pub fn is_bootstrapping(&self) -> RequestReaction {
-        RequestReaction::forge_with_error(ExampleDbErrors::is_bootstrapping())
+        RequestReaction::forge_with_error(example_db_errors::is_bootstrapping())
     }
     pub fn truncate_error(&self) -> RequestReaction {
-        RequestReaction::forge_with_error(ExampleDbErrors::truncate_error())
+        RequestReaction::forge_with_error(example_db_errors::truncate_error())
     }
     pub fn read_timeout(&self) -> RequestReaction {
-        RequestReaction::forge_with_error(ExampleDbErrors::read_timeout())
+        RequestReaction::forge_with_error(example_db_errors::read_timeout())
     }
     pub fn write_timeout(&self) -> RequestReaction {
-        RequestReaction::forge_with_error(ExampleDbErrors::write_timeout())
+        RequestReaction::forge_with_error(example_db_errors::write_timeout())
     }
     pub fn read_failure(&self) -> RequestReaction {
-        RequestReaction::forge_with_error(ExampleDbErrors::read_failure())
+        RequestReaction::forge_with_error(example_db_errors::read_failure())
     }
     pub fn write_failure(&self) -> RequestReaction {
-        RequestReaction::forge_with_error(ExampleDbErrors::write_failure())
+        RequestReaction::forge_with_error(example_db_errors::write_failure())
     }
     pub fn unprepared(&self) -> RequestReaction {
-        RequestReaction::forge_with_error(ExampleDbErrors::unprepared())
+        RequestReaction::forge_with_error(example_db_errors::unprepared())
     }
     pub fn server_error(&self) -> RequestReaction {
-        RequestReaction::forge_with_error(ExampleDbErrors::server_error())
+        RequestReaction::forge_with_error(example_db_errors::server_error())
     }
     pub fn protocol_error(&self) -> RequestReaction {
-        RequestReaction::forge_with_error(ExampleDbErrors::protocol_error())
+        RequestReaction::forge_with_error(example_db_errors::protocol_error())
     }
     pub fn other(&self, num: i32) -> RequestReaction {
-        RequestReaction::forge_with_error(ExampleDbErrors::other(num))
+        RequestReaction::forge_with_error(example_db_errors::other(num))
     }
     pub fn random_error(&self) -> RequestReaction {
         self.random_error_with_delay(None)
     }
     pub fn random_error_with_delay(&self, delay: Option<Duration>) -> RequestReaction {
         static ERRORS: &[fn() -> DbError] = &[
-            ExampleDbErrors::invalid,
-            ExampleDbErrors::already_exists,
-            ExampleDbErrors::function_failure,
-            ExampleDbErrors::authentication_error,
-            ExampleDbErrors::unauthorized,
-            ExampleDbErrors::config_error,
-            ExampleDbErrors::unavailable,
-            ExampleDbErrors::overloaded,
-            ExampleDbErrors::is_bootstrapping,
-            ExampleDbErrors::truncate_error,
-            ExampleDbErrors::read_timeout,
-            ExampleDbErrors::write_timeout,
-            ExampleDbErrors::write_failure,
-            ExampleDbErrors::unprepared,
-            ExampleDbErrors::server_error,
-            ExampleDbErrors::protocol_error,
-            || ExampleDbErrors::other(2137),
+            example_db_errors::invalid,
+            example_db_errors::already_exists,
+            example_db_errors::function_failure,
+            example_db_errors::authentication_error,
+            example_db_errors::unauthorized,
+            example_db_errors::config_error,
+            example_db_errors::unavailable,
+            example_db_errors::overloaded,
+            example_db_errors::is_bootstrapping,
+            example_db_errors::truncate_error,
+            example_db_errors::read_timeout,
+            example_db_errors::write_timeout,
+            example_db_errors::write_failure,
+            example_db_errors::unprepared,
+            example_db_errors::server_error,
+            example_db_errors::protocol_error,
+            || example_db_errors::other(2137),
         ];
         RequestReaction::forge_with_error_lazy_delay(
             Box::new(|| ERRORS[rand::thread_rng().next_u32() as usize % ERRORS.len()]()),

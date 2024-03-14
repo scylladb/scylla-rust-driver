@@ -336,15 +336,15 @@ async fn consistency_is_correctly_set_in_cql_requests() {
 
 #[derive(Debug, Clone)]
 pub(crate) struct OwnedRoutingInfo {
-    pub consistency: Consistency,
-    pub serial_consistency: Option<SerialConsistency>,
+    consistency: Consistency,
+    serial_consistency: Option<SerialConsistency>,
 
     #[allow(unused)]
-    pub keyspace: Option<String>,
+    keyspace: Option<String>,
     #[allow(unused)]
-    pub token: Option<Token>,
+    token: Option<Token>,
     #[allow(unused)]
-    pub is_confirmed_lwt: bool,
+    is_confirmed_lwt: bool,
 }
 
 impl OwnedRoutingInfo {

@@ -301,7 +301,7 @@ mod ssl_config {
     // for the particular node. (The SslConfig must be different, because SNIs differ for different nodes.)
     // Thenceforth, all connections to that node share the same SslConfig.
     #[derive(Clone)]
-    pub struct SslConfig {
+    pub(crate) struct SslConfig {
         context: SslContext,
         #[cfg(feature = "cloud")]
         sni: Option<String>,
@@ -309,7 +309,7 @@ mod ssl_config {
 
     impl SslConfig {
         // Used in case when the user provided their own SslContext to be used in all connections.
-        pub fn new_with_global_context(context: SslContext) -> Self {
+        pub(crate) fn new_with_global_context(context: SslContext) -> Self {
             Self {
                 context,
                 #[cfg(feature = "cloud")]
@@ -349,24 +349,24 @@ mod ssl_config {
 }
 
 #[derive(Clone)]
-pub struct ConnectionConfig {
-    pub compression: Option<Compression>,
-    pub tcp_nodelay: bool,
-    pub tcp_keepalive_interval: Option<Duration>,
+pub(crate) struct ConnectionConfig {
+    pub(crate) compression: Option<Compression>,
+    pub(crate) tcp_nodelay: bool,
+    pub(crate) tcp_keepalive_interval: Option<Duration>,
     #[cfg(feature = "ssl")]
-    pub ssl_config: Option<SslConfig>,
-    pub connect_timeout: std::time::Duration,
+    pub(crate) ssl_config: Option<SslConfig>,
+    pub(crate) connect_timeout: std::time::Duration,
     // should be Some only in control connections,
-    pub event_sender: Option<mpsc::Sender<Event>>,
-    pub default_consistency: Consistency,
+    pub(crate) event_sender: Option<mpsc::Sender<Event>>,
+    pub(crate) default_consistency: Consistency,
     #[cfg(feature = "cloud")]
     pub(crate) cloud_config: Option<Arc<CloudConfig>>,
-    pub authenticator: Option<Arc<dyn AuthenticatorProvider>>,
-    pub address_translator: Option<Arc<dyn AddressTranslator>>,
-    pub enable_write_coalescing: bool,
+    pub(crate) authenticator: Option<Arc<dyn AuthenticatorProvider>>,
+    pub(crate) address_translator: Option<Arc<dyn AddressTranslator>>,
+    pub(crate) enable_write_coalescing: bool,
 
-    pub keepalive_interval: Option<Duration>,
-    pub keepalive_timeout: Option<Duration>,
+    pub(crate) keepalive_interval: Option<Duration>,
+    pub(crate) keepalive_timeout: Option<Duration>,
 }
 
 impl Default for ConnectionConfig {
@@ -395,7 +395,7 @@ impl Default for ConnectionConfig {
 
 impl ConnectionConfig {
     #[cfg(feature = "ssl")]
-    pub fn is_ssl(&self) -> bool {
+    fn is_ssl(&self) -> bool {
         #[cfg(feature = "cloud")]
         if self.cloud_config.is_some() {
             return true;
@@ -404,7 +404,7 @@ impl ConnectionConfig {
     }
 
     #[cfg(not(feature = "ssl"))]
-    pub fn is_ssl(&self) -> bool {
+    fn is_ssl(&self) -> bool {
         false
     }
 }
