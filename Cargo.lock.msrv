@@ -479,6 +479,7 @@ dependencies = [
  "clap",
  "futures",
  "openssl",
+ "rand",
  "rustyline",
  "rustyline-derive",
  "scylla",

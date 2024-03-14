@@ -41,7 +41,7 @@ async fn main() -> Result<()> {
                 .get_cluster_data()
                 .get_token_endpoints("examples_ks", Token { value: t })
                 .iter()
-                .map(|n| n.address)
+                .map(|(node, _shard)| node.address)
                 .collect::<Vec<NodeAddr>>()
         );
 

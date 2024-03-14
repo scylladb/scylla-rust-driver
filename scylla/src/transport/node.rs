@@ -3,7 +3,7 @@ use tracing::warn;
 use uuid::Uuid;
 
 /// Node represents a cluster node along with it's data and connections
-use crate::routing::{Sharder, Token};
+use crate::routing::{Shard, Sharder};
 use crate::transport::connection::Connection;
 use crate::transport::connection::VerifiedKeyspaceName;
 use crate::transport::connection_pool::{NodeConnectionPool, PoolConfig};
@@ -152,18 +152,13 @@ impl Node {
         self.pool.as_ref()?.sharder()
     }
 
-    /// Get connection which should be used to connect using given token
-    /// If this connection is broken get any random connection to this Node
-    pub(crate) async fn connection_for_token(
+    /// Get a connection targetting the given shard
+    /// If such connection is broken, get any random connection to this `Node`
+    pub(crate) async fn connection_for_shard(
         &self,
-        token: Token,
+        shard: Shard,
     ) -> Result<Arc<Connection>, QueryError> {
-        self.get_pool()?.connection_for_token(token)
-    }
-
-    /// Get random connection
-    pub(crate) async fn random_connection(&self) -> Result<Arc<Connection>, QueryError> {
-        self.get_pool()?.random_connection()
+        self.get_pool()?.connection_for_shard(shard)
     }
 
     pub fn is_down(&self) -> bool {

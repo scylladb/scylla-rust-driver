@@ -51,7 +51,7 @@ use crate::frame::response::cql_to_rust::FromRowError;
 use crate::frame::response::result;
 use crate::prepared_statement::PreparedStatement;
 use crate::query::Query;
-use crate::routing::Token;
+use crate::routing::{Shard, Token};
 use crate::statement::Consistency;
 use crate::tracing::{TracingEvent, TracingInfo};
 use crate::transport::cluster::{Cluster, ClusterData, ClusterNeatDebug};
@@ -655,7 +655,6 @@ impl Session {
                 statement_info,
                 &query.config,
                 execution_profile,
-                |node: Arc<Node>| async move { node.random_connection().await },
                 |connection: Arc<Connection>,
                  consistency: Consistency,
                  execution_profile: &ExecutionProfileInner| {
@@ -1024,12 +1023,6 @@ impl Session {
                 statement_info,
                 &prepared.config,
                 execution_profile,
-                |node: Arc<Node>| async move {
-                    match token {
-                        Some(token) => node.connection_for_token(token).await,
-                        None => node.random_connection().await,
-                    }
-                },
                 |connection: Arc<Connection>,
                  consistency: Consistency,
                  execution_profile: &ExecutionProfileInner| {
@@ -1236,14 +1229,6 @@ impl Session {
                 statement_info,
                 &batch.config,
                 execution_profile,
-                |node: Arc<Node>| async move {
-                    match first_value_token {
-                        Some(first_value_token) => {
-                            node.connection_for_token(first_value_token).await
-                        }
-                        None => node.random_connection().await,
-                    }
-                },
                 |connection: Arc<Connection>,
                  consistency: Consistency,
                  execution_profile: &ExecutionProfileInner| {
@@ -1507,28 +1492,23 @@ impl Session {
     }
 
     // This method allows to easily run a query using load balancing, retry policy etc.
-    // Requires some information about the query and two closures
-    // First closure is used to choose a connection
-    // - query will use node.random_connection()
-    // - execute will use node.connection_for_token()
-    // The second closure is used to do the query itself on a connection
+    // Requires some information about the query and a closure.
+    // The closure is used to do the query itself on a connection.
     // - query will use connection.query()
     // - execute will use connection.execute()
     // If this query closure fails with some errors retry policy is used to perform retries
     // On success this query's result is returned
     // I tried to make this closures take a reference instead of an Arc but failed
     // maybe once async closures get stabilized this can be fixed
-    async fn run_query<'a, ConnFut, QueryFut, ResT>(
+    async fn run_query<'a, QueryFut, ResT>(
         &'a self,
         statement_info: RoutingInfo<'a>,
         statement_config: &'a StatementConfig,
         execution_profile: Arc<ExecutionProfileInner>,
-        choose_connection: impl Fn(Arc<Node>) -> ConnFut,
         do_query: impl Fn(Arc<Connection>, Consistency, &ExecutionProfileInner) -> QueryFut,
         request_span: &'a RequestSpan,
     ) -> Result<RunQueryResult<ResT>, QueryError>
     where
-        ConnFut: Future<Output = Result<Arc<Connection>, QueryError>>,
         QueryFut: Future<Output = Result<ResT, QueryError>>,
         ResT: AllowedRunQueryResTType,
     {
@@ -1550,16 +1530,16 @@ impl Session {
             // can be shared safely.
             struct SharedPlan<'a, I>
             where
-                I: Iterator<Item = NodeRef<'a>>,
+                I: Iterator<Item = (NodeRef<'a>, Shard)>,
             {
                 iter: std::sync::Mutex<I>,
             }
 
             impl<'a, I> Iterator for &SharedPlan<'a, I>
             where
-                I: Iterator<Item = NodeRef<'a>>,
+                I: Iterator<Item = (NodeRef<'a>, Shard)>,
             {
-                type Item = NodeRef<'a>;
+                type Item = (NodeRef<'a>, Shard);
 
                 fn next(&mut self) -> Option<Self::Item> {
                     self.iter.lock().unwrap().next()
@@ -1602,7 +1582,6 @@ impl Session {
 
                         self.execute_query(
                             &shared_query_plan,
-                            &choose_connection,
                             &do_query,
                             &execution_profile,
                             ExecuteQueryContext {
@@ -1638,7 +1617,6 @@ impl Session {
                             });
                     self.execute_query(
                         query_plan,
-                        &choose_connection,
                         &do_query,
                         &execution_profile,
                         ExecuteQueryContext {
@@ -1684,16 +1662,14 @@ impl Session {
         result
     }
 
-    async fn execute_query<'a, ConnFut, QueryFut, ResT>(
+    async fn execute_query<'a, QueryFut, ResT>(
         &'a self,
-        query_plan: impl Iterator<Item = NodeRef<'a>>,
-        choose_connection: impl Fn(Arc<Node>) -> ConnFut,
+        query_plan: impl Iterator<Item = (NodeRef<'a>, Shard)>,
         do_query: impl Fn(Arc<Connection>, Consistency, &ExecutionProfileInner) -> QueryFut,
         execution_profile: &ExecutionProfileInner,
         mut context: ExecuteQueryContext<'a>,
     ) -> Option<Result<RunQueryResult<ResT>, QueryError>>
     where
-        ConnFut: Future<Output = Result<Arc<Connection>, QueryError>>,
         QueryFut: Future<Output = Result<ResT, QueryError>>,
         ResT: AllowedRunQueryResTType,
     {
@@ -1702,14 +1678,11 @@ impl Session {
             .consistency_set_on_statement
             .unwrap_or(execution_profile.consistency);
 
-        'nodes_in_plan: for node in query_plan {
+        'nodes_in_plan: for (node, shard) in query_plan {
             let span = trace_span!("Executing query", node = %node.address);
             'same_node_retries: loop {
                 trace!(parent: &span, "Execution started");
-                let connection: Arc<Connection> = match choose_connection(node.clone())
-                    .instrument(span.clone())
-                    .await
-                {
+                let connection = match node.connection_for_shard(shard).await {
                     Ok(connection) => connection,
                     Err(e) => {
                         trace!(
@@ -2027,19 +2000,19 @@ impl RequestSpan {
         self.span.record("result_rows", rows.rows.len());
     }
 
-    pub(crate) fn record_replicas<'a>(&'a self, replicas: &'a [impl Borrow<Arc<Node>>]) {
-        struct ReplicaIps<'a, N>(&'a [N]);
+    pub(crate) fn record_replicas<'a>(&'a self, replicas: &'a [(impl Borrow<Arc<Node>>, Shard)]) {
+        struct ReplicaIps<'a, N>(&'a [(N, Shard)]);
         impl<'a, N> Display for ReplicaIps<'a, N>
         where
             N: Borrow<Arc<Node>>,
         {
             fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-                let mut nodes = self.0.iter();
-                if let Some(node) = nodes.next() {
-                    write!(f, "{}", node.borrow().address.ip())?;
+                let mut nodes_with_shards = self.0.iter();
+                if let Some((node, shard)) = nodes_with_shards.next() {
+                    write!(f, "{}-shard{}", node.borrow().address.ip(), shard)?;
 
-                    for node in nodes {
-                        write!(f, ",{}", node.borrow().address.ip())?;
+                    for (node, shard) in nodes_with_shards {
+                        write!(f, ",{}-shard{}", node.borrow().address.ip(), shard)?;
                     }
                 }
                 Ok(())
