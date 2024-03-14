@@ -58,7 +58,7 @@ struct Context {
     fields: Vec<Field>,
 }
 
-pub fn derive_serialize_row(tokens_input: TokenStream) -> Result<syn::ItemImpl, syn::Error> {
+pub(crate) fn derive_serialize_row(tokens_input: TokenStream) -> Result<syn::ItemImpl, syn::Error> {
     let input: syn::DeriveInput = syn::parse(tokens_input)?;
     let struct_name = input.ident.clone();
     let named_fields = crate::parser::parse_named_fields(&input, "SerializeRow")?;

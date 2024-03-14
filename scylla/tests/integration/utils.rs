@@ -11,7 +11,7 @@ use tracing::instrument::WithSubscriber;
 
 use scylla_proxy::{Node, Proxy, ProxyError, RunningProxy, ShardAwareness};
 
-pub fn init_logger() {
+pub(crate) fn init_logger() {
     let _ = tracing_subscriber::fmt::fmt()
         .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
         .without_time()
@@ -27,7 +27,7 @@ fn with_pseudorandom_shard(node: NodeRef) -> (NodeRef, Shard) {
 }
 
 #[derive(Debug)]
-pub struct FixedOrderLoadBalancer;
+pub(crate) struct FixedOrderLoadBalancer;
 impl LoadBalancingPolicy for FixedOrderLoadBalancer {
     fn pick<'a>(
         &'a self,
@@ -78,7 +78,7 @@ impl LoadBalancingPolicy for FixedOrderLoadBalancer {
     }
 }
 
-pub async fn test_with_3_node_cluster<F, Fut>(
+pub(crate) async fn test_with_3_node_cluster<F, Fut>(
     shard_awareness: ShardAwareness,
     test: F,
 ) -> Result<(), ProxyError>

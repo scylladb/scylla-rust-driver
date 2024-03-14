@@ -3,7 +3,7 @@ use quote::{quote, quote_spanned};
 use syn::{spanned::Spanned, DeriveInput};
 
 /// #[derive(IntoUserType)] allows to parse a struct as User Defined Type
-pub fn into_user_type_derive(tokens_input: TokenStream) -> Result<TokenStream, syn::Error> {
+pub(crate) fn into_user_type_derive(tokens_input: TokenStream) -> Result<TokenStream, syn::Error> {
     let item = syn::parse::<DeriveInput>(tokens_input)?;
     let path = crate::parser::get_path(&item)?;
     let struct_fields = crate::parser::parse_named_fields(&item, "IntoUserType")?;

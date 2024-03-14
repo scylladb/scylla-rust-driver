@@ -4,7 +4,7 @@ use syn::DeriveInput;
 
 /// #[derive(ValueList)] allows to parse a struct as a list of values,
 /// which can be fed to the query directly.
-pub fn value_list_derive(tokens_input: TokenStream) -> Result<TokenStream, syn::Error> {
+pub(crate) fn value_list_derive(tokens_input: TokenStream) -> Result<TokenStream, syn::Error> {
     let item = syn::parse::<DeriveInput>(tokens_input)?;
     let path = crate::parser::get_path(&item)?;
     let struct_fields = crate::parser::parse_named_fields(&item, "ValueList")?;
