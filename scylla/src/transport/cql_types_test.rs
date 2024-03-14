@@ -4,7 +4,6 @@ use crate::frame::response::result::CqlValue;
 use crate::frame::value::{Counter, CqlDate, CqlTime, CqlTimestamp};
 use crate::macros::FromUserType;
 use crate::test_utils::create_new_session_builder;
-use crate::transport::session::IntoTypedRows;
 use crate::transport::session::Session;
 use crate::utils::test_utils::unique_keyspace_name;
 use itertools::Itertools;
@@ -90,9 +89,8 @@ where
             .query(select_values, &[])
             .await
             .unwrap()
-            .rows
+            .rows_typed::<(T,)>()
             .unwrap()
-            .into_typed::<(T,)>()
             .map(Result::unwrap)
             .map(|row| row.0)
             .collect::<Vec<_>>();
@@ -206,9 +204,8 @@ async fn test_cql_varint() {
             .execute(&prepared_select, &[])
             .await
             .unwrap()
-            .rows
+            .rows_typed::<(CqlVarint,)>()
             .unwrap()
-            .into_typed::<(CqlVarint,)>()
             .map(Result::unwrap)
             .map(|row| row.0)
             .collect::<Vec<_>>();
@@ -278,9 +275,8 @@ async fn test_counter() {
             .query(select_values, (i as i32,))
             .await
             .unwrap()
-            .rows
+            .rows_typed::<(Counter,)>()
             .unwrap()
-            .into_typed::<(Counter,)>()
             .map(Result::unwrap)
             .map(|row| row.0)
             .collect::<Vec<_>>();
@@ -354,9 +350,8 @@ async fn test_naive_date() {
             .query("SELECT val from chrono_naive_date_tests", &[])
             .await
             .unwrap()
-            .rows
+            .rows_typed::<(NaiveDate,)>()
             .unwrap()
-            .into_typed::<(NaiveDate,)>()
             .next()
             .unwrap()
             .ok()
@@ -378,11 +373,7 @@ async fn test_naive_date() {
                 .query("SELECT val from chrono_naive_date_tests", &[])
                 .await
                 .unwrap()
-                .rows
-                .unwrap()
-                .into_typed::<(NaiveDate,)>()
-                .next()
-                .unwrap()
+                .single_row_typed::<(NaiveDate,)>()
                 .unwrap();
             assert_eq!(read_date, *naive_date);
         }
@@ -568,11 +559,7 @@ async fn test_cql_time() {
             .query("SELECT val from cql_time_tests", &[])
             .await
             .unwrap()
-            .rows
-            .unwrap()
-            .into_typed::<(CqlTime,)>()
-            .next()
-            .unwrap()
+            .single_row_typed::<(CqlTime,)>()
             .unwrap();
 
         assert_eq!(read_time, *time_duration);
@@ -590,11 +577,7 @@ async fn test_cql_time() {
             .query("SELECT val from cql_time_tests", &[])
             .await
             .unwrap()
-            .rows
-            .unwrap()
-            .into_typed::<(CqlTime,)>()
-            .next()
-            .unwrap()
+            .single_row_typed::<(CqlTime,)>()
             .unwrap();
 
         assert_eq!(read_time, *time_duration);
@@ -820,11 +803,7 @@ async fn test_cql_timestamp() {
             .query("SELECT val from cql_timestamp_tests", &[])
             .await
             .unwrap()
-            .rows
-            .unwrap()
-            .into_typed::<(CqlTimestamp,)>()
-            .next()
-            .unwrap()
+            .single_row_typed::<(CqlTimestamp,)>()
             .unwrap();
 
         assert_eq!(read_timestamp, *timestamp_duration);
@@ -842,11 +821,7 @@ async fn test_cql_timestamp() {
             .query("SELECT val from cql_timestamp_tests", &[])
             .await
             .unwrap()
-            .rows
-            .unwrap()
-            .into_typed::<(CqlTimestamp,)>()
-            .next()
-            .unwrap()
+            .single_row_typed::<(CqlTimestamp,)>()
             .unwrap();
 
         assert_eq!(read_timestamp, *timestamp_duration);
@@ -1202,11 +1177,7 @@ async fn test_timeuuid() {
             .query("SELECT val from timeuuid_tests", &[])
             .await
             .unwrap()
-            .rows
-            .unwrap()
-            .into_typed::<(CqlTimeuuid,)>()
-            .next()
-            .unwrap()
+            .single_row_typed::<(CqlTimeuuid,)>()
             .unwrap();
 
         assert_eq!(read_timeuuid.as_bytes(), timeuuid_bytes);
@@ -1225,11 +1196,7 @@ async fn test_timeuuid() {
             .query("SELECT val from timeuuid_tests", &[])
             .await
             .unwrap()
-            .rows
-            .unwrap()
-            .into_typed::<(CqlTimeuuid,)>()
-            .next()
-            .unwrap()
+            .single_row_typed::<(CqlTimeuuid,)>()
             .unwrap();
 
         assert_eq!(read_timeuuid.as_bytes(), timeuuid_bytes);
@@ -1372,11 +1339,7 @@ async fn test_inet() {
             .query("SELECT val from inet_tests WHERE id = 0", &[])
             .await
             .unwrap()
-            .rows
-            .unwrap()
-            .into_typed::<(IpAddr,)>()
-            .next()
-            .unwrap()
+            .single_row_typed::<(IpAddr,)>()
             .unwrap();
 
         assert_eq!(read_inet, *inet);
@@ -1391,11 +1354,7 @@ async fn test_inet() {
             .query("SELECT val from inet_tests WHERE id = 0", &[])
             .await
             .unwrap()
-            .rows
-            .unwrap()
-            .into_typed::<(IpAddr,)>()
-            .next()
-            .unwrap()
+            .single_row_typed::<(IpAddr,)>()
             .unwrap();
 
         assert_eq!(read_inet, *inet);
@@ -1445,11 +1404,7 @@ async fn test_blob() {
             .query("SELECT val from blob_tests WHERE id = 0", &[])
             .await
             .unwrap()
-            .rows
-            .unwrap()
-            .into_typed::<(Vec<u8>,)>()
-            .next()
-            .unwrap()
+            .single_row_typed::<(Vec<u8>,)>()
             .unwrap();
 
         assert_eq!(read_blob, *blob);
@@ -1464,11 +1419,7 @@ async fn test_blob() {
             .query("SELECT val from blob_tests WHERE id = 0", &[])
             .await
             .unwrap()
-            .rows
-            .unwrap()
-            .into_typed::<(Vec<u8>,)>()
-            .next()
-            .unwrap()
+            .single_row_typed::<(Vec<u8>,)>()
             .unwrap();
 
         assert_eq!(read_blob, *blob);
@@ -1555,11 +1506,7 @@ async fn test_udt_after_schema_update() {
         .query(format!("SELECT val from {} WHERE id = 0", table_name), &[])
         .await
         .unwrap()
-        .rows
-        .unwrap()
-        .into_typed::<(UdtV1,)>()
-        .next()
-        .unwrap()
+        .single_row_typed::<(UdtV1,)>()
         .unwrap();
 
     assert_eq!(read_udt, v1);
@@ -1576,11 +1523,7 @@ async fn test_udt_after_schema_update() {
         .query(format!("SELECT val from {} WHERE id = 0", table_name), &[])
         .await
         .unwrap()
-        .rows
-        .unwrap()
-        .into_typed::<(UdtV1,)>()
-        .next()
-        .unwrap()
+        .single_row_typed::<(UdtV1,)>()
         .unwrap();
 
     assert_eq!(read_udt, v1);
@@ -1601,11 +1544,7 @@ async fn test_udt_after_schema_update() {
         .query(format!("SELECT val from {} WHERE id = 0", table_name), &[])
         .await
         .unwrap()
-        .rows
-        .unwrap()
-        .into_typed::<(UdtV2,)>()
-        .next()
-        .unwrap()
+        .single_row_typed::<(UdtV2,)>()
         .unwrap();
 
     assert_eq!(
@@ -1736,11 +1675,7 @@ async fn test_udt_with_missing_field() {
             )
             .await
             .unwrap()
-            .rows
-            .unwrap()
-            .into_typed::<(TR,)>()
-            .next()
-            .unwrap()
+            .single_row_typed::<(TR,)>()
             .unwrap()
             .0;
         assert_eq!(expected, result);

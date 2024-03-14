@@ -1,7 +1,7 @@
 use crate::cql_to_rust::FromCqlVal;
 use crate::test_utils::create_new_session_builder;
 use crate::utils::test_utils::unique_keyspace_name;
-use crate::{frame::response::result::CqlValue, IntoTypedRows, Session};
+use crate::{frame::response::result::CqlValue, Session};
 use scylla_cql::types::serialize::value::SerializeCql;
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
@@ -48,11 +48,7 @@ async fn insert_and_select<InsertT, SelectT>(
         .query(format!("SELECT val FROM {} WHERE p = 0", table_name), ())
         .await
         .unwrap()
-        .rows
-        .unwrap()
-        .into_typed::<(SelectT,)>()
-        .next()
-        .unwrap()
+        .single_row_typed::<(SelectT,)>()
         .unwrap()
         .0;
 

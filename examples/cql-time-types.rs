@@ -5,7 +5,7 @@ use anyhow::Result;
 use chrono::{DateTime, NaiveDate, NaiveTime, Utc};
 use scylla::frame::response::result::CqlValue;
 use scylla::frame::value::{CqlDate, CqlTime, CqlTimestamp};
-use scylla::transport::session::{IntoTypedRows, Session};
+use scylla::transport::session::Session;
 use scylla::SessionBuilder;
 use std::env;
 
@@ -40,19 +40,16 @@ async fn main() -> Result<()> {
         )
         .await?;
 
-    if let Some(rows) = session
+    let result = session
         .query("SELECT d from examples_ks.dates", &[])
-        .await?
-        .rows
-    {
-        for row in rows.into_typed::<(NaiveDate,)>() {
-            let (read_date,): (NaiveDate,) = match row {
-                Ok(read_date) => read_date,
-                Err(_) => continue, // We might read a date that does not fit in NaiveDate, skip it
-            };
+        .await?;
+    for row in result.rows_typed::<(NaiveDate,)>()? {
+        let (read_date,): (NaiveDate,) = match row {
+            Ok(read_date) => read_date,
+            Err(_) => continue, // We might read a date that does not fit in NaiveDate, skip it
+        };
 
-            println!("Parsed a date into chrono::NaiveDate: {:?}", read_date);
-        }
+        println!("Parsed a date into chrono::NaiveDate: {:?}", read_date);
     }
 
     // Alternatively, you can enable 'time' feature and use `time::Date` to represent date. `time::Date` only allows
@@ -64,19 +61,16 @@ async fn main() -> Result<()> {
         .query("INSERT INTO examples_ks.dates (d) VALUES (?)", (time_date,))
         .await?;
 
-    if let Some(rows) = session
+    let result = session
         .query("SELECT d from examples_ks.dates", &[])
-        .await?
-        .rows
-    {
-        for row in rows.into_typed::<(time::Date,)>() {
-            let (read_date,) = match row {
-                Ok(read_date) => read_date,
-                Err(_) => continue, // We might read a date that does not fit in time::Date, skip it
-            };
+        .await?;
+    for row in result.rows_typed::<(time::Date,)>()? {
+        let (read_date,) = match row {
+            Ok(read_date) => read_date,
+            Err(_) => continue, // We might read a date that does not fit in time::Date, skip it
+        };
 
-            println!("Parsed a date into time::Date: {:?}", read_date);
-        }
+        println!("Parsed a date into time::Date: {:?}", read_date);
     }
 
     // Dates outside this range must be represented in the raw form - an u32 describing days since -5877641-06-23
@@ -88,19 +82,17 @@ async fn main() -> Result<()> {
         )
         .await?;
 
-    if let Some(rows) = session
+    let result = session
         .query("SELECT d from examples_ks.dates", &[])
-        .await?
-        .rows
-    {
-        for row in rows {
-            let read_days: u32 = match row.columns[0] {
-                Some(CqlValue::Date(CqlDate(days))) => days,
-                _ => panic!("oh no"),
-            };
+        .await?;
+    let mut iter = result.rows_typed::<(CqlValue,)>()?;
+    while let Some((value,)) = iter.next().transpose()? {
+        let read_days: u32 = match value {
+            CqlValue::Date(CqlDate(days)) => days,
+            _ => panic!("oh no"),
+        };
 
-            println!("Read a date as raw days: {}", read_days);
-        }
+        println!("Read a date as raw days: {}", read_days);
     }
 
     // Time
@@ -126,16 +118,12 @@ async fn main() -> Result<()> {
         )
         .await?;
 
-    if let Some(rows) = session
+    let result = session
         .query("SELECT t from examples_ks.times", &[])
-        .await?
-        .rows
-    {
-        for row in rows.into_typed::<(NaiveTime,)>() {
-            let (read_time,) = row?;
-
-            println!("Parsed a time into chrono::NaiveTime: {:?}", read_time);
-        }
+        .await?;
+    let mut iter = result.rows_typed::<(NaiveTime,)>()?;
+    while let Some((read_time,)) = iter.next().transpose()? {
+        println!("Parsed a time into chrono::NaiveTime: {:?}", read_time);
     }
 
     // time::Time
@@ -145,16 +133,12 @@ async fn main() -> Result<()> {
         .query("INSERT INTO examples_ks.times (t) VALUES (?)", (time_time,))
         .await?;
 
-    if let Some(rows) = session
+    let result = session
         .query("SELECT t from examples_ks.times", &[])
-        .await?
-        .rows
-    {
-        for row in rows.into_typed::<(time::Time,)>() {
-            let (read_time,) = row?;
-
-            println!("Parsed a time into time::Time: {:?}", read_time);
-        }
+        .await?;
+    let mut iter = result.rows_typed::<(time::Time,)>()?;
+    while let Some((read_time,)) = iter.next().transpose()? {
+        println!("Parsed a time into time::Time: {:?}", read_time);
     }
 
     // CqlTime
@@ -164,16 +148,12 @@ async fn main() -> Result<()> {
         .query("INSERT INTO examples_ks.times (t) VALUES (?)", (time_time,))
         .await?;
 
-    if let Some(rows) = session
+    let result = session
         .query("SELECT t from examples_ks.times", &[])
-        .await?
-        .rows
-    {
-        for row in rows.into_typed::<(CqlTime,)>() {
-            let (read_time,) = row?;
-
-            println!("Read a time as raw nanos: {:?}", read_time);
-        }
+        .await?;
+    let mut iter = result.rows_typed::<(CqlTime,)>()?;
+    while let Some((read_time,)) = iter.next().transpose()? {
+        println!("Read a time as raw nanos: {:?}", read_time);
     }
 
     // Timestamp
@@ -199,19 +179,15 @@ async fn main() -> Result<()> {
         )
         .await?;
 
-    if let Some(rows) = session
+    let result = session
         .query("SELECT t from examples_ks.timestamps", &[])
-        .await?
-        .rows
-    {
-        for row in rows.into_typed::<(DateTime<Utc>,)>() {
-            let (read_time,) = row?;
-
-            println!(
-                "Parsed a timestamp into chrono::DateTime<chrono::Utc>: {:?}",
-                read_time
-            );
-        }
+        .await?;
+    let mut iter = result.rows_typed::<(DateTime<Utc>,)>()?;
+    while let Some((read_time,)) = iter.next().transpose()? {
+        println!(
+            "Parsed a timestamp into chrono::DateTime<chrono::Utc>: {:?}",
+            read_time
+        );
     }
 
     // time::OffsetDateTime
@@ -224,19 +200,15 @@ async fn main() -> Result<()> {
         )
         .await?;
 
-    if let Some(rows) = session
+    let result = session
         .query("SELECT t from examples_ks.timestamps", &[])
-        .await?
-        .rows
-    {
-        for row in rows.into_typed::<(time::OffsetDateTime,)>() {
-            let (read_time,) = row?;
-
-            println!(
-                "Parsed a timestamp into time::OffsetDateTime: {:?}",
-                read_time
-            );
-        }
+        .await?;
+    let mut iter = result.rows_typed::<(time::OffsetDateTime,)>()?;
+    while let Some((read_time,)) = iter.next().transpose()? {
+        println!(
+            "Parsed a timestamp into time::OffsetDateTime: {:?}",
+            read_time
+        );
     }
 
     // CqlTimestamp
@@ -249,16 +221,12 @@ async fn main() -> Result<()> {
         )
         .await?;
 
-    if let Some(rows) = session
+    let result = session
         .query("SELECT t from examples_ks.timestamps", &[])
-        .await?
-        .rows
-    {
-        for row in rows.into_typed::<(CqlTimestamp,)>() {
-            let (read_time,) = row?;
-
-            println!("Read a timestamp as raw millis: {:?}", read_time);
-        }
+        .await?;
+    let mut iter = result.rows_typed::<(CqlTimestamp,)>()?;
+    while let Some((read_time,)) = iter.next().transpose()? {
+        println!("Read a timestamp as raw millis: {:?}", read_time);
     }
 
     Ok(())

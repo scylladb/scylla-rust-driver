@@ -22,7 +22,7 @@ use crate::utils::test_utils::{
 use crate::CachingSession;
 use crate::ExecutionProfile;
 use crate::QueryResult;
-use crate::{IntoTypedRows, Session, SessionBuilder};
+use crate::{Session, SessionBuilder};
 use assert_matches::assert_matches;
 use bytes::Bytes;
 use futures::{FutureExt, StreamExt, TryStreamExt};
@@ -221,19 +221,13 @@ async fn test_prepared_statement() {
 
     // Verify that token calculation is compatible with Scylla
     {
-        let rs = session
+        let (value,): (i64,) = session
             .query(format!("SELECT token(a) FROM {}.t2", ks), &[])
             .await
             .unwrap()
-            .rows
+            .single_row_typed()
             .unwrap();
-        let token = Token {
-            value: rs.first().unwrap().columns[0]
-                .as_ref()
-                .unwrap()
-                .as_bigint()
-                .unwrap(),
-        };
+        let token = Token { value };
         let prepared_token = Murmur3Partitioner
             .hash_one(&prepared_statement.compute_partition_key(&values).unwrap());
         assert_eq!(token, prepared_token);
@@ -246,19 +240,13 @@ async fn test_prepared_statement() {
         assert_eq!(token, cluster_data_token);
     }
     {
-        let rs = session
+        let (value,): (i64,) = session
             .query(format!("SELECT token(a,b,c) FROM {}.complex_pk", ks), &[])
             .await
             .unwrap()
-            .rows
+            .single_row_typed()
             .unwrap();
-        let token = Token {
-            value: rs.first().unwrap().columns[0]
-                .as_ref()
-                .unwrap()
-                .as_bigint()
-                .unwrap(),
-        };
+        let token = Token { value };
         let prepared_token = Murmur3Partitioner.hash_one(
             &prepared_complex_pk_statement
                 .compute_partition_key(&values)
@@ -306,20 +294,17 @@ async fn test_prepared_statement() {
         assert_eq!(results_from_manual_paging, rs);
     }
     {
-        let rs = session
+        let (a, b, c, d, e): (i32, i32, String, i32, Option<i32>) = session
             .query(format!("SELECT a,b,c,d,e FROM {}.complex_pk", ks), &[])
             .await
             .unwrap()
-            .rows
+            .single_row_typed()
             .unwrap();
-        let r = rs.first().unwrap();
-        let a = r.columns[0].as_ref().unwrap().as_int().unwrap();
-        let b = r.columns[1].as_ref().unwrap().as_int().unwrap();
-        let c = r.columns[2].as_ref().unwrap().as_text().unwrap();
-        let d = r.columns[3].as_ref().unwrap().as_int().unwrap();
-        let e = r.columns[4].as_ref();
         assert!(e.is_none());
-        assert_eq!((a, b, c, d), (17, 16, &String::from("I'm prepared!!!"), 7))
+        assert_eq!(
+            (a, b, c.as_str(), d, e),
+            (17, 16, "I'm prepared!!!", 7, None)
+        );
     }
     // Check that SerializeRow macro works
     {
@@ -349,7 +334,7 @@ async fn test_prepared_statement() {
             )
             .await
             .unwrap();
-        let mut rs = session
+        let output: ComplexPk = session
             .query(
                 format!(
                     "SELECT * FROM {}.complex_pk WHERE a = 9 and b = 8 and c = 'seven'",
@@ -359,10 +344,8 @@ async fn test_prepared_statement() {
             )
             .await
             .unwrap()
-            .rows
-            .unwrap()
-            .into_typed::<ComplexPk>();
-        let output = rs.next().unwrap().unwrap();
+            .single_row_typed()
+            .unwrap();
         assert_eq!(input, output)
     }
 }
@@ -419,29 +402,22 @@ async fn test_batch() {
     .await
     .unwrap();
 
-    let rs = session
+    let mut results: Vec<(i32, i32, String)> = session
         .query(format!("SELECT a, b, c FROM {}.t_batch", ks), &[])
         .await
         .unwrap()
-        .rows
+        .rows_typed()
+        .unwrap()
+        .collect::<Result<_, _>>()
         .unwrap();
 
-    let mut results: Vec<(i32, i32, &String)> = rs
-        .iter()
-        .map(|r| {
-            let a = r.columns[0].as_ref().unwrap().as_int().unwrap();
-            let b = r.columns[1].as_ref().unwrap().as_int().unwrap();
-            let c = r.columns[2].as_ref().unwrap().as_text().unwrap();
-            (a, b, c)
-        })
-        .collect();
     results.sort();
     assert_eq!(
         results,
         vec![
-            (1, 2, &String::from("abc")),
-            (1, 4, &String::from("hello")),
-            (7, 11, &String::from(""))
+            (1, 2, String::from("abc")),
+            (1, 4, String::from("hello")),
+            (7, 11, String::from(""))
         ]
     );
 
@@ -460,26 +436,19 @@ async fn test_batch() {
         .unwrap();
     session.batch(&batch, values).await.unwrap();
 
-    let rs = session
+    let results: Vec<(i32, i32, String)> = session
         .query(
             format!("SELECT a, b, c FROM {}.t_batch WHERE a = 4", ks),
             &[],
         )
         .await
         .unwrap()
-        .rows
+        .rows_typed()
+        .unwrap()
+        .collect::<Result<_, _>>()
         .unwrap();
-    let results: Vec<(i32, i32, &String)> = rs
-        .iter()
-        .map(|r| {
-            let a = r.columns[0].as_ref().unwrap().as_int().unwrap();
-            let b = r.columns[1].as_ref().unwrap().as_int().unwrap();
-            let c = r.columns[2].as_ref().unwrap().as_text().unwrap();
-            (a, b, c)
-        })
-        .collect();
 
-    assert_eq!(results, vec![(4, 20, &String::from("foobar"))]);
+    assert_eq!(results, vec![(4, 20, String::from("foobar"))]);
 }
 
 #[tokio::test]
@@ -516,22 +485,16 @@ async fn test_token_calculation() {
         let serialized_values = prepared_statement.serialize_values(&values).unwrap();
         session.execute(&prepared_statement, &values).await.unwrap();
 
-        let rs = session
+        let (value,): (i64,) = session
             .query(
                 format!("SELECT token(a) FROM {}.t3 WHERE a = ?", ks),
                 &values,
             )
             .await
             .unwrap()
-            .rows
+            .single_row_typed()
             .unwrap();
-        let token = Token {
-            value: rs.first().unwrap().columns[0]
-                .as_ref()
-                .unwrap()
-                .as_bigint()
-                .unwrap(),
-        };
+        let token = Token { value };
         let prepared_token = Murmur3Partitioner
             .hash_one(&prepared_statement.compute_partition_key(&values).unwrap());
         assert_eq!(token, prepared_token);
@@ -622,9 +585,8 @@ async fn test_use_keyspace() {
         .query("SELECT * FROM tab", &[])
         .await
         .unwrap()
-        .rows
+        .rows_typed::<(String,)>()
         .unwrap()
-        .into_typed::<(String,)>()
         .map(|res| res.unwrap().0)
         .collect();
 
@@ -672,9 +634,8 @@ async fn test_use_keyspace() {
         .query("SELECT * FROM tab", &[])
         .await
         .unwrap()
-        .rows
+        .rows_typed::<(String,)>()
         .unwrap()
-        .into_typed::<(String,)>()
         .map(|res| res.unwrap().0)
         .collect();
 
@@ -732,9 +693,8 @@ async fn test_use_keyspace_case_sensitivity() {
         .query("SELECT * from tab", &[])
         .await
         .unwrap()
-        .rows
+        .rows_typed::<(String,)>()
         .unwrap()
-        .into_typed::<(String,)>()
         .map(|row| row.unwrap().0)
         .collect();
 
@@ -748,9 +708,8 @@ async fn test_use_keyspace_case_sensitivity() {
         .query("SELECT * from tab", &[])
         .await
         .unwrap()
-        .rows
+        .rows_typed::<(String,)>()
         .unwrap()
-        .into_typed::<(String,)>()
         .map(|row| row.unwrap().0)
         .collect();
 
@@ -789,9 +748,8 @@ async fn test_raw_use_keyspace() {
         .query("SELECT * FROM tab", &[])
         .await
         .unwrap()
-        .rows
+        .rows_typed::<(String,)>()
         .unwrap()
-        .into_typed::<(String,)>()
         .map(|res| res.unwrap().0)
         .collect();
 
@@ -1084,15 +1042,14 @@ async fn assert_in_tracing_table(session: &Session, tracing_uuid: Uuid) {
     // If rows are empty perform 8 retries with a 32ms wait in between
 
     for _ in 0..8 {
-        let row_opt = session
+        let rows_num = session
             .query(traces_query.clone(), (tracing_uuid,))
             .await
             .unwrap()
-            .rows
-            .into_iter()
-            .next();
+            .rows_num()
+            .unwrap();
 
-        if row_opt.is_some() {
+        if rows_num > 0 {
             // Ok there was some row for this tracing_uuid
             return;
         }
@@ -1207,9 +1164,8 @@ async fn test_timestamp() {
         )
         .await
         .unwrap()
-        .rows
+        .rows_typed::<(String, String, i64)>()
         .unwrap()
-        .into_typed::<(String, String, i64)>()
         .map(Result::unwrap)
         .collect::<Vec<_>>();
     results.sort();
@@ -1827,9 +1783,8 @@ async fn test_named_bind_markers() {
         .query("SELECT pk, ck, v FROM t", &[])
         .await
         .unwrap()
-        .rows
+        .rows_typed::<(i32, i32, i32)>()
         .unwrap()
-        .into_typed::<(i32, i32, i32)>()
         .map(|res| res.unwrap())
         .collect();
 

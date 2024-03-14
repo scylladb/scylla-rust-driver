@@ -1,6 +1,6 @@
 use anyhow::{bail, Result};
 use scylla::transport::errors::QueryError;
-use scylla::transport::session::{IntoTypedRows, Session};
+use scylla::transport::session::Session;
 use scylla::SessionBuilder;
 use std::env;
 use std::time::Duration;
@@ -66,16 +66,14 @@ async fn main() -> Result<()> {
         .await?;
 
     // Rows can be parsed as tuples
-    if let Some(rows) = session
+    let result = session
         .query("SELECT a, b, c FROM examples_ks.schema_agreement", &[])
-        .await?
-        .rows
-    {
-        for row in rows.into_typed::<(i32, i32, String)>() {
-            let (a, b, c) = row?;
-            println!("a, b, c: {}, {}, {}", a, b, c);
-        }
+        .await?;
+    let mut iter = result.rows_typed::<(i32, i32, String)>()?;
+    while let Some((a, b, c)) = iter.next().transpose()? {
+        println!("a, b, c: {}, {}, {}", a, b, c);
     }
+
     println!("Ok.");
 
     let schema_version = session.await_schema_agreement().await?;

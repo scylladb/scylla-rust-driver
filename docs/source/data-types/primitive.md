@@ -1,6 +1,7 @@
 # Bool, Tinyint, Smallint, Int, Bigint, Float, Double
 
 ### Bool
+
 `Bool` is represented as rust `bool`
 
 ```rust
@@ -17,16 +18,17 @@ session
     .await?;
 
 // Read a bool from the table
-if let Some(rows) = session.query("SELECT a FROM keyspace.table", &[]).await?.rows {
-    for row in rows.into_typed::<(bool,)>() {
-        let (bool_value,): (bool,) = row?;
-    }
+let result = session.query("SELECT a FROM keyspace.table", &[]).await?;
+let mut iter = result.rows_typed::<(bool,)>()?;
+while let Some((bool_value,)) = iter.next().transpose()? {
+    println!("{}", bool_value);
 }
 # Ok(())
 # }
 ```
 
 ### Tinyint
+
 `Tinyint` is represented as rust `i8`
 
 ```rust
@@ -43,16 +45,17 @@ session
     .await?;
 
 // Read a tinyint from the table
-if let Some(rows) = session.query("SELECT a FROM keyspace.table", &[]).await?.rows {
-    for row in rows.into_typed::<(i8,)>() {
-        let (tinyint_value,): (i8,) = row?;
-    }
+let result = session.query("SELECT a FROM keyspace.table", &[]).await?;
+let mut iter = result.rows_typed::<(i8,)>()?;
+while let Some((tinyint_value,)) = iter.next().transpose()? {
+    println!("{:?}", tinyint_value);
 }
 # Ok(())
 # }
 ```
 
 ### Smallint
+
 `Smallint` is represented as rust `i16`
 
 ```rust
@@ -69,16 +72,17 @@ session
     .await?;
 
 // Read a smallint from the table
-if let Some(rows) = session.query("SELECT a FROM keyspace.table", &[]).await?.rows {
-    for row in rows.into_typed::<(i16,)>() {
-        let (smallint_value,): (i16,) = row?;
-    }
+let result = session.query("SELECT a FROM keyspace.table", &[]).await?;
+let mut iter = result.rows_typed::<(i16,)>()?;
+while let Some((smallint_value,)) = iter.next().transpose()? {
+    println!("{}", smallint_value);
 }
 # Ok(())
 # }
 ```
 
 ### Int
+
 `Int` is represented as rust `i32`
 
 ```rust
@@ -95,16 +99,17 @@ session
     .await?;
 
 // Read an int from the table
-if let Some(rows) = session.query("SELECT a FROM keyspace.table", &[]).await?.rows {
-    for row in rows.into_typed::<(i32,)>() {
-        let (int_value,): (i32,) = row?;
-    }
+let result = session.query("SELECT a FROM keyspace.table", &[]).await?;
+let mut iter = result.rows_typed::<(i32,)>()?;
+while let Some((int_value,)) = iter.next().transpose()? {
+    println!("{}", int_value);
 }
 # Ok(())
 # }
 ```
 
 ### Bigint
+
 `Bigint` is represented as rust `i64`
 
 ```rust
@@ -121,16 +126,17 @@ session
     .await?;
 
 // Read a bigint from the table
-if let Some(rows) = session.query("SELECT a FROM keyspace.table", &[]).await?.rows {
-    for row in rows.into_typed::<(i64,)>() {
-        let (bigint_value,): (i64,) = row?;
-    }
+let result = session.query("SELECT a FROM keyspace.table", &[]).await?;
+let mut iter = result.rows_typed::<(i64,)>()?;
+while let Some((bigint_value,)) = iter.next().transpose()? {
+    println!("{:?}", bigint_value);
 }
 # Ok(())
 # }
 ```
 
-### Float 
+### Float
+
 `Float` is represented as rust `f32`
 
 ```rust
@@ -147,16 +153,17 @@ session
     .await?;
 
 // Read a float from the table
-if let Some(rows) = session.query("SELECT a FROM keyspace.table", &[]).await?.rows {
-    for row in rows.into_typed::<(f32,)>() {
-        let (float_value,): (f32,) = row?;
-    }
+let result = session.query("SELECT a FROM keyspace.table", &[]).await?;
+let mut iter = result.rows_typed::<(f32,)>()?;
+while let Some((float_value,)) = iter.next().transpose()? {
+    println!("{:?}", float_value);
 }
 # Ok(())
 # }
 ```
 
 ### Double
+
 `Double` is represented as rust `f64`
 
 ```rust
@@ -173,10 +180,10 @@ session
     .await?;
 
 // Read a double from the table
-if let Some(rows) = session.query("SELECT a FROM keyspace.table", &[]).await?.rows {
-    for row in rows.into_typed::<(f64,)>() {
-        let (double_value,): (f64,) = row?;
-    }
+let result = session.query("SELECT a FROM keyspace.table", &[]).await?;
+let mut iter = result.rows_typed::<(f64,)>()?;
+while let Some((double_value,)) = iter.next().transpose()? {
+    println!("{:?}", double_value);
 }
 # Ok(())
 # }

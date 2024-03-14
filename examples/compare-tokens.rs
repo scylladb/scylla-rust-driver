@@ -45,24 +45,13 @@ async fn main() -> Result<()> {
                 .collect::<Vec<NodeAddr>>()
         );
 
-        let qt = session
+        let (qt,) = session
             .query(
-                format!(
-                    "SELECT token(pk) FROM examples_ks.compare_tokens where pk = {}",
-                    pk
-                ),
-                &[],
+                "SELECT token(pk) FROM examples_ks.compare_tokens where pk = ?",
+                (pk,),
             )
             .await?
-            .rows
-            .unwrap()
-            .first()
-            .expect("token query no rows!")
-            .columns[0]
-            .as_ref()
-            .expect("token query null value!")
-            .as_bigint()
-            .expect("token wrong type!");
+            .single_row_typed::<(i64,)>()?;
         assert_eq!(t, qt);
         println!("token for {}: {}", pk, t);
     }

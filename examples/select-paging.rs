@@ -45,7 +45,7 @@ async fn main() -> Result<()> {
     println!(
         "Paging state: {:#?} ({} rows)",
         res1.paging_state,
-        res1.rows.unwrap().len()
+        res1.rows_num()?,
     );
     let res2 = session
         .query_paged(paged_query.clone(), &[], res1.paging_state)
@@ -53,7 +53,7 @@ async fn main() -> Result<()> {
     println!(
         "Paging state: {:#?} ({} rows)",
         res2.paging_state,
-        res2.rows.unwrap().len()
+        res2.rows_num()?,
     );
     let res3 = session
         .query_paged(paged_query.clone(), &[], res2.paging_state)
@@ -61,7 +61,7 @@ async fn main() -> Result<()> {
     println!(
         "Paging state: {:#?} ({} rows)",
         res3.paging_state,
-        res3.rows.unwrap().len()
+        res3.rows_num()?,
     );
 
     let paged_prepared = session
@@ -71,7 +71,7 @@ async fn main() -> Result<()> {
     println!(
         "Paging state from the prepared statement execution: {:#?} ({} rows)",
         res4.paging_state,
-        res4.rows.unwrap().len()
+        res4.rows_num()?,
     );
     let res5 = session
         .execute_paged(&paged_prepared, &[], res4.paging_state)
@@ -79,7 +79,7 @@ async fn main() -> Result<()> {
     println!(
         "Paging state from the second prepared statement execution: {:#?} ({} rows)",
         res5.paging_state,
-        res5.rows.unwrap().len()
+        res5.rows_num()?,
     );
     let res6 = session
         .execute_paged(&paged_prepared, &[], res5.paging_state)
@@ -87,7 +87,7 @@ async fn main() -> Result<()> {
     println!(
         "Paging state from the third prepared statement execution: {:#?} ({} rows)",
         res6.paging_state,
-        res6.rows.unwrap().len()
+        res6.rows_num()?,
     );
     println!("Ok.");
 
