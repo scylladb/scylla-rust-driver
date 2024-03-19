@@ -1,4 +1,4 @@
-use crate::utils::test_with_3_node_cluster;
+use crate::utils::{setup_tracing, test_with_3_node_cluster};
 
 use scylla::execution_profile::{ExecutionProfileBuilder, ExecutionProfileHandle};
 use scylla::load_balancing::{DefaultPolicy, LoadBalancingPolicy, RoutingInfo};
@@ -256,6 +256,7 @@ async fn check_for_all_consistencies_and_setting_options<
 #[ntest::timeout(60000)]
 #[cfg(not(scylla_cloud_tests))]
 async fn consistency_is_correctly_set_in_cql_requests() {
+    setup_tracing();
     let res = test_with_3_node_cluster(
         ShardAwareness::QueryNode,
         |proxy_uris, translation_map, mut running_proxy| async move {
@@ -407,6 +408,7 @@ impl LoadBalancingPolicy for RoutingInfoReportingWrapper {
 #[ntest::timeout(60000)]
 #[cfg(not(scylla_cloud_tests))]
 async fn consistency_is_correctly_set_in_routing_info() {
+    setup_tracing();
     let uri = std::env::var("SCYLLA_URI").unwrap_or_else(|_| "127.0.0.1:9042".to_string());
     let ks = unique_keyspace_name();
 
@@ -465,6 +467,7 @@ async fn consistency_is_correctly_set_in_routing_info() {
 #[ntest::timeout(60000)]
 #[cfg(not(scylla_cloud_tests))]
 async fn consistency_allows_for_paxos_selects() {
+    setup_tracing();
     let uri = std::env::var("SCYLLA_URI").unwrap_or_else(|_| "127.0.0.1:9042".to_string());
 
     let session = SessionBuilder::new()

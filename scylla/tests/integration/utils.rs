@@ -11,10 +11,11 @@ use tracing::instrument::WithSubscriber;
 
 use scylla_proxy::{Node, Proxy, ProxyError, RunningProxy, ShardAwareness};
 
-pub(crate) fn init_logger() {
+#[cfg(test)]
+pub(crate) fn setup_tracing() {
     let _ = tracing_subscriber::fmt::fmt()
         .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
-        .without_time()
+        .with_writer(tracing_subscriber::fmt::TestWriter::new())
         .try_init();
 }
 
@@ -86,7 +87,6 @@ where
     F: FnOnce([String; 3], HashMap<SocketAddr, SocketAddr>, RunningProxy) -> Fut,
     Fut: Future<Output = RunningProxy>,
 {
-    init_logger();
     let real1_uri = env::var("SCYLLA_URI").unwrap_or_else(|_| "127.0.0.1:9042".to_string());
     let proxy1_uri = format!("{}:9042", scylla_proxy::get_exclusive_local_address());
     let real2_uri = env::var("SCYLLA_URI2").unwrap_or_else(|_| "127.0.0.2:9042".to_string());

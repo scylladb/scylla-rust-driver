@@ -1,7 +1,7 @@
 use std::ops::Deref;
 use std::sync::Arc;
 
-use crate::utils::test_with_3_node_cluster;
+use crate::utils::{setup_tracing, test_with_3_node_cluster};
 use assert_matches::assert_matches;
 use scylla::batch::BatchStatement;
 use scylla::batch::{Batch, BatchType};
@@ -124,6 +124,7 @@ impl<const NODE: u8> SpeculativeExecutionPolicy for BoundToPredefinedNodePolicy<
 #[ntest::timeout(20000)]
 #[cfg(not(scylla_cloud_tests))]
 async fn test_execution_profiles() {
+    setup_tracing();
     let res = test_with_3_node_cluster(ShardAwareness::QueryNode, |proxy_uris, translation_map, mut running_proxy| async move {
 
         let (routing_tx, mut profile_rx) = mpsc::unbounded_channel();
