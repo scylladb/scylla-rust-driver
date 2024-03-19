@@ -1054,7 +1054,11 @@ async fn assert_in_tracing_table(session: &Session, tracing_uuid: Uuid) {
     // Tracing info might not be immediately available
     // If rows are empty perform 8 retries with a 32ms wait in between
 
-    for _ in 0..8 {
+    // The reason why we enable so long waiting for TracingInfo is... Cassandra. (Yes, again.)
+    // In Cassandra Java Driver, the wait time for tracing info is 10 seconds, so here we do the same.
+    // However, as Scylla usually gets TracingInfo ready really fast (our default interval is hence 3ms),
+    // we stick to a not-so-much-terribly-long interval here.
+    for _ in 0..200 {
         let rows_num = session
             .query(traces_query.clone(), (tracing_uuid,))
             .await
@@ -1068,7 +1072,7 @@ async fn assert_in_tracing_table(session: &Session, tracing_uuid: Uuid) {
         }
 
         // Otherwise retry
-        tokio::time::sleep(std::time::Duration::from_millis(32)).await;
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
     }
 
     // If all retries failed panic with an error
