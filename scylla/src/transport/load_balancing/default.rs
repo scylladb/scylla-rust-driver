@@ -11,7 +11,7 @@ use rand::{prelude::SliceRandom, thread_rng, Rng};
 use rand_pcg::Pcg32;
 use scylla_cql::{errors::QueryError, frame::types::SerialConsistency, Consistency};
 use std::{fmt, sync::Arc, time::Duration};
-use tracing::warn;
+use tracing::{debug, warn};
 
 #[derive(Clone, Copy)]
 enum NodeLocationCriteria<'a> {
@@ -735,7 +735,11 @@ impl DefaultPolicyBuilder {
             permit_dc_failover: self.permit_dc_failover,
             pick_predicate,
             latency_awareness,
-            fixed_seed: (!self.enable_replica_shuffle).then(rand::random),
+            fixed_seed: (!self.enable_replica_shuffle).then(|| {
+                let seed = rand::random();
+                debug!("DefaultPolicy: setting fixed seed to {}", seed);
+                seed
+            }),
         })
     }
 
