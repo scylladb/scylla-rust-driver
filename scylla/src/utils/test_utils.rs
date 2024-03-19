@@ -89,8 +89,8 @@ pub fn create_new_session_builder() -> GenericSessionBuilder<impl SessionBuilder
     // However, as Scylla usually gets TracingInfo ready really fast (our default interval is hence 3ms),
     // we stick to a not-so-much-terribly-long interval here.
     session_builder
-        .tracing_info_fetch_attempts(NonZeroU32::new(50).unwrap())
-        .tracing_info_fetch_interval(Duration::from_millis(200))
+        .tracing_info_fetch_attempts(NonZeroU32::new(200).unwrap())
+        .tracing_info_fetch_interval(Duration::from_millis(50))
 }
 
 #[cfg(test)]
