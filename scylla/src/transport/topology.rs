@@ -1179,6 +1179,8 @@ fn topo_sort_udts(udts: &mut Vec<UdtRowWithParsedFieldTypes>) -> Result<(), Quer
 
 #[cfg(test)]
 mod toposort_tests {
+    use crate::test_utils::setup_tracing;
+
     use super::{topo_sort_udts, UdtRow, UdtRowWithParsedFieldTypes};
 
     const KEYSPACE1: &str = "KEYSPACE1";
@@ -1216,6 +1218,7 @@ mod toposort_tests {
     #[test]
     #[ntest::timeout(1000)]
     fn test_udt_topo_sort_valid_case() {
+        setup_tracing();
         // UDTs dependencies on each other (arrow A -> B signifies that type B is composed of type A):
         //
         // KEYSPACE1
@@ -1282,6 +1285,7 @@ mod toposort_tests {
     #[test]
     #[ntest::timeout(1000)]
     fn test_udt_topo_sort_detects_cycles() {
+        setup_tracing();
         const KEYSPACE1: &str = "KEYSPACE1";
         let tests = [
             // test 1
@@ -1316,6 +1320,7 @@ mod toposort_tests {
     #[test]
     #[ntest::timeout(1000)]
     fn test_udt_topo_sort_ignores_invalid_metadata() {
+        setup_tracing();
         // A depends on B, which depends on unknown C; also, there is an independent E.
         let mut udts = vec![
             make_udt_row(
@@ -1733,10 +1738,13 @@ fn strategy_from_string_map(
 
 #[cfg(test)]
 mod tests {
+    use crate::test_utils::setup_tracing;
+
     use super::*;
 
     #[test]
     fn test_cql_type_parsing() {
+        setup_tracing();
         let test_cases = [
             ("bigint", PreCqlType::Native(NativeType::BigInt)),
             (

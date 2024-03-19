@@ -1,13 +1,14 @@
 use crate::{
     batch::Batch,
     prepared_statement::PreparedStatement,
-    test_utils::{create_new_session_builder, unique_keyspace_name},
+    test_utils::{create_new_session_builder, setup_tracing, unique_keyspace_name},
     Session,
 };
 use std::collections::BTreeSet;
 
 #[tokio::test]
 async fn test_quietly_prepare_batch() {
+    setup_tracing();
     let session = create_new_session_builder().build().await.unwrap();
 
     let ks = unique_keyspace_name();

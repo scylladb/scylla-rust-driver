@@ -186,6 +186,8 @@ mod tests {
     use bytes::Bytes;
     use scylla_cql::errors::BadQuery;
 
+    use crate::test_utils::setup_tracing;
+
     use super::*;
 
     const CONSISTENCY_LEVELS: &[Consistency] = &[
@@ -229,6 +231,7 @@ mod tests {
 
     #[test]
     fn downgrading_consistency_never_retries() {
+        setup_tracing();
         let never_retried_dberrors = vec![
             DbError::SyntaxError,
             DbError::Invalid,
@@ -320,6 +323,7 @@ mod tests {
 
     #[test]
     fn downgrading_consistency_idempotent_next_retries() {
+        setup_tracing();
         let idempotent_next_errors = vec![
             QueryError::DbError(DbError::Overloaded, String::new()),
             QueryError::DbError(DbError::TruncateError, String::new()),
@@ -337,6 +341,7 @@ mod tests {
     // Always retry on next node if current one is bootstrapping
     #[test]
     fn downgrading_consistency_bootstrapping() {
+        setup_tracing();
         let error = QueryError::DbError(DbError::IsBootstrapping, String::new());
 
         for &cl in CONSISTENCY_LEVELS {
@@ -357,6 +362,7 @@ mod tests {
     // On Unavailable error we retry one time no matter the idempotence
     #[test]
     fn downgrading_consistency_unavailable() {
+        setup_tracing();
         let alive = 1;
         let error = QueryError::DbError(
             DbError::Unavailable {
@@ -395,6 +401,7 @@ mod tests {
     // On ReadTimeout we retry one time if there were enough responses and the data was present no matter the idempotence
     #[test]
     fn downgrading_consistency_read_timeout() {
+        setup_tracing();
         // Enough responses and data_present == false - coordinator received only checksums
         let enough_responses_no_data = QueryError::DbError(
             DbError::ReadTimeout {
@@ -542,6 +549,7 @@ mod tests {
     // WriteTimeout will retry once when the query is idempotent and write_type == BatchLog
     #[test]
     fn downgrading_consistency_write_timeout() {
+        setup_tracing();
         for (received, required) in (1..=5).zip(2..=6) {
             // WriteType == BatchLog
             let write_type_batchlog = QueryError::DbError(

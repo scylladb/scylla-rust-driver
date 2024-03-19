@@ -949,6 +949,7 @@ mod tests {
     use scylla_cql::Consistency;
 
     use super::SessionBuilder;
+    use crate::test_utils::setup_tracing;
     use crate::transport::execution_profile::{defaults, ExecutionProfile};
     use crate::transport::node::KnownNode;
     use crate::transport::Compression;
@@ -957,6 +958,7 @@ mod tests {
 
     #[test]
     fn default_session_builder() {
+        setup_tracing();
         let builder = SessionBuilder::new();
 
         assert!(builder.config.known_nodes.is_empty());
@@ -965,6 +967,7 @@ mod tests {
 
     #[test]
     fn add_known_node() {
+        setup_tracing();
         let mut builder = SessionBuilder::new();
 
         builder = builder.known_node("test_hostname");
@@ -978,6 +981,7 @@ mod tests {
 
     #[test]
     fn add_known_node_addr() {
+        setup_tracing();
         let mut builder = SessionBuilder::new();
 
         let addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(172, 17, 0, 3)), 1357);
@@ -989,6 +993,7 @@ mod tests {
 
     #[test]
     fn add_known_nodes() {
+        setup_tracing();
         let mut builder = SessionBuilder::new();
 
         builder = builder.known_nodes(["test_hostname1", "test_hostname2"]);
@@ -1005,6 +1010,7 @@ mod tests {
 
     #[test]
     fn add_known_nodes_addr() {
+        setup_tracing();
         let mut builder = SessionBuilder::new();
 
         let addr1 = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(172, 17, 0, 3)), 1357);
@@ -1021,6 +1027,7 @@ mod tests {
 
     #[test]
     fn compression() {
+        setup_tracing();
         let mut builder = SessionBuilder::new();
         assert_eq!(builder.config.compression, None);
 
@@ -1036,6 +1043,7 @@ mod tests {
 
     #[test]
     fn tcp_nodelay() {
+        setup_tracing();
         let mut builder = SessionBuilder::new();
         assert!(builder.config.tcp_nodelay);
 
@@ -1048,6 +1056,7 @@ mod tests {
 
     #[test]
     fn use_keyspace() {
+        setup_tracing();
         let mut builder = SessionBuilder::new();
         assert_eq!(builder.config.used_keyspace, None);
         assert!(!builder.config.keyspace_case_sensitive);
@@ -1063,6 +1072,7 @@ mod tests {
 
     #[test]
     fn connection_timeout() {
+        setup_tracing();
         let mut builder = SessionBuilder::new();
         assert_eq!(
             builder.config.connect_timeout,
@@ -1078,6 +1088,7 @@ mod tests {
 
     #[test]
     fn fetch_schema_metadata() {
+        setup_tracing();
         let mut builder = SessionBuilder::new();
         assert!(builder.config.fetch_schema_metadata);
 
@@ -1091,6 +1102,7 @@ mod tests {
     // LatencyAwarePolicy, which is used in the test, requires presence of Tokio runtime.
     #[tokio::test]
     async fn execution_profile() {
+        setup_tracing();
         let default_builder = SessionBuilder::new();
         let default_execution_profile = default_builder
             .config
@@ -1150,6 +1162,7 @@ mod tests {
 
     #[test]
     fn cluster_metadata_refresh_interval() {
+        setup_tracing();
         let builder = SessionBuilder::new();
         assert_eq!(
             builder.config.cluster_metadata_refresh_interval,
@@ -1159,6 +1172,7 @@ mod tests {
 
     #[test]
     fn all_features() {
+        setup_tracing();
         let mut builder = SessionBuilder::new();
 
         let addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(172, 17, 0, 3)), 8465);

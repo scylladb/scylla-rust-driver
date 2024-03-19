@@ -1,4 +1,5 @@
 use crate::authentication::{AuthError, AuthenticatorProvider, AuthenticatorSession};
+use crate::test_utils::setup_tracing;
 use crate::utils::test_utils::unique_keyspace_name;
 use async_trait::async_trait;
 use bytes::{BufMut, BytesMut};
@@ -7,6 +8,7 @@ use std::sync::Arc;
 #[tokio::test]
 #[ignore]
 async fn authenticate_superuser() {
+    setup_tracing();
     let uri = std::env::var("SCYLLA_URI").unwrap_or_else(|_| "127.0.0.1:9042".to_string());
 
     println!("Connecting to {} with cassandra superuser ...", uri);
@@ -62,6 +64,7 @@ impl AuthenticatorProvider for CustomAuthenticatorProvider {
 #[tokio::test]
 #[ignore]
 async fn custom_authentication() {
+    setup_tracing();
     let uri = std::env::var("SCYLLA_URI").unwrap_or_else(|_| "127.0.0.1:9042".to_string());
 
     println!("Connecting to {} with cassandra superuser ...", uri);

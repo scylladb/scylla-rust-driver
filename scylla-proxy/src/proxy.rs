@@ -1294,7 +1294,9 @@ pub fn get_exclusive_local_address() -> IpAddr {
 mod tests {
     use super::*;
     use crate::frame::{read_frame, read_request_frame, FrameType};
-    use crate::{Condition, Reaction as _, RequestReaction, ResponseOpcode, ResponseReaction};
+    use crate::{
+        setup_tracing, Condition, Reaction as _, RequestReaction, ResponseOpcode, ResponseReaction,
+    };
     use assert_matches::assert_matches;
     use bytes::{BufMut, BytesMut};
     use futures::future::{join, join3};
@@ -1307,15 +1309,6 @@ mod tests {
     use std::time::Duration;
     use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
     use tokio::sync::oneshot;
-
-    // This is for convenient logs from failing tests. Just call it at the beginning of a test.
-    #[allow(unused)]
-    fn init_logger() {
-        let _ = tracing_subscriber::fmt::fmt()
-            .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
-            .without_time()
-            .try_init();
-    }
 
     fn random_body() -> Bytes {
         let body_len = (rand::random::<u32>() % 1000) as usize;
@@ -1437,19 +1430,21 @@ mod tests {
     #[tokio::test]
     #[ntest::timeout(1000)]
     async fn identity_shard_unaware_proxy_does_not_mutate_frames() {
+        setup_tracing();
         identity_proxy_does_not_mutate_frames(ShardAwareness::Unaware).await
     }
 
     #[tokio::test]
     #[ntest::timeout(1000)]
     async fn identity_shard_aware_proxy_does_not_mutate_frames() {
-        init_logger();
+        setup_tracing();
         identity_proxy_does_not_mutate_frames(ShardAwareness::QueryNode).await
     }
 
     #[tokio::test]
     #[ntest::timeout(1000)]
     async fn shard_aware_proxy_is_transparent_for_connection_to_shards() {
+        setup_tracing();
         async fn test_for_shards_num(shards_num: u16) {
             let node1_real_addr = next_local_address_with_port(9876);
             let node1_proxy_addr = next_local_address_with_port(9876);
@@ -1499,6 +1494,7 @@ mod tests {
     #[tokio::test]
     #[ntest::timeout(1000)]
     async fn shard_aware_proxy_queries_shards_number() {
+        setup_tracing();
         async fn test_for_shards_num(shards_num: u16) {
             for shard_num in 0..shards_num {
                 let node1_real_addr = next_local_address_with_port(9876);
@@ -1554,6 +1550,7 @@ mod tests {
     #[tokio::test]
     #[ntest::timeout(1000)]
     async fn forger_proxy_forges_response() {
+        setup_tracing();
         let node1_real_addr = next_local_address_with_port(9876);
         let node1_proxy_addr = next_local_address_with_port(9876);
 
@@ -1685,6 +1682,7 @@ mod tests {
     #[tokio::test]
     #[ntest::timeout(1000)]
     async fn ad_hoc_rules_changing() {
+        setup_tracing();
         let node1_real_addr = next_local_address_with_port(9876);
         let node1_proxy_addr = next_local_address_with_port(9876);
         let proxy = Proxy::new([Node::new(
@@ -1779,6 +1777,7 @@ mod tests {
     #[tokio::test]
     #[ntest::timeout(2000)]
     async fn limited_times_condition_expires() {
+        setup_tracing();
         const FAILING_TRIES: usize = 4;
         const PASSING_TRIES: usize = 5;
 
@@ -1880,6 +1879,7 @@ mod tests {
     #[tokio::test]
     #[ntest::timeout(1000)]
     async fn proxy_reports_requests_and_responses_as_feedback() {
+        setup_tracing();
         let node1_real_addr = next_local_address_with_port(9876);
         let node1_proxy_addr = next_local_address_with_port(9876);
 
@@ -1952,6 +1952,7 @@ mod tests {
     #[tokio::test]
     #[ntest::timeout(1000)]
     async fn sanity_check_reports_errors() {
+        setup_tracing();
         let node1_real_addr = next_local_address_with_port(9876);
         let node1_proxy_addr = next_local_address_with_port(9876);
         let proxy = Proxy::new([Node::new(
@@ -2002,7 +2003,7 @@ mod tests {
     #[tokio::test]
     #[ntest::timeout(1000)]
     async fn proxy_processes_requests_concurrently() {
-        init_logger();
+        setup_tracing();
         let node1_real_addr = next_local_address_with_port(9876);
         let node1_proxy_addr = next_local_address_with_port(9876);
 
@@ -2076,6 +2077,7 @@ mod tests {
     #[tokio::test]
     #[ntest::timeout(1000)]
     async fn dry_mode_proxy_drops_incoming_frames() {
+        setup_tracing();
         let node1_proxy_addr = next_local_address_with_port(9876);
         let proxy = Proxy::new([Node::new_dry_mode(node1_proxy_addr, None)]);
         let running_proxy = proxy.run().await.unwrap();
@@ -2100,6 +2102,7 @@ mod tests {
     #[tokio::test]
     #[ntest::timeout(1000)]
     async fn dry_mode_forger_proxy_forges_response() {
+        setup_tracing();
         let node1_proxy_addr = next_local_address_with_port(9876);
 
         let this_shall_pass = b"This.Shall.Pass.";
@@ -2207,7 +2210,7 @@ mod tests {
     #[tokio::test]
     #[ntest::timeout(1000)]
     async fn proxy_reports_target_shard_as_feedback() {
-        init_logger();
+        setup_tracing();
 
         let node_port = 10101;
         let node_real_addr = next_local_address_with_port(node_port);
@@ -2355,6 +2358,7 @@ mod tests {
     #[tokio::test]
     #[ntest::timeout(1000)]
     async fn proxy_ignores_control_connection_messages() {
+        setup_tracing();
         let node1_real_addr = next_local_address_with_port(9876);
         let node1_proxy_addr = next_local_address_with_port(9876);
 

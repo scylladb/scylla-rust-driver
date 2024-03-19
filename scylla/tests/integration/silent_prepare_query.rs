@@ -1,4 +1,4 @@
-use crate::utils::test_with_3_node_cluster;
+use crate::utils::{setup_tracing, test_with_3_node_cluster};
 use scylla::transport::session::Session;
 use scylla::SessionBuilder;
 use scylla::{query::Query, test_utils::unique_keyspace_name};
@@ -13,6 +13,7 @@ use std::time::Duration;
 #[ntest::timeout(30000)]
 #[cfg(not(scylla_cloud_tests))]
 async fn test_prepare_query_with_values() {
+    setup_tracing();
     // unprepared query with non empty values should be prepared
     const TIMEOUT_PER_REQUEST: Duration = Duration::from_millis(1000);
 
@@ -63,6 +64,7 @@ async fn test_prepare_query_with_values() {
 #[ntest::timeout(30000)]
 #[cfg(not(scylla_cloud_tests))]
 async fn test_query_with_no_values() {
+    setup_tracing();
     // unprepared query with empty values should not be prepared
     const TIMEOUT_PER_REQUEST: Duration = Duration::from_millis(1000);
 

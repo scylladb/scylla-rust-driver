@@ -1,4 +1,5 @@
-use crate::utils::test_with_3_node_cluster;
+use crate::utils::{setup_tracing, test_with_3_node_cluster};
+
 use scylla::frame::types;
 use scylla::retry_policy::FallthroughRetryPolicy;
 use scylla::transport::session::Session;
@@ -16,6 +17,8 @@ use scylla_proxy::{
 #[ntest::timeout(20000)]
 #[cfg(not(scylla_cloud_tests))]
 async fn if_lwt_optimisation_mark_offered_then_negotiatied_and_lwt_routed_optimally() {
+    setup_tracing();
+
     // This is just to increase the likelihood that only intended prepared statements (which contain this mark) are captured by the proxy.
     const MAGIC_MARK: i32 = 123;
 
@@ -73,34 +76,34 @@ async fn if_lwt_optimisation_mark_offered_then_negotiatied_and_lwt_routed_optima
             .await
             .unwrap();
 
+        type Rxs = [mpsc::UnboundedReceiver<(RequestFrame, Option<TargetShard>)>; 3];
 
-        fn clear_rxs(rxs: &mut [mpsc::UnboundedReceiver<(RequestFrame, Option<TargetShard>)>; 3]) {
+        fn clear_rxs(rxs: &mut Rxs) {
             for rx in rxs.iter_mut() {
                 while rx.try_recv().is_ok() {}
             }
         }
 
-        async fn assert_all_replicas_queried(rxs: &mut [mpsc::UnboundedReceiver<(RequestFrame, Option<TargetShard>)>; 3]) {
-            for rx in rxs.iter_mut() {
-                rx.recv().await.unwrap();
-            }
+        fn get_num_queried(rxs: &mut Rxs) -> usize {
+            let num_queried = rxs.iter_mut().filter_map(|rx| rx.try_recv().ok()).count();
             clear_rxs(rxs);
+            num_queried
         }
 
-        fn assert_one_replica_queried(rxs: &mut [mpsc::UnboundedReceiver<(RequestFrame, Option<TargetShard>)>; 3]) {
-            let mut found_queried = false;
-            for rx in rxs.iter_mut() {
-                if rx.try_recv().is_ok() {
-                    assert!(!found_queried);
-                    found_queried = true;
-                };
-            }
-            assert!(found_queried);
-            clear_rxs(rxs);
+        fn assert_multiple_replicas_queried(rxs: &mut Rxs) {
+            let num_queried = get_num_queried(rxs);
+
+            assert!(num_queried > 1);
+        }
+
+        fn assert_one_replica_queried(rxs: &mut Rxs) {
+            let num_queried = get_num_queried(rxs);
+
+            assert!(num_queried == 1);
         }
 
         #[allow(unused)]
-        fn who_was_queried(rxs: &mut [mpsc::UnboundedReceiver<(RequestFrame, Option<TargetShard>)>; 3]) {
+        fn who_was_queried(rxs: &mut Rxs) {
             for (i, rx) in rxs.iter_mut().enumerate() {
                 if rx.try_recv().is_ok() {
                     println!("{} was queried.", i);
@@ -110,7 +113,7 @@ async fn if_lwt_optimisation_mark_offered_then_negotiatied_and_lwt_routed_optima
             println!("NOBODY was queried!");
         }
 
-        // We will check which nodes where queries, for both LWT and non-LWT prepared statements.
+        // We will check which nodes were queried, for both LWT and non-LWT prepared statements.
         let prepared_non_lwt = session.prepare("INSERT INTO t (a, b) VALUES (?, 1)").await.unwrap();
         let prepared_lwt = session.prepare("UPDATE t SET b=3 WHERE a=? IF b=2").await.unwrap();
 
@@ -123,12 +126,20 @@ async fn if_lwt_optimisation_mark_offered_then_negotiatied_and_lwt_routed_optima
         assert!(prepared_non_lwt.is_token_aware());
         assert!(prepared_lwt.is_token_aware());
 
-        // We execute non-LWT statements and ensure that all nodes were queried (due to RoundRobin).
-        for _ in 0..15 {
+        // We execute non-LWT statements and ensure that multiple nodes were queried.
+        //
+        // Note that our DefaultPolicy no longer performs round robin, but instead randomly picks a replica.
+        // To see multiple replicas here, we cannot choose a fixed pick seed, so we must rely on randomness.
+        // It happened several times in CI that *not all* replicas were queried, but now we only
+        // assert that *more than one* replica is queried. Moreover, we increased iterations
+        // from 15 to 30 in hope this will suffice to prevent flakiness.
+        // Alternatively, we could give up this part of the test and only test LWT part, but then
+        // we couldn't be sure that in non-LWT case the driver truly chooses various replicas.
+        for _ in 0..30 {
             session.execute(&prepared_non_lwt, (MAGIC_MARK,)).await.unwrap();
         }
 
-        assert_all_replicas_queried(&mut prepared_rxs).await;
+        assert_multiple_replicas_queried(&mut prepared_rxs);
 
         // We execute LWT statements, and...
         for _ in 0..15 {
@@ -140,7 +151,7 @@ async fn if_lwt_optimisation_mark_offered_then_negotiatied_and_lwt_routed_optima
             assert_one_replica_queried(&mut prepared_rxs);
         } else {
             // ...else we assert that replicas were shuffled as in case of non-LWT.
-            assert_all_replicas_queried(&mut prepared_rxs).await;
+            assert_multiple_replicas_queried(&mut prepared_rxs);
         }
 
         running_proxy

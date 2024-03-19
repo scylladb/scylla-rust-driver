@@ -760,10 +760,11 @@ impl<'a> IntoIterator for ReplicasOrdered<'a> {
 
 #[cfg(test)]
 mod tests {
-    use crate::{routing::Token, transport::locator::test::*};
+    use crate::{routing::Token, test_utils::setup_tracing, transport::locator::test::*};
 
     #[tokio::test]
     async fn test_replicas_ordered() {
+        setup_tracing();
         let metadata = mock_metadata_for_token_aware_tests();
         let locator = create_locator(&metadata);
 

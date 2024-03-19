@@ -4,6 +4,7 @@ use uuid::Uuid;
 
 use super::{ReplicaLocator, ReplicaSet};
 use crate::routing::Token;
+use crate::test_utils::setup_tracing;
 use crate::transport::{
     connection_pool::PoolConfig,
     topology::{Keyspace, Metadata, Peer, Strategy},
@@ -207,6 +208,7 @@ pub(crate) fn create_locator(metadata: &Metadata) -> ReplicaLocator {
 
 #[tokio::test]
 async fn test_locator() {
+    setup_tracing();
     let locator = create_locator(&mock_metadata_for_token_aware_tests());
 
     test_datacenter_info(&locator);

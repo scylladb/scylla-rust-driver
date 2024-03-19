@@ -1,4 +1,4 @@
-use crate::utils::test_with_3_node_cluster;
+use crate::utils::{setup_tracing, test_with_3_node_cluster};
 use scylla::transport::session::Session;
 use scylla::SessionBuilder;
 use scylla::{prepared_statement::PreparedStatement, test_utils::unique_keyspace_name};
@@ -13,6 +13,7 @@ use std::sync::Arc;
 #[ntest::timeout(20000)]
 #[cfg(not(scylla_cloud_tests))]
 async fn test_skip_result_metadata() {
+    setup_tracing();
     use scylla_proxy::{ResponseOpcode, ResponseRule};
 
     const NO_METADATA_FLAG: i32 = 0x0004;

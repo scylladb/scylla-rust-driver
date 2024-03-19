@@ -534,7 +534,7 @@ mod tests {
         types::serialize::row::SerializedValues,
     };
 
-    use crate::prepared_statement::PartitionKey;
+    use crate::{prepared_statement::PartitionKey, test_utils::setup_tracing};
 
     fn make_meta(
         cols: impl IntoIterator<Item = ColumnType>,
@@ -572,6 +572,7 @@ mod tests {
 
     #[test]
     fn test_partition_key_multiple_columns_shuffled() {
+        setup_tracing();
         let meta = make_meta(
             [
                 ColumnType::TinyInt,

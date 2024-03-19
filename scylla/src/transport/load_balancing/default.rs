@@ -11,7 +11,7 @@ use rand::{prelude::SliceRandom, thread_rng, Rng};
 use rand_pcg::Pcg32;
 use scylla_cql::{errors::QueryError, frame::types::SerialConsistency, Consistency};
 use std::{fmt, sync::Arc, time::Duration};
-use tracing::warn;
+use tracing::{debug, warn};
 
 #[derive(Clone, Copy)]
 enum NodeLocationCriteria<'a> {
@@ -735,7 +735,11 @@ impl DefaultPolicyBuilder {
             permit_dc_failover: self.permit_dc_failover,
             pick_predicate,
             latency_awareness,
-            fixed_seed: (!self.enable_replica_shuffle).then(rand::random),
+            fixed_seed: (!self.enable_replica_shuffle).then(|| {
+                let seed = rand::random();
+                debug!("DefaultPolicy: setting fixed seed to {}", seed);
+                seed
+            }),
         })
     }
 
@@ -918,6 +922,7 @@ mod tests {
             default::tests::framework::mock_cluster_data_for_token_aware_tests, RoutingInfo,
         },
         routing::Token,
+        test_utils::setup_tracing,
         transport::{
             locator::test::{KEYSPACE_NTS_RF_2, KEYSPACE_NTS_RF_3, KEYSPACE_SS_RF_2},
             ClusterData,
@@ -934,6 +939,7 @@ mod tests {
         use crate::{
             load_balancing::{LoadBalancingPolicy, Plan, RoutingInfo},
             routing::Token,
+            test_utils::setup_tracing,
             transport::{
                 locator::test::{id_to_invalid_addr, mock_metadata_for_token_aware_tests},
                 topology::{Metadata, Peer},
@@ -1078,6 +1084,7 @@ mod tests {
 
         #[test]
         fn test_assert_proper_grouping_in_plan_good() {
+            setup_tracing();
             let got = vec![1u16, 2, 3, 4, 5];
             let expected_groups = ExpectedGroupsBuilder::new()
                 .group([1])
@@ -1091,6 +1098,7 @@ mod tests {
         #[test]
         #[should_panic]
         fn test_assert_proper_grouping_in_plan_too_many_nodes_in_the_end() {
+            setup_tracing();
             let got = vec![1u16, 2, 3, 4, 5, 6];
             let expected_groups = ExpectedGroupsBuilder::new()
                 .group([1])
@@ -1104,6 +1112,7 @@ mod tests {
         #[test]
         #[should_panic]
         fn test_assert_proper_grouping_in_plan_too_many_nodes_in_the_middle() {
+            setup_tracing();
             let got = vec![1u16, 2, 6, 3, 4, 5];
             let expected_groups = ExpectedGroupsBuilder::new()
                 .group([1])
@@ -1117,6 +1126,7 @@ mod tests {
         #[test]
         #[should_panic]
         fn test_assert_proper_grouping_in_plan_missing_node() {
+            setup_tracing();
             let got = vec![1u16, 2, 3, 4];
             let expected_groups = ExpectedGroupsBuilder::new()
                 .group([1])
@@ -1207,6 +1217,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_default_policy_with_token_unaware_statements() {
+        setup_tracing();
         let local_dc = "eu".to_string();
         let policy_with_disabled_dc_failover = DefaultPolicy {
             preferences: NodeLocationPreference::Datacenter(local_dc.clone()),
@@ -1240,6 +1251,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_default_policy_with_token_aware_statements() {
+        setup_tracing();
         use crate::transport::locator::test::{A, B, C, D, E, F, G};
 
         let cluster = mock_cluster_data_for_token_aware_tests().await;
@@ -1710,6 +1722,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_default_policy_with_lwt_statements() {
+        setup_tracing();
         use crate::transport::locator::test::{A, B, C, D, E, F, G};
 
         let cluster = mock_cluster_data_for_token_aware_tests().await;
@@ -2784,8 +2797,9 @@ mod latency_awareness {
         };
 
         use crate::{
-            load_balancing::default::NodeLocationPreference, routing::Shard,
-            test_utils::create_new_session_builder,
+            load_balancing::default::NodeLocationPreference,
+            routing::Shard,
+            test_utils::{create_new_session_builder, setup_tracing},
         };
         use crate::{
             load_balancing::{
@@ -2892,6 +2906,7 @@ mod latency_awareness {
 
         #[tokio::test]
         async fn latency_aware_default_policy_does_not_penalise_if_no_latency_info_available_yet() {
+            setup_tracing();
             let policy = latency_aware_default_policy();
             let cluster = tests::mock_cluster_data_for_token_unaware_tests().await;
 
@@ -2911,6 +2926,7 @@ mod latency_awareness {
 
         #[tokio::test]
         async fn latency_aware_default_policy_does_not_penalise_if_not_enough_measurements() {
+            setup_tracing();
             let policy = latency_aware_default_policy();
             let cluster = tests::mock_cluster_data_for_token_unaware_tests().await;
 
@@ -2972,6 +2988,7 @@ mod latency_awareness {
         #[tokio::test]
         async fn latency_aware_default_policy_does_not_penalise_if_exclusion_threshold_not_crossed()
         {
+            setup_tracing();
             let policy = latency_aware_default_policy();
             let cluster = tests::mock_cluster_data_for_token_unaware_tests().await;
 
@@ -3031,6 +3048,7 @@ mod latency_awareness {
 
         #[tokio::test]
         async fn latency_aware_default_policy_does_not_penalise_if_retry_period_expired() {
+            setup_tracing();
             let policy = latency_aware_default_policy_customised(|b| {
                 b.retry_period(Duration::from_millis(10))
             });
@@ -3095,10 +3113,7 @@ mod latency_awareness {
 
         #[tokio::test]
         async fn latency_aware_default_policy_penalises_if_conditions_met() {
-            let _ = tracing_subscriber::fmt::fmt()
-                .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
-                .without_time()
-                .try_init();
+            setup_tracing();
             let (policy, updater) = latency_aware_default_policy_with_explicit_updater();
             let cluster = tests::mock_cluster_data_for_token_unaware_tests().await;
 
@@ -3185,6 +3200,8 @@ mod latency_awareness {
         #[tokio::test]
         async fn latency_aware_default_policy_stops_penalising_after_min_average_increases_enough_only_after_update_rate_elapses(
         ) {
+            setup_tracing();
+
             let (policy, updater) = latency_aware_default_policy_with_explicit_updater();
 
             let cluster = tests::mock_cluster_data_for_token_unaware_tests().await;
@@ -3308,7 +3325,7 @@ mod latency_awareness {
 
         #[tokio::test]
         async fn latency_aware_default_policy_is_correctly_token_aware() {
-            let _ = tracing_subscriber::fmt::try_init();
+            setup_tracing();
 
             struct Test<'a, 'b> {
                 // If Some, then the provided value is set as a min_avg.
@@ -3508,6 +3525,7 @@ mod latency_awareness {
         #[tokio::test]
         #[ntest::timeout(1000)]
         async fn latency_aware_query_completes() {
+            setup_tracing();
             let policy = DefaultPolicy::builder()
                 .latency_awareness(LatencyAwarenessBuilder::default())
                 .build();
@@ -3525,9 +3543,9 @@ mod latency_awareness {
             session.query("whatever", ()).await.unwrap_err();
         }
 
-        #[tokio::test]
+        #[tokio::test(start_paused = true)]
         async fn timestamped_average_works_when_clock_stops() {
-            tokio::time::pause();
+            setup_tracing();
             let avg = Some(TimestampedAverage {
                 timestamp: Instant::now(),
                 average: Duration::from_secs(123),

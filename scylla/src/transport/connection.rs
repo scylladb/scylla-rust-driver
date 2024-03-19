@@ -1877,6 +1877,7 @@ mod tests {
 
     use super::ConnectionConfig;
     use crate::query::Query;
+    use crate::test_utils::setup_tracing;
     use crate::transport::connection::open_connection;
     use crate::transport::node::ResolvedContactPoint;
     use crate::transport::topology::UntranslatedEndpoint;
@@ -1910,6 +1911,7 @@ mod tests {
     #[tokio::test]
     #[cfg(not(scylla_cloud_tests))]
     async fn connection_query_iter_test() {
+        setup_tracing();
         let uri = std::env::var("SCYLLA_URI").unwrap_or_else(|_| "127.0.0.1:9042".to_string());
         let addr: SocketAddr = resolve_hostname(&uri).await;
 
@@ -2009,6 +2011,7 @@ mod tests {
     #[tokio::test]
     #[cfg(not(scylla_cloud_tests))]
     async fn test_coalescing() {
+        setup_tracing();
         // It's difficult to write a reliable test that checks whether coalescing
         // works like intended or not. Instead, this is a smoke test which is supposed
         // to trigger the coalescing logic and check that everything works fine
@@ -2124,6 +2127,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_lwt_optimisation_mark_negotiation() {
+        setup_tracing();
         const MASK: &str = "2137";
 
         let lwt_optimisation_entry = format!("{}={}", LWT_OPTIMIZATION_META_BIT_MASK_KEY, MASK);
@@ -2204,6 +2208,7 @@ mod tests {
     #[ntest::timeout(20000)]
     #[cfg(not(scylla_cloud_tests))]
     async fn connection_is_closed_on_no_response_to_keepalives() {
+        setup_tracing();
         let proxy_addr = SocketAddr::new(scylla_proxy::get_exclusive_local_address(), 9042);
         let uri = std::env::var("SCYLLA_URI").unwrap_or_else(|_| "127.0.0.1:9042".to_string());
         let node_addr: SocketAddr = resolve_hostname(&uri).await;

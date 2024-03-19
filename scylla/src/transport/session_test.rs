@@ -6,6 +6,7 @@ use crate::query::Query;
 use crate::retry_policy::{QueryInfo, RetryDecision, RetryPolicy, RetrySession};
 use crate::routing::Token;
 use crate::statement::Consistency;
+use crate::test_utils::setup_tracing;
 use crate::tracing::TracingInfo;
 use crate::transport::cluster::Datacenter;
 use crate::transport::errors::{BadKeyspaceName, BadQuery, DbError, QueryError};
@@ -39,6 +40,7 @@ use uuid::Uuid;
 
 #[tokio::test]
 async fn test_connection_failure() {
+    setup_tracing();
     // Make sure that Session::create fails when the control connection
     // fails to connect.
 
@@ -63,6 +65,7 @@ async fn test_connection_failure() {
 
 #[tokio::test]
 async fn test_unprepared_statement() {
+    setup_tracing();
     let session = create_new_session_builder().build().await.unwrap();
     let ks = unique_keyspace_name();
 
@@ -161,6 +164,7 @@ async fn test_unprepared_statement() {
 
 #[tokio::test]
 async fn test_prepared_statement() {
+    setup_tracing();
     let session = create_new_session_builder().build().await.unwrap();
     let ks = unique_keyspace_name();
 
@@ -352,6 +356,7 @@ async fn test_prepared_statement() {
 
 #[tokio::test]
 async fn test_batch() {
+    setup_tracing();
     let session = Arc::new(create_new_session_builder().build().await.unwrap());
     let ks = unique_keyspace_name();
 
@@ -453,6 +458,7 @@ async fn test_batch() {
 
 #[tokio::test]
 async fn test_token_calculation() {
+    setup_tracing();
     let session = create_new_session_builder().build().await.unwrap();
     let ks = unique_keyspace_name();
 
@@ -508,6 +514,7 @@ async fn test_token_calculation() {
 
 #[tokio::test]
 async fn test_token_awareness() {
+    setup_tracing();
     let session = create_new_session_builder().build().await.unwrap();
     let ks = unique_keyspace_name();
 
@@ -556,6 +563,7 @@ async fn test_token_awareness() {
 
 #[tokio::test]
 async fn test_use_keyspace() {
+    setup_tracing();
     let session = create_new_session_builder().build().await.unwrap();
     let ks = unique_keyspace_name();
 
@@ -646,6 +654,7 @@ async fn test_use_keyspace() {
 
 #[tokio::test]
 async fn test_use_keyspace_case_sensitivity() {
+    setup_tracing();
     let session = create_new_session_builder().build().await.unwrap();
     let ks_lower = unique_keyspace_name().to_lowercase();
     let ks_upper = ks_lower.to_uppercase();
@@ -718,6 +727,7 @@ async fn test_use_keyspace_case_sensitivity() {
 
 #[tokio::test]
 async fn test_raw_use_keyspace() {
+    setup_tracing();
     let session = create_new_session_builder().build().await.unwrap();
     let ks = unique_keyspace_name();
 
@@ -769,6 +779,7 @@ async fn test_raw_use_keyspace() {
 
 #[tokio::test]
 async fn test_fetch_system_keyspace() {
+    setup_tracing();
     let session = create_new_session_builder().build().await.unwrap();
 
     let prepared_statement = session
@@ -782,6 +793,7 @@ async fn test_fetch_system_keyspace() {
 // Test that some Database Errors are parsed correctly
 #[tokio::test]
 async fn test_db_errors() {
+    setup_tracing();
     let session = create_new_session_builder().build().await.unwrap();
     let ks = unique_keyspace_name();
 
@@ -836,6 +848,7 @@ async fn test_db_errors() {
 
 #[tokio::test]
 async fn test_tracing() {
+    setup_tracing();
     let session = create_new_session_builder().build().await.unwrap();
     let ks = unique_keyspace_name();
 
@@ -1064,18 +1077,21 @@ async fn assert_in_tracing_table(session: &Session, tracing_uuid: Uuid) {
 
 #[tokio::test]
 async fn test_await_schema_agreement() {
+    setup_tracing();
     let session = create_new_session_builder().build().await.unwrap();
     let _schema_version = session.await_schema_agreement().await.unwrap();
 }
 
 #[tokio::test]
 async fn test_await_timed_schema_agreement() {
+    setup_tracing();
     let session = create_new_session_builder().build().await.unwrap();
     session.await_schema_agreement().await.unwrap();
 }
 
 #[tokio::test]
 async fn test_timestamp() {
+    setup_tracing();
     let session = create_new_session_builder().build().await.unwrap();
     let ks = unique_keyspace_name();
 
@@ -1186,6 +1202,7 @@ async fn test_timestamp() {
 #[ignore = "works on remote Scylla instances only (local ones are too fast)"]
 #[tokio::test]
 async fn test_request_timeout() {
+    setup_tracing();
     use std::time::Duration;
 
     let fast_timeouting_profile_handle = ExecutionProfile::builder()
@@ -1252,6 +1269,7 @@ async fn test_request_timeout() {
 
 #[tokio::test]
 async fn test_prepared_config() {
+    setup_tracing();
     let session = create_new_session_builder().build().await.unwrap();
 
     let mut query = Query::new("SELECT * FROM system_schema.tables");
@@ -1338,6 +1356,7 @@ fn udt_type_c_def(ks: &str) -> Arc<UserDefinedType> {
 
 #[tokio::test]
 async fn test_schema_types_in_metadata() {
+    setup_tracing();
     let session = create_new_session_builder().build().await.unwrap();
     let ks = unique_keyspace_name();
 
@@ -1493,6 +1512,7 @@ async fn test_schema_types_in_metadata() {
 
 #[tokio::test]
 async fn test_user_defined_types_in_metadata() {
+    setup_tracing();
     let session = create_new_session_builder().build().await.unwrap();
     let ks = unique_keyspace_name();
 
@@ -1553,6 +1573,7 @@ async fn test_user_defined_types_in_metadata() {
 
 #[tokio::test]
 async fn test_column_kinds_in_metadata() {
+    setup_tracing();
     let session = create_new_session_builder().build().await.unwrap();
     let ks = unique_keyspace_name();
 
@@ -1595,6 +1616,7 @@ async fn test_column_kinds_in_metadata() {
 
 #[tokio::test]
 async fn test_primary_key_ordering_in_metadata() {
+    setup_tracing();
     let session = create_new_session_builder().build().await.unwrap();
     let ks = unique_keyspace_name();
 
@@ -1636,6 +1658,7 @@ async fn test_primary_key_ordering_in_metadata() {
 
 #[tokio::test]
 async fn test_table_partitioner_in_metadata() {
+    setup_tracing();
     if option_env!("CDC") == Some("disabled") {
         return;
     }
@@ -1675,6 +1698,7 @@ async fn test_table_partitioner_in_metadata() {
 
 #[tokio::test]
 async fn test_turning_off_schema_fetching() {
+    setup_tracing();
     let session = create_new_session_builder()
         .fetch_schema_metadata(false)
         .build()

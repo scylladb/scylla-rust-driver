@@ -49,6 +49,18 @@ The above commands will leave a running ScyllaDB cluster in the background.
 To stop it, use `make down`.\
 Starting a cluster without running any test is possible with `make up`.
 
+### Tracing in tests
+
+By default cargo captures `print!` macro's output from tests and prints them for failed tests.
+This is a bit problematic for us in case of `tracing` crate logs, because traces are not printed
+unless a subscriber is set. That's why we have a helper function for tests: `setup_tracing`.
+It sets up a tracing subscriber with env filter (so you can filter traces using env variables)
+and with a Writer that is compatible with test framework's output capturing.
+
+Most of the tests already call this function, and any new tests should too.
+If you want to see tracing output from a failing test and it doesn't call this function,
+simply add the call at the beginning of the test.
+
 ## CI
 
 Before sending a pull request, it is a good idea to run `make ci` locally (or `make dockerized-ci` if on macOS).

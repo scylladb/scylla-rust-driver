@@ -229,10 +229,12 @@ mod tests {
     use scylla_cql::frame::response::result::CqlValue;
     use scylla_cql::frame::value::{CqlDate, CqlDecimal, CqlDuration, CqlTime, CqlTimestamp};
 
+    use crate::test_utils::setup_tracing;
     use crate::utils::pretty::CqlValueDisplayer;
 
     #[test]
     fn test_cql_value_displayer() {
+        setup_tracing();
         assert_eq!(
             format!("{}", CqlValueDisplayer(CqlValue::Boolean(true))),
             "true"

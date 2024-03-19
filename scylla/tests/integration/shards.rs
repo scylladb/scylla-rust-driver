@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use crate::utils::test_with_3_node_cluster;
+use crate::utils::{setup_tracing, test_with_3_node_cluster};
 use scylla::{test_utils::unique_keyspace_name, SessionBuilder};
 use tokio::sync::mpsc;
 
@@ -14,6 +14,7 @@ use scylla_proxy::{ProxyError, RequestFrame, WorkerError};
 #[ntest::timeout(30000)]
 #[cfg(not(scylla_cloud_tests))]
 async fn test_consistent_shard_awareness() {
+    setup_tracing();
     use std::collections::HashSet;
 
     let res = test_with_3_node_cluster(ShardAwareness::QueryNode, |proxy_uris, translation_map, mut running_proxy| async move {
