@@ -2,7 +2,8 @@
 
 use super::{value::DeserializeCql, FrameSlice};
 use crate::frame::frame_errors::ParseError;
-use crate::frame::response::result::ColumnSpec;
+use crate::frame::response::result::CqlValue;
+use crate::frame::response::result::{ColumnSpec, Row};
 
 /// Represents a raw, unparsed column value.
 #[non_exhaustive]
@@ -83,6 +84,26 @@ where
     /// so it should not use the assumption about `type_check` being called
     /// as an excuse to run `unsafe` code.
     fn deserialize(row: ColumnIterator<'frame>) -> Result<Self, ParseError>;
+}
+
+impl<'frame> DeserializeRow<'frame> for Row {
+    #[inline]
+    fn type_check(_specs: &[ColumnSpec]) -> Result<(), ParseError> {
+        // CqlValues accept all types, no type checking needed
+        Ok(())
+    }
+
+    #[inline]
+    fn deserialize(mut row: ColumnIterator<'frame>) -> Result<Self, ParseError> {
+        let mut columns = Vec::with_capacity(row.size_hint().0);
+        while let Some(column) = row.next().transpose()? {
+            columns.push(<Option<CqlValue>>::deserialize(
+                &column.spec.typ,
+                column.slice,
+            )?);
+        }
+        Ok(Self { columns })
+    }
 }
 
 impl<'frame> DeserializeRow<'frame> for ColumnIterator<'frame> {
