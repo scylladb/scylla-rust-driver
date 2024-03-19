@@ -816,6 +816,10 @@ impl<K: SessionBuilderKind> GenericSessionBuilder<K> {
     /// Tracing info might not be available immediately on queried node - that's why
     /// the driver performs a few attempts with sleeps in between.
     ///
+    /// Cassandra users may want to increase this value - the default is good
+    /// for Scylla, but Cassandra sometimes needs more time for the data to
+    /// appear in tracing table.
+    ///
     /// # Example
     /// ```
     /// # use scylla::{Session, SessionBuilder};
@@ -840,6 +844,10 @@ impl<K: SessionBuilderKind> GenericSessionBuilder<K> {
     ///
     /// Tracing info might not be available immediately on queried node - that's why
     /// the driver performs a few attempts with sleeps in between.
+    ///
+    /// Cassandra users may want to increase this value - the default is good
+    /// for Scylla, but Cassandra sometimes needs more time for the data to
+    /// appear in tracing table.
     ///
     /// # Example
     /// ```
