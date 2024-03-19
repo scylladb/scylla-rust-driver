@@ -6,7 +6,7 @@ use thiserror::Error;
 
 use super::value::DeserializeValue;
 use super::{make_error_replace_rust_name, DeserializationError, FrameSlice, TypeCheckError};
-use crate::frame::response::result::{ColumnSpec, ColumnType};
+use crate::frame::response::result::{ColumnSpec, ColumnType, CqlValue, Row};
 
 /// Represents a raw, unparsed column value.
 #[non_exhaustive]
@@ -134,6 +134,42 @@ make_error_replace_rust_name!(
     DeserializationError,
     BuiltinDeserializationError
 );
+
+// legacy/dynamic deserialization as Row
+//
+/// While no longer encouraged (because the new framework encourages deserializing
+/// directly into desired types, entirely bypassing CqlValue), this can be indispensable
+/// for some use cases, i.e. those involving dynamic parsing (ORMs?).
+impl<'frame> DeserializeRow<'frame> for Row {
+    #[inline]
+    fn type_check(_specs: &[ColumnSpec]) -> Result<(), TypeCheckError> {
+        // CqlValues accept all types, no type checking needed.
+        Ok(())
+    }
+
+    #[inline]
+    fn deserialize(mut row: ColumnIterator<'frame>) -> Result<Self, DeserializationError> {
+        let mut columns = Vec::with_capacity(row.size_hint().0);
+        while let Some(column) = row
+            .next()
+            .transpose()
+            .map_err(deser_error_replace_rust_name::<Self>)?
+        {
+            columns.push(
+                <Option<CqlValue>>::deserialize(&column.spec.typ, column.slice).map_err(|err| {
+                    mk_deser_err::<Self>(
+                        BuiltinDeserializationErrorKind::ColumnDeserializationFailed {
+                            column_index: column.index,
+                            column_name: column.spec.name.clone(),
+                            err,
+                        },
+                    )
+                })?,
+            );
+        }
+        Ok(Self { columns })
+    }
+}
 
 // tuples
 //
