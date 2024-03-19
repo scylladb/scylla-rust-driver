@@ -329,7 +329,7 @@ impl SessionConfig {
             #[cfg(feature = "cloud")]
             cloud_config: None,
             enable_write_coalescing: true,
-            tracing_info_fetch_attempts: NonZeroU32::new(5).unwrap(),
+            tracing_info_fetch_attempts: NonZeroU32::new(10).unwrap(),
             tracing_info_fetch_interval: Duration::from_millis(3),
             tracing_info_fetch_consistency: Consistency::One,
             cluster_metadata_refresh_interval: Duration::from_secs(60),
