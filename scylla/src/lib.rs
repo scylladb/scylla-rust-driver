@@ -103,7 +103,7 @@ pub mod macros;
 pub use macros::*;
 
 pub use scylla_cql::frame;
-pub use scylla_cql::types::serialize;
+pub use scylla_cql::types::{deserialize, serialize};
 
 pub mod authentication;
 #[cfg(feature = "cloud")]

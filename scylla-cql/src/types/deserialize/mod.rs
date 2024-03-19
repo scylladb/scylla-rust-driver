@@ -1,3 +1,155 @@
+//! Framework for deserialization of data returned by database queries.
+//!
+//! Deserialization is based on two traits:
+//!
+//! - A type that implements `DeserializeCql<'frame>` can be deserialized
+//!   from a single _CQL value_ - i.e. an element of a row in the query result,
+//! - A type that implements `DeserializeRow<'frame>` can be deserialized
+//!   from a single _row_ of a query result.
+//!
+//! Those traits are quite similar to each other, both in the idea behind them
+//! and the interface that they expose.
+//!
+//! # `type_check` and `deserialize`
+//!
+//! The deserialization process is divided into two parts: type checking and
+//! actual deserialization, represented by `DeserializeCql`/`DeserializeRow`'s
+//! methods called `type_check` and `deserialize`.
+//!
+//! The `deserialize` method can assume that `type_check` was called before, so
+//! it doesn't have to verify the type again. This can be a performance gain
+//! when deserializing query results with multiple rows: as each row in a result
+//! has the same type, it is only necessary to call `type_check` once for the
+//! whole result and then `deserialize` for each row.
+//!
+//! Note that `deserialize` is not an `unsafe` method - although you can be
+//! sure that the driver will call `type_check` before `deserialize`, you
+//! shouldn't do unsafe things based on this assumption.
+//!
+//! # Data ownership
+//!
+//! Some CQL types can be easily consumed while still partially serialized.
+//! For example, types like `blob` or `text` can be just represented with
+//! `&[u8]` and `&str` that just point to a part of the serialized response.
+//! This is more efficient than using `Vec<u8>` or `String` because it avoids
+//! an allocation and a copy, however it is less convenient because those types
+//! are bound with a lifetime.
+//!
+//! The framework supports types that refer to the serialized response's memory
+//! in three different ways:
+//!
+//! ## Owned types
+//!
+//! Some types don't borrow anything and fully own their data, e.g. `i32` or
+//! `String`. They aren't constrained by any lifetime and should implement
+//! the respective trait for _all_ lifetimes, i.e.:
+//!
+//! ```rust
+//! # use scylla_cql::types::deserialize::{value::DeserializeCql, FrameSlice};
+//! # use scylla_cql::frame::response::result::ColumnType;
+//! # use scylla_cql::frame::frame_errors::ParseError;
+//! struct MyVec(Vec<u8>);
+//! impl<'frame> DeserializeCql<'frame> for MyVec {
+//!     fn type_check(typ: &ColumnType) -> Result<(), ParseError> {
+//!          if let ColumnType::Blob = typ {
+//!              return Ok(());
+//!          }
+//!          Err(ParseError::BadIncomingData("Expected bytes".to_string()))
+//!      }
+//!
+//!      fn deserialize(
+//!          _typ: &'frame ColumnType,
+//!          v: Option<FrameSlice<'frame>>,
+//!      ) -> Result<Self, ParseError> {
+//!          v.ok_or_else(|| {
+//!              ParseError::BadIncomingData("Expected non-null value".to_string())
+//!          })
+//!          .map(|v| Self(v.as_slice().to_vec()))
+//!      }
+//! }
+//! ```
+//!
+//! ## Borrowing types
+//!
+//! Some types do not fully contain their data but rather will point to some
+//! bytes in the serialized response, e.g. `&str` or `&[u8]`. Those types will
+//! usually contain a lifetime in their definition. In order to properly
+//! implement `DeserializeCql` or `DeserializeRow` for such a type, the `impl`
+//! should still have a generic lifetime parameter, but the lifetimes from the
+//! type definition should be constrained with the generic lifetime parameter.
+//! For example:
+//!
+//! ```rust
+//! # use scylla_cql::types::deserialize::{value::DeserializeCql, FrameSlice};
+//! # use scylla_cql::frame::response::result::ColumnType;
+//! # use scylla_cql::frame::frame_errors::ParseError;
+//! struct MySlice<'a>(&'a [u8]);
+//! impl<'a, 'frame> DeserializeCql<'frame> for MySlice<'a>
+//! where
+//!     'frame: 'a,
+//! {
+//!     fn type_check(typ: &ColumnType) -> Result<(), ParseError> {
+//!          if let ColumnType::Blob = typ {
+//!              return Ok(());
+//!          }
+//!          Err(ParseError::BadIncomingData("Expected bytes".to_string()))
+//!      }
+//!
+//!      fn deserialize(
+//!          _typ: &'frame ColumnType,
+//!          v: Option<FrameSlice<'frame>>,
+//!      ) -> Result<Self, ParseError> {
+//!          v.ok_or_else(|| {
+//!             ParseError::BadIncomingData("Expected non-null value".to_string())
+//!          })
+//!          .map(|v| Self(v.as_slice()))
+//!      }
+//! }
+//! ```
+//!
+//! ## Reference-counted types (`DeserializeCql` only)
+//!
+//! Internally, the driver uses the `bytes::Bytes` type to keep the contents
+//! of the serialized response. It supports creating derived `Bytes` objects
+//! which point to a subslice but keep the whole, original `Bytes` object alive.
+//!
+//! During deserialization, a type can obtain a `Bytes` subslice that points
+//! to the serialized value. This approach combines advantages of the previous
+//! two approaches - creating a derived `Bytes` object can be cheaper than
+//! allocation and a copy (it supports `Arc`-like semantics) and the `Bytes`
+//! type is not constrained by a lifetime. However, you should be aware that
+//! the subslice will keep the whole `Bytes` object that holds the frame alive.
+//! It is not recommended to use this approach for long-living objects because
+//! it can introduce space leaks.
+//!
+//! Example:
+//!
+//! ```rust
+//! # use scylla_cql::types::deserialize::{value::DeserializeCql, FrameSlice};
+//! # use scylla_cql::frame::response::result::ColumnType;
+//! # use scylla_cql::frame::frame_errors::ParseError;
+//! # use bytes::Bytes;
+//! struct MyBytes(Bytes);
+//! impl<'frame> DeserializeCql<'frame> for MyBytes {
+//!     fn type_check(typ: &ColumnType) -> Result<(), ParseError> {
+//!          if let ColumnType::Blob = typ {
+//!              return Ok(());
+//!          }
+//!          Err(ParseError::BadIncomingData("Expected bytes".to_string()))
+//!      }
+//!
+//!      fn deserialize(
+//!          _typ: &'frame ColumnType,
+//!          v: Option<FrameSlice<'frame>>,
+//!      ) -> Result<Self, ParseError> {
+//!          v.ok_or_else(|| {
+//!              ParseError::BadIncomingData("Expected non-null value".to_string())
+//!          })
+//!          .map(|v| Self(v.to_bytes()))
+//!      }
+//! }
+//! ```
+
 pub mod row;
 pub mod value;
 
