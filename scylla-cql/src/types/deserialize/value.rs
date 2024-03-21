@@ -10,7 +10,7 @@ use super::{DeserializationError, FrameSlice, TypeCheckError};
 use crate::frame::frame_errors::ParseError;
 use crate::frame::response::result::{deser_cql_value, ColumnType, CqlValue};
 use crate::frame::types;
-use crate::frame::value::{Counter, CqlDecimal, CqlDuration, CqlVarint};
+use crate::frame::value::{Counter, CqlDate, CqlDecimal, CqlDuration, CqlVarint};
 
 /// A type that can be deserialized from a column value inside a row that was
 /// returned from a query.
@@ -401,6 +401,61 @@ impl_strict_type!(
     }
 );
 
+impl_emptiable_strict_type!(
+    CqlDate,
+    Date,
+    |typ: &'frame ColumnType, v: Option<FrameSlice<'frame>>| {
+        let val = ensure_not_null_slice::<Self>(typ, v)?;
+        let arr = ensure_exact_length::<Self, 4>(typ, val)?;
+        let days = u32::from_be_bytes(*arr);
+        Ok(CqlDate(days))
+    }
+);
+
+#[cfg(any(feature = "chrono", feature = "time"))]
+fn get_days_since_epoch_from_date_column<T>(
+    typ: &ColumnType,
+    v: Option<FrameSlice<'_>>,
+) -> Result<i64, DeserializationError> {
+    let val = ensure_not_null_slice::<T>(typ, v)?;
+    let arr = ensure_exact_length::<T, 4>(typ, val)?;
+    let days = u32::from_be_bytes(*arr);
+    let days_since_epoch = days as i64 - (1i64 << 31);
+    Ok(days_since_epoch)
+}
+
+#[cfg(feature = "chrono")]
+impl_emptiable_strict_type!(
+    chrono::NaiveDate,
+    Date,
+    |typ: &'frame ColumnType, v: Option<FrameSlice<'frame>>| {
+        let fail = || mk_deser_err::<Self>(typ, BuiltinDeserializationErrorKind::ValueOverflow);
+        let days_since_epoch =
+            chrono::Duration::try_days(get_days_since_epoch_from_date_column::<Self>(typ, v)?)
+                .ok_or_else(fail)?;
+        chrono::NaiveDate::from_ymd_opt(1970, 1, 1)
+            .unwrap()
+            .checked_add_signed(days_since_epoch)
+            .ok_or_else(fail)
+    }
+);
+
+#[cfg(feature = "time")]
+impl_emptiable_strict_type!(
+    time::Date,
+    Date,
+    |typ: &'frame ColumnType, v: Option<FrameSlice<'frame>>| {
+        let days_since_epoch =
+            time::Duration::days(get_days_since_epoch_from_date_column::<Self>(typ, v)?);
+        time::Date::from_calendar_date(1970, time::Month::January, 1)
+            .unwrap()
+            .checked_add(days_since_epoch)
+            .ok_or_else(|| {
+                mk_deser_err::<Self>(typ, BuiltinDeserializationErrorKind::ValueOverflow)
+            })
+    }
+);
+
 // Utilities
 
 fn ensure_not_null_frame_slice<'frame, T>(
@@ -601,7 +656,7 @@ mod tests {
     use crate::frame::response::cql_to_rust::FromCqlVal;
     use crate::frame::response::result::{deser_cql_value, ColumnType, CqlValue};
     use crate::frame::types;
-    use crate::frame::value::{Counter, CqlDecimal, CqlDuration, CqlVarint};
+    use crate::frame::value::{Counter, CqlDate, CqlDecimal, CqlDuration, CqlVarint};
     use crate::types::deserialize::{DeserializationError, FrameSlice};
     use crate::types::serialize::value::SerializeValue;
     use crate::types::serialize::CellWriter;
@@ -839,6 +894,29 @@ mod tests {
         };
         compat_check_serialized::<CqlDuration>(&ColumnType::Duration, &duration1);
         compat_check_serialized::<CqlDuration>(&ColumnType::Duration, &duration2);
+
+        // date
+        let date1 = (2u32.pow(31)).to_be_bytes();
+        let date2 = (2u32.pow(31) - 30).to_be_bytes();
+        let date3 = (2u32.pow(31) + 30).to_be_bytes();
+
+        compat_check::<CqlDate>(&ColumnType::Date, make_bytes(&date1));
+        compat_check::<CqlDate>(&ColumnType::Date, make_bytes(&date2));
+        compat_check::<CqlDate>(&ColumnType::Date, make_bytes(&date3));
+
+        #[cfg(feature = "chrono")]
+        {
+            compat_check::<chrono::NaiveDate>(&ColumnType::Date, make_bytes(&date1));
+            compat_check::<chrono::NaiveDate>(&ColumnType::Date, make_bytes(&date2));
+            compat_check::<chrono::NaiveDate>(&ColumnType::Date, make_bytes(&date3));
+        }
+
+        #[cfg(feature = "time")]
+        {
+            compat_check::<time::Date>(&ColumnType::Date, make_bytes(&date1));
+            compat_check::<time::Date>(&ColumnType::Date, make_bytes(&date2));
+            compat_check::<time::Date>(&ColumnType::Date, make_bytes(&date3));
+        }
     }
 
     // Checks that both new and old serialization framework
