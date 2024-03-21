@@ -1,5 +1,7 @@
 //! Provides types for dealing with CQL value deserialization.
 
+use std::net::IpAddr;
+
 use bytes::Bytes;
 
 #[cfg(feature = "chrono")]
@@ -472,6 +474,27 @@ impl_strict_type!(
     }
 );
 
+// inet
+
+impl_strict_type!(
+    "inet",
+    IpAddr,
+    ColumnType::Inet,
+    |_typ: &'frame ColumnType, v: Option<FrameSlice<'frame>>| {
+        let val = ensure_not_null(v)?;
+        if let Ok(ipv4) = <[u8; 4]>::try_from(val) {
+            Ok(IpAddr::from(ipv4))
+        } else if let Ok(ipv16) = <[u8; 16]>::try_from(val) {
+            Ok(IpAddr::from(ipv16))
+        } else {
+            Err(ParseError::BadIncomingData(format!(
+                "Invalid inet bytes length: {}",
+                val.len(),
+            )))
+        }
+    }
+);
+
 // Utilities
 
 fn ensure_not_null(v: Option<FrameSlice>) -> Result<&[u8], ParseError> {
@@ -514,6 +537,7 @@ mod tests {
     use chrono::{DateTime, NaiveDate, NaiveTime, Utc};
 
     use std::fmt::Debug;
+    use std::net::{IpAddr, Ipv6Addr};
 
     use crate::frame::frame_errors::ParseError;
     use crate::frame::response::cql_to_rust::FromCqlVal;
@@ -803,6 +827,12 @@ mod tests {
             compat_check_serialized::<time::OffsetDateTime>(&ColumnType::Timestamp, &timestamp2);
             compat_check_serialized::<time::OffsetDateTime>(&ColumnType::Timestamp, &timestamp3);
         }
+
+        // inet
+        let ipv4 = IpAddr::from([127u8, 0, 0, 1]);
+        let ipv6: IpAddr = Ipv6Addr::LOCALHOST.into();
+        compat_check::<IpAddr>(&ColumnType::Inet, make_ip_address(ipv4));
+        compat_check::<IpAddr>(&ColumnType::Inet, make_ip_address(ipv6));
     }
 
     // Checks that both new and old serialization framework
@@ -858,6 +888,13 @@ mod tests {
         let writer = CellWriter::new(&mut v);
         value.serialize(typ, writer).unwrap();
         v.into()
+    }
+
+    fn make_ip_address(ip: IpAddr) -> Bytes {
+        match ip {
+            IpAddr::V4(v4) => make_bytes(&v4.octets()),
+            IpAddr::V6(v6) => make_bytes(&v6.octets()),
+        }
     }
 
     fn append_bytes(b: &mut impl BufMut, cell: &[u8]) {
