@@ -7,6 +7,8 @@ use thiserror::Error;
 use super::{DeserializationError, FrameSlice, TypeCheckError};
 use crate::frame::frame_errors::ParseError;
 use crate::frame::response::result::{deser_cql_value, ColumnType, CqlValue};
+use crate::frame::types;
+use crate::frame::value::{CqlDecimal, CqlVarint};
 
 /// A type that can be deserialized from a column value inside a row that was
 /// returned from a query.
@@ -199,6 +201,69 @@ impl_fixed_numeric_type!(i64, [BigInt | Counter]);
 impl_fixed_numeric_type!(f32, Float);
 impl_fixed_numeric_type!(f64, Double);
 
+// other numeric types
+
+impl_emptiable_strict_type!(
+    CqlVarint,
+    Varint,
+    |typ: &'frame ColumnType, v: Option<FrameSlice<'frame>>| {
+        let val = ensure_not_null_slice::<Self>(typ, v)?;
+        Ok(CqlVarint::from_signed_bytes_be_slice(val))
+    }
+);
+
+#[cfg(feature = "num-bigint-03")]
+impl_emptiable_strict_type!(num_bigint_03::BigInt, Varint, |typ: &'frame ColumnType,
+                                                            v: Option<
+    FrameSlice<'frame>,
+>| {
+    let val = ensure_not_null_slice::<Self>(typ, v)?;
+    Ok(num_bigint_03::BigInt::from_signed_bytes_be(val))
+});
+
+#[cfg(feature = "num-bigint-04")]
+impl_emptiable_strict_type!(num_bigint_04::BigInt, Varint, |typ: &'frame ColumnType,
+                                                            v: Option<
+    FrameSlice<'frame>,
+>| {
+    let val = ensure_not_null_slice::<Self>(typ, v)?;
+    Ok(num_bigint_04::BigInt::from_signed_bytes_be(val))
+});
+
+impl_emptiable_strict_type!(
+    CqlDecimal,
+    Decimal,
+    |typ: &'frame ColumnType, v: Option<FrameSlice<'frame>>| {
+        let mut val = ensure_not_null_slice::<Self>(typ, v)?;
+        let scale = types::read_int(&mut val).map_err(|err| {
+            mk_deser_err::<Self>(
+                typ,
+                BuiltinDeserializationErrorKind::GenericParseError(err.into()),
+            )
+        })?;
+        Ok(CqlDecimal::from_signed_be_bytes_slice_and_exponent(
+            val, scale,
+        ))
+    }
+);
+
+#[cfg(feature = "bigdecimal-04")]
+impl_emptiable_strict_type!(
+    bigdecimal_04::BigDecimal,
+    Decimal,
+    |typ: &'frame ColumnType, v: Option<FrameSlice<'frame>>| {
+        let mut val = ensure_not_null_slice::<Self>(typ, v)?;
+        let scale = types::read_int(&mut val).map_err(|err| {
+            mk_deser_err::<Self>(
+                typ,
+                BuiltinDeserializationErrorKind::GenericParseError(err.into()),
+            )
+        })? as i64;
+        let int_value = bigdecimal_04::num_bigint::BigInt::from_signed_bytes_be(val);
+        Ok(bigdecimal_04::BigDecimal::from((int_value, scale)))
+    }
+);
+
 // Utilities
 
 fn ensure_not_null_frame_slice<'frame, T>(
@@ -373,6 +438,7 @@ mod tests {
     use crate::frame::response::cql_to_rust::FromCqlVal;
     use crate::frame::response::result::{deser_cql_value, ColumnType, CqlValue};
     use crate::frame::types;
+    use crate::frame::value::{CqlDecimal, CqlVarint};
     use crate::types::deserialize::{DeserializationError, FrameSlice};
     use crate::types::serialize::value::SerializeValue;
     use crate::types::serialize::CellWriter;
@@ -454,6 +520,83 @@ mod tests {
         compat_check::<f32>(&ColumnType::Float, make_bytes(&(-123f32).to_be_bytes()));
         compat_check::<f64>(&ColumnType::Double, make_bytes(&123f64.to_be_bytes()));
         compat_check::<f64>(&ColumnType::Double, make_bytes(&(-123f64).to_be_bytes()));
+
+        // big integers
+        const PI_STR: &[u8] = b"3.1415926535897932384626433832795028841971693993751058209749445923";
+        let num1 = &PI_STR[2..];
+        let num2 = [b'-']
+            .into_iter()
+            .chain(PI_STR[2..].iter().copied())
+            .collect::<Vec<_>>();
+        let num3 = &b"0"[..];
+
+        // native - CqlVarint
+        {
+            let num1 = CqlVarint::from_signed_bytes_be_slice(num1);
+            let num2 = CqlVarint::from_signed_bytes_be_slice(&num2);
+            let num3 = CqlVarint::from_signed_bytes_be_slice(num3);
+            compat_check_serialized::<CqlVarint>(&ColumnType::Varint, &num1);
+            compat_check_serialized::<CqlVarint>(&ColumnType::Varint, &num2);
+            compat_check_serialized::<CqlVarint>(&ColumnType::Varint, &num3);
+        }
+
+        #[cfg(feature = "num-bigint-03")]
+        {
+            use num_bigint_03::BigInt;
+
+            let num1 = BigInt::parse_bytes(num1, 10).unwrap();
+            let num2 = BigInt::parse_bytes(&num2, 10).unwrap();
+            let num3 = BigInt::parse_bytes(num3, 10).unwrap();
+            compat_check_serialized::<BigInt>(&ColumnType::Varint, &num1);
+            compat_check_serialized::<BigInt>(&ColumnType::Varint, &num2);
+            compat_check_serialized::<BigInt>(&ColumnType::Varint, &num3);
+        }
+
+        #[cfg(feature = "num-bigint-04")]
+        {
+            use num_bigint_04::BigInt;
+
+            let num1 = BigInt::parse_bytes(num1, 10).unwrap();
+            let num2 = BigInt::parse_bytes(&num2, 10).unwrap();
+            let num3 = BigInt::parse_bytes(num3, 10).unwrap();
+            compat_check_serialized::<BigInt>(&ColumnType::Varint, &num1);
+            compat_check_serialized::<BigInt>(&ColumnType::Varint, &num2);
+            compat_check_serialized::<BigInt>(&ColumnType::Varint, &num3);
+        }
+
+        // big decimals
+        {
+            let scale1 = 0;
+            let scale2 = -42;
+            let scale3 = 2137;
+            let num1 = CqlDecimal::from_signed_be_bytes_slice_and_exponent(num1, scale1);
+            let num2 = CqlDecimal::from_signed_be_bytes_and_exponent(num2, scale2);
+            let num3 = CqlDecimal::from_signed_be_bytes_slice_and_exponent(num3, scale3);
+            compat_check_serialized::<CqlDecimal>(&ColumnType::Decimal, &num1);
+            compat_check_serialized::<CqlDecimal>(&ColumnType::Decimal, &num2);
+            compat_check_serialized::<CqlDecimal>(&ColumnType::Decimal, &num3);
+        }
+
+        // native - CqlDecimal
+
+        #[cfg(feature = "bigdecimal-04")]
+        {
+            use bigdecimal_04::BigDecimal;
+
+            let num1 = PI_STR.to_vec();
+            let num2 = vec![b'-']
+                .into_iter()
+                .chain(PI_STR.iter().copied())
+                .collect::<Vec<_>>();
+            let num3 = b"0.0".to_vec();
+
+            let num1 = BigDecimal::parse_bytes(&num1, 10).unwrap();
+            let num2 = BigDecimal::parse_bytes(&num2, 10).unwrap();
+            let num3 = BigDecimal::parse_bytes(&num3, 10).unwrap();
+            compat_check_serialized::<BigDecimal>(&ColumnType::Decimal, &num1);
+            compat_check_serialized::<BigDecimal>(&ColumnType::Decimal, &num2);
+            compat_check_serialized::<BigDecimal>(&ColumnType::Decimal, &num3);
+        }
     }
 
     // Checks that both new and old serialization framework
