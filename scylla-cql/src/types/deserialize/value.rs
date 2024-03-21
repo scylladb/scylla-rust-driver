@@ -559,6 +559,24 @@ where
     }
 }
 
+// secrecy
+#[cfg(feature = "secret")]
+impl<'frame, T> DeserializeCql<'frame> for secrecy::Secret<T>
+where
+    T: DeserializeCql<'frame> + secrecy::Zeroize,
+{
+    fn type_check(typ: &ColumnType) -> Result<(), ParseError> {
+        <T as DeserializeCql<'frame>>::type_check(typ)
+    }
+
+    fn deserialize(
+        typ: &'frame ColumnType,
+        v: Option<FrameSlice<'frame>>,
+    ) -> Result<Self, ParseError> {
+        <T as DeserializeCql<'frame>>::deserialize(typ, v).map(secrecy::Secret::new)
+    }
+}
+
 // Utilities
 
 fn ensure_not_null(v: Option<FrameSlice>) -> Result<&[u8], ParseError> {
