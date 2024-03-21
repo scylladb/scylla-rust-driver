@@ -915,6 +915,103 @@ impl_tuple_multiple!(
     t0, t1, t2, t3, t4, t5, t6, t7, t8, t9, t10, t11, t12, t13, t14, t15
 );
 
+// udts
+
+/// An iterator over fields of a User Defined Type.
+///
+/// # Note
+///
+/// A serialized UDT will generally have one value for each field, but it is
+/// allowed to have fewer. This iterator differentiates null values
+/// from non-existent values in the following way:
+///
+/// - `None` - missing from the serialized form
+/// - `Some(None)` - present, but null
+/// - `Some(Some(...))` - non-null, present value
+pub struct UdtIterator<'frame> {
+    fields: &'frame [(String, ColumnType)],
+    raw_iter: BytesSequenceIterator<'frame>,
+}
+
+impl<'frame> UdtIterator<'frame> {
+    #[inline]
+    pub fn new(fields: &'frame [(String, ColumnType)], slice: FrameSlice<'frame>) -> Self {
+        Self {
+            fields,
+            raw_iter: BytesSequenceIterator::new(slice),
+        }
+    }
+
+    #[inline]
+    pub fn fields(&self) -> &'frame [(String, ColumnType)] {
+        self.fields
+    }
+}
+
+impl<'frame> DeserializeCql<'frame> for UdtIterator<'frame> {
+    fn type_check(typ: &ColumnType) -> Result<(), ParseError> {
+        match typ {
+            ColumnType::UserDefinedType { .. } => Ok(()),
+            _ => Err(ParseError::BadIncomingData(format!(
+                "Expected a user defined type, got {:?}",
+                typ,
+            ))),
+        }
+    }
+
+    fn deserialize(
+        typ: &'frame ColumnType,
+        v: Option<FrameSlice<'frame>>,
+    ) -> Result<Self, ParseError> {
+        let v = ensure_not_null_slice(v)?;
+        let mem = v.as_slice();
+        let fields = match typ {
+            ColumnType::UserDefinedType { field_types, .. } => field_types.as_ref(),
+            _ => {
+                return Err(ParseError::BadIncomingData(format!(
+                    "Expected a user defined type, got {:?}",
+                    typ,
+                )))
+            }
+        };
+        Ok(Self::new(
+            fields,
+            FrameSlice::new_subslice(mem, v.as_bytes_ref()),
+        ))
+    }
+}
+
+impl<'frame> Iterator for UdtIterator<'frame> {
+    type Item = Result<
+        (
+            &'frame (String, ColumnType),
+            Option<Option<FrameSlice<'frame>>>,
+        ),
+        ParseError,
+    >;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        // TODO: Should we fail when there are too many fields?
+        let (head, fields) = self.fields.split_first()?;
+        self.fields = fields;
+        let raw = match self.raw_iter.next() {
+            // The field is there and it was parsed correctly
+            Some(Ok(raw)) => Some(raw),
+
+            // There were some bytes but they didn't parse as correct field value
+            Some(Err(err)) => return Some(Err(err)),
+
+            // The field is just missing from the serialized form
+            None => None,
+        };
+        Some(Ok((head, raw)))
+    }
+
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        self.raw_iter.size_hint()
+    }
+}
+
 // Utilities
 
 fn ensure_not_null(v: Option<FrameSlice>) -> Result<&[u8], ParseError> {
@@ -975,6 +1072,40 @@ fn ensure_tuple_type<const SIZE: usize>(
 }
 
 // Helper iterators
+
+/// Iterates over a sequence of `[bytes]` items from a frame subslice.
+///
+/// The `[bytes]` items are parsed until the end of subslice is reached.
+#[derive(Clone, Copy, Debug)]
+pub struct BytesSequenceIterator<'frame> {
+    slice: FrameSlice<'frame>,
+}
+
+impl<'frame> BytesSequenceIterator<'frame> {
+    #[inline]
+    fn new(slice: FrameSlice<'frame>) -> Self {
+        Self { slice }
+    }
+}
+
+impl<'frame> From<FrameSlice<'frame>> for BytesSequenceIterator<'frame> {
+    #[inline]
+    fn from(slice: FrameSlice<'frame>) -> Self {
+        Self::new(slice)
+    }
+}
+
+impl<'frame> Iterator for BytesSequenceIterator<'frame> {
+    type Item = Result<Option<FrameSlice<'frame>>, ParseError>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.slice.as_slice().is_empty() {
+            None
+        } else {
+            Some(self.slice.read_cql_bytes())
+        }
+    }
+}
 
 /// Iterates over a sequence of `[bytes]` items from a frame subslice, expecting
 /// a particular number of items.
@@ -1498,6 +1629,38 @@ mod tests {
 
         let tup = deserialize::<(i32, &str, Option<Uuid>)>(&typ, &tuple).unwrap();
         assert_eq!(tup, (42, "foo", None));
+    }
+
+    #[test]
+    fn test_custom_type_parser() {
+        #[derive(Default, Debug, PartialEq, Eq)]
+        struct SwappedPair<A, B>(B, A);
+        impl<'frame, A, B> DeserializeCql<'frame> for SwappedPair<A, B>
+        where
+            A: DeserializeCql<'frame>,
+            B: DeserializeCql<'frame>,
+        {
+            fn type_check(typ: &ColumnType) -> Result<(), ParseError> {
+                <(B, A) as DeserializeCql<'frame>>::type_check(typ)
+            }
+
+            fn deserialize(
+                typ: &'frame ColumnType,
+                v: Option<FrameSlice<'frame>>,
+            ) -> Result<Self, ParseError> {
+                <(B, A) as DeserializeCql<'frame>>::deserialize(typ, v).map(|(b, a)| Self(b, a))
+            }
+        }
+
+        let mut tuple_contents = BytesMut::new();
+        append_bytes(&mut tuple_contents, "foo".as_bytes());
+        append_bytes(&mut tuple_contents, &42i32.to_be_bytes());
+        let tuple = make_bytes(&tuple_contents);
+
+        let typ = ColumnType::Tuple(vec![ColumnType::Ascii, ColumnType::Int]);
+
+        let tup = deserialize::<SwappedPair<i32, &str>>(&typ, &tuple).unwrap();
+        assert_eq!(tup, SwappedPair("foo", 42));
     }
 
     // Checks that both new and old serialization framework
