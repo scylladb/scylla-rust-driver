@@ -1,7 +1,7 @@
 //! Provides types for dealing with CQL value deserialization.
 
 use std::{
-    collections::{BTreeSet, HashSet},
+    collections::{BTreeMap, BTreeSet, HashMap, HashSet},
     hash::{BuildHasher, Hash},
     net::IpAddr,
 };
@@ -724,6 +724,142 @@ where
     }
 }
 
+/// An iterator over a CQL map.
+pub struct MapIterator<'frame, K, V> {
+    k_typ: &'frame ColumnType,
+    v_typ: &'frame ColumnType,
+    raw_iter: FixedLengthBytesSequenceIterator<'frame>,
+    phantom_data_k: std::marker::PhantomData<K>,
+    phantom_data_v: std::marker::PhantomData<V>,
+}
+
+impl<'frame, K, V> MapIterator<'frame, K, V> {
+    pub fn new(
+        k_typ: &'frame ColumnType,
+        v_typ: &'frame ColumnType,
+        count: usize,
+        slice: FrameSlice<'frame>,
+    ) -> Self {
+        Self {
+            k_typ,
+            v_typ,
+            raw_iter: FixedLengthBytesSequenceIterator::new(count, slice),
+            phantom_data_k: std::marker::PhantomData,
+            phantom_data_v: std::marker::PhantomData,
+        }
+    }
+}
+
+impl<'frame, K, V> DeserializeCql<'frame> for MapIterator<'frame, K, V>
+where
+    K: DeserializeCql<'frame>,
+    V: DeserializeCql<'frame>,
+{
+    fn type_check(typ: &ColumnType) -> Result<(), ParseError> {
+        match typ {
+            ColumnType::Map(k_t, v_t) => {
+                <K as DeserializeCql<'frame>>::type_check(k_t)?;
+                <V as DeserializeCql<'frame>>::type_check(v_t)?;
+                Ok(())
+            }
+            _ => Err(ParseError::BadIncomingData(format!(
+                "Expected map, got {:?}",
+                typ,
+            ))),
+        }
+    }
+
+    fn deserialize(
+        typ: &'frame ColumnType,
+        v: Option<FrameSlice<'frame>>,
+    ) -> Result<Self, ParseError> {
+        let v = ensure_not_null_slice(v)?;
+        let mut mem = v.as_slice();
+        let count = types::read_int_length(&mut mem)?;
+        let (k_typ, v_typ) = match typ {
+            ColumnType::Map(k_t, v_t) => (k_t, v_t),
+            _ => {
+                return Err(ParseError::BadIncomingData(format!(
+                    "Expected map, got {:?}",
+                    typ,
+                )))
+            }
+        };
+        Ok(Self::new(
+            k_typ,
+            v_typ,
+            2 * count,
+            FrameSlice::new_subslice(mem, v.as_bytes_ref()),
+        ))
+    }
+}
+
+impl<'frame, K, V> Iterator for MapIterator<'frame, K, V>
+where
+    K: DeserializeCql<'frame>,
+    V: DeserializeCql<'frame>,
+{
+    type Item = Result<(K, V), ParseError>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let raw_k = match self.raw_iter.next() {
+            Some(Ok(raw_k)) => raw_k,
+            Some(Err(err)) => return Some(Err(err)),
+            None => return None,
+        };
+        let raw_v = match self.raw_iter.next() {
+            Some(Ok(raw_v)) => raw_v,
+            Some(Err(err)) => return Some(Err(err)),
+            None => return None,
+        };
+        let do_next = || -> Result<(K, V), ParseError> {
+            let k = K::deserialize(self.k_typ, raw_k)?;
+            let v = V::deserialize(self.v_typ, raw_v)?;
+            Ok((k, v))
+        };
+        do_next().map(Some).transpose()
+    }
+
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        self.raw_iter.size_hint()
+    }
+}
+
+impl<'frame, K, V> DeserializeCql<'frame> for BTreeMap<K, V>
+where
+    K: DeserializeCql<'frame> + Ord,
+    V: DeserializeCql<'frame>,
+{
+    fn type_check(typ: &ColumnType) -> Result<(), ParseError> {
+        MapIterator::<'frame, K, V>::type_check(typ)
+    }
+
+    fn deserialize(
+        typ: &'frame ColumnType,
+        v: Option<FrameSlice<'frame>>,
+    ) -> Result<Self, ParseError> {
+        MapIterator::<'frame, K, V>::deserialize(typ, v)?.collect()
+    }
+}
+
+impl<'frame, K, V, S> DeserializeCql<'frame> for HashMap<K, V, S>
+where
+    K: DeserializeCql<'frame> + Eq + Hash,
+    V: DeserializeCql<'frame>,
+    S: BuildHasher + Default + 'frame,
+{
+    fn type_check(typ: &ColumnType) -> Result<(), ParseError> {
+        MapIterator::<'frame, K, V>::type_check(typ)
+    }
+
+    fn deserialize(
+        typ: &'frame ColumnType,
+        v: Option<FrameSlice<'frame>>,
+    ) -> Result<Self, ParseError> {
+        MapIterator::<'frame, K, V>::deserialize(typ, v)?.collect()
+    }
+}
+
 // Utilities
 
 fn ensure_not_null(v: Option<FrameSlice>) -> Result<&[u8], ParseError> {
@@ -806,7 +942,7 @@ mod tests {
     use chrono::{DateTime, NaiveDate, NaiveTime, Utc};
     use uuid::Uuid;
 
-    use std::collections::{BTreeSet, HashSet};
+    use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
     use std::fmt::Debug;
     use std::net::{IpAddr, Ipv6Addr};
 
@@ -817,7 +953,7 @@ mod tests {
     use crate::frame::value::{
         Counter, CqlDate, CqlDuration, CqlTime, CqlTimestamp, CqlTimeuuid, CqlVarint,
     };
-    use crate::types::deserialize::value::{ListlikeIterator, MaybeEmpty};
+    use crate::types::deserialize::value::{ListlikeIterator, MapIterator, MaybeEmpty};
     use crate::types::deserialize::FrameSlice;
     use crate::types::serialize::value::SerializeCql;
     use crate::types::serialize::CellWriter;
@@ -1149,6 +1285,19 @@ mod tests {
         compat_check::<Vec<i32>>(&set_type, set.clone());
         compat_check::<BTreeSet<i32>>(&set_type, set.clone());
         compat_check::<HashSet<i32>>(&set_type, set);
+
+        let mut map = BytesMut::new();
+        map.put_i32(3);
+        append_bytes(&mut map, &123i32.to_be_bytes());
+        append_bytes(&mut map, "quick".as_bytes());
+        append_bytes(&mut map, &456i32.to_be_bytes());
+        append_bytes(&mut map, "brown".as_bytes());
+        append_bytes(&mut map, &789i32.to_be_bytes());
+        append_bytes(&mut map, "fox".as_bytes());
+        let map = make_bytes(&map);
+        let map_type = ColumnType::Map(Box::new(ColumnType::Int), Box::new(ColumnType::Text));
+        compat_check::<BTreeMap<i32, String>>(&map_type, map.clone());
+        compat_check::<HashMap<i32, String>>(&map_type, map);
     }
 
     #[test]
@@ -1215,6 +1364,54 @@ mod tests {
             decoded_btree_string,
             expected_vec_string.into_iter().collect(),
         );
+    }
+
+    #[test]
+    fn test_map() {
+        let mut collection_contents = BytesMut::new();
+        collection_contents.put_i32(3);
+        append_bytes(&mut collection_contents, &1i32.to_be_bytes());
+        append_bytes(&mut collection_contents, "quick".as_bytes());
+        append_bytes(&mut collection_contents, &2i32.to_be_bytes());
+        append_bytes(&mut collection_contents, "brown".as_bytes());
+        append_bytes(&mut collection_contents, &3i32.to_be_bytes());
+        append_bytes(&mut collection_contents, "fox".as_bytes());
+
+        let collection = make_bytes(&collection_contents);
+
+        let typ = ColumnType::Map(Box::new(ColumnType::Int), Box::new(ColumnType::Ascii));
+
+        // iterator
+        let mut iter = deserialize::<MapIterator<i32, &str>>(&typ, &collection).unwrap();
+        assert_eq!(iter.next().transpose().unwrap(), Some((1, "quick")));
+        assert_eq!(iter.next().transpose().unwrap(), Some((2, "brown")));
+        assert_eq!(iter.next().transpose().unwrap(), Some((3, "fox")));
+        assert_eq!(iter.next().transpose().unwrap(), None);
+
+        let expected_str = vec![(1, "quick"), (2, "brown"), (3, "fox")];
+        let expected_string = vec![
+            (1, "quick".to_string()),
+            (2, "brown".to_string()),
+            (3, "fox".to_string()),
+        ];
+
+        // hash set
+        let decoded_hash_str = deserialize::<HashMap<i32, &str>>(&typ, &collection).unwrap();
+        let decoded_hash_string = deserialize::<HashMap<i32, String>>(&typ, &collection).unwrap();
+        assert_eq!(decoded_hash_str, expected_str.clone().into_iter().collect());
+        assert_eq!(
+            decoded_hash_string,
+            expected_string.clone().into_iter().collect(),
+        );
+
+        // btree set
+        let decoded_btree_str = deserialize::<BTreeMap<i32, &str>>(&typ, &collection).unwrap();
+        let decoded_btree_string = deserialize::<BTreeMap<i32, String>>(&typ, &collection).unwrap();
+        assert_eq!(
+            decoded_btree_str,
+            expected_str.clone().into_iter().collect(),
+        );
+        assert_eq!(decoded_btree_string, expected_string.into_iter().collect(),);
     }
 
     // Checks that both new and old serialization framework
