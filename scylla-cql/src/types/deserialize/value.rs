@@ -6,13 +6,14 @@ use bytes::Bytes;
 
 #[cfg(feature = "chrono")]
 use chrono::{DateTime, NaiveDate, NaiveTime, TimeZone as _, Utc};
+use uuid::Uuid;
 
 use super::FrameSlice;
 use crate::frame::{
     frame_errors::ParseError,
     response::result::{deser_cql_value, ColumnType, CqlValue},
     types,
-    value::{Counter, CqlDate, CqlDuration, CqlTime, CqlTimestamp, CqlVarint},
+    value::{Counter, CqlDate, CqlDuration, CqlTime, CqlTimestamp, CqlTimeuuid, CqlVarint},
 };
 
 /// A type that can be deserialized from a column value inside a row that was
@@ -495,6 +496,31 @@ impl_strict_type!(
     }
 );
 
+// uuid
+
+impl_strict_type!(
+    "uuid",
+    Uuid,
+    ColumnType::Uuid,
+    |_typ: &'frame ColumnType, v: Option<FrameSlice<'frame>>| {
+        let val = ensure_not_null(v)?;
+        let arr = ensure_exact_length::<16>("uuid", val)?;
+        let i = u128::from_be_bytes(arr);
+        Ok(uuid::Uuid::from_u128(i))
+    }
+);
+
+impl_strict_type!(
+    "timeuuid",
+    CqlTimeuuid,
+    ColumnType::Timeuuid,
+    |_typ: &'frame ColumnType, v: Option<FrameSlice<'frame>>| {
+        let val = ensure_not_null(v)?;
+        let arr = ensure_exact_length::<16>("timeuuid", val)?;
+        let i = u128::from_be_bytes(arr);
+        Ok(CqlTimeuuid::from(uuid::Uuid::from_u128(i)))
+    }
+);
 // Utilities
 
 fn ensure_not_null(v: Option<FrameSlice>) -> Result<&[u8], ParseError> {
@@ -535,6 +561,7 @@ mod tests {
 
     #[cfg(feature = "chrono")]
     use chrono::{DateTime, NaiveDate, NaiveTime, Utc};
+    use uuid::Uuid;
 
     use std::fmt::Debug;
     use std::net::{IpAddr, Ipv6Addr};
@@ -543,7 +570,9 @@ mod tests {
     use crate::frame::response::cql_to_rust::FromCqlVal;
     use crate::frame::response::result::{deser_cql_value, ColumnType, CqlValue};
     use crate::frame::types;
-    use crate::frame::value::{Counter, CqlDate, CqlDuration, CqlTime, CqlTimestamp, CqlVarint};
+    use crate::frame::value::{
+        Counter, CqlDate, CqlDuration, CqlTime, CqlTimestamp, CqlTimeuuid, CqlVarint,
+    };
     use crate::types::deserialize::FrameSlice;
     use crate::types::serialize::value::SerializeCql;
     use crate::types::serialize::CellWriter;
@@ -833,6 +862,18 @@ mod tests {
         let ipv6: IpAddr = Ipv6Addr::LOCALHOST.into();
         compat_check::<IpAddr>(&ColumnType::Inet, make_ip_address(ipv4));
         compat_check::<IpAddr>(&ColumnType::Inet, make_ip_address(ipv6));
+
+        // uuid and timeuuid
+        // new_v4 generates random UUIDs, so these are different cases
+        let uuid1 = Uuid::new_v4();
+        let uuid2 = Uuid::new_v4();
+        let uuid3 = Uuid::new_v4();
+        compat_check_serialized::<Uuid>(&ColumnType::Uuid, &uuid1);
+        compat_check_serialized::<Uuid>(&ColumnType::Uuid, &uuid2);
+        compat_check_serialized::<Uuid>(&ColumnType::Uuid, &uuid3);
+        compat_check_serialized::<CqlTimeuuid>(&ColumnType::Timeuuid, &CqlTimeuuid::from(uuid1));
+        compat_check_serialized::<CqlTimeuuid>(&ColumnType::Timeuuid, &CqlTimeuuid::from(uuid2));
+        compat_check_serialized::<CqlTimeuuid>(&ColumnType::Timeuuid, &CqlTimeuuid::from(uuid3));
     }
 
     // Checks that both new and old serialization framework
