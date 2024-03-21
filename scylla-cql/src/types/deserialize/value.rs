@@ -1,6 +1,10 @@
 //! Provides types for dealing with CQL value deserialization.
 
-use std::net::IpAddr;
+use std::{
+    collections::{BTreeSet, HashSet},
+    hash::{BuildHasher, Hash},
+    net::IpAddr,
+};
 
 use bytes::Bytes;
 
@@ -577,6 +581,149 @@ where
     }
 }
 
+// collections
+
+// lists and sets
+
+/// An iterator over either a CQL set or list.
+pub struct ListlikeIterator<'frame, T> {
+    elem_typ: &'frame ColumnType,
+    raw_iter: FixedLengthBytesSequenceIterator<'frame>,
+    phantom_data: std::marker::PhantomData<T>,
+}
+
+impl<'frame, T> ListlikeIterator<'frame, T> {
+    pub fn new(elem_typ: &'frame ColumnType, count: usize, slice: FrameSlice<'frame>) -> Self {
+        Self {
+            elem_typ,
+            raw_iter: FixedLengthBytesSequenceIterator::new(count, slice),
+            phantom_data: std::marker::PhantomData,
+        }
+    }
+}
+
+impl<'frame, T> DeserializeCql<'frame> for ListlikeIterator<'frame, T>
+where
+    T: DeserializeCql<'frame>,
+{
+    fn type_check(typ: &ColumnType) -> Result<(), ParseError> {
+        match typ {
+            ColumnType::List(el_t) | ColumnType::Set(el_t) => {
+                <T as DeserializeCql<'frame>>::type_check(el_t)
+            }
+            _ => Err(ParseError::BadIncomingData(format!(
+                "Expected list or set, got {:?}",
+                typ,
+            ))),
+        }
+    }
+
+    fn deserialize(
+        typ: &'frame ColumnType,
+        v: Option<FrameSlice<'frame>>,
+    ) -> Result<Self, ParseError> {
+        let v = ensure_not_null_slice(v)?;
+        let mut mem = v.as_slice();
+        let count = types::read_int_length(&mut mem)?;
+        let elem_typ = match typ {
+            ColumnType::List(elem_typ) | ColumnType::Set(elem_typ) => elem_typ,
+            _ => {
+                return Err(ParseError::BadIncomingData(format!(
+                    "Expected list or set, got {:?}",
+                    typ,
+                )))
+            }
+        };
+        Ok(Self::new(
+            elem_typ,
+            count,
+            FrameSlice::new_subslice(mem, v.as_bytes_ref()),
+        ))
+    }
+}
+
+impl<'frame, T> Iterator for ListlikeIterator<'frame, T>
+where
+    T: DeserializeCql<'frame>,
+{
+    type Item = Result<T, ParseError>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let raw = self.raw_iter.next()?;
+        Some(raw.and_then(|raw| T::deserialize(self.elem_typ, raw)))
+    }
+
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        self.raw_iter.size_hint()
+    }
+}
+
+impl<'frame, T> DeserializeCql<'frame> for Vec<T>
+where
+    T: DeserializeCql<'frame>,
+{
+    fn type_check(typ: &ColumnType) -> Result<(), ParseError> {
+        // It makes sense for both Set and List to deserialize to Vec.
+        ListlikeIterator::<'frame, T>::type_check(typ)
+    }
+
+    fn deserialize(
+        typ: &'frame ColumnType,
+        v: Option<FrameSlice<'frame>>,
+    ) -> Result<Self, ParseError> {
+        ListlikeIterator::<'frame, T>::deserialize(typ, v)?.collect()
+    }
+}
+
+impl<'frame, T> DeserializeCql<'frame> for BTreeSet<T>
+where
+    T: DeserializeCql<'frame> + Ord,
+{
+    fn type_check(typ: &ColumnType) -> Result<(), ParseError> {
+        // It only makes sense for Set to deserialize to BTreeSet.
+        // Deserializing List straight to BTreeSet would be lossy.
+        match typ {
+            ColumnType::Set(el_t) => <T as DeserializeCql<'frame>>::type_check(el_t),
+            _ => Err(ParseError::BadIncomingData(format!(
+                "Expected set, got {:?}",
+                typ,
+            ))),
+        }
+    }
+
+    fn deserialize(
+        typ: &'frame ColumnType,
+        v: Option<FrameSlice<'frame>>,
+    ) -> Result<Self, ParseError> {
+        ListlikeIterator::<'frame, T>::deserialize(typ, v)?.collect()
+    }
+}
+
+impl<'frame, T, S> DeserializeCql<'frame> for HashSet<T, S>
+where
+    T: DeserializeCql<'frame> + Eq + Hash,
+    S: BuildHasher + Default + 'frame,
+{
+    fn type_check(typ: &ColumnType) -> Result<(), ParseError> {
+        // It only makes sense for Set to deserialize to HashSet.
+        // Deserializing List straight to HashSet would be lossy.
+        match typ {
+            ColumnType::Set(el_t) => <T as DeserializeCql<'frame>>::type_check(el_t),
+            _ => Err(ParseError::BadIncomingData(format!(
+                "Expected set, got {:?}",
+                typ,
+            ))),
+        }
+    }
+
+    fn deserialize(
+        typ: &'frame ColumnType,
+        v: Option<FrameSlice<'frame>>,
+    ) -> Result<Self, ParseError> {
+        ListlikeIterator::<'frame, T>::deserialize(typ, v)?.collect()
+    }
+}
+
 // Utilities
 
 fn ensure_not_null(v: Option<FrameSlice>) -> Result<&[u8], ParseError> {
@@ -597,6 +744,15 @@ fn ensure_not_null_owned(v: Option<FrameSlice>) -> Result<Bytes, ParseError> {
     }
 }
 
+fn ensure_not_null_slice(v: Option<FrameSlice>) -> Result<FrameSlice, ParseError> {
+    match v {
+        Some(v) => Ok(v),
+        None => Err(ParseError::BadIncomingData(
+            "Expected a non-null value".to_string(),
+        )),
+    }
+}
+
 fn ensure_exact_length<const SIZE: usize>(
     cql_name: &str,
     v: &[u8],
@@ -611,6 +767,37 @@ fn ensure_exact_length<const SIZE: usize>(
     })
 }
 
+// Helper iterators
+
+/// Iterates over a sequence of `[bytes]` items from a frame subslice, expecting
+/// a particular number of items.
+///
+/// The iterator does not consider it to be an error if there are some bytes
+/// remaining in the slice after parsing requested amount of items.
+#[derive(Clone, Copy, Debug)]
+pub struct FixedLengthBytesSequenceIterator<'frame> {
+    slice: FrameSlice<'frame>,
+    remaining: usize,
+}
+
+impl<'frame> FixedLengthBytesSequenceIterator<'frame> {
+    pub fn new(count: usize, slice: FrameSlice<'frame>) -> Self {
+        Self {
+            slice,
+            remaining: count,
+        }
+    }
+}
+
+impl<'frame> Iterator for FixedLengthBytesSequenceIterator<'frame> {
+    type Item = Result<Option<FrameSlice<'frame>>, ParseError>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        self.remaining = self.remaining.checked_sub(1)?;
+        Some(self.slice.read_cql_bytes())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use bytes::{BufMut, Bytes, BytesMut};
@@ -619,6 +806,7 @@ mod tests {
     use chrono::{DateTime, NaiveDate, NaiveTime, Utc};
     use uuid::Uuid;
 
+    use std::collections::{BTreeSet, HashSet};
     use std::fmt::Debug;
     use std::net::{IpAddr, Ipv6Addr};
 
@@ -629,7 +817,7 @@ mod tests {
     use crate::frame::value::{
         Counter, CqlDate, CqlDuration, CqlTime, CqlTimestamp, CqlTimeuuid, CqlVarint,
     };
-    use crate::types::deserialize::value::MaybeEmpty;
+    use crate::types::deserialize::value::{ListlikeIterator, MaybeEmpty};
     use crate::types::deserialize::FrameSlice;
     use crate::types::serialize::value::SerializeCql;
     use crate::types::serialize::CellWriter;
@@ -938,6 +1126,29 @@ mod tests {
         // nulls, represented via option
         compat_check_serialized::<Option<i32>>(&ColumnType::Int, &123i32);
         compat_check::<Option<i32>>(&ColumnType::Int, make_null());
+
+        // collections
+        let mut list = BytesMut::new();
+        list.put_i32(3);
+        append_bytes(&mut list, &123i32.to_be_bytes());
+        append_bytes(&mut list, &456i32.to_be_bytes());
+        append_bytes(&mut list, &789i32.to_be_bytes());
+        let list = make_bytes(&list);
+        let list_type = ColumnType::List(Box::new(ColumnType::Int));
+        compat_check::<Vec<i32>>(&list_type, list.clone());
+        // Support for deserialization List -> {Hash,BTree}Set was removed not to cause confusion.
+        // Such deserialization would be lossy, which is unwanted.
+
+        let mut set = BytesMut::new();
+        set.put_i32(3);
+        append_bytes(&mut set, &123i32.to_be_bytes());
+        append_bytes(&mut set, &456i32.to_be_bytes());
+        append_bytes(&mut set, &789i32.to_be_bytes());
+        let set = make_bytes(&set);
+        let set_type = ColumnType::Set(Box::new(ColumnType::Int));
+        compat_check::<Vec<i32>>(&set_type, set.clone());
+        compat_check::<BTreeSet<i32>>(&set_type, set.clone());
+        compat_check::<HashSet<i32>>(&set_type, set);
     }
 
     #[test]
@@ -950,6 +1161,60 @@ mod tests {
         let decoded_non_empty =
             deserialize::<MaybeEmpty<i8>>(&ColumnType::TinyInt, &non_empty).unwrap();
         assert_eq!(decoded_non_empty, MaybeEmpty::Value(0x01));
+    }
+
+    #[test]
+    fn test_list_and_set() {
+        let mut collection_contents = BytesMut::new();
+        collection_contents.put_i32(3);
+        append_bytes(&mut collection_contents, "quick".as_bytes());
+        append_bytes(&mut collection_contents, "brown".as_bytes());
+        append_bytes(&mut collection_contents, "fox".as_bytes());
+
+        let collection = make_bytes(&collection_contents);
+
+        let list_typ = ColumnType::List(Box::new(ColumnType::Ascii));
+        let set_typ = ColumnType::Set(Box::new(ColumnType::Ascii));
+
+        // iterator
+        let mut iter = deserialize::<ListlikeIterator<&str>>(&list_typ, &collection).unwrap();
+        assert_eq!(iter.next().transpose().unwrap(), Some("quick"));
+        assert_eq!(iter.next().transpose().unwrap(), Some("brown"));
+        assert_eq!(iter.next().transpose().unwrap(), Some("fox"));
+        assert_eq!(iter.next().transpose().unwrap(), None);
+
+        let expected_vec_str = vec!["quick", "brown", "fox"];
+        let expected_vec_string = vec!["quick".to_string(), "brown".to_string(), "fox".to_string()];
+
+        // list
+        let decoded_vec_str = deserialize::<Vec<&str>>(&list_typ, &collection).unwrap();
+        let decoded_vec_string = deserialize::<Vec<String>>(&list_typ, &collection).unwrap();
+        assert_eq!(decoded_vec_str, expected_vec_str);
+        assert_eq!(decoded_vec_string, expected_vec_string);
+
+        // hash set
+        let decoded_hash_str = deserialize::<HashSet<&str>>(&set_typ, &collection).unwrap();
+        let decoded_hash_string = deserialize::<HashSet<String>>(&set_typ, &collection).unwrap();
+        assert_eq!(
+            decoded_hash_str,
+            expected_vec_str.clone().into_iter().collect(),
+        );
+        assert_eq!(
+            decoded_hash_string,
+            expected_vec_string.clone().into_iter().collect(),
+        );
+
+        // btree set
+        let decoded_btree_str = deserialize::<BTreeSet<&str>>(&set_typ, &collection).unwrap();
+        let decoded_btree_string = deserialize::<BTreeSet<String>>(&set_typ, &collection).unwrap();
+        assert_eq!(
+            decoded_btree_str,
+            expected_vec_str.clone().into_iter().collect(),
+        );
+        assert_eq!(
+            decoded_btree_string,
+            expected_vec_string.into_iter().collect(),
+        );
     }
 
     // Checks that both new and old serialization framework
