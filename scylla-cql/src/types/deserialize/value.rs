@@ -73,6 +73,50 @@ where
     }
 }
 
+/// Values that may be empty or not.
+///
+/// In CQL, some types can have a special value of "empty", represented as
+/// a serialized value of length 0. An example of this are integral types:
+/// the "int" type can actually hold 2^32 + 1 possible values because of this
+/// quirk. Note that this is distinct from being NULL.
+///
+/// Rust types that cannot represent an empty value (e.g. i32) should implement
+/// this trait in order to be deserialized as [MaybeEmpty].
+pub trait Emptiable {}
+
+/// A value that may be empty or not.
+///
+/// `MaybeEmpty` was introduced to help support the quirk described in [Emptiable]
+/// for Rust types which can't represent the empty, additional value.
+#[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Copy)]
+pub enum MaybeEmpty<T: Emptiable> {
+    Empty,
+    Value(T),
+}
+
+impl<'frame, T> DeserializeValue<'frame> for MaybeEmpty<T>
+where
+    T: DeserializeValue<'frame> + Emptiable,
+{
+    #[inline]
+    fn type_check(typ: &ColumnType) -> Result<(), TypeCheckError> {
+        <T as DeserializeValue<'frame>>::type_check(typ)
+    }
+
+    fn deserialize(
+        typ: &'frame ColumnType,
+        v: Option<FrameSlice<'frame>>,
+    ) -> Result<Self, DeserializationError> {
+        let val = ensure_not_null_slice::<Self>(typ, v)?;
+        if val.is_empty() {
+            Ok(MaybeEmpty::Empty)
+        } else {
+            let v = <T as DeserializeValue<'frame>>::deserialize(typ, v)?;
+            Ok(MaybeEmpty::Value(v))
+        }
+    }
+}
+
 // Utilities
 
 fn ensure_not_null_frame_slice<'frame, T>(
