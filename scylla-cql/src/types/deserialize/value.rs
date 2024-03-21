@@ -1,5 +1,7 @@
 //! Provides types for dealing with CQL value deserialization.
 
+use std::net::IpAddr;
+
 use bytes::Bytes;
 
 use std::fmt::Display;
@@ -564,6 +566,26 @@ impl_emptiable_strict_type!(
     }
 );
 
+// inet
+
+impl_emptiable_strict_type!(
+    IpAddr,
+    Inet,
+    |typ: &'frame ColumnType, v: Option<FrameSlice<'frame>>| {
+        let val = ensure_not_null_slice::<Self>(typ, v)?;
+        if let Ok(ipv4) = <[u8; 4]>::try_from(val) {
+            Ok(IpAddr::from(ipv4))
+        } else if let Ok(ipv6) = <[u8; 16]>::try_from(val) {
+            Ok(IpAddr::from(ipv6))
+        } else {
+            Err(mk_deser_err::<Self>(
+                typ,
+                BuiltinDeserializationErrorKind::BadInetLength { got: val.len() },
+            ))
+        }
+    }
+);
+
 // Utilities
 
 fn ensure_not_null_frame_slice<'frame, T>(
@@ -728,6 +750,9 @@ pub enum BuiltinDeserializationErrorKind {
     /// The read value is out of range supported by the Rust type.
     // TODO: consider storing additional info here (what exactly did not fit and why)
     ValueOverflow,
+
+    /// The length of read value in bytes is not suitable for IP address.
+    BadInetLength { got: usize },
 }
 
 impl Display for BuiltinDeserializationErrorKind {
@@ -751,6 +776,10 @@ impl Display for BuiltinDeserializationErrorKind {
                 // inside this variant for debug purposes.
                 f.write_str("read value is out of representable range")
             }
+            BuiltinDeserializationErrorKind::BadInetLength { got } => write!(
+                f,
+                "the length of read value in bytes ({got}) is not suitable for IP address; expected 4 or 16"
+            ),
         }
     }
 }
@@ -760,6 +789,7 @@ mod tests {
     use bytes::{BufMut, Bytes, BytesMut};
 
     use std::fmt::Debug;
+    use std::net::{IpAddr, Ipv6Addr};
 
     use crate::frame::response::cql_to_rust::FromCqlVal;
     use crate::frame::response::result::{deser_cql_value, ColumnType, CqlValue};
@@ -1082,6 +1112,12 @@ mod tests {
             compat_check_serialized::<time::OffsetDateTime>(&ColumnType::Timestamp, &timestamp2);
             compat_check_serialized::<time::OffsetDateTime>(&ColumnType::Timestamp, &timestamp3);
         }
+
+        // inet
+        let ipv4 = IpAddr::from([127u8, 0, 0, 1]);
+        let ipv6: IpAddr = Ipv6Addr::LOCALHOST.into();
+        compat_check::<IpAddr>(&ColumnType::Inet, make_ip_address(ipv4));
+        compat_check::<IpAddr>(&ColumnType::Inet, make_ip_address(ipv6));
     }
 
     // Checks that both new and old serialization framework
@@ -1148,6 +1184,13 @@ mod tests {
         let writer = CellWriter::new(&mut v);
         value.serialize(typ, writer).unwrap();
         *buf = v.into();
+    }
+
+    fn make_ip_address(ip: IpAddr) -> Bytes {
+        match ip {
+            IpAddr::V4(v4) => make_bytes(&v4.octets()),
+            IpAddr::V6(v6) => make_bytes(&v6.octets()),
+        }
     }
 
     fn append_bytes(b: &mut impl BufMut, cell: &[u8]) {
