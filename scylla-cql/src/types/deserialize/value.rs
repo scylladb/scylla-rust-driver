@@ -1,5 +1,7 @@
 //! Provides types for dealing with CQL value deserialization.
 
+use bytes::Bytes;
+
 use std::fmt::Display;
 
 use thiserror::Error;
@@ -264,6 +266,34 @@ impl_emptiable_strict_type!(
     }
 );
 
+// blob
+
+impl_strict_type!(
+    &'a [u8],
+    Blob,
+    |typ: &'frame ColumnType, v: Option<FrameSlice<'frame>>| {
+        let val = ensure_not_null_slice::<Self>(typ, v)?;
+        Ok(val)
+    },
+    'a
+);
+impl_strict_type!(
+    Vec<u8>,
+    Blob,
+    |typ: &'frame ColumnType, v: Option<FrameSlice<'frame>>| {
+        let val = ensure_not_null_slice::<Self>(typ, v)?;
+        Ok(val.to_vec())
+    }
+);
+impl_strict_type!(
+    Bytes,
+    Blob,
+    |typ: &'frame ColumnType, v: Option<FrameSlice<'frame>>| {
+        let val = ensure_not_null_owned::<Self>(typ, v)?;
+        Ok(val)
+    }
+);
+
 // Utilities
 
 fn ensure_not_null_frame_slice<'frame, T>(
@@ -278,6 +308,13 @@ fn ensure_not_null_slice<'frame, T>(
     v: Option<FrameSlice<'frame>>,
 ) -> Result<&'frame [u8], DeserializationError> {
     ensure_not_null_frame_slice::<T>(typ, v).map(|frame_slice| frame_slice.as_slice())
+}
+
+fn ensure_not_null_owned<T>(
+    typ: &ColumnType,
+    v: Option<FrameSlice>,
+) -> Result<Bytes, DeserializationError> {
+    ensure_not_null_frame_slice::<T>(typ, v).map(|frame_slice| frame_slice.to_bytes())
 }
 
 fn ensure_exact_length<'frame, T, const SIZE: usize>(
@@ -446,6 +483,21 @@ mod tests {
     use super::{mk_deser_err, BuiltinDeserializationErrorKind, DeserializeValue};
 
     #[test]
+    fn test_deserialize_bytes() {
+        const ORIGINAL_BYTES: &[u8] = &[1, 5, 2, 4, 3];
+
+        let bytes = make_bytes(ORIGINAL_BYTES);
+
+        let decoded_slice = deserialize::<&[u8]>(&ColumnType::Blob, &bytes).unwrap();
+        let decoded_vec = deserialize::<Vec<u8>>(&ColumnType::Blob, &bytes).unwrap();
+        let decoded_bytes = deserialize::<Bytes>(&ColumnType::Blob, &bytes).unwrap();
+
+        assert_eq!(decoded_slice, ORIGINAL_BYTES);
+        assert_eq!(decoded_vec, ORIGINAL_BYTES);
+        assert_eq!(decoded_bytes, ORIGINAL_BYTES);
+    }
+
+    #[test]
     fn test_integral() {
         let tinyint = make_bytes(&[0x01]);
         let decoded_tinyint = deserialize::<i8>(&ColumnType::TinyInt, &tinyint).unwrap();
@@ -597,6 +649,10 @@ mod tests {
             compat_check_serialized::<BigDecimal>(&ColumnType::Decimal, &num2);
             compat_check_serialized::<BigDecimal>(&ColumnType::Decimal, &num3);
         }
+
+        // blob
+        compat_check::<Vec<u8>>(&ColumnType::Blob, make_bytes(&[]));
+        compat_check::<Vec<u8>>(&ColumnType::Blob, make_bytes(&[1, 9, 2, 8, 3, 7, 4, 6, 5]));
     }
 
     // Checks that both new and old serialization framework
