@@ -860,6 +860,61 @@ where
     }
 }
 
+// tuples
+
+// Implements tuple deserialization.
+// The generated impl expects that the serialized data will contain at least
+// the given amount of values.
+// TODO: Include information about the id of the column that failed to parse
+macro_rules! impl_tuple {
+    ($($Ti:ident),*; $($idx:literal),*; $($idf:ident),*) => {
+        impl<'frame, $($Ti),*> DeserializeCql<'frame> for ($($Ti,)*)
+        where
+            $($Ti: DeserializeCql<'frame>),*
+        {
+            fn type_check(typ: &ColumnType) -> Result<(), ParseError> {
+                const TUPLE_LEN: usize = [0, $($idx),*].len() - 1;
+                let [$($idf),*] = ensure_tuple_type::<TUPLE_LEN>(typ)?;
+                $(
+                    <$Ti>::type_check($idf)?;
+                )*
+                Ok(())
+            }
+
+            fn deserialize(typ: &'frame ColumnType, v: Option<FrameSlice<'frame>>) -> Result<Self, ParseError> {
+                const TUPLE_LEN: usize = [0, $($idx),*].len() - 1;
+                let [$($idf),*] = ensure_tuple_type::<TUPLE_LEN>(typ)?;
+
+                // Ignore the warning for the zero-sized tuple
+                #[allow(unused)]
+                let mut v = ensure_not_null_slice(v)?;
+                let ret = (
+                    $(
+                        <$Ti>::deserialize($idf, v.read_cql_bytes()?)?,
+                    )*
+                );
+                Ok(ret)
+            }
+        }
+    }
+}
+
+macro_rules! impl_tuple_multiple {
+    (;;) => {
+        impl_tuple!(;;);
+    };
+    ($TN:ident $(,$Ti:ident)*; $idx_n:literal $(,$idx:literal)*; $idf_n:ident $(,$idf:ident)*) => {
+        impl_tuple_multiple!($($Ti),*; $($idx),*; $($idf),*);
+        impl_tuple!($TN $(,$Ti)*; $idx_n $(,$idx)*; $idf_n $(,$idf)*);
+    }
+}
+
+impl_tuple_multiple!(
+    T0, T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, T12, T13, T14, T15;
+    0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15;
+    t0, t1, t2, t3, t4, t5, t6, t7, t8, t9, t10, t11, t12, t13, t14, t15
+);
+
 // Utilities
 
 fn ensure_not_null(v: Option<FrameSlice>) -> Result<&[u8], ParseError> {
@@ -899,6 +954,22 @@ fn ensure_exact_length<const SIZE: usize>(
             cql_name,
             SIZE,
             v.len(),
+        ))
+    })
+}
+
+fn ensure_tuple_type<const SIZE: usize>(
+    typ: &ColumnType,
+) -> Result<&[ColumnType; SIZE], ParseError> {
+    if let ColumnType::Tuple(typs_v) = typ {
+        typs_v.as_slice().try_into().map_err(|_| ())
+    } else {
+        Err(())
+    }
+    .map_err(|()| {
+        ParseError::BadIncomingData(format!(
+            "Expected tuple of size {}, but got {:?}",
+            SIZE, typ,
         ))
     })
 }
@@ -1412,6 +1483,21 @@ mod tests {
             expected_str.clone().into_iter().collect(),
         );
         assert_eq!(decoded_btree_string, expected_string.into_iter().collect(),);
+    }
+
+    #[test]
+    fn test_tuples() {
+        let mut tuple_contents = BytesMut::new();
+        append_bytes(&mut tuple_contents, &42i32.to_be_bytes());
+        append_bytes(&mut tuple_contents, "foo".as_bytes());
+        append_null(&mut tuple_contents);
+
+        let tuple = make_bytes(&tuple_contents);
+
+        let typ = ColumnType::Tuple(vec![ColumnType::Int, ColumnType::Ascii, ColumnType::Uuid]);
+
+        let tup = deserialize::<(i32, &str, Option<Uuid>)>(&typ, &tuple).unwrap();
+        assert_eq!(tup, (42, "foo", None));
     }
 
     // Checks that both new and old serialization framework
