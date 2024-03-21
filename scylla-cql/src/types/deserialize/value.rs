@@ -1,7 +1,7 @@
 //! Provides types for dealing with CQL value deserialization.
 
 use std::{
-    collections::{BTreeSet, HashSet},
+    collections::{BTreeMap, BTreeSet, HashMap, HashSet},
     hash::{BuildHasher, Hash},
     net::IpAddr,
 };
@@ -823,6 +823,169 @@ where
     }
 }
 
+/// An iterator over a CQL map.
+pub struct MapIterator<'frame, K, V> {
+    coll_typ: &'frame ColumnType,
+    k_typ: &'frame ColumnType,
+    v_typ: &'frame ColumnType,
+    raw_iter: FixedLengthBytesSequenceIterator<'frame>,
+    phantom_data_k: std::marker::PhantomData<K>,
+    phantom_data_v: std::marker::PhantomData<V>,
+}
+
+impl<'frame, K, V> MapIterator<'frame, K, V> {
+    fn new(
+        coll_typ: &'frame ColumnType,
+        k_typ: &'frame ColumnType,
+        v_typ: &'frame ColumnType,
+        count: usize,
+        slice: FrameSlice<'frame>,
+    ) -> Self {
+        Self {
+            coll_typ,
+            k_typ,
+            v_typ,
+            raw_iter: FixedLengthBytesSequenceIterator::new(count, slice),
+            phantom_data_k: std::marker::PhantomData,
+            phantom_data_v: std::marker::PhantomData,
+        }
+    }
+}
+
+impl<'frame, K, V> DeserializeValue<'frame> for MapIterator<'frame, K, V>
+where
+    K: DeserializeValue<'frame>,
+    V: DeserializeValue<'frame>,
+{
+    fn type_check(typ: &ColumnType) -> Result<(), TypeCheckError> {
+        match typ {
+            ColumnType::Map(k_t, v_t) => {
+                <K as DeserializeValue<'frame>>::type_check(k_t).map_err(|err| {
+                    mk_typck_err::<Self>(typ, MapTypeCheckErrorKind::KeyTypeCheckFailed(err))
+                })?;
+                <V as DeserializeValue<'frame>>::type_check(v_t).map_err(|err| {
+                    mk_typck_err::<Self>(typ, MapTypeCheckErrorKind::ValueTypeCheckFailed(err))
+                })?;
+                Ok(())
+            }
+            _ => Err(mk_typck_err::<Self>(typ, MapTypeCheckErrorKind::NotMap)),
+        }
+    }
+
+    fn deserialize(
+        typ: &'frame ColumnType,
+        v: Option<FrameSlice<'frame>>,
+    ) -> Result<Self, DeserializationError> {
+        let mut v = ensure_not_null_frame_slice::<Self>(typ, v)?;
+        let count = types::read_int_length(v.as_slice_mut()).map_err(|err| {
+            mk_deser_err::<Self>(
+                typ,
+                MapDeserializationErrorKind::LengthDeserializationFailed(
+                    DeserializationError::new(err),
+                ),
+            )
+        })?;
+        let (k_typ, v_typ) = match typ {
+            ColumnType::Map(k_t, v_t) => (k_t, v_t),
+            _ => {
+                unreachable!("Typecheck should have prevented this scenario!")
+            }
+        };
+        Ok(Self::new(typ, k_typ, v_typ, 2 * count, v))
+    }
+}
+
+impl<'frame, K, V> Iterator for MapIterator<'frame, K, V>
+where
+    K: DeserializeValue<'frame>,
+    V: DeserializeValue<'frame>,
+{
+    type Item = Result<(K, V), DeserializationError>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let raw_k = match self.raw_iter.next() {
+            Some(Ok(raw_k)) => raw_k,
+            Some(Err(err)) => {
+                return Some(Err(mk_deser_err::<Self>(
+                    self.coll_typ,
+                    BuiltinDeserializationErrorKind::GenericParseError(err),
+                )));
+            }
+            None => return None,
+        };
+        let raw_v = match self.raw_iter.next() {
+            Some(Ok(raw_v)) => raw_v,
+            Some(Err(err)) => {
+                return Some(Err(mk_deser_err::<Self>(
+                    self.coll_typ,
+                    BuiltinDeserializationErrorKind::GenericParseError(err),
+                )));
+            }
+            None => return None,
+        };
+
+        let do_next = || -> Result<(K, V), DeserializationError> {
+            let k = K::deserialize(self.k_typ, raw_k).map_err(|err| {
+                mk_deser_err::<Self>(
+                    self.coll_typ,
+                    MapDeserializationErrorKind::KeyDeserializationFailed(err),
+                )
+            })?;
+            let v = V::deserialize(self.v_typ, raw_v).map_err(|err| {
+                mk_deser_err::<Self>(
+                    self.coll_typ,
+                    MapDeserializationErrorKind::ValueDeserializationFailed(err),
+                )
+            })?;
+            Ok((k, v))
+        };
+        Some(do_next())
+    }
+
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        self.raw_iter.size_hint()
+    }
+}
+
+impl<'frame, K, V> DeserializeValue<'frame> for BTreeMap<K, V>
+where
+    K: DeserializeValue<'frame> + Ord,
+    V: DeserializeValue<'frame>,
+{
+    fn type_check(typ: &ColumnType) -> Result<(), TypeCheckError> {
+        MapIterator::<'frame, K, V>::type_check(typ).map_err(typck_error_replace_rust_name::<Self>)
+    }
+
+    fn deserialize(
+        typ: &'frame ColumnType,
+        v: Option<FrameSlice<'frame>>,
+    ) -> Result<Self, DeserializationError> {
+        MapIterator::<'frame, K, V>::deserialize(typ, v)
+            .and_then(|it| it.collect::<Result<_, DeserializationError>>())
+            .map_err(deser_error_replace_rust_name::<Self>)
+    }
+}
+
+impl<'frame, K, V, S> DeserializeValue<'frame> for HashMap<K, V, S>
+where
+    K: DeserializeValue<'frame> + Eq + Hash,
+    V: DeserializeValue<'frame>,
+    S: BuildHasher + Default + 'frame,
+{
+    fn type_check(typ: &ColumnType) -> Result<(), TypeCheckError> {
+        MapIterator::<'frame, K, V>::type_check(typ).map_err(typck_error_replace_rust_name::<Self>)
+    }
+
+    fn deserialize(
+        typ: &'frame ColumnType,
+        v: Option<FrameSlice<'frame>>,
+    ) -> Result<Self, DeserializationError> {
+        MapIterator::<'frame, K, V>::deserialize(typ, v)
+            .and_then(|it| it.collect::<Result<_, DeserializationError>>())
+            .map_err(deser_error_replace_rust_name::<Self>)
+    }
+}
+
 // Utilities
 
 fn ensure_not_null_frame_slice<'frame, T>(
@@ -954,12 +1117,22 @@ pub enum BuiltinTypeCheckErrorKind {
 
     /// A type check failure specific to a CQL set or list.
     SetOrListError(SetOrListTypeCheckErrorKind),
+
+    /// A type check failure specific to a CQL map.
+    MapError(MapTypeCheckErrorKind),
 }
 
 impl From<SetOrListTypeCheckErrorKind> for BuiltinTypeCheckErrorKind {
     #[inline]
     fn from(value: SetOrListTypeCheckErrorKind) -> Self {
         BuiltinTypeCheckErrorKind::SetOrListError(value)
+    }
+}
+
+impl From<MapTypeCheckErrorKind> for BuiltinTypeCheckErrorKind {
+    #[inline]
+    fn from(value: MapTypeCheckErrorKind) -> Self {
+        BuiltinTypeCheckErrorKind::MapError(value)
     }
 }
 
@@ -970,6 +1143,7 @@ impl Display for BuiltinTypeCheckErrorKind {
                 write!(f, "expected one of the CQL types: {expected:?}")
             }
             BuiltinTypeCheckErrorKind::SetOrListError(err) => err.fmt(f),
+            BuiltinTypeCheckErrorKind::MapError(err) => err.fmt(f),
         }
     }
 }
@@ -998,6 +1172,34 @@ impl Display for SetOrListTypeCheckErrorKind {
             SetOrListTypeCheckErrorKind::ElementTypeCheckFailed(err) => {
                 write!(f, "the set or list element types between the CQL type and the Rust type failed to type check against each other: {}", err)
             }
+        }
+    }
+}
+
+/// Describes why type checking of a map type failed.
+#[derive(Debug, Clone)]
+#[non_exhaustive]
+pub enum MapTypeCheckErrorKind {
+    /// The CQL type is not a map.
+    NotMap,
+    /// Incompatible key types.
+    KeyTypeCheckFailed(TypeCheckError),
+    /// Incompatible value types.
+    ValueTypeCheckFailed(TypeCheckError),
+}
+
+impl Display for MapTypeCheckErrorKind {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            MapTypeCheckErrorKind::NotMap => {
+                f.write_str("the CQL type the Rust type was attempted to be type checked against was neither a map")
+            }
+            MapTypeCheckErrorKind::KeyTypeCheckFailed(err) => {
+                write!(f, "the map key types between the CQL type and the Rust type failed to type check against each other: {}", err)
+            },
+            MapTypeCheckErrorKind::ValueTypeCheckFailed(err) => {
+                write!(f, "the map value types between the CQL type and the Rust type failed to type check against each other: {}", err)
+            },
         }
     }
 }
@@ -1063,6 +1265,9 @@ pub enum BuiltinDeserializationErrorKind {
 
     /// A deserialization failure specific to a CQL set or list.
     SetOrListError(SetOrListDeserializationErrorKind),
+
+    /// A deserialization failure specific to a CQL map.
+    MapError(MapDeserializationErrorKind),
 }
 
 impl Display for BuiltinDeserializationErrorKind {
@@ -1091,6 +1296,7 @@ impl Display for BuiltinDeserializationErrorKind {
                 "the length of read value in bytes ({got}) is not suitable for IP address; expected 4 or 16"
             ),
             BuiltinDeserializationErrorKind::SetOrListError(err) => err.fmt(f),
+            BuiltinDeserializationErrorKind::MapError(err) => err.fmt(f),
         }
     }
 }
@@ -1126,12 +1332,48 @@ impl From<SetOrListDeserializationErrorKind> for BuiltinDeserializationErrorKind
     }
 }
 
+/// Describes why deserialization of a map type failed.
+#[derive(Debug)]
+#[non_exhaustive]
+pub enum MapDeserializationErrorKind {
+    /// Failed to deserialize map's length.
+    LengthDeserializationFailed(DeserializationError),
+
+    /// One of the keys in the map failed to deserialize.
+    KeyDeserializationFailed(DeserializationError),
+
+    /// One of the values in the map failed to deserialize.
+    ValueDeserializationFailed(DeserializationError),
+}
+
+impl Display for MapDeserializationErrorKind {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            MapDeserializationErrorKind::LengthDeserializationFailed(err) => {
+                write!(f, "failed to deserialize map's length: {}", err)
+            }
+            MapDeserializationErrorKind::KeyDeserializationFailed(err) => {
+                write!(f, "failed to deserialize one of the keys: {}", err)
+            }
+            MapDeserializationErrorKind::ValueDeserializationFailed(err) => {
+                write!(f, "failed to deserialize one of the values: {}", err)
+            }
+        }
+    }
+}
+
+impl From<MapDeserializationErrorKind> for BuiltinDeserializationErrorKind {
+    fn from(err: MapDeserializationErrorKind) -> Self {
+        Self::MapError(err)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use bytes::{BufMut, Bytes, BytesMut};
     use uuid::Uuid;
 
-    use std::collections::{BTreeSet, HashSet};
+    use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
     use std::fmt::Debug;
     use std::net::{IpAddr, Ipv6Addr};
 
@@ -1147,7 +1389,7 @@ mod tests {
 
     use super::{
         mk_deser_err, BuiltinDeserializationErrorKind, DeserializeValue, ListlikeIterator,
-        MaybeEmpty,
+        MapIterator, MaybeEmpty,
     };
 
     #[test]
@@ -1530,6 +1772,19 @@ mod tests {
         compat_check::<Vec<i32>>(&set_type, set.clone());
         compat_check::<BTreeSet<i32>>(&set_type, set.clone());
         compat_check::<HashSet<i32>>(&set_type, set);
+
+        let mut map = BytesMut::new();
+        map.put_i32(3);
+        append_bytes(&mut map, &123i32.to_be_bytes());
+        append_bytes(&mut map, "quick".as_bytes());
+        append_bytes(&mut map, &456i32.to_be_bytes());
+        append_bytes(&mut map, "brown".as_bytes());
+        append_bytes(&mut map, &789i32.to_be_bytes());
+        append_bytes(&mut map, "fox".as_bytes());
+        let map = make_bytes(&map);
+        let map_type = ColumnType::Map(Box::new(ColumnType::Int), Box::new(ColumnType::Text));
+        compat_check::<BTreeMap<i32, String>>(&map_type, map.clone());
+        compat_check::<HashMap<i32, String>>(&map_type, map);
     }
 
     #[test]
@@ -1596,6 +1851,54 @@ mod tests {
             decoded_btree_string,
             expected_vec_string.into_iter().collect(),
         );
+    }
+
+    #[test]
+    fn test_map() {
+        let mut collection_contents = BytesMut::new();
+        collection_contents.put_i32(3);
+        append_bytes(&mut collection_contents, &1i32.to_be_bytes());
+        append_bytes(&mut collection_contents, "quick".as_bytes());
+        append_bytes(&mut collection_contents, &2i32.to_be_bytes());
+        append_bytes(&mut collection_contents, "brown".as_bytes());
+        append_bytes(&mut collection_contents, &3i32.to_be_bytes());
+        append_bytes(&mut collection_contents, "fox".as_bytes());
+
+        let collection = make_bytes(&collection_contents);
+
+        let typ = ColumnType::Map(Box::new(ColumnType::Int), Box::new(ColumnType::Ascii));
+
+        // iterator
+        let mut iter = deserialize::<MapIterator<i32, &str>>(&typ, &collection).unwrap();
+        assert_eq!(iter.next().transpose().unwrap(), Some((1, "quick")));
+        assert_eq!(iter.next().transpose().unwrap(), Some((2, "brown")));
+        assert_eq!(iter.next().transpose().unwrap(), Some((3, "fox")));
+        assert_eq!(iter.next().transpose().unwrap(), None);
+
+        let expected_str = vec![(1, "quick"), (2, "brown"), (3, "fox")];
+        let expected_string = vec![
+            (1, "quick".to_string()),
+            (2, "brown".to_string()),
+            (3, "fox".to_string()),
+        ];
+
+        // hash set
+        let decoded_hash_str = deserialize::<HashMap<i32, &str>>(&typ, &collection).unwrap();
+        let decoded_hash_string = deserialize::<HashMap<i32, String>>(&typ, &collection).unwrap();
+        assert_eq!(decoded_hash_str, expected_str.clone().into_iter().collect());
+        assert_eq!(
+            decoded_hash_string,
+            expected_string.clone().into_iter().collect(),
+        );
+
+        // btree set
+        let decoded_btree_str = deserialize::<BTreeMap<i32, &str>>(&typ, &collection).unwrap();
+        let decoded_btree_string = deserialize::<BTreeMap<i32, String>>(&typ, &collection).unwrap();
+        assert_eq!(
+            decoded_btree_str,
+            expected_str.clone().into_iter().collect(),
+        );
+        assert_eq!(decoded_btree_string, expected_string.into_iter().collect(),);
     }
 
     // Checks that both new and old serialization framework
