@@ -217,6 +217,49 @@ impl_strict_type!(
     }
 );
 
+// string
+
+macro_rules! impl_string_type {
+    ($t:ty, $conv:expr $(, $l:lifetime)?) => {
+        impl_strict_type!(
+            "ascii or text",
+            $t,
+            ColumnType::Ascii | ColumnType::Text,
+            $conv
+            $(, $l)?
+        );
+    };
+}
+
+impl_string_type!(
+    &'a str,
+    |typ: &'frame ColumnType, v: Option<FrameSlice<'frame>>| {
+        let val = ensure_not_null(v)?;
+        check_ascii(typ, val)?;
+        Ok(std::str::from_utf8(val)?)
+    },
+    'a
+);
+impl_string_type!(
+    String,
+    |typ: &'frame ColumnType, v: Option<FrameSlice<'frame>>| {
+        let val = ensure_not_null(v)?;
+        check_ascii(typ, val)?;
+        Ok(std::str::from_utf8(val)?.to_string())
+    }
+);
+
+// TODO: Deserialization for string::String<Bytes>
+
+fn check_ascii(typ: &ColumnType, s: &[u8]) -> Result<(), ParseError> {
+    if matches!(typ, ColumnType::Ascii) && !s.is_ascii() {
+        return Err(ParseError::BadIncomingData(
+            "Expected a valid ASCII string".to_string(),
+        ));
+    }
+    Ok(())
+}
+
 // Utilities
 
 fn ensure_not_null(v: Option<FrameSlice>) -> Result<&[u8], ParseError> {
@@ -281,6 +324,39 @@ mod tests {
         assert_eq!(decoded_slice, ORIGINAL_BYTES);
         assert_eq!(decoded_vec, ORIGINAL_BYTES);
         assert_eq!(decoded_bytes, ORIGINAL_BYTES);
+    }
+
+    #[test]
+    fn test_deserialize_ascii() {
+        const ASCII_TEXT: &str = "The quick brown fox jumps over the lazy dog";
+
+        let ascii = make_bytes(ASCII_TEXT.as_bytes());
+
+        let decoded_ascii_str = deserialize::<&str>(&ColumnType::Ascii, &ascii).unwrap();
+        let decoded_ascii_string = deserialize::<String>(&ColumnType::Ascii, &ascii).unwrap();
+        let decoded_text_str = deserialize::<&str>(&ColumnType::Text, &ascii).unwrap();
+        let decoded_text_string = deserialize::<String>(&ColumnType::Text, &ascii).unwrap();
+
+        assert_eq!(decoded_ascii_str, ASCII_TEXT);
+        assert_eq!(decoded_ascii_string, ASCII_TEXT);
+        assert_eq!(decoded_text_str, ASCII_TEXT);
+        assert_eq!(decoded_text_string, ASCII_TEXT);
+    }
+
+    #[test]
+    fn test_deserialize_text() {
+        const UNICODE_TEXT: &str = "Zażółć gęślą jaźń";
+
+        let unicode = make_bytes(UNICODE_TEXT.as_bytes());
+
+        // Should fail because it's not an ASCII string
+        deserialize::<&str>(&ColumnType::Ascii, &unicode).unwrap_err();
+        deserialize::<String>(&ColumnType::Ascii, &unicode).unwrap_err();
+
+        let decoded_text_str = deserialize::<&str>(&ColumnType::Text, &unicode).unwrap();
+        let decoded_text_string = deserialize::<String>(&ColumnType::Text, &unicode).unwrap();
+        assert_eq!(decoded_text_str, UNICODE_TEXT);
+        assert_eq!(decoded_text_string, UNICODE_TEXT);
     }
 
     #[test]
@@ -416,6 +492,13 @@ mod tests {
         // blob
         compat_check::<Vec<u8>>(&ColumnType::Blob, make_bytes(&[]));
         compat_check::<Vec<u8>>(&ColumnType::Blob, make_bytes(&[1, 9, 2, 8, 3, 7, 4, 6, 5]));
+
+        // text types
+        for typ in &[ColumnType::Ascii, ColumnType::Text] {
+            compat_check::<String>(typ, make_bytes("".as_bytes()));
+            compat_check::<String>(typ, make_bytes("foo".as_bytes()));
+            compat_check::<String>(typ, make_bytes("superfragilisticexpialidocious".as_bytes()));
+        }
     }
 
     // Checks that both new and old serialization framework
