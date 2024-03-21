@@ -32,4 +32,78 @@ where
 }
 
 #[cfg(test)]
-mod tests {}
+mod tests {
+    use bytes::{BufMut, Bytes, BytesMut};
+
+    use std::fmt::Debug;
+
+    use crate::frame::frame_errors::ParseError;
+    use crate::frame::response::cql_to_rust::FromCqlVal;
+    use crate::frame::response::result::{deser_cql_value, ColumnType, CqlValue};
+    use crate::frame::types;
+    use crate::types::deserialize::FrameSlice;
+    use crate::types::serialize::value::SerializeCql;
+    use crate::types::serialize::CellWriter;
+
+    use super::DeserializeCql;
+
+    // Checks that both new and old serialization framework
+    // produces the same results in this case
+    fn compat_check<T>(typ: &ColumnType, raw: Bytes)
+    where
+        T: for<'f> DeserializeCql<'f>,
+        T: FromCqlVal<Option<CqlValue>>,
+        T: Debug + PartialEq,
+    {
+        let mut slice = raw.as_ref();
+        let mut cell = types::read_bytes_opt(&mut slice).unwrap();
+        let old = T::from_cql(
+            cell.as_mut()
+                .map(|c| deser_cql_value(typ, c))
+                .transpose()
+                .unwrap(),
+        )
+        .unwrap();
+        let new = deserialize::<T>(typ, &raw).unwrap();
+        assert_eq!(old, new);
+    }
+
+    fn compat_check_serialized<T>(typ: &ColumnType, val: &dyn SerializeCql)
+    where
+        T: for<'f> DeserializeCql<'f>,
+        T: FromCqlVal<Option<CqlValue>>,
+        T: Debug + PartialEq,
+    {
+        let raw = serialize(typ, val);
+        compat_check::<T>(typ, raw);
+    }
+
+    fn deserialize<'frame, T>(typ: &'frame ColumnType, byts: &'frame Bytes) -> Result<T, ParseError>
+    where
+        T: DeserializeCql<'frame>,
+    {
+        <T as DeserializeCql<'frame>>::type_check(typ)?;
+        let mut buf = byts.as_ref();
+        let cell = types::read_bytes_opt(&mut buf)?;
+        let value = cell.map(|cell| FrameSlice::new_subslice(cell, byts));
+        <T as DeserializeCql<'frame>>::deserialize(typ, value)
+    }
+
+    fn make_bytes(cell: &[u8]) -> Bytes {
+        let mut b = BytesMut::new();
+        append_bytes(&mut b, cell);
+        b.freeze()
+    }
+
+    fn serialize(typ: &ColumnType, value: &dyn SerializeCql) -> Bytes {
+        let mut v = Vec::new();
+        let writer = CellWriter::new(&mut v);
+        value.serialize(typ, writer).unwrap();
+        v.into()
+    }
+
+    fn append_bytes(b: &mut impl BufMut, cell: &[u8]) {
+        b.put_i32(cell.len() as i32);
+        b.put_slice(cell);
+    }
+}
