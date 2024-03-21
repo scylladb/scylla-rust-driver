@@ -1,5 +1,7 @@
 //! Provides types for dealing with CQL value deserialization.
 
+use bytes::Bytes;
+
 use super::FrameSlice;
 use crate::frame::{
     frame_errors::ParseError,
@@ -184,11 +186,51 @@ impl_strict_type!(
     }
 );
 
+// blob
+
+impl_strict_type!(
+    "blob",
+    &'a [u8],
+    ColumnType::Blob,
+    |_typ: &'frame ColumnType, v: Option<FrameSlice<'frame>>| {
+        let val = ensure_not_null(v)?;
+        Ok(val)
+    },
+    'a
+);
+impl_strict_type!(
+    "blob",
+    Vec<u8>,
+    ColumnType::Blob,
+    |_typ: &'frame ColumnType, v: Option<FrameSlice<'frame>>| {
+        let val = ensure_not_null(v)?;
+        Ok(val.to_vec())
+    }
+);
+impl_strict_type!(
+    "blob",
+    Bytes,
+    ColumnType::Blob,
+    |_typ: &'frame ColumnType, v: Option<FrameSlice<'frame>>| {
+        let val = ensure_not_null_owned(v)?;
+        Ok(val)
+    }
+);
+
 // Utilities
 
 fn ensure_not_null(v: Option<FrameSlice>) -> Result<&[u8], ParseError> {
     match v {
         Some(v) => Ok(v.as_slice()),
+        None => Err(ParseError::BadIncomingData(
+            "Expected a non-null value".to_string(),
+        )),
+    }
+}
+
+fn ensure_not_null_owned(v: Option<FrameSlice>) -> Result<Bytes, ParseError> {
+    match v {
+        Some(v) => Ok(v.to_bytes()),
         None => Err(ParseError::BadIncomingData(
             "Expected a non-null value".to_string(),
         )),
@@ -225,6 +267,21 @@ mod tests {
     use crate::types::serialize::CellWriter;
 
     use super::DeserializeCql;
+
+    #[test]
+    fn test_deserialize_bytes() {
+        const ORIGINAL_BYTES: &[u8] = &[1, 5, 2, 4, 3];
+
+        let bytes = make_bytes(ORIGINAL_BYTES);
+
+        let decoded_slice = deserialize::<&[u8]>(&ColumnType::Blob, &bytes).unwrap();
+        let decoded_vec = deserialize::<Vec<u8>>(&ColumnType::Blob, &bytes).unwrap();
+        let decoded_bytes = deserialize::<Bytes>(&ColumnType::Blob, &bytes).unwrap();
+
+        assert_eq!(decoded_slice, ORIGINAL_BYTES);
+        assert_eq!(decoded_vec, ORIGINAL_BYTES);
+        assert_eq!(decoded_bytes, ORIGINAL_BYTES);
+    }
 
     #[test]
     fn test_integral() {
@@ -355,6 +412,10 @@ mod tests {
             compat_check_serialized::<BigDecimal>(&ColumnType::Decimal, &num2);
             compat_check_serialized::<BigDecimal>(&ColumnType::Decimal, &num3);
         }
+
+        // blob
+        compat_check::<Vec<u8>>(&ColumnType::Blob, make_bytes(&[]));
+        compat_check::<Vec<u8>>(&ColumnType::Blob, make_bytes(&[1, 9, 2, 8, 3, 7, 4, 6, 5]));
     }
 
     // Checks that both new and old serialization framework
