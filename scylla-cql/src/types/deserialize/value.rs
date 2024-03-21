@@ -7,7 +7,7 @@ use crate::frame::{
     frame_errors::ParseError,
     response::result::{deser_cql_value, ColumnType, CqlValue},
     types,
-    value::CqlVarint,
+    value::{Counter, CqlVarint},
 };
 
 /// A type that can be deserialized from a column value inside a row that was
@@ -260,6 +260,20 @@ fn check_ascii(typ: &ColumnType, s: &[u8]) -> Result<(), ParseError> {
     Ok(())
 }
 
+// counter
+
+impl_strict_type!(
+    "counter",
+    Counter,
+    ColumnType::Counter,
+    |_typ: &'frame ColumnType, v: Option<FrameSlice<'frame>>| {
+        let val = ensure_not_null(v)?;
+        let arr = ensure_exact_length::<8>("counter", val)?;
+        let counter = i64::from_be_bytes(arr);
+        Ok(Counter(counter))
+    }
+);
+
 // Utilities
 
 fn ensure_not_null(v: Option<FrameSlice>) -> Result<&[u8], ParseError> {
@@ -304,7 +318,7 @@ mod tests {
     use crate::frame::response::cql_to_rust::FromCqlVal;
     use crate::frame::response::result::{deser_cql_value, ColumnType, CqlValue};
     use crate::frame::types;
-    use crate::frame::value::CqlVarint;
+    use crate::frame::value::{Counter, CqlVarint};
     use crate::types::deserialize::FrameSlice;
     use crate::types::serialize::value::SerializeCql;
     use crate::types::serialize::CellWriter;
@@ -498,6 +512,12 @@ mod tests {
             compat_check::<String>(typ, make_bytes("".as_bytes()));
             compat_check::<String>(typ, make_bytes("foo".as_bytes()));
             compat_check::<String>(typ, make_bytes("superfragilisticexpialidocious".as_bytes()));
+        }
+
+        // counters
+        for i in 0..63 {
+            let v: i64 = 1 << i;
+            compat_check::<Counter>(&ColumnType::Counter, make_bytes(&v.to_be_bytes()));
         }
     }
 
