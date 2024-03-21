@@ -1,7 +1,10 @@
 //! Provides types for dealing with CQL value deserialization.
 
 use super::FrameSlice;
-use crate::frame::{frame_errors::ParseError, response::result::ColumnType};
+use crate::frame::{
+    frame_errors::ParseError,
+    response::result::{deser_cql_value, ColumnType, CqlValue},
+};
 
 /// A type that can be deserialized from a column value inside a row that was
 /// returned from a query.
@@ -29,6 +32,49 @@ where
         typ: &'frame ColumnType,
         v: Option<FrameSlice<'frame>>,
     ) -> Result<Self, ParseError>;
+}
+
+impl<'frame> DeserializeCql<'frame> for CqlValue {
+    fn type_check(_typ: &ColumnType) -> Result<(), ParseError> {
+        // CqlValue accepts all possible CQL types
+        Ok(())
+    }
+
+    fn deserialize(
+        typ: &'frame ColumnType,
+        v: Option<FrameSlice<'frame>>,
+    ) -> Result<Self, ParseError> {
+        let mut val = ensure_not_null(v)?;
+        let cql = deser_cql_value(typ, &mut val)?;
+        Ok(cql)
+    }
+}
+
+impl<'frame, T> DeserializeCql<'frame> for Option<T>
+where
+    T: DeserializeCql<'frame>,
+{
+    fn type_check(typ: &ColumnType) -> Result<(), ParseError> {
+        T::type_check(typ)
+    }
+
+    fn deserialize(
+        typ: &'frame ColumnType,
+        v: Option<FrameSlice<'frame>>,
+    ) -> Result<Self, ParseError> {
+        v.map(|_| T::deserialize(typ, v)).transpose()
+    }
+}
+
+// Utilities
+
+fn ensure_not_null(v: Option<FrameSlice>) -> Result<&[u8], ParseError> {
+    match v {
+        Some(v) => Ok(v.as_slice()),
+        None => Err(ParseError::BadIncomingData(
+            "Expected a non-null value".to_string(),
+        )),
+    }
 }
 
 #[cfg(test)]
