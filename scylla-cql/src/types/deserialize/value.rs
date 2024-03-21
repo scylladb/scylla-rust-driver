@@ -521,6 +521,44 @@ impl_strict_type!(
         Ok(CqlTimeuuid::from(uuid::Uuid::from_u128(i)))
     }
 );
+
+/// A value that may be empty or not.
+///
+/// In CQL, some types can have a special value of "empty", represented as
+/// a serialized value of length 0. An example of this are integral types:
+/// the "int" type can actually hold 2^32 + 1 possible values because of this
+/// quirk. Note that this is distinct from being NULL.
+///
+/// `MaybeEmpty` was introduced to help support this quirk for Rust types
+/// which can't represent the empty, additional value.
+#[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Copy)]
+pub enum MaybeEmpty<T> {
+    Empty,
+    Value(T),
+}
+
+impl<'frame, T> DeserializeCql<'frame> for MaybeEmpty<T>
+where
+    T: DeserializeCql<'frame>,
+{
+    fn type_check(typ: &ColumnType) -> Result<(), ParseError> {
+        <T as DeserializeCql<'frame>>::type_check(typ)
+    }
+
+    fn deserialize(
+        typ: &'frame ColumnType,
+        v: Option<FrameSlice<'frame>>,
+    ) -> Result<Self, ParseError> {
+        let val = ensure_not_null(v)?;
+        if val.is_empty() {
+            Ok(MaybeEmpty::Empty)
+        } else {
+            let v = <T as DeserializeCql<'frame>>::deserialize(typ, v)?;
+            Ok(MaybeEmpty::Value(v))
+        }
+    }
+}
+
 // Utilities
 
 fn ensure_not_null(v: Option<FrameSlice>) -> Result<&[u8], ParseError> {
@@ -573,6 +611,7 @@ mod tests {
     use crate::frame::value::{
         Counter, CqlDate, CqlDuration, CqlTime, CqlTimestamp, CqlTimeuuid, CqlVarint,
     };
+    use crate::types::deserialize::value::MaybeEmpty;
     use crate::types::deserialize::FrameSlice;
     use crate::types::serialize::value::SerializeCql;
     use crate::types::serialize::CellWriter;
@@ -874,6 +913,25 @@ mod tests {
         compat_check_serialized::<CqlTimeuuid>(&ColumnType::Timeuuid, &CqlTimeuuid::from(uuid1));
         compat_check_serialized::<CqlTimeuuid>(&ColumnType::Timeuuid, &CqlTimeuuid::from(uuid2));
         compat_check_serialized::<CqlTimeuuid>(&ColumnType::Timeuuid, &CqlTimeuuid::from(uuid3));
+
+        // empty values
+        // ...are implemented via MaybeEmpty and are handled in other tests
+
+        // nulls, represented via option
+        compat_check_serialized::<Option<i32>>(&ColumnType::Int, &123i32);
+        compat_check::<Option<i32>>(&ColumnType::Int, make_null());
+    }
+
+    #[test]
+    fn test_maybe_empty() {
+        let empty = make_bytes(&[]);
+        let decoded_empty = deserialize::<MaybeEmpty<i8>>(&ColumnType::TinyInt, &empty).unwrap();
+        assert_eq!(decoded_empty, MaybeEmpty::Empty);
+
+        let non_empty = make_bytes(&[0x01]);
+        let decoded_non_empty =
+            deserialize::<MaybeEmpty<i8>>(&ColumnType::TinyInt, &non_empty).unwrap();
+        assert_eq!(decoded_non_empty, MaybeEmpty::Value(0x01));
     }
 
     // Checks that both new and old serialization framework
@@ -941,5 +999,15 @@ mod tests {
     fn append_bytes(b: &mut impl BufMut, cell: &[u8]) {
         b.put_i32(cell.len() as i32);
         b.put_slice(cell);
+    }
+
+    fn make_null() -> Bytes {
+        let mut b = BytesMut::new();
+        append_null(&mut b);
+        b.freeze()
+    }
+
+    fn append_null(b: &mut impl BufMut) {
+        b.put_i32(-1);
     }
 }
