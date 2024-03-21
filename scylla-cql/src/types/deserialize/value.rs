@@ -10,7 +10,7 @@ use super::{DeserializationError, FrameSlice, TypeCheckError};
 use crate::frame::frame_errors::ParseError;
 use crate::frame::response::result::{deser_cql_value, ColumnType, CqlValue};
 use crate::frame::types;
-use crate::frame::value::{CqlDecimal, CqlVarint};
+use crate::frame::value::{Counter, CqlDecimal, CqlVarint};
 
 /// A type that can be deserialized from a column value inside a row that was
 /// returned from a query.
@@ -343,6 +343,19 @@ impl_string_type!(
 
 // TODO: Consider support for deserialization of string::String<Bytes>
 
+// counter
+
+impl_strict_type!(
+    Counter,
+    Counter,
+    |typ: &'frame ColumnType, v: Option<FrameSlice<'frame>>| {
+        let val = ensure_not_null_slice::<Self>(typ, v)?;
+        let arr = ensure_exact_length::<Self, 8>(typ, val)?;
+        let counter = i64::from_be_bytes(*arr);
+        Ok(Counter(counter))
+    }
+);
+
 // Utilities
 
 fn ensure_not_null_frame_slice<'frame, T>(
@@ -534,7 +547,7 @@ mod tests {
     use crate::frame::response::cql_to_rust::FromCqlVal;
     use crate::frame::response::result::{deser_cql_value, ColumnType, CqlValue};
     use crate::frame::types;
-    use crate::frame::value::{CqlDecimal, CqlVarint};
+    use crate::frame::value::{Counter, CqlDecimal, CqlVarint};
     use crate::types::deserialize::{DeserializationError, FrameSlice};
     use crate::types::serialize::value::SerializeValue;
     use crate::types::serialize::CellWriter;
@@ -751,6 +764,12 @@ mod tests {
             compat_check::<String>(typ, make_bytes("".as_bytes()));
             compat_check::<String>(typ, make_bytes("foo".as_bytes()));
             compat_check::<String>(typ, make_bytes("superfragilisticexpialidocious".as_bytes()));
+        }
+
+        // counters
+        for i in 0..63 {
+            let v: i64 = 1 << i;
+            compat_check::<Counter>(&ColumnType::Counter, make_bytes(&v.to_be_bytes()));
         }
     }
 
