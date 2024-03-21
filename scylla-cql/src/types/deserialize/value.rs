@@ -1,6 +1,10 @@
 //! Provides types for dealing with CQL value deserialization.
 
-use std::net::IpAddr;
+use std::{
+    collections::{BTreeSet, HashSet},
+    hash::{BuildHasher, Hash},
+    net::IpAddr,
+};
 
 use bytes::Bytes;
 use uuid::Uuid;
@@ -9,7 +13,7 @@ use std::fmt::Display;
 
 use thiserror::Error;
 
-use super::{DeserializationError, FrameSlice, TypeCheckError};
+use super::{make_error_replace_rust_name, DeserializationError, FrameSlice, TypeCheckError};
 use crate::frame::frame_errors::ParseError;
 use crate::frame::response::result::{deser_cql_value, ColumnType, CqlValue};
 use crate::frame::types;
@@ -629,6 +633,196 @@ where
     }
 }
 
+// collections
+
+make_error_replace_rust_name!(
+    typck_error_replace_rust_name,
+    TypeCheckError,
+    BuiltinTypeCheckError
+);
+
+make_error_replace_rust_name!(
+    deser_error_replace_rust_name,
+    DeserializationError,
+    BuiltinDeserializationError
+);
+
+// lists and sets
+
+/// An iterator over either a CQL set or list.
+pub struct ListlikeIterator<'frame, T> {
+    coll_typ: &'frame ColumnType,
+    elem_typ: &'frame ColumnType,
+    raw_iter: FixedLengthBytesSequenceIterator<'frame>,
+    phantom_data: std::marker::PhantomData<T>,
+}
+
+impl<'frame, T> ListlikeIterator<'frame, T> {
+    fn new(
+        coll_typ: &'frame ColumnType,
+        elem_typ: &'frame ColumnType,
+        count: usize,
+        slice: FrameSlice<'frame>,
+    ) -> Self {
+        Self {
+            coll_typ,
+            elem_typ,
+            raw_iter: FixedLengthBytesSequenceIterator::new(count, slice),
+            phantom_data: std::marker::PhantomData,
+        }
+    }
+}
+
+impl<'frame, T> DeserializeValue<'frame> for ListlikeIterator<'frame, T>
+where
+    T: DeserializeValue<'frame>,
+{
+    fn type_check(typ: &ColumnType) -> Result<(), TypeCheckError> {
+        match typ {
+            ColumnType::List(el_t) | ColumnType::Set(el_t) => {
+                <T as DeserializeValue<'frame>>::type_check(el_t).map_err(|err| {
+                    mk_typck_err::<Self>(
+                        typ,
+                        SetOrListTypeCheckErrorKind::ElementTypeCheckFailed(err),
+                    )
+                })
+            }
+            _ => Err(mk_typck_err::<Self>(
+                typ,
+                BuiltinTypeCheckErrorKind::SetOrListError(
+                    SetOrListTypeCheckErrorKind::NotSetOrList,
+                ),
+            )),
+        }
+    }
+
+    fn deserialize(
+        typ: &'frame ColumnType,
+        v: Option<FrameSlice<'frame>>,
+    ) -> Result<Self, DeserializationError> {
+        let mut v = ensure_not_null_frame_slice::<Self>(typ, v)?;
+        let count = types::read_int_length(v.as_slice_mut()).map_err(|err| {
+            mk_deser_err::<Self>(
+                typ,
+                SetOrListDeserializationErrorKind::LengthDeserializationFailed(
+                    DeserializationError::new(err),
+                ),
+            )
+        })?;
+        let elem_typ = match typ {
+            ColumnType::List(elem_typ) | ColumnType::Set(elem_typ) => elem_typ,
+            _ => {
+                unreachable!("Typecheck should have prevented this scenario!")
+            }
+        };
+        Ok(Self::new(typ, elem_typ, count, v))
+    }
+}
+
+impl<'frame, T> Iterator for ListlikeIterator<'frame, T>
+where
+    T: DeserializeValue<'frame>,
+{
+    type Item = Result<T, DeserializationError>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let raw = self.raw_iter.next()?.map_err(|err| {
+            mk_deser_err::<Self>(
+                self.coll_typ,
+                BuiltinDeserializationErrorKind::GenericParseError(err),
+            )
+        });
+        Some(raw.and_then(|raw| {
+            T::deserialize(self.elem_typ, raw).map_err(|err| {
+                mk_deser_err::<Self>(
+                    self.coll_typ,
+                    SetOrListDeserializationErrorKind::ElementDeserializationFailed(err),
+                )
+            })
+        }))
+    }
+
+    #[inline]
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        self.raw_iter.size_hint()
+    }
+}
+
+impl<'frame, T> DeserializeValue<'frame> for Vec<T>
+where
+    T: DeserializeValue<'frame>,
+{
+    fn type_check(typ: &ColumnType) -> Result<(), TypeCheckError> {
+        // It makes sense for both Set and List to deserialize to Vec.
+        ListlikeIterator::<'frame, T>::type_check(typ)
+            .map_err(typck_error_replace_rust_name::<Self>)
+    }
+
+    fn deserialize(
+        typ: &'frame ColumnType,
+        v: Option<FrameSlice<'frame>>,
+    ) -> Result<Self, DeserializationError> {
+        ListlikeIterator::<'frame, T>::deserialize(typ, v)
+            .and_then(|it| it.collect::<Result<_, DeserializationError>>())
+            .map_err(deser_error_replace_rust_name::<Self>)
+    }
+}
+
+impl<'frame, T> DeserializeValue<'frame> for BTreeSet<T>
+where
+    T: DeserializeValue<'frame> + Ord,
+{
+    fn type_check(typ: &ColumnType) -> Result<(), TypeCheckError> {
+        // It only makes sense for Set to deserialize to BTreeSet.
+        // Deserializing List straight to BTreeSet would be lossy.
+        match typ {
+            ColumnType::Set(el_t) => <T as DeserializeValue<'frame>>::type_check(el_t)
+                .map_err(typck_error_replace_rust_name::<Self>),
+            _ => Err(mk_typck_err::<Self>(
+                typ,
+                SetOrListTypeCheckErrorKind::NotSet,
+            )),
+        }
+    }
+
+    fn deserialize(
+        typ: &'frame ColumnType,
+        v: Option<FrameSlice<'frame>>,
+    ) -> Result<Self, DeserializationError> {
+        ListlikeIterator::<'frame, T>::deserialize(typ, v)
+            .and_then(|it| it.collect::<Result<_, DeserializationError>>())
+            .map_err(deser_error_replace_rust_name::<Self>)
+    }
+}
+
+impl<'frame, T, S> DeserializeValue<'frame> for HashSet<T, S>
+where
+    T: DeserializeValue<'frame> + Eq + Hash,
+    S: BuildHasher + Default + 'frame,
+{
+    fn type_check(typ: &ColumnType) -> Result<(), TypeCheckError> {
+        // It only makes sense for Set to deserialize to HashSet.
+        // Deserializing List straight to HashSet would be lossy.
+        match typ {
+            ColumnType::Set(el_t) => <T as DeserializeValue<'frame>>::type_check(el_t)
+                .map_err(typck_error_replace_rust_name::<Self>),
+            _ => Err(mk_typck_err::<Self>(
+                typ,
+                SetOrListTypeCheckErrorKind::NotSet,
+            )),
+        }
+    }
+
+    fn deserialize(
+        typ: &'frame ColumnType,
+        v: Option<FrameSlice<'frame>>,
+    ) -> Result<Self, DeserializationError> {
+        ListlikeIterator::<'frame, T>::deserialize(typ, v)
+            .and_then(|it| it.collect::<Result<_, DeserializationError>>())
+            .map_err(deser_error_replace_rust_name::<Self>)
+    }
+}
+
 // Utilities
 
 fn ensure_not_null_frame_slice<'frame, T>(
@@ -665,6 +859,37 @@ fn ensure_exact_length<'frame, T, const SIZE: usize>(
             },
         )
     })
+}
+
+// Helper iterators
+
+/// Iterates over a sequence of `[bytes]` items from a frame subslice, expecting
+/// a particular number of items.
+///
+/// The iterator does not consider it to be an error if there are some bytes
+/// remaining in the slice after parsing requested amount of items.
+#[derive(Clone, Copy, Debug)]
+pub struct FixedLengthBytesSequenceIterator<'frame> {
+    slice: FrameSlice<'frame>,
+    remaining: usize,
+}
+
+impl<'frame> FixedLengthBytesSequenceIterator<'frame> {
+    fn new(count: usize, slice: FrameSlice<'frame>) -> Self {
+        Self {
+            slice,
+            remaining: count,
+        }
+    }
+}
+
+impl<'frame> Iterator for FixedLengthBytesSequenceIterator<'frame> {
+    type Item = Result<Option<FrameSlice<'frame>>, ParseError>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        self.remaining = self.remaining.checked_sub(1)?;
+        Some(self.slice.read_cql_bytes())
+    }
 }
 
 // Error facilities
@@ -726,6 +951,16 @@ pub enum BuiltinTypeCheckErrorKind {
         /// The list of types that the Rust type can deserialize from.
         expected: &'static [ColumnType],
     },
+
+    /// A type check failure specific to a CQL set or list.
+    SetOrListError(SetOrListTypeCheckErrorKind),
+}
+
+impl From<SetOrListTypeCheckErrorKind> for BuiltinTypeCheckErrorKind {
+    #[inline]
+    fn from(value: SetOrListTypeCheckErrorKind) -> Self {
+        BuiltinTypeCheckErrorKind::SetOrListError(value)
+    }
 }
 
 impl Display for BuiltinTypeCheckErrorKind {
@@ -733,6 +968,35 @@ impl Display for BuiltinTypeCheckErrorKind {
         match self {
             BuiltinTypeCheckErrorKind::MismatchedType { expected } => {
                 write!(f, "expected one of the CQL types: {expected:?}")
+            }
+            BuiltinTypeCheckErrorKind::SetOrListError(err) => err.fmt(f),
+        }
+    }
+}
+
+/// Describes why type checking of a set or list type failed.
+#[derive(Debug, Clone)]
+#[non_exhaustive]
+pub enum SetOrListTypeCheckErrorKind {
+    /// The CQL type is neither a set not a list.
+    NotSetOrList,
+    /// The CQL type is not a set.
+    NotSet,
+    /// Incompatible element types.
+    ElementTypeCheckFailed(TypeCheckError),
+}
+
+impl Display for SetOrListTypeCheckErrorKind {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            SetOrListTypeCheckErrorKind::NotSetOrList => {
+                f.write_str("the CQL type the Rust type was attempted to be type checked against was neither a set nor a list")
+            }
+            SetOrListTypeCheckErrorKind::NotSet => {
+                f.write_str("the CQL type the Rust type was attempted to be type checked against was not a set")
+            }
+            SetOrListTypeCheckErrorKind::ElementTypeCheckFailed(err) => {
+                write!(f, "the set or list element types between the CQL type and the Rust type failed to type check against each other: {}", err)
             }
         }
     }
@@ -796,6 +1060,9 @@ pub enum BuiltinDeserializationErrorKind {
 
     /// The length of read value in bytes is not suitable for IP address.
     BadInetLength { got: usize },
+
+    /// A deserialization failure specific to a CQL set or list.
+    SetOrListError(SetOrListDeserializationErrorKind),
 }
 
 impl Display for BuiltinDeserializationErrorKind {
@@ -823,7 +1090,39 @@ impl Display for BuiltinDeserializationErrorKind {
                 f,
                 "the length of read value in bytes ({got}) is not suitable for IP address; expected 4 or 16"
             ),
+            BuiltinDeserializationErrorKind::SetOrListError(err) => err.fmt(f),
         }
+    }
+}
+
+/// Describes why deserialization of a set or list type failed.
+#[derive(Debug)]
+#[non_exhaustive]
+pub enum SetOrListDeserializationErrorKind {
+    /// Failed to deserialize set or list's length.
+    LengthDeserializationFailed(DeserializationError),
+
+    /// One of the elements of the set/list failed to deserialize.
+    ElementDeserializationFailed(DeserializationError),
+}
+
+impl Display for SetOrListDeserializationErrorKind {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            SetOrListDeserializationErrorKind::LengthDeserializationFailed(err) => {
+                write!(f, "failed to deserialize set or list's length: {}", err)
+            }
+            SetOrListDeserializationErrorKind::ElementDeserializationFailed(err) => {
+                write!(f, "failed to deserialize one of the elements: {}", err)
+            }
+        }
+    }
+}
+
+impl From<SetOrListDeserializationErrorKind> for BuiltinDeserializationErrorKind {
+    #[inline]
+    fn from(err: SetOrListDeserializationErrorKind) -> Self {
+        Self::SetOrListError(err)
     }
 }
 
@@ -832,6 +1131,7 @@ mod tests {
     use bytes::{BufMut, Bytes, BytesMut};
     use uuid::Uuid;
 
+    use std::collections::{BTreeSet, HashSet};
     use std::fmt::Debug;
     use std::net::{IpAddr, Ipv6Addr};
 
@@ -845,7 +1145,10 @@ mod tests {
     use crate::types::serialize::value::SerializeValue;
     use crate::types::serialize::CellWriter;
 
-    use super::{mk_deser_err, BuiltinDeserializationErrorKind, DeserializeValue, MaybeEmpty};
+    use super::{
+        mk_deser_err, BuiltinDeserializationErrorKind, DeserializeValue, ListlikeIterator,
+        MaybeEmpty,
+    };
 
     #[test]
     fn test_deserialize_bytes() {
@@ -1204,6 +1507,95 @@ mod tests {
         // nulls, represented via Option
         compat_check_serialized::<Option<i32>>(&ColumnType::Int, &123i32);
         compat_check::<Option<i32>>(&ColumnType::Int, make_null());
+
+        // collections
+        let mut list = BytesMut::new();
+        list.put_i32(3);
+        append_bytes(&mut list, &123i32.to_be_bytes());
+        append_bytes(&mut list, &456i32.to_be_bytes());
+        append_bytes(&mut list, &789i32.to_be_bytes());
+        let list = make_bytes(&list);
+        let list_type = ColumnType::List(Box::new(ColumnType::Int));
+        compat_check::<Vec<i32>>(&list_type, list.clone());
+        // Support for deserialization List -> {Hash,BTree}Set was removed not to cause confusion.
+        // Such deserialization would be lossy, which is unwanted.
+
+        let mut set = BytesMut::new();
+        set.put_i32(3);
+        append_bytes(&mut set, &123i32.to_be_bytes());
+        append_bytes(&mut set, &456i32.to_be_bytes());
+        append_bytes(&mut set, &789i32.to_be_bytes());
+        let set = make_bytes(&set);
+        let set_type = ColumnType::Set(Box::new(ColumnType::Int));
+        compat_check::<Vec<i32>>(&set_type, set.clone());
+        compat_check::<BTreeSet<i32>>(&set_type, set.clone());
+        compat_check::<HashSet<i32>>(&set_type, set);
+    }
+
+    #[test]
+    fn test_maybe_empty() {
+        let empty = make_bytes(&[]);
+        let decoded_empty = deserialize::<MaybeEmpty<i8>>(&ColumnType::TinyInt, &empty).unwrap();
+        assert_eq!(decoded_empty, MaybeEmpty::Empty);
+
+        let non_empty = make_bytes(&[0x01]);
+        let decoded_non_empty =
+            deserialize::<MaybeEmpty<i8>>(&ColumnType::TinyInt, &non_empty).unwrap();
+        assert_eq!(decoded_non_empty, MaybeEmpty::Value(0x01));
+    }
+
+    #[test]
+    fn test_list_and_set() {
+        let mut collection_contents = BytesMut::new();
+        collection_contents.put_i32(3);
+        append_bytes(&mut collection_contents, "quick".as_bytes());
+        append_bytes(&mut collection_contents, "brown".as_bytes());
+        append_bytes(&mut collection_contents, "fox".as_bytes());
+
+        let collection = make_bytes(&collection_contents);
+
+        let list_typ = ColumnType::List(Box::new(ColumnType::Ascii));
+        let set_typ = ColumnType::Set(Box::new(ColumnType::Ascii));
+
+        // iterator
+        let mut iter = deserialize::<ListlikeIterator<&str>>(&list_typ, &collection).unwrap();
+        assert_eq!(iter.next().transpose().unwrap(), Some("quick"));
+        assert_eq!(iter.next().transpose().unwrap(), Some("brown"));
+        assert_eq!(iter.next().transpose().unwrap(), Some("fox"));
+        assert_eq!(iter.next().transpose().unwrap(), None);
+
+        let expected_vec_str = vec!["quick", "brown", "fox"];
+        let expected_vec_string = vec!["quick".to_string(), "brown".to_string(), "fox".to_string()];
+
+        // list
+        let decoded_vec_str = deserialize::<Vec<&str>>(&list_typ, &collection).unwrap();
+        let decoded_vec_string = deserialize::<Vec<String>>(&list_typ, &collection).unwrap();
+        assert_eq!(decoded_vec_str, expected_vec_str);
+        assert_eq!(decoded_vec_string, expected_vec_string);
+
+        // hash set
+        let decoded_hash_str = deserialize::<HashSet<&str>>(&set_typ, &collection).unwrap();
+        let decoded_hash_string = deserialize::<HashSet<String>>(&set_typ, &collection).unwrap();
+        assert_eq!(
+            decoded_hash_str,
+            expected_vec_str.clone().into_iter().collect(),
+        );
+        assert_eq!(
+            decoded_hash_string,
+            expected_vec_string.clone().into_iter().collect(),
+        );
+
+        // btree set
+        let decoded_btree_str = deserialize::<BTreeSet<&str>>(&set_typ, &collection).unwrap();
+        let decoded_btree_string = deserialize::<BTreeSet<String>>(&set_typ, &collection).unwrap();
+        assert_eq!(
+            decoded_btree_str,
+            expected_vec_str.clone().into_iter().collect(),
+        );
+        assert_eq!(
+            decoded_btree_string,
+            expected_vec_string.into_iter().collect(),
+        );
     }
 
     // Checks that both new and old serialization framework

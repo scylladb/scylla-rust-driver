@@ -234,6 +234,36 @@ impl Display for DeserializationError {
     }
 }
 
+// This is a hack to enable setting the proper Rust type name in error messages,
+// even though the error originates from some helper type used underneath.
+// ASSUMPTION: This should be used:
+// - ONLY in proper type_check()/deserialize() implementation,
+// - BEFORE an error is cloned (because otherwise the Arc::get_mut fails).
+macro_rules! make_error_replace_rust_name {
+    ($fn_name: ident, $outer_err: ty, $inner_err: ty) => {
+        fn $fn_name<RustT>(mut err: $outer_err) -> $outer_err {
+            // Safety: the assumed usage of this function guarantees that the Arc has not yet been cloned.
+            let arc_mut = std::sync::Arc::get_mut(&mut err.0).unwrap();
+
+            let rust_name: &mut &str = {
+                if let Some(err) = arc_mut.downcast_mut::<$inner_err>() {
+                    &mut err.rust_name
+                } else {
+                    unreachable!(concat!(
+                        "This function is assumed to be called only on built-in ",
+                        stringify!($inner_err),
+                        " kinds."
+                    ))
+                }
+            };
+
+            *rust_name = std::any::type_name::<RustT>();
+            err
+        }
+    };
+}
+use make_error_replace_rust_name;
+
 #[cfg(test)]
 mod tests {
     use bytes::{Bytes, BytesMut};
