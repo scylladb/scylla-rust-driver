@@ -1095,6 +1095,111 @@ impl_tuple_multiple!(
     t0, t1, t2, t3, t4, t5, t6, t7, t8, t9, t10, t11, t12, t13, t14, t15
 );
 
+// udts
+
+/// An iterator over fields of a User Defined Type.
+///
+/// # Note
+///
+/// A serialized UDT will generally have one value for each field, but it is
+/// allowed to have fewer. This iterator differentiates null values
+/// from non-existent values in the following way:
+///
+/// - `None` - missing from the serialized form
+/// - `Some(None)` - present, but null
+/// - `Some(Some(...))` - non-null, present value
+pub struct UdtIterator<'frame> {
+    all_fields: &'frame [(String, ColumnType)],
+    type_name: &'frame str,
+    keyspace: &'frame str,
+    remaining_fields: &'frame [(String, ColumnType)],
+    raw_iter: BytesSequenceIterator<'frame>,
+}
+
+impl<'frame> UdtIterator<'frame> {
+    fn new(
+        fields: &'frame [(String, ColumnType)],
+        type_name: &'frame str,
+        keyspace: &'frame str,
+        slice: FrameSlice<'frame>,
+    ) -> Self {
+        Self {
+            all_fields: fields,
+            remaining_fields: fields,
+            type_name,
+            keyspace,
+            raw_iter: BytesSequenceIterator::new(slice),
+        }
+    }
+
+    #[inline]
+    pub fn fields(&self) -> &'frame [(String, ColumnType)] {
+        self.remaining_fields
+    }
+}
+
+impl<'frame> DeserializeValue<'frame> for UdtIterator<'frame> {
+    fn type_check(typ: &ColumnType) -> Result<(), TypeCheckError> {
+        match typ {
+            ColumnType::UserDefinedType { .. } => Ok(()),
+            _ => Err(mk_typck_err::<Self>(typ, UdtTypeCheckErrorKind::NotUdt)),
+        }
+    }
+
+    fn deserialize(
+        typ: &'frame ColumnType,
+        v: Option<FrameSlice<'frame>>,
+    ) -> Result<Self, DeserializationError> {
+        let v = ensure_not_null_frame_slice::<Self>(typ, v)?;
+        let (fields, type_name, keyspace) = match typ {
+            ColumnType::UserDefinedType {
+                field_types,
+                type_name,
+                keyspace,
+            } => (field_types.as_ref(), type_name.as_ref(), keyspace.as_ref()),
+            _ => {
+                unreachable!("Typecheck should have prevented this scenario!")
+            }
+        };
+        Ok(Self::new(fields, type_name, keyspace, v))
+    }
+}
+
+impl<'frame> Iterator for UdtIterator<'frame> {
+    type Item = (
+        &'frame (String, ColumnType),
+        Result<Option<Option<FrameSlice<'frame>>>, DeserializationError>,
+    );
+
+    fn next(&mut self) -> Option<Self::Item> {
+        // TODO: Should we fail when there are too many fields?
+        let (head, fields) = self.remaining_fields.split_first()?;
+        self.remaining_fields = fields;
+        let raw_res = match self.raw_iter.next() {
+            // The field is there and it was parsed correctly
+            Some(Ok(raw)) => Ok(Some(raw)),
+
+            // There were some bytes but they didn't parse as correct field value
+            Some(Err(err)) => Err(mk_deser_err::<Self>(
+                &ColumnType::UserDefinedType {
+                    type_name: self.type_name.to_owned(),
+                    keyspace: self.keyspace.to_owned(),
+                    field_types: self.all_fields.to_owned(),
+                },
+                BuiltinDeserializationErrorKind::GenericParseError(err),
+            )),
+
+            // The field is just missing from the serialized form
+            None => Ok(None),
+        };
+        Some((head, raw_res))
+    }
+
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        self.raw_iter.size_hint()
+    }
+}
+
 // Utilities
 
 fn ensure_not_null_frame_slice<'frame, T>(
@@ -1182,6 +1287,39 @@ impl<'frame> Iterator for FixedLengthBytesSequenceIterator<'frame> {
     }
 }
 
+/// Iterates over a sequence of `[bytes]` items from a frame subslice.
+///
+/// The `[bytes]` items are parsed until the end of subslice is reached.
+#[derive(Clone, Copy, Debug)]
+pub struct BytesSequenceIterator<'frame> {
+    slice: FrameSlice<'frame>,
+}
+
+impl<'frame> BytesSequenceIterator<'frame> {
+    fn new(slice: FrameSlice<'frame>) -> Self {
+        Self { slice }
+    }
+}
+
+impl<'frame> From<FrameSlice<'frame>> for BytesSequenceIterator<'frame> {
+    #[inline]
+    fn from(slice: FrameSlice<'frame>) -> Self {
+        Self::new(slice)
+    }
+}
+
+impl<'frame> Iterator for BytesSequenceIterator<'frame> {
+    type Item = Result<Option<FrameSlice<'frame>>, ParseError>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.slice.as_slice().is_empty() {
+            None
+        } else {
+            Some(self.slice.read_cql_bytes())
+        }
+    }
+}
+
 // Error facilities
 
 /// Type checking of one of the built-in types failed.
@@ -1250,6 +1388,9 @@ pub enum BuiltinTypeCheckErrorKind {
 
     /// A type check failure specific to a CQL tuple.
     TupleError(TupleTypeCheckErrorKind),
+
+    /// A type check failure specific to a CQL UDT.
+    UdtError(UdtTypeCheckErrorKind),
 }
 
 impl From<SetOrListTypeCheckErrorKind> for BuiltinTypeCheckErrorKind {
@@ -1273,6 +1414,13 @@ impl From<TupleTypeCheckErrorKind> for BuiltinTypeCheckErrorKind {
     }
 }
 
+impl From<UdtTypeCheckErrorKind> for BuiltinTypeCheckErrorKind {
+    #[inline]
+    fn from(value: UdtTypeCheckErrorKind) -> Self {
+        BuiltinTypeCheckErrorKind::UdtError(value)
+    }
+}
+
 impl Display for BuiltinTypeCheckErrorKind {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
@@ -1282,6 +1430,7 @@ impl Display for BuiltinTypeCheckErrorKind {
             BuiltinTypeCheckErrorKind::SetOrListError(err) => err.fmt(f),
             BuiltinTypeCheckErrorKind::MapError(err) => err.fmt(f),
             BuiltinTypeCheckErrorKind::TupleError(err) => err.fmt(f),
+            BuiltinTypeCheckErrorKind::UdtError(err) => err.fmt(f),
         }
     }
 }
@@ -1389,6 +1538,25 @@ impl Display for TupleTypeCheckErrorKind {
                 position,
                 err
             )
+        }
+    }
+}
+
+/// Describes why type checking of a user defined type failed.
+#[derive(Debug, Clone)]
+#[non_exhaustive]
+pub enum UdtTypeCheckErrorKind {
+    /// The CQL type is not a user defined type.
+    NotUdt,
+}
+
+impl Display for UdtTypeCheckErrorKind {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            UdtTypeCheckErrorKind::NotUdt => write!(
+                f,
+                "the CQL type the Rust type was attempted to be type checked against is not a UDT"
+            ),
         }
     }
 }
@@ -1609,7 +1777,7 @@ mod tests {
     use crate::frame::value::{
         Counter, CqlDate, CqlDecimal, CqlDuration, CqlTime, CqlTimestamp, CqlTimeuuid, CqlVarint,
     };
-    use crate::types::deserialize::{DeserializationError, FrameSlice};
+    use crate::types::deserialize::{DeserializationError, FrameSlice, TypeCheckError};
     use crate::types::serialize::value::SerializeValue;
     use crate::types::serialize::CellWriter;
 
@@ -2140,6 +2308,38 @@ mod tests {
 
         let tup = deserialize::<(i32, &str, Option<Uuid>)>(&typ, &tuple).unwrap();
         assert_eq!(tup, (42, "foo", None));
+    }
+
+    #[test]
+    fn test_custom_type_parser() {
+        #[derive(Default, Debug, PartialEq, Eq)]
+        struct SwappedPair<A, B>(B, A);
+        impl<'frame, A, B> DeserializeValue<'frame> for SwappedPair<A, B>
+        where
+            A: DeserializeValue<'frame>,
+            B: DeserializeValue<'frame>,
+        {
+            fn type_check(typ: &ColumnType) -> Result<(), TypeCheckError> {
+                <(B, A) as DeserializeValue<'frame>>::type_check(typ)
+            }
+
+            fn deserialize(
+                typ: &'frame ColumnType,
+                v: Option<FrameSlice<'frame>>,
+            ) -> Result<Self, DeserializationError> {
+                <(B, A) as DeserializeValue<'frame>>::deserialize(typ, v).map(|(b, a)| Self(b, a))
+            }
+        }
+
+        let mut tuple_contents = BytesMut::new();
+        append_bytes(&mut tuple_contents, "foo".as_bytes());
+        append_bytes(&mut tuple_contents, &42i32.to_be_bytes());
+        let tuple = make_bytes(&tuple_contents);
+
+        let typ = ColumnType::Tuple(vec![ColumnType::Ascii, ColumnType::Int]);
+
+        let tup = deserialize::<SwappedPair<i32, &str>>(&typ, &tuple).unwrap();
+        assert_eq!(tup, SwappedPair("foo", 42));
     }
 
     // Checks that both new and old serialization framework
