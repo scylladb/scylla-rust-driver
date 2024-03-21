@@ -27,6 +27,7 @@ use tracing::instrument::WithSubscriber;
 use tracing::{debug, warn};
 use uuid::Uuid;
 
+#[cfg(feature = "unstable-tablets")]
 use super::locator::tablets::{RawTablet, Tablet, TabletsInfo};
 use super::node::{KnownNode, NodeAddr};
 use super::NodeRef;
@@ -119,6 +120,7 @@ struct ClusterWorker {
 
     // Channel used to receive info about new tablets from custom payload in responses
     // sent by server.
+    #[cfg(feature = "unstable-tablets")]
     tablets_channel: tokio::sync::mpsc::Receiver<(TableSpec, RawTablet)>,
 
     // Keyspace send in "USE <keyspace name>" when opening each connection
@@ -152,7 +154,10 @@ impl Cluster {
         fetch_schema_metadata: bool,
         host_filter: Option<Arc<dyn HostFilter>>,
         cluster_metadata_refresh_interval: Duration,
-        tablet_receiver: tokio::sync::mpsc::Receiver<(TableSpec, RawTablet)>,
+        #[cfg(feature = "unstable-tablets")] tablet_receiver: tokio::sync::mpsc::Receiver<(
+            TableSpec,
+            RawTablet,
+        )>,
     ) -> Result<Cluster, NewSessionError> {
         let (refresh_sender, refresh_receiver) = tokio::sync::mpsc::channel(32);
         let (use_keyspace_sender, use_keyspace_receiver) = tokio::sync::mpsc::channel(32);
@@ -179,6 +184,7 @@ impl Cluster {
             &HashMap::new(),
             &None,
             host_filter.as_deref(),
+            #[cfg(feature = "unstable-tablets")]
             TabletsInfo::new(),
         )
         .await;
@@ -195,6 +201,7 @@ impl Cluster {
             refresh_channel: refresh_receiver,
             server_events_channel: server_events_receiver,
             control_connection_repair_channel: control_connection_repair_receiver,
+            #[cfg(feature = "unstable-tablets")]
             tablets_channel: tablet_receiver,
 
             use_keyspace_channel: use_keyspace_receiver,
@@ -284,7 +291,7 @@ impl ClusterData {
         known_peers: &HashMap<Uuid, Arc<Node>>,
         used_keyspace: &Option<VerifiedKeyspaceName>,
         host_filter: Option<&dyn HostFilter>,
-        tablets: TabletsInfo,
+        #[cfg(feature = "unstable-tablets")] tablets: TabletsInfo,
     ) -> Self {
         // Create new updated known_peers and ring
         let mut new_known_peers: HashMap<Uuid, Arc<Node>> =
@@ -352,7 +359,12 @@ impl ClusterData {
         let keyspaces = metadata.keyspaces;
         let (locator, keyspaces) = tokio::task::spawn_blocking(move || {
             let keyspace_strategies = keyspaces.values().map(|ks| &ks.strategy);
-            let locator = ReplicaLocator::new(ring.into_iter(), keyspace_strategies, tablets);
+            let locator = ReplicaLocator::new(
+                ring.into_iter(),
+                keyspace_strategies,
+                #[cfg(feature = "unstable-tablets")]
+                tablets,
+            );
             (locator, keyspaces)
         })
         .await
@@ -494,6 +506,7 @@ impl ClusterData {
         // is nonempty, too.
     }
 
+    #[cfg(feature = "unstable-tablets")]
     fn update_tablets(&mut self, raw_tablets: Vec<(TableSpec, RawTablet)>) {
         let replica_translator = |uuid: Uuid| self.known_peers.get(&uuid).cloned();
 
@@ -524,9 +537,21 @@ impl ClusterWorker {
                 })
                 .unwrap_or_else(Instant::now);
 
+            let sleep_future = tokio::time::sleep_until(sleep_until);
+
+            #[cfg(feature = "unstable-tablets")]
             let mut tablets = Vec::new();
 
-            let sleep_future = tokio::time::sleep_until(sleep_until);
+            #[cfg(feature = "unstable-tablets")]
+            let tablets_poll = {
+                let channel_ref = &mut self.tablets_channel;
+                let tablets_ref = &mut tablets;
+
+                || async move { channel_ref.recv_many(tablets_ref, 8192).await }
+            };
+            #[cfg(not(feature = "unstable-tablets"))]
+            let tablets_poll = std::future::pending;
+
             tokio::pin!(sleep_future);
 
             tokio::select! {
@@ -537,16 +562,26 @@ impl ClusterWorker {
                         None => return, // If refresh_channel was closed then cluster was dropped, we can stop working
                     }
                 }
-                tablets_count = self.tablets_channel.recv_many(&mut tablets, 8192) => {
-                    if tablets_count == 0 {
-                        // If the channel was closed then cluster was dropped, we can stop working
-                        return;
-                    }
-                    let mut new_cluster_data: ClusterData = self.cluster_data.load().as_ref().clone();
-                    new_cluster_data.update_tablets(tablets);
-                    self.update_cluster_data(Arc::new(new_cluster_data));
+                tablets_count = tablets_poll() => {
+                    #[cfg(feature = "unstable-tablets")]
+                    {
+                        if tablets_count == 0 {
+                            // If the channel was closed then cluste1r was dropped, we can stop working
+                            return;
+                        }
+                        let mut new_cluster_data: ClusterData = self.cluster_data.load().as_ref().clone();
+                        new_cluster_data.update_tablets(tablets);
+                        self.update_cluster_data(Arc::new(new_cluster_data));
 
-                    continue;
+                        continue;
+                    }
+
+                    #[cfg(not(feature = "unstable-tablets"))]
+                    {
+                        #[allow(clippy::let_unit_value)]
+                        let _tablets_count = tablets_count;
+                        continue;
+                    }
                 }
                 recv_res = self.server_events_channel.recv() => {
                     if let Some(event) = recv_res {
@@ -703,6 +738,7 @@ impl ClusterWorker {
                 &cluster_data.known_peers,
                 &self.used_keyspace,
                 self.host_filter.as_deref(),
+                #[cfg(feature = "unstable-tablets")]
                 cluster_data.locator.tablets.clone(),
             )
             .await,

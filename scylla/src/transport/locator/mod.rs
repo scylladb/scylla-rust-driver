@@ -1,6 +1,7 @@
 mod precomputed_replicas;
 mod replicas;
 mod replication_info;
+#[cfg(feature = "unstable-tablets")]
 pub(crate) mod tablets;
 #[cfg(test)]
 pub(crate) mod test;
@@ -10,6 +11,7 @@ use rand::{seq::IteratorRandom, Rng};
 use scylla_cql::frame::response::result::TableSpec;
 pub use token_ring::TokenRing;
 
+#[cfg(feature = "unstable-tablets")]
 use self::tablets::TabletsInfo;
 
 use super::{topology::Strategy, Node, NodeRef};
@@ -37,6 +39,7 @@ pub struct ReplicaLocator {
 
     datacenters: Vec<String>,
 
+    #[cfg(feature = "unstable-tablets")]
     pub(crate) tablets: TabletsInfo,
 }
 
@@ -47,7 +50,7 @@ impl ReplicaLocator {
     pub(crate) fn new<'a>(
         ring_iter: impl Iterator<Item = (Token, Arc<Node>)>,
         precompute_replica_sets_for: impl Iterator<Item = &'a Strategy>,
-        tablets: TabletsInfo,
+        #[cfg(feature = "unstable-tablets")] tablets: TabletsInfo,
     ) -> Self {
         let replication_data = ReplicationInfo::new(ring_iter);
         let precomputed_replicas =
@@ -65,6 +68,7 @@ impl ReplicaLocator {
             replication_data,
             precomputed_replicas,
             datacenters,
+            #[cfg(feature = "unstable-tablets")]
             tablets,
         }
     }
@@ -93,6 +97,7 @@ impl ReplicaLocator {
         datacenter: Option<&'a str>,
         table: &TableSpec,
     ) -> ReplicaSet<'a> {
+        #[cfg(feature = "unstable-tablets")]
         if let Some(tablets) = self.tablets.tablets_for_table(table) {
             let replicas: Option<&[(Arc<Node>, u32)]> = if let Some(datacenter) = datacenter {
                 tablets.dc_replicas_for_token(token, datacenter)
@@ -113,6 +118,9 @@ impl ReplicaLocator {
                 };
             }
         }
+        #[cfg(not(feature = "unstable-tablets"))]
+        let _table = table;
+
         match strategy {
             Strategy::SimpleStrategy { replication_factor } => {
                 if let Some(datacenter) = datacenter {
@@ -268,6 +276,9 @@ fn with_computed_shard(node: NodeRef, token: Token) -> (NodeRef, Shard) {
 enum ReplicaSetInner<'a> {
     Plain(ReplicasArray<'a>),
 
+    // Unused when tablets disabled
+    // TODO: Remove when tablets no longer guarded by feature gate
+    #[allow(dead_code)]
     PlainSharded(&'a [(Arc<Node>, Shard)]),
 
     // Represents a set of SimpleStrategy replicas that is limited to a specified datacenter.

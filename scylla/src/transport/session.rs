@@ -494,6 +494,7 @@ impl Session {
             return Err(NewSessionError::EmptyKnownNodesList);
         }
 
+        #[cfg(feature = "unstable-tablets")]
         let (tablet_sender, tablet_receiver) = tokio::sync::mpsc::channel(8192);
 
         let connection_config = ConnectionConfig {
@@ -512,6 +513,7 @@ impl Session {
             enable_write_coalescing: config.enable_write_coalescing,
             keepalive_interval: config.keepalive_interval,
             keepalive_timeout: config.keepalive_timeout,
+            #[cfg(feature = "unstable-tablets")]
             tablet_sender: Some(tablet_sender),
         };
 
@@ -529,6 +531,7 @@ impl Session {
             config.fetch_schema_metadata,
             config.host_filter,
             config.cluster_metadata_refresh_interval,
+            #[cfg(feature = "unstable-tablets")]
             tablet_receiver,
         )
         .await?;

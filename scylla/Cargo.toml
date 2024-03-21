@@ -24,6 +24,7 @@ num-bigint-03 = ["scylla-cql/num-bigint-03"]
 num-bigint-04 = ["scylla-cql/num-bigint-04"]
 bigdecimal-04 = ["scylla-cql/bigdecimal-04"]
 full-serialization = ["chrono", "time", "secret", "num-bigint-03", "num-bigint-04", "bigdecimal-04"]
+unstable-tablets = ["dep:lazy_static"]
 
 [dependencies]
 scylla-macros = { version = "0.4.0", path = "../scylla-macros" }
@@ -53,7 +54,7 @@ url = { version = "2.3.1", optional = true }
 base64 = { version = "0.21.1", optional = true }
 rand_pcg = "0.3.1"
 socket2 = { version = "0.5.3", features = ["all"] }
-lazy_static = "1"
+lazy_static = { version = "1", optional = true }
 
 [dev-dependencies]
 num-bigint-03 = { package = "num-bigint", version = "0.3" }

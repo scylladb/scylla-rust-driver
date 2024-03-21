@@ -994,14 +994,14 @@ mod tests {
             routing::Token,
             test_utils::setup_tracing,
             transport::{
-                locator::{
-                    tablets::TabletsInfo,
-                    test::{id_to_invalid_addr, mock_metadata_for_token_aware_tests},
-                },
+                locator::test::{id_to_invalid_addr, mock_metadata_for_token_aware_tests},
                 topology::{Metadata, Peer},
                 ClusterData,
             },
         };
+
+        #[cfg(feature = "unstable-tablets")]
+        use crate::transport::locator::tablets::TabletsInfo;
 
         #[derive(Debug)]
         enum ExpectedGroup {
@@ -1204,6 +1204,7 @@ mod tests {
                 &HashMap::new(),
                 &None,
                 None,
+                #[cfg(feature = "unstable-tablets")]
                 TabletsInfo::new(),
             )
             .await
@@ -1234,6 +1235,7 @@ mod tests {
                 &HashMap::new(),
                 &None,
                 None,
+                #[cfg(feature = "unstable-tablets")]
                 TabletsInfo::new(),
             )
             .await

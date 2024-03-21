@@ -2,7 +2,9 @@ use bytes::Bytes;
 use futures::{future::RemoteHandle, FutureExt};
 use scylla_cql::errors::TranslationError;
 use scylla_cql::frame::request::options::Options;
-use scylla_cql::frame::response::result::{ResultMetadata, TableSpec};
+use scylla_cql::frame::response::result::ResultMetadata;
+#[cfg(feature = "unstable-tablets")]
+use scylla_cql::frame::response::result::TableSpec;
 use scylla_cql::frame::response::Error;
 use scylla_cql::frame::types::SerialConsistency;
 use scylla_cql::types::serialize::batch::{BatchValues, BatchValuesIterator};
@@ -43,6 +45,7 @@ use std::{
 
 use super::errors::{BadKeyspaceName, DbError, QueryError};
 use super::iterator::RowIterator;
+#[cfg(feature = "unstable-tablets")]
 use super::locator::tablets::{RawTablet, TabletParsingError};
 use super::query_result::SingleRowTypedError;
 use super::session::AddressTranslator;
@@ -370,6 +373,8 @@ pub(crate) struct ConnectionConfig {
 
     pub(crate) keepalive_interval: Option<Duration>,
     pub(crate) keepalive_timeout: Option<Duration>,
+
+    #[cfg(feature = "unstable-tablets")]
     pub(crate) tablet_sender: Option<mpsc::Sender<(TableSpec, RawTablet)>>,
 }
 
@@ -394,6 +399,7 @@ impl Default for ConnectionConfig {
             keepalive_interval: None,
             keepalive_timeout: None,
 
+            #[cfg(feature = "unstable-tablets")]
             tablet_sender: None,
         }
     }
@@ -727,6 +733,7 @@ impl Connection {
             )
             .await?;
 
+        #[cfg(feature = "unstable-tablets")]
         if let Some(spec) = prepared_statement.get_table_spec() {
             if let Err(e) = self
                 .update_tablets_from_response(spec, &query_response)
@@ -754,6 +761,7 @@ impl Connection {
                     )
                     .await?;
 
+                #[cfg(feature = "unstable-tablets")]
                 if let Some(spec) = prepared_statement.get_table_spec() {
                     if let Err(e) = self.update_tablets_from_response(spec, &new_response).await {
                         tracing::warn!(
@@ -1443,6 +1451,7 @@ impl Connection {
         self.connect_address
     }
 
+    #[cfg(feature = "unstable-tablets")]
     async fn update_tablets_from_response(
         &self,
         table: &TableSpec,

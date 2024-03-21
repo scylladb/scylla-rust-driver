@@ -3,6 +3,7 @@ use rand_chacha::ChaCha8Rng;
 use scylla_cql::frame::response::result::TableSpec;
 use uuid::Uuid;
 
+#[cfg(feature = "unstable-tablets")]
 use super::tablets::TabletsInfo;
 use super::{ReplicaLocator, ReplicaSet};
 use crate::routing::Token;
@@ -193,7 +194,12 @@ pub(crate) fn create_locator(metadata: &Metadata) -> ReplicaLocator {
     let ring = create_ring(metadata);
     let strategies = metadata.keyspaces.values().map(|ks| &ks.strategy);
 
-    ReplicaLocator::new(ring, strategies, TabletsInfo::new())
+    ReplicaLocator::new(
+        ring,
+        strategies,
+        #[cfg(feature = "unstable-tablets")]
+        TabletsInfo::new(),
+    )
 }
 
 #[tokio::test]
