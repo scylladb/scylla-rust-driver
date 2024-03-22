@@ -4,7 +4,8 @@ use std::fmt::Display;
 
 use thiserror::Error;
 
-use super::{DeserializationError, FrameSlice, TypeCheckError};
+use super::value::DeserializeValue;
+use super::{make_error_replace_rust_name, DeserializationError, FrameSlice, TypeCheckError};
 use crate::frame::response::result::{ColumnSpec, ColumnType};
 
 /// Represents a raw, unparsed column value.
@@ -122,6 +123,90 @@ impl<'frame> DeserializeRow<'frame> for ColumnIterator<'frame> {
     }
 }
 
+make_error_replace_rust_name!(
+    _typck_error_replace_rust_name,
+    TypeCheckError,
+    BuiltinTypeCheckError
+);
+
+make_error_replace_rust_name!(
+    deser_error_replace_rust_name,
+    DeserializationError,
+    BuiltinDeserializationError
+);
+
+// tuples
+//
+/// This is the new encouraged way for deserializing a row.
+/// If only you know the exact column types in advance, you had better deserialize the row
+/// to a tuple. The new deserialization framework will take care of all type checking
+/// and needed conversions, issuing meaningful errors in case something goes wrong.
+macro_rules! impl_tuple {
+    ($($Ti:ident),*; $($idx:literal),*; $($idf:ident),*) => {
+        impl<'frame, $($Ti),*> DeserializeRow<'frame> for ($($Ti,)*)
+        where
+            $($Ti: DeserializeValue<'frame>),*
+        {
+            fn type_check(specs: &[ColumnSpec]) -> Result<(), TypeCheckError> {
+                const TUPLE_LEN: usize = (&[$($idx),*] as &[i32]).len();
+
+                let column_types_iter = || specs.iter().map(|spec| spec.typ.clone());
+                if let [$($idf),*] = &specs {
+                    $(
+                        <$Ti as DeserializeValue<'frame>>::type_check(&$idf.typ)
+                            .map_err(|err| mk_typck_err::<Self>(column_types_iter(), BuiltinTypeCheckErrorKind::ColumnTypeCheckFailed {
+                                column_index: $idx,
+                                column_name: specs[$idx].name.clone(),
+                                err
+                            }))?;
+                    )*
+                    Ok(())
+                } else {
+                    Err(mk_typck_err::<Self>(column_types_iter(), BuiltinTypeCheckErrorKind::WrongColumnCount {
+                        rust_cols: TUPLE_LEN, cql_cols: specs.len()
+                    }))
+                }
+            }
+
+            fn deserialize(mut row: ColumnIterator<'frame>) -> Result<Self, DeserializationError> {
+                const TUPLE_LEN: usize = (&[$($idx),*] as &[i32]).len();
+
+                let ret = (
+                    $({
+                        let column = row.next().unwrap_or_else(|| unreachable!(
+                            "Typecheck should have prevented this scenario! Column count mismatch: rust type {}, cql row {}",
+                            TUPLE_LEN,
+                            $idx
+                        )).map_err(deser_error_replace_rust_name::<Self>)?;
+
+                        <$Ti as DeserializeValue<'frame>>::deserialize(&column.spec.typ, column.slice)
+                            .map_err(|err| mk_deser_err::<Self>(BuiltinDeserializationErrorKind::ColumnDeserializationFailed {
+                                column_index: column.index,
+                                column_name: column.spec.name.clone(),
+                                err,
+                            }))?
+                    },)*
+                );
+                assert!(
+                    row.next().is_none(),
+                    "Typecheck should have prevented this scenario! Column count mismatch: rust type {}, cql row is bigger",
+                    TUPLE_LEN,
+                );
+                Ok(ret)
+            }
+        }
+    }
+}
+
+use super::value::impl_tuple_multiple;
+
+// Implements row-to-tuple deserialization for all tuple sizes up to 16.
+impl_tuple_multiple!(
+    T0, T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, T12, T13, T14, T15;
+    0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15;
+    t0, t1, t2, t3, t4, t5, t6, t7, t8, t9, t10, t11, t12, t13, t14, t15
+);
+
 // Error facilities
 
 /// Failed to type check incoming result column types again given Rust type,
@@ -161,11 +246,47 @@ fn mk_typck_err_named(
 /// Describes why type checking incoming result column types again given Rust type failed.
 #[derive(Debug, Clone)]
 #[non_exhaustive]
-pub enum BuiltinTypeCheckErrorKind {}
+pub enum BuiltinTypeCheckErrorKind {
+    /// The Rust type expects `rust_cols` columns, but the statement operates on `cql_cols`.
+    WrongColumnCount {
+        /// The number of values that the Rust type provides.
+        rust_cols: usize,
+
+        /// The number of columns that the statement operates on.
+        cql_cols: usize,
+    },
+
+    /// Column type check failed between Rust type and DB type at given position (=in given column).
+    ColumnTypeCheckFailed {
+        /// Index of the column.
+        column_index: usize,
+
+        /// Name of the column, as provided by the DB.
+        column_name: String,
+
+        /// Inner type check error due to the type mismatch.
+        err: TypeCheckError,
+    },
+}
 
 impl Display for BuiltinTypeCheckErrorKind {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        Ok(())
+        match self {
+            BuiltinTypeCheckErrorKind::WrongColumnCount {
+                rust_cols,
+                cql_cols,
+            } => {
+                write!(f, "wrong column count: the statement operates on {cql_cols} columns, but the given rust types contains {rust_cols}")
+            }
+            BuiltinTypeCheckErrorKind::ColumnTypeCheckFailed {
+                column_index,
+                column_name,
+                err,
+            } => write!(
+                f,
+                "mismatched types in column {column_name} at index {column_index}: {err}"
+            ),
+        }
     }
 }
 
@@ -201,6 +322,18 @@ pub(super) fn mk_deser_err_named(
 #[derive(Debug, Clone)]
 #[non_exhaustive]
 pub enum BuiltinDeserializationErrorKind {
+    /// One of the columns failed to deserialize.
+    ColumnDeserializationFailed {
+        /// Index of the column that failed to deserialize.
+        column_index: usize,
+
+        /// Name of the column that failed to deserialize.
+        column_name: String,
+
+        /// The error that caused the column deserialization to fail.
+        err: DeserializationError,
+    },
+
     /// One of the raw columns failed to deserialize, most probably
     /// due to the invalid column structure inside a row in the frame.
     RawColumnDeserializationFailed {
@@ -218,6 +351,16 @@ pub enum BuiltinDeserializationErrorKind {
 impl Display for BuiltinDeserializationErrorKind {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
+            BuiltinDeserializationErrorKind::ColumnDeserializationFailed {
+                column_index,
+                column_name,
+                err,
+            } => {
+                write!(
+                    f,
+                    "failed to deserialize column {column_name} at index {column_index}: {err}"
+                )
+            }
             BuiltinDeserializationErrorKind::RawColumnDeserializationFailed {
                 column_index,
                 column_name,
@@ -241,6 +384,49 @@ mod tests {
 
     use super::super::tests::{serialize_cells, spec};
     use super::{ColumnIterator, DeserializeRow};
+
+    #[test]
+    fn test_tuple_deserialization() {
+        // Empty tuple
+        deserialize::<()>(&[], &Bytes::new()).unwrap();
+
+        // 1-elem tuple
+        let (a,) = deserialize::<(i32,)>(
+            &[spec("i", ColumnType::Int)],
+            &serialize_cells([val_int(123)]),
+        )
+        .unwrap();
+        assert_eq!(a, 123);
+
+        // 3-elem tuple
+        let (a, b, c) = deserialize::<(i32, i32, i32)>(
+            &[
+                spec("i1", ColumnType::Int),
+                spec("i2", ColumnType::Int),
+                spec("i3", ColumnType::Int),
+            ],
+            &serialize_cells([val_int(123), val_int(456), val_int(789)]),
+        )
+        .unwrap();
+        assert_eq!((a, b, c), (123, 456, 789));
+
+        // Make sure that column type mismatch is detected
+        deserialize::<(i32, String, i32)>(
+            &[
+                spec("i1", ColumnType::Int),
+                spec("i2", ColumnType::Int),
+                spec("i3", ColumnType::Int),
+            ],
+            &serialize_cells([val_int(123), val_int(456), val_int(789)]),
+        )
+        .unwrap_err();
+
+        // Make sure that borrowing types compile and work correctly
+        let specs = &[spec("s", ColumnType::Text)];
+        let byts = serialize_cells([val_str("abc")]);
+        let (s,) = deserialize::<(&str,)>(specs, &byts).unwrap();
+        assert_eq!(s, "abc");
+    }
 
     #[test]
     fn test_deserialization_as_column_iterator() {
