@@ -1,7 +1,8 @@
 use crate::frame::response::result::ColumnSpec;
 
-use super::row::{mk_deser_err, BuiltinDeserializationErrorKind, ColumnIterator};
-use super::{DeserializationError, FrameSlice};
+use super::row::{mk_deser_err, BuiltinDeserializationErrorKind, ColumnIterator, DeserializeRow};
+use super::{DeserializationError, FrameSlice, TypeCheckError};
+use std::marker::PhantomData;
 
 /// Iterates over the whole result, returning rows.
 pub struct RowIterator<'frame> {
@@ -73,12 +74,70 @@ impl<'frame> Iterator for RowIterator<'frame> {
     }
 }
 
+/// A typed version of [RowIterator] which deserializes the rows before
+/// returning them.
+pub struct TypedRowIterator<'frame, R> {
+    inner: RowIterator<'frame>,
+    _phantom: PhantomData<R>,
+}
+
+impl<'frame, R> TypedRowIterator<'frame, R>
+where
+    R: DeserializeRow<'frame>,
+{
+    /// Creates a new [TypedRowIterator] from given [RowIterator].
+    ///
+    /// Calls `R::type_check` and fails if the type check fails.
+    #[inline]
+    pub fn new(raw: RowIterator<'frame>) -> Result<Self, TypeCheckError> {
+        R::type_check(raw.specs())?;
+        Ok(Self {
+            inner: raw,
+            _phantom: PhantomData,
+        })
+    }
+
+    /// Returns information about the columns of rows that are iterated over.
+    #[inline]
+    pub fn specs(&self) -> &'frame [ColumnSpec] {
+        self.inner.specs()
+    }
+
+    /// Returns the remaining number of rows that this iterator is supposed
+    /// to return.
+    #[inline]
+    pub fn rows_remaining(&self) -> usize {
+        self.inner.rows_remaining()
+    }
+}
+
+impl<'frame, R> Iterator for TypedRowIterator<'frame, R>
+where
+    R: DeserializeRow<'frame>,
+{
+    type Item = Result<R, DeserializationError>;
+
+    #[inline]
+    fn next(&mut self) -> Option<Self::Item> {
+        self.inner
+            .next()
+            .map(|raw| raw.and_then(|raw| R::deserialize(raw)))
+    }
+
+    #[inline]
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        self.inner.size_hint()
+    }
+}
+
 #[cfg(test)]
 mod tests {
+    use bytes::Bytes;
+
     use crate::frame::response::result::ColumnType;
 
     use super::super::tests::{serialize_cells, spec, CELL1, CELL2};
-    use super::{FrameSlice, RowIterator};
+    use super::{FrameSlice, RowIterator, TypedRowIterator};
 
     #[test]
     fn test_row_iterator_basic_parse() {
@@ -111,5 +170,31 @@ mod tests {
 
         iter.next().unwrap().unwrap();
         assert!(iter.next().unwrap().is_err());
+    }
+
+    #[test]
+    fn test_typed_row_iterator_basic_parse() {
+        let raw_data = serialize_cells([Some(CELL1), Some(CELL2), Some(CELL2), Some(CELL1)]);
+        let specs = [spec("b1", ColumnType::Blob), spec("b2", ColumnType::Blob)];
+        let iter = RowIterator::new(2, &specs, FrameSlice::new(&raw_data));
+        let mut iter = TypedRowIterator::<'_, (&[u8], Vec<u8>)>::new(iter).unwrap();
+
+        let (c11, c12) = iter.next().unwrap().unwrap();
+        assert_eq!(c11, CELL1);
+        assert_eq!(c12, CELL2);
+
+        let (c21, c22) = iter.next().unwrap().unwrap();
+        assert_eq!(c21, CELL2);
+        assert_eq!(c22, CELL1);
+
+        assert!(iter.next().is_none());
+    }
+
+    #[test]
+    fn test_typed_row_iterator_wrong_type() {
+        let raw_data = Bytes::new();
+        let specs = [spec("b1", ColumnType::Blob), spec("b2", ColumnType::Blob)];
+        let iter = RowIterator::new(0, &specs, FrameSlice::new(&raw_data));
+        assert!(TypedRowIterator::<'_, (i32, i64)>::new(iter).is_err());
     }
 }
