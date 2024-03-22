@@ -1,3 +1,7 @@
+pub mod frame_slice;
+
+pub use frame_slice::FrameSlice;
+
 use std::sync::Arc;
 
 use thiserror::Error;
@@ -26,5 +30,34 @@ impl TypeCheckError {
     #[inline]
     pub fn new(err: impl std::error::Error + Send + Sync + 'static) -> Self {
         Self(Arc::new(err))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use bytes::{Bytes, BytesMut};
+
+    use crate::frame::response::result::{ColumnSpec, ColumnType, TableSpec};
+    use crate::frame::types;
+
+    pub(super) static CELL1: &[u8] = &[1, 2, 3];
+    pub(super) static CELL2: &[u8] = &[4, 5, 6, 7];
+
+    pub(super) fn serialize_cells(
+        cells: impl IntoIterator<Item = Option<impl AsRef<[u8]>>>,
+    ) -> Bytes {
+        let mut bytes = BytesMut::new();
+        for cell in cells {
+            types::write_bytes_opt(cell, &mut bytes).unwrap();
+        }
+        bytes.freeze()
+    }
+
+    pub(super) fn spec(name: &str, typ: ColumnType) -> ColumnSpec {
+        ColumnSpec {
+            name: name.to_owned(),
+            typ,
+            table_spec: TableSpec::borrowed("ks", "tbl"),
+        }
     }
 }
