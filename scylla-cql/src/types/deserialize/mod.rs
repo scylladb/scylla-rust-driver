@@ -163,6 +163,7 @@
 // TODO: in the above module docstring, stop abusing ParseError once errors are refactored.
 
 pub mod frame_slice;
+pub mod result;
 pub mod row;
 pub mod value;
 
