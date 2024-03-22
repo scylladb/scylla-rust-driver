@@ -1,6 +1,6 @@
 //! Provides types for dealing with row deserialization.
 
-use super::FrameSlice;
+use super::{value::DeserializeCql, FrameSlice};
 use crate::frame::frame_errors::ParseError;
 use crate::frame::response::result::ColumnSpec;
 
@@ -97,6 +97,63 @@ impl<'frame> DeserializeRow<'frame> for ColumnIterator<'frame> {
     }
 }
 
+macro_rules! impl_tuple {
+    ($($Ti:ident),*; $($idx:literal),*; $($idf:ident),*) => {
+        impl<'frame, $($Ti),*> DeserializeRow<'frame> for ($($Ti,)*)
+        where
+            $($Ti: DeserializeCql<'frame>),*
+        {
+            fn type_check(specs: &[ColumnSpec]) -> Result<(), ParseError> {
+                if let [$($idf),*] = &specs {
+                    $(
+                        <$Ti as DeserializeCql<'frame>>::type_check(&$idf.typ)?;
+                    )*
+                    return Ok(());
+                }
+                const TUPLE_LEN: usize = [0, $($idx),*].len() - 1;
+                return Err(ParseError::BadIncomingData(format!(
+                    "Expected {} columns, but got {:?}",
+                    TUPLE_LEN, specs.len(),
+                )));
+            }
+
+            fn deserialize(mut row: ColumnIterator<'frame>) -> Result<Self, ParseError> {
+                const TUPLE_LEN: usize = [0, $($idx),*].len() - 1;
+                let ret = (
+                    $({
+                        let column = row.next().ok_or_else(|| ParseError::BadIncomingData(
+                            format!("Expected {} values, got {}", TUPLE_LEN, $idx)
+                        ))??;
+                        <$Ti as DeserializeCql<'frame>>::deserialize(&column.spec.typ, column.slice)?
+                    },)*
+                );
+                if row.next().is_some() {
+                    return Err(ParseError::BadIncomingData(
+                        format!("Expected {} values, but got more", TUPLE_LEN)
+                    ));
+                }
+                Ok(ret)
+            }
+        }
+    }
+}
+
+macro_rules! impl_tuple_multiple {
+    (;;) => {
+        impl_tuple!(;;);
+    };
+    ($TN:ident $(,$Ti:ident)*; $idx_n:literal $(,$idx:literal)*; $idf_n:ident $(,$idf:ident)*) => {
+        impl_tuple_multiple!($($Ti),*; $($idx),*; $($idf),*);
+        impl_tuple!($TN $(,$Ti)*; $idx_n $(,$idx)*; $idf_n $(,$idf)*);
+    }
+}
+
+impl_tuple_multiple!(
+    T0, T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, T12, T13, T14, T15;
+    0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15;
+    t0, t1, t2, t3, t4, t5, t6, t7, t8, t9, t10, t11, t12, t13, t14, t15
+);
+
 #[cfg(test)]
 mod tests {
     use bytes::Bytes;
@@ -107,6 +164,49 @@ mod tests {
 
     use super::super::tests::serialize_cells;
     use super::{ColumnIterator, DeserializeRow};
+
+    #[test]
+    fn test_tuple_deserialization() {
+        // Empty tuple
+        deserialize::<()>(&[], &Bytes::new()).unwrap();
+
+        // 1-elem tuple
+        let (a,) = deserialize::<(i32,)>(
+            &[spec("i", ColumnType::Int)],
+            &serialize_cells([val_int(123)]),
+        )
+        .unwrap();
+        assert_eq!(a, 123);
+
+        // 3-elem tuple
+        let (a, b, c) = deserialize::<(i32, i32, i32)>(
+            &[
+                spec("i1", ColumnType::Int),
+                spec("i2", ColumnType::Int),
+                spec("i3", ColumnType::Int),
+            ],
+            &serialize_cells([val_int(123), val_int(456), val_int(789)]),
+        )
+        .unwrap();
+        assert_eq!((a, b, c), (123, 456, 789));
+
+        // Make sure that column type mismatch is detected
+        deserialize::<(i32, String, i32)>(
+            &[
+                spec("i1", ColumnType::Int),
+                spec("i2", ColumnType::Int),
+                spec("i3", ColumnType::Int),
+            ],
+            &serialize_cells([val_int(123), val_int(456), val_int(789)]),
+        )
+        .unwrap_err();
+
+        // Make sure that borrowing types compile and work correctly
+        let specs = &[spec("s", ColumnType::Text)];
+        let byts = serialize_cells([val_str("abc")]);
+        let (s,) = deserialize::<(&str,)>(specs, &byts).unwrap();
+        assert_eq!(s, "abc");
+    }
 
     #[test]
     fn test_deserialization_as_column_iterator() {
