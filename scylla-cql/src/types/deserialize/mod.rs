@@ -156,7 +156,10 @@ pub mod value;
 use bytes::Bytes;
 
 use crate::frame::frame_errors::ParseError;
+use crate::frame::response::result::ColumnSpec;
 use crate::frame::types;
+
+use self::row::ColumnIterator;
 
 /// A reference to a part of the frame.
 #[derive(Clone, Copy, Debug)]
@@ -246,9 +249,73 @@ impl<'frame> FrameSlice<'frame> {
     }
 }
 
+/// Iterates over the whole result, returning rows.
+pub struct RowIterator<'frame> {
+    specs: &'frame [ColumnSpec],
+    remaining: usize,
+    slice: FrameSlice<'frame>,
+}
+
+impl<'frame> RowIterator<'frame> {
+    /// Creates a new iterator over rows from a serialized response.
+    ///
+    /// - `remaining` - number of the remaining rows in the serialized response,
+    /// - `specs` - information about columns of the serialized response,
+    /// - `slice` - a `FrameSlice` that points to the serialized rows data.
+    #[inline]
+    pub fn new(remaining: usize, specs: &'frame [ColumnSpec], slice: FrameSlice<'frame>) -> Self {
+        Self {
+            specs,
+            remaining,
+            slice,
+        }
+    }
+
+    /// Returns information about the columns of rows that are iterated over.
+    #[inline]
+    pub fn specs(&self) -> &'frame [ColumnSpec] {
+        self.specs
+    }
+
+    /// Returns the remaining number of rows that this iterator is supposed
+    /// to return.
+    #[inline]
+    pub fn rows_remaining(&self) -> usize {
+        self.remaining
+    }
+}
+
+impl<'frame> Iterator for RowIterator<'frame> {
+    type Item = Result<ColumnIterator<'frame>, ParseError>;
+
+    #[inline]
+    fn next(&mut self) -> Option<Self::Item> {
+        self.remaining = self.remaining.checked_sub(1)?;
+
+        let iter = ColumnIterator::new(self.specs, self.slice);
+
+        // Skip the row here, manually
+        for _ in 0..self.specs.len() {
+            if let Err(err) = self.slice.read_cql_bytes() {
+                return Some(Err(err));
+            }
+        }
+
+        Some(Ok(iter))
+    }
+
+    #[inline]
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        (0, Some(self.remaining))
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use crate::frame::types;
+    use crate::frame::{
+        response::result::{ColumnType, TableSpec},
+        types,
+    };
 
     use super::*;
 
@@ -265,6 +332,17 @@ mod tests {
             types::write_bytes_opt(cell, &mut bytes).unwrap();
         }
         bytes.freeze()
+    }
+
+    fn spec(name: &str, typ: ColumnType) -> ColumnSpec {
+        ColumnSpec {
+            name: name.to_owned(),
+            typ,
+            table_spec: TableSpec {
+                ks_name: "ks".to_owned(),
+                table_name: "tbl".to_owned(),
+            },
+        }
     }
 
     #[test]
@@ -314,5 +392,38 @@ mod tests {
 
         assert_eq!(subslice1.as_slice(), subslice1_bytes.as_ref());
         assert_eq!(subslice2.as_slice(), subslice2_bytes.as_ref());
+    }
+
+    #[test]
+    fn test_row_iterator_basic_parse() {
+        let raw_data = serialize_cells([Some(CELL1), Some(CELL2), Some(CELL2), Some(CELL1)]);
+        let specs = [spec("b1", ColumnType::Blob), spec("b2", ColumnType::Blob)];
+        let mut iter = RowIterator::new(2, &specs, FrameSlice::new(&raw_data));
+
+        let mut row1 = iter.next().unwrap().unwrap();
+        let c11 = row1.next().unwrap().unwrap();
+        assert_eq!(c11.slice.unwrap().as_slice(), CELL1);
+        let c12 = row1.next().unwrap().unwrap();
+        assert_eq!(c12.slice.unwrap().as_slice(), CELL2);
+        assert!(row1.next().is_none());
+
+        let mut row2 = iter.next().unwrap().unwrap();
+        let c21 = row2.next().unwrap().unwrap();
+        assert_eq!(c21.slice.unwrap().as_slice(), CELL2);
+        let c22 = row2.next().unwrap().unwrap();
+        assert_eq!(c22.slice.unwrap().as_slice(), CELL1);
+        assert!(row2.next().is_none());
+
+        assert!(iter.next().is_none());
+    }
+
+    #[test]
+    fn test_row_iterator_too_few_rows() {
+        let raw_data = serialize_cells([Some(CELL1), Some(CELL2)]);
+        let specs = [spec("b1", ColumnType::Blob), spec("b2", ColumnType::Blob)];
+        let mut iter = RowIterator::new(2, &specs, FrameSlice::new(&raw_data));
+
+        iter.next().unwrap().unwrap();
+        assert!(iter.next().unwrap().is_err());
     }
 }
