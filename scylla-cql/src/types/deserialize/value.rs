@@ -7,7 +7,7 @@ use crate::frame::{
     frame_errors::ParseError,
     response::result::{deser_cql_value, ColumnType, CqlValue},
     types,
-    value::{Counter, CqlVarint},
+    value::{Counter, CqlDuration, CqlVarint},
 };
 
 /// A type that can be deserialized from a column value inside a row that was
@@ -274,6 +274,27 @@ impl_strict_type!(
     }
 );
 
+// date and time types
+
+// duration
+impl_strict_type!(
+    "duration",
+    CqlDuration,
+    ColumnType::Duration,
+    |_typ: &'frame ColumnType, v: Option<FrameSlice<'frame>>| {
+        let mut val = ensure_not_null(v)?;
+        let months = i32::try_from(types::vint_decode(&mut val)?)?;
+        let days = i32::try_from(types::vint_decode(&mut val)?)?;
+        let nanoseconds = types::vint_decode(&mut val)?;
+
+        Ok(CqlDuration {
+            months,
+            days,
+            nanoseconds,
+        })
+    }
+);
+
 // Utilities
 
 fn ensure_not_null(v: Option<FrameSlice>) -> Result<&[u8], ParseError> {
@@ -318,7 +339,7 @@ mod tests {
     use crate::frame::response::cql_to_rust::FromCqlVal;
     use crate::frame::response::result::{deser_cql_value, ColumnType, CqlValue};
     use crate::frame::types;
-    use crate::frame::value::{Counter, CqlVarint};
+    use crate::frame::value::{Counter, CqlDuration, CqlVarint};
     use crate::types::deserialize::FrameSlice;
     use crate::types::serialize::value::SerializeCql;
     use crate::types::serialize::CellWriter;
@@ -519,6 +540,20 @@ mod tests {
             let v: i64 = 1 << i;
             compat_check::<Counter>(&ColumnType::Counter, make_bytes(&v.to_be_bytes()));
         }
+
+        // duration
+        let duration1 = CqlDuration {
+            days: 123,
+            months: 456,
+            nanoseconds: 789,
+        };
+        let duration2 = CqlDuration {
+            days: 987,
+            months: 654,
+            nanoseconds: 321,
+        };
+        compat_check_serialized::<CqlDuration>(&ColumnType::Duration, &duration1);
+        compat_check_serialized::<CqlDuration>(&ColumnType::Duration, &duration2);
     }
 
     // Checks that both new and old serialization framework
