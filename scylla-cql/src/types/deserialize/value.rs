@@ -3,14 +3,14 @@
 use bytes::Bytes;
 
 #[cfg(feature = "chrono")]
-use chrono::{NaiveDate, NaiveTime};
+use chrono::{DateTime, NaiveDate, NaiveTime, TimeZone as _, Utc};
 
 use super::FrameSlice;
 use crate::frame::{
     frame_errors::ParseError,
     response::result::{deser_cql_value, ColumnType, CqlValue},
     types,
-    value::{Counter, CqlDate, CqlDuration, CqlTime, CqlVarint},
+    value::{Counter, CqlDate, CqlDuration, CqlTime, CqlTimestamp, CqlVarint},
 };
 
 /// A type that can be deserialized from a column value inside a row that was
@@ -358,6 +358,57 @@ impl_strict_type!(
     }
 );
 
+fn get_millis_from_timestamp_column(v: Option<FrameSlice<'_>>) -> Result<i64, ParseError> {
+    let val = ensure_not_null(v)?;
+    let arr = ensure_exact_length::<8>("timestamp", val)?;
+    let millis = i64::from_be_bytes(arr);
+
+    Ok(millis)
+}
+
+impl_strict_type!(
+    "timestamp",
+    CqlTimestamp,
+    ColumnType::Timestamp,
+    |_typ: &'frame ColumnType, v: Option<FrameSlice<'frame>>| {
+        let millis = get_millis_from_timestamp_column(v)?;
+        Ok(CqlTimestamp(millis))
+    }
+);
+
+#[cfg(feature = "chrono")]
+impl_strict_type!(
+    "timestamp",
+    DateTime<Utc>,
+    ColumnType::Timestamp,
+    |_typ: &'frame ColumnType, v: Option<FrameSlice<'frame>>| {
+        let millis = get_millis_from_timestamp_column(v)?;
+        match Utc.timestamp_millis_opt(millis) {
+            chrono::LocalResult::Single(datetime) => Ok(datetime),
+            _ => Err(ParseError::BadIncomingData(format!(
+                "Timestamp {} is out of the representable range for DateTime<Utc>",
+                millis
+            ))),
+        }
+    }
+);
+
+#[cfg(feature = "time")]
+impl_strict_type!(
+    "timestamp",
+    time::OffsetDateTime,
+    ColumnType::Timestamp,
+    |_typ: &'frame ColumnType, v: Option<FrameSlice<'frame>>| {
+        let millis = get_millis_from_timestamp_column(v)?;
+        time::OffsetDateTime::from_unix_timestamp_nanos(millis as i128 * 1_000_000).map_err(|_| {
+            ParseError::BadIncomingData(format!(
+                "Timestamp {} is out of the representable range for time::OffsetDateTime",
+                millis
+            ))
+        })
+    }
+);
+
 fn get_nanos_from_time_column(v: Option<FrameSlice<'_>>) -> Result<i64, ParseError> {
     let val = ensure_not_null(v)?;
     let arr = ensure_exact_length::<8>("date", val)?;
@@ -460,7 +511,7 @@ mod tests {
     use bytes::{BufMut, Bytes, BytesMut};
 
     #[cfg(feature = "chrono")]
-    use chrono::{NaiveDate, NaiveTime};
+    use chrono::{DateTime, NaiveDate, NaiveTime, Utc};
 
     use std::fmt::Debug;
 
@@ -468,7 +519,7 @@ mod tests {
     use crate::frame::response::cql_to_rust::FromCqlVal;
     use crate::frame::response::result::{deser_cql_value, ColumnType, CqlValue};
     use crate::frame::types;
-    use crate::frame::value::{Counter, CqlDate, CqlDuration, CqlTime, CqlVarint};
+    use crate::frame::value::{Counter, CqlDate, CqlDuration, CqlTime, CqlTimestamp, CqlVarint};
     use crate::types::deserialize::FrameSlice;
     use crate::types::serialize::value::SerializeCql;
     use crate::types::serialize::CellWriter;
@@ -728,6 +779,29 @@ mod tests {
             compat_check_serialized::<time::Time>(&ColumnType::Time, &time1);
             compat_check_serialized::<time::Time>(&ColumnType::Time, &time2);
             compat_check_serialized::<time::Time>(&ColumnType::Time, &time3);
+        }
+
+        // timestamp
+        let timestamp1 = CqlTimestamp(0);
+        let timestamp2 = CqlTimestamp(123456789);
+        let timestamp3 = CqlTimestamp(98765432123456);
+
+        compat_check_serialized::<CqlTimestamp>(&ColumnType::Timestamp, &timestamp1);
+        compat_check_serialized::<CqlTimestamp>(&ColumnType::Timestamp, &timestamp2);
+        compat_check_serialized::<CqlTimestamp>(&ColumnType::Timestamp, &timestamp3);
+
+        #[cfg(feature = "chrono")]
+        {
+            compat_check_serialized::<DateTime<Utc>>(&ColumnType::Timestamp, &timestamp1);
+            compat_check_serialized::<DateTime<Utc>>(&ColumnType::Timestamp, &timestamp2);
+            compat_check_serialized::<DateTime<Utc>>(&ColumnType::Timestamp, &timestamp3);
+        }
+
+        #[cfg(feature = "time")]
+        {
+            compat_check_serialized::<time::OffsetDateTime>(&ColumnType::Timestamp, &timestamp1);
+            compat_check_serialized::<time::OffsetDateTime>(&ColumnType::Timestamp, &timestamp2);
+            compat_check_serialized::<time::OffsetDateTime>(&ColumnType::Timestamp, &timestamp3);
         }
     }
 
