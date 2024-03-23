@@ -10,7 +10,7 @@ use super::{DeserializationError, FrameSlice, TypeCheckError};
 use crate::frame::frame_errors::ParseError;
 use crate::frame::response::result::{deser_cql_value, ColumnType, CqlValue};
 use crate::frame::types;
-use crate::frame::value::{Counter, CqlDecimal, CqlVarint};
+use crate::frame::value::{Counter, CqlDecimal, CqlDuration, CqlVarint};
 
 /// A type that can be deserialized from a column value inside a row that was
 /// returned from a query.
@@ -356,6 +356,51 @@ impl_strict_type!(
     }
 );
 
+// date and time types
+
+// duration
+impl_strict_type!(
+    CqlDuration,
+    Duration,
+    |typ: &'frame ColumnType, v: Option<FrameSlice<'frame>>| {
+        let mut val = ensure_not_null_slice::<Self>(typ, v)?;
+
+        macro_rules! mk_err {
+            ($err: expr) => {
+                mk_deser_err::<Self>(typ, $err)
+            };
+        }
+
+        let months_i64 = types::vint_decode(&mut val).map_err(|err| {
+            mk_err!(BuiltinDeserializationErrorKind::GenericParseError(
+                err.into()
+            ))
+        })?;
+        let months = i32::try_from(months_i64)
+            .map_err(|_| mk_err!(BuiltinDeserializationErrorKind::ValueOverflow))?;
+
+        let days_i64 = types::vint_decode(&mut val).map_err(|err| {
+            mk_err!(BuiltinDeserializationErrorKind::GenericParseError(
+                err.into()
+            ))
+        })?;
+        let days = i32::try_from(days_i64)
+            .map_err(|_| mk_err!(BuiltinDeserializationErrorKind::ValueOverflow))?;
+
+        let nanoseconds = types::vint_decode(&mut val).map_err(|err| {
+            mk_err!(BuiltinDeserializationErrorKind::GenericParseError(
+                err.into()
+            ))
+        })?;
+
+        Ok(CqlDuration {
+            months,
+            days,
+            nanoseconds,
+        })
+    }
+);
+
 // Utilities
 
 fn ensure_not_null_frame_slice<'frame, T>(
@@ -516,6 +561,10 @@ pub enum BuiltinDeserializationErrorKind {
 
     /// Invalid UTF-8 string.
     InvalidUtf8(std::str::Utf8Error),
+
+    /// The read value is out of range supported by the Rust type.
+    // TODO: consider storing additional info here (what exactly did not fit and why)
+    ValueOverflow,
 }
 
 impl Display for BuiltinDeserializationErrorKind {
@@ -534,6 +583,11 @@ impl Display for BuiltinDeserializationErrorKind {
                 f.write_str("expected a valid ASCII string")
             }
             BuiltinDeserializationErrorKind::InvalidUtf8(err) => err.fmt(f),
+            BuiltinDeserializationErrorKind::ValueOverflow => {
+                // TODO: consider storing Arc<dyn Display/Debug> of the offending value
+                // inside this variant for debug purposes.
+                f.write_str("read value is out of representable range")
+            }
         }
     }
 }
@@ -547,7 +601,7 @@ mod tests {
     use crate::frame::response::cql_to_rust::FromCqlVal;
     use crate::frame::response::result::{deser_cql_value, ColumnType, CqlValue};
     use crate::frame::types;
-    use crate::frame::value::{Counter, CqlDecimal, CqlVarint};
+    use crate::frame::value::{Counter, CqlDecimal, CqlDuration, CqlVarint};
     use crate::types::deserialize::{DeserializationError, FrameSlice};
     use crate::types::serialize::value::SerializeValue;
     use crate::types::serialize::CellWriter;
@@ -771,6 +825,20 @@ mod tests {
             let v: i64 = 1 << i;
             compat_check::<Counter>(&ColumnType::Counter, make_bytes(&v.to_be_bytes()));
         }
+
+        // duration
+        let duration1 = CqlDuration {
+            days: 123,
+            months: 456,
+            nanoseconds: 789,
+        };
+        let duration2 = CqlDuration {
+            days: 987,
+            months: 654,
+            nanoseconds: 321,
+        };
+        compat_check_serialized::<CqlDuration>(&ColumnType::Duration, &duration1);
+        compat_check_serialized::<CqlDuration>(&ColumnType::Duration, &duration2);
     }
 
     // Checks that both new and old serialization framework
