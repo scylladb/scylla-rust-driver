@@ -3,14 +3,14 @@
 use bytes::Bytes;
 
 #[cfg(feature = "chrono")]
-use chrono::NaiveDate;
+use chrono::{NaiveDate, NaiveTime};
 
 use super::FrameSlice;
 use crate::frame::{
     frame_errors::ParseError,
     response::result::{deser_cql_value, ColumnType, CqlValue},
     types,
-    value::{Counter, CqlDate, CqlDuration, CqlVarint},
+    value::{Counter, CqlDate, CqlDuration, CqlTime, CqlVarint},
 };
 
 /// A type that can be deserialized from a column value inside a row that was
@@ -358,6 +358,69 @@ impl_strict_type!(
     }
 );
 
+fn get_nanos_from_time_column(v: Option<FrameSlice<'_>>) -> Result<i64, ParseError> {
+    let val = ensure_not_null(v)?;
+    let arr = ensure_exact_length::<8>("date", val)?;
+    let nanoseconds = i64::from_be_bytes(arr);
+
+    // Valid values are in the range 0 to 86399999999999
+    if !(0..=86399999999999).contains(&nanoseconds) {
+        return Err(ParseError::BadIncomingData(format!(
+            "Invalid time value; only 0 to 86399999999999 allowed: {}.",
+            nanoseconds,
+        )));
+    }
+
+    Ok(nanoseconds)
+}
+
+impl_strict_type!(
+    "time",
+    CqlTime,
+    ColumnType::Time,
+    |_typ: &'frame ColumnType, v: Option<FrameSlice<'frame>>| {
+        let nanoseconds = get_nanos_from_time_column(v)?;
+
+        Ok(CqlTime(nanoseconds))
+    }
+);
+
+#[cfg(feature = "chrono")]
+impl_strict_type!(
+    "time",
+    NaiveTime,
+    ColumnType::Time,
+    |_typ: &'frame ColumnType, v: Option<FrameSlice<'frame>>| {
+        let nanoseconds = get_nanos_from_time_column(v)?;
+
+        let naive_time: NaiveTime = CqlTime(nanoseconds).try_into().map_err(|err| {
+            ParseError::BadIncomingData(format!(
+                "Value is out of representable range for NaiveTime: {}",
+                err
+            ))
+        })?;
+        Ok(naive_time)
+    }
+);
+
+#[cfg(feature = "time")]
+impl_strict_type!(
+    "time",
+    time::Time,
+    ColumnType::Time,
+    |_typ: &'frame ColumnType, v: Option<FrameSlice<'frame>>| {
+        let nanoseconds = get_nanos_from_time_column(v)?;
+
+        let time: time::Time = CqlTime(nanoseconds).try_into().map_err(|err| {
+            ParseError::BadIncomingData(format!(
+                "Value is out of representable range for time::Time: {}",
+                err
+            ))
+        })?;
+        Ok(time)
+    }
+);
+
 // Utilities
 
 fn ensure_not_null(v: Option<FrameSlice>) -> Result<&[u8], ParseError> {
@@ -397,7 +460,7 @@ mod tests {
     use bytes::{BufMut, Bytes, BytesMut};
 
     #[cfg(feature = "chrono")]
-    use chrono::NaiveDate;
+    use chrono::{NaiveDate, NaiveTime};
 
     use std::fmt::Debug;
 
@@ -405,7 +468,7 @@ mod tests {
     use crate::frame::response::cql_to_rust::FromCqlVal;
     use crate::frame::response::result::{deser_cql_value, ColumnType, CqlValue};
     use crate::frame::types;
-    use crate::frame::value::{Counter, CqlDate, CqlDuration, CqlVarint};
+    use crate::frame::value::{Counter, CqlDate, CqlDuration, CqlTime, CqlVarint};
     use crate::types::deserialize::FrameSlice;
     use crate::types::serialize::value::SerializeCql;
     use crate::types::serialize::CellWriter;
@@ -642,6 +705,29 @@ mod tests {
             compat_check::<time::Date>(&ColumnType::Date, make_bytes(&date1));
             compat_check::<time::Date>(&ColumnType::Date, make_bytes(&date2));
             compat_check::<time::Date>(&ColumnType::Date, make_bytes(&date3));
+        }
+
+        // time
+        let time1 = CqlTime(0);
+        let time2 = CqlTime(123456789);
+        let time3 = CqlTime(86399999999999); // maximum allowed
+
+        compat_check_serialized::<CqlTime>(&ColumnType::Time, &time1);
+        compat_check_serialized::<CqlTime>(&ColumnType::Time, &time2);
+        compat_check_serialized::<CqlTime>(&ColumnType::Time, &time3);
+
+        #[cfg(feature = "chrono")]
+        {
+            compat_check_serialized::<NaiveTime>(&ColumnType::Time, &time1);
+            compat_check_serialized::<NaiveTime>(&ColumnType::Time, &time2);
+            compat_check_serialized::<NaiveTime>(&ColumnType::Time, &time3);
+        }
+
+        #[cfg(feature = "time")]
+        {
+            compat_check_serialized::<time::Time>(&ColumnType::Time, &time1);
+            compat_check_serialized::<time::Time>(&ColumnType::Time, &time2);
+            compat_check_serialized::<time::Time>(&ColumnType::Time, &time3);
         }
     }
 
