@@ -10,7 +10,7 @@ use super::{DeserializationError, FrameSlice, TypeCheckError};
 use crate::frame::frame_errors::ParseError;
 use crate::frame::response::result::{deser_cql_value, ColumnType, CqlValue};
 use crate::frame::types;
-use crate::frame::value::{Counter, CqlDate, CqlDecimal, CqlDuration, CqlVarint};
+use crate::frame::value::{Counter, CqlDate, CqlDecimal, CqlDuration, CqlTime, CqlVarint};
 
 /// A type that can be deserialized from a column value inside a row that was
 /// returned from a query.
@@ -456,6 +456,63 @@ impl_emptiable_strict_type!(
     }
 );
 
+fn get_nanos_from_time_column<T>(
+    typ: &ColumnType,
+    v: Option<FrameSlice<'_>>,
+) -> Result<i64, DeserializationError> {
+    let val = ensure_not_null_slice::<T>(typ, v)?;
+    let arr = ensure_exact_length::<T, 8>(typ, val)?;
+    let nanoseconds = i64::from_be_bytes(*arr);
+
+    // Valid values are in the range 0 to 86399999999999
+    if !(0..=86399999999999).contains(&nanoseconds) {
+        return Err(mk_deser_err::<T>(
+            typ,
+            BuiltinDeserializationErrorKind::ValueOverflow,
+        ));
+    }
+
+    Ok(nanoseconds)
+}
+
+impl_emptiable_strict_type!(
+    CqlTime,
+    Time,
+    |typ: &'frame ColumnType, v: Option<FrameSlice<'frame>>| {
+        let nanoseconds = get_nanos_from_time_column::<Self>(typ, v)?;
+
+        Ok(CqlTime(nanoseconds))
+    }
+);
+
+#[cfg(feature = "chrono")]
+impl_emptiable_strict_type!(
+    chrono::NaiveTime,
+    Time,
+    |typ: &'frame ColumnType, v: Option<FrameSlice<'frame>>| {
+        let nanoseconds = get_nanos_from_time_column::<chrono::NaiveTime>(typ, v)?;
+
+        let naive_time: chrono::NaiveTime = CqlTime(nanoseconds).try_into().map_err(|_| {
+            mk_deser_err::<Self>(typ, BuiltinDeserializationErrorKind::ValueOverflow)
+        })?;
+        Ok(naive_time)
+    }
+);
+
+#[cfg(feature = "time")]
+impl_emptiable_strict_type!(
+    time::Time,
+    Time,
+    |typ: &'frame ColumnType, v: Option<FrameSlice<'frame>>| {
+        let nanoseconds = get_nanos_from_time_column::<time::Time>(typ, v)?;
+
+        let time: time::Time = CqlTime(nanoseconds).try_into().map_err(|_| {
+            mk_deser_err::<Self>(typ, BuiltinDeserializationErrorKind::ValueOverflow)
+        })?;
+        Ok(time)
+    }
+);
+
 // Utilities
 
 fn ensure_not_null_frame_slice<'frame, T>(
@@ -656,7 +713,7 @@ mod tests {
     use crate::frame::response::cql_to_rust::FromCqlVal;
     use crate::frame::response::result::{deser_cql_value, ColumnType, CqlValue};
     use crate::frame::types;
-    use crate::frame::value::{Counter, CqlDate, CqlDecimal, CqlDuration, CqlVarint};
+    use crate::frame::value::{Counter, CqlDate, CqlDecimal, CqlDuration, CqlTime, CqlVarint};
     use crate::types::deserialize::{DeserializationError, FrameSlice};
     use crate::types::serialize::value::SerializeValue;
     use crate::types::serialize::CellWriter;
@@ -916,6 +973,29 @@ mod tests {
             compat_check::<time::Date>(&ColumnType::Date, make_bytes(&date1));
             compat_check::<time::Date>(&ColumnType::Date, make_bytes(&date2));
             compat_check::<time::Date>(&ColumnType::Date, make_bytes(&date3));
+        }
+
+        // time
+        let time1 = CqlTime(0);
+        let time2 = CqlTime(123456789);
+        let time3 = CqlTime(86399999999999); // maximum allowed
+
+        compat_check_serialized::<CqlTime>(&ColumnType::Time, &time1);
+        compat_check_serialized::<CqlTime>(&ColumnType::Time, &time2);
+        compat_check_serialized::<CqlTime>(&ColumnType::Time, &time3);
+
+        #[cfg(feature = "chrono")]
+        {
+            compat_check_serialized::<chrono::NaiveTime>(&ColumnType::Time, &time1);
+            compat_check_serialized::<chrono::NaiveTime>(&ColumnType::Time, &time2);
+            compat_check_serialized::<chrono::NaiveTime>(&ColumnType::Time, &time3);
+        }
+
+        #[cfg(feature = "time")]
+        {
+            compat_check_serialized::<time::Time>(&ColumnType::Time, &time1);
+            compat_check_serialized::<time::Time>(&ColumnType::Time, &time2);
+            compat_check_serialized::<time::Time>(&ColumnType::Time, &time3);
         }
     }
 
