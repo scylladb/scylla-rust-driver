@@ -10,7 +10,9 @@ use super::{DeserializationError, FrameSlice, TypeCheckError};
 use crate::frame::frame_errors::ParseError;
 use crate::frame::response::result::{deser_cql_value, ColumnType, CqlValue};
 use crate::frame::types;
-use crate::frame::value::{Counter, CqlDate, CqlDecimal, CqlDuration, CqlTime, CqlVarint};
+use crate::frame::value::{
+    Counter, CqlDate, CqlDecimal, CqlDuration, CqlTime, CqlTimestamp, CqlVarint,
+};
 
 /// A type that can be deserialized from a column value inside a row that was
 /// returned from a query.
@@ -513,6 +515,55 @@ impl_emptiable_strict_type!(
     }
 );
 
+fn get_millis_from_timestamp_column<T>(
+    typ: &ColumnType,
+    v: Option<FrameSlice<'_>>,
+) -> Result<i64, DeserializationError> {
+    let val = ensure_not_null_slice::<T>(typ, v)?;
+    let arr = ensure_exact_length::<T, 8>(typ, val)?;
+    let millis = i64::from_be_bytes(*arr);
+
+    Ok(millis)
+}
+
+impl_emptiable_strict_type!(
+    CqlTimestamp,
+    Timestamp,
+    |typ: &'frame ColumnType, v: Option<FrameSlice<'frame>>| {
+        let millis = get_millis_from_timestamp_column::<Self>(typ, v)?;
+        Ok(CqlTimestamp(millis))
+    }
+);
+
+#[cfg(feature = "chrono")]
+impl_emptiable_strict_type!(
+    chrono::DateTime<chrono::Utc>,
+    Timestamp,
+    |typ: &'frame ColumnType, v: Option<FrameSlice<'frame>>| {
+        use chrono::TimeZone as _;
+
+        let millis = get_millis_from_timestamp_column::<Self>(typ, v)?;
+        match chrono::Utc.timestamp_millis_opt(millis) {
+            chrono::LocalResult::Single(datetime) => Ok(datetime),
+            _ => Err(mk_deser_err::<Self>(
+                typ,
+                BuiltinDeserializationErrorKind::ValueOverflow,
+            )),
+        }
+    }
+);
+
+#[cfg(feature = "time")]
+impl_emptiable_strict_type!(
+    time::OffsetDateTime,
+    Timestamp,
+    |typ: &'frame ColumnType, v: Option<FrameSlice<'frame>>| {
+        let millis = get_millis_from_timestamp_column::<Self>(typ, v)?;
+        time::OffsetDateTime::from_unix_timestamp_nanos(millis as i128 * 1_000_000)
+            .map_err(|_| mk_deser_err::<Self>(typ, BuiltinDeserializationErrorKind::ValueOverflow))
+    }
+);
+
 // Utilities
 
 fn ensure_not_null_frame_slice<'frame, T>(
@@ -713,7 +764,9 @@ mod tests {
     use crate::frame::response::cql_to_rust::FromCqlVal;
     use crate::frame::response::result::{deser_cql_value, ColumnType, CqlValue};
     use crate::frame::types;
-    use crate::frame::value::{Counter, CqlDate, CqlDecimal, CqlDuration, CqlTime, CqlVarint};
+    use crate::frame::value::{
+        Counter, CqlDate, CqlDecimal, CqlDuration, CqlTime, CqlTimestamp, CqlVarint,
+    };
     use crate::types::deserialize::{DeserializationError, FrameSlice};
     use crate::types::serialize::value::SerializeValue;
     use crate::types::serialize::CellWriter;
@@ -996,6 +1049,38 @@ mod tests {
             compat_check_serialized::<time::Time>(&ColumnType::Time, &time1);
             compat_check_serialized::<time::Time>(&ColumnType::Time, &time2);
             compat_check_serialized::<time::Time>(&ColumnType::Time, &time3);
+        }
+
+        // timestamp
+        let timestamp1 = CqlTimestamp(0);
+        let timestamp2 = CqlTimestamp(123456789);
+        let timestamp3 = CqlTimestamp(98765432123456);
+
+        compat_check_serialized::<CqlTimestamp>(&ColumnType::Timestamp, &timestamp1);
+        compat_check_serialized::<CqlTimestamp>(&ColumnType::Timestamp, &timestamp2);
+        compat_check_serialized::<CqlTimestamp>(&ColumnType::Timestamp, &timestamp3);
+
+        #[cfg(feature = "chrono")]
+        {
+            compat_check_serialized::<chrono::DateTime<chrono::Utc>>(
+                &ColumnType::Timestamp,
+                &timestamp1,
+            );
+            compat_check_serialized::<chrono::DateTime<chrono::Utc>>(
+                &ColumnType::Timestamp,
+                &timestamp2,
+            );
+            compat_check_serialized::<chrono::DateTime<chrono::Utc>>(
+                &ColumnType::Timestamp,
+                &timestamp3,
+            );
+        }
+
+        #[cfg(feature = "time")]
+        {
+            compat_check_serialized::<time::OffsetDateTime>(&ColumnType::Timestamp, &timestamp1);
+            compat_check_serialized::<time::OffsetDateTime>(&ColumnType::Timestamp, &timestamp2);
+            compat_check_serialized::<time::OffsetDateTime>(&ColumnType::Timestamp, &timestamp3);
         }
     }
 
