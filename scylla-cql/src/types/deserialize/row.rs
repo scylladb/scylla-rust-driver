@@ -231,3 +231,64 @@ impl Display for BuiltinDeserializationErrorKind {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use bytes::Bytes;
+
+    use crate::frame::response::result::{ColumnSpec, ColumnType};
+    use crate::types::deserialize::{DeserializationError, FrameSlice};
+
+    use super::super::tests::{serialize_cells, spec};
+    use super::{ColumnIterator, DeserializeRow};
+
+    #[test]
+    fn test_deserialization_as_column_iterator() {
+        let col_specs = [
+            spec("i1", ColumnType::Int),
+            spec("i2", ColumnType::Text),
+            spec("i3", ColumnType::Counter),
+        ];
+        let serialized_values = serialize_cells([val_int(123), val_str("ScyllaDB"), None]);
+        let mut iter = deserialize::<ColumnIterator>(&col_specs, &serialized_values).unwrap();
+
+        let col1 = iter.next().unwrap().unwrap();
+        assert_eq!(col1.spec.name, "i1");
+        assert_eq!(col1.spec.typ, ColumnType::Int);
+        assert_eq!(col1.slice.unwrap().as_slice(), &123i32.to_be_bytes());
+
+        let col2 = iter.next().unwrap().unwrap();
+        assert_eq!(col2.spec.name, "i2");
+        assert_eq!(col2.spec.typ, ColumnType::Text);
+        assert_eq!(col2.slice.unwrap().as_slice(), "ScyllaDB".as_bytes());
+
+        let col3 = iter.next().unwrap().unwrap();
+        assert_eq!(col3.spec.name, "i3");
+        assert_eq!(col3.spec.typ, ColumnType::Counter);
+        assert!(col3.slice.is_none());
+
+        assert!(iter.next().is_none());
+    }
+
+    fn val_int(i: i32) -> Option<Vec<u8>> {
+        Some(i.to_be_bytes().to_vec())
+    }
+
+    fn val_str(s: &str) -> Option<Vec<u8>> {
+        Some(s.as_bytes().to_vec())
+    }
+
+    fn deserialize<'frame, R>(
+        specs: &'frame [ColumnSpec],
+        byts: &'frame Bytes,
+    ) -> Result<R, DeserializationError>
+    where
+        R: DeserializeRow<'frame>,
+    {
+        <R as DeserializeRow<'frame>>::type_check(specs)
+            .map_err(|typecheck_err| DeserializationError(typecheck_err.0))?;
+        let slice = FrameSlice::new(byts);
+        let iter = ColumnIterator::new(specs, slice);
+        <R as DeserializeRow<'frame>>::deserialize(iter)
+    }
+}
