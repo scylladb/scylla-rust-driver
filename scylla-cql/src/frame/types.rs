@@ -371,7 +371,7 @@ pub fn write_string(v: &str, buf: &mut impl BufMut) -> Result<(), ParseError> {
 
 #[test]
 fn type_string() {
-    let vals = vec![String::from(""), String::from("hello, world!")];
+    let vals = [String::from(""), String::from("hello, world!")];
     for val in vals.iter() {
         let mut buf = Vec::new();
         write_string(val, &mut buf).unwrap();
@@ -396,7 +396,7 @@ pub fn write_long_string(v: &str, buf: &mut impl BufMut) -> Result<(), ParseErro
 
 #[test]
 fn type_long_string() {
-    let vals = vec![String::from(""), String::from("hello, world!")];
+    let vals = [String::from(""), String::from("hello, world!")];
     for val in vals.iter() {
         let mut buf = Vec::new();
         write_long_string(val, &mut buf).unwrap();
