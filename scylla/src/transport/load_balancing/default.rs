@@ -184,7 +184,7 @@ or refrain from preferring datacenters (which may ban all other datacenters, if 
                 |node| (self.pick_predicate)(node, None),
                 NodeLocationCriteria::DatacenterAndRack(dc, rack),
             );
-            let local_rack_picked = self.pick_node(nodes, |node| rack_predicate(&node));
+            let local_rack_picked = self.pick_node(nodes, rack_predicate);
 
             if let Some(alive_local_rack) = local_rack_picked {
                 return Some((alive_local_rack, None));
@@ -471,7 +471,7 @@ impl DefaultPolicy {
     fn make_rack_predicate<'a>(
         predicate: impl Fn(NodeRef<'a>) -> bool + 'a,
         replica_location: NodeLocationCriteria<'a>,
-    ) -> impl Fn(&NodeRef<'a>) -> bool {
+    ) -> impl Fn(NodeRef<'a>) -> bool {
         move |node| match replica_location {
             NodeLocationCriteria::Any | NodeLocationCriteria::Datacenter(_) => predicate(node),
             NodeLocationCriteria::DatacenterAndRack(_, rack) => {
@@ -662,12 +662,9 @@ impl DefaultPolicy {
     fn round_robin_nodes<'a>(
         &'a self,
         nodes: &'a [Arc<Node>],
-        // I wanted this to be
-        // impl Fn(&NodeRef<'a>) -> bool
-        // but I have no idea how to make this work with borrow checker
-        predicate: impl Fn(&NodeRef<'a>) -> bool,
+        predicate: impl Fn(NodeRef<'a>) -> bool,
     ) -> impl Iterator<Item = NodeRef<'_>> {
-        Self::randomly_rotated_nodes(nodes).filter(predicate)
+        Self::randomly_rotated_nodes(nodes).filter(move |node| predicate(node))
     }
 
     fn shuffle<'a>(
