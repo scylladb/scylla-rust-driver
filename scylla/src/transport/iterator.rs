@@ -10,6 +10,7 @@ use std::task::{Context, Poll};
 
 use bytes::Bytes;
 use futures::Stream;
+use scylla_cql::frame::response::result::TableSpec;
 use scylla_cql::frame::response::NonErrorResponse;
 use scylla_cql::frame::types::SerialConsistency;
 use scylla_cql::types::serialize::row::SerializedValues;
@@ -415,6 +416,11 @@ impl RowIterator {
     /// Returns specification of row columns
     pub fn get_column_specs(&self) -> &[ColumnSpec] {
         &self.current_page.metadata.col_specs
+    }
+
+    /// Returns specification of table
+    pub fn get_table_spec(&self) -> &Option<TableSpec> {
+        &self.current_page.metadata.table_spec
     }
 
     fn is_current_page_exhausted(&self) -> bool {
