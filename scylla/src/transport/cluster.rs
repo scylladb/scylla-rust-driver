@@ -292,7 +292,6 @@ impl ClusterData {
             HashMap::with_capacity(metadata.peers.len());
         let mut ring: Vec<(Token, Arc<Node>)> = Vec::new();
         let mut datacenters: HashMap<String, Datacenter> = HashMap::new();
-        let mut all_nodes: Vec<Arc<Node>> = Vec::with_capacity(metadata.peers.len());
 
         for peer in metadata.peers {
             // Take existing Arc<Node> if possible, otherwise create new one
@@ -344,8 +343,6 @@ impl ClusterData {
             for token in peer_tokens {
                 ring.push((token, node.clone()));
             }
-
-            all_nodes.push(node);
         }
 
         Self::update_rack_count(&mut datacenters);
