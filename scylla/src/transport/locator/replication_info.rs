@@ -220,8 +220,8 @@ mod tests {
         let replication_info = ReplicationInfo::new(ring);
 
         let check = |token, replication_factor, expected_node_ids| {
-            let replicas = replication_info
-                .simple_strategy_replicas(Token { value: token }, replication_factor);
+            let replicas =
+                replication_info.simple_strategy_replicas(Token::new(token), replication_factor);
             let ids: Vec<u16> = replicas.map(|node| node.address.port()).collect();
 
             assert_eq!(ids, expected_node_ids);
@@ -255,8 +255,7 @@ mod tests {
         let replication_info = ReplicationInfo::new(ring);
 
         let check = |token, dc, rf, expected| {
-            let replicas =
-                replication_info.nts_replicas_in_datacenter(Token { value: token }, dc, rf);
+            let replicas = replication_info.nts_replicas_in_datacenter(Token::new(token), dc, rf);
             let ids: Vec<u16> = replicas.map(|node| node.address.port()).collect();
 
             assert_eq!(ids, expected);

@@ -1949,7 +1949,7 @@ impl RequestSpan {
             );
         }
         if let Some(token) = token {
-            span.record("token", token.value);
+            span.record("token", token.value());
         }
 
         Self {

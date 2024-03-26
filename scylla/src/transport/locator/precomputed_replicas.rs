@@ -255,10 +255,8 @@ mod tests {
         );
 
         let check = |token, replication_factor, expected_node_ids| {
-            let replicas = precomputed_replicas.get_precomputed_simple_strategy_replicas(
-                Token { value: token },
-                replication_factor,
-            );
+            let replicas = precomputed_replicas
+                .get_precomputed_simple_strategy_replicas(Token::new(token), replication_factor);
 
             let ids: Vec<u16> = replicas
                 .unwrap()
@@ -273,7 +271,7 @@ mod tests {
         check(160, 1, vec![F]);
         check(160, 2, vec![F, A]);
         assert_eq!(
-            precomputed_replicas.get_precomputed_simple_strategy_replicas(Token { value: 160 }, 3),
+            precomputed_replicas.get_precomputed_simple_strategy_replicas(Token::new(160), 3),
             None
         );
 
@@ -300,7 +298,7 @@ mod tests {
 
         let check = |token, dc, replication_factor, expected_node_ids| {
             let replicas = precomputed_replicas.get_precomputed_network_strategy_replicas(
-                Token { value: token },
+                Token::new(token),
                 dc,
                 replication_factor,
             );
@@ -320,7 +318,7 @@ mod tests {
         check(160, "eu", 3, vec![A, C, G]);
         assert_eq!(
             precomputed_replicas.get_precomputed_network_strategy_replicas(
-                Token { value: 160 },
+                Token::new(160),
                 "eu",
                 4
             ),
@@ -333,7 +331,7 @@ mod tests {
         check(160, "us", 3, vec![F, D, E]);
         assert_eq!(
             precomputed_replicas.get_precomputed_network_strategy_replicas(
-                Token { value: 160 },
+                Token::new(160),
                 "us",
                 4
             ),

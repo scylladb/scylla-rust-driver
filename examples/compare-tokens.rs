@@ -33,13 +33,13 @@ async fn main() -> Result<()> {
             )
             .await?;
 
-        let t = prepared.calculate_token(&(pk,))?.unwrap().value;
+        let t = prepared.calculate_token(&(pk,))?.unwrap().value();
 
         println!(
             "Token endpoints for query: {:?}",
             session
                 .get_cluster_data()
-                .get_token_endpoints("examples_ks", Token { value: t })
+                .get_token_endpoints("examples_ks", Token::new(t))
                 .iter()
                 .map(|(node, _shard)| node.address)
                 .collect::<Vec<NodeAddr>>()

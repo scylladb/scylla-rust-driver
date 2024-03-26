@@ -231,7 +231,7 @@ async fn test_prepared_statement() {
             .unwrap()
             .single_row_typed()
             .unwrap();
-        let token = Token { value };
+        let token = Token::new(value);
         let prepared_token = Murmur3Partitioner
             .hash_one(&prepared_statement.compute_partition_key(&values).unwrap());
         assert_eq!(token, prepared_token);
@@ -250,7 +250,7 @@ async fn test_prepared_statement() {
             .unwrap()
             .single_row_typed()
             .unwrap();
-        let token = Token { value };
+        let token = Token::new(value);
         let prepared_token = Murmur3Partitioner.hash_one(
             &prepared_complex_pk_statement
                 .compute_partition_key(&values)
@@ -500,7 +500,7 @@ async fn test_token_calculation() {
             .unwrap()
             .single_row_typed()
             .unwrap();
-        let token = Token { value };
+        let token = Token::new(value);
         let prepared_token = Murmur3Partitioner
             .hash_one(&prepared_statement.compute_partition_key(&values).unwrap());
         assert_eq!(token, prepared_token);
@@ -2778,7 +2778,8 @@ async fn test_manual_primary_key_computation() {
         .unwrap();
         println!(
             "by_prepared: {}, by_hand: {}",
-            token_by_prepared.value, token_by_hand.value
+            token_by_prepared.value(),
+            token_by_hand.value()
         );
         assert_eq!(token_by_prepared, token_by_hand);
     }

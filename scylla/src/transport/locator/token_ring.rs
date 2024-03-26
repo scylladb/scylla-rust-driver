@@ -78,117 +78,117 @@ mod tests {
     fn test_token_ring() {
         setup_tracing();
         let ring_data = [
-            (Token { value: -30 }, -3),
-            (Token { value: -20 }, -2),
-            (Token { value: -10 }, -1),
-            (Token { value: 0 }, 0),
-            (Token { value: 10 }, 1),
-            (Token { value: 20 }, 2),
-            (Token { value: 30 }, 3),
+            (Token::new(-30), -3),
+            (Token::new(-20), -2),
+            (Token::new(-10), -1),
+            (Token::new(0), 0),
+            (Token::new(10), 1),
+            (Token::new(20), 2),
+            (Token::new(30), 3),
         ];
 
         let ring: TokenRing<i32> = TokenRing::new(ring_data.into_iter());
 
         assert_eq!(
-            ring.ring_range(Token { value: -35 })
+            ring.ring_range(Token::new(-35))
                 .cloned()
                 .collect::<Vec<i32>>(),
             vec![-3, -2, -1, 0, 1, 2, 3]
         );
 
         assert_eq!(
-            ring.ring_range(Token { value: -30 })
+            ring.ring_range(Token::new(-30))
                 .cloned()
                 .collect::<Vec<i32>>(),
             vec![-3, -2, -1, 0, 1, 2, 3]
         );
 
         assert_eq!(
-            ring.ring_range(Token { value: -25 })
+            ring.ring_range(Token::new(-25))
                 .cloned()
                 .collect::<Vec<i32>>(),
             vec![-2, -1, 0, 1, 2, 3, -3]
         );
 
         assert_eq!(
-            ring.ring_range(Token { value: -20 })
+            ring.ring_range(Token::new(-20))
                 .cloned()
                 .collect::<Vec<i32>>(),
             vec![-2, -1, 0, 1, 2, 3, -3]
         );
 
         assert_eq!(
-            ring.ring_range(Token { value: -15 })
+            ring.ring_range(Token::new(-15))
                 .cloned()
                 .collect::<Vec<i32>>(),
             vec![-1, 0, 1, 2, 3, -3, -2]
         );
 
         assert_eq!(
-            ring.ring_range(Token { value: -10 })
+            ring.ring_range(Token::new(-10))
                 .cloned()
                 .collect::<Vec<i32>>(),
             vec![-1, 0, 1, 2, 3, -3, -2]
         );
 
         assert_eq!(
-            ring.ring_range(Token { value: -5 })
+            ring.ring_range(Token::new(-5))
                 .cloned()
                 .collect::<Vec<i32>>(),
             vec![0, 1, 2, 3, -3, -2, -1]
         );
 
         assert_eq!(
-            ring.ring_range(Token { value: 0 })
+            ring.ring_range(Token::new(0))
                 .cloned()
                 .collect::<Vec<i32>>(),
             vec![0, 1, 2, 3, -3, -2, -1]
         );
 
         assert_eq!(
-            ring.ring_range(Token { value: 5 })
+            ring.ring_range(Token::new(5))
                 .cloned()
                 .collect::<Vec<i32>>(),
             vec![1, 2, 3, -3, -2, -1, 0]
         );
 
         assert_eq!(
-            ring.ring_range(Token { value: 10 })
+            ring.ring_range(Token::new(10))
                 .cloned()
                 .collect::<Vec<i32>>(),
             vec![1, 2, 3, -3, -2, -1, 0]
         );
 
         assert_eq!(
-            ring.ring_range(Token { value: 15 })
+            ring.ring_range(Token::new(15))
                 .cloned()
                 .collect::<Vec<i32>>(),
             vec![2, 3, -3, -2, -1, 0, 1]
         );
 
         assert_eq!(
-            ring.ring_range(Token { value: 20 })
+            ring.ring_range(Token::new(20))
                 .cloned()
                 .collect::<Vec<i32>>(),
             vec![2, 3, -3, -2, -1, 0, 1]
         );
 
         assert_eq!(
-            ring.ring_range(Token { value: 25 })
+            ring.ring_range(Token::new(25))
                 .cloned()
                 .collect::<Vec<i32>>(),
             vec![3, -3, -2, -1, 0, 1, 2]
         );
 
         assert_eq!(
-            ring.ring_range(Token { value: 30 })
+            ring.ring_range(Token::new(30))
                 .cloned()
                 .collect::<Vec<i32>>(),
             vec![3, -3, -2, -1, 0, 1, 2]
         );
 
         assert_eq!(
-            ring.ring_range(Token { value: 35 })
+            ring.ring_range(Token::new(35))
                 .cloned()
                 .collect::<Vec<i32>>(),
             vec![-3, -2, -1, 0, 1, 2, 3]

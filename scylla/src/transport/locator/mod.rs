@@ -771,8 +771,7 @@ mod tests {
         // For each case (token, limit_to_dc, strategy), we are checking
         // that ReplicasOrdered yields replicas in the expected order.
         let check = |token, limit_to_dc, strategy, expected| {
-            let replica_set =
-                locator.replicas_for_token(Token { value: token }, strategy, limit_to_dc);
+            let replica_set = locator.replicas_for_token(Token::new(token), strategy, limit_to_dc);
             let replicas_ordered = replica_set.into_replicas_ordered();
             let ids: Vec<_> = replicas_ordered
                 .into_iter()
