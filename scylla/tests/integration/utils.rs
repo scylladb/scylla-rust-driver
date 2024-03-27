@@ -19,12 +19,12 @@ pub(crate) fn setup_tracing() {
         .try_init();
 }
 
-fn with_pseudorandom_shard(node: NodeRef) -> (NodeRef, Shard) {
+fn with_pseudorandom_shard(node: NodeRef) -> (NodeRef, Option<Shard>) {
     let nr_shards = node
         .sharder()
         .map(|sharder| sharder.nr_shards.get())
         .unwrap_or(1);
-    (node, ((nr_shards - 1) % 42) as Shard)
+    (node, Some(((nr_shards - 1) % 42) as Shard))
 }
 
 #[derive(Debug)]
@@ -34,7 +34,7 @@ impl LoadBalancingPolicy for FixedOrderLoadBalancer {
         &'a self,
         _info: &'a scylla::load_balancing::RoutingInfo,
         cluster: &'a scylla::transport::ClusterData,
-    ) -> Option<(NodeRef<'a>, Shard)> {
+    ) -> Option<(NodeRef<'a>, Option<Shard>)> {
         cluster
             .get_nodes_info()
             .iter()

@@ -39,7 +39,8 @@ pub struct RoutingInfo<'a> {
 ///
 /// It is computed on-demand, only if querying the most preferred node fails
 /// (or when speculative execution is triggered).
-pub type FallbackPlan<'a> = Box<dyn Iterator<Item = (NodeRef<'a>, Shard)> + Send + Sync + 'a>;
+pub type FallbackPlan<'a> =
+    Box<dyn Iterator<Item = (NodeRef<'a>, Option<Shard>)> + Send + Sync + 'a>;
 
 /// Policy that decides which nodes and shards to contact for each query.
 ///
@@ -67,7 +68,7 @@ pub trait LoadBalancingPolicy: Send + Sync + std::fmt::Debug {
         &'a self,
         query: &'a RoutingInfo,
         cluster: &'a ClusterData,
-    ) -> Option<(NodeRef<'a>, Shard)>;
+    ) -> Option<(NodeRef<'a>, Option<Shard>)>;
 
     /// Returns all contact-appropriate nodes for a given query.
     fn fallback<'a>(&'a self, query: &'a RoutingInfo, cluster: &'a ClusterData)
