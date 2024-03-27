@@ -1,8 +1,4 @@
 use futures::Future;
-use itertools::Itertools;
-use scylla::load_balancing::LoadBalancingPolicy;
-use scylla::routing::Shard;
-use scylla::transport::NodeRef;
 use std::collections::HashMap;
 use std::env;
 use std::net::SocketAddr;
@@ -17,66 +13,6 @@ pub(crate) fn setup_tracing() {
         .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
         .with_writer(tracing_subscriber::fmt::TestWriter::new())
         .try_init();
-}
-
-fn with_pseudorandom_shard(node: NodeRef) -> (NodeRef, Option<Shard>) {
-    let nr_shards = node
-        .sharder()
-        .map(|sharder| sharder.nr_shards.get())
-        .unwrap_or(1);
-    (node, Some(((nr_shards - 1) % 42) as Shard))
-}
-
-#[derive(Debug)]
-pub(crate) struct FixedOrderLoadBalancer;
-impl LoadBalancingPolicy for FixedOrderLoadBalancer {
-    fn pick<'a>(
-        &'a self,
-        _info: &'a scylla::load_balancing::RoutingInfo,
-        cluster: &'a scylla::transport::ClusterData,
-    ) -> Option<(NodeRef<'a>, Option<Shard>)> {
-        cluster
-            .get_nodes_info()
-            .iter()
-            .sorted_by(|node1, node2| Ord::cmp(&node1.address, &node2.address))
-            .next()
-            .map(with_pseudorandom_shard)
-    }
-
-    fn fallback<'a>(
-        &'a self,
-        _info: &'a scylla::load_balancing::RoutingInfo,
-        cluster: &'a scylla::transport::ClusterData,
-    ) -> scylla::load_balancing::FallbackPlan<'a> {
-        Box::new(
-            cluster
-                .get_nodes_info()
-                .iter()
-                .sorted_by(|node1, node2| Ord::cmp(&node1.address, &node2.address))
-                .map(with_pseudorandom_shard),
-        )
-    }
-
-    fn on_query_success(
-        &self,
-        _: &scylla::load_balancing::RoutingInfo,
-        _: std::time::Duration,
-        _: NodeRef<'_>,
-    ) {
-    }
-
-    fn on_query_failure(
-        &self,
-        _: &scylla::load_balancing::RoutingInfo,
-        _: std::time::Duration,
-        _: NodeRef<'_>,
-        _: &scylla_cql::errors::QueryError,
-    ) {
-    }
-
-    fn name(&self) -> String {
-        "FixedOrderLoadBalancer".to_string()
-    }
 }
 
 pub(crate) async fn test_with_3_node_cluster<F, Fut>(
