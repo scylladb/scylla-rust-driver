@@ -429,9 +429,7 @@ impl Metadata {
 
                 Peer {
                     address: endpoint.address(),
-                    tokens: vec![Token {
-                        value: token as i64,
-                    }],
+                    tokens: vec![Token::new(token as i64)],
                     datacenter: None,
                     rack: None,
                     host_id: Uuid::new_v4(),
@@ -887,9 +885,7 @@ async fn create_peer_from_row(
             // Also, we could implement support for Cassandra's other standard partitioners
             // like RandomPartitioner or ByteOrderedPartitioner.
             trace!("Couldn't parse tokens as 64-bit integers: {}, proceeding with a dummy token. If you're using a partitioner with different token size, consider migrating to murmur3", e);
-            vec![Token {
-                value: rand::thread_rng().gen::<i64>(),
-            }]
+            vec![Token::new(rand::thread_rng().gen::<i64>())]
         }
     };
 

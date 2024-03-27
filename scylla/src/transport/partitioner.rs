@@ -255,9 +255,7 @@ impl PartitionerHasher for Murmur3PartitionerHasher {
         h1 += h2;
         h2 += h1;
 
-        Token {
-            value: (((h2.0 as i128) << 64) | h1.0 as i128) as i64,
-        }
+        Token::new((((h2.0 as i128) << 64) | h1.0 as i128) as i64)
     }
 }
 
@@ -303,9 +301,7 @@ impl PartitionerHasher for CDCPartitionerHasher {
 
                 // If the buffer is full, we can compute and fix the token.
                 if *len == Self::BUF_CAPACITY {
-                    let token = Token {
-                        value: (&mut &buf[..]).get_i64(),
-                    };
+                    let token = Token::new((&mut &buf[..]).get_i64());
                     self.state = CDCPartitionerHasherState::Computed(token);
                 }
             }
@@ -315,7 +311,12 @@ impl PartitionerHasher for CDCPartitionerHasher {
 
     fn finish(&self) -> Token {
         match self.state {
-            CDCPartitionerHasherState::Feeding { .. } => Token { value: i64::MIN },
+            // Looking at Scylla code it seems that here we actually want token with this value.
+            // If the value is too short Scylla returns `dht::minimum_token()`:
+            // https://github.com/scylladb/scylladb/blob/4be70bfc2bc7f133cab492b4aac7bab9c790a48c/cdc/cdc_partitioner.cc#L32
+            // When you call `long_token` on `minimum_token` it will actually return `i64::MIN`:
+            // https://github.com/scylladb/scylladb/blob/0a7854ea4de04f20b71326ba5940b5fac6f7241a/dht/token.cc#L21-L35
+            CDCPartitionerHasherState::Feeding { .. } => Token::INVALID,
             CDCPartitionerHasherState::Computed(token) => token,
         }
     }
@@ -373,7 +374,7 @@ mod tests {
     use super::{CDCPartitioner, Murmur3Partitioner, Partitioner};
 
     fn assert_correct_murmur3_hash(pk: &'static str, expected_hash: i64) {
-        let hash = Murmur3Partitioner.hash_one(pk.as_bytes()).value;
+        let hash = Murmur3Partitioner.hash_one(pk.as_bytes()).value();
         assert_eq!(hash, expected_hash);
     }
 
@@ -391,7 +392,7 @@ mod tests {
     }
 
     fn assert_correct_cdc_hash(pk: &'static str, expected_hash: i64) {
-        let hash = CDCPartitioner.hash_one(pk.as_bytes()).value;
+        let hash = CDCPartitioner.hash_one(pk.as_bytes()).value();
         assert_eq!(hash, expected_hash);
     }
 

@@ -1152,9 +1152,7 @@ mod tests {
                     datacenter: Some(dc.to_string()),
                     rack: None,
                     address: id_to_invalid_addr(*id),
-                    tokens: vec![Token {
-                        value: *id as i64 * 100,
-                    }],
+                    tokens: vec![Token::new(*id as i64 * 100)],
                     host_id: Uuid::new_v4(),
                 })
                 .collect::<Vec<_>>();
@@ -1271,7 +1269,7 @@ mod tests {
                     ..Default::default()
                 },
                 routing_info: RoutingInfo {
-                    token: Some(Token { value: 160 }),
+                    token: Some(Token::new(160)),
                     keyspace: Some(KEYSPACE_NTS_RF_2),
                     consistency: Consistency::Two,
                     ..Default::default()
@@ -1296,7 +1294,7 @@ mod tests {
                     ..Default::default()
                 },
                 routing_info: RoutingInfo {
-                    token: Some(Token { value: 160 }),
+                    token: Some(Token::new(160)),
                     keyspace: Some(KEYSPACE_NTS_RF_2),
                     consistency: Consistency::Two,
                     ..Default::default()
@@ -1320,7 +1318,7 @@ mod tests {
                     ..Default::default()
                 },
                 routing_info: RoutingInfo {
-                    token: Some(Token { value: 160 }),
+                    token: Some(Token::new(160)),
                     keyspace: Some(KEYSPACE_NTS_RF_2),
                     consistency: Consistency::LocalOne, // local Consistency forbids datacenter failover
                     ..Default::default()
@@ -1342,7 +1340,7 @@ mod tests {
                     ..Default::default()
                 },
                 routing_info: RoutingInfo {
-                    token: Some(Token { value: 160 }),
+                    token: Some(Token::new(160)),
                     keyspace: Some(KEYSPACE_NTS_RF_2),
                     consistency: Consistency::One,
                     ..Default::default()
@@ -1364,7 +1362,7 @@ mod tests {
                     ..Default::default()
                 },
                 routing_info: RoutingInfo {
-                    token: Some(Token { value: 160 }),
+                    token: Some(Token::new(160)),
                     keyspace: Some(KEYSPACE_NTS_RF_3),
                     consistency: Consistency::Quorum,
                     ..Default::default()
@@ -1389,7 +1387,7 @@ mod tests {
                     ..Default::default()
                 },
                 routing_info: RoutingInfo {
-                    token: Some(Token { value: 160 }),
+                    token: Some(Token::new(160)),
                     keyspace: Some(KEYSPACE_NTS_RF_3),
                     consistency: Consistency::Quorum,
                     ..Default::default()
@@ -1413,7 +1411,7 @@ mod tests {
                     ..Default::default()
                 },
                 routing_info: RoutingInfo {
-                    token: Some(Token { value: 160 }),
+                    token: Some(Token::new(160)),
                     keyspace: Some(KEYSPACE_NTS_RF_3),
                     consistency: Consistency::Quorum,
                     ..Default::default()
@@ -1435,7 +1433,7 @@ mod tests {
                     ..Default::default()
                 },
                 routing_info: RoutingInfo {
-                    token: Some(Token { value: 160 }),
+                    token: Some(Token::new(160)),
                     keyspace: Some(KEYSPACE_SS_RF_2),
                     consistency: Consistency::Two,
                     ..Default::default()
@@ -1459,7 +1457,7 @@ mod tests {
                     ..Default::default()
                 },
                 routing_info: RoutingInfo {
-                    token: Some(Token { value: 160 }),
+                    token: Some(Token::new(160)),
                     keyspace: Some(KEYSPACE_SS_RF_2),
                     consistency: Consistency::LocalOne, // local Consistency forbids datacenter failover
                     ..Default::default()
@@ -1500,7 +1498,7 @@ mod tests {
                     ..Default::default()
                 },
                 routing_info: RoutingInfo {
-                    token: Some(Token { value: 160 }),
+                    token: Some(Token::new(160)),
                     keyspace: None, // no keyspace
                     consistency: Consistency::Quorum,
                     ..Default::default()
@@ -1519,7 +1517,7 @@ mod tests {
                     ..Default::default()
                 },
                 routing_info: RoutingInfo {
-                    token: Some(Token { value: 160 }),
+                    token: Some(Token::new(160)),
                     keyspace: Some(KEYSPACE_NTS_RF_2),
                     consistency: Consistency::Quorum,
                     ..Default::default()
@@ -1541,7 +1539,7 @@ mod tests {
                     ..Default::default()
                 },
                 routing_info: RoutingInfo {
-                    token: Some(Token { value: 160 }),
+                    token: Some(Token::new(160)),
                     keyspace: Some(KEYSPACE_NTS_RF_2),
                     consistency: Consistency::Quorum,
                     ..Default::default()
@@ -1560,7 +1558,7 @@ mod tests {
                     ..Default::default()
                 },
                 routing_info: RoutingInfo {
-                    token: Some(Token { value: 160 }),
+                    token: Some(Token::new(160)),
                     keyspace: Some(KEYSPACE_NTS_RF_2),
                     consistency: Consistency::Quorum,
                     ..Default::default()
@@ -1582,7 +1580,7 @@ mod tests {
                     ..Default::default()
                 },
                 routing_info: RoutingInfo {
-                    token: Some(Token { value: 160 }),
+                    token: Some(Token::new(160)),
                     keyspace: Some(KEYSPACE_NTS_RF_2),
                     consistency: Consistency::Quorum,
                     ..Default::default()
@@ -1607,7 +1605,7 @@ mod tests {
                     ..Default::default()
                 },
                 routing_info: RoutingInfo {
-                    token: Some(Token { value: 160 }),
+                    token: Some(Token::new(160)),
                     keyspace: Some(KEYSPACE_NTS_RF_3),
                     consistency: Consistency::One,
                     ..Default::default()
@@ -1635,7 +1633,7 @@ mod tests {
                     ..Default::default()
                 },
                 routing_info: RoutingInfo {
-                    token: Some(Token { value: 560 }),
+                    token: Some(Token::new(560)),
                     keyspace: Some(KEYSPACE_SS_RF_2),
                     consistency: Consistency::Two,
                     ..Default::default()
@@ -1662,7 +1660,7 @@ mod tests {
                     ..Default::default()
                 },
                 routing_info: RoutingInfo {
-                    token: Some(Token { value: 160 }),
+                    token: Some(Token::new(160)),
                     keyspace: Some(KEYSPACE_SS_RF_2),
                     consistency: Consistency::One,
                     ..Default::default()
@@ -1742,7 +1740,7 @@ mod tests {
                     ..Default::default()
                 },
                 routing_info: RoutingInfo {
-                    token: Some(Token { value: 160 }),
+                    token: Some(Token::new(160)),
                     keyspace: Some(KEYSPACE_NTS_RF_2),
                     consistency: Consistency::Two,
                     is_confirmed_lwt: true,
@@ -1768,7 +1766,7 @@ mod tests {
                     ..Default::default()
                 },
                 routing_info: RoutingInfo {
-                    token: Some(Token { value: 160 }),
+                    token: Some(Token::new(160)),
                     keyspace: Some(KEYSPACE_NTS_RF_2),
                     consistency: Consistency::Two,
                     is_confirmed_lwt: true,
@@ -1793,7 +1791,7 @@ mod tests {
                     ..Default::default()
                 },
                 routing_info: RoutingInfo {
-                    token: Some(Token { value: 160 }),
+                    token: Some(Token::new(160)),
                     keyspace: Some(KEYSPACE_NTS_RF_2),
                     consistency: Consistency::LocalOne, // local Consistency forbids datacenter failover
                     is_confirmed_lwt: true,
@@ -1816,7 +1814,7 @@ mod tests {
                     ..Default::default()
                 },
                 routing_info: RoutingInfo {
-                    token: Some(Token { value: 160 }),
+                    token: Some(Token::new(160)),
                     keyspace: Some(KEYSPACE_NTS_RF_2),
                     consistency: Consistency::One,
                     is_confirmed_lwt: true,
@@ -1839,7 +1837,7 @@ mod tests {
                     ..Default::default()
                 },
                 routing_info: RoutingInfo {
-                    token: Some(Token { value: 160 }),
+                    token: Some(Token::new(160)),
                     keyspace: Some(KEYSPACE_NTS_RF_3),
                     consistency: Consistency::Quorum,
                     is_confirmed_lwt: true,
@@ -1865,7 +1863,7 @@ mod tests {
                     ..Default::default()
                 },
                 routing_info: RoutingInfo {
-                    token: Some(Token { value: 160 }),
+                    token: Some(Token::new(160)),
                     keyspace: Some(KEYSPACE_NTS_RF_3),
                     consistency: Consistency::Quorum,
                     is_confirmed_lwt: true,
@@ -1890,7 +1888,7 @@ mod tests {
                     ..Default::default()
                 },
                 routing_info: RoutingInfo {
-                    token: Some(Token { value: 160 }),
+                    token: Some(Token::new(160)),
                     keyspace: Some(KEYSPACE_NTS_RF_3),
                     consistency: Consistency::Quorum,
                     is_confirmed_lwt: true,
@@ -1913,7 +1911,7 @@ mod tests {
                     ..Default::default()
                 },
                 routing_info: RoutingInfo {
-                    token: Some(Token { value: 160 }),
+                    token: Some(Token::new(160)),
                     keyspace: Some(KEYSPACE_SS_RF_2),
                     consistency: Consistency::Two,
                     is_confirmed_lwt: true,
@@ -1938,7 +1936,7 @@ mod tests {
                     ..Default::default()
                 },
                 routing_info: RoutingInfo {
-                    token: Some(Token { value: 160 }),
+                    token: Some(Token::new(160)),
                     keyspace: Some(KEYSPACE_SS_RF_2),
                     consistency: Consistency::LocalOne, // local Consistency forbids datacenter failover
                     is_confirmed_lwt: true,
@@ -1981,7 +1979,7 @@ mod tests {
                     ..Default::default()
                 },
                 routing_info: RoutingInfo {
-                    token: Some(Token { value: 160 }),
+                    token: Some(Token::new(160)),
                     keyspace: None, // no keyspace
                     consistency: Consistency::Quorum,
                     is_confirmed_lwt: true,
@@ -2001,7 +1999,7 @@ mod tests {
                     ..Default::default()
                 },
                 routing_info: RoutingInfo {
-                    token: Some(Token { value: 160 }),
+                    token: Some(Token::new(160)),
                     keyspace: Some(KEYSPACE_NTS_RF_2),
                     consistency: Consistency::Quorum,
                     is_confirmed_lwt: true,
@@ -2024,7 +2022,7 @@ mod tests {
                     ..Default::default()
                 },
                 routing_info: RoutingInfo {
-                    token: Some(Token { value: 160 }),
+                    token: Some(Token::new(160)),
                     keyspace: Some(KEYSPACE_NTS_RF_2),
                     consistency: Consistency::Quorum,
                     is_confirmed_lwt: true,
@@ -2044,7 +2042,7 @@ mod tests {
                     ..Default::default()
                 },
                 routing_info: RoutingInfo {
-                    token: Some(Token { value: 160 }),
+                    token: Some(Token::new(160)),
                     keyspace: Some(KEYSPACE_NTS_RF_2),
                     consistency: Consistency::Quorum,
                     is_confirmed_lwt: true,
@@ -2067,7 +2065,7 @@ mod tests {
                     ..Default::default()
                 },
                 routing_info: RoutingInfo {
-                    token: Some(Token { value: 160 }),
+                    token: Some(Token::new(160)),
                     keyspace: Some(KEYSPACE_NTS_RF_2),
                     consistency: Consistency::Quorum,
                     is_confirmed_lwt: true,
@@ -2093,7 +2091,7 @@ mod tests {
                     ..Default::default()
                 },
                 routing_info: RoutingInfo {
-                    token: Some(Token { value: 160 }),
+                    token: Some(Token::new(160)),
                     keyspace: Some(KEYSPACE_NTS_RF_3),
                     consistency: Consistency::One,
                     is_confirmed_lwt: true,
@@ -2122,7 +2120,7 @@ mod tests {
                     ..Default::default()
                 },
                 routing_info: RoutingInfo {
-                    token: Some(Token { value: 760 }),
+                    token: Some(Token::new(760)),
                     keyspace: Some(KEYSPACE_SS_RF_2),
                     consistency: Consistency::Two,
                     is_confirmed_lwt: true,
@@ -2149,7 +2147,7 @@ mod tests {
                     ..Default::default()
                 },
                 routing_info: RoutingInfo {
-                    token: Some(Token { value: 160 }),
+                    token: Some(Token::new(160)),
                     keyspace: Some(KEYSPACE_SS_RF_2),
                     consistency: Consistency::One,
                     is_confirmed_lwt: true,
@@ -3404,7 +3402,7 @@ mod latency_awareness {
                         (E, too_few_measurements_slow()),
                     ],
                     routing_info: RoutingInfo {
-                        token: Some(Token { value: 160 }),
+                        token: Some(Token::new(160)),
                         keyspace: Some(KEYSPACE_NTS_RF_3),
                         consistency: Consistency::Quorum,
                         ..Default::default()
@@ -3424,7 +3422,7 @@ mod latency_awareness {
                     // Latency-awareness has old minimum average cached, so does not fire.
                     preset_min_avg: Some(100 * min_avg),
                     routing_info: RoutingInfo {
-                        token: Some(Token { value: 160 }),
+                        token: Some(Token::new(160)),
                         keyspace: Some(KEYSPACE_NTS_RF_3),
                         consistency: Consistency::Quorum,
                         ..Default::default()
@@ -3453,7 +3451,7 @@ mod latency_awareness {
                         (C, too_few_measurements_fast_leader()),
                     ],
                     routing_info: RoutingInfo {
-                        token: Some(Token { value: 160 }),
+                        token: Some(Token::new(160)),
                         keyspace: Some(KEYSPACE_NTS_RF_2),
                         consistency: Consistency::Quorum,
                         ..Default::default()
@@ -3472,7 +3470,7 @@ mod latency_awareness {
                     // No latency stats, so latency-awareness is a no-op.
                     preset_min_avg: None,
                     routing_info: RoutingInfo {
-                        token: Some(Token { value: 160 }),
+                        token: Some(Token::new(160)),
                         keyspace: Some("invalid"),
                         consistency: Consistency::Quorum,
                         ..Default::default()
