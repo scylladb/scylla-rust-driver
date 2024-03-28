@@ -31,6 +31,8 @@ use uuid::Uuid;
 use super::locator::tablets::{RawTablet, Tablet, TabletsInfo};
 use super::node::{KnownNode, NodeAddr};
 use super::NodeRef;
+#[cfg(feature = "unstable-tablets")]
+use std::collections::HashSet;
 
 use super::locator::ReplicaLocator;
 use super::partitioner::calculate_token_for_partition_key;
@@ -291,7 +293,7 @@ impl ClusterData {
         known_peers: &HashMap<Uuid, Arc<Node>>,
         used_keyspace: &Option<VerifiedKeyspaceName>,
         host_filter: Option<&dyn HostFilter>,
-        #[cfg(feature = "unstable-tablets")] tablets: TabletsInfo,
+        #[cfg(feature = "unstable-tablets")] mut tablets: TabletsInfo,
     ) -> Self {
         // Create new updated known_peers and ring
         let mut new_known_peers: HashMap<Uuid, Arc<Node>> =
@@ -349,6 +351,40 @@ impl ClusterData {
             for token in peer_tokens {
                 ring.push((token, node.clone()));
             }
+        }
+
+        #[cfg(feature = "unstable-tablets")]
+        {
+            let mut removed_nodes = HashSet::new();
+            for old_peer in known_peers {
+                if !new_known_peers.contains_key(old_peer.0) {
+                    removed_nodes.insert(*old_peer.0);
+                }
+            }
+
+            let table_predicate = |spec: &TableSpec| {
+                if let Some(ks) = metadata.keyspaces.get(spec.ks_name.as_str()) {
+                    ks.tables.contains_key(spec.table_name.as_str())
+                } else {
+                    false
+                }
+            };
+
+            let mut recreated_nodes = HashMap::new();
+            for (old_peer_id, old_peer_node) in known_peers {
+                if let Some(new_peer_node) = new_known_peers.get(old_peer_id) {
+                    if !Arc::ptr_eq(old_peer_node, new_peer_node) {
+                        recreated_nodes.insert(*old_peer_id, Arc::clone(new_peer_node));
+                    }
+                }
+            }
+
+            tablets.perform_maintanance(
+                &table_predicate,
+                &removed_nodes,
+                &new_known_peers,
+                &recreated_nodes,
+            )
         }
 
         Self::update_rack_count(&mut datacenters);
@@ -508,7 +544,14 @@ impl ClusterData {
         let replica_translator = |uuid: Uuid| self.known_peers.get(&uuid).cloned();
 
         for (table, raw_tablet) in raw_tablets.into_iter() {
-            let tablet = Tablet::from_raw_tablet(&raw_tablet, replica_translator);
+            // Should we skip tablets that belong to keyspace not present in
+            // self.keyspaces? The keyspace could have been, without drivers knowledge:
+            // 1. Dropped - in which case we'll remove it's info soon (when refreshing
+            // topology) anyway.
+            // 2. Created - no harm in storing the info now.
+            //
+            // So I think we can safely skip checking keyspace presence.
+            let tablet = Tablet::from_raw_tablet(raw_tablet, replica_translator);
             self.locator.tablets.add_tablet(table, tablet);
         }
     }

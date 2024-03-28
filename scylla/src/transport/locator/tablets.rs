@@ -1,15 +1,16 @@
+use itertools::Itertools;
 use lazy_static::lazy_static;
 use scylla_cql::cql_to_rust::FromCqlVal;
 use scylla_cql::frame::frame_errors::ParseError;
 use scylla_cql::frame::response::result::{deser_cql_value, ColumnType, TableSpec};
 use thiserror::Error;
-use tracing::warn;
+use tracing::{info, warn};
 use uuid::Uuid;
 
 use crate::routing::{Shard, Token};
 use crate::transport::Node;
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 #[derive(Error, Debug)]
@@ -20,7 +21,7 @@ pub(crate) enum TabletParsingError {
     ShardNum(i32),
 }
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq, Clone)]
 struct RawTabletReplicas {
     replicas: Vec<(Uuid, Shard)>,
 }
@@ -95,44 +96,120 @@ pub(crate) struct Tablet {
     first_token: Token,
     last_token: Token,
     replicas: TabletReplicas,
+    /// If any of the replicas failed to resolve to a node,
+    /// then this field will contain the original list of replicas.
+    failed: Option<RawTabletReplicas>,
 }
 
 #[derive(Clone, Debug, Default)]
 pub(crate) struct TableTablets {
     tablet_list: Vec<Tablet>,
+    /// In order to make typical tablet maintance faster
+    /// we remember if there were any tablets that have unrecognized uuids in replica list.
+    /// If there were none, and few other conditions are satisfied, we can skip nearly whole maintanace.
+    /// This flag may be falsely true: if we add tablet with unknown replica but later
+    /// overwrite it with some other tablet.
+    has_unknown_replicas: bool,
 }
 
 #[derive(Clone, Debug)]
 pub(crate) struct TabletsInfo {
     tablets: HashMap<TableSpec, TableTablets>,
+    /// See `has_unknown_replicas` field in `TableTablets`.
+    /// The field here will be true if it is true for any TableTablets.
+    has_unknown_replicas: bool,
 }
 
 impl Tablet {
     pub(crate) fn from_raw_tablet(
-        raw_tablet: &RawTablet,
+        raw_tablet: RawTablet,
         replica_translator: impl Fn(Uuid) -> Option<Arc<Node>>,
     ) -> Self {
+        let replicas_result =
+            TabletReplicas::from_raw_replicas(&raw_tablet.replicas, replica_translator);
+        let (replicas, failed) = match replicas_result {
+            Ok(r) => (r, None),
+            Err((r, f)) => {
+                info!("Nodes ({}) from system.tablets not present in current ClusterData.known_peers. \
+                       Skipping this replica until topology refresh", f.iter().format(", "));
+                (r, Some(raw_tablet.replicas))
+            }
+        };
         Self {
             first_token: raw_tablet.first_token,
             last_token: raw_tablet.last_token,
-            replicas: TabletReplicas::from_raw_replicas(&raw_tablet.replicas, replica_translator),
+            replicas,
+            failed,
+        }
+    }
+
+    // Returns true if after the operation Tablet replicas are fully resolved
+    fn re_resolve_replicas(
+        &mut self,
+        replica_translator: impl Fn(Uuid) -> Option<Arc<Node>>,
+    ) -> bool {
+        if let Some(failed) = self.failed.as_ref() {
+            match TabletReplicas::from_raw_replicas(failed, replica_translator) {
+                Ok(resolved_replicas) => {
+                    // We managed to successfully resolve all replicas, all is well.
+                    self.replicas = resolved_replicas;
+                    self.failed = None;
+                    true
+                }
+                Err((_, failed)) => {
+                    warn!("Nodes ({}) listed as replicas for a tablet are not present in ClusterData.known_peers, \
+                           despite topology refresh. Removing problematic tablet.", failed.iter().format(", "));
+                    false
+                }
+            }
+        } else {
+            true
+        }
+    }
+
+    fn update_stale_nodes(&mut self, recreated_nodes: &HashMap<Uuid, Arc<Node>>) {
+        let mut any_updated = false;
+        for (node, _) in self.replicas.all.iter_mut() {
+            if let Some(new_node) = recreated_nodes.get(&node.host_id) {
+                any_updated = true;
+                *node = Arc::clone(new_node);
+            }
+
+            if any_updated {
+                // Now that we know we have some nodes to update we need to go over
+                // per-dc nodes and update them too.
+                for (_, dc_nodes) in self.replicas.per_dc.iter_mut() {
+                    for (node, _) in dc_nodes.iter_mut() {
+                        if let Some(new_node) = recreated_nodes.get(&node.host_id) {
+                            *node = Arc::clone(new_node);
+                        }
+                    }
+                }
+            }
         }
     }
 }
 
 impl TabletReplicas {
+    /// Gets raw replica list (which is an array of (Uuid, Shard)), retrieves
+    /// `Node` objects and groups node replicas by DC to make life easier for LBP.
+    /// In case of failure this function returns Self, but with problematic nodes skipped,
+    /// and a list of skipped uuids - so that the caller can e.g. do some logging.
     pub(crate) fn from_raw_replicas(
         raw_replicas: &RawTabletReplicas,
         replica_translator: impl Fn(Uuid) -> Option<Arc<Node>>,
-    ) -> Self {
-        let all: Vec<_> = raw_replicas.replicas
+    ) -> Result<Self, (Self, Vec<Uuid>)> {
+        let mut failed = Vec::new();
+        let all: Vec<_> = raw_replicas
+            .replicas
             .iter()
-            .filter_map(|(replica, shard)| if let Some(r) = replica_translator(*replica) {
-                Some((r, *shard as Shard))
-            } else {
-                // TODO: Should this be an error? When can this happen?
-                warn!("Node {replica} from system.tablets not present in ClusterData.known_peers. Skipping this replica");
-                None
+            .filter_map(|(replica, shard)| {
+                if let Some(r) = replica_translator(*replica) {
+                    Some((r, *shard as Shard))
+                } else {
+                    failed.push(*replica);
+                    None
+                }
             })
             .collect();
 
@@ -147,7 +224,11 @@ impl TabletReplicas {
             }
         });
 
-        Self { all, per_dc }
+        if failed.is_empty() {
+            Ok(Self { all, per_dc })
+        } else {
+            Err((Self { all, per_dc }, failed))
+        }
     }
 }
 
@@ -181,6 +262,9 @@ impl TableTablets {
     }
 
     fn add_tablet(&mut self, tablet: Tablet) {
+        if tablet.failed.is_some() {
+            self.has_unknown_replicas = true;
+        }
         // Smallest `left_idx` for which `tablet.first_token` is LESS OR EQUAL to `tablet_list[left_idx].last_token`.
         // It implies that `tablet_list[left_idx]` overlaps with `tablet` iff `tablet.last_token`
         // is GREATER OR EQUAL to `tablet_list[left_idx].first_token`.
@@ -197,12 +281,54 @@ impl TableTablets {
         self.tablet_list.drain(left_idx..right_idx);
         self.tablet_list.insert(left_idx, tablet);
     }
+
+    fn perform_maintanance(
+        &mut self,
+        removed_nodes: &HashSet<Uuid>,
+        all_current_nodes: &HashMap<Uuid, Arc<Node>>,
+        recreated_nodes: &HashMap<Uuid, Arc<Node>>,
+    ) {
+        // First we need to re-resolve unknown replicas or remove their tablets.
+        // It will make later checks easier because we'll know that `failed` field
+        // is `None` for all tablets.
+        if self.has_unknown_replicas {
+            self.tablet_list.retain_mut(|tablet| {
+                tablet.re_resolve_replicas(|id: Uuid| all_current_nodes.get(&id).cloned())
+            });
+        }
+
+        // Now we remove all tablets that have replicas on removed nodes.
+        if !removed_nodes.is_empty() {
+            self.tablet_list.retain(|tablet| {
+                tablet
+                    .replicas
+                    .all
+                    .iter()
+                    .all(|node| !removed_nodes.contains(&node.0.host_id))
+            });
+        }
+
+        // The last thing to do is to replace all old `Node` objects.
+        // Situations where driver does this don't happen often:
+        // - Node IP change
+        // - Node DC change / Rack change
+        // so I don't think we should be too concerned about performance of this code.
+        if !recreated_nodes.is_empty() {
+            for tablet in self.tablet_list.iter_mut() {
+                tablet.update_stale_nodes(recreated_nodes);
+            }
+        }
+
+        // All unknown replicas were either resolved or whole tablets removed.
+        self.has_unknown_replicas = false;
+    }
 }
 
 impl TabletsInfo {
     pub(crate) fn new() -> Self {
         Self {
             tablets: HashMap::new(),
+            has_unknown_replicas: false,
         }
     }
 
@@ -213,7 +339,74 @@ impl TabletsInfo {
     }
 
     pub(crate) fn add_tablet(&mut self, table: TableSpec, tablet: Tablet) {
+        if tablet.failed.is_some() {
+            self.has_unknown_replicas = true;
+        }
         self.tablets.entry(table).or_default().add_tablet(tablet)
+    }
+
+    /// This method is supposed to be called when topology is updated.
+    /// It goes trough tablet info and adjusts it to topology changes.
+    /// What is updated:
+    /// 1. Info for dropped tables is removed.
+    /// 2. Tablets where removed node was one of replicas are removed.
+    ///    Can be skipped if no nodes were removed.
+    /// 3. Tablets with unrecognized uuids in replica list are resolved again.
+    ///    If this is unsuccessful again then the tablet is removed.
+    ///    This can be skipped if we know we have no such tablets.
+    /// 4. Rarely the driver may need to re-create `Node` object for given node.
+    ///    Old object is replaced with new in replica lists.
+    ///    This can be skipped if there were no re-created `Node` objects.
+    ///
+    /// In order to not perform unnecessary work during typical schema refresh
+    /// we avoid iterating trough tablets at all if steps 2-4 can be skipped.
+    ///
+    /// * `removed_nodes`: Nodes that previously were present in ClusterData but are not anymore.
+    ///                    For any such node we should remove all tablets that have it in replica list.
+    ///                    This is because otherwise:
+    ///                    1. We would hold on to old `Node` objects, not allowing them to release memory.
+    ///                    2. Return removed nodes in LBP
+    ///                    3. When new node joins and becomes replica for this tablet, we would
+    ///                       not use it - instead we would keep querying a subset of replicas.
+    ///
+    /// * `all_current_nodes`: Map of all nodes. Required to remap unknown replicas.
+    ///                        If we didn't try to remap them and instead just skipped them,
+    ///                        then we would only query subset of replicas for the tablet,
+    ///                        potentially increasing load on those replicas.
+    ///                        The alternative is dropping the tablet immediately, but if there are a lot
+    ///                        of requests to range belonging to this tablet, then we would get a
+    ///                        lot of unnecessary feedbacks sent. Thus the current solution:
+    ///                        skipping unknown replicas and dropping the tablet if we still can't resolve
+    ///                        them after schema refresh.
+    ///
+    /// * `recreated_nodes`: There are some situations (IP change, DC / Rack change) where the driver
+    ///                      will create a new `Node` object for some node and drop the old one.
+    ///                      Tablet info would still contain old object, so the driver would not use
+    ///                      new connections. That means if there were such nodes then we need to go over
+    ///                      tablets and replace `Arc<Node>` objects for recreated nodes.
+
+    pub(crate) fn perform_maintanance(
+        &mut self,
+        table_predicate: &impl Fn(&TableSpec) -> bool,
+        removed_nodes: &HashSet<Uuid>,
+        all_current_nodes: &HashMap<Uuid, Arc<Node>>,
+        recreated_nodes: &HashMap<Uuid, Arc<Node>>,
+    ) {
+        // First we remove info for all tables that are no longer present.
+        self.tablets.retain(|k, _| table_predicate(k));
+
+        if !removed_nodes.is_empty() || !recreated_nodes.is_empty() || self.has_unknown_replicas {
+            for (_, table_tablets) in self.tablets.iter_mut() {
+                table_tablets.perform_maintanance(
+                    removed_nodes,
+                    all_current_nodes,
+                    recreated_nodes,
+                );
+            }
+        }
+
+        // All unknown replicas were either resolved or whole tablets removed.
+        self.has_unknown_replicas = false;
     }
 }
 
@@ -428,14 +621,14 @@ mod tests {
 
         assert_eq!(
             replicas,
-            TabletReplicas {
+            Ok(TabletReplicas {
                 all: replicas_uids
                     .iter()
                     .cloned()
                     .map(|replica| (translator(replica).unwrap(), 1))
                     .collect(),
                 per_dc
-            }
+            })
         );
     }
 
@@ -461,6 +654,7 @@ mod tests {
                 first_token: Token::new(*first),
                 last_token: Token::new(*last),
                 replicas: Default::default(),
+                failed: None,
             });
         }
     }
