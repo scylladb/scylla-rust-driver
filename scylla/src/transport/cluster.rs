@@ -17,6 +17,7 @@ use futures::future::join_all;
 use futures::{future::RemoteHandle, FutureExt};
 use itertools::Itertools;
 use scylla_cql::errors::{BadQuery, NewSessionError};
+use scylla_cql::frame::response::result::TableSpec;
 use scylla_cql::types::serialize::row::SerializedValues;
 use std::collections::HashMap;
 use std::net::SocketAddr;
@@ -26,8 +27,12 @@ use tracing::instrument::WithSubscriber;
 use tracing::{debug, warn};
 use uuid::Uuid;
 
+#[cfg(feature = "unstable-tablets")]
+use super::locator::tablets::{RawTablet, Tablet, TabletsInfo};
 use super::node::{KnownNode, NodeAddr};
 use super::NodeRef;
+#[cfg(feature = "unstable-tablets")]
+use std::collections::HashSet;
 
 use super::locator::ReplicaLocator;
 use super::partitioner::calculate_token_for_partition_key;
@@ -115,6 +120,11 @@ struct ClusterWorker {
     // Channel used to receive signals that control connection is broken
     control_connection_repair_channel: tokio::sync::broadcast::Receiver<()>,
 
+    // Channel used to receive info about new tablets from custom payload in responses
+    // sent by server.
+    #[cfg(feature = "unstable-tablets")]
+    tablets_channel: tokio::sync::mpsc::Receiver<(TableSpec, RawTablet)>,
+
     // Keyspace send in "USE <keyspace name>" when opening each connection
     used_keyspace: Option<VerifiedKeyspaceName>,
 
@@ -146,6 +156,10 @@ impl Cluster {
         fetch_schema_metadata: bool,
         host_filter: Option<Arc<dyn HostFilter>>,
         cluster_metadata_refresh_interval: Duration,
+        #[cfg(feature = "unstable-tablets")] tablet_receiver: tokio::sync::mpsc::Receiver<(
+            TableSpec,
+            RawTablet,
+        )>,
     ) -> Result<Cluster, NewSessionError> {
         let (refresh_sender, refresh_receiver) = tokio::sync::mpsc::channel(32);
         let (use_keyspace_sender, use_keyspace_receiver) = tokio::sync::mpsc::channel(32);
@@ -172,6 +186,8 @@ impl Cluster {
             &HashMap::new(),
             &None,
             host_filter.as_deref(),
+            #[cfg(feature = "unstable-tablets")]
+            TabletsInfo::new(),
         )
         .await;
         cluster_data.wait_until_all_pools_are_initialized().await;
@@ -187,6 +203,8 @@ impl Cluster {
             refresh_channel: refresh_receiver,
             server_events_channel: server_events_receiver,
             control_connection_repair_channel: control_connection_repair_receiver,
+            #[cfg(feature = "unstable-tablets")]
+            tablets_channel: tablet_receiver,
 
             use_keyspace_channel: use_keyspace_receiver,
             used_keyspace: None,
@@ -275,13 +293,13 @@ impl ClusterData {
         known_peers: &HashMap<Uuid, Arc<Node>>,
         used_keyspace: &Option<VerifiedKeyspaceName>,
         host_filter: Option<&dyn HostFilter>,
+        #[cfg(feature = "unstable-tablets")] mut tablets: TabletsInfo,
     ) -> Self {
         // Create new updated known_peers and ring
         let mut new_known_peers: HashMap<Uuid, Arc<Node>> =
             HashMap::with_capacity(metadata.peers.len());
         let mut ring: Vec<(Token, Arc<Node>)> = Vec::new();
         let mut datacenters: HashMap<String, Datacenter> = HashMap::new();
-        let mut all_nodes: Vec<Arc<Node>> = Vec::with_capacity(metadata.peers.len());
 
         for peer in metadata.peers {
             // Take existing Arc<Node> if possible, otherwise create new one
@@ -333,8 +351,40 @@ impl ClusterData {
             for token in peer_tokens {
                 ring.push((token, node.clone()));
             }
+        }
 
-            all_nodes.push(node);
+        #[cfg(feature = "unstable-tablets")]
+        {
+            let mut removed_nodes = HashSet::new();
+            for old_peer in known_peers {
+                if !new_known_peers.contains_key(old_peer.0) {
+                    removed_nodes.insert(*old_peer.0);
+                }
+            }
+
+            let table_predicate = |spec: &TableSpec| {
+                if let Some(ks) = metadata.keyspaces.get(spec.ks_name.as_str()) {
+                    ks.tables.contains_key(spec.table_name.as_str())
+                } else {
+                    false
+                }
+            };
+
+            let mut recreated_nodes = HashMap::new();
+            for (old_peer_id, old_peer_node) in known_peers {
+                if let Some(new_peer_node) = new_known_peers.get(old_peer_id) {
+                    if !Arc::ptr_eq(old_peer_node, new_peer_node) {
+                        recreated_nodes.insert(*old_peer_id, Arc::clone(new_peer_node));
+                    }
+                }
+            }
+
+            tablets.perform_maintanance(
+                &table_predicate,
+                &removed_nodes,
+                &new_known_peers,
+                &recreated_nodes,
+            )
         }
 
         Self::update_rack_count(&mut datacenters);
@@ -342,7 +392,12 @@ impl ClusterData {
         let keyspaces = metadata.keyspaces;
         let (locator, keyspaces) = tokio::task::spawn_blocking(move || {
             let keyspace_strategies = keyspaces.values().map(|ks| &ks.strategy);
-            let locator = ReplicaLocator::new(ring.into_iter(), keyspace_strategies);
+            let locator = ReplicaLocator::new(
+                ring.into_iter(),
+                keyspace_strategies,
+                #[cfg(feature = "unstable-tablets")]
+                tablets,
+            );
             (locator, keyspaces)
         })
         .await
@@ -409,24 +464,33 @@ impl ClusterData {
     }
 
     /// Access to replicas owning a given token
-    pub fn get_token_endpoints(&self, keyspace: &str, token: Token) -> Vec<(Arc<Node>, Shard)> {
-        self.get_token_endpoints_iter(keyspace, token)
+    pub fn get_token_endpoints(
+        &self,
+        keyspace: impl Into<String>,
+        table: impl Into<String>,
+        token: Token,
+    ) -> Vec<(Arc<Node>, Shard)> {
+        let table_spec = TableSpec {
+            ks_name: keyspace.into(),
+            table_name: table.into(),
+        };
+        self.get_token_endpoints_iter(&table_spec, token)
             .map(|(node, shard)| (node.clone(), shard))
             .collect()
     }
 
     pub(crate) fn get_token_endpoints_iter(
         &self,
-        keyspace: &str,
+        table: &TableSpec,
         token: Token,
     ) -> impl Iterator<Item = (NodeRef<'_>, Shard)> {
-        let keyspace = self.keyspaces.get(keyspace);
+        let keyspace = self.keyspaces.get(table.ks_name.as_str());
         let strategy = keyspace
             .map(|k| &k.strategy)
             .unwrap_or(&Strategy::LocalStrategy);
         let replica_set = self
             .replica_locator()
-            .replicas_for_token(token, strategy, None);
+            .replicas_for_token(token, strategy, None, table);
 
         replica_set.into_iter()
     }
@@ -434,14 +498,14 @@ impl ClusterData {
     /// Access to replicas owning a given partition key (similar to `nodetool getendpoints`)
     pub fn get_endpoints(
         &self,
-        keyspace: &str,
-        table: &str,
+        keyspace: impl Into<String>,
+        table: impl Into<String>,
         partition_key: &SerializedValues,
     ) -> Result<Vec<(Arc<Node>, Shard)>, BadQuery> {
-        Ok(self.get_token_endpoints(
-            keyspace,
-            self.compute_token(keyspace, table, partition_key)?,
-        ))
+        let keyspace = keyspace.into();
+        let table = table.into();
+        let token = self.compute_token(keyspace.as_ref(), table.as_ref(), partition_key)?;
+        Ok(self.get_token_endpoints(keyspace, table, token))
     }
 
     /// Access replica location info
@@ -474,6 +538,23 @@ impl ClusterData {
         // By an invariant `self.known_peers` is nonempty, so the returned iterator
         // is nonempty, too.
     }
+
+    #[cfg(feature = "unstable-tablets")]
+    fn update_tablets(&mut self, raw_tablets: Vec<(TableSpec, RawTablet)>) {
+        let replica_translator = |uuid: Uuid| self.known_peers.get(&uuid).cloned();
+
+        for (table, raw_tablet) in raw_tablets.into_iter() {
+            // Should we skip tablets that belong to keyspace not present in
+            // self.keyspaces? The keyspace could have been, without drivers knowledge:
+            // 1. Dropped - in which case we'll remove it's info soon (when refreshing
+            // topology) anyway.
+            // 2. Created - no harm in storing the info now.
+            //
+            // So I think we can safely skip checking keyspace presence.
+            let tablet = Tablet::from_raw_tablet(raw_tablet, replica_translator);
+            self.locator.tablets.add_tablet(table, tablet);
+        }
+    }
 }
 
 impl ClusterWorker {
@@ -497,6 +578,20 @@ impl ClusterWorker {
                 .unwrap_or_else(Instant::now);
 
             let sleep_future = tokio::time::sleep_until(sleep_until);
+
+            #[cfg(feature = "unstable-tablets")]
+            let mut tablets = Vec::new();
+
+            #[cfg(feature = "unstable-tablets")]
+            let tablets_poll = {
+                let channel_ref = &mut self.tablets_channel;
+                let tablets_ref = &mut tablets;
+
+                || async move { channel_ref.recv_many(tablets_ref, 8192).await }
+            };
+            #[cfg(not(feature = "unstable-tablets"))]
+            let tablets_poll = std::future::pending;
+
             tokio::pin!(sleep_future);
 
             tokio::select! {
@@ -505,6 +600,27 @@ impl ClusterWorker {
                     match recv_res {
                         Some(request) => cur_request = Some(request),
                         None => return, // If refresh_channel was closed then cluster was dropped, we can stop working
+                    }
+                }
+                tablets_count = tablets_poll() => {
+                    #[cfg(feature = "unstable-tablets")]
+                    {
+                        if tablets_count == 0 {
+                            // If the channel was closed then cluste1r was dropped, we can stop working
+                            return;
+                        }
+                        let mut new_cluster_data: ClusterData = self.cluster_data.load().as_ref().clone();
+                        new_cluster_data.update_tablets(tablets);
+                        self.update_cluster_data(Arc::new(new_cluster_data));
+
+                        continue;
+                    }
+
+                    #[cfg(not(feature = "unstable-tablets"))]
+                    {
+                        #[allow(clippy::let_unit_value)]
+                        let _tablets_count = tablets_count;
+                        continue;
                     }
                 }
                 recv_res = self.server_events_channel.recv() => {
@@ -662,6 +778,8 @@ impl ClusterWorker {
                 &cluster_data.known_peers,
                 &self.used_keyspace,
                 self.host_filter.as_deref(),
+                #[cfg(feature = "unstable-tablets")]
+                cluster_data.locator.tablets.clone(),
             )
             .await,
         );

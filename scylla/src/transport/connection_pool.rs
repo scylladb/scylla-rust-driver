@@ -950,7 +950,8 @@ impl PoolRefiller {
             .boxed(),
             _ => async move {
                 let non_shard_aware_endpoint = endpoint_fut.await;
-                let result = connection::open_connection(non_shard_aware_endpoint, None, cfg).await;
+                let result =
+                    connection::open_connection(non_shard_aware_endpoint, None, &cfg).await;
                 OpenedConnectionEvent {
                     result,
                     requested_shard: None,
@@ -1242,8 +1243,7 @@ async fn open_connection_to_shard_aware_port(
 
     for port in source_port_iter {
         let connect_result =
-            connection::open_connection(endpoint.clone(), Some(port), connection_config.clone())
-                .await;
+            connection::open_connection(endpoint.clone(), Some(port), connection_config).await;
 
         match connect_result {
             Err(err) if err.is_address_unavailable_for_use() => continue, // If we can't use this port, try the next one
