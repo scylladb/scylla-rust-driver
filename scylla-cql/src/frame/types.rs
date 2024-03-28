@@ -302,11 +302,14 @@ pub fn write_bytes(v: &[u8], buf: &mut impl BufMut) -> Result<(), ParseError> {
     Ok(())
 }
 
-pub fn write_bytes_opt(v: Option<&Vec<u8>>, buf: &mut impl BufMut) -> Result<(), ParseError> {
+pub fn write_bytes_opt(
+    v: Option<impl AsRef<[u8]>>,
+    buf: &mut impl BufMut,
+) -> Result<(), ParseError> {
     match v {
         Some(bytes) => {
-            write_int_length(bytes.len(), buf)?;
-            buf.put_slice(bytes);
+            write_int_length(bytes.as_ref().len(), buf)?;
+            buf.put_slice(bytes.as_ref());
         }
         None => write_int(-1, buf),
     }
