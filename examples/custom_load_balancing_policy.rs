@@ -18,12 +18,12 @@ struct CustomLoadBalancingPolicy {
     fav_datacenter_name: String,
 }
 
-fn with_random_shard(node: NodeRef) -> (NodeRef, Shard) {
+fn with_random_shard(node: NodeRef) -> (NodeRef, Option<Shard>) {
     let nr_shards = node
         .sharder()
         .map(|sharder| sharder.nr_shards.get())
         .unwrap_or(1);
-    (node, thread_rng().gen_range(0..nr_shards) as Shard)
+    (node, Some(thread_rng().gen_range(0..nr_shards) as Shard))
 }
 
 impl LoadBalancingPolicy for CustomLoadBalancingPolicy {
@@ -31,7 +31,7 @@ impl LoadBalancingPolicy for CustomLoadBalancingPolicy {
         &'a self,
         _info: &'a RoutingInfo,
         cluster: &'a ClusterData,
-    ) -> Option<(NodeRef<'a>, Shard)> {
+    ) -> Option<(NodeRef<'a>, Option<Shard>)> {
         self.fallback(_info, cluster).next()
     }
 

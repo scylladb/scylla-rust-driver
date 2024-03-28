@@ -1,3 +1,4 @@
+use rand::{thread_rng, Rng};
 use tracing::error;
 
 use super::{FallbackPlan, LoadBalancingPolicy, NodeRef, RoutingInfo};
@@ -6,20 +7,65 @@ use crate::{routing::Shard, transport::ClusterData};
 enum PlanState<'a> {
     Created,
     PickedNone, // This always means an abnormal situation: it means that no nodes satisfied locality/node filter requirements.
-    Picked((NodeRef<'a>, Shard)),
+    Picked((NodeRef<'a>, Option<Shard>)),
     Fallback {
         iter: FallbackPlan<'a>,
-        node_to_filter_out: (NodeRef<'a>, Shard),
+        target_to_filter_out: (NodeRef<'a>, Option<Shard>),
     },
 }
 
-/// The list of nodes constituting the query plan.
+/// The list of targets constituting the query plan. Target here is a pair `(NodeRef<'a>, Shard)`.
 ///
-/// The plan is partly lazily computed, with the first node computed
-/// eagerly in the first place and the remaining nodes computed on-demand
+/// The plan is partly lazily computed, with the first target computed
+/// eagerly in the first place and the remaining targets computed on-demand
 /// (all at once).
 /// This significantly reduces the allocation overhead on "the happy path"
-/// (when the first node successfully handles the request),
+/// (when the first target successfully handles the request).
+///
+/// `Plan` implements `Iterator<Item=(NodeRef<'a>, Shard)>` but LoadBalancingPolicy
+/// returns `Option<Shard>` instead of `Shard` both in `pick` and in `fallback`.
+/// `Plan` handles the `None` case by using random shard for a given node.
+/// There is currently no way to configure RNG used by `Plan`.
+/// If you don't want `Plan` to do randomize shards or you want to control the RNG,
+/// use custom LBP that will always return non-`None` shards.
+/// Example of LBP that always uses shard 0, preventing `Plan` from using random numbers:
+///
+/// ```
+/// # use std::sync::Arc;
+/// # use scylla::load_balancing::LoadBalancingPolicy;
+/// # use scylla::load_balancing::RoutingInfo;
+/// # use scylla::transport::ClusterData;
+/// # use scylla::transport::NodeRef;
+/// # use scylla::routing::Shard;
+/// # use scylla::load_balancing::FallbackPlan;
+///
+/// #[derive(Debug)]
+/// struct NonRandomLBP {
+///     inner: Arc<dyn LoadBalancingPolicy>,
+/// }
+/// impl LoadBalancingPolicy for NonRandomLBP {
+///     fn pick<'a>(
+///         &'a self,
+///         info: &'a RoutingInfo,
+///         cluster: &'a ClusterData,
+///     ) -> Option<(NodeRef<'a>, Option<Shard>)> {
+///         self.inner
+///             .pick(info, cluster)
+///             .map(|(node, shard)| (node, shard.or(Some(0))))
+///     }
+///
+///     fn fallback<'a>(&'a self, info: &'a RoutingInfo, cluster: &'a ClusterData) -> FallbackPlan<'a> {
+///         Box::new(self.inner
+///             .fallback(info, cluster)
+///             .map(|(node, shard)| (node, shard.or(Some(0)))))
+///     }
+///
+///     fn name(&self) -> String {
+///         "NonRandomLBP".to_string()
+///     }
+/// }
+/// ```
+
 pub struct Plan<'a> {
     policy: &'a dyn LoadBalancingPolicy,
     routing_info: &'a RoutingInfo<'a>,
@@ -41,6 +87,21 @@ impl<'a> Plan<'a> {
             state: PlanState::Created,
         }
     }
+
+    fn with_random_shard_if_unknown(
+        (node, shard): (NodeRef<'_>, Option<Shard>),
+    ) -> (NodeRef<'_>, Shard) {
+        (
+            node,
+            shard.unwrap_or_else(|| {
+                let nr_shards = node
+                    .sharder()
+                    .map(|sharder| sharder.nr_shards.get())
+                    .unwrap_or(1);
+                thread_rng().gen_range(0..nr_shards).into()
+            }),
+        )
+    }
 }
 
 impl<'a> Iterator for Plan<'a> {
@@ -52,7 +113,7 @@ impl<'a> Iterator for Plan<'a> {
                 let picked = self.policy.pick(self.routing_info, self.cluster);
                 if let Some(picked) = picked {
                     self.state = PlanState::Picked(picked);
-                    Some(picked)
+                    Some(Self::with_random_shard_if_unknown(picked))
                 } else {
                     // `pick()` returned None, which semantically means that a first node cannot be computed _cheaply_.
                     // This, however, does not imply that fallback would return an empty plan, too.
@@ -64,9 +125,9 @@ impl<'a> Iterator for Plan<'a> {
                     if let Some(node) = first_fallback_node {
                         self.state = PlanState::Fallback {
                             iter,
-                            node_to_filter_out: node,
+                            target_to_filter_out: node,
                         };
-                        Some(node)
+                        Some(Self::with_random_shard_if_unknown(node))
                     } else {
                         error!("Load balancing policy returned an empty plan! The query cannot be executed. Routing info: {:?}", self.routing_info);
                         self.state = PlanState::PickedNone;
@@ -77,20 +138,20 @@ impl<'a> Iterator for Plan<'a> {
             PlanState::Picked(node) => {
                 self.state = PlanState::Fallback {
                     iter: self.policy.fallback(self.routing_info, self.cluster),
-                    node_to_filter_out: *node,
+                    target_to_filter_out: *node,
                 };
 
                 self.next()
             }
             PlanState::Fallback {
                 iter,
-                node_to_filter_out,
+                target_to_filter_out: node_to_filter_out,
             } => {
                 for node in iter {
                     if node == *node_to_filter_out {
                         continue;
                     } else {
-                        return Some(node);
+                        return Some(Self::with_random_shard_if_unknown(node));
                     }
                 }
 
@@ -135,7 +196,7 @@ mod tests {
             &'a self,
             _query: &'a RoutingInfo,
             _cluster: &'a ClusterData,
-        ) -> Option<(NodeRef<'a>, Shard)> {
+        ) -> Option<(NodeRef<'a>, Option<Shard>)> {
             None
         }
 
@@ -147,7 +208,7 @@ mod tests {
             Box::new(
                 self.expected_nodes
                     .iter()
-                    .map(|(node_ref, shard)| (node_ref, *shard)),
+                    .map(|(node_ref, shard)| (node_ref, Some(*shard))),
             )
         }
 

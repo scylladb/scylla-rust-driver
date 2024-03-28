@@ -51,9 +51,13 @@ impl<const NODE: u8> LoadBalancingPolicy for BoundToPredefinedNodePolicy<NODE> {
         &'a self,
         _info: &'a RoutingInfo,
         cluster: &'a ClusterData,
-    ) -> Option<(NodeRef<'a>, Shard)> {
+    ) -> Option<(NodeRef<'a>, Option<Shard>)> {
         self.report_node(Report::LoadBalancing);
-        cluster.get_nodes_info().iter().next().map(|node| (node, 0))
+        cluster
+            .get_nodes_info()
+            .iter()
+            .next()
+            .map(|node| (node, None))
     }
 
     fn fallback<'a>(
