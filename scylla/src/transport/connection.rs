@@ -256,14 +256,15 @@ impl NonErrorQueryResponse {
     }
 
     pub(crate) fn into_query_result(self) -> Result<QueryResult, QueryError> {
-        let (rows, paging_state, col_specs, serialized_size) = match self.response {
+        let (rows, paging_state, table_spec, col_specs, serialized_size) = match self.response {
             NonErrorResponse::Result(result::Result::Rows(rs)) => (
                 Some(rs.rows),
                 rs.metadata.paging_state,
+                rs.metadata.table_spec,
                 rs.metadata.col_specs,
                 rs.serialized_size,
             ),
-            NonErrorResponse::Result(_) => (None, None, vec![], 0),
+            NonErrorResponse::Result(_) => (None, None, None, vec![], 0),
             _ => {
                 return Err(QueryError::ProtocolError(
                     "Unexpected server response, expected Result or Error",
@@ -276,6 +277,7 @@ impl NonErrorQueryResponse {
             warnings: self.warnings,
             tracing_id: self.tracing_id,
             paging_state,
+            table_spec,
             col_specs,
             serialized_size,
         })

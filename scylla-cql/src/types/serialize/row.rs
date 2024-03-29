@@ -853,7 +853,7 @@ mod tests {
     use std::borrow::Cow;
     use std::collections::BTreeMap;
 
-    use crate::frame::response::result::{ColumnSpec, ColumnType, TableSpec};
+    use crate::frame::response::result::{ColumnSpec, ColumnType};
     use crate::frame::types::RawValue;
     use crate::frame::value::{LegacySerializedValues, MaybeUnset, SerializedResult, ValueList};
     use crate::types::serialize::row::ValueListAdapter;
@@ -869,10 +869,6 @@ mod tests {
 
     fn col_spec(name: &str, typ: ColumnType) -> ColumnSpec {
         ColumnSpec {
-            table_spec: TableSpec {
-                ks_name: "ks".to_string(),
-                table_name: "tbl".to_string(),
-            },
             name: name.to_string(),
             typ,
         }
@@ -994,10 +990,6 @@ mod tests {
 
     fn col(name: &str, typ: ColumnType) -> ColumnSpec {
         ColumnSpec {
-            table_spec: TableSpec {
-                ks_name: "ks".to_string(),
-                table_name: "tbl".to_string(),
-            },
             name: name.to_string(),
             typ,
         }

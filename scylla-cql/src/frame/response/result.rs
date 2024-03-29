@@ -381,7 +381,6 @@ impl CqlValue {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ColumnSpec {
-    pub table_spec: TableSpec,
     pub name: String,
     pub typ: ColumnType,
 }
@@ -390,6 +389,7 @@ pub struct ColumnSpec {
 pub struct ResultMetadata {
     col_count: usize,
     pub paging_state: Option<Bytes>,
+    pub table_spec: Option<TableSpec>,
     pub col_specs: Vec<ColumnSpec>,
 }
 
@@ -408,6 +408,7 @@ pub struct PreparedMetadata {
     /// pk_indexes are sorted by `index` and can be reordered in partition key order
     /// using `sequence` field
     pub pk_indexes: Vec<PartitionKeyIndex>,
+    pub table_spec: Option<TableSpec>,
     pub col_specs: Vec<ColumnSpec>,
 }
 
@@ -441,13 +442,33 @@ pub enum Result {
     SchemaChange(SchemaChange),
 }
 
-fn deser_table_spec(buf: &mut &[u8]) -> StdResult<TableSpec, ParseError> {
-    let ks_name = types::read_string(buf)?.to_owned();
-    let table_name = types::read_string(buf)?.to_owned();
-    Ok(TableSpec {
-        ks_name,
-        table_name,
-    })
+// Only allocates a new `TableSpec` if one is not yet given.
+fn deser_table_spec(
+    buf: &mut &[u8],
+    known_spec: Option<TableSpec>,
+) -> StdResult<TableSpec, ParseError> {
+    let ks_name = types::read_string(buf)?;
+    let table_name = types::read_string(buf)?;
+
+    match known_spec {
+        None => Ok(TableSpec {
+            ks_name: ks_name.to_owned(),
+            table_name: table_name.to_owned(),
+        }),
+        Some(table_spec) => {
+            // We assume that for each column, table spec is the same.
+            // As this is not guaranteed by the CQL protocol specification but only by how
+            // Cassandra and ScyllaDB work (no support for joins), we perform a sanity check here.
+            if table_spec.table_name == table_name && table_spec.ks_name == ks_name {
+                Ok(table_spec)
+            } else {
+                Err(ParseError::BadIncomingData(format!(
+                    "Table specification differs between columns of the same response! Previous column: keyspace={}, table={}; current column: keyspace={}, table={}",
+                    table_spec.ks_name, table_spec.table_name, ks_name, table_name
+                )))
+            }
+        }
+    }
 }
 
 fn deser_type(buf: &mut &[u8]) -> StdResult<ColumnType, ParseError> {
@@ -521,25 +542,21 @@ fn deser_type(buf: &mut &[u8]) -> StdResult<ColumnType, ParseError> {
 
 fn deser_col_specs(
     buf: &mut &[u8],
-    global_table_spec: &Option<TableSpec>,
+    global_table_spec: Option<TableSpec>,
     col_count: usize,
-) -> StdResult<Vec<ColumnSpec>, ParseError> {
+) -> StdResult<(Option<TableSpec>, Vec<ColumnSpec>), ParseError> {
+    let global_table_spec_provided = global_table_spec.is_some();
+    let mut table_spec = global_table_spec;
     let mut col_specs = Vec::with_capacity(col_count);
     for _ in 0..col_count {
-        let table_spec = if let Some(spec) = global_table_spec {
-            spec.clone()
-        } else {
-            deser_table_spec(buf)?
-        };
+        if !global_table_spec_provided {
+            table_spec = Some(deser_table_spec(buf, table_spec)?);
+        }
         let name = types::read_string(buf)?.to_owned();
         let typ = deser_type(buf)?;
-        col_specs.push(ColumnSpec {
-            table_spec,
-            name,
-            typ,
-        });
+        col_specs.push(ColumnSpec { name, typ });
     }
-    Ok(col_specs)
+    Ok((table_spec, col_specs))
 }
 
 fn deser_result_metadata(buf: &mut &[u8]) -> StdResult<ResultMetadata, ParseError> {
@@ -560,21 +577,21 @@ fn deser_result_metadata(buf: &mut &[u8]) -> StdResult<ResultMetadata, ParseErro
         return Ok(ResultMetadata {
             col_count,
             paging_state,
+            table_spec: None,
             col_specs: vec![],
         });
     }
 
-    let global_table_spec = if global_tables_spec {
-        Some(deser_table_spec(buf)?)
-    } else {
-        None
-    };
+    let global_table_spec = global_tables_spec
+        .then(|| deser_table_spec(buf, None))
+        .transpose()?;
 
-    let col_specs = deser_col_specs(buf, &global_table_spec, col_count)?;
+    let (table_spec, col_specs) = deser_col_specs(buf, global_table_spec, col_count)?;
 
     Ok(ResultMetadata {
         col_count,
         paging_state,
+        table_spec,
         col_specs,
     })
 }
@@ -596,17 +613,16 @@ fn deser_prepared_metadata(buf: &mut &[u8]) -> StdResult<PreparedMetadata, Parse
     }
     pk_indexes.sort_unstable_by_key(|pki| pki.index);
 
-    let global_table_spec = if global_tables_spec {
-        Some(deser_table_spec(buf)?)
-    } else {
-        None
-    };
+    let global_table_spec = global_tables_spec
+        .then(|| deser_table_spec(buf, None))
+        .transpose()?;
 
-    let col_specs = deser_col_specs(buf, &global_table_spec, col_count)?;
+    let (table_spec, col_specs) = deser_col_specs(buf, global_table_spec, col_count)?;
 
     Ok(PreparedMetadata {
         flags,
         col_count,
+        table_spec,
         pk_indexes,
         col_specs,
     })

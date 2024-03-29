@@ -3,6 +3,7 @@ use crate::frame::response::result::ColumnSpec;
 use crate::frame::response::result::Row;
 use crate::transport::session::{IntoTypedRows, TypedRowIter};
 use bytes::Bytes;
+use scylla_cql::frame::response::result::TableSpec;
 use thiserror::Error;
 use uuid::Uuid;
 
@@ -21,6 +22,8 @@ pub struct QueryResult {
     pub tracing_id: Option<Uuid>,
     /// Paging state returned from the server
     pub paging_state: Option<Bytes>,
+    /// Table specification returned from the server
+    pub table_spec: Option<TableSpec>,
     /// Column specification returned from the server
     pub col_specs: Vec<ColumnSpec>,
     /// The original size of the serialized rows in request
@@ -262,7 +265,7 @@ impl From<SingleRowError> for SingleRowTypedError {
 mod tests {
     use super::*;
     use crate::{
-        frame::response::result::{ColumnSpec, ColumnType, CqlValue, Row, TableSpec},
+        frame::response::result::{ColumnSpec, ColumnType, CqlValue, Row},
         test_utils::setup_tracing,
     };
     use std::convert::TryInto;
@@ -293,13 +296,7 @@ mod tests {
     }
 
     fn make_not_rows_query_result() -> QueryResult {
-        let table_spec = TableSpec {
-            ks_name: "some_keyspace".to_string(),
-            table_name: "some_table".to_string(),
-        };
-
         let column_spec = ColumnSpec {
-            table_spec,
             name: "column0".to_string(),
             typ: ColumnType::Int,
         };
@@ -309,6 +306,7 @@ mod tests {
             warnings: vec![],
             tracing_id: None,
             paging_state: None,
+            table_spec: None,
             col_specs: vec![column_spec],
             serialized_size: 0,
         }
