@@ -197,10 +197,12 @@ impl PreparedStatement {
     pub fn calculate_token(&self, values: &impl SerializeRow) -> Result<Option<Token>, QueryError> {
         self.calculate_token_untyped(&self.serialize_values(values)?)
     }
-
-    // A version of calculate_token which skips serialization and uses SerializedValues directly.
-    // Not type-safe, so not exposed to users.
-    pub(crate) fn calculate_token_untyped(
+    
+    // A version of calculate_token which skips serialization and uses SerializedValues directly (not type safe).
+    ///
+    /// Returns the token that would be computed for executing the provided
+    /// prepared statement with the provided values.
+    pub fn calculate_token_untyped(
         &self,
         values: &SerializedValues,
     ) -> Result<Option<Token>, QueryError> {
