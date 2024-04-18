@@ -1,4 +1,4 @@
-use syn::{Data, DeriveInput, ExprLit, Fields, FieldsNamed, Lit};
+use syn::{Data, DeriveInput, ExprLit, Fields, FieldsNamed, FieldsUnnamed, Lit};
 use syn::{Expr, Meta};
 
 /// Parses a struct DeriveInput and returns named fields of this struct.
@@ -17,6 +17,34 @@ pub(crate) fn parse_named_fields<'a>(
         Data::Struct(data) => match &data.fields {
             Fields::Named(named_fields) => Ok(named_fields),
             _ => Err(syn::Error::new_spanned(data.struct_token, create_err_msg())),
+        },
+        Data::Enum(e) => Err(syn::Error::new_spanned(e.enum_token, create_err_msg())),
+        Data::Union(u) => Err(syn::Error::new_spanned(u.union_token, create_err_msg())),
+    }
+}
+
+pub(crate) enum StructFields<'a> {
+    Named(&'a FieldsNamed),
+    Unnamed(&'a FieldsUnnamed),
+}
+
+/// Parses a struct DeriveInput and returns fields (both named and unnamed) of this struct.
+pub(crate) fn parse_struct_fields<'a>(
+    input: &'a DeriveInput,
+    current_derive: &str,
+) -> Result<StructFields<'a>, syn::Error> {
+    let create_err_msg = || {
+        format!(
+            "derive({}) works only for structs with fields",
+            current_derive
+        )
+    };
+
+    match &input.data {
+        Data::Struct(data) => match &data.fields {
+            Fields::Named(named_fields) => Ok(StructFields::Named(named_fields)),
+            Fields::Unnamed(unnamed_fields) => Ok(StructFields::Unnamed(unnamed_fields)),
+            Fields::Unit => Err(syn::Error::new_spanned(data.struct_token, create_err_msg())),
         },
         Data::Enum(e) => Err(syn::Error::new_spanned(e.enum_token, create_err_msg())),
         Data::Union(u) => Err(syn::Error::new_spanned(u.union_token, create_err_msg())),
