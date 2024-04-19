@@ -40,7 +40,32 @@ pub(crate) fn from_row_derive(tokens_input: TokenStream) -> Result<TokenStream, 
             };
             (fill_struct_code, fields.named.len())
         }
-        crate::parser::StructFields::Unnamed(_fields) => todo!(),
+        crate::parser::StructFields::Unnamed(fields) => {
+            let set_fields_code = fields.unnamed.iter().map(|field| {
+                let field_type = &field.ty;
+
+                quote_spanned! {field.span() =>
+                    {
+                        let (col_ix, col_value) = vals_iter
+                            .next()
+                            .unwrap(); // vals_iter size is checked before this code is reached, so
+                                    // it is safe to unwrap
+
+                        <#field_type as FromCqlVal<::std::option::Option<CqlValue>>>::from_cql(col_value)
+                            .map_err(|e| FromRowError::BadCqlVal {
+                                err: e,
+                                column: col_ix,
+                            })?
+                    },
+                }
+            });
+
+            // This generates: ( {<field1_code>}, {<field2_code>}, ... )
+            let fill_struct_code = quote! {
+                (#(#set_fields_code)*)
+            };
+            (fill_struct_code, fields.unnamed.len())
+        }
     };
 
     let generated = quote! {
