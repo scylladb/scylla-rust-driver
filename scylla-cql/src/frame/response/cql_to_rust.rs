@@ -1000,4 +1000,24 @@ mod tests {
             })
         );
     }
+
+    #[test]
+    fn unnamed_struct_from_row() {
+        #[derive(FromRow)]
+        struct MyRow(i32, Option<String>, Option<Vec<i32>>);
+
+        let row = Row {
+            columns: vec![
+                Some(CqlValue::Int(16)),
+                None,
+                Some(CqlValue::Set(vec![CqlValue::Int(1), CqlValue::Int(2)])),
+            ],
+        };
+
+        let my_row: MyRow = MyRow::from_row(row).unwrap();
+
+        assert_eq!(my_row.0, 16);
+        assert_eq!(my_row.1, None);
+        assert_eq!(my_row.2, Some(vec![1, 2]));
+    }
 }
