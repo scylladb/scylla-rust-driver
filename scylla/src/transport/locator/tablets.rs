@@ -1,4 +1,3 @@
-#![allow(dead_code)]
 use itertools::Itertools;
 use lazy_static::lazy_static;
 use scylla_cql::cql_to_rust::FromCqlVal;
