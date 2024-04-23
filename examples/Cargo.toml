@@ -16,7 +16,7 @@ tracing = "0.1.25"
 tracing-subscriber = { version = "0.3.14", features = ["env-filter"] }
 chrono = { version = "0.4", default-features = false }
 time = { version = "0.3.22" }
-uuid = "1.0"
+uuid = { version = "1.0", features = ["v1"]}
 tower = "0.4"
 stats_alloc = "0.1"
 clap = { version = "3.2.4", features = ["derive"] }
