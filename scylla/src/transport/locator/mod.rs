@@ -6,6 +6,7 @@ pub(crate) mod test;
 mod token_ring;
 
 use rand::{seq::IteratorRandom, Rng};
+use scylla_cql::frame::response::result::TableSpec;
 pub use token_ring::TokenRing;
 
 use super::{topology::Strategy, Node, NodeRef};
@@ -79,6 +80,7 @@ impl ReplicaLocator {
         token: Token,
         strategy: &'a Strategy,
         datacenter: Option<&'a str>,
+        _table_spec: &TableSpec,
     ) -> ReplicaSet<'a> {
         match strategy {
             Strategy::SimpleStrategy { replication_factor } => {
@@ -143,6 +145,7 @@ impl ReplicaLocator {
                 replication_factor: 1,
             },
             datacenter,
+            _table_spec,
         )
     }
 
@@ -770,8 +773,9 @@ mod tests {
 
         // For each case (token, limit_to_dc, strategy), we are checking
         // that ReplicasOrdered yields replicas in the expected order.
-        let check = |token, limit_to_dc, strategy, expected| {
-            let replica_set = locator.replicas_for_token(Token::new(token), strategy, limit_to_dc);
+        let check = |token, limit_to_dc, strategy, table, expected| {
+            let replica_set =
+                locator.replicas_for_token(Token::new(token), strategy, limit_to_dc, table);
             let replicas_ordered = replica_set.into_replicas_ordered();
             let ids: Vec<_> = replicas_ordered
                 .into_iter()
@@ -788,18 +792,21 @@ mod tests {
             160,
             None,
             &metadata.keyspaces.get(KEYSPACE_NTS_RF_3).unwrap().strategy,
+            TABLE_NTS_RF_3,
             vec![F, A, C, D, G, E],
         );
         check(
             160,
             None,
             &metadata.keyspaces.get(KEYSPACE_NTS_RF_2).unwrap().strategy,
+            TABLE_NTS_RF_2,
             vec![F, A, D, G],
         );
         check(
             160,
             None,
             &metadata.keyspaces.get(KEYSPACE_SS_RF_2).unwrap().strategy,
+            TABLE_SS_RF_2,
             vec![F, A],
         );
 
@@ -807,18 +814,21 @@ mod tests {
             160,
             Some("eu"),
             &metadata.keyspaces.get(KEYSPACE_NTS_RF_3).unwrap().strategy,
+            TABLE_NTS_RF_3,
             vec![A, C, G],
         );
         check(
             160,
             Some("us"),
             &metadata.keyspaces.get(KEYSPACE_NTS_RF_3).unwrap().strategy,
+            TABLE_NTS_RF_3,
             vec![F, D, E],
         );
         check(
             160,
             Some("eu"),
             &metadata.keyspaces.get(KEYSPACE_SS_RF_2).unwrap().strategy,
+            TABLE_SS_RF_2,
             vec![A],
         );
     }

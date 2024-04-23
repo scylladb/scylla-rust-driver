@@ -910,11 +910,12 @@ impl Session {
         prepared: &PreparedStatement,
         cluster_data: &'a ClusterData,
     ) -> Option<&'a str> {
+        let table_spec = prepared.get_table_spec()?;
         cluster_data
             .keyspaces
-            .get(prepared.get_keyspace_name()?)?
+            .get(table_spec.ks_name())?
             .tables
-            .get(prepared.get_table_name()?)?
+            .get(table_spec.table_name())?
             .partitioner
             .as_deref()
     }
@@ -989,6 +990,8 @@ impl Session {
             .unwrap_or_else(|| self.get_default_execution_profile_handle())
             .access();
 
+        let table_spec = prepared.get_table_spec();
+
         let statement_info = RoutingInfo {
             consistency: prepared
                 .config
@@ -999,7 +1002,7 @@ impl Session {
                 .serial_consistency
                 .unwrap_or(execution_profile.serial_consistency),
             token,
-            keyspace: prepared.get_keyspace_name(),
+            table: table_spec,
             is_confirmed_lwt: prepared.is_confirmed_lwt(),
         };
 
@@ -1010,10 +1013,10 @@ impl Session {
         );
 
         if !span.span().is_disabled() {
-            if let (Some(keyspace), Some(token)) = (statement_info.keyspace.as_ref(), token) {
+            if let (Some(table_spec), Some(token)) = (statement_info.table, token) {
                 let cluster_data = self.get_cluster_data();
                 let replicas: smallvec::SmallVec<[_; 8]> = cluster_data
-                    .get_token_endpoints_iter(keyspace, token)
+                    .get_token_endpoints_iter(table_spec, token)
                     .collect();
                 span.record_replicas(&replicas)
             }
@@ -1206,20 +1209,22 @@ impl Session {
             .serial_consistency
             .unwrap_or(execution_profile.serial_consistency);
 
-        let keyspace_name = match batch.statements.first() {
-            Some(BatchStatement::PreparedStatement(ps)) => ps.get_keyspace_name(),
-            _ => None,
-        };
-
         let (first_value_token, values) =
             batch_values::peek_first_token(values, batch.statements.first())?;
         let values_ref = &values;
+
+        let table_spec =
+            if let Some(BatchStatement::PreparedStatement(ps)) = batch.statements.first() {
+                ps.get_table_spec()
+            } else {
+                None
+            };
 
         let statement_info = RoutingInfo {
             consistency,
             serial_consistency,
             token: first_value_token,
-            keyspace: keyspace_name,
+            table: table_spec,
             is_confirmed_lwt: false,
         };
 

@@ -17,6 +17,7 @@ use futures::future::join_all;
 use futures::{future::RemoteHandle, FutureExt};
 use itertools::Itertools;
 use scylla_cql::errors::{BadQuery, NewSessionError};
+use scylla_cql::frame::response::result::TableSpec;
 use scylla_cql::types::serialize::row::SerializedValues;
 use std::collections::HashMap;
 use std::net::SocketAddr;
@@ -409,24 +410,30 @@ impl ClusterData {
     }
 
     /// Access to replicas owning a given token
-    pub fn get_token_endpoints(&self, keyspace: &str, token: Token) -> Vec<(Arc<Node>, Shard)> {
-        self.get_token_endpoints_iter(keyspace, token)
+    pub fn get_token_endpoints(
+        &self,
+        keyspace: &str,
+        table: &str,
+        token: Token,
+    ) -> Vec<(Arc<Node>, Shard)> {
+        let table_spec = TableSpec::borrowed(keyspace, table);
+        self.get_token_endpoints_iter(&table_spec, token)
             .map(|(node, shard)| (node.clone(), shard))
             .collect()
     }
 
     pub(crate) fn get_token_endpoints_iter(
         &self,
-        keyspace: &str,
+        table_spec: &TableSpec,
         token: Token,
     ) -> impl Iterator<Item = (NodeRef<'_>, Shard)> {
-        let keyspace = self.keyspaces.get(keyspace);
+        let keyspace = self.keyspaces.get(table_spec.ks_name());
         let strategy = keyspace
             .map(|k| &k.strategy)
             .unwrap_or(&Strategy::LocalStrategy);
         let replica_set = self
             .replica_locator()
-            .replicas_for_token(token, strategy, None);
+            .replicas_for_token(token, strategy, None, table_spec);
 
         replica_set.into_iter()
     }
@@ -438,10 +445,8 @@ impl ClusterData {
         table: &str,
         partition_key: &SerializedValues,
     ) -> Result<Vec<(Arc<Node>, Shard)>, BadQuery> {
-        Ok(self.get_token_endpoints(
-            keyspace,
-            self.compute_token(keyspace, table, partition_key)?,
-        ))
+        let token = self.compute_token(keyspace, table, partition_key)?;
+        Ok(self.get_token_endpoints(keyspace, table, token))
     }
 
     /// Access replica location info

@@ -4,7 +4,10 @@
 
 use super::{cluster::ClusterData, NodeRef};
 use crate::routing::{Shard, Token};
-use scylla_cql::{errors::QueryError, frame::types};
+use scylla_cql::{
+    errors::QueryError,
+    frame::{response::result::TableSpec, types},
+};
 
 use std::time::Duration;
 
@@ -22,9 +25,11 @@ pub struct RoutingInfo<'a> {
     pub consistency: types::Consistency,
     pub serial_consistency: Option<types::SerialConsistency>,
 
-    /// Information about token and keyspace is the basis of token-aware routing.
+    /// Information that are the basis of token-aware routing:
+    /// - token, keyspace for vnodes-based routing;
+    /// - token, keyspace, table for tablets-based routing.
     pub token: Option<Token>,
-    pub keyspace: Option<&'a str>,
+    pub table: Option<&'a TableSpec<'a>>,
 
     /// If, while preparing, we received from the cluster information that the statement is an LWT,
     /// then we can use this information for routing optimisation. Namely, an optimisation

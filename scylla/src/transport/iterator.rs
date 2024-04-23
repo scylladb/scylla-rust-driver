@@ -248,11 +248,12 @@ impl RowIterator {
                 }
             };
 
+            let table_spec = config.prepared.get_table_spec();
             let statement_info = RoutingInfo {
                 consistency,
                 serial_consistency,
                 token,
-                keyspace: config.prepared.get_keyspace_name(),
+                table: table_spec,
                 is_confirmed_lwt: config.prepared.is_confirmed_lwt(),
             };
 
@@ -273,13 +274,13 @@ impl RowIterator {
             let serialized_values_size = config.values.buffer_size();
 
             let replicas: Option<smallvec::SmallVec<[_; 8]>> =
-                if let (Some(keyspace), Some(token)) =
-                    (statement_info.keyspace.as_ref(), statement_info.token)
+                if let (Some(table_spec), Some(token)) =
+                    (statement_info.table, statement_info.token)
                 {
                     Some(
                         config
                             .cluster_data
-                            .get_token_endpoints_iter(keyspace, token)
+                            .get_token_endpoints_iter(table_spec, token)
                             .map(|(node, shard)| (node.clone(), shard))
                             .collect(),
                     )

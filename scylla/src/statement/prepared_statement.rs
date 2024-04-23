@@ -1,5 +1,8 @@
 use bytes::{Bytes, BytesMut};
 use scylla_cql::errors::{BadQuery, QueryError};
+use scylla_cql::frame::response::result::{
+    ColumnSpec, PartitionKeyIndex, ResultMetadata, TableSpec,
+};
 use scylla_cql::frame::types::RawValue;
 use scylla_cql::types::serialize::row::{RowSerializationContext, SerializeRow, SerializedValues};
 use scylla_cql::types::serialize::SerializationError;
@@ -9,8 +12,6 @@ use std::sync::Arc;
 use std::time::Duration;
 use thiserror::Error;
 use uuid::Uuid;
-
-use scylla_cql::frame::response::result::{ColumnSpec, PartitionKeyIndex, ResultMetadata};
 
 use super::StatementConfig;
 use crate::frame::response::result::PreparedMetadata;
@@ -206,6 +207,14 @@ impl PreparedStatement {
     ) -> Result<Option<Token>, QueryError> {
         self.extract_partition_key_and_calculate_token(&self.partitioner_name, values)
             .map(|opt| opt.map(|(_pk, token)| token))
+    }
+
+    /// Return keyspace name and table name this statement is operating on.
+    pub fn get_table_spec(&self) -> Option<&TableSpec> {
+        self.get_prepared_metadata()
+            .col_specs
+            .first()
+            .map(|spec| &spec.table_spec)
     }
 
     /// Returns the name of the keyspace this statement is operating on.

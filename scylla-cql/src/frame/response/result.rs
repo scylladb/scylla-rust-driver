@@ -36,7 +36,7 @@ pub struct SchemaChange {
     pub event: SchemaChangeEvent,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct TableSpec<'a> {
     ks_name: Cow<'a, str>,
     table_name: Cow<'a, str>,
