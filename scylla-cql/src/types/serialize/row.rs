@@ -869,10 +869,7 @@ mod tests {
 
     fn col_spec(name: &str, typ: ColumnType) -> ColumnSpec {
         ColumnSpec {
-            table_spec: TableSpec {
-                ks_name: "ks".to_string(),
-                table_name: "tbl".to_string(),
-            },
+            table_spec: TableSpec::owned("ks".to_string(), "tbl".to_string()),
             name: name.to_string(),
             typ,
         }
@@ -994,10 +991,7 @@ mod tests {
 
     fn col(name: &str, typ: ColumnType) -> ColumnSpec {
         ColumnSpec {
-            table_spec: TableSpec {
-                ks_name: "ks".to_string(),
-                table_name: "tbl".to_string(),
-            },
+            table_spec: TableSpec::owned("ks".to_string(), "tbl".to_string()),
             name: name.to_string(),
             typ,
         }

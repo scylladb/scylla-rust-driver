@@ -213,7 +213,7 @@ impl PreparedStatement {
         self.get_prepared_metadata()
             .col_specs
             .first()
-            .map(|col_spec| col_spec.table_spec.ks_name.as_str())
+            .map(|col_spec| col_spec.table_spec.ks_name())
     }
 
     /// Returns the name of the table this statement is operating on.
@@ -221,7 +221,7 @@ impl PreparedStatement {
         self.get_prepared_metadata()
             .col_specs
             .first()
-            .map(|col_spec| col_spec.table_spec.table_name.as_str())
+            .map(|col_spec| col_spec.table_spec.table_name())
     }
 
     /// Sets the consistency to be used when executing this statement.
@@ -540,10 +540,7 @@ mod tests {
         cols: impl IntoIterator<Item = ColumnType>,
         idx: impl IntoIterator<Item = usize>,
     ) -> PreparedMetadata {
-        let table_spec = TableSpec {
-            ks_name: "ks".to_owned(),
-            table_name: "t".to_owned(),
-        };
+        let table_spec = TableSpec::owned("ks".to_owned(), "t".to_owned());
         let col_specs: Vec<_> = cols
             .into_iter()
             .enumerate()

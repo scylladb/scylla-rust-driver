@@ -141,7 +141,7 @@ async fn test_unprepared_statement() {
     assert_eq!(specs.len(), 3);
     for (spec, name) in specs.iter().zip(["a", "b", "c"]) {
         assert_eq!(spec.name, name); // Check column name.
-        assert_eq!(spec.table_spec.ks_name, ks);
+        assert_eq!(spec.table_spec.ks_name(), ks);
     }
     let mut results_from_manual_paging: Vec<Row> = vec![];
     let query = Query::new(format!("SELECT a, b, c FROM {}.t", ks)).with_page_size(1);
@@ -197,7 +197,7 @@ async fn test_prepared_statement() {
     assert_eq!(specs.len(), 3);
     for (spec, name) in specs.iter().zip(["a", "b", "c"]) {
         assert_eq!(spec.name, name); // Check column name.
-        assert_eq!(spec.table_spec.ks_name, ks);
+        assert_eq!(spec.table_spec.ks_name(), ks);
     }
 
     let prepared_statement = session
