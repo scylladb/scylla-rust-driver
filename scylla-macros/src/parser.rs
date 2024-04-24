@@ -1,37 +1,25 @@
 use syn::{Data, DeriveInput, ExprLit, Fields, FieldsNamed, Lit};
 use syn::{Expr, Meta};
 
-/// Parses the tokens_input to a DeriveInput and returns the struct name from which it derives and
-/// the named fields
+/// Parses a struct DeriveInput and returns named fields of this struct.
 pub(crate) fn parse_named_fields<'a>(
     input: &'a DeriveInput,
     current_derive: &str,
 ) -> Result<&'a FieldsNamed, syn::Error> {
+    let create_err_msg = || {
+        format!(
+            "derive({}) works only for structs with named fields",
+            current_derive
+        )
+    };
+
     match &input.data {
         Data::Struct(data) => match &data.fields {
             Fields::Named(named_fields) => Ok(named_fields),
-            _ => Err(syn::Error::new_spanned(
-                data.struct_token,
-                format!(
-                    "derive({}) works only for structs with named fields",
-                    current_derive
-                ),
-            )),
+            _ => Err(syn::Error::new_spanned(data.struct_token, create_err_msg())),
         },
-        Data::Enum(e) => Err(syn::Error::new_spanned(
-            e.enum_token,
-            format!(
-                "derive({}) works only for structs with named fields",
-                current_derive
-            ),
-        )),
-        Data::Union(u) => Err(syn::Error::new_spanned(
-            u.union_token,
-            format!(
-                "derive({}) works only for structs with named fields",
-                current_derive
-            ),
-        )),
+        Data::Enum(e) => Err(syn::Error::new_spanned(e.enum_token, create_err_msg())),
+        Data::Union(u) => Err(syn::Error::new_spanned(u.union_token, create_err_msg())),
     }
 }
 
