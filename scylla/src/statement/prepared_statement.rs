@@ -22,6 +22,68 @@ use crate::transport::execution_profile::ExecutionProfileHandle;
 use crate::transport::partitioner::{Partitioner, PartitionerHasher, PartitionerName};
 
 /// Represents a statement prepared on the server.
+///
+/// To prepare a statement, simply execute [`Session::prepare`](crate::transport::session::Session::prepare).
+///
+/// If you plan on reusing the statement, or bounding some values to it during execution, always
+/// prefer using prepared statements over [`Session::query`](crate::transport::session::Session::query).
+///
+/// Benefits that prepared statements have to offer:
+/// * Performance - a prepared statement holds information about metadata
+/// that allows to carry out a statement execution in a type safe manner.
+/// When [`Session::query`](crate::transport::session::Session::query) is called with
+/// non-empty bound values, the driver has to prepare the statement before execution (to provide type safety).
+/// This implies 2 round trips per [`Session::query`](crate::transport::session::Session::query).
+/// On the other hand, the cost of [`Session::execute`](crate::transport::session::Session::execute) is only 1 round trip.
+/// * Increased type-safety - bound values' types are validated with
+/// the [`PreparedMetadata`] received from the server during the serialization.
+/// * Improved load balancing - thanks to statement metadata, the driver is able
+/// to compute a set of destined replicas for the statement execution. These replicas
+/// will be preferred when choosing the node (and shard) to send the request to.
+/// * Result deserialization optimization - see [`PreparedStatement::set_use_cached_result_metadata`].
+///
+/// # Clone implementation
+/// Cloning a prepared statement is a cheap operation. It only
+/// requires copying a couple of small fields and some [Arc] pointers.
+/// Always prefer cloning over executing [`Session::prepare`](crate::transport::session::Session::prepare)
+/// multiple times to save some roundtrips.
+///
+/// # Statement repreparation
+/// When schema is updated, the server is supposed to invalidate its
+/// prepared statement caches. Then, if client tries to execute a given statement,
+/// the server will respond with an error. Users should not worry about it, since
+/// the driver handles it properly and tries to reprepare the statement.
+/// However, there are some cases when client-side prepared statement should be dropped
+/// and prepared once again via [`Session::prepare`](crate::transport::session::Session::prepare) -
+/// see the mention about altering schema below.
+///
+/// # Altering schema
+/// If for some reason you decided to alter the part of schema that corresponds to given prepared
+/// statement, then the corresponding statement (and its copies obtained via [`PreparedStatement::clone`]) should
+/// be dropped. The statement should be prepared again.
+///
+/// There are two reasons for this:
+///
+/// ### CQL v4 protocol limitations
+/// The driver only supports CQL version 4.
+///
+/// In multi-client scenario, only the first client which reprepares the statement
+/// will receive the updated metadata from the server.
+/// The rest of the clients will still hold on the outdated metadata.
+/// In version 4 of CQL protocol there is currently no way for the server to notify other
+/// clients about prepared statement's metadata update.
+///
+/// ### Client-side metadata immutability
+/// The decision was made to keep client-side metadata immutable.
+/// Mainly because of the CQLv4 limitations mentioned above. This means
+/// that metadata is not updated during statement repreparation.
+/// This raises two issues:
+/// * bound values serialization errors - since [`PreparedMetadata`] is not updated
+/// * result deserialization errors - when [`PreparedStatement::set_use_cached_result_metadata`] is enabled,
+/// since [`ResultMetadata`] is not updated
+///
+/// So, to mitigate those issues, drop the outdated [`PreparedStatement`] manually
+/// and prepare it again against the new schema.
 #[derive(Debug)]
 pub struct PreparedStatement {
     pub(crate) config: StatementConfig,

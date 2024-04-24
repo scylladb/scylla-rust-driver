@@ -839,7 +839,8 @@ impl Session {
     /// > must be sent as bound values
     /// > (see [performance section](https://rust-driver.docs.scylladb.com/stable/queries/prepared.html#performance))
     ///
-    /// See [the book](https://rust-driver.docs.scylladb.com/stable/queries/prepared.html) for more information
+    /// See [the book](https://rust-driver.docs.scylladb.com/stable/queries/prepared.html) for more information.
+    /// See the documentation of [`PreparedStatement`].
     ///
     /// # Arguments
     /// * `query` - query to prepare, can be just a `&str` or the [Query] struct.
