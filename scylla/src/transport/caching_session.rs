@@ -218,7 +218,7 @@ where
 #[cfg(test)]
 mod tests {
     use crate::query::Query;
-    use crate::test_utils::{create_new_session_builder, setup_tracing};
+    use crate::test_utils::{create_new_session_builder, scylla_supports_tablets, setup_tracing};
     use crate::transport::partitioner::PartitionerName;
     use crate::utils::test_utils::unique_keyspace_name;
     use crate::{
@@ -229,15 +229,23 @@ mod tests {
     use futures::TryStreamExt;
     use std::collections::BTreeSet;
 
-    async fn new_for_test() -> Session {
+    async fn new_for_test(with_tablet_support: bool) -> Session {
         let session = create_new_session_builder()
             .build()
             .await
             .expect("Could not create session");
         let ks = unique_keyspace_name();
 
+        let mut create_ks = format!(
+            "CREATE KEYSPACE IF NOT EXISTS {ks}
+        WITH REPLICATION = {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}}"
+        );
+        if !with_tablet_support && scylla_supports_tablets(&session).await {
+            create_ks += " AND TABLETS = {'enabled': false}";
+        }
+
         session
-            .query(format!("CREATE KEYSPACE IF NOT EXISTS {} WITH REPLICATION = {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}}", ks), &[])
+            .query(create_ks, &[])
             .await
             .expect("Could not create keyspace");
 
@@ -261,7 +269,7 @@ mod tests {
     }
 
     async fn create_caching_session() -> CachingSession {
-        let session = CachingSession::from(new_for_test().await, 2);
+        let session = CachingSession::from(new_for_test(true).await, 2);
 
         // Add a row, this makes it easier to check if the caching works combined with the regular execute fn on Session
         session
@@ -419,11 +427,11 @@ mod tests {
         }
 
         let _session: CachingSession<std::collections::hash_map::RandomState> =
-            CachingSession::from(new_for_test().await, 2);
+            CachingSession::from(new_for_test(true).await, 2);
         let _session: CachingSession<CustomBuildHasher> =
-            CachingSession::from(new_for_test().await, 2);
+            CachingSession::from(new_for_test(true).await, 2);
         let _session: CachingSession<CustomBuildHasher> =
-            CachingSession::with_hasher(new_for_test().await, 2, Default::default());
+            CachingSession::with_hasher(new_for_test(true).await, 2, Default::default());
     }
 
     #[tokio::test]
@@ -552,7 +560,7 @@ mod tests {
     #[tokio::test]
     async fn test_parameters_caching() {
         setup_tracing();
-        let session: CachingSession = CachingSession::from(new_for_test().await, 100);
+        let session: CachingSession = CachingSession::from(new_for_test(true).await, 100);
 
         session
             .execute("CREATE TABLE tbl (a int PRIMARY KEY, b int)", ())
@@ -604,12 +612,13 @@ mod tests {
             return;
         }
 
-        let session: CachingSession = CachingSession::from(new_for_test().await, 100);
+        // This test uses CDC which is not yet compatible with Scylla's tablets.
+        let session: CachingSession = CachingSession::from(new_for_test(false).await, 100);
 
         session
             .execute(
                 "CREATE TABLE tbl (a int PRIMARY KEY) with cdc = {'enabled': true}",
-                (),
+                &(),
             )
             .await
             .unwrap();

@@ -1,6 +1,7 @@
 use std::sync::Arc;
 
 use crate::utils::{setup_tracing, test_with_3_node_cluster};
+use scylla::test_utils::scylla_supports_tablets;
 use scylla::{test_utils::unique_keyspace_name, SessionBuilder};
 use tokio::sync::mpsc;
 
@@ -37,7 +38,11 @@ async fn test_consistent_shard_awareness() {
         let ks = unique_keyspace_name();
 
         /* Prepare schema */
-        session.query(format!("CREATE KEYSPACE IF NOT EXISTS {} WITH REPLICATION = {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 3}}", ks), &[]).await.unwrap();
+        let mut create_ks = format!("CREATE KEYSPACE IF NOT EXISTS {} WITH REPLICATION = {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 3}}", ks);
+        if scylla_supports_tablets(&session).await {
+            create_ks += " and TABLETS = { 'enabled': false}";
+        }
+        session.query(create_ks, &[]).await.unwrap();
         session
             .query(
                 format!(
