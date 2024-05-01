@@ -3,6 +3,7 @@ use rand_chacha::ChaCha8Rng;
 use scylla_cql::frame::response::result::TableSpec;
 use uuid::Uuid;
 
+use super::tablets::TabletsInfo;
 use super::{ReplicaLocator, ReplicaSet};
 use crate::routing::Token;
 use crate::test_utils::setup_tracing;
@@ -202,7 +203,7 @@ pub(crate) fn create_locator(metadata: &Metadata) -> ReplicaLocator {
     let ring = create_ring(metadata);
     let strategies = metadata.keyspaces.values().map(|ks| &ks.strategy);
 
-    ReplicaLocator::new(ring, strategies)
+    ReplicaLocator::new(ring, strategies, TabletsInfo::new())
 }
 
 #[tokio::test]

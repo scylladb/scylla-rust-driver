@@ -2,7 +2,7 @@ use bytes::Bytes;
 use futures::{future::RemoteHandle, FutureExt};
 use scylla_cql::errors::TranslationError;
 use scylla_cql::frame::request::options::Options;
-use scylla_cql::frame::response::result::ResultMetadata;
+use scylla_cql::frame::response::result::{ResultMetadata, TableSpec};
 use scylla_cql::frame::response::Error;
 use scylla_cql::frame::types::SerialConsistency;
 use scylla_cql::types::serialize::batch::{BatchValues, BatchValuesIterator};
@@ -43,6 +43,7 @@ use std::{
 
 use super::errors::{BadKeyspaceName, DbError, QueryError};
 use super::iterator::RowIterator;
+use super::locator::tablets::{RawTablet, TabletParsingError};
 use super::query_result::SingleRowTypedError;
 use super::session::AddressTranslator;
 use super::topology::{PeerEndpoint, UntranslatedEndpoint, UntranslatedPeer};
@@ -369,6 +370,7 @@ pub(crate) struct ConnectionConfig {
 
     pub(crate) keepalive_interval: Option<Duration>,
     pub(crate) keepalive_timeout: Option<Duration>,
+    pub(crate) tablet_sender: Option<mpsc::Sender<(TableSpec<'static>, RawTablet)>>,
 }
 
 impl Default for ConnectionConfig {
@@ -391,6 +393,8 @@ impl Default for ConnectionConfig {
             // Note: this is different than SessionConfig default values.
             keepalive_interval: None,
             keepalive_timeout: None,
+
+            tablet_sender: None,
         }
     }
 }
@@ -723,6 +727,15 @@ impl Connection {
             )
             .await?;
 
+        if let Some(spec) = prepared_statement.get_table_spec() {
+            if let Err(e) = self
+                .update_tablets_from_response(spec, &query_response)
+                .await
+            {
+                tracing::warn!("Error while parsing tablet info from custom payload: {}", e);
+            }
+        }
+
         match &query_response.response {
             Response::Error(frame::response::Error {
                 error: DbError::Unprepared { statement_id },
@@ -732,13 +745,25 @@ impl Connection {
                 // Repreparation of a statement is needed
                 self.reprepare(prepared_statement.get_statement(), prepared_statement)
                     .await?;
-                self.send_request(
-                    &execute_frame,
-                    true,
-                    prepared_statement.config.tracing,
-                    cached_metadata,
-                )
-                .await
+                let new_response = self
+                    .send_request(
+                        &execute_frame,
+                        true,
+                        prepared_statement.config.tracing,
+                        cached_metadata,
+                    )
+                    .await?;
+
+                if let Some(spec) = prepared_statement.get_table_spec() {
+                    if let Err(e) = self.update_tablets_from_response(spec, &new_response).await {
+                        tracing::warn!(
+                            "Error while parsing tablet info from custom payload: {}",
+                            e
+                        );
+                    }
+                }
+
+                Ok(new_response)
             }
             _ => Ok(query_response),
         }
@@ -1416,6 +1441,32 @@ impl Connection {
 
     pub(crate) fn get_connect_address(&self) -> SocketAddr {
         self.connect_address
+    }
+
+    async fn update_tablets_from_response(
+        &self,
+        table: &TableSpec<'_>,
+        response: &QueryResponse,
+    ) -> Result<(), TabletParsingError> {
+        if let (Some(sender), Some(tablet_data)) = (
+            self.config.tablet_sender.as_ref(),
+            response.custom_payload.as_ref(),
+        ) {
+            let tablet = match RawTablet::from_custom_payload(tablet_data) {
+                Some(Ok(v)) => v,
+                Some(Err(e)) => return Err(e),
+                None => return Ok(()),
+            };
+            tracing::trace!(
+                "Received tablet info for table {}.{} in custom payload: {:?}",
+                table.ks_name(),
+                table.table_name(),
+                tablet
+            );
+            let _ = sender.send((table.to_owned(), tablet)).await;
+        }
+
+        Ok(())
     }
 }
 

@@ -10,6 +10,8 @@ use rand::{seq::IteratorRandom, Rng};
 use scylla_cql::frame::response::result::TableSpec;
 pub use token_ring::TokenRing;
 
+use self::tablets::TabletsInfo;
+
 use super::{topology::Strategy, Node, NodeRef};
 use crate::routing::{Shard, Token};
 use itertools::Itertools;
@@ -34,6 +36,8 @@ pub struct ReplicaLocator {
     precomputed_replicas: PrecomputedReplicas,
 
     datacenters: Vec<String>,
+
+    pub(crate) tablets: TabletsInfo,
 }
 
 impl ReplicaLocator {
@@ -43,6 +47,7 @@ impl ReplicaLocator {
     pub(crate) fn new<'a>(
         ring_iter: impl Iterator<Item = (Token, Arc<Node>)>,
         precompute_replica_sets_for: impl Iterator<Item = &'a Strategy>,
+        tablets: TabletsInfo,
     ) -> Self {
         let replication_data = ReplicationInfo::new(ring_iter);
         let precomputed_replicas =
@@ -60,6 +65,7 @@ impl ReplicaLocator {
             replication_data,
             precomputed_replicas,
             datacenters,
+            tablets,
         }
     }
 
