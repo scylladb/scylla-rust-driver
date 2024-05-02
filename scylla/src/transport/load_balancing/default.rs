@@ -2269,7 +2269,7 @@ mod latency_awareness {
     use itertools::Either;
     use scylla_cql::errors::{DbError, QueryError};
     use tokio::time::{Duration, Instant};
-    use tracing::{instrument::WithSubscriber, trace, warn};
+    use tracing::{trace, warn};
     use uuid::Uuid;
 
     use crate::{load_balancing::NodeRef, routing::Shard, transport::node::Node};
@@ -2454,7 +2454,7 @@ mod latency_awareness {
                 }
             }
             .remote_handle();
-            tokio::task::spawn(updater_fut.with_current_subscriber());
+            tokio::task::spawn(updater_fut);
 
             Self {
                 _updater_handle: Some(updater_handle),

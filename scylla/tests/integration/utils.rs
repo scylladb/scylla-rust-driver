@@ -3,7 +3,6 @@ use std::collections::HashMap;
 use std::env;
 use std::net::SocketAddr;
 use std::str::FromStr;
-use tracing::instrument::WithSubscriber;
 
 use scylla_proxy::{Node, Proxy, ProxyError, RunningProxy, ShardAwareness};
 
@@ -53,7 +52,7 @@ where
     );
 
     let translation_map = proxy.translation_map();
-    let running_proxy = proxy.run().with_current_subscriber().await.unwrap();
+    let running_proxy = proxy.run().await.unwrap();
 
     let running_proxy = test(
         [proxy1_uri, proxy2_uri, proxy3_uri],
