@@ -1,8 +1,8 @@
 # Timeuuid
 
-`Timeuuid` is represented as `value::CqlTimeuuid`.
-`value::CqlTimeuuid` is a wrapper for `uuid::Uuid` (using the `v1` feature) with custom ordering logic
-which follows Scylla/Cassandra semantics.
+The `Timeuuid` type is represented as `value::CqlTimeuuid`.
+
+Also, `value::CqlTimeuuid` is a wrapper for `uuid::Uuid`  with custom ordering logic which follows Scylla/Cassandra semantics.
 
 ```rust
 # extern crate scylla;
@@ -29,7 +29,9 @@ if let Some(rows) = session.query("SELECT a FROM keyspace.table", &[]).await?.ro
 # }
 ```
 
-To use the Timeuuid on `uuid` crate, enable the feature `v1` in your crate using:
+## Creating your own Timeuuid
+
+To create your own `Timeuuid` objects from timestamp-based `uuid` v1, you need to enable the feature `v1` of `uuid` crate using:
 
 ```shell
 cargo add uuid -F v1
@@ -48,9 +50,13 @@ use scylla::frame::value::CqlTimeuuid;
 use uuid::Uuid;
 # async fn check_only_compiles(session: &Session) -> Result<(), Box<dyn Error>> {
 
-// Insert some timeuuid into the table
-let to_insert = CqlTimeuuid::from(Uuid::now_v1(&[1, 2, 3, 4, 5, 6]));
-session  
+// Tip: you can use random stable numbers or your MAC Address
+let node_id = [0x12, 0x34, 0x56, 0x78, 0x9A, 0xBC];
+
+// Build your Timeuuid with the current timestamp
+let to_insert = CqlTimeuuid::from(Uuid::now_v1(&node_id));
+
+session
     .query("INSERT INTO keyspace.table (a) VALUES(?)", (to_insert,))  
     .await?;
 
@@ -63,3 +69,5 @@ if let Some(rows) = session.query("SELECT a FROM keyspace.table", &[]).await?.ro
 # Ok(())
 # }
 ```
+
+Learn more about UUID::v1 [here](https://en.wikipedia.org/wiki/Universally_unique_identifier#Version_1_(date-time_and_MAC_address)).
