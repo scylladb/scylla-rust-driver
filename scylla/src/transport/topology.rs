@@ -1,6 +1,6 @@
 use crate::frame::response::event::Event;
 use crate::routing::Token;
-use crate::statement::unprepared_statement::Query;
+use crate::statement::unprepared_statement::UnpreparedStatement;
 use crate::transport::connection::{Connection, ConnectionConfig};
 use crate::transport::connection_pool::{NodeConnectionPool, PoolConfig, PoolSize};
 use crate::transport::errors::{DbError, QueryError};
@@ -792,8 +792,9 @@ impl NodeInfoSource {
 }
 
 async fn query_peers(conn: &Arc<Connection>, connect_port: u16) -> Result<Vec<Peer>, QueryError> {
-    let mut peers_query =
-        Query::new("select host_id, rpc_address, data_center, rack, tokens from system.peers");
+    let mut peers_query = UnpreparedStatement::new(
+        "select host_id, rpc_address, data_center, rack, tokens from system.peers",
+    );
     peers_query.set_page_size(1024);
     let peers_query_stream = conn
         .clone()
@@ -802,8 +803,9 @@ async fn query_peers(conn: &Arc<Connection>, connect_port: u16) -> Result<Vec<Pe
         .try_flatten()
         .and_then(|row_result| future::ok((NodeInfoSource::Peer, row_result)));
 
-    let mut local_query =
-        Query::new("select host_id, rpc_address, data_center, rack, tokens from system.local");
+    let mut local_query = UnpreparedStatement::new(
+        "select host_id, rpc_address, data_center, rack, tokens from system.local",
+    );
     local_query.set_page_size(1024);
     let local_query_stream = conn
         .clone()
@@ -907,7 +909,7 @@ fn query_filter_keyspace_name<'a>(
 
     let fut = async move {
         if keyspaces_to_fetch.is_empty() {
-            let mut query = Query::new(query_str);
+            let mut query = UnpreparedStatement::new(query_str);
             query.set_page_size(1024);
 
             conn.query_iter(query).await
@@ -915,7 +917,7 @@ fn query_filter_keyspace_name<'a>(
             let keyspaces = &[keyspaces_to_fetch] as &[&[String]];
             let query_str = format!("{query_str} where keyspace_name in ?");
 
-            let mut query = Query::new(query_str);
+            let mut query = UnpreparedStatement::new(query_str);
             query.set_page_size(1024);
 
             let prepared = conn.prepare(&query).await?;
@@ -1649,7 +1651,7 @@ fn freeze_type(type_: PreCqlType) -> PreCqlType {
 async fn query_table_partitioners(
     conn: &Arc<Connection>,
 ) -> Result<HashMap<(String, String), Option<String>>, QueryError> {
-    let mut partitioner_query = Query::new(
+    let mut partitioner_query = UnpreparedStatement::new(
         "select keyspace_name, table_name, partitioner from system_schema.scylla_tables",
     );
     partitioner_query.set_page_size(1024);

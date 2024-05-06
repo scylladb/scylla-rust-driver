@@ -63,7 +63,7 @@ use crate::routing::ShardInfo;
 use crate::statement::prepared_statement::PreparedStatement;
 use crate::statement::Consistency;
 use crate::transport::Compression;
-use crate::unprepared_statement::Query;
+use crate::unprepared_statement::UnpreparedStatement;
 use crate::QueryResult;
 
 // Queries for schema agreement
@@ -539,7 +539,10 @@ impl Connection {
             .response)
     }
 
-    pub(crate) async fn prepare(&self, query: &Query) -> Result<PreparedStatement, QueryError> {
+    pub(crate) async fn prepare(
+        &self,
+        query: &UnpreparedStatement,
+    ) -> Result<PreparedStatement, QueryError> {
         let query_response = self
             .send_request(
                 &request::Prepare {
@@ -579,10 +582,10 @@ impl Connection {
 
     pub(crate) async fn reprepare(
         &self,
-        query: impl Into<Query>,
+        query: impl Into<UnpreparedStatement>,
         previous_prepared: &PreparedStatement,
     ) -> Result<(), QueryError> {
-        let reprepare_query: Query = query.into();
+        let reprepare_query: UnpreparedStatement = query.into();
         let reprepared = self.prepare(&reprepare_query).await?;
         // Reprepared statement should keep its id - it's the md5 sum
         // of statement contents
@@ -605,9 +608,9 @@ impl Connection {
 
     pub(crate) async fn query_single_page(
         &self,
-        query: impl Into<Query>,
+        query: impl Into<UnpreparedStatement>,
     ) -> Result<QueryResult, QueryError> {
-        let query: Query = query.into();
+        let query: UnpreparedStatement = query.into();
 
         // This method is used only for driver internal queries, so no need to consult execution profile here.
         let consistency = query
@@ -621,11 +624,11 @@ impl Connection {
 
     pub(crate) async fn query_single_page_with_consistency(
         &self,
-        query: impl Into<Query>,
+        query: impl Into<UnpreparedStatement>,
         consistency: Consistency,
         serial_consistency: Option<SerialConsistency>,
     ) -> Result<QueryResult, QueryError> {
-        let query: Query = query.into();
+        let query: UnpreparedStatement = query.into();
         self.query_with_consistency(&query, consistency, serial_consistency, None)
             .await?
             .into_query_result()
@@ -633,7 +636,7 @@ impl Connection {
 
     pub(crate) async fn query(
         &self,
-        query: &Query,
+        query: &UnpreparedStatement,
         paging_state: Option<Bytes>,
     ) -> Result<QueryResponse, QueryError> {
         // This method is used only for driver internal queries, so no need to consult execution profile here.
@@ -650,7 +653,7 @@ impl Connection {
 
     pub(crate) async fn query_with_consistency(
         &self,
-        query: &Query,
+        query: &UnpreparedStatement,
         consistency: Consistency,
         serial_consistency: Option<SerialConsistency>,
         paging_state: Option<Bytes>,
@@ -772,7 +775,7 @@ impl Connection {
     /// the asynchronous iterator interface.
     pub(crate) async fn query_iter(
         self: Arc<Self>,
-        query: Query,
+        query: UnpreparedStatement,
     ) -> Result<RowIterator, QueryError> {
         let consistency = query
             .config
@@ -910,7 +913,9 @@ impl Connection {
         let mut prepared_queries = HashMap::<&str, PreparedStatement>::new();
 
         for query in &to_prepare {
-            let prepared = self.prepare(&Query::new(query.to_string())).await?;
+            let prepared = self
+                .prepare(&UnpreparedStatement::new(query.to_string()))
+                .await?;
             prepared_queries.insert(query, prepared);
         }
 
@@ -938,7 +943,7 @@ impl Connection {
     ) -> Result<(), QueryError> {
         // Trying to pass keyspace_name as bound value doesn't work
         // We have to send "USE " + keyspace_name
-        let query: Query = match keyspace_name.is_case_sensitive {
+        let query: UnpreparedStatement = match keyspace_name.is_case_sensitive {
             true => format!("USE \"{}\"", keyspace_name.as_str()).into(),
             false => format!("USE {}", keyspace_name.as_str()).into(),
         };
@@ -1933,7 +1938,7 @@ mod tests {
     use crate::transport::connection::open_connection;
     use crate::transport::node::ResolvedContactPoint;
     use crate::transport::topology::UntranslatedEndpoint;
-    use crate::unprepared_statement::Query;
+    use crate::unprepared_statement::UnpreparedStatement;
     use crate::utils::test_utils::unique_keyspace_name;
     use crate::{IntoTypedRows, SessionBuilder};
     use futures::{StreamExt, TryStreamExt};
@@ -2010,7 +2015,8 @@ mod tests {
             .unwrap();
 
         // 1. SELECT from an empty table returns query result where rows are Some(Vec::new())
-        let select_query = Query::new("SELECT p FROM connection_query_iter_tab").with_page_size(7);
+        let select_query =
+            UnpreparedStatement::new("SELECT p FROM connection_query_iter_tab").with_page_size(7);
         let empty_res = connection
             .clone()
             .query_iter(select_query.clone())
@@ -2025,7 +2031,8 @@ mod tests {
         let values: Vec<i32> = (0..100).collect();
         let mut insert_futures = Vec::new();
         let insert_query =
-            Query::new("INSERT INTO connection_query_iter_tab (p) VALUES (?)").with_page_size(7);
+            UnpreparedStatement::new("INSERT INTO connection_query_iter_tab (p) VALUES (?)")
+                .with_page_size(7);
         let prepared = connection.prepare(&insert_query).await.unwrap();
         for v in &values {
             let prepared_clone = prepared.clone();
@@ -2050,7 +2057,7 @@ mod tests {
 
         // 3. INSERT query_iter should work and not return any rows.
         let insert_res1 = connection
-            .query_iter(Query::new(
+            .query_iter(UnpreparedStatement::new(
                 "INSERT INTO connection_query_iter_tab (p) VALUES (0)",
             ))
             .await
@@ -2125,7 +2132,7 @@ mod tests {
                 let conn = connection.clone();
                 futs.push(tokio::task::spawn(async move {
                     let futs = (base..base + batch_size).map(|j| {
-                        let q = Query::new("INSERT INTO t (p, v) VALUES (?, ?)");
+                        let q = UnpreparedStatement::new("INSERT INTO t (p, v) VALUES (?, ?)");
                         let conn = conn.clone();
                         async move {
                             let prepared = conn.prepare(&q).await.unwrap();

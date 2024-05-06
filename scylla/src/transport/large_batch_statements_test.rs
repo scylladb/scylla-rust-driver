@@ -4,7 +4,7 @@ use scylla_cql::errors::{BadQuery, QueryError};
 
 use crate::batch::BatchType;
 use crate::test_utils::setup_tracing;
-use crate::unprepared_statement::Query;
+use crate::unprepared_statement::UnpreparedStatement;
 use crate::{
     batch::Batch,
     test_utils::{create_new_session_builder, unique_keyspace_name},
@@ -56,7 +56,7 @@ async fn write_batch(session: &Session, n: usize, ks: &String) -> Result<QueryRe
     let mut batch_query = Batch::new(BatchType::Unlogged);
     let mut batch_values = Vec::new();
     let query = format!("INSERT INTO {}.pairs (dummy, k, v) VALUES (0, ?, ?)", ks);
-    let query = Query::new(query);
+    let query = UnpreparedStatement::new(query);
     let prepared_statement = session.prepare(query).await.unwrap();
     for i in 0..n {
         let mut key = vec![0];

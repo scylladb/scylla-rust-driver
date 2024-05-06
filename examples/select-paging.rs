@@ -1,6 +1,6 @@
 use anyhow::Result;
 use futures::stream::StreamExt;
-use scylla::{unprepared_statement::Query, Session, SessionBuilder};
+use scylla::{unprepared_statement::UnpreparedStatement, Session, SessionBuilder};
 use std::env;
 
 #[tokio::main]
@@ -40,7 +40,8 @@ async fn main() -> Result<()> {
         println!("a, b, c: {}, {}, {}", a, b, c);
     }
 
-    let paged_query = Query::new("SELECT a, b, c FROM examples_ks.select_paging").with_page_size(6);
+    let paged_query =
+        UnpreparedStatement::new("SELECT a, b, c FROM examples_ks.select_paging").with_page_size(6);
     let res1 = session.query(paged_query.clone(), &[]).await?;
     println!(
         "Paging state: {:#?} ({} rows)",
@@ -65,7 +66,10 @@ async fn main() -> Result<()> {
     );
 
     let paged_prepared = session
-        .prepare(Query::new("SELECT a, b, c FROM examples_ks.select_paging").with_page_size(7))
+        .prepare(
+            UnpreparedStatement::new("SELECT a, b, c FROM examples_ks.select_paging")
+                .with_page_size(7),
+        )
         .await?;
     let res4 = session.execute(&paged_prepared, &[]).await?;
     println!(

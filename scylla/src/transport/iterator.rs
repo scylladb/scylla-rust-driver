@@ -28,7 +28,9 @@ use crate::frame::response::{
 };
 use crate::history::{self, HistoryListener};
 use crate::statement::Consistency;
-use crate::statement::{prepared_statement::PreparedStatement, unprepared_statement::Query};
+use crate::statement::{
+    prepared_statement::PreparedStatement, unprepared_statement::UnpreparedStatement,
+};
 use crate::transport::cluster::ClusterData;
 use crate::transport::connection::{Connection, NonErrorQueryResponse, QueryResponse};
 use crate::transport::load_balancing::{self, RoutingInfo};
@@ -124,7 +126,7 @@ impl RowIterator {
     }
 
     pub(crate) async fn new_for_query(
-        mut query: Query,
+        mut query: UnpreparedStatement,
         execution_profile: Arc<ExecutionProfileInner>,
         cluster_data: Arc<ClusterData>,
         metrics: Arc<Metrics>,
@@ -323,7 +325,7 @@ impl RowIterator {
     }
 
     pub(crate) async fn new_for_connection_query_iter(
-        mut query: Query,
+        mut query: UnpreparedStatement,
         connection: Arc<Connection>,
         consistency: Consistency,
         serial_consistency: Option<SerialConsistency>,

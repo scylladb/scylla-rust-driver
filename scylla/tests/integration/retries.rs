@@ -4,7 +4,7 @@ use scylla::speculative_execution::SimpleSpeculativeExecutionPolicy;
 use scylla::transport::session::Session;
 use scylla::ExecutionProfile;
 use scylla::SessionBuilder;
-use scylla::{test_utils::unique_keyspace_name, unprepared_statement::Query};
+use scylla::{test_utils::unique_keyspace_name, unprepared_statement::UnpreparedStatement};
 use std::sync::Arc;
 use std::time::Duration;
 use tracing::info;
@@ -43,7 +43,7 @@ async fn speculative_execution_is_fired() {
             .await
             .unwrap();
 
-        let mut q = Query::from("INSERT INTO t (a) VALUES (?)");
+        let mut q = UnpreparedStatement::from("INSERT INTO t (a) VALUES (?)");
         q.set_is_idempotent(true); // this is to allow speculative execution to fire
 
         let drop_frame_rule = RequestRule(
@@ -119,7 +119,7 @@ async fn retries_occur() {
             .await
             .unwrap();
 
-        let mut q = Query::from("INSERT INTO t (a) VALUES (?)");
+        let mut q = UnpreparedStatement::from("INSERT INTO t (a) VALUES (?)");
         q.set_is_idempotent(true); // this is to allow retry to fire
 
         let forge_error_rule = RequestRule(

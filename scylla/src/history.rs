@@ -456,8 +456,8 @@ mod tests {
     };
 
     use crate::{
-        retry_policy::RetryDecision, test_utils::setup_tracing, unprepared_statement::Query,
-        utils::test_utils::unique_keyspace_name,
+        retry_policy::RetryDecision, test_utils::setup_tracing,
+        unprepared_statement::UnpreparedStatement, utils::test_utils::unique_keyspace_name,
     };
 
     use super::{
@@ -919,7 +919,7 @@ mod tests {
         setup_tracing();
         let session = create_new_session_builder().build().await.unwrap();
 
-        let mut query = Query::new("SELECT * FROM system.local");
+        let mut query = UnpreparedStatement::new("SELECT * FROM system.local");
         let history_collector = Arc::new(HistoryCollector::new());
         query.set_history_listener(history_collector.clone());
 
@@ -986,7 +986,7 @@ mod tests {
         setup_tracing();
         let session = create_new_session_builder().build().await.unwrap();
 
-        let mut query = Query::new("This isnt even CQL");
+        let mut query = UnpreparedStatement::new("This isnt even CQL");
         let history_collector = Arc::new(HistoryCollector::new());
         query.set_history_listener(history_collector.clone());
 
@@ -1040,7 +1040,7 @@ mod tests {
                 .unwrap();
         }
 
-        let mut iter_query: Query = Query::new("SELECT * FROM t");
+        let mut iter_query: UnpreparedStatement = UnpreparedStatement::new("SELECT * FROM t");
         iter_query.set_page_size(8);
         let history_collector = Arc::new(HistoryCollector::new());
         iter_query.set_history_listener(history_collector.clone());

@@ -3,7 +3,9 @@ use std::sync::Arc;
 
 use crate::history::HistoryListener;
 use crate::retry_policy::RetryPolicy;
-use crate::statement::{prepared_statement::PreparedStatement, unprepared_statement::Query};
+use crate::statement::{
+    prepared_statement::PreparedStatement, unprepared_statement::UnpreparedStatement,
+};
 use crate::transport::execution_profile::ExecutionProfileHandle;
 
 use super::StatementConfig;
@@ -157,18 +159,18 @@ impl Default for Batch {
 /// This enum represents a CQL statement, that can be part of batch.
 #[derive(Clone)]
 pub enum BatchStatement {
-    Query(Query),
+    Query(UnpreparedStatement),
     PreparedStatement(PreparedStatement),
 }
 
 impl From<&str> for BatchStatement {
     fn from(s: &str) -> Self {
-        BatchStatement::Query(Query::from(s))
+        BatchStatement::Query(UnpreparedStatement::from(s))
     }
 }
 
-impl From<Query> for BatchStatement {
-    fn from(q: Query) -> Self {
+impl From<UnpreparedStatement> for BatchStatement {
+    fn from(q: UnpreparedStatement) -> Self {
         BatchStatement::Query(q)
     }
 }

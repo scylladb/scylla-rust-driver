@@ -15,7 +15,7 @@ use scylla::test_utils::unique_keyspace_name;
 use scylla::transport::ClusterData;
 use scylla::transport::Node;
 use scylla::transport::NodeRef;
-use scylla::unprepared_statement::Query;
+use scylla::unprepared_statement::UnpreparedStatement;
 use scylla::ExecutionProfile;
 use scylla::QueryResult;
 use scylla::Session;
@@ -209,7 +209,7 @@ async fn send_statement_everywhere(
 async fn send_unprepared_query_everywhere(
     session: &Session,
     cluster: &ClusterData,
-    query: &Query,
+    query: &UnpreparedStatement,
 ) -> Result<Vec<QueryResult>, QueryError> {
     let tasks = cluster.get_nodes_info().iter().flat_map(|node| {
         let shard_count: u16 = node.sharder().unwrap().nr_shards.into();
@@ -453,7 +453,9 @@ async fn test_tablet_feedback_not_sent_for_unprepared_queries() {
             send_unprepared_query_everywhere(
                 &session,
                 session.get_cluster_data().as_ref(),
-                &Query::new(format!("INSERT INTO {ks}.t (a, b, c) VALUES (1, 1, 'abc')")),
+                &UnpreparedStatement::new(format!(
+                    "INSERT INTO {ks}.t (a, b, c) VALUES (1, 1, 'abc')"
+                )),
             )
             .await
             .unwrap();

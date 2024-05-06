@@ -8,7 +8,7 @@ use scylla::batch::{Batch, BatchType};
 use scylla::routing::Shard;
 use scylla::statement::SerialConsistency;
 use scylla::transport::NodeRef;
-use scylla::unprepared_statement::Query;
+use scylla::unprepared_statement::UnpreparedStatement;
 use scylla::{
     load_balancing::{LoadBalancingPolicy, RoutingInfo},
     retry_policy::{RetryPolicy, RetrySession},
@@ -181,7 +181,7 @@ async fn test_execution_profiles() {
             .await
             .unwrap();
 
-        let mut query = Query::from(format!("INSERT INTO {}.t (a, b, c) VALUES (1, 2, 'abc')", ks));
+        let mut query = UnpreparedStatement::from(format!("INSERT INTO {}.t (a, b, c) VALUES (1, 2, 'abc')", ks));
         let mut prepared = session.prepare(format!("INSERT INTO {}.t (a, b, c) VALUES (1, 2, 'abc')", ks)).await.unwrap();
         let mut batch = Batch::new_with_statements(BatchType::Unlogged, vec![BatchStatement::Query(query.clone())]);
 

@@ -66,7 +66,7 @@ use crate::transport::query_result::QueryResult;
 use crate::transport::retry_policy::{QueryInfo, RetryDecision, RetrySession};
 use crate::transport::speculative_execution;
 use crate::transport::Compression;
-use crate::unprepared_statement::Query;
+use crate::unprepared_statement::UnpreparedStatement;
 use crate::{
     batch::{Batch, BatchStatement},
     statement::StatementConfig,
@@ -613,7 +613,7 @@ impl Session {
     /// ```
     pub async fn query(
         &self,
-        query: impl Into<Query>,
+        query: impl Into<UnpreparedStatement>,
         values: impl SerializeRow,
     ) -> Result<QueryResult, QueryError> {
         self.query_paged(query, values, None).await
@@ -632,11 +632,11 @@ impl Session {
     /// * `paging_state` - previously received paging state or None
     pub async fn query_paged(
         &self,
-        query: impl Into<Query>,
+        query: impl Into<UnpreparedStatement>,
         values: impl SerializeRow,
         paging_state: Option<Bytes>,
     ) -> Result<QueryResult, QueryError> {
-        let query: Query = query.into();
+        let query: UnpreparedStatement = query.into();
 
         let execution_profile = query
             .get_execution_profile_handle()
@@ -798,10 +798,10 @@ impl Session {
     /// ```
     pub async fn query_iter(
         &self,
-        query: impl Into<Query>,
+        query: impl Into<UnpreparedStatement>,
         values: impl SerializeRow,
     ) -> Result<RowIterator, QueryError> {
-        let query: Query = query.into();
+        let query: UnpreparedStatement = query.into();
 
         let execution_profile = query
             .get_execution_profile_handle()
@@ -869,7 +869,10 @@ impl Session {
     /// # Ok(())
     /// # }
     /// ```
-    pub async fn prepare(&self, query: impl Into<Query>) -> Result<PreparedStatement, QueryError> {
+    pub async fn prepare(
+        &self,
+        query: impl Into<UnpreparedStatement>,
+    ) -> Result<PreparedStatement, QueryError> {
         let query = query.into();
         let query_ref = &query;
 
@@ -1447,12 +1450,14 @@ impl Session {
         consistency: Option<Consistency>,
     ) -> Result<Option<TracingInfo>, QueryError> {
         // Query system_traces.sessions for TracingInfo
-        let mut traces_session_query = Query::new(crate::tracing::TRACES_SESSION_QUERY_STR);
+        let mut traces_session_query =
+            UnpreparedStatement::new(crate::tracing::TRACES_SESSION_QUERY_STR);
         traces_session_query.config.consistency = consistency;
         traces_session_query.set_page_size(1024);
 
         // Query system_traces.events for TracingEvents
-        let mut traces_events_query = Query::new(crate::tracing::TRACES_EVENTS_QUERY_STR);
+        let mut traces_events_query =
+            UnpreparedStatement::new(crate::tracing::TRACES_EVENTS_QUERY_STR);
         traces_events_query.config.consistency = consistency;
         traces_events_query.set_page_size(1024);
 

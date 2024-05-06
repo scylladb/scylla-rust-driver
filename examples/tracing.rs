@@ -5,7 +5,7 @@ use anyhow::{anyhow, Result};
 use futures::StreamExt;
 use scylla::batch::Batch;
 use scylla::statement::{
-    prepared_statement::PreparedStatement, unprepared_statement::Query, Consistency,
+    prepared_statement::PreparedStatement, unprepared_statement::UnpreparedStatement, Consistency,
     SerialConsistency,
 };
 use scylla::tracing::TracingInfo;
@@ -38,7 +38,8 @@ async fn main() -> Result<()> {
 
     // QUERY
     // Create a simple query and enable tracing for it
-    let mut query: Query = Query::new("SELECT val from examples_ks.tracing");
+    let mut query: UnpreparedStatement =
+        UnpreparedStatement::new("SELECT val from examples_ks.tracing");
     query.set_tracing(true);
     query.set_serial_consistency(Some(SerialConsistency::LocalSerial));
 

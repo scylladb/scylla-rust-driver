@@ -4,7 +4,7 @@ use anyhow::Result;
 use futures::StreamExt;
 use scylla::history::{HistoryCollector, StructuredHistory};
 use scylla::transport::session::Session;
-use scylla::unprepared_statement::Query;
+use scylla::unprepared_statement::UnpreparedStatement;
 use scylla::SessionBuilder;
 use std::env;
 use std::sync::Arc;
@@ -27,7 +27,7 @@ async fn main() -> Result<()> {
         .await?;
 
     // Create a query for which we would like to trace the history of its execution
-    let mut query: Query = Query::new("SELECT * FROM ks.t");
+    let mut query: UnpreparedStatement = UnpreparedStatement::new("SELECT * FROM ks.t");
     let history_listener = Arc::new(HistoryCollector::new());
     query.set_history_listener(history_listener.clone());
 
@@ -54,7 +54,8 @@ async fn main() -> Result<()> {
             .await?;
     }
 
-    let mut iter_query: Query = Query::new("SELECT * FROM examples_ks.query_history");
+    let mut iter_query: UnpreparedStatement =
+        UnpreparedStatement::new("SELECT * FROM examples_ks.query_history");
     iter_query.set_page_size(8);
     let iter_history_listener = Arc::new(HistoryCollector::new());
     iter_query.set_history_listener(iter_history_listener.clone());

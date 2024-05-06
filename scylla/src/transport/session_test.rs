@@ -16,7 +16,7 @@ use crate::transport::topology::Strategy::NetworkTopologyStrategy;
 use crate::transport::topology::{
     CollectionType, ColumnKind, CqlType, NativeType, UserDefinedType,
 };
-use crate::unprepared_statement::Query;
+use crate::unprepared_statement::UnpreparedStatement;
 use crate::utils::test_utils::{
     create_new_session_builder, supports_feature, unique_keyspace_name,
 };
@@ -144,7 +144,7 @@ async fn test_unprepared_statement() {
         assert_eq!(spec.table_spec.ks_name(), ks);
     }
     let mut results_from_manual_paging: Vec<Row> = vec![];
-    let query = Query::new(format!("SELECT a, b, c FROM {}.t", ks)).with_page_size(1);
+    let query = UnpreparedStatement::new(format!("SELECT a, b, c FROM {}.t", ks)).with_page_size(1);
     let mut paging_state: Option<Bytes> = None;
     let mut watchdog = 0;
     loop {
@@ -279,7 +279,8 @@ async fn test_prepared_statement() {
         assert_eq!((a, b, c), (17, 16, &String::from("I'm prepared!!!")));
 
         let mut results_from_manual_paging: Vec<Row> = vec![];
-        let query = Query::new(format!("SELECT a, b, c FROM {}.t2", ks)).with_page_size(1);
+        let query =
+            UnpreparedStatement::new(format!("SELECT a, b, c FROM {}.t2", ks)).with_page_size(1);
         let prepared_paged = session.prepare(query).await.unwrap();
         let mut paging_state: Option<Bytes> = None;
         let mut watchdog = 0;
@@ -883,13 +884,15 @@ async fn test_tracing() {
 
 async fn test_tracing_query(session: &Session, ks: String) {
     // A query without tracing enabled has no tracing uuid in result
-    let untraced_query: Query = Query::new(format!("SELECT * FROM {}.tab", ks));
+    let untraced_query: UnpreparedStatement =
+        UnpreparedStatement::new(format!("SELECT * FROM {}.tab", ks));
     let untraced_query_result: QueryResult = session.query(untraced_query, &[]).await.unwrap();
 
     assert!(untraced_query_result.tracing_id.is_none());
 
     // A query with tracing enabled has a tracing uuid in result
-    let mut traced_query: Query = Query::new(format!("SELECT * FROM {}.tab", ks));
+    let mut traced_query: UnpreparedStatement =
+        UnpreparedStatement::new(format!("SELECT * FROM {}.tab", ks));
     traced_query.config.tracing = true;
 
     let traced_query_result: QueryResult = session.query(traced_query, &[]).await.unwrap();
@@ -936,7 +939,7 @@ async fn test_tracing_prepare(session: &Session, ks: String) {
     assert!(untraced_prepared.prepare_tracing_ids.is_empty());
 
     // Preparing a statement with tracing enabled has tracing uuids in result
-    let mut to_prepare_traced = Query::new(format!("SELECT * FROM {}.tab", ks));
+    let mut to_prepare_traced = UnpreparedStatement::new(format!("SELECT * FROM {}.tab", ks));
     to_prepare_traced.config.tracing = true;
 
     let traced_prepared = session.prepare(to_prepare_traced).await.unwrap();
@@ -950,7 +953,8 @@ async fn test_tracing_prepare(session: &Session, ks: String) {
 
 async fn test_get_tracing_info(session: &Session, ks: String) {
     // A query with tracing enabled has a tracing uuid in result
-    let mut traced_query: Query = Query::new(format!("SELECT * FROM {}.tab", ks));
+    let mut traced_query: UnpreparedStatement =
+        UnpreparedStatement::new(format!("SELECT * FROM {}.tab", ks));
     traced_query.config.tracing = true;
 
     let traced_query_result: QueryResult = session.query(traced_query, &[]).await.unwrap();
@@ -964,7 +968,8 @@ async fn test_get_tracing_info(session: &Session, ks: String) {
 
 async fn test_tracing_query_iter(session: &Session, ks: String) {
     // A query without tracing enabled has no tracing ids
-    let untraced_query: Query = Query::new(format!("SELECT * FROM {}.tab", ks));
+    let untraced_query: UnpreparedStatement =
+        UnpreparedStatement::new(format!("SELECT * FROM {}.tab", ks));
 
     let mut untraced_row_iter = session.query_iter(untraced_query, &[]).await.unwrap();
     while let Some(_row) = untraced_row_iter.next().await {
@@ -978,7 +983,8 @@ async fn test_tracing_query_iter(session: &Session, ks: String) {
     assert!(untraced_typed_row_iter.get_tracing_ids().is_empty());
 
     // A query with tracing enabled has a tracing ids in result
-    let mut traced_query: Query = Query::new(format!("SELECT * FROM {}.tab", ks));
+    let mut traced_query: UnpreparedStatement =
+        UnpreparedStatement::new(format!("SELECT * FROM {}.tab", ks));
     traced_query.config.tracing = true;
 
     let mut traced_row_iter = session.query_iter(traced_query, &[]).await.unwrap();
@@ -1058,7 +1064,8 @@ async fn test_tracing_batch(session: &Session, ks: String) {
 }
 
 async fn assert_in_tracing_table(session: &Session, tracing_uuid: Uuid) {
-    let mut traces_query = Query::new("SELECT * FROM system_traces.sessions WHERE session_id = ?");
+    let mut traces_query =
+        UnpreparedStatement::new("SELECT * FROM system_traces.sessions WHERE session_id = ?");
     traces_query.config.consistency = Some(Consistency::One);
 
     // Tracing info might not be immediately available
@@ -1127,7 +1134,7 @@ async fn test_timestamp() {
 
     // test regular query timestamps
 
-    let mut regular_query = Query::new(query_str.to_string());
+    let mut regular_query = UnpreparedStatement::new(query_str.to_string());
 
     regular_query.set_timestamp(Some(420));
     session
@@ -1227,7 +1234,8 @@ async fn test_request_timeout() {
     {
         let session = create_new_session_builder().build().await.unwrap();
 
-        let mut query: Query = Query::new("SELECT * FROM system_schema.tables");
+        let mut query: UnpreparedStatement =
+            UnpreparedStatement::new("SELECT * FROM system_schema.tables");
         query.set_request_timeout(Some(Duration::from_millis(1)));
         match session.query(query, &[]).await {
             Ok(_) => panic!("the query should have failed due to a client-side timeout"),
@@ -1252,7 +1260,7 @@ async fn test_request_timeout() {
             .await
             .unwrap();
 
-        let mut query = Query::new("SELECT * FROM system_schema.tables");
+        let mut query = UnpreparedStatement::new("SELECT * FROM system_schema.tables");
 
         match timeouting_session.query(query.clone(), &[]).await {
             Ok(_) => panic!("the query should have failed due to a client-side timeout"),
@@ -1286,7 +1294,7 @@ async fn test_prepared_config() {
     setup_tracing();
     let session = create_new_session_builder().build().await.unwrap();
 
-    let mut query = Query::new("SELECT * FROM system_schema.tables");
+    let mut query = UnpreparedStatement::new("SELECT * FROM system_schema.tables");
     query.set_is_idempotent(true);
     query.set_page_size(42);
 
@@ -2666,7 +2674,7 @@ async fn test_iter_methods_with_modification_statements() {
         .await
         .unwrap();
 
-    let mut query = Query::from(format!(
+    let mut query = UnpreparedStatement::from(format!(
         "INSERT INTO {}.t (a, b, c) VALUES (1, 2, 'abc')",
         ks
     ));

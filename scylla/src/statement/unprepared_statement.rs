@@ -10,14 +10,14 @@ use std::time::Duration;
 ///
 /// This represents a CQL query that can be executed on a server.
 #[derive(Clone)]
-pub struct Query {
+pub struct UnpreparedStatement {
     pub(crate) config: StatementConfig,
 
     pub contents: String,
     page_size: Option<i32>,
 }
 
-impl Query {
+impl UnpreparedStatement {
     /// Creates a new `Query` from a CQL query string.
     pub fn new(query_text: impl Into<String>) -> Self {
         Self {
@@ -158,14 +158,14 @@ impl Query {
     }
 }
 
-impl From<String> for Query {
-    fn from(s: String) -> Query {
-        Query::new(s)
+impl From<String> for UnpreparedStatement {
+    fn from(s: String) -> UnpreparedStatement {
+        UnpreparedStatement::new(s)
     }
 }
 
-impl<'a> From<&'a str> for Query {
-    fn from(s: &'a str) -> Query {
-        Query::new(s.to_owned())
+impl<'a> From<&'a str> for UnpreparedStatement {
+    fn from(s: &'a str) -> UnpreparedStatement {
+        UnpreparedStatement::new(s.to_owned())
     }
 }
