@@ -20,7 +20,7 @@ use itertools::Itertools;
 use scylla_cql::errors::{BadQuery, NewSessionError};
 use scylla_cql::frame::response::result::TableSpec;
 use scylla_cql::types::serialize::row::SerializedValues;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration;
@@ -285,7 +285,7 @@ impl ClusterData {
         known_peers: &HashMap<Uuid, Arc<Node>>,
         used_keyspace: &Option<VerifiedKeyspaceName>,
         host_filter: Option<&dyn HostFilter>,
-        tablets: TabletsInfo,
+        mut tablets: TabletsInfo,
     ) -> Self {
         // Create new updated known_peers and ring
         let mut new_known_peers: HashMap<Uuid, Arc<Node>> =
@@ -343,6 +343,47 @@ impl ClusterData {
             for token in peer_tokens {
                 ring.push((token, node.clone()));
             }
+        }
+
+        {
+            let removed_nodes = {
+                let mut removed_nodes = HashSet::new();
+                for old_peer in known_peers {
+                    if !new_known_peers.contains_key(old_peer.0) {
+                        removed_nodes.insert(*old_peer.0);
+                    }
+                }
+
+                removed_nodes
+            };
+
+            let table_predicate = |spec: &TableSpec| {
+                if let Some(ks) = metadata.keyspaces.get(spec.ks_name()) {
+                    ks.tables.contains_key(spec.table_name())
+                } else {
+                    false
+                }
+            };
+
+            let recreated_nodes = {
+                let mut recreated_nodes = HashMap::new();
+                for (old_peer_id, old_peer_node) in known_peers {
+                    if let Some(new_peer_node) = new_known_peers.get(old_peer_id) {
+                        if !Arc::ptr_eq(old_peer_node, new_peer_node) {
+                            recreated_nodes.insert(*old_peer_id, Arc::clone(new_peer_node));
+                        }
+                    }
+                }
+
+                recreated_nodes
+            };
+
+            tablets.perform_maintenance(
+                &table_predicate,
+                &removed_nodes,
+                &new_known_peers,
+                &recreated_nodes,
+            )
         }
 
         Self::update_rack_count(&mut datacenters);
@@ -491,7 +532,22 @@ impl ClusterData {
         let replica_translator = |uuid: Uuid| self.known_peers.get(&uuid).cloned();
 
         for (table, raw_tablet) in raw_tablets.into_iter() {
-            let tablet = Tablet::from_raw_tablet(&raw_tablet, replica_translator);
+            // Should we skip tablets that belong to a keyspace not present in
+            // self.keyspaces? The keyspace could have been, without driver's knowledge:
+            // 1. Dropped - in which case we'll remove its info soon (when refreshing
+            // topology) anyway.
+            // 2. Created - no harm in storing the info now.
+            //
+            // So I think we can safely skip checking keyspace presence.
+            let tablet = match Tablet::from_raw_tablet(raw_tablet, replica_translator) {
+                Ok(t) => t,
+                Err((t, f)) => {
+                    debug!("Nodes ({}) that are replicas for a tablet {{ks: {}, table: {}, range: [{}. {}]}} not present in current ClusterData.known_peers. \
+                       Skipping these replicas until topology refresh",
+                       f.iter().format(", "), table.ks_name(), table.table_name(), t.range().0.value(), t.range().1.value());
+                    t
+                }
+            };
             self.locator.tablets.add_tablet(table, tablet);
         }
     }
