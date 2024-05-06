@@ -6,9 +6,9 @@ use crate::transport::execution_profile::ExecutionProfileHandle;
 use std::sync::Arc;
 use std::time::Duration;
 
-/// CQL query statement.
+/// CQL unprepared statement.
 ///
-/// This represents a CQL query that can be executed on a server.
+/// This represents a CQL statement that can be executed on a server.
 #[derive(Clone)]
 pub struct UnpreparedStatement {
     pub(crate) config: StatementConfig,
@@ -18,7 +18,7 @@ pub struct UnpreparedStatement {
 }
 
 impl UnpreparedStatement {
-    /// Creates a new `Query` from a CQL query string.
+    /// Creates a new [`UnpreparedStatement`] from a CQL statement string.
     pub fn new(query_text: impl Into<String>) -> Self {
         Self {
             contents: query_text.into(),
@@ -33,18 +33,18 @@ impl UnpreparedStatement {
         self
     }
 
-    /// Sets the page size for this CQL query.
+    /// Sets the page size for this CQL statement.
     pub fn set_page_size(&mut self, page_size: i32) {
         assert!(page_size > 0, "page size must be larger than 0");
         self.page_size = Some(page_size);
     }
 
-    /// Disables paging for this CQL query.
+    /// Disables paging for this CQL statement.
     pub fn disable_paging(&mut self) {
         self.page_size = None;
     }
 
-    /// Returns the page size for this CQL query.
+    /// Returns the page size for this CQL statement.
     pub fn get_page_size(&self) -> Option<i32> {
         self.page_size
     }
@@ -54,7 +54,7 @@ impl UnpreparedStatement {
         self.config.consistency = Some(c);
     }
 
-    /// Gets the consistency to be used when executing this query if it is filled.
+    /// Gets the consistency to be used when executing this statement if it is filled.
     /// If this is empty, the default_consistency of the session will be used.
     pub fn get_consistency(&self) -> Option<Consistency> {
         self.config.consistency
@@ -73,10 +73,10 @@ impl UnpreparedStatement {
     }
 
     /// Sets the idempotence of this statement
-    /// A query is idempotent if it can be applied multiple times without changing the result of the initial application
+    /// A statement is idempotent if it can be executed multiple times without changing the result of the initial execution
     /// If set to `true` we can be sure that it is idempotent
     /// If set to `false` it is unknown whether it is idempotent
-    /// This is used in [`RetryPolicy`] to decide if retrying a query is safe
+    /// This is used in [`RetryPolicy`] to decide if retrying a statement execution is safe
     pub fn set_is_idempotent(&mut self, is_idempotent: bool) {
         self.config.is_idempotent = is_idempotent;
     }
@@ -88,7 +88,7 @@ impl UnpreparedStatement {
 
     /// Enable or disable CQL Tracing for this statement
     /// If enabled session.query() will return a QueryResult containing tracing_id
-    /// which can be used to query tracing information about the execution of this query
+    /// which can be used to query tracing information about the execution of this statement
     pub fn set_tracing(&mut self, should_trace: bool) {
         self.config.tracing = should_trace;
     }
@@ -119,7 +119,7 @@ impl UnpreparedStatement {
         self.config.request_timeout = timeout
     }
 
-    /// Gets client timeout associated with this query
+    /// Gets client timeout associated with this statement
     pub fn get_request_timeout(&self) -> Option<Duration> {
         self.config.request_timeout
     }
@@ -136,7 +136,7 @@ impl UnpreparedStatement {
         self.config.retry_policy.as_ref()
     }
 
-    /// Sets the listener capable of listening what happens during query execution.
+    /// Sets the listener capable of listening what happens during statement execution.
     pub fn set_history_listener(&mut self, history_listener: Arc<dyn HistoryListener>) {
         self.config.history_listener = Some(history_listener);
     }
@@ -146,13 +146,13 @@ impl UnpreparedStatement {
         self.config.history_listener.take()
     }
 
-    /// Associates the query with execution profile referred by the provided handle.
-    /// Handle may be later remapped to another profile, and query will reflect those changes.
+    /// Associates the statement with execution profile referred by the provided handle.
+    /// Handle may be later remapped to another profile, and statement will reflect those changes.
     pub fn set_execution_profile_handle(&mut self, profile_handle: Option<ExecutionProfileHandle>) {
         self.config.execution_profile_handle = profile_handle;
     }
 
-    /// Borrows the execution profile handle associated with this query.
+    /// Borrows the execution profile handle associated with this statement.
     pub fn get_execution_profile_handle(&self) -> Option<&ExecutionProfileHandle> {
         self.config.execution_profile_handle.as_ref()
     }
