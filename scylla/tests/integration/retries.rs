@@ -4,7 +4,7 @@ use scylla::speculative_execution::SimpleSpeculativeExecutionPolicy;
 use scylla::transport::session::Session;
 use scylla::ExecutionProfile;
 use scylla::SessionBuilder;
-use scylla::{query::Query, test_utils::unique_keyspace_name};
+use scylla::{test_utils::unique_keyspace_name, unprepared_statement::Query};
 use std::sync::Arc;
 use std::time::Duration;
 use tracing::info;

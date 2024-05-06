@@ -5,7 +5,8 @@ use anyhow::{anyhow, Result};
 use futures::StreamExt;
 use scylla::batch::Batch;
 use scylla::statement::{
-    prepared_statement::PreparedStatement, query::Query, Consistency, SerialConsistency,
+    prepared_statement::PreparedStatement, unprepared_statement::Query, Consistency,
+    SerialConsistency,
 };
 use scylla::tracing::TracingInfo;
 use scylla::transport::iterator::RowIterator;

@@ -1,7 +1,7 @@
 use crate::utils::{setup_tracing, test_with_3_node_cluster};
 use scylla::transport::session::Session;
 use scylla::SessionBuilder;
-use scylla::{query::Query, test_utils::unique_keyspace_name};
+use scylla::{test_utils::unique_keyspace_name, unprepared_statement::Query};
 use scylla_proxy::{
     Condition, ProxyError, Reaction, RequestOpcode, RequestReaction, RequestRule, ShardAwareness,
     WorkerError,

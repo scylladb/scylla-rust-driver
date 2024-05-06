@@ -3,8 +3,8 @@
 use anyhow::Result;
 use futures::StreamExt;
 use scylla::history::{HistoryCollector, StructuredHistory};
-use scylla::query::Query;
 use scylla::transport::session::Session;
+use scylla::unprepared_statement::Query;
 use scylla::SessionBuilder;
 use std::env;
 use std::sync::Arc;

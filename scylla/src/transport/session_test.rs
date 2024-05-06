@@ -2,7 +2,6 @@ use crate as scylla;
 use crate::batch::{Batch, BatchStatement};
 use crate::frame::response::result::Row;
 use crate::prepared_statement::PreparedStatement;
-use crate::query::Query;
 use crate::retry_policy::{QueryInfo, RetryDecision, RetryPolicy, RetrySession};
 use crate::routing::Token;
 use crate::statement::Consistency;
@@ -17,6 +16,7 @@ use crate::transport::topology::Strategy::NetworkTopologyStrategy;
 use crate::transport::topology::{
     CollectionType, ColumnKind, CqlType, NativeType, UserDefinedType,
 };
+use crate::unprepared_statement::Query;
 use crate::utils::test_utils::{
     create_new_session_builder, supports_feature, unique_keyspace_name,
 };

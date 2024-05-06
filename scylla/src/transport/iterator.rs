@@ -28,7 +28,7 @@ use crate::frame::response::{
 };
 use crate::history::{self, HistoryListener};
 use crate::statement::Consistency;
-use crate::statement::{prepared_statement::PreparedStatement, query::Query};
+use crate::statement::{prepared_statement::PreparedStatement, unprepared_statement::Query};
 use crate::transport::cluster::ClusterData;
 use crate::transport::connection::{Connection, NonErrorQueryResponse, QueryResponse};
 use crate::transport::load_balancing::{self, RoutingInfo};

@@ -1,6 +1,6 @@
 use crate::frame::response::event::Event;
 use crate::routing::Token;
-use crate::statement::query::Query;
+use crate::statement::unprepared_statement::Query;
 use crate::transport::connection::{Connection, ConnectionConfig};
 use crate::transport::connection_pool::{NodeConnectionPool, PoolConfig, PoolSize};
 use crate::transport::errors::{DbError, QueryError};

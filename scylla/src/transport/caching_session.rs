@@ -1,9 +1,9 @@
 use crate::batch::{Batch, BatchStatement};
 use crate::prepared_statement::PreparedStatement;
-use crate::query::Query;
 use crate::transport::errors::QueryError;
 use crate::transport::iterator::RowIterator;
 use crate::transport::partitioner::PartitionerName;
+use crate::unprepared_statement::Query;
 use crate::{QueryResult, Session};
 use bytes::Bytes;
 use dashmap::DashMap;
@@ -217,9 +217,9 @@ where
 
 #[cfg(test)]
 mod tests {
-    use crate::query::Query;
     use crate::test_utils::{create_new_session_builder, scylla_supports_tablets, setup_tracing};
     use crate::transport::partitioner::PartitionerName;
+    use crate::unprepared_statement::Query;
     use crate::utils::test_utils::unique_keyspace_name;
     use crate::{
         batch::{Batch, BatchStatement},

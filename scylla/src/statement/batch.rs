@@ -3,7 +3,7 @@ use std::sync::Arc;
 
 use crate::history::HistoryListener;
 use crate::retry_policy::RetryPolicy;
-use crate::statement::{prepared_statement::PreparedStatement, query::Query};
+use crate::statement::{prepared_statement::PreparedStatement, unprepared_statement::Query};
 use crate::transport::execution_profile::ExecutionProfileHandle;
 
 use super::StatementConfig;

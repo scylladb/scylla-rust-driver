@@ -456,7 +456,7 @@ mod tests {
     };
 
     use crate::{
-        query::Query, retry_policy::RetryDecision, test_utils::setup_tracing,
+        retry_policy::RetryDecision, test_utils::setup_tracing, unprepared_statement::Query,
         utils::test_utils::unique_keyspace_name,
     };
 

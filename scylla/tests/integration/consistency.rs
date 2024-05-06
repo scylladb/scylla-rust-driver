@@ -12,7 +12,7 @@ use scylla_cql::frame::response::result::TableSpec;
 use tokio::sync::mpsc::{self, UnboundedReceiver, UnboundedSender};
 
 use scylla::statement::batch::BatchStatement;
-use scylla::statement::query::Query;
+use scylla::statement::unprepared_statement::Query;
 use scylla::{
     batch::{Batch, BatchType},
     statement::SerialConsistency,

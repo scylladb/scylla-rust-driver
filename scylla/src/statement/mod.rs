@@ -5,7 +5,7 @@ use crate::{history::HistoryListener, retry_policy::RetryPolicy};
 
 pub mod batch;
 pub mod prepared_statement;
-pub mod query;
+pub mod unprepared_statement;
 
 pub use crate::frame::types::{Consistency, SerialConsistency};
 

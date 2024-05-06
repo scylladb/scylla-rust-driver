@@ -11,7 +11,7 @@ struct SessionService {
 }
 
 // A trivial service implementation for sending parameterless simple string requests to Scylla.
-impl Service<scylla::query::Query> for SessionService {
+impl Service<scylla::unprepared_statement::Query> for SessionService {
     type Response = scylla::QueryResult;
     type Error = scylla::transport::errors::QueryError;
     type Future = Pin<Box<dyn Future<Output = Result<Self::Response, Self::Error>>>>;
@@ -20,7 +20,7 @@ impl Service<scylla::query::Query> for SessionService {
         Poll::Ready(Ok(()))
     }
 
-    fn call(&mut self, req: scylla::query::Query) -> Self::Future {
+    fn call(&mut self, req: scylla::unprepared_statement::Query) -> Self::Future {
         let session = self.session.clone();
         Box::pin(async move { session.query(req, &[]).await })
     }

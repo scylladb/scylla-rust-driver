@@ -147,7 +147,7 @@ pub use utils::test_utils;
 
 pub use statement::batch;
 pub use statement::prepared_statement;
-pub use statement::query;
+pub use statement::unprepared_statement;
 
 pub use frame::response::cql_to_rust;
 pub use frame::response::cql_to_rust::FromRow;

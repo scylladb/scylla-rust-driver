@@ -1,6 +1,6 @@
 use anyhow::Result;
 use futures::stream::StreamExt;
-use scylla::{query::Query, Session, SessionBuilder};
+use scylla::{unprepared_statement::Query, Session, SessionBuilder};
 use std::env;
 
 #[tokio::main]

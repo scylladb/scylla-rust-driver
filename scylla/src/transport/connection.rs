@@ -59,11 +59,11 @@ use crate::frame::{
     server_event_type::EventType,
     FrameParams, SerializedRequest,
 };
-use crate::query::Query;
 use crate::routing::ShardInfo;
 use crate::statement::prepared_statement::PreparedStatement;
 use crate::statement::Consistency;
 use crate::transport::Compression;
+use crate::unprepared_statement::Query;
 use crate::QueryResult;
 
 // Queries for schema agreement
@@ -1929,11 +1929,11 @@ mod tests {
     use tokio::sync::mpsc;
 
     use super::ConnectionConfig;
-    use crate::query::Query;
     use crate::test_utils::setup_tracing;
     use crate::transport::connection::open_connection;
     use crate::transport::node::ResolvedContactPoint;
     use crate::transport::topology::UntranslatedEndpoint;
+    use crate::unprepared_statement::Query;
     use crate::utils::test_utils::unique_keyspace_name;
     use crate::{IntoTypedRows, SessionBuilder};
     use futures::{StreamExt, TryStreamExt};

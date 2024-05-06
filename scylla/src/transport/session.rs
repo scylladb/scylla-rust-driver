@@ -51,7 +51,6 @@ use crate::cql_to_rust::FromRow;
 use crate::frame::response::cql_to_rust::FromRowError;
 use crate::frame::response::result;
 use crate::prepared_statement::PreparedStatement;
-use crate::query::Query;
 use crate::routing::{Shard, Token};
 use crate::statement::Consistency;
 use crate::tracing::{TracingEvent, TracingInfo};
@@ -67,6 +66,7 @@ use crate::transport::query_result::QueryResult;
 use crate::transport::retry_policy::{QueryInfo, RetryDecision, RetrySession};
 use crate::transport::speculative_execution;
 use crate::transport::Compression;
+use crate::unprepared_statement::Query;
 use crate::{
     batch::{Batch, BatchStatement},
     statement::StatementConfig,
