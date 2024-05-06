@@ -39,7 +39,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
         )
         .await?;
 
-    // This query should generate a warning message
+    // This statement should generate a warning message
     session.query("USE ks", &[]).await?;
 
     Ok(())

@@ -24,7 +24,7 @@ Below, the remaps described above are followed in code.
 # use std::error::Error;
 # async fn check_only_compiles() -> Result<(), Box<dyn Error>> {
 use scylla::{Session, SessionBuilder};
-use scylla::query::Query;
+use scylla::unprepared_statement::UnpreparedStatement;
 use scylla::statement::Consistency;
 use scylla::transport::ExecutionProfile;
 
@@ -45,8 +45,8 @@ let session: Session = SessionBuilder::new()
     .build()
     .await?;
 
-let mut query1 = Query::from("SELECT * FROM ks.table");
-let mut query2 = Query::from("SELECT pk FROM ks.table WHERE pk = ?");
+let mut query1 = UnpreparedStatement::from("SELECT * FROM ks.table");
+let mut query2 = UnpreparedStatement::from("SELECT pk FROM ks.table WHERE pk = ?");
 
 query1.set_execution_profile_handle(Some(handle1.clone()));
 query2.set_execution_profile_handle(Some(handle2.clone()));

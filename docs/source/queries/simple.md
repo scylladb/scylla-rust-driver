@@ -1,11 +1,11 @@
-# Simple query
+# Unprepared statement
 
-Simple query takes query text and values and simply executes them on a `Session`:
+Unprepared statement takes statement text and values and simply executes them on a `Session`:
 ```rust
 # extern crate scylla;
 # use scylla::Session;
 # use std::error::Error;
-# async fn simple_query_example(session: &Session) -> Result<(), Box<dyn Error>> {
+# async fn unprepared_statement_example(session: &Session) -> Result<(), Box<dyn Error>> {
 // Insert a value into the table
 let to_insert: i32 = 12345;
 session
@@ -16,11 +16,11 @@ session
 ```
 
 > ***Warning***\
-> Don't use simple query to receive large amounts of data.\
-> By default the query is unpaged and might cause heavy load on the cluster.\
-> In such cases set a page size and use [paged query](paged.md) instead.\
+> Don't use unprepared statements to receive large amounts of data.\
+> By default the statement execution is unpaged and might cause heavy load on the cluster.\
+> In such cases set a page size and use [paged statement](paged.md) instead.\
 > 
-> When page size is set, `query` will return only the first page of results.
+> When page size is set, `Session::query` will return only the first page of results.
 
 > ***Warning***\
 > If the values are not empty, driver first needs to send a `PREPARE` request
@@ -35,11 +35,12 @@ You can create a query manually to set custom options. For example to change que
 # use scylla::Session;
 # use std::error::Error;
 # async fn check_only_compiles(session: &Session) -> Result<(), Box<dyn Error>> {
-use scylla::query::Query;
+use scylla::unprepared_statement::UnpreparedStatement;
 use scylla::statement::Consistency;
 
-// Create a Query manually to change the Consistency to ONE
-let mut my_query: Query = Query::new("INSERT INTO ks.tab (a) VALUES(?)");
+// Create an UnpreparedStatement manually to change the Consistency to ONE
+let mut my_query: UnpreparedStatement =
+    UnpreparedStatement::new("INSERT INTO ks.tab (a) VALUES(?)");
 my_query.set_consistency(Consistency::One);
 
 // Insert a value into the table
@@ -48,7 +49,7 @@ session.query(my_query, (to_insert,)).await?;
 # Ok(())
 # }
 ```
-See [Query API documentation](https://docs.rs/scylla/latest/scylla/statement/query/struct.Query.html) for more options
+See [Query API documentation](https://docs.rs/scylla/latest/scylla/statement/unprepared_statement/struct.UnpreparedStatement.html) for more options
 
 ### Second argument - the values
 Query text is constant, but the values might change.
@@ -92,15 +93,15 @@ while let Some(read_row) = iter.next().transpose()? {
 # Ok(())
 # }
 ```
-> In cases where page size is set, simple query returns only a single page of results.\
-> To receive all pages use a [paged query](paged.md) instead.\
+> In cases where page size is set, unprepared statement returns only a single page of results.\
+> To receive all pages use a [paged statement](paged.md) instead.\
 
 See [Query result](result.md) for more information about handling query results
 
 ### Performance
-Simple queries should not be used in places where performance matters.\
-If performance matters use a [Prepared query](prepared.md) instead.
+Unprepared statements should not be used in places where performance matters.\
+If performance matters use a [Prepared statement](prepared.md) instead.
 
-With simple query the database has to parse query text each time it's executed, which worsens performance.\
+With unprepared statement the database has to parse statement text each time it's executed, which worsens performance.\
 
-Additionally token and shard aware load balancing does not work with simple queries. They are sent to random nodes.
+Additionally token and shard aware load balancing does not work with unprepared statements. They are sent to random nodes.

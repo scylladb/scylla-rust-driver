@@ -5,11 +5,11 @@ During operation the driver collects various metrics.
 They can be accessed at any moment using `Session::get_metrics()`
 
 ### Collected metrics:
-* Query latencies
-* Total number of nonpaged queries
-* Number of errors during nonpaged queries
-* Total number of paged queries
-* Number of errors during paged queries
+* Statement execution latencies
+* Total number of nonpaged statements
+* Number of errors during nonpaged statements' execution
+* Total number of paged statements
+* Number of errors during paged statements' execution
 * Number of retries
 
 ### Example

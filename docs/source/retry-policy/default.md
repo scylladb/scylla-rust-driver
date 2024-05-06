@@ -28,19 +28,20 @@ let session: Session = SessionBuilder::new()
 # }
 ```
 
-To use in a [simple query](../queries/simple.md):
+To use in an [unprepared statement](../queries/simple.md):
 ```rust
 # extern crate scylla;
 # use scylla::Session;
 # use std::error::Error;
 # use std::sync::Arc;
 # async fn check_only_compiles(session: &Session) -> Result<(), Box<dyn Error>> {
-use scylla::query::Query;
+use scylla::unprepared_statement::UnpreparedStatement;
 use scylla::transport::ExecutionProfile;
 use scylla::transport::retry_policy::DefaultRetryPolicy;
 
 // Create a Query manually and set the retry policy
-let mut my_query: Query = Query::new("INSERT INTO ks.tab (a) VALUES(?)");
+let mut my_query: UnpreparedStatement =
+    UnpreparedStatement::new("INSERT INTO ks.tab (a) VALUES(?)");
 my_query.set_retry_policy(Some(Arc::new(DefaultRetryPolicy::new())));
 
 // You can also set retry policy in an execution profile

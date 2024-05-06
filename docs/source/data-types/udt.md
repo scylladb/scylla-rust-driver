@@ -3,17 +3,17 @@ Scylla allows users to define their own data types with named fields (See [the o
 To use user defined types in the driver, you can create a corresponding struct in Rust, and use it to read and write UDT values.
 
 
-For example let's say `my_type` was created using this query:
+For example let's say `my_type` was created using this statement:
 ```sql
 CREATE TYPE ks.my_type (int_val int, text_val text)
 ```
 
 To use this type in the driver, create a matching struct and derive:
-- `SerializeCql`: in order to be able to use this struct in query parameters. \
+- `SerializeCql`: in order to be able to use this struct in statement parameters. \
     This macro requires fields of UDT and struct to have matching names, but the order
     of the fields is not required to be the same. \
     Note: you can use different name using `rename` attribute - see `SerializeCql` macro documentation.
-- `FromUserType`:  in order to be able to use this struct in query results. \
+- `FromUserType`:  in order to be able to use this struct in statement execution results. \
     This macro requires fields of UDT and struct to be in the same *ORDER*. \
     This mismatch between `SerializeCql` and `FromUserType` requirements is a temporary situation - in the future `FromUserType` (or  the macro that replaces it) will also require matching names.
 

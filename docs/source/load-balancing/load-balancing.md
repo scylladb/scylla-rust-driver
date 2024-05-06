@@ -3,9 +3,9 @@
 ## Introduction
 
 The driver uses a load balancing policy to determine which node(s) and shard(s)
-to contact when executing a query. Load balancing policies implement the
+to contact when executing a statement. Load balancing policies implement the
 `LoadBalancingPolicy` trait, which contains methods to generate a load
-balancing plan based on the query information and the state of the cluster.
+balancing plan based on the statement information and the state of the cluster.
 
 Load balancing policies do not influence to which nodes connections are
 being opened. For a node connection blacklist configuration refer to
@@ -16,9 +16,9 @@ In this chapter, "target" will refer to a pair `<node, optional shard>`.
 
 ## Plan
 
-When a query is prepared to be sent to the database, the load balancing policy
+When a statement is prepared to be sent to the database, the load balancing policy
 constructs a load balancing plan. This plan is essentially a list of targets to
-which the driver will try to send the query. The first elements of the plan are
+which the driver will try to send the statement. The first elements of the plan are
 the targets which are the best to contact (e.g. they might be replicas for the
 requested data or have the best latency).
 
@@ -73,7 +73,7 @@ let session: Session = SessionBuilder::new()
 
 In addition to being able to configure load balancing policies through
 execution profiles at the session level, the driver also allow for setting
-execution profile handles on a per-query basis. This means that for each query,
+execution profile handles on a per-statement basis. This means that for each statement,
 a specific execution profile can be selected with a customized load balancing
 settings.
 
@@ -81,12 +81,12 @@ settings.
 
 ### `pick` and `fallback`:
 
-Most queries are sent successfully on the first try. In such cases, only the
+Most statements are executed successfully on the first try. In such cases, only the
 first element of the load balancing plan is needed, so it's usually unnecessary
 to compute entire load balancing plan. To optimize this common case, the
 `LoadBalancingPolicy` trait provides two methods: `pick` and `fallback`.
 
-`pick` returns the first target to contact for a given query, which is usually
+`pick` returns the first target to contact for a given statement, which is usually
 the best based on a particular load balancing policy.
 
 `fallback`, returns an iterator that provides the rest of the targets in the
@@ -94,7 +94,7 @@ load balancing plan. `fallback` is called when using the initial picked
 target fails (or when executing speculatively) or when `pick` returned `None`.
 
 It's possible for the `fallback` method to include the same target that was
-returned by the `pick` method. In such cases, the query execution layer filters
+returned by the `pick` method. In such cases, the statement execution layer filters
 out the picked target from the iterator returned by `fallback`.
 
 ### `on_query_success` and `on_query_failure`:
@@ -103,13 +103,13 @@ The `on_query_success` and `on_query_failure` methods are useful for load
 balancing policies because they provide feedback on the performance and health
 of the nodes in the cluster.
 
-When a query is successfully executed, the `on_query_success` method is called
+When a statement is successfully executed, the `on_query_success` method is called
 and can be used by the load balancing policy to update its internal state. For
 example, a policy might use the latency of the successful query to update its
 latency statistics for each node in the cluster. This information can be used
 to make decisions about which nodes to contact in the future.
 
-On the other hand, when a query fails to execute, the `on_query_failure` method
+On the other hand, when a statement fails to execute, the `on_query_failure` method
 is called and provides information about the failure. The error message
 returned by Cassandra can help determine the cause of the failure, such as a
 node being down or overloaded. The load balancing policy can use this

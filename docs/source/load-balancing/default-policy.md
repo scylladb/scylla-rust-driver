@@ -2,7 +2,7 @@
 
 `DefaultPolicy` is the default load balancing policy in Scylla Rust Driver. It
 can be configured to be datacenter-aware and token-aware. Datacenter failover
-for queries with non-local consistency mode is also supported.
+for statements with non-local consistency mode is also supported.
 
 ## Creating a DefaultPolicy
 
@@ -107,7 +107,7 @@ Every `update_rate` the global minimum average latency is computed,
 and all nodes whose average latency is worse than `exclusion_threshold`
 times the global minimum average latency become penalised for
 `retry_period`. Penalisation involves putting those nodes at the very end
-of the query plan. As it is often not truly beneficial to prefer
+of the statement execution plan. As it is often not truly beneficial to prefer
 faster non-replica than replicas lagging behind the non-replicas,
 this mechanism may as well worsen latencies and/or throughput.
 

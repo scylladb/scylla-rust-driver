@@ -1,4 +1,4 @@
-# Connecting and running a simple query
+# Connecting and executing an unprepared statement
 
 Now everything is ready to use the driver.
 Here is a small example:

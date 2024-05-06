@@ -1,7 +1,7 @@
 # Tracing a paged query
 
-A paged query performs multiple simple/prepared queries to query subsequent pages.\
-If tracing is enabled the row iterator will contain a list of tracing ids for all performed queries.
+A paged query performs multiple unprepared/prepared statements to query subsequent pages.\
+If tracing is enabled the row iterator will contain a list of tracing ids for all executed statements.
 
 
 ### Tracing `Session::query_iter`
@@ -12,14 +12,15 @@ If tracing is enabled the row iterator will contain a list of tracing ids for al
 # use scylla::Session;
 # use std::error::Error;
 # async fn check_only_compiles(session: &Session) -> Result<(), Box<dyn Error>> {
-use scylla::query::Query;
+use scylla::unprepared_statement::UnpreparedStatement;
 use scylla::transport::iterator::RowIterator;
 use scylla::tracing::TracingInfo;
 use futures::StreamExt;
 use uuid::Uuid;
 
 // Create a Query manually and enable tracing
-let mut query: Query = Query::new("INSERT INTO ks.tab (a) VALUES(4)");
+let mut query: UnpreparedStatement =
+    UnpreparedStatement::new("INSERT INTO ks.tab (a) VALUES(4)");
 query.set_tracing(true);
 
 // Create a paged query iterator and fetch pages

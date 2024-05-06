@@ -1,6 +1,6 @@
 # Execution profiles
 
-Execution profiles are a way to group various query execution configuration options together. Profiles can be created to represent different workloads, which can be run conveniently on a single session.
+Execution profiles are a way to group various statement execution configuration options together. Profiles can be created to represent different workloads, which can be run conveniently on a single session.
 
 The settings that an execution profile encapsulates are [as follows](maximal-example.md):
 * consistency
