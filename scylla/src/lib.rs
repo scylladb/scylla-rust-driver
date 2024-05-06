@@ -34,21 +34,21 @@
 //! `Session` is usually created using the [SessionBuilder].\
 //! All configuration options for a `Session` can be specified while building.
 //!
-//! ### Making queries
-//! After successfully connecting to the cluster we can make queries.\
-//! The driver supports multiple query types:
-//! * [Simple](crate::Session::query)
-//! * [Simple paged](crate::Session::query_iter)
-//! * [Prepare](crate::Session::execute) (need to be [prepared](crate::Session::prepare) before use)
+//! ### Executing statements
+//! After successfully connecting to the cluster we can execute statements.\
+//! The driver supports multiple statement types:
+//! * [Unprepared](crate::Session::query)
+//! * [Unprepared paged](crate::Session::query_iter)
+//! * [Prepared](crate::Session::execute) (need to be [prepared](crate::Session::prepare) before use)
 //! * [Prepared paged](crate::Session::execute_iter)
 //! * [Batch](crate::Session::batch)
 //!
-//! To specify options for a single query create the query object and configure it:
-//! * For simple: [Query](crate::query::Query)
+//! To specify options for a single statement, create the statement object and configure it:
+//! * For unprepared: [UnpreparedStatement](crate::unprepared_statement::UnpreparedStatement)
 //! * For prepared: [PreparedStatement](crate::prepared_statement::PreparedStatement)
 //! * For batch: [Batch](crate::batch::Batch)
 //!
-//! The easiest way to specify bound values in a query is using a tuple:
+//! The easiest way to specify bound values in a statement is using a tuple:
 //! ```rust
 //! # use scylla::Session;
 //! # use std::error::Error;
