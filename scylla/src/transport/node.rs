@@ -331,13 +331,17 @@ mod tests {
 
     impl Node {
         pub(crate) fn new_for_test(
-            address: NodeAddr,
+            id: Option<Uuid>,
+            address: Option<NodeAddr>,
             datacenter: Option<String>,
             rack: Option<String>,
         ) -> Self {
             Self {
-                host_id: Uuid::new_v4(),
-                address,
+                host_id: id.unwrap_or(Uuid::new_v4()),
+                address: address.unwrap_or(NodeAddr::Translatable(SocketAddr::from((
+                    [255, 255, 255, 255],
+                    0,
+                )))),
                 datacenter,
                 rack,
                 pool: None,

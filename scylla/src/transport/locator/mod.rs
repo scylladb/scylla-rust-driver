@@ -1,6 +1,7 @@
 mod precomputed_replicas;
 mod replicas;
 mod replication_info;
+pub(crate) mod tablets;
 #[cfg(test)]
 pub(crate) mod test;
 mod token_ring;

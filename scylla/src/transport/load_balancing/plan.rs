@@ -179,7 +179,10 @@ mod tests {
     fn expected_nodes() -> Vec<(Arc<Node>, Shard)> {
         vec![(
             Arc::new(Node::new_for_test(
-                NodeAddr::Translatable(SocketAddr::from_str("127.0.0.1:9042").unwrap()),
+                None,
+                Some(NodeAddr::Translatable(
+                    SocketAddr::from_str("127.0.0.1:9042").unwrap(),
+                )),
                 None,
                 None,
             )),
