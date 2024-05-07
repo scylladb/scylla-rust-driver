@@ -1149,17 +1149,14 @@ impl Display for BuiltinTypeCheckErrorKind {
                 write!(f, "expected one of the CQL types: {expected:?}")
             }
             BuiltinTypeCheckErrorKind::NotEmptyable => {
-                write!(
-                    f,
-                    "the separate empty representation is not valid for this type"
-                )
+                f.write_str("the separate empty representation is not valid for this type")
             }
             BuiltinTypeCheckErrorKind::SetOrListError(err) => err.fmt(f),
             BuiltinTypeCheckErrorKind::MapError(err) => err.fmt(f),
             BuiltinTypeCheckErrorKind::TupleError(err) => err.fmt(f),
             BuiltinTypeCheckErrorKind::UdtError(err) => err.fmt(f),
             BuiltinTypeCheckErrorKind::CustomTypeUnsupported => {
-                write!(f, "custom CQL types are unsupported")
+                f.write_str("custom CQL types are unsupported")
             }
         }
     }
@@ -1217,16 +1214,10 @@ impl Display for BuiltinSerializationErrorKind {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             BuiltinSerializationErrorKind::SizeOverflow => {
-                write!(
-                    f,
-                    "the Rust value is too big to be serialized in the CQL protocol format"
-                )
+                f.write_str("the Rust value is too big to be serialized in the CQL protocol format")
             }
             BuiltinSerializationErrorKind::ValueOverflow => {
-                write!(
-                    f,
-                    "the Rust value is out of range supported by the CQL type"
-                )
+                f.write_str("the Rust value is out of range supported by the CQL type")
             }
             BuiltinSerializationErrorKind::SetOrListError(err) => err.fmt(f),
             BuiltinSerializationErrorKind::MapError(err) => err.fmt(f),
@@ -1247,12 +1238,9 @@ pub enum MapTypeCheckErrorKind {
 impl Display for MapTypeCheckErrorKind {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            MapTypeCheckErrorKind::NotMap => {
-                write!(
-                    f,
-                    "the CQL type the map was attempted to be serialized to was not map"
-                )
-            }
+            MapTypeCheckErrorKind::NotMap => f.write_str(
+                "the CQL type the Rust type was attempted to be type checked against was not a map",
+            ),
         }
     }
 }
@@ -1275,10 +1263,7 @@ impl Display for MapSerializationErrorKind {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             MapSerializationErrorKind::TooManyElements => {
-                write!(
-                    f,
-                    "the map contains too many elements to fit in CQL representation"
-                )
+                f.write_str("the map contains too many elements to fit in CQL representation")
             }
             MapSerializationErrorKind::KeySerializationFailed(err) => {
                 write!(f, "failed to serialize one of the keys: {}", err)
@@ -1302,10 +1287,7 @@ impl Display for SetOrListTypeCheckErrorKind {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             SetOrListTypeCheckErrorKind::NotSetOrList => {
-                write!(
-                    f,
-                    "the CQL type the tuple was attempted to was neither a set or a list"
-                )
+                f.write_str("the CQL type the Rust type was attempted to be type checked against was neither a set or a list")
             }
         }
     }
@@ -1325,12 +1307,9 @@ pub enum SetOrListSerializationErrorKind {
 impl Display for SetOrListSerializationErrorKind {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            SetOrListSerializationErrorKind::TooManyElements => {
-                write!(
-                    f,
-                    "the collection contains too many elements to fit in CQL representation"
-                )
-            }
+            SetOrListSerializationErrorKind::TooManyElements => f.write_str(
+                "the collection contains too many elements to fit in CQL representation",
+            ),
             SetOrListSerializationErrorKind::ElementSerializationFailed(err) => {
                 write!(f, "failed to serialize one of the elements: {err}")
             }
@@ -1362,14 +1341,10 @@ pub enum TupleTypeCheckErrorKind {
 impl Display for TupleTypeCheckErrorKind {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            TupleTypeCheckErrorKind::NotTuple => write!(
-                f,
-                "the CQL type the tuple was attempted to be serialized to is not a tuple"
+            TupleTypeCheckErrorKind::NotTuple => f.write_str(
+                "the CQL type the Rust type was attempted to be type checked against is not a tuple"
             ),
-            TupleTypeCheckErrorKind::WrongElementCount {
-                rust_type_el_count,
-                cql_type_el_count,
-            } => write!(
+            TupleTypeCheckErrorKind::WrongElementCount { rust_type_el_count, cql_type_el_count } => write!(
                 f,
                 "wrong tuple element count: CQL type has {cql_type_el_count}, the Rust tuple has {rust_type_el_count}"
             ),
@@ -1442,10 +1417,7 @@ pub enum UdtTypeCheckErrorKind {
 impl Display for UdtTypeCheckErrorKind {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            UdtTypeCheckErrorKind::NotUdt => write!(
-                f,
-                "the CQL type the tuple was attempted to be type checked against is not a UDT"
-            ),
+            UdtTypeCheckErrorKind::NotUdt => f.write_str("the CQL type the Rust type was attempted to be type checked against is not a UDT"),
             UdtTypeCheckErrorKind::NameMismatch {
                 keyspace,
                 type_name,
