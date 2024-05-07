@@ -173,7 +173,7 @@ fn read_raw_bytes<'a>(count: usize, buf: &mut &'a [u8]) -> Result<&'a [u8], Pars
     Ok(ret)
 }
 
-pub fn read_int(buf: &mut &[u8]) -> Result<i32, ParseError> {
+pub fn read_int(buf: &mut &[u8]) -> Result<i32, std::io::Error> {
     let v = buf.read_i32::<BigEndian>()?;
     Ok(v)
 }
@@ -206,7 +206,7 @@ fn type_int() {
     }
 }
 
-pub fn read_long(buf: &mut &[u8]) -> Result<i64, ParseError> {
+pub fn read_long(buf: &mut &[u8]) -> Result<i64, std::io::Error> {
     let v = buf.read_i64::<BigEndian>()?;
     Ok(v)
 }
@@ -225,7 +225,7 @@ fn type_long() {
     }
 }
 
-pub fn read_short(buf: &mut &[u8]) -> Result<u16, ParseError> {
+pub fn read_short(buf: &mut &[u8]) -> Result<u16, std::io::Error> {
     let v = buf.read_u16::<BigEndian>()?;
     Ok(v)
 }
@@ -234,7 +234,7 @@ pub fn write_short(v: u16, buf: &mut impl BufMut) {
     buf.put_u16(v);
 }
 
-pub(crate) fn read_short_length(buf: &mut &[u8]) -> Result<usize, ParseError> {
+pub(crate) fn read_short_length(buf: &mut &[u8]) -> Result<usize, std::io::Error> {
     let v = read_short(buf)?;
     let v: usize = v.into();
     Ok(v)
@@ -514,9 +514,12 @@ fn type_string_multimap() {
 pub fn read_uuid(buf: &mut &[u8]) -> Result<Uuid, ParseError> {
     let raw = read_raw_bytes(16, buf)?;
 
-    // It's safe to unwrap here because Uuid::from_slice only fails
-    // if the argument slice's length is not 16.
-    Ok(Uuid::from_slice(raw).unwrap())
+    // It's safe to unwrap here because the conversion only fails
+    // if the argument slice's length does not match, which
+    // `read_raw_bytes` prevents.
+    let raw_array: &[u8; 16] = raw.try_into().unwrap();
+
+    Ok(Uuid::from_bytes(*raw_array))
 }
 
 pub fn write_uuid(uuid: &Uuid, buf: &mut impl BufMut) {
@@ -649,7 +652,7 @@ fn unsigned_vint_encode(v: u64, buf: &mut Vec<u8>) {
     buf.put_uint(v, number_of_bytes as usize)
 }
 
-fn unsigned_vint_decode(buf: &mut &[u8]) -> Result<u64, ParseError> {
+fn unsigned_vint_decode(buf: &mut &[u8]) -> Result<u64, std::io::Error> {
     let first_byte = buf.read_u8()?;
     let extra_bytes = first_byte.leading_ones() as usize;
 
@@ -671,7 +674,7 @@ pub(crate) fn vint_encode(v: i64, buf: &mut Vec<u8>) {
     unsigned_vint_encode(zig_zag_encode(v), buf)
 }
 
-pub(crate) fn vint_decode(buf: &mut &[u8]) -> Result<i64, ParseError> {
+pub(crate) fn vint_decode(buf: &mut &[u8]) -> Result<i64, std::io::Error> {
     unsigned_vint_decode(buf).map(zig_zag_decode)
 }
 
