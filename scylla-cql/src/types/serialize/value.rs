@@ -1574,17 +1574,21 @@ mod tests {
         assert_eq!(typed_data, erased_data);
     }
 
-    fn do_serialize<T: SerializeCql>(t: T, typ: &ColumnType) -> Vec<u8> {
+    fn do_serialize_result<T: SerializeCql>(
+        t: T,
+        typ: &ColumnType,
+    ) -> Result<Vec<u8>, SerializationError> {
         let mut ret = Vec::new();
         let writer = CellWriter::new(&mut ret);
-        t.serialize(typ, writer).unwrap();
-        ret
+        t.serialize(typ, writer).map(|_| ()).map(|()| ret)
+    }
+
+    fn do_serialize<T: SerializeCql>(t: T, typ: &ColumnType) -> Vec<u8> {
+        do_serialize_result(t, typ).unwrap()
     }
 
     fn do_serialize_err<T: SerializeCql>(t: T, typ: &ColumnType) -> SerializationError {
-        let mut ret = Vec::new();
-        let writer = CellWriter::new(&mut ret);
-        t.serialize(typ, writer).unwrap_err()
+        do_serialize_result(t, typ).unwrap_err()
     }
 
     #[test]
