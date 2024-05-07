@@ -108,8 +108,8 @@ macro_rules! impl_serialize_row_for_unit {
             if !ctx.columns().is_empty() {
                 return Err(mk_typck_err::<Self>(
                     BuiltinTypeCheckErrorKind::WrongColumnCount {
-                        actual: 0,
-                        asked_for: ctx.columns().len(),
+                        rust_cols: 0,
+                        cql_cols: ctx.columns().len(),
                     },
                 ));
             }
@@ -142,8 +142,8 @@ macro_rules! impl_serialize_row_for_slice {
             if ctx.columns().len() != self.len() {
                 return Err(mk_typck_err::<Self>(
                     BuiltinTypeCheckErrorKind::WrongColumnCount {
-                        actual: self.len(),
-                        asked_for: ctx.columns().len(),
+                        rust_cols: self.len(),
+                        cql_cols: ctx.columns().len(),
                     },
                 ));
             }
@@ -289,8 +289,8 @@ macro_rules! impl_tuple {
                     [$($tidents),*] => ($($tidents,)*),
                     _ => return Err(mk_typck_err::<Self>(
                         BuiltinTypeCheckErrorKind::WrongColumnCount {
-                            actual: $length,
-                            asked_for: ctx.columns().len(),
+                            rust_cols: $length,
+                            cql_cols: ctx.columns().len(),
                         },
                     )),
                 };
@@ -582,13 +582,13 @@ fn mk_ser_err_named(
 #[derive(Debug, Clone)]
 #[non_exhaustive]
 pub enum BuiltinTypeCheckErrorKind {
-    /// The Rust type expects `actual` column, but the statement requires `asked_for`.
+    /// The Rust type provides `rust_cols` columns, but the statement operates on `cql_cols`.
     WrongColumnCount {
         /// The number of values that the Rust type provides.
-        actual: usize,
+        rust_cols: usize,
 
-        /// The number of columns that the statement requires.
-        asked_for: usize,
+        /// The number of columns that the statement operates on.
+        cql_cols: usize,
     },
 
     /// The Rust type provides a value for some column, but that column is not
@@ -618,8 +618,8 @@ pub enum BuiltinTypeCheckErrorKind {
 impl Display for BuiltinTypeCheckErrorKind {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            BuiltinTypeCheckErrorKind::WrongColumnCount { actual, asked_for } => {
-                write!(f, "wrong column count: the query requires {asked_for} columns, but {actual} were provided")
+            BuiltinTypeCheckErrorKind::WrongColumnCount { rust_cols, cql_cols } => {
+                write!(f, "wrong column count: the statement operates on {cql_cols} columns, but the given rust type provides {rust_cols}")
             }
             BuiltinTypeCheckErrorKind::NoColumnWithName { name } => {
                 write!(
@@ -1048,8 +1048,8 @@ mod tests {
         assert_matches!(
             err.kind,
             BuiltinTypeCheckErrorKind::WrongColumnCount {
-                actual: 0,
-                asked_for: 1,
+                rust_cols: 0,
+                cql_cols: 1,
             }
         );
 
@@ -1063,8 +1063,8 @@ mod tests {
         assert_matches!(
             err.kind,
             BuiltinTypeCheckErrorKind::WrongColumnCount {
-                actual: 1,
-                asked_for: 2,
+                rust_cols: 1,
+                cql_cols: 2,
             }
         );
 
@@ -1090,8 +1090,8 @@ mod tests {
         assert_matches!(
             err.kind,
             BuiltinTypeCheckErrorKind::WrongColumnCount {
-                actual: 1,
-                asked_for: 2,
+                rust_cols: 1,
+                cql_cols: 2,
             }
         );
 
