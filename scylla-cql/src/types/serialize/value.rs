@@ -48,7 +48,7 @@ pub trait SerializeCql {
     /// The [`CellWriter`] provided to the method ensures that the value produced
     /// will be properly framed (i.e. incorrectly written value should not
     /// cause the rest of the request to be misinterpreted), but otherwise
-    /// the implementor of the trait is responsible for producing the a value
+    /// the implementor of the trait is responsible for producing the value
     /// in a correct format.
     fn serialize<'b>(
         &self,
@@ -548,8 +548,8 @@ fn serialize_cql_value<'b>(
                         return Err(mk_typck_err::<CqlValue>(
                             typ,
                             TupleTypeCheckErrorKind::WrongElementCount {
-                                actual: t.len(),
-                                asked_for: fields.len(),
+                                rust_type_el_count: t.len(),
+                                cql_type_el_count: fields.len(),
                             },
                         ));
                     }
@@ -586,7 +586,7 @@ fn fix_cql_value_name_in_err(mut err: SerializationError) -> SerializationError 
             }
         }
         None => {
-            // The `None` case shouldn't happen consisdering how we are using
+            // The `None` case shouldn't happen considering how we are using
             // the function in the code now, but let's provide it here anyway
             // for correctness.
             if let Some(err) = err.0.downcast_ref::<BuiltinTypeCheckError>() {
@@ -729,8 +729,8 @@ macro_rules! impl_tuple {
                         _ => return Err(mk_typck_err::<Self>(
                             typ,
                             TupleTypeCheckErrorKind::WrongElementCount {
-                                actual: $length,
-                                asked_for: typs.len(),
+                                rust_type_el_count: $length,
+                                cql_type_el_count: typs.len(),
                             }
                         ))
                     }
@@ -1352,10 +1352,10 @@ pub enum TupleTypeCheckErrorKind {
     /// elements will be set to null.
     WrongElementCount {
         /// The number of elements that the Rust tuple has.
-        actual: usize,
+        rust_type_el_count: usize,
 
         /// The number of elements that the CQL tuple type has.
-        asked_for: usize,
+        cql_type_el_count: usize,
     },
 }
 
@@ -1366,9 +1366,12 @@ impl Display for TupleTypeCheckErrorKind {
                 f,
                 "the CQL type the tuple was attempted to be serialized to is not a tuple"
             ),
-            TupleTypeCheckErrorKind::WrongElementCount { actual, asked_for } => write!(
+            TupleTypeCheckErrorKind::WrongElementCount {
+                rust_type_el_count,
+                cql_type_el_count,
+            } => write!(
                 f,
-                "wrong tuple element count: CQL type has {asked_for}, the Rust tuple has {actual}"
+                "wrong tuple element count: CQL type has {cql_type_el_count}, the Rust tuple has {rust_type_el_count}"
             ),
         }
     }
@@ -1807,8 +1810,8 @@ mod tests {
         assert_matches!(
             err.kind,
             BuiltinTypeCheckErrorKind::TupleError(TupleTypeCheckErrorKind::WrongElementCount {
-                actual: 3,
-                asked_for: 2,
+                rust_type_el_count: 3,
+                cql_type_el_count: 2,
             })
         );
 
@@ -1879,8 +1882,8 @@ mod tests {
         assert_matches!(
             err.kind,
             BuiltinTypeCheckErrorKind::TupleError(TupleTypeCheckErrorKind::WrongElementCount {
-                actual: 3,
-                asked_for: 2,
+                rust_type_el_count: 3,
+                cql_type_el_count: 2,
             })
         );
 
