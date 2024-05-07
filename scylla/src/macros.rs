@@ -1,6 +1,8 @@
-/// #[derive(FromRow)] derives FromRow for struct
+/// Derive macro for the [`FromRow`](crate::frame::response::cql_to_rust::FromRow) trait
+/// which deserializes a row to given Rust structure.
 ///
-/// Works only on simple structs without generics etc
+/// It is supported for structs with either named or unnamed fields.
+/// It works only for simple structs without generics etc.
 ///
 /// ---
 ///
