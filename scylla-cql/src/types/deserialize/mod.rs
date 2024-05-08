@@ -1,4 +1,5 @@
 pub mod frame_slice;
+pub mod row;
 pub mod value;
 
 pub use frame_slice::FrameSlice;
