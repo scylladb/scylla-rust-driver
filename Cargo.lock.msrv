@@ -1524,6 +1524,7 @@ dependencies = [
 name = "scylla-cql"
 version = "0.2.0"
 dependencies = [
+ "assert_matches",
  "async-trait",
  "bigdecimal",
  "byteorder",

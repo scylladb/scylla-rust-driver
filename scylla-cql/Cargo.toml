@@ -28,7 +28,8 @@ serde = { version = "1.0", features = ["derive"], optional = true }
 time = { version = "0.3", optional = true }
 
 [dev-dependencies]
-criterion = "0.4" # Note: v0.5 needs at least rust 1.70.0
+assert_matches = "1.5.0"
+criterion = "0.4"        # Note: v0.5 needs at least rust 1.70.0
 # Use large-dates feature to test potential edge cases
 time = { version = "0.3.21", features = ["large-dates"] }
 
@@ -43,7 +44,14 @@ chrono = ["dep:chrono"]
 num-bigint-03 = ["dep:num-bigint-03"]
 num-bigint-04 = ["dep:num-bigint-04"]
 bigdecimal-04 = ["dep:bigdecimal-04"]
-full-serialization = ["chrono", "time", "secret", "num-bigint-03", "num-bigint-04", "bigdecimal-04"]
+full-serialization = [
+    "chrono",
+    "time",
+    "secret",
+    "num-bigint-03",
+    "num-bigint-04",
+    "bigdecimal-04",
+]
 
 [lints.rust]
 unreachable_pub = "warn"
