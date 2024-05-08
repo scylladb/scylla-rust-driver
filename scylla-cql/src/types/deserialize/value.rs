@@ -986,6 +986,115 @@ where
     }
 }
 
+// tuples
+
+// Implements tuple deserialization.
+// The generated impl expects that the serialized data contains exactly the given amount of values.
+macro_rules! impl_tuple {
+    ($($Ti:ident),*; $($idx:literal),*; $($idf:ident),*) => {
+        impl<'frame, $($Ti),*> DeserializeValue<'frame> for ($($Ti,)*)
+        where
+            $($Ti: DeserializeValue<'frame>),*
+        {
+            fn type_check(typ: &ColumnType) -> Result<(), TypeCheckError> {
+                const TUPLE_LEN: usize = (&[$($idx),*] as &[i32]).len();
+                let [$($idf),*] = ensure_tuple_type::<($($Ti,)*), TUPLE_LEN>(typ)?;
+                $(
+                    <$Ti>::type_check($idf).map_err(|err| mk_typck_err::<Self>(
+                        typ,
+                        TupleTypeCheckErrorKind::FieldTypeCheckFailed {
+                            position: $idx,
+                            err,
+                        }
+                    ))?;
+                )*
+                Ok(())
+            }
+
+            fn deserialize(typ: &'frame ColumnType, v: Option<FrameSlice<'frame>>) -> Result<Self, DeserializationError> {
+                const TUPLE_LEN: usize = (&[$($idx),*] as &[i32]).len();
+                // Safety: we are allowed to assume that type_check() was already called.
+                let [$($idf),*] = ensure_tuple_type::<($($Ti,)*), TUPLE_LEN>(typ)
+                    .expect("Type check should have prevented this!");
+
+                // Ignore the warning for the zero-sized tuple
+                #[allow(unused)]
+                let mut v = ensure_not_null_frame_slice::<Self>(typ, v)?;
+                let ret = (
+                    $(
+                        v.read_cql_bytes()
+                            .map_err(|err| DeserializationError::new(err))
+                            .and_then(|cql_bytes| <$Ti>::deserialize($idf, cql_bytes))
+                            .map_err(|err| mk_deser_err::<Self>(
+                                typ,
+                                TupleDeserializationErrorKind::FieldDeserializationFailed {
+                                    position: $idx,
+                                    err,
+                                }
+                            )
+                        )?,
+                    )*
+                );
+                Ok(ret)
+            }
+        }
+    }
+}
+
+// Implements tuple deserialization for all tuple sizes up to predefined size.
+// Accepts 3 lists, (see usage below the definition):
+// - type parameters for the consecutive fields,
+// - indices of the consecutive fields,
+// - consecutive names for variables corresponding to each field.
+//
+// The idea is to recursively build prefixes of those lists (starting with an empty prefix)
+// and for each prefix, implement deserialization for generic tuple represented by it.
+// The < > brackets aid syntactically to separate the prefixes (positioned inside them)
+// from the remaining suffixes (positioned beyond them).
+macro_rules! impl_tuple_multiple {
+    // The entry point to the macro.
+    // Begins with implementing deserialization for (), then proceeds to the main recursive call.
+    ($($Ti:ident),*; $($idx:literal),*; $($idf:ident),*) => {
+        impl_tuple!(;;);
+        impl_tuple_multiple!(
+            $($Ti),* ; < > ;
+            $($idx),*; < > ;
+            $($idf),*; < >
+        );
+    };
+
+    // The termination condition. No more fields given to extend the tuple with.
+    (;< $($Ti:ident,)* >;;< $($idx:literal,)* >;;< $($idf:ident,)* >) => {};
+
+    // The recursion. Upon each call, a new field is appended to the tuple
+    // and deserialization is implemented for it.
+    (
+        $T_head:ident $(,$T_suffix:ident)*; < $($T_prefix:ident,)* > ;
+        $idx_head:literal $(,$idx_suffix:literal)*; < $($idx_prefix:literal,)* >;
+        $idf_head:ident $(,$idf_suffix:ident)* ; <$($idf_prefix:ident,)*>
+    ) => {
+        impl_tuple!(
+            $($T_prefix,)* $T_head;
+            $($idx_prefix, )* $idx_head;
+            $($idf_prefix, )* $idf_head
+        );
+        impl_tuple_multiple!(
+            $($T_suffix),* ; < $($T_prefix,)* $T_head, > ;
+            $($idx_suffix),*; < $($idx_prefix, )* $idx_head, > ;
+            $($idf_suffix),*; < $($idf_prefix, )* $idf_head, >
+        );
+    }
+}
+
+pub(super) use impl_tuple_multiple;
+
+// Implements tuple deserialization for all tuple sizes up to 16.
+impl_tuple_multiple!(
+    T0, T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, T12, T13, T14, T15;
+    0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15;
+    t0, t1, t2, t3, t4, t5, t6, t7, t8, t9, t10, t11, t12, t13, t14, t15
+);
+
 // Utilities
 
 fn ensure_not_null_frame_slice<'frame, T>(
@@ -1022,6 +1131,24 @@ fn ensure_exact_length<'frame, T, const SIZE: usize>(
             },
         )
     })
+}
+
+fn ensure_tuple_type<T, const SIZE: usize>(
+    typ: &ColumnType,
+) -> Result<&[ColumnType; SIZE], TypeCheckError> {
+    if let ColumnType::Tuple(typs_v) = typ {
+        typs_v.as_slice().try_into().map_err(|_| {
+            BuiltinTypeCheckErrorKind::TupleError(TupleTypeCheckErrorKind::WrongElementCount {
+                rust_type_el_count: SIZE,
+                cql_type_el_count: typs_v.len(),
+            })
+        })
+    } else {
+        Err(BuiltinTypeCheckErrorKind::TupleError(
+            TupleTypeCheckErrorKind::NotTuple,
+        ))
+    }
+    .map_err(|kind| mk_typck_err::<T>(typ, kind))
 }
 
 // Helper iterators
@@ -1120,6 +1247,9 @@ pub enum BuiltinTypeCheckErrorKind {
 
     /// A type check failure specific to a CQL map.
     MapError(MapTypeCheckErrorKind),
+
+    /// A type check failure specific to a CQL tuple.
+    TupleError(TupleTypeCheckErrorKind),
 }
 
 impl From<SetOrListTypeCheckErrorKind> for BuiltinTypeCheckErrorKind {
@@ -1136,6 +1266,13 @@ impl From<MapTypeCheckErrorKind> for BuiltinTypeCheckErrorKind {
     }
 }
 
+impl From<TupleTypeCheckErrorKind> for BuiltinTypeCheckErrorKind {
+    #[inline]
+    fn from(value: TupleTypeCheckErrorKind) -> Self {
+        BuiltinTypeCheckErrorKind::TupleError(value)
+    }
+}
+
 impl Display for BuiltinTypeCheckErrorKind {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
@@ -1144,6 +1281,7 @@ impl Display for BuiltinTypeCheckErrorKind {
             }
             BuiltinTypeCheckErrorKind::SetOrListError(err) => err.fmt(f),
             BuiltinTypeCheckErrorKind::MapError(err) => err.fmt(f),
+            BuiltinTypeCheckErrorKind::TupleError(err) => err.fmt(f),
         }
     }
 }
@@ -1200,6 +1338,57 @@ impl Display for MapTypeCheckErrorKind {
             MapTypeCheckErrorKind::ValueTypeCheckFailed(err) => {
                 write!(f, "the map value types between the CQL type and the Rust type failed to type check against each other: {}", err)
             },
+        }
+    }
+}
+
+/// Describes why type checking of a tuple failed.
+#[derive(Debug, Clone)]
+#[non_exhaustive]
+pub enum TupleTypeCheckErrorKind {
+    /// The CQL type is not a tuple.
+    NotTuple,
+
+    /// The tuple has the wrong element count.
+    WrongElementCount {
+        /// The number of elements that the Rust tuple has.
+        rust_type_el_count: usize,
+
+        /// The number of elements that the CQL tuple type has.
+        cql_type_el_count: usize,
+    },
+
+    /// The CQL type and the Rust type of a tuple field failed to type check against each other.
+    FieldTypeCheckFailed {
+        /// The index of the field whose type check failed.
+        position: usize,
+
+        /// The type check error that occured.
+        err: TypeCheckError,
+    },
+}
+
+impl Display for TupleTypeCheckErrorKind {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            TupleTypeCheckErrorKind::NotTuple => write!(
+                f,
+                "the CQL type the tuple was attempted to be serialized to is not a tuple"
+            ),
+            TupleTypeCheckErrorKind::WrongElementCount {
+                rust_type_el_count,
+                cql_type_el_count,
+            } => write!(
+                f,
+                "wrong tuple element count: CQL type has {cql_type_el_count}, the Rust tuple has {rust_type_el_count}"
+            ),
+
+            TupleTypeCheckErrorKind::FieldTypeCheckFailed { position, err } => write!(
+                f,
+                "the CQL type and the Rust type of the tuple field {} failed to type check against each other: {}",
+                position,
+                err
+            )
         }
     }
 }
@@ -1268,6 +1457,9 @@ pub enum BuiltinDeserializationErrorKind {
 
     /// A deserialization failure specific to a CQL map.
     MapError(MapDeserializationErrorKind),
+
+    /// A deserialization failure specific to a CQL tuple.
+    TupleError(TupleDeserializationErrorKind),
 }
 
 impl Display for BuiltinDeserializationErrorKind {
@@ -1297,6 +1489,7 @@ impl Display for BuiltinDeserializationErrorKind {
             ),
             BuiltinDeserializationErrorKind::SetOrListError(err) => err.fmt(f),
             BuiltinDeserializationErrorKind::MapError(err) => err.fmt(f),
+            BuiltinDeserializationErrorKind::TupleError(err) => err.fmt(f),
         }
     }
 }
@@ -1365,6 +1558,39 @@ impl Display for MapDeserializationErrorKind {
 impl From<MapDeserializationErrorKind> for BuiltinDeserializationErrorKind {
     fn from(err: MapDeserializationErrorKind) -> Self {
         Self::MapError(err)
+    }
+}
+
+/// Describes why deserialization of a tuple failed.
+#[derive(Debug, Clone)]
+#[non_exhaustive]
+pub enum TupleDeserializationErrorKind {
+    /// One of the tuple fields failed to deserialize.
+    FieldDeserializationFailed {
+        /// Index of the tuple field that failed to deserialize.
+        position: usize,
+
+        /// The error that caused the tuple field deserialization to fail.
+        err: DeserializationError,
+    },
+}
+
+impl Display for TupleDeserializationErrorKind {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            TupleDeserializationErrorKind::FieldDeserializationFailed {
+                position: index,
+                err,
+            } => {
+                write!(f, "field no. {index} failed to deserialize: {err}")
+            }
+        }
+    }
+}
+
+impl From<TupleDeserializationErrorKind> for BuiltinDeserializationErrorKind {
+    fn from(err: TupleDeserializationErrorKind) -> Self {
+        Self::TupleError(err)
     }
 }
 
@@ -1899,6 +2125,21 @@ mod tests {
             expected_str.clone().into_iter().collect(),
         );
         assert_eq!(decoded_btree_string, expected_string.into_iter().collect(),);
+    }
+
+    #[test]
+    fn test_tuples() {
+        let mut tuple_contents = BytesMut::new();
+        append_bytes(&mut tuple_contents, &42i32.to_be_bytes());
+        append_bytes(&mut tuple_contents, "foo".as_bytes());
+        append_null(&mut tuple_contents);
+
+        let tuple = make_bytes(&tuple_contents);
+
+        let typ = ColumnType::Tuple(vec![ColumnType::Int, ColumnType::Ascii, ColumnType::Uuid]);
+
+        let tup = deserialize::<(i32, &str, Option<Uuid>)>(&typ, &tuple).unwrap();
+        assert_eq!(tup, (42, "foo", None));
     }
 
     // Checks that both new and old serialization framework
