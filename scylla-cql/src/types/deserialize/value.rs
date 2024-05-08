@@ -1763,7 +1763,8 @@ impl From<TupleDeserializationErrorKind> for BuiltinDeserializationErrorKind {
 }
 
 #[cfg(test)]
-mod tests {
+pub(super) mod tests {
+    use assert_matches::assert_matches;
     use bytes::{BufMut, Bytes, BytesMut};
     use uuid::Uuid;
 
@@ -1777,13 +1778,18 @@ mod tests {
     use crate::frame::value::{
         Counter, CqlDate, CqlDecimal, CqlDuration, CqlTime, CqlTimestamp, CqlTimeuuid, CqlVarint,
     };
+    use crate::types::deserialize::value::{
+        TupleDeserializationErrorKind, TupleTypeCheckErrorKind,
+    };
     use crate::types::deserialize::{DeserializationError, FrameSlice, TypeCheckError};
     use crate::types::serialize::value::SerializeValue;
     use crate::types::serialize::CellWriter;
 
     use super::{
-        mk_deser_err, BuiltinDeserializationErrorKind, DeserializeValue, ListlikeIterator,
-        MapIterator, MaybeEmpty,
+        mk_deser_err, BuiltinDeserializationError, BuiltinDeserializationErrorKind,
+        BuiltinTypeCheckError, BuiltinTypeCheckErrorKind, DeserializeValue, ListlikeIterator,
+        MapDeserializationErrorKind, MapIterator, MapTypeCheckErrorKind, MaybeEmpty,
+        SetOrListDeserializationErrorKind, SetOrListTypeCheckErrorKind,
     };
 
     #[test]
@@ -2428,5 +2434,515 @@ mod tests {
 
     fn append_null(b: &mut impl BufMut) {
         b.put_i32(-1);
+    }
+
+    /* Errors checks */
+
+    #[track_caller]
+    pub(crate) fn get_typeck_err_inner<'a>(
+        err: &'a (dyn std::error::Error + 'static),
+    ) -> &'a BuiltinTypeCheckError {
+        match err.downcast_ref() {
+            Some(err) => err,
+            None => panic!("not a BuiltinTypeCheckError: {:?}", err),
+        }
+    }
+
+    #[track_caller]
+    pub(crate) fn get_typeck_err(err: &DeserializationError) -> &BuiltinTypeCheckError {
+        get_typeck_err_inner(err.0.as_ref())
+    }
+
+    #[track_caller]
+    pub(crate) fn get_deser_err(err: &DeserializationError) -> &BuiltinDeserializationError {
+        match err.0.downcast_ref() {
+            Some(err) => err,
+            None => panic!("not a BuiltinDeserializationError: {:?}", err),
+        }
+    }
+
+    macro_rules! assert_given_error {
+        ($get_err:ident, $bytes:expr, $DestT:ty, $cql_typ:expr, $kind:pat) => {
+            let cql_typ = $cql_typ.clone();
+            let err = deserialize::<$DestT>(&cql_typ, $bytes).unwrap_err();
+            let err = $get_err(&err);
+            assert_eq!(err.rust_name, std::any::type_name::<$DestT>());
+            assert_eq!(err.cql_type, cql_typ);
+            assert_matches::assert_matches!(err.kind, $kind);
+        };
+    }
+
+    macro_rules! assert_type_check_error {
+        ($bytes:expr, $DestT:ty, $cql_typ:expr, $kind:pat) => {
+            assert_given_error!(get_typeck_err, $bytes, $DestT, $cql_typ, $kind);
+        };
+    }
+
+    macro_rules! assert_deser_error {
+        ($bytes:expr, $DestT:ty, $cql_typ:expr, $kind:pat) => {
+            assert_given_error!(get_deser_err, $bytes, $DestT, $cql_typ, $kind);
+        };
+    }
+
+    #[test]
+    fn test_native_errors() {
+        // Simple type mismatch
+        {
+            let v = 123_i32;
+            let bytes = serialize(&ColumnType::Int, &v);
+
+            // Incompatible types render type check error.
+            assert_type_check_error!(
+                &bytes,
+                f64,
+                ColumnType::Int,
+                super::BuiltinTypeCheckErrorKind::MismatchedType {
+                    expected: &[ColumnType::Double],
+                }
+            );
+
+            // ColumnType is said to be Double (8 bytes expected), but in reality the serialized form has 4 bytes only.
+            assert_deser_error!(
+                &bytes,
+                f64,
+                ColumnType::Double,
+                BuiltinDeserializationErrorKind::ByteLengthMismatch {
+                    expected: 8,
+                    got: 4,
+                }
+            );
+
+            // ColumnType is said to be Float, but in reality Int was serialized.
+            // As these types have the same size, though, and every binary number in [0, 2^32] is a valid
+            // value for both of them, this always succeeds.
+            {
+                deserialize::<f32>(&ColumnType::Float, &bytes).unwrap();
+            }
+        }
+
+        // str (and also Uuid) are interesting because they accept two types.
+        {
+            let v = "Ala ma kota";
+            let bytes = serialize(&ColumnType::Ascii, &v);
+
+            assert_type_check_error!(
+                &bytes,
+                &str,
+                ColumnType::Double,
+                BuiltinTypeCheckErrorKind::MismatchedType {
+                    expected: &[ColumnType::Ascii, ColumnType::Text],
+                }
+            );
+
+            // ColumnType is said to be BigInt (8 bytes expected), but in reality the serialized form
+            // (the string) has 11 bytes.
+            assert_deser_error!(
+                &bytes,
+                i64,
+                ColumnType::BigInt,
+                BuiltinDeserializationErrorKind::ByteLengthMismatch {
+                    expected: 8,
+                    got: 11, // str len
+                }
+            );
+        }
+        {
+            // -126 is not a valid ASCII nor UTF-8 byte.
+            let v = -126_i8;
+            let bytes = serialize(&ColumnType::TinyInt, &v);
+
+            assert_deser_error!(
+                &bytes,
+                &str,
+                ColumnType::Ascii,
+                BuiltinDeserializationErrorKind::ExpectedAscii
+            );
+
+            assert_deser_error!(
+                &bytes,
+                &str,
+                ColumnType::Text,
+                BuiltinDeserializationErrorKind::InvalidUtf8(_)
+            );
+        }
+    }
+
+    #[test]
+    fn test_set_or_list_errors() {
+        // Not a set or list
+        {
+            assert_type_check_error!(
+                &Bytes::new(),
+                Vec<i64>,
+                ColumnType::Float,
+                BuiltinTypeCheckErrorKind::SetOrListError(
+                    SetOrListTypeCheckErrorKind::NotSetOrList
+                )
+            );
+
+            // Type check of Rust set against CQL list must fail, because it would be lossy.
+            assert_type_check_error!(
+                &Bytes::new(),
+                BTreeSet<i32>,
+                ColumnType::List(Box::new(ColumnType::Int)),
+                BuiltinTypeCheckErrorKind::SetOrListError(SetOrListTypeCheckErrorKind::NotSet)
+            );
+        }
+
+        // Got null
+        {
+            type RustTyp = Vec<i32>;
+            let ser_typ = ColumnType::List(Box::new(ColumnType::Int));
+
+            let err = RustTyp::deserialize(&ser_typ, None).unwrap_err();
+            let err = get_deser_err(&err);
+            assert_eq!(err.rust_name, std::any::type_name::<RustTyp>());
+            assert_eq!(err.cql_type, ser_typ);
+            assert_matches!(err.kind, BuiltinDeserializationErrorKind::ExpectedNonNull);
+        }
+
+        // Bad element type
+        {
+            assert_type_check_error!(
+                &Bytes::new(),
+                Vec<i64>,
+                ColumnType::List(Box::new(ColumnType::Ascii)),
+                BuiltinTypeCheckErrorKind::SetOrListError(
+                    SetOrListTypeCheckErrorKind::ElementTypeCheckFailed(_)
+                )
+            );
+
+            let err = deserialize::<Vec<i64>>(
+                &ColumnType::List(Box::new(ColumnType::Varint)),
+                &Bytes::new(),
+            )
+            .unwrap_err();
+            let err = get_typeck_err(&err);
+            assert_eq!(err.rust_name, std::any::type_name::<Vec<i64>>());
+            assert_eq!(err.cql_type, ColumnType::List(Box::new(ColumnType::Varint)),);
+            let BuiltinTypeCheckErrorKind::SetOrListError(
+                SetOrListTypeCheckErrorKind::ElementTypeCheckFailed(ref err),
+            ) = err.kind
+            else {
+                panic!("unexpected error kind: {}", err.kind)
+            };
+            let err = get_typeck_err_inner(err.0.as_ref());
+            assert_eq!(err.rust_name, std::any::type_name::<i64>());
+            assert_eq!(err.cql_type, ColumnType::Varint);
+            assert_matches!(
+                err.kind,
+                BuiltinTypeCheckErrorKind::MismatchedType {
+                    expected: &[ColumnType::BigInt, ColumnType::Counter]
+                }
+            );
+        }
+
+        {
+            let ser_typ = ColumnType::List(Box::new(ColumnType::Int));
+            let v = vec![123_i32];
+            let bytes = serialize(&ser_typ, &v);
+
+            {
+                let err = deserialize::<Vec<i64>>(
+                    &ColumnType::List(Box::new(ColumnType::BigInt)),
+                    &bytes,
+                )
+                .unwrap_err();
+                let err = get_deser_err(&err);
+                assert_eq!(err.rust_name, std::any::type_name::<Vec<i64>>());
+                assert_eq!(err.cql_type, ColumnType::List(Box::new(ColumnType::BigInt)),);
+                let BuiltinDeserializationErrorKind::SetOrListError(
+                    SetOrListDeserializationErrorKind::ElementDeserializationFailed(err),
+                ) = &err.kind
+                else {
+                    panic!("unexpected error kind: {}", err.kind)
+                };
+                let err = get_deser_err(err);
+                assert_eq!(err.rust_name, std::any::type_name::<i64>());
+                assert_eq!(err.cql_type, ColumnType::BigInt);
+                assert_matches!(
+                    err.kind,
+                    BuiltinDeserializationErrorKind::ByteLengthMismatch {
+                        expected: 8,
+                        got: 4
+                    }
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn test_map_errors() {
+        // Not a map
+        {
+            let ser_typ = ColumnType::Float;
+            let v = 2.12_f32;
+            let bytes = serialize(&ser_typ, &v);
+
+            assert_type_check_error!(
+                &bytes,
+                HashMap<i64, &str>,
+                ser_typ,
+                BuiltinTypeCheckErrorKind::MapError(
+                    MapTypeCheckErrorKind::NotMap,
+                )
+            );
+        }
+
+        // Got null
+        {
+            type RustTyp = HashMap<i32, bool>;
+            let ser_typ = ColumnType::Map(Box::new(ColumnType::Int), Box::new(ColumnType::Boolean));
+
+            let err = RustTyp::deserialize(&ser_typ, None).unwrap_err();
+            let err = get_deser_err(&err);
+            assert_eq!(err.rust_name, std::any::type_name::<RustTyp>());
+            assert_eq!(err.cql_type, ser_typ);
+            assert_matches!(err.kind, BuiltinDeserializationErrorKind::ExpectedNonNull);
+        }
+
+        // Key type mismatch
+        {
+            let err = deserialize::<HashMap<i64, bool>>(
+                &ColumnType::Map(Box::new(ColumnType::Varint), Box::new(ColumnType::Boolean)),
+                &Bytes::new(),
+            )
+            .unwrap_err();
+            let err = get_typeck_err(&err);
+            assert_eq!(err.rust_name, std::any::type_name::<HashMap<i64, bool>>());
+            assert_eq!(
+                err.cql_type,
+                ColumnType::Map(Box::new(ColumnType::Varint), Box::new(ColumnType::Boolean))
+            );
+            let BuiltinTypeCheckErrorKind::MapError(MapTypeCheckErrorKind::KeyTypeCheckFailed(
+                ref err,
+            )) = err.kind
+            else {
+                panic!("unexpected error kind: {}", err.kind)
+            };
+            let err = get_typeck_err_inner(err.0.as_ref());
+            assert_eq!(err.rust_name, std::any::type_name::<i64>());
+            assert_eq!(err.cql_type, ColumnType::Varint);
+            assert_matches!(
+                err.kind,
+                BuiltinTypeCheckErrorKind::MismatchedType {
+                    expected: &[ColumnType::BigInt, ColumnType::Counter]
+                }
+            );
+        }
+
+        // Value type mismatch
+        {
+            let err = deserialize::<BTreeMap<i64, &str>>(
+                &ColumnType::Map(Box::new(ColumnType::BigInt), Box::new(ColumnType::Boolean)),
+                &Bytes::new(),
+            )
+            .unwrap_err();
+            let err = get_typeck_err(&err);
+            assert_eq!(err.rust_name, std::any::type_name::<BTreeMap<i64, &str>>());
+            assert_eq!(
+                err.cql_type,
+                ColumnType::Map(Box::new(ColumnType::BigInt), Box::new(ColumnType::Boolean))
+            );
+            let BuiltinTypeCheckErrorKind::MapError(MapTypeCheckErrorKind::ValueTypeCheckFailed(
+                ref err,
+            )) = err.kind
+            else {
+                panic!("unexpected error kind: {}", err.kind)
+            };
+            let err = get_typeck_err_inner(err.0.as_ref());
+            assert_eq!(err.rust_name, std::any::type_name::<&str>());
+            assert_eq!(err.cql_type, ColumnType::Boolean);
+            assert_matches!(
+                err.kind,
+                BuiltinTypeCheckErrorKind::MismatchedType {
+                    expected: &[ColumnType::Ascii, ColumnType::Text]
+                }
+            );
+        }
+
+        // Key length mismatch
+        {
+            let ser_typ = ColumnType::Map(Box::new(ColumnType::Int), Box::new(ColumnType::Boolean));
+            let v = HashMap::from([(42, false), (2137, true)]);
+            let bytes = serialize(&ser_typ, &v as &dyn SerializeValue);
+
+            let err = deserialize::<HashMap<i64, bool>>(
+                &ColumnType::Map(Box::new(ColumnType::BigInt), Box::new(ColumnType::Boolean)),
+                &bytes,
+            )
+            .unwrap_err();
+            let err = get_deser_err(&err);
+            assert_eq!(err.rust_name, std::any::type_name::<HashMap<i64, bool>>());
+            assert_eq!(
+                err.cql_type,
+                ColumnType::Map(Box::new(ColumnType::BigInt), Box::new(ColumnType::Boolean))
+            );
+            let BuiltinDeserializationErrorKind::MapError(
+                MapDeserializationErrorKind::KeyDeserializationFailed(err),
+            ) = &err.kind
+            else {
+                panic!("unexpected error kind: {}", err.kind)
+            };
+            let err = get_deser_err(err);
+            assert_eq!(err.rust_name, std::any::type_name::<i64>());
+            assert_eq!(err.cql_type, ColumnType::BigInt);
+            assert_matches!(
+                err.kind,
+                BuiltinDeserializationErrorKind::ByteLengthMismatch {
+                    expected: 8,
+                    got: 4
+                }
+            );
+        }
+
+        // Value length mismatch
+        {
+            let ser_typ = ColumnType::Map(Box::new(ColumnType::Int), Box::new(ColumnType::Boolean));
+            let v = HashMap::from([(42, false), (2137, true)]);
+            let bytes = serialize(&ser_typ, &v as &dyn SerializeValue);
+
+            let err = deserialize::<HashMap<i32, i16>>(
+                &ColumnType::Map(Box::new(ColumnType::Int), Box::new(ColumnType::SmallInt)),
+                &bytes,
+            )
+            .unwrap_err();
+            let err = get_deser_err(&err);
+            assert_eq!(err.rust_name, std::any::type_name::<HashMap<i32, i16>>());
+            assert_eq!(
+                err.cql_type,
+                ColumnType::Map(Box::new(ColumnType::Int), Box::new(ColumnType::SmallInt))
+            );
+            let BuiltinDeserializationErrorKind::MapError(
+                MapDeserializationErrorKind::ValueDeserializationFailed(err),
+            ) = &err.kind
+            else {
+                panic!("unexpected error kind: {}", err.kind)
+            };
+            let err = get_deser_err(err);
+            assert_eq!(err.rust_name, std::any::type_name::<i16>());
+            assert_eq!(err.cql_type, ColumnType::SmallInt);
+            assert_matches!(
+                err.kind,
+                BuiltinDeserializationErrorKind::ByteLengthMismatch {
+                    expected: 2,
+                    got: 1
+                }
+            );
+        }
+    }
+
+    #[test]
+    fn test_tuple_errors() {
+        // Not a tuple
+        {
+            assert_type_check_error!(
+                &Bytes::new(),
+                (i64,),
+                ColumnType::BigInt,
+                BuiltinTypeCheckErrorKind::TupleError(TupleTypeCheckErrorKind::NotTuple)
+            );
+        }
+        // Wrong element count
+        {
+            assert_type_check_error!(
+                &Bytes::new(),
+                (i64,),
+                ColumnType::Tuple(vec![]),
+                BuiltinTypeCheckErrorKind::TupleError(TupleTypeCheckErrorKind::WrongElementCount {
+                    rust_type_el_count: 1,
+                    cql_type_el_count: 0,
+                })
+            );
+
+            assert_type_check_error!(
+                &Bytes::new(),
+                (f32,),
+                ColumnType::Tuple(vec![ColumnType::Float, ColumnType::Float]),
+                BuiltinTypeCheckErrorKind::TupleError(TupleTypeCheckErrorKind::WrongElementCount {
+                    rust_type_el_count: 1,
+                    cql_type_el_count: 2,
+                })
+            );
+        }
+
+        // Bad field type
+        {
+            {
+                let err = deserialize::<(i64,)>(
+                    &ColumnType::Tuple(vec![ColumnType::SmallInt]),
+                    &Bytes::new(),
+                )
+                .unwrap_err();
+                let err = get_typeck_err(&err);
+                assert_eq!(err.rust_name, std::any::type_name::<(i64,)>());
+                assert_eq!(err.cql_type, ColumnType::Tuple(vec![ColumnType::SmallInt]));
+                let BuiltinTypeCheckErrorKind::TupleError(
+                    TupleTypeCheckErrorKind::FieldTypeCheckFailed { ref err, position },
+                ) = err.kind
+                else {
+                    panic!("unexpected error kind: {}", err.kind)
+                };
+                assert_eq!(position, 0);
+                let err = get_typeck_err_inner(err.0.as_ref());
+                assert_eq!(err.rust_name, std::any::type_name::<i64>());
+                assert_eq!(err.cql_type, ColumnType::SmallInt);
+                assert_matches!(
+                    err.kind,
+                    BuiltinTypeCheckErrorKind::MismatchedType {
+                        expected: &[ColumnType::BigInt, ColumnType::Counter]
+                    }
+                );
+            }
+        }
+
+        {
+            let ser_typ = ColumnType::Tuple(vec![ColumnType::Int, ColumnType::Float]);
+            let v = (123_i32, 123.123_f32);
+            let bytes = serialize(&ser_typ, &v);
+
+            {
+                let err = deserialize::<(i32, f64)>(
+                    &ColumnType::Tuple(vec![ColumnType::Int, ColumnType::Double]),
+                    &bytes,
+                )
+                .unwrap_err();
+                let err = get_deser_err(&err);
+                assert_eq!(err.rust_name, std::any::type_name::<(i32, f64)>());
+                assert_eq!(
+                    err.cql_type,
+                    ColumnType::Tuple(vec![ColumnType::Int, ColumnType::Double])
+                );
+                let BuiltinDeserializationErrorKind::TupleError(
+                    TupleDeserializationErrorKind::FieldDeserializationFailed {
+                        ref err,
+                        position: index,
+                    },
+                ) = err.kind
+                else {
+                    panic!("unexpected error kind: {}", err.kind)
+                };
+                assert_eq!(index, 1);
+                let err = get_deser_err(err);
+                assert_eq!(err.rust_name, std::any::type_name::<f64>());
+                assert_eq!(err.cql_type, ColumnType::Double);
+                assert_matches!(
+                    err.kind,
+                    BuiltinDeserializationErrorKind::ByteLengthMismatch {
+                        expected: 8,
+                        got: 4
+                    }
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn test_null_errors() {
+        let ser_typ = ColumnType::Map(Box::new(ColumnType::Int), Box::new(ColumnType::Boolean));
+        let v = HashMap::from([(42, false), (2137, true)]);
+        let bytes = serialize(&ser_typ, &v as &dyn SerializeValue);
+
+        deserialize::<MaybeEmpty<i32>>(&ser_typ, &bytes).unwrap_err();
     }
 }
