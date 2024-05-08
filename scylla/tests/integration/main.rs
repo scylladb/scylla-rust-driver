@@ -7,4 +7,5 @@ mod retries;
 mod shards;
 mod silent_prepare_query;
 mod skip_metadata_optimization;
+mod tablets;
 pub(crate) mod utils;
