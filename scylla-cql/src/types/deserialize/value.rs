@@ -3,6 +3,7 @@
 use std::net::IpAddr;
 
 use bytes::Bytes;
+use uuid::Uuid;
 
 use std::fmt::Display;
 
@@ -13,7 +14,7 @@ use crate::frame::frame_errors::ParseError;
 use crate::frame::response::result::{deser_cql_value, ColumnType, CqlValue};
 use crate::frame::types;
 use crate::frame::value::{
-    Counter, CqlDate, CqlDecimal, CqlDuration, CqlTime, CqlTimestamp, CqlVarint,
+    Counter, CqlDate, CqlDecimal, CqlDuration, CqlTime, CqlTimestamp, CqlTimeuuid, CqlVarint,
 };
 
 /// A type that can be deserialized from a column value inside a row that was
@@ -586,6 +587,30 @@ impl_emptiable_strict_type!(
     }
 );
 
+// uuid
+
+impl_emptiable_strict_type!(
+    Uuid,
+    Uuid,
+    |typ: &'frame ColumnType, v: Option<FrameSlice<'frame>>| {
+        let val = ensure_not_null_slice::<Self>(typ, v)?;
+        let arr = ensure_exact_length::<Self, 16>(typ, val)?;
+        let i = u128::from_be_bytes(*arr);
+        Ok(uuid::Uuid::from_u128(i))
+    }
+);
+
+impl_emptiable_strict_type!(
+    CqlTimeuuid,
+    Timeuuid,
+    |typ: &'frame ColumnType, v: Option<FrameSlice<'frame>>| {
+        let val = ensure_not_null_slice::<Self>(typ, v)?;
+        let arr = ensure_exact_length::<Self, 16>(typ, val)?;
+        let i = u128::from_be_bytes(*arr);
+        Ok(CqlTimeuuid::from(uuid::Uuid::from_u128(i)))
+    }
+);
+
 // Utilities
 
 fn ensure_not_null_frame_slice<'frame, T>(
@@ -787,6 +812,7 @@ impl Display for BuiltinDeserializationErrorKind {
 #[cfg(test)]
 mod tests {
     use bytes::{BufMut, Bytes, BytesMut};
+    use uuid::Uuid;
 
     use std::fmt::Debug;
     use std::net::{IpAddr, Ipv6Addr};
@@ -795,7 +821,7 @@ mod tests {
     use crate::frame::response::result::{deser_cql_value, ColumnType, CqlValue};
     use crate::frame::types;
     use crate::frame::value::{
-        Counter, CqlDate, CqlDecimal, CqlDuration, CqlTime, CqlTimestamp, CqlVarint,
+        Counter, CqlDate, CqlDecimal, CqlDuration, CqlTime, CqlTimestamp, CqlTimeuuid, CqlVarint,
     };
     use crate::types::deserialize::{DeserializationError, FrameSlice};
     use crate::types::serialize::value::SerializeValue;
@@ -1118,6 +1144,13 @@ mod tests {
         let ipv6: IpAddr = Ipv6Addr::LOCALHOST.into();
         compat_check::<IpAddr>(&ColumnType::Inet, make_ip_address(ipv4));
         compat_check::<IpAddr>(&ColumnType::Inet, make_ip_address(ipv6));
+
+        // uuid and timeuuid
+        // new_v4 generates random UUIDs, so these are different cases
+        for uuid in std::iter::repeat_with(Uuid::new_v4).take(3) {
+            compat_check_serialized::<Uuid>(&ColumnType::Uuid, &uuid);
+            compat_check_serialized::<CqlTimeuuid>(&ColumnType::Timeuuid, &CqlTimeuuid::from(uuid));
+        }
     }
 
     // Checks that both new and old serialization framework
