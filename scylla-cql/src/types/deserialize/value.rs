@@ -845,7 +845,7 @@ mod tests {
     use crate::types::serialize::value::SerializeValue;
     use crate::types::serialize::CellWriter;
 
-    use super::{mk_deser_err, BuiltinDeserializationErrorKind, DeserializeValue};
+    use super::{mk_deser_err, BuiltinDeserializationErrorKind, DeserializeValue, MaybeEmpty};
 
     #[test]
     fn test_deserialize_bytes() {
@@ -932,6 +932,34 @@ mod tests {
         let double = make_bytes(&[64, 0, 0, 0, 0, 0, 0, 0]);
         let decoded_double = deserialize::<f64>(&ColumnType::Double, &double).unwrap();
         assert_eq!(decoded_double, 2.0);
+    }
+
+    #[test]
+    fn test_null_and_empty() {
+        // non-nullable emptiable deserialization, non-empty value
+        let int = make_bytes(&[21, 37, 0, 0]);
+        let decoded_int = deserialize::<MaybeEmpty<i32>>(&ColumnType::Int, &int).unwrap();
+        assert_eq!(decoded_int, MaybeEmpty::Value((21 << 24) + (37 << 16)));
+
+        // non-nullable emptiable deserialization, empty value
+        let int = make_bytes(&[]);
+        let decoded_int = deserialize::<MaybeEmpty<i32>>(&ColumnType::Int, &int).unwrap();
+        assert_eq!(decoded_int, MaybeEmpty::Empty);
+
+        // nullable non-emptiable deserialization, non-null value
+        let int = make_bytes(&[21, 37, 0, 0]);
+        let decoded_int = deserialize::<Option<i32>>(&ColumnType::Int, &int).unwrap();
+        assert_eq!(decoded_int, Some((21 << 24) + (37 << 16)));
+
+        // nullable non-emptiable deserialization, null value
+        let int = make_null();
+        let decoded_int = deserialize::<Option<i32>>(&ColumnType::Int, &int).unwrap();
+        assert_eq!(decoded_int, None);
+
+        // nullable emptiable deserialization, non-null non-empty value
+        let int = make_bytes(&[]);
+        let decoded_int = deserialize::<Option<MaybeEmpty<i32>>>(&ColumnType::Int, &int).unwrap();
+        assert_eq!(decoded_int, Some(MaybeEmpty::Empty));
     }
 
     #[test]
