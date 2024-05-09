@@ -1,0 +1,38 @@
+name: Tablets
+
+on:
+  push:
+    branches:
+    - main
+    - 'branch-*'
+  pull_request:
+    branches:
+    - main
+    - 'branch-*'
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: full
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v3
+      - name: Install scylla-ccm
+        run: pip3 install https://github.com/scylladb/scylla-ccm/archive/master.zip
+
+      - name: Create cluster with tablets enabled
+        run: |
+          ccm create tablets -i 127.0.1. -n 3 --scylla -v 'unstable/master:2024-05-01T18:26:10Z'
+          ccm updateconf 'experimental_features: [consistent-topology-changes, tablets]'
+          ccm start
+
+      - name: Check
+        run: cargo check --verbose
+      - name: Run tablets tests
+        run: SCYLLA_URI=127.0.1.1:9042 SCYLLA_URI2=127.0.1.2:9042 SCYLLA_URI3=127.0.1.3:9042 cargo test --verbose
+
+      - name: Remove tablets cluster
+        run: ccm remove tablets

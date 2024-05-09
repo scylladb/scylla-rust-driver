@@ -1,12 +1,16 @@
 mod precomputed_replicas;
 mod replicas;
 mod replication_info;
+pub(crate) mod tablets;
 #[cfg(test)]
 pub(crate) mod test;
 mod token_ring;
 
 use rand::{seq::IteratorRandom, Rng};
+use scylla_cql::frame::response::result::TableSpec;
 pub use token_ring::TokenRing;
+
+use self::tablets::TabletsInfo;
 
 use super::{topology::Strategy, Node, NodeRef};
 use crate::routing::{Shard, Token};
@@ -32,6 +36,8 @@ pub struct ReplicaLocator {
     precomputed_replicas: PrecomputedReplicas,
 
     datacenters: Vec<String>,
+
+    pub(crate) tablets: TabletsInfo,
 }
 
 impl ReplicaLocator {
@@ -41,6 +47,7 @@ impl ReplicaLocator {
     pub(crate) fn new<'a>(
         ring_iter: impl Iterator<Item = (Token, Arc<Node>)>,
         precompute_replica_sets_for: impl Iterator<Item = &'a Strategy>,
+        tablets: TabletsInfo,
     ) -> Self {
         let replication_data = ReplicationInfo::new(ring_iter);
         let precomputed_replicas =
@@ -58,6 +65,7 @@ impl ReplicaLocator {
             replication_data,
             precomputed_replicas,
             datacenters,
+            tablets,
         }
     }
 
@@ -74,76 +82,99 @@ impl ReplicaLocator {
     /// parameter of `Self::new`, invocation of this function will trigger a computation of the
     /// desired replica set (the computation might be delegated in time and start upon interaction
     /// with the returned `ReplicaSet`).
+    ///
+    /// If the requested table uses Tablets, then a separate code path is taken, which ignores
+    /// replication strategies and only uses tablet information stored in ReplicaLocator.
+    /// If we don't have info about the tablet that owns the given token, empty set will be returned.
     pub fn replicas_for_token<'a>(
         &'a self,
         token: Token,
         strategy: &'a Strategy,
         datacenter: Option<&'a str>,
+        table_spec: &TableSpec,
     ) -> ReplicaSet<'a> {
-        match strategy {
-            Strategy::SimpleStrategy { replication_factor } => {
-                if let Some(datacenter) = datacenter {
-                    let replicas = self.get_simple_strategy_replicas(token, *replication_factor);
+        if let Some(tablets) = self.tablets.tablets_for_table(table_spec) {
+            let replicas: Option<&[(Arc<Node>, Shard)]> = if let Some(datacenter) = datacenter {
+                tablets.dc_replicas_for_token(token, datacenter)
+            } else {
+                tablets.replicas_for_token(token)
+            };
+            return ReplicaSet {
+                inner: ReplicaSetInner::PlainSharded(replicas.unwrap_or(
+                    // The table is a tablet table, but we don't have information for given token.
+                    // Let's just return empty set in this case.
+                    &[],
+                )),
+                token,
+            };
+        } else {
+            match strategy {
+                Strategy::SimpleStrategy { replication_factor } => {
+                    if let Some(datacenter) = datacenter {
+                        let replicas =
+                            self.get_simple_strategy_replicas(token, *replication_factor);
 
-                    return ReplicaSet {
-                        inner: ReplicaSetInner::FilteredSimple {
-                            replicas,
-                            datacenter,
-                        },
-                        token,
-                    };
-                } else {
-                    return ReplicaSet {
-                        inner: ReplicaSetInner::Plain(
-                            self.get_simple_strategy_replicas(token, *replication_factor),
-                        ),
-                        token,
-                    };
-                }
-            }
-            Strategy::NetworkTopologyStrategy {
-                datacenter_repfactors,
-            } => {
-                if let Some(dc) = datacenter {
-                    if let Some(repfactor) = datacenter_repfactors.get(dc) {
                         return ReplicaSet {
-                            inner: ReplicaSetInner::Plain(
-                                self.get_network_strategy_replicas(token, dc, *repfactor),
-                            ),
+                            inner: ReplicaSetInner::FilteredSimple {
+                                replicas,
+                                datacenter,
+                            },
                             token,
                         };
                     } else {
-                        debug!("Datacenter ({}) does not exist!", dc);
                         return ReplicaSet {
-                            inner: ReplicaSetInner::Plain(EMPTY_REPLICAS),
+                            inner: ReplicaSetInner::Plain(
+                                self.get_simple_strategy_replicas(token, *replication_factor),
+                            ),
                             token,
                         };
                     }
-                } else {
-                    return ReplicaSet {
-                        inner: ReplicaSetInner::ChainedNTS {
-                            datacenter_repfactors,
-                            locator: self,
-                            token,
-                        },
-                        token,
-                    };
                 }
+                Strategy::NetworkTopologyStrategy {
+                    datacenter_repfactors,
+                } => {
+                    if let Some(dc) = datacenter {
+                        if let Some(repfactor) = datacenter_repfactors.get(dc) {
+                            return ReplicaSet {
+                                inner: ReplicaSetInner::Plain(
+                                    self.get_network_strategy_replicas(token, dc, *repfactor),
+                                ),
+                                token,
+                            };
+                        } else {
+                            debug!("Datacenter ({}) does not exist!", dc);
+                            return ReplicaSet {
+                                inner: ReplicaSetInner::Plain(EMPTY_REPLICAS),
+                                token,
+                            };
+                        }
+                    } else {
+                        return ReplicaSet {
+                            inner: ReplicaSetInner::ChainedNTS {
+                                datacenter_repfactors,
+                                locator: self,
+                                token,
+                            },
+                            token,
+                        };
+                    }
+                }
+                Strategy::Other { name, .. } => {
+                    debug!("Unknown strategy ({}), falling back to SimpleStrategy with replication_factor = 1", name)
+                }
+                _ => (),
             }
-            Strategy::Other { name, .. } => {
-                debug!("Unknown strategy ({}), falling back to SimpleStrategy with replication_factor = 1", name)
-            }
-            _ => (),
-        }
 
-        // Fallback to simple strategy with replication factor = 1.
-        self.replicas_for_token(
-            token,
-            &Strategy::SimpleStrategy {
-                replication_factor: 1,
-            },
-            datacenter,
-        )
+            // Fallback to simple strategy with replication factor = 1.
+            self.replicas_for_token(
+                token,
+                &Strategy::SimpleStrategy {
+                    replication_factor: 1,
+                },
+                datacenter,
+                table_spec,
+            )
+        }
     }
 
     /// Gives access to the token ring, based on which all token ranges/replica sets are computed.
@@ -234,6 +265,8 @@ fn with_computed_shard(node: NodeRef, token: Token) -> (NodeRef, Shard) {
 enum ReplicaSetInner<'a> {
     Plain(ReplicasArray<'a>),
 
+    PlainSharded(&'a [(Arc<Node>, Shard)]),
+
     // Represents a set of SimpleStrategy replicas that is limited to a specified datacenter.
     FilteredSimple {
         replicas: ReplicasArray<'a>,
@@ -291,6 +324,7 @@ impl<'a> ReplicaSet<'a> {
     pub fn len(&self) -> usize {
         match &self.inner {
             ReplicaSetInner::Plain(replicas) => replicas.len(),
+            ReplicaSetInner::PlainSharded(replicas) => replicas.len(),
             ReplicaSetInner::FilteredSimple {
                 replicas,
                 datacenter,
@@ -335,6 +369,9 @@ impl<'a> ReplicaSet<'a> {
                 ReplicaSetInner::Plain(replicas) => replicas
                     .get(index)
                     .map(|node| with_computed_shard(node, self.token)),
+                ReplicaSetInner::PlainSharded(replicas) => {
+                    replicas.get(index).map(|(node, shard)| (node, *shard))
+                }
                 ReplicaSetInner::FilteredSimple {
                     replicas,
                     datacenter,
@@ -390,6 +427,9 @@ impl<'a> IntoIterator for ReplicaSet<'a> {
     fn into_iter(self) -> Self::IntoIter {
         let inner = match self.inner {
             ReplicaSetInner::Plain(replicas) => ReplicaSetIteratorInner::Plain { replicas, idx: 0 },
+            ReplicaSetInner::PlainSharded(replicas) => {
+                ReplicaSetIteratorInner::PlainSharded { replicas, idx: 0 }
+            }
             ReplicaSetInner::FilteredSimple {
                 replicas,
                 datacenter,
@@ -436,6 +476,10 @@ enum ReplicaSetIteratorInner<'a> {
         replicas: ReplicasArray<'a>,
         idx: usize,
     },
+    PlainSharded {
+        replicas: &'a [(Arc<Node>, Shard)],
+        idx: usize,
+    },
     FilteredSimple {
         replicas: ReplicasArray<'a>,
         datacenter: &'a str,
@@ -467,6 +511,14 @@ impl<'a> Iterator for ReplicaSetIterator<'a> {
                 if let Some(replica) = replicas.get(*idx) {
                     *idx += 1;
                     return Some(with_computed_shard(replica, self.token));
+                }
+
+                None
+            }
+            ReplicaSetIteratorInner::PlainSharded { replicas, idx } => {
+                if let Some((replica, shard)) = replicas.get(*idx) {
+                    *idx += 1;
+                    return Some((replica, *shard));
                 }
 
                 None
@@ -520,6 +572,11 @@ impl<'a> Iterator for ReplicaSetIterator<'a> {
 
                 (size, Some(size))
             }
+            ReplicaSetIteratorInner::PlainSharded { replicas, idx } => {
+                let size = replicas.len() - *idx;
+
+                (size, Some(size))
+            }
             ReplicaSetIteratorInner::FilteredSimple {
                 replicas,
                 datacenter: _,
@@ -548,7 +605,8 @@ impl<'a> Iterator for ReplicaSetIterator<'a> {
 
     fn nth(&mut self, n: usize) -> Option<Self::Item> {
         match &mut self.inner {
-            ReplicaSetIteratorInner::Plain { replicas: _, idx } => {
+            ReplicaSetIteratorInner::Plain { replicas: _, idx }
+            | ReplicaSetIteratorInner::PlainSharded { replicas: _, idx } => {
                 *idx += n;
 
                 self.next()
@@ -571,7 +629,8 @@ impl<'a> ReplicaSet<'a> {
 }
 
 /// Represents a sequence of replicas for a given token and strategy,
-/// ordered according to the ring order.
+/// ordered according to the ring order (for token-ring tables) or with the
+/// order defined by tablet data (for tablet tables).
 ///
 /// This container can only be created by calling `ReplicaSet::into_replicas_ordered()`,
 /// and either it can borrow precomputed replica lists living in the locator (in case of SimpleStrategy)
@@ -739,6 +798,11 @@ impl<'a> IntoIterator for ReplicasOrdered<'a> {
                         replica_set_iter: replica_set.into_iter(),
                     }
                 }
+                ReplicaSetInner::PlainSharded(_) => {
+                    ReplicasOrderedIteratorInner::AlreadyRingOrdered {
+                        replica_set_iter: replica_set.into_iter(),
+                    }
+                }
                 ReplicaSetInner::ChainedNTS {
                     datacenter_repfactors,
                     locator,
@@ -770,8 +834,9 @@ mod tests {
 
         // For each case (token, limit_to_dc, strategy), we are checking
         // that ReplicasOrdered yields replicas in the expected order.
-        let check = |token, limit_to_dc, strategy, expected| {
-            let replica_set = locator.replicas_for_token(Token::new(token), strategy, limit_to_dc);
+        let check = |token, limit_to_dc, strategy, table, expected| {
+            let replica_set =
+                locator.replicas_for_token(Token::new(token), strategy, limit_to_dc, table);
             let replicas_ordered = replica_set.into_replicas_ordered();
             let ids: Vec<_> = replicas_ordered
                 .into_iter()
@@ -788,18 +853,21 @@ mod tests {
             160,
             None,
             &metadata.keyspaces.get(KEYSPACE_NTS_RF_3).unwrap().strategy,
+            TABLE_NTS_RF_3,
             vec![F, A, C, D, G, E],
         );
         check(
             160,
             None,
             &metadata.keyspaces.get(KEYSPACE_NTS_RF_2).unwrap().strategy,
+            TABLE_NTS_RF_2,
             vec![F, A, D, G],
         );
         check(
             160,
             None,
             &metadata.keyspaces.get(KEYSPACE_SS_RF_2).unwrap().strategy,
+            TABLE_SS_RF_2,
             vec![F, A],
         );
 
@@ -807,18 +875,21 @@ mod tests {
             160,
             Some("eu"),
             &metadata.keyspaces.get(KEYSPACE_NTS_RF_3).unwrap().strategy,
+            TABLE_NTS_RF_3,
             vec![A, C, G],
         );
         check(
             160,
             Some("us"),
             &metadata.keyspaces.get(KEYSPACE_NTS_RF_3).unwrap().strategy,
+            TABLE_NTS_RF_3,
             vec![F, D, E],
         );
         check(
             160,
             Some("eu"),
             &metadata.keyspaces.get(KEYSPACE_SS_RF_2).unwrap().strategy,
+            TABLE_SS_RF_2,
             vec![A],
         );
     }

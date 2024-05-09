@@ -293,10 +293,7 @@ mod tests {
     }
 
     fn make_not_rows_query_result() -> QueryResult {
-        let table_spec = TableSpec {
-            ks_name: "some_keyspace".to_string(),
-            table_name: "some_table".to_string(),
-        };
+        let table_spec = TableSpec::owned("some_keyspace".to_string(), "some_table".to_string());
 
         let column_spec = ColumnSpec {
             table_spec,

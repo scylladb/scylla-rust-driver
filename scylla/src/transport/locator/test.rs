@@ -1,7 +1,9 @@
 use rand::SeedableRng;
 use rand_chacha::ChaCha8Rng;
+use scylla_cql::frame::response::result::TableSpec;
 use uuid::Uuid;
 
+use super::tablets::TabletsInfo;
 use super::{ReplicaLocator, ReplicaSet};
 use crate::routing::Token;
 use crate::test_utils::setup_tracing;
@@ -22,6 +24,16 @@ use std::{
 pub(crate) const KEYSPACE_NTS_RF_2: &str = "keyspace_with_nts_rf_2";
 pub(crate) const KEYSPACE_NTS_RF_3: &str = "keyspace_with_nts_rf_3";
 pub(crate) const KEYSPACE_SS_RF_2: &str = "keyspace_with_ss_rf_2";
+
+// Those are references because otherwise I can't use them in Option without
+// additional binding.
+pub(crate) const TABLE_NTS_RF_2: &TableSpec<'static> =
+    &TableSpec::borrowed(KEYSPACE_NTS_RF_2, "table");
+pub(crate) const TABLE_NTS_RF_3: &TableSpec<'static> =
+    &TableSpec::borrowed(KEYSPACE_NTS_RF_3, "table");
+pub(crate) const TABLE_SS_RF_2: &TableSpec<'static> =
+    &TableSpec::borrowed(KEYSPACE_SS_RF_2, "table");
+pub(crate) const TABLE_INVALID: &TableSpec<'static> = &TableSpec::borrowed("invalid", "invalid");
 
 pub(crate) const A: u16 = 1;
 pub(crate) const B: u16 = 2;
@@ -191,7 +203,7 @@ pub(crate) fn create_locator(metadata: &Metadata) -> ReplicaLocator {
     let ring = create_ring(metadata);
     let strategies = metadata.keyspaces.values().map(|ks| &ks.strategy);
 
-    ReplicaLocator::new(ring, strategies)
+    ReplicaLocator::new(ring, strategies, TabletsInfo::new())
 }
 
 #[tokio::test]
@@ -245,6 +257,7 @@ fn test_simple_strategy_replicas(locator: &ReplicaLocator) {
                 replication_factor: 3,
             },
             None,
+            TABLE_INVALID,
         ),
         &[F, G, D],
     );
@@ -256,6 +269,7 @@ fn test_simple_strategy_replicas(locator: &ReplicaLocator) {
                 replication_factor: 4,
             },
             None,
+            TABLE_INVALID,
         ),
         &[F, G, D, B],
     );
@@ -267,6 +281,7 @@ fn test_simple_strategy_replicas(locator: &ReplicaLocator) {
                 replication_factor: 4,
             },
             None,
+            TABLE_INVALID,
         ),
         &[A, C, D, F],
     );
@@ -278,6 +293,7 @@ fn test_simple_strategy_replicas(locator: &ReplicaLocator) {
                 replication_factor: 0,
             },
             None,
+            TABLE_INVALID,
         ),
         &[],
     );
@@ -291,6 +307,7 @@ fn test_simple_strategy_replicas(locator: &ReplicaLocator) {
                 replication_factor: 1,
             },
             Some("us"),
+            TABLE_INVALID,
         ),
         &[],
     );
@@ -302,6 +319,7 @@ fn test_simple_strategy_replicas(locator: &ReplicaLocator) {
                 replication_factor: 3,
             },
             Some("us"),
+            TABLE_INVALID,
         ),
         &[E],
     );
@@ -313,6 +331,7 @@ fn test_simple_strategy_replicas(locator: &ReplicaLocator) {
                 replication_factor: 3,
             },
             Some("eu"),
+            TABLE_INVALID,
         ),
         &[A, B],
     );
@@ -328,6 +347,7 @@ fn test_network_topology_strategy_replicas(locator: &ReplicaLocator) {
                     .collect(),
             },
             Some("eu"),
+            TABLE_INVALID,
         ),
         &[B],
     );
@@ -341,6 +361,7 @@ fn test_network_topology_strategy_replicas(locator: &ReplicaLocator) {
                     .collect(),
             },
             Some("us"),
+            TABLE_INVALID,
         ),
         &[E],
     );
@@ -354,6 +375,7 @@ fn test_network_topology_strategy_replicas(locator: &ReplicaLocator) {
                     .collect(),
             },
             None,
+            TABLE_INVALID,
         ),
         &[B, E],
     );
@@ -367,6 +389,7 @@ fn test_network_topology_strategy_replicas(locator: &ReplicaLocator) {
                     .collect(),
             },
             None,
+            TABLE_INVALID,
         ),
         // Walking the ring from token 75, [B E F A C D A F G] is encountered.
         // NTS takes the first 2 nodes from that list - {B, E} and the last one - G because it is
@@ -383,6 +406,7 @@ fn test_network_topology_strategy_replicas(locator: &ReplicaLocator) {
                     .collect(),
             },
             None,
+            TABLE_INVALID,
         ),
         &[E],
     );
@@ -396,6 +420,7 @@ fn test_network_topology_strategy_replicas(locator: &ReplicaLocator) {
                     .collect(),
             },
             None,
+            TABLE_INVALID,
         ),
         &[G, E],
     );
@@ -411,6 +436,7 @@ fn test_replica_set_len(locator: &ReplicaLocator) {
                     .collect(),
             },
             None,
+            TABLE_INVALID,
         )
         .len();
     assert_eq!(merged_nts_len, 3);
@@ -426,6 +452,7 @@ fn test_replica_set_len(locator: &ReplicaLocator) {
                     .collect(),
             },
             None,
+            TABLE_INVALID,
         )
         .len();
     assert_eq!(capped_merged_nts_len, 5); // 5 = all eu nodes + 1 us node = 4 + 1.
@@ -439,6 +466,7 @@ fn test_replica_set_len(locator: &ReplicaLocator) {
                     .collect(),
             },
             Some("eu"),
+            TABLE_INVALID,
         )
         .len();
     assert_eq!(filtered_nts_len, 2);
@@ -450,6 +478,7 @@ fn test_replica_set_len(locator: &ReplicaLocator) {
                 replication_factor: 3,
             },
             None,
+            TABLE_INVALID,
         )
         .len();
     assert_eq!(ss_len, 3);
@@ -462,6 +491,7 @@ fn test_replica_set_len(locator: &ReplicaLocator) {
                 replication_factor: 3,
             },
             Some("eu"),
+            TABLE_INVALID,
         )
         .len();
     assert_eq!(filtered_ss_len, 1)
@@ -482,7 +512,8 @@ fn test_replica_set_choose(locator: &ReplicaLocator) {
     let mut rng = ChaCha8Rng::seed_from_u64(69);
 
     for strategy in strategies {
-        let replica_set_generator = || locator.replicas_for_token(Token::new(75), &strategy, None);
+        let replica_set_generator =
+            || locator.replicas_for_token(Token::new(75), &strategy, None, TABLE_INVALID);
 
         // Verify that after a certain number of random selections, the set of selected replicas
         // will contain all nodes in the ring (replica set was created using a strategy with
@@ -522,7 +553,8 @@ fn test_replica_set_choose_filtered(locator: &ReplicaLocator) {
     let mut rng = ChaCha8Rng::seed_from_u64(69);
 
     for strategy in strategies {
-        let replica_set_generator = || locator.replicas_for_token(Token::new(75), &strategy, None);
+        let replica_set_generator =
+            || locator.replicas_for_token(Token::new(75), &strategy, None, TABLE_INVALID);
 
         // Verify that after a certain number of random selections with a dc filter, the set of
         // selected replicas will contain all nodes in the specified dc ring.
@@ -554,6 +586,7 @@ fn test_replica_set_choose_filtered(locator: &ReplicaLocator) {
             Token::new(75),
             &Strategy::LocalStrategy,
             Some("unknown_dc_name"),
+            TABLE_INVALID,
         )
         .choose_filtered(&mut rng, |_| true);
     assert_eq!(empty, None);

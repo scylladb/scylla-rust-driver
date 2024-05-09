@@ -7,6 +7,7 @@ use crate::frame::value::{
 use crate::frame::{frame_errors::ParseError, types};
 use byteorder::{BigEndian, ReadBytesExt};
 use bytes::{Buf, Bytes};
+use std::borrow::Cow;
 use std::{
     convert::{TryFrom, TryInto},
     net::IpAddr,
@@ -35,10 +36,10 @@ pub struct SchemaChange {
     pub event: SchemaChangeEvent,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct TableSpec {
-    pub ks_name: String,
-    pub table_name: String,
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct TableSpec<'a> {
+    ks_name: Cow<'a, str>,
+    table_name: Cow<'a, str>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -114,6 +115,40 @@ pub enum CqlValue {
     Tuple(Vec<Option<CqlValue>>),
     Uuid(Uuid),
     Varint(CqlVarint),
+}
+
+impl<'a> TableSpec<'a> {
+    pub const fn borrowed(ks: &'a str, table: &'a str) -> Self {
+        Self {
+            ks_name: Cow::Borrowed(ks),
+            table_name: Cow::Borrowed(table),
+        }
+    }
+
+    pub fn ks_name(&'a self) -> &'a str {
+        self.ks_name.as_ref()
+    }
+
+    pub fn table_name(&'a self) -> &'a str {
+        self.table_name.as_ref()
+    }
+
+    pub fn into_owned(self) -> TableSpec<'static> {
+        TableSpec::owned(self.ks_name.into_owned(), self.table_name.into_owned())
+    }
+
+    pub fn to_owned(&self) -> TableSpec<'static> {
+        TableSpec::owned(self.ks_name().to_owned(), self.table_name().to_owned())
+    }
+}
+
+impl TableSpec<'static> {
+    pub fn owned(ks_name: String, table_name: String) -> Self {
+        Self {
+            ks_name: Cow::Owned(ks_name),
+            table_name: Cow::Owned(table_name),
+        }
+    }
 }
 
 impl ColumnType {
@@ -381,7 +416,7 @@ impl CqlValue {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ColumnSpec {
-    pub table_spec: TableSpec,
+    pub table_spec: TableSpec<'static>,
     pub name: String,
     pub typ: ColumnType,
 }
@@ -441,13 +476,10 @@ pub enum Result {
     SchemaChange(SchemaChange),
 }
 
-fn deser_table_spec(buf: &mut &[u8]) -> StdResult<TableSpec, ParseError> {
+fn deser_table_spec(buf: &mut &[u8]) -> StdResult<TableSpec<'static>, ParseError> {
     let ks_name = types::read_string(buf)?.to_owned();
     let table_name = types::read_string(buf)?.to_owned();
-    Ok(TableSpec {
-        ks_name,
-        table_name,
-    })
+    Ok(TableSpec::owned(ks_name, table_name))
 }
 
 fn deser_type(buf: &mut &[u8]) -> StdResult<ColumnType, ParseError> {
@@ -521,7 +553,7 @@ fn deser_type(buf: &mut &[u8]) -> StdResult<ColumnType, ParseError> {
 
 fn deser_col_specs(
     buf: &mut &[u8],
-    global_table_spec: &Option<TableSpec>,
+    global_table_spec: &Option<TableSpec<'static>>,
     col_count: usize,
 ) -> StdResult<Vec<ColumnSpec>, ParseError> {
     let mut col_specs = Vec::with_capacity(col_count);

@@ -6,7 +6,7 @@ use crate::query::Query;
 use crate::retry_policy::{QueryInfo, RetryDecision, RetryPolicy, RetrySession};
 use crate::routing::Token;
 use crate::statement::Consistency;
-use crate::test_utils::setup_tracing;
+use crate::test_utils::{scylla_supports_tablets, setup_tracing};
 use crate::tracing::TracingInfo;
 use crate::transport::cluster::Datacenter;
 use crate::transport::errors::{BadKeyspaceName, BadQuery, DbError, QueryError};
@@ -141,7 +141,7 @@ async fn test_unprepared_statement() {
     assert_eq!(specs.len(), 3);
     for (spec, name) in specs.iter().zip(["a", "b", "c"]) {
         assert_eq!(spec.name, name); // Check column name.
-        assert_eq!(spec.table_spec.ks_name, ks);
+        assert_eq!(spec.table_spec.ks_name(), ks);
     }
     let mut results_from_manual_paging: Vec<Row> = vec![];
     let query = Query::new(format!("SELECT a, b, c FROM {}.t", ks)).with_page_size(1);
@@ -197,7 +197,7 @@ async fn test_prepared_statement() {
     assert_eq!(specs.len(), 3);
     for (spec, name) in specs.iter().zip(["a", "b", "c"]) {
         assert_eq!(spec.name, name); // Check column name.
-        assert_eq!(spec.table_spec.ks_name, ks);
+        assert_eq!(spec.table_spec.ks_name(), ks);
     }
 
     let prepared_statement = session
@@ -518,7 +518,17 @@ async fn test_token_awareness() {
     let session = create_new_session_builder().build().await.unwrap();
     let ks = unique_keyspace_name();
 
-    session.query(format!("CREATE KEYSPACE IF NOT EXISTS {} WITH REPLICATION = {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}}", ks), &[]).await.unwrap();
+    // Need to disable tablets in this test because they make token routing
+    // work differently, and in this test we want to test the classic token ring
+    // behavior.
+    let mut create_ks = format!(
+        "CREATE KEYSPACE IF NOT EXISTS {ks} WITH REPLICATION = {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}}"
+    );
+    if scylla_supports_tablets(&session).await {
+        create_ks += " AND TABLETS = {'enabled': false}"
+    }
+
+    session.query(create_ks, &[]).await.unwrap();
     session
         .query(
             format!("CREATE TABLE IF NOT EXISTS {}.t (a text primary key)", ks),
@@ -1670,10 +1680,15 @@ async fn test_table_partitioner_in_metadata() {
     let session = create_new_session_builder().build().await.unwrap();
     let ks = unique_keyspace_name();
 
-    session
-        .query(format!("CREATE KEYSPACE {} WITH REPLICATION = {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}}", ks), &[])
-        .await
-        .unwrap();
+    // This test uses CDC which is not yet compatible with Scylla's tablets.
+    let mut create_ks = format!(
+        "CREATE KEYSPACE {ks} WITH REPLICATION = {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}}"
+    );
+    if scylla_supports_tablets(&session).await {
+        create_ks += " AND TABLETS = {'enabled': false}";
+    }
+
+    session.query(create_ks, &[]).await.unwrap();
 
     session.query(format!("USE {}", ks), &[]).await.unwrap();
 
@@ -1834,7 +1849,14 @@ async fn test_prepared_partitioner() {
     let session = create_new_session_builder().build().await.unwrap();
     let ks = unique_keyspace_name();
 
-    session.query(format!("CREATE KEYSPACE IF NOT EXISTS {} WITH REPLICATION = {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}}", ks), &[]).await.unwrap();
+    // This test uses CDC which is not yet compatible with Scylla's tablets.
+    let mut create_ks = format!(
+        "CREATE KEYSPACE IF NOT EXISTS {ks} WITH REPLICATION = {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}}");
+    if scylla_supports_tablets(&session).await {
+        create_ks += " AND TABLETS = {'enabled': false}"
+    }
+
+    session.query(create_ks, &[]).await.unwrap();
     session.use_keyspace(ks, false).await.unwrap();
 
     session
@@ -2551,6 +2573,7 @@ async fn test_keyspaces_to_fetch() {
 // Reproduces the problem with execute_iter mentioned in #608.
 #[tokio::test]
 async fn test_iter_works_when_retry_policy_returns_ignore_write_error() {
+    setup_tracing();
     // It's difficult to reproduce the issue with a real downgrading consistency policy,
     // as it would require triggering a WriteTimeout. We just need the policy
     // to return IgnoreWriteError, so we will trigger a different error
@@ -2592,7 +2615,11 @@ async fn test_iter_works_when_retry_policy_returns_ignore_write_error() {
     // Create a keyspace with replication factor that is larger than the cluster size
     let cluster_size = session.get_cluster_data().get_nodes_info().len();
     let ks = unique_keyspace_name();
-    session.query(format!("CREATE KEYSPACE {} WITH REPLICATION = {{'class': 'NetworkTopologyStrategy', 'replication_factor': {}}}", ks, cluster_size + 1), ()).await.unwrap();
+    let mut create_ks = format!("CREATE KEYSPACE {} WITH REPLICATION = {{'class': 'NetworkTopologyStrategy', 'replication_factor': {}}}", ks, cluster_size + 1);
+    if scylla_supports_tablets(&session).await {
+        create_ks += " and TABLETS = { 'enabled': false}";
+    }
+    session.query(create_ks, ()).await.unwrap();
     session.use_keyspace(ks, true).await.unwrap();
     session
         .query("CREATE TABLE t (pk int PRIMARY KEY, v int)", ())

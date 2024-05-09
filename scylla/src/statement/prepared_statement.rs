@@ -1,5 +1,8 @@
 use bytes::{Bytes, BytesMut};
 use scylla_cql::errors::{BadQuery, QueryError};
+use scylla_cql::frame::response::result::{
+    ColumnSpec, PartitionKeyIndex, ResultMetadata, TableSpec,
+};
 use scylla_cql::frame::types::RawValue;
 use scylla_cql::types::serialize::row::{RowSerializationContext, SerializeRow, SerializedValues};
 use scylla_cql::types::serialize::SerializationError;
@@ -9,8 +12,6 @@ use std::sync::Arc;
 use std::time::Duration;
 use thiserror::Error;
 use uuid::Uuid;
-
-use scylla_cql::frame::response::result::{ColumnSpec, PartitionKeyIndex, ResultMetadata};
 
 use super::StatementConfig;
 use crate::frame::response::result::PreparedMetadata;
@@ -208,12 +209,20 @@ impl PreparedStatement {
             .map(|opt| opt.map(|(_pk, token)| token))
     }
 
+    /// Return keyspace name and table name this statement is operating on.
+    pub fn get_table_spec(&self) -> Option<&TableSpec> {
+        self.get_prepared_metadata()
+            .col_specs
+            .first()
+            .map(|spec| &spec.table_spec)
+    }
+
     /// Returns the name of the keyspace this statement is operating on.
     pub fn get_keyspace_name(&self) -> Option<&str> {
         self.get_prepared_metadata()
             .col_specs
             .first()
-            .map(|col_spec| col_spec.table_spec.ks_name.as_str())
+            .map(|col_spec| col_spec.table_spec.ks_name())
     }
 
     /// Returns the name of the table this statement is operating on.
@@ -221,7 +230,7 @@ impl PreparedStatement {
         self.get_prepared_metadata()
             .col_specs
             .first()
-            .map(|col_spec| col_spec.table_spec.table_name.as_str())
+            .map(|col_spec| col_spec.table_spec.table_name())
     }
 
     /// Sets the consistency to be used when executing this statement.
@@ -540,10 +549,7 @@ mod tests {
         cols: impl IntoIterator<Item = ColumnType>,
         idx: impl IntoIterator<Item = usize>,
     ) -> PreparedMetadata {
-        let table_spec = TableSpec {
-            ks_name: "ks".to_owned(),
-            table_name: "t".to_owned(),
-        };
+        let table_spec = TableSpec::owned("ks".to_owned(), "t".to_owned());
         let col_specs: Vec<_> = cols
             .into_iter()
             .enumerate()

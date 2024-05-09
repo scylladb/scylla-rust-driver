@@ -2,7 +2,7 @@ use bytes::Bytes;
 use futures::{future::RemoteHandle, FutureExt};
 use scylla_cql::errors::TranslationError;
 use scylla_cql::frame::request::options::Options;
-use scylla_cql::frame::response::result::ResultMetadata;
+use scylla_cql::frame::response::result::{ResultMetadata, TableSpec};
 use scylla_cql::frame::response::Error;
 use scylla_cql::frame::types::SerialConsistency;
 use scylla_cql::types::serialize::batch::{BatchValues, BatchValuesIterator};
@@ -43,6 +43,7 @@ use std::{
 
 use super::errors::{BadKeyspaceName, DbError, QueryError};
 use super::iterator::RowIterator;
+use super::locator::tablets::{RawTablet, TabletParsingError};
 use super::query_result::SingleRowTypedError;
 use super::session::AddressTranslator;
 use super::topology::{PeerEndpoint, UntranslatedEndpoint, UntranslatedPeer};
@@ -217,6 +218,8 @@ pub(crate) struct QueryResponse {
     pub(crate) response: Response,
     pub(crate) tracing_id: Option<Uuid>,
     pub(crate) warnings: Vec<String>,
+    #[allow(dead_code)] // This is not exposed to user (yet?)
+    pub(crate) custom_payload: Option<HashMap<String, Vec<u8>>>,
 }
 
 // A QueryResponse in which response can not be Response::Error
@@ -367,6 +370,7 @@ pub(crate) struct ConnectionConfig {
 
     pub(crate) keepalive_interval: Option<Duration>,
     pub(crate) keepalive_timeout: Option<Duration>,
+    pub(crate) tablet_sender: Option<mpsc::Sender<(TableSpec<'static>, RawTablet)>>,
 }
 
 impl Default for ConnectionConfig {
@@ -389,6 +393,8 @@ impl Default for ConnectionConfig {
             // Note: this is different than SessionConfig default values.
             keepalive_interval: None,
             keepalive_timeout: None,
+
+            tablet_sender: None,
         }
     }
 }
@@ -721,6 +727,15 @@ impl Connection {
             )
             .await?;
 
+        if let Some(spec) = prepared_statement.get_table_spec() {
+            if let Err(e) = self
+                .update_tablets_from_response(spec, &query_response)
+                .await
+            {
+                tracing::warn!("Error while parsing tablet info from custom payload: {}", e);
+            }
+        }
+
         match &query_response.response {
             Response::Error(frame::response::Error {
                 error: DbError::Unprepared { statement_id },
@@ -730,13 +745,25 @@ impl Connection {
                 // Repreparation of a statement is needed
                 self.reprepare(prepared_statement.get_statement(), prepared_statement)
                     .await?;
-                self.send_request(
-                    &execute_frame,
-                    true,
-                    prepared_statement.config.tracing,
-                    cached_metadata,
-                )
-                .await
+                let new_response = self
+                    .send_request(
+                        &execute_frame,
+                        true,
+                        prepared_statement.config.tracing,
+                        cached_metadata,
+                    )
+                    .await?;
+
+                if let Some(spec) = prepared_statement.get_table_spec() {
+                    if let Err(e) = self.update_tablets_from_response(spec, &new_response).await {
+                        tracing::warn!(
+                            "Error while parsing tablet info from custom payload: {}",
+                            e
+                        );
+                    }
+                }
+
+                Ok(new_response)
             }
             _ => Ok(query_response),
         }
@@ -1034,6 +1061,7 @@ impl Connection {
             response,
             warnings: body_with_ext.warnings,
             tracing_id: body_with_ext.trace_id,
+            custom_payload: body_with_ext.custom_payload,
         })
     }
 
@@ -1414,6 +1442,32 @@ impl Connection {
     pub(crate) fn get_connect_address(&self) -> SocketAddr {
         self.connect_address
     }
+
+    async fn update_tablets_from_response(
+        &self,
+        table: &TableSpec<'_>,
+        response: &QueryResponse,
+    ) -> Result<(), TabletParsingError> {
+        if let (Some(sender), Some(tablet_data)) = (
+            self.config.tablet_sender.as_ref(),
+            response.custom_payload.as_ref(),
+        ) {
+            let tablet = match RawTablet::from_custom_payload(tablet_data) {
+                Some(Ok(v)) => v,
+                Some(Err(e)) => return Err(e),
+                None => return Ok(()),
+            };
+            tracing::trace!(
+                "Received tablet info for table {}.{} in custom payload: {:?}",
+                table.ks_name(),
+                table.table_name(),
+                tablet
+            );
+            let _ = sender.send((table.to_owned(), tablet)).await;
+        }
+
+        Ok(())
+    }
 }
 
 async fn maybe_translated_addr(
@@ -1458,7 +1512,7 @@ async fn maybe_translated_addr(
 pub(crate) async fn open_connection(
     endpoint: UntranslatedEndpoint,
     source_port: Option<u16>,
-    config: ConnectionConfig,
+    config: &ConnectionConfig,
 ) -> Result<(Connection, ErrorReceiver), QueryError> {
     let addr = maybe_translated_addr(endpoint, config.address_translator.as_deref()).await?;
     open_named_connection(
@@ -1474,7 +1528,7 @@ pub(crate) async fn open_connection(
 pub(crate) async fn open_named_connection(
     addr: SocketAddr,
     source_port: Option<u16>,
-    config: ConnectionConfig,
+    config: &ConnectionConfig,
     driver_name: Option<String>,
     driver_version: Option<String>,
 ) -> Result<(Connection, ErrorReceiver), QueryError> {
@@ -1921,7 +1975,7 @@ mod tests {
                 datacenter: None,
             }),
             None,
-            ConnectionConfig::default(),
+            &ConnectionConfig::default(),
         )
         .await
         .unwrap();
@@ -2046,7 +2100,7 @@ mod tests {
                     datacenter: None,
                 }),
                 None,
-                ConnectionConfig {
+                &ConnectionConfig {
                     enable_write_coalescing: enable_coalescing,
                     ..ConnectionConfig::default()
                 },
@@ -2175,7 +2229,7 @@ mod tests {
 
         // We must interrupt the driver's full connection opening, because our proxy does not interact further after Startup.
         let (startup_without_lwt_optimisation, _shard) = select! {
-            _ = open_connection(UntranslatedEndpoint::ContactPoint(ResolvedContactPoint{address: proxy_addr, datacenter: None}), None, config.clone()) => unreachable!(),
+            _ = open_connection(UntranslatedEndpoint::ContactPoint(ResolvedContactPoint{address: proxy_addr, datacenter: None}), None, &config) => unreachable!(),
             startup = startup_rx.recv() => startup.unwrap(),
         };
 
@@ -2183,7 +2237,7 @@ mod tests {
             .change_request_rules(Some(make_rules(options_with_lwt_optimisation_support)));
 
         let (startup_with_lwt_optimisation, _shard) = select! {
-            _ = open_connection(UntranslatedEndpoint::ContactPoint(ResolvedContactPoint{address: proxy_addr, datacenter: None}), None, config.clone()) => unreachable!(),
+            _ = open_connection(UntranslatedEndpoint::ContactPoint(ResolvedContactPoint{address: proxy_addr, datacenter: None}), None, &config) => unreachable!(),
             startup = startup_rx.recv() => startup.unwrap(),
         };
 
@@ -2244,7 +2298,7 @@ mod tests {
                 datacenter: None,
             }),
             None,
-            config,
+            &config,
         )
         .await
         .unwrap();

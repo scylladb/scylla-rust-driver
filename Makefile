@@ -4,10 +4,10 @@ COMPOSE := docker compose -f test/cluster/docker-compose.yml
 all: test
 
 .PHONY: ci
-ci: fmt-check check check-without-features clippy test build
+ci: fmt-check check check-without-features check-all-features clippy clippy-all-features test build
 
 .PHONY: dockerized-ci
-dockerized-ci: fmt-check check check-without-features clippy dockerized-test build
+dockerized-ci: fmt-check check check-without-features check-all-features clippy clippy-all-features dockerized-test build
 
 .PHONY: fmt
 fmt:
@@ -25,9 +25,17 @@ check:
 check-without-features:
 	cargo check --manifest-path "scylla/Cargo.toml" --features "" --all-targets
 
+.PHONY: check-all-features
+check-all-features:
+	cargo check --all-targets --all-features
+
 .PHONY: clippy
 clippy:
 	RUSTFLAGS=-Dwarnings cargo clippy --all-targets
+
+.PHONY: clippy-all-features
+clippy-all-features:
+	RUSTFLAGS=-Dwarnings cargo clippy --all-targets --all-features
 
 .PHONY: test
 test: up

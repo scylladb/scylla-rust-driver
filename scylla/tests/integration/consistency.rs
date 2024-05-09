@@ -8,6 +8,7 @@ use scylla::routing::{Shard, Token};
 use scylla::test_utils::unique_keyspace_name;
 use scylla::transport::session::Session;
 use scylla::transport::NodeRef;
+use scylla_cql::frame::response::result::TableSpec;
 use tokio::sync::mpsc::{self, UnboundedReceiver, UnboundedSender};
 
 use scylla::statement::batch::BatchStatement;
@@ -341,7 +342,7 @@ pub(crate) struct OwnedRoutingInfo {
     serial_consistency: Option<SerialConsistency>,
 
     #[allow(unused)]
-    keyspace: Option<String>,
+    table: Option<TableSpec<'static>>,
     #[allow(unused)]
     token: Option<Token>,
     #[allow(unused)]
@@ -354,14 +355,14 @@ impl OwnedRoutingInfo {
             consistency,
             serial_consistency,
             token,
-            keyspace,
+            table,
             is_confirmed_lwt,
         } = info;
         Self {
             consistency,
             serial_consistency,
             token,
-            keyspace: keyspace.map(ToOwned::to_owned),
+            table: table.map(TableSpec::to_owned),
             is_confirmed_lwt,
         }
     }

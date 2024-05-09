@@ -9,7 +9,10 @@ use crate::{
 use itertools::{Either, Itertools};
 use rand::{prelude::SliceRandom, thread_rng, Rng};
 use rand_pcg::Pcg32;
-use scylla_cql::{errors::QueryError, frame::types::SerialConsistency, Consistency};
+use scylla_cql::errors::QueryError;
+use scylla_cql::frame::response::result::TableSpec;
+use scylla_cql::frame::types::SerialConsistency;
+use scylla_cql::Consistency;
 use std::hash::{Hash, Hasher};
 use std::{fmt, sync::Arc, time::Duration};
 use tracing::{debug, warn};
@@ -122,7 +125,7 @@ or refrain from preferring datacenters (which may ban all other datacenters, if 
         } else {
             StatementType::NonLwt
         };
-        if let Some(ts) = &routing_info.token_with_strategy {
+        if let (Some(ts), Some(table_spec)) = (&routing_info.token_with_strategy, query.table) {
             if let NodeLocationPreference::DatacenterAndRack(dc, rack) = &self.preferences {
                 // Try to pick some alive local rack random replica.
                 let local_rack_picked = self.pick_replica(
@@ -131,6 +134,7 @@ or refrain from preferring datacenters (which may ban all other datacenters, if 
                     |node, shard| (self.pick_predicate)(node, Some(shard)),
                     cluster,
                     statement_type,
+                    table_spec,
                 );
 
                 if let Some((alive_local_rack_replica, shard)) = local_rack_picked {
@@ -148,6 +152,7 @@ or refrain from preferring datacenters (which may ban all other datacenters, if 
                     |node, shard| (self.pick_predicate)(node, Some(shard)),
                     cluster,
                     statement_type,
+                    table_spec,
                 );
 
                 if let Some((alive_local_replica, shard)) = picked {
@@ -166,6 +171,7 @@ or refrain from preferring datacenters (which may ban all other datacenters, if 
                     |node, shard| (self.pick_predicate)(node, Some(shard)),
                     cluster,
                     statement_type,
+                    table_spec,
                 );
                 if let Some((alive_remote_replica, shard)) = picked {
                     return Some((alive_remote_replica, Some(shard)));
@@ -237,7 +243,9 @@ or refrain from preferring datacenters (which may ban all other datacenters, if 
         };
 
         // If token is available, get a shuffled list of alive replicas.
-        let maybe_replicas = if let Some(ts) = &routing_info.token_with_strategy {
+        let maybe_replicas = if let (Some(ts), Some(table_spec)) =
+            (&routing_info.token_with_strategy, query.table)
+        {
             let maybe_local_rack_replicas =
                 if let NodeLocationPreference::DatacenterAndRack(dc, rack) = &self.preferences {
                     let local_rack_replicas = self.fallback_replicas(
@@ -246,6 +254,7 @@ or refrain from preferring datacenters (which may ban all other datacenters, if 
                         |node, shard| Self::is_alive(node, Some(shard)),
                         cluster,
                         statement_type,
+                        table_spec,
                     );
                     Either::Left(local_rack_replicas)
                 } else {
@@ -262,6 +271,7 @@ or refrain from preferring datacenters (which may ban all other datacenters, if 
                     |node, shard| Self::is_alive(node, Some(shard)),
                     cluster,
                     statement_type,
+                    table_spec,
                 );
                 Either::Left(local_replicas)
             } else {
@@ -278,6 +288,7 @@ or refrain from preferring datacenters (which may ban all other datacenters, if 
                     |node, shard| Self::is_alive(node, Some(shard)),
                     cluster,
                     statement_type,
+                    table_spec,
                 );
                 Either::Left(remote_replicas)
             } else {
@@ -459,12 +470,13 @@ impl DefaultPolicy {
         ts: &TokenWithStrategy<'a>,
         replica_location: NodeLocationCriteria<'a>,
         cluster: &'a ClusterData,
+        table_spec: &TableSpec,
     ) -> ReplicaSet<'a> {
         let datacenter = replica_location.datacenter();
 
         cluster
             .replica_locator()
-            .replicas_for_token(ts.token, ts.strategy, datacenter)
+            .replicas_for_token(ts.token, ts.strategy, datacenter, table_spec)
     }
 
     /// Wraps the provided predicate, adding the requirement for rack to match.
@@ -502,16 +514,17 @@ impl DefaultPolicy {
         predicate: impl Fn(NodeRef<'a>, Shard) -> bool + 'a,
         cluster: &'a ClusterData,
         order: ReplicaOrder,
+        table_spec: &TableSpec,
     ) -> impl Iterator<Item = (NodeRef<'a>, Shard)> {
         let predicate = Self::make_sharded_rack_predicate(predicate, replica_location);
 
         let replica_iter = match order {
             ReplicaOrder::Arbitrary => Either::Left(
-                self.nonfiltered_replica_set(ts, replica_location, cluster)
+                self.nonfiltered_replica_set(ts, replica_location, cluster, table_spec)
                     .into_iter(),
             ),
             ReplicaOrder::RingOrder => Either::Right(
-                self.nonfiltered_replica_set(ts, replica_location, cluster)
+                self.nonfiltered_replica_set(ts, replica_location, cluster, table_spec)
                     .into_replicas_ordered()
                     .into_iter(),
             ),
@@ -526,11 +539,14 @@ impl DefaultPolicy {
         predicate: impl Fn(NodeRef<'a>, Shard) -> bool + 'a,
         cluster: &'a ClusterData,
         statement_type: StatementType,
+        table_spec: &TableSpec,
     ) -> Option<(NodeRef<'a>, Shard)> {
         match statement_type {
-            StatementType::Lwt => self.pick_first_replica(ts, replica_location, predicate, cluster),
+            StatementType::Lwt => {
+                self.pick_first_replica(ts, replica_location, predicate, cluster, table_spec)
+            }
             StatementType::NonLwt => {
-                self.pick_random_replica(ts, replica_location, predicate, cluster)
+                self.pick_random_replica(ts, replica_location, predicate, cluster, table_spec)
             }
         }
     }
@@ -553,6 +569,7 @@ impl DefaultPolicy {
         replica_location: NodeLocationCriteria<'a>,
         predicate: impl Fn(NodeRef<'a>, Shard) -> bool + 'a,
         cluster: &'a ClusterData,
+        table_spec: &TableSpec,
     ) -> Option<(NodeRef<'a>, Shard)> {
         match replica_location {
             NodeLocationCriteria::Any => {
@@ -566,7 +583,7 @@ impl DefaultPolicy {
                 // (computation of the remaining ones is expensive), in case that the primary replica
                 // does not satisfy the `predicate`, None is returned. All expensive computation
                 // is to be done only when `fallback()` is called.
-                self.nonfiltered_replica_set(ts, replica_location, cluster)
+                self.nonfiltered_replica_set(ts, replica_location, cluster, table_spec)
                     .into_replicas_ordered()
                     .into_iter()
                     .next()
@@ -586,6 +603,7 @@ impl DefaultPolicy {
                     predicate,
                     cluster,
                     ReplicaOrder::RingOrder,
+                    table_spec,
                 )
                 .next()
             }
@@ -598,10 +616,11 @@ impl DefaultPolicy {
         replica_location: NodeLocationCriteria<'a>,
         predicate: impl Fn(NodeRef<'a>, Shard) -> bool + 'a,
         cluster: &'a ClusterData,
+        table_spec: &TableSpec,
     ) -> Option<(NodeRef<'a>, Shard)> {
         let predicate = Self::make_sharded_rack_predicate(predicate, replica_location);
 
-        let replica_set = self.nonfiltered_replica_set(ts, replica_location, cluster);
+        let replica_set = self.nonfiltered_replica_set(ts, replica_location, cluster, table_spec);
 
         if let Some(fixed) = self.fixed_seed {
             let mut gen = Pcg32::new(fixed, 0);
@@ -618,13 +637,14 @@ impl DefaultPolicy {
         predicate: impl Fn(NodeRef<'_>, Shard) -> bool + 'a,
         cluster: &'a ClusterData,
         statement_type: StatementType,
+        table_spec: &TableSpec,
     ) -> impl Iterator<Item = (NodeRef<'_>, Shard)> {
         let order = match statement_type {
             StatementType::Lwt => ReplicaOrder::RingOrder,
             StatementType::NonLwt => ReplicaOrder::Arbitrary,
         };
 
-        let replicas = self.replicas(ts, replica_location, predicate, cluster, order);
+        let replicas = self.replicas(ts, replica_location, predicate, cluster, order, table_spec);
 
         match statement_type {
             // As an LWT optimisation: in order to reduce contention caused by Paxos conflicts,
@@ -930,7 +950,7 @@ struct TokenWithStrategy<'a> {
 impl<'a> TokenWithStrategy<'a> {
     fn new(query: &'a RoutingInfo, cluster: &'a ClusterData) -> Option<TokenWithStrategy<'a>> {
         let token = query.token?;
-        let keyspace_name = query.keyspace?;
+        let keyspace_name = query.table?.ks_name();
         let keyspace = cluster.get_keyspace_info().get(keyspace_name)?;
         let strategy = &keyspace.strategy;
         Some(TokenWithStrategy { strategy, token })
@@ -946,16 +966,14 @@ mod tests {
         get_plan_and_collect_node_identifiers, mock_cluster_data_for_token_unaware_tests,
         ExpectedGroups, ExpectedGroupsBuilder,
     };
+    use crate::transport::locator::test::{TABLE_NTS_RF_2, TABLE_NTS_RF_3, TABLE_SS_RF_2};
     use crate::{
         load_balancing::{
             default::tests::framework::mock_cluster_data_for_token_aware_tests, Plan, RoutingInfo,
         },
         routing::Token,
         test_utils::setup_tracing,
-        transport::{
-            locator::test::{KEYSPACE_NTS_RF_2, KEYSPACE_NTS_RF_3, KEYSPACE_SS_RF_2},
-            ClusterData,
-        },
+        transport::ClusterData,
     };
 
     use super::{DefaultPolicy, NodeLocationPreference};
@@ -970,7 +988,10 @@ mod tests {
             routing::Token,
             test_utils::setup_tracing,
             transport::{
-                locator::test::{id_to_invalid_addr, mock_metadata_for_token_aware_tests},
+                locator::{
+                    tablets::TabletsInfo,
+                    test::{id_to_invalid_addr, mock_metadata_for_token_aware_tests},
+                },
                 topology::{Metadata, Peer},
                 ClusterData,
             },
@@ -1171,7 +1192,15 @@ mod tests {
         // based on locator mock cluster
         pub(crate) async fn mock_cluster_data_for_token_aware_tests() -> ClusterData {
             let metadata = mock_metadata_for_token_aware_tests();
-            ClusterData::new(metadata, &Default::default(), &HashMap::new(), &None, None).await
+            ClusterData::new(
+                metadata,
+                &Default::default(),
+                &HashMap::new(),
+                &None,
+                None,
+                TabletsInfo::new(),
+            )
+            .await
         }
 
         // creates ClusterData with info about 5 nodes living in 2 different datacenters
@@ -1193,7 +1222,15 @@ mod tests {
                 keyspaces: HashMap::new(),
             };
 
-            ClusterData::new(info, &Default::default(), &HashMap::new(), &None, None).await
+            ClusterData::new(
+                info,
+                &Default::default(),
+                &HashMap::new(),
+                &None,
+                None,
+                TabletsInfo::new(),
+            )
+            .await
         }
 
         pub(crate) fn get_plan_and_collect_node_identifiers(
@@ -1209,7 +1246,7 @@ mod tests {
 
     pub(crate) const EMPTY_ROUTING_INFO: RoutingInfo = RoutingInfo {
         token: None,
-        keyspace: None,
+        table: None,
         is_confirmed_lwt: false,
         consistency: Consistency::Quorum,
         serial_consistency: Some(SerialConsistency::Serial),
@@ -1316,7 +1353,7 @@ mod tests {
                 },
                 routing_info: RoutingInfo {
                     token: Some(Token::new(160)),
-                    keyspace: Some(KEYSPACE_NTS_RF_2),
+                    table: Some(TABLE_NTS_RF_2),
                     consistency: Consistency::Two,
                     ..Default::default()
                 },
@@ -1341,7 +1378,7 @@ mod tests {
                 },
                 routing_info: RoutingInfo {
                     token: Some(Token::new(160)),
-                    keyspace: Some(KEYSPACE_NTS_RF_2),
+                    table: Some(TABLE_NTS_RF_2),
                     consistency: Consistency::Two,
                     ..Default::default()
                 },
@@ -1365,7 +1402,7 @@ mod tests {
                 },
                 routing_info: RoutingInfo {
                     token: Some(Token::new(160)),
-                    keyspace: Some(KEYSPACE_NTS_RF_2),
+                    table: Some(TABLE_NTS_RF_2),
                     consistency: Consistency::LocalOne, // local Consistency forbids datacenter failover
                     ..Default::default()
                 },
@@ -1387,7 +1424,7 @@ mod tests {
                 },
                 routing_info: RoutingInfo {
                     token: Some(Token::new(160)),
-                    keyspace: Some(KEYSPACE_NTS_RF_2),
+                    table: Some(TABLE_NTS_RF_2),
                     consistency: Consistency::One,
                     ..Default::default()
                 },
@@ -1409,7 +1446,7 @@ mod tests {
                 },
                 routing_info: RoutingInfo {
                     token: Some(Token::new(160)),
-                    keyspace: Some(KEYSPACE_NTS_RF_3),
+                    table: Some(TABLE_NTS_RF_3),
                     consistency: Consistency::Quorum,
                     ..Default::default()
                 },
@@ -1434,7 +1471,7 @@ mod tests {
                 },
                 routing_info: RoutingInfo {
                     token: Some(Token::new(160)),
-                    keyspace: Some(KEYSPACE_NTS_RF_3),
+                    table: Some(TABLE_NTS_RF_3),
                     consistency: Consistency::Quorum,
                     ..Default::default()
                 },
@@ -1458,7 +1495,7 @@ mod tests {
                 },
                 routing_info: RoutingInfo {
                     token: Some(Token::new(160)),
-                    keyspace: Some(KEYSPACE_NTS_RF_3),
+                    table: Some(TABLE_NTS_RF_3),
                     consistency: Consistency::Quorum,
                     ..Default::default()
                 },
@@ -1480,7 +1517,7 @@ mod tests {
                 },
                 routing_info: RoutingInfo {
                     token: Some(Token::new(160)),
-                    keyspace: Some(KEYSPACE_SS_RF_2),
+                    table: Some(TABLE_SS_RF_2),
                     consistency: Consistency::Two,
                     ..Default::default()
                 },
@@ -1504,7 +1541,7 @@ mod tests {
                 },
                 routing_info: RoutingInfo {
                     token: Some(Token::new(160)),
-                    keyspace: Some(KEYSPACE_SS_RF_2),
+                    table: Some(TABLE_SS_RF_2),
                     consistency: Consistency::LocalOne, // local Consistency forbids datacenter failover
                     ..Default::default()
                 },
@@ -1526,7 +1563,7 @@ mod tests {
                 },
                 routing_info: RoutingInfo {
                     token: None, // no token
-                    keyspace: Some(KEYSPACE_NTS_RF_3),
+                    table: Some(TABLE_NTS_RF_3),
                     consistency: Consistency::Quorum,
                     ..Default::default()
                 },
@@ -1545,7 +1582,7 @@ mod tests {
                 },
                 routing_info: RoutingInfo {
                     token: Some(Token::new(160)),
-                    keyspace: None, // no keyspace
+                    table: None, // no keyspace
                     consistency: Consistency::Quorum,
                     ..Default::default()
                 },
@@ -1564,7 +1601,7 @@ mod tests {
                 },
                 routing_info: RoutingInfo {
                     token: Some(Token::new(160)),
-                    keyspace: Some(KEYSPACE_NTS_RF_2),
+                    table: Some(TABLE_NTS_RF_2),
                     consistency: Consistency::Quorum,
                     ..Default::default()
                 },
@@ -1586,7 +1623,7 @@ mod tests {
                 },
                 routing_info: RoutingInfo {
                     token: Some(Token::new(160)),
-                    keyspace: Some(KEYSPACE_NTS_RF_2),
+                    table: Some(TABLE_NTS_RF_2),
                     consistency: Consistency::Quorum,
                     ..Default::default()
                 },
@@ -1605,7 +1642,7 @@ mod tests {
                 },
                 routing_info: RoutingInfo {
                     token: Some(Token::new(160)),
-                    keyspace: Some(KEYSPACE_NTS_RF_2),
+                    table: Some(TABLE_NTS_RF_2),
                     consistency: Consistency::Quorum,
                     ..Default::default()
                 },
@@ -1627,7 +1664,7 @@ mod tests {
                 },
                 routing_info: RoutingInfo {
                     token: Some(Token::new(160)),
-                    keyspace: Some(KEYSPACE_NTS_RF_2),
+                    table: Some(TABLE_NTS_RF_2),
                     consistency: Consistency::Quorum,
                     ..Default::default()
                 },
@@ -1652,7 +1689,7 @@ mod tests {
                 },
                 routing_info: RoutingInfo {
                     token: Some(Token::new(160)),
-                    keyspace: Some(KEYSPACE_NTS_RF_3),
+                    table: Some(TABLE_NTS_RF_3),
                     consistency: Consistency::One,
                     ..Default::default()
                 },
@@ -1680,7 +1717,7 @@ mod tests {
                 },
                 routing_info: RoutingInfo {
                     token: Some(Token::new(560)),
-                    keyspace: Some(KEYSPACE_SS_RF_2),
+                    table: Some(TABLE_SS_RF_2),
                     consistency: Consistency::Two,
                     ..Default::default()
                 },
@@ -1707,7 +1744,7 @@ mod tests {
                 },
                 routing_info: RoutingInfo {
                     token: Some(Token::new(160)),
-                    keyspace: Some(KEYSPACE_SS_RF_2),
+                    table: Some(TABLE_SS_RF_2),
                     consistency: Consistency::One,
                     ..Default::default()
                 },
@@ -1733,7 +1770,7 @@ mod tests {
                 },
                 routing_info: RoutingInfo {
                     token: None,
-                    keyspace: Some(KEYSPACE_NTS_RF_3),
+                    table: Some(TABLE_NTS_RF_3),
                     consistency: Consistency::One,
                     ..Default::default()
                 },
@@ -1788,7 +1825,7 @@ mod tests {
                 },
                 routing_info: RoutingInfo {
                     token: Some(Token::new(160)),
-                    keyspace: Some(KEYSPACE_NTS_RF_2),
+                    table: Some(TABLE_NTS_RF_2),
                     consistency: Consistency::Two,
                     is_confirmed_lwt: true,
                     ..Default::default()
@@ -1814,7 +1851,7 @@ mod tests {
                 },
                 routing_info: RoutingInfo {
                     token: Some(Token::new(160)),
-                    keyspace: Some(KEYSPACE_NTS_RF_2),
+                    table: Some(TABLE_NTS_RF_2),
                     consistency: Consistency::Two,
                     is_confirmed_lwt: true,
                     ..Default::default()
@@ -1839,7 +1876,7 @@ mod tests {
                 },
                 routing_info: RoutingInfo {
                     token: Some(Token::new(160)),
-                    keyspace: Some(KEYSPACE_NTS_RF_2),
+                    table: Some(TABLE_NTS_RF_2),
                     consistency: Consistency::LocalOne, // local Consistency forbids datacenter failover
                     is_confirmed_lwt: true,
                     ..Default::default()
@@ -1862,7 +1899,7 @@ mod tests {
                 },
                 routing_info: RoutingInfo {
                     token: Some(Token::new(160)),
-                    keyspace: Some(KEYSPACE_NTS_RF_2),
+                    table: Some(TABLE_NTS_RF_2),
                     consistency: Consistency::One,
                     is_confirmed_lwt: true,
                     ..Default::default()
@@ -1885,7 +1922,7 @@ mod tests {
                 },
                 routing_info: RoutingInfo {
                     token: Some(Token::new(160)),
-                    keyspace: Some(KEYSPACE_NTS_RF_3),
+                    table: Some(TABLE_NTS_RF_3),
                     consistency: Consistency::Quorum,
                     is_confirmed_lwt: true,
                     ..Default::default()
@@ -1911,7 +1948,7 @@ mod tests {
                 },
                 routing_info: RoutingInfo {
                     token: Some(Token::new(160)),
-                    keyspace: Some(KEYSPACE_NTS_RF_3),
+                    table: Some(TABLE_NTS_RF_3),
                     consistency: Consistency::Quorum,
                     is_confirmed_lwt: true,
                     ..Default::default()
@@ -1936,7 +1973,7 @@ mod tests {
                 },
                 routing_info: RoutingInfo {
                     token: Some(Token::new(160)),
-                    keyspace: Some(KEYSPACE_NTS_RF_3),
+                    table: Some(TABLE_NTS_RF_3),
                     consistency: Consistency::Quorum,
                     is_confirmed_lwt: true,
                     ..Default::default()
@@ -1959,7 +1996,7 @@ mod tests {
                 },
                 routing_info: RoutingInfo {
                     token: Some(Token::new(160)),
-                    keyspace: Some(KEYSPACE_SS_RF_2),
+                    table: Some(TABLE_SS_RF_2),
                     consistency: Consistency::Two,
                     is_confirmed_lwt: true,
                     ..Default::default()
@@ -1984,7 +2021,7 @@ mod tests {
                 },
                 routing_info: RoutingInfo {
                     token: Some(Token::new(160)),
-                    keyspace: Some(KEYSPACE_SS_RF_2),
+                    table: Some(TABLE_SS_RF_2),
                     consistency: Consistency::LocalOne, // local Consistency forbids datacenter failover
                     is_confirmed_lwt: true,
                     ..Default::default()
@@ -2007,7 +2044,7 @@ mod tests {
                 },
                 routing_info: RoutingInfo {
                     token: None, // no token
-                    keyspace: Some(KEYSPACE_NTS_RF_3),
+                    table: Some(TABLE_NTS_RF_3),
                     consistency: Consistency::Quorum,
                     is_confirmed_lwt: true,
                     ..Default::default()
@@ -2027,7 +2064,7 @@ mod tests {
                 },
                 routing_info: RoutingInfo {
                     token: Some(Token::new(160)),
-                    keyspace: None, // no keyspace
+                    table: None, // no keyspace
                     consistency: Consistency::Quorum,
                     is_confirmed_lwt: true,
                     ..Default::default()
@@ -2047,7 +2084,7 @@ mod tests {
                 },
                 routing_info: RoutingInfo {
                     token: Some(Token::new(160)),
-                    keyspace: Some(KEYSPACE_NTS_RF_2),
+                    table: Some(TABLE_NTS_RF_2),
                     consistency: Consistency::Quorum,
                     is_confirmed_lwt: true,
                     ..Default::default()
@@ -2070,7 +2107,7 @@ mod tests {
                 },
                 routing_info: RoutingInfo {
                     token: Some(Token::new(160)),
-                    keyspace: Some(KEYSPACE_NTS_RF_2),
+                    table: Some(TABLE_NTS_RF_2),
                     consistency: Consistency::Quorum,
                     is_confirmed_lwt: true,
                     ..Default::default()
@@ -2090,7 +2127,7 @@ mod tests {
                 },
                 routing_info: RoutingInfo {
                     token: Some(Token::new(160)),
-                    keyspace: Some(KEYSPACE_NTS_RF_2),
+                    table: Some(TABLE_NTS_RF_2),
                     consistency: Consistency::Quorum,
                     is_confirmed_lwt: true,
                     ..Default::default()
@@ -2113,7 +2150,7 @@ mod tests {
                 },
                 routing_info: RoutingInfo {
                     token: Some(Token::new(160)),
-                    keyspace: Some(KEYSPACE_NTS_RF_2),
+                    table: Some(TABLE_NTS_RF_2),
                     consistency: Consistency::Quorum,
                     is_confirmed_lwt: true,
                     ..Default::default()
@@ -2139,7 +2176,7 @@ mod tests {
                 },
                 routing_info: RoutingInfo {
                     token: Some(Token::new(160)),
-                    keyspace: Some(KEYSPACE_NTS_RF_3),
+                    table: Some(TABLE_NTS_RF_3),
                     consistency: Consistency::One,
                     is_confirmed_lwt: true,
                     ..Default::default()
@@ -2168,7 +2205,7 @@ mod tests {
                 },
                 routing_info: RoutingInfo {
                     token: Some(Token::new(760)),
-                    keyspace: Some(KEYSPACE_SS_RF_2),
+                    table: Some(TABLE_SS_RF_2),
                     consistency: Consistency::Two,
                     is_confirmed_lwt: true,
                     ..Default::default()
@@ -2195,7 +2232,7 @@ mod tests {
                 },
                 routing_info: RoutingInfo {
                     token: Some(Token::new(160)),
-                    keyspace: Some(KEYSPACE_SS_RF_2),
+                    table: Some(TABLE_SS_RF_2),
                     consistency: Consistency::One,
                     is_confirmed_lwt: true,
                     ..Default::default()
@@ -2804,6 +2841,7 @@ mod latency_awareness {
             load_balancing::default::NodeLocationPreference,
             routing::Shard,
             test_utils::{create_new_session_builder, setup_tracing},
+            transport::locator::test::{TABLE_INVALID, TABLE_NTS_RF_2, TABLE_NTS_RF_3},
         };
         use crate::{
             load_balancing::{
@@ -2812,9 +2850,7 @@ mod latency_awareness {
             },
             routing::Token,
             transport::{
-                locator::test::{
-                    id_to_invalid_addr, A, B, C, D, E, F, G, KEYSPACE_NTS_RF_2, KEYSPACE_NTS_RF_3,
-                },
+                locator::test::{id_to_invalid_addr, A, B, C, D, E, F, G},
                 ClusterData, NodeAddr,
             },
             ExecutionProfile,
@@ -3407,7 +3443,7 @@ mod latency_awareness {
                     ],
                     routing_info: RoutingInfo {
                         token: Some(Token::new(160)),
-                        keyspace: Some(KEYSPACE_NTS_RF_3),
+                        table: Some(TABLE_NTS_RF_3),
                         consistency: Consistency::Quorum,
                         ..Default::default()
                     },
@@ -3427,7 +3463,7 @@ mod latency_awareness {
                     preset_min_avg: Some(100 * min_avg),
                     routing_info: RoutingInfo {
                         token: Some(Token::new(160)),
-                        keyspace: Some(KEYSPACE_NTS_RF_3),
+                        table: Some(TABLE_NTS_RF_3),
                         consistency: Consistency::Quorum,
                         ..Default::default()
                     },
@@ -3456,7 +3492,7 @@ mod latency_awareness {
                     ],
                     routing_info: RoutingInfo {
                         token: Some(Token::new(160)),
-                        keyspace: Some(KEYSPACE_NTS_RF_2),
+                        table: Some(TABLE_NTS_RF_2),
                         consistency: Consistency::Quorum,
                         ..Default::default()
                     },
@@ -3475,7 +3511,7 @@ mod latency_awareness {
                     preset_min_avg: None,
                     routing_info: RoutingInfo {
                         token: Some(Token::new(160)),
-                        keyspace: Some("invalid"),
+                        table: Some(TABLE_INVALID),
                         consistency: Consistency::Quorum,
                         ..Default::default()
                     },

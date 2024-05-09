@@ -3,6 +3,7 @@ use crate::frame::response::event::{Event, StatusChangeEvent};
 use crate::prepared_statement::TokenCalculationError;
 use crate::routing::{Shard, Token};
 use crate::transport::host_filter::HostFilter;
+use crate::transport::session::TABLET_CHANNEL_SIZE;
 use crate::transport::{
     connection::{Connection, VerifiedKeyspaceName},
     connection_pool::PoolConfig,
@@ -17,8 +18,9 @@ use futures::future::join_all;
 use futures::{future::RemoteHandle, FutureExt};
 use itertools::Itertools;
 use scylla_cql::errors::{BadQuery, NewSessionError};
+use scylla_cql::frame::response::result::TableSpec;
 use scylla_cql::types::serialize::row::SerializedValues;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration;
@@ -26,6 +28,7 @@ use tracing::instrument::WithSubscriber;
 use tracing::{debug, warn};
 use uuid::Uuid;
 
+use super::locator::tablets::{RawTablet, Tablet, TabletsInfo};
 use super::node::{KnownNode, NodeAddr};
 use super::NodeRef;
 
@@ -115,6 +118,10 @@ struct ClusterWorker {
     // Channel used to receive signals that control connection is broken
     control_connection_repair_channel: tokio::sync::broadcast::Receiver<()>,
 
+    // Channel used to receive info about new tablets from custom payload in responses
+    // sent by server.
+    tablets_channel: tokio::sync::mpsc::Receiver<(TableSpec<'static>, RawTablet)>,
+
     // Keyspace send in "USE <keyspace name>" when opening each connection
     used_keyspace: Option<VerifiedKeyspaceName>,
 
@@ -146,6 +153,7 @@ impl Cluster {
         fetch_schema_metadata: bool,
         host_filter: Option<Arc<dyn HostFilter>>,
         cluster_metadata_refresh_interval: Duration,
+        tablet_receiver: tokio::sync::mpsc::Receiver<(TableSpec<'static>, RawTablet)>,
     ) -> Result<Cluster, NewSessionError> {
         let (refresh_sender, refresh_receiver) = tokio::sync::mpsc::channel(32);
         let (use_keyspace_sender, use_keyspace_receiver) = tokio::sync::mpsc::channel(32);
@@ -172,6 +180,7 @@ impl Cluster {
             &HashMap::new(),
             &None,
             host_filter.as_deref(),
+            TabletsInfo::new(),
         )
         .await;
         cluster_data.wait_until_all_pools_are_initialized().await;
@@ -187,6 +196,7 @@ impl Cluster {
             refresh_channel: refresh_receiver,
             server_events_channel: server_events_receiver,
             control_connection_repair_channel: control_connection_repair_receiver,
+            tablets_channel: tablet_receiver,
 
             use_keyspace_channel: use_keyspace_receiver,
             used_keyspace: None,
@@ -275,13 +285,13 @@ impl ClusterData {
         known_peers: &HashMap<Uuid, Arc<Node>>,
         used_keyspace: &Option<VerifiedKeyspaceName>,
         host_filter: Option<&dyn HostFilter>,
+        mut tablets: TabletsInfo,
     ) -> Self {
         // Create new updated known_peers and ring
         let mut new_known_peers: HashMap<Uuid, Arc<Node>> =
             HashMap::with_capacity(metadata.peers.len());
         let mut ring: Vec<(Token, Arc<Node>)> = Vec::new();
         let mut datacenters: HashMap<String, Datacenter> = HashMap::new();
-        let mut all_nodes: Vec<Arc<Node>> = Vec::with_capacity(metadata.peers.len());
 
         for peer in metadata.peers {
             // Take existing Arc<Node> if possible, otherwise create new one
@@ -333,8 +343,47 @@ impl ClusterData {
             for token in peer_tokens {
                 ring.push((token, node.clone()));
             }
+        }
 
-            all_nodes.push(node);
+        {
+            let removed_nodes = {
+                let mut removed_nodes = HashSet::new();
+                for old_peer in known_peers {
+                    if !new_known_peers.contains_key(old_peer.0) {
+                        removed_nodes.insert(*old_peer.0);
+                    }
+                }
+
+                removed_nodes
+            };
+
+            let table_predicate = |spec: &TableSpec| {
+                if let Some(ks) = metadata.keyspaces.get(spec.ks_name()) {
+                    ks.tables.contains_key(spec.table_name())
+                } else {
+                    false
+                }
+            };
+
+            let recreated_nodes = {
+                let mut recreated_nodes = HashMap::new();
+                for (old_peer_id, old_peer_node) in known_peers {
+                    if let Some(new_peer_node) = new_known_peers.get(old_peer_id) {
+                        if !Arc::ptr_eq(old_peer_node, new_peer_node) {
+                            recreated_nodes.insert(*old_peer_id, Arc::clone(new_peer_node));
+                        }
+                    }
+                }
+
+                recreated_nodes
+            };
+
+            tablets.perform_maintenance(
+                &table_predicate,
+                &removed_nodes,
+                &new_known_peers,
+                &recreated_nodes,
+            )
         }
 
         Self::update_rack_count(&mut datacenters);
@@ -342,7 +391,7 @@ impl ClusterData {
         let keyspaces = metadata.keyspaces;
         let (locator, keyspaces) = tokio::task::spawn_blocking(move || {
             let keyspace_strategies = keyspaces.values().map(|ks| &ks.strategy);
-            let locator = ReplicaLocator::new(ring.into_iter(), keyspace_strategies);
+            let locator = ReplicaLocator::new(ring.into_iter(), keyspace_strategies, tablets);
             (locator, keyspaces)
         })
         .await
@@ -409,24 +458,30 @@ impl ClusterData {
     }
 
     /// Access to replicas owning a given token
-    pub fn get_token_endpoints(&self, keyspace: &str, token: Token) -> Vec<(Arc<Node>, Shard)> {
-        self.get_token_endpoints_iter(keyspace, token)
+    pub fn get_token_endpoints(
+        &self,
+        keyspace: &str,
+        table: &str,
+        token: Token,
+    ) -> Vec<(Arc<Node>, Shard)> {
+        let table_spec = TableSpec::borrowed(keyspace, table);
+        self.get_token_endpoints_iter(&table_spec, token)
             .map(|(node, shard)| (node.clone(), shard))
             .collect()
     }
 
     pub(crate) fn get_token_endpoints_iter(
         &self,
-        keyspace: &str,
+        table_spec: &TableSpec,
         token: Token,
     ) -> impl Iterator<Item = (NodeRef<'_>, Shard)> {
-        let keyspace = self.keyspaces.get(keyspace);
+        let keyspace = self.keyspaces.get(table_spec.ks_name());
         let strategy = keyspace
             .map(|k| &k.strategy)
             .unwrap_or(&Strategy::LocalStrategy);
         let replica_set = self
             .replica_locator()
-            .replicas_for_token(token, strategy, None);
+            .replicas_for_token(token, strategy, None, table_spec);
 
         replica_set.into_iter()
     }
@@ -438,10 +493,8 @@ impl ClusterData {
         table: &str,
         partition_key: &SerializedValues,
     ) -> Result<Vec<(Arc<Node>, Shard)>, BadQuery> {
-        Ok(self.get_token_endpoints(
-            keyspace,
-            self.compute_token(keyspace, table, partition_key)?,
-        ))
+        let token = self.compute_token(keyspace, table, partition_key)?;
+        Ok(self.get_token_endpoints(keyspace, table, token))
     }
 
     /// Access replica location info
@@ -474,6 +527,30 @@ impl ClusterData {
         // By an invariant `self.known_peers` is nonempty, so the returned iterator
         // is nonempty, too.
     }
+
+    fn update_tablets(&mut self, raw_tablets: Vec<(TableSpec<'static>, RawTablet)>) {
+        let replica_translator = |uuid: Uuid| self.known_peers.get(&uuid).cloned();
+
+        for (table, raw_tablet) in raw_tablets.into_iter() {
+            // Should we skip tablets that belong to a keyspace not present in
+            // self.keyspaces? The keyspace could have been, without driver's knowledge:
+            // 1. Dropped - in which case we'll remove its info soon (when refreshing
+            // topology) anyway.
+            // 2. Created - no harm in storing the info now.
+            //
+            // So I think we can safely skip checking keyspace presence.
+            let tablet = match Tablet::from_raw_tablet(raw_tablet, replica_translator) {
+                Ok(t) => t,
+                Err((t, f)) => {
+                    debug!("Nodes ({}) that are replicas for a tablet {{ks: {}, table: {}, range: [{}. {}]}} not present in current ClusterData.known_peers. \
+                       Skipping these replicas until topology refresh",
+                       f.iter().format(", "), table.ks_name(), table.table_name(), t.range().0.value(), t.range().1.value());
+                    t
+                }
+            };
+            self.locator.tablets.add_tablet(table, tablet);
+        }
+    }
 }
 
 impl ClusterWorker {
@@ -496,6 +573,8 @@ impl ClusterWorker {
                 })
                 .unwrap_or_else(Instant::now);
 
+            let mut tablets = Vec::new();
+
             let sleep_future = tokio::time::sleep_until(sleep_until);
             tokio::pin!(sleep_future);
 
@@ -506,6 +585,37 @@ impl ClusterWorker {
                         Some(request) => cur_request = Some(request),
                         None => return, // If refresh_channel was closed then cluster was dropped, we can stop working
                     }
+                }
+                tablets_count = self.tablets_channel.recv_many(&mut tablets, TABLET_CHANNEL_SIZE) => {
+                    tracing::trace!("Performing tablets update - received {} tablets", tablets_count);
+                    if tablets_count == 0 {
+                        // If the channel was closed then the cluster was dropped, we can stop working
+                        return;
+                    }
+                    // The current tablet implementation collects tablet feedback in a channel
+                    // and then clones the whole ClusterData, updates it with new tablets and replaces
+                    // the old ClusterData - this update procedure happens below.
+                    // This fits the general model of how ClusterData is handled in the driver:
+                    // - ClusterData remains a "simple" struct - without locks etc (apart from Node).
+                    // - Topology information update is similar to tablet update - it creates a new ClusterData
+                    //   and replaces the old one.
+                    // The disadvantage is that we need to have 2 copies of ClusterData, but this happens
+                    // anyway during topology update.
+                    //
+                    // An alternative solution would be to use some synchronization primitives to update tablet info
+                    // in place. This solution avoids ClusterData cloning but:
+                    // - ClusterData would be much more complicated
+                    // - Requires using locks in hot path (when sending request)
+                    // - Makes maintenance (which happens during topology update) more complicated and error-prone.
+                    //
+                    // I decided to stick with the approach that fits with the driver.
+                    // Apart from the reasons above, it is much easier to reason about concurrency etc
+                    // when reading the code in other parts of the driver.
+                    let mut new_cluster_data: ClusterData = self.cluster_data.load().as_ref().clone();
+                    new_cluster_data.update_tablets(tablets);
+                    self.update_cluster_data(Arc::new(new_cluster_data));
+
+                    continue;
                 }
                 recv_res = self.server_events_channel.recv() => {
                     if let Some(event) = recv_res {
@@ -662,6 +772,7 @@ impl ClusterWorker {
                 &cluster_data.known_peers,
                 &self.used_keyspace,
                 self.host_filter.as_deref(),
+                cluster_data.locator.tablets.clone(),
             )
             .await,
         );
