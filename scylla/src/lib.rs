@@ -126,7 +126,10 @@ pub mod frame {
     }
 }
 
-pub use scylla_cql::types::serialize;
+// FIXME: finer-grained control over exports
+// Some types are `pub` in scylla-cql just for scylla crate,
+// and those shouldn't be exposed for users.
+pub use scylla_cql::types::{deserialize, serialize};
 
 pub mod authentication;
 #[cfg(feature = "cloud")]

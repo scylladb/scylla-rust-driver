@@ -75,6 +75,53 @@ impl<'frame> Iterator for ColumnIterator<'frame> {
     }
 }
 
+/// A type that can be deserialized from a row that was returned from a query.
+///
+/// For tips on how to write a custom implementation of this trait, see the
+/// documentation of the parent module.
+///
+/// The crate also provides a derive macro which allows to automatically
+/// implement the trait for a custom type. For more details on what the macro
+/// is capable of, see its documentation.
+pub trait DeserializeRow<'frame>
+where
+    Self: Sized,
+{
+    /// Checks that the schema of the result matches what this type expects.
+    ///
+    /// This function can check whether column types and names match the
+    /// expectations.
+    fn type_check(specs: &[ColumnSpec]) -> Result<(), TypeCheckError>;
+
+    /// Deserializes a row from given column iterator.
+    ///
+    /// This function can assume that the driver called `type_check` to verify
+    /// the row's type. Note that `deserialize` is not an unsafe function,
+    /// so it should not use the assumption about `type_check` being called
+    /// as an excuse to run `unsafe` code.
+    fn deserialize(row: ColumnIterator<'frame>) -> Result<Self, DeserializationError>;
+}
+
+// raw deserialization as ColumnIterator
+
+// What is the purpose of implementing DeserializeRow for ColumnIterator?
+//
+// Sometimes users might be interested in operating on ColumnIterator directly.
+// Implementing DeserializeRow for it allows us to simplify our interface. For example,
+// we have `QueryResult::rows<T: DeserializeRow>()` - you can put T = ColumnIterator
+// instead of having a separate rows_raw function or something like this.
+impl<'frame> DeserializeRow<'frame> for ColumnIterator<'frame> {
+    #[inline]
+    fn type_check(_specs: &[ColumnSpec]) -> Result<(), TypeCheckError> {
+        Ok(())
+    }
+
+    #[inline]
+    fn deserialize(row: ColumnIterator<'frame>) -> Result<Self, DeserializationError> {
+        Ok(row)
+    }
+}
+
 // Error facilities
 
 /// Failed to type check incoming result column types again given Rust type,
