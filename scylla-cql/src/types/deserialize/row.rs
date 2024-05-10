@@ -4,9 +4,76 @@ use std::fmt::Display;
 
 use thiserror::Error;
 
-use super::{DeserializationError, TypeCheckError};
+use super::{DeserializationError, FrameSlice, TypeCheckError};
+use crate::frame::response::result::{ColumnSpec, ColumnType};
 
-use crate::frame::response::result::ColumnType;
+/// Represents a raw, unparsed column value.
+#[non_exhaustive]
+pub struct RawColumn<'frame> {
+    pub index: usize,
+    pub spec: &'frame ColumnSpec,
+    pub slice: Option<FrameSlice<'frame>>,
+}
+
+/// Iterates over columns of a single row.
+#[derive(Clone, Debug)]
+pub struct ColumnIterator<'frame> {
+    specs: std::iter::Enumerate<std::slice::Iter<'frame, ColumnSpec>>,
+    slice: FrameSlice<'frame>,
+}
+
+impl<'frame> ColumnIterator<'frame> {
+    /// Creates a new iterator over a single row.
+    ///
+    /// - `specs` - information about columns of the serialized response,
+    /// - `slice` - a [FrameSlice] which points to the serialized row.
+    #[inline]
+    pub(crate) fn new(specs: &'frame [ColumnSpec], slice: FrameSlice<'frame>) -> Self {
+        Self {
+            specs: specs.iter().enumerate(),
+            slice,
+        }
+    }
+
+    /// Returns the remaining number of columns that this iterator is expected
+    /// to return.
+    #[inline]
+    pub fn columns_remaining(&self) -> usize {
+        self.specs.len()
+    }
+}
+
+impl<'frame> Iterator for ColumnIterator<'frame> {
+    type Item = Result<RawColumn<'frame>, DeserializationError>;
+
+    #[inline]
+    fn next(&mut self) -> Option<Self::Item> {
+        let (column_index, spec) = self.specs.next()?;
+        Some(
+            self.slice
+                .read_cql_bytes()
+                .map(|slice| RawColumn {
+                    index: column_index,
+                    spec,
+                    slice,
+                })
+                .map_err(|err| {
+                    mk_deser_err::<Self>(
+                        BuiltinDeserializationErrorKind::RawColumnDeserializationFailed {
+                            column_index,
+                            column_name: spec.name.clone(),
+                            err: DeserializationError::new(err),
+                        },
+                    )
+                }),
+        )
+    }
+
+    #[inline]
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        self.specs.size_hint()
+    }
+}
 
 // Error facilities
 
@@ -86,10 +153,34 @@ pub(super) fn mk_deser_err_named(
 /// Describes why deserializing a result row failed.
 #[derive(Debug, Clone)]
 #[non_exhaustive]
-pub enum BuiltinDeserializationErrorKind {}
+pub enum BuiltinDeserializationErrorKind {
+    /// One of the raw columns failed to deserialize, most probably
+    /// due to the invalid column structure inside a row in the frame.
+    RawColumnDeserializationFailed {
+        /// Index of the raw column that failed to deserialize.
+        column_index: usize,
+
+        /// Name of the raw column that failed to deserialize.
+        column_name: String,
+
+        /// The error that caused the raw column deserialization to fail.
+        err: DeserializationError,
+    },
+}
 
 impl Display for BuiltinDeserializationErrorKind {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        Ok(())
+        match self {
+            BuiltinDeserializationErrorKind::RawColumnDeserializationFailed {
+                column_index,
+                column_name,
+                err,
+            } => {
+                write!(
+                    f,
+                    "failed to deserialize raw column {column_name} at index {column_index} (most probably due to invalid column structure inside a row): {err}"
+                )
+            }
+        }
     }
 }
