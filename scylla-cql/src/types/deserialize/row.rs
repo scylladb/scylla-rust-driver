@@ -413,13 +413,17 @@ impl Display for BuiltinDeserializationErrorKind {
 
 #[cfg(test)]
 mod tests {
+    use assert_matches::assert_matches;
     use bytes::Bytes;
 
+    use crate::frame::frame_errors::ParseError;
     use crate::frame::response::result::{ColumnSpec, ColumnType};
+    use crate::types::deserialize::row::BuiltinDeserializationErrorKind;
     use crate::types::deserialize::{DeserializationError, FrameSlice};
 
     use super::super::tests::{serialize_cells, spec};
-    use super::{ColumnIterator, DeserializeRow};
+    use super::{BuiltinDeserializationError, ColumnIterator, CqlValue, DeserializeRow, Row};
+    use super::{BuiltinTypeCheckError, BuiltinTypeCheckErrorKind};
 
     #[test]
     fn test_tuple_deserialization() {
@@ -512,5 +516,169 @@ mod tests {
         let slice = FrameSlice::new(byts);
         let iter = ColumnIterator::new(specs, slice);
         <R as DeserializeRow<'frame>>::deserialize(iter)
+    }
+
+    #[track_caller]
+    fn get_typck_err(err: &DeserializationError) -> &BuiltinTypeCheckError {
+        match err.0.downcast_ref() {
+            Some(err) => err,
+            None => panic!("not a BuiltinTypeCheckError: {:?}", err),
+        }
+    }
+
+    #[track_caller]
+    fn get_deser_err(err: &DeserializationError) -> &BuiltinDeserializationError {
+        match err.0.downcast_ref() {
+            Some(err) => err,
+            None => panic!("not a BuiltinDeserializationError: {:?}", err),
+        }
+    }
+
+    #[test]
+    fn test_tuple_errors() {
+        // Column type check failure
+        {
+            let col_name: &str = "i";
+            let specs = &[spec(col_name, ColumnType::Int)];
+            let err = deserialize::<(i64,)>(specs, &serialize_cells([val_int(123)])).unwrap_err();
+            let err = get_typck_err(&err);
+            assert_eq!(err.rust_name, std::any::type_name::<(i64,)>());
+            assert_eq!(
+                err.cql_types,
+                specs
+                    .iter()
+                    .map(|spec| spec.typ.clone())
+                    .collect::<Vec<_>>()
+            );
+            let BuiltinTypeCheckErrorKind::ColumnTypeCheckFailed {
+                column_index,
+                column_name,
+                err,
+            } = &err.kind
+            else {
+                panic!("unexpected error kind: {}", err.kind)
+            };
+            assert_eq!(*column_index, 0);
+            assert_eq!(column_name, col_name);
+            let err = super::super::value::tests::get_typeck_err_inner(err.0.as_ref());
+            assert_eq!(err.rust_name, std::any::type_name::<i64>());
+            assert_eq!(err.cql_type, ColumnType::Int);
+            assert_matches!(
+                &err.kind,
+                super::super::value::BuiltinTypeCheckErrorKind::MismatchedType {
+                    expected: &[ColumnType::BigInt, ColumnType::Counter]
+                }
+            );
+        }
+
+        // Column deserialization failure
+        {
+            let col_name: &str = "i";
+            let err = deserialize::<(i64,)>(
+                &[spec(col_name, ColumnType::BigInt)],
+                &serialize_cells([val_int(123)]),
+            )
+            .unwrap_err();
+            let err = get_deser_err(&err);
+            assert_eq!(err.rust_name, std::any::type_name::<(i64,)>());
+            let BuiltinDeserializationErrorKind::ColumnDeserializationFailed {
+                column_name,
+                err,
+                ..
+            } = &err.kind
+            else {
+                panic!("unexpected error kind: {}", err.kind)
+            };
+            assert_eq!(column_name, col_name);
+            let err = super::super::value::tests::get_deser_err(err);
+            assert_eq!(err.rust_name, std::any::type_name::<i64>());
+            assert_eq!(err.cql_type, ColumnType::BigInt);
+            assert_matches!(
+                err.kind,
+                super::super::value::BuiltinDeserializationErrorKind::ByteLengthMismatch {
+                    expected: 8,
+                    got: 4
+                }
+            );
+        }
+
+        // Raw column deserialization failure
+        {
+            let col_name: &str = "i";
+            let err = deserialize::<(i64,)>(
+                &[spec(col_name, ColumnType::BigInt)],
+                &Bytes::from_static(b"alamakota"),
+            )
+            .unwrap_err();
+            let err = get_deser_err(&err);
+            assert_eq!(err.rust_name, std::any::type_name::<(i64,)>());
+            let BuiltinDeserializationErrorKind::RawColumnDeserializationFailed {
+                column_index: _column_index,
+                column_name,
+                err: _err,
+            } = &err.kind
+            else {
+                panic!("unexpected error kind: {}", err.kind)
+            };
+            assert_eq!(column_name, col_name);
+        }
+    }
+
+    #[test]
+    fn test_row_errors() {
+        // Column type check failure - happens never, because Row consists of CqlValues,
+        // which accept all CQL types.
+
+        // Column deserialization failure
+        {
+            let col_name: &str = "i";
+            let err = deserialize::<Row>(
+                &[spec(col_name, ColumnType::BigInt)],
+                &serialize_cells([val_int(123)]),
+            )
+            .unwrap_err();
+            let err = get_deser_err(&err);
+            assert_eq!(err.rust_name, std::any::type_name::<Row>());
+            let BuiltinDeserializationErrorKind::ColumnDeserializationFailed {
+                column_index: _column_index,
+                column_name,
+                err,
+            } = &err.kind
+            else {
+                panic!("unexpected error kind: {}", err.kind)
+            };
+            assert_eq!(column_name, col_name);
+            let err = super::super::value::tests::get_deser_err(err);
+            assert_eq!(err.rust_name, std::any::type_name::<CqlValue>());
+            assert_eq!(err.cql_type, ColumnType::BigInt);
+            let super::super::value::BuiltinDeserializationErrorKind::GenericParseError(
+                ParseError::BadIncomingData(info),
+            ) = &err.kind
+            else {
+                panic!("unexpected error kind: {}", err.kind)
+            };
+            assert_eq!(info, "Buffer length should be 8 not 4");
+        }
+
+        // Raw column deserialization failure
+        {
+            let col_name: &str = "i";
+            let err = deserialize::<Row>(
+                &[spec(col_name, ColumnType::BigInt)],
+                &Bytes::from_static(b"alamakota"),
+            )
+            .unwrap_err();
+            let err = get_deser_err(&err);
+            assert_eq!(err.rust_name, std::any::type_name::<Row>());
+            let BuiltinDeserializationErrorKind::RawColumnDeserializationFailed {
+                column_index: _column_index,
+                column_name,
+                err: _err,
+            } = &err.kind
+            else {
+                panic!("unexpected error kind: {}", err.kind)
+            };
+            assert_eq!(column_name, col_name);
+        }
     }
 }
