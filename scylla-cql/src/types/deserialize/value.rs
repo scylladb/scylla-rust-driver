@@ -6,7 +6,7 @@ use thiserror::Error;
 
 use super::{DeserializationError, FrameSlice, TypeCheckError};
 use crate::frame::frame_errors::ParseError;
-use crate::frame::response::result::ColumnType;
+use crate::frame::response::result::{deser_cql_value, ColumnType, CqlValue};
 
 /// A type that can be deserialized from a column value inside a row that was
 /// returned from a query.
@@ -34,6 +34,40 @@ where
         typ: &'frame ColumnType,
         v: Option<FrameSlice<'frame>>,
     ) -> Result<Self, DeserializationError>;
+}
+
+impl<'frame> DeserializeValue<'frame> for CqlValue {
+    fn type_check(_typ: &ColumnType) -> Result<(), TypeCheckError> {
+        // CqlValue accepts all possible CQL types
+        Ok(())
+    }
+
+    fn deserialize(
+        typ: &'frame ColumnType,
+        v: Option<FrameSlice<'frame>>,
+    ) -> Result<Self, DeserializationError> {
+        let mut val = ensure_not_null_slice::<Self>(typ, v)?;
+        let cql = deser_cql_value(typ, &mut val).map_err(|err| {
+            mk_deser_err::<Self>(typ, BuiltinDeserializationErrorKind::GenericParseError(err))
+        })?;
+        Ok(cql)
+    }
+}
+
+// Utilities
+
+fn ensure_not_null_frame_slice<'frame, T>(
+    typ: &ColumnType,
+    v: Option<FrameSlice<'frame>>,
+) -> Result<FrameSlice<'frame>, DeserializationError> {
+    v.ok_or_else(|| mk_deser_err::<T>(typ, BuiltinDeserializationErrorKind::ExpectedNonNull))
+}
+
+fn ensure_not_null_slice<'frame, T>(
+    typ: &ColumnType,
+    v: Option<FrameSlice<'frame>>,
+) -> Result<&'frame [u8], DeserializationError> {
+    ensure_not_null_frame_slice::<T>(typ, v).map(|frame_slice| frame_slice.as_slice())
 }
 
 // Error facilities
@@ -136,12 +170,18 @@ fn mk_deser_err_named(
 pub enum BuiltinDeserializationErrorKind {
     /// A generic deserialization failure - legacy error type.
     GenericParseError(ParseError),
+
+    /// Expected non-null value, got null.
+    ExpectedNonNull,
 }
 
 impl Display for BuiltinDeserializationErrorKind {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             BuiltinDeserializationErrorKind::GenericParseError(err) => err.fmt(f),
+            BuiltinDeserializationErrorKind::ExpectedNonNull => {
+                f.write_str("expected a non-null value, got null")
+            }
         }
     }
 }
