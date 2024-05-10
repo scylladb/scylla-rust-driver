@@ -54,6 +54,25 @@ impl<'frame> DeserializeValue<'frame> for CqlValue {
     }
 }
 
+// Option represents nullability of CQL values:
+// None corresponds to null,
+// Some(val) to non-null values.
+impl<'frame, T> DeserializeValue<'frame> for Option<T>
+where
+    T: DeserializeValue<'frame>,
+{
+    fn type_check(typ: &ColumnType) -> Result<(), TypeCheckError> {
+        T::type_check(typ)
+    }
+
+    fn deserialize(
+        typ: &'frame ColumnType,
+        v: Option<FrameSlice<'frame>>,
+    ) -> Result<Self, DeserializationError> {
+        v.map(|_| T::deserialize(typ, v)).transpose()
+    }
+}
+
 // Utilities
 
 fn ensure_not_null_frame_slice<'frame, T>(
