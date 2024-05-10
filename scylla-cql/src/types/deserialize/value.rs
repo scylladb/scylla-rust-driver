@@ -1169,6 +1169,13 @@ mod tests {
             compat_check_serialized::<Uuid>(&ColumnType::Uuid, &uuid);
             compat_check_serialized::<CqlTimeuuid>(&ColumnType::Timeuuid, &CqlTimeuuid::from(uuid));
         }
+
+        // empty values
+        // ...are implemented via MaybeEmpty and are handled in other tests
+
+        // nulls, represented via Option
+        compat_check_serialized::<Option<i32>>(&ColumnType::Int, &123i32);
+        compat_check::<Option<i32>>(&ColumnType::Int, make_null());
     }
 
     // Checks that both new and old serialization framework
@@ -1247,5 +1254,15 @@ mod tests {
     fn append_bytes(b: &mut impl BufMut, cell: &[u8]) {
         b.put_i32(cell.len() as i32);
         b.put_slice(cell);
+    }
+
+    fn make_null() -> Bytes {
+        let mut b = BytesMut::new();
+        append_null(&mut b);
+        b.freeze()
+    }
+
+    fn append_null(b: &mut impl BufMut) {
+        b.put_i32(-1);
     }
 }
