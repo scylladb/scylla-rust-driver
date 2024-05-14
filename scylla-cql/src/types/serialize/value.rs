@@ -1535,7 +1535,7 @@ mod tests {
     }
 
     #[test]
-    fn test_dyn_serialize_cql() {
+    fn test_dyn_serialize_value() {
         let v: i32 = 123;
         let mut typed_data = Vec::new();
         let typed_data_writer = CellWriter::new(&mut typed_data);
