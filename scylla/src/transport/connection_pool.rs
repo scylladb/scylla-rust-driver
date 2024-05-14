@@ -27,7 +27,6 @@ use std::sync::{Arc, RwLock, Weak};
 use std::time::Duration;
 
 use tokio::sync::{broadcast, mpsc, Notify};
-use tracing::instrument::WithSubscriber;
 use tracing::{debug, error, trace, warn};
 
 /// The target size of a per-node connection pool.
@@ -212,7 +211,7 @@ impl NodeConnectionPool {
 
         let conns = refiller.get_shared_connections();
         let (fut, refiller_handle) = refiller.run(use_keyspace_request_receiver).remote_handle();
-        tokio::spawn(fut.with_current_subscriber());
+        tokio::spawn(fut);
 
         Self {
             conns,
@@ -1138,17 +1137,14 @@ impl PoolRefiller {
             Err(QueryError::IoError(io_error.unwrap()))
         };
 
-        tokio::task::spawn(
-            async move {
-                let res = fut.await;
-                match &res {
-                    Ok(()) => debug!("[{}] Successfully changed current keyspace", address),
-                    Err(err) => warn!("[{}] Failed to change keyspace: {:?}", address, err),
-                }
-                let _ = response_sender.send(res);
+        tokio::task::spawn(async move {
+            let res = fut.await;
+            match &res {
+                Ok(()) => debug!("[{}] Successfully changed current keyspace", address),
+                Err(err) => warn!("[{}] Failed to change keyspace: {:?}", address, err),
             }
-            .with_current_subscriber(),
-        );
+            let _ = response_sender.send(res);
+        });
     }
 
     // Requires the keyspace to be set

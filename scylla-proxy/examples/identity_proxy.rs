@@ -1,7 +1,6 @@
 use std::{net::SocketAddr, str::FromStr};
 
 use scylla_proxy::{Node, Proxy, ShardAwareness};
-use tracing::instrument::WithSubscriber;
 
 fn init_logger() {
     tracing_subscriber::fmt::fmt()
@@ -30,7 +29,7 @@ async fn main() {
                 .build(),
         )
         .build();
-    let running_proxy = proxy.run().with_current_subscriber().await.unwrap();
+    let running_proxy = proxy.run().await.unwrap();
 
     pause().await;
     running_proxy.finish().await.unwrap();

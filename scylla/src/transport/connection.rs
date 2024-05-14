@@ -13,7 +13,6 @@ use tokio::io::{split, AsyncRead, AsyncWrite, AsyncWriteExt, BufReader, BufWrite
 use tokio::net::{TcpSocket, TcpStream};
 use tokio::sync::{mpsc, oneshot};
 use tokio::time::Instant;
-use tracing::instrument::WithSubscriber;
 use tracing::{debug, error, trace, warn};
 use uuid::Uuid;
 
@@ -1090,7 +1089,7 @@ impl Connection {
                 node_address,
             )
             .remote_handle();
-            tokio::task::spawn(task.with_current_subscriber());
+            tokio::task::spawn(task);
             return Ok(handle);
         }
 
@@ -1104,7 +1103,7 @@ impl Connection {
             node_address,
         )
         .remote_handle();
-        tokio::task::spawn(task.with_current_subscriber());
+        tokio::task::spawn(task);
         Ok(handle)
     }
 
