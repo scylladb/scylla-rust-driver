@@ -24,7 +24,6 @@ use std::collections::{HashMap, HashSet};
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration;
-use tracing::instrument::WithSubscriber;
 use tracing::{debug, warn};
 use uuid::Uuid;
 
@@ -206,7 +205,7 @@ impl Cluster {
         };
 
         let (fut, worker_handle) = worker.work().remote_handle();
-        tokio::spawn(fut.with_current_subscriber());
+        tokio::spawn(fut);
 
         let result = Cluster {
             data: cluster_data,
@@ -647,7 +646,7 @@ impl ClusterWorker {
 
                             let cluster_data = self.cluster_data.load_full();
                             let use_keyspace_future = Self::handle_use_keyspace_request(cluster_data, request);
-                            tokio::spawn(use_keyspace_future.with_current_subscriber());
+                            tokio::spawn(use_keyspace_future);
                         },
                         None => return, // If use_keyspace_channel was closed then cluster was dropped, we can stop working
                     }
