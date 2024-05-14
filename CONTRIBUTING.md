@@ -19,10 +19,10 @@ In case any of those requirements can't be met, please include the reason for th
 
 After submitting a PR which meets all criteria from the previous section, it will be reviewed by one or more maintainers. When the maintainers become satisfied with your contribution, one of them will merge it.
 
-Currently, the list of people maintaining the fork include:
+Currently, the list of people maintaining the driver include:
 
-- Jan Ciołek (@cvybhu)
-- Piotr Dulikowski (@piodul)
+- Wojciech Przytuła (@wprzytula)
+- Karol Baryła (@Lorak-mmk)
 
 ## Static checks
 
