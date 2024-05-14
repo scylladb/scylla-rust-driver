@@ -906,14 +906,14 @@ fn serialize_mapping<'t, 'b, K: SerializeValue + 't, V: SerializeValue + 't>(
 ///
 /// ```rust
 /// # use scylla_cql::frame::value::{Value, ValueTooBig};
-/// # use scylla_cql::impl_serialize_cql_via_value;
+/// # use scylla_cql::impl_serialize_value_via_value;
 /// struct NoGenerics {}
 /// impl Value for NoGenerics {
 ///     fn serialize<'b>(&self, _buf: &mut Vec<u8>) -> Result<(), ValueTooBig> {
 ///         Ok(())
 ///     }
 /// }
-/// impl_serialize_cql_via_value!(NoGenerics);
+/// impl_serialize_value_via_value!(NoGenerics);
 ///
 /// // Generic types are also supported. You must specify the bounds if the
 /// // struct/enum contains any.
@@ -925,10 +925,10 @@ fn serialize_mapping<'t, 'b, K: SerializeValue + 't, V: SerializeValue + 't>(
 ///         Ok(())
 ///     }
 /// }
-/// impl_serialize_cql_via_value!(WithGenerics<T, U: Clone>);
+/// impl_serialize_value_via_value!(WithGenerics<T, U: Clone>);
 /// ```
 #[macro_export]
-macro_rules! impl_serialize_cql_via_value {
+macro_rules! impl_serialize_value_via_value {
     ($t:ident$(<$($targ:tt $(: $tbound:tt)?),*>)?) => {
         impl $(<$($targ $(: $tbound)?),*>)? $crate::types::serialize::value::SerializeValue
         for $t$(<$($targ),*>)?
@@ -951,7 +951,7 @@ macro_rules! impl_serialize_cql_via_value {
 
 /// Implements [`SerializeValue`] if the type wrapped over implements [`Value`].
 ///
-/// See the [`impl_serialize_cql_via_value`] macro on information about
+/// See the [`impl_serialize_value_via_value`] macro on information about
 /// the properties of the [`SerializeValue`] implementation.
 pub struct ValueAdapter<T>(pub T);
 
@@ -980,7 +980,7 @@ where
 /// Returns an error if the result of the `Value::serialize` call was not
 /// a properly encoded `[value]` as defined in the CQL protocol spec.
 ///
-/// See [`impl_serialize_cql_via_value`] which generates a boilerplate
+/// See [`impl_serialize_value_via_value`] which generates a boilerplate
 /// [`SerializeValue`] implementation that uses this function.
 pub fn serialize_legacy_value<'b, T: Value>(
     v: &T,
