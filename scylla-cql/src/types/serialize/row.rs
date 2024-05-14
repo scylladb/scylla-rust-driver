@@ -1141,6 +1141,7 @@ mod tests {
     // Do not remove. It's not used in tests but we keep it here to check that
     // we properly ignore warnings about unused variables, unnecessary `mut`s
     // etc. that usually pop up when generating code for empty structs.
+    #[allow(unused)]
     #[derive(SerializeRow)]
     #[scylla(crate = crate)]
     struct TestRowWithNoColumns {}
