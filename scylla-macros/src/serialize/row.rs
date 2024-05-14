@@ -237,7 +237,7 @@ impl<'a> Generator for ColumnSortingGenerator<'a> {
                     #(
                         #udt_field_names => {
                             let sub_writer = #crate_path::RowWriter::make_cell_writer(writer);
-                            match <#field_types as #crate_path::SerializeCql>::serialize(&self.#rust_field_idents, &spec.typ, sub_writer) {
+                            match <#field_types as #crate_path::SerializeValue>::serialize(&self.#rust_field_idents, &spec.typ, sub_writer) {
                                 ::std::result::Result::Ok(_proof) => {}
                                 ::std::result::Result::Err(err) => {
                                     return ::std::result::Result::Err(mk_ser_err(
@@ -339,7 +339,7 @@ impl<'a> Generator for ColumnOrderedGenerator<'a> {
                     Some(spec) => {
                         if #name_check_expression {
                             let cell_writer = #crate_path::RowWriter::make_cell_writer(writer);
-                            match <#typ as #crate_path::SerializeCql>::serialize(&self.#rust_field_ident, &spec.typ, cell_writer) {
+                            match <#typ as #crate_path::SerializeValue>::serialize(&self.#rust_field_ident, &spec.typ, cell_writer) {
                                 Ok(_proof) => {},
                                 Err(err) => {
                                     return ::std::result::Result::Err(mk_ser_err(

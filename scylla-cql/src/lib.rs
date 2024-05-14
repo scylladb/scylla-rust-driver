@@ -5,8 +5,8 @@ pub mod macros {
     pub use scylla_macros::FromRow;
     pub use scylla_macros::FromUserType;
     pub use scylla_macros::IntoUserType;
-    pub use scylla_macros::SerializeCql;
     pub use scylla_macros::SerializeRow;
+    pub use scylla_macros::SerializeValue;
     pub use scylla_macros::ValueList;
 
     // Reexports for derive(IntoUserType)
@@ -44,7 +44,7 @@ pub mod _macro_internal {
         BuiltinSerializationError as BuiltinTypeSerializationError,
         BuiltinSerializationErrorKind as BuiltinTypeSerializationErrorKind,
         BuiltinTypeCheckError as BuiltinTypeTypeCheckError,
-        BuiltinTypeCheckErrorKind as BuiltinTypeTypeCheckErrorKind, SerializeCql,
+        BuiltinTypeCheckErrorKind as BuiltinTypeTypeCheckErrorKind, SerializeValue,
         UdtSerializationErrorKind, UdtTypeCheckErrorKind,
     };
     pub use crate::types::serialize::writers::WrittenCellProof;

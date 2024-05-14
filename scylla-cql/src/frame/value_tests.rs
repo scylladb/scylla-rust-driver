@@ -2,7 +2,7 @@ use crate::frame::value::{CqlTimeuuid, CqlVarint};
 use crate::frame::{response::result::CqlValue, types::RawValue, value::LegacyBatchValuesIterator};
 use crate::types::serialize::batch::{BatchValues, BatchValuesIterator, LegacyBatchValuesAdapter};
 use crate::types::serialize::row::{RowSerializationContext, SerializeRow};
-use crate::types::serialize::value::SerializeCql;
+use crate::types::serialize::value::SerializeValue;
 use crate::types::serialize::{CellWriter, RowWriter};
 
 use super::response::result::{ColumnSpec, ColumnType, TableSpec};
@@ -23,24 +23,24 @@ use uuid::Uuid;
 
 fn serialized<T>(val: T, typ: ColumnType) -> Vec<u8>
 where
-    T: Value + SerializeCql,
+    T: Value + SerializeValue,
 {
     let mut result: Vec<u8> = Vec::new();
     Value::serialize(&val, &mut result).unwrap();
 
     let mut new_result: Vec<u8> = Vec::new();
     let writer = CellWriter::new(&mut new_result);
-    SerializeCql::serialize(&val, &typ, writer).unwrap();
+    SerializeValue::serialize(&val, &typ, writer).unwrap();
 
     assert_eq!(result, new_result);
 
     result
 }
 
-fn serialized_only_new<T: SerializeCql>(val: T, typ: ColumnType) -> Vec<u8> {
+fn serialized_only_new<T: SerializeValue>(val: T, typ: ColumnType) -> Vec<u8> {
     let mut result: Vec<u8> = Vec::new();
     let writer = CellWriter::new(&mut result);
-    SerializeCql::serialize(&val, &typ, writer).unwrap();
+    SerializeValue::serialize(&val, &typ, writer).unwrap();
     result
 }
 
@@ -169,7 +169,7 @@ fn varint_test_cases_from_spec() -> Vec<(i64, Vec<u8>)> {
 #[cfg(any(feature = "num-bigint-03", feature = "num-bigint-04"))]
 fn generic_num_bigint_serialization<B>()
 where
-    B: From<i64> + Value + SerializeCql,
+    B: From<i64> + Value + SerializeValue,
 {
     let cases_from_the_spec: &[(i64, Vec<u8>)] = &varint_test_cases_from_spec();
 
@@ -824,7 +824,7 @@ fn cqlvalue_serialization() {
         ]
     );
 
-    // Unlike the legacy Value trait, SerializeCql takes case of reordering
+    // Unlike the legacy Value trait, SerializeValue takes case of reordering
     // the fields
     let udt = CqlValue::UserDefinedType {
         keyspace: "ks".to_string(),

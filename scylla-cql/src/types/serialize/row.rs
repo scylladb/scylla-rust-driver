@@ -17,7 +17,7 @@ use crate::frame::value::SerializeValuesError;
 use crate::frame::value::{LegacySerializedValues, ValueList};
 use crate::frame::{response::result::ColumnSpec, types::RawValue};
 
-use super::value::SerializeCql;
+use super::value::SerializeValue;
 use super::{CellWriter, RowWriter, SerializationError};
 
 /// Contains information needed to serialize a row.
@@ -148,16 +148,15 @@ macro_rules! impl_serialize_row_for_slice {
                 ));
             }
             for (col, val) in ctx.columns().iter().zip(self.iter()) {
-                <T as SerializeCql>::serialize(val, &col.typ, writer.make_cell_writer()).map_err(
-                    |err| {
+                <T as SerializeValue>::serialize(val, &col.typ, writer.make_cell_writer())
+                    .map_err(|err| {
                         mk_ser_err::<Self>(
                             BuiltinSerializationErrorKind::ColumnSerializationFailed {
                                 name: col.name.clone(),
                                 err,
                             },
                         )
-                    },
-                )?;
+                    })?;
             }
             Ok(())
         }
@@ -169,11 +168,11 @@ macro_rules! impl_serialize_row_for_slice {
     };
 }
 
-impl<'a, T: SerializeCql + 'a> SerializeRow for &'a [T] {
+impl<'a, T: SerializeValue + 'a> SerializeRow for &'a [T] {
     impl_serialize_row_for_slice!();
 }
 
-impl<T: SerializeCql> SerializeRow for Vec<T> {
+impl<T: SerializeValue> SerializeRow for Vec<T> {
     impl_serialize_row_for_slice!();
 }
 
@@ -199,7 +198,7 @@ macro_rules! impl_serialize_row_for_map {
                         ))
                     }
                     Some(v) => {
-                        <T as SerializeCql>::serialize(v, &col.typ, writer.make_cell_writer())
+                        <T as SerializeValue>::serialize(v, &col.typ, writer.make_cell_writer())
                             .map_err(|err| {
                                 mk_ser_err::<Self>(
                                     BuiltinSerializationErrorKind::ColumnSerializationFailed {
@@ -233,19 +232,19 @@ macro_rules! impl_serialize_row_for_map {
     };
 }
 
-impl<T: SerializeCql> SerializeRow for BTreeMap<String, T> {
+impl<T: SerializeValue> SerializeRow for BTreeMap<String, T> {
     impl_serialize_row_for_map!();
 }
 
-impl<T: SerializeCql> SerializeRow for BTreeMap<&str, T> {
+impl<T: SerializeValue> SerializeRow for BTreeMap<&str, T> {
     impl_serialize_row_for_map!();
 }
 
-impl<T: SerializeCql, S: BuildHasher> SerializeRow for HashMap<String, T, S> {
+impl<T: SerializeValue, S: BuildHasher> SerializeRow for HashMap<String, T, S> {
     impl_serialize_row_for_map!();
 }
 
-impl<T: SerializeCql, S: BuildHasher> SerializeRow for HashMap<&str, T, S> {
+impl<T: SerializeValue, S: BuildHasher> SerializeRow for HashMap<&str, T, S> {
     impl_serialize_row_for_map!();
 }
 
@@ -279,7 +278,7 @@ macro_rules! impl_tuple {
         $($tidents:ident),*;
         $length:expr
     ) => {
-        impl<$($typs: SerializeCql),*> SerializeRow for ($($typs,)*) {
+        impl<$($typs: SerializeValue),*> SerializeRow for ($($typs,)*) {
             fn serialize(
                 &self,
                 ctx: &RowSerializationContext<'_>,
@@ -296,7 +295,7 @@ macro_rules! impl_tuple {
                 };
                 let ($($fidents,)*) = self;
                 $(
-                    <$typs as SerializeCql>::serialize($fidents, &$tidents.typ, writer.make_cell_writer()).map_err(|err| {
+                    <$typs as SerializeValue>::serialize($fidents, &$tidents.typ, writer.make_cell_writer()).map_err(|err| {
                         mk_ser_err::<Self>(BuiltinSerializationErrorKind::ColumnSerializationFailed {
                             name: $tidents.name.clone(),
                             err,
@@ -784,7 +783,7 @@ impl SerializedValues {
     }
 
     /// Serializes value and appends it to the list
-    pub fn add_value<T: SerializeCql>(
+    pub fn add_value<T: SerializeValue>(
         &mut self,
         val: &T,
         typ: &ColumnType,
@@ -861,7 +860,7 @@ mod tests {
 
     use super::{
         BuiltinSerializationError, BuiltinSerializationErrorKind, BuiltinTypeCheckError,
-        BuiltinTypeCheckErrorKind, RowSerializationContext, SerializeCql, SerializeRow,
+        BuiltinTypeCheckErrorKind, RowSerializationContext, SerializeRow, SerializeValue,
     };
 
     use super::SerializedValues;
@@ -1254,7 +1253,7 @@ mod tests {
 
     #[derive(SerializeRow)]
     #[scylla(crate = crate)]
-    struct TestRowWithGenerics<'a, T: SerializeCql> {
+    struct TestRowWithGenerics<'a, T: SerializeValue> {
         a: &'a str,
         b: T,
     }
@@ -1262,7 +1261,7 @@ mod tests {
     #[test]
     fn test_row_serialization_with_generics() {
         // A minimal smoke test just to test that it works.
-        fn check_with_type<T: SerializeCql + Copy>(typ: ColumnType, t: T) {
+        fn check_with_type<T: SerializeValue + Copy>(typ: ColumnType, t: T) {
             let spec = [col("a", ColumnType::Text), col("b", typ)];
             let reference = do_serialize(("Ala ma kota", t), &spec);
             let row = do_serialize(
