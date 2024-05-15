@@ -14,7 +14,7 @@ mod serialize;
 /// This is because of rustdocs limitations that are hard to explain here.
 #[proc_macro_derive(SerializeValue, attributes(scylla))]
 pub fn serialize_value_derive(tokens_input: TokenStream) -> TokenStream {
-    match serialize::cql::derive_serialize_value(tokens_input) {
+    match serialize::value::derive_serialize_value(tokens_input) {
         Ok(t) => t.into_token_stream().into(),
         Err(e) => e.into_compile_error().into(),
     }
