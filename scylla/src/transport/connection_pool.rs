@@ -974,7 +974,7 @@ impl PoolRefiller {
             new_sharder,
         );
 
-        self.sharder = new_sharder.clone();
+        self.sharder.clone_from(&new_sharder);
 
         // If the sharder has changed, we can throw away all previous connections.
         // All connections to the same live node will have the same sharder,

@@ -15,6 +15,7 @@ use thiserror::Error;
 use tokio::io::{AsyncRead, AsyncReadExt};
 use uuid::Uuid;
 
+use std::fmt::Display;
 use std::{collections::HashMap, convert::TryFrom};
 
 use request::SerializableRequest;
@@ -47,11 +48,11 @@ pub enum Compression {
     Snappy,
 }
 
-impl ToString for Compression {
-    fn to_string(&self) -> String {
+impl Display for Compression {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Compression::Lz4 => "lz4".to_owned(),
-            Compression::Snappy => "snappy".to_owned(),
+            Compression::Lz4 => f.write_str("lz4"),
+            Compression::Snappy => f.write_str("snappy"),
         }
     }
 }
