@@ -865,6 +865,7 @@ mod tests {
     };
 
     use super::SerializedValues;
+    use assert_matches::assert_matches;
     use scylla_macros::SerializeRow;
 
     fn col_spec(name: &str, typ: ColumnType) -> ColumnSpec {
@@ -1044,13 +1045,13 @@ mod tests {
         let err = do_serialize_err(v, &spec);
         let err = get_typeck_err(&err);
         assert_eq!(err.rust_name, std::any::type_name::<()>());
-        assert!(matches!(
+        assert_matches!(
             err.kind,
             BuiltinTypeCheckErrorKind::WrongColumnCount {
                 actual: 0,
                 asked_for: 1,
             }
-        ));
+        );
 
         // Non-unit tuple
         // Count mismatch
@@ -1059,13 +1060,13 @@ mod tests {
         let err = do_serialize_err(v, &spec);
         let err = get_typeck_err(&err);
         assert_eq!(err.rust_name, std::any::type_name::<(&str,)>());
-        assert!(matches!(
+        assert_matches!(
             err.kind,
             BuiltinTypeCheckErrorKind::WrongColumnCount {
                 actual: 1,
                 asked_for: 2,
             }
-        ));
+        );
 
         // Serialization of one of the element fails
         let v = ("Ala ma kota", 123_i32);
@@ -1086,13 +1087,13 @@ mod tests {
         let err = do_serialize_err(v, &spec);
         let err = get_typeck_err(&err);
         assert_eq!(err.rust_name, std::any::type_name::<Vec<&str>>());
-        assert!(matches!(
+        assert_matches!(
             err.kind,
             BuiltinTypeCheckErrorKind::WrongColumnCount {
                 actual: 1,
                 asked_for: 2,
             }
-        ));
+        );
 
         // Serialization of one of the element fails
         let v = vec!["Ala ma kota", "Kot ma pchły"];
@@ -1214,10 +1215,10 @@ mod tests {
         };
         let err = <_ as SerializeRow>::serialize(&row, &ctx, &mut row_writer).unwrap_err();
         let err = err.0.downcast_ref::<BuiltinTypeCheckError>().unwrap();
-        assert!(matches!(
+        assert_matches!(
             err.kind,
             BuiltinTypeCheckErrorKind::ValueMissingForColumn { .. }
-        ));
+        );
 
         let spec_duplicate_column = [
             col("a", ColumnType::Text),
@@ -1232,10 +1233,7 @@ mod tests {
         };
         let err = <_ as SerializeRow>::serialize(&row, &ctx, &mut row_writer).unwrap_err();
         let err = err.0.downcast_ref::<BuiltinTypeCheckError>().unwrap();
-        assert!(matches!(
-            err.kind,
-            BuiltinTypeCheckErrorKind::NoColumnWithName { .. }
-        ));
+        assert_matches!(err.kind, BuiltinTypeCheckErrorKind::NoColumnWithName { .. });
 
         let spec_wrong_type = [
             col("a", ColumnType::Text),
@@ -1248,10 +1246,10 @@ mod tests {
         };
         let err = <_ as SerializeRow>::serialize(&row, &ctx, &mut row_writer).unwrap_err();
         let err = err.0.downcast_ref::<BuiltinSerializationError>().unwrap();
-        assert!(matches!(
+        assert_matches!(
             err.kind,
             BuiltinSerializationErrorKind::ColumnSerializationFailed { .. }
-        ));
+        );
     }
 
     #[derive(SerializeRow)]
@@ -1325,10 +1323,10 @@ mod tests {
         let ctx = RowSerializationContext { columns: &spec };
         let err = <_ as SerializeRow>::serialize(&row, &ctx, &mut writer).unwrap_err();
         let err = err.0.downcast_ref::<BuiltinTypeCheckError>().unwrap();
-        assert!(matches!(
+        assert_matches!(
             err.kind,
             BuiltinTypeCheckErrorKind::ColumnNameMismatch { .. }
-        ));
+        );
 
         let spec_without_c = [
             col("a", ColumnType::Text),
@@ -1341,10 +1339,10 @@ mod tests {
         };
         let err = <_ as SerializeRow>::serialize(&row, &ctx, &mut writer).unwrap_err();
         let err = err.0.downcast_ref::<BuiltinTypeCheckError>().unwrap();
-        assert!(matches!(
+        assert_matches!(
             err.kind,
             BuiltinTypeCheckErrorKind::ValueMissingForColumn { .. }
-        ));
+        );
 
         let spec_duplicate_column = [
             col("a", ColumnType::Text),
@@ -1359,10 +1357,7 @@ mod tests {
         };
         let err = <_ as SerializeRow>::serialize(&row, &ctx, &mut writer).unwrap_err();
         let err = err.0.downcast_ref::<BuiltinTypeCheckError>().unwrap();
-        assert!(matches!(
-            err.kind,
-            BuiltinTypeCheckErrorKind::NoColumnWithName { .. }
-        ));
+        assert_matches!(err.kind, BuiltinTypeCheckErrorKind::NoColumnWithName { .. });
 
         let spec_wrong_type = [
             col("a", ColumnType::Text),
@@ -1375,10 +1370,10 @@ mod tests {
         };
         let err = <_ as SerializeRow>::serialize(&row, &ctx, &mut writer).unwrap_err();
         let err = err.0.downcast_ref::<BuiltinSerializationError>().unwrap();
-        assert!(matches!(
+        assert_matches!(
             err.kind,
             BuiltinSerializationErrorKind::ColumnSerializationFailed { .. }
-        ));
+        );
     }
 
     #[test]
