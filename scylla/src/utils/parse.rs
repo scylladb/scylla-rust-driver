@@ -1,3 +1,5 @@
+use std::fmt::Display;
+
 /// An error that can occur during parsing.
 #[derive(Copy, Clone)]
 pub(crate) struct ParseError {
@@ -27,11 +29,11 @@ pub(crate) enum ParseErrorCause {
     Other(&'static str),
 }
 
-impl ToString for ParseErrorCause {
-    fn to_string(&self) -> String {
+impl Display for ParseErrorCause {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            ParseErrorCause::Expected(e) => format!("expected {:?}", e),
-            ParseErrorCause::Other(e) => e.to_string(),
+            ParseErrorCause::Expected(e) => write!(f, "expected {:?}", e),
+            ParseErrorCause::Other(e) => f.write_str(e),
         }
     }
 }
