@@ -1,4 +1,5 @@
 use crate::batch::{Batch, BatchStatement};
+use crate::deserialize::DeserializeValue;
 use crate::prepared_statement::PreparedStatement;
 use crate::query::Query;
 use crate::retry_policy::{QueryInfo, RetryDecision, RetryPolicy, RetrySession};
@@ -25,12 +26,12 @@ use assert_matches::assert_matches;
 use futures::{FutureExt, TryStreamExt};
 use itertools::Itertools;
 use scylla_cql::frame::request::query::{PagingState, PagingStateResponse};
-use scylla_cql::frame::response::result::ColumnType;
-use scylla_cql::frame::response::result::Row;
+use scylla_cql::frame::response::result::{ColumnType, Row};
+use scylla_cql::frame::value::CqlVarint;
 use scylla_cql::types::serialize::row::{SerializeRow, SerializedValues};
 use scylla_cql::types::serialize::value::SerializeValue;
-use std::collections::BTreeSet;
 use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeSet, HashSet};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use tokio::net::TcpListener;
@@ -3096,4 +3097,69 @@ async fn test_manual_primary_key_computation() {
         )
         .await;
     }
+}
+
+/// ScyllaDB does not distinguish empty collections from nulls. That is, INSERTing an empty collection
+/// is equivalent to nullifying the corresponding column.
+/// As pointed out in [#1001](https://github.com/scylladb/scylla-rust-driver/issues/1001), it's a nice
+/// QOL feature to be able to deserialize empty CQL collections to empty Rust collections instead of
+/// `None::<RustCollection>`. This test checks that.
+#[tokio::test]
+async fn test_deserialize_empty_collections() {
+    // Setup session.
+    let ks = unique_keyspace_name();
+    let session = create_new_session_builder().build().await.unwrap();
+    session.query_unpaged(format!("CREATE KEYSPACE IF NOT EXISTS {} WITH REPLICATION = {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}}", ks), &[]).await.unwrap();
+    session.use_keyspace(&ks, true).await.unwrap();
+
+    async fn deserialize_empty_collection<
+        Collection: Default + for<'frame> DeserializeValue<'frame, 'frame> + SerializeValue,
+    >(
+        session: &Session,
+        collection_name: &str,
+        collection_type_params: &str,
+    ) -> Collection {
+        // Create a table for the given collection type.
+        let table_name = "test_empty_".to_owned() + collection_name;
+        let query = format!(
+            "CREATE TABLE {} (n int primary key, c {}<{}>)",
+            table_name, collection_name, collection_type_params
+        );
+        session.query_unpaged(query, ()).await.unwrap();
+
+        // Populate the table with an empty collection, effectively inserting null as the collection.
+        session
+            .query_unpaged(
+                format!("INSERT INTO {} (n, c) VALUES (?, ?)", table_name,),
+                (0, Collection::default()),
+            )
+            .await
+            .unwrap();
+
+        let query_rows_result = session
+            .query_unpaged(format!("SELECT c FROM {}", table_name), ())
+            .await
+            .unwrap()
+            .into_rows_result()
+            .unwrap()
+            .unwrap();
+        let (collection,) = query_rows_result.first_row::<(Collection,)>().unwrap();
+
+        // Drop the table
+        collection
+    }
+
+    let list = deserialize_empty_collection::<Vec<i32>>(&session, "list", "int").await;
+    assert!(list.is_empty());
+
+    let set = deserialize_empty_collection::<HashSet<i64>>(&session, "set", "bigint").await;
+    assert!(set.is_empty());
+
+    let map = deserialize_empty_collection::<HashMap<bool, CqlVarint>>(
+        &session,
+        "map",
+        "boolean, varint",
+    )
+    .await;
+    assert!(map.is_empty());
 }
