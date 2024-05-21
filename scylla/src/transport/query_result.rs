@@ -267,6 +267,8 @@ mod tests {
     };
     use std::convert::TryInto;
 
+    use assert_matches::assert_matches;
+
     // Returns specified number of rows, each one containing one int32 value.
     // Values are 0, 1, 2, 3, 4, ...
     fn make_rows(rows_num: usize) -> Vec<Row> {
@@ -483,10 +485,10 @@ mod tests {
             Ok((0,))
         );
 
-        assert!(matches!(
+        assert_matches!(
             make_string_rows_query_result(2).first_row_typed::<(i32,)>(),
             Err(FirstRowTypedError::FromRowError(_))
-        ));
+        );
     }
 
     #[test]
@@ -539,10 +541,10 @@ mod tests {
             Ok(Some((0,)))
         );
 
-        assert!(matches!(
+        assert_matches!(
             make_string_rows_query_result(1).maybe_first_row_typed::<(i32,)>(),
             Err(MaybeFirstRowTypedError::FromRowError(_))
-        ))
+        )
     }
 
     #[test]
@@ -594,9 +596,9 @@ mod tests {
             Err(SingleRowTypedError::BadNumberOfRows(3))
         );
 
-        assert!(matches!(
+        assert_matches!(
             make_string_rows_query_result(1).single_row_typed::<(i32,)>(),
             Err(SingleRowTypedError::FromRowError(_))
-        ));
+        );
     }
 }

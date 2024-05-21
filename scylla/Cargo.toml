@@ -16,14 +16,28 @@ rustdoc-args = ["--cfg", "docsrs"]
 [features]
 default = []
 ssl = ["dep:tokio-openssl", "dep:openssl"]
-cloud = ["ssl", "scylla-cql/serde", "dep:serde_yaml", "dep:serde", "dep:url", "dep:base64"]
+cloud = [
+    "ssl",
+    "scylla-cql/serde",
+    "dep:serde_yaml",
+    "dep:serde",
+    "dep:url",
+    "dep:base64",
+]
 secret = ["scylla-cql/secret"]
 chrono = ["scylla-cql/chrono"]
 time = ["scylla-cql/time"]
 num-bigint-03 = ["scylla-cql/num-bigint-03"]
 num-bigint-04 = ["scylla-cql/num-bigint-04"]
 bigdecimal-04 = ["scylla-cql/bigdecimal-04"]
-full-serialization = ["chrono", "time", "secret", "num-bigint-03", "num-bigint-04", "bigdecimal-04"]
+full-serialization = [
+    "chrono",
+    "time",
+    "secret",
+    "num-bigint-03",
+    "num-bigint-04",
+    "bigdecimal-04",
+]
 
 [dependencies]
 scylla-macros = { version = "0.5.0", path = "../scylla-macros" }
@@ -33,7 +47,14 @@ bytes = "1.0.1"
 futures = "0.3.6"
 hashbrown = "0.14"
 histogram = "0.6.9"
-tokio = { version = "1.34", features = ["net", "time", "io-util", "sync", "rt", "macros"] }
+tokio = { version = "1.34", features = [
+    "net",
+    "time",
+    "io-util",
+    "sync",
+    "rt",
+    "macros",
+] }
 snap = "1.0"
 uuid = { version = "1.0", features = ["v4"] }
 rand = "0.8.3"
@@ -62,7 +83,7 @@ num-bigint-04 = { package = "num-bigint", version = "0.4" }
 bigdecimal-04 = { package = "bigdecimal", version = "0.4" }
 scylla-proxy = { version = "0.0.3", path = "../scylla-proxy" }
 ntest = "0.9.0"
-criterion = "0.4" # Note: v0.5 needs at least rust 1.70.0
+criterion = "0.4"                                                      # Note: v0.5 needs at least rust 1.70.0
 tokio = { version = "1.27", features = ["test-util"] }
 tracing-subscriber = { version = "0.3.14", features = ["env-filter"] }
 assert_matches = "1.5.0"

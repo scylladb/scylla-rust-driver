@@ -108,8 +108,8 @@ macro_rules! impl_serialize_row_for_unit {
             if !ctx.columns().is_empty() {
                 return Err(mk_typck_err::<Self>(
                     BuiltinTypeCheckErrorKind::WrongColumnCount {
-                        actual: 0,
-                        asked_for: ctx.columns().len(),
+                        rust_cols: 0,
+                        cql_cols: ctx.columns().len(),
                     },
                 ));
             }
@@ -142,8 +142,8 @@ macro_rules! impl_serialize_row_for_slice {
             if ctx.columns().len() != self.len() {
                 return Err(mk_typck_err::<Self>(
                     BuiltinTypeCheckErrorKind::WrongColumnCount {
-                        actual: self.len(),
-                        asked_for: ctx.columns().len(),
+                        rust_cols: self.len(),
+                        cql_cols: ctx.columns().len(),
                     },
                 ));
             }
@@ -289,8 +289,8 @@ macro_rules! impl_tuple {
                     [$($tidents),*] => ($($tidents,)*),
                     _ => return Err(mk_typck_err::<Self>(
                         BuiltinTypeCheckErrorKind::WrongColumnCount {
-                            actual: $length,
-                            asked_for: ctx.columns().len(),
+                            rust_cols: $length,
+                            cql_cols: ctx.columns().len(),
                         },
                     )),
                 };
@@ -582,13 +582,13 @@ fn mk_ser_err_named(
 #[derive(Debug, Clone)]
 #[non_exhaustive]
 pub enum BuiltinTypeCheckErrorKind {
-    /// The Rust type expects `actual` column, but the statement requires `asked_for`.
+    /// The Rust type provides `rust_cols` columns, but the statement operates on `cql_cols`.
     WrongColumnCount {
         /// The number of values that the Rust type provides.
-        actual: usize,
+        rust_cols: usize,
 
-        /// The number of columns that the statement requires.
-        asked_for: usize,
+        /// The number of columns that the statement operates on.
+        cql_cols: usize,
     },
 
     /// The Rust type provides a value for some column, but that column is not
@@ -618,8 +618,8 @@ pub enum BuiltinTypeCheckErrorKind {
 impl Display for BuiltinTypeCheckErrorKind {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            BuiltinTypeCheckErrorKind::WrongColumnCount { actual, asked_for } => {
-                write!(f, "wrong column count: the query requires {asked_for} columns, but {actual} were provided")
+            BuiltinTypeCheckErrorKind::WrongColumnCount { rust_cols, cql_cols } => {
+                write!(f, "wrong column count: the statement operates on {cql_cols} columns, but the given rust type provides {rust_cols}")
             }
             BuiltinTypeCheckErrorKind::NoColumnWithName { name } => {
                 write!(
@@ -865,6 +865,7 @@ mod tests {
     };
 
     use super::SerializedValues;
+    use assert_matches::assert_matches;
     use scylla_macros::SerializeRow;
 
     fn col_spec(name: &str, typ: ColumnType) -> ColumnSpec {
@@ -1044,13 +1045,13 @@ mod tests {
         let err = do_serialize_err(v, &spec);
         let err = get_typeck_err(&err);
         assert_eq!(err.rust_name, std::any::type_name::<()>());
-        assert!(matches!(
+        assert_matches!(
             err.kind,
             BuiltinTypeCheckErrorKind::WrongColumnCount {
-                actual: 0,
-                asked_for: 1,
+                rust_cols: 0,
+                cql_cols: 1,
             }
-        ));
+        );
 
         // Non-unit tuple
         // Count mismatch
@@ -1059,13 +1060,13 @@ mod tests {
         let err = do_serialize_err(v, &spec);
         let err = get_typeck_err(&err);
         assert_eq!(err.rust_name, std::any::type_name::<(&str,)>());
-        assert!(matches!(
+        assert_matches!(
             err.kind,
             BuiltinTypeCheckErrorKind::WrongColumnCount {
-                actual: 1,
-                asked_for: 2,
+                rust_cols: 1,
+                cql_cols: 2,
             }
-        ));
+        );
 
         // Serialization of one of the element fails
         let v = ("Ala ma kota", 123_i32);
@@ -1086,13 +1087,13 @@ mod tests {
         let err = do_serialize_err(v, &spec);
         let err = get_typeck_err(&err);
         assert_eq!(err.rust_name, std::any::type_name::<Vec<&str>>());
-        assert!(matches!(
+        assert_matches!(
             err.kind,
             BuiltinTypeCheckErrorKind::WrongColumnCount {
-                actual: 1,
-                asked_for: 2,
+                rust_cols: 1,
+                cql_cols: 2,
             }
-        ));
+        );
 
         // Serialization of one of the element fails
         let v = vec!["Ala ma kota", "Kot ma pchły"];
@@ -1214,10 +1215,10 @@ mod tests {
         };
         let err = <_ as SerializeRow>::serialize(&row, &ctx, &mut row_writer).unwrap_err();
         let err = err.0.downcast_ref::<BuiltinTypeCheckError>().unwrap();
-        assert!(matches!(
+        assert_matches!(
             err.kind,
             BuiltinTypeCheckErrorKind::ValueMissingForColumn { .. }
-        ));
+        );
 
         let spec_duplicate_column = [
             col("a", ColumnType::Text),
@@ -1232,10 +1233,7 @@ mod tests {
         };
         let err = <_ as SerializeRow>::serialize(&row, &ctx, &mut row_writer).unwrap_err();
         let err = err.0.downcast_ref::<BuiltinTypeCheckError>().unwrap();
-        assert!(matches!(
-            err.kind,
-            BuiltinTypeCheckErrorKind::NoColumnWithName { .. }
-        ));
+        assert_matches!(err.kind, BuiltinTypeCheckErrorKind::NoColumnWithName { .. });
 
         let spec_wrong_type = [
             col("a", ColumnType::Text),
@@ -1248,10 +1246,10 @@ mod tests {
         };
         let err = <_ as SerializeRow>::serialize(&row, &ctx, &mut row_writer).unwrap_err();
         let err = err.0.downcast_ref::<BuiltinSerializationError>().unwrap();
-        assert!(matches!(
+        assert_matches!(
             err.kind,
             BuiltinSerializationErrorKind::ColumnSerializationFailed { .. }
-        ));
+        );
     }
 
     #[derive(SerializeRow)]
@@ -1325,10 +1323,10 @@ mod tests {
         let ctx = RowSerializationContext { columns: &spec };
         let err = <_ as SerializeRow>::serialize(&row, &ctx, &mut writer).unwrap_err();
         let err = err.0.downcast_ref::<BuiltinTypeCheckError>().unwrap();
-        assert!(matches!(
+        assert_matches!(
             err.kind,
             BuiltinTypeCheckErrorKind::ColumnNameMismatch { .. }
-        ));
+        );
 
         let spec_without_c = [
             col("a", ColumnType::Text),
@@ -1341,10 +1339,10 @@ mod tests {
         };
         let err = <_ as SerializeRow>::serialize(&row, &ctx, &mut writer).unwrap_err();
         let err = err.0.downcast_ref::<BuiltinTypeCheckError>().unwrap();
-        assert!(matches!(
+        assert_matches!(
             err.kind,
             BuiltinTypeCheckErrorKind::ValueMissingForColumn { .. }
-        ));
+        );
 
         let spec_duplicate_column = [
             col("a", ColumnType::Text),
@@ -1359,10 +1357,7 @@ mod tests {
         };
         let err = <_ as SerializeRow>::serialize(&row, &ctx, &mut writer).unwrap_err();
         let err = err.0.downcast_ref::<BuiltinTypeCheckError>().unwrap();
-        assert!(matches!(
-            err.kind,
-            BuiltinTypeCheckErrorKind::NoColumnWithName { .. }
-        ));
+        assert_matches!(err.kind, BuiltinTypeCheckErrorKind::NoColumnWithName { .. });
 
         let spec_wrong_type = [
             col("a", ColumnType::Text),
@@ -1375,10 +1370,10 @@ mod tests {
         };
         let err = <_ as SerializeRow>::serialize(&row, &ctx, &mut writer).unwrap_err();
         let err = err.0.downcast_ref::<BuiltinSerializationError>().unwrap();
-        assert!(matches!(
+        assert_matches!(
             err.kind,
             BuiltinSerializationErrorKind::ColumnSerializationFailed { .. }
-        ));
+        );
     }
 
     #[test]

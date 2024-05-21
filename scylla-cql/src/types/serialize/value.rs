@@ -48,7 +48,7 @@ pub trait SerializeCql {
     /// The [`CellWriter`] provided to the method ensures that the value produced
     /// will be properly framed (i.e. incorrectly written value should not
     /// cause the rest of the request to be misinterpreted), but otherwise
-    /// the implementor of the trait is responsible for producing the a value
+    /// the implementor of the trait is responsible for producing the value
     /// in a correct format.
     fn serialize<'b>(
         &self,
@@ -548,8 +548,8 @@ fn serialize_cql_value<'b>(
                         return Err(mk_typck_err::<CqlValue>(
                             typ,
                             TupleTypeCheckErrorKind::WrongElementCount {
-                                actual: t.len(),
-                                asked_for: fields.len(),
+                                rust_type_el_count: t.len(),
+                                cql_type_el_count: fields.len(),
                             },
                         ));
                     }
@@ -586,7 +586,7 @@ fn fix_cql_value_name_in_err(mut err: SerializationError) -> SerializationError 
             }
         }
         None => {
-            // The `None` case shouldn't happen consisdering how we are using
+            // The `None` case shouldn't happen considering how we are using
             // the function in the code now, but let's provide it here anyway
             // for correctness.
             if let Some(err) = err.0.downcast_ref::<BuiltinTypeCheckError>() {
@@ -729,8 +729,8 @@ macro_rules! impl_tuple {
                         _ => return Err(mk_typck_err::<Self>(
                             typ,
                             TupleTypeCheckErrorKind::WrongElementCount {
-                                actual: $length,
-                                asked_for: typs.len(),
+                                rust_type_el_count: $length,
+                                cql_type_el_count: typs.len(),
                             }
                         ))
                     }
@@ -1149,17 +1149,14 @@ impl Display for BuiltinTypeCheckErrorKind {
                 write!(f, "expected one of the CQL types: {expected:?}")
             }
             BuiltinTypeCheckErrorKind::NotEmptyable => {
-                write!(
-                    f,
-                    "the separate empty representation is not valid for this type"
-                )
+                f.write_str("the separate empty representation is not valid for this type")
             }
             BuiltinTypeCheckErrorKind::SetOrListError(err) => err.fmt(f),
             BuiltinTypeCheckErrorKind::MapError(err) => err.fmt(f),
             BuiltinTypeCheckErrorKind::TupleError(err) => err.fmt(f),
             BuiltinTypeCheckErrorKind::UdtError(err) => err.fmt(f),
             BuiltinTypeCheckErrorKind::CustomTypeUnsupported => {
-                write!(f, "custom CQL types are unsupported")
+                f.write_str("custom CQL types are unsupported")
             }
         }
     }
@@ -1217,16 +1214,10 @@ impl Display for BuiltinSerializationErrorKind {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             BuiltinSerializationErrorKind::SizeOverflow => {
-                write!(
-                    f,
-                    "the Rust value is too big to be serialized in the CQL protocol format"
-                )
+                f.write_str("the Rust value is too big to be serialized in the CQL protocol format")
             }
             BuiltinSerializationErrorKind::ValueOverflow => {
-                write!(
-                    f,
-                    "the Rust value is out of range supported by the CQL type"
-                )
+                f.write_str("the Rust value is out of range supported by the CQL type")
             }
             BuiltinSerializationErrorKind::SetOrListError(err) => err.fmt(f),
             BuiltinSerializationErrorKind::MapError(err) => err.fmt(f),
@@ -1247,12 +1238,9 @@ pub enum MapTypeCheckErrorKind {
 impl Display for MapTypeCheckErrorKind {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            MapTypeCheckErrorKind::NotMap => {
-                write!(
-                    f,
-                    "the CQL type the map was attempted to be serialized to was not map"
-                )
-            }
+            MapTypeCheckErrorKind::NotMap => f.write_str(
+                "the CQL type the Rust type was attempted to be type checked against was not a map",
+            ),
         }
     }
 }
@@ -1275,10 +1263,7 @@ impl Display for MapSerializationErrorKind {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             MapSerializationErrorKind::TooManyElements => {
-                write!(
-                    f,
-                    "the map contains too many elements to fit in CQL representation"
-                )
+                f.write_str("the map contains too many elements to fit in CQL representation")
             }
             MapSerializationErrorKind::KeySerializationFailed(err) => {
                 write!(f, "failed to serialize one of the keys: {}", err)
@@ -1302,10 +1287,7 @@ impl Display for SetOrListTypeCheckErrorKind {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             SetOrListTypeCheckErrorKind::NotSetOrList => {
-                write!(
-                    f,
-                    "the CQL type the tuple was attempted to was neither a set or a list"
-                )
+                f.write_str("the CQL type the Rust type was attempted to be type checked against was neither a set or a list")
             }
         }
     }
@@ -1325,12 +1307,9 @@ pub enum SetOrListSerializationErrorKind {
 impl Display for SetOrListSerializationErrorKind {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            SetOrListSerializationErrorKind::TooManyElements => {
-                write!(
-                    f,
-                    "the collection contains too many elements to fit in CQL representation"
-                )
-            }
+            SetOrListSerializationErrorKind::TooManyElements => f.write_str(
+                "the collection contains too many elements to fit in CQL representation",
+            ),
             SetOrListSerializationErrorKind::ElementSerializationFailed(err) => {
                 write!(f, "failed to serialize one of the elements: {err}")
             }
@@ -1352,23 +1331,22 @@ pub enum TupleTypeCheckErrorKind {
     /// elements will be set to null.
     WrongElementCount {
         /// The number of elements that the Rust tuple has.
-        actual: usize,
+        rust_type_el_count: usize,
 
         /// The number of elements that the CQL tuple type has.
-        asked_for: usize,
+        cql_type_el_count: usize,
     },
 }
 
 impl Display for TupleTypeCheckErrorKind {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            TupleTypeCheckErrorKind::NotTuple => write!(
-                f,
-                "the CQL type the tuple was attempted to be serialized to is not a tuple"
+            TupleTypeCheckErrorKind::NotTuple => f.write_str(
+                "the CQL type the Rust type was attempted to be type checked against is not a tuple"
             ),
-            TupleTypeCheckErrorKind::WrongElementCount { actual, asked_for } => write!(
+            TupleTypeCheckErrorKind::WrongElementCount { rust_type_el_count, cql_type_el_count } => write!(
                 f,
-                "wrong tuple element count: CQL type has {asked_for}, the Rust tuple has {actual}"
+                "wrong tuple element count: CQL type has {cql_type_el_count}, the Rust tuple has {rust_type_el_count}"
             ),
         }
     }
@@ -1439,10 +1417,7 @@ pub enum UdtTypeCheckErrorKind {
 impl Display for UdtTypeCheckErrorKind {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            UdtTypeCheckErrorKind::NotUdt => write!(
-                f,
-                "the CQL type the tuple was attempted to be type checked against is not a UDT"
-            ),
+            UdtTypeCheckErrorKind::NotUdt => f.write_str("the CQL type the Rust type was attempted to be type checked against is not a UDT"),
             UdtTypeCheckErrorKind::NameMismatch {
                 keyspace,
                 type_name,
@@ -1536,6 +1511,7 @@ mod tests {
     };
     use crate::types::serialize::{CellWriter, SerializationError};
 
+    use assert_matches::assert_matches;
     use scylla_macros::SerializeCql;
 
     use super::{SerializeCql, UdtSerializationErrorKind, UdtTypeCheckErrorKind};
@@ -1573,17 +1549,21 @@ mod tests {
         assert_eq!(typed_data, erased_data);
     }
 
-    fn do_serialize<T: SerializeCql>(t: T, typ: &ColumnType) -> Vec<u8> {
+    fn do_serialize_result<T: SerializeCql>(
+        t: T,
+        typ: &ColumnType,
+    ) -> Result<Vec<u8>, SerializationError> {
         let mut ret = Vec::new();
         let writer = CellWriter::new(&mut ret);
-        t.serialize(typ, writer).unwrap();
-        ret
+        t.serialize(typ, writer).map(|_| ()).map(|()| ret)
+    }
+
+    fn do_serialize<T: SerializeCql>(t: T, typ: &ColumnType) -> Vec<u8> {
+        do_serialize_result(t, typ).unwrap()
     }
 
     fn do_serialize_err<T: SerializeCql>(t: T, typ: &ColumnType) -> SerializationError {
-        let mut ret = Vec::new();
-        let writer = CellWriter::new(&mut ret);
-        t.serialize(typ, writer).unwrap_err()
+        do_serialize_result(t, typ).unwrap_err()
     }
 
     #[test]
@@ -1628,12 +1608,12 @@ mod tests {
         let err = get_typeck_err(&err);
         assert_eq!(err.rust_name, std::any::type_name::<i32>());
         assert_eq!(err.got, ColumnType::Double);
-        assert!(matches!(
+        assert_matches!(
             err.kind,
             BuiltinTypeCheckErrorKind::MismatchedType {
                 expected: &[ColumnType::Int],
-            },
-        ));
+            }
+        );
 
         // str (and also Uuid) are interesting because they accept two types,
         // also check str here
@@ -1642,12 +1622,12 @@ mod tests {
         let err = get_typeck_err(&err);
         assert_eq!(err.rust_name, std::any::type_name::<&str>());
         assert_eq!(err.got, ColumnType::Double);
-        assert!(matches!(
+        assert_matches!(
             err.kind,
             BuiltinTypeCheckErrorKind::MismatchedType {
                 expected: &[ColumnType::Ascii, ColumnType::Text],
-            },
-        ));
+            }
+        );
 
         // We'll skip testing for SizeOverflow as this would require producing
         // a value which is at least 2GB in size.
@@ -1665,10 +1645,7 @@ mod tests {
         let err = get_ser_err(&err);
         assert_eq!(err.rust_name, std::any::type_name::<BigDecimal>());
         assert_eq!(err.got, ColumnType::Decimal);
-        assert!(matches!(
-            err.kind,
-            BuiltinSerializationErrorKind::ValueOverflow,
-        ));
+        assert_matches!(err.kind, BuiltinSerializationErrorKind::ValueOverflow);
     }
 
     #[test]
@@ -1679,10 +1656,10 @@ mod tests {
         let err = get_typeck_err(&err);
         assert_eq!(err.rust_name, std::any::type_name::<Vec<i32>>());
         assert_eq!(err.got, ColumnType::Double);
-        assert!(matches!(
+        assert_matches!(
             err.kind,
-            BuiltinTypeCheckErrorKind::SetOrListError(SetOrListTypeCheckErrorKind::NotSetOrList),
-        ));
+            BuiltinTypeCheckErrorKind::SetOrListError(SetOrListTypeCheckErrorKind::NotSetOrList)
+        );
 
         // Trick: Unset is a ZST, so [Unset; 1 << 33] is a ZST, too.
         // While it's probably incorrect to use Unset in a collection, this
@@ -1694,12 +1671,12 @@ mod tests {
         let err = get_ser_err(&err);
         assert_eq!(err.rust_name, std::any::type_name::<&[Unset]>());
         assert_eq!(err.got, typ);
-        assert!(matches!(
+        assert_matches!(
             err.kind,
             BuiltinSerializationErrorKind::SetOrListError(
                 SetOrListSerializationErrorKind::TooManyElements
-            ),
-        ));
+            )
+        );
 
         // Error during serialization of an element
         let v = vec![123_i32];
@@ -1715,12 +1692,12 @@ mod tests {
             panic!("unexpected error kind: {}", err.kind)
         };
         let err = get_typeck_err(err);
-        assert!(matches!(
+        assert_matches!(
             err.kind,
             BuiltinTypeCheckErrorKind::MismatchedType {
                 expected: &[ColumnType::Int],
             }
-        ));
+        );
     }
 
     #[test]
@@ -1731,10 +1708,10 @@ mod tests {
         let err = get_typeck_err(&err);
         assert_eq!(err.rust_name, std::any::type_name::<BTreeMap<&str, &str>>());
         assert_eq!(err.got, ColumnType::Double);
-        assert!(matches!(
+        assert_matches!(
             err.kind,
-            BuiltinTypeCheckErrorKind::MapError(MapTypeCheckErrorKind::NotMap),
-        ));
+            BuiltinTypeCheckErrorKind::MapError(MapTypeCheckErrorKind::NotMap)
+        );
 
         // It's not practical to check the TooManyElements error as it would
         // require allocating a huge amount of memory.
@@ -1753,12 +1730,12 @@ mod tests {
             panic!("unexpected error kind: {}", err.kind)
         };
         let err = get_typeck_err(err);
-        assert!(matches!(
+        assert_matches!(
             err.kind,
             BuiltinTypeCheckErrorKind::MismatchedType {
                 expected: &[ColumnType::Int],
             }
-        ));
+        );
 
         // Error during serialization of a value
         let v = BTreeMap::from([(123_i32, 456_i32)]);
@@ -1774,12 +1751,12 @@ mod tests {
             panic!("unexpected error kind: {}", err.kind)
         };
         let err = get_typeck_err(err);
-        assert!(matches!(
+        assert_matches!(
             err.kind,
             BuiltinTypeCheckErrorKind::MismatchedType {
                 expected: &[ColumnType::Int],
             }
-        ));
+        );
     }
 
     #[test]
@@ -1790,10 +1767,10 @@ mod tests {
         let err = get_typeck_err(&err);
         assert_eq!(err.rust_name, std::any::type_name::<(i32, i32, i32)>());
         assert_eq!(err.got, ColumnType::Double);
-        assert!(matches!(
+        assert_matches!(
             err.kind,
-            BuiltinTypeCheckErrorKind::TupleError(TupleTypeCheckErrorKind::NotTuple),
-        ));
+            BuiltinTypeCheckErrorKind::TupleError(TupleTypeCheckErrorKind::NotTuple)
+        );
 
         // The Rust tuple has more elements than the CQL type
         let v = (123_i32, 456_i32, 789_i32);
@@ -1802,13 +1779,13 @@ mod tests {
         let err = get_typeck_err(&err);
         assert_eq!(err.rust_name, std::any::type_name::<(i32, i32, i32)>());
         assert_eq!(err.got, typ);
-        assert!(matches!(
+        assert_matches!(
             err.kind,
             BuiltinTypeCheckErrorKind::TupleError(TupleTypeCheckErrorKind::WrongElementCount {
-                actual: 3,
-                asked_for: 2,
-            }),
-        ));
+                rust_type_el_count: 3,
+                cql_type_el_count: 2,
+            })
+        );
 
         // Error during serialization of one of the elements
         let v = (123_i32, "Ala ma kota", 789.0_f64);
@@ -1824,12 +1801,12 @@ mod tests {
             panic!("unexpected error kind: {}", err.kind)
         };
         let err = get_typeck_err(err);
-        assert!(matches!(
+        assert_matches!(
             err.kind,
             BuiltinTypeCheckErrorKind::MismatchedType {
                 expected: &[ColumnType::Double],
             }
-        ));
+        );
     }
 
     #[test]
@@ -1840,7 +1817,7 @@ mod tests {
         let err = get_typeck_err(&err);
         assert_eq!(err.rust_name, std::any::type_name::<CqlValue>());
         assert_eq!(err.got, ColumnType::Counter);
-        assert!(matches!(err.kind, BuiltinTypeCheckErrorKind::NotEmptyable));
+        assert_matches!(err.kind, BuiltinTypeCheckErrorKind::NotEmptyable);
 
         // Handle tuples and UDTs in separate tests, as they have some
         // custom logic
@@ -1858,10 +1835,10 @@ mod tests {
         let err = get_typeck_err(&err);
         assert_eq!(err.rust_name, std::any::type_name::<CqlValue>());
         assert_eq!(err.got, ColumnType::Double);
-        assert!(matches!(
+        assert_matches!(
             err.kind,
-            BuiltinTypeCheckErrorKind::TupleError(TupleTypeCheckErrorKind::NotTuple),
-        ));
+            BuiltinTypeCheckErrorKind::TupleError(TupleTypeCheckErrorKind::NotTuple)
+        );
 
         // The Rust tuple has more elements than the CQL type
         let v = CqlValue::Tuple(vec![
@@ -1874,13 +1851,13 @@ mod tests {
         let err = get_typeck_err(&err);
         assert_eq!(err.rust_name, std::any::type_name::<CqlValue>());
         assert_eq!(err.got, typ);
-        assert!(matches!(
+        assert_matches!(
             err.kind,
             BuiltinTypeCheckErrorKind::TupleError(TupleTypeCheckErrorKind::WrongElementCount {
-                actual: 3,
-                asked_for: 2,
-            }),
-        ));
+                rust_type_el_count: 3,
+                cql_type_el_count: 2,
+            })
+        );
 
         // Error during serialization of one of the elements
         let v = CqlValue::Tuple(vec![
@@ -1900,12 +1877,12 @@ mod tests {
             panic!("unexpected error kind: {}", err.kind)
         };
         let err = get_typeck_err(err);
-        assert!(matches!(
+        assert_matches!(
             err.kind,
             BuiltinTypeCheckErrorKind::MismatchedType {
                 expected: &[ColumnType::Double],
             }
-        ));
+        );
     }
 
     #[test]
@@ -1924,10 +1901,10 @@ mod tests {
         let err = get_typeck_err(&err);
         assert_eq!(err.rust_name, std::any::type_name::<CqlValue>());
         assert_eq!(err.got, ColumnType::Double);
-        assert!(matches!(
+        assert_matches!(
             err.kind,
-            BuiltinTypeCheckErrorKind::UdtError(UdtTypeCheckErrorKind::NotUdt),
-        ));
+            BuiltinTypeCheckErrorKind::UdtError(UdtTypeCheckErrorKind::NotUdt)
+        );
 
         // Wrong type name
         let v = CqlValue::UserDefinedType {
@@ -2027,12 +2004,12 @@ mod tests {
         };
         assert_eq!(field_name, "c");
         let err = get_typeck_err(err);
-        assert!(matches!(
+        assert_matches!(
             err.kind,
             BuiltinTypeCheckErrorKind::MismatchedType {
                 expected: &[ColumnType::Int],
             }
-        ));
+        );
     }
 
     // Do not remove. It's not used in tests but we keep it here to check that
@@ -2251,10 +2228,10 @@ mod tests {
             .serialize(&typ_not_udt, CellWriter::new(&mut data))
             .unwrap_err();
         let err = err.0.downcast_ref::<BuiltinTypeCheckError>().unwrap();
-        assert!(matches!(
+        assert_matches!(
             err.kind,
             BuiltinTypeCheckErrorKind::UdtError(UdtTypeCheckErrorKind::NotUdt)
-        ));
+        );
 
         let typ_without_c = ColumnType::UserDefinedType {
             type_name: "typ".to_string(),
@@ -2270,12 +2247,12 @@ mod tests {
             .serialize(&typ_without_c, CellWriter::new(&mut data))
             .unwrap_err();
         let err = err.0.downcast_ref::<BuiltinTypeCheckError>().unwrap();
-        assert!(matches!(
+        assert_matches!(
             err.kind,
             BuiltinTypeCheckErrorKind::UdtError(
                 UdtTypeCheckErrorKind::ValueMissingForUdtField { .. }
             )
-        ));
+        );
 
         let typ_wrong_type = ColumnType::UserDefinedType {
             type_name: "typ".to_string(),
@@ -2291,12 +2268,12 @@ mod tests {
             .serialize(&typ_wrong_type, CellWriter::new(&mut data))
             .unwrap_err();
         let err = err.0.downcast_ref::<BuiltinSerializationError>().unwrap();
-        assert!(matches!(
+        assert_matches!(
             err.kind,
             BuiltinSerializationErrorKind::UdtError(
                 UdtSerializationErrorKind::FieldSerializationFailed { .. }
             )
-        ));
+        );
     }
 
     #[derive(SerializeCql)]
@@ -2448,10 +2425,10 @@ mod tests {
         let err = <_ as SerializeCql>::serialize(&udt, &typ_not_udt, CellWriter::new(&mut data))
             .unwrap_err();
         let err = err.0.downcast_ref::<BuiltinTypeCheckError>().unwrap();
-        assert!(matches!(
+        assert_matches!(
             err.kind,
             BuiltinTypeCheckErrorKind::UdtError(UdtTypeCheckErrorKind::NotUdt)
-        ));
+        );
 
         let typ = ColumnType::UserDefinedType {
             type_name: "typ".to_string(),
@@ -2470,10 +2447,10 @@ mod tests {
         let err =
             <_ as SerializeCql>::serialize(&udt, &typ, CellWriter::new(&mut data)).unwrap_err();
         let err = err.0.downcast_ref::<BuiltinTypeCheckError>().unwrap();
-        assert!(matches!(
+        assert_matches!(
             err.kind,
             BuiltinTypeCheckErrorKind::UdtError(UdtTypeCheckErrorKind::FieldNameMismatch { .. })
-        ));
+        );
 
         let typ_without_c = ColumnType::UserDefinedType {
             type_name: "typ".to_string(),
@@ -2488,12 +2465,12 @@ mod tests {
         let err = <_ as SerializeCql>::serialize(&udt, &typ_without_c, CellWriter::new(&mut data))
             .unwrap_err();
         let err = err.0.downcast_ref::<BuiltinTypeCheckError>().unwrap();
-        assert!(matches!(
+        assert_matches!(
             err.kind,
             BuiltinTypeCheckErrorKind::UdtError(
                 UdtTypeCheckErrorKind::ValueMissingForUdtField { .. }
             )
-        ));
+        );
 
         let typ_unexpected_field = ColumnType::UserDefinedType {
             type_name: "typ".to_string(),
@@ -2509,12 +2486,12 @@ mod tests {
             <_ as SerializeCql>::serialize(&udt, &typ_unexpected_field, CellWriter::new(&mut data))
                 .unwrap_err();
         let err = err.0.downcast_ref::<BuiltinSerializationError>().unwrap();
-        assert!(matches!(
+        assert_matches!(
             err.kind,
             BuiltinSerializationErrorKind::UdtError(
                 UdtSerializationErrorKind::FieldSerializationFailed { .. }
             )
-        ));
+        );
     }
 
     #[derive(SerializeCql, Debug)]
@@ -2669,10 +2646,10 @@ mod tests {
             .serialize(&typ_unexpected_field, CellWriter::new(&mut data))
             .unwrap_err();
         let err = err.0.downcast_ref::<BuiltinTypeCheckError>().unwrap();
-        assert!(matches!(
+        assert_matches!(
             err.kind,
             BuiltinTypeCheckErrorKind::UdtError(UdtTypeCheckErrorKind::NoSuchFieldInUdt { .. })
-        ));
+        );
 
         let typ_unexpected_field_middle = ColumnType::UserDefinedType {
             type_name: "typ".to_string(),
@@ -2693,10 +2670,10 @@ mod tests {
             .serialize(&typ_unexpected_field_middle, CellWriter::new(&mut data))
             .unwrap_err();
         let err = err.0.downcast_ref::<BuiltinTypeCheckError>().unwrap();
-        assert!(matches!(
+        assert_matches!(
             err.kind,
             BuiltinTypeCheckErrorKind::UdtError(UdtTypeCheckErrorKind::NoSuchFieldInUdt { .. })
-        ));
+        );
     }
 
     #[derive(SerializeCql, Debug, PartialEq, Eq, Default)]
@@ -2731,10 +2708,10 @@ mod tests {
             <_ as SerializeCql>::serialize(&udt, &typ_unexpected_field, CellWriter::new(&mut data))
                 .unwrap_err();
         let err = err.0.downcast_ref::<BuiltinTypeCheckError>().unwrap();
-        assert!(matches!(
+        assert_matches!(
             err.kind,
             BuiltinTypeCheckErrorKind::UdtError(UdtTypeCheckErrorKind::NoSuchFieldInUdt { .. })
-        ));
+        );
     }
 
     #[derive(SerializeCql, Debug)]

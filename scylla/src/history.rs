@@ -465,6 +465,7 @@ mod tests {
         SpeculativeId, StructuredHistory, TimePoint,
     };
     use crate::test_utils::create_new_session_builder;
+    use assert_matches::assert_matches;
     use chrono::{DateTime, NaiveDate, NaiveDateTime, NaiveTime, Utc};
     use futures::StreamExt;
     use scylla_cql::{
@@ -642,10 +643,10 @@ mod tests {
         assert_eq!(history.queries.len(), 1);
         assert_eq!(history.queries[0].non_speculative_fiber.attempts.len(), 1);
         assert!(history.queries[0].speculative_fibers.is_empty());
-        assert!(matches!(
+        assert_matches!(
             history.queries[0].non_speculative_fiber.attempts[0].result,
             Some(AttemptResult::Success(_))
-        ));
+        );
 
         let displayed = "Queries History:
 === Query #0 ===

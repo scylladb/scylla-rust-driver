@@ -10,6 +10,8 @@ use super::value::{
     CqlDate, CqlDuration, CqlTime, CqlTimestamp, LegacyBatchValues, LegacySerializedValues,
     MaybeUnset, SerializeValuesError, Unset, Value, ValueList, ValueTooBig,
 };
+#[cfg(test)]
+use assert_matches::assert_matches;
 use bytes::BufMut;
 use std::collections::hash_map::DefaultHasher;
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
@@ -1262,7 +1264,7 @@ fn serialized_values_value_list() {
     ser_values.add_value(&"qwertyuiop").unwrap();
 
     let ser_ser_values: Cow<LegacySerializedValues> = ser_values.serialized().unwrap();
-    assert!(matches!(ser_ser_values, Cow::Borrowed(_)));
+    assert_matches!(ser_ser_values, Cow::Borrowed(_));
 
     assert_eq!(&ser_values, ser_ser_values.as_ref());
 }
@@ -1272,7 +1274,7 @@ fn cow_serialized_values_value_list() {
     let cow_ser_values: Cow<LegacySerializedValues> = Cow::Owned(LegacySerializedValues::new());
 
     let serialized: Cow<LegacySerializedValues> = cow_ser_values.serialized().unwrap();
-    assert!(matches!(serialized, Cow::Borrowed(_)));
+    assert_matches!(serialized, Cow::Borrowed(_));
 
     assert_eq!(cow_ser_values.as_ref(), serialized.as_ref());
 }
