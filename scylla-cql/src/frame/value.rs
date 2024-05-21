@@ -699,6 +699,12 @@ pub trait ValueList {
     }
 }
 
+impl Default for LegacySerializedValues {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl LegacySerializedValues {
     /// Creates empty value list
     pub const fn new() -> Self {
