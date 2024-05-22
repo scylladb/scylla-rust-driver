@@ -5,7 +5,7 @@
 - [Quick start](quickstart/quickstart.md)
     - [Creating a project](quickstart/create-project.md)
     - [Running Scylla using Docker](quickstart/scylla-docker.md)
-    - [Connecting and running a simple query](quickstart/example.md)
+    - [Connecting and executing an unprepared statement](quickstart/example.md)
 
 - [Migration guides](migration-guides/migration-guides.md)
     - [Adjusting code to changes in serialization API introduced in 0.11](migration-guides/0.11-serialization.md)
@@ -15,17 +15,17 @@
     - [Authentication](connecting/authentication.md)
     - [TLS](connecting/tls.md)
 
-- [Making queries](queries/queries.md)
-    - [Simple query](queries/simple.md)
-    - [Query values](queries/values.md)
+- [Executing statements](queries/queries.md)
+    - [Unprepared statement](queries/simple.md)
+    - [Statement bound values](queries/values.md)
     - [Query result](queries/result.md)
-    - [Prepared query](queries/prepared.md)
+    - [Prepared statement](queries/prepared.md)
     - [Batch statement](queries/batch.md)
-    - [Paged query](queries/paged.md)
-    - [Lightweight transaction query (LWT)](queries/lwt.md)
+    - [Paged statement execution](queries/paged.md)
+    - [Lightweight transaction statement (LWT)](queries/lwt.md)
     - [USE keyspace](queries/usekeyspace.md)
     - [Schema agreement](queries/schema-agreement.md)
-    - [Query timeouts](queries/timeouts.md)
+    - [Statement execution timeouts](queries/timeouts.md)
 
 - [Execution profiles](execution-profiles/execution-profiles.md)
     - [Creating a profile and setting it](execution-profiles/create-and-use.md)
@@ -67,10 +67,10 @@
 
 - [Logging](logging/logging.md)
 
-- [Query tracing](tracing/tracing.md)
-    - [Tracing a simple/prepared query](tracing/basic.md)
-    - [Tracing a paged query](tracing/paged.md)
+- [Statement execution tracing](tracing/tracing.md)
+    - [Tracing a statement execution](tracing/basic.md)
+    - [Tracing a paged statement execution](tracing/paged.md)
     - [Tracing `Session::prepare`](tracing/prepare.md)
-    - [Query Execution History](tracing/query-history.md)
+    - [Statement Execution History](tracing/query-history.md)
 
 - [Database schema](schema/schema.md)

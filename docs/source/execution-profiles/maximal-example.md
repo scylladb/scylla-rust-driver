@@ -6,7 +6,7 @@
 # extern crate scylla;
 # use std::error::Error;
 # async fn check_only_compiles() -> Result<(), Box<dyn Error>> {
-use scylla::query::Query;
+use scylla::unprepared_statement::UnpreparedStatement;
 use scylla::speculative_execution::SimpleSpeculativeExecutionPolicy;
 use scylla::statement::{Consistency, SerialConsistency};
 use scylla::transport::ExecutionProfile;
@@ -32,7 +32,7 @@ let profile = ExecutionProfile::builder()
     )
     .build();
 
-let mut query = Query::from("SELECT * FROM ks.table");
+let mut query = UnpreparedStatement::from("SELECT * FROM ks.table");
 query.set_execution_profile_handle(Some(profile.into_handle()));
 
 # Ok(())

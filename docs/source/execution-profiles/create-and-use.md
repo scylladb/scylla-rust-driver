@@ -27,12 +27,12 @@ let session: Session = SessionBuilder::new()
 ```
 
 ### Example
-To create an `ExecutionProfile` and attach it to a `Query`:
+To create an `ExecutionProfile` and attach it to an `UnpreparedStatement`:
 ```rust
 # extern crate scylla;
 # use std::error::Error;
 # async fn check_only_compiles() -> Result<(), Box<dyn Error>> {
-use scylla::query::Query;
+use scylla::unprepared_statement::UnpreparedStatement;
 use scylla::statement::Consistency;
 use scylla::transport::ExecutionProfile;
 use std::time::Duration;
@@ -44,10 +44,10 @@ let profile = ExecutionProfile::builder()
 
 let handle = profile.into_handle();
 
-let mut query1 = Query::from("SELECT * FROM ks.table");
+let mut query1 = UnpreparedStatement::from("SELECT * FROM ks.table");
 query1.set_execution_profile_handle(Some(handle.clone()));
 
-let mut query2 = Query::from("SELECT pk FROM ks.table WHERE pk = ?");
+let mut query2 = UnpreparedStatement::from("SELECT pk FROM ks.table WHERE pk = ?");
 query2.set_execution_profile_handle(Some(handle));
 # Ok(())
 # }
