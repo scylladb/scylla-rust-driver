@@ -150,14 +150,17 @@ async fn run_test(
                             )
                         });
 
+                        // Take a global lock to make test deterministic
+                        // (and because we need to push stuff in there to test that shard-awareness is respected)
+                        let mut shards_for_nodes_test_check =
+                            shards_for_nodes_test_check_clone.lock().await;
+
                         session
                             .batch(&scylla_batch, &batch)
                             .await
                             .expect("Query to send batch failed");
 
-                        shards_for_nodes_test_check_clone
-                            .lock()
-                            .await
+                        shards_for_nodes_test_check
                             .entry(destination_shard.node_id)
                             .or_default()
                             .push(destination_shard.shard_id_on_node);
