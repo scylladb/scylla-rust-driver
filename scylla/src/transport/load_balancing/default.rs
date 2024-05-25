@@ -703,7 +703,7 @@ impl DefaultPolicy {
         vec.into_iter()
     }
 
-    fn is_alive(node: NodeRef, _shard: Option<Shard>) -> bool {
+    pub(crate) fn is_alive(node: NodeRef, _shard: Option<Shard>) -> bool {
         // For now, we leave this as stub, until we have time to improve node events.
         // node.is_enabled() && !node.is_down()
         node.is_enabled()

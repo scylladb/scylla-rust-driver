@@ -80,6 +80,17 @@ pub trait SerializeRow {
     /// the bind marker types and names so that the values can be properly
     /// type checked and serialized.
     fn is_empty(&self) -> bool;
+
+    /// Specialization that allows the driver to not re-serialize the row if it's already
+    /// a `SerializedValues`
+    ///
+    /// Note that if using this, it's the user's responsibility to ensure that this
+    /// `SerializedValues` has been generated with the same prepared statement as the query
+    /// is going to be made with.
+    #[inline]
+    fn already_serialized(&self) -> Option<&SerializedValues> {
+        None
+    }
 }
 
 macro_rules! fallback_impl_contents {
@@ -255,12 +266,35 @@ impl<T: SerializeRow + ?Sized> SerializeRow for &T {
         ctx: &RowSerializationContext<'_>,
         writer: &mut RowWriter,
     ) -> Result<(), SerializationError> {
-        <T as SerializeRow>::serialize(self, ctx, writer)
+        <T as SerializeRow>::serialize(*self, ctx, writer)
     }
 
     #[inline]
     fn is_empty(&self) -> bool {
-        <T as SerializeRow>::is_empty(self)
+        <T as SerializeRow>::is_empty(*self)
+    }
+
+    #[inline]
+    fn already_serialized(&self) -> Option<&SerializedValues> {
+        <T as SerializeRow>::already_serialized(*self)
+    }
+}
+
+impl SerializeRow for SerializedValues {
+    fn serialize(
+        &self,
+        _ctx: &RowSerializationContext<'_>,
+        writer: &mut RowWriter,
+    ) -> Result<(), SerializationError> {
+        Ok(writer.append_serialize_row(self))
+    }
+
+    fn is_empty(&self) -> bool {
+        self.is_empty()
+    }
+
+    fn already_serialized(&self) -> Option<&SerializedValues> {
+        Some(self)
     }
 }
 

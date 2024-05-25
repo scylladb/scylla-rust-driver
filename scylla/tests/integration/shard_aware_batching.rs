@@ -1,8 +1,8 @@
 use crate::utils::test_with_3_node_cluster;
 use futures::prelude::*;
 use futures_batch::ChunksTimeoutStreamExt;
-use scylla::frame::value::ValueList;
 use scylla::retry_policy::FallthroughRetryPolicy;
+use scylla::serialize::row::SerializedValues;
 use scylla::test_utils::unique_keyspace_name;
 use scylla::transport::session::Session;
 use scylla::{ExecutionProfile, SessionBuilder};
@@ -95,20 +95,19 @@ async fn run_test(
     #[derive(Clone, Copy, PartialEq, Eq, Hash)]
     struct DestinationShard {
         node_id: uuid::Uuid,
-        shard_id_on_node: Option<u32>,
+        shard_id_on_node: u32,
     }
     let mut channels_for_shards: HashMap<
         DestinationShard,
-        tokio::sync::mpsc::Sender<scylla::frame::value::SerializedValues>,
+        tokio::sync::mpsc::Sender<SerializedValues>,
     > = HashMap::new();
     let mut batching_tasks: Vec<tokio::task::JoinHandle<()>> = Vec::new(); // To make sure nothing panicked
     for i in 0..150 {
         let values = (i, MAGIC_MARK);
 
-        let serialized_values = values
-            .serialized()
-            .expect("Failed to serialize values")
-            .into_owned();
+        let serialized_values = prepared_statement
+            .serialize_values(&values)
+            .expect("Failed to serialize values");
 
         let (node, shard_id_on_node) = session
             .shard_for_statement(&prepared_statement, &serialized_values)
@@ -132,7 +131,7 @@ async fn run_test(
 
                 let mut scylla_batch =
                     scylla::batch::Batch::new(scylla::batch::BatchType::Unlogged);
-                scylla_batch.enforce_target_node(&node, &session);
+                scylla_batch.enforce_target_node(&node, shard_id_on_node, &session);
 
                 batching_tasks.push(tokio::spawn(async move {
                     let mut batches = ReceiverStream::new(receiver)
@@ -176,12 +175,14 @@ async fn run_test(
     // TODO
 
     // wip: make sure we did capture the queries to each node
-    fn clear_rxs(rxs: &mut [mpsc::UnboundedReceiver<RequestFrame>; 3]) {
+    fn clear_rxs(rxs: &mut [mpsc::UnboundedReceiver<(RequestFrame, Option<u16>)>; 3]) {
         for rx in rxs.iter_mut() {
             while rx.try_recv().is_ok() {}
         }
     }
-    async fn assert_all_replicas_queried(rxs: &mut [mpsc::UnboundedReceiver<RequestFrame>; 3]) {
+    async fn assert_all_replicas_queried(
+        rxs: &mut [mpsc::UnboundedReceiver<(RequestFrame, Option<u16>)>; 3],
+    ) {
         for rx in rxs.iter_mut() {
             rx.recv().await.unwrap();
         }

@@ -19,8 +19,8 @@ pub use scylla_cql::errors::TranslationError;
 use scylla_cql::frame::response::result::{deser_cql_value, ColumnSpec, Rows};
 use scylla_cql::frame::response::NonErrorResponse;
 use scylla_cql::types::serialize::batch::BatchValues;
-use scylla_cql::types::serialize::row::SerializeRow;
-use std::borrow::Borrow;
+use scylla_cql::types::serialize::row::{SerializeRow, SerializedValues};
+use std::borrow::{Borrow, Cow};
 use std::collections::HashMap;
 use std::fmt::Display;
 use std::future::Future;
@@ -985,78 +985,92 @@ impl Session {
         values: impl SerializeRow,
         paging_state: Option<Bytes>,
     ) -> Result<QueryResult, QueryError> {
-        let serialized_values = prepared.serialize_values(&values)?;
-        let values_ref = &serialized_values;
-        let paging_state_ref = &paging_state;
-
-        let (partition_key, token) = prepared
-            .extract_partition_key_and_calculate_token(prepared.get_partitioner_name(), values_ref)?
-            .unzip();
-
-        let (execution_profile, statement_info) =
-            self.execution_profile_and_routing_info_from_prepared_statement(prepared, token);
-
-        let span = RequestSpan::new_prepared(
-            partition_key.as_ref().map(|pk| pk.iter()),
-            token,
-            serialized_values.buffer_size(),
-        );
-
-        if !span.span().is_disabled() {
-            if let (Some(table_spec), Some(token)) = (statement_info.table, token) {
-                let cluster_data = self.get_cluster_data();
-                let replicas: smallvec::SmallVec<[_; 8]> = cluster_data
-                    .get_token_endpoints_iter(table_spec, token)
-                    .collect();
-                span.record_replicas(&replicas)
-            }
-        }
-
-        let run_query_result: RunQueryResult<NonErrorQueryResponse> = self
-            .run_query(
-                statement_info,
-                &prepared.config,
-                execution_profile,
-                |connection: Arc<Connection>,
-                 consistency: Consistency,
-                 execution_profile: &ExecutionProfileInner| {
-                    let serial_consistency = prepared
-                        .config
-                        .serial_consistency
-                        .unwrap_or(execution_profile.serial_consistency);
-                    async move {
-                        connection
-                            .execute_with_consistency(
-                                prepared,
-                                values_ref,
-                                consistency,
-                                serial_consistency,
-                                paging_state_ref.clone(),
-                            )
-                            .await
-                            .and_then(QueryResponse::into_non_error_query_response)
-                    }
-                },
-                &span,
-            )
-            .instrument(span.span().clone())
-            .await?;
-
-        let response = match run_query_result {
-            RunQueryResult::IgnoredWriteError => NonErrorQueryResponse {
-                response: NonErrorResponse::Result(result::Result::Void),
-                tracing_id: None,
-                warnings: Vec::new(),
-            },
-            RunQueryResult::Completed(response) => response,
+        // Inlining + const propagation make this optimization zero-cost in unrelated cases:
+        let serialized_values = match values.already_serialized() {
+            None => Cow::Owned(prepared.serialize_values(&values)?),
+            Some(serialized) => Cow::Borrowed(serialized),
         };
 
-        self.handle_set_keyspace_response(&response).await?;
-        self.handle_auto_await_schema_agreement(&response).await?;
+        return non_generic_inner(self, prepared, &serialized_values, &paging_state).await;
+        /// Avoid monomorphizing this whole function for every SerializeRow type
+        async fn non_generic_inner(
+            self_: &Session,
+            prepared: &PreparedStatement,
+            values_ref: &SerializedValues,
+            paging_state_ref: &Option<Bytes>,
+        ) -> Result<QueryResult, QueryError> {
+            let (partition_key, token) = prepared
+                .extract_partition_key_and_calculate_token(
+                    prepared.get_partitioner_name(),
+                    values_ref,
+                )?
+                .unzip();
 
-        let result = response.into_query_result()?;
-        span.record_result_fields(&result);
-        Ok(result)
+            let (execution_profile, statement_info) =
+                self_.execution_profile_and_routing_info_from_prepared_statement(prepared, token);
+
+            let span = RequestSpan::new_prepared(
+                partition_key.as_ref().map(|pk| pk.iter()),
+                token,
+                values_ref.buffer_size(),
+            );
+
+            if !span.span().is_disabled() {
+                if let (Some(table_spec), Some(token)) = (statement_info.table, token) {
+                    let cluster_data = self_.get_cluster_data();
+                    let replicas: smallvec::SmallVec<[_; 8]> = cluster_data
+                        .get_token_endpoints_iter(table_spec, token)
+                        .collect();
+                    span.record_replicas(&replicas)
+                }
+            }
+
+            let run_query_result: RunQueryResult<NonErrorQueryResponse> = self_
+                .run_query(
+                    statement_info,
+                    &prepared.config,
+                    execution_profile,
+                    |connection: Arc<Connection>,
+                     consistency: Consistency,
+                     execution_profile: &ExecutionProfileInner| {
+                        let serial_consistency = prepared
+                            .config
+                            .serial_consistency
+                            .unwrap_or(execution_profile.serial_consistency);
+                        async move {
+                            connection
+                                .execute_with_consistency(
+                                    prepared,
+                                    values_ref,
+                                    consistency,
+                                    serial_consistency,
+                                    paging_state_ref.clone(),
+                                )
+                                .await
+                                .and_then(QueryResponse::into_non_error_query_response)
+                        }
+                    },
+                    &span,
+                )
+                .instrument(span.span().clone())
+                .await?;
+
+            let response = match run_query_result {
+                RunQueryResult::IgnoredWriteError => NonErrorQueryResponse {
+                    response: NonErrorResponse::Result(result::Result::Void),
+                    tracing_id: None,
+                    warnings: Vec::new(),
+                },
+                RunQueryResult::Completed(response) => response,
+            };
+
+            self_.handle_set_keyspace_response(&response).await?;
+            self_.handle_auto_await_schema_agreement(&response).await?;
+
+            let result = response.into_query_result()?;
+            span.record_result_fields(&result);
+            Ok(result)
+        }
     }
 
     /// Run a prepared query with paging\
@@ -1813,11 +1827,15 @@ impl Session {
         &self,
         prepared: &PreparedStatement,
         serialized_values: &SerializedValues,
-    ) -> Result<Option<(Arc<Node>, Option<routing::Shard>)>, QueryError> {
-        let token = match self.calculate_token(prepared, serialized_values)? {
-            Some(token) => token,
+    ) -> Result<Option<(Arc<Node>, routing::Shard)>, QueryError> {
+        let token = match prepared.extract_partition_key_and_calculate_token(
+            prepared.get_partitioner_name(),
+            serialized_values,
+        )? {
+            Some((_partition_key, token)) => token,
             None => return Ok(None),
         };
+
         let (execution_profile, routing_info) =
             self.execution_profile_and_routing_info_from_prepared_statement(prepared, Some(token));
         let cluster_data = self.cluster.get_data();
@@ -1835,10 +1853,9 @@ impl Session {
         // Most likely though, people would use this for some kind of shard-awareness optimization for batching,
         // and are consequently not interested in subsequent nodes.
         // Until then, let's just expose this, as it is simpler
-        Ok(query_plan.next().map(move |node| {
-            let token = node.sharder().map(|sharder| sharder.shard_of(token));
-            (node.clone(), token)
-        }))
+        Ok(query_plan
+            .next()
+            .map(|(node, shard)| (Arc::clone(node), shard)))
     }
 
     fn execution_profile_and_routing_info_from_prepared_statement<'p>(

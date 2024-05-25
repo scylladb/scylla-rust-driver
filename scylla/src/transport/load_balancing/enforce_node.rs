@@ -1,5 +1,8 @@
 use super::{DefaultPolicy, FallbackPlan, LoadBalancingPolicy, NodeRef, RoutingInfo};
-use crate::transport::{cluster::ClusterData, Node};
+use crate::{
+    routing::Shard,
+    transport::{cluster::ClusterData, Node},
+};
 use std::sync::Arc;
 use uuid::Uuid;
 
@@ -8,25 +11,36 @@ use uuid::Uuid;
 ///
 /// This is meant to be used for shard-aware batching.
 #[derive(Debug)]
-pub struct EnforceTargetNodePolicy {
+pub struct EnforceTargetShardPolicy {
     target_node: Uuid,
+    shard: Shard,
     fallback: Arc<dyn LoadBalancingPolicy>,
 }
 
-impl EnforceTargetNodePolicy {
-    pub fn new(target_node: &Arc<Node>, fallback: Arc<dyn LoadBalancingPolicy>) -> Self {
+impl EnforceTargetShardPolicy {
+    pub fn new(
+        target_node: &Arc<Node>,
+        shard: Shard,
+        fallback: Arc<dyn LoadBalancingPolicy>,
+    ) -> Self {
         Self {
             target_node: target_node.host_id,
+            shard,
             fallback,
         }
     }
 }
-impl LoadBalancingPolicy for EnforceTargetNodePolicy {
-    fn pick<'a>(&'a self, query: &'a RoutingInfo, cluster: &'a ClusterData) -> Option<NodeRef<'a>> {
+impl LoadBalancingPolicy for EnforceTargetShardPolicy {
+    fn pick<'a>(
+        &'a self,
+        query: &'a RoutingInfo,
+        cluster: &'a ClusterData,
+    ) -> Option<(NodeRef<'a>, Option<Shard>)> {
         cluster
             .known_peers
             .get(&self.target_node)
-            .filter(DefaultPolicy::is_alive)
+            .map(|node| (node, Some(self.shard)))
+            .filter(|&(node, shard)| DefaultPolicy::is_alive(node, shard))
             .or_else(|| self.fallback.pick(query, cluster))
     }
 
@@ -40,7 +54,7 @@ impl LoadBalancingPolicy for EnforceTargetNodePolicy {
 
     fn name(&self) -> String {
         format!(
-            "Enforce target node Load balancing policy - Node: {} - fallback: {}",
+            "Enforce target shard Load balancing policy - Node: {} - fallback: {}",
             self.target_node,
             self.fallback.name()
         )

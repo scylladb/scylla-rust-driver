@@ -17,7 +17,7 @@ mod plan;
 pub use plan::Plan;
 pub use {
     default::{DefaultPolicy, DefaultPolicyBuilder, LatencyAwarenessBuilder},
-    enforce_node::EnforceTargetNodePolicy,
+    enforce_node::EnforceTargetShardPolicy,
 };
 
 /// Represents info about statement that can be used by load balancing policies.
