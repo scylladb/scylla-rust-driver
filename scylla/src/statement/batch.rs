@@ -148,7 +148,7 @@ impl Batch {
     }
 
     /// Associates the batch with a new execution profile that will have a load
-    /// balancing policy that will enforce the use of the provided [`Node`]
+    /// balancing policy that will enforce the use of the provided [`NodeRef`]
     /// to the extent possible.
     ///
     /// This should typically be used in conjunction with
