@@ -286,7 +286,8 @@ impl SerializeRow for SerializedValues {
         _ctx: &RowSerializationContext<'_>,
         writer: &mut RowWriter,
     ) -> Result<(), SerializationError> {
-        Ok(writer.append_serialize_row(self))
+        writer.append_serialize_row(self);
+        Ok(())
     }
 
     fn is_empty(&self) -> bool {

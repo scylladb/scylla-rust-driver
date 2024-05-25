@@ -2,6 +2,7 @@ use crate::utils::test_with_3_node_cluster;
 use futures::prelude::*;
 use futures_batch::ChunksTimeoutStreamExt;
 use scylla::retry_policy::FallthroughRetryPolicy;
+use scylla::routing::Shard;
 use scylla::serialize::row::SerializedValues;
 use scylla::test_utils::unique_keyspace_name;
 use scylla::transport::session::Session;
@@ -13,8 +14,8 @@ use tokio::sync::mpsc;
 use tokio_stream::wrappers::ReceiverStream;
 
 use scylla_proxy::{
-    Condition, ProxyError, Reaction, RequestFrame, RequestOpcode, RequestReaction, RequestRule,
-    RunningProxy, ShardAwareness, WorkerError,
+    Condition, ProxyError, Reaction, RequestOpcode, RequestReaction, RequestRule, RunningProxy,
+    ShardAwareness, WorkerError,
 };
 
 #[tokio::test]
@@ -55,6 +56,8 @@ async fn run_test(
         running_proxy.running_nodes[i].change_request_rules(Some(vec![prepared_rule(prepared_tx)]));
         prepared_rx
     });
+    let shards_for_nodes_test_check: Arc<tokio::sync::Mutex<HashMap<uuid::Uuid, Vec<Shard>>>> =
+        Default::default();
 
     let handle = ExecutionProfile::builder()
         .retry_policy(Box::new(FallthroughRetryPolicy))
@@ -133,6 +136,7 @@ async fn run_test(
                     scylla::batch::Batch::new(scylla::batch::BatchType::Unlogged);
                 scylla_batch.enforce_target_node(&node, shard_id_on_node, &session);
 
+                let shards_for_nodes_test_check_clone = Arc::clone(&shards_for_nodes_test_check);
                 batching_tasks.push(tokio::spawn(async move {
                     let mut batches = ReceiverStream::new(receiver)
                         .chunks_timeout(10, Duration::from_millis(100));
@@ -150,6 +154,13 @@ async fn run_test(
                             .batch(&scylla_batch, &batch)
                             .await
                             .expect("Query to send batch failed");
+
+                        shards_for_nodes_test_check_clone
+                            .lock()
+                            .await
+                            .entry(destination_shard.node_id)
+                            .or_default()
+                            .push(destination_shard.shard_id_on_node);
                     }
                 }));
                 sender
@@ -172,23 +183,40 @@ async fn run_test(
 
     // finally check that batching was indeed shard-aware.
 
-    // TODO
+    let mut expected: Vec<Vec<Shard>> = Arc::try_unwrap(shards_for_nodes_test_check)
+        .expect("All batching tasks have finished")
+        .into_inner()
+        .into_values()
+        .collect();
 
-    // wip: make sure we did capture the queries to each node
-    fn clear_rxs(rxs: &mut [mpsc::UnboundedReceiver<(RequestFrame, Option<u16>)>; 3]) {
-        for rx in rxs.iter_mut() {
-            while rx.try_recv().is_ok() {}
+    let mut nodes_shards_calls: Vec<Vec<Shard>> = Vec::new();
+    for rx in prepared_rxs.iter_mut() {
+        let mut shards_calls = Vec::new();
+        shards_calls.push(
+            rx.recv()
+                .await
+                .expect("Each node should have received at least one message")
+                .1
+                .expect("Calls should be shard-aware")
+                .into(),
+        );
+        loop {
+            match rx.try_recv() {
+                Ok((_, call_shard)) => {
+                    shards_calls.push(call_shard.expect("Calls should all be shard-aware").into())
+                }
+                Err(_) => break,
+            }
         }
+        nodes_shards_calls.push(shards_calls);
     }
-    async fn assert_all_replicas_queried(
-        rxs: &mut [mpsc::UnboundedReceiver<(RequestFrame, Option<u16>)>; 3],
-    ) {
-        for rx in rxs.iter_mut() {
-            rx.recv().await.unwrap();
-        }
-        clear_rxs(rxs);
-    }
-    assert_all_replicas_queried(&mut prepared_rxs).await;
+
+    // Don't know which node is which
+    // but at least once we don't care about which node is which they should agree about what was sent to what shard
+    dbg!(&expected, &nodes_shards_calls);
+    expected.sort_unstable();
+    nodes_shards_calls.sort_unstable();
+    assert_eq!(expected, nodes_shards_calls);
 
     running_proxy
 }
