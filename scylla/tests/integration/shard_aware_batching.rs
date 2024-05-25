@@ -197,16 +197,21 @@ async fn run_test(
                 .await
                 .expect("Each node should have received at least one message")
                 .1
-                .expect("Calls should be shard-aware")
+                .unwrap_or({
+                    // Cassandra case (non-scylla)
+                    0
+                })
                 .into(),
         );
-        loop {
-            match rx.try_recv() {
-                Ok((_, call_shard)) => {
-                    shards_calls.push(call_shard.expect("Calls should all be shard-aware").into())
-                }
-                Err(_) => break,
-            }
+        while let Ok((_, call_shard)) = rx.try_recv() {
+            shards_calls.push(
+                call_shard
+                    .unwrap_or({
+                        // Cassandra case (non-scylla)
+                        0
+                    })
+                    .into(),
+            )
         }
         nodes_shards_calls.push(shards_calls);
     }
