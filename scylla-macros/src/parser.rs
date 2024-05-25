@@ -1,5 +1,4 @@
-use syn::{Data, DeriveInput, ExprLit, Fields, FieldsNamed, FieldsUnnamed, Lit};
-use syn::{Expr, Meta};
+use syn::{Data, DeriveInput, Expr, ExprLit, Fields, FieldsNamed, FieldsUnnamed, Lit, Meta};
 
 /// Parses a struct DeriveInput and returns named fields of this struct.
 pub(crate) fn parse_named_fields<'a>(
@@ -51,8 +50,8 @@ pub(crate) fn parse_struct_fields<'a>(
     }
 }
 
-pub(crate) fn get_path(input: &DeriveInput) -> Result<proc_macro2::TokenStream, syn::Error> {
-    let mut this_path: Option<proc_macro2::TokenStream> = None;
+pub(crate) fn get_path(input: &DeriveInput) -> Result<syn::Path, syn::Error> {
+    let mut this_path: Option<syn::Path> = None;
     for attr in input.attrs.iter() {
         if !attr.path().is_ident("scylla_crate") {
             continue;
@@ -65,7 +64,7 @@ pub(crate) fn get_path(input: &DeriveInput) -> Result<proc_macro2::TokenStream, 
                 {
                     let path = syn::Ident::new(&lit.value(), lit.span());
                     if this_path.is_none() {
-                        this_path = Some(quote::quote!(#path::_macro_internal));
+                        this_path = Some(syn::parse_quote!(#path::_macro_internal));
                     } else {
                         return Err(syn::Error::new_spanned(
                             &name_value.path,
@@ -87,5 +86,5 @@ pub(crate) fn get_path(input: &DeriveInput) -> Result<proc_macro2::TokenStream, 
             }
         }
     }
-    Ok(this_path.unwrap_or_else(|| quote::quote!(scylla::_macro_internal)))
+    Ok(this_path.unwrap_or_else(|| syn::parse_quote!(scylla::_macro_internal)))
 }
