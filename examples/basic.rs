@@ -1,6 +1,6 @@
 use anyhow::Result;
 use scylla::macros::FromRow;
-use scylla::transport::session::{IntoTypedRows, Session};
+use scylla::transport::session::Session;
 use scylla::SessionBuilder;
 use std::env;
 
@@ -12,25 +12,31 @@ async fn main() -> Result<()> {
 
     let session: Session = SessionBuilder::new().known_node(uri).build().await?;
 
-    session.query("CREATE KEYSPACE IF NOT EXISTS ks WITH REPLICATION = {'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}", &[]).await?;
+    session.query("CREATE KEYSPACE IF NOT EXISTS examples_ks WITH REPLICATION = {'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}", &[]).await?;
 
     session
         .query(
-            "CREATE TABLE IF NOT EXISTS ks.t (a int, b int, c text, primary key (a, b))",
+            "CREATE TABLE IF NOT EXISTS examples_ks.basic (a int, b int, c text, primary key (a, b))",
             &[],
         )
         .await?;
 
     session
-        .query("INSERT INTO ks.t (a, b, c) VALUES (?, ?, ?)", (3, 4, "def"))
+        .query(
+            "INSERT INTO examples_ks.basic (a, b, c) VALUES (?, ?, ?)",
+            (3, 4, "def"),
+        )
         .await?;
 
     session
-        .query("INSERT INTO ks.t (a, b, c) VALUES (1, 2, 'abc')", &[])
+        .query(
+            "INSERT INTO examples_ks.basic (a, b, c) VALUES (1, 2, 'abc')",
+            &[],
+        )
         .await?;
 
     let prepared = session
-        .prepare("INSERT INTO ks.t (a, b, c) VALUES (?, 7, ?)")
+        .prepare("INSERT INTO examples_ks.basic (a, b, c) VALUES (?, 7, ?)")
         .await?;
     session
         .execute(&prepared, (42_i32, "I'm prepared!"))
@@ -43,11 +49,12 @@ async fn main() -> Result<()> {
         .await?;
 
     // Rows can be parsed as tuples
-    if let Some(rows) = session.query("SELECT a, b, c FROM ks.t", &[]).await?.rows {
-        for row in rows.into_typed::<(i32, i32, String)>() {
-            let (a, b, c) = row?;
-            println!("a, b, c: {}, {}, {}", a, b, c);
-        }
+    let result = session
+        .query("SELECT a, b, c FROM examples_ks.basic", &[])
+        .await?;
+    let mut iter = result.rows_typed::<(i32, i32, String)>()?;
+    while let Some((a, b, c)) = iter.next().transpose()? {
+        println!("a, b, c: {}, {}, {}", a, b, c);
     }
 
     // Or as custom structs that derive FromRow
@@ -58,24 +65,27 @@ async fn main() -> Result<()> {
         _c: String,
     }
 
-    if let Some(rows) = session.query("SELECT a, b, c FROM ks.t", &[]).await?.rows {
-        for row_data in rows.into_typed::<RowData>() {
-            let row_data = row_data?;
-            println!("row_data: {:?}", row_data);
-        }
+    let result = session
+        .query("SELECT a, b, c FROM examples_ks.basic", &[])
+        .await?;
+    let mut iter = result.rows_typed::<RowData>()?;
+    while let Some(row_data) = iter.next().transpose()? {
+        println!("row_data: {:?}", row_data);
     }
 
     // Or simply as untyped rows
-    if let Some(rows) = session.query("SELECT a, b, c FROM ks.t", &[]).await?.rows {
-        for row in rows {
-            let a = row.columns[0].as_ref().unwrap().as_int().unwrap();
-            let b = row.columns[1].as_ref().unwrap().as_int().unwrap();
-            let c = row.columns[2].as_ref().unwrap().as_text().unwrap();
-            println!("a, b, c: {}, {}, {}", a, b, c);
+    let result = session
+        .query("SELECT a, b, c FROM examples_ks.basic", &[])
+        .await?;
+    let rows = result.rows.unwrap();
+    for row in rows {
+        let a = row.columns[0].as_ref().unwrap().as_int().unwrap();
+        let b = row.columns[1].as_ref().unwrap().as_int().unwrap();
+        let c = row.columns[2].as_ref().unwrap().as_text().unwrap();
+        println!("a, b, c: {}, {}, {}", a, b, c);
 
-            // Alternatively each row can be parsed individually
-            // let (a2, b2, c2) = row.into_typed::<(i32, i32, String)>() ?;
-        }
+        // Alternatively each row can be parsed individually
+        // let (a2, b2, c2) = row.into_typed::<(i32, i32, String)>() ?;
     }
 
     let metrics = session.get_metrics();

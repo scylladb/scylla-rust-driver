@@ -13,7 +13,7 @@
 //!
 //! # Driver overview
 //! ### Connecting
-//! All driver activity revolves around the [Session](crate::Session)\
+//! All driver activity revolves around the [Session]\
 //! `Session` is created by specifying a few known nodes and connecting to them:
 //!
 //! ```rust,no_run
@@ -31,7 +31,7 @@
 //!    Ok(())
 //! }
 //! ```
-//! `Session` is usually created using the [SessionBuilder](crate::SessionBuilder).\
+//! `Session` is usually created using the [SessionBuilder].\
 //! All configuration options for a `Session` can be specified while building.
 //!
 //! ### Making queries
@@ -98,8 +98,35 @@ pub mod _macro_internal {
     pub use scylla_cql::_macro_internal::*;
 }
 
-pub use scylla_cql::frame;
-pub use scylla_cql::macros::{self, *};
+pub mod macros;
+#[doc(inline)]
+pub use macros::*;
+
+pub mod frame {
+    pub use scylla_cql::frame::{frame_errors, value, Authenticator, Compression};
+    pub(crate) use scylla_cql::frame::{
+        parse_response_body_extensions, protocol_features, read_response_frame, request,
+        server_event_type, FrameParams, SerializedRequest,
+    };
+
+    pub mod types {
+        pub use scylla_cql::frame::types::{Consistency, SerialConsistency};
+    }
+
+    pub mod response {
+        pub use scylla_cql::frame::response::cql_to_rust;
+        pub(crate) use scylla_cql::frame::response::*;
+
+        pub mod result {
+            pub(crate) use scylla_cql::frame::response::result::*;
+            pub use scylla_cql::frame::response::result::{
+                ColumnSpec, ColumnType, CqlValue, PartitionKeyIndex, Row, TableSpec,
+            };
+        }
+    }
+}
+
+pub use scylla_cql::types::serialize;
 
 pub mod authentication;
 #[cfg(feature = "cloud")]

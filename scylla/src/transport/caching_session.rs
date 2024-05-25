@@ -1,5 +1,4 @@
 use crate::batch::{Batch, BatchStatement};
-use crate::frame::value::{BatchValues, ValueList};
 use crate::prepared_statement::PreparedStatement;
 use crate::query::Query;
 use crate::transport::errors::QueryError;
@@ -9,7 +8,9 @@ use crate::{QueryResult, Session};
 use bytes::Bytes;
 use dashmap::DashMap;
 use futures::future::try_join_all;
-use scylla_cql::frame::response::result::PreparedMetadata;
+use scylla_cql::frame::response::result::{PreparedMetadata, ResultMetadata};
+use scylla_cql::types::serialize::batch::BatchValues;
+use scylla_cql::types::serialize::row::SerializeRow;
 use std::collections::hash_map::RandomState;
 use std::hash::BuildHasher;
 
@@ -22,6 +23,7 @@ struct RawPreparedStatementData {
     id: Bytes,
     is_confirmed_lwt: bool,
     metadata: PreparedMetadata,
+    result_metadata: ResultMetadata,
     partitioner_name: PartitionerName,
 }
 
@@ -70,38 +72,35 @@ where
     pub async fn execute(
         &self,
         query: impl Into<Query>,
-        values: impl ValueList,
+        values: impl SerializeRow,
     ) -> Result<QueryResult, QueryError> {
         let query = query.into();
         let prepared = self.add_prepared_statement_owned(query).await?;
-        let values = values.serialized()?;
-        self.session.execute(&prepared, values.clone()).await
+        self.session.execute(&prepared, values).await
     }
 
     /// Does the same thing as [`Session::execute_iter`] but uses the prepared statement cache
     pub async fn execute_iter(
         &self,
         query: impl Into<Query>,
-        values: impl ValueList,
+        values: impl SerializeRow,
     ) -> Result<RowIterator, QueryError> {
         let query = query.into();
         let prepared = self.add_prepared_statement_owned(query).await?;
-        let values = values.serialized()?;
-        self.session.execute_iter(prepared, values.clone()).await
+        self.session.execute_iter(prepared, values).await
     }
 
     /// Does the same thing as [`Session::execute_paged`] but uses the prepared statement cache
     pub async fn execute_paged(
         &self,
         query: impl Into<Query>,
-        values: impl ValueList,
+        values: impl SerializeRow,
         paging_state: Option<Bytes>,
     ) -> Result<QueryResult, QueryError> {
         let query = query.into();
         let prepared = self.add_prepared_statement_owned(query).await?;
-        let values = values.serialized()?;
         self.session
-            .execute_paged(&prepared, values.clone(), paging_state.clone())
+            .execute_paged(&prepared, values, paging_state.clone())
             .await
     }
 
@@ -170,6 +169,7 @@ where
                 raw.id.clone(),
                 raw.is_confirmed_lwt,
                 raw.metadata.clone(),
+                raw.result_metadata.clone(),
                 query.contents,
                 page_size,
                 query.config,
@@ -197,6 +197,7 @@ where
                 id: prepared.get_id().clone(),
                 is_confirmed_lwt: prepared.is_confirmed_lwt(),
                 metadata: prepared.get_prepared_metadata().clone(),
+                result_metadata: prepared.get_result_metadata().clone(),
                 partitioner_name: prepared.get_partitioner_name().clone(),
             };
             self.cache.insert(query_contents, raw);
@@ -217,7 +218,7 @@ where
 #[cfg(test)]
 mod tests {
     use crate::query::Query;
-    use crate::test_utils::create_new_session_builder;
+    use crate::test_utils::{create_new_session_builder, scylla_supports_tablets, setup_tracing};
     use crate::transport::partitioner::PartitionerName;
     use crate::utils::test_utils::unique_keyspace_name;
     use crate::{
@@ -228,15 +229,23 @@ mod tests {
     use futures::TryStreamExt;
     use std::collections::BTreeSet;
 
-    async fn new_for_test() -> Session {
+    async fn new_for_test(with_tablet_support: bool) -> Session {
         let session = create_new_session_builder()
             .build()
             .await
             .expect("Could not create session");
         let ks = unique_keyspace_name();
 
+        let mut create_ks = format!(
+            "CREATE KEYSPACE IF NOT EXISTS {ks}
+        WITH REPLICATION = {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}}"
+        );
+        if !with_tablet_support && scylla_supports_tablets(&session).await {
+            create_ks += " AND TABLETS = {'enabled': false}";
+        }
+
         session
-            .query(format!("CREATE KEYSPACE IF NOT EXISTS {} WITH REPLICATION = {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}}", ks), &[])
+            .query(create_ks, &[])
             .await
             .expect("Could not create keyspace");
 
@@ -260,7 +269,7 @@ mod tests {
     }
 
     async fn create_caching_session() -> CachingSession {
-        let session = CachingSession::from(new_for_test().await, 2);
+        let session = CachingSession::from(new_for_test(true).await, 2);
 
         // Add a row, this makes it easier to check if the caching works combined with the regular execute fn on Session
         session
@@ -280,6 +289,7 @@ mod tests {
     /// to the cache and a random query is removed
     #[tokio::test]
     async fn test_full() {
+        setup_tracing();
         let session = create_caching_session().await;
 
         let first_query = "select * from test_table";
@@ -314,6 +324,7 @@ mod tests {
     /// Checks that the same prepared statement is reused when executing the same query twice
     #[tokio::test]
     async fn test_execute_cached() {
+        setup_tracing();
         let session = create_caching_session().await;
         let result = session
             .execute("select * from test_table", &[])
@@ -321,7 +332,7 @@ mod tests {
             .unwrap();
 
         assert_eq!(1, session.cache.len());
-        assert_eq!(1, result.rows.unwrap().len());
+        assert_eq!(1, result.rows_num().unwrap());
 
         let result = session
             .execute("select * from test_table", &[])
@@ -329,12 +340,13 @@ mod tests {
             .unwrap();
 
         assert_eq!(1, session.cache.len());
-        assert_eq!(1, result.rows.unwrap().len());
+        assert_eq!(1, result.rows_num().unwrap());
     }
 
     /// Checks that caching works with execute_iter
     #[tokio::test]
     async fn test_execute_iter_cached() {
+        setup_tracing();
         let session = create_caching_session().await;
 
         assert!(session.cache.is_empty());
@@ -353,6 +365,7 @@ mod tests {
     /// Checks that caching works with execute_paged
     #[tokio::test]
     async fn test_execute_paged_cached() {
+        setup_tracing();
         let session = create_caching_session().await;
 
         assert!(session.cache.is_empty());
@@ -363,7 +376,7 @@ mod tests {
             .unwrap();
 
         assert_eq!(1, session.cache.len());
-        assert_eq!(1, result.rows.unwrap().len());
+        assert_eq!(1, result.rows_num().unwrap());
     }
 
     async fn assert_test_batch_table_rows_contain(
@@ -381,7 +394,7 @@ mod tests {
         for expected_row in expected_rows.iter() {
             if !selected_rows.contains(expected_row) {
                 panic!(
-                    "Expected {:?} to contain row: {:?}, but they didnt",
+                    "Expected {:?} to contain row: {:?}, but they didn't",
                     selected_rows, expected_row
                 );
             }
@@ -391,6 +404,7 @@ mod tests {
     /// This test checks that we can construct a CachingSession with custom HashBuilder implementations
     #[tokio::test]
     async fn test_custom_hasher() {
+        setup_tracing();
         #[derive(Default, Clone)]
         struct CustomBuildHasher;
         impl std::hash::BuildHasher for CustomBuildHasher {
@@ -413,15 +427,16 @@ mod tests {
         }
 
         let _session: CachingSession<std::collections::hash_map::RandomState> =
-            CachingSession::from(new_for_test().await, 2);
+            CachingSession::from(new_for_test(true).await, 2);
         let _session: CachingSession<CustomBuildHasher> =
-            CachingSession::from(new_for_test().await, 2);
+            CachingSession::from(new_for_test(true).await, 2);
         let _session: CachingSession<CustomBuildHasher> =
-            CachingSession::with_hasher(new_for_test().await, 2, Default::default());
+            CachingSession::with_hasher(new_for_test(true).await, 2, Default::default());
     }
 
     #[tokio::test]
     async fn test_batch() {
+        setup_tracing();
         let session: CachingSession = create_caching_session().await;
 
         session
@@ -544,7 +559,8 @@ mod tests {
     // Reproduces #597
     #[tokio::test]
     async fn test_parameters_caching() {
-        let session: CachingSession = CachingSession::from(new_for_test().await, 100);
+        setup_tracing();
+        let session: CachingSession = CachingSession::from(new_for_test(true).await, 100);
 
         session
             .execute("CREATE TABLE tbl (a int PRIMARY KEY, b int)", ())
@@ -591,16 +607,18 @@ mod tests {
     // Checks whether the PartitionerName is cached properly.
     #[tokio::test]
     async fn test_partitioner_name_caching() {
+        setup_tracing();
         if option_env!("CDC") == Some("disabled") {
             return;
         }
 
-        let session: CachingSession = CachingSession::from(new_for_test().await, 100);
+        // This test uses CDC which is not yet compatible with Scylla's tablets.
+        let session: CachingSession = CachingSession::from(new_for_test(false).await, 100);
 
         session
             .execute(
                 "CREATE TABLE tbl (a int PRIMARY KEY) with cdc = {'enabled': true}",
-                (),
+                &(),
             )
             .await
             .unwrap();

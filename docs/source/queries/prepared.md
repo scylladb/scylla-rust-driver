@@ -3,6 +3,12 @@
 Prepared queries provide much better performance than simple queries,
 but they need to be prepared before use.
 
+Benefits that prepared statements have to offer:
+- Type safety - thanks to metadata provided by the server, the driver can verify bound values' types before serialization. This way, we can be always sure that the Rust type provided by the user is compatible (and if not, the error is returned) with the destined native type. The same applies for deserialization.
+- Performance - when executing a simple query with non-empty values list, the driver
+prepares the statement before execution. The reason for this is to provide type safety for simple queries. However, this implies 2 round trips per simple query execution. On the other hand, the cost of prepared statement's execution is only 1 round trip.
+- Improved load-balancing - using the statement metadata, the driver can compute a set of destined replicas for current statement execution. These replicas will be preferred when choosing the node (and shard) to send the request to. For more insight on this, see [performance section](#performance).
+
 ```rust
 # extern crate scylla;
 # use scylla::Session;

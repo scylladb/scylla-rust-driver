@@ -3,9 +3,13 @@ name: Book
 
 on:
   push:
-    branches: [ main ]
+    branches:
+    - main
+    - 'branch-*'
   pull_request:
-    branches: [ main ]
+    branches:
+    - main
+    - 'branch-*'
 
 env:
   CARGO_TERM_COLOR: always
@@ -20,7 +24,7 @@ jobs:
         image: scylladb/scylla
         ports:
           - 9042:9042
-        options: --health-cmd "cqlsh --debug" --health-interval 5s --health-retries 10
+        options: --health-cmd "cqlsh --debug scylladb" --health-interval 5s --health-retries 10
     steps:
     - uses: actions/checkout@v3
     - name: Install mdbook
@@ -29,7 +33,5 @@ jobs:
       run: cargo build --verbose --examples
     - name: Build the book
       run: mdbook build docs
-    - name: Build the book using the script
-      run: python3 docs/build_book.py
     - name: Run book tests
       run: mdbook test -L target/debug/deps docs

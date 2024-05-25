@@ -1,13 +1,16 @@
+use tokio::net::lookup_host;
+use tracing::warn;
 use uuid::Uuid;
 
 /// Node represents a cluster node along with it's data and connections
-use crate::routing::{Sharder, Token};
+use crate::routing::{Shard, Sharder};
 use crate::transport::connection::Connection;
 use crate::transport::connection::VerifiedKeyspaceName;
 use crate::transport::connection_pool::{NodeConnectionPool, PoolConfig};
 use crate::transport::errors::QueryError;
 
 use std::fmt::Display;
+use std::io;
 use std::net::IpAddr;
 use std::{
     hash::{Hash, Hasher},
@@ -100,8 +103,16 @@ impl Node {
         let address = peer.address;
         let datacenter = peer.datacenter.clone();
         let rack = peer.rack.clone();
+
+        // We aren't interested in the fact that the pool becomes empty, so we immediately drop the receiving part.
+        let (pool_empty_notifier, _) = tokio::sync::broadcast::channel(1);
         let pool = enabled.then(|| {
-            NodeConnectionPool::new(UntranslatedEndpoint::Peer(peer), pool_config, keyspace_name)
+            NodeConnectionPool::new(
+                UntranslatedEndpoint::Peer(peer),
+                pool_config,
+                keyspace_name,
+                pool_empty_notifier,
+            )
         });
 
         Node {
@@ -141,18 +152,13 @@ impl Node {
         self.pool.as_ref()?.sharder()
     }
 
-    /// Get connection which should be used to connect using given token
-    /// If this connection is broken get any random connection to this Node
-    pub(crate) async fn connection_for_token(
+    /// Get a connection targetting the given shard
+    /// If such connection is broken, get any random connection to this `Node`
+    pub(crate) async fn connection_for_shard(
         &self,
-        token: Token,
+        shard: Shard,
     ) -> Result<Arc<Connection>, QueryError> {
-        self.get_pool()?.connection_for_token(token)
-    }
-
-    /// Get random connection
-    pub(crate) async fn random_connection(&self) -> Result<Arc<Connection>, QueryError> {
-        self.get_pool()?.random_connection()
+        self.get_pool()?.connection_for_shard(shard)
     }
 
     pub fn is_down(&self) -> bool {
@@ -215,19 +221,127 @@ impl Hash for Node {
     }
 }
 
+/// Describes a database server known on `Session` startup.
+///
+/// The name derives from SessionBuilder's `known_node()` family of methods.
+#[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Debug)]
+#[non_exhaustive]
+pub enum KnownNode {
+    Hostname(String),
+    Address(SocketAddr),
+    #[cfg(feature = "cloud")]
+    CloudEndpoint(CloudEndpoint),
+}
+
+/// Describes a database server in the serverless Scylla Cloud.
+#[cfg(feature = "cloud")]
+#[non_exhaustive]
+#[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Debug)]
+pub struct CloudEndpoint {
+    pub hostname: String,
+    pub datacenter: String,
+}
+
+/// Describes a database server known on Session startup, with already resolved address.
+#[derive(Debug, Clone)]
+#[non_exhaustive]
+pub struct ResolvedContactPoint {
+    pub address: SocketAddr,
+    pub datacenter: Option<String>,
+}
+
+// Resolve the given hostname using a DNS lookup if necessary.
+// The resolution may return multiple IPs and the function returns one of them.
+// It prefers to return IPv4s first, and only if there are none, IPv6s.
+pub(crate) async fn resolve_hostname(hostname: &str) -> Result<SocketAddr, io::Error> {
+    let mut ret = None;
+    let addrs: Vec<SocketAddr> = match lookup_host(hostname).await {
+        Ok(addrs) => addrs.collect(),
+        // Use a default port in case of error, but propagate the original error on failure
+        Err(e) => lookup_host((hostname, 9042)).await.or(Err(e))?.collect(),
+    };
+    for a in addrs {
+        match a {
+            SocketAddr::V4(_) => return Ok(a),
+            _ => {
+                ret = Some(a);
+            }
+        }
+    }
+
+    ret.ok_or_else(|| {
+        io::Error::new(
+            io::ErrorKind::Other,
+            format!("Empty address list returned by DNS for {}", hostname),
+        )
+    })
+}
+
+/// Transforms the given [`KnownNode`]s into [`ContactPoint`]s.
+///
+/// In case of a hostname, resolves it using a DNS lookup.
+/// In case of a plain IP address, parses it and uses straight.
+pub(crate) async fn resolve_contact_points(
+    known_nodes: &[KnownNode],
+) -> (Vec<ResolvedContactPoint>, Vec<String>) {
+    // Find IP addresses of all known nodes passed in the config
+    let mut initial_peers: Vec<ResolvedContactPoint> = Vec::with_capacity(known_nodes.len());
+
+    let mut to_resolve: Vec<(&String, Option<String>)> = Vec::new();
+    let mut hostnames: Vec<String> = Vec::new();
+
+    for node in known_nodes.iter() {
+        match node {
+            KnownNode::Hostname(hostname) => {
+                to_resolve.push((hostname, None));
+                hostnames.push(hostname.clone());
+            }
+            KnownNode::Address(address) => initial_peers.push(ResolvedContactPoint {
+                address: *address,
+                datacenter: None,
+            }),
+            #[cfg(feature = "cloud")]
+            KnownNode::CloudEndpoint(CloudEndpoint {
+                hostname,
+                datacenter,
+            }) => to_resolve.push((hostname, Some(datacenter.clone()))),
+        };
+    }
+    let resolve_futures = to_resolve.iter().map(|(hostname, datacenter)| async move {
+        match resolve_hostname(hostname).await {
+            Ok(address) => Some(ResolvedContactPoint {
+                address,
+                datacenter: datacenter.clone(),
+            }),
+            Err(e) => {
+                warn!("Hostname resolution failed for {}: {}", hostname, &e);
+                None
+            }
+        }
+    });
+    let resolved: Vec<_> = futures::future::join_all(resolve_futures).await;
+    initial_peers.extend(resolved.into_iter().flatten());
+
+    (initial_peers, hostnames)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     impl Node {
         pub(crate) fn new_for_test(
-            address: NodeAddr,
+            id: Option<Uuid>,
+            address: Option<NodeAddr>,
             datacenter: Option<String>,
             rack: Option<String>,
         ) -> Self {
             Self {
-                host_id: Uuid::new_v4(),
-                address,
+                host_id: id.unwrap_or(Uuid::new_v4()),
+                address: address.unwrap_or(NodeAddr::Translatable(SocketAddr::from((
+                    [255, 255, 255, 255],
+                    0,
+                )))),
                 datacenter,
                 rack,
                 pool: None,

@@ -5,6 +5,7 @@ use crate::transport::connection::{Connection, ConnectionConfig};
 use crate::transport::connection_pool::{NodeConnectionPool, PoolConfig, PoolSize};
 use crate::transport::errors::{DbError, QueryError};
 use crate::transport::host_filter::HostFilter;
+use crate::transport::node::resolve_contact_points;
 use crate::utils::parse::{ParseErrorCause, ParseResult, ParserState};
 
 use futures::future::{self, FutureExt};
@@ -12,8 +13,8 @@ use futures::stream::{self, StreamExt, TryStreamExt};
 use futures::Stream;
 use rand::seq::SliceRandom;
 use rand::{thread_rng, Rng};
+use scylla_cql::errors::NewSessionError;
 use scylla_cql::frame::response::result::Row;
-use scylla_cql::frame::value::ValueList;
 use scylla_macros::FromRow;
 use std::borrow::BorrowMut;
 use std::cell::Cell;
@@ -25,13 +26,11 @@ use std::num::NonZeroUsize;
 use std::str::FromStr;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
-use strum_macros::EnumString;
-use tokio::sync::mpsc;
+use tokio::sync::{broadcast, mpsc};
 use tracing::{debug, error, trace, warn};
 use uuid::Uuid;
 
-use super::cluster::ContactPoint;
-use super::NodeAddr;
+use super::node::{KnownNode, NodeAddr, ResolvedContactPoint};
 
 /// Allows to read current metadata from the cluster
 pub(crate) struct MetadataReader {
@@ -46,12 +45,20 @@ pub(crate) struct MetadataReader {
     keyspaces_to_fetch: Vec<String>,
     fetch_schema: bool,
     host_filter: Option<Arc<dyn HostFilter>>,
+
+    // When no known peer is reachable, initial known nodes are resolved once again as a fallback
+    // and establishing control connection to them is attempted.
+    initial_known_nodes: Vec<KnownNode>,
+
+    // When a control connection breaks, the PoolRefiller of its pool uses the requester
+    // to signal ClusterWorker that an immediate metadata refresh is advisable.
+    control_connection_repair_requester: broadcast::Sender<()>,
 }
 
 /// Describes all metadata retrieved from the cluster
-pub struct Metadata {
-    pub peers: Vec<Peer>,
-    pub keyspaces: HashMap<String, Keyspace>,
+pub(crate) struct Metadata {
+    pub(crate) peers: Vec<Peer>,
+    pub(crate) keyspaces: HashMap<String, Keyspace>,
 }
 
 #[non_exhaustive] // <- so that we can add more fields in a backwards-compatible way
@@ -69,7 +76,7 @@ pub struct Peer {
 #[derive(Clone, Debug)]
 pub enum UntranslatedEndpoint {
     /// Provided by user in SessionConfig (initial contact points).
-    ContactPoint(ContactPoint),
+    ContactPoint(ResolvedContactPoint),
     /// Fetched in Metadata with `query_peers()`
     Peer(PeerEndpoint),
 }
@@ -77,7 +84,7 @@ pub enum UntranslatedEndpoint {
 impl UntranslatedEndpoint {
     pub(crate) fn address(&self) -> NodeAddr {
         match *self {
-            UntranslatedEndpoint::ContactPoint(ContactPoint { address, .. }) => {
+            UntranslatedEndpoint::ContactPoint(ResolvedContactPoint { address, .. }) => {
                 NodeAddr::Untranslatable(address)
             }
             UntranslatedEndpoint::Peer(PeerEndpoint { address, .. }) => address,
@@ -85,7 +92,7 @@ impl UntranslatedEndpoint {
     }
     pub(crate) fn set_port(&mut self, port: u16) {
         let inner_addr = match self {
-            UntranslatedEndpoint::ContactPoint(ContactPoint { address, .. }) => address,
+            UntranslatedEndpoint::ContactPoint(ResolvedContactPoint { address, .. }) => address,
             UntranslatedEndpoint::Peer(PeerEndpoint { address, .. }) => address.inner_mut(),
         };
         inner_addr.set_port(port);
@@ -112,6 +119,18 @@ impl Peer {
             datacenter: self.datacenter.clone(),
             rack: self.rack.clone(),
         }
+    }
+
+    pub(crate) fn into_peer_endpoint_and_tokens(self) -> (PeerEndpoint, Vec<Token>) {
+        (
+            PeerEndpoint {
+                host_id: self.host_id,
+                address: self.address,
+                datacenter: self.datacenter,
+                rack: self.rack,
+            },
+            self.tokens,
+        )
     }
 }
 
@@ -235,8 +254,7 @@ pub struct MissingUserDefinedType {
     pub keyspace: String,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, EnumString)]
-#[strum(serialize_all = "lowercase")]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum NativeType {
     Ascii,
     Boolean,
@@ -258,6 +276,40 @@ pub enum NativeType {
     Timeuuid,
     Uuid,
     Varint,
+}
+
+/// [NativeType] parse error
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct NativeTypeFromStrError;
+
+impl std::str::FromStr for NativeType {
+    type Err = NativeTypeFromStrError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "ascii" => Ok(Self::Ascii),
+            "boolean" => Ok(Self::Boolean),
+            "blob" => Ok(Self::Blob),
+            "counter" => Ok(Self::Counter),
+            "date" => Ok(Self::Date),
+            "decimal" => Ok(Self::Decimal),
+            "double" => Ok(Self::Double),
+            "duration" => Ok(Self::Duration),
+            "float" => Ok(Self::Float),
+            "int" => Ok(Self::Int),
+            "bigint" => Ok(Self::BigInt),
+            "text" => Ok(Self::Text),
+            "timestamp" => Ok(Self::Timestamp),
+            "inet" => Ok(Self::Inet),
+            "smallint" => Ok(Self::SmallInt),
+            "tinyint" => Ok(Self::TinyInt),
+            "time" => Ok(Self::Time),
+            "timeuuid" => Ok(Self::Timeuuid),
+            "uuid" => Ok(Self::Uuid),
+            "varint" => Ok(Self::Varint),
+            _ => Err(NativeTypeFromStrError),
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -295,13 +347,30 @@ pub enum CollectionType {
     Set(Box<CqlType>),
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, EnumString)]
-#[strum(serialize_all = "snake_case")]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ColumnKind {
     Regular,
     Static,
     Clustering,
     PartitionKey,
+}
+
+/// [ColumnKind] parse error
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ColumnKindFromStrError;
+
+impl std::str::FromStr for ColumnKind {
+    type Err = ColumnKindFromStrError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "regular" => Ok(Self::Regular),
+            "static" => Ok(Self::Static),
+            "clustering" => Ok(Self::Clustering),
+            "partition_key" => Ok(Self::PartitionKey),
+            _ => Err(ColumnKindFromStrError),
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -349,7 +418,7 @@ impl Metadata {
     ///
     /// It can be used as a replacement for real metadata when initial
     /// metadata read fails.
-    pub fn new_dummy(initial_peers: &[UntranslatedEndpoint]) -> Self {
+    pub(crate) fn new_dummy(initial_peers: &[UntranslatedEndpoint]) -> Self {
         let peers = initial_peers
             .iter()
             .enumerate()
@@ -360,9 +429,7 @@ impl Metadata {
 
                 Peer {
                     address: endpoint.address(),
-                    tokens: vec![Token {
-                        value: token as i64,
-                    }],
+                    tokens: vec![Token::new(token as i64)],
                     datacenter: None,
                     rack: None,
                     host_id: Uuid::new_v4(),
@@ -380,19 +447,29 @@ impl Metadata {
 impl MetadataReader {
     /// Creates new MetadataReader, which connects to initially_known_peers in the background
     #[allow(clippy::too_many_arguments)]
-    pub(crate) fn new(
-        initially_known_peers: Vec<ContactPoint>,
+    pub(crate) async fn new(
+        initial_known_nodes: Vec<KnownNode>,
+        control_connection_repair_requester: broadcast::Sender<()>,
         mut connection_config: ConnectionConfig,
         keepalive_interval: Option<Duration>,
         server_event_sender: mpsc::Sender<Event>,
         keyspaces_to_fetch: Vec<String>,
         fetch_schema: bool,
         host_filter: &Option<Arc<dyn HostFilter>>,
-    ) -> Self {
+    ) -> Result<Self, NewSessionError> {
+        let (initial_peers, resolved_hostnames) =
+            resolve_contact_points(&initial_known_nodes).await;
+        // Ensure there is at least one resolved node
+        if initial_peers.is_empty() {
+            return Err(NewSessionError::FailedToResolveAnyHostname(
+                resolved_hostnames,
+            ));
+        }
+
         let control_connection_endpoint = UntranslatedEndpoint::ContactPoint(
-            initially_known_peers
+            initial_peers
                 .choose(&mut thread_rng())
-                .expect("Tried to initialize MetadataReader with empty known_peers list!")
+                .expect("Tried to initialize MetadataReader with empty initial_known_nodes list!")
                 .clone(),
         );
 
@@ -405,33 +482,43 @@ impl MetadataReader {
             control_connection_endpoint.clone(),
             connection_config.clone(),
             keepalive_interval,
+            control_connection_repair_requester.clone(),
         );
 
-        MetadataReader {
+        Ok(MetadataReader {
             control_connection_endpoint,
             control_connection,
             keepalive_interval,
             connection_config,
-            known_peers: initially_known_peers
+            known_peers: initial_peers
                 .into_iter()
                 .map(UntranslatedEndpoint::ContactPoint)
                 .collect(),
             keyspaces_to_fetch,
             fetch_schema,
             host_filter: host_filter.clone(),
-        }
+            initial_known_nodes,
+            control_connection_repair_requester,
+        })
     }
 
     /// Fetches current metadata from the cluster
     pub(crate) async fn read_metadata(&mut self, initial: bool) -> Result<Metadata, QueryError> {
         let mut result = self.fetch_metadata(initial).await;
-        if let Ok(metadata) = result {
-            self.update_known_peers(&metadata);
-            if initial {
-                self.handle_unaccepted_host_in_control_connection(&metadata);
+        let prev_err = match result {
+            Ok(metadata) => {
+                debug!("Fetched new metadata");
+                self.update_known_peers(&metadata);
+                if initial {
+                    self.handle_unaccepted_host_in_control_connection(&metadata);
+                }
+                return Ok(metadata);
             }
-            return Ok(metadata);
-        }
+            Err(err) => err,
+        };
+
+        // At this point, we known that fetching metadata on currect control connection failed.
+        // Therefore, we try to fetch metadata from other known peers, in order.
 
         // shuffle known_peers to iterate through them in random order later
         self.known_peers.shuffle(&mut thread_rng());
@@ -447,12 +534,61 @@ impl MetadataReader {
         let address_of_failed_control_connection = self.control_connection_endpoint.address();
         let filtered_known_peers = self
             .known_peers
-            .iter()
-            .filter(|&peer| peer.address() != address_of_failed_control_connection);
+            .clone()
+            .into_iter()
+            .filter(|peer| peer.address() != address_of_failed_control_connection);
 
         // if fetching metadata on current control connection failed,
         // try to fetch metadata from other known peer
-        for peer in filtered_known_peers {
+        result = self
+            .retry_fetch_metadata_on_nodes(initial, filtered_known_peers, prev_err)
+            .await;
+
+        if let Err(prev_err) = result {
+            if !initial {
+                // If no known peer is reachable, try falling back to initial contact points, in hope that
+                // there are some hostnames there which will resolve to reachable new addresses.
+                warn!("Failed to establish control connection and fetch metadata on all known peers. Falling back to initial contact points.");
+                let (initial_peers, _hostnames) =
+                    resolve_contact_points(&self.initial_known_nodes).await;
+                result = self
+                    .retry_fetch_metadata_on_nodes(
+                        initial,
+                        initial_peers
+                            .into_iter()
+                            .map(UntranslatedEndpoint::ContactPoint),
+                        prev_err,
+                    )
+                    .await;
+            } else {
+                // No point in falling back as this is an initial connection attempt.
+                result = Err(prev_err);
+            }
+        }
+
+        match &result {
+            Ok(metadata) => {
+                self.update_known_peers(metadata);
+                self.handle_unaccepted_host_in_control_connection(metadata);
+                debug!("Fetched new metadata");
+            }
+            Err(error) => error!(
+                error = %error,
+                "Could not fetch metadata"
+            ),
+        }
+
+        result
+    }
+
+    async fn retry_fetch_metadata_on_nodes(
+        &mut self,
+        initial: bool,
+        nodes: impl Iterator<Item = UntranslatedEndpoint>,
+        prev_err: QueryError,
+    ) -> Result<Metadata, QueryError> {
+        let mut result = Err(prev_err);
+        for peer in nodes {
             let err = match result {
                 Ok(_) => break,
                 Err(err) => err,
@@ -473,6 +609,7 @@ impl MetadataReader {
                 self.control_connection_endpoint.clone(),
                 self.connection_config.clone(),
                 self.keepalive_interval,
+                self.control_connection_repair_requester.clone(),
             );
 
             debug!(
@@ -481,19 +618,6 @@ impl MetadataReader {
             );
             result = self.fetch_metadata(initial).await;
         }
-
-        match &result {
-            Ok(metadata) => {
-                self.update_known_peers(metadata);
-                self.handle_unaccepted_host_in_control_connection(metadata);
-                debug!("Fetched new metadata");
-            }
-            Err(error) => error!(
-                error = %error,
-                "Could not fetch metadata"
-            ),
-        }
-
         result
     }
 
@@ -585,6 +709,7 @@ impl MetadataReader {
                         self.control_connection_endpoint.clone(),
                         self.connection_config.clone(),
                         self.keepalive_interval,
+                        self.control_connection_repair_requester.clone(),
                     );
                 }
             }
@@ -595,6 +720,7 @@ impl MetadataReader {
         endpoint: UntranslatedEndpoint,
         connection_config: ConnectionConfig,
         keepalive_interval: Option<Duration>,
+        refresh_requester: broadcast::Sender<()>,
     ) -> NodeConnectionPool {
         let pool_config = PoolConfig {
             connection_config,
@@ -608,7 +734,7 @@ impl MetadataReader {
             can_use_shard_aware_port: false,
         };
 
-        NodeConnectionPool::new(endpoint, pool_config, None)
+        NodeConnectionPool::new(endpoint, pool_config, None, refresh_requester)
     }
 }
 
@@ -671,7 +797,7 @@ async fn query_peers(conn: &Arc<Connection>, connect_port: u16) -> Result<Vec<Pe
     peers_query.set_page_size(1024);
     let peers_query_stream = conn
         .clone()
-        .query_iter(peers_query, &[])
+        .query_iter(peers_query)
         .into_stream()
         .try_flatten()
         .and_then(|row_result| future::ok((NodeInfoSource::Peer, row_result)));
@@ -681,7 +807,7 @@ async fn query_peers(conn: &Arc<Connection>, connect_port: u16) -> Result<Vec<Pe
     local_query.set_page_size(1024);
     let local_query_stream = conn
         .clone()
-        .query_iter(local_query, &[])
+        .query_iter(local_query)
         .into_stream()
         .try_flatten()
         .and_then(|row_result| future::ok((NodeInfoSource::Local, row_result)));
@@ -759,9 +885,7 @@ async fn create_peer_from_row(
             // Also, we could implement support for Cassandra's other standard partitioners
             // like RandomPartitioner or ByteOrderedPartitioner.
             trace!("Couldn't parse tokens as 64-bit integers: {}, proceeding with a dummy token. If you're using a partitioner with different token size, consider migrating to murmur3", e);
-            vec![Token {
-                value: rand::thread_rng().gen::<i64>(),
-            }]
+            vec![Token::new(rand::thread_rng().gen::<i64>())]
         }
     };
 
@@ -774,24 +898,30 @@ async fn create_peer_from_row(
     }))
 }
 
-fn query_filter_keyspace_name(
+fn query_filter_keyspace_name<'a>(
     conn: &Arc<Connection>,
-    query_str: &str,
-    keyspaces_to_fetch: &[String],
-) -> impl Stream<Item = Result<Row, QueryError>> {
-    let keyspaces = &[keyspaces_to_fetch] as &[&[String]];
-    let (query_str, query_values) = if !keyspaces_to_fetch.is_empty() {
-        (format!("{query_str} where keyspace_name in ?"), keyspaces)
-    } else {
-        (query_str.into(), &[] as &[&[String]])
-    };
-    let query_values = query_values.serialized().map(|sv| sv.into_owned());
-    let mut query = Query::new(query_str);
+    query_str: &'a str,
+    keyspaces_to_fetch: &'a [String],
+) -> impl Stream<Item = Result<Row, QueryError>> + 'a {
     let conn = conn.clone();
-    query.set_page_size(1024);
+
     let fut = async move {
-        let query_values = query_values?;
-        conn.query_iter(query, query_values).await
+        if keyspaces_to_fetch.is_empty() {
+            let mut query = Query::new(query_str);
+            query.set_page_size(1024);
+
+            conn.query_iter(query).await
+        } else {
+            let keyspaces = &[keyspaces_to_fetch] as &[&[String]];
+            let query_str = format!("{query_str} where keyspace_name in ?");
+
+            let mut query = Query::new(query_str);
+            query.set_page_size(1024);
+
+            let prepared = conn.prepare(&query).await?;
+            let serialized_values = prepared.serialize_values(&keyspaces)?;
+            conn.execute_iter(prepared, serialized_values).await
+        }
     };
     fut.into_stream().try_flatten()
 }
@@ -1045,6 +1175,8 @@ fn topo_sort_udts(udts: &mut Vec<UdtRowWithParsedFieldTypes>) -> Result<(), Quer
 
 #[cfg(test)]
 mod toposort_tests {
+    use crate::test_utils::setup_tracing;
+
     use super::{topo_sort_udts, UdtRow, UdtRowWithParsedFieldTypes};
 
     const KEYSPACE1: &str = "KEYSPACE1";
@@ -1082,6 +1214,7 @@ mod toposort_tests {
     #[test]
     #[ntest::timeout(1000)]
     fn test_udt_topo_sort_valid_case() {
+        setup_tracing();
         // UDTs dependencies on each other (arrow A -> B signifies that type B is composed of type A):
         //
         // KEYSPACE1
@@ -1148,6 +1281,7 @@ mod toposort_tests {
     #[test]
     #[ntest::timeout(1000)]
     fn test_udt_topo_sort_detects_cycles() {
+        setup_tracing();
         const KEYSPACE1: &str = "KEYSPACE1";
         let tests = [
             // test 1
@@ -1182,6 +1316,7 @@ mod toposort_tests {
     #[test]
     #[ntest::timeout(1000)]
     fn test_udt_topo_sort_ignores_invalid_metadata() {
+        setup_tracing();
         // A depends on B, which depends on unknown C; also, there is an independent E.
         let mut udts = vec![
             make_udt_row(
@@ -1521,7 +1656,7 @@ async fn query_table_partitioners(
 
     let rows = conn
         .clone()
-        .query_iter(partitioner_query, &[])
+        .query_iter(partitioner_query)
         .into_stream()
         .try_flatten();
 
@@ -1599,10 +1734,13 @@ fn strategy_from_string_map(
 
 #[cfg(test)]
 mod tests {
+    use crate::test_utils::setup_tracing;
+
     use super::*;
 
     #[test]
     fn test_cql_type_parsing() {
+        setup_tracing();
         let test_cases = [
             ("bigint", PreCqlType::Native(NativeType::BigInt)),
             (

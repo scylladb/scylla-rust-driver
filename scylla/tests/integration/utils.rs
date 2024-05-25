@@ -1,72 +1,20 @@
 use futures::Future;
-use itertools::Itertools;
-use scylla::load_balancing::LoadBalancingPolicy;
 use std::collections::HashMap;
 use std::env;
 use std::net::SocketAddr;
 use std::str::FromStr;
-use tracing::instrument::WithSubscriber;
 
 use scylla_proxy::{Node, Proxy, ProxyError, RunningProxy, ShardAwareness};
 
-pub fn init_logger() {
+#[cfg(test)]
+pub(crate) fn setup_tracing() {
     let _ = tracing_subscriber::fmt::fmt()
         .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
-        .without_time()
+        .with_writer(tracing_subscriber::fmt::TestWriter::new())
         .try_init();
 }
 
-#[derive(Debug)]
-pub struct FixedOrderLoadBalancer;
-impl LoadBalancingPolicy for FixedOrderLoadBalancer {
-    fn pick<'a>(
-        &'a self,
-        _info: &'a scylla::load_balancing::RoutingInfo,
-        cluster: &'a scylla::transport::ClusterData,
-    ) -> Option<scylla::transport::NodeRef<'a>> {
-        cluster
-            .get_nodes_info()
-            .iter()
-            .sorted_by(|node1, node2| Ord::cmp(&node1.address, &node2.address))
-            .next()
-    }
-
-    fn fallback<'a>(
-        &'a self,
-        _info: &'a scylla::load_balancing::RoutingInfo,
-        cluster: &'a scylla::transport::ClusterData,
-    ) -> scylla::load_balancing::FallbackPlan<'a> {
-        Box::new(
-            cluster
-                .get_nodes_info()
-                .iter()
-                .sorted_by(|node1, node2| Ord::cmp(&node1.address, &node2.address)),
-        )
-    }
-
-    fn on_query_success(
-        &self,
-        _: &scylla::load_balancing::RoutingInfo,
-        _: std::time::Duration,
-        _: scylla::transport::NodeRef<'_>,
-    ) {
-    }
-
-    fn on_query_failure(
-        &self,
-        _: &scylla::load_balancing::RoutingInfo,
-        _: std::time::Duration,
-        _: scylla::transport::NodeRef<'_>,
-        _: &scylla_cql::errors::QueryError,
-    ) {
-    }
-
-    fn name(&self) -> String {
-        "FixedOrderLoadBalancer".to_string()
-    }
-}
-
-pub async fn test_with_3_node_cluster<F, Fut>(
+pub(crate) async fn test_with_3_node_cluster<F, Fut>(
     shard_awareness: ShardAwareness,
     test: F,
 ) -> Result<(), ProxyError>
@@ -74,7 +22,6 @@ where
     F: FnOnce([String; 3], HashMap<SocketAddr, SocketAddr>, RunningProxy) -> Fut,
     Fut: Future<Output = RunningProxy>,
 {
-    init_logger();
     let real1_uri = env::var("SCYLLA_URI").unwrap_or_else(|_| "127.0.0.1:9042".to_string());
     let proxy1_uri = format!("{}:9042", scylla_proxy::get_exclusive_local_address());
     let real2_uri = env::var("SCYLLA_URI2").unwrap_or_else(|_| "127.0.0.2:9042".to_string());
@@ -105,7 +52,7 @@ where
     );
 
     let translation_map = proxy.translation_map();
-    let running_proxy = proxy.run().with_current_subscriber().await.unwrap();
+    let running_proxy = proxy.run().await.unwrap();
 
     let running_proxy = test(
         [proxy1_uri, proxy2_uri, proxy3_uri],

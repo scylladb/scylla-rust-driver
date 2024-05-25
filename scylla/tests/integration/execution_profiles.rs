@@ -1,15 +1,15 @@
 use std::ops::Deref;
 use std::sync::Arc;
 
-use crate::utils::test_with_3_node_cluster;
+use crate::utils::{setup_tracing, test_with_3_node_cluster};
 use assert_matches::assert_matches;
 use scylla::batch::BatchStatement;
 use scylla::batch::{Batch, BatchType};
 use scylla::query::Query;
+use scylla::routing::Shard;
 use scylla::statement::SerialConsistency;
 use scylla::transport::NodeRef;
 use scylla::{
-    frame::types::LegacyConsistency,
     load_balancing::{LoadBalancingPolicy, RoutingInfo},
     retry_policy::{RetryPolicy, RetrySession},
     speculative_execution::SpeculativeExecutionPolicy,
@@ -34,22 +34,30 @@ enum Report {
 #[derive(Debug, Clone)]
 struct BoundToPredefinedNodePolicy<const NODE: u8> {
     profile_reporter: mpsc::UnboundedSender<(Report, u8)>,
-    consistency_reporter: mpsc::UnboundedSender<LegacyConsistency>,
+    consistency_reporter: mpsc::UnboundedSender<Consistency>,
 }
 
 impl<const NODE: u8> BoundToPredefinedNodePolicy<NODE> {
     fn report_node(&self, report: Report) {
         self.profile_reporter.send((report, NODE)).unwrap();
     }
-    fn report_consistency(&self, c: LegacyConsistency) {
+    fn report_consistency(&self, c: Consistency) {
         self.consistency_reporter.send(c).unwrap();
     }
 }
 
 impl<const NODE: u8> LoadBalancingPolicy for BoundToPredefinedNodePolicy<NODE> {
-    fn pick<'a>(&'a self, _info: &'a RoutingInfo, cluster: &'a ClusterData) -> Option<NodeRef<'a>> {
+    fn pick<'a>(
+        &'a self,
+        _info: &'a RoutingInfo,
+        cluster: &'a ClusterData,
+    ) -> Option<(NodeRef<'a>, Option<Shard>)> {
         self.report_node(Report::LoadBalancing);
-        cluster.get_nodes_info().iter().next()
+        cluster
+            .get_nodes_info()
+            .iter()
+            .next()
+            .map(|node| (node, None))
     }
 
     fn fallback<'a>(
@@ -120,6 +128,7 @@ impl<const NODE: u8> SpeculativeExecutionPolicy for BoundToPredefinedNodePolicy<
 #[ntest::timeout(20000)]
 #[cfg(not(scylla_cloud_tests))]
 async fn test_execution_profiles() {
+    setup_tracing();
     let res = test_with_3_node_cluster(ShardAwareness::QueryNode, |proxy_uris, translation_map, mut running_proxy| async move {
 
         let (routing_tx, mut profile_rx) = mpsc::unbounded_channel();
@@ -260,55 +269,55 @@ async fn test_execution_profiles() {
         // Run non-LWT on default per-session execution profile
         session.query(query.clone(), &[]).await.unwrap_err();
         let report_consistency = consistency_rx.recv().await.unwrap();
-        assert_matches!(report_consistency, LegacyConsistency::Regular(Consistency::One));
+        assert_matches!(report_consistency, Consistency::One);
         consistency_rx.try_recv().unwrap_err();
 
         session.execute(&prepared, &[]).await.unwrap_err();
         let report_consistency = consistency_rx.recv().await.unwrap();
-        assert_matches!(report_consistency, LegacyConsistency::Regular(Consistency::One));
+        assert_matches!(report_consistency, Consistency::One);
         consistency_rx.try_recv().unwrap_err();
 
         session.batch(&batch, ((),)).await.unwrap_err();
         let report_consistency = consistency_rx.recv().await.unwrap();
-        assert_matches!(report_consistency, LegacyConsistency::Regular(Consistency::One));
+        assert_matches!(report_consistency, Consistency::One);
         consistency_rx.try_recv().unwrap_err();
 
         // Run on statement-specific execution profile
         query.set_execution_profile_handle(Some(profile2.clone().into_handle()));
         session.query(query.clone(), &[]).await.unwrap_err();
         let report_consistency = consistency_rx.recv().await.unwrap();
-        assert_matches!(report_consistency, LegacyConsistency::Regular(Consistency::Two));
+        assert_matches!(report_consistency, Consistency::Two);
         consistency_rx.try_recv().unwrap_err();
 
         prepared.set_execution_profile_handle(Some(profile2.clone().into_handle()));
         session.execute(&prepared, &[]).await.unwrap_err();
         let report_consistency = consistency_rx.recv().await.unwrap();
-        assert_matches!(report_consistency, LegacyConsistency::Regular(Consistency::Two));
+        assert_matches!(report_consistency, Consistency::Two);
         consistency_rx.try_recv().unwrap_err();
 
         batch.set_execution_profile_handle(Some(profile2.clone().into_handle()));
         session.batch(&batch, ((),)).await.unwrap_err();
         let report_consistency = consistency_rx.recv().await.unwrap();
-        assert_matches!(report_consistency, LegacyConsistency::Regular(Consistency::Two));
+        assert_matches!(report_consistency, Consistency::Two);
         consistency_rx.try_recv().unwrap_err();
 
         // Run with statement-set specific options
         query.set_consistency(Consistency::Three);
         session.query(query.clone(), &[]).await.unwrap_err();
         let report_consistency = consistency_rx.recv().await.unwrap();
-        assert_matches!(report_consistency, LegacyConsistency::Regular(Consistency::Three));
+        assert_matches!(report_consistency, Consistency::Three);
         consistency_rx.try_recv().unwrap_err();
 
         prepared.set_consistency(Consistency::Three);
         session.execute(&prepared, &[]).await.unwrap_err();
         let report_consistency = consistency_rx.recv().await.unwrap();
-        assert_matches!(report_consistency, LegacyConsistency::Regular(Consistency::Three));
+        assert_matches!(report_consistency, Consistency::Three);
         consistency_rx.try_recv().unwrap_err();
 
         batch.set_consistency(Consistency::Three);
         session.batch(&batch, ((),)).await.unwrap_err();
         let report_consistency = consistency_rx.recv().await.unwrap();
-        assert_matches!(report_consistency, LegacyConsistency::Regular(Consistency::Three));
+        assert_matches!(report_consistency, Consistency::Three);
         consistency_rx.try_recv().unwrap_err();
 
         for i in 0..=2 {

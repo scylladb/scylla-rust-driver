@@ -26,16 +26,18 @@ async fn main() -> Result<()> {
         .build()
         .await?;
 
-    session.query("CREATE KEYSPACE IF NOT EXISTS ks WITH REPLICATION = {'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}", &[]).await?;
+    session.query("CREATE KEYSPACE IF NOT EXISTS examples_ks WITH REPLICATION = {'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}", &[]).await?;
 
     session
         .query(
-            "CREATE TABLE IF NOT EXISTS ks.t (a int, b int, c text, primary key (a, b))",
+            "CREATE TABLE IF NOT EXISTS examples_ks.speculative_execution (a int, b int, c text, primary key (a, b))",
             &[],
         )
         .await?;
 
-    let mut select_stmt = session.prepare("SELECT a, b, c FROM ks.t").await?;
+    let mut select_stmt = session
+        .prepare("SELECT a, b, c FROM examples_ks.speculative_execution")
+        .await?;
 
     // This will allow for speculative execution
     select_stmt.set_is_idempotent(true);

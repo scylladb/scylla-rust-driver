@@ -179,22 +179,22 @@ pub(crate) mod defaults {
     use scylla_cql::Consistency;
     use std::sync::Arc;
     use std::time::Duration;
-    pub fn consistency() -> Consistency {
+    pub(crate) fn consistency() -> Consistency {
         Consistency::LocalQuorum
     }
-    pub fn serial_consistency() -> Option<SerialConsistency> {
+    pub(crate) fn serial_consistency() -> Option<SerialConsistency> {
         Some(SerialConsistency::LocalSerial)
     }
-    pub fn request_timeout() -> Option<Duration> {
+    pub(crate) fn request_timeout() -> Option<Duration> {
         Some(Duration::from_secs(30))
     }
-    pub fn load_balancing_policy() -> Arc<dyn LoadBalancingPolicy> {
+    pub(crate) fn load_balancing_policy() -> Arc<dyn LoadBalancingPolicy> {
         Arc::new(load_balancing::DefaultPolicy::default())
     }
-    pub fn retry_policy() -> Box<dyn RetryPolicy> {
+    pub(crate) fn retry_policy() -> Box<dyn RetryPolicy> {
         Box::new(DefaultRetryPolicy::new())
     }
-    pub fn speculative_execution_policy() -> Option<Arc<dyn SpeculativeExecutionPolicy>> {
+    pub(crate) fn speculative_execution_policy() -> Option<Arc<dyn SpeculativeExecutionPolicy>> {
         None
     }
 
@@ -272,7 +272,7 @@ impl ExecutionProfileBuilder {
     }
 
     /// Sets the load balancing policy.
-    /// The default is DefaultPolicy (token-aware round robin).
+    /// The default is DefaultPolicy.
     ///
     /// # Example
     /// ```

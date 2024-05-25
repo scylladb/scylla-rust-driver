@@ -1,8 +1,9 @@
 /// Cluster manages up to date information and connections to database nodes
 use crate::frame::response::event::{Event, StatusChangeEvent};
-use crate::frame::value::ValueList;
-use crate::routing::Token;
+use crate::prepared_statement::TokenCalculationError;
+use crate::routing::{Shard, Token};
 use crate::transport::host_filter::HostFilter;
+use crate::transport::session::TABLET_CHANNEL_SIZE;
 use crate::transport::{
     connection::{Connection, VerifiedKeyspaceName},
     connection_pool::PoolConfig,
@@ -13,29 +14,25 @@ use crate::transport::{
 };
 
 use arc_swap::ArcSwap;
-use bytes::{BufMut, Bytes, BytesMut};
 use futures::future::join_all;
 use futures::{future::RemoteHandle, FutureExt};
 use itertools::Itertools;
-use scylla_cql::errors::BadQuery;
-use std::collections::HashMap;
+use scylla_cql::errors::{BadQuery, NewSessionError};
+use scylla_cql::frame::response::result::TableSpec;
+use scylla_cql::types::serialize::row::SerializedValues;
+use std::collections::{HashMap, HashSet};
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration;
-use tracing::instrument::WithSubscriber;
 use tracing::{debug, warn};
 use uuid::Uuid;
 
-use super::node::NodeAddr;
-
-#[derive(Debug, Clone)]
-#[non_exhaustive]
-pub struct ContactPoint {
-    pub address: SocketAddr,
-    pub datacenter: Option<String>,
-}
+use super::locator::tablets::{RawTablet, Tablet, TabletsInfo};
+use super::node::{KnownNode, NodeAddr};
+use super::NodeRef;
 
 use super::locator::ReplicaLocator;
+use super::partitioner::calculate_token_for_partition_key;
 use super::topology::Strategy;
 
 /// Cluster manages up to date information and connections to database nodes.
@@ -117,12 +114,23 @@ struct ClusterWorker {
     // Channel used to receive server events
     server_events_channel: tokio::sync::mpsc::Receiver<Event>,
 
+    // Channel used to receive signals that control connection is broken
+    control_connection_repair_channel: tokio::sync::broadcast::Receiver<()>,
+
+    // Channel used to receive info about new tablets from custom payload in responses
+    // sent by server.
+    tablets_channel: tokio::sync::mpsc::Receiver<(TableSpec<'static>, RawTablet)>,
+
     // Keyspace send in "USE <keyspace name>" when opening each connection
     used_keyspace: Option<VerifiedKeyspaceName>,
 
     // The host filter determines towards which nodes we should open
     // connections
     host_filter: Option<Arc<dyn HostFilter>>,
+
+    // This value determines how frequently the cluster
+    // worker will refresh the cluster metadata
+    cluster_metadata_refresh_interval: Duration,
 }
 
 #[derive(Debug)]
@@ -138,25 +146,31 @@ struct UseKeyspaceRequest {
 
 impl Cluster {
     pub(crate) async fn new(
-        initial_peers: Vec<ContactPoint>,
+        known_nodes: Vec<KnownNode>,
         pool_config: PoolConfig,
         keyspaces_to_fetch: Vec<String>,
         fetch_schema_metadata: bool,
         host_filter: Option<Arc<dyn HostFilter>>,
-    ) -> Result<Cluster, QueryError> {
+        cluster_metadata_refresh_interval: Duration,
+        tablet_receiver: tokio::sync::mpsc::Receiver<(TableSpec<'static>, RawTablet)>,
+    ) -> Result<Cluster, NewSessionError> {
         let (refresh_sender, refresh_receiver) = tokio::sync::mpsc::channel(32);
         let (use_keyspace_sender, use_keyspace_receiver) = tokio::sync::mpsc::channel(32);
         let (server_events_sender, server_events_receiver) = tokio::sync::mpsc::channel(32);
+        let (control_connection_repair_sender, control_connection_repair_receiver) =
+            tokio::sync::broadcast::channel(32);
 
         let mut metadata_reader = MetadataReader::new(
-            initial_peers,
+            known_nodes,
+            control_connection_repair_sender,
             pool_config.connection_config.clone(),
             pool_config.keepalive_interval,
             server_events_sender,
             keyspaces_to_fetch,
             fetch_schema_metadata,
             &host_filter,
-        );
+        )
+        .await?;
 
         let metadata = metadata_reader.read_metadata(true).await?;
         let cluster_data = ClusterData::new(
@@ -165,6 +179,7 @@ impl Cluster {
             &HashMap::new(),
             &None,
             host_filter.as_deref(),
+            TabletsInfo::new(),
         )
         .await;
         cluster_data.wait_until_all_pools_are_initialized().await;
@@ -179,15 +194,18 @@ impl Cluster {
 
             refresh_channel: refresh_receiver,
             server_events_channel: server_events_receiver,
+            control_connection_repair_channel: control_connection_repair_receiver,
+            tablets_channel: tablet_receiver,
 
             use_keyspace_channel: use_keyspace_receiver,
             used_keyspace: None,
 
             host_filter,
+            cluster_metadata_refresh_interval,
         };
 
         let (fut, worker_handle) = worker.work().remote_handle();
-        tokio::spawn(fut.with_current_subscriber());
+        tokio::spawn(fut);
 
         let result = Cluster {
             data: cluster_data,
@@ -237,29 +255,6 @@ impl Cluster {
 
         response_receiver.await.unwrap() // ClusterWorker always responds
     }
-
-    /// Returns nonempty list of working connections to all shards
-    pub(crate) async fn get_working_connections(&self) -> Result<Vec<Arc<Connection>>, QueryError> {
-        let cluster_data: Arc<ClusterData> = self.get_data();
-        let peers = &cluster_data.known_peers;
-
-        let mut result: Vec<Arc<Connection>> = Vec::with_capacity(peers.len());
-
-        let mut last_error: Option<QueryError> = None;
-
-        for node in peers.values() {
-            match node.get_working_connections() {
-                Ok(conns) => result.extend(conns),
-                Err(e) => last_error = Some(e),
-            }
-        }
-
-        if result.is_empty() {
-            return Err(last_error.unwrap()); // By invariant peers is nonempty
-        }
-
-        Ok(result)
-    }
 }
 
 impl ClusterData {
@@ -269,7 +264,7 @@ impl ClusterData {
             datacenter.rack_count = datacenter
                 .nodes
                 .iter()
-                .filter_map(|node| node.rack.clone())
+                .filter_map(|node| node.rack.as_ref())
                 .unique()
                 .count();
         }
@@ -289,31 +284,39 @@ impl ClusterData {
         known_peers: &HashMap<Uuid, Arc<Node>>,
         used_keyspace: &Option<VerifiedKeyspaceName>,
         host_filter: Option<&dyn HostFilter>,
+        mut tablets: TabletsInfo,
     ) -> Self {
         // Create new updated known_peers and ring
         let mut new_known_peers: HashMap<Uuid, Arc<Node>> =
             HashMap::with_capacity(metadata.peers.len());
         let mut ring: Vec<(Token, Arc<Node>)> = Vec::new();
         let mut datacenters: HashMap<String, Datacenter> = HashMap::new();
-        let mut all_nodes: Vec<Arc<Node>> = Vec::with_capacity(metadata.peers.len());
 
         for peer in metadata.peers {
             // Take existing Arc<Node> if possible, otherwise create new one
             // Changing rack/datacenter but not ip address seems improbable
             // so we can just create new node and connections then
-            let node: Arc<Node> = match known_peers.get(&peer.host_id) {
+            let peer_host_id = peer.host_id;
+            let peer_address = peer.address;
+            let peer_tokens;
+
+            let node: Arc<Node> = match known_peers.get(&peer_host_id) {
                 Some(node) if node.datacenter == peer.datacenter && node.rack == peer.rack => {
-                    if node.address == peer.address {
+                    let (peer_endpoint, tokens) = peer.into_peer_endpoint_and_tokens();
+                    peer_tokens = tokens;
+                    if node.address == peer_address {
                         node.clone()
                     } else {
                         // If IP changes, the Node struct is recreated, but the underlying pool is preserved and notified about the IP change.
-                        Arc::new(Node::inherit_with_ip_changed(node, peer.to_peer_endpoint()))
+                        Arc::new(Node::inherit_with_ip_changed(node, peer_endpoint))
                     }
                 }
                 _ => {
                     let is_enabled = host_filter.map_or(true, |f| f.accept(&peer));
+                    let (peer_endpoint, tokens) = peer.into_peer_endpoint_and_tokens();
+                    peer_tokens = tokens;
                     Arc::new(Node::new(
-                        peer.to_peer_endpoint(),
+                        peer_endpoint,
                         pool_config.clone(),
                         used_keyspace.clone(),
                         is_enabled,
@@ -321,7 +324,7 @@ impl ClusterData {
                 }
             };
 
-            new_known_peers.insert(peer.host_id, node.clone());
+            new_known_peers.insert(peer_host_id, node.clone());
 
             if let Some(dc) = &node.datacenter {
                 match datacenters.get_mut(dc) {
@@ -336,30 +339,66 @@ impl ClusterData {
                 }
             }
 
-            for token in peer.tokens {
+            for token in peer_tokens {
                 ring.push((token, node.clone()));
             }
+        }
 
-            all_nodes.push(node);
+        {
+            let removed_nodes = {
+                let mut removed_nodes = HashSet::new();
+                for old_peer in known_peers {
+                    if !new_known_peers.contains_key(old_peer.0) {
+                        removed_nodes.insert(*old_peer.0);
+                    }
+                }
+
+                removed_nodes
+            };
+
+            let table_predicate = |spec: &TableSpec| {
+                if let Some(ks) = metadata.keyspaces.get(spec.ks_name()) {
+                    ks.tables.contains_key(spec.table_name())
+                } else {
+                    false
+                }
+            };
+
+            let recreated_nodes = {
+                let mut recreated_nodes = HashMap::new();
+                for (old_peer_id, old_peer_node) in known_peers {
+                    if let Some(new_peer_node) = new_known_peers.get(old_peer_id) {
+                        if !Arc::ptr_eq(old_peer_node, new_peer_node) {
+                            recreated_nodes.insert(*old_peer_id, Arc::clone(new_peer_node));
+                        }
+                    }
+                }
+
+                recreated_nodes
+            };
+
+            tablets.perform_maintenance(
+                &table_predicate,
+                &removed_nodes,
+                &new_known_peers,
+                &recreated_nodes,
+            )
         }
 
         Self::update_rack_count(&mut datacenters);
 
-        let keyspace_strategies: Vec<Strategy> = metadata
-            .keyspaces
-            .values()
-            .map(|ks| ks.strategy.clone())
-            .collect();
-
-        let locator = tokio::task::spawn_blocking(move || {
-            ReplicaLocator::new(ring.into_iter(), keyspace_strategies.iter())
+        let keyspaces = metadata.keyspaces;
+        let (locator, keyspaces) = tokio::task::spawn_blocking(move || {
+            let keyspace_strategies = keyspaces.values().map(|ks| &ks.strategy);
+            let locator = ReplicaLocator::new(ring.into_iter(), keyspace_strategies, tablets);
+            (locator, keyspaces)
         })
         .await
         .unwrap();
 
         ClusterData {
             known_peers: new_known_peers,
-            keyspaces: metadata.keyspaces,
+            keyspaces,
             locator,
         }
     }
@@ -400,7 +439,7 @@ impl ClusterData {
         &self,
         keyspace: &str,
         table: &str,
-        partition_key: impl ValueList,
+        partition_key: &SerializedValues,
     ) -> Result<Token, BadQuery> {
         let partitioner = self
             .keyspaces
@@ -409,52 +448,39 @@ impl ClusterData {
             .and_then(|t| t.partitioner.as_deref())
             .and_then(PartitionerName::from_str)
             .unwrap_or_default();
-        let serialized_values = partition_key.serialized()?;
-        // Null values are skipped in computation; null values in partition key are unsound,
-        // but it is consistent with computation of prepared statements token.
-        let serialized_pk = match serialized_values.len() {
-            0 => None,
-            1 => serialized_values
-                .iter()
-                .next()
-                .unwrap()
-                .map(Bytes::copy_from_slice),
-            _ => {
-                let mut buf = BytesMut::new();
-                for value in serialized_values.iter().flatten() {
-                    let value_size = value
-                        .len()
-                        .try_into()
-                        .map_err(|_| BadQuery::ValuesTooLongForKey(value.len(), u16::MAX.into()))?;
-                    buf.put_u16(value_size);
-                    buf.extend_from_slice(value);
-                    buf.put_u8(0);
-                }
-                Some(buf.into())
+
+        calculate_token_for_partition_key(partition_key, &partitioner).map_err(|err| match err {
+            TokenCalculationError::ValueTooLong(values_len) => {
+                BadQuery::ValuesTooLongForKey(values_len, u16::MAX.into())
             }
-        };
-        Ok(partitioner.hash(&serialized_pk.unwrap_or_default()))
+        })
     }
 
     /// Access to replicas owning a given token
-    pub fn get_token_endpoints(&self, keyspace: &str, token: Token) -> Vec<Arc<Node>> {
-        self.get_token_endpoints_iter(keyspace, token)
-            .cloned()
+    pub fn get_token_endpoints(
+        &self,
+        keyspace: &str,
+        table: &str,
+        token: Token,
+    ) -> Vec<(Arc<Node>, Shard)> {
+        let table_spec = TableSpec::borrowed(keyspace, table);
+        self.get_token_endpoints_iter(&table_spec, token)
+            .map(|(node, shard)| (node.clone(), shard))
             .collect()
     }
 
     pub(crate) fn get_token_endpoints_iter(
         &self,
-        keyspace: &str,
+        table_spec: &TableSpec,
         token: Token,
-    ) -> impl Iterator<Item = &Arc<Node>> {
-        let keyspace = self.keyspaces.get(keyspace);
+    ) -> impl Iterator<Item = (NodeRef<'_>, Shard)> {
+        let keyspace = self.keyspaces.get(table_spec.ks_name());
         let strategy = keyspace
             .map(|k| &k.strategy)
             .unwrap_or(&Strategy::LocalStrategy);
         let replica_set = self
             .replica_locator()
-            .replicas_for_token(token, strategy, None);
+            .replicas_for_token(token, strategy, None, table_spec);
 
         replica_set.into_iter()
     }
@@ -464,17 +490,65 @@ impl ClusterData {
         &self,
         keyspace: &str,
         table: &str,
-        partition_key: impl ValueList,
-    ) -> Result<Vec<Arc<Node>>, BadQuery> {
-        Ok(self.get_token_endpoints(
-            keyspace,
-            self.compute_token(keyspace, table, partition_key)?,
-        ))
+        partition_key: &SerializedValues,
+    ) -> Result<Vec<(Arc<Node>, Shard)>, BadQuery> {
+        let token = self.compute_token(keyspace, table, partition_key)?;
+        Ok(self.get_token_endpoints(keyspace, table, token))
     }
 
     /// Access replica location info
     pub fn replica_locator(&self) -> &ReplicaLocator {
         &self.locator
+    }
+
+    /// Returns nonempty iterator of working connections to all shards.
+    pub(crate) fn iter_working_connections(
+        &self,
+    ) -> Result<impl Iterator<Item = Arc<Connection>> + '_, QueryError> {
+        // The returned iterator is nonempty by nonemptiness invariant of `self.known_peers`.
+        assert!(!self.known_peers.is_empty());
+        let mut peers_iter = self.known_peers.values();
+
+        // First we try to find the first working pool of connections.
+        // If none is found, return error.
+        let first_working_pool = peers_iter
+            .by_ref()
+            .map(|node| node.get_working_connections())
+            .find_or_first(Result::is_ok)
+            .expect("impossible: known_peers was asserted to be nonempty")?;
+
+        let remaining_pools_iter = peers_iter
+            .map(|node| node.get_working_connections())
+            .flatten_ok()
+            .flatten();
+
+        Ok(first_working_pool.into_iter().chain(remaining_pools_iter))
+        // By an invariant `self.known_peers` is nonempty, so the returned iterator
+        // is nonempty, too.
+    }
+
+    fn update_tablets(&mut self, raw_tablets: Vec<(TableSpec<'static>, RawTablet)>) {
+        let replica_translator = |uuid: Uuid| self.known_peers.get(&uuid).cloned();
+
+        for (table, raw_tablet) in raw_tablets.into_iter() {
+            // Should we skip tablets that belong to a keyspace not present in
+            // self.keyspaces? The keyspace could have been, without driver's knowledge:
+            // 1. Dropped - in which case we'll remove its info soon (when refreshing
+            // topology) anyway.
+            // 2. Created - no harm in storing the info now.
+            //
+            // So I think we can safely skip checking keyspace presence.
+            let tablet = match Tablet::from_raw_tablet(raw_tablet, replica_translator) {
+                Ok(t) => t,
+                Err((t, f)) => {
+                    debug!("Nodes ({}) that are replicas for a tablet {{ks: {}, table: {}, range: [{}. {}]}} not present in current ClusterData.known_peers. \
+                       Skipping these replicas until topology refresh",
+                       f.iter().format(", "), table.ks_name(), table.table_name(), t.range().0.value(), t.range().1.value());
+                    t
+                }
+            };
+            self.locator.tablets.add_tablet(table, tablet);
+        }
     }
 }
 
@@ -482,16 +556,23 @@ impl ClusterWorker {
     pub(crate) async fn work(mut self) {
         use tokio::time::Instant;
 
-        let refresh_duration = Duration::from_secs(60); // Refresh topology every 60 seconds
+        let control_connection_repair_duration = Duration::from_secs(1); // Attempt control connection repair every second
         let mut last_refresh_time = Instant::now();
+        let mut control_connection_works = true;
 
         loop {
             let mut cur_request: Option<RefreshRequest> = None;
 
             // Wait until it's time for the next refresh
             let sleep_until: Instant = last_refresh_time
-                .checked_add(refresh_duration)
+                .checked_add(if control_connection_works {
+                    self.cluster_metadata_refresh_interval
+                } else {
+                    control_connection_repair_duration
+                })
                 .unwrap_or_else(Instant::now);
+
+            let mut tablets = Vec::new();
 
             let sleep_future = tokio::time::sleep_until(sleep_until);
             tokio::pin!(sleep_future);
@@ -503,6 +584,37 @@ impl ClusterWorker {
                         Some(request) => cur_request = Some(request),
                         None => return, // If refresh_channel was closed then cluster was dropped, we can stop working
                     }
+                }
+                tablets_count = self.tablets_channel.recv_many(&mut tablets, TABLET_CHANNEL_SIZE) => {
+                    tracing::trace!("Performing tablets update - received {} tablets", tablets_count);
+                    if tablets_count == 0 {
+                        // If the channel was closed then the cluster was dropped, we can stop working
+                        return;
+                    }
+                    // The current tablet implementation collects tablet feedback in a channel
+                    // and then clones the whole ClusterData, updates it with new tablets and replaces
+                    // the old ClusterData - this update procedure happens below.
+                    // This fits the general model of how ClusterData is handled in the driver:
+                    // - ClusterData remains a "simple" struct - without locks etc (apart from Node).
+                    // - Topology information update is similar to tablet update - it creates a new ClusterData
+                    //   and replaces the old one.
+                    // The disadvantage is that we need to have 2 copies of ClusterData, but this happens
+                    // anyway during topology update.
+                    //
+                    // An alternative solution would be to use some synchronization primitives to update tablet info
+                    // in place. This solution avoids ClusterData cloning but:
+                    // - ClusterData would be much more complicated
+                    // - Requires using locks in hot path (when sending request)
+                    // - Makes maintenance (which happens during topology update) more complicated and error-prone.
+                    //
+                    // I decided to stick with the approach that fits with the driver.
+                    // Apart from the reasons above, it is much easier to reason about concurrency etc
+                    // when reading the code in other parts of the driver.
+                    let mut new_cluster_data: ClusterData = self.cluster_data.load().as_ref().clone();
+                    new_cluster_data.update_tablets(tablets);
+                    self.update_cluster_data(Arc::new(new_cluster_data));
+
+                    continue;
                 }
                 recv_res = self.server_events_channel.recv() => {
                     if let Some(event) = recv_res {
@@ -534,12 +646,32 @@ impl ClusterWorker {
 
                             let cluster_data = self.cluster_data.load_full();
                             let use_keyspace_future = Self::handle_use_keyspace_request(cluster_data, request);
-                            tokio::spawn(use_keyspace_future.with_current_subscriber());
+                            tokio::spawn(use_keyspace_future);
                         },
                         None => return, // If use_keyspace_channel was closed then cluster was dropped, we can stop working
                     }
 
                     continue; // Don't go to refreshing, wait for the next event
+                }
+                recv_res = self.control_connection_repair_channel.recv() => {
+                    match recv_res {
+                        Ok(()) => {
+                            // The control connection was broken. Acknowledge that and start attempting to reconnect.
+                            // The first reconnect attempt will be immediate (by attempting metadata refresh below),
+                            // and if it does not succeed, then `control_connection_works` will be set to `false`,
+                            // so subsequent attempts will be issued every second.
+                        }
+                        Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {
+                            // This is very unlikely; we would have to have a lot of concurrent
+                            // control connections opened and broken at the same time.
+                            // The best we can do is ignoring this.
+                        }
+                        Err(tokio::sync::broadcast::error::RecvError::Closed) => {
+                            // If control_connection_repair_channel was closed then MetadataReader was dropped,
+                            // we can stop working.
+                            return;
+                        }
+                    }
                 }
             }
 
@@ -547,6 +679,8 @@ impl ClusterWorker {
             debug!("Requesting topology refresh");
             last_refresh_time = Instant::now();
             let refresh_res = self.perform_refresh().await;
+
+            control_connection_works = refresh_res.is_ok();
 
             // Send refresh result if there was a request
             if let Some(request) = cur_request {
@@ -591,13 +725,10 @@ impl ClusterWorker {
         cluster_data: Arc<ClusterData>,
         keyspace_name: &VerifiedKeyspaceName,
     ) -> Result<(), QueryError> {
-        let mut use_keyspace_futures = Vec::new();
-
-        for node in cluster_data.known_peers.values() {
-            let fut = node.use_keyspace(keyspace_name.clone());
-            use_keyspace_futures.push(fut);
-        }
-
+        let use_keyspace_futures = cluster_data
+            .known_peers
+            .values()
+            .map(|node| node.use_keyspace(keyspace_name.clone()));
         let use_keyspace_results: Vec<Result<(), QueryError>> =
             join_all(use_keyspace_futures).await;
 
@@ -640,6 +771,7 @@ impl ClusterWorker {
                 &cluster_data.known_peers,
                 &self.used_keyspace,
                 self.host_filter.as_deref(),
+                cluster_data.locator.tablets.clone(),
             )
             .await,
         );

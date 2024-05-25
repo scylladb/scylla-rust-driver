@@ -3,15 +3,20 @@ pub use self::latency_awareness::LatencyAwarenessBuilder;
 
 use super::{FallbackPlan, LoadBalancingPolicy, NodeRef, RoutingInfo};
 use crate::{
-    routing::Token,
+    routing::{Shard, Token},
     transport::{cluster::ClusterData, locator::ReplicaSet, node::Node, topology::Strategy},
 };
 use itertools::{Either, Itertools};
 use rand::{prelude::SliceRandom, thread_rng, Rng};
 use rand_pcg::Pcg32;
-use scylla_cql::{errors::QueryError, frame::types::SerialConsistency, Consistency};
+use scylla_cql::errors::QueryError;
+use scylla_cql::frame::response::result::TableSpec;
+use scylla_cql::frame::types::SerialConsistency;
+use scylla_cql::Consistency;
+use std::hash::{Hash, Hasher};
 use std::{fmt, sync::Arc, time::Duration};
-use tracing::warn;
+use tracing::{debug, warn};
+use uuid::Uuid;
 
 #[derive(Clone, Copy)]
 enum NodeLocationCriteria<'a> {
@@ -70,13 +75,14 @@ enum StatementType {
 /// It can be configured to be datacenter-aware and token-aware.
 /// Datacenter failover for queries with non local consistency mode is also supported.
 /// Latency awareness is available, althrough not recommended.
+#[allow(clippy::type_complexity)]
 pub struct DefaultPolicy {
     preferences: NodeLocationPreference,
     is_token_aware: bool,
     permit_dc_failover: bool,
-    pick_predicate: Box<dyn Fn(&NodeRef) -> bool + Send + Sync>,
+    pick_predicate: Box<dyn Fn(NodeRef<'_>, Option<Shard>) -> bool + Send + Sync>,
     latency_awareness: Option<LatencyAwareness>,
-    fixed_shuffle_seed: Option<u64>,
+    fixed_seed: Option<u64>,
 }
 
 impl fmt::Debug for DefaultPolicy {
@@ -86,13 +92,17 @@ impl fmt::Debug for DefaultPolicy {
             .field("is_token_aware", &self.is_token_aware)
             .field("permit_dc_failover", &self.permit_dc_failover)
             .field("latency_awareness", &self.latency_awareness)
-            .field("fixed_shuffle_seed", &self.fixed_shuffle_seed)
+            .field("fixed_shuffle_seed", &self.fixed_seed)
             .finish_non_exhaustive()
     }
 }
 
 impl LoadBalancingPolicy for DefaultPolicy {
-    fn pick<'a>(&'a self, query: &'a RoutingInfo, cluster: &'a ClusterData) -> Option<NodeRef<'a>> {
+    fn pick<'a>(
+        &'a self,
+        query: &'a RoutingInfo,
+        cluster: &'a ClusterData,
+    ) -> Option<(NodeRef<'a>, Option<Shard>)> {
         let routing_info = self.routing_info(query, cluster);
         if let Some(ref token_with_strategy) = routing_info.token_with_strategy {
             if self.preferences.datacenter().is_some()
@@ -115,19 +125,20 @@ or refrain from preferring datacenters (which may ban all other datacenters, if 
         } else {
             StatementType::NonLwt
         };
-        if let Some(ts) = &routing_info.token_with_strategy {
+        if let (Some(ts), Some(table_spec)) = (&routing_info.token_with_strategy, query.table) {
             if let NodeLocationPreference::DatacenterAndRack(dc, rack) = &self.preferences {
                 // Try to pick some alive local rack random replica.
                 let local_rack_picked = self.pick_replica(
                     ts,
                     NodeLocationCriteria::DatacenterAndRack(dc, rack),
-                    &self.pick_predicate,
+                    |node, shard| (self.pick_predicate)(node, Some(shard)),
                     cluster,
                     statement_type,
+                    table_spec,
                 );
 
-                if let Some(alive_local_rack_replica) = local_rack_picked {
-                    return Some(alive_local_rack_replica);
+                if let Some((alive_local_rack_replica, shard)) = local_rack_picked {
+                    return Some((alive_local_rack_replica, Some(shard)));
                 }
             }
 
@@ -138,13 +149,14 @@ or refrain from preferring datacenters (which may ban all other datacenters, if 
                 let picked = self.pick_replica(
                     ts,
                     NodeLocationCriteria::Datacenter(dc),
-                    &self.pick_predicate,
+                    |node, shard| (self.pick_predicate)(node, Some(shard)),
                     cluster,
                     statement_type,
+                    table_spec,
                 );
 
-                if let Some(alive_local_replica) = picked {
-                    return Some(alive_local_replica);
+                if let Some((alive_local_replica, shard)) = picked {
+                    return Some((alive_local_replica, Some(shard)));
                 }
             }
 
@@ -156,12 +168,13 @@ or refrain from preferring datacenters (which may ban all other datacenters, if 
                 let picked = self.pick_replica(
                     ts,
                     NodeLocationCriteria::Any,
-                    &self.pick_predicate,
+                    |node, shard| (self.pick_predicate)(node, Some(shard)),
                     cluster,
                     statement_type,
+                    table_spec,
                 );
-                if let Some(alive_remote_replica) = picked {
-                    return Some(alive_remote_replica);
+                if let Some((alive_remote_replica, shard)) = picked {
+                    return Some((alive_remote_replica, Some(shard)));
                 }
             }
         };
@@ -174,47 +187,47 @@ or refrain from preferring datacenters (which may ban all other datacenters, if 
         if let NodeLocationPreference::DatacenterAndRack(dc, rack) = &self.preferences {
             // Try to pick some alive local rack random node.
             let rack_predicate = Self::make_rack_predicate(
-                &self.pick_predicate,
+                |node| (self.pick_predicate)(node, None),
                 NodeLocationCriteria::DatacenterAndRack(dc, rack),
             );
-            let local_rack_picked = Self::pick_node(nodes, rack_predicate);
+            let local_rack_picked = self.pick_node(nodes, rack_predicate);
 
             if let Some(alive_local_rack) = local_rack_picked {
-                return Some(alive_local_rack);
+                return Some((alive_local_rack, None));
             }
         }
 
         // Try to pick some alive local random node.
-        if let Some(alive_local) = Self::pick_node(nodes, &self.pick_predicate) {
-            return Some(alive_local);
+        if let Some(alive_local) = self.pick_node(nodes, |node| (self.pick_predicate)(node, None)) {
+            return Some((alive_local, None));
         }
 
         let all_nodes = cluster.replica_locator().unique_nodes_in_global_ring();
         // If a datacenter failover is possible, loosen restriction about locality.
         if self.is_datacenter_failover_possible(&routing_info) {
-            let picked = Self::pick_node(all_nodes, &self.pick_predicate);
+            let picked = self.pick_node(all_nodes, |node| (self.pick_predicate)(node, None));
             if let Some(alive_maybe_remote) = picked {
-                return Some(alive_maybe_remote);
+                return Some((alive_maybe_remote, None));
             }
         }
 
         // Previous checks imply that every node we could have selected is down.
         // Let's try to return a down node that wasn't disabled.
-        let picked = Self::pick_node(nodes, |node| node.is_enabled());
+        let picked = self.pick_node(nodes, |node| node.is_enabled());
         if let Some(down_but_enabled_local_node) = picked {
-            return Some(down_but_enabled_local_node);
+            return Some((down_but_enabled_local_node, None));
         }
 
         // If a datacenter failover is possible, loosen restriction about locality.
         if self.is_datacenter_failover_possible(&routing_info) {
-            let picked = Self::pick_node(all_nodes, |node| node.is_enabled());
+            let picked = self.pick_node(all_nodes, |node| node.is_enabled());
             if let Some(down_but_enabled_maybe_remote_node) = picked {
-                return Some(down_but_enabled_maybe_remote_node);
+                return Some((down_but_enabled_maybe_remote_node, None));
             }
         }
 
         // Every node is disabled. This could be due to a bad host filter - configuration error.
-        nodes.first()
+        nodes.first().map(|node| (node, None))
     }
 
     fn fallback<'a>(
@@ -230,15 +243,18 @@ or refrain from preferring datacenters (which may ban all other datacenters, if 
         };
 
         // If token is available, get a shuffled list of alive replicas.
-        let maybe_replicas = if let Some(ts) = &routing_info.token_with_strategy {
+        let maybe_replicas = if let (Some(ts), Some(table_spec)) =
+            (&routing_info.token_with_strategy, query.table)
+        {
             let maybe_local_rack_replicas =
                 if let NodeLocationPreference::DatacenterAndRack(dc, rack) = &self.preferences {
                     let local_rack_replicas = self.fallback_replicas(
                         ts,
                         NodeLocationCriteria::DatacenterAndRack(dc, rack),
-                        Self::is_alive,
+                        |node, shard| Self::is_alive(node, Some(shard)),
                         cluster,
                         statement_type,
+                        table_spec,
                     );
                     Either::Left(local_rack_replicas)
                 } else {
@@ -252,9 +268,10 @@ or refrain from preferring datacenters (which may ban all other datacenters, if 
                 let local_replicas = self.fallback_replicas(
                     ts,
                     NodeLocationCriteria::Datacenter(dc),
-                    Self::is_alive,
+                    |node, shard| Self::is_alive(node, Some(shard)),
                     cluster,
                     statement_type,
+                    table_spec,
                 );
                 Either::Left(local_replicas)
             } else {
@@ -268,9 +285,10 @@ or refrain from preferring datacenters (which may ban all other datacenters, if 
                 let remote_replicas = self.fallback_replicas(
                     ts,
                     NodeLocationCriteria::Any,
-                    Self::is_alive,
+                    |node, shard| Self::is_alive(node, Some(shard)),
                     cluster,
                     statement_type,
+                    table_spec,
                 );
                 Either::Left(remote_replicas)
             } else {
@@ -282,10 +300,11 @@ or refrain from preferring datacenters (which may ban all other datacenters, if 
             Either::Left(
                 maybe_local_rack_replicas
                     .chain(maybe_local_replicas)
-                    .chain(maybe_remote_replicas),
+                    .chain(maybe_remote_replicas)
+                    .map(|(node, shard)| (node, Some(shard))),
             )
         } else {
-            Either::Right(std::iter::empty::<NodeRef<'a>>())
+            Either::Right(std::iter::empty::<(NodeRef<'a>, Option<Shard>)>())
         };
 
         // Get a list of all local alive nodes, and apply a round robin to it
@@ -294,44 +313,85 @@ or refrain from preferring datacenters (which may ban all other datacenters, if 
         let maybe_local_rack_nodes =
             if let NodeLocationPreference::DatacenterAndRack(dc, rack) = &self.preferences {
                 let rack_predicate = Self::make_rack_predicate(
-                    &self.pick_predicate,
+                    |node| (self.pick_predicate)(node, None),
                     NodeLocationCriteria::DatacenterAndRack(dc, rack),
                 );
-                Either::Left(Self::round_robin_nodes(local_nodes, rack_predicate))
+                Either::Left(
+                    self.round_robin_nodes(local_nodes, rack_predicate)
+                        .map(|node| (node, None)),
+                )
             } else {
-                Either::Right(std::iter::empty::<NodeRef<'a>>())
+                Either::Right(std::iter::empty::<(NodeRef<'a>, Option<Shard>)>())
             };
-        let robined_local_nodes = Self::round_robin_nodes(local_nodes, Self::is_alive);
+        let robinned_local_nodes = self
+            .round_robin_nodes(local_nodes, |node| Self::is_alive(node, None))
+            .map(|node| (node, None));
 
         let all_nodes = cluster.replica_locator().unique_nodes_in_global_ring();
 
         // If a datacenter failover is possible, loosen restriction about locality.
         let maybe_remote_nodes = if self.is_datacenter_failover_possible(&routing_info) {
-            let robined_all_nodes = Self::round_robin_nodes(all_nodes, Self::is_alive);
+            let robinned_all_nodes =
+                self.round_robin_nodes(all_nodes, |node| Self::is_alive(node, None));
 
-            Either::Left(robined_all_nodes)
+            Either::Left(robinned_all_nodes.map(|node| (node, None)))
         } else {
-            Either::Right(std::iter::empty::<NodeRef<'a>>())
+            Either::Right(std::iter::empty::<(NodeRef<'a>, Option<Shard>)>())
         };
 
         // Even if we consider some enabled nodes to be down, we should try contacting them in the last resort.
-        let maybe_down_local_nodes = local_nodes.iter().filter(|node| node.is_enabled());
+        let maybe_down_local_nodes = local_nodes
+            .iter()
+            .filter(|node| node.is_enabled())
+            .map(|node| (node, None));
 
         // If a datacenter failover is possible, loosen restriction about locality.
         let maybe_down_nodes = if self.is_datacenter_failover_possible(&routing_info) {
-            Either::Left(all_nodes.iter().filter(|node| node.is_enabled()))
+            Either::Left(
+                all_nodes
+                    .iter()
+                    .filter(|node| node.is_enabled())
+                    .map(|node| (node, None)),
+            )
         } else {
             Either::Right(std::iter::empty())
         };
 
+        struct DefaultPolicyTargetComparator {
+            host_id: Uuid,
+            shard: Option<Shard>,
+        }
+
+        impl PartialEq for DefaultPolicyTargetComparator {
+            fn eq(&self, other: &Self) -> bool {
+                match (self.shard, other.shard) {
+                    (_, None) | (None, _) => self.host_id.eq(&other.host_id),
+                    (Some(shard_left), Some(shard_right)) => {
+                        self.host_id.eq(&other.host_id) && shard_left.eq(&shard_right)
+                    }
+                }
+            }
+        }
+
+        impl Eq for DefaultPolicyTargetComparator {}
+
+        impl Hash for DefaultPolicyTargetComparator {
+            fn hash<H: Hasher>(&self, state: &mut H) {
+                self.host_id.hash(state);
+            }
+        }
+
         // Construct a fallback plan as a composition of replicas, local nodes and remote nodes.
         let plan = maybe_replicas
             .chain(maybe_local_rack_nodes)
-            .chain(robined_local_nodes)
+            .chain(robinned_local_nodes)
             .chain(maybe_remote_nodes)
             .chain(maybe_down_local_nodes)
             .chain(maybe_down_nodes)
-            .unique();
+            .unique_by(|(node, shard)| DefaultPolicyTargetComparator {
+                host_id: node.host_id,
+                shard: *shard,
+            });
 
         if let Some(latency_awareness) = self.latency_awareness.as_ref() {
             Box::new(latency_awareness.wrap(plan))
@@ -410,19 +470,20 @@ impl DefaultPolicy {
         ts: &TokenWithStrategy<'a>,
         replica_location: NodeLocationCriteria<'a>,
         cluster: &'a ClusterData,
+        table_spec: &TableSpec,
     ) -> ReplicaSet<'a> {
         let datacenter = replica_location.datacenter();
 
         cluster
             .replica_locator()
-            .replicas_for_token(ts.token, ts.strategy, datacenter)
+            .replicas_for_token(ts.token, ts.strategy, datacenter, table_spec)
     }
 
     /// Wraps the provided predicate, adding the requirement for rack to match.
     fn make_rack_predicate<'a>(
-        predicate: impl Fn(&NodeRef<'a>) -> bool + 'a,
+        predicate: impl Fn(NodeRef<'a>) -> bool + 'a,
         replica_location: NodeLocationCriteria<'a>,
-    ) -> impl Fn(&NodeRef<'a>) -> bool {
+    ) -> impl Fn(NodeRef<'a>) -> bool {
         move |node| match replica_location {
             NodeLocationCriteria::Any | NodeLocationCriteria::Datacenter(_) => predicate(node),
             NodeLocationCriteria::DatacenterAndRack(_, rack) => {
@@ -431,42 +492,61 @@ impl DefaultPolicy {
         }
     }
 
+    /// Wraps the provided predicate, adding the requirement for rack to match.
+    fn make_sharded_rack_predicate<'a>(
+        predicate: impl Fn(NodeRef<'a>, Shard) -> bool + 'a,
+        replica_location: NodeLocationCriteria<'a>,
+    ) -> impl Fn(NodeRef<'a>, Shard) -> bool {
+        move |node, shard| match replica_location {
+            NodeLocationCriteria::Any | NodeLocationCriteria::Datacenter(_) => {
+                predicate(node, shard)
+            }
+            NodeLocationCriteria::DatacenterAndRack(_, rack) => {
+                predicate(node, shard) && node.rack.as_deref() == Some(rack)
+            }
+        }
+    }
+
     fn replicas<'a>(
         &'a self,
         ts: &TokenWithStrategy<'a>,
         replica_location: NodeLocationCriteria<'a>,
-        predicate: impl Fn(&NodeRef<'a>) -> bool + 'a,
+        predicate: impl Fn(NodeRef<'a>, Shard) -> bool + 'a,
         cluster: &'a ClusterData,
         order: ReplicaOrder,
-    ) -> impl Iterator<Item = NodeRef<'a>> {
-        let predicate = Self::make_rack_predicate(predicate, replica_location);
+        table_spec: &TableSpec,
+    ) -> impl Iterator<Item = (NodeRef<'a>, Shard)> {
+        let predicate = Self::make_sharded_rack_predicate(predicate, replica_location);
 
         let replica_iter = match order {
             ReplicaOrder::Arbitrary => Either::Left(
-                self.nonfiltered_replica_set(ts, replica_location, cluster)
+                self.nonfiltered_replica_set(ts, replica_location, cluster, table_spec)
                     .into_iter(),
             ),
             ReplicaOrder::RingOrder => Either::Right(
-                self.nonfiltered_replica_set(ts, replica_location, cluster)
+                self.nonfiltered_replica_set(ts, replica_location, cluster, table_spec)
                     .into_replicas_ordered()
                     .into_iter(),
             ),
         };
-        replica_iter.filter(move |node: &NodeRef<'a>| predicate(node))
+        replica_iter.filter(move |(node, shard): &(NodeRef<'a>, Shard)| predicate(node, *shard))
     }
 
     fn pick_replica<'a>(
         &'a self,
         ts: &TokenWithStrategy<'a>,
         replica_location: NodeLocationCriteria<'a>,
-        predicate: &'a impl Fn(&NodeRef<'a>) -> bool,
+        predicate: impl Fn(NodeRef<'a>, Shard) -> bool + 'a,
         cluster: &'a ClusterData,
         statement_type: StatementType,
-    ) -> Option<NodeRef<'a>> {
+        table_spec: &TableSpec,
+    ) -> Option<(NodeRef<'a>, Shard)> {
         match statement_type {
-            StatementType::Lwt => self.pick_first_replica(ts, replica_location, predicate, cluster),
+            StatementType::Lwt => {
+                self.pick_first_replica(ts, replica_location, predicate, cluster, table_spec)
+            }
             StatementType::NonLwt => {
-                self.pick_random_replica(ts, replica_location, predicate, cluster)
+                self.pick_random_replica(ts, replica_location, predicate, cluster, table_spec)
             }
         }
     }
@@ -487,9 +567,10 @@ impl DefaultPolicy {
         &'a self,
         ts: &TokenWithStrategy<'a>,
         replica_location: NodeLocationCriteria<'a>,
-        predicate: &'a impl Fn(&NodeRef<'a>) -> bool,
+        predicate: impl Fn(NodeRef<'a>, Shard) -> bool + 'a,
         cluster: &'a ClusterData,
-    ) -> Option<NodeRef<'a>> {
+        table_spec: &TableSpec,
+    ) -> Option<(NodeRef<'a>, Shard)> {
         match replica_location {
             NodeLocationCriteria::Any => {
                 // ReplicaSet returned by ReplicaLocator for this case:
@@ -502,12 +583,12 @@ impl DefaultPolicy {
                 // (computation of the remaining ones is expensive), in case that the primary replica
                 // does not satisfy the `predicate`, None is returned. All expensive computation
                 // is to be done only when `fallback()` is called.
-                self.nonfiltered_replica_set(ts, replica_location, cluster)
+                self.nonfiltered_replica_set(ts, replica_location, cluster, table_spec)
                     .into_replicas_ordered()
                     .into_iter()
                     .next()
-                    .and_then(|primary_replica| {
-                        predicate(&primary_replica).then_some(primary_replica)
+                    .and_then(|(primary_replica, shard)| {
+                        predicate(primary_replica, shard).then_some((primary_replica, shard))
                     })
             }
             NodeLocationCriteria::Datacenter(_) | NodeLocationCriteria::DatacenterAndRack(_, _) => {
@@ -519,9 +600,10 @@ impl DefaultPolicy {
                 self.replicas(
                     ts,
                     replica_location,
-                    move |node| predicate(node),
+                    predicate,
                     cluster,
                     ReplicaOrder::RingOrder,
+                    table_spec,
                 )
                 .next()
             }
@@ -532,18 +614,19 @@ impl DefaultPolicy {
         &'a self,
         ts: &TokenWithStrategy<'a>,
         replica_location: NodeLocationCriteria<'a>,
-        predicate: &'a impl Fn(&NodeRef<'a>) -> bool,
+        predicate: impl Fn(NodeRef<'a>, Shard) -> bool + 'a,
         cluster: &'a ClusterData,
-    ) -> Option<NodeRef<'a>> {
-        let predicate = Self::make_rack_predicate(predicate, replica_location);
+        table_spec: &TableSpec,
+    ) -> Option<(NodeRef<'a>, Shard)> {
+        let predicate = Self::make_sharded_rack_predicate(predicate, replica_location);
 
-        let replica_set = self.nonfiltered_replica_set(ts, replica_location, cluster);
+        let replica_set = self.nonfiltered_replica_set(ts, replica_location, cluster, table_spec);
 
-        if let Some(fixed) = self.fixed_shuffle_seed {
+        if let Some(fixed) = self.fixed_seed {
             let mut gen = Pcg32::new(fixed, 0);
-            replica_set.choose_filtered(&mut gen, predicate)
+            replica_set.choose_filtered(&mut gen, |(node, shard)| predicate(node, *shard))
         } else {
-            replica_set.choose_filtered(&mut thread_rng(), predicate)
+            replica_set.choose_filtered(&mut thread_rng(), |(node, shard)| predicate(node, *shard))
         }
     }
 
@@ -551,16 +634,17 @@ impl DefaultPolicy {
         &'a self,
         ts: &TokenWithStrategy<'a>,
         replica_location: NodeLocationCriteria<'a>,
-        predicate: impl Fn(&NodeRef<'a>) -> bool + 'a,
+        predicate: impl Fn(NodeRef<'_>, Shard) -> bool + 'a,
         cluster: &'a ClusterData,
         statement_type: StatementType,
-    ) -> impl Iterator<Item = NodeRef<'a>> {
+        table_spec: &TableSpec,
+    ) -> impl Iterator<Item = (NodeRef<'_>, Shard)> {
         let order = match statement_type {
             StatementType::Lwt => ReplicaOrder::RingOrder,
             StatementType::NonLwt => ReplicaOrder::Arbitrary,
         };
 
-        let replicas = self.replicas(ts, replica_location, predicate, cluster, order);
+        let replicas = self.replicas(ts, replica_location, predicate, cluster, order, table_spec);
 
         match statement_type {
             // As an LWT optimisation: in order to reduce contention caused by Paxos conflicts,
@@ -587,27 +671,29 @@ impl DefaultPolicy {
     }
 
     fn pick_node<'a>(
+        &'a self,
         nodes: &'a [Arc<Node>],
-        predicate: impl Fn(&NodeRef<'a>) -> bool,
-    ) -> Option<NodeRef<'a>> {
+        predicate: impl Fn(NodeRef<'a>) -> bool,
+    ) -> Option<NodeRef<'_>> {
         // Select the first node that matches the predicate
-        Self::randomly_rotated_nodes(nodes).find(predicate)
+        Self::randomly_rotated_nodes(nodes).find(|&node| predicate(node))
     }
 
     fn round_robin_nodes<'a>(
+        &'a self,
         nodes: &'a [Arc<Node>],
-        predicate: impl Fn(&NodeRef<'a>) -> bool,
-    ) -> impl Iterator<Item = NodeRef<'a>> {
-        Self::randomly_rotated_nodes(nodes).filter(predicate)
+        predicate: impl Fn(NodeRef<'a>) -> bool,
+    ) -> impl Iterator<Item = NodeRef<'_>> {
+        Self::randomly_rotated_nodes(nodes).filter(move |node| predicate(node))
     }
 
     fn shuffle<'a>(
         &self,
-        iter: impl Iterator<Item = NodeRef<'a>>,
-    ) -> impl Iterator<Item = NodeRef<'a>> {
-        let mut vec: Vec<NodeRef<'a>> = iter.collect();
+        iter: impl Iterator<Item = (NodeRef<'a>, Shard)>,
+    ) -> impl Iterator<Item = (NodeRef<'a>, Shard)> {
+        let mut vec: Vec<(NodeRef<'_>, Shard)> = iter.collect();
 
-        if let Some(fixed) = self.fixed_shuffle_seed {
+        if let Some(fixed) = self.fixed_seed {
             let mut gen = Pcg32::new(fixed, 0);
             vec.shuffle(&mut gen);
         } else {
@@ -617,7 +703,7 @@ impl DefaultPolicy {
         vec.into_iter()
     }
 
-    pub(crate) fn is_alive(node: &NodeRef<'_>) -> bool {
+    fn is_alive(node: NodeRef, _shard: Option<Shard>) -> bool {
         // For now, we leave this as stub, until we have time to improve node events.
         // node.is_enabled() && !node.is_down()
         node.is_enabled()
@@ -638,7 +724,7 @@ impl Default for DefaultPolicy {
             permit_dc_failover: false,
             pick_predicate: Box::new(Self::is_alive),
             latency_awareness: None,
-            fixed_shuffle_seed: None,
+            fixed_seed: None,
         }
     }
 }
@@ -683,8 +769,10 @@ impl DefaultPolicyBuilder {
         let latency_awareness = self.latency_awareness.map(|builder| builder.build());
         let pick_predicate = if let Some(ref latency_awareness) = latency_awareness {
             let latency_predicate = latency_awareness.generate_predicate();
-            Box::new(move |node: &NodeRef| DefaultPolicy::is_alive(node) && latency_predicate(node))
-                as Box<dyn Fn(&NodeRef) -> bool + Send + Sync + 'static>
+            Box::new(move |node: NodeRef<'_>, shard| {
+                DefaultPolicy::is_alive(node, shard) && latency_predicate(node)
+            })
+                as Box<dyn Fn(NodeRef<'_>, Option<Shard>) -> bool + Send + Sync + 'static>
         } else {
             Box::new(DefaultPolicy::is_alive)
         };
@@ -695,7 +783,11 @@ impl DefaultPolicyBuilder {
             permit_dc_failover: self.permit_dc_failover,
             pick_predicate,
             latency_awareness,
-            fixed_shuffle_seed: (!self.enable_replica_shuffle).then(rand::random),
+            fixed_seed: (!self.enable_replica_shuffle).then(|| {
+                let seed = rand::random();
+                debug!("DefaultPolicy: setting fixed seed to {}", seed);
+                seed
+            }),
         })
     }
 
@@ -858,7 +950,7 @@ struct TokenWithStrategy<'a> {
 impl<'a> TokenWithStrategy<'a> {
     fn new(query: &'a RoutingInfo, cluster: &'a ClusterData) -> Option<TokenWithStrategy<'a>> {
         let token = query.token?;
-        let keyspace_name = query.keyspace?;
+        let keyspace_name = query.table?.ks_name();
         let keyspace = cluster.get_keyspace_info().get(keyspace_name)?;
         let strategy = &keyspace.strategy;
         Some(TokenWithStrategy { strategy, token })
@@ -868,20 +960,20 @@ impl<'a> TokenWithStrategy<'a> {
 #[cfg(test)]
 mod tests {
     use scylla_cql::{frame::types::SerialConsistency, Consistency};
+    use tracing::info;
 
     use self::framework::{
         get_plan_and_collect_node_identifiers, mock_cluster_data_for_token_unaware_tests,
         ExpectedGroups, ExpectedGroupsBuilder,
     };
+    use crate::transport::locator::test::{TABLE_NTS_RF_2, TABLE_NTS_RF_3, TABLE_SS_RF_2};
     use crate::{
         load_balancing::{
-            default::tests::framework::mock_cluster_data_for_token_aware_tests, RoutingInfo,
+            default::tests::framework::mock_cluster_data_for_token_aware_tests, Plan, RoutingInfo,
         },
         routing::Token,
-        transport::{
-            locator::test::{KEYSPACE_NTS_RF_2, KEYSPACE_NTS_RF_3, KEYSPACE_SS_RF_2},
-            ClusterData,
-        },
+        test_utils::setup_tracing,
+        transport::ClusterData,
     };
 
     use super::{DefaultPolicy, NodeLocationPreference};
@@ -894,13 +986,18 @@ mod tests {
         use crate::{
             load_balancing::{LoadBalancingPolicy, Plan, RoutingInfo},
             routing::Token,
+            test_utils::setup_tracing,
             transport::{
-                locator::test::{id_to_invalid_addr, mock_metadata_for_token_aware_tests},
+                locator::{
+                    tablets::TabletsInfo,
+                    test::{id_to_invalid_addr, mock_metadata_for_token_aware_tests},
+                },
                 topology::{Metadata, Peer},
                 ClusterData,
             },
         };
 
+        #[derive(Debug)]
         enum ExpectedGroup {
             NonDeterministic(HashSet<u16>),
             Deterministic(HashSet<u16>),
@@ -956,6 +1053,7 @@ mod tests {
             }
         }
 
+        #[derive(Debug)]
         pub(crate) struct ExpectedGroups {
             groups: Vec<ExpectedGroup>,
         }
@@ -987,7 +1085,7 @@ mod tests {
                     // and just `assert_eq` them
                     let mut got = got.iter();
                     for (group_id, expected) in self.groups.iter().enumerate() {
-                        // Collect the nodes that consistute the group
+                        // Collect the nodes that constitute the group
                         // in the actual plan
                         let got_group: Vec<_> = (&mut got).take(expected.len()).copied().collect();
 
@@ -1038,6 +1136,7 @@ mod tests {
 
         #[test]
         fn test_assert_proper_grouping_in_plan_good() {
+            setup_tracing();
             let got = vec![1u16, 2, 3, 4, 5];
             let expected_groups = ExpectedGroupsBuilder::new()
                 .group([1])
@@ -1051,6 +1150,7 @@ mod tests {
         #[test]
         #[should_panic]
         fn test_assert_proper_grouping_in_plan_too_many_nodes_in_the_end() {
+            setup_tracing();
             let got = vec![1u16, 2, 3, 4, 5, 6];
             let expected_groups = ExpectedGroupsBuilder::new()
                 .group([1])
@@ -1064,6 +1164,7 @@ mod tests {
         #[test]
         #[should_panic]
         fn test_assert_proper_grouping_in_plan_too_many_nodes_in_the_middle() {
+            setup_tracing();
             let got = vec![1u16, 2, 6, 3, 4, 5];
             let expected_groups = ExpectedGroupsBuilder::new()
                 .group([1])
@@ -1077,6 +1178,7 @@ mod tests {
         #[test]
         #[should_panic]
         fn test_assert_proper_grouping_in_plan_missing_node() {
+            setup_tracing();
             let got = vec![1u16, 2, 3, 4];
             let expected_groups = ExpectedGroupsBuilder::new()
                 .group([1])
@@ -1090,7 +1192,15 @@ mod tests {
         // based on locator mock cluster
         pub(crate) async fn mock_cluster_data_for_token_aware_tests() -> ClusterData {
             let metadata = mock_metadata_for_token_aware_tests();
-            ClusterData::new(metadata, &Default::default(), &HashMap::new(), &None, None).await
+            ClusterData::new(
+                metadata,
+                &Default::default(),
+                &HashMap::new(),
+                &None,
+                None,
+                TabletsInfo::new(),
+            )
+            .await
         }
 
         // creates ClusterData with info about 5 nodes living in 2 different datacenters
@@ -1102,9 +1212,7 @@ mod tests {
                     datacenter: Some(dc.to_string()),
                     rack: None,
                     address: id_to_invalid_addr(*id),
-                    tokens: vec![Token {
-                        value: *id as i64 * 100,
-                    }],
+                    tokens: vec![Token::new(*id as i64 * 100)],
                     host_id: Uuid::new_v4(),
                 })
                 .collect::<Vec<_>>();
@@ -1114,7 +1222,15 @@ mod tests {
                 keyspaces: HashMap::new(),
             };
 
-            ClusterData::new(info, &Default::default(), &HashMap::new(), &None, None).await
+            ClusterData::new(
+                info,
+                &Default::default(),
+                &HashMap::new(),
+                &None,
+                None,
+                TabletsInfo::new(),
+            )
+            .await
         }
 
         pub(crate) fn get_plan_and_collect_node_identifiers(
@@ -1123,13 +1239,14 @@ mod tests {
             cluster: &ClusterData,
         ) -> Vec<u16> {
             let plan = Plan::new(policy, query_info, cluster);
-            plan.map(|node| node.address.port()).collect::<Vec<_>>()
+            plan.map(|(node, _shard)| node.address.port())
+                .collect::<Vec<_>>()
         }
     }
 
     pub(crate) const EMPTY_ROUTING_INFO: RoutingInfo = RoutingInfo {
         token: None,
-        keyspace: None,
+        table: None,
         is_confirmed_lwt: false,
         consistency: Consistency::Quorum,
         serial_consistency: Some(SerialConsistency::Serial),
@@ -1146,6 +1263,19 @@ mod tests {
             let plan = get_plan_and_collect_node_identifiers(policy, routing_info, cluster);
             plans.push(plan);
         }
+        let example_plan = Plan::new(policy, routing_info, cluster);
+        info!("Example plan from policy:",);
+        for (node, shard) in example_plan {
+            info!(
+                "Node port: {}, shard: {}, dc: {:?}, rack: {:?}, down: {:?}",
+                node.address.port(),
+                shard,
+                node.datacenter,
+                node.rack,
+                node.is_down()
+            );
+        }
+
         expected_groups.assert_proper_grouping_in_plans(&plans);
     }
 
@@ -1166,6 +1296,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_default_policy_with_token_unaware_statements() {
+        setup_tracing();
         let local_dc = "eu".to_string();
         let policy_with_disabled_dc_failover = DefaultPolicy {
             preferences: NodeLocationPreference::Datacenter(local_dc.clone()),
@@ -1199,9 +1330,12 @@ mod tests {
 
     #[tokio::test]
     async fn test_default_policy_with_token_aware_statements() {
-        use crate::transport::locator::test::{A, B, C, D, E, F, G};
+        setup_tracing();
 
+        use crate::transport::locator::test::{A, B, C, D, E, F, G};
         let cluster = mock_cluster_data_for_token_aware_tests().await;
+
+        #[derive(Debug)]
         struct Test<'a> {
             policy: DefaultPolicy,
             routing_info: RoutingInfo<'a>,
@@ -1218,8 +1352,8 @@ mod tests {
                     ..Default::default()
                 },
                 routing_info: RoutingInfo {
-                    token: Some(Token { value: 160 }),
-                    keyspace: Some(KEYSPACE_NTS_RF_2),
+                    token: Some(Token::new(160)),
+                    table: Some(TABLE_NTS_RF_2),
                     consistency: Consistency::Two,
                     ..Default::default()
                 },
@@ -1239,12 +1373,12 @@ mod tests {
                     preferences: NodeLocationPreference::Datacenter("eu".to_owned()),
                     is_token_aware: true,
                     permit_dc_failover: true,
-                    fixed_shuffle_seed: Some(123),
+                    fixed_seed: Some(123),
                     ..Default::default()
                 },
                 routing_info: RoutingInfo {
-                    token: Some(Token { value: 160 }),
-                    keyspace: Some(KEYSPACE_NTS_RF_2),
+                    token: Some(Token::new(160)),
+                    table: Some(TABLE_NTS_RF_2),
                     consistency: Consistency::Two,
                     ..Default::default()
                 },
@@ -1267,8 +1401,8 @@ mod tests {
                     ..Default::default()
                 },
                 routing_info: RoutingInfo {
-                    token: Some(Token { value: 160 }),
-                    keyspace: Some(KEYSPACE_NTS_RF_2),
+                    token: Some(Token::new(160)),
+                    table: Some(TABLE_NTS_RF_2),
                     consistency: Consistency::LocalOne, // local Consistency forbids datacenter failover
                     ..Default::default()
                 },
@@ -1289,8 +1423,8 @@ mod tests {
                     ..Default::default()
                 },
                 routing_info: RoutingInfo {
-                    token: Some(Token { value: 160 }),
-                    keyspace: Some(KEYSPACE_NTS_RF_2),
+                    token: Some(Token::new(160)),
+                    table: Some(TABLE_NTS_RF_2),
                     consistency: Consistency::One,
                     ..Default::default()
                 },
@@ -1311,8 +1445,8 @@ mod tests {
                     ..Default::default()
                 },
                 routing_info: RoutingInfo {
-                    token: Some(Token { value: 160 }),
-                    keyspace: Some(KEYSPACE_NTS_RF_3),
+                    token: Some(Token::new(160)),
+                    table: Some(TABLE_NTS_RF_3),
                     consistency: Consistency::Quorum,
                     ..Default::default()
                 },
@@ -1332,12 +1466,12 @@ mod tests {
                     preferences: NodeLocationPreference::Datacenter("eu".to_owned()),
                     is_token_aware: true,
                     permit_dc_failover: true,
-                    fixed_shuffle_seed: Some(123),
+                    fixed_seed: Some(123),
                     ..Default::default()
                 },
                 routing_info: RoutingInfo {
-                    token: Some(Token { value: 160 }),
-                    keyspace: Some(KEYSPACE_NTS_RF_3),
+                    token: Some(Token::new(160)),
+                    table: Some(TABLE_NTS_RF_3),
                     consistency: Consistency::Quorum,
                     ..Default::default()
                 },
@@ -1360,8 +1494,8 @@ mod tests {
                     ..Default::default()
                 },
                 routing_info: RoutingInfo {
-                    token: Some(Token { value: 160 }),
-                    keyspace: Some(KEYSPACE_NTS_RF_3),
+                    token: Some(Token::new(160)),
+                    table: Some(TABLE_NTS_RF_3),
                     consistency: Consistency::Quorum,
                     ..Default::default()
                 },
@@ -1382,8 +1516,8 @@ mod tests {
                     ..Default::default()
                 },
                 routing_info: RoutingInfo {
-                    token: Some(Token { value: 160 }),
-                    keyspace: Some(KEYSPACE_SS_RF_2),
+                    token: Some(Token::new(160)),
+                    table: Some(TABLE_SS_RF_2),
                     consistency: Consistency::Two,
                     ..Default::default()
                 },
@@ -1406,8 +1540,8 @@ mod tests {
                     ..Default::default()
                 },
                 routing_info: RoutingInfo {
-                    token: Some(Token { value: 160 }),
-                    keyspace: Some(KEYSPACE_SS_RF_2),
+                    token: Some(Token::new(160)),
+                    table: Some(TABLE_SS_RF_2),
                     consistency: Consistency::LocalOne, // local Consistency forbids datacenter failover
                     ..Default::default()
                 },
@@ -1429,7 +1563,7 @@ mod tests {
                 },
                 routing_info: RoutingInfo {
                     token: None, // no token
-                    keyspace: Some(KEYSPACE_NTS_RF_3),
+                    table: Some(TABLE_NTS_RF_3),
                     consistency: Consistency::Quorum,
                     ..Default::default()
                 },
@@ -1447,8 +1581,8 @@ mod tests {
                     ..Default::default()
                 },
                 routing_info: RoutingInfo {
-                    token: Some(Token { value: 160 }),
-                    keyspace: None, // no keyspace
+                    token: Some(Token::new(160)),
+                    table: None, // no keyspace
                     consistency: Consistency::Quorum,
                     ..Default::default()
                 },
@@ -1466,8 +1600,8 @@ mod tests {
                     ..Default::default()
                 },
                 routing_info: RoutingInfo {
-                    token: Some(Token { value: 160 }),
-                    keyspace: Some(KEYSPACE_NTS_RF_2),
+                    token: Some(Token::new(160)),
+                    table: Some(TABLE_NTS_RF_2),
                     consistency: Consistency::Quorum,
                     ..Default::default()
                 },
@@ -1488,8 +1622,8 @@ mod tests {
                     ..Default::default()
                 },
                 routing_info: RoutingInfo {
-                    token: Some(Token { value: 160 }),
-                    keyspace: Some(KEYSPACE_NTS_RF_2),
+                    token: Some(Token::new(160)),
+                    table: Some(TABLE_NTS_RF_2),
                     consistency: Consistency::Quorum,
                     ..Default::default()
                 },
@@ -1507,8 +1641,8 @@ mod tests {
                     ..Default::default()
                 },
                 routing_info: RoutingInfo {
-                    token: Some(Token { value: 160 }),
-                    keyspace: Some(KEYSPACE_NTS_RF_2),
+                    token: Some(Token::new(160)),
+                    table: Some(TABLE_NTS_RF_2),
                     consistency: Consistency::Quorum,
                     ..Default::default()
                 },
@@ -1529,8 +1663,8 @@ mod tests {
                     ..Default::default()
                 },
                 routing_info: RoutingInfo {
-                    token: Some(Token { value: 160 }),
-                    keyspace: Some(KEYSPACE_NTS_RF_2),
+                    token: Some(Token::new(160)),
+                    table: Some(TABLE_NTS_RF_2),
                     consistency: Consistency::Quorum,
                     ..Default::default()
                 },
@@ -1554,8 +1688,8 @@ mod tests {
                     ..Default::default()
                 },
                 routing_info: RoutingInfo {
-                    token: Some(Token { value: 160 }),
-                    keyspace: Some(KEYSPACE_NTS_RF_3),
+                    token: Some(Token::new(160)),
+                    table: Some(TABLE_NTS_RF_3),
                     consistency: Consistency::One,
                     ..Default::default()
                 },
@@ -1578,12 +1712,12 @@ mod tests {
                     ),
                     is_token_aware: true,
                     permit_dc_failover: false,
-                    fixed_shuffle_seed: Some(123),
+                    fixed_seed: Some(123),
                     ..Default::default()
                 },
                 routing_info: RoutingInfo {
-                    token: Some(Token { value: 560 }),
-                    keyspace: Some(KEYSPACE_SS_RF_2),
+                    token: Some(Token::new(560)),
+                    table: Some(TABLE_SS_RF_2),
                     consistency: Consistency::Two,
                     ..Default::default()
                 },
@@ -1609,8 +1743,8 @@ mod tests {
                     ..Default::default()
                 },
                 routing_info: RoutingInfo {
-                    token: Some(Token { value: 160 }),
-                    keyspace: Some(KEYSPACE_SS_RF_2),
+                    token: Some(Token::new(160)),
+                    table: Some(TABLE_SS_RF_2),
                     consistency: Consistency::One,
                     ..Default::default()
                 },
@@ -1636,7 +1770,7 @@ mod tests {
                 },
                 routing_info: RoutingInfo {
                     token: None,
-                    keyspace: Some(KEYSPACE_NTS_RF_3),
+                    table: Some(TABLE_NTS_RF_3),
                     consistency: Consistency::One,
                     ..Default::default()
                 },
@@ -1651,12 +1785,13 @@ mod tests {
             },
         ];
 
-        for Test {
-            policy,
-            routing_info,
-            expected_groups,
-        } in tests
-        {
+        for test in tests {
+            info!("Test: {:?}", test);
+            let Test {
+                policy,
+                routing_info,
+                expected_groups,
+            } = test;
             test_default_policy_with_given_cluster_and_routing_info(
                 &policy,
                 &cluster,
@@ -1669,6 +1804,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_default_policy_with_lwt_statements() {
+        setup_tracing();
         use crate::transport::locator::test::{A, B, C, D, E, F, G};
 
         let cluster = mock_cluster_data_for_token_aware_tests().await;
@@ -1688,8 +1824,8 @@ mod tests {
                     ..Default::default()
                 },
                 routing_info: RoutingInfo {
-                    token: Some(Token { value: 160 }),
-                    keyspace: Some(KEYSPACE_NTS_RF_2),
+                    token: Some(Token::new(160)),
+                    table: Some(TABLE_NTS_RF_2),
                     consistency: Consistency::Two,
                     is_confirmed_lwt: true,
                     ..Default::default()
@@ -1710,12 +1846,12 @@ mod tests {
                     preferences: NodeLocationPreference::Datacenter("eu".to_owned()),
                     is_token_aware: true,
                     permit_dc_failover: true,
-                    fixed_shuffle_seed: Some(123),
+                    fixed_seed: Some(123),
                     ..Default::default()
                 },
                 routing_info: RoutingInfo {
-                    token: Some(Token { value: 160 }),
-                    keyspace: Some(KEYSPACE_NTS_RF_2),
+                    token: Some(Token::new(160)),
+                    table: Some(TABLE_NTS_RF_2),
                     consistency: Consistency::Two,
                     is_confirmed_lwt: true,
                     ..Default::default()
@@ -1739,8 +1875,8 @@ mod tests {
                     ..Default::default()
                 },
                 routing_info: RoutingInfo {
-                    token: Some(Token { value: 160 }),
-                    keyspace: Some(KEYSPACE_NTS_RF_2),
+                    token: Some(Token::new(160)),
+                    table: Some(TABLE_NTS_RF_2),
                     consistency: Consistency::LocalOne, // local Consistency forbids datacenter failover
                     is_confirmed_lwt: true,
                     ..Default::default()
@@ -1762,8 +1898,8 @@ mod tests {
                     ..Default::default()
                 },
                 routing_info: RoutingInfo {
-                    token: Some(Token { value: 160 }),
-                    keyspace: Some(KEYSPACE_NTS_RF_2),
+                    token: Some(Token::new(160)),
+                    table: Some(TABLE_NTS_RF_2),
                     consistency: Consistency::One,
                     is_confirmed_lwt: true,
                     ..Default::default()
@@ -1785,8 +1921,8 @@ mod tests {
                     ..Default::default()
                 },
                 routing_info: RoutingInfo {
-                    token: Some(Token { value: 160 }),
-                    keyspace: Some(KEYSPACE_NTS_RF_3),
+                    token: Some(Token::new(160)),
+                    table: Some(TABLE_NTS_RF_3),
                     consistency: Consistency::Quorum,
                     is_confirmed_lwt: true,
                     ..Default::default()
@@ -1807,12 +1943,12 @@ mod tests {
                     preferences: NodeLocationPreference::Datacenter("eu".to_owned()),
                     is_token_aware: true,
                     permit_dc_failover: true,
-                    fixed_shuffle_seed: Some(123),
+                    fixed_seed: Some(123),
                     ..Default::default()
                 },
                 routing_info: RoutingInfo {
-                    token: Some(Token { value: 160 }),
-                    keyspace: Some(KEYSPACE_NTS_RF_3),
+                    token: Some(Token::new(160)),
+                    table: Some(TABLE_NTS_RF_3),
                     consistency: Consistency::Quorum,
                     is_confirmed_lwt: true,
                     ..Default::default()
@@ -1836,8 +1972,8 @@ mod tests {
                     ..Default::default()
                 },
                 routing_info: RoutingInfo {
-                    token: Some(Token { value: 160 }),
-                    keyspace: Some(KEYSPACE_NTS_RF_3),
+                    token: Some(Token::new(160)),
+                    table: Some(TABLE_NTS_RF_3),
                     consistency: Consistency::Quorum,
                     is_confirmed_lwt: true,
                     ..Default::default()
@@ -1859,8 +1995,8 @@ mod tests {
                     ..Default::default()
                 },
                 routing_info: RoutingInfo {
-                    token: Some(Token { value: 160 }),
-                    keyspace: Some(KEYSPACE_SS_RF_2),
+                    token: Some(Token::new(160)),
+                    table: Some(TABLE_SS_RF_2),
                     consistency: Consistency::Two,
                     is_confirmed_lwt: true,
                     ..Default::default()
@@ -1884,8 +2020,8 @@ mod tests {
                     ..Default::default()
                 },
                 routing_info: RoutingInfo {
-                    token: Some(Token { value: 160 }),
-                    keyspace: Some(KEYSPACE_SS_RF_2),
+                    token: Some(Token::new(160)),
+                    table: Some(TABLE_SS_RF_2),
                     consistency: Consistency::LocalOne, // local Consistency forbids datacenter failover
                     is_confirmed_lwt: true,
                     ..Default::default()
@@ -1908,7 +2044,7 @@ mod tests {
                 },
                 routing_info: RoutingInfo {
                     token: None, // no token
-                    keyspace: Some(KEYSPACE_NTS_RF_3),
+                    table: Some(TABLE_NTS_RF_3),
                     consistency: Consistency::Quorum,
                     is_confirmed_lwt: true,
                     ..Default::default()
@@ -1927,8 +2063,8 @@ mod tests {
                     ..Default::default()
                 },
                 routing_info: RoutingInfo {
-                    token: Some(Token { value: 160 }),
-                    keyspace: None, // no keyspace
+                    token: Some(Token::new(160)),
+                    table: None, // no keyspace
                     consistency: Consistency::Quorum,
                     is_confirmed_lwt: true,
                     ..Default::default()
@@ -1947,8 +2083,8 @@ mod tests {
                     ..Default::default()
                 },
                 routing_info: RoutingInfo {
-                    token: Some(Token { value: 160 }),
-                    keyspace: Some(KEYSPACE_NTS_RF_2),
+                    token: Some(Token::new(160)),
+                    table: Some(TABLE_NTS_RF_2),
                     consistency: Consistency::Quorum,
                     is_confirmed_lwt: true,
                     ..Default::default()
@@ -1970,8 +2106,8 @@ mod tests {
                     ..Default::default()
                 },
                 routing_info: RoutingInfo {
-                    token: Some(Token { value: 160 }),
-                    keyspace: Some(KEYSPACE_NTS_RF_2),
+                    token: Some(Token::new(160)),
+                    table: Some(TABLE_NTS_RF_2),
                     consistency: Consistency::Quorum,
                     is_confirmed_lwt: true,
                     ..Default::default()
@@ -1990,8 +2126,8 @@ mod tests {
                     ..Default::default()
                 },
                 routing_info: RoutingInfo {
-                    token: Some(Token { value: 160 }),
-                    keyspace: Some(KEYSPACE_NTS_RF_2),
+                    token: Some(Token::new(160)),
+                    table: Some(TABLE_NTS_RF_2),
                     consistency: Consistency::Quorum,
                     is_confirmed_lwt: true,
                     ..Default::default()
@@ -2013,8 +2149,8 @@ mod tests {
                     ..Default::default()
                 },
                 routing_info: RoutingInfo {
-                    token: Some(Token { value: 160 }),
-                    keyspace: Some(KEYSPACE_NTS_RF_2),
+                    token: Some(Token::new(160)),
+                    table: Some(TABLE_NTS_RF_2),
                     consistency: Consistency::Quorum,
                     is_confirmed_lwt: true,
                     ..Default::default()
@@ -2039,8 +2175,8 @@ mod tests {
                     ..Default::default()
                 },
                 routing_info: RoutingInfo {
-                    token: Some(Token { value: 160 }),
-                    keyspace: Some(KEYSPACE_NTS_RF_3),
+                    token: Some(Token::new(160)),
+                    table: Some(TABLE_NTS_RF_3),
                     consistency: Consistency::One,
                     is_confirmed_lwt: true,
                     ..Default::default()
@@ -2064,12 +2200,12 @@ mod tests {
                     ),
                     is_token_aware: true,
                     permit_dc_failover: false,
-                    fixed_shuffle_seed: Some(123),
+                    fixed_seed: Some(123),
                     ..Default::default()
                 },
                 routing_info: RoutingInfo {
-                    token: Some(Token { value: 760 }),
-                    keyspace: Some(KEYSPACE_SS_RF_2),
+                    token: Some(Token::new(760)),
+                    table: Some(TABLE_SS_RF_2),
                     consistency: Consistency::Two,
                     is_confirmed_lwt: true,
                     ..Default::default()
@@ -2095,8 +2231,8 @@ mod tests {
                     ..Default::default()
                 },
                 routing_info: RoutingInfo {
-                    token: Some(Token { value: 160 }),
-                    keyspace: Some(KEYSPACE_SS_RF_2),
+                    token: Some(Token::new(160)),
+                    table: Some(TABLE_SS_RF_2),
                     consistency: Consistency::One,
                     is_confirmed_lwt: true,
                     ..Default::default()
@@ -2132,10 +2268,11 @@ mod latency_awareness {
     use futures::{future::RemoteHandle, FutureExt};
     use itertools::Either;
     use scylla_cql::errors::{DbError, QueryError};
-    use tracing::{instrument::WithSubscriber, trace};
+    use tokio::time::{Duration, Instant};
+    use tracing::{trace, warn};
     use uuid::Uuid;
 
-    use crate::{load_balancing::NodeRef, transport::node::Node};
+    use crate::{load_balancing::NodeRef, routing::Shard, transport::node::Node};
     use std::{
         collections::HashMap,
         ops::Deref,
@@ -2143,7 +2280,6 @@ mod latency_awareness {
             atomic::{AtomicU64, Ordering},
             Arc, RwLock,
         },
-        time::{Duration, Instant},
     };
 
     #[derive(Debug)]
@@ -2168,7 +2304,7 @@ mod latency_awareness {
         }
     }
 
-    #[derive(Debug, Clone, Copy)]
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
     pub(super) struct TimestampedAverage {
         pub(super) timestamp: Instant,
         pub(super) average: Duration,
@@ -2190,15 +2326,41 @@ mod latency_awareness {
                     timestamp: now,
                 }),
                 Some(prev_avg) => Some({
-                    let delay = (now - prev_avg.timestamp).as_secs_f64();
+                    let delay = now
+                        .saturating_duration_since(prev_avg.timestamp)
+                        .as_secs_f64();
                     let scaled_delay = delay / scale_secs;
-                    let prev_weight = (scaled_delay + 1.).ln() / scaled_delay;
+                    let prev_weight = if scaled_delay <= 0. {
+                        1.
+                    } else {
+                        (scaled_delay + 1.).ln() / scaled_delay
+                    };
 
                     let last_latency_secs = last_latency.as_secs_f64();
                     let prev_avg_secs = prev_avg.average.as_secs_f64();
-                    let average = Duration::from_secs_f64(
+                    let average = match Duration::try_from_secs_f64(
                         (1. - prev_weight) * last_latency_secs + prev_weight * prev_avg_secs,
-                    );
+                    ) {
+                        Ok(ts) => ts,
+                        Err(e) => {
+                            warn!(
+                                "Error while calculating average: {e}. \
+                            prev_avg_secs: {prev_avg_secs}, \
+                            last_latency_secs: {last_latency_secs}, \
+                            prev_weight: {prev_weight}, \
+                            scaled_delay: {scaled_delay}, \
+                            delay: {delay}, \
+                            prev_avg.timestamp: {:?}, \
+                            now: {now:?}",
+                                prev_avg.timestamp
+                            );
+
+                            // Not sure when we could enter this branch,
+                            // so I have no idea what would be a sensible value to return here,
+                            // this does not seem like a very bad choice.
+                            prev_avg.average
+                        }
+                    };
                     Self {
                         num_measures: prev_avg.num_measures + 1,
                         timestamp: now,
@@ -2292,7 +2454,7 @@ mod latency_awareness {
                 }
             }
             .remote_handle();
-            tokio::task::spawn(updater_fut.with_current_subscriber());
+            tokio::task::spawn(updater_fut);
 
             Self {
                 _updater_handle: Some(updater_handle),
@@ -2321,21 +2483,45 @@ mod latency_awareness {
 
         pub(super) fn wrap<'a>(
             &self,
-            fallback: impl Iterator<Item = NodeRef<'a>>,
-        ) -> impl Iterator<Item = NodeRef<'a>> {
+            fallback: impl Iterator<Item = (NodeRef<'a>, Option<Shard>)>,
+        ) -> impl Iterator<Item = (NodeRef<'a>, Option<Shard>)> {
             let min_avg_latency = match self.last_min_latency.load() {
                 Some(min_avg) => min_avg,
                 None => return Either::Left(fallback), // noop, as no latency data has been collected yet
             };
 
-            Either::Right(IteratorWithSkippedNodes::new(
-                self.node_avgs.read().unwrap().deref(),
-                fallback,
-                self.exclusion_threshold,
-                self.retry_period,
-                self.minimum_measurements,
-                min_avg_latency,
-            ))
+            let average_latencies = self.node_avgs.read().unwrap();
+            let targets = fallback;
+
+            let mut fast_targets = vec![];
+            let mut penalised_targets = vec![];
+
+            for node_and_shard @ (node, _shard) in targets {
+                match fast_enough(
+                    average_latencies.deref(),
+                    node.host_id,
+                    self.exclusion_threshold,
+                    self.retry_period,
+                    self.minimum_measurements,
+                    min_avg_latency,
+                ) {
+                    FastEnough::Yes => fast_targets.push(node_and_shard),
+                    FastEnough::No { average } => {
+                        trace!("Latency awareness: Penalising node {{address={}, datacenter={:?}, rack={:?}}} for being on average at least {} times slower (latency: {}ms) than the fastest ({}ms).",
+                                node.address, node.datacenter, node.rack, self.exclusion_threshold, average.as_millis(), min_avg_latency.as_millis());
+                        penalised_targets.push(node_and_shard);
+                    }
+                }
+            }
+
+            let mut fast_targets = fast_targets.into_iter();
+            let mut penalised_targets = penalised_targets.into_iter();
+
+            let skipping_penalised_targets_iterator = std::iter::from_fn(move || {
+                fast_targets.next().or_else(|| penalised_targets.next())
+            });
+
+            Either::Right(skipping_penalised_targets_iterator)
         }
 
         pub(super) fn report_query(&self, node: &Node, latency: Duration) {
@@ -2641,71 +2827,6 @@ mod latency_awareness {
         }
     }
 
-    struct IteratorWithSkippedNodes<'a, Fast, Penalised>
-    where
-        Fast: Iterator<Item = NodeRef<'a>>,
-        Penalised: Iterator<Item = NodeRef<'a>>,
-    {
-        fast_nodes: Fast,
-        penalised_nodes: Penalised,
-    }
-
-    impl<'a>
-        IteratorWithSkippedNodes<
-            'a,
-            std::vec::IntoIter<NodeRef<'a>>,
-            std::vec::IntoIter<NodeRef<'a>>,
-        >
-    {
-        fn new(
-            average_latencies: &HashMap<Uuid, RwLock<Option<TimestampedAverage>>>,
-            nodes: impl Iterator<Item = NodeRef<'a>>,
-            exclusion_threshold: f64,
-            retry_period: Duration,
-            minimum_measurements: usize,
-            min_avg: Duration,
-        ) -> Self {
-            let mut fast_nodes = vec![];
-            let mut penalised_nodes = vec![];
-
-            for node in nodes {
-                match fast_enough(
-                    average_latencies,
-                    node.host_id,
-                    exclusion_threshold,
-                    retry_period,
-                    minimum_measurements,
-                    min_avg,
-                ) {
-                    FastEnough::Yes => fast_nodes.push(node),
-                    FastEnough::No { average } => {
-                        trace!("Latency awareness: Penalising node {{address={}, datacenter={:?}, rack={:?}}} for being on average at least {} times slower (latency: {}ms) than the fastest ({}ms).",
-                                node.address, node.datacenter, node.rack, exclusion_threshold, average.as_millis(), min_avg.as_millis());
-                        penalised_nodes.push(node);
-                    }
-                }
-            }
-
-            Self {
-                fast_nodes: fast_nodes.into_iter(),
-                penalised_nodes: penalised_nodes.into_iter(),
-            }
-        }
-    }
-
-    impl<'a, Fast, Penalised> Iterator for IteratorWithSkippedNodes<'a, Fast, Penalised>
-    where
-        Fast: Iterator<Item = NodeRef<'a>>,
-        Penalised: Iterator<Item = NodeRef<'a>>,
-    {
-        type Item = &'a Arc<Node>;
-
-        fn next(&mut self) -> Option<Self::Item> {
-            self.fast_nodes
-                .next()
-                .or_else(|| self.penalised_nodes.next())
-        }
-    }
     #[cfg(test)]
     mod tests {
         use scylla_cql::Consistency;
@@ -2717,7 +2838,10 @@ mod latency_awareness {
         };
 
         use crate::{
-            load_balancing::default::NodeLocationPreference, test_utils::create_new_session_builder,
+            load_balancing::default::NodeLocationPreference,
+            routing::Shard,
+            test_utils::{create_new_session_builder, setup_tracing},
+            transport::locator::test::{TABLE_INVALID, TABLE_NTS_RF_2, TABLE_NTS_RF_3},
         };
         use crate::{
             load_balancing::{
@@ -2726,14 +2850,12 @@ mod latency_awareness {
             },
             routing::Token,
             transport::{
-                locator::test::{
-                    id_to_invalid_addr, A, B, C, D, E, F, G, KEYSPACE_NTS_RF_2, KEYSPACE_NTS_RF_3,
-                },
+                locator::test::{id_to_invalid_addr, A, B, C, D, E, F, G},
                 ClusterData, NodeAddr,
             },
             ExecutionProfile,
         };
-        use std::time::Instant;
+        use tokio::time::Instant;
 
         trait DefaultPolicyTestExt {
             fn set_nodes_latency_stats(
@@ -2778,9 +2900,10 @@ mod latency_awareness {
         ) -> DefaultPolicy {
             let pick_predicate = {
                 let latency_predicate = latency_awareness.generate_predicate();
-                Box::new(move |node: &NodeRef| {
-                    DefaultPolicy::is_alive(node) && latency_predicate(node)
-                }) as Box<dyn Fn(&NodeRef) -> bool + Send + Sync + 'static>
+                Box::new(move |node: NodeRef<'_>, shard| {
+                    DefaultPolicy::is_alive(node, shard) && latency_predicate(node)
+                })
+                    as Box<dyn Fn(NodeRef<'_>, Option<Shard>) -> bool + Send + Sync + 'static>
             };
 
             DefaultPolicy {
@@ -2789,7 +2912,7 @@ mod latency_awareness {
                 is_token_aware: true,
                 pick_predicate,
                 latency_awareness: Some(latency_awareness),
-                fixed_shuffle_seed: None,
+                fixed_seed: None,
             }
         }
 
@@ -2821,6 +2944,7 @@ mod latency_awareness {
 
         #[tokio::test]
         async fn latency_aware_default_policy_does_not_penalise_if_no_latency_info_available_yet() {
+            setup_tracing();
             let policy = latency_aware_default_policy();
             let cluster = tests::mock_cluster_data_for_token_unaware_tests().await;
 
@@ -2840,6 +2964,7 @@ mod latency_awareness {
 
         #[tokio::test]
         async fn latency_aware_default_policy_does_not_penalise_if_not_enough_measurements() {
+            setup_tracing();
             let policy = latency_aware_default_policy();
             let cluster = tests::mock_cluster_data_for_token_unaware_tests().await;
 
@@ -2901,6 +3026,7 @@ mod latency_awareness {
         #[tokio::test]
         async fn latency_aware_default_policy_does_not_penalise_if_exclusion_threshold_not_crossed()
         {
+            setup_tracing();
             let policy = latency_aware_default_policy();
             let cluster = tests::mock_cluster_data_for_token_unaware_tests().await;
 
@@ -2960,6 +3086,7 @@ mod latency_awareness {
 
         #[tokio::test]
         async fn latency_aware_default_policy_does_not_penalise_if_retry_period_expired() {
+            setup_tracing();
             let policy = latency_aware_default_policy_customised(|b| {
                 b.retry_period(Duration::from_millis(10))
             });
@@ -3024,10 +3151,7 @@ mod latency_awareness {
 
         #[tokio::test]
         async fn latency_aware_default_policy_penalises_if_conditions_met() {
-            let _ = tracing_subscriber::fmt::fmt()
-                .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
-                .without_time()
-                .try_init();
+            setup_tracing();
             let (policy, updater) = latency_aware_default_policy_with_explicit_updater();
             let cluster = tests::mock_cluster_data_for_token_unaware_tests().await;
 
@@ -3114,6 +3238,8 @@ mod latency_awareness {
         #[tokio::test]
         async fn latency_aware_default_policy_stops_penalising_after_min_average_increases_enough_only_after_update_rate_elapses(
         ) {
+            setup_tracing();
+
             let (policy, updater) = latency_aware_default_policy_with_explicit_updater();
 
             let cluster = tests::mock_cluster_data_for_token_unaware_tests().await;
@@ -3237,7 +3363,7 @@ mod latency_awareness {
 
         #[tokio::test]
         async fn latency_aware_default_policy_is_correctly_token_aware() {
-            let _ = tracing_subscriber::fmt::try_init();
+            setup_tracing();
 
             struct Test<'a, 'b> {
                 // If Some, then the provided value is set as a min_avg.
@@ -3316,8 +3442,8 @@ mod latency_awareness {
                         (E, too_few_measurements_slow()),
                     ],
                     routing_info: RoutingInfo {
-                        token: Some(Token { value: 160 }),
-                        keyspace: Some(KEYSPACE_NTS_RF_3),
+                        token: Some(Token::new(160)),
+                        table: Some(TABLE_NTS_RF_3),
                         consistency: Consistency::Quorum,
                         ..Default::default()
                     },
@@ -3336,8 +3462,8 @@ mod latency_awareness {
                     // Latency-awareness has old minimum average cached, so does not fire.
                     preset_min_avg: Some(100 * min_avg),
                     routing_info: RoutingInfo {
-                        token: Some(Token { value: 160 }),
-                        keyspace: Some(KEYSPACE_NTS_RF_3),
+                        token: Some(Token::new(160)),
+                        table: Some(TABLE_NTS_RF_3),
                         consistency: Consistency::Quorum,
                         ..Default::default()
                     },
@@ -3365,8 +3491,8 @@ mod latency_awareness {
                         (C, too_few_measurements_fast_leader()),
                     ],
                     routing_info: RoutingInfo {
-                        token: Some(Token { value: 160 }),
-                        keyspace: Some(KEYSPACE_NTS_RF_2),
+                        token: Some(Token::new(160)),
+                        table: Some(TABLE_NTS_RF_2),
                         consistency: Consistency::Quorum,
                         ..Default::default()
                     },
@@ -3384,8 +3510,8 @@ mod latency_awareness {
                     // No latency stats, so latency-awareness is a no-op.
                     preset_min_avg: None,
                     routing_info: RoutingInfo {
-                        token: Some(Token { value: 160 }),
-                        keyspace: Some("invalid"),
+                        token: Some(Token::new(160)),
+                        table: Some(TABLE_INVALID),
                         consistency: Consistency::Quorum,
                         ..Default::default()
                     },
@@ -3437,6 +3563,7 @@ mod latency_awareness {
         #[tokio::test]
         #[ntest::timeout(1000)]
         async fn latency_aware_query_completes() {
+            setup_tracing();
             let policy = DefaultPolicy::builder()
                 .latency_awareness(LatencyAwarenessBuilder::default())
                 .build();
@@ -3452,6 +3579,25 @@ mod latency_awareness {
                 .unwrap();
 
             session.query("whatever", ()).await.unwrap_err();
+        }
+
+        #[tokio::test(start_paused = true)]
+        async fn timestamped_average_works_when_clock_stops() {
+            setup_tracing();
+            let avg = Some(TimestampedAverage {
+                timestamp: Instant::now(),
+                average: Duration::from_secs(123),
+                num_measures: 1,
+            });
+            let new_avg = TimestampedAverage::compute_next(avg, Duration::from_secs(456), 10.0);
+            assert_eq!(
+                new_avg,
+                Some(TimestampedAverage {
+                    timestamp: Instant::now(),
+                    average: Duration::from_secs(123),
+                    num_measures: 2,
+                }),
+            );
         }
     }
 }

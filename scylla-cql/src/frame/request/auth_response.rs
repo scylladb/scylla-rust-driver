@@ -1,5 +1,4 @@
 use crate::frame::frame_errors::ParseError;
-use bytes::BufMut;
 
 use crate::frame::request::{RequestOpcode, SerializableRequest};
 use crate::frame::types::write_bytes_opt;
@@ -12,7 +11,7 @@ pub struct AuthResponse {
 impl SerializableRequest for AuthResponse {
     const OPCODE: RequestOpcode = RequestOpcode::AuthResponse;
 
-    fn serialize(&self, buf: &mut impl BufMut) -> Result<(), ParseError> {
+    fn serialize(&self, buf: &mut Vec<u8>) -> Result<(), ParseError> {
         write_bytes_opt(self.response.as_ref(), buf)
     }
 }

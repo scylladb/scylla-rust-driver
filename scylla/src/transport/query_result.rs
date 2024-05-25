@@ -261,8 +261,13 @@ impl From<SingleRowError> for SingleRowTypedError {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::frame::response::result::{ColumnSpec, ColumnType, CqlValue, Row, TableSpec};
+    use crate::{
+        frame::response::result::{ColumnSpec, ColumnType, CqlValue, Row, TableSpec},
+        test_utils::setup_tracing,
+    };
     use std::convert::TryInto;
+
+    use assert_matches::assert_matches;
 
     // Returns specified number of rows, each one containing one int32 value.
     // Values are 0, 1, 2, 3, 4, ...
@@ -290,10 +295,7 @@ mod tests {
     }
 
     fn make_not_rows_query_result() -> QueryResult {
-        let table_spec = TableSpec {
-            ks_name: "some_keyspace".to_string(),
-            table_name: "some_table".to_string(),
-        };
+        let table_spec = TableSpec::owned("some_keyspace".to_string(), "some_table".to_string());
 
         let column_spec = ColumnSpec {
             table_spec,
@@ -325,6 +327,7 @@ mod tests {
 
     #[test]
     fn rows_num_test() {
+        setup_tracing();
         assert_eq!(
             make_not_rows_query_result().rows_num(),
             Err(RowsExpectedError)
@@ -337,6 +340,7 @@ mod tests {
 
     #[test]
     fn rows_test() {
+        setup_tracing();
         assert_eq!(make_not_rows_query_result().rows(), Err(RowsExpectedError));
         assert_eq!(make_rows_query_result(0).rows(), Ok(vec![]));
         assert_eq!(make_rows_query_result(1).rows(), Ok(make_rows(1)));
@@ -345,6 +349,7 @@ mod tests {
 
     #[test]
     fn rows_typed_test() {
+        setup_tracing();
         assert!(make_not_rows_query_result().rows_typed::<(i32,)>().is_err());
 
         let rows0: Vec<(i32,)> = make_rows_query_result(0)
@@ -374,6 +379,7 @@ mod tests {
 
     #[test]
     fn result_not_rows_test() {
+        setup_tracing();
         assert_eq!(make_not_rows_query_result().result_not_rows(), Ok(()));
         assert_eq!(
             make_rows_query_result(0).result_not_rows(),
@@ -391,6 +397,7 @@ mod tests {
 
     #[test]
     fn rows_or_empty_test() {
+        setup_tracing();
         assert_eq!(make_not_rows_query_result().rows_or_empty(), vec![]);
         assert_eq!(make_rows_query_result(0).rows_or_empty(), make_rows(0));
         assert_eq!(make_rows_query_result(1).rows_or_empty(), make_rows(1));
@@ -399,6 +406,7 @@ mod tests {
 
     #[test]
     fn rows_typed_or_empty() {
+        setup_tracing();
         let rows_empty: Vec<(i32,)> = make_not_rows_query_result()
             .rows_typed_or_empty::<(i32,)>()
             .map(|r| r.unwrap())
@@ -430,6 +438,7 @@ mod tests {
 
     #[test]
     fn first_row_test() {
+        setup_tracing();
         assert_eq!(
             make_not_rows_query_result().first_row(),
             Err(FirstRowError::RowsExpected(RowsExpectedError))
@@ -454,6 +463,7 @@ mod tests {
 
     #[test]
     fn first_row_typed_test() {
+        setup_tracing();
         assert_eq!(
             make_not_rows_query_result().first_row_typed::<(i32,)>(),
             Err(FirstRowTypedError::RowsExpected(RowsExpectedError))
@@ -475,14 +485,15 @@ mod tests {
             Ok((0,))
         );
 
-        assert!(matches!(
+        assert_matches!(
             make_string_rows_query_result(2).first_row_typed::<(i32,)>(),
             Err(FirstRowTypedError::FromRowError(_))
-        ));
+        );
     }
 
     #[test]
     fn maybe_first_row_test() {
+        setup_tracing();
         assert_eq!(
             make_not_rows_query_result().maybe_first_row(),
             Err(RowsExpectedError)
@@ -504,6 +515,7 @@ mod tests {
 
     #[test]
     fn maybe_first_row_typed_test() {
+        setup_tracing();
         assert_eq!(
             make_not_rows_query_result().maybe_first_row_typed::<(i32,)>(),
             Err(MaybeFirstRowTypedError::RowsExpected(RowsExpectedError))
@@ -529,14 +541,15 @@ mod tests {
             Ok(Some((0,)))
         );
 
-        assert!(matches!(
+        assert_matches!(
             make_string_rows_query_result(1).maybe_first_row_typed::<(i32,)>(),
             Err(MaybeFirstRowTypedError::FromRowError(_))
-        ))
+        )
     }
 
     #[test]
     fn single_row_test() {
+        setup_tracing();
         assert_eq!(
             make_not_rows_query_result().single_row(),
             Err(SingleRowError::RowsExpected(RowsExpectedError))
@@ -561,6 +574,7 @@ mod tests {
 
     #[test]
     fn single_row_typed_test() {
+        setup_tracing();
         assert_eq!(
             make_not_rows_query_result().single_row_typed::<(i32,)>(),
             Err(SingleRowTypedError::RowsExpected(RowsExpectedError))
@@ -582,9 +596,9 @@ mod tests {
             Err(SingleRowTypedError::BadNumberOfRows(3))
         );
 
-        assert!(matches!(
+        assert_matches!(
             make_string_rows_query_result(1).single_row_typed::<(i32,)>(),
             Err(SingleRowTypedError::FromRowError(_))
-        ));
+        );
     }
 }

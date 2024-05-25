@@ -1,5 +1,5 @@
 use crate::frame::frame_errors::ParseError;
-use bytes::{BufMut, Bytes};
+use bytes::Bytes;
 
 use crate::{
     frame::request::{query, RequestOpcode, SerializableRequest},
@@ -17,7 +17,7 @@ pub struct Execute<'a> {
 impl SerializableRequest for Execute<'_> {
     const OPCODE: RequestOpcode = RequestOpcode::Execute;
 
-    fn serialize(&self, buf: &mut impl BufMut) -> Result<(), ParseError> {
+    fn serialize(&self, buf: &mut Vec<u8>) -> Result<(), ParseError> {
         // Serializing statement id
         types::write_short_bytes(&self.id[..], buf)?;
 

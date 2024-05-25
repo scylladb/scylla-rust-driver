@@ -205,6 +205,7 @@ where
 mod tests {
     use crate::{
         routing::Token,
+        test_utils::setup_tracing,
         transport::locator::test::{
             create_ring, mock_metadata_for_token_aware_tests, A, B, C, D, E, F, G,
         },
@@ -214,12 +215,13 @@ mod tests {
 
     #[tokio::test]
     async fn test_simple_strategy() {
+        setup_tracing();
         let ring = create_ring(&mock_metadata_for_token_aware_tests());
         let replication_info = ReplicationInfo::new(ring);
 
         let check = |token, replication_factor, expected_node_ids| {
-            let replicas = replication_info
-                .simple_strategy_replicas(Token { value: token }, replication_factor);
+            let replicas =
+                replication_info.simple_strategy_replicas(Token::new(token), replication_factor);
             let ids: Vec<u16> = replicas.map(|node| node.address.port()).collect();
 
             assert_eq!(ids, expected_node_ids);
@@ -248,12 +250,12 @@ mod tests {
 
     #[tokio::test]
     async fn test_network_topology_strategy() {
+        setup_tracing();
         let ring = create_ring(&mock_metadata_for_token_aware_tests());
         let replication_info = ReplicationInfo::new(ring);
 
         let check = |token, dc, rf, expected| {
-            let replicas =
-                replication_info.nts_replicas_in_datacenter(Token { value: token }, dc, rf);
+            let replicas = replication_info.nts_replicas_in_datacenter(Token::new(token), dc, rf);
             let ids: Vec<u16> = replicas.map(|node| node.address.port()).collect();
 
             assert_eq!(ids, expected);

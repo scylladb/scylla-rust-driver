@@ -3,17 +3,18 @@ use std::borrow::Cow;
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
 
 use scylla_cql::frame::request::SerializableRequest;
-use scylla_cql::frame::value::SerializedValues;
-use scylla_cql::frame::value::ValueList;
+use scylla_cql::frame::response::result::ColumnType;
 use scylla_cql::frame::{request::query, Compression, SerializedRequest};
+use scylla_cql::types::serialize::row::SerializedValues;
 
-fn make_query<'a>(contents: &'a str, values: &'a SerializedValues) -> query::Query<'a> {
+fn make_query(contents: &str, values: SerializedValues) -> query::Query<'_> {
     query::Query {
         contents: Cow::Borrowed(contents),
         parameters: query::QueryParameters {
             consistency: scylla_cql::Consistency::LocalQuorum,
             serial_consistency: None,
-            values: Cow::Borrowed(values),
+            values: Cow::Owned(values),
+            skip_metadata: false,
             page_size: None,
             paging_state: None,
             timestamp: None,
@@ -22,13 +23,24 @@ fn make_query<'a>(contents: &'a str, values: &'a SerializedValues) -> query::Que
 }
 
 fn serialized_request_make_bench(c: &mut Criterion) {
+    let mut values = SerializedValues::new();
     let mut group = c.benchmark_group("LZ4Compression.SerializedRequest");
     let query_args = [
-        ("INSERT foo INTO ks.table_name (?)", &(1234,).serialized().unwrap()),
-        ("INSERT foo, bar, baz INTO ks.table_name (?, ?, ?)", &(1234, "a value", "i am storing a string").serialized().unwrap()),
+        ("INSERT foo INTO ks.table_name (?)", {
+            values.add_value(&1234, &ColumnType::Int).unwrap();
+            values.clone()
+        }),
+        ("INSERT foo, bar, baz INTO ks.table_name (?, ?, ?)", {
+            values.add_value(&"a value", &ColumnType::Text).unwrap();
+            values.add_value(&"i am storing a string", &ColumnType::Text).unwrap();
+            values.clone()
+        }),
         (
             "INSERT foo, bar, baz, boop, blah INTO longer_keyspace.a_big_table_name (?, ?, ?, ?, 1000)",
-            &(1234, "a value", "i am storing a string", "dc0c8cd7-d954-47c1-8722-a857941c43fb").serialized().unwrap()
+            {
+                values.add_value(&"dc0c8cd7-d954-47c1-8722-a857941c43fb", &ColumnType::Text).unwrap();
+                values.clone()
+            }
         ),
     ];
     let queries = query_args.map(|(q, v)| make_query(q, v));

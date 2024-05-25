@@ -15,7 +15,7 @@ Available speculative execution strategies:
 Speculative execution is not enabled by default, and currently only
 non-iter session methods use it.
 
-```eval_rst
+```{eval-rst}
 .. toctree::
    :hidden:
    :glob:

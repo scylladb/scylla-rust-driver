@@ -1,6 +1,5 @@
 #[cfg(test)]
 use crate::transport::session_builder::{GenericSessionBuilder, SessionBuilderKind};
-#[cfg(test)]
 use crate::Session;
 #[cfg(test)]
 use std::{num::NonZeroU32, time::Duration};
@@ -89,6 +88,28 @@ pub fn create_new_session_builder() -> GenericSessionBuilder<impl SessionBuilder
     // However, as Scylla usually gets TracingInfo ready really fast (our default interval is hence 3ms),
     // we stick to a not-so-much-terribly-long interval here.
     session_builder
-        .tracing_info_fetch_attempts(NonZeroU32::new(50).unwrap())
-        .tracing_info_fetch_interval(Duration::from_millis(200))
+        .tracing_info_fetch_attempts(NonZeroU32::new(200).unwrap())
+        .tracing_info_fetch_interval(Duration::from_millis(50))
+}
+
+pub async fn scylla_supports_tablets(session: &Session) -> bool {
+    let result = session
+        .query(
+            "select column_name from system_schema.columns where 
+                keyspace_name = 'system_schema'
+                and table_name = 'scylla_keyspaces'
+                and column_name = 'initial_tablets'",
+            &[],
+        )
+        .await
+        .unwrap();
+    result.single_row().is_ok()
+}
+
+#[cfg(test)]
+pub(crate) fn setup_tracing() {
+    let _ = tracing_subscriber::fmt::fmt()
+        .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+        .with_writer(tracing_subscriber::fmt::TestWriter::new())
+        .try_init();
 }

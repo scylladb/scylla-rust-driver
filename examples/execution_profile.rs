@@ -18,7 +18,7 @@ async fn main() -> Result<()> {
     println!("Connecting to {} ...", uri);
 
     let profile1 = ExecutionProfile::builder()
-        .consistency(Consistency::EachQuorum)
+        .consistency(Consistency::LocalQuorum)
         .serial_consistency(Some(SerialConsistency::Serial))
         .request_timeout(Some(Duration::from_secs(42)))
         .load_balancing_policy(Arc::new(load_balancing::DefaultPolicy::default()))
@@ -59,16 +59,17 @@ async fn main() -> Result<()> {
     session_3_config.add_known_node(uri);
     let session3: Session = Session::connect(session_3_config).await?;
 
-    session1.query("CREATE KEYSPACE IF NOT EXISTS ks WITH REPLICATION = {'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}", &[]).await?;
+    session1.query("CREATE KEYSPACE IF NOT EXISTS examples_ks WITH REPLICATION = {'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}", &[]).await?;
 
     session2
         .query(
-            "CREATE TABLE IF NOT EXISTS ks.t (a int, b int, c text, primary key (a, b))",
+            "CREATE TABLE IF NOT EXISTS examples_ks.execution_profile (a int, b int, c text, primary key (a, b))",
             &[],
         )
         .await?;
 
-    let mut query_insert: Query = "INSERT INTO ks.t (a, b, c) VALUES (?, ?, ?)".into();
+    let mut query_insert: Query =
+        "INSERT INTO examples_ks.execution_profile (a, b, c) VALUES (?, ?, ?)".into();
 
     // As `query_insert` is set another handle than session1, the execution profile pointed by query's handle
     // will be preferred, so the query below will be executed with `profile2`, even though `session1` is set `profile1`.
@@ -79,12 +80,18 @@ async fn main() -> Result<()> {
     handle2.map_to_another_profile(profile1);
     // And now the following queries are executed with profile1:
     session1.query(query_insert.clone(), (3, 4, "def")).await?;
-    session2.query("SELECT * FROM ks.t", ()).await?;
+    session2
+        .query("SELECT * FROM examples_ks.execution_profile", ())
+        .await?;
 
     // One can unset a profile handle from a statement and, since then, execute it with session's default profile.
     query_insert.set_execution_profile_handle(None);
-    session3.query("SELECT * FROM ks.t", ()).await?; // This executes with default session profile.
-    session2.query("SELECT * FROM ks.t", ()).await?; // This executes with profile1.
+    session3
+        .query("SELECT * FROM examples_ks.execution_profile", ())
+        .await?; // This executes with default session profile.
+    session2
+        .query("SELECT * FROM examples_ks.execution_profile", ())
+        .await?; // This executes with profile1.
 
     Ok(())
 }

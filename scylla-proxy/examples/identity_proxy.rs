@@ -1,7 +1,6 @@
-use std::{io::Read as _, net::SocketAddr, str::FromStr};
+use std::{net::SocketAddr, str::FromStr};
 
 use scylla_proxy::{Node, Proxy, ShardAwareness};
-use tracing::instrument::WithSubscriber;
 
 fn init_logger() {
     tracing_subscriber::fmt::fmt()
@@ -10,10 +9,9 @@ fn init_logger() {
         .init()
 }
 
-fn pause() {
-    println!("Press Enter to stop proxy...");
-    std::io::stdin().read_exact(&mut [0]).unwrap();
-    println!();
+async fn pause() {
+    println!("Press Ctrl-C to stop the proxy...");
+    tokio::signal::ctrl_c().await.unwrap();
 }
 
 #[tokio::main]
@@ -31,8 +29,8 @@ async fn main() {
                 .build(),
         )
         .build();
-    let running_proxy = proxy.run().with_current_subscriber().await.unwrap();
+    let running_proxy = proxy.run().await.unwrap();
 
-    pause();
+    pause().await;
     running_proxy.finish().await.unwrap();
 }

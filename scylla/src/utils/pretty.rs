@@ -1,5 +1,8 @@
 use chrono::{LocalResult, TimeZone, Utc};
-use scylla_cql::frame::response::result::CqlValue;
+use scylla_cql::frame::{
+    response::result::CqlValue,
+    value::{CqlDate, CqlTime, CqlTimestamp},
+};
 
 use std::borrow::Borrow;
 use std::fmt::{Display, LowerHex, UpperHex};
@@ -39,7 +42,15 @@ where
             CqlValue::Text(t) => write!(f, "{}", CqlStringLiteralDisplayer(t))?,
             CqlValue::Blob(b) => write!(f, "0x{:x}", HexBytes(b))?,
             CqlValue::Empty => write!(f, "0x")?,
-            CqlValue::Decimal(d) => write!(f, "{}", d)?,
+            CqlValue::Decimal(d) => {
+                let (bytes, scale) = d.as_signed_be_bytes_slice_and_exponent();
+                write!(
+                    f,
+                    "blobAsDecimal(0x{:x}{:x})",
+                    HexBytes(&scale.to_be_bytes()),
+                    HexBytes(bytes)
+                )?
+            }
             CqlValue::Float(fl) => write!(f, "{}", fl)?,
             CqlValue::Double(d) => write!(f, "{}", d)?,
             CqlValue::Boolean(b) => write!(f, "{}", b)?,
@@ -48,10 +59,19 @@ where
             CqlValue::Inet(i) => write!(f, "'{}'", i)?,
             CqlValue::SmallInt(si) => write!(f, "{}", si)?,
             CqlValue::TinyInt(ti) => write!(f, "{}", ti)?,
-            CqlValue::Varint(vi) => write!(f, "{}", vi)?,
+            CqlValue::Varint(vi) => write!(
+                f,
+                "blobAsVarint(0x{:x})",
+                HexBytes(vi.as_signed_bytes_be_slice())
+            )?,
             CqlValue::Counter(c) => write!(f, "{}", c.0)?,
-            CqlValue::Date(d) => {
-                let days_since_epoch = chrono::Duration::days(*d as i64 - (1 << 31));
+            CqlValue::Date(CqlDate(d)) => {
+                // This is basically a copy of the code used in `impl TryInto<NaiveDate> for CqlDate` impl
+                // in scylla-cql. We can't call this impl because it is behind chrono feature in scylla-cql.
+
+                // date_days is u32 then converted to i64 then we subtract 2^31;
+                // Max value is 2^31, min value is -2^31. Both values can safely fit in chrono::Duration, this call won't panic
+                let days_since_epoch = chrono::Duration::try_days(*d as i64 - (1 << 31)).unwrap();
 
                 // TODO: chrono::NaiveDate does not handle the whole range
                 // supported by the `date` datatype
@@ -64,18 +84,18 @@ where
                 }
             }
             CqlValue::Duration(d) => write!(f, "{}mo{}d{}ns", d.months, d.days, d.nanoseconds)?,
-            CqlValue::Time(t) => {
+            CqlValue::Time(CqlTime(t)) => {
                 write!(
                     f,
                     "'{:02}:{:02}:{:02}.{:09}'",
-                    t.num_hours() % 24,
-                    t.num_minutes() % 60,
-                    t.num_seconds() % 60,
-                    t.num_nanoseconds().unwrap_or(0) % 1_000_000_000,
+                    t / 3_600_000_000_000,
+                    t / 60_000_000_000 % 60,
+                    t / 1_000_000_000 % 60,
+                    t % 1_000_000_000,
                 )?;
             }
-            CqlValue::Timestamp(t) => {
-                match Utc.timestamp_millis_opt(t.num_milliseconds()) {
+            CqlValue::Timestamp(CqlTimestamp(t)) => {
+                match Utc.timestamp_millis_opt(*t) {
                     LocalResult::Ambiguous(_, _) => unreachable!(), // not supposed to happen with timestamp_millis_opt
                     LocalResult::Single(d) => {
                         write!(f, "{}", d.format("'%Y-%m-%d %H:%M:%S%.3f%z'"))?
@@ -204,19 +224,17 @@ where
 
 #[cfg(test)]
 mod tests {
-    use std::str::FromStr;
-    use std::time::Duration;
-
-    use bigdecimal::BigDecimal;
     use chrono::{NaiveDate, NaiveDateTime, NaiveTime};
 
     use scylla_cql::frame::response::result::CqlValue;
-    use scylla_cql::frame::value::CqlDuration;
+    use scylla_cql::frame::value::{CqlDate, CqlDecimal, CqlDuration, CqlTime, CqlTimestamp};
 
+    use crate::test_utils::setup_tracing;
     use crate::utils::pretty::CqlValueDisplayer;
 
     #[test]
     fn test_cql_value_displayer() {
+        setup_tracing();
         assert_eq!(
             format!("{}", CqlValueDisplayer(CqlValue::Boolean(true))),
             "true"
@@ -225,9 +243,12 @@ mod tests {
         assert_eq!(
             format!(
                 "{}",
-                CqlValueDisplayer(CqlValue::Decimal(BigDecimal::from_str("123.456").unwrap()))
+                // 123.456
+                CqlValueDisplayer(CqlValue::Decimal(
+                    CqlDecimal::from_signed_be_bytes_and_exponent(vec![0x01, 0xE2, 0x40], 3)
+                ))
             ),
-            "123.456"
+            "blobAsDecimal(0x0000000301e240)"
         );
         assert_eq!(
             format!("{}", CqlValueDisplayer(CqlValue::Float(12.75))),
@@ -247,7 +268,10 @@ mod tests {
 
         // Time types are the most tricky
         assert_eq!(
-            format!("{}", CqlValueDisplayer(CqlValue::Date(40 + (1 << 31)))),
+            format!(
+                "{}",
+                CqlValueDisplayer(CqlValue::Date(CqlDate(40 + (1 << 31))))
+            ),
             "'1970-02-10'"
         );
         assert_eq!(
@@ -261,15 +285,12 @@ mod tests {
             ),
             "1mo2d3ns"
         );
-        let t = Duration::from_nanos(123)
-            + Duration::from_secs(4)
-            + Duration::from_secs(5 * 60)
-            + Duration::from_secs(6 * 60 * 60);
+        let t = chrono::NaiveTime::from_hms_nano_opt(6, 5, 4, 123)
+            .unwrap()
+            .signed_duration_since(chrono::NaiveTime::MIN);
+        let t = t.num_nanoseconds().unwrap();
         assert_eq!(
-            format!(
-                "{}",
-                CqlValueDisplayer(CqlValue::Time(chrono::Duration::from_std(t).unwrap()))
-            ),
+            format!("{}", CqlValueDisplayer(CqlValue::Time(CqlTime(t)))),
             "'06:05:04.000000123'"
         );
 
@@ -279,9 +300,10 @@ mod tests {
         assert_eq!(
             format!(
                 "{}",
-                CqlValueDisplayer(CqlValue::Timestamp(
+                CqlValueDisplayer(CqlValue::Timestamp(CqlTimestamp(
                     t.signed_duration_since(NaiveDateTime::default())
-                ))
+                        .num_milliseconds()
+                )))
             ),
             "'2005-04-02 19:37:42.000+0000'"
         );

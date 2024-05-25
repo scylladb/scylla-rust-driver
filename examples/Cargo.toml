@@ -10,15 +10,18 @@ futures = "0.3.6"
 openssl = "0.10.32"
 rustyline = "9"
 rustyline-derive = "0.6"
-scylla = {path = "../scylla", features = ["ssl", "cloud"]}
+scylla = {path = "../scylla", features = ["ssl", "cloud", "chrono", "time", "num-bigint-03", "num-bigint-04", "bigdecimal-04"]}
 tokio = {version = "1.1.0", features = ["full"]}
-tracing = "0.1.25"
+tracing = { version = "0.1.25" , features = ["log"] }
 tracing-subscriber = { version = "0.3.14", features = ["env-filter"] }
 chrono = { version = "0.4", default-features = false }
-uuid = "1.0"
+time = { version = "0.3.22" }
+uuid = { version = "1.0", features = ["v1"]}
 tower = "0.4"
 stats_alloc = "0.1"
 clap = { version = "3.2.4", features = ["derive"] }
+rand = "0.8.5"
+env_logger = "0.10"
 
 [[example]]
 name = "auth"
@@ -31,6 +34,10 @@ path = "basic.rs"
 [[example]]
 name = "logging"
 path = "logging.rs"
+
+[[example]]
+name = "logging_log"
+path = "logging_log.rs"
 
 [[example]]
 name = "tls"

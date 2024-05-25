@@ -16,6 +16,7 @@ pub(crate) struct StatementConfig {
 
     pub(crate) is_idempotent: bool,
 
+    pub(crate) skip_result_metadata: bool,
     pub(crate) tracing: bool,
     pub(crate) timestamp: Option<i64>,
     pub(crate) request_timeout: Option<Duration>,

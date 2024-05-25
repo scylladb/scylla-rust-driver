@@ -4,10 +4,10 @@ COMPOSE := docker compose -f test/cluster/docker-compose.yml
 all: test
 
 .PHONY: ci
-ci: fmt-check check check-without-features clippy test build
+ci: fmt-check check check-without-features check-all-features clippy clippy-all-features test build
 
 .PHONY: dockerized-ci
-dockerized-ci: fmt-check check check-without-features clippy dockerized-test build
+dockerized-ci: fmt-check check check-without-features check-all-features clippy clippy-all-features dockerized-test build
 
 .PHONY: fmt
 fmt:
@@ -19,15 +19,23 @@ fmt-check:
 
 .PHONY: check
 check:
-	cargo check --examples --tests
+	cargo check --all-targets
 
 .PHONY: check-without-features
 check-without-features:
-	cargo check --manifest-path "scylla/Cargo.toml" --features ""
+	cargo check --manifest-path "scylla/Cargo.toml" --features "" --all-targets
+
+.PHONY: check-all-features
+check-all-features:
+	cargo check --all-targets --all-features
 
 .PHONY: clippy
 clippy:
-	RUSTFLAGS=-Dwarnings cargo clippy --examples --tests -- -Aclippy::uninlined_format_args
+	RUSTFLAGS=-Dwarnings cargo clippy --all-targets
+
+.PHONY: clippy-all-features
+clippy-all-features:
+	RUSTFLAGS=-Dwarnings cargo clippy --all-targets --all-features
 
 .PHONY: test
 test: up
@@ -42,11 +50,19 @@ dockerized-test: up
 
 .PHONY: build
 build:
-	cargo build --examples
+	cargo build --examples --benches
 
 .PHONY: docs
 docs:
-	./docs/build_book.py
+	mdbook build docs
+
+.PHONY: semver-rev
+semver-rev:
+	./scripts/semver-checks.sh $(if $(rev),--baseline-rev $(rev),--baseline-rev main)
+
+.PHONY: semver-version
+semver-version:
+	./scripts/semver-checks.sh $(if $(version),--baseline-version $(version),)
 
 .PHONY: up
 up:

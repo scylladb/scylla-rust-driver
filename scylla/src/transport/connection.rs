@@ -2,14 +2,17 @@ use bytes::Bytes;
 use futures::{future::RemoteHandle, FutureExt};
 use scylla_cql::errors::TranslationError;
 use scylla_cql::frame::request::options::Options;
+use scylla_cql::frame::response::result::{ResultMetadata, TableSpec};
 use scylla_cql::frame::response::Error;
 use scylla_cql::frame::types::SerialConsistency;
+use scylla_cql::types::serialize::batch::{BatchValues, BatchValuesIterator};
+use scylla_cql::types::serialize::raw_batch::RawBatchValuesAdapter;
+use scylla_cql::types::serialize::row::{RowSerializationContext, SerializedValues};
 use socket2::{SockRef, TcpKeepalive};
 use tokio::io::{split, AsyncRead, AsyncWrite, AsyncWriteExt, BufReader, BufWriter};
 use tokio::net::{TcpSocket, TcpStream};
 use tokio::sync::{mpsc, oneshot};
 use tokio::time::Instant;
-use tracing::instrument::WithSubscriber;
 use tracing::{debug, error, trace, warn};
 use uuid::Uuid;
 
@@ -26,7 +29,7 @@ pub(crate) use ssl_config::SslConfig;
 
 use crate::authentication::AuthenticatorProvider;
 use scylla_cql::frame::response::authenticate::Authenticate;
-use std::collections::{BTreeSet, HashMap};
+use std::collections::{BTreeSet, HashMap, HashSet};
 use std::convert::TryFrom;
 use std::io::ErrorKind;
 use std::net::{IpAddr, SocketAddr};
@@ -39,6 +42,8 @@ use std::{
 
 use super::errors::{BadKeyspaceName, DbError, QueryError};
 use super::iterator::RowIterator;
+use super::locator::tablets::{RawTablet, TabletParsingError};
+use super::query_result::SingleRowTypedError;
 use super::session::AddressTranslator;
 use super::topology::{PeerEndpoint, UntranslatedEndpoint, UntranslatedPeer};
 use super::NodeAddr;
@@ -52,14 +57,12 @@ use crate::frame::{
     request::{self, batch, execute, query, register, SerializableRequest},
     response::{event::Event, result, NonErrorResponse, Response, ResponseOpcode},
     server_event_type::EventType,
-    value::{BatchValues, ValueList},
     FrameParams, SerializedRequest,
 };
 use crate::query::Query;
 use crate::routing::ShardInfo;
 use crate::statement::prepared_statement::PreparedStatement;
 use crate::statement::Consistency;
-use crate::transport::session::IntoTypedRows;
 use crate::transport::Compression;
 use crate::QueryResult;
 
@@ -214,6 +217,8 @@ pub(crate) struct QueryResponse {
     pub(crate) response: Response,
     pub(crate) tracing_id: Option<Uuid>,
     pub(crate) warnings: Vec<String>,
+    #[allow(dead_code)] // This is not exposed to user (yet?)
+    pub(crate) custom_payload: Option<HashMap<String, Vec<u8>>>,
 }
 
 // A QueryResponse in which response can not be Response::Error
@@ -290,7 +295,7 @@ mod ssl_config {
     /// This struct encapsulates all Ssl-regarding configuration and helps pass it tidily through the code.
     //
     // There are 3 possible options for SslConfig, whose behaviour is somewhat subtle.
-    // Option 1: No ssl configuration. Then it is None everytime.
+    // Option 1: No ssl configuration. Then it is None every time.
     // Option 2: User-provided global SslContext. Then, a SslConfig is created upon Session creation
     // and henceforth stored in the ConnectionConfig.
     // Option 3: Serverless Cloud. The Option<SslConfig> remains None in ConnectionConfig until it reaches
@@ -298,7 +303,7 @@ mod ssl_config {
     // for the particular node. (The SslConfig must be different, because SNIs differ for different nodes.)
     // Thenceforth, all connections to that node share the same SslConfig.
     #[derive(Clone)]
-    pub struct SslConfig {
+    pub(crate) struct SslConfig {
         context: SslContext,
         #[cfg(feature = "cloud")]
         sni: Option<String>,
@@ -306,7 +311,7 @@ mod ssl_config {
 
     impl SslConfig {
         // Used in case when the user provided their own SslContext to be used in all connections.
-        pub fn new_with_global_context(context: SslContext) -> Self {
+        pub(crate) fn new_with_global_context(context: SslContext) -> Self {
             Self {
                 context,
                 #[cfg(feature = "cloud")]
@@ -346,24 +351,25 @@ mod ssl_config {
 }
 
 #[derive(Clone)]
-pub struct ConnectionConfig {
-    pub compression: Option<Compression>,
-    pub tcp_nodelay: bool,
-    pub tcp_keepalive_interval: Option<Duration>,
+pub(crate) struct ConnectionConfig {
+    pub(crate) compression: Option<Compression>,
+    pub(crate) tcp_nodelay: bool,
+    pub(crate) tcp_keepalive_interval: Option<Duration>,
     #[cfg(feature = "ssl")]
-    pub ssl_config: Option<SslConfig>,
-    pub connect_timeout: std::time::Duration,
+    pub(crate) ssl_config: Option<SslConfig>,
+    pub(crate) connect_timeout: std::time::Duration,
     // should be Some only in control connections,
-    pub event_sender: Option<mpsc::Sender<Event>>,
-    pub default_consistency: Consistency,
+    pub(crate) event_sender: Option<mpsc::Sender<Event>>,
+    pub(crate) default_consistency: Consistency,
     #[cfg(feature = "cloud")]
     pub(crate) cloud_config: Option<Arc<CloudConfig>>,
-    pub authenticator: Option<Arc<dyn AuthenticatorProvider>>,
-    pub address_translator: Option<Arc<dyn AddressTranslator>>,
-    pub enable_write_coalescing: bool,
+    pub(crate) authenticator: Option<Arc<dyn AuthenticatorProvider>>,
+    pub(crate) address_translator: Option<Arc<dyn AddressTranslator>>,
+    pub(crate) enable_write_coalescing: bool,
 
-    pub keepalive_interval: Option<Duration>,
-    pub keepalive_timeout: Option<Duration>,
+    pub(crate) keepalive_interval: Option<Duration>,
+    pub(crate) keepalive_timeout: Option<Duration>,
+    pub(crate) tablet_sender: Option<mpsc::Sender<(TableSpec<'static>, RawTablet)>>,
 }
 
 impl Default for ConnectionConfig {
@@ -386,13 +392,15 @@ impl Default for ConnectionConfig {
             // Note: this is different than SessionConfig default values.
             keepalive_interval: None,
             keepalive_timeout: None,
+
+            tablet_sender: None,
         }
     }
 }
 
 impl ConnectionConfig {
     #[cfg(feature = "ssl")]
-    pub fn is_ssl(&self) -> bool {
+    fn is_ssl(&self) -> bool {
         #[cfg(feature = "cloud")]
         if self.cloud_config.is_some() {
             return true;
@@ -401,7 +409,7 @@ impl ConnectionConfig {
     }
 
     #[cfg(not(feature = "ssl"))]
-    pub fn is_ssl(&self) -> bool {
+    fn is_ssl(&self) -> bool {
         false
     }
 }
@@ -519,14 +527,14 @@ impl Connection {
         options: HashMap<String, String>,
     ) -> Result<Response, QueryError> {
         Ok(self
-            .send_request(&request::Startup { options }, false, false)
+            .send_request(&request::Startup { options }, false, false, None)
             .await?
             .response)
     }
 
     pub(crate) async fn get_options(&self) -> Result<Response, QueryError> {
         Ok(self
-            .send_request(&request::Options {}, false, false)
+            .send_request(&request::Options {}, false, false, None)
             .await?
             .response)
     }
@@ -539,6 +547,7 @@ impl Connection {
                 },
                 true,
                 query.config.tracing,
+                None,
             )
             .await?;
 
@@ -550,6 +559,7 @@ impl Connection {
                     .protocol_features
                     .prepared_flags_contain_lwt_mark(p.prepared_metadata.flags as u32),
                 p.prepared_metadata,
+                p.result_metadata,
                 query.contents.clone(),
                 query.get_page_size(),
                 query.config.clone(),
@@ -589,14 +599,13 @@ impl Connection {
         &self,
         response: Option<Vec<u8>>,
     ) -> Result<QueryResponse, QueryError> {
-        self.send_request(&request::AuthResponse { response }, false, false)
+        self.send_request(&request::AuthResponse { response }, false, false, None)
             .await
     }
 
     pub(crate) async fn query_single_page(
         &self,
         query: impl Into<Query>,
-        values: impl ValueList,
     ) -> Result<QueryResult, QueryError> {
         let query: Query = query.into();
 
@@ -606,24 +615,18 @@ impl Connection {
             .determine_consistency(self.config.default_consistency);
         let serial_consistency = query.config.serial_consistency;
 
-        self.query_single_page_with_consistency(
-            query,
-            &values,
-            consistency,
-            serial_consistency.flatten(),
-        )
-        .await
+        self.query_single_page_with_consistency(query, consistency, serial_consistency.flatten())
+            .await
     }
 
     pub(crate) async fn query_single_page_with_consistency(
         &self,
         query: impl Into<Query>,
-        values: impl ValueList,
         consistency: Consistency,
         serial_consistency: Option<SerialConsistency>,
     ) -> Result<QueryResult, QueryError> {
         let query: Query = query.into();
-        self.query_with_consistency(&query, &values, consistency, serial_consistency, None)
+        self.query_with_consistency(&query, consistency, serial_consistency, None)
             .await?
             .into_query_result()
     }
@@ -631,13 +634,11 @@ impl Connection {
     pub(crate) async fn query(
         &self,
         query: &Query,
-        values: impl ValueList,
         paging_state: Option<Bytes>,
     ) -> Result<QueryResponse, QueryError> {
         // This method is used only for driver internal queries, so no need to consult execution profile here.
         self.query_with_consistency(
             query,
-            values,
             query
                 .config
                 .determine_consistency(self.config.default_consistency),
@@ -650,54 +651,89 @@ impl Connection {
     pub(crate) async fn query_with_consistency(
         &self,
         query: &Query,
-        values: impl ValueList,
         consistency: Consistency,
         serial_consistency: Option<SerialConsistency>,
         paging_state: Option<Bytes>,
     ) -> Result<QueryResponse, QueryError> {
-        let serialized_values = values.serialized()?;
-
         let query_frame = query::Query {
             contents: Cow::Borrowed(&query.contents),
             parameters: query::QueryParameters {
                 consistency,
                 serial_consistency,
-                values: serialized_values,
+                values: Cow::Borrowed(SerializedValues::EMPTY),
                 page_size: query.get_page_size(),
                 paging_state,
+                skip_metadata: false,
                 timestamp: query.get_timestamp(),
             },
         };
 
-        self.send_request(&query_frame, true, query.config.tracing)
+        self.send_request(&query_frame, true, query.config.tracing, None)
             .await
+    }
+
+    #[allow(dead_code)]
+    pub(crate) async fn execute(
+        &self,
+        prepared: PreparedStatement,
+        values: SerializedValues,
+        paging_state: Option<Bytes>,
+    ) -> Result<QueryResponse, QueryError> {
+        // This method is used only for driver internal queries, so no need to consult execution profile here.
+        self.execute_with_consistency(
+            &prepared,
+            &values,
+            prepared
+                .config
+                .determine_consistency(self.config.default_consistency),
+            prepared.config.serial_consistency.flatten(),
+            paging_state,
+        )
+        .await
     }
 
     pub(crate) async fn execute_with_consistency(
         &self,
         prepared_statement: &PreparedStatement,
-        values: impl ValueList,
+        values: &SerializedValues,
         consistency: Consistency,
         serial_consistency: Option<SerialConsistency>,
         paging_state: Option<Bytes>,
     ) -> Result<QueryResponse, QueryError> {
-        let serialized_values = values.serialized()?;
-
         let execute_frame = execute::Execute {
             id: prepared_statement.get_id().to_owned(),
             parameters: query::QueryParameters {
                 consistency,
                 serial_consistency,
-                values: serialized_values,
+                values: Cow::Borrowed(values),
                 page_size: prepared_statement.get_page_size(),
                 timestamp: prepared_statement.get_timestamp(),
+                skip_metadata: prepared_statement.get_use_cached_result_metadata(),
                 paging_state,
             },
         };
 
+        let cached_metadata = prepared_statement
+            .get_use_cached_result_metadata()
+            .then(|| prepared_statement.get_result_metadata());
+
         let query_response = self
-            .send_request(&execute_frame, true, prepared_statement.config.tracing)
+            .send_request(
+                &execute_frame,
+                true,
+                prepared_statement.config.tracing,
+                cached_metadata,
+            )
             .await?;
+
+        if let Some(spec) = prepared_statement.get_table_spec() {
+            if let Err(e) = self
+                .update_tablets_from_response(spec, &query_response)
+                .await
+            {
+                tracing::warn!("Error while parsing tablet info from custom payload: {}", e);
+            }
+        }
 
         match &query_response.response {
             Response::Error(frame::response::Error {
@@ -708,8 +744,25 @@ impl Connection {
                 // Repreparation of a statement is needed
                 self.reprepare(prepared_statement.get_statement(), prepared_statement)
                     .await?;
-                self.send_request(&execute_frame, true, prepared_statement.config.tracing)
-                    .await
+                let new_response = self
+                    .send_request(
+                        &execute_frame,
+                        true,
+                        prepared_statement.config.tracing,
+                        cached_metadata,
+                    )
+                    .await?;
+
+                if let Some(spec) = prepared_statement.get_table_spec() {
+                    if let Err(e) = self.update_tablets_from_response(spec, &new_response).await {
+                        tracing::warn!(
+                            "Error while parsing tablet info from custom payload: {}",
+                            e
+                        );
+                    }
+                }
+
+                Ok(new_response)
             }
             _ => Ok(query_response),
         }
@@ -720,19 +773,32 @@ impl Connection {
     pub(crate) async fn query_iter(
         self: Arc<Self>,
         query: Query,
-        values: impl ValueList,
     ) -> Result<RowIterator, QueryError> {
-        let serialized_values = values.serialized()?.into_owned();
-
         let consistency = query
             .config
             .determine_consistency(self.config.default_consistency);
         let serial_consistency = query.config.serial_consistency.flatten();
 
-        RowIterator::new_for_connection_query_iter(
-            query,
+        RowIterator::new_for_connection_query_iter(query, self, consistency, serial_consistency)
+            .await
+    }
+
+    /// Executes a prepared statements and fetches its results over multiple pages, using
+    /// the asynchronous iterator interface.
+    pub(crate) async fn execute_iter(
+        self: Arc<Self>,
+        prepared_statement: PreparedStatement,
+        values: SerializedValues,
+    ) -> Result<RowIterator, QueryError> {
+        let consistency = prepared_statement
+            .config
+            .determine_consistency(self.config.default_consistency);
+        let serial_consistency = prepared_statement.config.serial_consistency.flatten();
+
+        RowIterator::new_for_connection_execute_iter(
+            prepared_statement,
+            values,
             self,
-            serialized_values,
             consistency,
             serial_consistency,
         )
@@ -758,11 +824,22 @@ impl Connection {
 
     pub(crate) async fn batch_with_consistency(
         &self,
-        batch: &Batch,
+        init_batch: &Batch,
         values: impl BatchValues,
         consistency: Consistency,
         serial_consistency: Option<SerialConsistency>,
     ) -> Result<QueryResult, QueryError> {
+        let batch = self.prepare_batch(init_batch, &values).await?;
+
+        let contexts = batch.statements.iter().map(|bs| match bs {
+            BatchStatement::Query(_) => RowSerializationContext::empty(),
+            BatchStatement::PreparedStatement(ps) => {
+                RowSerializationContext::from_prepared(ps.get_prepared_metadata())
+            }
+        });
+
+        let values = RawBatchValuesAdapter::new(values, contexts);
+
         let batch_frame = batch::Batch {
             statements: Cow::Borrowed(&batch.statements),
             values,
@@ -774,7 +851,7 @@ impl Connection {
 
         loop {
             let query_response = self
-                .send_request(&batch_frame, true, batch.config.tracing)
+                .send_request(&batch_frame, true, batch.config.tracing, None)
                 .await?;
 
             return match query_response.response {
@@ -806,6 +883,55 @@ impl Connection {
         }
     }
 
+    async fn prepare_batch<'b>(
+        &self,
+        init_batch: &'b Batch,
+        values: impl BatchValues,
+    ) -> Result<Cow<'b, Batch>, QueryError> {
+        let mut to_prepare = HashSet::<&str>::new();
+
+        {
+            let mut values_iter = values.batch_values_iter();
+            for stmt in &init_batch.statements {
+                if let BatchStatement::Query(query) = stmt {
+                    if let Some(false) = values_iter.is_empty_next() {
+                        to_prepare.insert(&query.contents);
+                    }
+                } else {
+                    values_iter.skip_next();
+                }
+            }
+        }
+
+        if to_prepare.is_empty() {
+            return Ok(Cow::Borrowed(init_batch));
+        }
+
+        let mut prepared_queries = HashMap::<&str, PreparedStatement>::new();
+
+        for query in &to_prepare {
+            let prepared = self.prepare(&Query::new(query.to_string())).await?;
+            prepared_queries.insert(query, prepared);
+        }
+
+        let mut batch: Cow<Batch> = Cow::Owned(Default::default());
+        batch.to_mut().config = init_batch.config.clone();
+        for stmt in &init_batch.statements {
+            match stmt {
+                BatchStatement::Query(query) => match prepared_queries.get(query.contents.as_str())
+                {
+                    Some(prepared) => batch.to_mut().append_statement(prepared.clone()),
+                    None => batch.to_mut().append_statement(query.clone()),
+                },
+                BatchStatement::PreparedStatement(prepared) => {
+                    batch.to_mut().append_statement(prepared.clone());
+                }
+            }
+        }
+
+        Ok(batch)
+    }
+
     pub(crate) async fn use_keyspace(
         &self,
         keyspace_name: &VerifiedKeyspaceName,
@@ -817,7 +943,7 @@ impl Connection {
             false => format!("USE {}", keyspace_name.as_str()).into(),
         };
 
-        let query_response = self.query(&query, (), None).await?;
+        let query_response = self.query(&query, None).await?;
 
         match query_response.response {
             Response::Result(result::Result::SetKeyspace(set_keyspace)) => {
@@ -847,7 +973,7 @@ impl Connection {
         };
 
         match self
-            .send_request(&register_frame, true, false)
+            .send_request(&register_frame, true, false, None)
             .await?
             .response
         {
@@ -861,14 +987,20 @@ impl Connection {
 
     pub(crate) async fn fetch_schema_version(&self) -> Result<Uuid, QueryError> {
         let (version_id,): (Uuid,) = self
-            .query_single_page(LOCAL_VERSION, &[])
+            .query_single_page(LOCAL_VERSION)
             .await?
-            .rows
-            .ok_or(QueryError::ProtocolError("Version query returned not rows"))?
-            .into_typed::<(Uuid,)>()
-            .next()
-            .ok_or(QueryError::ProtocolError("Admin table returned empty rows"))?
-            .map_err(|_| QueryError::ProtocolError("Row is not uuid type as it should be"))?;
+            .single_row_typed()
+            .map_err(|err| match err {
+                SingleRowTypedError::RowsExpected(_) => {
+                    QueryError::ProtocolError("Version query returned not rows")
+                }
+                SingleRowTypedError::BadNumberOfRows(_) => {
+                    QueryError::ProtocolError("system.local query returned a wrong number of rows")
+                }
+                SingleRowTypedError::FromRowError(_) => {
+                    QueryError::ProtocolError("Row is not uuid type as it should be")
+                }
+            })?;
         Ok(version_id)
     }
 
@@ -877,6 +1009,7 @@ impl Connection {
         request: &impl SerializableRequest,
         compress: bool,
         tracing: bool,
+        cached_metadata: Option<&ResultMetadata>,
     ) -> Result<QueryResponse, QueryError> {
         let compression = if compress {
             self.config.compression
@@ -893,6 +1026,7 @@ impl Connection {
             task_response,
             self.config.compression,
             &self.features.protocol_features,
+            cached_metadata,
         )
     }
 
@@ -900,6 +1034,7 @@ impl Connection {
         task_response: TaskResponse,
         compression: Option<Compression>,
         features: &ProtocolFeatures,
+        cached_metadata: Option<&ResultMetadata>,
     ) -> Result<QueryResponse, QueryError> {
         let body_with_ext = frame::parse_response_body_extensions(
             task_response.params.flags,
@@ -914,13 +1049,18 @@ impl Connection {
             );
         }
 
-        let response =
-            Response::deserialize(features, task_response.opcode, &mut &*body_with_ext.body)?;
+        let response = Response::deserialize(
+            features,
+            task_response.opcode,
+            &mut &*body_with_ext.body,
+            cached_metadata,
+        )?;
 
         Ok(QueryResponse {
             response,
             warnings: body_with_ext.warnings,
             tracing_id: body_with_ext.trace_id,
+            custom_payload: body_with_ext.custom_payload,
         })
     }
 
@@ -949,7 +1089,7 @@ impl Connection {
                 node_address,
             )
             .remote_handle();
-            tokio::task::spawn(task.with_current_subscriber());
+            tokio::task::spawn(task);
             return Ok(handle);
         }
 
@@ -963,7 +1103,7 @@ impl Connection {
             node_address,
         )
         .remote_handle();
-        tokio::task::spawn(task.with_current_subscriber());
+        tokio::task::spawn(task);
         Ok(handle)
     }
 
@@ -1266,10 +1406,10 @@ impl Connection {
         // or passing the negotiated features via a channel/mutex/etc.
         // Fortunately, events do not need information about protocol features
         // to be serialized (yet), therefore I'm leaving this problem for
-        // future implementors.
+        // future implementers.
         let features = ProtocolFeatures::default(); // TODO: Use the right features
 
-        let response = Self::parse_response(task_response, compression, &features)?.response;
+        let response = Self::parse_response(task_response, compression, &features, None)?.response;
         let event = match response {
             Response::Event(e) => e,
             _ => {
@@ -1300,6 +1440,32 @@ impl Connection {
 
     pub(crate) fn get_connect_address(&self) -> SocketAddr {
         self.connect_address
+    }
+
+    async fn update_tablets_from_response(
+        &self,
+        table: &TableSpec<'_>,
+        response: &QueryResponse,
+    ) -> Result<(), TabletParsingError> {
+        if let (Some(sender), Some(tablet_data)) = (
+            self.config.tablet_sender.as_ref(),
+            response.custom_payload.as_ref(),
+        ) {
+            let tablet = match RawTablet::from_custom_payload(tablet_data) {
+                Some(Ok(v)) => v,
+                Some(Err(e)) => return Err(e),
+                None => return Ok(()),
+            };
+            tracing::trace!(
+                "Received tablet info for table {}.{} in custom payload: {:?}",
+                table.ks_name(),
+                table.table_name(),
+                tablet
+            );
+            let _ = sender.send((table.to_owned(), tablet)).await;
+        }
+
+        Ok(())
     }
 }
 
@@ -1345,7 +1511,7 @@ async fn maybe_translated_addr(
 pub(crate) async fn open_connection(
     endpoint: UntranslatedEndpoint,
     source_port: Option<u16>,
-    config: ConnectionConfig,
+    config: &ConnectionConfig,
 ) -> Result<(Connection, ErrorReceiver), QueryError> {
     let addr = maybe_translated_addr(endpoint, config.address_translator.as_deref()).await?;
     open_named_connection(
@@ -1361,7 +1527,7 @@ pub(crate) async fn open_connection(
 pub(crate) async fn open_named_connection(
     addr: SocketAddr,
     source_port: Option<u16>,
-    config: ConnectionConfig,
+    config: &ConnectionConfig,
     driver_name: Option<String>,
     driver_version: Option<String>,
 ) -> Result<(Connection, ErrorReceiver), QueryError> {
@@ -1764,8 +1930,9 @@ mod tests {
 
     use super::ConnectionConfig;
     use crate::query::Query;
-    use crate::transport::cluster::ContactPoint;
+    use crate::test_utils::setup_tracing;
     use crate::transport::connection::open_connection;
+    use crate::transport::node::ResolvedContactPoint;
     use crate::transport::topology::UntranslatedEndpoint;
     use crate::utils::test_utils::unique_keyspace_name;
     use crate::{IntoTypedRows, SessionBuilder};
@@ -1797,16 +1964,17 @@ mod tests {
     #[tokio::test]
     #[cfg(not(scylla_cloud_tests))]
     async fn connection_query_iter_test() {
+        setup_tracing();
         let uri = std::env::var("SCYLLA_URI").unwrap_or_else(|_| "127.0.0.1:9042".to_string());
         let addr: SocketAddr = resolve_hostname(&uri).await;
 
         let (connection, _) = super::open_connection(
-            UntranslatedEndpoint::ContactPoint(ContactPoint {
+            UntranslatedEndpoint::ContactPoint(ResolvedContactPoint {
                 address: addr,
                 datacenter: None,
             }),
             None,
-            ConnectionConfig::default(),
+            &ConnectionConfig::default(),
         )
         .await
         .unwrap();
@@ -1845,7 +2013,7 @@ mod tests {
         let select_query = Query::new("SELECT p FROM connection_query_iter_tab").with_page_size(7);
         let empty_res = connection
             .clone()
-            .query_iter(select_query.clone(), &[])
+            .query_iter(select_query.clone())
             .await
             .unwrap()
             .try_collect::<Vec<_>>()
@@ -1858,15 +2026,19 @@ mod tests {
         let mut insert_futures = Vec::new();
         let insert_query =
             Query::new("INSERT INTO connection_query_iter_tab (p) VALUES (?)").with_page_size(7);
+        let prepared = connection.prepare(&insert_query).await.unwrap();
         for v in &values {
-            insert_futures.push(connection.query_single_page(insert_query.clone(), (v,)));
+            let prepared_clone = prepared.clone();
+            let values = prepared_clone.serialize_values(&(*v,)).unwrap();
+            let fut = async { connection.execute(prepared_clone, values, None).await };
+            insert_futures.push(fut);
         }
 
         futures::future::try_join_all(insert_futures).await.unwrap();
 
         let mut results: Vec<i32> = connection
             .clone()
-            .query_iter(select_query.clone(), &[])
+            .query_iter(select_query.clone())
             .await
             .unwrap()
             .into_typed::<(i32,)>()
@@ -1878,7 +2050,9 @@ mod tests {
 
         // 3. INSERT query_iter should work and not return any rows.
         let insert_res1 = connection
-            .query_iter(insert_query, (0,))
+            .query_iter(Query::new(
+                "INSERT INTO connection_query_iter_tab (p) VALUES (0)",
+            ))
             .await
             .unwrap()
             .try_collect::<Vec<_>>()
@@ -1890,6 +2064,7 @@ mod tests {
     #[tokio::test]
     #[cfg(not(scylla_cloud_tests))]
     async fn test_coalescing() {
+        setup_tracing();
         // It's difficult to write a reliable test that checks whether coalescing
         // works like intended or not. Instead, this is a smoke test which is supposed
         // to trigger the coalescing logic and check that everything works fine
@@ -1919,12 +2094,12 @@ mod tests {
 
         let subtest = |enable_coalescing: bool, ks: String| async move {
             let (connection, _) = super::open_connection(
-                UntranslatedEndpoint::ContactPoint(ContactPoint {
+                UntranslatedEndpoint::ContactPoint(ResolvedContactPoint {
                     address: addr,
                     datacenter: None,
                 }),
                 None,
-                ConnectionConfig {
+                &ConnectionConfig {
                     enable_write_coalescing: enable_coalescing,
                     ..ConnectionConfig::default()
                 },
@@ -1938,10 +2113,7 @@ mod tests {
                 .await
                 .unwrap();
 
-            connection
-                .query(&"TRUNCATE t".into(), (), None)
-                .await
-                .unwrap();
+            connection.query(&"TRUNCATE t".into(), None).await.unwrap();
 
             let mut futs = Vec::new();
 
@@ -1956,23 +2128,29 @@ mod tests {
                         let q = Query::new("INSERT INTO t (p, v) VALUES (?, ?)");
                         let conn = conn.clone();
                         async move {
-                            conn.query(&q, (j, vec![j as u8; j as usize]), None)
-                                .await
-                                .unwrap()
+                            let prepared = conn.prepare(&q).await.unwrap();
+                            let values = prepared
+                                .serialize_values(&(j, vec![j as u8; j as usize]))
+                                .unwrap();
+                            let response =
+                                conn.execute(prepared.clone(), values, None).await.unwrap();
+                            // QueryResponse might contain an error - make sure that there were no errors
+                            let _nonerror_response =
+                                response.into_non_error_query_response().unwrap();
                         }
                     });
-                    futures::future::join_all(futs).await;
+                    let _joined: Vec<()> = futures::future::join_all(futs).await;
                 }));
 
                 tokio::task::yield_now().await;
             }
 
-            futures::future::join_all(futs).await;
+            let _joined: Vec<()> = futures::future::try_join_all(futs).await.unwrap();
 
             // Check that everything was written properly
             let range_end = arithmetic_sequence_sum(NUM_BATCHES);
             let mut results = connection
-                .query(&"SELECT p, v FROM t".into(), (), None)
+                .query(&"SELECT p, v FROM t".into(), None)
                 .await
                 .unwrap()
                 .into_query_result()
@@ -2002,6 +2180,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_lwt_optimisation_mark_negotiation() {
+        setup_tracing();
         const MASK: &str = "2137";
 
         let lwt_optimisation_entry = format!("{}={}", LWT_OPTIMIZATION_META_BIT_MASK_KEY, MASK);
@@ -2048,16 +2227,16 @@ mod tests {
             .unwrap();
 
         // We must interrupt the driver's full connection opening, because our proxy does not interact further after Startup.
-        let startup_without_lwt_optimisation = select! {
-            _ = open_connection(UntranslatedEndpoint::ContactPoint(ContactPoint{address: proxy_addr, datacenter: None}), None, config.clone()) => unreachable!(),
+        let (startup_without_lwt_optimisation, _shard) = select! {
+            _ = open_connection(UntranslatedEndpoint::ContactPoint(ResolvedContactPoint{address: proxy_addr, datacenter: None}), None, &config) => unreachable!(),
             startup = startup_rx.recv() => startup.unwrap(),
         };
 
         proxy.running_nodes[0]
             .change_request_rules(Some(make_rules(options_with_lwt_optimisation_support)));
 
-        let startup_with_lwt_optimisation = select! {
-            _ = open_connection(UntranslatedEndpoint::ContactPoint(ContactPoint{address: proxy_addr, datacenter: None}), None, config.clone()) => unreachable!(),
+        let (startup_with_lwt_optimisation, _shard) = select! {
+            _ = open_connection(UntranslatedEndpoint::ContactPoint(ResolvedContactPoint{address: proxy_addr, datacenter: None}), None, &config) => unreachable!(),
             startup = startup_rx.recv() => startup.unwrap(),
         };
 
@@ -2082,6 +2261,7 @@ mod tests {
     #[ntest::timeout(20000)]
     #[cfg(not(scylla_cloud_tests))]
     async fn connection_is_closed_on_no_response_to_keepalives() {
+        setup_tracing();
         let proxy_addr = SocketAddr::new(scylla_proxy::get_exclusive_local_address(), 9042);
         let uri = std::env::var("SCYLLA_URI").unwrap_or_else(|_| "127.0.0.1:9042".to_string());
         let node_addr: SocketAddr = resolve_hostname(&uri).await;
@@ -2112,12 +2292,12 @@ mod tests {
 
         // Setup connection normally, without obstruction
         let (conn, mut error_receiver) = open_connection(
-            UntranslatedEndpoint::ContactPoint(ContactPoint {
+            UntranslatedEndpoint::ContactPoint(ResolvedContactPoint {
                 address: proxy_addr,
                 datacenter: None,
             }),
             None,
-            config,
+            &config,
         )
         .await
         .unwrap();
@@ -2125,7 +2305,7 @@ mod tests {
         // As everything is normal, these queries should succeed.
         for _ in 0..3 {
             tokio::time::sleep(Duration::from_millis(500)).await;
-            conn.query_single_page("SELECT host_id FROM system.local", ())
+            conn.query_single_page("SELECT host_id FROM system.local")
                 .await
                 .unwrap();
         }
@@ -2145,7 +2325,7 @@ mod tests {
 
         // As the router is invalidated, all further queries should immediately
         // return error.
-        conn.query_single_page("SELECT host_id FROM system.local", ())
+        conn.query_single_page("SELECT host_id FROM system.local")
             .await
             .unwrap_err();
 

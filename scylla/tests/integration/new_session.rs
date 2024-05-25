@@ -1,3 +1,5 @@
+use crate::utils::setup_tracing;
+
 use assert_matches::assert_matches;
 use scylla::SessionBuilder;
 use scylla_cql::errors::NewSessionError;
@@ -5,6 +7,7 @@ use scylla_cql::errors::NewSessionError;
 #[cfg(not(scylla_cloud_tests))]
 #[tokio::test]
 async fn proceed_if_only_some_hostnames_are_invalid() {
+    setup_tracing();
     // on purpose left without port
     let uri1 = "scylladbisthefastestdb.invalid".to_owned();
     // correctly provided port, but unknown domain
@@ -25,6 +28,7 @@ async fn proceed_if_only_some_hostnames_are_invalid() {
 #[cfg(not(scylla_cloud_tests))]
 #[tokio::test]
 async fn all_hostnames_invalid() {
+    setup_tracing();
     let uri = "cassandrasuckssomuch.invalid:9042".to_owned();
 
     assert_matches!(

@@ -1,5 +1,4 @@
 use crate::frame::frame_errors::ParseError;
-use bytes::BufMut;
 
 use std::collections::HashMap;
 
@@ -15,7 +14,7 @@ pub struct Startup {
 impl SerializableRequest for Startup {
     const OPCODE: RequestOpcode = RequestOpcode::Startup;
 
-    fn serialize(&self, buf: &mut impl BufMut) -> Result<(), ParseError> {
+    fn serialize(&self, buf: &mut Vec<u8>) -> Result<(), ParseError> {
         types::write_string_map(&self.options, buf)?;
         Ok(())
     }

@@ -1,6 +1,7 @@
-use super::response;
+use super::TryFromPrimitiveError;
 use crate::cql_to_rust::CqlTypeError;
 use crate::frame::value::SerializeValuesError;
+use crate::types::serialize::SerializationError;
 use thiserror::Error;
 
 #[derive(Error, Debug)]
@@ -24,7 +25,7 @@ pub enum FrameError {
     #[error(transparent)]
     StdIoError(#[from] std::io::Error),
     #[error("Unrecognized opcode{0}")]
-    TryFromPrimitiveError(#[from] num_enum::TryFromPrimitiveError<response::ResponseOpcode>),
+    TryFromPrimitiveError(#[from] TryFromPrimitiveError<u8>),
     #[error("Error compressing lz4 data {0}")]
     Lz4CompressError(#[from] lz4_flex::block::CompressError),
     #[error("Error decompressing lz4 data {0}")]
@@ -40,9 +41,11 @@ pub enum ParseError {
     #[error(transparent)]
     IoError(#[from] std::io::Error),
     #[error("type not yet implemented, id: {0}")]
-    TypeNotImplemented(i16),
+    TypeNotImplemented(u16),
     #[error(transparent)]
     SerializeValuesError(#[from] SerializeValuesError),
+    #[error(transparent)]
+    SerializationError(#[from] SerializationError),
     #[error(transparent)]
     CqlTypeError(#[from] CqlTypeError),
 }

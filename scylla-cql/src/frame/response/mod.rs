@@ -5,14 +5,15 @@ pub mod event;
 pub mod result;
 pub mod supported;
 
-use crate::{errors::QueryError, frame::frame_errors::ParseError};
-use num_enum::TryFromPrimitive;
-
-use crate::frame::protocol_features::ProtocolFeatures;
 pub use error::Error;
 pub use supported::Supported;
 
-#[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord, TryFromPrimitive)]
+use crate::frame::protocol_features::ProtocolFeatures;
+use crate::frame::response::result::ResultMetadata;
+use crate::frame::TryFromPrimitiveError;
+use crate::{errors::QueryError, frame::frame_errors::ParseError};
+
+#[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord)]
 #[repr(u8)]
 pub enum ResponseOpcode {
     Error = 0x00,
@@ -23,6 +24,27 @@ pub enum ResponseOpcode {
     Event = 0x0C,
     AuthChallenge = 0x0E,
     AuthSuccess = 0x10,
+}
+
+impl TryFrom<u8> for ResponseOpcode {
+    type Error = TryFromPrimitiveError<u8>;
+
+    fn try_from(value: u8) -> Result<Self, TryFromPrimitiveError<u8>> {
+        match value {
+            0x00 => Ok(Self::Error),
+            0x02 => Ok(Self::Ready),
+            0x03 => Ok(Self::Authenticate),
+            0x06 => Ok(Self::Supported),
+            0x08 => Ok(Self::Result),
+            0x0C => Ok(Self::Event),
+            0x0E => Ok(Self::AuthChallenge),
+            0x10 => Ok(Self::AuthSuccess),
+            _ => Err(TryFromPrimitiveError {
+                enum_name: "ResponseOpcode",
+                primitive: value,
+            }),
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -42,6 +64,7 @@ impl Response {
         features: &ProtocolFeatures,
         opcode: ResponseOpcode,
         buf: &mut &[u8],
+        cached_metadata: Option<&ResultMetadata>,
     ) -> Result<Response, ParseError> {
         let response = match opcode {
             ResponseOpcode::Error => Response::Error(Error::deserialize(features, buf)?),
@@ -50,7 +73,7 @@ impl Response {
                 Response::Authenticate(authenticate::Authenticate::deserialize(buf)?)
             }
             ResponseOpcode::Supported => Response::Supported(Supported::deserialize(buf)?),
-            ResponseOpcode::Result => Response::Result(result::deserialize(buf)?),
+            ResponseOpcode::Result => Response::Result(result::deserialize(buf, cached_metadata)?),
             ResponseOpcode::Event => Response::Event(event::Event::deserialize(buf)?),
             ResponseOpcode::AuthChallenge => {
                 Response::AuthChallenge(authenticate::AuthChallenge::deserialize(buf)?)

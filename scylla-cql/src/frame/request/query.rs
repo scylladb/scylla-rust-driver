@@ -1,12 +1,14 @@
 use std::borrow::Cow;
 
-use crate::frame::frame_errors::ParseError;
+use crate::{
+    frame::{frame_errors::ParseError, types::SerialConsistency},
+    types::serialize::row::SerializedValues,
+};
 use bytes::{Buf, BufMut, Bytes};
 
 use crate::{
     frame::request::{RequestOpcode, SerializableRequest},
     frame::types,
-    frame::value::SerializedValues,
 };
 
 use super::DeserializableRequest;
@@ -36,7 +38,7 @@ pub struct Query<'q> {
 impl SerializableRequest for Query<'_> {
     const OPCODE: RequestOpcode = RequestOpcode::Query;
 
-    fn serialize(&self, buf: &mut impl BufMut) -> Result<(), ParseError> {
+    fn serialize(&self, buf: &mut Vec<u8>) -> Result<(), ParseError> {
         types::write_long_string(&self.contents, buf)?;
         self.parameters.serialize(buf)?;
         Ok(())
@@ -61,6 +63,7 @@ pub struct QueryParameters<'a> {
     pub timestamp: Option<i64>,
     pub page_size: Option<i32>,
     pub paging_state: Option<Bytes>,
+    pub skip_metadata: bool,
     pub values: Cow<'a, SerializedValues>,
 }
 
@@ -72,6 +75,7 @@ impl Default for QueryParameters<'_> {
             timestamp: None,
             page_size: None,
             paging_state: None,
+            skip_metadata: false,
             values: Cow::Borrowed(SerializedValues::EMPTY),
         }
     }
@@ -84,6 +88,10 @@ impl QueryParameters<'_> {
         let mut flags = 0;
         if !self.values.is_empty() {
             flags |= FLAG_VALUES;
+        }
+
+        if self.skip_metadata {
+            flags |= FLAG_SKIP_METADATA;
         }
 
         if self.page_size.is_some() {
@@ -100,10 +108,6 @@ impl QueryParameters<'_> {
 
         if self.timestamp.is_some() {
             flags |= FLAG_WITH_DEFAULT_TIMESTAMP;
-        }
-
-        if self.values.has_names() {
-            flags |= FLAG_WITH_NAMES_FOR_VALUES;
         }
 
         buf.put_u8(flags);
@@ -134,13 +138,7 @@ impl QueryParameters<'_> {
 
 impl<'q> QueryParameters<'q> {
     pub fn deserialize(buf: &mut &[u8]) -> Result<Self, ParseError> {
-        let consistency = match types::read_consistency(buf)? {
-            types::LegacyConsistency::Regular(reg) => Ok(reg),
-            types::LegacyConsistency::Serial(ser) => Err(ParseError::BadIncomingData(format!(
-                "Expected regular Consistency, got SerialConsistency {}",
-                ser
-            ))),
-        }?;
+        let consistency = types::read_consistency(buf)?;
 
         let flags = buf.get_u8();
         let unknown_flags = flags & (!ALL_FLAGS);
@@ -151,14 +149,21 @@ impl<'q> QueryParameters<'q> {
             )));
         }
         let values_flag = (flags & FLAG_VALUES) != 0;
+        let skip_metadata = (flags & FLAG_SKIP_METADATA) != 0;
         let page_size_flag = (flags & FLAG_PAGE_SIZE) != 0;
         let paging_state_flag = (flags & FLAG_WITH_PAGING_STATE) != 0;
         let serial_consistency_flag = (flags & FLAG_WITH_SERIAL_CONSISTENCY) != 0;
         let default_timestamp_flag = (flags & FLAG_WITH_DEFAULT_TIMESTAMP) != 0;
         let values_have_names_flag = (flags & FLAG_WITH_NAMES_FOR_VALUES) != 0;
 
+        if values_have_names_flag {
+            return Err(ParseError::BadIncomingData(
+                "Named values in frame are currently unsupported".to_string(),
+            ));
+        }
+
         let values = Cow::Owned(if values_flag {
-            SerializedValues::new_from_frame(buf, values_have_names_flag)?
+            SerializedValues::new_from_frame(buf)?
         } else {
             SerializedValues::new()
         });
@@ -169,19 +174,19 @@ impl<'q> QueryParameters<'q> {
         } else {
             None
         };
-        let serial_consistency = if serial_consistency_flag {
-            match types::read_consistency(buf)? {
-                types::LegacyConsistency::Regular(reg) => {
-                    return Err(ParseError::BadIncomingData(format!(
+        let serial_consistency = serial_consistency_flag
+            .then(|| types::read_consistency(buf))
+            .transpose()?
+            .map(
+                |consistency| match SerialConsistency::try_from(consistency) {
+                    Ok(serial_consistency) => Ok(serial_consistency),
+                    Err(_) => Err(ParseError::BadIncomingData(format!(
                         "Expected SerialConsistency, got regular Consistency {}",
-                        reg
-                    )))
-                }
-                types::LegacyConsistency::Serial(ser) => Some(ser),
-            }
-        } else {
-            None
-        };
+                        consistency
+                    ))),
+                },
+            )
+            .transpose()?;
         let timestamp = if default_timestamp_flag {
             Some(types::read_long(buf)?)
         } else {
@@ -194,6 +199,7 @@ impl<'q> QueryParameters<'q> {
             timestamp,
             page_size,
             paging_state,
+            skip_metadata,
             values,
         })
     }

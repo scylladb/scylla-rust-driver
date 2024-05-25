@@ -10,7 +10,7 @@
 //! to compute those lists for each strategy used in cluster.
 //!
 //! Notes on Network Topology Strategy precomputation:
-//! The optimization mentioned above works ony if requested `replication factor` is <= `rack count`.
+//! The optimization mentioned above works only if requested `replication factor` is <= `rack count`.
 
 use super::replication_info::ReplicationInfo;
 use super::TokenRing;
@@ -216,6 +216,7 @@ mod tests {
 
     use crate::{
         routing::Token,
+        test_utils::setup_tracing,
         transport::{
             locator::test::{create_ring, mock_metadata_for_token_aware_tests, A, C, D, E, F, G},
             topology::{Keyspace, Strategy},
@@ -226,6 +227,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_simple_stategy() {
+        setup_tracing();
         let mut metadata = mock_metadata_for_token_aware_tests();
         metadata.keyspaces = [(
             "SimpleStrategy{rf=2}".into(),
@@ -253,10 +255,8 @@ mod tests {
         );
 
         let check = |token, replication_factor, expected_node_ids| {
-            let replicas = precomputed_replicas.get_precomputed_simple_strategy_replicas(
-                Token { value: token },
-                replication_factor,
-            );
+            let replicas = precomputed_replicas
+                .get_precomputed_simple_strategy_replicas(Token::new(token), replication_factor);
 
             let ids: Vec<u16> = replicas
                 .unwrap()
@@ -271,7 +271,7 @@ mod tests {
         check(160, 1, vec![F]);
         check(160, 2, vec![F, A]);
         assert_eq!(
-            precomputed_replicas.get_precomputed_simple_strategy_replicas(Token { value: 160 }, 3),
+            precomputed_replicas.get_precomputed_simple_strategy_replicas(Token::new(160), 3),
             None
         );
 
@@ -284,6 +284,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_network_topology_strategy() {
+        setup_tracing();
         let metadata = mock_metadata_for_token_aware_tests();
         let ring = create_ring(&metadata);
         let replication_info = ReplicationInfo::new(ring);
@@ -297,7 +298,7 @@ mod tests {
 
         let check = |token, dc, replication_factor, expected_node_ids| {
             let replicas = precomputed_replicas.get_precomputed_network_strategy_replicas(
-                Token { value: token },
+                Token::new(token),
                 dc,
                 replication_factor,
             );
@@ -317,7 +318,7 @@ mod tests {
         check(160, "eu", 3, vec![A, C, G]);
         assert_eq!(
             precomputed_replicas.get_precomputed_network_strategy_replicas(
-                Token { value: 160 },
+                Token::new(160),
                 "eu",
                 4
             ),
@@ -330,7 +331,7 @@ mod tests {
         check(160, "us", 3, vec![F, D, E]);
         assert_eq!(
             precomputed_replicas.get_precomputed_network_strategy_replicas(
-                Token { value: 160 },
+                Token::new(160),
                 "us",
                 4
             ),

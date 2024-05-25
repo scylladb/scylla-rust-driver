@@ -1,9 +1,12 @@
 use rand::SeedableRng;
 use rand_chacha::ChaCha8Rng;
+use scylla_cql::frame::response::result::TableSpec;
 use uuid::Uuid;
 
+use super::tablets::TabletsInfo;
 use super::{ReplicaLocator, ReplicaSet};
 use crate::routing::Token;
+use crate::test_utils::setup_tracing;
 use crate::transport::{
     connection_pool::PoolConfig,
     topology::{Keyspace, Metadata, Peer, Strategy},
@@ -21,6 +24,16 @@ use std::{
 pub(crate) const KEYSPACE_NTS_RF_2: &str = "keyspace_with_nts_rf_2";
 pub(crate) const KEYSPACE_NTS_RF_3: &str = "keyspace_with_nts_rf_3";
 pub(crate) const KEYSPACE_SS_RF_2: &str = "keyspace_with_ss_rf_2";
+
+// Those are references because otherwise I can't use them in Option without
+// additional binding.
+pub(crate) const TABLE_NTS_RF_2: &TableSpec<'static> =
+    &TableSpec::borrowed(KEYSPACE_NTS_RF_2, "table");
+pub(crate) const TABLE_NTS_RF_3: &TableSpec<'static> =
+    &TableSpec::borrowed(KEYSPACE_NTS_RF_3, "table");
+pub(crate) const TABLE_SS_RF_2: &TableSpec<'static> =
+    &TableSpec::borrowed(KEYSPACE_SS_RF_2, "table");
+pub(crate) const TABLE_INVALID: &TableSpec<'static> = &TableSpec::borrowed("invalid", "invalid");
 
 pub(crate) const A: u16 = 1;
 pub(crate) const B: u16 = 2;
@@ -51,11 +64,7 @@ pub(crate) fn mock_metadata_for_token_aware_tests() -> Metadata {
             datacenter: Some("eu".into()),
             rack: Some("r1".to_owned()),
             address: id_to_invalid_addr(1),
-            tokens: vec![
-                Token { value: 50 },
-                Token { value: 250 },
-                Token { value: 400 },
-            ],
+            tokens: vec![Token::new(50), Token::new(250), Token::new(400)],
             host_id: Uuid::new_v4(),
         },
         Peer {
@@ -63,11 +72,7 @@ pub(crate) fn mock_metadata_for_token_aware_tests() -> Metadata {
             datacenter: Some("eu".into()),
             rack: Some("r1".to_owned()),
             address: id_to_invalid_addr(2),
-            tokens: vec![
-                Token { value: 100 },
-                Token { value: 600 },
-                Token { value: 900 },
-            ],
+            tokens: vec![Token::new(100), Token::new(600), Token::new(900)],
             host_id: Uuid::new_v4(),
         },
         Peer {
@@ -75,11 +80,7 @@ pub(crate) fn mock_metadata_for_token_aware_tests() -> Metadata {
             datacenter: Some("eu".into()),
             rack: Some("r1".to_owned()),
             address: id_to_invalid_addr(3),
-            tokens: vec![
-                Token { value: 300 },
-                Token { value: 650 },
-                Token { value: 700 },
-            ],
+            tokens: vec![Token::new(300), Token::new(650), Token::new(700)],
             host_id: Uuid::new_v4(),
         },
         Peer {
@@ -87,7 +88,7 @@ pub(crate) fn mock_metadata_for_token_aware_tests() -> Metadata {
             datacenter: Some("us".into()),
             rack: Some("r1".to_owned()),
             address: id_to_invalid_addr(4),
-            tokens: vec![Token { value: 350 }, Token { value: 550 }],
+            tokens: vec![Token::new(350), Token::new(550)],
             host_id: Uuid::new_v4(),
         },
         Peer {
@@ -95,7 +96,7 @@ pub(crate) fn mock_metadata_for_token_aware_tests() -> Metadata {
             datacenter: Some("us".into()),
             rack: Some("r1".to_owned()),
             address: id_to_invalid_addr(5),
-            tokens: vec![Token { value: 150 }, Token { value: 750 }],
+            tokens: vec![Token::new(150), Token::new(750)],
             host_id: Uuid::new_v4(),
         },
         Peer {
@@ -103,7 +104,7 @@ pub(crate) fn mock_metadata_for_token_aware_tests() -> Metadata {
             datacenter: Some("us".into()),
             rack: Some("r2".to_owned()),
             address: id_to_invalid_addr(6),
-            tokens: vec![Token { value: 200 }, Token { value: 450 }],
+            tokens: vec![Token::new(200), Token::new(450)],
             host_id: Uuid::new_v4(),
         },
         Peer {
@@ -111,7 +112,7 @@ pub(crate) fn mock_metadata_for_token_aware_tests() -> Metadata {
             datacenter: Some("eu".into()),
             rack: Some("r2".to_owned()),
             address: id_to_invalid_addr(7),
-            tokens: vec![Token { value: 500 }, Token { value: 800 }],
+            tokens: vec![Token::new(500), Token::new(800)],
             host_id: Uuid::new_v4(),
         },
     ];
@@ -175,7 +176,7 @@ fn assert_same_node_ids<'a>(left: impl Iterator<Item = NodeRef<'a>>, ids: &[u16]
 }
 
 fn assert_replica_set_equal_to(nodes: ReplicaSet<'_>, ids: &[u16]) {
-    assert_same_node_ids(nodes.into_iter(), ids)
+    assert_same_node_ids(nodes.into_iter().map(|(node, _shard)| node), ids)
 }
 
 pub(crate) fn create_ring(metadata: &Metadata) -> impl Iterator<Item = (Token, Arc<Node>)> {
@@ -202,11 +203,12 @@ pub(crate) fn create_locator(metadata: &Metadata) -> ReplicaLocator {
     let ring = create_ring(metadata);
     let strategies = metadata.keyspaces.values().map(|ks| &ks.strategy);
 
-    ReplicaLocator::new(ring, strategies)
+    ReplicaLocator::new(ring, strategies, TabletsInfo::new())
 }
 
 #[tokio::test]
 async fn test_locator() {
+    setup_tracing();
     let locator = create_locator(&mock_metadata_for_token_aware_tests());
 
     test_datacenter_info(&locator);
@@ -250,44 +252,48 @@ fn test_datacenter_info(locator: &ReplicaLocator) {
 fn test_simple_strategy_replicas(locator: &ReplicaLocator) {
     assert_replica_set_equal_to(
         locator.replicas_for_token(
-            Token { value: 450 },
+            Token::new(450),
             &Strategy::SimpleStrategy {
                 replication_factor: 3,
             },
             None,
+            TABLE_INVALID,
         ),
         &[F, G, D],
     );
 
     assert_replica_set_equal_to(
         locator.replicas_for_token(
-            Token { value: 450 },
+            Token::new(450),
             &Strategy::SimpleStrategy {
                 replication_factor: 4,
             },
             None,
+            TABLE_INVALID,
         ),
         &[F, G, D, B],
     );
 
     assert_replica_set_equal_to(
         locator.replicas_for_token(
-            Token { value: 201 },
+            Token::new(201),
             &Strategy::SimpleStrategy {
                 replication_factor: 4,
             },
             None,
+            TABLE_INVALID,
         ),
         &[A, C, D, F],
     );
 
     assert_replica_set_equal_to(
         locator.replicas_for_token(
-            Token { value: 201 },
+            Token::new(201),
             &Strategy::SimpleStrategy {
                 replication_factor: 0,
             },
             None,
+            TABLE_INVALID,
         ),
         &[],
     );
@@ -296,33 +302,36 @@ fn test_simple_strategy_replicas(locator: &ReplicaLocator) {
     // in that dc.
     assert_replica_set_equal_to(
         locator.replicas_for_token(
-            Token { value: 50 },
+            Token::new(50),
             &Strategy::SimpleStrategy {
                 replication_factor: 1,
             },
             Some("us"),
+            TABLE_INVALID,
         ),
         &[],
     );
 
     assert_replica_set_equal_to(
         locator.replicas_for_token(
-            Token { value: 50 },
+            Token::new(50),
             &Strategy::SimpleStrategy {
                 replication_factor: 3,
             },
             Some("us"),
+            TABLE_INVALID,
         ),
         &[E],
     );
 
     assert_replica_set_equal_to(
         locator.replicas_for_token(
-            Token { value: 50 },
+            Token::new(50),
             &Strategy::SimpleStrategy {
                 replication_factor: 3,
             },
             Some("eu"),
+            TABLE_INVALID,
         ),
         &[A, B],
     );
@@ -331,52 +340,56 @@ fn test_simple_strategy_replicas(locator: &ReplicaLocator) {
 fn test_network_topology_strategy_replicas(locator: &ReplicaLocator) {
     assert_replica_set_equal_to(
         locator.replicas_for_token(
-            Token { value: 75 },
+            Token::new(75),
             &Strategy::NetworkTopologyStrategy {
                 datacenter_repfactors: [("eu".to_owned(), 1), ("us".to_owned(), 1)]
                     .into_iter()
                     .collect(),
             },
             Some("eu"),
+            TABLE_INVALID,
         ),
         &[B],
     );
 
     assert_replica_set_equal_to(
         locator.replicas_for_token(
-            Token { value: 75 },
+            Token::new(75),
             &Strategy::NetworkTopologyStrategy {
                 datacenter_repfactors: [("eu".to_owned(), 1), ("us".to_owned(), 1)]
                     .into_iter()
                     .collect(),
             },
             Some("us"),
+            TABLE_INVALID,
         ),
         &[E],
     );
 
     assert_replica_set_equal_to(
         locator.replicas_for_token(
-            Token { value: 75 },
+            Token::new(75),
             &Strategy::NetworkTopologyStrategy {
                 datacenter_repfactors: [("eu".to_owned(), 1), ("us".to_owned(), 1)]
                     .into_iter()
                     .collect(),
             },
             None,
+            TABLE_INVALID,
         ),
         &[B, E],
     );
 
     assert_replica_set_equal_to(
         locator.replicas_for_token(
-            Token { value: 75 },
+            Token::new(75),
             &Strategy::NetworkTopologyStrategy {
                 datacenter_repfactors: [("eu".to_owned(), 2), ("us".to_owned(), 1)]
                     .into_iter()
                     .collect(),
             },
             None,
+            TABLE_INVALID,
         ),
         // Walking the ring from token 75, [B E F A C D A F G] is encountered.
         // NTS takes the first 2 nodes from that list - {B, E} and the last one - G because it is
@@ -386,26 +399,28 @@ fn test_network_topology_strategy_replicas(locator: &ReplicaLocator) {
 
     assert_replica_set_equal_to(
         locator.replicas_for_token(
-            Token { value: 75 },
+            Token::new(75),
             &Strategy::NetworkTopologyStrategy {
                 datacenter_repfactors: [("unknown".to_owned(), 2), ("us".to_owned(), 1)]
                     .into_iter()
                     .collect(),
             },
             None,
+            TABLE_INVALID,
         ),
         &[E],
     );
 
     assert_replica_set_equal_to(
         locator.replicas_for_token(
-            Token { value: 800 },
+            Token::new(800),
             &Strategy::NetworkTopologyStrategy {
                 datacenter_repfactors: [("eu".to_owned(), 1), ("us".to_owned(), 1)]
                     .into_iter()
                     .collect(),
             },
             None,
+            TABLE_INVALID,
         ),
         &[G, E],
     );
@@ -414,13 +429,14 @@ fn test_network_topology_strategy_replicas(locator: &ReplicaLocator) {
 fn test_replica_set_len(locator: &ReplicaLocator) {
     let merged_nts_len = locator
         .replicas_for_token(
-            Token { value: 75 },
+            Token::new(75),
             &Strategy::NetworkTopologyStrategy {
                 datacenter_repfactors: [("eu".to_owned(), 2), ("us".to_owned(), 1)]
                     .into_iter()
                     .collect(),
             },
             None,
+            TABLE_INVALID,
         )
         .len();
     assert_eq!(merged_nts_len, 3);
@@ -429,37 +445,40 @@ fn test_replica_set_len(locator: &ReplicaLocator) {
     // replica set length was limited.
     let capped_merged_nts_len = locator
         .replicas_for_token(
-            Token { value: 75 },
+            Token::new(75),
             &Strategy::NetworkTopologyStrategy {
                 datacenter_repfactors: [("eu".to_owned(), 69), ("us".to_owned(), 1)]
                     .into_iter()
                     .collect(),
             },
             None,
+            TABLE_INVALID,
         )
         .len();
     assert_eq!(capped_merged_nts_len, 5); // 5 = all eu nodes + 1 us node = 4 + 1.
 
     let filtered_nts_len = locator
         .replicas_for_token(
-            Token { value: 450 },
+            Token::new(450),
             &Strategy::NetworkTopologyStrategy {
                 datacenter_repfactors: [("eu".to_owned(), 2), ("us".to_owned(), 1)]
                     .into_iter()
                     .collect(),
             },
             Some("eu"),
+            TABLE_INVALID,
         )
         .len();
     assert_eq!(filtered_nts_len, 2);
 
     let ss_len = locator
         .replicas_for_token(
-            Token { value: 75 },
+            Token::new(75),
             &Strategy::SimpleStrategy {
                 replication_factor: 3,
             },
             None,
+            TABLE_INVALID,
         )
         .len();
     assert_eq!(ss_len, 3);
@@ -467,11 +486,12 @@ fn test_replica_set_len(locator: &ReplicaLocator) {
     // Test if the replica set length was capped when a datacenter name was provided.
     let filtered_ss_len = locator
         .replicas_for_token(
-            Token { value: 75 },
+            Token::new(75),
             &Strategy::SimpleStrategy {
                 replication_factor: 3,
             },
             Some("eu"),
+            TABLE_INVALID,
         )
         .len();
     assert_eq!(filtered_ss_len, 1)
@@ -493,15 +513,15 @@ fn test_replica_set_choose(locator: &ReplicaLocator) {
 
     for strategy in strategies {
         let replica_set_generator =
-            || locator.replicas_for_token(Token { value: 75 }, &strategy, None);
+            || locator.replicas_for_token(Token::new(75), &strategy, None, TABLE_INVALID);
 
         // Verify that after a certain number of random selections, the set of selected replicas
-        // will contain all nodes in the ring (replica set was created usin a strategy with
+        // will contain all nodes in the ring (replica set was created using a strategy with
         // replication factors higher than node count).
         let mut chosen_replicas = HashSet::new();
         for _ in 0..32 {
             let set = replica_set_generator();
-            let node = set
+            let (node, _shard) = set
                 .choose(&mut rng)
                 .expect("choose from non-empty set must return some node");
             chosen_replicas.insert(node.host_id);
@@ -534,15 +554,17 @@ fn test_replica_set_choose_filtered(locator: &ReplicaLocator) {
 
     for strategy in strategies {
         let replica_set_generator =
-            || locator.replicas_for_token(Token { value: 75 }, &strategy, None);
+            || locator.replicas_for_token(Token::new(75), &strategy, None, TABLE_INVALID);
 
         // Verify that after a certain number of random selections with a dc filter, the set of
         // selected replicas will contain all nodes in the specified dc ring.
         let mut chosen_replicas = HashSet::new();
         for _ in 0..32 {
             let set = replica_set_generator();
-            let node = set
-                .choose_filtered(&mut rng, |node| node.datacenter == Some("eu".into()))
+            let (node, _shard) = set
+                .choose_filtered(&mut rng, |(node, _shard)| {
+                    node.datacenter == Some("eu".into())
+                })
                 .expect("choose from non-empty set must return some node");
             chosen_replicas.insert(node.host_id);
         }
@@ -561,9 +583,10 @@ fn test_replica_set_choose_filtered(locator: &ReplicaLocator) {
     // Check that choosing from an empty set yields no value.
     let empty = locator
         .replicas_for_token(
-            Token { value: 75 },
+            Token::new(75),
             &Strategy::LocalStrategy,
             Some("unknown_dc_name"),
+            TABLE_INVALID,
         )
         .choose_filtered(&mut rng, |_| true);
     assert_eq!(empty, None);

@@ -3,14 +3,14 @@ use crate::errors::{DoorkeeperError, ProxyError, WorkerError};
 use crate::frame::{
     self, read_response_frame, write_frame, FrameOpcode, FrameParams, RequestFrame, ResponseFrame,
 };
-use crate::RequestOpcode;
+use crate::{RequestOpcode, TargetShard};
 use bytes::Bytes;
 use scylla_cql::frame::types::read_string_multimap;
 use std::collections::HashMap;
 use std::fmt::Display;
 use std::future::Future;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
-use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::net::{TcpListener, TcpSocket, TcpStream};
@@ -202,6 +202,18 @@ impl Display for DisplayableRealAddrOption {
             write!(f, "{}", addr)
         } else {
             write!(f, "<dry mode>")
+        }
+    }
+}
+
+#[derive(Clone, Copy)]
+struct DisplayableShard(Option<TargetShard>);
+impl Display for DisplayableShard {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        if let Some(shard) = self.0 {
+            write!(f, "shard {}", shard)
+        } else {
+            write!(f, "unknown shard")
         }
     }
 }
@@ -419,8 +431,8 @@ impl RunningProxy {
         }
     }
 
-    /// Attempts to fetch the first error that has occured in proxy since last check.
-    /// If no errors occured, returns Ok(()).
+    /// Attempts to fetch the first error that has occurred in proxy since last check.
+    /// If no errors occurred, returns Ok(()).
     pub fn sanity_check(&mut self) -> Result<(), ProxyError> {
         match self.error_sink.try_recv() {
             Ok(err) => Err(err),
@@ -432,13 +444,13 @@ impl RunningProxy {
         }
     }
 
-    /// Waits until an error occurs in proxy. If proxy finishes with no errors occured, returns Err(()).
+    /// Waits until an error occurs in proxy. If proxy finishes with no errors occurred, returns Err(()).
     pub async fn wait_for_error(&mut self) -> Option<ProxyError> {
         self.error_sink.recv().await
     }
 
     /// Requests termination of all proxy workers and awaits its completion.
-    /// Returns the first error that occured in proxy.
+    /// Returns the first error that occurred in proxy.
     pub async fn finish(mut self) -> Result<(), ProxyError> {
         self.terminate_signaler.send(()).map_err(|err| {
             ProxyError::AwaitFinishFailure(format!(
@@ -600,6 +612,7 @@ impl Doorkeeper {
         connection_no: usize,
         driver_stream: TcpStream,
         cluster_stream: Option<TcpStream>,
+        shard: Option<TargetShard>,
     ) {
         let (driver_read, driver_write) = driver_stream.into_split();
 
@@ -611,12 +624,14 @@ impl Doorkeeper {
             driver_addr,
             real_addr: self.node.real_addr(),
             proxy_addr: self.node.proxy_addr(),
+            shard,
         };
 
         let (tx_request, rx_request) = mpsc::unbounded_channel::<RequestFrame>();
         let (tx_response, rx_response) = mpsc::unbounded_channel::<ResponseFrame>();
         let (tx_cluster, rx_cluster) = mpsc::unbounded_channel::<RequestFrame>();
         let (tx_driver, rx_driver) = mpsc::unbounded_channel::<ResponseFrame>();
+        let event_register_flag = Arc::new(AtomicBool::new(false));
 
         tokio::task::spawn(new_worker().receiver_from_driver(driver_read, tx_request));
         tokio::task::spawn(new_worker().sender_to_driver(
@@ -632,6 +647,7 @@ impl Doorkeeper {
             connection_no,
             self.node.request_rules().clone(),
             connection_close_tx.clone(),
+            event_register_flag.clone(),
         ));
         if let InternalNode::Real {
             ref response_rules, ..
@@ -652,6 +668,7 @@ impl Doorkeeper {
                 connection_no,
                 response_rules.clone(),
                 connection_close_tx.clone(),
+                event_register_flag.clone(),
             ));
         }
         debug!(
@@ -667,11 +684,13 @@ impl Doorkeeper {
         connection_no: usize,
     ) -> Result<(), DoorkeeperError> {
         let (driver_stream, driver_addr) = self.make_driver_stream(connection_no).await?;
-        let cluster_stream = match self.node {
+        let (cluster_stream, shard) = match self.node {
             InternalNode::Real { real_addr, .. } => {
-                Some(self.make_cluster_stream(driver_addr, real_addr).await?)
+                let (cluster_stream, shard) =
+                    self.make_cluster_stream(driver_addr, real_addr).await?;
+                (Some(cluster_stream), shard)
             }
-            InternalNode::Simulated { .. } => None,
+            InternalNode::Simulated { .. } => (None, None),
         };
 
         self.spawn_workers(
@@ -680,6 +699,7 @@ impl Doorkeeper {
             connection_no,
             driver_stream,
             cluster_stream,
+            shard,
         )
         .await;
 
@@ -707,8 +727,8 @@ impl Doorkeeper {
         &mut self,
         driver_addr: SocketAddr,
         real_addr: SocketAddr,
-    ) -> Result<TcpStream, DoorkeeperError> {
-        let cluster_stream = if let Some(shards) = self.shards_count {
+    ) -> Result<(TcpStream, Option<TargetShard>), DoorkeeperError> {
+        let mut cluster_stream = if let Some(shards) = self.shards_count {
             let socket = match self.node.proxy_addr().ip() {
                 std::net::IpAddr::V4(_) => TcpSocket::new_v4(),
                 std::net::IpAddr::V6(_) => TcpSocket::new_v6(),
@@ -731,7 +751,7 @@ impl Doorkeeper {
 
             socket.connect(real_addr).await.map(|ok| {
                 info!(
-                    "Connected to the cluster from {} at {}, shard {}.",
+                    "Connected to the cluster from {} at {}, intended shard {}.",
                     ok.local_addr().unwrap(),
                     real_addr,
                     shard_preserving_addr.port() % shards
@@ -746,32 +766,53 @@ impl Doorkeeper {
         }
         .map_err(|err| DoorkeeperError::NodeConnectionAttempt(real_addr, err))?;
 
-        Ok(cluster_stream)
+        // If ShardAwareness is aware (QueryNode or FixedNum variants) and the
+        // proxy succeeded to know the shards count (in FixedNum we get it for
+        // free, in QueryNode the initial Options query succeeded and Supported
+        // contained SCYLLA_SHARDS_NUM), then upon opening each connection to the
+        // node, the proxy issues another Options requests and acknowledges the
+        // shard it got connected to.
+        let shard = if self.shards_count.is_some() {
+            self.obtain_shard_number(real_addr, &mut cluster_stream)
+                .await?
+        } else {
+            None
+        };
+
+        Ok((cluster_stream, shard))
     }
 
     fn next_port_to_same_shard(&self, port: u16) -> u16 {
         port.wrapping_add(self.shards_count.unwrap())
     }
 
-    async fn obtain_shards_count(&self, real_addr: SocketAddr) -> Result<u16, DoorkeeperError> {
-        let mut connection = TcpStream::connect(real_addr)
-            .await
-            .map_err(|err| DoorkeeperError::NodeConnectionAttempt(real_addr, err))?;
+    async fn get_supported_options(
+        connection: &mut TcpStream,
+    ) -> Result<HashMap<String, Vec<String>>, DoorkeeperError> {
         write_frame(
             HARDCODED_OPTIONS_PARAMS,
             FrameOpcode::Request(RequestOpcode::Options),
             &Bytes::new(),
-            &mut connection,
+            connection,
         )
         .await
         .map_err(DoorkeeperError::ObtainingShardNumber)?;
 
-        let supported_frame = read_response_frame(&mut connection)
+        let supported_frame = read_response_frame(connection)
             .await
             .map_err(DoorkeeperError::ObtainingShardNumberFrame)?;
 
         let options = read_string_multimap(&mut supported_frame.body.as_ref())
             .map_err(DoorkeeperError::ObtainingShardNumberParseOptions)?;
+
+        Ok(options)
+    }
+
+    async fn obtain_shards_count(&self, real_addr: SocketAddr) -> Result<u16, DoorkeeperError> {
+        let mut connection = TcpStream::connect(real_addr)
+            .await
+            .map_err(|err| DoorkeeperError::NodeConnectionAttempt(real_addr, err))?;
+        let options = Self::get_supported_options(&mut connection).await?;
         let nr_shards_entry = options.get("SCYLLA_NR_SHARDS");
         let shards = match nr_shards_entry
             .and_then(|vec| vec.first())
@@ -785,6 +826,24 @@ impl Doorkeeper {
         info!("Obtained shards number on node {}: {}", real_addr, shards);
         Ok(shards)
     }
+
+    async fn obtain_shard_number(
+        &self,
+        real_addr: SocketAddr,
+        connection: &mut TcpStream,
+    ) -> Result<Option<TargetShard>, DoorkeeperError> {
+        let options = Self::get_supported_options(connection).await?;
+        let shard_entry = options.get("SCYLLA_SHARD");
+        let shard = shard_entry
+            .and_then(|vec| vec.first())
+            .map(|s| {
+                s.parse::<u16>()
+                    .map_err(DoorkeeperError::ObtainingShardNumberParseShardNumber)
+            })
+            .transpose()?;
+        info!("Connected to node {}, shard {:?}", real_addr, shard);
+        Ok(shard)
+    }
 }
 
 struct ProxyWorker {
@@ -795,15 +854,17 @@ struct ProxyWorker {
     driver_addr: SocketAddr,
     real_addr: Option<SocketAddr>,
     proxy_addr: SocketAddr,
+    shard: Option<TargetShard>,
 }
 
 impl ProxyWorker {
     fn exit(self, duty: &'static str) {
         debug!(
-            "Worker exits: [driver: {}, proxy: {}, node: {}]::{}.",
+            "Worker exits: [driver: {}, proxy: {}, node: {}, {}]::{}.",
             self.driver_addr,
             self.proxy_addr,
             DisplayableRealAddrOption(self.real_addr),
+            DisplayableShard(self.shard),
             duty
         );
         std::mem::drop(self.finish_guard);
@@ -834,6 +895,7 @@ impl ProxyWorker {
         mut read_half: (impl AsyncRead + Unpin),
         request_processor_tx: mpsc::UnboundedSender<RequestFrame>,
     ) {
+        let shard = self.shard;
         self.run_until_interrupted(
             "receiver_from_driver",
             |driver_addr, proxy_addr, _real_addr| async move {
@@ -846,8 +908,11 @@ impl ProxyWorker {
                         })?;
 
                     debug!(
-                        "Intercepted Driver ({}) -> Cluster ({}) frame. opcode: {:?}.",
-                        driver_addr, proxy_addr, &frame.opcode
+                        "Intercepted Driver ({}) -> Cluster ({}) ({}) frame. opcode: {:?}.",
+                        driver_addr,
+                        proxy_addr,
+                        DisplayableShard(shard),
+                        &frame.opcode
                     );
                     if request_processor_tx.send(frame).is_err() {
                         warn!("request_processor had exited.");
@@ -864,6 +929,7 @@ impl ProxyWorker {
         mut read_half: (impl AsyncRead + Unpin),
         response_processor_tx: mpsc::UnboundedSender<ResponseFrame>,
     ) {
+        let shard = self.shard;
         self.run_until_interrupted(
             "receiver_from_cluster",
             |driver_addr, _proxy_addr, real_addr| async move {
@@ -878,8 +944,11 @@ impl ProxyWorker {
                             })?;
 
                     debug!(
-                        "Intercepted Cluster ({}) -> Driver ({}) frame. opcode: {:?}.",
-                        real_addr, driver_addr, &frame.opcode
+                        "Intercepted Cluster ({}) -> Driver ({}) ({}) frame. opcode: {:?}.",
+                        real_addr,
+                        driver_addr,
+                        DisplayableShard(shard),
+                        &frame.opcode
                     );
 
                     if response_processor_tx.send(frame).is_err() {
@@ -899,6 +968,7 @@ impl ProxyWorker {
         mut connection_close_notifier: ConnectionCloseNotifier,
         mut terminate_notifier: TerminateNotifier,
     ) {
+        let shard = self.shard;
         self.run_until_interrupted(
             "sender_to_driver",
             |driver_addr, proxy_addr, _real_addr| async move {
@@ -916,8 +986,11 @@ impl ProxyWorker {
                     };
 
                     debug!(
-                        "Sending Proxy ({}) -> Driver ({}) frame. opcode: {:?}.",
-                        proxy_addr, driver_addr, &response.opcode
+                        "Sending Proxy ({}) -> Driver ({}) ({}) frame. opcode: {:?}.",
+                        proxy_addr,
+                        driver_addr,
+                        DisplayableShard(shard),
+                        &response.opcode
                     );
                     if response.write(&mut write_half).await.is_err() {
                         if terminate_notifier.try_recv().is_err()
@@ -941,6 +1014,7 @@ impl ProxyWorker {
         mut connection_close_notifier: ConnectionCloseNotifier,
         mut terminate_notifier: TerminateNotifier,
     ) {
+        let shard = self.shard;
         self.run_until_interrupted(
             "sender_to_driver",
             |_driver_addr, proxy_addr, real_addr| async move {
@@ -959,8 +1033,11 @@ impl ProxyWorker {
                     };
 
                     debug!(
-                        "Sending Proxy ({}) -> Cluster ({}) frame. opcode: {:?}.",
-                        proxy_addr, real_addr, &request.opcode
+                        "Sending Proxy ({}) -> Cluster ({}) ({}) frame. opcode: {:?}.",
+                        proxy_addr,
+                        real_addr,
+                        DisplayableShard(shard),
+                        &request.opcode
                     );
 
                     if request.write(&mut write_half).await.is_err() {
@@ -978,6 +1055,7 @@ impl ProxyWorker {
         .await;
     }
 
+    #[allow(clippy::too_many_arguments)]
     async fn request_processor(
         self,
         mut requests_rx: mpsc::UnboundedReceiver<RequestFrame>,
@@ -986,26 +1064,32 @@ impl ProxyWorker {
         connection_no: usize,
         request_rules: Arc<Mutex<Vec<RequestRule>>>,
         connection_close_signaler: ConnectionCloseSignaler,
+        event_registered_flag: Arc<AtomicBool>,
     ) {
+        let shard = self.shard;
         self.run_until_interrupted("request_processor", |driver_addr, _, real_addr| async move {
             'mainloop: loop {
                 match requests_rx.recv().await {
                     Some(request) => {
+                        if request.opcode == RequestOpcode::Register {
+                            event_registered_flag.store(true, Ordering::Relaxed);
+                        }
                         let ctx = EvaluationContext {
                             connection_seq_no: connection_no,
                             opcode: FrameOpcode::Request(request.opcode),
                             frame_body: request.body.clone(),
+                            connection_has_events: event_registered_flag.load(Ordering::Relaxed),
                         };
                         let mut guard = request_rules.lock().unwrap();
                         '_ruleloop: for (i, request_rule) in guard.iter_mut().enumerate() {
                             if request_rule.0.eval(&ctx) {
-                                info!("Applying rule no={} to request ({} -> {}).", i, driver_addr, DisplayableRealAddrOption(real_addr));
+                                info!("Applying rule no={} to request ({} -> {} ({})).", i, driver_addr, DisplayableRealAddrOption(real_addr), DisplayableShard(shard));
                                 debug!("-> Applied rule: {:?}", request_rule);
                                 debug!("-> To request: {:?}", ctx.opcode);
                                 trace!("{:?}", request);
 
                                 if let Some(ref tx) = request_rule.1.feedback_channel {
-                                    tx.send(request.clone()).unwrap_or_else(|err|
+                                    tx.send((request.clone(), shard)).unwrap_or_else(|err|
                                         warn!("Could not send received request as feedback: {}", err)
                                     );
                                 }
@@ -1055,8 +1139,11 @@ impl ProxyWorker {
                                         }
                                         // close connection.
                                         info!(
-                                            "Dropping connection between {} and {} (as requested by a proxy rule)!"
-                                        , driver_addr, DisplayableRealAddrOption(real_addr));
+                                            "Dropping connection between {} and {} ({}) (as requested by a proxy rule)!",
+                                            driver_addr,
+                                            DisplayableRealAddrOption(real_addr),
+                                            DisplayableShard(shard),
+                                        );
                                         let _ = connection_close_signaler_clone.send(());
                                     }
                                 };
@@ -1077,6 +1164,7 @@ impl ProxyWorker {
         .await;
     }
 
+    #[allow(clippy::too_many_arguments)]
     async fn response_processor(
         self,
         mut responses_rx: mpsc::UnboundedReceiver<ResponseFrame>,
@@ -1085,7 +1173,9 @@ impl ProxyWorker {
         connection_no: usize,
         response_rules: Arc<Mutex<Vec<ResponseRule>>>,
         connection_close_signaler: ConnectionCloseSignaler,
+        event_registered_flag: Arc<AtomicBool>,
     ) {
+        let shard = self.shard;
         self.run_until_interrupted("request_processor", |driver_addr, _, real_addr| async move {
             'mainloop: loop {
                 match responses_rx.recv().await {
@@ -1094,17 +1184,18 @@ impl ProxyWorker {
                             connection_seq_no: connection_no,
                             opcode: FrameOpcode::Response(response.opcode),
                             frame_body: response.body.clone(),
+                            connection_has_events: event_registered_flag.load(Ordering::Relaxed),
                         };
                         let mut guard = response_rules.lock().unwrap();
                         '_ruleloop: for (i, response_rule) in guard.iter_mut().enumerate() {
                             if response_rule.0.eval(&ctx) {
-                                info!("Applying rule no={} to request ({} -> {}).", i, DisplayableRealAddrOption(real_addr), driver_addr);
+                                info!("Applying rule no={} to request ({} -> {} ({})).", i, DisplayableRealAddrOption(real_addr), driver_addr, DisplayableShard(shard));
                                 debug!("-> Applied rule: {:?}", response_rule);
                                 debug!("-> To response: {:?}", ctx.opcode);
                                 trace!("{:?}", response);
 
                                 if let Some(ref tx) = response_rule.1.feedback_channel {
-                                    tx.send(response.clone()).unwrap_or_else(|err| warn!(
+                                    tx.send((response.clone(), shard)).unwrap_or_else(|err| warn!(
                                         "Could not send received response as feedback: {}", err
                                     ));
                                 }
@@ -1154,8 +1245,11 @@ impl ProxyWorker {
                                         }
                                         // close connection.
                                         info!(
-                                            "Dropping connection between {} and {} (as requested by a proxy rule)!"
-                                        , driver_addr, real_addr.expect("BUG: response rules are unavailable for dry-mode proxy!"));
+                                            "Dropping connection between {} and {} ({}) (as requested by a proxy rule)!",
+                                            driver_addr,
+                                            real_addr.expect("BUG: response rules are unavailable for dry-mode proxy!"),
+                                            DisplayableShard(shard)
+                                        );
                                         let _ = connection_close_signaler_clone.send(());
                                     }
                                 };
@@ -1199,11 +1293,13 @@ pub fn get_exclusive_local_address() -> IpAddr {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::frame::read_request_frame;
-    use crate::{Condition, Reaction as _, RequestReaction, ResponseOpcode, ResponseReaction};
+    use crate::frame::{read_frame, read_request_frame, FrameType};
+    use crate::{
+        setup_tracing, Condition, Reaction as _, RequestReaction, ResponseOpcode, ResponseReaction,
+    };
     use assert_matches::assert_matches;
     use bytes::{BufMut, BytesMut};
-    use futures::future::join;
+    use futures::future::{join, join3};
     use rand::RngCore;
     use scylla_cql::frame::frame_errors::FrameError;
     use scylla_cql::frame::types::write_string_multimap;
@@ -1214,15 +1310,6 @@ mod tests {
     use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
     use tokio::sync::oneshot;
 
-    // This is for convenient logs from failing tests. Just call it at the beginning of a test.
-    #[allow(unused)]
-    fn init_logger() {
-        let _ = tracing_subscriber::fmt::fmt()
-            .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
-            .without_time()
-            .try_init();
-    }
-
     fn random_body() -> Bytes {
         let body_len = (rand::random::<u32>() % 1000) as usize;
         let mut body = BytesMut::zeroed(body_len);
@@ -1230,23 +1317,21 @@ mod tests {
         body.freeze()
     }
 
-    async fn respond_with_shards_number(mut conn: TcpStream, shards_num: u16) {
+    async fn respond_with_supported(
+        conn: &mut TcpStream,
+        supported_options: &HashMap<String, Vec<String>>,
+    ) {
         let RequestFrame {
             params: recvd_params,
             opcode: recvd_opcode,
             body: recvd_body,
-        } = read_request_frame(&mut conn).await.unwrap();
+        } = read_request_frame(conn).await.unwrap();
         assert_eq!(recvd_params, HARDCODED_OPTIONS_PARAMS);
         assert_eq!(recvd_opcode, RequestOpcode::Options);
         assert_eq!(recvd_body, Bytes::new()); // body should be empty
 
         let mut body = BytesMut::new();
-        let mut sharded_info = HashMap::new();
-        sharded_info.insert(
-            String::from("SCYLLA_NR_SHARDS"),
-            vec![shards_num.to_string()],
-        );
-        write_string_multimap(&sharded_info, &mut body).unwrap();
+        write_string_multimap(supported_options, &mut body).unwrap();
 
         let body = body.freeze();
 
@@ -1254,10 +1339,33 @@ mod tests {
             HARDCODED_OPTIONS_PARAMS.for_response(),
             FrameOpcode::Response(ResponseOpcode::Supported),
             &body,
-            &mut conn,
+            conn,
         )
         .await
         .unwrap();
+    }
+
+    fn supported_shards_count(shards_count: u16) -> HashMap<String, Vec<String>> {
+        let mut sharded_info = HashMap::new();
+        sharded_info.insert(
+            String::from("SCYLLA_NR_SHARDS"),
+            vec![shards_count.to_string()],
+        );
+        sharded_info
+    }
+
+    fn supported_shard_number(shard_num: TargetShard) -> HashMap<String, Vec<String>> {
+        let mut sharded_info = HashMap::new();
+        sharded_info.insert(String::from("SCYLLA_SHARD"), vec![shard_num.to_string()]);
+        sharded_info
+    }
+
+    async fn respond_with_shards_count(conn: &mut TcpStream, shards_count: u16) {
+        respond_with_supported(conn, &supported_shards_count(shards_count)).await;
+    }
+
+    async fn respond_with_shard_num(conn: &mut TcpStream, shard_num: TargetShard) {
+        respond_with_supported(conn, &supported_shard_number(shard_num)).await;
     }
 
     fn next_local_address_with_port(port: u16) -> SocketAddr {
@@ -1287,7 +1395,7 @@ mod tests {
 
         let body = random_body();
 
-        let mock_driver_action = async {
+        let send_frame_to_shard = async {
             let mut conn = TcpStream::connect(node1_proxy_addr).await.unwrap();
 
             write_frame(params, opcode, &body, &mut conn).await.unwrap();
@@ -1296,9 +1404,13 @@ mod tests {
 
         let mock_node_action = async {
             if let ShardAwareness::QueryNode = shard_awareness {
-                respond_with_shards_number(mock_node_listener.accept().await.unwrap().0, 1).await;
+                respond_with_shards_count(&mut mock_node_listener.accept().await.unwrap().0, 1)
+                    .await;
             }
             let (mut conn, _) = mock_node_listener.accept().await.unwrap();
+            if shard_awareness.is_aware() {
+                respond_with_shard_num(&mut conn, 1).await;
+            }
             let RequestFrame {
                 params: recvd_params,
                 opcode: recvd_opcode,
@@ -1311,26 +1423,28 @@ mod tests {
         };
 
         // we keep the connections open until proxy finishes to let it perform clean exit with no disconnects
-        let (_node_conn, _driver_conn) = join(mock_node_action, mock_driver_action).await;
+        let (_node_conn, _driver_conn) = join(mock_node_action, send_frame_to_shard).await;
         running_proxy.finish().await.unwrap();
     }
 
     #[tokio::test]
     #[ntest::timeout(1000)]
     async fn identity_shard_unaware_proxy_does_not_mutate_frames() {
+        setup_tracing();
         identity_proxy_does_not_mutate_frames(ShardAwareness::Unaware).await
     }
 
     #[tokio::test]
     #[ntest::timeout(1000)]
     async fn identity_shard_aware_proxy_does_not_mutate_frames() {
-        init_logger();
+        setup_tracing();
         identity_proxy_does_not_mutate_frames(ShardAwareness::QueryNode).await
     }
 
     #[tokio::test]
     #[ntest::timeout(1000)]
     async fn shard_aware_proxy_is_transparent_for_connection_to_shards() {
+        setup_tracing();
         async fn test_for_shards_num(shards_num: u16) {
             let node1_real_addr = next_local_address_with_port(9876);
             let node1_proxy_addr = next_local_address_with_port(9876);
@@ -1347,7 +1461,7 @@ mod tests {
 
             let (driver_addr_tx, driver_addr_rx) = oneshot::channel::<SocketAddr>();
 
-            let mock_driver_action = async {
+            let send_frame_to_shard = async {
                 let socket = TcpSocket::new_v4().unwrap();
                 socket
                     .bind(SocketAddr::from_str("0.0.0.0:0").unwrap())
@@ -1368,7 +1482,7 @@ mod tests {
             };
 
             // we keep the connections open until proxy finishes to let it perform clean exit with no disconnects
-            let (_node_conn, _driver_conn) = join(mock_node_action, mock_driver_action).await;
+            let (_node_conn, _driver_conn) = join(mock_node_action, send_frame_to_shard).await;
             running_proxy.finish().await.unwrap();
         }
 
@@ -1380,6 +1494,7 @@ mod tests {
     #[tokio::test]
     #[ntest::timeout(1000)]
     async fn shard_aware_proxy_queries_shards_number() {
+        setup_tracing();
         async fn test_for_shards_num(shards_num: u16) {
             for shard_num in 0..shards_num {
                 let node1_real_addr = next_local_address_with_port(9876);
@@ -1398,7 +1513,7 @@ mod tests {
                 let (driver_addr_tx, driver_addr_rx) = oneshot::channel::<SocketAddr>();
 
                 let mock_driver_addr = next_local_address_with_port(shards_num * 1234 + shard_num);
-                let mock_driver_action = async {
+                let send_frame_to_shard = async {
                     let socket = TcpSocket::new_v4().unwrap();
                     socket
                         .bind(mock_driver_addr)
@@ -1408,8 +1523,8 @@ mod tests {
                 };
 
                 let mock_node_action = async {
-                    respond_with_shards_number(
-                        mock_node_listener.accept().await.unwrap().0,
+                    respond_with_shards_count(
+                        &mut mock_node_listener.accept().await.unwrap().0,
                         shards_num,
                     )
                     .await;
@@ -1422,7 +1537,7 @@ mod tests {
                     conn
                 };
 
-                let (_node_conn, _driver_conn) = join(mock_node_action, mock_driver_action).await;
+                let (_node_conn, _driver_conn) = join(mock_node_action, send_frame_to_shard).await;
                 running_proxy.finish().await.unwrap();
             }
         }
@@ -1435,6 +1550,7 @@ mod tests {
     #[tokio::test]
     #[ntest::timeout(1000)]
     async fn forger_proxy_forges_response() {
+        setup_tracing();
         let node1_real_addr = next_local_address_with_port(9876);
         let node1_proxy_addr = next_local_address_with_port(9876);
 
@@ -1507,7 +1623,7 @@ mod tests {
             body.freeze()
         };
 
-        let mock_driver_action = async {
+        let send_frame_to_shard = async {
             let mut conn = TcpStream::connect(node1_proxy_addr).await.unwrap();
 
             write_frame(params1, opcode1, &body1, &mut conn)
@@ -1555,7 +1671,7 @@ mod tests {
             conn
         };
 
-        let (mut node_conn, mut driver_conn) = join(mock_node_action, mock_driver_action).await;
+        let (mut node_conn, mut driver_conn) = join(mock_node_action, send_frame_to_shard).await;
 
         running_proxy.finish().await.unwrap();
 
@@ -1566,6 +1682,7 @@ mod tests {
     #[tokio::test]
     #[ntest::timeout(1000)]
     async fn ad_hoc_rules_changing() {
+        setup_tracing();
         let node1_real_addr = next_local_address_with_port(9876);
         let node1_proxy_addr = next_local_address_with_port(9876);
         let proxy = Proxy::new([Node::new(
@@ -1660,6 +1777,7 @@ mod tests {
     #[tokio::test]
     #[ntest::timeout(2000)]
     async fn limited_times_condition_expires() {
+        setup_tracing();
         const FAILING_TRIES: usize = 4;
         const PASSING_TRIES: usize = 5;
 
@@ -1761,6 +1879,7 @@ mod tests {
     #[tokio::test]
     #[ntest::timeout(1000)]
     async fn proxy_reports_requests_and_responses_as_feedback() {
+        setup_tracing();
         let node1_real_addr = next_local_address_with_port(9876);
         let node1_proxy_addr = next_local_address_with_port(9876);
 
@@ -1793,7 +1912,7 @@ mod tests {
 
         let body = random_body();
 
-        let mock_driver_action = async {
+        let send_frame_to_shard = async {
             let mut conn = TcpStream::connect(node1_proxy_addr).await.unwrap();
             write_frame(params, request_opcode, &body, &mut conn)
                 .await
@@ -1810,16 +1929,16 @@ mod tests {
         };
 
         // we keep the connections open until proxy finishes to let it perform clean exit with no disconnects
-        let (_node_conn, _driver_conn) = join(mock_node_action, mock_driver_action).await;
+        let (_node_conn, _driver_conn) = join(mock_node_action, send_frame_to_shard).await;
 
-        let feedback_request = request_feedback_rx.recv().await.unwrap();
+        let (feedback_request, _shard) = request_feedback_rx.recv().await.unwrap();
         assert_eq!(feedback_request.params, params);
         assert_eq!(
             FrameOpcode::Request(feedback_request.opcode),
             request_opcode
         );
         assert_eq!(feedback_request.body, body);
-        let feedback_response = response_feedback_rx.recv().await.unwrap();
+        let (feedback_response, _shard) = response_feedback_rx.recv().await.unwrap();
         assert_eq!(feedback_response.params, params.for_response());
         assert_eq!(
             FrameOpcode::Response(feedback_response.opcode),
@@ -1833,6 +1952,7 @@ mod tests {
     #[tokio::test]
     #[ntest::timeout(1000)]
     async fn sanity_check_reports_errors() {
+        setup_tracing();
         let node1_real_addr = next_local_address_with_port(9876);
         let node1_proxy_addr = next_local_address_with_port(9876);
         let proxy = Proxy::new([Node::new(
@@ -1846,7 +1966,7 @@ mod tests {
 
         let mock_node_listener = TcpListener::bind(node1_real_addr).await.unwrap();
 
-        let mock_driver_action = async {
+        let send_frame_to_shard = async {
             let mut conn = TcpStream::connect(node1_proxy_addr).await.unwrap();
 
             conn.write_all(b"uselessJunk").await.unwrap();
@@ -1858,7 +1978,7 @@ mod tests {
             conn
         };
 
-        let (node_conn, driver_conn) = join(mock_node_action, mock_driver_action).await;
+        let (node_conn, driver_conn) = join(mock_node_action, send_frame_to_shard).await;
 
         running_proxy.sanity_check().unwrap();
 
@@ -1883,7 +2003,7 @@ mod tests {
     #[tokio::test]
     #[ntest::timeout(1000)]
     async fn proxy_processes_requests_concurrently() {
-        init_logger();
+        setup_tracing();
         let node1_real_addr = next_local_address_with_port(9876);
         let node1_proxy_addr = next_local_address_with_port(9876);
 
@@ -1921,7 +2041,7 @@ mod tests {
 
         let body2 = random_body();
 
-        let mock_driver_action = async {
+        let send_frame_to_shard = async {
             let mut conn = TcpStream::connect(node1_proxy_addr).await.unwrap();
 
             write_frame(params1, opcode1, &body1, &mut conn)
@@ -1948,7 +2068,7 @@ mod tests {
 
         // we keep the connections open until proxy finishes to let it perform clean exit with no disconnects
         let (_node_conn, _driver_conn) =
-            tokio::time::timeout(delay, join(mock_node_action, mock_driver_action))
+            tokio::time::timeout(delay, join(mock_node_action, send_frame_to_shard))
                 .await
                 .expect("Request processing was not concurrent");
         running_proxy.finish().await.unwrap();
@@ -1957,6 +2077,7 @@ mod tests {
     #[tokio::test]
     #[ntest::timeout(1000)]
     async fn dry_mode_proxy_drops_incoming_frames() {
+        setup_tracing();
         let node1_proxy_addr = next_local_address_with_port(9876);
         let proxy = Proxy::new([Node::new_dry_mode(node1_proxy_addr, None)]);
         let running_proxy = proxy.run().await.unwrap();
@@ -1981,6 +2102,7 @@ mod tests {
     #[tokio::test]
     #[ntest::timeout(1000)]
     async fn dry_mode_forger_proxy_forges_response() {
+        setup_tracing();
         let node1_proxy_addr = next_local_address_with_port(9876);
 
         let this_shall_pass = b"This.Shall.Pass.";
@@ -2080,5 +2202,277 @@ mod tests {
         running_proxy.finish().await.unwrap();
 
         assert_matches!(conn.read(&mut [0u8; 1]).await, Ok(0));
+    }
+
+    // The test asserts that once a (mock) driver connects to the proxy from some port,
+    // the proxy will connect to a shard corresponding to that port and that the target
+    // shard number will be sent through the feedback channel.
+    #[tokio::test]
+    #[ntest::timeout(1000)]
+    async fn proxy_reports_target_shard_as_feedback() {
+        setup_tracing();
+
+        let node_port = 10101;
+        let node_real_addr = next_local_address_with_port(node_port);
+        let mock_node_listener = TcpListener::bind(node_real_addr).await.unwrap();
+
+        let params = FrameParams {
+            flags: 0,
+            version: 0x04,
+            stream: 0,
+        };
+        let request_opcode = FrameOpcode::Request(RequestOpcode::Options);
+        let response_opcode = FrameOpcode::Response(ResponseOpcode::Ready);
+
+        let body = random_body();
+
+        for shards_count in 2..9 {
+            // Two driver connections are simulated, each to a different shard.
+            let driver1_shard = shards_count - 1;
+            let driver2_shard = shards_count - 2;
+            let node_proxy_addr = next_local_address_with_port(node_port);
+
+            let (request_feedback_tx, mut request_feedback_rx) = mpsc::unbounded_channel();
+            let (response_feedback_tx, mut response_feedback_rx) = mpsc::unbounded_channel();
+
+            let proxy = Proxy::new([Node::new(
+                node_real_addr,
+                node_proxy_addr,
+                ShardAwareness::FixedNum(shards_count),
+                Some(vec![RequestRule(
+                    Condition::True,
+                    RequestReaction::drop_frame().with_feedback_when_performed(request_feedback_tx),
+                )]),
+                Some(vec![ResponseRule(
+                    Condition::True,
+                    ResponseReaction::drop_frame()
+                        .with_feedback_when_performed(response_feedback_tx),
+                )]),
+            )]);
+            let running_proxy = proxy.run().await.unwrap();
+
+            /// Choose a source port `p` such that `shard == shard_of_source_port(p)`.
+            fn draw_source_port_for_shard(shards_count: u16, shard: u16) -> u16 {
+                assert!(shard < shards_count);
+                (49152 + shards_count - 1) / shards_count * shards_count + shard
+            }
+
+            async fn bind_socket_for_shard(shards_count: u16, shard: u16) -> TcpSocket {
+                let socket = TcpSocket::new_v4().unwrap();
+                let initial_port = draw_source_port_for_shard(shards_count, shard);
+
+                let mut desired_addr =
+                    SocketAddr::new(IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0)), initial_port);
+                while socket.bind(desired_addr).is_err() {
+                    // in search for a port that translates to the desired shard
+                    let next_port = desired_addr.port().wrapping_add(shards_count);
+                    if next_port == initial_port {
+                        panic!("No more ports left");
+                    }
+                    desired_addr.set_port(next_port);
+                }
+
+                socket
+            }
+
+            let body_ref = &body;
+            let send_frame_to_shard = |driver_shard: u16| async move {
+                let socket = bind_socket_for_shard(shards_count, driver_shard).await;
+                let mut conn = socket.connect(node_proxy_addr).await.unwrap();
+
+                write_frame(params, request_opcode, body_ref, &mut conn)
+                    .await
+                    .unwrap();
+                conn
+            };
+
+            let mock_driver1_action = send_frame_to_shard(driver1_shard);
+            let mock_driver2_action = send_frame_to_shard(driver2_shard);
+
+            // Accepts two connections and sends a response to each of them.
+            let mock_node_action = async {
+                let mut conns_futs = (0..2)
+                    .map(|_| async {
+                        let (mut conn, driver_addr) = mock_node_listener.accept().await.unwrap();
+                        respond_with_shard_num(&mut conn, driver_addr.port() % shards_count).await;
+                        write_frame(params.for_response(), response_opcode, body_ref, &mut conn)
+                            .await
+                            .unwrap();
+                        conn
+                    })
+                    .collect::<Vec<_>>();
+                let conn2 = conns_futs.pop().unwrap().await;
+                let conn1 = conns_futs.pop().unwrap().await;
+                (conn1, conn2)
+            };
+
+            // we keep the connections open until proxy finishes to let it perform clean exit with no disconnects
+            let (_node_conns, _driver1_conn, _driver2_conn) =
+                join3(mock_node_action, mock_driver1_action, mock_driver2_action).await;
+
+            let assert_feedback_request = |feedback_request: RequestFrame| {
+                assert_eq!(feedback_request.params, params);
+                assert_eq!(
+                    FrameOpcode::Request(feedback_request.opcode),
+                    request_opcode
+                );
+                assert_eq!(feedback_request.body, body);
+            };
+
+            let assert_feedback_response = |feedback_response: ResponseFrame| {
+                assert_eq!(feedback_response.params, params.for_response());
+                assert_eq!(
+                    FrameOpcode::Response(feedback_response.opcode),
+                    response_opcode
+                );
+                assert_eq!(feedback_response.body, body);
+            };
+
+            let (feedback_request, shard1) = request_feedback_rx.recv().await.unwrap();
+            assert_feedback_request(feedback_request);
+            let (feedback_request, shard2) = request_feedback_rx.recv().await.unwrap();
+            assert_feedback_request(feedback_request);
+            let (feedback_response, shard3) = response_feedback_rx.recv().await.unwrap();
+            assert_feedback_response(feedback_response);
+            let (feedback_response, shard4) = response_feedback_rx.recv().await.unwrap();
+            assert_feedback_response(feedback_response);
+
+            // expected: {driver1_shard request, driver1_shard response, driver2_shard request, driver2_shard response}
+            let mut expected_shards = [driver1_shard, driver1_shard, driver2_shard, driver2_shard];
+            expected_shards.sort_unstable();
+
+            let mut got_shards = [
+                shard1.unwrap(),
+                shard2.unwrap(),
+                shard3.unwrap(),
+                shard4.unwrap(),
+            ];
+            got_shards.sort_unstable();
+
+            assert_eq!(expected_shards, got_shards);
+
+            running_proxy.finish().await.unwrap();
+        }
+    }
+
+    #[tokio::test]
+    #[ntest::timeout(1000)]
+    async fn proxy_ignores_control_connection_messages() {
+        setup_tracing();
+        let node1_real_addr = next_local_address_with_port(9876);
+        let node1_proxy_addr = next_local_address_with_port(9876);
+
+        let (request_feedback_tx, mut request_feedback_rx) = mpsc::unbounded_channel();
+        let (response_feedback_tx, mut response_feedback_rx) = mpsc::unbounded_channel();
+        let proxy = Proxy::new([Node::new(
+            node1_real_addr,
+            node1_proxy_addr,
+            ShardAwareness::Unaware,
+            Some(vec![RequestRule(
+                Condition::not(Condition::ConnectionRegisteredAnyEvent),
+                RequestReaction::noop().with_feedback_when_performed(request_feedback_tx),
+            )]),
+            Some(vec![ResponseRule(
+                Condition::not(Condition::ConnectionRegisteredAnyEvent),
+                ResponseReaction::noop().with_feedback_when_performed(response_feedback_tx),
+            )]),
+        )]);
+        let running_proxy = proxy.run().await.unwrap();
+
+        let mock_node_listener = TcpListener::bind(node1_real_addr).await.unwrap();
+
+        let (mut client_socket, mut server_socket) = join(
+            async { TcpStream::connect(node1_proxy_addr).await.unwrap() },
+            async { mock_node_listener.accept().await.unwrap().0 },
+        )
+        .await;
+
+        async fn perform_reqest_response<'a>(
+            req_opcode: RequestOpcode,
+            resp_opcode: ResponseOpcode,
+            client_socket_ref: &'a mut TcpStream,
+            server_socket_ref: &'a mut TcpStream,
+            body_base: &'a str,
+        ) {
+            let params = FrameParams {
+                flags: 0,
+                version: 0x04,
+                stream: 0,
+            };
+
+            write_frame(
+                params,
+                FrameOpcode::Request(req_opcode),
+                &(body_base.to_string() + "|request|").into(),
+                client_socket_ref,
+            )
+            .await
+            .unwrap();
+
+            let received_request = read_frame(server_socket_ref, FrameType::Request)
+                .await
+                .unwrap();
+            assert_eq!(received_request.1, FrameOpcode::Request(req_opcode));
+
+            write_frame(
+                params.for_response(),
+                FrameOpcode::Response(resp_opcode),
+                &(body_base.to_string() + "|response|").into(),
+                server_socket_ref,
+            )
+            .await
+            .unwrap();
+
+            let received_response = read_frame(client_socket_ref, FrameType::Response)
+                .await
+                .unwrap();
+            assert_eq!(received_response.1, FrameOpcode::Response(resp_opcode));
+        }
+
+        // Messages before REGISTER should be fed back to channels
+        for i in 0..5 {
+            perform_reqest_response(
+                RequestOpcode::Query,
+                ResponseOpcode::Result,
+                &mut client_socket,
+                &mut server_socket,
+                &format!("message_before_{i}"),
+            )
+            .await
+        }
+
+        perform_reqest_response(
+            RequestOpcode::Register,
+            ResponseOpcode::Result,
+            &mut client_socket,
+            &mut server_socket,
+            "message_register",
+        )
+        .await;
+
+        // Messages after REGISTER should be passed through without feedback
+        for i in 0..5 {
+            perform_reqest_response(
+                RequestOpcode::Query,
+                ResponseOpcode::Result,
+                &mut client_socket,
+                &mut server_socket,
+                &format!("message_after_{i}"),
+            )
+            .await
+        }
+
+        running_proxy.finish().await.unwrap();
+
+        for _ in 0..5 {
+            let (feedback_request, _shard) = request_feedback_rx.recv().await.unwrap();
+            assert_eq!(feedback_request.opcode, RequestOpcode::Query);
+            let (feedback_response, _shard) = response_feedback_rx.recv().await.unwrap();
+            assert_eq!(feedback_response.opcode, ResponseOpcode::Result);
+        }
+
+        // Response to REGISTER and further requests / responses should be ignored
+        let _ = request_feedback_rx.try_recv().unwrap_err();
+        let _ = response_feedback_rx.try_recv().unwrap_err();
     }
 }

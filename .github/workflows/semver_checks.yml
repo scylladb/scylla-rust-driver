@@ -1,0 +1,148 @@
+# This workflow tests semver compatibilty.
+# For PRs it checks if PR makes any API breaking changes, and assings appropriate label if so.
+name: Semver checks
+
+on:
+  pull_request_target:
+    branches:
+    - main
+    - 'branch-*'
+  push:
+    tags:
+      - v*.*.*
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: full
+  PR_BASE: ${{ github.event.pull_request.base.sha }}
+  PR_HEAD: ${{ github.event.pull_request.head.sha }}
+  PR_ID: ${{ github.event.number }}
+
+jobs:
+  semver-pull-request-check:
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request_target'
+    # Disable all permissions
+    # This is important, because this job runs on untrusted input from
+    # the user and it's possible for the user to take over the job,
+    # for example by adding malicious build.rs file. If the job had,
+    # for example, `pull_requests: write` permission, malicous user
+    # could do us a lot of harm. This is also the reason that there are
+    # 2 jobs - it's so that it's not possible to take over a job that
+    # has permissions.
+    permissions: {} 
+    timeout-minutes: 30
+    # This is to prevent a situation, when job A triggered by push 1 finishes
+    # after job B triggered by push 2. That could result in incorrectly assigning
+    # or removing a PR label.
+    concurrency:
+      # Can't use `env.PR_ID` because concurrency doesn't have access to env context.
+      group: semver-pull-request-check-${{ github.event.number }}
+      cancel-in-progress: true
+    outputs:
+      exitcode: ${{ steps.semver-pr-check.outputs.exitcode }}
+      output: ${{ steps.semver-pr-check.outputs.output }}
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v3
+      with:
+        fetch-depth: "2"
+        ref: "refs/pull/${{ env.PR_ID }}/merge"
+    # Check if there was another push before this job started.
+    # If there was, wrong commit would be checked out.
+    - name: Sanity check
+      run: |
+        [[ "$(git rev-parse 'HEAD^2')" == "$PR_HEAD" ]]
+    # I don't know any way to do this using checkout action
+    - name: Fetch PR base
+      run: git fetch origin "$PR_BASE"
+    - name: Install semver-checks
+      # Official action uses binary releases fetched from GitHub
+      # If this pipeline becomes too slow, we should do this too
+      run: cargo install cargo-semver-checks --no-default-features
+    - name: Verify the API compatibilty with PR base
+      id: semver-pr-check
+      run: |
+        set -e # So that failed commands exit the script
+        set -o pipefail # So that if a command in a pipe fails, the whole command fails
+
+        echo "output<<SEMVER_STDOUT_EOF" >> $GITHUB_OUTPUT
+        SEMVER_REV_OUTPUT=$(make semver-rev rev="$PR_BASE" 2>&1) && true # "&& true" preserves exit code but cancels effects of set -e
+        exitcode=$?
+
+        # Weird sed strip ANSI colors from output
+        # If any of the commands below fail, `set -e` and `set -o pipefail` should exit the script
+        echo "${SEMVER_REV_OUTPUT}" | tee /proc/self/fd/2 | sed -r "s/\x1B\[([0-9]{1,2}(;[0-9]{1,2})?)?[mGK]//g" >> $GITHUB_OUTPUT
+        echo "SEMVER_STDOUT_EOF" >> $GITHUB_OUTPUT
+
+        echo "Semver checks exitcode: " $exitcode
+        echo "exitcode=$exitcode" >> $GITHUB_OUTPUT
+
+  semver-pull-request-label:
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request_target'
+    permissions:
+      pull-requests: write
+    needs: semver-pull-request-check
+    timeout-minutes: 3
+    steps:
+    - name: Get ID of comment if posted previously.
+      uses: peter-evans/find-comment@v3
+      id: find-comment
+      with:
+          issue-number: ${{ env.PR_ID }}
+          comment-author: 'github-actions[bot]'
+          body-includes: semver
+    - name: Remove breaking label on success
+      run: gh pr edit "$PR_ID" --remove-label semver-checks-breaking
+      if: needs.semver-pull-request-check.outputs.exitcode == '0'
+      env:
+        GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        GH_REPO: ${{ github.repository }}
+    - name: Report that there were no breaks
+      uses: peter-evans/create-or-update-comment@v4
+      with:
+          issue-number: ${{ env.PR_ID }}
+          comment-id: ${{ steps.find-comment.outputs.comment-id }}
+          body: |
+            `cargo semver-checks` found no API-breaking changes in this PR! 🎉🥳
+            Checked commit: ${{ env.PR_HEAD }}
+          edit-mode: replace
+      if: needs.semver-pull-request-check.outputs.exitcode == '0'
+    - name: Add breaking label on failure
+      run: gh pr edit "$PR_ID" --add-label semver-checks-breaking
+      if: needs.semver-pull-request-check.outputs.exitcode != '0'
+      env:
+        GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        GH_REPO: ${{ github.repository }}
+    - name: Post report on semver break
+      uses: peter-evans/create-or-update-comment@v4
+      with:
+          issue-number: ${{ env.PR_ID }}
+          comment-id: ${{ steps.find-comment.outputs.comment-id }}
+          body: |
+            `cargo semver-checks` detected some API incompatibilities in this PR.
+            Checked commit: ${{ env.PR_HEAD }}
+
+            See the following report for details:
+            <details>
+            <summary>cargo semver-checks output</summary>
+
+            ```
+            ${{ needs.semver-pull-request-check.outputs.output }}
+            ```
+
+            </details>
+          edit-mode: replace
+      if: needs.semver-pull-request-check.outputs.exitcode != '0'
+
+  semver-push-tag:
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push'
+    timeout-minutes: 30
+    steps:
+    - uses: actions/checkout@v3
+    - name: Install semver-checks
+      run: cargo install cargo-semver-checks --no-default-features
+    - name: Run semver-checks to see if it agrees with version updates
+      run: make semver-version

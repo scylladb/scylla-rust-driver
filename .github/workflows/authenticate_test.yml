@@ -2,9 +2,13 @@ name: Authenticate
 
 on:
   push:
-    branches: [ main ]
+    branches:
+    - main
+    - 'branch-*'
   pull_request:
-    branches: [ main ]
+    branches:
+    - main
+    - 'branch-*'
 
 env:
   CARGO_TERM_COLOR: always
@@ -24,4 +28,4 @@ jobs:
     steps:
     - uses: actions/checkout@v3
     - name: Run tests
-      run: cargo test --verbose authenticate_superuser -- custom_authentication --ignored
+      run: RUST_LOG=trace cargo test --verbose authenticate_superuser -- custom_authentication --ignored

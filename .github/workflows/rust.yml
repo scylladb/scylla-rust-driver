@@ -2,15 +2,19 @@ name: Rust
 
 on:
   push:
-    branches: [ main ]
+    branches:
+    - main
+    - 'branch-*'
   pull_request:
-    branches: [ main ]
+    branches:
+    - main
+    - 'branch-*'
 
 env:
   CARGO_TERM_COLOR: always
   RUSTFLAGS: -Dwarnings
   RUST_BACKTRACE: full
-  rust_min: 1.65.0 # <- Update this when bumping up MSRV
+  rust_min: 1.66.0 # <- Update this when bumping up MSRV
 
 jobs:
   build:
@@ -25,17 +29,35 @@ jobs:
     - name: Format check
       run: cargo fmt --verbose --all -- --check
     - name: Clippy check
-      run: cargo clippy --verbose --examples --tests -- -Aclippy::uninlined_format_args
+      run: cargo clippy --verbose --all-targets
+    - name: Clippy check with all features
+      run: cargo clippy --verbose --all-targets --all-features
     - name: Cargo check without features
-      run: cargo check --manifest-path "scylla/Cargo.toml" --features ""
-    - name: Cargo check with secrecy feature
-      run: cargo check --manifest-path "scylla/Cargo.toml" --features "secret"
+      run: cargo check --all-targets --manifest-path "scylla/Cargo.toml" --features ""
+    - name: Cargo check with all serialization features
+      run: cargo check --all-targets --manifest-path "scylla/Cargo.toml" --features "full-serialization"
+    - name: Cargo check with all features
+      run: cargo check --all-targets --manifest-path "scylla/Cargo.toml" --all-features
+    - name: Cargo check with secret feature
+      run: cargo check --all-targets --manifest-path "scylla/Cargo.toml" --features "secret"
+    - name: Cargo check with chrono feature
+      run: cargo check --all-targets --manifest-path "scylla/Cargo.toml" --features "chrono"
+    - name: Cargo check with time feature
+      run: cargo check --all-targets --manifest-path "scylla/Cargo.toml" --features "time"
+    - name: Cargo check with num-bigint-03 feature
+      run: cargo check --all-targets --manifest-path "scylla/Cargo.toml" --features "num-bigint-03"
+    - name: Cargo check with num-bigint-04 feature
+      run: cargo check --all-targets --manifest-path "scylla/Cargo.toml" --features "num-bigint-04"
+    - name: Cargo check with bigdecimal-04 feature
+      run: cargo check --all-targets --manifest-path "scylla/Cargo.toml" --features "bigdecimal-04"
     - name: Build scylla-cql
-      run: cargo build --verbose --all-targets --manifest-path "scylla-cql/Cargo.toml"
+      run: cargo build --verbose --all-targets --manifest-path "scylla-cql/Cargo.toml" --features "full-serialization"
     - name: Build
-      run: cargo build --verbose --examples
+      run: cargo build --verbose --all-targets --features "full-serialization"
     - name: Run tests
-      run: SCYLLA_URI=172.42.0.2:9042 SCYLLA_URI2=172.42.0.3:9042 SCYLLA_URI3=172.42.0.4:9042 cargo test --verbose
+      run: |
+        cargo clean
+        RUST_LOG=trace SCYLLA_URI=172.42.0.2:9042 SCYLLA_URI2=172.42.0.3:9042 SCYLLA_URI3=172.42.0.4:9042 cargo test --verbose --features "full-serialization"
     - name: Stop the cluster
       if: ${{ always() }}
       run: docker compose -f test/cluster/docker-compose.yml stop
@@ -56,12 +78,14 @@ jobs:
         rustup override set ${{ env.rust_min }}
     - name: Print Rust version
       run: rustc --version
+    - name: Use MSRV Cargo.lock
+      run: mv Cargo.lock.msrv Cargo.lock
     - name: MSRV cargo check with features
-      run: cargo check --verbose --examples --tests
+      run: cargo check --verbose --all-targets --all-features --locked
     - name: MSRV cargo check without features
-      run: cargo check --verbose --manifest-path "scylla/Cargo.toml"
+      run: cargo check --verbose --all-targets --locked --manifest-path "scylla/Cargo.toml"
     - name: MSRV cargo check scylla-cql
-      run: cargo check --verbose --all-targets --manifest-path "scylla-cql/Cargo.toml"
+      run: cargo check --verbose --all-targets --locked --manifest-path "scylla-cql/Cargo.toml"
 
   # Tests that docstrings generate docs without warnings
   cargo_docs:

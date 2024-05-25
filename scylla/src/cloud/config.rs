@@ -184,13 +184,13 @@ mod deserialize {
         // +optional
         apiVersion: Option<String>,
 
-        // Datacenters is a map of referencable names to datacenter configs.
+        // Datacenters is a map of referenceable names to datacenter configs.
         datacenters: HashMap<String, Datacenter>,
 
-        // AuthInfos is a map of referencable names to authentication configs.
+        // AuthInfos is a map of referenceable names to authentication configs.
         authInfos: HashMap<String, AuthInfo>,
 
-        // Contexts is a map of referencable names to context configs.
+        // Contexts is a map of referenceable names to context configs.
         contexts: HashMap<String, Context>,
 
         // CurrentContext is the name of the context that you would like to use by default.
@@ -551,6 +551,7 @@ mod deserialize {
     #[cfg(test)]
     mod tests {
         use crate::cloud::config::deserialize::Parameters;
+        use crate::test_utils::setup_tracing;
 
         use super::super::CloudConfig;
         use super::RawCloudConfig;
@@ -599,6 +600,7 @@ mod deserialize {
 
         #[test]
         fn test_cloud_config_dc_validation_no_cert_provided() {
+            setup_tracing();
             let dc_no_cert = super::Datacenter {
                 certificateAuthorityPath: None,
                 certificateAuthorityData: None,
@@ -609,6 +611,7 @@ mod deserialize {
 
         #[test]
         fn test_cloud_config_dc_validation_cert_not_found() {
+            setup_tracing();
             let dc_cert_nonfound = super::Datacenter {
                 certificateAuthorityPath: Some(NO_PEM_PATH.into()),
                 certificateAuthorityData: None,
@@ -619,6 +622,7 @@ mod deserialize {
 
         #[test]
         fn test_cloud_config_dc_validation_invalid_cert() {
+            setup_tracing();
             let dc_invalid_cert = super::Datacenter {
                 certificateAuthorityData: Some("INVALID CERFITICATE".into()),
                 ..dc_valid()
@@ -628,6 +632,7 @@ mod deserialize {
 
         #[test]
         fn test_cloud_config_dc_validation_cert_found_bad() {
+            setup_tracing();
             let dc_cert_found_bad = super::Datacenter {
                 certificateAuthorityPath: Some(BAD_PEM_PATH.into()),
                 certificateAuthorityData: None,
@@ -638,6 +643,7 @@ mod deserialize {
 
         #[test]
         fn test_cloud_config_dc_validation_cert_found_good() {
+            setup_tracing();
             let dc_cert_found_good = super::Datacenter {
                 certificateAuthorityPath: Some(GOOD_PEM_PATH.into()),
                 certificateAuthorityData: None,
@@ -648,6 +654,7 @@ mod deserialize {
 
         #[test]
         fn test_cloud_config_dc_validation_domain_empty() {
+            setup_tracing();
             let dc_bad_domain_empty = super::Datacenter {
                 nodeDomain: "".into(),
                 ..dc_valid()
@@ -657,6 +664,7 @@ mod deserialize {
 
         #[test]
         fn test_cloud_config_dc_validation_domain_trailing_minus() {
+            setup_tracing();
             let dc_bad_domain_trailing_minus = super::Datacenter {
                 nodeDomain: "cql.scylla-.com".into(),
                 ..dc_valid()
@@ -666,6 +674,7 @@ mod deserialize {
 
         #[test]
         fn test_cloud_config_dc_validation_domain_interior_minus() {
+            setup_tracing();
             let dc_good_domain_interior_minus = super::Datacenter {
                 nodeDomain: "cql.scylla-cloud.com".into(),
                 ..dc_valid()
@@ -675,6 +684,7 @@ mod deserialize {
 
         #[test]
         fn test_cloud_config_dc_validation_domain_special_sign() {
+            setup_tracing();
             let dc_bad_domain_special_sign = super::Datacenter {
                 nodeDomain: "cql.$cylla-cloud.com".into(),
                 ..dc_valid()
@@ -684,6 +694,7 @@ mod deserialize {
 
         #[test]
         fn test_cloud_config_dc_validation_bad_server_url() {
+            setup_tracing();
             let dc_bad_server_not_url = super::Datacenter {
                 server: "NotAUrl".into(),
                 ..dc_valid()
@@ -699,6 +710,7 @@ mod deserialize {
 
         #[test]
         fn test_cloud_config_unsupported_api_version() {
+            setup_tracing();
             let mut config = RawCloudConfig::try_from(CCM_CONFIG).unwrap();
             config.apiVersion = Some("1.0".into());
             // The mere unknown api version should not be considered an erroneous input, but a warning will be logged.
@@ -707,6 +719,7 @@ mod deserialize {
 
         #[test]
         fn test_cloud_config_deserialisation() {
+            setup_tracing();
             {
                 // CCM standard config
                 let config = RawCloudConfig::try_from(CCM_CONFIG).unwrap();
@@ -786,6 +799,7 @@ mod deserialize {
 
         #[test]
         fn test_cloud_config_validation() {
+            setup_tracing();
             {
                 // CCM standard config
                 let config = RawCloudConfig::try_from(CCM_CONFIG).unwrap();

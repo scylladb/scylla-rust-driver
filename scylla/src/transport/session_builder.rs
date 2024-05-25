@@ -708,7 +708,7 @@ impl<K: SessionBuilderKind> GenericSessionBuilder<K> {
     pub fn keepalive_timeout(mut self, timeout: Duration) -> Self {
         if timeout <= Duration::from_secs(1) {
             warn!(
-                "Setting the keepalive timeout to low values ({:?}) is not recommended as it may aggresively close connections. Consider setting it above 5 seconds.",
+                "Setting the keepalive timeout to low values ({:?}) is not recommended as it may aggressively close connections. Consider setting it above 5 seconds.",
                 timeout
             );
         }
@@ -717,8 +717,8 @@ impl<K: SessionBuilderKind> GenericSessionBuilder<K> {
         self
     }
 
-    /// Enables automatic wait for schema agreement and sets the timeout for it.
-    /// By default, it is enabled and the timeout is 60 seconds.
+    /// Sets the timeout for waiting for schema agreement.
+    /// By default, the timeout is 60 seconds.
     ///
     /// # Example
     /// ```
@@ -726,19 +726,19 @@ impl<K: SessionBuilderKind> GenericSessionBuilder<K> {
     /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
     /// let session: Session = SessionBuilder::new()
     ///     .known_node("127.0.0.1:9042")
-    ///     .auto_schema_agreement_timeout(std::time::Duration::from_secs(120))
+    ///     .schema_agreement_timeout(std::time::Duration::from_secs(120))
     ///     .build()
     ///     .await?;
     /// # Ok(())
     /// # }
     /// ```
-    pub fn auto_schema_agreement_timeout(mut self, timeout: Duration) -> Self {
-        self.config.auto_await_schema_agreement_timeout = Some(timeout);
+    pub fn schema_agreement_timeout(mut self, timeout: Duration) -> Self {
+        self.config.schema_agreement_timeout = timeout;
         self
     }
 
-    /// Disables automatic wait for schema agreement.
-    /// By default, it is enabled and the timeout is 60 seconds.
+    /// Controls automatic waiting for schema agreement after a schema-altering
+    /// statement is sent. By default, it is enabled.
     ///
     /// # Example
     /// ```
@@ -746,14 +746,14 @@ impl<K: SessionBuilderKind> GenericSessionBuilder<K> {
     /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
     /// let session: Session = SessionBuilder::new()
     ///     .known_node("127.0.0.1:9042")
-    ///     .no_auto_schema_agreement()
+    ///     .auto_await_schema_agreement(false)
     ///     .build()
     ///     .await?;
     /// # Ok(())
     /// # }
     /// ```
-    pub fn no_auto_schema_agreement(mut self) -> Self {
-        self.config.auto_await_schema_agreement_timeout = None;
+    pub fn auto_await_schema_agreement(mut self, enabled: bool) -> Self {
+        self.config.schema_agreement_automatic_waiting = enabled;
         self
     }
 
@@ -816,6 +816,10 @@ impl<K: SessionBuilderKind> GenericSessionBuilder<K> {
     /// Tracing info might not be available immediately on queried node - that's why
     /// the driver performs a few attempts with sleeps in between.
     ///
+    /// Cassandra users may want to increase this value - the default is good
+    /// for Scylla, but Cassandra sometimes needs more time for the data to
+    /// appear in tracing table.
+    ///
     /// # Example
     /// ```
     /// # use scylla::{Session, SessionBuilder};
@@ -840,6 +844,10 @@ impl<K: SessionBuilderKind> GenericSessionBuilder<K> {
     ///
     /// Tracing info might not be available immediately on queried node - that's why
     /// the driver performs a few attempts with sleeps in between.
+    ///
+    /// Cassandra users may want to increase this value - the default is good
+    /// for Scylla, but Cassandra sometimes needs more time for the data to
+    /// appear in tracing table.
     ///
     /// # Example
     /// ```
@@ -910,6 +918,30 @@ impl<K: SessionBuilderKind> GenericSessionBuilder<K> {
         self.config.enable_write_coalescing = enable;
         self
     }
+
+    /// Set the interval at which the driver refreshes the cluster metadata which contains information
+    /// about the cluster topology as well as the cluster schema.
+    ///
+    /// The default is 60 seconds.
+    ///
+    /// In the given example, we have set the duration value to 20 seconds, which
+    /// means that the metadata is refreshed every 20 seconds.
+    /// # Example
+    /// ```
+    /// # use scylla::{Session, SessionBuilder};
+    /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
+    ///     let session: Session = SessionBuilder::new()
+    ///         .known_node("127.0.0.1:9042")
+    ///         .cluster_metadata_refresh_interval(std::time::Duration::from_secs(20))
+    ///         .build()
+    ///         .await?;
+    /// #   Ok(())
+    /// # }
+    /// ```
+    pub fn cluster_metadata_refresh_interval(mut self, interval: Duration) -> Self {
+        self.config.cluster_metadata_refresh_interval = interval;
+        self
+    }
 }
 
 /// Creates a [`SessionBuilder`] with default configuration, same as [`SessionBuilder::new`]
@@ -925,14 +957,16 @@ mod tests {
     use scylla_cql::Consistency;
 
     use super::SessionBuilder;
+    use crate::test_utils::setup_tracing;
     use crate::transport::execution_profile::{defaults, ExecutionProfile};
-    use crate::transport::session::KnownNode;
+    use crate::transport::node::KnownNode;
     use crate::transport::Compression;
     use std::net::{IpAddr, Ipv4Addr, SocketAddr};
     use std::time::Duration;
 
     #[test]
     fn default_session_builder() {
+        setup_tracing();
         let builder = SessionBuilder::new();
 
         assert!(builder.config.known_nodes.is_empty());
@@ -941,6 +975,7 @@ mod tests {
 
     #[test]
     fn add_known_node() {
+        setup_tracing();
         let mut builder = SessionBuilder::new();
 
         builder = builder.known_node("test_hostname");
@@ -954,6 +989,7 @@ mod tests {
 
     #[test]
     fn add_known_node_addr() {
+        setup_tracing();
         let mut builder = SessionBuilder::new();
 
         let addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(172, 17, 0, 3)), 1357);
@@ -965,6 +1001,7 @@ mod tests {
 
     #[test]
     fn add_known_nodes() {
+        setup_tracing();
         let mut builder = SessionBuilder::new();
 
         builder = builder.known_nodes(["test_hostname1", "test_hostname2"]);
@@ -981,6 +1018,7 @@ mod tests {
 
     #[test]
     fn add_known_nodes_addr() {
+        setup_tracing();
         let mut builder = SessionBuilder::new();
 
         let addr1 = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(172, 17, 0, 3)), 1357);
@@ -997,6 +1035,7 @@ mod tests {
 
     #[test]
     fn compression() {
+        setup_tracing();
         let mut builder = SessionBuilder::new();
         assert_eq!(builder.config.compression, None);
 
@@ -1012,6 +1051,7 @@ mod tests {
 
     #[test]
     fn tcp_nodelay() {
+        setup_tracing();
         let mut builder = SessionBuilder::new();
         assert!(builder.config.tcp_nodelay);
 
@@ -1024,6 +1064,7 @@ mod tests {
 
     #[test]
     fn use_keyspace() {
+        setup_tracing();
         let mut builder = SessionBuilder::new();
         assert_eq!(builder.config.used_keyspace, None);
         assert!(!builder.config.keyspace_case_sensitive);
@@ -1039,6 +1080,7 @@ mod tests {
 
     #[test]
     fn connection_timeout() {
+        setup_tracing();
         let mut builder = SessionBuilder::new();
         assert_eq!(
             builder.config.connect_timeout,
@@ -1054,6 +1096,7 @@ mod tests {
 
     #[test]
     fn fetch_schema_metadata() {
+        setup_tracing();
         let mut builder = SessionBuilder::new();
         assert!(builder.config.fetch_schema_metadata);
 
@@ -1067,6 +1110,7 @@ mod tests {
     // LatencyAwarePolicy, which is used in the test, requires presence of Tokio runtime.
     #[tokio::test]
     async fn execution_profile() {
+        setup_tracing();
         let default_builder = SessionBuilder::new();
         let default_execution_profile = default_builder
             .config
@@ -1125,7 +1169,18 @@ mod tests {
     }
 
     #[test]
+    fn cluster_metadata_refresh_interval() {
+        setup_tracing();
+        let builder = SessionBuilder::new();
+        assert_eq!(
+            builder.config.cluster_metadata_refresh_interval,
+            std::time::Duration::from_secs(60)
+        );
+    }
+
+    #[test]
     fn all_features() {
+        setup_tracing();
         let mut builder = SessionBuilder::new();
 
         let addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(172, 17, 0, 3)), 8465);
@@ -1140,6 +1195,7 @@ mod tests {
         builder = builder.tcp_nodelay(true);
         builder = builder.use_keyspace("ks_name", true);
         builder = builder.fetch_schema_metadata(false);
+        builder = builder.cluster_metadata_refresh_interval(Duration::from_secs(1));
 
         assert_eq!(
             builder.config.known_nodes,
@@ -1155,6 +1211,10 @@ mod tests {
 
         assert_eq!(builder.config.compression, Some(Compression::Snappy));
         assert!(builder.config.tcp_nodelay);
+        assert_eq!(
+            builder.config.cluster_metadata_refresh_interval,
+            Duration::from_secs(1)
+        );
 
         assert_eq!(builder.config.used_keyspace, Some("ks_name".to_string()));
 

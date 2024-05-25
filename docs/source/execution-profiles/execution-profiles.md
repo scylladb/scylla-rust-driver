@@ -14,7 +14,7 @@ There are two classes of objects related to execution profiles: `ExecutionProfil
 \
 At any moment, handles [can be remapped](remap.md) to point to another `ExecutionProfile`. This allows convenient switching between workloads for all `Sessions` and/or `Statements` that, for instance, share common characteristics.
 
-```eval_rst
+```{eval-rst}
 .. toctree::
    :hidden:
    :glob:

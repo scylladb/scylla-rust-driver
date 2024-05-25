@@ -3,8 +3,11 @@
 //! See [the book](https://rust-driver.docs.scylladb.com/stable/load-balancing/load-balancing.html) for more information
 
 use super::{cluster::ClusterData, NodeRef};
-use crate::routing::Token;
-use scylla_cql::{errors::QueryError, frame::types};
+use crate::routing::{Shard, Token};
+use scylla_cql::{
+    errors::QueryError,
+    frame::{response::result::TableSpec, types},
+};
 
 use std::time::Duration;
 
@@ -26,9 +29,11 @@ pub struct RoutingInfo<'a> {
     pub consistency: types::Consistency,
     pub serial_consistency: Option<types::SerialConsistency>,
 
-    /// Information about token and keyspace is the basis of token-aware routing.
+    /// Information that are the basis of token-aware routing:
+    /// - token, keyspace for vnodes-based routing;
+    /// - token, keyspace, table for tablets-based routing.
     pub token: Option<Token>,
-    pub keyspace: Option<&'a str>,
+    pub table: Option<&'a TableSpec<'a>>,
 
     /// If, while preparing, we received from the cluster information that the statement is an LWT,
     /// then we can use this information for routing optimisation. Namely, an optimisation
@@ -43,18 +48,20 @@ pub struct RoutingInfo<'a> {
 ///
 /// It is computed on-demand, only if querying the most preferred node fails
 /// (or when speculative execution is triggered).
-pub type FallbackPlan<'a> = Box<dyn Iterator<Item = NodeRef<'a>> + Send + Sync + 'a>;
+pub type FallbackPlan<'a> =
+    Box<dyn Iterator<Item = (NodeRef<'a>, Option<Shard>)> + Send + Sync + 'a>;
 
-/// Policy that decides which nodes to contact for each query.
+/// Policy that decides which nodes and shards to contact for each query.
 ///
 /// When a query is prepared to be sent to ScyllaDB/Cassandra, a `LoadBalancingPolicy`
-/// implementation constructs a load balancing plan. That plan is a list of nodes to which
-/// the driver will try to send the query. The first elements of the plan are the nodes which are
+/// implementation constructs a load balancing plan. That plan is a list of
+/// targets (target is a node + an optional shard) to which
+/// the driver will try to send the query. The first elements of the plan are the targets which are
 /// the best to contact (e.g. they might have the lowest latency).
 ///
-/// Most queries are send on the first try, so the query execution layer rarely needs to know more
-/// than one node from plan. To better optimize that case, `LoadBalancingPolicy` has two methods:
-/// `pick` and `fallback`. `pick` returns a first node to contact for a given query, `fallback`
+/// Most queries are sent on the first try, so the query execution layer rarely needs to know more
+/// than one target from plan. To better optimize that case, `LoadBalancingPolicy` has two methods:
+/// `pick` and `fallback`. `pick` returns the first target to contact for a given query, `fallback`
 /// returns the rest of the load balancing plan.
 ///
 /// `fallback` is called not only if a send to `pick`ed node failed (or when executing
@@ -66,7 +73,11 @@ pub type FallbackPlan<'a> = Box<dyn Iterator<Item = NodeRef<'a>> + Send + Sync +
 /// This trait is used to produce an iterator of nodes to contact for a given query.
 pub trait LoadBalancingPolicy: Send + Sync + std::fmt::Debug {
     /// Returns the first node to contact for a given query.
-    fn pick<'a>(&'a self, query: &'a RoutingInfo, cluster: &'a ClusterData) -> Option<NodeRef<'a>>;
+    fn pick<'a>(
+        &'a self,
+        query: &'a RoutingInfo,
+        cluster: &'a ClusterData,
+    ) -> Option<(NodeRef<'a>, Option<Shard>)>;
 
     /// Returns all contact-appropriate nodes for a given query.
     fn fallback<'a>(&'a self, query: &'a RoutingInfo, cluster: &'a ClusterData)

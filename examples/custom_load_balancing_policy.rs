@@ -1,15 +1,29 @@
 use anyhow::Result;
+use rand::thread_rng;
+use rand::Rng;
+use scylla::transport::NodeRef;
 use scylla::{
     load_balancing::{LoadBalancingPolicy, RoutingInfo},
+    routing::Shard,
     transport::{ClusterData, ExecutionProfile},
     Session, SessionBuilder,
 };
 use std::{env, sync::Arc};
 
 /// Example load balancing policy that prefers nodes from favorite datacenter
+/// This is, of course, very naive, as it is completely non token-aware.
+/// For more realistic implementation, see [`DefaultPolicy`](scylla::load_balancing::DefaultPolicy).
 #[derive(Debug)]
 struct CustomLoadBalancingPolicy {
     fav_datacenter_name: String,
+}
+
+fn with_random_shard(node: NodeRef) -> (NodeRef, Option<Shard>) {
+    let nr_shards = node
+        .sharder()
+        .map(|sharder| sharder.nr_shards.get())
+        .unwrap_or(1);
+    (node, Some(thread_rng().gen_range(0..nr_shards) as Shard))
 }
 
 impl LoadBalancingPolicy for CustomLoadBalancingPolicy {
@@ -17,7 +31,7 @@ impl LoadBalancingPolicy for CustomLoadBalancingPolicy {
         &'a self,
         _info: &'a RoutingInfo,
         cluster: &'a ClusterData,
-    ) -> Option<scylla::transport::NodeRef<'a>> {
+    ) -> Option<(NodeRef<'a>, Option<Shard>)> {
         self.fallback(_info, cluster).next()
     }
 
@@ -31,9 +45,9 @@ impl LoadBalancingPolicy for CustomLoadBalancingPolicy {
             .unique_nodes_in_datacenter_ring(&self.fav_datacenter_name);
 
         match fav_dc_nodes {
-            Some(nodes) => Box::new(nodes.iter()),
+            Some(nodes) => Box::new(nodes.iter().map(with_random_shard)),
             // If there is no dc with provided name, fallback to other datacenters
-            None => Box::new(cluster.get_nodes_info().iter()),
+            None => Box::new(cluster.get_nodes_info().iter().map(with_random_shard)),
         }
     }
 

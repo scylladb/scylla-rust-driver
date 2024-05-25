@@ -1,5 +1,16 @@
 # Varint
-`Varint` is represented as [`num_bigint::BigInt`](https://docs.rs/num-bigint/0.4.0/num_bigint/struct.BigInt.html)
+`Varint` is represented as `value::CqlVarint` or [`num_bigint::BigInt`](https://docs.rs/num-bigint/0.4.0/num_bigint/struct.BigInt.html).
+
+## num_bigint::BigInt
+
+To make use of `num_bigint::BigInt` type, user should enable one of the available feature flags (`num-bigint-03` or `num-bigint-04`). They enable support for `num_bigint::BigInt` v0.3 and v0.4 accordingly.
+
+## value::CqlVarint
+
+Without any feature flags, the user can interact with `Varint` type by making use of `value::CqlVarint` which
+is a very simple wrapper representing the value as signed binary number in big-endian order.
+
+## Example
 
 ```rust
 # extern crate scylla;
@@ -18,10 +29,10 @@ session
     .await?;
 
 // Read a varint from the table
-if let Some(rows) = session.query("SELECT a FROM keyspace.table", &[]).await?.rows {
-    for row in rows.into_typed::<(BigInt,)>() {
-        let (varint_value,): (BigInt,) = row?;
-    }
+let result = session.query("SELECT a FROM keyspace.table", &[]).await?;
+let mut iter = result.rows_typed::<(BigInt,)>()?;
+while let Some((varint_value,)) = iter.next().transpose()? {
+    println!("{:?}", varint_value);
 }
 # Ok(())
 # }

@@ -1,16 +1,18 @@
 use crate as scylla;
 use crate::batch::{Batch, BatchStatement};
 use crate::frame::response::result::Row;
-use crate::frame::value::ValueList;
 use crate::prepared_statement::PreparedStatement;
 use crate::query::Query;
 use crate::retry_policy::{QueryInfo, RetryDecision, RetryPolicy, RetrySession};
 use crate::routing::Token;
 use crate::statement::Consistency;
+use crate::test_utils::{scylla_supports_tablets, setup_tracing};
 use crate::tracing::TracingInfo;
 use crate::transport::cluster::Datacenter;
 use crate::transport::errors::{BadKeyspaceName, BadQuery, DbError, QueryError};
-use crate::transport::partitioner::{Murmur3Partitioner, Partitioner, PartitionerName};
+use crate::transport::partitioner::{
+    calculate_token_for_partition_key, Murmur3Partitioner, Partitioner, PartitionerName,
+};
 use crate::transport::topology::Strategy::NetworkTopologyStrategy;
 use crate::transport::topology::{
     CollectionType, ColumnKind, CqlType, NativeType, UserDefinedType,
@@ -21,12 +23,14 @@ use crate::utils::test_utils::{
 use crate::CachingSession;
 use crate::ExecutionProfile;
 use crate::QueryResult;
-use crate::{IntoTypedRows, Session, SessionBuilder};
+use crate::{Session, SessionBuilder};
 use assert_matches::assert_matches;
 use bytes::Bytes;
 use futures::{FutureExt, StreamExt, TryStreamExt};
 use itertools::Itertools;
-use scylla_cql::frame::value::Value;
+use scylla_cql::frame::response::result::ColumnType;
+use scylla_cql::types::serialize::row::{SerializeRow, SerializedValues};
+use scylla_cql::types::serialize::value::SerializeCql;
 use std::collections::BTreeSet;
 use std::collections::{BTreeMap, HashMap};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -36,6 +40,7 @@ use uuid::Uuid;
 
 #[tokio::test]
 async fn test_connection_failure() {
+    setup_tracing();
     // Make sure that Session::create fails when the control connection
     // fails to connect.
 
@@ -60,6 +65,7 @@ async fn test_connection_failure() {
 
 #[tokio::test]
 async fn test_unprepared_statement() {
+    setup_tracing();
     let session = create_new_session_builder().build().await.unwrap();
     let ks = unique_keyspace_name();
 
@@ -135,7 +141,7 @@ async fn test_unprepared_statement() {
     assert_eq!(specs.len(), 3);
     for (spec, name) in specs.iter().zip(["a", "b", "c"]) {
         assert_eq!(spec.name, name); // Check column name.
-        assert_eq!(spec.table_spec.ks_name, ks);
+        assert_eq!(spec.table_spec.ks_name(), ks);
     }
     let mut results_from_manual_paging: Vec<Row> = vec![];
     let query = Query::new(format!("SELECT a, b, c FROM {}.t", ks)).with_page_size(1);
@@ -158,6 +164,7 @@ async fn test_unprepared_statement() {
 
 #[tokio::test]
 async fn test_prepared_statement() {
+    setup_tracing();
     let session = create_new_session_builder().build().await.unwrap();
     let ks = unique_keyspace_name();
 
@@ -190,7 +197,7 @@ async fn test_prepared_statement() {
     assert_eq!(specs.len(), 3);
     for (spec, name) in specs.iter().zip(["a", "b", "c"]) {
         assert_eq!(spec.name, name); // Check column name.
-        assert_eq!(spec.table_spec.ks_name, ks);
+        assert_eq!(spec.table_spec.ks_name(), ks);
     }
 
     let prepared_statement = session
@@ -206,7 +213,9 @@ async fn test_prepared_statement() {
         .unwrap();
 
     let values = (17_i32, 16_i32, "I'm prepared!!!");
-    let serialized_values = values.serialized().unwrap().into_owned();
+    let serialized_values_complex_pk = prepared_complex_pk_statement
+        .serialize_values(&values)
+        .unwrap();
 
     session.execute(&prepared_statement, &values).await.unwrap();
     session
@@ -216,54 +225,41 @@ async fn test_prepared_statement() {
 
     // Verify that token calculation is compatible with Scylla
     {
-        let rs = session
+        let (value,): (i64,) = session
             .query(format!("SELECT token(a) FROM {}.t2", ks), &[])
             .await
             .unwrap()
-            .rows
+            .single_row_typed()
             .unwrap();
-        let token = Token {
-            value: rs.first().unwrap().columns[0]
-                .as_ref()
-                .unwrap()
-                .as_bigint()
-                .unwrap(),
-        };
-        let prepared_token = Murmur3Partitioner::hash(
-            &prepared_statement
-                .compute_partition_key(&serialized_values)
-                .unwrap(),
-        );
+        let token = Token::new(value);
+        let prepared_token = Murmur3Partitioner
+            .hash_one(&prepared_statement.compute_partition_key(&values).unwrap());
         assert_eq!(token, prepared_token);
+        let mut pk = SerializedValues::new();
+        pk.add_value(&17_i32, &ColumnType::Int).unwrap();
         let cluster_data_token = session
             .get_cluster_data()
-            .compute_token(&ks, "t2", (17_i32,))
+            .compute_token(&ks, "t2", &pk)
             .unwrap();
         assert_eq!(token, cluster_data_token);
     }
     {
-        let rs = session
+        let (value,): (i64,) = session
             .query(format!("SELECT token(a,b,c) FROM {}.complex_pk", ks), &[])
             .await
             .unwrap()
-            .rows
+            .single_row_typed()
             .unwrap();
-        let token = Token {
-            value: rs.first().unwrap().columns[0]
-                .as_ref()
-                .unwrap()
-                .as_bigint()
-                .unwrap(),
-        };
-        let prepared_token = Murmur3Partitioner::hash(
+        let token = Token::new(value);
+        let prepared_token = Murmur3Partitioner.hash_one(
             &prepared_complex_pk_statement
-                .compute_partition_key(&serialized_values)
+                .compute_partition_key(&values)
                 .unwrap(),
         );
         assert_eq!(token, prepared_token);
         let cluster_data_token = session
             .get_cluster_data()
-            .compute_token(&ks, "complex_pk", &serialized_values)
+            .compute_token(&ks, "complex_pk", &serialized_values_complex_pk)
             .unwrap();
         assert_eq!(token, cluster_data_token);
     }
@@ -302,24 +298,22 @@ async fn test_prepared_statement() {
         assert_eq!(results_from_manual_paging, rs);
     }
     {
-        let rs = session
+        let (a, b, c, d, e): (i32, i32, String, i32, Option<i32>) = session
             .query(format!("SELECT a,b,c,d,e FROM {}.complex_pk", ks), &[])
             .await
             .unwrap()
-            .rows
+            .single_row_typed()
             .unwrap();
-        let r = rs.first().unwrap();
-        let a = r.columns[0].as_ref().unwrap().as_int().unwrap();
-        let b = r.columns[1].as_ref().unwrap().as_int().unwrap();
-        let c = r.columns[2].as_ref().unwrap().as_text().unwrap();
-        let d = r.columns[3].as_ref().unwrap().as_int().unwrap();
-        let e = r.columns[4].as_ref();
         assert!(e.is_none());
-        assert_eq!((a, b, c, d), (17, 16, &String::from("I'm prepared!!!"), 7))
+        assert_eq!(
+            (a, b, c.as_str(), d, e),
+            (17, 16, "I'm prepared!!!", 7, None)
+        );
     }
-    // Check that ValueList macro works
+    // Check that SerializeRow macro works
     {
-        #[derive(scylla::ValueList, scylla::FromRow, PartialEq, Debug, Clone)]
+        #[derive(scylla::SerializeRow, scylla::FromRow, PartialEq, Debug, Clone)]
+        #[scylla(crate = crate)]
         struct ComplexPk {
             a: i32,
             b: i32,
@@ -344,7 +338,7 @@ async fn test_prepared_statement() {
             )
             .await
             .unwrap();
-        let mut rs = session
+        let output: ComplexPk = session
             .query(
                 format!(
                     "SELECT * FROM {}.complex_pk WHERE a = 9 and b = 8 and c = 'seven'",
@@ -354,16 +348,15 @@ async fn test_prepared_statement() {
             )
             .await
             .unwrap()
-            .rows
-            .unwrap()
-            .into_typed::<ComplexPk>();
-        let output = rs.next().unwrap().unwrap();
+            .single_row_typed()
+            .unwrap();
         assert_eq!(input, output)
     }
 }
 
 #[tokio::test]
 async fn test_batch() {
+    setup_tracing();
     let session = Arc::new(create_new_session_builder().build().await.unwrap());
     let ks = unique_keyspace_name();
 
@@ -414,29 +407,22 @@ async fn test_batch() {
     .await
     .unwrap();
 
-    let rs = session
+    let mut results: Vec<(i32, i32, String)> = session
         .query(format!("SELECT a, b, c FROM {}.t_batch", ks), &[])
         .await
         .unwrap()
-        .rows
+        .rows_typed()
+        .unwrap()
+        .collect::<Result<_, _>>()
         .unwrap();
 
-    let mut results: Vec<(i32, i32, &String)> = rs
-        .iter()
-        .map(|r| {
-            let a = r.columns[0].as_ref().unwrap().as_int().unwrap();
-            let b = r.columns[1].as_ref().unwrap().as_int().unwrap();
-            let c = r.columns[2].as_ref().unwrap().as_text().unwrap();
-            (a, b, c)
-        })
-        .collect();
     results.sort();
     assert_eq!(
         results,
         vec![
-            (1, 2, &String::from("abc")),
-            (1, 4, &String::from("hello")),
-            (7, 11, &String::from(""))
+            (1, 2, String::from("abc")),
+            (1, 4, String::from("hello")),
+            (7, 11, String::from(""))
         ]
     );
 
@@ -455,30 +441,24 @@ async fn test_batch() {
         .unwrap();
     session.batch(&batch, values).await.unwrap();
 
-    let rs = session
+    let results: Vec<(i32, i32, String)> = session
         .query(
             format!("SELECT a, b, c FROM {}.t_batch WHERE a = 4", ks),
             &[],
         )
         .await
         .unwrap()
-        .rows
+        .rows_typed()
+        .unwrap()
+        .collect::<Result<_, _>>()
         .unwrap();
-    let results: Vec<(i32, i32, &String)> = rs
-        .iter()
-        .map(|r| {
-            let a = r.columns[0].as_ref().unwrap().as_int().unwrap();
-            let b = r.columns[1].as_ref().unwrap().as_int().unwrap();
-            let c = r.columns[2].as_ref().unwrap().as_text().unwrap();
-            (a, b, c)
-        })
-        .collect();
 
-    assert_eq!(results, vec![(4, 20, &String::from("foobar"))]);
+    assert_eq!(results, vec![(4, 20, String::from("foobar"))]);
 }
 
 #[tokio::test]
 async fn test_token_calculation() {
+    setup_tracing();
     let session = create_new_session_builder().build().await.unwrap();
     let ks = unique_keyspace_name();
 
@@ -508,30 +488,21 @@ async fn test_token_calculation() {
             s.push('a');
         }
         let values = (&s,);
-        let serialized_values = values.serialized().unwrap().into_owned();
+        let serialized_values = prepared_statement.serialize_values(&values).unwrap();
         session.execute(&prepared_statement, &values).await.unwrap();
 
-        let rs = session
+        let (value,): (i64,) = session
             .query(
                 format!("SELECT token(a) FROM {}.t3 WHERE a = ?", ks),
                 &values,
             )
             .await
             .unwrap()
-            .rows
+            .single_row_typed()
             .unwrap();
-        let token = Token {
-            value: rs.first().unwrap().columns[0]
-                .as_ref()
-                .unwrap()
-                .as_bigint()
-                .unwrap(),
-        };
-        let prepared_token = Murmur3Partitioner::hash(
-            &prepared_statement
-                .compute_partition_key(&serialized_values)
-                .unwrap(),
-        );
+        let token = Token::new(value);
+        let prepared_token = Murmur3Partitioner
+            .hash_one(&prepared_statement.compute_partition_key(&values).unwrap());
         assert_eq!(token, prepared_token);
         let cluster_data_token = session
             .get_cluster_data()
@@ -543,10 +514,21 @@ async fn test_token_calculation() {
 
 #[tokio::test]
 async fn test_token_awareness() {
+    setup_tracing();
     let session = create_new_session_builder().build().await.unwrap();
     let ks = unique_keyspace_name();
 
-    session.query(format!("CREATE KEYSPACE IF NOT EXISTS {} WITH REPLICATION = {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}}", ks), &[]).await.unwrap();
+    // Need to disable tablets in this test because they make token routing
+    // work differently, and in this test we want to test the classic token ring
+    // behavior.
+    let mut create_ks = format!(
+        "CREATE KEYSPACE IF NOT EXISTS {ks} WITH REPLICATION = {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}}"
+    );
+    if scylla_supports_tablets(&session).await {
+        create_ks += " AND TABLETS = {'enabled': false}"
+    }
+
+    session.query(create_ks, &[]).await.unwrap();
     session
         .query(
             format!("CREATE TABLE IF NOT EXISTS {}.t (a text primary key)", ks),
@@ -591,6 +573,7 @@ async fn test_token_awareness() {
 
 #[tokio::test]
 async fn test_use_keyspace() {
+    setup_tracing();
     let session = create_new_session_builder().build().await.unwrap();
     let ks = unique_keyspace_name();
 
@@ -620,9 +603,8 @@ async fn test_use_keyspace() {
         .query("SELECT * FROM tab", &[])
         .await
         .unwrap()
-        .rows
+        .rows_typed::<(String,)>()
         .unwrap()
-        .into_typed::<(String,)>()
         .map(|res| res.unwrap().0)
         .collect();
 
@@ -644,7 +626,7 @@ async fn test_use_keyspace() {
         )))
     ));
 
-    let long_name: String = vec!['a'; 49].iter().collect();
+    let long_name: String = ['a'; 49].iter().collect();
     assert!(matches!(
         session.use_keyspace(long_name, false).await,
         Err(QueryError::BadQuery(BadQuery::BadKeyspaceName(
@@ -670,9 +652,8 @@ async fn test_use_keyspace() {
         .query("SELECT * FROM tab", &[])
         .await
         .unwrap()
-        .rows
+        .rows_typed::<(String,)>()
         .unwrap()
-        .into_typed::<(String,)>()
         .map(|res| res.unwrap().0)
         .collect();
 
@@ -683,6 +664,7 @@ async fn test_use_keyspace() {
 
 #[tokio::test]
 async fn test_use_keyspace_case_sensitivity() {
+    setup_tracing();
     let session = create_new_session_builder().build().await.unwrap();
     let ks_lower = unique_keyspace_name().to_lowercase();
     let ks_upper = ks_lower.to_uppercase();
@@ -722,7 +704,7 @@ async fn test_use_keyspace_case_sensitivity() {
         .await
         .unwrap();
 
-    // Use uppercase keyspace without case sesitivity
+    // Use uppercase keyspace without case sensitivity
     // Should select the lowercase one
     session.use_keyspace(ks_upper.clone(), false).await.unwrap();
 
@@ -730,15 +712,14 @@ async fn test_use_keyspace_case_sensitivity() {
         .query("SELECT * from tab", &[])
         .await
         .unwrap()
-        .rows
+        .rows_typed::<(String,)>()
         .unwrap()
-        .into_typed::<(String,)>()
         .map(|row| row.unwrap().0)
         .collect();
 
     assert_eq!(rows, vec!["lowercase".to_string()]);
 
-    // Use uppercase keyspace with case sesitivity
+    // Use uppercase keyspace with case sensitivity
     // Should select the uppercase one
     session.use_keyspace(ks_upper, true).await.unwrap();
 
@@ -746,9 +727,8 @@ async fn test_use_keyspace_case_sensitivity() {
         .query("SELECT * from tab", &[])
         .await
         .unwrap()
-        .rows
+        .rows_typed::<(String,)>()
         .unwrap()
-        .into_typed::<(String,)>()
         .map(|row| row.unwrap().0)
         .collect();
 
@@ -757,6 +737,7 @@ async fn test_use_keyspace_case_sensitivity() {
 
 #[tokio::test]
 async fn test_raw_use_keyspace() {
+    setup_tracing();
     let session = create_new_session_builder().build().await.unwrap();
     let ks = unique_keyspace_name();
 
@@ -787,9 +768,8 @@ async fn test_raw_use_keyspace() {
         .query("SELECT * FROM tab", &[])
         .await
         .unwrap()
-        .rows
+        .rows_typed::<(String,)>()
         .unwrap()
-        .into_typed::<(String,)>()
         .map(|res| res.unwrap().0)
         .collect();
 
@@ -809,6 +789,7 @@ async fn test_raw_use_keyspace() {
 
 #[tokio::test]
 async fn test_fetch_system_keyspace() {
+    setup_tracing();
     let session = create_new_session_builder().build().await.unwrap();
 
     let prepared_statement = session
@@ -822,6 +803,7 @@ async fn test_fetch_system_keyspace() {
 // Test that some Database Errors are parsed correctly
 #[tokio::test]
 async fn test_db_errors() {
+    setup_tracing();
     let session = create_new_session_builder().build().await.unwrap();
     let ks = unique_keyspace_name();
 
@@ -876,6 +858,7 @@ async fn test_db_errors() {
 
 #[tokio::test]
 async fn test_tracing() {
+    setup_tracing();
     let session = create_new_session_builder().build().await.unwrap();
     let ks = unique_keyspace_name();
 
@@ -1081,22 +1064,25 @@ async fn assert_in_tracing_table(session: &Session, tracing_uuid: Uuid) {
     // Tracing info might not be immediately available
     // If rows are empty perform 8 retries with a 32ms wait in between
 
-    for _ in 0..8 {
-        let row_opt = session
+    // The reason why we enable so long waiting for TracingInfo is... Cassandra. (Yes, again.)
+    // In Cassandra Java Driver, the wait time for tracing info is 10 seconds, so here we do the same.
+    // However, as Scylla usually gets TracingInfo ready really fast (our default interval is hence 3ms),
+    // we stick to a not-so-much-terribly-long interval here.
+    for _ in 0..200 {
+        let rows_num = session
             .query(traces_query.clone(), (tracing_uuid,))
             .await
             .unwrap()
-            .rows
-            .into_iter()
-            .next();
+            .rows_num()
+            .unwrap();
 
-        if row_opt.is_some() {
+        if rows_num > 0 {
             // Ok there was some row for this tracing_uuid
             return;
         }
 
         // Otherwise retry
-        tokio::time::sleep(std::time::Duration::from_millis(32)).await;
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
     }
 
     // If all retries failed panic with an error
@@ -1104,29 +1090,22 @@ async fn assert_in_tracing_table(session: &Session, tracing_uuid: Uuid) {
 }
 
 #[tokio::test]
-async fn test_fetch_schema_version() {
+async fn test_await_schema_agreement() {
+    setup_tracing();
     let session = create_new_session_builder().build().await.unwrap();
-    session.fetch_schema_version().await.unwrap();
+    let _schema_version = session.await_schema_agreement().await.unwrap();
 }
 
 #[tokio::test]
-async fn test_await_schema_agreement() {
+async fn test_await_timed_schema_agreement() {
+    setup_tracing();
     let session = create_new_session_builder().build().await.unwrap();
     session.await_schema_agreement().await.unwrap();
 }
 
 #[tokio::test]
-async fn test_await_timed_schema_agreement() {
-    use std::time::Duration;
-    let session = create_new_session_builder().build().await.unwrap();
-    session
-        .await_timed_schema_agreement(Duration::from_millis(50))
-        .await
-        .unwrap();
-}
-
-#[tokio::test]
 async fn test_timestamp() {
+    setup_tracing();
     let session = create_new_session_builder().build().await.unwrap();
     let ks = unique_keyspace_name();
 
@@ -1215,9 +1194,8 @@ async fn test_timestamp() {
         )
         .await
         .unwrap()
-        .rows
+        .rows_typed::<(String, String, i64)>()
         .unwrap()
-        .into_typed::<(String, String, i64)>()
         .map(Result::unwrap)
         .collect::<Vec<_>>();
     results.sort();
@@ -1238,6 +1216,7 @@ async fn test_timestamp() {
 #[ignore = "works on remote Scylla instances only (local ones are too fast)"]
 #[tokio::test]
 async fn test_request_timeout() {
+    setup_tracing();
     use std::time::Duration;
 
     let fast_timeouting_profile_handle = ExecutionProfile::builder()
@@ -1304,6 +1283,7 @@ async fn test_request_timeout() {
 
 #[tokio::test]
 async fn test_prepared_config() {
+    setup_tracing();
     let session = create_new_session_builder().build().await.unwrap();
 
     let mut query = Query::new("SELECT * FROM system_schema.tables");
@@ -1390,6 +1370,7 @@ fn udt_type_c_def(ks: &str) -> Arc<UserDefinedType> {
 
 #[tokio::test]
 async fn test_schema_types_in_metadata() {
+    setup_tracing();
     let session = create_new_session_builder().build().await.unwrap();
     let ks = unique_keyspace_name();
 
@@ -1545,6 +1526,7 @@ async fn test_schema_types_in_metadata() {
 
 #[tokio::test]
 async fn test_user_defined_types_in_metadata() {
+    setup_tracing();
     let session = create_new_session_builder().build().await.unwrap();
     let ks = unique_keyspace_name();
 
@@ -1605,6 +1587,7 @@ async fn test_user_defined_types_in_metadata() {
 
 #[tokio::test]
 async fn test_column_kinds_in_metadata() {
+    setup_tracing();
     let session = create_new_session_builder().build().await.unwrap();
     let ks = unique_keyspace_name();
 
@@ -1647,6 +1630,7 @@ async fn test_column_kinds_in_metadata() {
 
 #[tokio::test]
 async fn test_primary_key_ordering_in_metadata() {
+    setup_tracing();
     let session = create_new_session_builder().build().await.unwrap();
     let ks = unique_keyspace_name();
 
@@ -1688,6 +1672,7 @@ async fn test_primary_key_ordering_in_metadata() {
 
 #[tokio::test]
 async fn test_table_partitioner_in_metadata() {
+    setup_tracing();
     if option_env!("CDC") == Some("disabled") {
         return;
     }
@@ -1695,10 +1680,15 @@ async fn test_table_partitioner_in_metadata() {
     let session = create_new_session_builder().build().await.unwrap();
     let ks = unique_keyspace_name();
 
-    session
-        .query(format!("CREATE KEYSPACE {} WITH REPLICATION = {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}}", ks), &[])
-        .await
-        .unwrap();
+    // This test uses CDC which is not yet compatible with Scylla's tablets.
+    let mut create_ks = format!(
+        "CREATE KEYSPACE {ks} WITH REPLICATION = {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}}"
+    );
+    if scylla_supports_tablets(&session).await {
+        create_ks += " AND TABLETS = {'enabled': false}";
+    }
+
+    session.query(create_ks, &[]).await.unwrap();
 
     session.query(format!("USE {}", ks), &[]).await.unwrap();
 
@@ -1727,6 +1717,7 @@ async fn test_table_partitioner_in_metadata() {
 
 #[tokio::test]
 async fn test_turning_off_schema_fetching() {
+    setup_tracing();
     let session = create_new_session_builder()
         .fetch_schema_metadata(false)
         .build()
@@ -1835,9 +1826,8 @@ async fn test_named_bind_markers() {
         .query("SELECT pk, ck, v FROM t", &[])
         .await
         .unwrap()
-        .rows
+        .rows_typed::<(i32, i32, i32)>()
         .unwrap()
-        .into_typed::<(i32, i32, i32)>()
         .map(|res| res.unwrap())
         .collect();
 
@@ -1859,7 +1849,14 @@ async fn test_prepared_partitioner() {
     let session = create_new_session_builder().build().await.unwrap();
     let ks = unique_keyspace_name();
 
-    session.query(format!("CREATE KEYSPACE IF NOT EXISTS {} WITH REPLICATION = {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}}", ks), &[]).await.unwrap();
+    // This test uses CDC which is not yet compatible with Scylla's tablets.
+    let mut create_ks = format!(
+        "CREATE KEYSPACE IF NOT EXISTS {ks} WITH REPLICATION = {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}}");
+    if scylla_supports_tablets(&session).await {
+        create_ks += " AND TABLETS = {'enabled': false}"
+    }
+
+    session.query(create_ks, &[]).await.unwrap();
     session.use_keyspace(ks, false).await.unwrap();
 
     session
@@ -1999,14 +1996,17 @@ async fn test_unusual_valuelists() {
         .await
         .unwrap();
 
-    let values_dyn: Vec<&dyn Value> =
-        vec![&1 as &dyn Value, &2 as &dyn Value, &"&dyn" as &dyn Value];
+    let values_dyn: Vec<&dyn SerializeCql> = vec![
+        &1 as &dyn SerializeCql,
+        &2 as &dyn SerializeCql,
+        &"&dyn" as &dyn SerializeCql,
+    ];
     session.execute(&insert_a_b_c, values_dyn).await.unwrap();
 
-    let values_box_dyn: Vec<Box<dyn Value>> = vec![
-        Box::new(1) as Box<dyn Value>,
-        Box::new(3) as Box<dyn Value>,
-        Box::new("Box dyn") as Box<dyn Value>,
+    let values_box_dyn: Vec<Box<dyn SerializeCql>> = vec![
+        Box::new(1) as Box<dyn SerializeCql>,
+        Box::new(3) as Box<dyn SerializeCql>,
+        Box::new("Box dyn") as Box<dyn SerializeCql>,
     ];
     session
         .execute(&insert_a_b_c, values_box_dyn)
@@ -2229,7 +2229,7 @@ async fn assert_test_batch_table_rows_contain(sess: &Session, expected_rows: &[(
     for expected_row in expected_rows.iter() {
         if !selected_rows.contains(expected_row) {
             panic!(
-                "Expected {:?} to contain row: {:?}, but they didnt",
+                "Expected {:?} to contain row: {:?}, but they didn't",
                 selected_rows, expected_row
             );
         }
@@ -2573,6 +2573,7 @@ async fn test_keyspaces_to_fetch() {
 // Reproduces the problem with execute_iter mentioned in #608.
 #[tokio::test]
 async fn test_iter_works_when_retry_policy_returns_ignore_write_error() {
+    setup_tracing();
     // It's difficult to reproduce the issue with a real downgrading consistency policy,
     // as it would require triggering a WriteTimeout. We just need the policy
     // to return IgnoreWriteError, so we will trigger a different error
@@ -2614,7 +2615,11 @@ async fn test_iter_works_when_retry_policy_returns_ignore_write_error() {
     // Create a keyspace with replication factor that is larger than the cluster size
     let cluster_size = session.get_cluster_data().get_nodes_info().len();
     let ks = unique_keyspace_name();
-    session.query(format!("CREATE KEYSPACE {} WITH REPLICATION = {{'class': 'NetworkTopologyStrategy', 'replication_factor': {}}}", ks, cluster_size + 1), ()).await.unwrap();
+    let mut create_ks = format!("CREATE KEYSPACE {} WITH REPLICATION = {{'class': 'NetworkTopologyStrategy', 'replication_factor': {}}}", ks, cluster_size + 1);
+    if scylla_supports_tablets(&session).await {
+        create_ks += " and TABLETS = { 'enabled': false}";
+    }
+    session.query(create_ks, ()).await.unwrap();
     session.use_keyspace(ks, true).await.unwrap();
     session
         .query("CREATE TABLE t (pk int PRIMARY KEY, v int)", ())
@@ -2784,31 +2789,28 @@ async fn test_manual_primary_key_computation() {
     async fn assert_tokens_equal(
         session: &Session,
         prepared: &PreparedStatement,
-        pk_values_in_pk_order: impl ValueList,
-        all_values_in_query_order: impl ValueList,
+        serialized_pk_values_in_pk_order: &SerializedValues,
+        all_values_in_query_order: impl SerializeRow,
     ) {
-        let serialized_values_in_pk_order =
-            pk_values_in_pk_order.serialized().unwrap().into_owned();
-        let serialized_values_in_query_order =
-            all_values_in_query_order.serialized().unwrap().into_owned();
+        let token_by_prepared = prepared
+            .calculate_token(&all_values_in_query_order)
+            .unwrap()
+            .unwrap();
 
         session
-            .execute(prepared, &serialized_values_in_query_order)
+            .execute(prepared, all_values_in_query_order)
             .await
             .unwrap();
 
-        let token_by_prepared = session
-            .calculate_token(prepared, &serialized_values_in_query_order)
-            .unwrap()
-            .unwrap();
-        let token_by_hand = Session::calculate_token_for_partition_key(
-            &serialized_values_in_pk_order,
+        let token_by_hand = calculate_token_for_partition_key(
+            serialized_pk_values_in_pk_order,
             &Murmur3Partitioner,
         )
         .unwrap();
         println!(
             "by_prepared: {}, by_hand: {}",
-            token_by_prepared.value, token_by_hand.value
+            token_by_prepared.value(),
+            token_by_hand.value()
         );
         assert_eq!(token_by_prepared, token_by_hand);
     }
@@ -2829,13 +2831,16 @@ async fn test_manual_primary_key_computation() {
             .await
             .unwrap();
 
-        let pk_values_in_pk_order = (17_i32,);
+        let mut pk_values_in_pk_order = SerializedValues::new();
+        pk_values_in_pk_order
+            .add_value(&17_i32, &ColumnType::Int)
+            .unwrap();
         let all_values_in_query_order = (17_i32, 16_i32, "I'm prepared!!!");
 
         assert_tokens_equal(
             &session,
             &prepared_simple_pk,
-            pk_values_in_pk_order,
+            &pk_values_in_pk_order,
             all_values_in_query_order,
         )
         .await;
@@ -2855,13 +2860,22 @@ async fn test_manual_primary_key_computation() {
             .await
             .unwrap();
 
-        let pk_values_in_pk_order = (17_i32, 16_i32, "I'm prepared!!!");
+        let mut pk_values_in_pk_order = SerializedValues::new();
+        pk_values_in_pk_order
+            .add_value(&17_i32, &ColumnType::Int)
+            .unwrap();
+        pk_values_in_pk_order
+            .add_value(&16_i32, &ColumnType::Int)
+            .unwrap();
+        pk_values_in_pk_order
+            .add_value(&"I'm prepared!!!", &ColumnType::Ascii)
+            .unwrap();
         let all_values_in_query_order = (17_i32, "I'm prepared!!!", 16_i32);
 
         assert_tokens_equal(
             &session,
             &prepared_complex_pk,
-            pk_values_in_pk_order,
+            &pk_values_in_pk_order,
             all_values_in_query_order,
         )
         .await;

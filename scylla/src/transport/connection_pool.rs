@@ -1,7 +1,7 @@
 #[cfg(feature = "cloud")]
 use crate::cloud::set_ssl_config_for_scylla_cloud_host;
 
-use crate::routing::{Shard, ShardCount, Sharder, Token};
+use crate::routing::{Shard, ShardCount, Sharder};
 use crate::transport::errors::QueryError;
 use crate::transport::{
     connection,
@@ -9,10 +9,10 @@ use crate::transport::{
 };
 
 #[cfg(feature = "cloud")]
-use super::session::resolve_hostname;
+use super::node::resolve_hostname;
 
 #[cfg(feature = "cloud")]
-use super::cluster::ContactPoint;
+use super::node::ResolvedContactPoint;
 use super::topology::{PeerEndpoint, UntranslatedEndpoint};
 use super::NodeAddr;
 
@@ -25,9 +25,9 @@ use std::num::NonZeroUsize;
 use std::pin::Pin;
 use std::sync::{Arc, RwLock, Weak};
 use std::time::Duration;
-use tokio::sync::{mpsc, Notify};
-use tracing::instrument::WithSubscriber;
-use tracing::{debug, trace, warn};
+
+use tokio::sync::{broadcast, mpsc, Notify};
+use tracing::{debug, error, trace, warn};
 
 /// The target size of a per-node connection pool.
 #[derive(Debug, Clone, Copy)]
@@ -169,6 +169,7 @@ impl NodeConnectionPool {
         endpoint: UntranslatedEndpoint,
         #[allow(unused_mut)] mut pool_config: PoolConfig, // `mut` needed only with "cloud" feature
         current_keyspace: Option<VerifiedKeyspaceName>,
+        pool_empty_notifier: broadcast::Sender<()>,
     ) -> Self {
         let (use_keyspace_request_sender, use_keyspace_request_receiver) = mpsc::channel(1);
         let pool_updated_notify = Arc::new(Notify::new());
@@ -176,7 +177,7 @@ impl NodeConnectionPool {
         #[cfg(feature = "cloud")]
         if pool_config.connection_config.cloud_config.is_some() {
             let (host_id, address, dc) = match endpoint {
-                UntranslatedEndpoint::ContactPoint(ContactPoint {
+                UntranslatedEndpoint::ContactPoint(ResolvedContactPoint {
                     address,
                     ref datacenter,
                 }) => (None, address, datacenter.as_deref()), // FIXME: Pass DC in ContactPoint
@@ -205,11 +206,12 @@ impl NodeConnectionPool {
             pool_config,
             current_keyspace,
             pool_updated_notify.clone(),
+            pool_empty_notifier,
         );
 
         let conns = refiller.get_shared_connections();
         let (fut, refiller_handle) = refiller.run(use_keyspace_request_receiver).remote_handle();
-        tokio::spawn(fut.with_current_subscriber());
+        tokio::spawn(fut);
 
         Self {
             conns,
@@ -232,22 +234,25 @@ impl NodeConnectionPool {
         .unwrap_or(None)
     }
 
-    pub(crate) fn connection_for_token(&self, token: Token) -> Result<Arc<Connection>, QueryError> {
-        trace!(token = token.value, "Selecting connection for token");
+    pub(crate) fn connection_for_shard(&self, shard: Shard) -> Result<Arc<Connection>, QueryError> {
+        trace!(shard = shard, "Selecting connection for shard");
         self.with_connections(|pool_conns| match pool_conns {
             PoolConnections::NotSharded(conns) => {
                 Self::choose_random_connection_from_slice(conns).unwrap()
             }
             PoolConnections::Sharded {
-                sharder,
                 connections,
+                sharder
             } => {
-                let shard: u16 = sharder
-                    .shard_of(token)
+                let shard = shard
                     .try_into()
-                    .expect("Shard number doesn't fit in u16");
-                trace!(shard = shard, "Selecting connection for token");
-                Self::connection_for_shard(shard, sharder.nr_shards, connections.as_slice())
+                    // It's safer to use 0 rather that panic here, as shards are returned by `LoadBalancingPolicy`
+                    // now, which can be implemented by a user in an arbitrary way.
+                    .unwrap_or_else(|_| {
+                        error!("The provided shard number: {} does not fit u16! Using 0 as the shard number. Check your LoadBalancingPolicy implementation.", shard);
+                        0
+                    });
+                Self::connection_for_shard_helper(shard, sharder.nr_shards, connections.as_slice())
             }
         })
     }
@@ -263,13 +268,13 @@ impl NodeConnectionPool {
                 connections,
             } => {
                 let shard: u16 = rand::thread_rng().gen_range(0..sharder.nr_shards.get());
-                Self::connection_for_shard(shard, sharder.nr_shards, connections.as_slice())
+                Self::connection_for_shard_helper(shard, sharder.nr_shards, connections.as_slice())
             }
         })
     }
 
     // Tries to get a connection to given shard, if it's broken returns any working connection
-    fn connection_for_shard(
+    fn connection_for_shard_helper(
         shard: u16,
         nr_shards: ShardCount,
         shard_conns: &[Vec<Arc<Connection>>],
@@ -472,6 +477,9 @@ struct PoolRefiller {
 
     // Signaled when the connection pool is updated
     pool_updated_notify: Arc<Notify>,
+
+    // Signaled when the connection pool becomes empty
+    pool_empty_notifier: broadcast::Sender<()>,
 }
 
 #[derive(Debug)]
@@ -486,6 +494,7 @@ impl PoolRefiller {
         pool_config: PoolConfig,
         current_keyspace: Option<VerifiedKeyspaceName>,
         pool_updated_notify: Arc<Notify>,
+        pool_empty_notifier: broadcast::Sender<()>,
     ) -> Self {
         // At the beginning, we assume the node does not have any shards
         // and assume that the node is a Cassandra node
@@ -513,6 +522,7 @@ impl PoolRefiller {
             current_keyspace,
 
             pool_updated_notify,
+            pool_empty_notifier,
         }
     }
 
@@ -939,7 +949,8 @@ impl PoolRefiller {
             .boxed(),
             _ => async move {
                 let non_shard_aware_endpoint = endpoint_fut.await;
-                let result = connection::open_connection(non_shard_aware_endpoint, None, cfg).await;
+                let result =
+                    connection::open_connection(non_shard_aware_endpoint, None, &cfg).await;
                 OpenedConnectionEvent {
                     result,
                     requested_shard: None,
@@ -962,7 +973,7 @@ impl PoolRefiller {
             new_sharder,
         );
 
-        self.sharder = new_sharder.clone();
+        self.sharder.clone_from(&new_sharder);
 
         // If the sharder has changed, we can throw away all previous connections.
         // All connections to the same live node will have the same sharder,
@@ -1037,6 +1048,9 @@ impl PoolRefiller {
                 self.conns[shard_id].len(),
                 self.active_connection_count(),
             );
+            if !self.has_connections() {
+                let _ = self.pool_empty_notifier.send(());
+            }
             self.update_shared_conns(Some(last_error));
             return;
         }
@@ -1123,17 +1137,14 @@ impl PoolRefiller {
             Err(QueryError::IoError(io_error.unwrap()))
         };
 
-        tokio::task::spawn(
-            async move {
-                let res = fut.await;
-                match &res {
-                    Ok(()) => debug!("[{}] Successfully changed current keyspace", address),
-                    Err(err) => warn!("[{}] Failed to change keyspace: {:?}", address, err),
-                }
-                let _ = response_sender.send(res);
+        tokio::task::spawn(async move {
+            let res = fut.await;
+            match &res {
+                Ok(()) => debug!("[{}] Successfully changed current keyspace", address),
+                Err(err) => warn!("[{}] Failed to change keyspace: {:?}", address, err),
             }
-            .with_current_subscriber(),
-        );
+            let _ = response_sender.send(res);
+        });
     }
 
     // Requires the keyspace to be set
@@ -1228,8 +1239,7 @@ async fn open_connection_to_shard_aware_port(
 
     for port in source_port_iter {
         let connect_result =
-            connection::open_connection(endpoint.clone(), Some(port), connection_config.clone())
-                .await;
+            connection::open_connection(endpoint.clone(), Some(port), connection_config).await;
 
         match connect_result {
             Err(err) if err.is_address_unavailable_for_use() => continue, // If we can't use this port, try the next one
@@ -1248,8 +1258,9 @@ async fn open_connection_to_shard_aware_port(
 mod tests {
     use super::open_connection_to_shard_aware_port;
     use crate::routing::{ShardCount, Sharder};
-    use crate::transport::cluster::ContactPoint;
+    use crate::test_utils::setup_tracing;
     use crate::transport::connection::ConnectionConfig;
+    use crate::transport::node::ResolvedContactPoint;
     use crate::transport::topology::UntranslatedEndpoint;
     use std::net::{SocketAddr, ToSocketAddrs};
 
@@ -1259,6 +1270,7 @@ mod tests {
     #[tokio::test]
     #[cfg(not(scylla_cloud_tests))]
     async fn many_connections() {
+        setup_tracing();
         let connections_number = 512;
 
         let connect_address: SocketAddr = std::env::var("SCYLLA_URI")
@@ -1286,7 +1298,7 @@ mod tests {
 
         for _ in 0..connections_number {
             conns.push(open_connection_to_shard_aware_port(
-                UntranslatedEndpoint::ContactPoint(ContactPoint {
+                UntranslatedEndpoint::ContactPoint(ResolvedContactPoint {
                     address: connect_address,
                     datacenter: None,
                 }),

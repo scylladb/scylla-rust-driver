@@ -10,7 +10,7 @@ networks:
         - subnet: 172.42.0.0/16
 services:
   cassandra1:
-    image: cassandra:4.0.7
+    image: cassandra
     healthcheck:
         test: ["CMD", "cqlsh", "-e", "describe keyspaces" ]
         interval: 5s
@@ -24,7 +24,7 @@ services:
       - HEAP_NEWSIZE=512M
       - MAX_HEAP_SIZE=2048M
   cassandra2:
-    image: cassandra:4.0.7
+    image: cassandra
     healthcheck:
         test: ["CMD", "cqlsh", "-e", "describe keyspaces" ]
         interval: 5s
@@ -42,7 +42,7 @@ services:
       cassandra1:
         condition: service_healthy
   cassandra3:
-    image: cassandra:4.0.7
+    image: cassandra
     healthcheck:
         test: ["CMD", "cqlsh", "-e", "describe keyspaces" ]
         interval: 5s

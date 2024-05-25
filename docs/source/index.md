@@ -13,6 +13,7 @@ Although optimized for Scylla, the driver is also compatible with [Apache Cassan
 
 ## Contents
 * [Quick start](quickstart/quickstart.md) - Setting up a Rust project using `scylla-rust-driver` and running a few queries
+* [Migration guides](migration-guides/migration-guides.md) - How to update the code that used an older version of this driver
 * [Connecting to the cluster](connecting/connecting.md) - Configuring a connection to scylla cluster
 * [Making queries](queries/queries.md) - Making different types of queries (simple, prepared, batch, paged)
 * [Execution profiles](execution-profiles/execution-profiles.md) - Grouping query execution configuration options together and switching them all at once

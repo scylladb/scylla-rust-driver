@@ -13,6 +13,7 @@
    retry-policy/retry-policy
    speculative-execution/speculative
    metrics/metrics
+   migration-guides/migration-guides
    logging/logging
    tracing/tracing
    schema/schema

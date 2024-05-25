@@ -1,5 +1,6 @@
-use anyhow::Result;
-use scylla::transport::session::{IntoTypedRows, Session};
+use anyhow::{bail, Result};
+use scylla::transport::errors::QueryError;
+use scylla::transport::session::Session;
 use scylla::SessionBuilder;
 use std::env;
 use std::time::Duration;
@@ -17,40 +18,42 @@ async fn main() -> Result<()> {
         .build()
         .await?;
 
-    let schema_version = session.fetch_schema_version().await?;
+    let schema_version = session.await_schema_agreement().await?;
+
     println!("Schema version: {}", schema_version);
 
-    session.await_schema_agreement().await?; // without timeout example
-    session.query("CREATE KEYSPACE IF NOT EXISTS ks WITH REPLICATION = {'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}", &[]).await?;
+    session.query("CREATE KEYSPACE IF NOT EXISTS examples_ks WITH REPLICATION = {'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}", &[]).await?;
 
-    if session
-        .await_timed_schema_agreement(Duration::from_secs(5))
-        .await?
-    {
-        // with timeout example
-        println!("Timed schema is in agreement");
-    } else {
-        println!("Timed schema is NOT in agreement");
-    }
+    match session.await_schema_agreement().await {
+        Ok(_schema_version) => println!("Schema is in agreement in time"),
+        Err(QueryError::RequestTimeout(_)) => println!("Schema is NOT in agreement in time"),
+        Err(err) => bail!(err),
+    };
     session
         .query(
-            "CREATE TABLE IF NOT EXISTS ks.t (a int, b int, c text, primary key (a, b))",
+            "CREATE TABLE IF NOT EXISTS examples_ks.schema_agreement (a int, b int, c text, primary key (a, b))",
             &[],
         )
         .await?;
 
     session.await_schema_agreement().await?;
     session
-        .query("INSERT INTO ks.t (a, b, c) VALUES (?, ?, ?)", (3, 4, "def"))
+        .query(
+            "INSERT INTO examples_ks.schema_agreement (a, b, c) VALUES (?, ?, ?)",
+            (3, 4, "def"),
+        )
         .await?;
 
     session.await_schema_agreement().await?;
     session
-        .query("INSERT INTO ks.t (a, b, c) VALUES (1, 2, 'abc')", &[])
+        .query(
+            "INSERT INTO examples_ks.schema_agreement (a, b, c) VALUES (1, 2, 'abc')",
+            &[],
+        )
         .await?;
 
     let prepared = session
-        .prepare("INSERT INTO ks.t (a, b, c) VALUES (?, 7, ?)")
+        .prepare("INSERT INTO examples_ks.schema_agreement (a, b, c) VALUES (?, 7, ?)")
         .await?;
     session
         .execute(&prepared, (42_i32, "I'm prepared!"))
@@ -63,15 +66,17 @@ async fn main() -> Result<()> {
         .await?;
 
     // Rows can be parsed as tuples
-    if let Some(rows) = session.query("SELECT a, b, c FROM ks.t", &[]).await?.rows {
-        for row in rows.into_typed::<(i32, i32, String)>() {
-            let (a, b, c) = row?;
-            println!("a, b, c: {}, {}, {}", a, b, c);
-        }
+    let result = session
+        .query("SELECT a, b, c FROM examples_ks.schema_agreement", &[])
+        .await?;
+    let mut iter = result.rows_typed::<(i32, i32, String)>()?;
+    while let Some((a, b, c)) = iter.next().transpose()? {
+        println!("a, b, c: {}, {}, {}", a, b, c);
     }
+
     println!("Ok.");
 
-    let schema_version = session.fetch_schema_version().await?;
+    let schema_version = session.await_schema_agreement().await?;
     println!("Schema version: {}", schema_version);
 
     Ok(())

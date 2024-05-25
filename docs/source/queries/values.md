@@ -5,14 +5,14 @@ Each `?` in query text will be filled with the matching value.
 
 > **Never** pass values by adding strings, this could lead to [SQL Injection](https://en.wikipedia.org/wiki/SQL_injection)
 
-Each list of values to send in a query must implement the trait `ValueList`.\
+Each list of values to send in a query must implement the trait `SerializeRow`.\
 By default this can be a slice `&[]`, a tuple `()` (max 16 elements) of values to send,
-or a custom struct which derives from `ValueList`.
+or a custom struct which derives from `SerializeRow`.
 
 A few examples:
 ```rust
 # extern crate scylla;
-# use scylla::{Session, ValueList, frame::response::result::CqlValue};
+# use scylla::{Session, SerializeRow, frame::response::result::CqlValue};
 # use std::error::Error;
 # use std::collections::HashMap;
 # async fn check_only_compiles(session: &Session) -> Result<(), Box<dyn Error>> {
@@ -33,20 +33,43 @@ session
     .await?;
 
 // Sending an integer and a string using a named struct.
-// The values will be passed in the order from the struct definition
-#[derive(ValueList)]
+// Names of fields must match names of columns in request,
+// but having them in the same order is not required.
+// If the fields are in the same order, you can use attribute:
+// `#[scylla(flavor = "enforce_order")]`
+// in order to skip sorting the fields and just check if they
+// are in the same order. See documentation of this macro
+// for more information.
+#[derive(SerializeRow)]
 struct IntString {
-    first_col: i32,
-    second_col: String,
+    a: i32,
+    b: String,
 }
 
 let int_string = IntString {
-    first_col: 42_i32,
-    second_col: "hello".to_owned(),
+    a: 42_i32,
+    b: "hello".to_owned(),
 };
 
 session
     .query("INSERT INTO ks.tab (a, b) VALUES(?, ?)", int_string)
+    .await?;
+
+// You can use named bind markers in query if you want
+// your names in struct to be different than column names.
+#[derive(SerializeRow)]
+struct IntStringCustom {
+    first_value: i32,
+    second_value: String,
+}
+
+let int_string_custom = IntStringCustom {
+    first_value: 42_i32,
+    second_value: "hello".to_owned(),
+};
+
+session
+    .query("INSERT INTO ks.tab (a, b) VALUES(:first_value, :second_value)", int_string_custom)
     .await?;
 
 // Sending a single value as a tuple requires a trailing coma (Rust syntax):

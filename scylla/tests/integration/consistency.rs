@@ -1,12 +1,14 @@
-use crate::utils::test_with_3_node_cluster;
+use crate::utils::{setup_tracing, test_with_3_node_cluster};
 
 use scylla::execution_profile::{ExecutionProfileBuilder, ExecutionProfileHandle};
 use scylla::load_balancing::{DefaultPolicy, LoadBalancingPolicy, RoutingInfo};
 use scylla::prepared_statement::PreparedStatement;
 use scylla::retry_policy::FallthroughRetryPolicy;
-use scylla::routing::Token;
+use scylla::routing::{Shard, Token};
 use scylla::test_utils::unique_keyspace_name;
 use scylla::transport::session::Session;
+use scylla::transport::NodeRef;
+use scylla_cql::frame::response::result::TableSpec;
 use tokio::sync::mpsc::{self, UnboundedReceiver, UnboundedSender};
 
 use scylla::statement::batch::BatchStatement;
@@ -20,7 +22,7 @@ use scylla_cql::Consistency;
 use scylla_proxy::ShardAwareness;
 use scylla_proxy::{
     Condition, ProxyError, Reaction, RequestFrame, RequestOpcode, RequestReaction, RequestRule,
-    WorkerError,
+    TargetShard, WorkerError,
 };
 use std::sync::Arc;
 use std::time::Duration;
@@ -255,20 +257,24 @@ async fn check_for_all_consistencies_and_setting_options<
 #[ntest::timeout(60000)]
 #[cfg(not(scylla_cloud_tests))]
 async fn consistency_is_correctly_set_in_cql_requests() {
+    setup_tracing();
     let res = test_with_3_node_cluster(
         ShardAwareness::QueryNode,
         |proxy_uris, translation_map, mut running_proxy| async move {
             let request_rule = |tx| {
                 RequestRule(
-                    Condition::or(
-                        Condition::RequestOpcode(RequestOpcode::Execute),
+                    Condition::and(
+                        Condition::not(Condition::ConnectionRegisteredAnyEvent),
                         Condition::or(
-                            Condition::RequestOpcode(RequestOpcode::Batch),
-                            Condition::and(
-                                Condition::RequestOpcode(RequestOpcode::Query),
-                                Condition::BodyContainsCaseSensitive(Box::new(
-                                    *b"INTO consistency_tests",
-                                )),
+                            Condition::RequestOpcode(RequestOpcode::Execute),
+                            Condition::or(
+                                Condition::RequestOpcode(RequestOpcode::Batch),
+                                Condition::and(
+                                    Condition::RequestOpcode(RequestOpcode::Query),
+                                    Condition::BodyContainsCaseSensitive(Box::new(
+                                        *b"INTO consistency_tests",
+                                    )),
+                                ),
                             ),
                         ),
                     ),
@@ -296,9 +302,9 @@ async fn consistency_is_correctly_set_in_cql_requests() {
             async fn check_consistencies(
                 consistency: Consistency,
                 serial_consistency: Option<SerialConsistency>,
-                mut request_rx: UnboundedReceiver<RequestFrame>,
-            ) -> UnboundedReceiver<RequestFrame> {
-                let request_frame = request_rx.recv().await.unwrap();
+                mut request_rx: UnboundedReceiver<(RequestFrame, Option<TargetShard>)>,
+            ) -> UnboundedReceiver<(RequestFrame, Option<TargetShard>)> {
+                let (request_frame, _shard) = request_rx.recv().await.unwrap();
                 let deserialized_request = request_frame.deserialize().unwrap();
                 assert_eq!(deserialized_request.get_consistency().unwrap(), consistency);
                 assert_eq!(
@@ -332,15 +338,15 @@ async fn consistency_is_correctly_set_in_cql_requests() {
 
 #[derive(Debug, Clone)]
 pub(crate) struct OwnedRoutingInfo {
-    pub consistency: Consistency,
-    pub serial_consistency: Option<SerialConsistency>,
+    consistency: Consistency,
+    serial_consistency: Option<SerialConsistency>,
 
     #[allow(unused)]
-    pub keyspace: Option<String>,
+    table: Option<TableSpec<'static>>,
     #[allow(unused)]
-    pub token: Option<Token>,
+    token: Option<Token>,
     #[allow(unused)]
-    pub is_confirmed_lwt: bool,
+    is_confirmed_lwt: bool,
 }
 
 impl OwnedRoutingInfo {
@@ -349,14 +355,14 @@ impl OwnedRoutingInfo {
             consistency,
             serial_consistency,
             token,
-            keyspace,
+            table,
             is_confirmed_lwt,
         } = info;
         Self {
             consistency,
             serial_consistency,
             token,
-            keyspace: keyspace.map(ToOwned::to_owned),
+            table: table.map(TableSpec::to_owned),
             is_confirmed_lwt,
         }
     }
@@ -374,7 +380,7 @@ impl LoadBalancingPolicy for RoutingInfoReportingWrapper {
         &'a self,
         query: &'a RoutingInfo,
         cluster: &'a scylla::transport::ClusterData,
-    ) -> Option<scylla::transport::NodeRef<'a>> {
+    ) -> Option<(NodeRef<'a>, Option<Shard>)> {
         self.routing_info_tx
             .send(OwnedRoutingInfo::from(query.clone()))
             .unwrap();
@@ -403,6 +409,7 @@ impl LoadBalancingPolicy for RoutingInfoReportingWrapper {
 #[ntest::timeout(60000)]
 #[cfg(not(scylla_cloud_tests))]
 async fn consistency_is_correctly_set_in_routing_info() {
+    setup_tracing();
     let uri = std::env::var("SCYLLA_URI").unwrap_or_else(|_| "127.0.0.1:9042".to_string());
     let ks = unique_keyspace_name();
 
@@ -451,4 +458,26 @@ async fn consistency_is_correctly_set_in_routing_info() {
         check_consistencies,
     )
     .await;
+}
+
+// Performs a read using Paxos, by setting Consistency to Serial.
+// This not really checks that functionality works properly, but stays here
+// to ensure that it is even expressible to issue such query.
+// Before, Consistency did not contain serial variants, so it used to be impossible.
+#[tokio::test]
+#[ntest::timeout(60000)]
+#[cfg(not(scylla_cloud_tests))]
+async fn consistency_allows_for_paxos_selects() {
+    setup_tracing();
+    let uri = std::env::var("SCYLLA_URI").unwrap_or_else(|_| "127.0.0.1:9042".to_string());
+
+    let session = SessionBuilder::new()
+        .known_node(uri.as_str())
+        .build()
+        .await
+        .unwrap();
+
+    let mut query = Query::from("SELECT host_id FROM system.peers WHERE peer = '127.0.0.1'");
+    query.set_consistency(Consistency::Serial);
+    session.query(query, ()).await.unwrap();
 }

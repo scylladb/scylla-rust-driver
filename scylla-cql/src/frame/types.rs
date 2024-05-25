@@ -1,21 +1,22 @@
 //! CQL binary protocol in-wire types.
 
 use super::frame_errors::ParseError;
+use super::TryFromPrimitiveError;
 use byteorder::{BigEndian, ReadBytesExt};
 use bytes::{Buf, BufMut};
-use num_enum::TryFromPrimitive;
 use std::collections::HashMap;
 use std::convert::TryFrom;
 use std::convert::TryInto;
 use std::net::IpAddr;
 use std::net::SocketAddr;
 use std::str;
+use thiserror::Error;
 use uuid::Uuid;
 
-#[derive(Debug, Copy, Clone, Default, PartialEq, Eq, PartialOrd, Ord, TryFromPrimitive)]
+#[derive(Debug, Copy, Clone, Default, PartialEq, Eq, PartialOrd, Ord)]
 #[cfg_attr(feature = "serde", derive(serde::Deserialize))]
 #[cfg_attr(feature = "serde", serde(rename_all = "SCREAMING_SNAKE_CASE"))]
-#[repr(i16)]
+#[repr(u16)]
 pub enum Consistency {
     Any = 0x0000,
     One = 0x0001,
@@ -27,9 +28,38 @@ pub enum Consistency {
     LocalQuorum = 0x0006,
     EachQuorum = 0x0007,
     LocalOne = 0x000A,
+
+    // Apparently, Consistency can be set to Serial or LocalSerial in SELECT statements
+    // to make them use Paxos.
+    Serial = 0x0008,
+    LocalSerial = 0x0009,
 }
 
-#[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord, TryFromPrimitive)]
+impl TryFrom<u16> for Consistency {
+    type Error = TryFromPrimitiveError<u16>;
+
+    fn try_from(value: u16) -> Result<Self, Self::Error> {
+        match value {
+            0x0000 => Ok(Consistency::Any),
+            0x0001 => Ok(Consistency::One),
+            0x0002 => Ok(Consistency::Two),
+            0x0003 => Ok(Consistency::Three),
+            0x0004 => Ok(Consistency::Quorum),
+            0x0005 => Ok(Consistency::All),
+            0x0006 => Ok(Consistency::LocalQuorum),
+            0x0007 => Ok(Consistency::EachQuorum),
+            0x000A => Ok(Consistency::LocalOne),
+            0x0008 => Ok(Consistency::Serial),
+            0x0009 => Ok(Consistency::LocalSerial),
+            _ => Err(TryFromPrimitiveError {
+                enum_name: "Consistency",
+                primitive: value,
+            }),
+        }
+    }
+}
+
+#[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord)]
 #[cfg_attr(feature = "serde", derive(serde::Deserialize))]
 #[cfg_attr(feature = "serde", serde(rename_all = "SCREAMING_SNAKE_CASE"))]
 #[repr(i16)]
@@ -38,13 +68,49 @@ pub enum SerialConsistency {
     LocalSerial = 0x0009,
 }
 
-// LegacyConsistency exists, because Scylla may return a SerialConsistency value
-// as Consistency when returning certain error types - the distinction between
-// Consistency and SerialConsistency is not really a thing in CQL.
-#[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord)]
-pub enum LegacyConsistency {
-    Regular(Consistency),
-    Serial(SerialConsistency),
+impl TryFrom<i16> for SerialConsistency {
+    type Error = TryFromPrimitiveError<i16>;
+
+    fn try_from(value: i16) -> Result<Self, Self::Error> {
+        match value {
+            0x0008 => Ok(Self::Serial),
+            0x0009 => Ok(Self::LocalSerial),
+            _ => Err(TryFromPrimitiveError {
+                enum_name: "SerialConsistency",
+                primitive: value,
+            }),
+        }
+    }
+}
+
+impl Consistency {
+    pub fn is_serial(&self) -> bool {
+        matches!(self, Consistency::Serial | Consistency::LocalSerial)
+    }
+}
+
+#[derive(Debug, Error)]
+#[error("Expected Consistency Serial or LocalSerial, got: {0}")]
+pub struct NonSerialConsistencyError(Consistency);
+
+impl TryFrom<Consistency> for SerialConsistency {
+    type Error = NonSerialConsistencyError;
+
+    fn try_from(c: Consistency) -> Result<Self, Self::Error> {
+        match c {
+            Consistency::Any
+            | Consistency::One
+            | Consistency::Two
+            | Consistency::Three
+            | Consistency::Quorum
+            | Consistency::All
+            | Consistency::LocalQuorum
+            | Consistency::EachQuorum
+            | Consistency::LocalOne => Err(NonSerialConsistencyError(c)),
+            Consistency::Serial => Ok(SerialConsistency::Serial),
+            Consistency::LocalSerial => Ok(SerialConsistency::LocalSerial),
+        }
+    }
 }
 
 impl std::fmt::Display for Consistency {
@@ -56,15 +122,6 @@ impl std::fmt::Display for Consistency {
 impl std::fmt::Display for SerialConsistency {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{:?}", self)
-    }
-}
-
-impl std::fmt::Display for LegacyConsistency {
-    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-        match self {
-            Self::Regular(c) => c.fmt(f),
-            Self::Serial(c) => c.fmt(f),
-        }
     }
 }
 
@@ -86,6 +143,23 @@ impl From<std::array::TryFromSliceError> for ParseError {
     }
 }
 
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum RawValue<'a> {
+    Null,
+    Unset,
+    Value(&'a [u8]),
+}
+
+impl<'a> RawValue<'a> {
+    #[inline]
+    pub fn as_value(&self) -> Option<&'a [u8]> {
+        match self {
+            RawValue::Value(v) => Some(v),
+            RawValue::Null | RawValue::Unset => None,
+        }
+    }
+}
+
 fn read_raw_bytes<'a>(count: usize, buf: &mut &'a [u8]) -> Result<&'a [u8], ParseError> {
     if buf.len() < count {
         return Err(ParseError::BadIncomingData(format!(
@@ -99,7 +173,7 @@ fn read_raw_bytes<'a>(count: usize, buf: &mut &'a [u8]) -> Result<&'a [u8], Pars
     Ok(ret)
 }
 
-pub fn read_int(buf: &mut &[u8]) -> Result<i32, ParseError> {
+pub fn read_int(buf: &mut &[u8]) -> Result<i32, std::io::Error> {
     let v = buf.read_i32::<BigEndian>()?;
     Ok(v)
 }
@@ -124,7 +198,7 @@ fn write_int_length(v: usize, buf: &mut impl BufMut) -> Result<(), ParseError> {
 
 #[test]
 fn type_int() {
-    let vals = vec![i32::MIN, -1, 0, 1, i32::MAX];
+    let vals = [i32::MIN, -1, 0, 1, i32::MAX];
     for val in vals.iter() {
         let mut buf = Vec::new();
         write_int(*val, &mut buf);
@@ -132,7 +206,7 @@ fn type_int() {
     }
 }
 
-pub fn read_long(buf: &mut &[u8]) -> Result<i64, ParseError> {
+pub fn read_long(buf: &mut &[u8]) -> Result<i64, std::io::Error> {
     let v = buf.read_i64::<BigEndian>()?;
     Ok(v)
 }
@@ -143,7 +217,7 @@ pub fn write_long(v: i64, buf: &mut impl BufMut) {
 
 #[test]
 fn type_long() {
-    let vals = vec![i64::MIN, -1, 0, 1, i64::MAX];
+    let vals = [i64::MIN, -1, 0, 1, i64::MAX];
     for val in vals.iter() {
         let mut buf = Vec::new();
         write_long(*val, &mut buf);
@@ -151,30 +225,30 @@ fn type_long() {
     }
 }
 
-pub fn read_short(buf: &mut &[u8]) -> Result<i16, ParseError> {
-    let v = buf.read_i16::<BigEndian>()?;
+pub fn read_short(buf: &mut &[u8]) -> Result<u16, std::io::Error> {
+    let v = buf.read_u16::<BigEndian>()?;
     Ok(v)
 }
 
-pub fn write_short(v: i16, buf: &mut impl BufMut) {
-    buf.put_i16(v);
+pub fn write_short(v: u16, buf: &mut impl BufMut) {
+    buf.put_u16(v);
 }
 
-pub(crate) fn read_short_length(buf: &mut &[u8]) -> Result<usize, ParseError> {
+pub(crate) fn read_short_length(buf: &mut &[u8]) -> Result<usize, std::io::Error> {
     let v = read_short(buf)?;
-    let v: usize = v.try_into()?;
+    let v: usize = v.into();
     Ok(v)
 }
 
 fn write_short_length(v: usize, buf: &mut impl BufMut) -> Result<(), ParseError> {
-    let v: i16 = v.try_into()?;
+    let v: u16 = v.try_into()?;
     write_short(v, buf);
     Ok(())
 }
 
 #[test]
 fn type_short() {
-    let vals = vec![i16::MIN, -1, 0, 1, i16::MAX];
+    let vals: [u16; 3] = [0, 1, u16::MAX];
     for val in vals.iter() {
         let mut buf = Vec::new();
         write_short(*val, &mut buf);
@@ -200,6 +274,22 @@ pub fn read_bytes<'a>(buf: &mut &'a [u8]) -> Result<&'a [u8], ParseError> {
     Ok(v)
 }
 
+pub fn read_value<'a>(buf: &mut &'a [u8]) -> Result<RawValue<'a>, ParseError> {
+    let len = read_int(buf)?;
+    match len {
+        -2 => Ok(RawValue::Unset),
+        -1 => Ok(RawValue::Null),
+        len if len >= 0 => {
+            let v = read_raw_bytes(len as usize, buf)?;
+            Ok(RawValue::Value(v))
+        }
+        len => Err(ParseError::BadIncomingData(format!(
+            "invalid value length: {}",
+            len,
+        ))),
+    }
+}
+
 pub fn read_short_bytes<'a>(buf: &mut &'a [u8]) -> Result<&'a [u8], ParseError> {
     let len = read_short_length(buf)?;
     let v = read_raw_bytes(len, buf)?;
@@ -212,11 +302,14 @@ pub fn write_bytes(v: &[u8], buf: &mut impl BufMut) -> Result<(), ParseError> {
     Ok(())
 }
 
-pub fn write_bytes_opt(v: Option<&Vec<u8>>, buf: &mut impl BufMut) -> Result<(), ParseError> {
+pub fn write_bytes_opt(
+    v: Option<impl AsRef<[u8]>>,
+    buf: &mut impl BufMut,
+) -> Result<(), ParseError> {
     match v {
         Some(bytes) => {
-            write_int_length(bytes.len(), buf)?;
-            buf.put_slice(bytes);
+            write_int_length(bytes.as_ref().len(), buf)?;
+            buf.put_slice(bytes.as_ref());
         }
         None => write_int(-1, buf),
     }
@@ -281,7 +374,7 @@ pub fn write_string(v: &str, buf: &mut impl BufMut) -> Result<(), ParseError> {
 
 #[test]
 fn type_string() {
-    let vals = vec![String::from(""), String::from("hello, world!")];
+    let vals = [String::from(""), String::from("hello, world!")];
     for val in vals.iter() {
         let mut buf = Vec::new();
         write_string(val, &mut buf).unwrap();
@@ -306,7 +399,7 @@ pub fn write_long_string(v: &str, buf: &mut impl BufMut) -> Result<(), ParseErro
 
 #[test]
 fn type_long_string() {
-    let vals = vec![String::from(""), String::from("hello, world!")];
+    let vals = [String::from(""), String::from("hello, world!")];
     for val in vals.iter() {
         let mut buf = Vec::new();
         write_long_string(val, &mut buf).unwrap();
@@ -421,9 +514,12 @@ fn type_string_multimap() {
 pub fn read_uuid(buf: &mut &[u8]) -> Result<Uuid, ParseError> {
     let raw = read_raw_bytes(16, buf)?;
 
-    // It's safe to unwrap here because Uuid::from_slice only fails
-    // if the argument slice's length is not 16.
-    Ok(Uuid::from_slice(raw).unwrap())
+    // It's safe to unwrap here because the conversion only fails
+    // if the argument slice's length does not match, which
+    // `read_raw_bytes` prevents.
+    let raw_array: &[u8; 16] = raw.try_into().unwrap();
+
+    Ok(Uuid::from_bytes(*raw_array))
 }
 
 pub fn write_uuid(uuid: &Uuid, buf: &mut impl BufMut) {
@@ -439,26 +535,18 @@ fn type_uuid() {
     assert_eq!(u, u2);
 }
 
-pub fn read_consistency(buf: &mut &[u8]) -> Result<LegacyConsistency, ParseError> {
+pub fn read_consistency(buf: &mut &[u8]) -> Result<Consistency, ParseError> {
     let raw = read_short(buf)?;
-    let parsed = match Consistency::try_from(raw) {
-        Ok(c) => LegacyConsistency::Regular(c),
-        Err(_) => {
-            let parsed_serial = SerialConsistency::try_from(raw).map_err(|_| {
-                ParseError::BadIncomingData(format!("unknown consistency: {}", raw))
-            })?;
-            LegacyConsistency::Serial(parsed_serial)
-        }
-    };
-    Ok(parsed)
+    Consistency::try_from(raw)
+        .map_err(|_| ParseError::BadIncomingData(format!("unknown consistency: {}", raw)))
 }
 
 pub fn write_consistency(c: Consistency, buf: &mut impl BufMut) {
-    write_short(c as i16, buf);
+    write_short(c as u16, buf);
 }
 
 pub fn write_serial_consistency(c: SerialConsistency, buf: &mut impl BufMut) {
-    write_short(c as i16, buf);
+    write_short(c as u16, buf);
 }
 
 #[test]
@@ -467,7 +555,7 @@ fn type_consistency() {
     let mut buf = Vec::new();
     write_consistency(c, &mut buf);
     let c2 = read_consistency(&mut &*buf).unwrap();
-    assert_eq!(LegacyConsistency::Regular(c), c2);
+    assert_eq!(c, c2);
 
     let c: i16 = 0x1234;
     buf.clear();
@@ -564,7 +652,7 @@ fn unsigned_vint_encode(v: u64, buf: &mut Vec<u8>) {
     buf.put_uint(v, number_of_bytes as usize)
 }
 
-fn unsigned_vint_decode(buf: &mut &[u8]) -> Result<u64, ParseError> {
+fn unsigned_vint_decode(buf: &mut &[u8]) -> Result<u64, std::io::Error> {
     let first_byte = buf.read_u8()?;
     let extra_bytes = first_byte.leading_ones() as usize;
 
@@ -586,7 +674,7 @@ pub(crate) fn vint_encode(v: i64, buf: &mut Vec<u8>) {
     unsigned_vint_encode(zig_zag_encode(v), buf)
 }
 
-pub(crate) fn vint_decode(buf: &mut &[u8]) -> Result<i64, ParseError> {
+pub(crate) fn vint_decode(buf: &mut &[u8]) -> Result<i64, std::io::Error> {
     unsigned_vint_decode(buf).map(zig_zag_decode)
 }
 

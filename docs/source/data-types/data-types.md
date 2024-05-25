@@ -20,13 +20,14 @@ Database types and their Rust equivalents:
 * `Counter` <----> `value::Counter`
 * `Blob` <----> `Vec<u8>`
 * `Inet` <----> `std::net::IpAddr`
-* `Uuid`, `Timeuuid` <----> `uuid::Uuid`
-* `Date` <----> `chrono::NaiveDate`, `u32`
-* `Time` <----> `chrono::Duration`
-* `Timestamp` <----> `chrono::Duration`
+* `Uuid` <----> `uuid::Uuid`
+* `Timeuuid` <----> `value::CqlTimeuuid`
+* `Date` <----> `value::CqlDate`, `chrono::NaiveDate`, `time::Date`
+* `Time` <----> `value::CqlTime`, `chrono::NaiveTime`, `time::Time`
+* `Timestamp` <----> `value::CqlTimestamp`, `chrono::DateTime<Utc>`, `time::OffsetDateTime`
 * `Duration` <----> `value::CqlDuration`
-* `Decimal` <----> `bigdecimal::Decimal`
-* `Varint` <----> `num_bigint::BigInt`
+* `Decimal` <----> `value::CqlDecimal`, `bigdecimal::Decimal`
+* `Varint` <----> `value::CqlVarint`, `num_bigint::BigInt` (v0.3 and v0.4)
 * `List` <----> `Vec<T>`
 * `Set` <----> `Vec<T>`
 * `Map` <----> `std::collections::HashMap<K, V>`
@@ -34,7 +35,7 @@ Database types and their Rust equivalents:
 * `UDT (User defined type)` <----> Custom user structs with macros
 
 
-```eval_rst
+```{eval-rst}
 .. toctree::
    :hidden:
    :glob:
@@ -45,6 +46,7 @@ Database types and their Rust equivalents:
    blob
    inet
    uuid
+   timeuuid
    date
    time
    timestamp

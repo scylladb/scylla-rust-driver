@@ -2,7 +2,7 @@
 //! To decide when to retry a query the `Session` can use any object which implements
 //! the `RetryPolicy` trait
 
-use crate::frame::types::{Consistency, LegacyConsistency};
+use crate::frame::types::Consistency;
 use crate::transport::errors::{DbError, QueryError, WriteType};
 
 /// Information about a failed query
@@ -14,7 +14,7 @@ pub struct QueryInfo<'a> {
     /// If set to `false` it is unknown whether it is idempotent
     pub is_idempotent: bool,
     /// Consistency with which the query failed
-    pub consistency: LegacyConsistency,
+    pub consistency: Consistency,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -136,7 +136,7 @@ impl Default for DefaultRetrySession {
 
 impl RetrySession for DefaultRetrySession {
     fn decide_should_retry(&mut self, query_info: QueryInfo) -> RetryDecision {
-        if let LegacyConsistency::Serial(_) = query_info.consistency {
+        if query_info.consistency.is_serial() {
             return RetryDecision::DontRetry;
         };
         match query_info.error {
@@ -219,8 +219,8 @@ impl RetrySession for DefaultRetrySession {
 #[cfg(test)]
 mod tests {
     use super::{DefaultRetryPolicy, QueryInfo, RetryDecision, RetryPolicy};
-    use crate::frame::types::LegacyConsistency;
     use crate::statement::Consistency;
+    use crate::test_utils::setup_tracing;
     use crate::transport::errors::{BadQuery, DbError, QueryError, WriteType};
     use bytes::Bytes;
     use std::io::ErrorKind;
@@ -230,7 +230,7 @@ mod tests {
         QueryInfo {
             error,
             is_idempotent,
-            consistency: LegacyConsistency::Regular(Consistency::One),
+            consistency: Consistency::One,
         }
     }
 
@@ -251,6 +251,7 @@ mod tests {
 
     #[test]
     fn default_never_retries() {
+        setup_tracing();
         let never_retried_dberrors = vec![
             DbError::SyntaxError,
             DbError::Invalid,
@@ -267,14 +268,14 @@ mod tests {
             DbError::Unauthorized,
             DbError::ConfigError,
             DbError::ReadFailure {
-                consistency: LegacyConsistency::Regular(Consistency::Two),
+                consistency: Consistency::Two,
                 received: 2,
                 required: 1,
                 numfailures: 1,
                 data_present: false,
             },
             DbError::WriteFailure {
-                consistency: LegacyConsistency::Regular(Consistency::Two),
+                consistency: Consistency::Two,
                 received: 1,
                 required: 2,
                 numfailures: 1,
@@ -316,6 +317,7 @@ mod tests {
 
     #[test]
     fn default_idempotent_next_retries() {
+        setup_tracing();
         let idempotent_next_errors = vec![
             QueryError::DbError(DbError::Overloaded, String::new()),
             QueryError::DbError(DbError::TruncateError, String::new()),
@@ -331,6 +333,7 @@ mod tests {
     // Always retry on next node if current one is bootstrapping
     #[test]
     fn default_bootstrapping() {
+        setup_tracing();
         let error = QueryError::DbError(DbError::IsBootstrapping, String::new());
 
         let mut policy = DefaultRetryPolicy::new().new_session();
@@ -349,9 +352,10 @@ mod tests {
     // On Unavailable error we retry one time no matter the idempotence
     #[test]
     fn default_unavailable() {
+        setup_tracing();
         let error = QueryError::DbError(
             DbError::Unavailable {
-                consistency: LegacyConsistency::Regular(Consistency::Two),
+                consistency: Consistency::Two,
                 required: 2,
                 alive: 1,
             },
@@ -382,10 +386,11 @@ mod tests {
     // On ReadTimeout we retry one time if there were enough responses and the data was present no matter the idempotence
     #[test]
     fn default_read_timeout() {
+        setup_tracing();
         // Enough responses and data_present == false - coordinator received only checksums
         let enough_responses_no_data = QueryError::DbError(
             DbError::ReadTimeout {
-                consistency: LegacyConsistency::Regular(Consistency::Two),
+                consistency: Consistency::Two,
                 received: 2,
                 required: 2,
                 data_present: false,
@@ -419,7 +424,7 @@ mod tests {
         // waiting for read-repair acknowledgement.
         let enough_responses_with_data = QueryError::DbError(
             DbError::ReadTimeout {
-                consistency: LegacyConsistency::Regular(Consistency::Two),
+                consistency: Consistency::Two,
                 received: 2,
                 required: 2,
                 data_present: true,
@@ -444,7 +449,7 @@ mod tests {
         // Not enough responses, data_present == true
         let not_enough_responses_with_data = QueryError::DbError(
             DbError::ReadTimeout {
-                consistency: LegacyConsistency::Regular(Consistency::Two),
+                consistency: Consistency::Two,
                 received: 1,
                 required: 2,
                 data_present: true,
@@ -470,10 +475,11 @@ mod tests {
     // WriteTimeout will retry once when the query is idempotent and write_type == BatchLog
     #[test]
     fn default_write_timeout() {
+        setup_tracing();
         // WriteType == BatchLog
         let good_write_type = QueryError::DbError(
             DbError::WriteTimeout {
-                consistency: LegacyConsistency::Regular(Consistency::Two),
+                consistency: Consistency::Two,
                 received: 1,
                 required: 2,
                 write_type: WriteType::BatchLog,
@@ -502,7 +508,7 @@ mod tests {
         // WriteType != BatchLog
         let bad_write_type = QueryError::DbError(
             DbError::WriteTimeout {
-                consistency: LegacyConsistency::Regular(Consistency::Two),
+                consistency: Consistency::Two,
                 received: 4,
                 required: 2,
                 write_type: WriteType::Simple,

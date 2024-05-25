@@ -12,26 +12,21 @@ use bytes::Bytes;
 use futures::Stream;
 use scylla_cql::frame::response::NonErrorResponse;
 use scylla_cql::frame::types::SerialConsistency;
+use scylla_cql::types::serialize::row::SerializedValues;
 use std::result::Result;
 use thiserror::Error;
 use tokio::sync::mpsc;
-use tracing::instrument::WithSubscriber;
 
 use super::errors::QueryError;
 use super::execution_profile::ExecutionProfileInner;
 use super::session::RequestSpan;
 use crate::cql_to_rust::{FromRow, FromRowError};
 
-use crate::frame::types::LegacyConsistency;
-use crate::frame::{
-    response::{
-        result,
-        result::{ColumnSpec, Row, Rows},
-    },
-    value::SerializedValues,
+use crate::frame::response::{
+    result,
+    result::{ColumnSpec, Row, Rows},
 };
 use crate::history::{self, HistoryListener};
-use crate::routing::Token;
 use crate::statement::Consistency;
 use crate::statement::{prepared_statement::PreparedStatement, query::Query};
 use crate::transport::cluster::ClusterData;
@@ -39,7 +34,7 @@ use crate::transport::connection::{Connection, NonErrorQueryResponse, QueryRespo
 use crate::transport::load_balancing::{self, RoutingInfo};
 use crate::transport::metrics::Metrics;
 use crate::transport::retry_policy::{QueryInfo, RetryDecision, RetrySession};
-use crate::transport::{Node, NodeRef};
+use crate::transport::NodeRef;
 use tracing::{trace, trace_span, warn, Instrument};
 use uuid::Uuid;
 
@@ -76,8 +71,6 @@ struct ReceivedPage {
 pub(crate) struct PreparedIteratorConfig {
     pub(crate) prepared: PreparedStatement,
     pub(crate) values: SerializedValues,
-    pub(crate) partition_key: Option<Bytes>,
-    pub(crate) token: Option<Token>,
     pub(crate) execution_profile: Arc<ExecutionProfileInner>,
     pub(crate) cluster_data: Arc<ClusterData>,
     pub(crate) metrics: Arc<Metrics>,
@@ -132,7 +125,6 @@ impl RowIterator {
 
     pub(crate) async fn new_for_query(
         mut query: Query,
-        values: SerializedValues,
         execution_profile: Arc<ExecutionProfileInner>,
         cluster_data: Arc<ClusterData>,
         metrics: Arc<Metrics>,
@@ -166,33 +158,32 @@ impl RowIterator {
         let parent_span = tracing::Span::current();
         let worker_task = async move {
             let query_ref = &query;
-            let values_ref = &values;
-
-            let choose_connection = |node: Arc<Node>| async move { node.random_connection().await };
 
             let page_query = |connection: Arc<Connection>,
                               consistency: Consistency,
-                              paging_state: Option<Bytes>| async move {
-                connection
-                    .query_with_consistency(
-                        query_ref,
-                        values_ref,
-                        consistency,
-                        serial_consistency,
-                        paging_state,
-                    )
-                    .await
+                              paging_state: Option<Bytes>| {
+                async move {
+                    connection
+                        .query_with_consistency(
+                            query_ref,
+                            consistency,
+                            serial_consistency,
+                            paging_state,
+                        )
+                        .await
+                }
             };
 
             let query_ref = &query;
-            let serialized_values_size = values.size();
 
-            let span_creator =
-                move || RequestSpan::new_query(&query_ref.contents, serialized_values_size);
+            let span_creator = move || {
+                let span = RequestSpan::new_query(&query_ref.contents);
+                span.record_request_size(0);
+                span
+            };
 
             let worker = RowIteratorWorker {
                 sender: sender.into(),
-                choose_connection,
                 page_query,
                 statement_info: routing_info,
                 query_is_idempotent: query.config.is_idempotent,
@@ -241,24 +232,28 @@ impl RowIterator {
 
         let parent_span = tracing::Span::current();
         let worker_task = async move {
+            let prepared_ref = &config.prepared;
+            let values_ref = &config.values;
+
+            let (partition_key, token) = match prepared_ref
+                .extract_partition_key_and_calculate_token(
+                    prepared_ref.get_partitioner_name(),
+                    values_ref,
+                ) {
+                Ok(res) => res.unzip(),
+                Err(err) => {
+                    let (proof, _res) = ProvingSender::from(sender).send(Err(err)).await;
+                    return proof;
+                }
+            };
+
+            let table_spec = config.prepared.get_table_spec();
             let statement_info = RoutingInfo {
                 consistency,
                 serial_consistency,
-                token: config.token,
-                keyspace: config.prepared.get_keyspace_name(),
+                token,
+                table: table_spec,
                 is_confirmed_lwt: config.prepared.is_confirmed_lwt(),
-            };
-
-            let prepared_ref = &config.prepared;
-            let values_ref = &config.values;
-            let partition_key = config.partition_key;
-            let token = config.token;
-
-            let choose_connection = |node: Arc<Node>| async move {
-                match token {
-                    Some(token) => node.connection_for_token(token).await,
-                    None => node.random_connection().await,
-                }
             };
 
             let page_query = |connection: Arc<Connection>,
@@ -275,17 +270,17 @@ impl RowIterator {
                     .await
             };
 
-            let serialized_values_size = config.values.size();
+            let serialized_values_size = config.values.buffer_size();
 
             let replicas: Option<smallvec::SmallVec<[_; 8]>> =
-                if let (Some(keyspace), Some(token)) =
-                    (statement_info.keyspace.as_ref(), statement_info.token)
+                if let (Some(table_spec), Some(token)) =
+                    (statement_info.table, statement_info.token)
                 {
                     Some(
                         config
                             .cluster_data
-                            .get_token_endpoints_iter(keyspace, token)
-                            .cloned()
+                            .get_token_endpoints_iter(table_spec, token)
+                            .map(|(node, shard)| (node.clone(), shard))
                             .collect(),
                     )
                 } else {
@@ -294,8 +289,7 @@ impl RowIterator {
 
             let span_creator = move || {
                 let span = RequestSpan::new_prepared(
-                    prepared_ref.get_prepared_metadata(),
-                    partition_key.as_ref(),
+                    partition_key.as_ref().map(|pk| pk.iter()),
                     token,
                     serialized_values_size,
                 );
@@ -307,7 +301,6 @@ impl RowIterator {
 
             let worker = RowIteratorWorker {
                 sender: sender.into(),
-                choose_connection,
                 page_query,
                 statement_info,
                 query_is_idempotent: config.prepared.config.is_idempotent,
@@ -332,7 +325,6 @@ impl RowIterator {
     pub(crate) async fn new_for_connection_query_iter(
         mut query: Query,
         connection: Arc<Connection>,
-        values: SerializedValues,
         consistency: Consistency,
         serial_consistency: Option<SerialConsistency>,
     ) -> Result<RowIterator, QueryError> {
@@ -347,6 +339,36 @@ impl RowIterator {
                 fetcher: |paging_state| {
                     connection.query_with_consistency(
                         &query,
+                        consistency,
+                        serial_consistency,
+                        paging_state,
+                    )
+                },
+            };
+            worker.work().await
+        };
+
+        Self::new_from_worker_future(worker_task, receiver).await
+    }
+
+    pub(crate) async fn new_for_connection_execute_iter(
+        mut prepared: PreparedStatement,
+        values: SerializedValues,
+        connection: Arc<Connection>,
+        consistency: Consistency,
+        serial_consistency: Option<SerialConsistency>,
+    ) -> Result<RowIterator, QueryError> {
+        if prepared.get_page_size().is_none() {
+            prepared.set_page_size(DEFAULT_ITER_PAGE_SIZE);
+        }
+        let (sender, receiver) = mpsc::channel::<Result<ReceivedPage, QueryError>>(1);
+
+        let worker_task = async move {
+            let worker = SingleConnectionRowIteratorWorker {
+                sender: sender.into(),
+                fetcher: |paging_state| {
+                    connection.execute_with_consistency(
+                        &prepared,
                         &values,
                         consistency,
                         serial_consistency,
@@ -364,7 +386,7 @@ impl RowIterator {
         worker_task: impl Future<Output = PageSendAttemptedProof> + Send + 'static,
         mut receiver: mpsc::Receiver<Result<ReceivedPage, QueryError>>,
     ) -> Result<RowIterator, QueryError> {
-        tokio::task::spawn(worker_task.with_current_subscriber());
+        tokio::task::spawn(worker_task);
 
         // This unwrap is safe because:
         // - The future returned by worker.work sends at least one item
@@ -463,12 +485,8 @@ type PageSendAttemptedProof = SendAttemptedProof<Result<ReceivedPage, QueryError
 
 // RowIteratorWorker works in the background to fetch pages
 // RowIterator receives them through a channel
-struct RowIteratorWorker<'a, ConnFunc, QueryFunc, SpanCreatorFunc> {
+struct RowIteratorWorker<'a, QueryFunc, SpanCreatorFunc> {
     sender: ProvingSender<Result<ReceivedPage, QueryError>>,
-
-    // Closure used to choose a connection from a node
-    // AsyncFn(Arc<Node>) -> Result<Arc<Connection>, QueryError>
-    choose_connection: ConnFunc,
 
     // Closure used to perform a single page query
     // AsyncFn(Arc<Connection>, Option<Bytes>) -> Result<QueryResponse, QueryError>
@@ -491,11 +509,8 @@ struct RowIteratorWorker<'a, ConnFunc, QueryFunc, SpanCreatorFunc> {
     span_creator: SpanCreatorFunc,
 }
 
-impl<ConnFunc, ConnFut, QueryFunc, QueryFut, SpanCreator>
-    RowIteratorWorker<'_, ConnFunc, QueryFunc, SpanCreator>
+impl<QueryFunc, QueryFut, SpanCreator> RowIteratorWorker<'_, QueryFunc, SpanCreator>
 where
-    ConnFunc: Fn(Arc<Node>) -> ConnFut,
-    ConnFut: Future<Output = Result<Arc<Connection>, QueryError>>,
     QueryFunc: Fn(Arc<Connection>, Consistency, Option<Bytes>) -> QueryFut,
     QueryFut: Future<Output = Result<QueryResponse, QueryError>>,
     SpanCreator: Fn() -> RequestSpan,
@@ -513,12 +528,13 @@ where
 
         self.log_query_start();
 
-        'nodes_in_plan: for node in query_plan {
+        'nodes_in_plan: for (node, shard) in query_plan {
             let span =
                 trace_span!(parent: &self.parent_span, "Executing query", node = %node.address);
             // For each node in the plan choose a connection to use
             // This connection will be reused for same node retries to preserve paging cache on the shard
-            let connection: Arc<Connection> = match (self.choose_connection)(node.clone())
+            let connection: Arc<Connection> = match node
+                .connection_for_shard(shard)
                 .instrument(span.clone())
                 .await
             {
@@ -565,7 +581,7 @@ where
                 let query_info = QueryInfo {
                     error: &last_error,
                     is_idempotent: self.query_is_idempotent,
-                    consistency: LegacyConsistency::Regular(self.query_consistency),
+                    consistency: self.query_consistency,
                 };
 
                 let retry_decision = self.retry_session.decide_should_retry(query_info);

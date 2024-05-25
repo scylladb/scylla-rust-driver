@@ -1,6 +1,6 @@
 # Query tracing
 
-The driver has utilites for monitoring the execution of queries.
+The driver has utilities for monitoring the execution of queries.
 There are two separate ways to get information about what happened with a query: `Tracing` and `Query Execution History`.
 
 ### Tracing
@@ -29,7 +29,7 @@ This is what query execution history was made for.
 It allows to follow what the driver was thinking - all query attempts, retry decisions, speculative executions.
 More information is available in the [Query Execution History](query-history.md) chapter.
 
-```eval_rst
+```{eval-rst}
 .. toctree::
    :hidden:
    :glob:

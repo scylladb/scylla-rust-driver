@@ -7,9 +7,9 @@ pub mod query;
 pub mod register;
 pub mod startup;
 
+use crate::types::serialize::row::SerializedValues;
 use crate::{frame::frame_errors::ParseError, Consistency};
-use bytes::{BufMut, Bytes};
-use num_enum::TryFromPrimitive;
+use bytes::Bytes;
 
 pub use auth_response::AuthResponse;
 pub use batch::Batch;
@@ -22,9 +22,9 @@ pub use startup::Startup;
 use self::batch::BatchStatement;
 
 use super::types::SerialConsistency;
-use super::value::SerializedValues;
+use super::TryFromPrimitiveError;
 
-#[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord, TryFromPrimitive)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord)]
 #[repr(u8)]
 pub enum RequestOpcode {
     Startup = 0x01,
@@ -37,10 +37,31 @@ pub enum RequestOpcode {
     AuthResponse = 0x0F,
 }
 
+impl TryFrom<u8> for RequestOpcode {
+    type Error = TryFromPrimitiveError<u8>;
+
+    fn try_from(value: u8) -> Result<Self, Self::Error> {
+        match value {
+            0x01 => Ok(Self::Startup),
+            0x05 => Ok(Self::Options),
+            0x07 => Ok(Self::Query),
+            0x09 => Ok(Self::Prepare),
+            0x0A => Ok(Self::Execute),
+            0x0B => Ok(Self::Register),
+            0x0D => Ok(Self::Batch),
+            0x0F => Ok(Self::AuthResponse),
+            _ => Err(TryFromPrimitiveError {
+                enum_name: "RequestOpcode",
+                primitive: value,
+            }),
+        }
+    }
+}
+
 pub trait SerializableRequest {
     const OPCODE: RequestOpcode;
 
-    fn serialize(&self, buf: &mut impl BufMut) -> Result<(), ParseError>;
+    fn serialize(&self, buf: &mut Vec<u8>) -> Result<(), ParseError>;
 
     fn to_bytes(&self) -> Result<Bytes, ParseError> {
         let mut v = Vec::new();
@@ -112,9 +133,10 @@ mod tests {
                 query::{Query, QueryParameters},
                 DeserializableRequest, SerializableRequest,
             },
-            types::{self, LegacyConsistency, SerialConsistency},
-            value::SerializedValues,
+            response::result::ColumnType,
+            types::{self, SerialConsistency},
         },
+        types::serialize::row::SerializedValues,
         Consistency,
     };
 
@@ -128,9 +150,10 @@ mod tests {
             timestamp: None,
             page_size: Some(323),
             paging_state: Some(vec![2, 1, 3, 7].into()),
+            skip_metadata: false,
             values: {
                 let mut vals = SerializedValues::new();
-                vals.add_value(&2137).unwrap();
+                vals.add_value(&2137, &ColumnType::Int).unwrap();
                 Cow::Owned(vals)
             },
         };
@@ -155,10 +178,11 @@ mod tests {
             timestamp: Some(3423434),
             page_size: None,
             paging_state: None,
+            skip_metadata: false,
             values: {
                 let mut vals = SerializedValues::new();
-                vals.add_named_value("the_answer", &42).unwrap();
-                vals.add_named_value("really?", &2137).unwrap();
+                vals.add_value(&42, &ColumnType::Int).unwrap();
+                vals.add_value(&2137, &ColumnType::Int).unwrap();
                 Cow::Owned(vals)
             },
         };
@@ -212,7 +236,8 @@ mod tests {
             timestamp: None,
             page_size: None,
             paging_state: None,
-            values: Cow::Owned(SerializedValues::new()),
+            skip_metadata: false,
+            values: Cow::Borrowed(SerializedValues::EMPTY),
         };
         let query = Query {
             contents: contents.clone(),
@@ -236,10 +261,7 @@ mod tests {
 
             // Now buf_ptr points at consistency.
             let consistency = types::read_consistency(&mut buf_ptr).unwrap();
-            assert_eq!(
-                consistency,
-                LegacyConsistency::Regular(Consistency::default())
-            );
+            assert_eq!(consistency, Consistency::default());
 
             // Now buf_ptr points at flags, but it is immutable. Get mutable reference into the buffer.
             let flags_idx = buf.len() - buf_ptr.len();

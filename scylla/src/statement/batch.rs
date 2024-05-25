@@ -78,7 +78,7 @@ impl Batch {
     /// A query is idempotent if it can be applied multiple times without changing the result of the initial application
     /// If set to `true` we can be sure that it is idempotent
     /// If set to `false` it is unknown whether it is idempotent
-    /// This is used in [`RetryPolicy`](crate::retry_policy::RetryPolicy) to decide if retrying a query is safe
+    /// This is used in [`RetryPolicy`] to decide if retrying a query is safe
     pub fn set_is_idempotent(&mut self, is_idempotent: bool) {
         self.config.is_idempotent = is_idempotent;
     }
@@ -270,6 +270,144 @@ impl<'a: 'b, 'b> From<&'a BatchStatement>
                     id: Cow::Borrowed(prepared.get_id()),
                 }
             }
+        }
+    }
+}
+
+pub(crate) mod batch_values {
+    use scylla_cql::errors::QueryError;
+    use scylla_cql::types::serialize::batch::BatchValues;
+    use scylla_cql::types::serialize::batch::BatchValuesIterator;
+    use scylla_cql::types::serialize::row::RowSerializationContext;
+    use scylla_cql::types::serialize::row::SerializedValues;
+    use scylla_cql::types::serialize::{RowWriter, SerializationError};
+
+    use crate::routing::Token;
+
+    use super::BatchStatement;
+
+    // Takes an optional reference to the first statement in the batch and
+    // the batch values, and tries to compute the token for the statement.
+    // Returns the (optional) token and batch values. If the function needed
+    // to serialize values for the first statement, the returned batch values
+    // will cache the results of the serialization.
+    //
+    // NOTE: Batch values returned by this function might not type check
+    // the first statement when it is serialized! However, if they don't,
+    // then the first row was already checked by the function. It is assumed
+    // that `statement` holds the first prepared statement of the batch (if
+    // there is one), and that it will be used later to serialize the values.
+    pub(crate) fn peek_first_token<'bv>(
+        values: impl BatchValues + 'bv,
+        statement: Option<&BatchStatement>,
+    ) -> Result<(Option<Token>, impl BatchValues + 'bv), QueryError> {
+        let mut values_iter = values.batch_values_iter();
+        let (token, first_values) = match statement {
+            Some(BatchStatement::PreparedStatement(ps)) => {
+                let ctx = RowSerializationContext::from_prepared(ps.get_prepared_metadata());
+                let (first_values, did_write) = SerializedValues::from_closure(|writer| {
+                    values_iter
+                        .serialize_next(&ctx, writer)
+                        .transpose()
+                        .map(|o| o.is_some())
+                })?;
+                if did_write {
+                    let token = ps.calculate_token_untyped(&first_values)?;
+                    (token, Some(first_values))
+                } else {
+                    (None, None)
+                }
+            }
+            _ => (None, None),
+        };
+
+        // Need to do it explicitly, otherwise the next line will complain
+        // that `values_iter` still borrows `values`.
+        std::mem::drop(values_iter);
+
+        // Reuse the already serialized first value via `BatchValuesFirstSerialized`.
+        let values = BatchValuesFirstSerialized::new(values, first_values);
+
+        Ok((token, values))
+    }
+
+    struct BatchValuesFirstSerialized<BV> {
+        // Contains the first value of BV in a serialized form.
+        // The first value in the iterator returned from `rest` should be skipped!
+        first: Option<SerializedValues>,
+        rest: BV,
+    }
+
+    impl<BV> BatchValuesFirstSerialized<BV> {
+        fn new(rest: BV, first: Option<SerializedValues>) -> Self {
+            Self { first, rest }
+        }
+    }
+
+    impl<BV> BatchValues for BatchValuesFirstSerialized<BV>
+    where
+        BV: BatchValues,
+    {
+        type BatchValuesIter<'r> = BatchValuesFirstSerializedIterator<'r, BV::BatchValuesIter<'r>>
+    where
+        Self: 'r;
+
+        fn batch_values_iter(&self) -> Self::BatchValuesIter<'_> {
+            BatchValuesFirstSerializedIterator {
+                first: self.first.as_ref(),
+                rest: self.rest.batch_values_iter(),
+            }
+        }
+    }
+
+    struct BatchValuesFirstSerializedIterator<'f, BVI> {
+        first: Option<&'f SerializedValues>,
+        rest: BVI,
+    }
+
+    impl<'f, BVI> BatchValuesIterator<'f> for BatchValuesFirstSerializedIterator<'f, BVI>
+    where
+        BVI: BatchValuesIterator<'f>,
+    {
+        #[inline]
+        fn serialize_next(
+            &mut self,
+            ctx: &RowSerializationContext<'_>,
+            writer: &mut RowWriter,
+        ) -> Option<Result<(), SerializationError>> {
+            match self.first.take() {
+                Some(sr) => {
+                    writer.append_serialize_row(sr);
+                    self.rest.skip_next();
+                    Some(Ok(()))
+                }
+                None => self.rest.serialize_next(ctx, writer),
+            }
+        }
+
+        #[inline]
+        fn is_empty_next(&mut self) -> Option<bool> {
+            match self.first.take() {
+                Some(s) => {
+                    self.rest.skip_next();
+                    Some(s.is_empty())
+                }
+                None => self.rest.is_empty_next(),
+            }
+        }
+
+        #[inline]
+        fn skip_next(&mut self) -> Option<()> {
+            self.first = None;
+            self.rest.skip_next()
+        }
+
+        #[inline]
+        fn count(self) -> usize
+        where
+            Self: Sized,
+        {
+            self.rest.count()
         }
     }
 }

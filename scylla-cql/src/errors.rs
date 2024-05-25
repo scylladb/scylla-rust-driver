@@ -2,8 +2,9 @@
 
 use crate::frame::frame_errors::{FrameError, ParseError};
 use crate::frame::protocol_features::ProtocolFeatures;
-use crate::frame::types::LegacyConsistency;
 use crate::frame::value::SerializeValuesError;
+use crate::types::serialize::SerializationError;
+use crate::Consistency;
 use bytes::Bytes;
 use std::io::ErrorKind;
 use std::sync::Arc;
@@ -108,7 +109,7 @@ pub enum DbError {
     )]
     Unavailable {
         /// Consistency level of the query
-        consistency: LegacyConsistency,
+        consistency: Consistency,
         /// Number of nodes required to be alive to satisfy required consistency level
         required: i32,
         /// Found number of active nodes
@@ -132,7 +133,7 @@ pub enum DbError {
             (consistency: {consistency}, received: {received}, required: {required}, data_present: {data_present})")]
     ReadTimeout {
         /// Consistency level of the query
-        consistency: LegacyConsistency,
+        consistency: Consistency,
         /// Number of nodes that responded to the read request
         received: i32,
         /// Number of nodes required to respond to satisfy required consistency level
@@ -146,7 +147,7 @@ pub enum DbError {
             (consistency: {consistency}, received: {received}, required: {required}, write_type: {write_type})")]
     WriteTimeout {
         /// Consistency level of the query
-        consistency: LegacyConsistency,
+        consistency: Consistency,
         /// Number of nodes that responded to the write request
         received: i32,
         /// Number of nodes required to respond to satisfy required consistency level
@@ -163,7 +164,7 @@ pub enum DbError {
     )]
     ReadFailure {
         /// Consistency level of the query
-        consistency: LegacyConsistency,
+        consistency: Consistency,
         /// Number of nodes that responded to the read request
         received: i32,
         /// Number of nodes required to respond to satisfy required consistency level
@@ -182,7 +183,7 @@ pub enum DbError {
     )]
     WriteFailure {
         /// Consistency level of the query
-        consistency: LegacyConsistency,
+        consistency: Consistency,
         /// Number of nodes that responded to the read request
         received: i32,
         /// Number of nodes required to respond to satisfy required consistency level
@@ -340,6 +341,9 @@ pub enum BadQuery {
     #[error("Serializing values failed: {0} ")]
     SerializeValuesError(#[from] SerializeValuesError),
 
+    #[error("Serializing values failed: {0} ")]
+    SerializationError(#[from] SerializationError),
+
     /// Serialized values are too long to compute partition key
     #[error("Serialized values are too long to compute partition key! Length: {0}, Max allowed length: {1}")]
     ValuesTooLongForKey(usize, usize),
@@ -347,6 +351,10 @@ pub enum BadQuery {
     /// Passed invalid keyspace name to use
     #[error("Passed invalid keyspace name to use: {0}")]
     BadKeyspaceName(#[from] BadKeyspaceName),
+
+    /// Too many queries in the batch statement
+    #[error("Number of Queries in Batch Statement supplied is {0} which has exceeded the max value of 65,535")]
+    TooManyQueriesInBatchStatement(usize),
 
     /// Other reasons of bad query
     #[error("{0}")]
@@ -436,6 +444,12 @@ impl From<std::io::Error> for QueryError {
 impl From<SerializeValuesError> for QueryError {
     fn from(serialized_err: SerializeValuesError) -> QueryError {
         QueryError::BadQuery(BadQuery::SerializeValuesError(serialized_err))
+    }
+}
+
+impl From<SerializationError> for QueryError {
+    fn from(serialized_err: SerializationError) -> QueryError {
+        QueryError::BadQuery(BadQuery::SerializationError(serialized_err))
     }
 }
 
@@ -550,7 +564,7 @@ impl WriteType {
 #[cfg(test)]
 mod tests {
     use super::{DbError, QueryError, WriteType};
-    use crate::frame::types::{Consistency, LegacyConsistency};
+    use crate::frame::types::Consistency;
 
     #[test]
     fn write_type_from_str() {
@@ -581,7 +595,7 @@ mod tests {
     fn dberror_full_info() {
         // Test that DbError::Unavailable is displayed correctly
         let db_error = DbError::Unavailable {
-            consistency: LegacyConsistency::Regular(Consistency::Three),
+            consistency: Consistency::Three,
             required: 3,
             alive: 2,
         };

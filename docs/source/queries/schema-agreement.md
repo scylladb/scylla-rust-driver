@@ -1,25 +1,33 @@
 # Schema agreement
 
-Sometimes after performing queries some nodes have not been updated so we need a mechanism that checks if every node have agreed schema version.
-There are four methods in `Session` that assist us. 
-Every method raise `QueryError` if something goes wrong, but they should never raise any errors, unless there is a DB or connection malfunction.
+Sometimes after performing queries some nodes have not been updated, so we need a mechanism that checks if every node have agreed on schema version.
 
-### Checking schema version
-`Session::fetch_schema_version` returns an `Uuid` of local node's schema version. 
+### Automated awaiting schema agreement
+
+The driver automatically awaits schema agreement after a schema-altering query is executed.
+Waiting for schema agreement more than necessary is never a bug, but might slow down applications which do a lot of schema changes (e.g. a migration).
+For instance, in case where somebody wishes to create a keyspace and then a lot of tables in it, it makes sense only to wait after creating a keyspace
+and after creating all the tables rather than after every query. Therefore, the said behaviour can be disabled:
 
 ```rust
 # extern crate scylla;
-# use scylla::Session;
+# use scylla::SessionBuilder;
 # use std::error::Error;
-# async fn check_only_compiles(session: &Session) -> Result<(), Box<dyn Error>> {
-println!("Local schema version is: {}", session.fetch_schema_version().await?);
+# async fn check_only_compiles() -> Result<(), Box<dyn Error>> {
+let session = SessionBuilder::new()
+    .known_node("127.0.0.1:9042")
+    .auto_await_schema_agreement(false)
+    .build()
+    .await?;
 # Ok(())
 # }
 ```
 
-### Awaiting schema agreement
+### Manually awaiting schema agreement
 
-`Session::await_schema_agreement` returns a `Future` that can be `await`ed on as long as schema is not in an agreement.
+`Session::await_schema_agreement` returns a `Future` that can be `await`ed as long as schema is not in an agreement.
+However, it won't wait forever; `SessionConfig` defines a timeout that limits the time of waiting. If the timeout elapses,
+the return value is `Err(QueryError::RequestTimeout)`, otherwise it is `Ok(schema_version)`.
 
 ```rust
 # extern crate scylla;
@@ -31,28 +39,10 @@ session.await_schema_agreement().await?;
 # }
 ```
 
-### Awaiting with timeout
-We can also set timeout in milliseconds with `Session::await_timed_schema_agreement`.
-It takes one argument, an `std::time::Duration` value that tells how long our driver should await for schema agreement. If the timeout is met the return value is `false` otherwise it is `true`.
+### Interval of checking for schema agreement
 
-```rust
-# extern crate scylla;
-# use scylla::Session;
-# use std::error::Error;
-# use std::time::Duration;
-# async fn check_only_compiles(session: &Session) -> Result<(), Box<dyn Error>> {
-if session.await_timed_schema_agreement(Duration::from_secs(5)).await? { // wait for 5 seconds
-    println!("SCHEMA AGREED");
-} else {
-    println!("SCHEMA IS NOT IN AGREEMENT - TIMED OUT");
-}
-# Ok(())
-# }
-```
-
-### Checking for schema interval
-If schema is not agreed driver sleeps for a duration before checking it again. Default value is 200 milliseconds but it can be changed with `SessionBuilder::schema_agreement_interval`.
-
+If the schema is not agreed upon, the driver sleeps for a duration before checking it again. The default value is 200 milliseconds,
+but it can be changed with `SessionBuilder::schema_agreement_interval`.
 
 ```rust
 # extern crate scylla;
@@ -70,15 +60,15 @@ SessionBuilder::new()
 ```
 
 ### Checking if schema is in agreement now
-If you want to check if schema is in agreement now without retrying after failure you can use `Session::check_schema_agreement` function.
 
+If you want to check if schema is in agreement now, without retrying after failure, you can use `Session::check_schema_agreement` function.
 
 ```rust
 # extern crate scylla;
 # use scylla::Session;
 # use std::error::Error;
 # async fn check_only_compiles(session: &Session) -> Result<(), Box<dyn Error>> {
-if session.check_schema_agreement().await? { 
+if session.check_schema_agreement().await?.is_some() {
     println!("SCHEMA AGREED");
 } else {
     println!("SCHEMA IS NOT IN AGREEMENT");
@@ -86,5 +76,3 @@ if session.check_schema_agreement().await? {
 # Ok(())
 # }
 ```
-
-

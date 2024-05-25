@@ -1,4 +1,4 @@
-use crate::utils::test_with_3_node_cluster;
+use crate::utils::{setup_tracing, test_with_3_node_cluster};
 use scylla::retry_policy::FallthroughRetryPolicy;
 use scylla::speculative_execution::SimpleSpeculativeExecutionPolicy;
 use scylla::transport::session::Session;
@@ -18,6 +18,7 @@ use scylla_proxy::{
 #[ntest::timeout(30000)]
 #[cfg(not(scylla_cloud_tests))]
 async fn speculative_execution_is_fired() {
+    setup_tracing();
     const TIMEOUT_PER_REQUEST: Duration = Duration::from_millis(1000);
 
     let res = test_with_3_node_cluster(ShardAwareness::QueryNode, |proxy_uris, translation_map, mut running_proxy| async move {
@@ -46,7 +47,7 @@ async fn speculative_execution_is_fired() {
         q.set_is_idempotent(true); // this is to allow speculative execution to fire
 
         let drop_frame_rule = RequestRule(
-            Condition::RequestOpcode(RequestOpcode::Query)
+            Condition::RequestOpcode(RequestOpcode::Prepare)
                 .and(Condition::BodyContainsCaseSensitive(Box::new(*b"t"))),
             RequestReaction::drop_frame(),
         );
@@ -99,6 +100,7 @@ async fn speculative_execution_is_fired() {
 #[ntest::timeout(30000)]
 #[cfg(not(scylla_cloud_tests))]
 async fn retries_occur() {
+    setup_tracing();
     let res = test_with_3_node_cluster(ShardAwareness::QueryNode, |proxy_uris, translation_map, mut running_proxy| async move {
 
         // DB preparation phase
@@ -121,7 +123,7 @@ async fn retries_occur() {
         q.set_is_idempotent(true); // this is to allow retry to fire
 
         let forge_error_rule = RequestRule(
-            Condition::RequestOpcode(RequestOpcode::Query)
+            Condition::RequestOpcode(RequestOpcode::Prepare)
                 .and(Condition::BodyContainsCaseSensitive(Box::new(*b"INTO t"))),
             RequestReaction::forge().server_error(),
         );

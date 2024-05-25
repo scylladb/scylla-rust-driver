@@ -4,14 +4,14 @@ use bytes::Bytes;
 use rand::{Rng, RngCore};
 use tokio::sync::mpsc;
 
-use crate::frame::{
-    FrameOpcode, FrameParams, RequestFrame, RequestOpcode, ResponseFrame, ResponseOpcode,
+#[cfg(test)]
+use crate::setup_tracing;
+
+use crate::{
+    frame::{FrameOpcode, FrameParams, RequestFrame, RequestOpcode, ResponseFrame, ResponseOpcode},
+    TargetShard,
 };
-use scylla_cql::{
-    errors::{DbError, WriteType},
-    frame::types::LegacyConsistency,
-    Consistency,
-};
+use scylla_cql::errors::DbError;
 
 /// Specifies when an associated [Reaction] will be performed.
 /// Conditions are subject to logic, with `not()`, `and()` and `or()`
@@ -48,11 +48,15 @@ pub enum Condition {
 
     /// True for predefined number of evaluations, then always false.
     TrueForLimitedTimes(usize),
+
+    // True if any REGISTER was sent on this connection. Useful to filter out control connection messages.
+    ConnectionRegisteredAnyEvent,
 }
 
 /// The context in which [`Conditions`](Condition) are evaluated.
 pub(crate) struct EvaluationContext {
     pub(crate) connection_seq_no: usize,
+    pub(crate) connection_has_events: bool,
     pub(crate) opcode: FrameOpcode,
     pub(crate) frame_body: Bytes,
 }
@@ -110,7 +114,9 @@ impl Condition {
                     *times -= 1;
                 }
                 val
-            }
+            },
+
+            Condition::ConnectionRegisteredAnyEvent => ctx.connection_has_events
         }
     }
 
@@ -172,7 +178,10 @@ pub trait Reaction: Sized {
 
     /// Adds sending the matching frame as feedback using the provided channel.
     /// Modifies the existing `Reaction`.
-    fn with_feedback_when_performed(self, tx: mpsc::UnboundedSender<Self::Incoming>) -> Self;
+    fn with_feedback_when_performed(
+        self,
+        tx: mpsc::UnboundedSender<(Self::Incoming, Option<TargetShard>)>,
+    ) -> Self;
 }
 
 fn fmt_reaction(
@@ -203,7 +212,7 @@ pub struct RequestReaction {
     pub to_addressee: Option<Action<RequestFrame, RequestFrame>>,
     pub to_sender: Option<Action<RequestFrame, ResponseFrame>>,
     pub drop_connection: Option<Option<Duration>>,
-    pub feedback_channel: Option<mpsc::UnboundedSender<RequestFrame>>,
+    pub feedback_channel: Option<mpsc::UnboundedSender<(RequestFrame, Option<TargetShard>)>>,
 }
 
 impl fmt::Debug for RequestReaction {
@@ -224,7 +233,7 @@ pub struct ResponseReaction {
     pub to_addressee: Option<Action<ResponseFrame, ResponseFrame>>,
     pub to_sender: Option<Action<ResponseFrame, RequestFrame>>,
     pub drop_connection: Option<Option<Duration>>,
-    pub feedback_channel: Option<mpsc::UnboundedSender<ResponseFrame>>,
+    pub feedback_channel: Option<mpsc::UnboundedSender<(ResponseFrame, Option<TargetShard>)>>,
 }
 
 impl fmt::Debug for ResponseReaction {
@@ -322,7 +331,10 @@ impl Reaction for RequestReaction {
         }
     }
 
-    fn with_feedback_when_performed(self, tx: mpsc::UnboundedSender<Self::Incoming>) -> Self {
+    fn with_feedback_when_performed(
+        self,
+        tx: mpsc::UnboundedSender<(Self::Incoming, Option<TargetShard>)>,
+    ) -> Self {
         Self {
             feedback_channel: Some(tx),
             ..self
@@ -395,8 +407,13 @@ impl RequestReaction {
     }
 }
 
-struct ExampleDbErrors;
-impl ExampleDbErrors {
+pub mod example_db_errors {
+    use bytes::Bytes;
+    use scylla_cql::{
+        errors::{DbError, WriteType},
+        Consistency,
+    };
+
     pub fn syntax_error() -> DbError {
         DbError::SyntaxError
     }
@@ -427,7 +444,7 @@ impl ExampleDbErrors {
     }
     pub fn unavailable() -> DbError {
         DbError::Unavailable {
-            consistency: LegacyConsistency::Regular(Consistency::One),
+            consistency: Consistency::One,
             required: 2,
             alive: 1,
         }
@@ -443,7 +460,7 @@ impl ExampleDbErrors {
     }
     pub fn read_timeout() -> DbError {
         DbError::ReadTimeout {
-            consistency: LegacyConsistency::Regular(Consistency::One),
+            consistency: Consistency::One,
             received: 2,
             required: 3,
             data_present: true,
@@ -451,7 +468,7 @@ impl ExampleDbErrors {
     }
     pub fn write_timeout() -> DbError {
         DbError::WriteTimeout {
-            consistency: LegacyConsistency::Regular(Consistency::One),
+            consistency: Consistency::One,
             received: 2,
             required: 3,
             write_type: WriteType::UnloggedBatch,
@@ -459,7 +476,7 @@ impl ExampleDbErrors {
     }
     pub fn read_failure() -> DbError {
         DbError::ReadFailure {
-            consistency: LegacyConsistency::Regular(Consistency::One),
+            consistency: Consistency::One,
             received: 2,
             required: 3,
             data_present: true,
@@ -468,7 +485,7 @@ impl ExampleDbErrors {
     }
     pub fn write_failure() -> DbError {
         DbError::WriteFailure {
-            consistency: LegacyConsistency::Regular(Consistency::One),
+            consistency: Consistency::One,
             received: 2,
             required: 3,
             write_type: WriteType::UnloggedBatch,
@@ -495,84 +512,84 @@ pub struct ResponseForger;
 
 impl ResponseForger {
     pub fn syntax_error(&self) -> RequestReaction {
-        RequestReaction::forge_with_error(ExampleDbErrors::syntax_error())
+        RequestReaction::forge_with_error(example_db_errors::syntax_error())
     }
     pub fn invalid(&self) -> RequestReaction {
-        RequestReaction::forge_with_error(ExampleDbErrors::invalid())
+        RequestReaction::forge_with_error(example_db_errors::invalid())
     }
     pub fn already_exists(&self) -> RequestReaction {
-        RequestReaction::forge_with_error(ExampleDbErrors::already_exists())
+        RequestReaction::forge_with_error(example_db_errors::already_exists())
     }
     pub fn function_failure(&self) -> RequestReaction {
-        RequestReaction::forge_with_error(ExampleDbErrors::function_failure())
+        RequestReaction::forge_with_error(example_db_errors::function_failure())
     }
     pub fn authentication_error(&self) -> RequestReaction {
-        RequestReaction::forge_with_error(ExampleDbErrors::authentication_error())
+        RequestReaction::forge_with_error(example_db_errors::authentication_error())
     }
     pub fn unauthorized(&self) -> RequestReaction {
-        RequestReaction::forge_with_error(ExampleDbErrors::unauthorized())
+        RequestReaction::forge_with_error(example_db_errors::unauthorized())
     }
     pub fn config_error(&self) -> RequestReaction {
-        RequestReaction::forge_with_error(ExampleDbErrors::config_error())
+        RequestReaction::forge_with_error(example_db_errors::config_error())
     }
     pub fn unavailable(&self) -> RequestReaction {
-        RequestReaction::forge_with_error(ExampleDbErrors::unavailable())
+        RequestReaction::forge_with_error(example_db_errors::unavailable())
     }
     pub fn overloaded(&self) -> RequestReaction {
-        RequestReaction::forge_with_error(ExampleDbErrors::overloaded())
+        RequestReaction::forge_with_error(example_db_errors::overloaded())
     }
     pub fn is_bootstrapping(&self) -> RequestReaction {
-        RequestReaction::forge_with_error(ExampleDbErrors::is_bootstrapping())
+        RequestReaction::forge_with_error(example_db_errors::is_bootstrapping())
     }
     pub fn truncate_error(&self) -> RequestReaction {
-        RequestReaction::forge_with_error(ExampleDbErrors::truncate_error())
+        RequestReaction::forge_with_error(example_db_errors::truncate_error())
     }
     pub fn read_timeout(&self) -> RequestReaction {
-        RequestReaction::forge_with_error(ExampleDbErrors::read_timeout())
+        RequestReaction::forge_with_error(example_db_errors::read_timeout())
     }
     pub fn write_timeout(&self) -> RequestReaction {
-        RequestReaction::forge_with_error(ExampleDbErrors::write_timeout())
+        RequestReaction::forge_with_error(example_db_errors::write_timeout())
     }
     pub fn read_failure(&self) -> RequestReaction {
-        RequestReaction::forge_with_error(ExampleDbErrors::read_failure())
+        RequestReaction::forge_with_error(example_db_errors::read_failure())
     }
     pub fn write_failure(&self) -> RequestReaction {
-        RequestReaction::forge_with_error(ExampleDbErrors::write_failure())
+        RequestReaction::forge_with_error(example_db_errors::write_failure())
     }
     pub fn unprepared(&self) -> RequestReaction {
-        RequestReaction::forge_with_error(ExampleDbErrors::unprepared())
+        RequestReaction::forge_with_error(example_db_errors::unprepared())
     }
     pub fn server_error(&self) -> RequestReaction {
-        RequestReaction::forge_with_error(ExampleDbErrors::server_error())
+        RequestReaction::forge_with_error(example_db_errors::server_error())
     }
     pub fn protocol_error(&self) -> RequestReaction {
-        RequestReaction::forge_with_error(ExampleDbErrors::protocol_error())
+        RequestReaction::forge_with_error(example_db_errors::protocol_error())
     }
     pub fn other(&self, num: i32) -> RequestReaction {
-        RequestReaction::forge_with_error(ExampleDbErrors::other(num))
+        RequestReaction::forge_with_error(example_db_errors::other(num))
     }
     pub fn random_error(&self) -> RequestReaction {
         self.random_error_with_delay(None)
     }
     pub fn random_error_with_delay(&self, delay: Option<Duration>) -> RequestReaction {
         static ERRORS: &[fn() -> DbError] = &[
-            ExampleDbErrors::invalid,
-            ExampleDbErrors::already_exists,
-            ExampleDbErrors::function_failure,
-            ExampleDbErrors::authentication_error,
-            ExampleDbErrors::unauthorized,
-            ExampleDbErrors::config_error,
-            ExampleDbErrors::unavailable,
-            ExampleDbErrors::overloaded,
-            ExampleDbErrors::is_bootstrapping,
-            ExampleDbErrors::truncate_error,
-            ExampleDbErrors::read_timeout,
-            ExampleDbErrors::write_timeout,
-            ExampleDbErrors::write_failure,
-            ExampleDbErrors::unprepared,
-            ExampleDbErrors::server_error,
-            ExampleDbErrors::protocol_error,
-            || ExampleDbErrors::other(2137),
+            example_db_errors::invalid,
+            example_db_errors::already_exists,
+            example_db_errors::function_failure,
+            example_db_errors::authentication_error,
+            example_db_errors::unauthorized,
+            example_db_errors::config_error,
+            example_db_errors::unavailable,
+            example_db_errors::overloaded,
+            example_db_errors::is_bootstrapping,
+            example_db_errors::truncate_error,
+            example_db_errors::read_timeout,
+            example_db_errors::write_timeout,
+            example_db_errors::write_failure,
+            example_db_errors::unprepared,
+            example_db_errors::server_error,
+            example_db_errors::protocol_error,
+            || example_db_errors::other(2137),
         ];
         RequestReaction::forge_with_error_lazy_delay(
             Box::new(|| ERRORS[rand::thread_rng().next_u32() as usize % ERRORS.len()]()),
@@ -663,7 +680,10 @@ impl Reaction for ResponseReaction {
         }
     }
 
-    fn with_feedback_when_performed(self, tx: mpsc::UnboundedSender<Self::Incoming>) -> Self {
+    fn with_feedback_when_performed(
+        self,
+        tx: mpsc::UnboundedSender<(Self::Incoming, Option<TargetShard>)>,
+    ) -> Self {
         Self {
             feedback_channel: Some(tx),
             ..self
@@ -708,6 +728,7 @@ pub struct ResponseRule(pub Condition, pub ResponseReaction);
 
 #[test]
 fn condition_case_insensitive_matching() {
+    setup_tracing();
     let mut condition_matching =
         Condition::BodyContainsCaseInsensitive(Box::new(*b"cassandra'sInefficiency"));
     let mut condition_nonmatching =
@@ -716,6 +737,7 @@ fn condition_case_insensitive_matching() {
         connection_seq_no: 42,
         opcode: FrameOpcode::Request(RequestOpcode::Options),
         frame_body: Bytes::from_static(b"\0\0x{0x223}Cassandra'sINEFFICIENCY\x12\x31"),
+        connection_has_events: false,
     };
 
     assert!(condition_matching.eval(&ctx));

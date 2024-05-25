@@ -1,31 +1,29 @@
 //! `Session` is the main object used in the driver.\
 //! It manages all connections to the cluster and allows to perform queries.
 
+use crate::batch::batch_values;
 #[cfg(feature = "cloud")]
 use crate::cloud::CloudConfig;
 
-use crate::frame::types::LegacyConsistency;
 use crate::history;
 use crate::history::HistoryListener;
-use crate::prepared_statement::PartitionKeyDecoder;
 use crate::routing;
 use crate::utils::pretty::{CommaSeparatedDisplayer, CqlValueDisplayer};
 use arc_swap::ArcSwapOption;
 use async_trait::async_trait;
-use bytes::BufMut;
 use bytes::Bytes;
-use bytes::BytesMut;
 use futures::future::join_all;
 use futures::future::try_join_all;
-use itertools::Either;
+use itertools::{Either, Itertools};
 pub use scylla_cql::errors::TranslationError;
-use scylla_cql::frame::response::result::{PreparedMetadata, Rows};
+use scylla_cql::frame::response::result::{deser_cql_value, ColumnSpec, Rows};
 use scylla_cql::frame::response::NonErrorResponse;
+use scylla_cql::types::serialize::batch::BatchValues;
+use scylla_cql::types::serialize::row::SerializeRow;
 use std::borrow::Borrow;
 use std::collections::HashMap;
 use std::fmt::Display;
 use std::future::Future;
-use std::io;
 use std::net::SocketAddr;
 use std::num::NonZeroU32;
 use std::str::FromStr;
@@ -33,33 +31,30 @@ use std::sync::atomic::AtomicUsize;
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use std::time::Duration;
-use tokio::net::lookup_host;
 use tokio::time::timeout;
-use tracing::warn;
-use tracing::{debug, error, trace, trace_span, Instrument};
+use tracing::{debug, trace, trace_span, Instrument};
 use uuid::Uuid;
 
-use super::cluster::ContactPoint;
 use super::connection::NonErrorQueryResponse;
 use super::connection::QueryResponse;
 #[cfg(feature = "ssl")]
 use super::connection::SslConfig;
-use super::errors::{BadQuery, NewSessionError, QueryError};
+use super::errors::{NewSessionError, QueryError};
 use super::execution_profile::{ExecutionProfile, ExecutionProfileHandle, ExecutionProfileInner};
-use super::partitioner::Partitioner;
+#[cfg(feature = "cloud")]
+use super::node::CloudEndpoint;
+use super::node::KnownNode;
 use super::partitioner::PartitionerName;
+use super::query_result::MaybeFirstRowTypedError;
 use super::topology::UntranslatedPeer;
 use super::NodeRef;
 use crate::cql_to_rust::FromRow;
 use crate::frame::response::cql_to_rust::FromRowError;
 use crate::frame::response::result;
-use crate::frame::value::{
-    BatchValues, BatchValuesFirstSerialized, BatchValuesIterator, SerializedValues, ValueList,
-};
-use crate::prepared_statement::{PartitionKeyError, PreparedStatement};
+use crate::prepared_statement::PreparedStatement;
 use crate::query::Query;
-use crate::routing::Token;
-use crate::statement::{Consistency, SerialConsistency};
+use crate::routing::{Shard, Token};
+use crate::statement::Consistency;
 use crate::tracing::{TracingEvent, TracingInfo};
 use crate::transport::cluster::{Cluster, ClusterData, ClusterNeatDebug};
 use crate::transport::connection::{Connection, ConnectionConfig, VerifiedKeyspaceName};
@@ -83,7 +78,26 @@ pub use crate::transport::connection_pool::PoolSize;
 use crate::authentication::AuthenticatorProvider;
 #[cfg(feature = "ssl")]
 use openssl::ssl::SslContext;
+use scylla_cql::errors::BadQuery;
 
+pub(crate) const TABLET_CHANNEL_SIZE: usize = 8192;
+
+/// Translates IP addresses received from ScyllaDB nodes into locally reachable addresses.
+///
+/// The driver auto-detects new ScyllaDB nodes added to the cluster through server side pushed
+/// notifications and through checking the system tables. For each node, the address the driver
+/// receives corresponds to the address set as `rpc_address` in the node yaml file. In most
+/// cases, this is the correct address to use by the driver and that is what is used by default.
+/// However, sometimes the addresses received through this mechanism will either not be reachable
+/// directly by the driver or should not be the preferred address to use to reach the node (for
+/// instance, the `rpc_address` set on ScyllaDB nodes might be a private IP, but some clients
+/// may have to use a public IP, or pass by a router, e.g. through NAT, to reach that node).
+/// This interface allows to deal with such cases, by allowing to translate an address as sent
+/// by a ScyllaDB node to another address to be used by the driver for connection.
+///
+/// Please note that the "known nodes" addresses provided while creating the [`Session`]
+/// instance are not translated, only IP address retrieved from or sent by Cassandra nodes
+/// to the driver are.
 #[async_trait]
 pub trait AddressTranslator: Send + Sync {
     async fn translate_address(
@@ -106,7 +120,7 @@ impl AddressTranslator for HashMap<SocketAddr, SocketAddr> {
 }
 
 #[async_trait]
-// Notice: this is unefficient, but what else can we do with such poor representation as str?
+// Notice: this is inefficient, but what else can we do with such poor representation as str?
 // After all, the cluster size is small enough to make this irrelevant.
 impl AddressTranslator for HashMap<&'static str, &'static str> {
     async fn translate_address(
@@ -131,7 +145,8 @@ pub struct Session {
     default_execution_profile_handle: ExecutionProfileHandle,
     schema_agreement_interval: Duration,
     metrics: Arc<Metrics>,
-    auto_await_schema_agreement_timeout: Option<Duration>,
+    schema_agreement_timeout: Duration,
+    schema_agreement_automatic_waiting: bool,
     refresh_metadata_on_auto_schema_agreement: bool,
     keyspace_name: ArcSwapOption<String>,
     tracing_info_fetch_attempts: NonZeroU32,
@@ -153,7 +168,7 @@ impl std::fmt::Debug for Session {
             .field("metrics", &self.metrics)
             .field(
                 "auto_await_schema_agreement_timeout",
-                &self.auto_await_schema_agreement_timeout,
+                &self.schema_agreement_timeout,
             )
             .finish()
     }
@@ -187,7 +202,6 @@ pub struct SessionConfig {
 
     pub authenticator: Option<Arc<dyn AuthenticatorProvider>>,
 
-    pub schema_agreement_interval: Duration,
     pub connect_timeout: Duration,
 
     /// Size of the per-node connection pool, i.e. how many connections the driver should keep to each node.
@@ -212,20 +226,32 @@ pub struct SessionConfig {
     /// If `None`, connections are never closed due to lack of response to a keepalive message.
     pub keepalive_timeout: Option<Duration>,
 
-    /// Controls the timeout for the automatic wait for schema agreement after sending a schema-altering statement.
-    /// If `None`, the automatic schema agreement is disabled.
-    pub auto_await_schema_agreement_timeout: Option<Duration>,
+    /// How often the driver should ask if schema is in agreement.
+    pub schema_agreement_interval: Duration,
 
+    /// Controls the timeout for waiting for schema agreement.
+    /// This works both for manual awaiting schema agreement and for
+    /// automatic waiting after a schema-altering statement is sent.
+    pub schema_agreement_timeout: Duration,
+
+    /// Controls whether schema agreement is automatically awaited
+    /// after sending a schema-altering statement.
+    pub schema_agreement_automatic_waiting: bool,
+
+    /// If true, full schema metadata is fetched after successfully reaching a schema agreement.
+    /// It is true by default but can be disabled if successive schema-altering statements should be performed.
+    pub refresh_metadata_on_auto_schema_agreement: bool,
+
+    /// The address translator is used to translate addresses received from ScyllaDB nodes
+    /// (either with cluster metadata or with an event) to addresses that can be used to
+    /// actually connect to those nodes. This may be needed e.g. when there is NAT
+    /// between the nodes and the driver.
     pub address_translator: Option<Arc<dyn AddressTranslator>>,
 
     /// The host filter decides whether any connections should be opened
     /// to the node or not. The driver will also avoid filtered out nodes when
     /// re-establishing the control connection.
     pub host_filter: Option<Arc<dyn HostFilter>>,
-
-    /// If true, full schema metadata is fetched after successfully reaching a schema agreement.
-    /// It is true by default but can be disabled if successive schema-altering statements should be performed.
-    pub refresh_metadata_on_auto_schema_agreement: bool,
 
     /// If the driver is to connect to ScyllaCloud, there is a config for it.
     #[cfg(feature = "cloud")]
@@ -258,24 +284,12 @@ pub struct SessionConfig {
     /// Consistency level of fetching [`TracingInfo`]
     /// in [`Session::get_tracing_info`].
     pub tracing_info_fetch_consistency: Consistency,
-}
 
-/// Describes database server known on Session startup.
-#[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Debug)]
-#[non_exhaustive]
-pub enum KnownNode {
-    Hostname(String),
-    Address(SocketAddr),
-    #[cfg(feature = "cloud")]
-    CloudEndpoint(CloudEndpoint),
-}
-
-#[cfg(feature = "cloud")]
-#[non_exhaustive]
-#[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Debug)]
-pub struct CloudEndpoint {
-    pub hostname: String,
-    pub datacenter: String,
+    /// Interval between refreshing cluster metadata. This
+    /// can be configured according to the traffic pattern
+    /// for e.g: if they do not want unexpected traffic
+    /// or they expect the topology to change frequently.
+    pub cluster_metadata_refresh_interval: Duration,
 }
 
 impl SessionConfig {
@@ -310,16 +324,18 @@ impl SessionConfig {
             fetch_schema_metadata: true,
             keepalive_interval: Some(Duration::from_secs(30)),
             keepalive_timeout: Some(Duration::from_secs(30)),
-            auto_await_schema_agreement_timeout: Some(std::time::Duration::from_secs(60)),
+            schema_agreement_timeout: Duration::from_secs(60),
+            schema_agreement_automatic_waiting: true,
             address_translator: None,
             host_filter: None,
             refresh_metadata_on_auto_schema_agreement: true,
             #[cfg(feature = "cloud")]
             cloud_config: None,
             enable_write_coalescing: true,
-            tracing_info_fetch_attempts: NonZeroU32::new(5).unwrap(),
+            tracing_info_fetch_attempts: NonZeroU32::new(10).unwrap(),
             tracing_info_fetch_interval: Duration::from_millis(3),
             tracing_info_fetch_consistency: Consistency::One,
+            cluster_metadata_refresh_interval: Duration::from_secs(60),
         }
     }
 
@@ -424,7 +440,7 @@ impl<RowT: FromRow> Iterator for TypedRowIter<RowT> {
     }
 }
 
-pub enum RunQueryResult<ResT> {
+pub(crate) enum RunQueryResult<ResT> {
     IgnoredWriteError,
     Completed(ResT),
 }
@@ -432,7 +448,7 @@ pub enum RunQueryResult<ResT> {
 /// Represents a CQL session, which can be used to communicate
 /// with the database
 impl Session {
-    /// Estabilishes a CQL session with the database
+    /// Establishes a CQL session with the database
     ///
     /// Usually it's easier to use [SessionBuilder](crate::transport::session_builder::SessionBuilder)
     /// instead of calling `Session::connect` directly, because it's more convenient.
@@ -445,7 +461,7 @@ impl Session {
     /// # use std::error::Error;
     /// # async fn check_only_compiles() -> Result<(), Box<dyn Error>> {
     /// use scylla::{Session, SessionConfig};
-    /// use scylla::transport::session::KnownNode;
+    /// use scylla::transport::KnownNode;
     ///
     /// let mut config = SessionConfig::new();
     /// config.known_nodes.push(KnownNode::Hostname("127.0.0.1:9042".to_string()));
@@ -481,49 +497,7 @@ impl Session {
             return Err(NewSessionError::EmptyKnownNodesList);
         }
 
-        // Find IP addresses of all known nodes passed in the config
-        let mut initial_peers: Vec<ContactPoint> = Vec::with_capacity(known_nodes.len());
-
-        let mut to_resolve: Vec<(String, Option<String>)> = Vec::new();
-
-        for node in known_nodes {
-            match node {
-                KnownNode::Hostname(hostname) => to_resolve.push((hostname, None)),
-                KnownNode::Address(address) => initial_peers.push(ContactPoint {
-                    address,
-                    datacenter: None,
-                }),
-                #[cfg(feature = "cloud")]
-                KnownNode::CloudEndpoint(CloudEndpoint {
-                    hostname,
-                    datacenter,
-                }) => to_resolve.push((hostname, Some(datacenter))),
-            };
-        }
-        let resolve_futures = to_resolve.iter().map(|(hostname, datacenter)| async move {
-            match resolve_hostname(hostname).await {
-                Ok(address) => Some(ContactPoint {
-                    address,
-                    datacenter: datacenter.clone(),
-                }),
-                Err(e) => {
-                    warn!("Hostname resolution failed for {}: {}", hostname, &e);
-                    None
-                }
-            }
-        });
-        let resolved: Vec<_> = futures::future::join_all(resolve_futures).await;
-        initial_peers.extend(resolved.into_iter().flatten());
-
-        // Ensure there is at least one resolved node
-        if initial_peers.is_empty() {
-            return Err(NewSessionError::FailedToResolveAnyHostname(
-                to_resolve
-                    .into_iter()
-                    .map(|(hostname, _datacenter)| hostname)
-                    .collect(),
-            ));
-        }
+        let (tablet_sender, tablet_receiver) = tokio::sync::mpsc::channel(TABLET_CHANNEL_SIZE);
 
         let connection_config = ConnectionConfig {
             compression: config.compression,
@@ -541,6 +515,7 @@ impl Session {
             enable_write_coalescing: config.enable_write_coalescing,
             keepalive_interval: config.keepalive_interval,
             keepalive_timeout: config.keepalive_timeout,
+            tablet_sender: Some(tablet_sender),
         };
 
         let pool_config = PoolConfig {
@@ -551,11 +526,13 @@ impl Session {
         };
 
         let cluster = Cluster::new(
-            initial_peers,
+            known_nodes,
             pool_config,
             config.keyspaces_to_fetch,
             config.fetch_schema_metadata,
             config.host_filter,
+            config.cluster_metadata_refresh_interval,
+            tablet_receiver,
         )
         .await?;
 
@@ -566,7 +543,8 @@ impl Session {
             default_execution_profile_handle,
             schema_agreement_interval: config.schema_agreement_interval,
             metrics: Arc::new(Metrics::new()),
-            auto_await_schema_agreement_timeout: config.auto_await_schema_agreement_timeout,
+            schema_agreement_timeout: config.schema_agreement_timeout,
+            schema_agreement_automatic_waiting: config.schema_agreement_automatic_waiting,
             refresh_metadata_on_auto_schema_agreement: config
                 .refresh_metadata_on_auto_schema_agreement,
             keyspace_name: ArcSwapOption::default(), // will be set by use_keyspace
@@ -589,9 +567,13 @@ impl Session {
     ///
     /// This is the easiest way to make a query, but performance is worse than that of prepared queries.
     ///
+    /// It is discouraged to use this method with non-empty values argument (`is_empty()` method from `SerializeRow`
+    /// trait returns false). In such case, query first needs to be prepared (on a single connection), so
+    /// driver will perform 2 round trips instead of 1. Please use [`Session::execute()`] instead.
+    ///
     /// See [the book](https://rust-driver.docs.scylladb.com/stable/queries/simple.html) for more information
     /// # Arguments
-    /// * `query` - query to perform, can be just a `&str` or the [Query](crate::query::Query) struct.
+    /// * `query` - query to perform, can be just a `&str` or the [Query] struct.
     /// * `values` - values bound to the query, easiest way is to use a tuple of bound values
     ///
     /// # Examples
@@ -633,12 +615,17 @@ impl Session {
     pub async fn query(
         &self,
         query: impl Into<Query>,
-        values: impl ValueList,
+        values: impl SerializeRow,
     ) -> Result<QueryResult, QueryError> {
         self.query_paged(query, values, None).await
     }
 
     /// Queries the database with a custom paging state.
+    ///
+    /// It is discouraged to use this method with non-empty values argument (`is_empty()` method from `SerializeRow`
+    /// trait returns false). In such case, query first needs to be prepared (on a single connection), so
+    /// driver will perform 2 round trips instead of 1. Please use [`Session::execute_paged()`] instead.
+    ///
     /// # Arguments
     ///
     /// * `query` - query to be performed
@@ -647,11 +634,10 @@ impl Session {
     pub async fn query_paged(
         &self,
         query: impl Into<Query>,
-        values: impl ValueList,
+        values: impl SerializeRow,
         paging_state: Option<Bytes>,
     ) -> Result<QueryResult, QueryError> {
         let query: Query = query.into();
-        let serialized_values = values.serialized()?;
 
         let execution_profile = query
             .get_execution_profile_handle()
@@ -670,13 +656,13 @@ impl Session {
             ..Default::default()
         };
 
-        let span = RequestSpan::new_query(&query.contents, serialized_values.size());
+        let span = RequestSpan::new_query(&query.contents);
+        let span_ref = &span;
         let run_query_result = self
             .run_query(
                 statement_info,
                 &query.config,
                 execution_profile,
-                |node: Arc<Node>| async move { node.random_connection().await },
                 |connection: Arc<Connection>,
                  consistency: Consistency,
                  execution_profile: &ExecutionProfileInner| {
@@ -686,19 +672,35 @@ impl Session {
                         .unwrap_or(execution_profile.serial_consistency);
                     // Needed to avoid moving query and values into async move block
                     let query_ref = &query;
-                    let values_ref = &serialized_values;
+                    let values_ref = &values;
                     let paging_state_ref = &paging_state;
                     async move {
-                        connection
-                            .query_with_consistency(
-                                query_ref,
-                                values_ref,
-                                consistency,
-                                serial_consistency,
-                                paging_state_ref.clone(),
-                            )
-                            .await
-                            .and_then(QueryResponse::into_non_error_query_response)
+                        if values_ref.is_empty() {
+                            span_ref.record_request_size(0);
+                            connection
+                                .query_with_consistency(
+                                    query_ref,
+                                    consistency,
+                                    serial_consistency,
+                                    paging_state_ref.clone(),
+                                )
+                                .await
+                                .and_then(QueryResponse::into_non_error_query_response)
+                        } else {
+                            let prepared = connection.prepare(query_ref).await?;
+                            let serialized = prepared.serialize_values(values_ref)?;
+                            span_ref.record_request_size(serialized.buffer_size());
+                            connection
+                                .execute_with_consistency(
+                                    &prepared,
+                                    &serialized,
+                                    consistency,
+                                    serial_consistency,
+                                    paging_state_ref.clone(),
+                                )
+                                .await
+                                .and_then(QueryResponse::into_non_error_query_response)
+                        }
                     }
                 },
                 &span,
@@ -716,8 +718,7 @@ impl Session {
         };
 
         self.handle_set_keyspace_response(&response).await?;
-        self.handle_auto_await_schema_agreement(&query.contents, &response)
-            .await?;
+        self.handle_auto_await_schema_agreement(&response).await?;
 
         let result = response.into_query_result()?;
         span.record_result_fields(&result);
@@ -742,20 +743,11 @@ impl Session {
 
     async fn handle_auto_await_schema_agreement(
         &self,
-        contents: &str,
         response: &NonErrorQueryResponse,
     ) -> Result<(), QueryError> {
-        if let Some(timeout) = self.auto_await_schema_agreement_timeout {
-            if response.as_schema_change().is_some()
-                && !self.await_timed_schema_agreement(timeout).await?
-            {
-                // TODO: The TimeoutError should allow to provide more context.
-                // For now, print an error to the logs
-                error!(
-                    "Failed to reach schema agreement after a schema-altering statement: {}",
-                    contents,
-                );
-                return Err(QueryError::TimeoutError);
+        if self.schema_agreement_automatic_waiting {
+            if response.as_schema_change().is_some() {
+                self.await_schema_agreement().await?;
             }
 
             if self.refresh_metadata_on_auto_schema_agreement
@@ -772,12 +764,16 @@ impl Session {
     /// This method will query all pages of the result\
     ///
     /// Returns an async iterator (stream) over all received rows\
-    /// Page size can be specified in the [Query](crate::query::Query) passed to the function
+    /// Page size can be specified in the [Query] passed to the function
+    ///
+    /// It is discouraged to use this method with non-empty values argument (`is_empty()` method from `SerializeRow`
+    /// trait returns false). In such case, query first needs to be prepared (on a single connection), so
+    /// driver will initially perform 2 round trips instead of 1. Please use [`Session::execute_iter()`] instead.
     ///
     /// See [the book](https://rust-driver.docs.scylladb.com/stable/queries/paged.html) for more information
     ///
     /// # Arguments
-    /// * `query` - query to perform, can be just a `&str` or the [Query](crate::query::Query) struct.
+    /// * `query` - query to perform, can be just a `&str` or the [Query] struct.
     /// * `values` - values bound to the query, easiest way is to use a tuple of bound values
     ///
     /// # Example
@@ -804,24 +800,38 @@ impl Session {
     pub async fn query_iter(
         &self,
         query: impl Into<Query>,
-        values: impl ValueList,
+        values: impl SerializeRow,
     ) -> Result<RowIterator, QueryError> {
         let query: Query = query.into();
-        let serialized_values = values.serialized()?;
 
         let execution_profile = query
             .get_execution_profile_handle()
             .unwrap_or_else(|| self.get_default_execution_profile_handle())
             .access();
 
-        RowIterator::new_for_query(
-            query,
-            serialized_values.into_owned(),
-            execution_profile,
-            self.cluster.get_data(),
-            self.metrics.clone(),
-        )
-        .await
+        if values.is_empty() {
+            RowIterator::new_for_query(
+                query,
+                execution_profile,
+                self.cluster.get_data(),
+                self.metrics.clone(),
+            )
+            .await
+        } else {
+            // Making RowIterator::new_for_query work with values is too hard (if even possible)
+            // so instead of sending one prepare to a specific connection on each iterator query,
+            // we fully prepare a statement beforehand.
+            let prepared = self.prepare(query).await?;
+            let values = prepared.serialize_values(&values)?;
+            RowIterator::new_for_prepared_statement(PreparedIteratorConfig {
+                prepared,
+                values,
+                execution_profile,
+                cluster_data: self.cluster.get_data(),
+                metrics: self.metrics.clone(),
+            })
+            .await
+        }
     }
 
     /// Prepares a statement on the server side and returns a prepared statement,
@@ -836,10 +846,11 @@ impl Session {
     /// > must be sent as bound values
     /// > (see [performance section](https://rust-driver.docs.scylladb.com/stable/queries/prepared.html#performance))
     ///
-    /// See [the book](https://rust-driver.docs.scylladb.com/stable/queries/prepared.html) for more information
+    /// See [the book](https://rust-driver.docs.scylladb.com/stable/queries/prepared.html) for more information.
+    /// See the documentation of [`PreparedStatement`].
     ///
     /// # Arguments
-    /// * `query` - query to prepare, can be just a `&str` or the [Query](crate::query::Query) struct.
+    /// * `query` - query to prepare, can be just a `&str` or the [Query] struct.
     ///
     /// # Example
     /// ```rust
@@ -861,32 +872,26 @@ impl Session {
     /// ```
     pub async fn prepare(&self, query: impl Into<Query>) -> Result<PreparedStatement, QueryError> {
         let query = query.into();
+        let query_ref = &query;
 
-        let connections = self.cluster.get_working_connections().await?;
+        let cluster_data = self.get_cluster_data();
+        let connections_iter = cluster_data.iter_working_connections()?;
 
         // Prepare statements on all connections concurrently
-        let handles = connections.iter().map(|c| c.prepare(&query));
-        let mut results = join_all(handles).await;
+        let handles = connections_iter.map(|c| async move { c.prepare(query_ref).await });
+        let mut results = join_all(handles).await.into_iter();
 
-        // If at least one prepare was successful prepare returns Ok
+        // If at least one prepare was successful, `prepare()` returns Ok.
+        // Find the first result that is Ok, or Err if all failed.
 
-        // Find first result that is Ok, or Err if all failed
-        let mut first_ok: Option<Result<PreparedStatement, QueryError>> = None;
-
-        while let Some(res) = results.pop() {
-            let is_ok: bool = res.is_ok();
-
-            first_ok = Some(res);
-
-            if is_ok {
-                break;
-            }
-        }
-
-        let mut prepared: PreparedStatement = first_ok.unwrap()?;
+        // Safety: there is at least one node in the cluster, and `Cluster::iter_working_connections()`
+        // returns either an error or an iterator with at least one connection, so there will be at least one result.
+        let first_ok: Result<PreparedStatement, QueryError> =
+            results.by_ref().find_or_first(Result::is_ok).unwrap();
+        let mut prepared: PreparedStatement = first_ok?;
 
         // Validate prepared ids equality
-        for statement in results.into_iter().flatten() {
+        for statement in results.flatten() {
             if prepared.get_id() != statement.get_id() {
                 return Err(QueryError::ProtocolError(
                     "Prepared statement Ids differ, all should be equal",
@@ -913,16 +918,17 @@ impl Session {
         prepared: &PreparedStatement,
         cluster_data: &'a ClusterData,
     ) -> Option<&'a str> {
+        let table_spec = prepared.get_table_spec()?;
         cluster_data
             .keyspaces
-            .get(prepared.get_keyspace_name()?)?
+            .get(table_spec.ks_name())?
             .tables
-            .get(prepared.get_table_name()?)?
+            .get(table_spec.table_name())?
             .partitioner
             .as_deref()
     }
 
-    /// Execute a prepared query. Requires a [PreparedStatement](crate::prepared_statement::PreparedStatement)
+    /// Execute a prepared query. Requires a [PreparedStatement]
     /// generated using [`Session::prepare`](Session::prepare)\
     /// Returns only a single page of results, to receive multiple pages use [execute_iter](Session::execute_iter)
     ///
@@ -962,7 +968,7 @@ impl Session {
     pub async fn execute(
         &self,
         prepared: &PreparedStatement,
-        values: impl ValueList,
+        values: impl SerializeRow,
     ) -> Result<QueryResult, QueryError> {
         self.execute_paged(prepared, values, None).await
     }
@@ -976,33 +982,31 @@ impl Session {
     pub async fn execute_paged(
         &self,
         prepared: &PreparedStatement,
-        values: impl ValueList,
+        values: impl SerializeRow,
         paging_state: Option<Bytes>,
     ) -> Result<QueryResult, QueryError> {
-        let serialized_values = values.serialized()?;
+        let serialized_values = prepared.serialize_values(&values)?;
         let values_ref = &serialized_values;
         let paging_state_ref = &paging_state;
 
-        let partition_key = self.calculate_partition_key(prepared, &serialized_values)?;
-        let token = partition_key
-            .as_ref()
-            .map(|pk| prepared.get_partitioner_name().hash(pk));
+        let (partition_key, token) = prepared
+            .extract_partition_key_and_calculate_token(prepared.get_partitioner_name(), values_ref)?
+            .unzip();
 
         let (execution_profile, statement_info) =
             self.execution_profile_and_routing_info_from_prepared_statement(prepared, token);
 
         let span = RequestSpan::new_prepared(
-            prepared.get_prepared_metadata(),
-            partition_key.as_ref(),
+            partition_key.as_ref().map(|pk| pk.iter()),
             token,
-            serialized_values.size(),
+            serialized_values.buffer_size(),
         );
 
         if !span.span().is_disabled() {
-            if let (Some(keyspace), Some(token)) = (statement_info.keyspace.as_ref(), token) {
+            if let (Some(table_spec), Some(token)) = (statement_info.table, token) {
                 let cluster_data = self.get_cluster_data();
                 let replicas: smallvec::SmallVec<[_; 8]> = cluster_data
-                    .get_token_endpoints_iter(keyspace, token)
+                    .get_token_endpoints_iter(table_spec, token)
                     .collect();
                 span.record_replicas(&replicas)
             }
@@ -1013,12 +1017,6 @@ impl Session {
                 statement_info,
                 &prepared.config,
                 execution_profile,
-                |node: Arc<Node>| async move {
-                    match token {
-                        Some(token) => node.connection_for_token(token).await,
-                        None => node.random_connection().await,
-                    }
-                },
                 |connection: Arc<Connection>,
                  consistency: Consistency,
                  execution_profile: &ExecutionProfileInner| {
@@ -1054,8 +1052,7 @@ impl Session {
         };
 
         self.handle_set_keyspace_response(&response).await?;
-        self.handle_auto_await_schema_agreement(prepared.get_statement(), &response)
-            .await?;
+        self.handle_auto_await_schema_agreement(&response).await?;
 
         let result = response.into_query_result()?;
         span.record_result_fields(&result);
@@ -1066,7 +1063,7 @@ impl Session {
     /// This method will query all pages of the result\
     ///
     /// Returns an async iterator (stream) over all received rows\
-    /// Page size can be specified in the [PreparedStatement](crate::prepared_statement::PreparedStatement)
+    /// Page size can be specified in the [PreparedStatement]
     /// passed to the function
     ///
     /// See [the book](https://rust-driver.docs.scylladb.com/stable/queries/paged.html) for more information
@@ -1106,14 +1103,10 @@ impl Session {
     pub async fn execute_iter(
         &self,
         prepared: impl Into<PreparedStatement>,
-        values: impl ValueList,
+        values: impl SerializeRow,
     ) -> Result<RowIterator, QueryError> {
         let prepared = prepared.into();
-        let serialized_values = values.serialized()?;
-        let partition_key = self.calculate_partition_key(&prepared, &serialized_values)?;
-        let token = partition_key
-            .as_ref()
-            .map(|pk| prepared.get_partitioner_name().hash(pk));
+        let serialized_values = prepared.serialize_values(&values)?;
 
         let execution_profile = prepared
             .get_execution_profile_handle()
@@ -1122,9 +1115,7 @@ impl Session {
 
         RowIterator::new_for_prepared_statement(PreparedIteratorConfig {
             prepared,
-            values: serialized_values.into_owned(),
-            partition_key,
-            token,
+            values: serialized_values,
             execution_profile,
             cluster_data: self.cluster.get_data(),
             metrics: self.metrics.clone(),
@@ -1138,10 +1129,15 @@ impl Session {
     ///
     /// Batch values must contain values for each of the queries
     ///
+    /// Avoid using non-empty values (`SerializeRow::is_empty()` return false) for simple queries
+    /// inside the batch. Such queries will first need to be prepared, so the driver will need to
+    /// send (numer_of_unprepared_queries_with_values + 1) requests instead of 1 request, severly
+    /// affecting performance.
+    ///
     /// See [the book](https://rust-driver.docs.scylladb.com/stable/queries/batch.html) for more information
     ///
     /// # Arguments
-    /// * `batch` - [Batch](crate::batch::Batch) to be performed
+    /// * `batch` - [Batch] to be performed
     /// * `values` - List of values for each query, it's the easiest to use a tuple of tuples
     ///
     /// # Example
@@ -1180,9 +1176,13 @@ impl Session {
         // Shard-awareness behavior for batch will be to pick shard based on first batch statement's shard
         // If users batch statements by shard, they will be rewarded with full shard awareness
 
-        // Extract first serialized_value
-        let first_serialized_value = values.batch_values_iter().next_serialized().transpose()?;
-        let first_serialized_value = first_serialized_value.as_deref();
+        // check to ensure that we don't send a batch statement with more than u16::MAX queries
+        let batch_statements_length = batch.statements.len();
+        if batch_statements_length > u16::MAX as usize {
+            return Err(QueryError::BadQuery(
+                BadQuery::TooManyQueriesInBatchStatement(batch_statements_length),
+            ));
+        }
 
         let execution_profile = batch
             .get_execution_profile_handle()
@@ -1199,28 +1199,24 @@ impl Session {
             .serial_consistency
             .unwrap_or(execution_profile.serial_consistency);
 
-        let statement_info = match (first_serialized_value, batch.statements.first()) {
-            (Some(first_serialized_value), Some(BatchStatement::PreparedStatement(ps))) => {
-                RoutingInfo {
-                    consistency,
-                    serial_consistency,
-                    token: self.calculate_token(ps, first_serialized_value)?,
-                    keyspace: ps.get_keyspace_name(),
-                    is_confirmed_lwt: false,
-                }
-            }
-            _ => RoutingInfo {
-                consistency,
-                serial_consistency,
-                ..Default::default()
-            },
-        };
-        let first_value_token = statement_info.token;
-
-        // Reuse first serialized value when serializing query, and delegate to `BatchValues::write_next_to_request`
-        // directly for others (if they weren't already serialized, possibly don't even allocate the `SerializedValues`)
-        let values = BatchValuesFirstSerialized::new(&values, first_serialized_value);
+        let (first_value_token, values) =
+            batch_values::peek_first_token(values, batch.statements.first())?;
         let values_ref = &values;
+
+        let table_spec =
+            if let Some(BatchStatement::PreparedStatement(ps)) = batch.statements.first() {
+                ps.get_table_spec()
+            } else {
+                None
+            };
+
+        let statement_info = RoutingInfo {
+            consistency,
+            serial_consistency,
+            token: first_value_token,
+            table: table_spec,
+            is_confirmed_lwt: false,
+        };
 
         let span = RequestSpan::new_batch();
 
@@ -1229,14 +1225,6 @@ impl Session {
                 statement_info,
                 &batch.config,
                 execution_profile,
-                |node: Arc<Node>| async move {
-                    match first_value_token {
-                        Some(first_value_token) => {
-                            node.connection_for_token(first_value_token).await
-                        }
-                        None => node.random_connection().await,
-                    }
-                },
                 |connection: Arc<Connection>,
                  consistency: Consistency,
                  execution_profile: &ExecutionProfileInner| {
@@ -1457,30 +1445,26 @@ impl Session {
         )?;
 
         // Get tracing info
-        let tracing_info_row_res: Option<Result<TracingInfo, _>> = traces_session_res
-            .rows
-            .ok_or(QueryError::ProtocolError(
-                "Response to system_traces.sessions query was not Rows",
-            ))?
-            .into_typed::<TracingInfo>()
-            .next();
-
-        let mut tracing_info: TracingInfo = match tracing_info_row_res {
-            Some(tracing_info_row_res) => tracing_info_row_res.map_err(|_| {
-                QueryError::ProtocolError(
+        let maybe_tracing_info: Option<TracingInfo> = traces_session_res
+            .maybe_first_row_typed()
+            .map_err(|err| match err {
+                MaybeFirstRowTypedError::RowsExpected(_) => QueryError::ProtocolError(
+                    "Response to system_traces.sessions query was not Rows",
+                ),
+                MaybeFirstRowTypedError::FromRowError(_) => QueryError::ProtocolError(
                     "Columns from system_traces.session have an unexpected type",
-                )
-            })?,
+                ),
+            })?;
+
+        let mut tracing_info = match maybe_tracing_info {
             None => return Ok(None),
+            Some(tracing_info) => tracing_info,
         };
 
         // Get tracing events
-        let tracing_event_rows = traces_events_res
-            .rows
-            .ok_or(QueryError::ProtocolError(
-                "Response to system_traces.events query was not Rows",
-            ))?
-            .into_typed::<TracingEvent>();
+        let tracing_event_rows = traces_events_res.rows_typed().map_err(|_| {
+            QueryError::ProtocolError("Response to system_traces.events query was not Rows")
+        })?;
 
         for event in tracing_event_rows {
             let tracing_event: TracingEvent = event.map_err(|_| {
@@ -1500,28 +1484,23 @@ impl Session {
     }
 
     // This method allows to easily run a query using load balancing, retry policy etc.
-    // Requires some information about the query and two closures
-    // First closure is used to choose a connection
-    // - query will use node.random_connection()
-    // - execute will use node.connection_for_token()
-    // The second closure is used to do the query itself on a connection
+    // Requires some information about the query and a closure.
+    // The closure is used to do the query itself on a connection.
     // - query will use connection.query()
     // - execute will use connection.execute()
     // If this query closure fails with some errors retry policy is used to perform retries
     // On success this query's result is returned
     // I tried to make this closures take a reference instead of an Arc but failed
     // maybe once async closures get stabilized this can be fixed
-    async fn run_query<'a, ConnFut, QueryFut, ResT>(
+    async fn run_query<'a, QueryFut, ResT>(
         &'a self,
         statement_info: RoutingInfo<'a>,
         statement_config: &'a StatementConfig,
         execution_profile: Arc<ExecutionProfileInner>,
-        choose_connection: impl Fn(Arc<Node>) -> ConnFut,
         do_query: impl Fn(Arc<Connection>, Consistency, &ExecutionProfileInner) -> QueryFut,
         request_span: &'a RequestSpan,
     ) -> Result<RunQueryResult<ResT>, QueryError>
     where
-        ConnFut: Future<Output = Result<Arc<Connection>, QueryError>>,
         QueryFut: Future<Output = Result<ResT, QueryError>>,
         ResT: AllowedRunQueryResTType,
     {
@@ -1543,16 +1522,16 @@ impl Session {
             // can be shared safely.
             struct SharedPlan<'a, I>
             where
-                I: Iterator<Item = NodeRef<'a>>,
+                I: Iterator<Item = (NodeRef<'a>, Shard)>,
             {
                 iter: std::sync::Mutex<I>,
             }
 
             impl<'a, I> Iterator for &SharedPlan<'a, I>
             where
-                I: Iterator<Item = NodeRef<'a>>,
+                I: Iterator<Item = (NodeRef<'a>, Shard)>,
             {
-                type Item = NodeRef<'a>;
+                type Item = (NodeRef<'a>, Shard);
 
                 fn next(&mut self) -> Option<Self::Item> {
                     self.iter.lock().unwrap().next()
@@ -1595,7 +1574,6 @@ impl Session {
 
                         self.execute_query(
                             &shared_query_plan,
-                            &choose_connection,
                             &do_query,
                             &execution_profile,
                             ExecuteQueryContext {
@@ -1631,7 +1609,6 @@ impl Session {
                             });
                     self.execute_query(
                         query_plan,
-                        &choose_connection,
                         &do_query,
                         &execution_profile,
                         ExecuteQueryContext {
@@ -1677,16 +1654,14 @@ impl Session {
         result
     }
 
-    async fn execute_query<'a, ConnFut, QueryFut, ResT>(
+    async fn execute_query<'a, QueryFut, ResT>(
         &'a self,
-        query_plan: impl Iterator<Item = NodeRef<'a>>,
-        choose_connection: impl Fn(Arc<Node>) -> ConnFut,
+        query_plan: impl Iterator<Item = (NodeRef<'a>, Shard)>,
         do_query: impl Fn(Arc<Connection>, Consistency, &ExecutionProfileInner) -> QueryFut,
         execution_profile: &ExecutionProfileInner,
         mut context: ExecuteQueryContext<'a>,
     ) -> Option<Result<RunQueryResult<ResT>, QueryError>>
     where
-        ConnFut: Future<Output = Result<Arc<Connection>, QueryError>>,
         QueryFut: Future<Output = Result<ResT, QueryError>>,
         ResT: AllowedRunQueryResTType,
     {
@@ -1695,14 +1670,11 @@ impl Session {
             .consistency_set_on_statement
             .unwrap_or(execution_profile.consistency);
 
-        'nodes_in_plan: for node in query_plan {
+        'nodes_in_plan: for (node, shard) in query_plan {
             let span = trace_span!("Executing query", node = %node.address);
             'same_node_retries: loop {
                 trace!(parent: &span, "Execution started");
-                let connection: Arc<Connection> = match choose_connection(node.clone())
-                    .instrument(span.clone())
-                    .await
-                {
+                let connection = match node.connection_for_shard(shard).await {
                     Ok(connection) => connection,
                     Err(e) => {
                         trace!(
@@ -1767,11 +1739,9 @@ impl Session {
                 let query_info = QueryInfo {
                     error: the_error,
                     is_idempotent: context.is_idempotent,
-                    consistency: LegacyConsistency::Regular(
-                        context
-                            .consistency_set_on_statement
-                            .unwrap_or(execution_profile.consistency),
-                    ),
+                    consistency: context
+                        .consistency_set_on_statement
+                        .unwrap_or(execution_profile.consistency),
                 };
 
                 let retry_decision = context.retry_session.decide_should_retry(query_info);
@@ -1803,102 +1773,36 @@ impl Session {
         last_error.map(Result::Err)
     }
 
-    pub async fn await_schema_agreement(&self) -> Result<(), QueryError> {
-        while !self.check_schema_agreement().await? {
-            tokio::time::sleep(self.schema_agreement_interval).await
-        }
-        Ok(())
-    }
-
-    pub async fn await_timed_schema_agreement(
-        &self,
-        timeout_duration: Duration,
-    ) -> Result<bool, QueryError> {
-        timeout(timeout_duration, self.await_schema_agreement())
-            .await
-            .map_or(Ok(false), |res| res.and(Ok(true)))
-    }
-
-    async fn schema_agreement_auxiliary<ResT, QueryFut>(
-        &self,
-        do_query: impl Fn(Arc<Connection>, Consistency, &ExecutionProfileInner) -> QueryFut,
-    ) -> Result<ResT, QueryError>
-    where
-        QueryFut: Future<Output = Result<ResT, QueryError>>,
-        ResT: AllowedRunQueryResTType,
-    {
-        let info = RoutingInfo::default();
-        let config = StatementConfig {
-            is_idempotent: true,
-            serial_consistency: Some(Some(SerialConsistency::LocalSerial)),
-            ..Default::default()
-        };
-
-        let span = RequestSpan::new_none();
-
-        match self
-            .run_query(
-                info,
-                &config,
-                self.get_default_execution_profile_handle().access(),
-                |node: Arc<Node>| async move { node.random_connection().await },
-                do_query,
-                &span,
-            )
-            .await?
-        {
-            RunQueryResult::IgnoredWriteError => Err(QueryError::ProtocolError(
-                "Retry policy has made the driver ignore schema's agreement query.",
-            )),
-            RunQueryResult::Completed(result) => Ok(result),
+    async fn await_schema_agreement_indefinitely(&self) -> Result<Uuid, QueryError> {
+        loop {
+            tokio::time::sleep(self.schema_agreement_interval).await;
+            if let Some(agreed_version) = self.check_schema_agreement().await? {
+                return Ok(agreed_version);
+            }
         }
     }
 
-    pub async fn check_schema_agreement(&self) -> Result<bool, QueryError> {
-        let connections = self.cluster.get_working_connections().await?;
+    pub async fn await_schema_agreement(&self) -> Result<Uuid, QueryError> {
+        timeout(
+            self.schema_agreement_timeout,
+            self.await_schema_agreement_indefinitely(),
+        )
+        .await
+        .unwrap_or(Err(QueryError::RequestTimeout(
+            "schema agreement not reached in time".to_owned(),
+        )))
+    }
 
-        let handles = connections.iter().map(|c| c.fetch_schema_version());
+    pub async fn check_schema_agreement(&self) -> Result<Option<Uuid>, QueryError> {
+        let cluster_data = self.get_cluster_data();
+        let connections_iter = cluster_data.iter_working_connections()?;
+
+        let handles = connections_iter.map(|c| async move { c.fetch_schema_version().await });
         let versions = try_join_all(handles).await?;
 
         let local_version: Uuid = versions[0];
         let in_agreement = versions.into_iter().all(|v| v == local_version);
-        Ok(in_agreement)
-    }
-
-    pub async fn fetch_schema_version(&self) -> Result<Uuid, QueryError> {
-        // We ignore custom Consistency that a retry policy could decide to put here, using the default instead.
-        self.schema_agreement_auxiliary(
-            |connection: Arc<Connection>, _: Consistency, _: &ExecutionProfileInner| async move {
-                connection.fetch_schema_version().await
-            },
-        )
-        .await
-    }
-
-    fn calculate_partition_key(
-        &self,
-        prepared: &PreparedStatement,
-        serialized_values: &SerializedValues,
-    ) -> Result<Option<Bytes>, QueryError> {
-        if !prepared.is_token_aware() {
-            return Ok(None);
-        }
-        let partition_key = calculate_partition_key(prepared, serialized_values)?;
-        Ok(Some(partition_key))
-    }
-
-    /// Calculates the token for given prepared statement and serialized values.
-    ///
-    /// Returns the token that would be computed for executing the provided
-    /// prepared statement with the provided values.
-    pub fn calculate_token(
-        &self,
-        prepared: &PreparedStatement,
-        serialized_values: &SerializedValues,
-    ) -> Result<Option<Token>, QueryError> {
-        Ok(self
-            .calculate_partition_key(prepared, serialized_values)?
-            .map(|partition_key| prepared.get_partitioner_name().hash(&partition_key)))
+        Ok(in_agreement.then_some(local_version))
     }
 
     /// Get a node/shard that the load balancer would potentially target if running this query
@@ -1947,6 +1851,8 @@ impl Session {
             .unwrap_or_else(|| self.get_default_execution_profile_handle())
             .access();
 
+        let table_spec = prepared.get_table_spec();
+
         let routing_info = RoutingInfo {
             consistency: prepared
                 .config
@@ -1957,50 +1863,11 @@ impl Session {
                 .serial_consistency
                 .unwrap_or(execution_profile.serial_consistency),
             token,
-            keyspace: prepared.get_keyspace_name(),
+            table: table_spec,
             is_confirmed_lwt: prepared.is_confirmed_lwt(),
         };
 
         (execution_profile, routing_info)
-    }
-
-    /// Calculates the token for given partitioner and serialized partition key.
-    ///
-    /// The ordinary way to calculate token is based on a PreparedStatement
-    /// and values for that statement. However, if a user knows:
-    /// - the order of the columns in the partition key,
-    /// - the values of the columns of the partition key,
-    /// - the partitioner of the table that the statement operates on,
-    ///
-    /// then having a `PreparedStatement` is not necessary and the token can
-    /// be calculated based on that information.
-    ///
-    /// NOTE: the provided values must completely constitute partition key
-    /// and be in the order defined in CREATE TABLE statement.
-    pub fn calculate_token_for_partition_key<P: Partitioner>(
-        serialized_partition_key_values: &SerializedValues,
-        _partitioner: &P,
-    ) -> Result<Token, PartitionKeyError> {
-        let mut buf: BytesMut = BytesMut::new();
-
-        if serialized_partition_key_values.len() == 1 {
-            let val = serialized_partition_key_values.iter().next().unwrap();
-            if let Some(val) = val {
-                buf.extend_from_slice(val);
-            }
-        } else {
-            for val in serialized_partition_key_values.iter().flatten() {
-                let val_len_u16: u16 = val
-                    .len()
-                    .try_into()
-                    .map_err(|_| PartitionKeyError::ValueTooLong(val.len()))?;
-                buf.put_u16(val_len_u16);
-                buf.extend_from_slice(val);
-                buf.put_u8(0);
-            }
-        }
-
-        Ok(P::hash(&buf.freeze()))
     }
 
     /// Retrieves the handle to execution profile that is used by this session
@@ -2008,48 +1875,6 @@ impl Session {
     pub fn get_default_execution_profile_handle(&self) -> &ExecutionProfileHandle {
         &self.default_execution_profile_handle
     }
-}
-
-fn calculate_partition_key(
-    stmt: &PreparedStatement,
-    values: &SerializedValues,
-) -> Result<Bytes, QueryError> {
-    match stmt.compute_partition_key(values) {
-        Ok(key) => Ok(key),
-        Err(PartitionKeyError::NoPkIndexValue(_, _)) => Err(QueryError::ProtocolError(
-            "No pk indexes - can't calculate token",
-        )),
-        Err(PartitionKeyError::ValueTooLong(values_len)) => Err(QueryError::BadQuery(
-            BadQuery::ValuesTooLongForKey(values_len, u16::MAX.into()),
-        )),
-    }
-}
-
-// Resolve the given hostname using a DNS lookup if necessary.
-// The resolution may return multiple IPs and the function returns one of them.
-// It prefers to return IPv4s first, and only if there are none, IPv6s.
-pub(crate) async fn resolve_hostname(hostname: &str) -> Result<SocketAddr, io::Error> {
-    let mut ret = None;
-    let addrs: Vec<SocketAddr> = match lookup_host(hostname).await {
-        Ok(addrs) => addrs.collect(),
-        // Use a default port in case of error, but propagate the original error on failure
-        Err(e) => lookup_host((hostname, 9042)).await.or(Err(e))?.collect(),
-    };
-    for a in addrs {
-        match a {
-            SocketAddr::V4(_) => return Ok(a),
-            _ => {
-                ret = Some(a);
-            }
-        }
-    }
-
-    ret.ok_or_else(|| {
-        io::Error::new(
-            io::ErrorKind::Other,
-            format!("Empty address list returned by DNS for {}", hostname),
-        )
-    })
 }
 
 // run_query, execute_query, etc have a template type called ResT.
@@ -2061,7 +1886,7 @@ pub(crate) async fn resolve_hostname(hostname: &str) -> Result<SocketAddr, io::E
 // When using run_query make sure that the ResT type is NOT able
 // to contain any errors.
 // See https://github.com/scylladb/scylla-rust-driver/issues/501
-pub trait AllowedRunQueryResTType {}
+pub(crate) trait AllowedRunQueryResTType {}
 
 impl AllowedRunQueryResTType for Uuid {}
 impl AllowedRunQueryResTType for QueryResult {}
@@ -2132,7 +1957,7 @@ pub(crate) struct RequestSpan {
 }
 
 impl RequestSpan {
-    pub(crate) fn new_query(contents: &str, request_size: usize) -> Self {
+    pub(crate) fn new_query(contents: &str) -> Self {
         use tracing::field::Empty;
 
         let span = trace_span!(
@@ -2140,7 +1965,7 @@ impl RequestSpan {
             kind = "unprepared",
             contents = contents,
             //
-            request_size = request_size,
+            request_size = Empty,
             result_size = Empty,
             result_rows = Empty,
             replicas = Empty,
@@ -2154,9 +1979,8 @@ impl RequestSpan {
         }
     }
 
-    pub(crate) fn new_prepared(
-        prepared_metadata: &PreparedMetadata,
-        partition_key: Option<&Bytes>,
+    pub(crate) fn new_prepared<'ps>(
+        partition_key: Option<impl Iterator<Item = (&'ps [u8], &'ps ColumnSpec)> + Clone>,
         token: Option<Token>,
         request_size: usize,
     ) -> Self {
@@ -2179,14 +2003,13 @@ impl RequestSpan {
         if let Some(partition_key) = partition_key {
             span.record(
                 "partition_key",
-                tracing::field::display(format_args!(
-                    "{}",
-                    partition_key_displayer(prepared_metadata, partition_key),
-                )),
+                tracing::field::display(
+                    format_args!("{}", partition_key_displayer(partition_key),),
+                ),
             );
         }
         if let Some(token) = token {
-            span.record("token", token.value);
+            span.record("token", token.value());
         }
 
         Self {
@@ -2216,13 +2039,6 @@ impl RequestSpan {
         }
     }
 
-    pub(crate) fn new_none() -> Self {
-        Self {
-            span: tracing::Span::none(),
-            speculative_executions: 0.into(),
-        }
-    }
-
     pub(crate) fn record_shard_id(&self, conn: &Connection) {
         if let Some(info) = conn.get_shard_info() {
             self.span.record("shard", info.shard);
@@ -2241,19 +2057,19 @@ impl RequestSpan {
         self.span.record("result_rows", rows.rows.len());
     }
 
-    pub(crate) fn record_replicas<'a>(&'a self, replicas: &'a [impl Borrow<Arc<Node>>]) {
-        struct ReplicaIps<'a, N>(&'a [N]);
+    pub(crate) fn record_replicas<'a>(&'a self, replicas: &'a [(impl Borrow<Arc<Node>>, Shard)]) {
+        struct ReplicaIps<'a, N>(&'a [(N, Shard)]);
         impl<'a, N> Display for ReplicaIps<'a, N>
         where
             N: Borrow<Arc<Node>>,
         {
             fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-                let mut nodes = self.0.iter();
-                if let Some(node) = nodes.next() {
-                    write!(f, "{}", node.borrow().address.ip())?;
+                let mut nodes_with_shards = self.0.iter();
+                if let Some((node, shard)) = nodes_with_shards.next() {
+                    write!(f, "{}-shard{}", node.borrow().address.ip(), shard)?;
 
-                    for node in nodes {
-                        write!(f, ",{}", node.borrow().address.ip())?;
+                    for (node, shard) in nodes_with_shards {
+                        write!(f, ",{}-shard{}", node.borrow().address.ip(), shard)?;
                     }
                 }
                 Ok(())
@@ -2261,6 +2077,10 @@ impl RequestSpan {
         }
         self.span
             .record("replicas", tracing::field::display(&ReplicaIps(replicas)));
+    }
+
+    pub(crate) fn record_request_size(&self, size: usize) {
+        self.span.record("request_size", size);
     }
 
     pub(crate) fn inc_speculative_executions(&self) {
@@ -2281,12 +2101,16 @@ impl Drop for RequestSpan {
     }
 }
 
-fn partition_key_displayer<'pk>(
-    prepared_metadata: &'pk PreparedMetadata,
-    partition_key: &'pk [u8],
-) -> impl Display + 'pk {
+fn partition_key_displayer<'ps, 'res>(
+    mut pk_values_iter: impl Iterator<Item = (&'ps [u8], &'ps ColumnSpec)> + 'res + Clone,
+) -> impl Display + 'res {
     CommaSeparatedDisplayer(
-        PartitionKeyDecoder::new(prepared_metadata, partition_key).map(|c| match c {
+        std::iter::from_fn(move || {
+            pk_values_iter
+                .next()
+                .map(|(mut cell, spec)| deser_cql_value(&spec.typ, &mut cell))
+        })
+        .map(|c| match c {
             Ok(c) => Either::Left(CqlValueDisplayer(c)),
             Err(_) => Either::Right("<decoding error>"),
         }),

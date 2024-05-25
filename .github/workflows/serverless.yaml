@@ -2,9 +2,13 @@ name: Serverless
 
 on:
   push:
-    branches: [ main ]
+    branches:
+    - main
+    - 'branch-*'
   pull_request:
-    branches: [ main ]
+    branches:
+    - main
+    - 'branch-*'
 
 env:
   CARGO_TERM_COLOR: always
@@ -31,7 +35,7 @@ jobs:
       - name: Run cloud example
         run: cargo run --example cloud -- $HOME/.ccm/serverless/config_data.yaml
       - name: Run cloud tests
-        run: CLOUD_CONFIG_PATH=$HOME/.ccm/serverless/config_data.yaml RUSTFLAGS="--cfg scylla_cloud_tests" cargo test --verbose
+        run: CLOUD_CONFIG_PATH=$HOME/.ccm/serverless/config_data.yaml RUSTFLAGS="--cfg scylla_cloud_tests" RUST_LOG=trace cargo test --verbose
 
       - name: Remove serverless cluster
         run: ccm remove serverless

@@ -56,7 +56,7 @@ pub trait HistoryListener: Debug + Send + Sync {
         node_addr: SocketAddr,
     ) -> AttemptId;
 
-    /// Log that an attempt succeded.
+    /// Log that an attempt succeeded.
     fn log_attempt_success(&self, attempt_id: AttemptId);
 
     /// Log that an attempt ended with an error. The error and decision whether to retry the attempt are also included in the log.
@@ -456,7 +456,8 @@ mod tests {
     };
 
     use crate::{
-        query::Query, retry_policy::RetryDecision, utils::test_utils::unique_keyspace_name,
+        query::Query, retry_policy::RetryDecision, test_utils::setup_tracing,
+        utils::test_utils::unique_keyspace_name,
     };
 
     use super::{
@@ -464,11 +465,11 @@ mod tests {
         SpeculativeId, StructuredHistory, TimePoint,
     };
     use crate::test_utils::create_new_session_builder;
+    use assert_matches::assert_matches;
     use chrono::{DateTime, NaiveDate, NaiveDateTime, NaiveTime, Utc};
     use futures::StreamExt;
     use scylla_cql::{
         errors::{DbError, QueryError},
-        frame::types::LegacyConsistency,
         Consistency,
     };
 
@@ -476,7 +477,7 @@ mod tests {
     // HistoryCollector sets the timestamp to current time which changes with each test.
     // Setting it to one makes it possible to test displaying consistently.
     fn set_one_time(mut history: StructuredHistory) -> StructuredHistory {
-        let the_time: TimePoint = DateTime::<Utc>::from_utc(
+        let the_time: TimePoint = DateTime::<Utc>::from_naive_utc_and_offset(
             NaiveDateTime::new(
                 NaiveDate::from_ymd_opt(2022, 2, 22).unwrap(),
                 NaiveTime::from_hms_opt(20, 22, 22).unwrap(),
@@ -576,7 +577,7 @@ mod tests {
     fn unavailable_error() -> QueryError {
         QueryError::DbError(
             DbError::Unavailable {
-                consistency: LegacyConsistency::Regular(Consistency::Quorum),
+                consistency: Consistency::Quorum,
                 required: 2,
                 alive: 1,
             },
@@ -590,6 +591,7 @@ mod tests {
 
     #[test]
     fn empty_history() {
+        setup_tracing();
         let history_collector = HistoryCollector::new();
         let history: StructuredHistory = history_collector.clone_structured_history();
 
@@ -602,6 +604,7 @@ mod tests {
 
     #[test]
     fn empty_query() {
+        setup_tracing();
         let history_collector = HistoryCollector::new();
 
         let _query_id: QueryId = history_collector.log_query_start();
@@ -626,6 +629,7 @@ mod tests {
 
     #[test]
     fn one_attempt() {
+        setup_tracing();
         let history_collector = HistoryCollector::new();
 
         let query_id: QueryId = history_collector.log_query_start();
@@ -639,10 +643,10 @@ mod tests {
         assert_eq!(history.queries.len(), 1);
         assert_eq!(history.queries[0].non_speculative_fiber.attempts.len(), 1);
         assert!(history.queries[0].speculative_fibers.is_empty());
-        assert!(matches!(
+        assert_matches!(
             history.queries[0].non_speculative_fiber.attempts[0].result,
             Some(AttemptResult::Success(_))
-        ));
+        );
 
         let displayed = "Queries History:
 === Query #0 ===
@@ -660,6 +664,7 @@ mod tests {
 
     #[test]
     fn two_error_atempts() {
+        setup_tracing();
         let history_collector = HistoryCollector::new();
 
         let query_id: QueryId = history_collector.log_query_start();
@@ -710,6 +715,7 @@ mod tests {
 
     #[test]
     fn empty_fibers() {
+        setup_tracing();
         let history_collector = HistoryCollector::new();
 
         let query_id: QueryId = history_collector.log_query_start();
@@ -751,6 +757,7 @@ mod tests {
 
     #[test]
     fn complex() {
+        setup_tracing();
         let history_collector = HistoryCollector::new();
 
         let query_id: QueryId = history_collector.log_query_start();
@@ -855,6 +862,7 @@ mod tests {
 
     #[test]
     fn multiple_queries() {
+        setup_tracing();
         let history_collector = HistoryCollector::new();
 
         let query1_id: QueryId = history_collector.log_query_start();
@@ -909,6 +917,7 @@ mod tests {
 
     #[tokio::test]
     async fn successful_query_history() {
+        setup_tracing();
         let session = create_new_session_builder().build().await.unwrap();
 
         let mut query = Query::new("SELECT * FROM system.local");
@@ -975,6 +984,7 @@ mod tests {
 
     #[tokio::test]
     async fn failed_query_history() {
+        setup_tracing();
         let session = create_new_session_builder().build().await.unwrap();
 
         let mut query = Query::new("This isnt even CQL");
@@ -1011,6 +1021,7 @@ mod tests {
 
     #[tokio::test]
     async fn iterator_query_history() {
+        setup_tracing();
         let session = create_new_session_builder().build().await.unwrap();
         let ks = unique_keyspace_name();
         session

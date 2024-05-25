@@ -3,9 +3,13 @@ name: Cassandra tests
 
 on:
   push:
-    branches: [ main ]
+    branches:
+    - main
+    - 'branch-*'
   pull_request:
-    branches: [ main ]
+    branches:
+    - main
+    - 'branch-*'
 
 env:
   CARGO_TERM_COLOR: always
@@ -22,10 +26,10 @@ jobs:
         docker compose -f test/cluster/cassandra/docker-compose.yml up -d --wait
       # A separate step for building to separate measuring time of compilation and testing
     - name: Build the project
-      run: cargo build --verbose --tests
+      run: cargo build --verbose --tests --features "full-serialization"
     - name: Run tests on cassandra
       run: |
-        CDC='disabled' SCYLLA_URI=172.42.0.2:9042 SCYLLA_URI2=172.42.0.3:9042 SCYLLA_URI3=172.42.0.4:9042 cargo test --verbose -- --skip test_views_in_schema_info
+        CDC='disabled' RUST_LOG=trace SCYLLA_URI=172.42.0.2:9042 SCYLLA_URI2=172.42.0.3:9042 SCYLLA_URI3=172.42.0.4:9042 cargo test --verbose --features "full-serialization" -- --skip test_views_in_schema_info --skip test_large_batch_statements
     - name: Stop the cluster
       if: ${{ always() }}
       run: docker compose -f test/cluster/cassandra/docker-compose.yml stop

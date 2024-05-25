@@ -1,10 +1,11 @@
 use itertools::Itertools;
+use scylla_cql::frame::value::CqlTimeuuid;
 use std::collections::HashMap;
 use std::net::IpAddr;
-use uuid::Uuid;
 
 use crate::cql_to_rust::{FromRow, FromRowError};
 use crate::frame::response::result::Row;
+use crate::frame::value::CqlTimestamp;
 
 /// Tracing info retrieved from `system_traces.sessions`
 /// with all events from `system_traces.events`
@@ -17,7 +18,7 @@ pub struct TracingInfo {
     pub parameters: Option<HashMap<String, String>>,
     pub request: Option<String>,
     /// started_at is a timestamp - time since unix epoch
-    pub started_at: Option<chrono::Duration>,
+    pub started_at: Option<CqlTimestamp>,
 
     pub events: Vec<TracingEvent>,
 }
@@ -25,7 +26,7 @@ pub struct TracingInfo {
 /// A single event happening during a traced query
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TracingEvent {
-    pub event_id: Uuid,
+    pub event_id: CqlTimeuuid,
     pub activity: Option<String>,
     pub source: Option<IpAddr>,
     pub source_elapsed: Option<i32>,
@@ -64,7 +65,7 @@ impl FromRow for TracingInfo {
                 Option<i32>,
                 Option<HashMap<String, String>>,
                 Option<String>,
-                Option<chrono::Duration>,
+                Option<CqlTimestamp>,
             )>::from_row(row)?;
 
         Ok(TracingInfo {
@@ -84,7 +85,7 @@ impl FromRow for TracingInfo {
 impl FromRow for TracingEvent {
     fn from_row(row: Row) -> Result<TracingEvent, FromRowError> {
         let (event_id, activity, source, source_elapsed, thread) = <(
-            Uuid,
+            CqlTimeuuid,
             Option<String>,
             Option<IpAddr>,
             Option<i32>,
