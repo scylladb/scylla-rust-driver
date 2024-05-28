@@ -138,7 +138,7 @@ make_error_replace_rust_name!(
 // legacy/dynamic deserialization as Row
 //
 /// While no longer encouraged (because the new framework encourages deserializing
-/// directly into desired types, entirely bypassing CqlValue), this can be indispensable
+/// directly into desired types, entirely bypassing [CqlValue]), this can be indispensable
 /// for some use cases, i.e. those involving dynamic parsing (ORMs?).
 impl<'frame> DeserializeRow<'frame> for Row {
     #[inline]

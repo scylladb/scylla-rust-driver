@@ -4,8 +4,9 @@ use crate::frame::value::{
     Counter, CqlDate, CqlDecimal, CqlDuration, CqlTime, CqlTimestamp, CqlTimeuuid, CqlVarint,
 };
 use crate::frame::{frame_errors::ParseError, types};
+use crate::types::deserialize::result::{RowIterator, TypedRowIterator};
 use crate::types::deserialize::value::{DeserializeValue, MapIterator, UdtIterator};
-use crate::types::deserialize::FrameSlice;
+use crate::types::deserialize::{DeserializationError, FrameSlice};
 use bytes::{Buf, Bytes};
 use std::borrow::Cow;
 use std::{convert::TryInto, net::IpAddr, result::Result as StdResult, str};
@@ -820,19 +821,16 @@ fn deser_rows(
 
     let rows_count: usize = types::read_int(buf)?.try_into()?;
 
-    let mut rows = Vec::with_capacity(rows_count);
-    for _ in 0..rows_count {
-        let mut columns = Vec::with_capacity(metadata.col_count);
-        for i in 0..metadata.col_count {
-            let v = if let Some(mut b) = types::read_bytes_opt(buf)? {
-                Some(deser_cql_value(&metadata.col_specs[i].typ, &mut b)?)
-            } else {
-                None
-            };
-            columns.push(v);
-        }
-        rows.push(Row { columns });
-    }
+    let raw_rows_iter = RowIterator::new(
+        rows_count,
+        &metadata.col_specs,
+        FrameSlice::new_borrowed(buf),
+    );
+    let rows_iter = TypedRowIterator::<Row>::new(raw_rows_iter)
+        .map_err(|err| DeserializationError::new(err.0))?;
+
+    let rows = rows_iter.collect::<StdResult<_, _>>()?;
+
     Ok(Rows {
         metadata,
         rows_count,
