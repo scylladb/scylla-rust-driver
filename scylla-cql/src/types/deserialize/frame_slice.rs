@@ -72,6 +72,23 @@ impl<'frame> FrameSlice<'frame> {
         }
     }
 
+    /// Creates a new FrameSlice from a reference to a slice.
+    ///
+    /// This method creates a not-fully-valid FrameSlice that does not hold
+    /// the valid original frame Bytes. Thus, it is intended to be used in
+    /// legacy code that does not operate on Bytes, but rather on borrowed slice only.
+    /// For correctness in an unlikely case that someone calls `to_bytes()` on such
+    /// a deficient slice, a special treatment is added there that copies
+    /// the slice into a new-allocation-based Bytes.
+    /// This is pub(crate) for the above reason.
+    #[inline]
+    pub(crate) fn new_borrowed(frame_subslice: &'frame [u8]) -> Self {
+        Self {
+            frame_subslice,
+            original_frame: &EMPTY_BYTES,
+        }
+    }
+
     /// Returns `true` if the slice has length of 0.
     #[inline]
     pub fn is_empty(&self) -> bool {
@@ -105,6 +122,15 @@ impl<'frame> FrameSlice<'frame> {
     /// frame slice object.
     #[inline]
     pub fn to_bytes(&self) -> Bytes {
+        if self.original_frame.is_empty() {
+            // For the borrowed, deficient version of FrameSlice - the one created with
+            // FrameSlice::new_borrowed to work properly in case someone calls
+            // FrameSlice::to_bytes on it (even though it's not intended for the borrowed version),
+            // the special case is introduced that creates new Bytes by copying the slice into
+            // a new allocation. Note that it's something unexpected to be ever done.
+            return Bytes::copy_from_slice(self.as_slice());
+        }
+
         self.original_frame.slice_ref(self.frame_subslice)
     }
 

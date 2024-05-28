@@ -652,12 +652,19 @@ mod tests {
             assert_eq!(err.rust_name, std::any::type_name::<CqlValue>());
             assert_eq!(err.cql_type, ColumnType::BigInt);
             let super::super::value::BuiltinDeserializationErrorKind::GenericParseError(
-                ParseError::BadIncomingData(info),
+                ParseError::DeserializationError(d),
             ) = &err.kind
             else {
                 panic!("unexpected error kind: {}", err.kind)
             };
-            assert_eq!(info, "Buffer length should be 8 not 4");
+            let err = super::super::value::tests::get_deser_err(d);
+            let super::super::value::BuiltinDeserializationErrorKind::ByteLengthMismatch {
+                expected: 8,
+                got: 4,
+            } = &err.kind
+            else {
+                panic!("unexpected error kind: {}", err.kind)
+            };
         }
 
         // Raw column deserialization failure
