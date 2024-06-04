@@ -1,4 +1,4 @@
-//! Contains the [`SerializeCql`] trait and its implementations.
+//! Contains the [`SerializeValue`] trait and its implementations.
 
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::fmt::Display;
@@ -34,7 +34,7 @@ use super::{CellWriter, SerializationError};
 /// protocol and usually does not have to be implemented directly. See the
 /// chapter on "Query Values" in the driver docs for information about how
 /// this trait is supposed to be used.
-pub trait SerializeCql {
+pub trait SerializeValue {
     /// Serializes the value to given CQL type.
     ///
     /// The value should produce a `[value]`, according to the [CQL protocol
@@ -90,31 +90,31 @@ macro_rules! impl_serialize_via_writer {
     };
 }
 
-impl SerializeCql for i8 {
+impl SerializeValue for i8 {
     impl_serialize_via_writer!(|me, typ, writer| {
         exact_type_check!(typ, TinyInt);
         writer.set_value(me.to_be_bytes().as_slice()).unwrap()
     });
 }
-impl SerializeCql for i16 {
+impl SerializeValue for i16 {
     impl_serialize_via_writer!(|me, typ, writer| {
         exact_type_check!(typ, SmallInt);
         writer.set_value(me.to_be_bytes().as_slice()).unwrap()
     });
 }
-impl SerializeCql for i32 {
+impl SerializeValue for i32 {
     impl_serialize_via_writer!(|me, typ, writer| {
         exact_type_check!(typ, Int);
         writer.set_value(me.to_be_bytes().as_slice()).unwrap()
     });
 }
-impl SerializeCql for i64 {
+impl SerializeValue for i64 {
     impl_serialize_via_writer!(|me, typ, writer| {
         exact_type_check!(typ, BigInt);
         writer.set_value(me.to_be_bytes().as_slice()).unwrap()
     });
 }
-impl SerializeCql for CqlDecimal {
+impl SerializeValue for CqlDecimal {
     impl_serialize_via_writer!(|me, typ, writer| {
         exact_type_check!(typ, Decimal);
         let mut builder = writer.into_value_builder();
@@ -127,7 +127,7 @@ impl SerializeCql for CqlDecimal {
     });
 }
 #[cfg(feature = "bigdecimal-04")]
-impl SerializeCql for bigdecimal_04::BigDecimal {
+impl SerializeValue for bigdecimal_04::BigDecimal {
     impl_serialize_via_writer!(|me, typ, writer| {
         exact_type_check!(typ, Decimal);
         let mut builder = writer.into_value_builder();
@@ -142,71 +142,71 @@ impl SerializeCql for bigdecimal_04::BigDecimal {
             .map_err(|_| mk_ser_err::<Self>(typ, BuiltinSerializationErrorKind::SizeOverflow))?
     });
 }
-impl SerializeCql for CqlDate {
+impl SerializeValue for CqlDate {
     impl_serialize_via_writer!(|me, typ, writer| {
         exact_type_check!(typ, Date);
         writer.set_value(me.0.to_be_bytes().as_slice()).unwrap()
     });
 }
-impl SerializeCql for CqlTimestamp {
+impl SerializeValue for CqlTimestamp {
     impl_serialize_via_writer!(|me, typ, writer| {
         exact_type_check!(typ, Timestamp);
         writer.set_value(me.0.to_be_bytes().as_slice()).unwrap()
     });
 }
-impl SerializeCql for CqlTime {
+impl SerializeValue for CqlTime {
     impl_serialize_via_writer!(|me, typ, writer| {
         exact_type_check!(typ, Time);
         writer.set_value(me.0.to_be_bytes().as_slice()).unwrap()
     });
 }
 #[cfg(feature = "chrono")]
-impl SerializeCql for NaiveDate {
+impl SerializeValue for NaiveDate {
     impl_serialize_via_writer!(|me, typ, writer| {
         exact_type_check!(typ, Date);
-        <CqlDate as SerializeCql>::serialize(&(*me).into(), typ, writer)?
+        <CqlDate as SerializeValue>::serialize(&(*me).into(), typ, writer)?
     });
 }
 #[cfg(feature = "chrono")]
-impl SerializeCql for DateTime<Utc> {
+impl SerializeValue for DateTime<Utc> {
     impl_serialize_via_writer!(|me, typ, writer| {
         exact_type_check!(typ, Timestamp);
-        <CqlTimestamp as SerializeCql>::serialize(&(*me).into(), typ, writer)?
+        <CqlTimestamp as SerializeValue>::serialize(&(*me).into(), typ, writer)?
     });
 }
 #[cfg(feature = "chrono")]
-impl SerializeCql for NaiveTime {
+impl SerializeValue for NaiveTime {
     impl_serialize_via_writer!(|me, typ, writer| {
         exact_type_check!(typ, Time);
         let cql_time = CqlTime::try_from(*me).map_err(|_: ValueOverflow| {
             mk_ser_err::<Self>(typ, BuiltinSerializationErrorKind::ValueOverflow)
         })?;
-        <CqlTime as SerializeCql>::serialize(&cql_time, typ, writer)?
+        <CqlTime as SerializeValue>::serialize(&cql_time, typ, writer)?
     });
 }
 #[cfg(feature = "time")]
-impl SerializeCql for time::Date {
+impl SerializeValue for time::Date {
     impl_serialize_via_writer!(|me, typ, writer| {
         exact_type_check!(typ, Date);
-        <CqlDate as SerializeCql>::serialize(&(*me).into(), typ, writer)?
+        <CqlDate as SerializeValue>::serialize(&(*me).into(), typ, writer)?
     });
 }
 #[cfg(feature = "time")]
-impl SerializeCql for time::OffsetDateTime {
+impl SerializeValue for time::OffsetDateTime {
     impl_serialize_via_writer!(|me, typ, writer| {
         exact_type_check!(typ, Timestamp);
-        <CqlTimestamp as SerializeCql>::serialize(&(*me).into(), typ, writer)?
+        <CqlTimestamp as SerializeValue>::serialize(&(*me).into(), typ, writer)?
     });
 }
 #[cfg(feature = "time")]
-impl SerializeCql for time::Time {
+impl SerializeValue for time::Time {
     impl_serialize_via_writer!(|me, typ, writer| {
         exact_type_check!(typ, Time);
-        <CqlTime as SerializeCql>::serialize(&(*me).into(), typ, writer)?
+        <CqlTime as SerializeValue>::serialize(&(*me).into(), typ, writer)?
     });
 }
 #[cfg(feature = "secret")]
-impl<V: SerializeCql + Zeroize> SerializeCql for Secret<V> {
+impl<V: SerializeValue + Zeroize> SerializeValue for Secret<V> {
     fn serialize<'b>(
         &self,
         typ: &ColumnType,
@@ -215,37 +215,37 @@ impl<V: SerializeCql + Zeroize> SerializeCql for Secret<V> {
         V::serialize(self.expose_secret(), typ, writer)
     }
 }
-impl SerializeCql for bool {
+impl SerializeValue for bool {
     impl_serialize_via_writer!(|me, typ, writer| {
         exact_type_check!(typ, Boolean);
         writer.set_value(&[*me as u8]).unwrap()
     });
 }
-impl SerializeCql for f32 {
+impl SerializeValue for f32 {
     impl_serialize_via_writer!(|me, typ, writer| {
         exact_type_check!(typ, Float);
         writer.set_value(me.to_be_bytes().as_slice()).unwrap()
     });
 }
-impl SerializeCql for f64 {
+impl SerializeValue for f64 {
     impl_serialize_via_writer!(|me, typ, writer| {
         exact_type_check!(typ, Double);
         writer.set_value(me.to_be_bytes().as_slice()).unwrap()
     });
 }
-impl SerializeCql for Uuid {
+impl SerializeValue for Uuid {
     impl_serialize_via_writer!(|me, typ, writer| {
         exact_type_check!(typ, Uuid);
         writer.set_value(me.as_bytes().as_ref()).unwrap()
     });
 }
-impl SerializeCql for CqlTimeuuid {
+impl SerializeValue for CqlTimeuuid {
     impl_serialize_via_writer!(|me, typ, writer| {
         exact_type_check!(typ, Timeuuid);
         writer.set_value(me.as_bytes().as_ref()).unwrap()
     });
 }
-impl SerializeCql for CqlVarint {
+impl SerializeValue for CqlVarint {
     impl_serialize_via_writer!(|me, typ, writer| {
         exact_type_check!(typ, Varint);
         writer
@@ -254,7 +254,7 @@ impl SerializeCql for CqlVarint {
     });
 }
 #[cfg(feature = "num-bigint-03")]
-impl SerializeCql for num_bigint_03::BigInt {
+impl SerializeValue for num_bigint_03::BigInt {
     impl_serialize_via_writer!(|me, typ, writer| {
         exact_type_check!(typ, Varint);
         // TODO: The allocation here can be avoided and we can reimplement
@@ -266,7 +266,7 @@ impl SerializeCql for num_bigint_03::BigInt {
     });
 }
 #[cfg(feature = "num-bigint-04")]
-impl SerializeCql for num_bigint_04::BigInt {
+impl SerializeValue for num_bigint_04::BigInt {
     impl_serialize_via_writer!(|me, typ, writer| {
         exact_type_check!(typ, Varint);
         // TODO: See above comment for num-bigint-03.
@@ -275,7 +275,7 @@ impl SerializeCql for num_bigint_04::BigInt {
             .map_err(|_| mk_ser_err::<Self>(typ, BuiltinSerializationErrorKind::SizeOverflow))?
     });
 }
-impl SerializeCql for &str {
+impl SerializeValue for &str {
     impl_serialize_via_writer!(|me, typ, writer| {
         exact_type_check!(typ, Ascii, Text);
         writer
@@ -283,7 +283,7 @@ impl SerializeCql for &str {
             .map_err(|_| mk_ser_err::<Self>(typ, BuiltinSerializationErrorKind::SizeOverflow))?
     });
 }
-impl SerializeCql for Vec<u8> {
+impl SerializeValue for Vec<u8> {
     impl_serialize_via_writer!(|me, typ, writer| {
         exact_type_check!(typ, Blob);
         writer
@@ -291,7 +291,7 @@ impl SerializeCql for Vec<u8> {
             .map_err(|_| mk_ser_err::<Self>(typ, BuiltinSerializationErrorKind::SizeOverflow))?
     });
 }
-impl SerializeCql for &[u8] {
+impl SerializeValue for &[u8] {
     impl_serialize_via_writer!(|me, typ, writer| {
         exact_type_check!(typ, Blob);
         writer
@@ -299,7 +299,7 @@ impl SerializeCql for &[u8] {
             .map_err(|_| mk_ser_err::<Self>(typ, BuiltinSerializationErrorKind::SizeOverflow))?
     });
 }
-impl<const N: usize> SerializeCql for [u8; N] {
+impl<const N: usize> SerializeValue for [u8; N] {
     impl_serialize_via_writer!(|me, typ, writer| {
         exact_type_check!(typ, Blob);
         writer
@@ -307,7 +307,7 @@ impl<const N: usize> SerializeCql for [u8; N] {
             .map_err(|_| mk_ser_err::<Self>(typ, BuiltinSerializationErrorKind::SizeOverflow))?
     });
 }
-impl SerializeCql for IpAddr {
+impl SerializeValue for IpAddr {
     impl_serialize_via_writer!(|me, typ, writer| {
         exact_type_check!(typ, Inet);
         match me {
@@ -316,7 +316,7 @@ impl SerializeCql for IpAddr {
         }
     });
 }
-impl SerializeCql for String {
+impl SerializeValue for String {
     impl_serialize_via_writer!(|me, typ, writer| {
         exact_type_check!(typ, Ascii, Text);
         writer
@@ -324,7 +324,7 @@ impl SerializeCql for String {
             .map_err(|_| mk_ser_err::<Self>(typ, BuiltinSerializationErrorKind::SizeOverflow))?
     });
 }
-impl<T: SerializeCql> SerializeCql for Option<T> {
+impl<T: SerializeValue> SerializeValue for Option<T> {
     fn serialize<'b>(
         &self,
         typ: &ColumnType,
@@ -336,16 +336,16 @@ impl<T: SerializeCql> SerializeCql for Option<T> {
         }
     }
 }
-impl SerializeCql for Unset {
+impl SerializeValue for Unset {
     impl_serialize_via_writer!(|_me, writer| writer.set_unset());
 }
-impl SerializeCql for Counter {
+impl SerializeValue for Counter {
     impl_serialize_via_writer!(|me, typ, writer| {
         exact_type_check!(typ, Counter);
         writer.set_value(me.0.to_be_bytes().as_slice()).unwrap()
     });
 }
-impl SerializeCql for CqlDuration {
+impl SerializeValue for CqlDuration {
     impl_serialize_via_writer!(|me, typ, writer| {
         exact_type_check!(typ, Duration);
         // TODO: adjust vint_encode to use CellValueBuilder or something like that
@@ -356,7 +356,7 @@ impl SerializeCql for CqlDuration {
         writer.set_value(buf.as_slice()).unwrap()
     });
 }
-impl<V: SerializeCql> SerializeCql for MaybeUnset<V> {
+impl<V: SerializeValue> SerializeValue for MaybeUnset<V> {
     fn serialize<'b>(
         &self,
         typ: &ColumnType,
@@ -368,7 +368,7 @@ impl<V: SerializeCql> SerializeCql for MaybeUnset<V> {
         }
     }
 }
-impl<T: SerializeCql + ?Sized> SerializeCql for &T {
+impl<T: SerializeValue + ?Sized> SerializeValue for &T {
     fn serialize<'b>(
         &self,
         typ: &ColumnType,
@@ -377,7 +377,7 @@ impl<T: SerializeCql + ?Sized> SerializeCql for &T {
         T::serialize(*self, typ, writer)
     }
 }
-impl<T: SerializeCql + ?Sized> SerializeCql for Box<T> {
+impl<T: SerializeValue + ?Sized> SerializeValue for Box<T> {
     fn serialize<'b>(
         &self,
         typ: &ColumnType,
@@ -386,7 +386,7 @@ impl<T: SerializeCql + ?Sized> SerializeCql for Box<T> {
         T::serialize(&**self, typ, writer)
     }
 }
-impl<V: SerializeCql, S: BuildHasher + Default> SerializeCql for HashSet<V, S> {
+impl<V: SerializeValue, S: BuildHasher + Default> SerializeValue for HashSet<V, S> {
     fn serialize<'b>(
         &self,
         typ: &ColumnType,
@@ -401,7 +401,7 @@ impl<V: SerializeCql, S: BuildHasher + Default> SerializeCql for HashSet<V, S> {
         )
     }
 }
-impl<K: SerializeCql, V: SerializeCql, S: BuildHasher> SerializeCql for HashMap<K, V, S> {
+impl<K: SerializeValue, V: SerializeValue, S: BuildHasher> SerializeValue for HashMap<K, V, S> {
     fn serialize<'b>(
         &self,
         typ: &ColumnType,
@@ -416,7 +416,7 @@ impl<K: SerializeCql, V: SerializeCql, S: BuildHasher> SerializeCql for HashMap<
         )
     }
 }
-impl<V: SerializeCql> SerializeCql for BTreeSet<V> {
+impl<V: SerializeValue> SerializeValue for BTreeSet<V> {
     fn serialize<'b>(
         &self,
         typ: &ColumnType,
@@ -431,7 +431,7 @@ impl<V: SerializeCql> SerializeCql for BTreeSet<V> {
         )
     }
 }
-impl<K: SerializeCql, V: SerializeCql> SerializeCql for BTreeMap<K, V> {
+impl<K: SerializeValue, V: SerializeValue> SerializeValue for BTreeMap<K, V> {
     fn serialize<'b>(
         &self,
         typ: &ColumnType,
@@ -446,7 +446,7 @@ impl<K: SerializeCql, V: SerializeCql> SerializeCql for BTreeMap<K, V> {
         )
     }
 }
-impl<T: SerializeCql> SerializeCql for Vec<T> {
+impl<T: SerializeValue> SerializeValue for Vec<T> {
     fn serialize<'b>(
         &self,
         typ: &ColumnType,
@@ -461,7 +461,7 @@ impl<T: SerializeCql> SerializeCql for Vec<T> {
         )
     }
 }
-impl<'a, T: SerializeCql + 'a> SerializeCql for &'a [T] {
+impl<'a, T: SerializeValue + 'a> SerializeValue for &'a [T] {
     fn serialize<'b>(
         &self,
         typ: &ColumnType,
@@ -476,7 +476,7 @@ impl<'a, T: SerializeCql + 'a> SerializeCql for &'a [T] {
         )
     }
 }
-impl SerializeCql for CqlValue {
+impl SerializeValue for CqlValue {
     fn serialize<'b>(
         &self,
         typ: &ColumnType,
@@ -498,14 +498,14 @@ fn serialize_cql_value<'b>(
         ));
     }
     match value {
-        CqlValue::Ascii(a) => <_ as SerializeCql>::serialize(&a, typ, writer),
-        CqlValue::Boolean(b) => <_ as SerializeCql>::serialize(&b, typ, writer),
-        CqlValue::Blob(b) => <_ as SerializeCql>::serialize(&b, typ, writer),
-        CqlValue::Counter(c) => <_ as SerializeCql>::serialize(&c, typ, writer),
-        CqlValue::Decimal(d) => <_ as SerializeCql>::serialize(&d, typ, writer),
-        CqlValue::Date(d) => <_ as SerializeCql>::serialize(&d, typ, writer),
-        CqlValue::Double(d) => <_ as SerializeCql>::serialize(&d, typ, writer),
-        CqlValue::Duration(d) => <_ as SerializeCql>::serialize(&d, typ, writer),
+        CqlValue::Ascii(a) => <_ as SerializeValue>::serialize(&a, typ, writer),
+        CqlValue::Boolean(b) => <_ as SerializeValue>::serialize(&b, typ, writer),
+        CqlValue::Blob(b) => <_ as SerializeValue>::serialize(&b, typ, writer),
+        CqlValue::Counter(c) => <_ as SerializeValue>::serialize(&c, typ, writer),
+        CqlValue::Decimal(d) => <_ as SerializeValue>::serialize(&d, typ, writer),
+        CqlValue::Date(d) => <_ as SerializeValue>::serialize(&d, typ, writer),
+        CqlValue::Double(d) => <_ as SerializeValue>::serialize(&d, typ, writer),
+        CqlValue::Duration(d) => <_ as SerializeValue>::serialize(&d, typ, writer),
         CqlValue::Empty => {
             if !typ.supports_special_empty_value() {
                 return Err(mk_typck_err::<CqlValue>(
@@ -515,13 +515,13 @@ fn serialize_cql_value<'b>(
             }
             Ok(writer.set_value(&[]).unwrap())
         }
-        CqlValue::Float(f) => <_ as SerializeCql>::serialize(&f, typ, writer),
-        CqlValue::Int(i) => <_ as SerializeCql>::serialize(&i, typ, writer),
-        CqlValue::BigInt(b) => <_ as SerializeCql>::serialize(&b, typ, writer),
-        CqlValue::Text(t) => <_ as SerializeCql>::serialize(&t, typ, writer),
-        CqlValue::Timestamp(t) => <_ as SerializeCql>::serialize(&t, typ, writer),
-        CqlValue::Inet(i) => <_ as SerializeCql>::serialize(&i, typ, writer),
-        CqlValue::List(l) => <_ as SerializeCql>::serialize(&l, typ, writer),
+        CqlValue::Float(f) => <_ as SerializeValue>::serialize(&f, typ, writer),
+        CqlValue::Int(i) => <_ as SerializeValue>::serialize(&i, typ, writer),
+        CqlValue::BigInt(b) => <_ as SerializeValue>::serialize(&b, typ, writer),
+        CqlValue::Text(t) => <_ as SerializeValue>::serialize(&t, typ, writer),
+        CqlValue::Timestamp(t) => <_ as SerializeValue>::serialize(&t, typ, writer),
+        CqlValue::Inet(i) => <_ as SerializeValue>::serialize(&i, typ, writer),
+        CqlValue::List(l) => <_ as SerializeValue>::serialize(&l, typ, writer),
         CqlValue::Map(m) => serialize_mapping(
             std::any::type_name::<CqlValue>(),
             m.len(),
@@ -529,16 +529,16 @@ fn serialize_cql_value<'b>(
             typ,
             writer,
         ),
-        CqlValue::Set(s) => <_ as SerializeCql>::serialize(&s, typ, writer),
+        CqlValue::Set(s) => <_ as SerializeValue>::serialize(&s, typ, writer),
         CqlValue::UserDefinedType {
             keyspace,
             type_name,
             fields,
         } => serialize_udt(typ, keyspace, type_name, fields, writer),
-        CqlValue::SmallInt(s) => <_ as SerializeCql>::serialize(&s, typ, writer),
-        CqlValue::TinyInt(t) => <_ as SerializeCql>::serialize(&t, typ, writer),
-        CqlValue::Time(t) => <_ as SerializeCql>::serialize(&t, typ, writer),
-        CqlValue::Timeuuid(t) => <_ as SerializeCql>::serialize(&t, typ, writer),
+        CqlValue::SmallInt(s) => <_ as SerializeValue>::serialize(&s, typ, writer),
+        CqlValue::TinyInt(t) => <_ as SerializeValue>::serialize(&t, typ, writer),
+        CqlValue::Time(t) => <_ as SerializeValue>::serialize(&t, typ, writer),
+        CqlValue::Timeuuid(t) => <_ as SerializeValue>::serialize(&t, typ, writer),
         CqlValue::Tuple(t) => {
             // We allow serializing tuples that have less fields
             // than the database tuple, but not the other way around.
@@ -564,8 +564,8 @@ fn serialize_cql_value<'b>(
             };
             serialize_tuple_like(typ, fields.iter(), t.iter(), writer)
         }
-        CqlValue::Uuid(u) => <_ as SerializeCql>::serialize(&u, typ, writer),
-        CqlValue::Varint(v) => <_ as SerializeCql>::serialize(&v, typ, writer),
+        CqlValue::Uuid(u) => <_ as SerializeValue>::serialize(&u, typ, writer),
+        CqlValue::Varint(v) => <_ as SerializeValue>::serialize(&v, typ, writer),
     }
 }
 
@@ -717,7 +717,7 @@ macro_rules! impl_tuple {
         $($tidents:ident),*;
         $length:expr
     ) => {
-        impl<$($typs: SerializeCql),*> SerializeCql for ($($typs,)*) {
+        impl<$($typs: SerializeValue),*> SerializeValue for ($($typs,)*) {
             fn serialize<'b>(
                 &self,
                 typ: &ColumnType,
@@ -743,7 +743,7 @@ macro_rules! impl_tuple {
                 let mut builder = writer.into_value_builder();
                 let index = 0;
                 $(
-                    <$typs as SerializeCql>::serialize($fidents, $tidents, builder.make_sub_writer())
+                    <$typs as SerializeValue>::serialize($fidents, $tidents, builder.make_sub_writer())
                         .map_err(|err| mk_ser_err::<Self>(
                             typ,
                             TupleSerializationErrorKind::ElementSerializationFailed {
@@ -792,7 +792,7 @@ impl_tuples!(
     16
 );
 
-fn serialize_sequence<'t, 'b, T: SerializeCql + 't>(
+fn serialize_sequence<'t, 'b, T: SerializeValue + 't>(
     rust_name: &'static str,
     len: usize,
     iter: impl Iterator<Item = &'t T>,
@@ -836,7 +836,7 @@ fn serialize_sequence<'t, 'b, T: SerializeCql + 't>(
         .map_err(|_| mk_ser_err_named(rust_name, typ, BuiltinSerializationErrorKind::SizeOverflow))
 }
 
-fn serialize_mapping<'t, 'b, K: SerializeCql + 't, V: SerializeCql + 't>(
+fn serialize_mapping<'t, 'b, K: SerializeValue + 't, V: SerializeValue + 't>(
     rust_name: &'static str,
     len: usize,
     iter: impl Iterator<Item = (&'t K, &'t V)>,
@@ -883,17 +883,17 @@ fn serialize_mapping<'t, 'b, K: SerializeCql + 't, V: SerializeCql + 't>(
         .map_err(|_| mk_ser_err_named(rust_name, typ, BuiltinSerializationErrorKind::SizeOverflow))
 }
 
-/// Implements the [`SerializeCql`] trait for a type, provided that the type
+/// Implements the [`SerializeValue`] trait for a type, provided that the type
 /// already implements the legacy [`Value`](crate::frame::value::Value) trait.
 ///
 /// # Note
 ///
 /// The translation from one trait to another encounters a performance penalty
-/// and does not utilize the stronger guarantees of `SerializeCql`. Before
+/// and does not utilize the stronger guarantees of `SerializeValue`. Before
 /// resorting to this macro, you should consider other options instead:
 ///
 /// - If the impl was generated using the `Value` procedural macro, you should
-///   switch to the `SerializeCql` procedural macro. *The new macro behaves
+///   switch to the `SerializeValue` procedural macro. *The new macro behaves
 ///   differently by default, so please read its documentation first!*
 /// - If the impl was written by hand, it is still preferable to rewrite it
 ///   manually. You have an opportunity to make your serialization logic
@@ -906,14 +906,14 @@ fn serialize_mapping<'t, 'b, K: SerializeCql + 't, V: SerializeCql + 't>(
 ///
 /// ```rust
 /// # use scylla_cql::frame::value::{Value, ValueTooBig};
-/// # use scylla_cql::impl_serialize_cql_via_value;
+/// # use scylla_cql::impl_serialize_value_via_value;
 /// struct NoGenerics {}
 /// impl Value for NoGenerics {
 ///     fn serialize<'b>(&self, _buf: &mut Vec<u8>) -> Result<(), ValueTooBig> {
 ///         Ok(())
 ///     }
 /// }
-/// impl_serialize_cql_via_value!(NoGenerics);
+/// impl_serialize_value_via_value!(NoGenerics);
 ///
 /// // Generic types are also supported. You must specify the bounds if the
 /// // struct/enum contains any.
@@ -925,12 +925,12 @@ fn serialize_mapping<'t, 'b, K: SerializeCql + 't, V: SerializeCql + 't>(
 ///         Ok(())
 ///     }
 /// }
-/// impl_serialize_cql_via_value!(WithGenerics<T, U: Clone>);
+/// impl_serialize_value_via_value!(WithGenerics<T, U: Clone>);
 /// ```
 #[macro_export]
-macro_rules! impl_serialize_cql_via_value {
+macro_rules! impl_serialize_value_via_value {
     ($t:ident$(<$($targ:tt $(: $tbound:tt)?),*>)?) => {
-        impl $(<$($targ $(: $tbound)?),*>)? $crate::types::serialize::value::SerializeCql
+        impl $(<$($targ $(: $tbound)?),*>)? $crate::types::serialize::value::SerializeValue
         for $t$(<$($targ),*>)?
         where
             Self: $crate::frame::value::Value,
@@ -949,13 +949,13 @@ macro_rules! impl_serialize_cql_via_value {
     };
 }
 
-/// Implements [`SerializeCql`] if the type wrapped over implements [`Value`].
+/// Implements [`SerializeValue`] if the type wrapped over implements [`Value`].
 ///
-/// See the [`impl_serialize_cql_via_value`] macro on information about
-/// the properties of the [`SerializeCql`] implementation.
+/// See the [`impl_serialize_value_via_value`] macro on information about
+/// the properties of the [`SerializeValue`] implementation.
 pub struct ValueAdapter<T>(pub T);
 
-impl<T> SerializeCql for ValueAdapter<T>
+impl<T> SerializeValue for ValueAdapter<T>
 where
     T: Value,
 {
@@ -980,8 +980,8 @@ where
 /// Returns an error if the result of the `Value::serialize` call was not
 /// a properly encoded `[value]` as defined in the CQL protocol spec.
 ///
-/// See [`impl_serialize_cql_via_value`] which generates a boilerplate
-/// [`SerializeCql`] implementation that uses this function.
+/// See [`impl_serialize_value_via_value`] which generates a boilerplate
+/// [`SerializeValue`] implementation that uses this function.
 pub fn serialize_legacy_value<'b, T: Value>(
     v: &T,
     writer: CellWriter<'b>,
@@ -989,13 +989,13 @@ pub fn serialize_legacy_value<'b, T: Value>(
     // It's an inefficient and slightly tricky but correct implementation.
     let mut buf = Vec::new();
     <T as Value>::serialize(v, &mut buf)
-        .map_err(|_| SerializationError::new(ValueToSerializeCqlAdapterError::TooBig))?;
+        .map_err(|_| SerializationError::new(ValueToSerializeValueAdapterError::TooBig))?;
 
     // Analyze the output.
     // All this dance shows how unsafe our previous interface was...
     if buf.len() < 4 {
         return Err(SerializationError(Arc::new(
-            ValueToSerializeCqlAdapterError::TooShort { size: buf.len() },
+            ValueToSerializeValueAdapterError::TooShort { size: buf.len() },
         )));
     }
 
@@ -1007,7 +1007,7 @@ pub fn serialize_legacy_value<'b, T: Value>(
         len if len >= 0 => {
             if contents.len() != len as usize {
                 Err(SerializationError(Arc::new(
-                    ValueToSerializeCqlAdapterError::DeclaredVsActualSizeMismatch {
+                    ValueToSerializeValueAdapterError::DeclaredVsActualSizeMismatch {
                         declared: len as usize,
                         actual: contents.len(),
                     },
@@ -1017,7 +1017,7 @@ pub fn serialize_legacy_value<'b, T: Value>(
             }
         }
         _ => Err(SerializationError(Arc::new(
-            ValueToSerializeCqlAdapterError::InvalidDeclaredSize { size: len },
+            ValueToSerializeValueAdapterError::InvalidDeclaredSize { size: len },
         ))),
     }
 }
@@ -1465,9 +1465,9 @@ impl Display for UdtSerializationErrorKind {
 }
 
 /// Describes a failure to translate the output of the [`Value`] legacy trait
-/// into an output of the [`SerializeCql`] trait.
+/// into an output of the [`SerializeValue`] trait.
 #[derive(Error, Debug)]
-pub enum ValueToSerializeCqlAdapterError {
+pub enum ValueToSerializeValueAdapterError {
     /// The value is too bit to be serialized as it exceeds the maximum 2GB size limit.
     #[error("The value is too big to be serialized as it exceeds the maximum 2GB size limit")]
     TooBig,
@@ -1512,17 +1512,17 @@ mod tests {
     use crate::types::serialize::{CellWriter, SerializationError};
 
     use assert_matches::assert_matches;
-    use scylla_macros::SerializeCql;
+    use scylla_macros::SerializeValue;
 
-    use super::{SerializeCql, UdtSerializationErrorKind, UdtTypeCheckErrorKind};
+    use super::{SerializeValue, UdtSerializationErrorKind, UdtTypeCheckErrorKind};
 
-    fn check_compat<V: Value + SerializeCql>(v: V) {
+    fn check_compat<V: Value + SerializeValue>(v: V) {
         let mut legacy_data = Vec::new();
         <V as Value>::serialize(&v, &mut legacy_data).unwrap();
 
         let mut new_data = Vec::new();
         let new_data_writer = CellWriter::new(&mut new_data);
-        <V as SerializeCql>::serialize(&v, &ColumnType::Int, new_data_writer).unwrap();
+        <V as SerializeValue>::serialize(&v, &ColumnType::Int, new_data_writer).unwrap();
 
         assert_eq!(legacy_data, new_data);
     }
@@ -1535,21 +1535,21 @@ mod tests {
     }
 
     #[test]
-    fn test_dyn_serialize_cql() {
+    fn test_dyn_serialize_value() {
         let v: i32 = 123;
         let mut typed_data = Vec::new();
         let typed_data_writer = CellWriter::new(&mut typed_data);
-        <_ as SerializeCql>::serialize(&v, &ColumnType::Int, typed_data_writer).unwrap();
+        <_ as SerializeValue>::serialize(&v, &ColumnType::Int, typed_data_writer).unwrap();
 
-        let v = &v as &dyn SerializeCql;
+        let v = &v as &dyn SerializeValue;
         let mut erased_data = Vec::new();
         let erased_data_writer = CellWriter::new(&mut erased_data);
-        <_ as SerializeCql>::serialize(&v, &ColumnType::Int, erased_data_writer).unwrap();
+        <_ as SerializeValue>::serialize(&v, &ColumnType::Int, erased_data_writer).unwrap();
 
         assert_eq!(typed_data, erased_data);
     }
 
-    fn do_serialize_result<T: SerializeCql>(
+    fn do_serialize_result<T: SerializeValue>(
         t: T,
         typ: &ColumnType,
     ) -> Result<Vec<u8>, SerializationError> {
@@ -1558,11 +1558,11 @@ mod tests {
         t.serialize(typ, writer).map(|_| ()).map(|()| ret)
     }
 
-    fn do_serialize<T: SerializeCql>(t: T, typ: &ColumnType) -> Vec<u8> {
+    fn do_serialize<T: SerializeValue>(t: T, typ: &ColumnType) -> Vec<u8> {
         do_serialize_result(t, typ).unwrap()
     }
 
-    fn do_serialize_err<T: SerializeCql>(t: T, typ: &ColumnType) -> SerializationError {
+    fn do_serialize_err<T: SerializeValue>(t: T, typ: &ColumnType) -> SerializationError {
         do_serialize_result(t, typ).unwrap_err()
     }
 
@@ -2016,11 +2016,11 @@ mod tests {
     // we properly ignore warnings about unused variables, unnecessary `mut`s
     // etc. that usually pop up when generating code for empty structs.
     #[allow(unused)]
-    #[derive(SerializeCql)]
+    #[derive(SerializeValue)]
     #[scylla(crate = crate)]
     struct TestUdtWithNoFields {}
 
-    #[derive(SerializeCql, Debug, PartialEq, Eq, Default)]
+    #[derive(SerializeValue, Debug, PartialEq, Eq, Default)]
     #[scylla(crate = crate)]
     struct TestUdtWithFieldSorting {
         a: String,
@@ -2168,7 +2168,7 @@ mod tests {
         assert_eq!(result_normal, result_additional_field);
     }
 
-    #[derive(SerializeCql, Debug, PartialEq, Default)]
+    #[derive(SerializeValue, Debug, PartialEq, Default)]
     #[scylla(crate = crate)]
     struct TestUdtWithFieldSorting2 {
         a: String,
@@ -2177,7 +2177,7 @@ mod tests {
         c: Vec<i64>,
     }
 
-    #[derive(SerializeCql, Debug, PartialEq, Default)]
+    #[derive(SerializeValue, Debug, PartialEq, Default)]
     #[scylla(crate = crate)]
     struct TestUdtWithFieldSorting3 {
         a: String,
@@ -2276,9 +2276,9 @@ mod tests {
         );
     }
 
-    #[derive(SerializeCql)]
+    #[derive(SerializeValue)]
     #[scylla(crate = crate)]
-    struct TestUdtWithGenerics<'a, T: SerializeCql> {
+    struct TestUdtWithGenerics<'a, T: SerializeValue> {
         a: &'a str,
         b: T,
     }
@@ -2286,7 +2286,7 @@ mod tests {
     #[test]
     fn test_udt_serialization_with_generics() {
         // A minimal smoke test just to test that it works.
-        fn check_with_type<T: SerializeCql>(typ: ColumnType, t: T, cql_t: CqlValue) {
+        fn check_with_type<T: SerializeValue>(typ: ColumnType, t: T, cql_t: CqlValue) {
             let typ = ColumnType::UserDefinedType {
                 type_name: "typ".to_string(),
                 keyspace: "ks".to_string(),
@@ -2320,7 +2320,7 @@ mod tests {
         check_with_type(ColumnType::Double, 123_f64, CqlValue::Double(123_f64));
     }
 
-    #[derive(SerializeCql, Debug, PartialEq, Eq, Default)]
+    #[derive(SerializeValue, Debug, PartialEq, Eq, Default)]
     #[scylla(crate = crate, flavor = "enforce_order")]
     struct TestUdtWithEnforcedOrder {
         a: String,
@@ -2422,7 +2422,7 @@ mod tests {
 
         let mut data = Vec::new();
 
-        let err = <_ as SerializeCql>::serialize(&udt, &typ_not_udt, CellWriter::new(&mut data))
+        let err = <_ as SerializeValue>::serialize(&udt, &typ_not_udt, CellWriter::new(&mut data))
             .unwrap_err();
         let err = err.0.downcast_ref::<BuiltinTypeCheckError>().unwrap();
         assert_matches!(
@@ -2445,7 +2445,7 @@ mod tests {
         };
 
         let err =
-            <_ as SerializeCql>::serialize(&udt, &typ, CellWriter::new(&mut data)).unwrap_err();
+            <_ as SerializeValue>::serialize(&udt, &typ, CellWriter::new(&mut data)).unwrap_err();
         let err = err.0.downcast_ref::<BuiltinTypeCheckError>().unwrap();
         assert_matches!(
             err.kind,
@@ -2462,8 +2462,9 @@ mod tests {
             ],
         };
 
-        let err = <_ as SerializeCql>::serialize(&udt, &typ_without_c, CellWriter::new(&mut data))
-            .unwrap_err();
+        let err =
+            <_ as SerializeValue>::serialize(&udt, &typ_without_c, CellWriter::new(&mut data))
+                .unwrap_err();
         let err = err.0.downcast_ref::<BuiltinTypeCheckError>().unwrap();
         assert_matches!(
             err.kind,
@@ -2482,9 +2483,12 @@ mod tests {
             ],
         };
 
-        let err =
-            <_ as SerializeCql>::serialize(&udt, &typ_unexpected_field, CellWriter::new(&mut data))
-                .unwrap_err();
+        let err = <_ as SerializeValue>::serialize(
+            &udt,
+            &typ_unexpected_field,
+            CellWriter::new(&mut data),
+        )
+        .unwrap_err();
         let err = err.0.downcast_ref::<BuiltinSerializationError>().unwrap();
         assert_matches!(
             err.kind,
@@ -2494,7 +2498,7 @@ mod tests {
         );
     }
 
-    #[derive(SerializeCql, Debug)]
+    #[derive(SerializeValue, Debug)]
     #[scylla(crate = crate)]
     struct TestUdtWithFieldRename {
         a: String,
@@ -2502,7 +2506,7 @@ mod tests {
         b: i32,
     }
 
-    #[derive(SerializeCql, Debug)]
+    #[derive(SerializeValue, Debug)]
     #[scylla(crate = crate, flavor = "enforce_order")]
     struct TestUdtWithFieldRenameAndEnforceOrder {
         a: String,
@@ -2575,7 +2579,7 @@ mod tests {
     }
 
     #[allow(unused)]
-    #[derive(SerializeCql, Debug)]
+    #[derive(SerializeValue, Debug)]
     #[scylla(crate = crate, flavor = "enforce_order", skip_name_checks)]
     struct TestUdtWithSkippedNameChecks {
         a: String,
@@ -2614,7 +2618,7 @@ mod tests {
         assert_eq!(reference, udt);
     }
 
-    #[derive(SerializeCql, Debug, PartialEq, Eq, Default)]
+    #[derive(SerializeValue, Debug, PartialEq, Eq, Default)]
     #[scylla(crate = crate, force_exact_match)]
     struct TestStrictUdtWithFieldSorting {
         a: String,
@@ -2676,7 +2680,7 @@ mod tests {
         );
     }
 
-    #[derive(SerializeCql, Debug, PartialEq, Eq, Default)]
+    #[derive(SerializeValue, Debug, PartialEq, Eq, Default)]
     #[scylla(crate = crate, flavor = "enforce_order", force_exact_match)]
     struct TestStrictUdtWithEnforcedOrder {
         a: String,
@@ -2704,9 +2708,12 @@ mod tests {
             ],
         };
 
-        let err =
-            <_ as SerializeCql>::serialize(&udt, &typ_unexpected_field, CellWriter::new(&mut data))
-                .unwrap_err();
+        let err = <_ as SerializeValue>::serialize(
+            &udt,
+            &typ_unexpected_field,
+            CellWriter::new(&mut data),
+        )
+        .unwrap_err();
         let err = err.0.downcast_ref::<BuiltinTypeCheckError>().unwrap();
         assert_matches!(
             err.kind,
@@ -2714,7 +2721,7 @@ mod tests {
         );
     }
 
-    #[derive(SerializeCql, Debug)]
+    #[derive(SerializeValue, Debug)]
     #[scylla(crate = crate, flavor = "enforce_order", skip_name_checks)]
     struct TestUdtWithSkippedFields {
         a: String,

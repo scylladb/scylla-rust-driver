@@ -61,15 +61,17 @@ struct Context {
     fields: Vec<Field>,
 }
 
-pub(crate) fn derive_serialize_cql(tokens_input: TokenStream) -> Result<syn::ItemImpl, syn::Error> {
+pub(crate) fn derive_serialize_value(
+    tokens_input: TokenStream,
+) -> Result<syn::ItemImpl, syn::Error> {
     let input: syn::DeriveInput = syn::parse(tokens_input)?;
     let struct_name = input.ident.clone();
-    let named_fields = crate::parser::parse_named_fields(&input, "SerializeCql")?;
+    let named_fields = crate::parser::parse_named_fields(&input, "SerializeValue")?;
     let (impl_generics, ty_generics, where_clause) = input.generics.split_for_impl();
     let attributes = Attributes::from_attributes(&input.attrs)?;
 
     let crate_path = attributes.crate_path();
-    let implemented_trait: syn::Path = parse_quote!(#crate_path::SerializeCql);
+    let implemented_trait: syn::Path = parse_quote!(#crate_path::SerializeValue);
 
     let fields = named_fields
         .named
@@ -305,7 +307,7 @@ impl<'a> Generator for FieldSortingGenerator<'a> {
                         #udt_field_names => {
                             #serialize_missing_nulls_statement
                             let sub_builder = #crate_path::CellValueBuilder::make_sub_writer(&mut builder);
-                            match <#field_types as #crate_path::SerializeCql>::serialize(&self.#rust_field_idents, field_type, sub_builder) {
+                            match <#field_types as #crate_path::SerializeValue>::serialize(&self.#rust_field_idents, field_type, sub_builder) {
                                 ::std::result::Result::Ok(_proof) => {}
                                 ::std::result::Result::Err(err) => {
                                     return ::std::result::Result::Err(mk_ser_err(
@@ -412,7 +414,7 @@ impl<'a> Generator for FieldOrderedGenerator<'a> {
                     Some((field_name, typ)) => {
                         if #name_check_expression {
                             let sub_builder = #crate_path::CellValueBuilder::make_sub_writer(&mut builder);
-                            match <#typ as #crate_path::SerializeCql>::serialize(&self.#rust_field_ident, typ, sub_builder) {
+                            match <#typ as #crate_path::SerializeValue>::serialize(&self.#rust_field_ident, typ, sub_builder) {
                                 Ok(_proof) => {},
                                 Err(err) => {
                                     return ::std::result::Result::Err(mk_ser_err(

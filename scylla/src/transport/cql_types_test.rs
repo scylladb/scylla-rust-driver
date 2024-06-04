@@ -8,8 +8,8 @@ use crate::transport::session::Session;
 use crate::utils::test_utils::unique_keyspace_name;
 use itertools::Itertools;
 use scylla_cql::frame::value::{CqlTimeuuid, CqlVarint};
-use scylla_cql::types::serialize::value::SerializeCql;
-use scylla_macros::SerializeCql;
+use scylla_cql::types::serialize::value::SerializeValue;
+use scylla_macros::SerializeValue;
 use std::cmp::PartialEq;
 use std::fmt::Debug;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
@@ -64,7 +64,7 @@ async fn init_test(table_name: &str, type_name: &str) -> Session {
 // Expected values and bound values are computed using T::from_str
 async fn run_tests<T>(tests: &[&str], type_name: &str)
 where
-    T: SerializeCql + FromCqlVal<CqlValue> + FromStr + Debug + Clone + PartialEq,
+    T: SerializeValue + FromCqlVal<CqlValue> + FromStr + Debug + Clone + PartialEq,
 {
     let session: Session = init_test(type_name, type_name).await;
     session.await_schema_agreement().await.unwrap();
@@ -1500,7 +1500,7 @@ async fn test_udt_after_schema_update() {
         .await
         .unwrap();
 
-    #[derive(SerializeCql, FromUserType, Debug, PartialEq)]
+    #[derive(SerializeValue, FromUserType, Debug, PartialEq)]
     #[scylla(crate = crate)]
     struct UdtV1 {
         first: i32,
@@ -1681,7 +1681,7 @@ async fn test_udt_with_missing_field() {
         element: TQ,
         expected: TR,
     ) where
-        TQ: SerializeCql,
+        TQ: SerializeValue,
         TR: FromCqlVal<CqlValue> + PartialEq + Debug,
     {
         session
@@ -1712,7 +1712,7 @@ async fn test_udt_with_missing_field() {
         fourth: Option<Vec<u8>>,
     }
 
-    #[derive(SerializeCql)]
+    #[derive(SerializeValue)]
     #[scylla(crate = crate)]
     struct UdtV1 {
         first: i32,
@@ -1738,7 +1738,7 @@ async fn test_udt_with_missing_field() {
 
     id += 1;
 
-    #[derive(SerializeCql)]
+    #[derive(SerializeValue)]
     #[scylla(crate = crate)]
     struct UdtV2 {
         first: i32,
@@ -1766,7 +1766,7 @@ async fn test_udt_with_missing_field() {
 
     id += 1;
 
-    #[derive(SerializeCql)]
+    #[derive(SerializeValue)]
     #[scylla(crate = crate)]
     struct UdtV3 {
         first: i32,
@@ -1794,7 +1794,7 @@ async fn test_udt_with_missing_field() {
 
     id += 1;
 
-    #[derive(SerializeCql)]
+    #[derive(SerializeValue)]
     #[scylla(crate = crate, flavor="enforce_order")]
     struct UdtV4 {
         first: i32,

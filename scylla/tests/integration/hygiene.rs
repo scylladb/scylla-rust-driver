@@ -65,7 +65,7 @@ macro_rules! test_crate {
         }
 
         #[allow(unused)]
-        #[derive(_scylla::macros::SerializeCql, _scylla::macros::SerializeRow)]
+        #[derive(_scylla::macros::SerializeValue, _scylla::macros::SerializeRow)]
         #[scylla(crate = _scylla)]
         struct TestStructNew {
             x: ::core::primitive::i32,

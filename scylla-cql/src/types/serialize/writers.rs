@@ -63,7 +63,7 @@ impl<'buf> RowWriter<'buf> {
 /// After the value is fully initialized, the handle is consumed and
 /// a [`WrittenCellProof`] object is returned
 /// in its stead. This is a type-level proof that the value was fully initialized
-/// and is used in [`SerializeCql::serialize`](`super::value::SerializeCql::serialize`)
+/// and is used in [`SerializeValue::serialize`](`super::value::SerializeValue::serialize`)
 /// in order to enforce the implementer to fully initialize the provided handle
 /// to CQL value.
 ///
@@ -190,7 +190,7 @@ impl<'buf> CellValueBuilder<'buf> {
 /// the value is fully initialized and the `CellWriter` is destroyed.
 ///
 /// The purpose of this type is to enforce the contract of
-/// [`SerializeCql::serialize`](super::value::SerializeCql::serialize): either
+/// [`SerializeValue::serialize`](super::value::SerializeValue::serialize): either
 /// the method succeeds and returns a proof that it serialized itself
 /// into the given value, or it fails and returns an error or panics.
 #[derive(Debug)]

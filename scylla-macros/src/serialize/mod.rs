@@ -1,7 +1,7 @@
 use darling::FromMeta;
 
-pub(crate) mod cql;
 pub(crate) mod row;
+pub(crate) mod value;
 
 #[derive(Copy, Clone, PartialEq, Eq, Default)]
 enum Flavor {

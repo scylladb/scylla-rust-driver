@@ -40,7 +40,7 @@ async fn main() {
 
     // You can also use type generics:
     #[derive(scylla::SerializeRow)]
-    struct MyTypeWithGenerics<S: scylla::serialize::value::SerializeCql> {
+    struct MyTypeWithGenerics<S: scylla::serialize::value::SerializeValue> {
         k: i32,
         my: Option<S>,
     }

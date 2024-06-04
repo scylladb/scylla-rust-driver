@@ -585,7 +585,7 @@ mod tests {
     use std::sync::Arc;
 
     use scylla_cql::frame::response::result::{ColumnType, CqlValue, TableSpec};
-    use scylla_cql::types::serialize::value::SerializeCql;
+    use scylla_cql::types::serialize::value::SerializeValue;
     use scylla_cql::types::serialize::CellWriter;
     use tracing::debug;
     use uuid::Uuid;
@@ -639,7 +639,7 @@ mod tests {
             ]))),
         ]);
 
-        SerializeCql::serialize(&value, &col_type, CellWriter::new(&mut data)).unwrap();
+        SerializeValue::serialize(&value, &col_type, CellWriter::new(&mut data)).unwrap();
         debug!("{:?}", data);
 
         custom_payload.insert(CUSTOM_PAYLOAD_TABLETS_V1_KEY.to_string(), data);
@@ -673,12 +673,13 @@ mod tests {
             ])),
         ]);
 
-        SerializeCql::serialize(&value, &RAW_TABLETS_CQL_TYPE, CellWriter::new(&mut data)).unwrap();
+        SerializeValue::serialize(&value, &RAW_TABLETS_CQL_TYPE, CellWriter::new(&mut data))
+            .unwrap();
         tracing::debug!("{:?}", data);
 
         custom_payload.insert(
             CUSTOM_PAYLOAD_TABLETS_V1_KEY.to_string(),
-            // Skipping length because `SerializeCql::serialize` adds length at the
+            // Skipping length because `SerializeValue::serialize` adds length at the
             // start of serialized value while Scylla sends the value without initial
             // length.
             data[4..].to_vec(),
