@@ -1770,9 +1770,9 @@ pub(super) mod tests {
 
     use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
     use std::fmt::Debug;
-    use std::net::{IpAddr, Ipv6Addr};
+    use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 
-    use crate::frame::response::result::{deser_cql_value, ColumnType, CqlValue};
+    use crate::frame::response::result::{ColumnType, CqlValue};
     use crate::frame::value::{
         Counter, CqlDate, CqlDecimal, CqlDuration, CqlTime, CqlTimestamp, CqlTimeuuid, CqlVarint,
     };
@@ -1803,6 +1803,14 @@ pub(super) mod tests {
         assert_eq!(decoded_slice, ORIGINAL_BYTES);
         assert_eq!(decoded_vec, ORIGINAL_BYTES);
         assert_eq!(decoded_bytes, ORIGINAL_BYTES);
+
+        // ser/de identity
+
+        // Nonempty blob
+        assert_ser_de_identity(&ColumnType::Blob, &ORIGINAL_BYTES, &mut Bytes::new());
+
+        // Empty blob
+        assert_ser_de_identity(&ColumnType::Blob, &(&[] as &[u8]), &mut Bytes::new());
     }
 
     #[test]
@@ -1811,15 +1819,23 @@ pub(super) mod tests {
 
         let ascii = make_bytes(ASCII_TEXT.as_bytes());
 
-        let decoded_ascii_str = deserialize::<&str>(&ColumnType::Ascii, &ascii).unwrap();
-        let decoded_ascii_string = deserialize::<String>(&ColumnType::Ascii, &ascii).unwrap();
-        let decoded_text_str = deserialize::<&str>(&ColumnType::Text, &ascii).unwrap();
-        let decoded_text_string = deserialize::<String>(&ColumnType::Text, &ascii).unwrap();
+        for typ in [ColumnType::Ascii, ColumnType::Text].iter() {
+            let decoded_str = deserialize::<&str>(typ, &ascii).unwrap();
+            let decoded_string = deserialize::<String>(typ, &ascii).unwrap();
 
-        assert_eq!(decoded_ascii_str, ASCII_TEXT);
-        assert_eq!(decoded_ascii_string, ASCII_TEXT);
-        assert_eq!(decoded_text_str, ASCII_TEXT);
-        assert_eq!(decoded_text_string, ASCII_TEXT);
+            assert_eq!(decoded_str, ASCII_TEXT);
+            assert_eq!(decoded_string, ASCII_TEXT);
+
+            // ser/de identity
+
+            // Empty string
+            assert_ser_de_identity(typ, &"", &mut Bytes::new());
+            assert_ser_de_identity(typ, &"".to_owned(), &mut Bytes::new());
+
+            // Nonempty string
+            assert_ser_de_identity(typ, &ASCII_TEXT, &mut Bytes::new());
+            assert_ser_de_identity(typ, &ASCII_TEXT.to_owned(), &mut Bytes::new());
+        }
     }
 
     #[test]
@@ -1836,6 +1852,15 @@ pub(super) mod tests {
         let decoded_text_string = deserialize::<String>(&ColumnType::Text, &unicode).unwrap();
         assert_eq!(decoded_text_str, UNICODE_TEXT);
         assert_eq!(decoded_text_string, UNICODE_TEXT);
+
+        // ser/de identity
+
+        assert_ser_de_identity(&ColumnType::Text, &UNICODE_TEXT, &mut Bytes::new());
+        assert_ser_de_identity(
+            &ColumnType::Text,
+            &UNICODE_TEXT.to_owned(),
+            &mut Bytes::new(),
+        );
     }
 
     #[test]
@@ -1855,6 +1880,12 @@ pub(super) mod tests {
         let bigint = make_bytes(&[0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08]);
         let decoded_bigint = deserialize::<i64>(&ColumnType::BigInt, &bigint).unwrap();
         assert_eq!(decoded_bigint, 0x0102030405060708);
+
+        // ser/de identity
+        assert_ser_de_identity(&ColumnType::TinyInt, &42_i8, &mut Bytes::new());
+        assert_ser_de_identity(&ColumnType::SmallInt, &2137_i16, &mut Bytes::new());
+        assert_ser_de_identity(&ColumnType::Int, &21372137_i32, &mut Bytes::new());
+        assert_ser_de_identity(&ColumnType::BigInt, &0_i64, &mut Bytes::new());
     }
 
     #[test]
@@ -1863,6 +1894,9 @@ pub(super) mod tests {
             let boolean_bytes = make_bytes(&[boolean as u8]);
             let decoded_bool = deserialize::<bool>(&ColumnType::Boolean, &boolean_bytes).unwrap();
             assert_eq!(decoded_bool, boolean);
+
+            // ser/de identity
+            assert_ser_de_identity(&ColumnType::Boolean, &boolean, &mut Bytes::new());
         }
     }
 
@@ -1875,6 +1909,150 @@ pub(super) mod tests {
         let double = make_bytes(&[64, 0, 0, 0, 0, 0, 0, 0]);
         let decoded_double = deserialize::<f64>(&ColumnType::Double, &double).unwrap();
         assert_eq!(decoded_double, 2.0);
+
+        // ser/de identity
+        assert_ser_de_identity(&ColumnType::Float, &21.37_f32, &mut Bytes::new());
+        assert_ser_de_identity(&ColumnType::Double, &2137.2137_f64, &mut Bytes::new());
+    }
+
+    #[test]
+    fn test_varlen_numbers() {
+        // varint
+        assert_ser_de_identity(
+            &ColumnType::Varint,
+            &CqlVarint::from_signed_bytes_be_slice(b"Ala ma kota"),
+            &mut Bytes::new(),
+        );
+
+        #[cfg(feature = "num-bigint-03")]
+        assert_ser_de_identity(
+            &ColumnType::Varint,
+            &num_bigint_03::BigInt::from_signed_bytes_be(b"Kot ma Ale"),
+            &mut Bytes::new(),
+        );
+
+        #[cfg(feature = "num-bigint-04")]
+        assert_ser_de_identity(
+            &ColumnType::Varint,
+            &num_bigint_04::BigInt::from_signed_bytes_be(b"Kot ma Ale"),
+            &mut Bytes::new(),
+        );
+
+        // decimal
+        assert_ser_de_identity(
+            &ColumnType::Decimal,
+            &CqlDecimal::from_signed_be_bytes_slice_and_exponent(b"Ala ma kota", 42),
+            &mut Bytes::new(),
+        );
+
+        #[cfg(feature = "bigdecimal-04")]
+        assert_ser_de_identity(
+            &ColumnType::Decimal,
+            &bigdecimal_04::BigDecimal::new(
+                bigdecimal_04::num_bigint::BigInt::from_signed_bytes_be(b"Ala ma kota"),
+                42,
+            ),
+            &mut Bytes::new(),
+        );
+    }
+
+    #[test]
+    fn test_date_time_types() {
+        // duration
+        assert_ser_de_identity(
+            &ColumnType::Duration,
+            &CqlDuration {
+                months: 21,
+                days: 37,
+                nanoseconds: 42,
+            },
+            &mut Bytes::new(),
+        );
+
+        // date
+        assert_ser_de_identity(&ColumnType::Date, &CqlDate(0xbeaf), &mut Bytes::new());
+
+        #[cfg(feature = "chrono")]
+        assert_ser_de_identity(
+            &ColumnType::Date,
+            &chrono::NaiveDate::from_yo_opt(1999, 99).unwrap(),
+            &mut Bytes::new(),
+        );
+
+        #[cfg(feature = "time")]
+        assert_ser_de_identity(
+            &ColumnType::Date,
+            &time::Date::from_ordinal_date(1999, 99).unwrap(),
+            &mut Bytes::new(),
+        );
+
+        // time
+        assert_ser_de_identity(&ColumnType::Time, &CqlTime(0xdeed), &mut Bytes::new());
+
+        #[cfg(feature = "chrono")]
+        assert_ser_de_identity(
+            &ColumnType::Time,
+            &chrono::NaiveTime::from_hms_micro_opt(21, 37, 21, 37).unwrap(),
+            &mut Bytes::new(),
+        );
+
+        #[cfg(feature = "time")]
+        assert_ser_de_identity(
+            &ColumnType::Time,
+            &time::Time::from_hms_micro(21, 37, 21, 37).unwrap(),
+            &mut Bytes::new(),
+        );
+
+        // timestamp
+        assert_ser_de_identity(
+            &ColumnType::Timestamp,
+            &CqlTimestamp(0xceed),
+            &mut Bytes::new(),
+        );
+
+        #[cfg(feature = "chrono")]
+        assert_ser_de_identity(
+            &ColumnType::Timestamp,
+            &chrono::DateTime::<chrono::Utc>::from_timestamp_millis(0xdead_cafe_deaf).unwrap(),
+            &mut Bytes::new(),
+        );
+
+        #[cfg(feature = "time")]
+        assert_ser_de_identity(
+            &ColumnType::Timestamp,
+            &time::OffsetDateTime::from_unix_timestamp(0xdead_cafe).unwrap(),
+            &mut Bytes::new(),
+        );
+    }
+
+    #[test]
+    fn test_inet() {
+        assert_ser_de_identity(
+            &ColumnType::Inet,
+            &IpAddr::V4(Ipv4Addr::BROADCAST),
+            &mut Bytes::new(),
+        );
+
+        assert_ser_de_identity(
+            &ColumnType::Inet,
+            &IpAddr::V6(Ipv6Addr::LOCALHOST),
+            &mut Bytes::new(),
+        );
+    }
+
+    #[test]
+    fn test_uuid() {
+        assert_ser_de_identity(
+            &ColumnType::Uuid,
+            &Uuid::from_u128(0xdead_cafe_deaf_feed_beaf_bead),
+            &mut Bytes::new(),
+        );
+
+        assert_ser_de_identity(
+            &ColumnType::Timeuuid,
+            &CqlTimeuuid::from_u128(0xdead_cafe_deaf_feed_beaf_bead),
+            &mut Bytes::new(),
+        );
     }
 
     #[test]
@@ -1903,6 +2081,15 @@ pub(super) mod tests {
         let int = make_bytes(&[]);
         let decoded_int = deserialize::<Option<MaybeEmpty<i32>>>(&ColumnType::Int, &int).unwrap();
         assert_eq!(decoded_int, Some(MaybeEmpty::Empty));
+
+        // ser/de identity
+        assert_ser_de_identity(&ColumnType::Int, &Some(12321_i32), &mut Bytes::new());
+        assert_ser_de_identity(&ColumnType::Double, &None::<f64>, &mut Bytes::new());
+        assert_ser_de_identity(
+            &ColumnType::Set(Box::new(ColumnType::Ascii)),
+            &None::<Vec<&str>>,
+            &mut Bytes::new(),
+        );
     }
 
     #[test]
@@ -1915,6 +2102,40 @@ pub(super) mod tests {
         let decoded_non_empty =
             deserialize::<MaybeEmpty<i8>>(&ColumnType::TinyInt, &non_empty).unwrap();
         assert_eq!(decoded_non_empty, MaybeEmpty::Value(0x01));
+    }
+
+    #[test]
+    fn test_cql_value() {
+        assert_ser_de_identity(
+            &ColumnType::Counter,
+            &CqlValue::Counter(Counter(765)),
+            &mut Bytes::new(),
+        );
+
+        assert_ser_de_identity(
+            &ColumnType::Timestamp,
+            &CqlValue::Timestamp(CqlTimestamp(2136)),
+            &mut Bytes::new(),
+        );
+
+        assert_ser_de_identity(&ColumnType::Boolean, &CqlValue::Empty, &mut Bytes::new());
+
+        assert_ser_de_identity(
+            &ColumnType::Text,
+            &CqlValue::Text("kremówki".to_owned()),
+            &mut Bytes::new(),
+        );
+        assert_ser_de_identity(
+            &ColumnType::Ascii,
+            &CqlValue::Ascii("kremowy".to_owned()),
+            &mut Bytes::new(),
+        );
+
+        assert_ser_de_identity(
+            &ColumnType::Set(Box::new(ColumnType::Text)),
+            &CqlValue::Set(vec![CqlValue::Text("Ala ma kota".to_owned())]),
+            &mut Bytes::new(),
+        );
     }
 
     #[test]
@@ -1969,6 +2190,20 @@ pub(super) mod tests {
             decoded_btree_string,
             expected_vec_string.into_iter().collect(),
         );
+
+        // ser/de identity
+        assert_ser_de_identity(&list_typ, &vec!["qwik"], &mut Bytes::new());
+        assert_ser_de_identity(&set_typ, &vec!["qwik"], &mut Bytes::new());
+        assert_ser_de_identity(
+            &set_typ,
+            &HashSet::<&str, std::collections::hash_map::RandomState>::from_iter(["qwik"]),
+            &mut Bytes::new(),
+        );
+        assert_ser_de_identity(
+            &set_typ,
+            &BTreeSet::<&str>::from_iter(["qwik"]),
+            &mut Bytes::new(),
+        );
     }
 
     #[test]
@@ -2016,7 +2251,21 @@ pub(super) mod tests {
             decoded_btree_str,
             expected_str.clone().into_iter().collect(),
         );
-        assert_eq!(decoded_btree_string, expected_string.into_iter().collect(),);
+        assert_eq!(decoded_btree_string, expected_string.into_iter().collect());
+
+        // ser/de identity
+        assert_ser_de_identity(
+            &typ,
+            &HashMap::<i32, &str, std::collections::hash_map::RandomState>::from_iter([(
+                -42, "qwik",
+            )]),
+            &mut Bytes::new(),
+        );
+        assert_ser_de_identity(
+            &typ,
+            &BTreeMap::<i32, &str>::from_iter([(-42, "qwik")]),
+            &mut Bytes::new(),
+        );
     }
 
     #[test]
@@ -2032,6 +2281,37 @@ pub(super) mod tests {
 
         let tup = deserialize::<(i32, &str, Option<Uuid>)>(&typ, &tuple).unwrap();
         assert_eq!(tup, (42, "foo", None));
+
+        // ser/de identity
+
+        // () does not implement SerializeValue, yet it does implement DeserializeValue.
+        // assert_ser_de_identity(&ColumnType::Tuple(vec![]), &(), &mut Bytes::new());
+
+        // nonempty, varied tuple
+        assert_ser_de_identity(
+            &ColumnType::Tuple(vec![
+                ColumnType::List(Box::new(ColumnType::Boolean)),
+                ColumnType::BigInt,
+                ColumnType::Uuid,
+                ColumnType::Inet,
+            ]),
+            &(
+                vec![true, false, true],
+                42_i64,
+                Uuid::from_u128(0xdead_cafe_deaf_feed_beaf_bead),
+                IpAddr::V6(Ipv6Addr::new(0xa, 0xb, 0xc, 0xd, 0xe, 0xf, 0x10, 0x11)),
+            ),
+            &mut Bytes::new(),
+        );
+
+        // nested tuples
+        assert_ser_de_identity(
+            &ColumnType::Tuple(vec![ColumnType::Tuple(vec![ColumnType::Tuple(vec![
+                ColumnType::Text,
+            ])])]),
+            &((("",),),),
+            &mut Bytes::new(),
+        );
     }
 
     #[test]
@@ -2101,13 +2381,6 @@ pub(super) mod tests {
         *buf = v.into();
     }
 
-    fn make_ip_address(ip: IpAddr) -> Bytes {
-        match ip {
-            IpAddr::V4(v4) => make_bytes(&v4.octets()),
-            IpAddr::V6(v6) => make_bytes(&v6.octets()),
-        }
-    }
-
     fn append_bytes(b: &mut impl BufMut, cell: &[u8]) {
         b.put_i32(cell.len() as i32);
         b.put_slice(cell);
@@ -2121,6 +2394,17 @@ pub(super) mod tests {
 
     fn append_null(b: &mut impl BufMut) {
         b.put_i32(-1);
+    }
+
+    fn assert_ser_de_identity<'f, T: SerializeValue + DeserializeValue<'f> + PartialEq + Debug>(
+        typ: &'f ColumnType,
+        v: &'f T,
+        buf: &'f mut Bytes, // `buf` must be passed as a reference from outside, because otherwise
+                            // we cannot specify the lifetime for DeserializeValue.
+    ) {
+        serialize_to_buf(typ, v, buf);
+        let deserialized = deserialize::<T>(typ, buf).unwrap();
+        assert_eq!(&deserialized, v);
     }
 
     /* Errors checks */
