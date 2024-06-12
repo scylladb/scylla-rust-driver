@@ -2424,7 +2424,11 @@ async fn test_batch_lwts() {
     let session = create_new_session_builder().build().await.unwrap();
 
     let ks = unique_keyspace_name();
-    session.query(format!("CREATE KEYSPACE IF NOT EXISTS {} WITH REPLICATION = {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}}", ks), &[]).await.unwrap();
+    let mut create_ks = format!("CREATE KEYSPACE {} WITH REPLICATION = {{'class': 'NetworkTopologyStrategy', 'replication_factor': 1}}", ks);
+    if scylla_supports_tablets(&session).await {
+        create_ks += " and TABLETS = { 'enabled': false}";
+    }
+    session.query(create_ks, &[]).await.unwrap();
     session.use_keyspace(ks.clone(), false).await.unwrap();
 
     session
