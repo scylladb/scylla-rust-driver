@@ -169,6 +169,9 @@ pub mod value;
 
 pub use frame_slice::FrameSlice;
 
+pub use row::DeserializeRow;
+pub use value::DeserializeValue;
+
 use std::error::Error;
 use std::fmt::Display;
 use std::sync::Arc;
