@@ -26,6 +26,12 @@ jobs:
       run: |
         sudo sh -c "echo 2097152 >> /proc/sys/fs/aio-max-nr"
         docker compose -f test/cluster/docker-compose.yml up -d --wait
+    - name: Print rustc version
+      run: rustc --version
+    - name: Print rustfmt version
+      run: cargo fmt --version
+    - name: Print clippy version
+      run: cargo clippy --version
     - name: Format check
       run: cargo fmt --verbose --all -- --check
     - name: Clippy check

@@ -479,9 +479,12 @@ async fn test_tablet_feedback_not_sent_for_unprepared_queries() {
 /// for every tablet.
 /// After that it sends 100 queries fro each tablet and verifies that only 1 shard on 1 node
 /// recevied requests for a given tablet.
+///
+/// TODO: Remove #[ignore] once LWTs are supported with tablets.
 #[cfg(not(scylla_cloud_tests))]
 #[tokio::test]
 #[ntest::timeout(30000)]
+#[ignore]
 async fn test_lwt_optimization_works_with_tablets() {
     setup_tracing();
     const TABLET_COUNT: usize = 16;

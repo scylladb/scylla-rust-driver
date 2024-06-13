@@ -10,13 +10,22 @@ futures = "0.3.6"
 openssl = "0.10.32"
 rustyline = "9"
 rustyline-derive = "0.6"
-scylla = {path = "../scylla", features = ["ssl", "cloud", "chrono", "time", "num-bigint-03", "num-bigint-04", "bigdecimal-04"]}
-tokio = {version = "1.1.0", features = ["full"]}
-tracing = { version = "0.1.25" , features = ["log"] }
+scylla = { path = "../scylla", features = [
+    "ssl",
+    "cloud",
+    "chrono",
+    "time",
+    "num-bigint-03",
+    "num-bigint-04",
+    "bigdecimal-04",
+] }
+# FIXME: Remove <1.38 once https://github.com/tokio-rs/tokio/issues/6610 is fixed
+tokio = { version = ">=1.34, <1.38", features = ["full"] }
+tracing = { version = "0.1.25", features = ["log"] }
 tracing-subscriber = { version = "0.3.14", features = ["env-filter"] }
 chrono = { version = "0.4", default-features = false }
 time = { version = "0.3.22" }
-uuid = { version = "1.0", features = ["v1"]}
+uuid = { version = "1.0", features = ["v1"] }
 tower = "0.4"
 stats_alloc = "0.1"
 clap = { version = "3.2.4", features = ["derive"] }

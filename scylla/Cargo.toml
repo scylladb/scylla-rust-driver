@@ -47,7 +47,8 @@ bytes = "1.0.1"
 futures = "0.3.6"
 hashbrown = "0.14"
 histogram = "0.6.9"
-tokio = { version = "1.34", features = [
+# FIXME: Remove <1.38 once https://github.com/tokio-rs/tokio/issues/6610 is fixed
+tokio = { version = ">=1.34, <1.38", features = [
     "net",
     "time",
     "io-util",
@@ -83,8 +84,9 @@ num-bigint-04 = { package = "num-bigint", version = "0.4" }
 bigdecimal-04 = { package = "bigdecimal", version = "0.4" }
 scylla-proxy = { version = "0.0.3", path = "../scylla-proxy" }
 ntest = "0.9.0"
-criterion = "0.4"                                                      # Note: v0.5 needs at least rust 1.70.0
-tokio = { version = "1.27", features = ["test-util"] }
+criterion = "0.4"                                              # Note: v0.5 needs at least rust 1.70.0
+# FIXME: Remove <1.38 once https://github.com/tokio-rs/tokio/issues/6610 is fixed
+tokio = { version = ">=1.34, <1.38", features = ["test-util"] }
 tracing-subscriber = { version = "0.3.14", features = ["env-filter"] }
 assert_matches = "1.5.0"
 rand_chacha = "0.3.1"
