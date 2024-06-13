@@ -126,7 +126,41 @@ pub mod frame {
     }
 }
 
-pub use scylla_cql::types::serialize;
+/// Serializing bound values of a query to be sent to the DB.
+pub mod serialize {
+    pub use scylla_cql::types::serialize::*;
+}
+
+/// Deserializing DB response containing CQL query results.
+pub mod deserialize {
+    pub use scylla_cql::types::deserialize::{
+        DeserializationError, DeserializeRow, DeserializeValue, FrameSlice, TypeCheckError,
+    };
+
+    /// Deserializing the whole query result contents.
+    pub mod result {
+        pub use scylla_cql::types::deserialize::result::{RowIterator, TypedRowIterator};
+    }
+
+    /// Deserializing a row of the query result.
+    pub mod row {
+        pub use scylla_cql::types::deserialize::row::{
+            BuiltinDeserializationError, BuiltinDeserializationErrorKind, BuiltinTypeCheckError,
+            BuiltinTypeCheckErrorKind, ColumnIterator, RawColumn,
+        };
+    }
+
+    /// Deserializing a single CQL value from a column of the query result row.
+    pub mod value {
+        pub use scylla_cql::types::deserialize::value::{
+            BuiltinDeserializationError, BuiltinDeserializationErrorKind, BuiltinTypeCheckError,
+            BuiltinTypeCheckErrorKind, Emptiable, ListlikeIterator, MapDeserializationErrorKind,
+            MapIterator, MapTypeCheckErrorKind, MaybeEmpty, SetOrListDeserializationErrorKind,
+            SetOrListTypeCheckErrorKind, TupleDeserializationErrorKind, TupleTypeCheckErrorKind,
+            UdtIterator, UdtTypeCheckErrorKind,
+        };
+    }
+}
 
 pub mod authentication;
 #[cfg(feature = "cloud")]
