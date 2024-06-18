@@ -1,3 +1,6 @@
+// See: https://github.com/TedDriggs/darling/issues/293
+#![allow(clippy::manual_unwrap_or_default)]
+
 use std::collections::HashMap;
 
 use darling::FromAttributes;
