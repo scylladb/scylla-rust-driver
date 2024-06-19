@@ -44,12 +44,12 @@ jobs:
       run: cargo check --all-targets --manifest-path "scylla/Cargo.toml" --features "full-serialization"
     - name: Cargo check with all features
       run: cargo check --all-targets --manifest-path "scylla/Cargo.toml" --all-features
-    - name: Cargo check with secret feature
-      run: cargo check --all-targets --manifest-path "scylla/Cargo.toml" --features "secret"
-    - name: Cargo check with chrono feature
-      run: cargo check --all-targets --manifest-path "scylla/Cargo.toml" --features "chrono"
-    - name: Cargo check with time feature
-      run: cargo check --all-targets --manifest-path "scylla/Cargo.toml" --features "time"
+    - name: Cargo check with secrecy-08 feature
+      run: cargo check --all-targets --manifest-path "scylla/Cargo.toml" --features "secrecy-08"
+    - name: Cargo check with chrono-04 feature
+      run: cargo check --all-targets --manifest-path "scylla/Cargo.toml" --features "chrono-04"
+    - name: Cargo check with time-03 feature
+      run: cargo check --all-targets --manifest-path "scylla/Cargo.toml" --features "time-03"
     - name: Cargo check with num-bigint-03 feature
       run: cargo check --all-targets --manifest-path "scylla/Cargo.toml" --features "num-bigint-03"
     - name: Cargo check with num-bigint-04 feature

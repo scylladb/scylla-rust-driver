@@ -9,12 +9,6 @@ use std::sync::Arc;
 use thiserror::Error;
 use uuid::Uuid;
 
-#[cfg(feature = "chrono")]
-use chrono::{DateTime, NaiveDate, NaiveTime, Utc};
-
-#[cfg(feature = "secret")]
-use secrecy::{ExposeSecret, Secret, Zeroize};
-
 use crate::frame::response::result::{ColumnType, CqlValue};
 use crate::frame::types::vint_encode;
 use crate::frame::value::{
@@ -22,7 +16,7 @@ use crate::frame::value::{
     MaybeUnset, Unset, Value,
 };
 
-#[cfg(feature = "chrono")]
+#[cfg(feature = "chrono-04")]
 use crate::frame::value::ValueOverflow;
 
 use super::writers::WrittenCellProof;
@@ -160,22 +154,22 @@ impl SerializeValue for CqlTime {
         writer.set_value(me.0.to_be_bytes().as_slice()).unwrap()
     });
 }
-#[cfg(feature = "chrono")]
-impl SerializeValue for NaiveDate {
+#[cfg(feature = "chrono-04")]
+impl SerializeValue for chrono_04::NaiveDate {
     impl_serialize_via_writer!(|me, typ, writer| {
         exact_type_check!(typ, Date);
         <CqlDate as SerializeValue>::serialize(&(*me).into(), typ, writer)?
     });
 }
-#[cfg(feature = "chrono")]
-impl SerializeValue for DateTime<Utc> {
+#[cfg(feature = "chrono-04")]
+impl SerializeValue for chrono_04::DateTime<chrono_04::Utc> {
     impl_serialize_via_writer!(|me, typ, writer| {
         exact_type_check!(typ, Timestamp);
         <CqlTimestamp as SerializeValue>::serialize(&(*me).into(), typ, writer)?
     });
 }
-#[cfg(feature = "chrono")]
-impl SerializeValue for NaiveTime {
+#[cfg(feature = "chrono-04")]
+impl SerializeValue for chrono_04::NaiveTime {
     impl_serialize_via_writer!(|me, typ, writer| {
         exact_type_check!(typ, Time);
         let cql_time = CqlTime::try_from(*me).map_err(|_: ValueOverflow| {
@@ -184,34 +178,35 @@ impl SerializeValue for NaiveTime {
         <CqlTime as SerializeValue>::serialize(&cql_time, typ, writer)?
     });
 }
-#[cfg(feature = "time")]
-impl SerializeValue for time::Date {
+#[cfg(feature = "time-03")]
+impl SerializeValue for time_03::Date {
     impl_serialize_via_writer!(|me, typ, writer| {
         exact_type_check!(typ, Date);
         <CqlDate as SerializeValue>::serialize(&(*me).into(), typ, writer)?
     });
 }
-#[cfg(feature = "time")]
-impl SerializeValue for time::OffsetDateTime {
+#[cfg(feature = "time-03")]
+impl SerializeValue for time_03::OffsetDateTime {
     impl_serialize_via_writer!(|me, typ, writer| {
         exact_type_check!(typ, Timestamp);
         <CqlTimestamp as SerializeValue>::serialize(&(*me).into(), typ, writer)?
     });
 }
-#[cfg(feature = "time")]
-impl SerializeValue for time::Time {
+#[cfg(feature = "time-03")]
+impl SerializeValue for time_03::Time {
     impl_serialize_via_writer!(|me, typ, writer| {
         exact_type_check!(typ, Time);
         <CqlTime as SerializeValue>::serialize(&(*me).into(), typ, writer)?
     });
 }
-#[cfg(feature = "secret")]
-impl<V: SerializeValue + Zeroize> SerializeValue for Secret<V> {
+#[cfg(feature = "secrecy-08")]
+impl<V: SerializeValue + secrecy_08::Zeroize> SerializeValue for secrecy_08::Secret<V> {
     fn serialize<'b>(
         &self,
         typ: &ColumnType,
         writer: CellWriter<'b>,
     ) -> Result<WrittenCellProof<'b>, SerializationError> {
+        use secrecy_08::ExposeSecret;
         V::serialize(self.expose_secret(), typ, writer)
     }
 }

@@ -13,8 +13,8 @@ rustyline-derive = "0.6"
 scylla = { path = "../scylla", features = [
     "ssl",
     "cloud",
-    "chrono",
-    "time",
+    "chrono-04",
+    "time-03",
     "num-bigint-03",
     "num-bigint-04",
     "bigdecimal-04",
