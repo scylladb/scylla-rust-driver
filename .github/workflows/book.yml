@@ -27,6 +27,8 @@ jobs:
         options: --health-cmd "cqlsh --debug scylladb" --health-interval 5s --health-retries 10
     steps:
     - uses: actions/checkout@v3
+    - name: Update rust toolchain
+      run: rustup update
     - name: Install mdbook
       run: cargo install mdbook --no-default-features
     - name: Build the project
