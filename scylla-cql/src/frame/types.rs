@@ -189,7 +189,7 @@ pub fn read_int_length(buf: &mut &[u8]) -> Result<usize, ParseError> {
     Ok(v)
 }
 
-fn write_int_length(v: usize, buf: &mut impl BufMut) -> Result<(), ParseError> {
+fn write_int_length(v: usize, buf: &mut impl BufMut) -> Result<(), std::num::TryFromIntError> {
     let v: i32 = v.try_into()?;
 
     write_int(v, buf);
@@ -240,7 +240,7 @@ pub(crate) fn read_short_length(buf: &mut &[u8]) -> Result<usize, std::io::Error
     Ok(v)
 }
 
-fn write_short_length(v: usize, buf: &mut impl BufMut) -> Result<(), ParseError> {
+fn write_short_length(v: usize, buf: &mut impl BufMut) -> Result<(), std::num::TryFromIntError> {
     let v: u16 = v.try_into()?;
     write_short(v, buf);
     Ok(())
@@ -296,7 +296,7 @@ pub fn read_short_bytes<'a>(buf: &mut &'a [u8]) -> Result<&'a [u8], ParseError> 
     Ok(v)
 }
 
-pub fn write_bytes(v: &[u8], buf: &mut impl BufMut) -> Result<(), ParseError> {
+pub fn write_bytes(v: &[u8], buf: &mut impl BufMut) -> Result<(), std::num::TryFromIntError> {
     write_int_length(v.len(), buf)?;
     buf.put_slice(v);
     Ok(())
@@ -305,7 +305,7 @@ pub fn write_bytes(v: &[u8], buf: &mut impl BufMut) -> Result<(), ParseError> {
 pub fn write_bytes_opt(
     v: Option<impl AsRef<[u8]>>,
     buf: &mut impl BufMut,
-) -> Result<(), ParseError> {
+) -> Result<(), std::num::TryFromIntError> {
     match v {
         Some(bytes) => {
             write_int_length(bytes.as_ref().len(), buf)?;
@@ -317,7 +317,7 @@ pub fn write_bytes_opt(
     Ok(())
 }
 
-pub fn write_short_bytes(v: &[u8], buf: &mut impl BufMut) -> Result<(), ParseError> {
+pub fn write_short_bytes(v: &[u8], buf: &mut impl BufMut) -> Result<(), std::num::TryFromIntError> {
     write_short_length(v.len(), buf)?;
     buf.put_slice(v);
     Ok(())
@@ -334,7 +334,10 @@ pub fn read_bytes_map(buf: &mut &[u8]) -> Result<HashMap<String, Vec<u8>>, Parse
     Ok(v)
 }
 
-pub fn write_bytes_map<B>(v: &HashMap<String, B>, buf: &mut impl BufMut) -> Result<(), ParseError>
+pub fn write_bytes_map<B>(
+    v: &HashMap<String, B>,
+    buf: &mut impl BufMut,
+) -> Result<(), std::num::TryFromIntError>
 where
     B: AsRef<[u8]>,
 {
@@ -365,7 +368,7 @@ pub fn read_string<'a>(buf: &mut &'a [u8]) -> Result<&'a str, ParseError> {
     Ok(v)
 }
 
-pub fn write_string(v: &str, buf: &mut impl BufMut) -> Result<(), ParseError> {
+pub fn write_string(v: &str, buf: &mut impl BufMut) -> Result<(), std::num::TryFromIntError> {
     let raw = v.as_bytes();
     write_short_length(v.len(), buf)?;
     buf.put_slice(raw);
@@ -389,7 +392,7 @@ pub fn read_long_string<'a>(buf: &mut &'a [u8]) -> Result<&'a str, ParseError> {
     Ok(v)
 }
 
-pub fn write_long_string(v: &str, buf: &mut impl BufMut) -> Result<(), ParseError> {
+pub fn write_long_string(v: &str, buf: &mut impl BufMut) -> Result<(), std::num::TryFromIntError> {
     let raw = v.as_bytes();
     let len = raw.len();
     write_int_length(len, buf)?;
@@ -421,7 +424,7 @@ pub fn read_string_map(buf: &mut &[u8]) -> Result<HashMap<String, String>, Parse
 pub fn write_string_map(
     v: &HashMap<String, String>,
     buf: &mut impl BufMut,
-) -> Result<(), ParseError> {
+) -> Result<(), std::num::TryFromIntError> {
     let len = v.len();
     write_short_length(len, buf)?;
     for (key, val) in v.iter() {
@@ -451,7 +454,10 @@ pub fn read_string_list(buf: &mut &[u8]) -> Result<Vec<String>, ParseError> {
     Ok(v)
 }
 
-pub fn write_string_list(v: &[String], buf: &mut impl BufMut) -> Result<(), ParseError> {
+pub fn write_string_list(
+    v: &[String],
+    buf: &mut impl BufMut,
+) -> Result<(), std::num::TryFromIntError> {
     let len = v.len();
     write_short_length(len, buf)?;
     for v in v.iter() {
@@ -487,7 +493,7 @@ pub fn read_string_multimap(buf: &mut &[u8]) -> Result<HashMap<String, Vec<Strin
 pub fn write_string_multimap(
     v: &HashMap<String, Vec<String>>,
     buf: &mut impl BufMut,
-) -> Result<(), ParseError> {
+) -> Result<(), std::num::TryFromIntError> {
     let len = v.len();
     write_short_length(len, buf)?;
     for (key, val) in v.iter() {

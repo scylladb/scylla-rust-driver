@@ -12,6 +12,6 @@ impl SerializableRequest for AuthResponse {
     const OPCODE: RequestOpcode = RequestOpcode::AuthResponse;
 
     fn serialize(&self, buf: &mut Vec<u8>) -> Result<(), ParseError> {
-        write_bytes_opt(self.response.as_ref(), buf)
+        Ok(write_bytes_opt(self.response.as_ref(), buf)?)
     }
 }
