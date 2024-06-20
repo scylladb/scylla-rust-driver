@@ -26,6 +26,8 @@ jobs:
       run: |
         sudo sh -c "echo 2097152 >> /proc/sys/fs/aio-max-nr"
         docker compose -f test/cluster/docker-compose.yml up -d --wait
+    - name: Update rust toolchain
+      run: rustup update
     - name: Print rustc version
       run: rustc --version
     - name: Print rustfmt version
@@ -98,5 +100,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@v3
+    - name: Update rust toolchain
+      run: rustup update
     - name: Compile docs
       run: RUSTDOCFLAGS=-Dwarnings cargo doc

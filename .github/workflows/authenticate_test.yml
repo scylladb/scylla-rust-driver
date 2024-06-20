@@ -27,5 +27,7 @@ jobs:
         options: --health-cmd "cqlsh --username cassandra --password cassandra --debug" --health-interval 5s --health-retries 30
     steps:
     - uses: actions/checkout@v3
+    - name: Update rust toolchain
+      run: rustup update
     - name: Run tests
       run: RUST_LOG=trace cargo test --verbose authenticate_superuser -- custom_authentication --ignored

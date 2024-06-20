@@ -1826,7 +1826,7 @@ struct StreamIdSet {
 
 impl StreamIdSet {
     fn new() -> Self {
-        const BITMAP_SIZE: usize = (std::i16::MAX as usize + 1) / 64;
+        const BITMAP_SIZE: usize = (i16::MAX as usize + 1) / 64;
         Self {
             used_bitmap: vec![0; BITMAP_SIZE].into_boxed_slice(),
         }
