@@ -785,13 +785,15 @@ pub fn deser_cql_value(typ: &ColumnType, buf: &mut &[u8]) -> StdResult<CqlValue,
             let t = type_names
                 .iter()
                 .map(|typ| {
-                    types::read_bytes_opt(buf).and_then(|v| {
-                        v.map(|v| {
-                            CqlValue::deserialize(typ, Some(FrameSlice::new_borrowed(v)))
-                                .map_err(Into::into)
+                    types::read_bytes_opt(buf)
+                        .map_err(ParseError::from)
+                        .and_then(|v| {
+                            v.map(|v| {
+                                CqlValue::deserialize(typ, Some(FrameSlice::new_borrowed(v)))
+                                    .map_err(Into::into)
+                            })
+                            .transpose()
                         })
-                        .transpose()
-                    })
                 })
                 .collect::<StdResult<_, _>>()?;
             CqlValue::Tuple(t)
