@@ -35,6 +35,8 @@ pub enum FrameError {
 
 #[derive(Error, Debug)]
 pub enum ParseError {
+    #[error("Low-level serialization failed: {0}")]
+    LowLevelSerializationError(#[from] LowLevelSerializationError),
     #[error("Could not serialize frame: {0}")]
     BadDataToSerialize(String),
     #[error("Could not deserialize frame: {0}")]
@@ -51,4 +53,18 @@ pub enum ParseError {
     SerializationError(#[from] SerializationError),
     #[error(transparent)]
     CqlTypeError(#[from] CqlTypeError),
+}
+
+/// A low level serialization error.
+///
+/// This error is returned when the serialization
+/// of some primitive value fails.
+///
+/// Possible error kinds:
+/// - out of range integer conversion
+#[non_exhaustive]
+#[derive(Error, Debug)]
+pub enum LowLevelSerializationError {
+    #[error(transparent)]
+    TryFromIntError(#[from] std::num::TryFromIntError),
 }
