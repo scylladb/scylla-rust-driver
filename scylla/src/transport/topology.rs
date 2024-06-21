@@ -184,6 +184,7 @@ enum PreCqlType {
         type_: PreCollectionType,
     },
     Tuple(Vec<PreCqlType>),
+    Vector(Box<PreCqlType>, u32),
     UserDefinedType {
         frozen: bool,
         name: String,
@@ -207,6 +208,9 @@ impl PreCqlType {
                     .map(|t| t.into_cql_type(keyspace_name, udts))
                     .collect(),
             ),
+            PreCqlType::Vector(t, dim) => {
+                CqlType::Vector(Box::new(t.into_cql_type(keyspace_name, udts)), dim)
+            }
             PreCqlType::UserDefinedType { frozen, name } => {
                 let definition = match udts
                     .get(keyspace_name)
@@ -232,6 +236,7 @@ pub enum CqlType {
         type_: CollectionType,
     },
     Tuple(Vec<CqlType>),
+    Vector(Box<CqlType>, u32),
     UserDefinedType {
         frozen: bool,
         // Using Arc here in order not to have many copies of the same definition
@@ -1099,6 +1104,9 @@ fn topo_sort_udts(udts: &mut Vec<UdtRowWithParsedFieldTypes>) -> Result<(), Quer
             PreCqlType::Tuple(types) => types
                 .iter()
                 .for_each(|type_| do_with_referenced_udts(what, type_)),
+            PreCqlType::Vector(t, _) => {
+                do_with_referenced_udts(what, t);
+            }
             PreCqlType::UserDefinedType { name, .. } => what(name),
         }
     }
@@ -1608,6 +1616,12 @@ fn parse_cql_type(p: ParserState<'_>) -> ParseResult<(PreCqlType, ParserState<'_
         })?;
 
         Ok((PreCqlType::Tuple(types), p))
+    } else if let Ok(p) = p.accept("vector<") {
+        let (inner_type, p) = parse_cql_type(p)?;
+        let p = p.accept(",")?.skip_white();
+        let (dim, p) = parse_u32(p)?;
+        let p = p.accept(">")?;
+        Ok((PreCqlType::Vector(Box::new(inner_type), dim), p))
     } else if let Ok((typ, p)) = parse_native_type(p) {
         Ok((PreCqlType::Native(typ), p))
     } else if let Ok((name, p)) = parse_user_defined_type(p) {
@@ -1637,6 +1651,15 @@ fn parse_user_defined_type(p: ParserState) -> ParseResult<(&str, ParserState)> {
         return Err(p.error(ParseErrorCause::Other("invalid user defined type")));
     }
     Ok((tok, p))
+}
+
+fn parse_u32(p: ParserState) -> ParseResult<(u32, ParserState)> {
+    let (tok, p) = p.take_while(|c| c.is_numeric());
+    if let Ok(value) = tok.parse() {
+        Ok((value, p))
+    } else {
+        Err(p.error(ParseErrorCause::Expected("positive integer")))
+    }
 }
 
 fn freeze_type(type_: PreCqlType) -> PreCqlType {
