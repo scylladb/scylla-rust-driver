@@ -66,3 +66,5 @@ pub fn value_list_derive(tokens_input: TokenStream) -> TokenStream {
     let res = value_list::value_list_derive(tokens_input);
     res.unwrap_or_else(|e| e.into_compile_error().into())
 }
+
+mod deserialize;
