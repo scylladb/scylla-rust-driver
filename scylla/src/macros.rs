@@ -310,6 +310,16 @@ pub use scylla_cql::macros::SerializeRow;
 /// is be generated. The UDT field names will still be checked during the
 /// type check phase.
 ///
+/// #[(scylla(skip_name_checks))]
+///
+/// This attribute only works when used with `enforce_order`.
+///
+/// If set, the generated implementation will not verify the UDT field names at
+/// all. Because it only works with `enforce_order`, it will deserialize first
+/// UDT field into the first struct field, second UDT field into the second
+/// struct field and so on. It will still verify that the UDT field types
+/// and struct field types match.
+///
 /// ## Field attributes
 ///
 /// `#[scylla(skip)]`

@@ -17,6 +17,13 @@ struct StructAttrs {
     // by name can be avoided, though it is less convenient.
     #[darling(default)]
     enforce_order: bool,
+
+    // If true, then the type checking code won't verify the UDT field names.
+    // UDT fields will be matched to struct fields based solely on the order.
+    //
+    // This annotation only works if `enforce_order` is specified.
+    #[darling(default)]
+    skip_name_checks: bool,
 }
 
 impl DeserializeCommonStructAttrs for StructAttrs {
@@ -137,6 +144,7 @@ impl<'sd> TypeCheckAssumeOrderGenerator<'sd> {
         let constraint_lifetime = self.0.constraint_lifetime();
         let rust_field_name = field.cql_name_literal();
         let rust_field_typ = field.deserialize_target();
+        let skip_name_checks = self.0.attrs.skip_name_checks;
 
         // Action performed in case of field name mismatch.
         let name_mismatch: syn::Expr = parse_quote! {
@@ -155,12 +163,15 @@ impl<'sd> TypeCheckAssumeOrderGenerator<'sd> {
             }
         };
 
-        let name_verification: syn::Expr = parse_quote! {
-            if #rust_field_name != cql_field_name {
-                // The read UDT field is not the one expected by the Rust struct.
-                #name_mismatch
+        // Optional name verification.
+        let name_verification: Option<syn::Expr> = (!skip_name_checks).then(|| {
+            parse_quote! {
+                if #rust_field_name != cql_field_name {
+                    // The read UDT field is not the one expected by the Rust struct.
+                    #name_mismatch
+                }
             }
-        };
+        });
 
         parse_quote! {
             'field: {
@@ -171,6 +182,7 @@ impl<'sd> TypeCheckAssumeOrderGenerator<'sd> {
                 let (cql_field_name, cql_field_typ) = next_cql_field;
 
                 'verifications: {
+                    // Verify the name (unless `skip_name_checks` is specified)
                     #name_verification
 
                     // Verify the type
@@ -268,6 +280,7 @@ impl<'sd> DeserializeAssumeOrderGenerator<'sd> {
         let cql_name_literal = field.cql_name_literal();
         let deserializer = field.deserialize_target();
         let constraint_lifetime = self.0.constraint_lifetime();
+        let skip_name_checks = self.0.attrs.skip_name_checks;
 
         let deserialize: syn::Expr = parse_quote! {
             <#deserializer as #macro_internal::DeserializeValue<#constraint_lifetime>>::deserialize(cql_field_typ, value)
@@ -289,11 +302,17 @@ impl<'sd> DeserializeAssumeOrderGenerator<'sd> {
             )
         };
 
-        let name_check_and_deserialize: syn::Expr = parse_quote! {
-            if #cql_name_literal == cql_field_name {
+        let maybe_name_check_and_deserialize: syn::Expr = if skip_name_checks {
+            parse_quote! {
                 #deserialize
-            } else {
-                #name_mismatch
+            }
+        } else {
+            parse_quote! {
+                if #cql_name_literal == cql_field_name {
+                    #deserialize
+                } else {
+                    #name_mismatch
+                }
             }
         };
 
@@ -321,7 +340,7 @@ impl<'sd> DeserializeAssumeOrderGenerator<'sd> {
                 // For now, we treat both cases as "null".
                 let value = value.flatten();
 
-                #name_check_and_deserialize
+                #maybe_name_check_and_deserialize
             }
         }
     }
