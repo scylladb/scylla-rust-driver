@@ -1556,6 +1556,18 @@ pub enum UdtTypeCheckErrorKind {
         field_names: Vec<&'static str>,
     },
 
+    /// A different field name was expected at given position.
+    FieldNameMismatch {
+        /// Index of the field in the Rust struct.
+        position: usize,
+
+        /// The name of the Rust field.
+        rust_field_name: String,
+
+        /// The name of the CQL UDT field.
+        db_field_name: String,
+    },
+
     /// UDT contains an excess field, which does not correspond to any Rust struct's field.
     ExcessFieldInUdt {
         /// The name of the CQL UDT field.
@@ -1566,6 +1578,13 @@ pub enum UdtTypeCheckErrorKind {
     DuplicatedField {
         /// The name of the duplicated field.
         field_name: String,
+    },
+
+    /// Fewer fields present in the UDT than required by the Rust type.
+    TooFewFields {
+        // TODO: decide whether we are OK with restricting to `&'static str` here.
+        required_fields: Vec<&'static str>,
+        present_fields: Vec<String>,
     },
 
     /// Type check failed between UDT and Rust type field.
@@ -1588,6 +1607,10 @@ impl Display for UdtTypeCheckErrorKind {
             UdtTypeCheckErrorKind::ValuesMissingForUdtFields { field_names } => {
                 write!(f, "the fields {field_names:?} are missing from the DB data but are required by the Rust type")
             },
+            UdtTypeCheckErrorKind::FieldNameMismatch { rust_field_name, db_field_name, position } => write!(
+                f,
+                "expected field with name {db_field_name} at position {position}, but the Rust field name is {rust_field_name}"
+            ),
             UdtTypeCheckErrorKind::ExcessFieldInUdt { db_field_name } => write!(
                 f,
                 "UDT contains an excess field {}, which does not correspond to any Rust struct's field.",
@@ -1597,6 +1620,12 @@ impl Display for UdtTypeCheckErrorKind {
                 f,
                 "field {} occurs more than once in CQL UDT type",
                 field_name
+            ),
+            UdtTypeCheckErrorKind::TooFewFields { required_fields, present_fields } => write!(
+                f,
+                "fewer fields present in the UDT than required by the Rust type: UDT has {:?}, Rust type requires {:?}",
+                present_fields,
+                required_fields,
             ),
             UdtTypeCheckErrorKind::FieldTypeCheckFailed { field_name, err } => write!(
                 f,
