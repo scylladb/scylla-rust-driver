@@ -2550,7 +2550,7 @@ pub(super) mod tests {
     #[test]
     fn test_udt_strict_ordering() {
         #[derive(scylla_macros::DeserializeValue, PartialEq, Eq, Debug)]
-        #[scylla(crate = "crate", enforce_order)]
+        #[scylla(crate = "crate", enforce_order, forbid_excess_udt_fields)]
         struct Udt<'a> {
             a: &'a str,
             #[scylla(skip)]
@@ -3312,7 +3312,7 @@ pub(super) mod tests {
         // Loose ordering
         {
             #[derive(scylla_macros::DeserializeValue, PartialEq, Eq, Debug)]
-            #[scylla(crate = "crate")]
+            #[scylla(crate = "crate", forbid_excess_udt_fields)]
             struct Udt<'a> {
                 a: &'a str,
                 #[scylla(skip)]
@@ -3354,6 +3354,26 @@ pub(super) mod tests {
                         panic!("unexpected error kind: {:?}", err.kind)
                     };
                     assert_eq!(missing_fields.as_slice(), &["a", "b"]);
+                }
+
+                // excess fields in UDT
+                {
+                    let typ = udt_def_with_fields([
+                        ("d", ColumnType::Boolean),
+                        ("a", ColumnType::Text),
+                        ("b", ColumnType::Int),
+                    ]);
+                    let err = Udt::type_check(&typ).unwrap_err();
+                    let err = get_typeck_err_inner(err.0.as_ref());
+                    assert_eq!(err.rust_name, std::any::type_name::<Udt>());
+                    assert_eq!(err.cql_type, typ);
+                    let BuiltinTypeCheckErrorKind::UdtError(
+                        UdtTypeCheckErrorKind::ExcessFieldInUdt { ref db_field_name },
+                    ) = err.kind
+                    else {
+                        panic!("unexpected error kind: {:?}", err.kind)
+                    };
+                    assert_eq!(db_field_name.as_str(), "d");
                 }
 
                 // missing UDT field
@@ -3425,7 +3445,7 @@ pub(super) mod tests {
         // Strict ordering
         {
             #[derive(scylla_macros::DeserializeValue, PartialEq, Eq, Debug)]
-            #[scylla(crate = "crate", enforce_order)]
+            #[scylla(crate = "crate", enforce_order, forbid_excess_udt_fields)]
             struct Udt<'a> {
                 a: &'a str,
                 #[scylla(skip)]
@@ -3467,6 +3487,27 @@ pub(super) mod tests {
                     };
                     assert_eq!(required_fields.as_slice(), &["a", "b", "c"]);
                     assert_eq!(present_fields.as_slice(), &["a".to_string()]);
+                }
+
+                // excess fields in UDT
+                {
+                    let typ = udt_def_with_fields([
+                        ("a", ColumnType::Text),
+                        ("b", ColumnType::Int),
+                        ("c", ColumnType::Boolean),
+                        ("d", ColumnType::Counter),
+                    ]);
+                    let err = Udt::type_check(&typ).unwrap_err();
+                    let err = get_typeck_err_inner(err.0.as_ref());
+                    assert_eq!(err.rust_name, std::any::type_name::<Udt>());
+                    assert_eq!(err.cql_type, typ);
+                    let BuiltinTypeCheckErrorKind::UdtError(
+                        UdtTypeCheckErrorKind::ExcessFieldInUdt { ref db_field_name },
+                    ) = err.kind
+                    else {
+                        panic!("unexpected error kind: {:?}", err.kind)
+                    };
+                    assert_eq!(db_field_name.as_str(), "d");
                 }
 
                 // UDT fields switched - field name mismatch
