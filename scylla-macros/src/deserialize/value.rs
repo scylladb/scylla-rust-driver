@@ -25,6 +25,12 @@ struct Field {
     // with Default::default() instead. All other attributes are ignored.
     #[darling(default)]
     skip: bool,
+
+    // If set, then deserializes from the UDT field with this particular name
+    // instead of the Rust field name.
+    #[darling(default)]
+    rename: Option<String>,
+
     ident: Option<syn::Ident>,
     ty: syn::Type,
 }
@@ -71,7 +77,10 @@ impl Field {
 
     // A Rust literal representing the name of this field
     fn cql_name_literal(&self) -> syn::LitStr {
-        let field_name = self.ident.as_ref().unwrap().unraw().to_string();
+        let field_name = match self.rename.as_ref() {
+            Some(rename) => rename.to_owned(),
+            None => self.ident.as_ref().unwrap().unraw().to_string(),
+        };
         syn::LitStr::new(&field_name, Span::call_site())
     }
 }

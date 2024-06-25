@@ -834,7 +834,8 @@ mod tests {
                 #[scylla(skip)]
                 x: String,
                 b: Option<i32>,
-                c: bool,
+                #[scylla(rename = "c")]
+                d: bool,
             }
 
             // Type check errors

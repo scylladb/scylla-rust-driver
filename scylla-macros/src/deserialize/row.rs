@@ -26,6 +26,12 @@ struct Field {
     #[darling(default)]
     skip: bool,
 
+    // If set, then deserialization will look for the column with given name
+    // and deserialize it to this Rust field, instead of just using the Rust
+    // field name.
+    #[darling(default)]
+    rename: Option<String>,
+
     ident: Option<syn::Ident>,
     ty: syn::Type,
 }
@@ -73,7 +79,10 @@ impl Field {
 
     // A Rust literal representing the name of this field
     fn cql_name_literal(&self) -> syn::LitStr {
-        let field_name = self.ident.as_ref().unwrap().unraw().to_string();
+        let field_name = match self.rename.as_ref() {
+            Some(rename) => rename.to_owned(),
+            None => self.ident.as_ref().unwrap().unraw().to_string(),
+        };
         syn::LitStr::new(&field_name, Span::call_site())
     }
 }
