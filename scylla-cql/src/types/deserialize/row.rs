@@ -706,6 +706,35 @@ mod tests {
         );
     }
 
+    #[test]
+    fn test_struct_deserialization_cross_rename_fields() {
+        #[derive(scylla_macros::DeserializeRow, PartialEq, Eq, Debug)]
+        #[scylla(crate = crate)]
+        struct TestRow {
+            #[scylla(rename = "b")]
+            a: i32,
+            #[scylla(rename = "a")]
+            b: String,
+        }
+
+        // Columns switched wrt fields - should still work.
+        {
+            let row_bytes = serialize_cells(
+                ["The quick brown fox".as_bytes(), &42_i32.to_be_bytes()].map(Some),
+            );
+            let specs = [spec("a", ColumnType::Text), spec("b", ColumnType::Int)];
+
+            let row = deserialize::<TestRow>(&specs, &row_bytes).unwrap();
+            assert_eq!(
+                row,
+                TestRow {
+                    a: 42,
+                    b: "The quick brown fox".to_owned(),
+                }
+            );
+        }
+    }
+
     fn val_int(i: i32) -> Option<Vec<u8>> {
         Some(i.to_be_bytes().to_vec())
     }
@@ -1325,3 +1354,47 @@ mod tests {
         }
     }
 }
+
+/// ```compile_fail
+///
+/// #[derive(scylla_macros::DeserializeRow)]
+/// #[scylla(crate = scylla_cql, skip_name_checks)]
+/// struct TestRow {}
+/// ```
+fn _test_struct_deserialization_name_check_skip_requires_enforce_order() {}
+
+/// ```compile_fail
+///
+/// #[derive(scylla_macros::DeserializeRow)]
+/// #[scylla(crate = scylla_cql, skip_name_checks)]
+/// struct TestRow {
+///     #[scylla(rename = "b")]
+///     a: i32,
+/// }
+/// ```
+fn _test_struct_deserialization_skip_name_check_conflicts_with_rename() {}
+
+/// ```compile_fail
+///
+/// #[derive(scylla_macros::DeserializeRow)]
+/// #[scylla(crate = scylla_cql)]
+/// struct TestRow {
+///     #[scylla(rename = "b")]
+///     a: i32,
+///     b: String,
+/// }
+/// ```
+fn _test_struct_deserialization_skip_rename_collision_with_field() {}
+
+/// ```compile_fail
+///
+/// #[derive(scylla_macros::DeserializeRow)]
+/// #[scylla(crate = scylla_cql)]
+/// struct TestRow {
+///     #[scylla(rename = "c")]
+///     a: i32,
+///     #[scylla(rename = "c")]
+///     b: String,
+/// }
+/// ```
+fn _test_struct_deserialization_rename_collision_with_another_rename() {}

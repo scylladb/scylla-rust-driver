@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use darling::{FromAttributes, FromField};
 use proc_macro::TokenStream;
 use proc_macro2::Span;
@@ -76,6 +78,8 @@ pub(crate) fn deserialize_value_derive(
     let constraining_trait = implemented_trait.clone();
     let s = StructDesc::new(&input, &implemented_trait_name, constraining_trait)?;
 
+    validate_attrs(&s.attrs, s.fields())?;
+
     let items = [
         s.generate_type_check_method().into(),
         s.generate_deserialize_method().into(),
@@ -83,19 +87,64 @@ pub(crate) fn deserialize_value_derive(
 
     Ok(s.generate_impl(implemented_trait, items))
 }
+
+fn validate_attrs(attrs: &StructAttrs, fields: &[Field]) -> Result<(), darling::Error> {
+    let mut errors = darling::Error::accumulator();
+
+    if attrs.skip_name_checks {
+        // Skipping name checks is only available in enforce_order mode
+        if !attrs.enforce_order {
+            let error =
+                darling::Error::custom("attribute <skip_name_checks> requires <enforce_order>.");
+            errors.push(error);
+        }
+
+        // <rename> annotations don't make sense with skipped name checks
+        for field in fields {
+            if field.rename.is_some() {
+                let err = darling::Error::custom(
+                    "<rename> annotations don't make sense with <skip_name_checks> attribute",
+                )
+                .with_span(&field.ident);
+                errors.push(err);
+            }
+        }
+    } else {
+        // Detect name collisions caused by <rename>.
+        let mut used_names = HashMap::<String, &Field>::new();
+        for field in fields {
+            let udt_field_name = field.udt_field_name();
+            if let Some(other_field) = used_names.get(&udt_field_name) {
+                let other_field_ident = other_field.ident.as_ref().unwrap();
+                let msg = format!("the UDT field name `{udt_field_name}` used by this struct field is already used by field `{other_field_ident}`");
+                let err = darling::Error::custom(msg).with_span(&field.ident);
+                errors.push(err);
+            } else {
+                used_names.insert(udt_field_name, field);
+            }
+        }
+    }
+
+    errors.finish()
+}
+
 impl Field {
     // Returns whether this field is mandatory for deserialization.
     fn is_required(&self) -> bool {
         !self.skip
     }
 
-    // A Rust literal representing the name of this field
-    fn cql_name_literal(&self) -> syn::LitStr {
-        let field_name = match self.rename.as_ref() {
+    // The name of UDT field corresponding to this Rust struct field
+    fn udt_field_name(&self) -> String {
+        match self.rename.as_ref() {
             Some(rename) => rename.to_owned(),
             None => self.ident.as_ref().unwrap().unraw().to_string(),
-        };
-        syn::LitStr::new(&field_name, Span::call_site())
+        }
+    }
+
+    // A Rust literal representing the name of this field
+    fn cql_name_literal(&self) -> syn::LitStr {
+        syn::LitStr::new(&self.udt_field_name(), Span::call_site())
     }
 }
 

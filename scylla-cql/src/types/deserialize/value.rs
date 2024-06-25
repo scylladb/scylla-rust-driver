@@ -2733,6 +2733,36 @@ pub(super) mod tests {
     }
 
     #[test]
+    fn test_udt_cross_rename_fields() {
+        #[derive(scylla_macros::DeserializeValue, PartialEq, Eq, Debug)]
+        #[scylla(crate = crate)]
+        struct TestUdt {
+            #[scylla(rename = "b")]
+            a: i32,
+            #[scylla(rename = "a")]
+            b: String,
+        }
+
+        // UDT fields switched - should still work.
+        {
+            let udt = UdtSerializer::new()
+                .field("The quick brown fox".as_bytes())
+                .field(&42_i32.to_be_bytes())
+                .finalize();
+            let typ = udt_def_with_fields([("a", ColumnType::Text), ("b", ColumnType::Int)]);
+
+            let udt = deserialize::<TestUdt>(&typ, &udt).unwrap();
+            assert_eq!(
+                udt,
+                TestUdt {
+                    a: 42,
+                    b: "The quick brown fox".to_owned(),
+                }
+            );
+        }
+    }
+
+    #[test]
     fn test_custom_type_parser() {
         #[derive(Default, Debug, PartialEq, Eq)]
         struct SwappedPair<A, B>(B, A);
@@ -3647,3 +3677,47 @@ pub(super) mod tests {
         }
     }
 }
+
+/// ```compile_fail
+///
+/// #[derive(scylla_macros::DeserializeValue)]
+/// #[scylla(crate = scylla_cql, skip_name_checks)]
+/// struct TestUdt {}
+/// ```
+fn _test_udt_bad_attributes_skip_name_check_requires_enforce_order() {}
+
+/// ```compile_fail
+///
+/// #[derive(scylla_macros::DeserializeValue)]
+/// #[scylla(crate = scylla_cql, enforce_order, skip_name_checks)]
+/// struct TestUdt {
+///     #[scylla(rename = "b")]
+///     a: i32,
+/// }
+/// ```
+fn _test_udt_bad_attributes_skip_name_check_conflicts_with_rename() {}
+
+/// ```compile_fail
+///
+/// #[derive(scylla_macros::DeserializeValue)]
+/// #[scylla(crate = scylla_cql)]
+/// struct TestUdt {
+///     #[scylla(rename = "b")]
+///     a: i32,
+///     b: String,
+/// }
+/// ```
+fn _test_udt_bad_attributes_rename_collision_with_field() {}
+
+/// ```compile_fail
+///
+/// #[derive(scylla_macros::DeserializeValue)]
+/// #[scylla(crate = scylla_cql)]
+/// struct TestUdt {
+///     #[scylla(rename = "c")]
+///     a: i32,
+///     #[scylla(rename = "c")]
+///     b: String,
+/// }
+/// ```
+fn _test_udt_bad_attributes_rename_collision_with_another_rename() {}
