@@ -668,6 +668,44 @@ mod tests {
         MyRow::type_check(specs).unwrap_err();
     }
 
+    #[test]
+    fn test_struct_deserialization_no_name_check() {
+        #[derive(DeserializeRow, PartialEq, Eq, Debug)]
+        #[scylla(crate = "crate", enforce_order, skip_name_checks)]
+        struct MyRow<'a> {
+            a: &'a str,
+            b: Option<i32>,
+            #[scylla(skip)]
+            c: String,
+        }
+
+        // Correct order of columns
+        let specs = &[spec("a", ColumnType::Text), spec("b", ColumnType::Int)];
+        let byts = serialize_cells([val_str("abc"), val_int(123)]);
+        let row = deserialize::<MyRow<'_>>(specs, &byts).unwrap();
+        assert_eq!(
+            row,
+            MyRow {
+                a: "abc",
+                b: Some(123),
+                c: String::new(),
+            }
+        );
+
+        // Correct order of columns, but different names - should still succeed
+        let specs = &[spec("z", ColumnType::Text), spec("x", ColumnType::Int)];
+        let byts = serialize_cells([val_str("abc"), val_int(123)]);
+        let row = deserialize::<MyRow<'_>>(specs, &byts).unwrap();
+        assert_eq!(
+            row,
+            MyRow {
+                a: "abc",
+                b: Some(123),
+                c: String::new(),
+            }
+        );
+    }
+
     fn val_int(i: i32) -> Option<Vec<u8>> {
         Some(i.to_be_bytes().to_vec())
     }
