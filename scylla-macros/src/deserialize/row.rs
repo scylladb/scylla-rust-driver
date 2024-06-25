@@ -20,6 +20,13 @@ struct StructAttrs {
     // by name can be avoided, though it is less convenient.
     #[darling(default)]
     enforce_order: bool,
+
+    // If true, then the type checking code won't verify the column names.
+    // Columns will be matched to struct fields based solely on the order.
+    //
+    // This annotation only works if `enforce_order` is specified.
+    #[darling(default)]
+    skip_name_checks: bool,
 }
 
 impl DeserializeCommonStructAttrs for StructAttrs {
@@ -126,25 +133,27 @@ impl<'sd> TypeCheckAssumeOrderGenerator<'sd> {
         column_index: usize, // applied to some field.
         field: &Field,
         column_spec: &syn::Ident,
-    ) -> syn::Expr {
-        let macro_internal = self.0.struct_attrs().macro_internal_path();
-        let rust_field_name = field.cql_name_literal();
+    ) -> Option<syn::Expr> {
+        (!self.0.attrs.skip_name_checks).then(|| {
+            let macro_internal = self.0.struct_attrs().macro_internal_path();
+            let rust_field_name = field.cql_name_literal();
 
-        parse_quote! {
-            if #column_spec.name != #rust_field_name {
-                return ::std::result::Result::Err(
-                    #macro_internal::mk_row_typck_err::<Self>(
-                        column_types_iter(),
-                        #macro_internal::DeserBuiltinRowTypeCheckErrorKind::ColumnNameMismatch {
-                            field_index: #field_index,
-                            column_index: #column_index,
-                            rust_column_name: #rust_field_name,
-                            db_column_name: ::std::clone::Clone::clone(&#column_spec.name),
-                        }
-                    )
-                );
+            parse_quote! {
+                if #column_spec.name != #rust_field_name {
+                    return ::std::result::Result::Err(
+                        #macro_internal::mk_row_typck_err::<Self>(
+                            column_types_iter(),
+                            #macro_internal::DeserBuiltinRowTypeCheckErrorKind::ColumnNameMismatch {
+                                field_index: #field_index,
+                                column_index: #column_index,
+                                rust_column_name: #rust_field_name,
+                                db_column_name: ::std::clone::Clone::clone(&#column_spec.name),
+                            }
+                        )
+                    );
+                }
             }
-        }
+        })
     }
 
     fn generate(&self) -> syn::ImplItemFn {
@@ -184,7 +193,7 @@ impl<'sd> TypeCheckAssumeOrderGenerator<'sd> {
                 match specs {
                     [#(#required_fields_idents),*] => {
                         #(
-                            // Verify the name
+                            // Verify the name (unless `skip_name_checks' is specified)
                             #name_verifications
 
                             // Verify the type
