@@ -1886,6 +1886,7 @@ pub(super) mod tests {
         BuiltinTypeCheckError, BuiltinTypeCheckErrorKind, DeserializeValue, ListlikeIterator,
         MapDeserializationErrorKind, MapIterator, MapTypeCheckErrorKind, MaybeEmpty,
         SetOrListDeserializationErrorKind, SetOrListTypeCheckErrorKind,
+        UdtDeserializationErrorKind, UdtTypeCheckErrorKind,
     };
 
     #[test]
@@ -3160,5 +3161,121 @@ pub(super) mod tests {
         let bytes = serialize(&ser_typ, &v as &dyn SerializeValue);
 
         deserialize::<MaybeEmpty<i32>>(&ser_typ, &bytes).unwrap_err();
+    }
+
+    #[test]
+    fn test_udt_errors() {
+        // Loose ordering
+        {
+            #[derive(scylla_macros::DeserializeValue, PartialEq, Eq, Debug)]
+            #[scylla(crate = "crate")]
+            struct Udt<'a> {
+                a: &'a str,
+                #[scylla(skip)]
+                x: String,
+                b: Option<i32>,
+                c: bool,
+            }
+
+            // Type check errors
+            {
+                // Not UDT
+                {
+                    let typ =
+                        ColumnType::Map(Box::new(ColumnType::Ascii), Box::new(ColumnType::Blob));
+                    let err = Udt::type_check(&typ).unwrap_err();
+                    let err = get_typeck_err_inner(err.0.as_ref());
+                    assert_eq!(err.rust_name, std::any::type_name::<Udt>());
+                    assert_eq!(err.cql_type, typ);
+                    let BuiltinTypeCheckErrorKind::UdtError(UdtTypeCheckErrorKind::NotUdt) =
+                        err.kind
+                    else {
+                        panic!("unexpected error kind: {:?}", err.kind)
+                    };
+                }
+
+                // UDT missing fields
+                {
+                    let typ = udt_def_with_fields([("c", ColumnType::Boolean)]);
+                    let err = Udt::type_check(&typ).unwrap_err();
+                    let err = get_typeck_err_inner(err.0.as_ref());
+                    assert_eq!(err.rust_name, std::any::type_name::<Udt>());
+                    assert_eq!(err.cql_type, typ);
+                    let BuiltinTypeCheckErrorKind::UdtError(
+                        UdtTypeCheckErrorKind::ValuesMissingForUdtFields {
+                            field_names: ref missing_fields,
+                        },
+                    ) = err.kind
+                    else {
+                        panic!("unexpected error kind: {:?}", err.kind)
+                    };
+                    assert_eq!(missing_fields.as_slice(), &["a", "b"]);
+                }
+
+                // missing UDT field
+                {
+                    let typ =
+                        udt_def_with_fields([("b", ColumnType::Int), ("a", ColumnType::Text)]);
+                    let err = Udt::type_check(&typ).unwrap_err();
+                    let err = get_typeck_err_inner(err.0.as_ref());
+                    assert_eq!(err.rust_name, std::any::type_name::<Udt>());
+                    assert_eq!(err.cql_type, typ);
+                    let BuiltinTypeCheckErrorKind::UdtError(
+                        UdtTypeCheckErrorKind::ValuesMissingForUdtFields { ref field_names },
+                    ) = err.kind
+                    else {
+                        panic!("unexpected error kind: {:?}", err.kind)
+                    };
+                    assert_eq!(field_names, &["c"]);
+                }
+
+                // UDT fields incompatible types - field type check failed
+                {
+                    let typ =
+                        udt_def_with_fields([("a", ColumnType::Blob), ("b", ColumnType::Int)]);
+                    let err = Udt::type_check(&typ).unwrap_err();
+                    let err = get_typeck_err_inner(err.0.as_ref());
+                    assert_eq!(err.rust_name, std::any::type_name::<Udt>());
+                    assert_eq!(err.cql_type, typ);
+                    let BuiltinTypeCheckErrorKind::UdtError(
+                        UdtTypeCheckErrorKind::FieldTypeCheckFailed {
+                            ref field_name,
+                            ref err,
+                        },
+                    ) = err.kind
+                    else {
+                        panic!("unexpected error kind: {:?}", err.kind)
+                    };
+                    assert_eq!(field_name.as_str(), "a");
+                    let err = get_typeck_err_inner(err.0.as_ref());
+                    assert_eq!(err.rust_name, std::any::type_name::<&str>());
+                    assert_eq!(err.cql_type, ColumnType::Blob);
+                    assert_matches!(
+                        err.kind,
+                        BuiltinTypeCheckErrorKind::MismatchedType {
+                            expected: &[ColumnType::Ascii, ColumnType::Text]
+                        }
+                    );
+                }
+            }
+
+            // Deserialization errors
+            {
+                // Got null
+                {
+                    let typ = udt_def_with_fields([
+                        ("c", ColumnType::Boolean),
+                        ("a", ColumnType::Blob),
+                        ("b", ColumnType::Int),
+                    ]);
+
+                    let err = Udt::deserialize(&typ, None).unwrap_err();
+                    let err = get_deser_err(&err);
+                    assert_eq!(err.rust_name, std::any::type_name::<Udt>());
+                    assert_eq!(err.cql_type, typ);
+                    assert_matches!(err.kind, BuiltinDeserializationErrorKind::ExpectedNonNull);
+                }
+            }
+        }
     }
 }
