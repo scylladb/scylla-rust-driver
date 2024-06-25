@@ -3704,3 +3704,16 @@ fn _test_udt_bad_attributes_rename_collision_with_field() {}
 /// }
 /// ```
 fn _test_udt_bad_attributes_rename_collision_with_another_rename() {}
+
+/// ```compile_fail
+///
+/// #[derive(scylla_macros::DeserializeValue)]
+/// #[scylla(crate = crate)]
+/// struct TestUdt {
+///     a: i32,
+///     #[scylla(allow_missing)]
+///     b: bool,
+///     c: String,
+/// }
+/// ```
+fn _test_udt_bad_attributes_name_enforce_order_limitations_on_allow_missing() {}
