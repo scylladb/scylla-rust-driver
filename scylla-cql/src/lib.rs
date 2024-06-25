@@ -2,6 +2,7 @@ pub mod errors;
 pub mod frame;
 #[macro_use]
 pub mod macros {
+    pub use scylla_macros::DeserializeRow;
     pub use scylla_macros::DeserializeValue;
     pub use scylla_macros::FromRow;
     pub use scylla_macros::FromUserType;
@@ -34,6 +35,14 @@ pub mod _macro_internal {
     };
     pub use crate::macros::*;
 
+    pub use crate::types::deserialize::row::{
+        deser_error_replace_rust_name as row_deser_error_replace_rust_name,
+        mk_deser_err as mk_row_deser_err, mk_typck_err as mk_row_typck_err,
+        BuiltinDeserializationError as BuiltinRowDeserializationError,
+        BuiltinDeserializationErrorKind as BuiltinRowDeserializationErrorKind,
+        BuiltinTypeCheckErrorKind as DeserBuiltinRowTypeCheckErrorKind, ColumnIterator,
+        DeserializeRow,
+    };
     pub use crate::types::deserialize::value::{
         deser_error_replace_rust_name as value_deser_error_replace_rust_name,
         mk_deser_err as mk_value_deser_err, mk_typck_err as mk_value_typck_err,

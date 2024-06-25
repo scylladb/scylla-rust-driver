@@ -2,6 +2,7 @@ use darling::{FromAttributes, FromField};
 use proc_macro2::Span;
 use syn::parse_quote;
 
+pub(crate) mod row;
 pub(crate) mod value;
 
 /// Common attributes that all deserialize impls should understand.

@@ -294,6 +294,38 @@ pub enum BuiltinTypeCheckErrorKind {
         cql_cols: usize,
     },
 
+    /// The CQL row contains a column for which a corresponding field is not found
+    /// in the Rust type.
+    ColumnWithUnknownName {
+        /// Index of the excess column.
+        column_index: usize,
+
+        /// Name of the column that is present in CQL row but not in the Rust type.
+        column_name: String,
+    },
+
+    /// Several values required by the Rust type are not provided by the DB.
+    ValuesMissingForColumns {
+        /// Names of the columns in the Rust type for which the DB doesn't
+        /// provide value.
+        column_names: Vec<&'static str>,
+    },
+
+    /// A different column name was expected at given position.
+    ColumnNameMismatch {
+        /// Index of the field determining the expected name.
+        field_index: usize,
+
+        /// Index of the column having mismatched name.
+        column_index: usize,
+
+        /// Name of the column, as expected by the Rust type.
+        rust_column_name: &'static str,
+
+        /// Name of the column for which the DB requested a value.
+        db_column_name: String,
+    },
+
     /// Column type check failed between Rust type and DB type at given position (=in given column).
     ColumnTypeCheckFailed {
         /// Index of the column.
@@ -304,6 +336,15 @@ pub enum BuiltinTypeCheckErrorKind {
 
         /// Inner type check error due to the type mismatch.
         err: TypeCheckError,
+    },
+
+    /// Duplicated column in DB metadata.
+    DuplicatedColumn {
+        /// Column index of the second occurence of the column with the same name.
+        column_index: usize,
+
+        /// The name of the duplicated column.
+        column_name: &'static str,
     },
 }
 
@@ -316,6 +357,33 @@ impl Display for BuiltinTypeCheckErrorKind {
             } => {
                 write!(f, "wrong column count: the statement operates on {cql_cols} columns, but the given rust types contains {rust_cols}")
             }
+            BuiltinTypeCheckErrorKind::ColumnWithUnknownName { column_name, column_index } => {
+                write!(
+                    f,
+                    "the CQL row contains a column {} at column index {}, but the corresponding field is not found in the Rust type",
+                    column_name,
+                    column_index,
+                )
+            }
+            BuiltinTypeCheckErrorKind::ValuesMissingForColumns { column_names } => {
+                write!(
+                    f,
+                    "values for columns {:?} are missing from the DB data but are required by the Rust type",
+                    column_names
+                )
+            },
+            BuiltinTypeCheckErrorKind::ColumnNameMismatch {
+                field_index,
+                column_index,rust_column_name,
+                db_column_name
+            } => write!(
+                f,
+                "expected column with name {} at column index {}, but the Rust field name at corresponding field index {} is {}",
+                db_column_name,
+                column_index,
+                field_index,
+                rust_column_name,
+            ),
             BuiltinTypeCheckErrorKind::ColumnTypeCheckFailed {
                 column_index,
                 column_name,
@@ -323,6 +391,12 @@ impl Display for BuiltinTypeCheckErrorKind {
             } => write!(
                 f,
                 "mismatched types in column {column_name} at index {column_index}: {err}"
+            ),
+            BuiltinTypeCheckErrorKind::DuplicatedColumn { column_name, column_index } => write!(
+                f,
+                "column {} occurs more than once in DB metadata; second occurence is at column index {}",
+                column_name,
+                column_index,
             ),
         }
     }

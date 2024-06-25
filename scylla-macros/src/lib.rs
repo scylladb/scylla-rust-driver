@@ -68,6 +68,15 @@ pub fn value_list_derive(tokens_input: TokenStream) -> TokenStream {
 }
 
 mod deserialize;
+
+#[proc_macro_derive(DeserializeRow, attributes(scylla))]
+pub fn deserialize_row_derive(tokens_input: TokenStream) -> TokenStream {
+    match deserialize::row::deserialize_row_derive(tokens_input) {
+        Ok(tokens) => tokens.into_token_stream().into(),
+        Err(err) => err.into_compile_error().into(),
+    }
+}
+
 #[proc_macro_derive(DeserializeValue, attributes(scylla))]
 pub fn deserialize_value_derive(tokens_input: TokenStream) -> TokenStream {
     match deserialize::value::deserialize_value_derive(tokens_input) {
