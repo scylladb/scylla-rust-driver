@@ -2413,6 +2413,149 @@ pub(super) mod tests {
         );
     }
 
+    fn udt_def_with_fields(
+        fields: impl IntoIterator<Item = (impl Into<String>, ColumnType)>,
+    ) -> ColumnType {
+        ColumnType::UserDefinedType {
+            type_name: "udt".to_owned(),
+            keyspace: "ks".to_owned(),
+            field_types: fields.into_iter().map(|(s, t)| (s.into(), t)).collect(),
+        }
+    }
+
+    #[must_use]
+    struct UdtSerializer {
+        buf: BytesMut,
+    }
+
+    impl UdtSerializer {
+        fn new() -> Self {
+            Self {
+                buf: BytesMut::default(),
+            }
+        }
+
+        fn field(mut self, field_bytes: &[u8]) -> Self {
+            append_bytes(&mut self.buf, field_bytes);
+            self
+        }
+
+        fn finalize(&self) -> Bytes {
+            make_bytes(&self.buf)
+        }
+    }
+
+    // Do not remove. It's not used in tests but we keep it here to check that
+    // we properly ignore warnings about unused variables, unnecessary `mut`s
+    // etc. that usually pop up when generating code for empty structs.
+    #[allow(unused)]
+    #[derive(scylla_macros::DeserializeValue)]
+    #[scylla(crate = crate)]
+    struct TestUdtWithNoFieldsUnordered {}
+
+    #[test]
+    fn test_udt_loose_ordering() {
+        #[derive(scylla_macros::DeserializeValue, PartialEq, Eq, Debug)]
+        #[scylla(crate = "crate")]
+        struct Udt<'a> {
+            a: &'a str,
+            #[scylla(skip)]
+            x: String,
+            b: Option<i32>,
+            c: i64,
+        }
+
+        // UDT fields in correct same order.
+        {
+            let udt = UdtSerializer::new()
+                .field("The quick brown fox".as_bytes())
+                .field(&42_i32.to_be_bytes())
+                .field(&2137_i64.to_be_bytes())
+                .finalize();
+            let typ = udt_def_with_fields([
+                ("a", ColumnType::Text),
+                ("b", ColumnType::Int),
+                ("c", ColumnType::BigInt),
+            ]);
+
+            let udt = deserialize::<Udt<'_>>(&typ, &udt).unwrap();
+            assert_eq!(
+                udt,
+                Udt {
+                    a: "The quick brown fox",
+                    x: String::new(),
+                    b: Some(42),
+                    c: 2137,
+                }
+            );
+        }
+
+        // UDT fields switched - should still work.
+        {
+            let udt = UdtSerializer::new()
+                .field(&42_i32.to_be_bytes())
+                .field("The quick brown fox".as_bytes())
+                .field(&2137_i64.to_be_bytes())
+                .finalize();
+            let typ = udt_def_with_fields([
+                ("b", ColumnType::Int),
+                ("a", ColumnType::Text),
+                ("c", ColumnType::BigInt),
+            ]);
+
+            let udt = deserialize::<Udt<'_>>(&typ, &udt).unwrap();
+            assert_eq!(
+                udt,
+                Udt {
+                    a: "The quick brown fox",
+                    x: String::new(),
+                    b: Some(42),
+                    c: 2137,
+                }
+            );
+        }
+
+        // An excess UDT field - should still work.
+        {
+            let udt = UdtSerializer::new()
+                .field(&12_i8.to_be_bytes())
+                .field(&42_i32.to_be_bytes())
+                .field("The quick brown fox".as_bytes())
+                .field(&2137_i64.to_be_bytes())
+                .finalize();
+            let typ = udt_def_with_fields([
+                ("d", ColumnType::TinyInt),
+                ("b", ColumnType::Int),
+                ("a", ColumnType::Text),
+                ("c", ColumnType::BigInt),
+            ]);
+
+            Udt::type_check(&typ).unwrap();
+            let udt = deserialize::<Udt<'_>>(&typ, &udt).unwrap();
+            assert_eq!(
+                udt,
+                Udt {
+                    a: "The quick brown fox",
+                    x: String::new(),
+                    b: Some(42),
+                    c: 2137,
+                }
+            );
+        }
+
+        // Wrong column type
+        {
+            let typ = udt_def_with_fields([("a", ColumnType::Text)]);
+            Udt::type_check(&typ).unwrap_err();
+        }
+
+        // Missing required column
+        {
+            let typ = udt_def_with_fields([("b", ColumnType::Int)]);
+            Udt::type_check(&typ).unwrap_err();
+        }
+    }
+
     #[test]
     fn test_custom_type_parser() {
         #[derive(Default, Debug, PartialEq, Eq)]
