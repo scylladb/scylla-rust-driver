@@ -341,6 +341,11 @@ pub use scylla_cql::macros::SerializeRow;
 /// If the UDT definition does not contain this field, it will be initialized
 /// with `Default::default()`.
 ///
+/// `#[scylla(default_when_null)]`
+///
+/// If the value of the field received from DB is null, the field will be
+/// initialized with `Default::default()`.
+///
 /// `#[scylla(rename = "field_name")`
 ///
 /// By default, the generated implementation will try to match the Rust field

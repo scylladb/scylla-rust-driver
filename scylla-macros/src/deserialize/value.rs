@@ -55,6 +55,12 @@ struct Field {
     #[darling(rename = "allow_missing")]
     default_when_missing: bool,
 
+    // If true, then - if this field is present among UDT fields metadata
+    // but at the same time missing from serialized data or set to null
+    // - it will be initialized to Default::default().
+    #[darling(default)]
+    default_when_null: bool,
+
     // If set, then deserializes from the UDT field with this particular name
     // instead of the Rust field name.
     #[darling(default)]
@@ -409,6 +415,7 @@ impl<'sd> DeserializeAssumeOrderGenerator<'sd> {
         let deserializer = field.deserialize_target();
         let constraint_lifetime = self.0.constraint_lifetime();
         let default_when_missing = field.default_when_missing;
+        let default_when_null = field.default_when_null;
         let skip_name_checks = self.0.attrs.skip_name_checks;
 
         let deserialize: syn::Expr = parse_quote! {
@@ -420,6 +427,20 @@ impl<'sd> DeserializeAssumeOrderGenerator<'sd> {
                         err,
                     }
                 ))?
+        };
+
+        let maybe_default_deserialize: syn::Expr = if default_when_null {
+            parse_quote! {
+                if value.is_none() {
+                    ::std::default::Default::default()
+                } else {
+                    #deserialize
+                }
+            }
+        } else {
+            parse_quote! {
+                #deserialize
+            }
         };
 
         // Action performed in case of field name mismatch.
@@ -448,12 +469,12 @@ impl<'sd> DeserializeAssumeOrderGenerator<'sd> {
 
         let maybe_name_check_and_deserialize_or_save: syn::Expr = if skip_name_checks {
             parse_quote! {
-                #deserialize
+                #maybe_default_deserialize
             }
         } else {
             parse_quote! {
                 if #cql_name_literal == cql_field_name {
-                    #deserialize
+                    #maybe_default_deserialize
                 } else {
                     #name_mismatch
                 }
@@ -765,6 +786,18 @@ impl<'sd> DeserializeUnorderedGenerator<'sd> {
                 ))?
             };
 
+            let deserialize_action: syn::Expr = if field.default_when_null {
+                parse_quote! {
+                    if value.is_some() {
+                        #do_deserialize
+                    } else {
+                        ::std::default::Default::default()
+                    }
+                }
+            } else {
+                do_deserialize
+            };
+
             parse_quote! {
                 {
                     assert!(
@@ -780,7 +813,7 @@ impl<'sd> DeserializeUnorderedGenerator<'sd> {
                     let value = value.flatten();
 
                     #deserialize_field = ::std::option::Option::Some(
-                        #do_deserialize
+                        #deserialize_action
                     );
                 }
             }
