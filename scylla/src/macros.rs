@@ -305,6 +305,11 @@ pub use scylla_cql::macros::SerializeRow;
 /// The field will be completely ignored during deserialization and will
 /// be initialized with `Default::default()`.
 ///
+/// `#[scylla(rename = "field_name")`
+///
+/// By default, the generated implementation will try to match the Rust field
+/// to a UDT field with the same name. This attribute instead allows to match
+/// to a UDT field with provided name.
 pub use scylla_macros::DeserializeValue;
 
 /// Derive macro for the `DeserializeRow` trait that generates an implementation
@@ -374,6 +379,12 @@ pub use scylla_macros::DeserializeValue;
 ///
 /// The field will be completely ignored during deserialization and will
 /// be initialized with `Default::default()`.
+///
+/// `#[scylla(rename = "field_name")`
+///
+/// By default, the generated implementation will try to match the Rust field
+/// to a column with the same name. This attribute allows to match to a column
+/// with provided name.
 pub use scylla_macros::DeserializeRow;
 
 /// #[derive(ValueList)] allows to pass struct as a list of values for a query
