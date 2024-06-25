@@ -420,6 +420,15 @@ pub use scylla_macros::DeserializeValue;
 /// efficient implementation that does not perform lookups is be generated.
 /// The generated code will still check that the column and field names match.
 ///
+/// #[(scylla(skip_name_checks))]
+///
+/// This attribute only works when used with `enforce_order`.
+///
+/// If set, the generated implementation will not verify the column names at
+/// all. Because it only works with `enforce_order`, it will deserialize first
+/// column into the first field, second column into the second field and so on.
+/// It will still still verify that the column types and field types match.
+///
 /// ## Field attributes
 ///
 /// `#[scylla(skip)]`

@@ -17,6 +17,13 @@ struct StructAttrs {
     // by name can be avoided, though it is less convenient.
     #[darling(default)]
     enforce_order: bool,
+
+    // If true, then the type checking code won't verify the column names.
+    // Columns will be matched to struct fields based solely on the order.
+    //
+    // This annotation only works if `enforce_order` is specified.
+    #[darling(default)]
+    skip_name_checks: bool,
 }
 
 impl DeserializeCommonStructAttrs for StructAttrs {
@@ -123,25 +130,27 @@ impl<'sd> TypeCheckAssumeOrderGenerator<'sd> {
         column_index: usize, // applied to some field.
         field: &Field,
         column_spec: &syn::Ident,
-    ) -> syn::Expr {
-        let macro_internal = self.0.struct_attrs().macro_internal_path();
-        let rust_field_name = field.cql_name_literal();
+    ) -> Option<syn::Expr> {
+        (!self.0.attrs.skip_name_checks).then(|| {
+            let macro_internal = self.0.struct_attrs().macro_internal_path();
+            let rust_field_name = field.cql_name_literal();
 
-        parse_quote! {
-            if #column_spec.name != #rust_field_name {
-                return ::std::result::Result::Err(
-                    #macro_internal::mk_row_typck_err::<Self>(
-                        column_types_iter(),
-                        #macro_internal::DeserBuiltinRowTypeCheckErrorKind::ColumnNameMismatch {
-                            field_index: #field_index,
-                            column_index: #column_index,
-                            rust_column_name: #rust_field_name,
-                            db_column_name: ::std::clone::Clone::clone(&#column_spec.name),
-                        }
-                    )
-                );
+            parse_quote! {
+                if #column_spec.name != #rust_field_name {
+                    return ::std::result::Result::Err(
+                        #macro_internal::mk_row_typck_err::<Self>(
+                            column_types_iter(),
+                            #macro_internal::DeserBuiltinRowTypeCheckErrorKind::ColumnNameMismatch {
+                                field_index: #field_index,
+                                column_index: #column_index,
+                                rust_column_name: #rust_field_name,
+                                db_column_name: ::std::clone::Clone::clone(&#column_spec.name),
+                            }
+                        )
+                    );
+                }
             }
-        }
+        })
     }
 
     fn generate(&self) -> syn::ImplItemFn {
@@ -181,7 +190,7 @@ impl<'sd> TypeCheckAssumeOrderGenerator<'sd> {
                 match specs {
                     [#(#required_fields_idents),*] => {
                         #(
-                            // Verify the name
+                            // Verify the name (unless `skip_name_checks' is specified)
                             #name_verifications
 
                             // Verify the type
@@ -226,19 +235,23 @@ impl<'sd> DeserializeAssumeOrderGenerator<'sd> {
         let deserializer = field.deserialize_target();
         let constraint_lifetime = self.0.constraint_lifetime();
 
+        let name_check: Option<syn::Stmt> = (!self.0.struct_attrs().skip_name_checks).then(|| parse_quote! {
+            if col.spec.name.as_str() != #cql_name_literal {
+                panic!(
+                    "Typecheck should have prevented this scenario - field-column name mismatch! Rust field name {}, CQL column name {}",
+                    #cql_name_literal,
+                    col.spec.name.as_str()
+                );
+            }
+        });
+
         parse_quote!(
             {
                 let col = row.next()
                     .expect("Typecheck should have prevented this scenario! Too few columns in the serialized data.")
                     .map_err(#macro_internal::row_deser_error_replace_rust_name::<Self>)?;
 
-                if col.spec.name.as_str() != #cql_name_literal {
-                    panic!(
-                        "Typecheck should have prevented this scenario - field-column name mismatch! Rust field name {}, CQL column name {}",
-                        #cql_name_literal,
-                        col.spec.name.as_str()
-                    );
-                }
+                #name_check
 
                 <#deserializer as #macro_internal::DeserializeValue<#constraint_lifetime>>::deserialize(&col.spec.typ, col.slice)
                     .map_err(|err| #macro_internal::mk_row_deser_err::<Self>(
