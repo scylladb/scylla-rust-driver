@@ -26,6 +26,13 @@ struct StructAttrs {
     // This annotation only works if `enforce_order` is specified.
     #[darling(default)]
     skip_name_checks: bool,
+
+    // If true, then the type checking code will require that the UDT does not
+    // contain excess fields at its suffix. Otherwise, if UDT has some fields
+    // at its suffix that do not correspond to Rust struct's fields,
+    // they will be ignored. With true, an error will be raised.
+    #[darling(default)]
+    forbid_excess_udt_fields: bool,
 }
 
 impl DeserializeCommonStructAttrs for StructAttrs {
@@ -279,6 +286,20 @@ impl<'sd> TypeCheckAssumeOrderGenerator<'sd> {
         let field_validations =
             nonskipped_fields_iter().map(|(idx, field)| self.generate_field_validation(idx, field));
 
+        let check_excess_udt_fields: Option<syn::Expr> =
+            self.0.attrs.forbid_excess_udt_fields.then(|| {
+                parse_quote! {
+                    if let ::std::option::Option::Some((cql_field_name, cql_field_typ)) = cql_field_iter.next() {
+                        return ::std::result::Result::Err(#macro_internal::mk_value_typck_err::<Self>(
+                            typ,
+                            #macro_internal::DeserUdtTypeCheckErrorKind::ExcessFieldInUdt {
+                                db_field_name: <_ as ::std::clone::Clone>::clone(cql_field_name),
+                            }
+                        ));
+                    }
+                }
+            });
+
         parse_quote! {
             fn type_check(
                 typ: &#macro_internal::ColumnType,
@@ -306,6 +327,8 @@ impl<'sd> TypeCheckAssumeOrderGenerator<'sd> {
                 #(
                     #field_validations
                 )*
+
+                #check_excess_udt_fields
 
                 // All is good!
                 ::std::result::Result::Ok(())
@@ -509,6 +532,7 @@ impl<'sd> TypeCheckUnorderedGenerator<'sd> {
         // - Every type on the list is correct
 
         let macro_internal = &self.0.struct_attrs().macro_internal_path();
+        let forbid_excess_udt_fields = self.0.attrs.forbid_excess_udt_fields;
         let rust_fields = self.0.fields();
         let visited_field_declarations = rust_fields
             .iter()
@@ -523,6 +547,27 @@ impl<'sd> TypeCheckUnorderedGenerator<'sd> {
         let required_cql_field_count_lit =
             syn::LitInt::new(&required_cql_field_count.to_string(), Span::call_site());
         let extract_cql_fields_expr = self.0.generate_extract_fields_from_type(parse_quote!(typ));
+
+        // If UDT contains a field with an unknown name, an error is raised iff
+        // `forbid_excess_udt_fields` attribute is specified.
+        let excess_udt_field_action: syn::Expr = if forbid_excess_udt_fields {
+            parse_quote! {
+                return ::std::result::Result::Err(
+                    #macro_internal::mk_value_typck_err::<Self>(
+                        typ,
+                        #macro_internal::DeserUdtTypeCheckErrorKind::ExcessFieldInUdt {
+                            db_field_name: unknown.to_owned(),
+                        }
+                    )
+                )
+            }
+        } else {
+            parse_quote! {
+                // We ignore excess UDT fields, as this facilitates the process of adding new fields
+                // to a UDT in running production cluster & clients.
+                ()
+            }
+        };
 
         parse_quote! {
             fn type_check(
@@ -542,10 +587,7 @@ impl<'sd> TypeCheckUnorderedGenerator<'sd> {
                     // Pattern match on the name and verify that the type is correct.
                     match cql_field_name.as_str() {
                         #(#rust_nonskipped_field_names => #type_check_blocks,)*
-                        _unknown => {
-                            // We ignore excess UDT fields, as this facilitates the process of adding new fields
-                            // to a UDT in running production cluster & clients.
-                        }
+                        unknown => #excess_udt_field_action,
                     }
                 }
 

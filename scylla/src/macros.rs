@@ -320,6 +320,15 @@ pub use scylla_cql::macros::SerializeRow;
 /// struct field and so on. It will still verify that the UDT field types
 /// and struct field types match.
 ///
+/// #[(scylla(forbid_excess_udt_fields))]
+///
+/// By default, the generated deserialization code ignores excess UDT fields.
+/// I.e., `enforce_order` flavour ignores excess UDT fields in the suffix
+/// of the UDT definition, and the default unordered flavour ignores excess
+/// UDT fields anywhere.
+/// If more strictness is desired, this flag makes sure that no excess fields
+/// are present and forces error in case there are some.
+///
 /// ## Field attributes
 ///
 /// `#[scylla(skip)]`
