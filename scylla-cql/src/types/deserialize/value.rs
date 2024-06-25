@@ -1335,7 +1335,9 @@ pub struct BuiltinTypeCheckError {
     pub kind: BuiltinTypeCheckErrorKind,
 }
 
-fn mk_typck_err<T>(
+// Not part of the public API; used in derive macros.
+#[doc(hidden)]
+pub fn mk_typck_err<T>(
     cql_type: &ColumnType,
     kind: impl Into<BuiltinTypeCheckErrorKind>,
 ) -> TypeCheckError {
@@ -1574,7 +1576,9 @@ pub struct BuiltinDeserializationError {
     pub kind: BuiltinDeserializationErrorKind,
 }
 
-pub(crate) fn mk_deser_err<T>(
+// Not part of the public API; used in derive macros.
+#[doc(hidden)]
+pub fn mk_deser_err<T>(
     cql_type: &ColumnType,
     kind: impl Into<BuiltinDeserializationErrorKind>,
 ) -> DeserializationError {

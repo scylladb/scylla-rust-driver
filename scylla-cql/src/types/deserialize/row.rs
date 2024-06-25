@@ -260,7 +260,9 @@ pub struct BuiltinTypeCheckError {
     pub kind: BuiltinTypeCheckErrorKind,
 }
 
-fn mk_typck_err<T>(
+// Not part of the public API; used in derive macros.
+#[doc(hidden)]
+pub fn mk_typck_err<T>(
     cql_types: impl IntoIterator<Item = ColumnType>,
     kind: impl Into<BuiltinTypeCheckErrorKind>,
 ) -> TypeCheckError {
@@ -338,13 +340,13 @@ pub struct BuiltinDeserializationError {
     pub kind: BuiltinDeserializationErrorKind,
 }
 
-pub(super) fn mk_deser_err<T>(
-    kind: impl Into<BuiltinDeserializationErrorKind>,
-) -> DeserializationError {
+// Not part of the public API; used in derive macros.
+#[doc(hidden)]
+pub fn mk_deser_err<T>(kind: impl Into<BuiltinDeserializationErrorKind>) -> DeserializationError {
     mk_deser_err_named(std::any::type_name::<T>(), kind)
 }
 
-pub(super) fn mk_deser_err_named(
+fn mk_deser_err_named(
     name: &'static str,
     kind: impl Into<BuiltinDeserializationErrorKind>,
 ) -> DeserializationError {
