@@ -1549,6 +1549,33 @@ impl Display for TupleTypeCheckErrorKind {
 pub enum UdtTypeCheckErrorKind {
     /// The CQL type is not a user defined type.
     NotUdt,
+
+    /// The CQL UDT type does not have some fields that is required in the Rust struct.
+    ValuesMissingForUdtFields {
+        /// Names of fields that the Rust struct requires but are missing in the CQL UDT.
+        field_names: Vec<&'static str>,
+    },
+
+    /// UDT contains an excess field, which does not correspond to any Rust struct's field.
+    ExcessFieldInUdt {
+        /// The name of the CQL UDT field.
+        db_field_name: String,
+    },
+
+    /// Duplicated field in serialized data.
+    DuplicatedField {
+        /// The name of the duplicated field.
+        field_name: String,
+    },
+
+    /// Type check failed between UDT and Rust type field.
+    FieldTypeCheckFailed {
+        /// The name of the field whose type check failed.
+        field_name: String,
+
+        /// Inner type check error that occured.
+        err: TypeCheckError,
+    },
 }
 
 impl Display for UdtTypeCheckErrorKind {
@@ -1557,6 +1584,25 @@ impl Display for UdtTypeCheckErrorKind {
             UdtTypeCheckErrorKind::NotUdt => write!(
                 f,
                 "the CQL type the Rust type was attempted to be type checked against is not a UDT"
+            ),
+            UdtTypeCheckErrorKind::ValuesMissingForUdtFields { field_names } => {
+                write!(f, "the fields {field_names:?} are missing from the DB data but are required by the Rust type")
+            },
+            UdtTypeCheckErrorKind::ExcessFieldInUdt { db_field_name } => write!(
+                f,
+                "UDT contains an excess field {}, which does not correspond to any Rust struct's field.",
+                db_field_name
+            ),
+            UdtTypeCheckErrorKind::DuplicatedField { field_name } => write!(
+                f,
+                "field {} occurs more than once in CQL UDT type",
+                field_name
+            ),
+            UdtTypeCheckErrorKind::FieldTypeCheckFailed { field_name, err } => write!(
+                f,
+                "the UDT field {} types between the CQL type and the Rust type failed to type check against each other: {}",
+                field_name,
+                err
             ),
         }
     }
@@ -1643,6 +1689,9 @@ pub enum BuiltinDeserializationErrorKind {
 
     /// A deserialization failure specific to a CQL tuple.
     TupleError(TupleDeserializationErrorKind),
+
+    /// A deserialization failure specific to a CQL UDT.
+    UdtError(UdtDeserializationErrorKind),
 }
 
 impl Display for BuiltinDeserializationErrorKind {
@@ -1675,6 +1724,7 @@ impl Display for BuiltinDeserializationErrorKind {
             BuiltinDeserializationErrorKind::SetOrListError(err) => err.fmt(f),
             BuiltinDeserializationErrorKind::MapError(err) => err.fmt(f),
             BuiltinDeserializationErrorKind::TupleError(err) => err.fmt(f),
+            BuiltinDeserializationErrorKind::UdtError(err) => err.fmt(f),
             BuiltinDeserializationErrorKind::CustomTypeNotSupported(typ) => write!(f, "Support for custom types is not yet implemented: {}", typ),
         }
     }
@@ -1777,6 +1827,36 @@ impl Display for TupleDeserializationErrorKind {
 impl From<TupleDeserializationErrorKind> for BuiltinDeserializationErrorKind {
     fn from(err: TupleDeserializationErrorKind) -> Self {
         Self::TupleError(err)
+    }
+}
+
+/// Describes why deserialization of a user defined type failed.
+#[derive(Debug, Clone)]
+#[non_exhaustive]
+pub enum UdtDeserializationErrorKind {
+    /// One of the fields failed to deserialize.
+    FieldDeserializationFailed {
+        /// Name of the field which failed to deserialize.
+        field_name: String,
+
+        /// The error that caused the UDT field deserialization to fail.
+        err: DeserializationError,
+    },
+}
+
+impl Display for UdtDeserializationErrorKind {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            UdtDeserializationErrorKind::FieldDeserializationFailed { field_name, err } => {
+                write!(f, "field {field_name} failed to deserialize: {err}")
+            }
+        }
+    }
+}
+
+impl From<UdtDeserializationErrorKind> for BuiltinDeserializationErrorKind {
+    fn from(err: UdtDeserializationErrorKind) -> Self {
+        Self::UdtError(err)
     }
 }
 
