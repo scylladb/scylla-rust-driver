@@ -2470,6 +2470,11 @@ pub(super) mod tests {
             self
         }
 
+        fn null_field(mut self) -> Self {
+            append_null(&mut self.buf);
+            self
+        }
+
         fn finalize(&self) -> Bytes {
             make_bytes(&self.buf)
         }
@@ -2498,6 +2503,7 @@ pub(super) mod tests {
             x: String,
             #[scylla(allow_missing)]
             b: Option<i32>,
+            #[scylla(default_when_null)]
             c: i64,
         }
 
@@ -2522,6 +2528,30 @@ pub(super) mod tests {
                     x: String::new(),
                     b: Some(42),
                     c: 2137,
+                }
+            );
+        }
+
+        // The last two UDT field are missing in serialized form - it should treat it
+        // as if there were nulls at the end.
+        {
+            let udt = UdtSerializer::new()
+                .field("The quick brown fox".as_bytes())
+                .finalize();
+            let typ = udt_def_with_fields([
+                ("a", ColumnType::Text),
+                ("b", ColumnType::Int),
+                ("c", ColumnType::BigInt),
+            ]);
+
+            let udt = deserialize::<Udt<'_>>(&typ, &udt).unwrap();
+            assert_eq!(
+                udt,
+                Udt {
+                    a: "The quick brown fox",
+                    x: String::new(),
+                    b: None,
+                    c: 0,
                 }
             );
         }
@@ -2579,6 +2609,25 @@ pub(super) mod tests {
             );
         }
 
+        // Only field 'a' is present
+        {
+            let udt = UdtSerializer::new()
+                .field("The quick brown fox".as_bytes())
+                .finalize();
+            let typ = udt_def_with_fields([("a", ColumnType::Text), ("c", ColumnType::BigInt)]);
+
+            let udt = deserialize::<Udt<'_>>(&typ, &udt).unwrap();
+            assert_eq!(
+                udt,
+                Udt {
+                    a: "The quick brown fox",
+                    x: String::new(),
+                    b: None,
+                    c: 0,
+                }
+            );
+        }
+
         // Wrong column type
         {
             let typ = udt_def_with_fields([("a", ColumnType::Text)]);
@@ -2597,6 +2646,7 @@ pub(super) mod tests {
         #[derive(scylla_macros::DeserializeValue, PartialEq, Eq, Debug)]
         #[scylla(crate = "crate", enforce_order)]
         struct Udt<'a> {
+            #[scylla(default_when_null)]
             a: &'a str,
             #[scylla(skip)]
             x: String,
@@ -2715,6 +2765,25 @@ pub(super) mod tests {
                     a: "kotmaale",
                     x: String::new(),
                     b: None,
+                }
+            );
+        }
+
+        // The first field is null, but `default_when_null` prevents failure.
+        {
+            let udt = UdtSerializer::new()
+                .null_field()
+                .field(&42i32.to_be_bytes())
+                .finalize();
+            let typ = udt_def_with_fields([("a", ColumnType::Text), ("b", ColumnType::Int)]);
+
+            let udt = deserialize::<Udt<'_>>(&typ, &udt).unwrap();
+            assert_eq!(
+                udt,
+                Udt {
+                    a: "",
+                    x: String::new(),
+                    b: Some(42),
                 }
             );
         }
@@ -3418,6 +3487,7 @@ pub(super) mod tests {
                 x: String,
                 #[scylla(allow_missing)]
                 b: Option<i32>,
+                #[scylla(default_when_null)]
                 c: bool,
             }
 
