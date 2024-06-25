@@ -112,6 +112,26 @@ fn validate_attrs(attrs: &StructAttrs, fields: &[Field]) -> Result<(), darling::
             errors.push(error);
         }
 
+        // Fields with `allow_missing` are only permitted at the end of the
+        // struct, i.e. no field without `allow_missing` and `skip` is allowed
+        // to be after any field with `allow_missing`.
+        let invalid_default_when_missing_field = fields
+            .iter()
+            .rev()
+            // Skip the whole suffix of <allow_missing> and <skip>.
+            .skip_while(|field| !field.is_required())
+            // skip_while finished either because the iterator is empty or it found a field without both <allow_missing> and <skip>.
+            // In either case, there aren't allowed to be any more fields with `allow_missing`.
+            .find(|field| field.default_when_missing);
+        if let Some(invalid) = invalid_default_when_missing_field {
+            let error =
+                darling::Error::custom(
+                    "when <skip_name_checks> is on, fields with <allow_missing> are only permitted at the end of the struct, \
+                          i.e. no field without <allow_missing> and <skip> is allowed to be after any field with <allow_missing>."
+            ).with_span(&invalid.ident);
+            errors.push(error);
+        }
+
         // <rename> annotations don't make sense with skipped name checks
         for field in fields {
             if field.rename.is_some() {
