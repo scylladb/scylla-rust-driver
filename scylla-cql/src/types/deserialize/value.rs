@@ -2480,6 +2480,7 @@ pub(super) mod tests {
             a: &'a str,
             #[scylla(skip)]
             x: String,
+            #[scylla(allow_missing)]
             b: Option<i32>,
             c: i64,
         }
@@ -2555,6 +2556,7 @@ pub(super) mod tests {
             a: &'a str,
             #[scylla(skip)]
             x: String,
+            #[scylla(allow_missing)]
             b: Option<i32>,
         }
 
@@ -2619,6 +2621,22 @@ pub(super) mod tests {
         {
             let typ = udt_def_with_fields([("b", ColumnType::Int)]);
             Udt::type_check(&typ).unwrap_err();
+        }
+
+        // Missing non-required column
+        {
+            let udt = UdtSerializer::new().field(b"kotmaale").finalize();
+            let typ = udt_def_with_fields([("a", ColumnType::Text)]);
+
+            let udt = deserialize::<Udt<'_>>(&typ, &udt).unwrap();
+            assert_eq!(
+                udt,
+                Udt {
+                    a: "kotmaale",
+                    x: String::new(),
+                    b: None,
+                }
+            );
         }
     }
 
@@ -3317,6 +3335,7 @@ pub(super) mod tests {
                 a: &'a str,
                 #[scylla(skip)]
                 x: String,
+                #[scylla(allow_missing)]
                 b: Option<i32>,
                 c: bool,
             }
@@ -3353,7 +3372,7 @@ pub(super) mod tests {
                     else {
                         panic!("unexpected error kind: {:?}", err.kind)
                     };
-                    assert_eq!(missing_fields.as_slice(), &["a", "b"]);
+                    assert_eq!(missing_fields.as_slice(), &["a"]);
                 }
 
                 // excess fields in UDT
@@ -3439,6 +3458,43 @@ pub(super) mod tests {
                     assert_eq!(err.cql_type, typ);
                     assert_matches!(err.kind, BuiltinDeserializationErrorKind::ExpectedNonNull);
                 }
+
+                // UDT field deserialization failed
+                {
+                    let typ =
+                        udt_def_with_fields([("a", ColumnType::Ascii), ("c", ColumnType::Boolean)]);
+
+                    let udt_bytes = UdtSerializer::new()
+                        .field("alamakota".as_bytes())
+                        .field(&42_i16.to_be_bytes())
+                        .finalize();
+
+                    let err = deserialize::<Udt>(&typ, &udt_bytes).unwrap_err();
+
+                    let err = get_deser_err(&err);
+                    assert_eq!(err.rust_name, std::any::type_name::<Udt>());
+                    assert_eq!(err.cql_type, typ);
+                    let BuiltinDeserializationErrorKind::UdtError(
+                        UdtDeserializationErrorKind::FieldDeserializationFailed {
+                            ref field_name,
+                            ref err,
+                        },
+                    ) = err.kind
+                    else {
+                        panic!("unexpected error kind: {:?}", err.kind)
+                    };
+                    assert_eq!(field_name.as_str(), "c");
+                    let err = get_deser_err(err);
+                    assert_eq!(err.rust_name, std::any::type_name::<bool>());
+                    assert_eq!(err.cql_type, ColumnType::Boolean);
+                    assert_matches!(
+                        err.kind,
+                        BuiltinDeserializationErrorKind::ByteLengthMismatch {
+                            expected: 1,
+                            got: 2,
+                        }
+                    );
+                }
             }
         }
 
@@ -3451,6 +3507,7 @@ pub(super) mod tests {
                 #[scylla(skip)]
                 x: String,
                 b: Option<i32>,
+                #[scylla(allow_missing)]
                 c: bool,
             }
 
@@ -3485,7 +3542,7 @@ pub(super) mod tests {
                     else {
                         panic!("unexpected error kind: {:?}", err.kind)
                     };
-                    assert_eq!(required_fields.as_slice(), &["a", "b", "c"]);
+                    assert_eq!(required_fields.as_slice(), &["a", "b"]);
                     assert_eq!(present_fields.as_slice(), &["a".to_string()]);
                 }
 
@@ -3494,8 +3551,7 @@ pub(super) mod tests {
                     let typ = udt_def_with_fields([
                         ("a", ColumnType::Text),
                         ("b", ColumnType::Int),
-                        ("c", ColumnType::Boolean),
-                        ("d", ColumnType::Counter),
+                        ("d", ColumnType::Boolean),
                     ]);
                     let err = Udt::type_check(&typ).unwrap_err();
                     let err = get_typeck_err_inner(err.0.as_ref());
@@ -3512,11 +3568,8 @@ pub(super) mod tests {
 
                 // UDT fields switched - field name mismatch
                 {
-                    let typ = udt_def_with_fields([
-                        ("b", ColumnType::Int),
-                        ("a", ColumnType::Text),
-                        ("c", ColumnType::Boolean),
-                    ]);
+                    let typ =
+                        udt_def_with_fields([("b", ColumnType::Int), ("a", ColumnType::Text)]);
                     let err = Udt::type_check(&typ).unwrap_err();
                     let err = get_typeck_err_inner(err.0.as_ref());
                     assert_eq!(err.rust_name, std::any::type_name::<Udt>());
@@ -3538,11 +3591,8 @@ pub(super) mod tests {
 
                 // UDT fields incompatible types - field type check failed
                 {
-                    let typ = udt_def_with_fields([
-                        ("a", ColumnType::Blob),
-                        ("b", ColumnType::Int),
-                        ("c", ColumnType::Boolean),
-                    ]);
+                    let typ =
+                        udt_def_with_fields([("a", ColumnType::Blob), ("b", ColumnType::Int)]);
                     let err = Udt::type_check(&typ).unwrap_err();
                     let err = get_typeck_err_inner(err.0.as_ref());
                     assert_eq!(err.rust_name, std::any::type_name::<Udt>());
