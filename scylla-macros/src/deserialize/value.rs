@@ -49,6 +49,12 @@ struct Field {
     #[darling(default)]
     skip: bool,
 
+    // If true, then - if this field is missing from the UDT fields metadata
+    // - it will be initialized to Default::default().
+    #[darling(default)]
+    #[darling(rename = "allow_missing")]
+    default_when_missing: bool,
+
     // If set, then deserializes from the UDT field with this particular name
     // instead of the Rust field name.
     #[darling(default)]
@@ -60,7 +66,7 @@ struct Field {
 
 impl DeserializeCommonFieldAttrs for Field {
     fn needs_default(&self) -> bool {
-        self.skip
+        self.skip || self.default_when_missing
     }
 
     fn deserialize_target(&self) -> &syn::Type {
@@ -138,7 +144,7 @@ fn validate_attrs(attrs: &StructAttrs, fields: &[Field]) -> Result<(), darling::
 impl Field {
     // Returns whether this field is mandatory for deserialization.
     fn is_required(&self) -> bool {
-        !self.skip
+        !self.skip && !self.default_when_missing
     }
 
     // The name of UDT field corresponding to this Rust struct field
@@ -200,22 +206,35 @@ impl<'sd> TypeCheckAssumeOrderGenerator<'sd> {
         let constraint_lifetime = self.0.constraint_lifetime();
         let rust_field_name = field.cql_name_literal();
         let rust_field_typ = field.deserialize_target();
+        let default_when_missing = field.default_when_missing;
         let skip_name_checks = self.0.attrs.skip_name_checks;
 
         // Action performed in case of field name mismatch.
-        let name_mismatch: syn::Expr = parse_quote! {
-            {
-                // Error - required value for field not present among the CQL fields.
-                return ::std::result::Result::Err(
-                    #macro_internal::mk_value_typck_err::<Self>(
-                        typ,
-                        #macro_internal::DeserUdtTypeCheckErrorKind::FieldNameMismatch {
-                            position: #rust_field_idx,
-                            rust_field_name: <_ as ::std::borrow::ToOwned>::to_owned(#rust_field_name),
-                            db_field_name: <_ as ::std::borrow::ToOwned>::to_owned(cql_field_name),
-                        }
-                    )
-                );
+        let name_mismatch: syn::Expr = if default_when_missing {
+            parse_quote! {
+                {
+                    // If the Rust struct's field is marked as `default_when_missing`, then let's assume
+                    // optimistically that the remaining UDT fields match required Rust struct fields.
+                    // For that, store the read UDT field to be fit against the next Rust struct field.
+                    saved_cql_field = ::std::option::Option::Some(next_cql_field);
+                    break 'verifications; // Skip type verification, because the UDT field is absent.
+                }
+            }
+        } else {
+            parse_quote! {
+                {
+                    // Error - required value for field not present among the CQL fields.
+                    return ::std::result::Result::Err(
+                        #macro_internal::mk_value_typck_err::<Self>(
+                            typ,
+                            #macro_internal::DeserUdtTypeCheckErrorKind::FieldNameMismatch {
+                                position: #rust_field_idx,
+                                rust_field_name: <_ as ::std::borrow::ToOwned>::to_owned(#rust_field_name),
+                                db_field_name: <_ as ::std::borrow::ToOwned>::to_owned(cql_field_name),
+                            }
+                        )
+                    );
+                }
             }
         };
 
@@ -231,14 +250,23 @@ impl<'sd> TypeCheckAssumeOrderGenerator<'sd> {
 
         parse_quote! {
             'field: {
-                let next_cql_field = match cql_field_iter.next() {
-                    ::std::option::Option::Some(cql_field) => cql_field,
-                    ::std::option::Option::None => return Err(too_few_fields()),
+                let next_cql_field = match saved_cql_field
+                    // We may have a stored CQL UDT field that did not match the previous Rust struct's field.
+                    .take()
+                    // If not, simply fetch another CQL UDT field from the iterator.
+                    .or_else(|| cql_field_iter.next()) {
+                        ::std::option::Option::Some(cql_field) => cql_field,
+                        // In case the Rust field allows default-initialisation and there are no more CQL fields,
+                        // simply assume it's going to be default-initialised.
+                        ::std::option::Option::None if #default_when_missing => break 'field,
+                        ::std::option::Option::None => return Err(too_few_fields()),
                 };
                 let (cql_field_name, cql_field_typ) = next_cql_field;
 
                 'verifications: {
                     // Verify the name (unless `skip_name_checks` is specified)
+                    // In a specific case when this Rust field is going to be default-initialised
+                    // due to no corresponding CQL UDT field, the below type verification will be skipped.
                     #name_verification
 
                     // Verify the type
@@ -289,7 +317,9 @@ impl<'sd> TypeCheckAssumeOrderGenerator<'sd> {
         let check_excess_udt_fields: Option<syn::Expr> =
             self.0.attrs.forbid_excess_udt_fields.then(|| {
                 parse_quote! {
-                    if let ::std::option::Option::Some((cql_field_name, cql_field_typ)) = cql_field_iter.next() {
+                    if let ::std::option::Option::Some((cql_field_name, cql_field_typ)) = saved_cql_field
+                        .take()
+                        .or_else(|| cql_field_iter.next()) {
                         return ::std::result::Result::Err(#macro_internal::mk_value_typck_err::<Self>(
                             typ,
                             #macro_internal::DeserUdtTypeCheckErrorKind::ExcessFieldInUdt {
@@ -324,6 +354,12 @@ impl<'sd> TypeCheckAssumeOrderGenerator<'sd> {
                 }
 
                 let mut cql_field_iter = fields.iter();
+                // A CQL UDT field that has already been fetched from the field iterator,
+                // but not yet matched to a Rust struct field (because the previous
+                // Rust struct field didn't match it and had #[allow_missing] specified).
+                let mut saved_cql_field = ::std::option::Option::None::<
+                    &(::std::string::String, #macro_internal::ColumnType),
+                >;
                 #(
                     #field_validations
                 )*
@@ -352,6 +388,7 @@ impl<'sd> DeserializeAssumeOrderGenerator<'sd> {
         let cql_name_literal = field.cql_name_literal();
         let deserializer = field.deserialize_target();
         let constraint_lifetime = self.0.constraint_lifetime();
+        let default_when_missing = field.default_when_missing;
         let skip_name_checks = self.0.attrs.skip_name_checks;
 
         let deserialize: syn::Expr = parse_quote! {
@@ -366,15 +403,30 @@ impl<'sd> DeserializeAssumeOrderGenerator<'sd> {
         };
 
         // Action performed in case of field name mismatch.
-        let name_mismatch: syn::Expr = parse_quote! {
-            panic!(
-                "type check should have prevented this scenario - field name mismatch! Rust field name {}, CQL field name {}",
-                #cql_name_literal,
-                cql_field_name
-            )
+        let name_mismatch: syn::Expr = if default_when_missing {
+            parse_quote! {
+                {
+                    // If the Rust struct's field is marked as `default_when_missing`, then let's assume
+                    // optimistically that the remaining UDT fields match required Rust struct fields.
+                    // For that, store the read UDT field to be fit against the next Rust struct field.
+                    saved_cql_field = ::std::option::Option::Some(next_cql_field);
+
+                    ::std::default::Default::default()
+                }
+            }
+        } else {
+            parse_quote! {
+                {
+                    panic!(
+                        "type check should have prevented this scenario - field name mismatch! Rust field name {}, CQL field name {}",
+                        #cql_name_literal,
+                        cql_field_name
+                    );
+                }
+            }
         };
 
-        let maybe_name_check_and_deserialize: syn::Expr = if skip_name_checks {
+        let maybe_name_check_and_deserialize_or_save: syn::Expr = if skip_name_checks {
             parse_quote! {
                 #deserialize
             }
@@ -388,12 +440,27 @@ impl<'sd> DeserializeAssumeOrderGenerator<'sd> {
             }
         };
 
+        let no_more_fields: syn::Expr = if default_when_missing {
+            parse_quote! {
+                ::std::default::Default::default()
+            }
+        } else {
+            parse_quote! {
+                // Type check has ensured that there are enough CQL UDT fields.
+                panic!("Too few CQL UDT fields - type check should have prevented this scenario!")
+            }
+        };
+
         parse_quote! {
             {
-                let next_cql_field = cql_field_iter.next()
-                    .map(|(specs, value_res)| value_res.map(|value| (specs, value)))
-                    // Type check has ensured that there are enough CQL UDT fields.
-                    .expect("Too few CQL UDT fields - type check should have prevented this scenario!")
+                let maybe_next_cql_field = saved_cql_field
+                    .take()
+                    .map(::std::result::Result::Ok)
+                    .or_else(|| {
+                        cql_field_iter.next()
+                            .map(|(specs, value_res)| value_res.map(|value| (specs, value)))
+                    })
+                    .transpose()
                     // Propagate deserialization errors.
                     .map_err(|err| #macro_internal::mk_value_deser_err::<Self>(
                         typ,
@@ -403,16 +470,19 @@ impl<'sd> DeserializeAssumeOrderGenerator<'sd> {
                         }
                     ))?;
 
+                if let Some(next_cql_field) = maybe_next_cql_field {
+                    let ((cql_field_name, cql_field_typ), value) = next_cql_field;
 
-                let ((cql_field_name, cql_field_typ), value) = next_cql_field;
+                    // The value can be either
+                    // - None - missing from the serialized representation
+                    // - Some(None) - present in the serialized representation but null
+                    // For now, we treat both cases as "null".
+                    let value = value.flatten();
 
-                // The value can be either
-                // - None - missing from the serialized representation
-                // - Some(None) - present in the serialized representation but null
-                // For now, we treat both cases as "null".
-                let value = value.flatten();
-
-                #maybe_name_check_and_deserialize
+                    #maybe_name_check_and_deserialize_or_save
+                } else {
+                    #no_more_fields
+                }
             }
         }
     }
@@ -439,6 +509,14 @@ impl<'sd> DeserializeAssumeOrderGenerator<'sd> {
                 // Create an iterator over the fields of the UDT.
                 let mut cql_field_iter = <#iterator_type as #macro_internal::DeserializeValue<#constraint_lifetime>>::deserialize(typ, v)
                     .map_err(#macro_internal::value_deser_error_replace_rust_name::<Self>)?;
+
+                // This is to hold another field that already popped up from the field iterator but appeared to not match
+                // the expected nonrequired field. Therefore, that field is stored here, while the expected field
+                // is default-initialized.
+                let mut saved_cql_field = ::std::option::Option::None::<(
+                    &(::std::string::String, #macro_internal::ColumnType),
+                    ::std::option::Option<::std::option::Option<#macro_internal::FrameSlice>>
+                )>;
 
                 ::std::result::Result::Ok(Self {
                     #(#field_idents: #field_finalizers,)*
@@ -630,11 +708,20 @@ impl<'sd> DeserializeUnorderedGenerator<'sd> {
         }
 
         let deserialize_field = Self::deserialize_field_variable(field);
-        let cql_name_literal = field.cql_name_literal();
-        parse_quote!(#deserialize_field.unwrap_or_else(|| panic!(
-            "field {} missing in UDT - type check should have prevented this!",
-            #cql_name_literal
-        )))
+        if field.default_when_missing {
+            // Generate Default::default if the field was missing
+            parse_quote! {
+                #deserialize_field.unwrap_or_default()
+            }
+        } else {
+            let cql_name_literal = field.cql_name_literal();
+            parse_quote! {
+                #deserialize_field.unwrap_or_else(|| panic!(
+                    "field {} missing in UDT - type check should have prevented this!",
+                    #cql_name_literal
+                ))
+            }
+        }
     }
 
     /// Generates code that performs deserialization when the raw field
