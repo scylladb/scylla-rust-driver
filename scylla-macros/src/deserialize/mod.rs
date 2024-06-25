@@ -2,6 +2,8 @@ use darling::{FromAttributes, FromField};
 use proc_macro2::Span;
 use syn::parse_quote;
 
+pub(crate) mod value;
+
 /// Common attributes that all deserialize impls should understand.
 trait DeserializeCommonStructAttrs {
     /// The path to either `scylla` or `scylla_cql` crate.

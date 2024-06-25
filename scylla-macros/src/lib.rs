@@ -1,5 +1,5 @@
+use darling::ToTokens;
 use proc_macro::TokenStream;
-use quote::ToTokens;
 
 mod from_row;
 mod from_user_type;
@@ -68,3 +68,10 @@ pub fn value_list_derive(tokens_input: TokenStream) -> TokenStream {
 }
 
 mod deserialize;
+#[proc_macro_derive(DeserializeValue, attributes(scylla))]
+pub fn deserialize_value_derive(tokens_input: TokenStream) -> TokenStream {
+    match deserialize::value::deserialize_value_derive(tokens_input) {
+        Ok(tokens) => tokens.into_token_stream().into(),
+        Err(err) => err.into_compile_error().into(),
+    }
+}
