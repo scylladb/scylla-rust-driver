@@ -2683,6 +2683,56 @@ pub(super) mod tests {
     }
 
     #[test]
+    fn test_udt_no_name_check() {
+        #[derive(scylla_macros::DeserializeValue, PartialEq, Eq, Debug)]
+        #[scylla(crate = "crate", enforce_order, skip_name_checks)]
+        struct Udt<'a> {
+            a: &'a str,
+            #[scylla(skip)]
+            x: String,
+            b: Option<i32>,
+        }
+
+        // UDT fields in correct same order
+        {
+            let udt = UdtSerializer::new()
+                .field("The quick brown fox".as_bytes())
+                .field(&42i32.to_be_bytes())
+                .finalize();
+            let typ = udt_def_with_fields([("a", ColumnType::Text), ("b", ColumnType::Int)]);
+
+            let udt = deserialize::<Udt<'_>>(&typ, &udt).unwrap();
+            assert_eq!(
+                udt,
+                Udt {
+                    a: "The quick brown fox",
+                    x: String::new(),
+                    b: Some(42),
+                }
+            );
+        }
+
+        // Correct order of UDT fields, but different names - should still succeed
+        {
+            let udt = UdtSerializer::new()
+                .field("The quick brown fox".as_bytes())
+                .field(&42i32.to_be_bytes())
+                .finalize();
+            let typ = udt_def_with_fields([("k", ColumnType::Text), ("l", ColumnType::Int)]);
+
+            let udt = deserialize::<Udt<'_>>(&typ, &udt).unwrap();
+            assert_eq!(
+                udt,
+                Udt {
+                    a: "The quick brown fox",
+                    x: String::new(),
+                    b: Some(42),
+                }
+            );
+        }
+    }
+
+    #[test]
     fn test_custom_type_parser() {
         #[derive(Default, Debug, PartialEq, Eq)]
         struct SwappedPair<A, B>(B, A);
