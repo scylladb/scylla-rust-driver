@@ -10,6 +10,13 @@ use super::{DeserializeCommonFieldAttrs, DeserializeCommonStructAttrs};
 struct StructAttrs {
     #[darling(rename = "crate")]
     crate_path: Option<syn::Path>,
+
+    // If true, then the type checking code will require the order of the fields
+    // to be the same in both the Rust struct and the columns. This allows the
+    // deserialization to be slightly faster because looking struct fields up
+    // by name can be avoided, though it is less convenient.
+    #[darling(default)]
+    enforce_order: bool,
 }
 
 impl DeserializeCommonStructAttrs for StructAttrs {
@@ -91,11 +98,181 @@ type StructDesc = super::StructDescForDeserialize<StructAttrs, Field>;
 
 impl StructDesc {
     fn generate_type_check_method(&self) -> syn::ImplItemFn {
-        TypeCheckUnorderedGenerator(self).generate()
+        if self.attrs.enforce_order {
+            TypeCheckAssumeOrderGenerator(self).generate()
+        } else {
+            TypeCheckUnorderedGenerator(self).generate()
+        }
     }
 
     fn generate_deserialize_method(&self) -> syn::ImplItemFn {
-        DeserializeUnorderedGenerator(self).generate()
+        if self.attrs.enforce_order {
+            DeserializeAssumeOrderGenerator(self).generate()
+        } else {
+            DeserializeUnorderedGenerator(self).generate()
+        }
+    }
+}
+
+struct TypeCheckAssumeOrderGenerator<'sd>(&'sd StructDesc);
+
+impl<'sd> TypeCheckAssumeOrderGenerator<'sd> {
+    fn generate_name_verification(
+        &self,
+        field_index: usize, //  These two indices can be different because of `skip` attribute
+        column_index: usize, // applied to some field.
+        field: &Field,
+        column_spec: &syn::Ident,
+    ) -> syn::Expr {
+        let macro_internal = self.0.struct_attrs().macro_internal_path();
+        let rust_field_name = field.cql_name_literal();
+
+        parse_quote! {
+            if #column_spec.name != #rust_field_name {
+                return ::std::result::Result::Err(
+                    #macro_internal::mk_row_typck_err::<Self>(
+                        column_types_iter(),
+                        #macro_internal::DeserBuiltinRowTypeCheckErrorKind::ColumnNameMismatch {
+                            field_index: #field_index,
+                            column_index: #column_index,
+                            rust_column_name: #rust_field_name,
+                            db_column_name: ::std::clone::Clone::clone(&#column_spec.name),
+                        }
+                    )
+                );
+            }
+        }
+    }
+
+    fn generate(&self) -> syn::ImplItemFn {
+        // The generated method will check that the order and the types
+        // of the columns correspond fields' names/types.
+
+        let macro_internal = self.0.struct_attrs().macro_internal_path();
+        let constraint_lifetime = self.0.constraint_lifetime();
+
+        let required_fields_iter = || {
+            self.0
+                .fields()
+                .iter()
+                .enumerate()
+                .filter(|(_, f)| f.is_required())
+        };
+        let required_fields_count = required_fields_iter().count();
+        let required_fields_idents: Vec<_> = (0..required_fields_count)
+            .map(|i| quote::format_ident!("f_{}", i))
+            .collect();
+        let name_verifications = required_fields_iter()
+            .zip(required_fields_idents.iter().enumerate())
+            .map(|((field_idx, field), (col_idx, fidents))| {
+                self.generate_name_verification(field_idx, col_idx, field, fidents)
+            });
+
+        let required_fields_deserializers =
+            required_fields_iter().map(|(_, f)| f.deserialize_target());
+        let numbers = 0usize..;
+
+        parse_quote! {
+            fn type_check(
+                specs: &[#macro_internal::ColumnSpec],
+            ) -> ::std::result::Result<(), #macro_internal::TypeCheckError> {
+                let column_types_iter = || specs.iter().map(|spec| ::std::clone::Clone::clone(&spec.typ));
+
+                match specs {
+                    [#(#required_fields_idents),*] => {
+                        #(
+                            // Verify the name
+                            #name_verifications
+
+                            // Verify the type
+                            <#required_fields_deserializers as #macro_internal::DeserializeValue<#constraint_lifetime>>::type_check(&#required_fields_idents.typ)
+                                .map_err(|err| #macro_internal::mk_row_typck_err::<Self>(
+                                    column_types_iter(),
+                                    #macro_internal::DeserBuiltinRowTypeCheckErrorKind::ColumnTypeCheckFailed {
+                                        column_index: #numbers,
+                                        column_name: ::std::clone::Clone::clone(&#required_fields_idents.name),
+                                        err,
+                                    }
+                                ))?;
+                        )*
+                        ::std::result::Result::Ok(())
+                    },
+                    _ => ::std::result::Result::Err(
+                        #macro_internal::mk_row_typck_err::<Self>(
+                            column_types_iter(),
+                            #macro_internal::DeserBuiltinRowTypeCheckErrorKind::WrongColumnCount {
+                                rust_cols: #required_fields_count,
+                                cql_cols: specs.len(),
+                            }
+                        ),
+                    ),
+                }
+            }
+        }
+    }
+}
+
+struct DeserializeAssumeOrderGenerator<'sd>(&'sd StructDesc);
+
+impl<'sd> DeserializeAssumeOrderGenerator<'sd> {
+    fn generate_finalize_field(&self, field_index: usize, field: &Field) -> syn::Expr {
+        if field.skip {
+            // Skipped fields are initialized with Default::default()
+            return parse_quote!(::std::default::Default::default());
+        }
+
+        let macro_internal = self.0.struct_attrs().macro_internal_path();
+        let cql_name_literal = field.cql_name_literal();
+        let deserializer = field.deserialize_target();
+        let constraint_lifetime = self.0.constraint_lifetime();
+
+        parse_quote!(
+            {
+                let col = row.next()
+                    .expect("Typecheck should have prevented this scenario! Too few columns in the serialized data.")
+                    .map_err(#macro_internal::row_deser_error_replace_rust_name::<Self>)?;
+
+                if col.spec.name.as_str() != #cql_name_literal {
+                    panic!(
+                        "Typecheck should have prevented this scenario - field-column name mismatch! Rust field name {}, CQL column name {}",
+                        #cql_name_literal,
+                        col.spec.name.as_str()
+                    );
+                }
+
+                <#deserializer as #macro_internal::DeserializeValue<#constraint_lifetime>>::deserialize(&col.spec.typ, col.slice)
+                    .map_err(|err| #macro_internal::mk_row_deser_err::<Self>(
+                        #macro_internal::BuiltinRowDeserializationErrorKind::ColumnDeserializationFailed {
+                            column_index: #field_index,
+                            column_name: <_ as std::clone::Clone>::clone(&col.spec.name),
+                            err,
+                        }
+                    ))?
+            }
+        )
+    }
+
+    fn generate(&self) -> syn::ImplItemFn {
+        let macro_internal = self.0.struct_attrs().macro_internal_path();
+        let constraint_lifetime = self.0.constraint_lifetime();
+
+        let fields = self.0.fields();
+        let field_idents = fields.iter().map(|f| f.ident.as_ref().unwrap());
+        let field_finalizers = fields
+            .iter()
+            .enumerate()
+            .map(|(field_idx, f)| self.generate_finalize_field(field_idx, f));
+
+        parse_quote! {
+            fn deserialize(
+                #[allow(unused_mut)]
+                mut row: #macro_internal::ColumnIterator<#constraint_lifetime>,
+            ) -> ::std::result::Result<Self, #macro_internal::DeserializationError> {
+                ::std::result::Result::Ok(Self {
+                    #(#field_idents: #field_finalizers,)*
+                })
+            }
+        }
     }
 }
 

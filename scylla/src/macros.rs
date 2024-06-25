@@ -400,6 +400,16 @@ pub use scylla_macros::DeserializeValue;
 /// macro itself, so in those cases the user must provide an alternative path
 /// to either the `scylla` or `scylla-cql` crate.
 ///
+/// `#[scylla(enforce_order)]`
+///
+/// By default, the generated deserialization code will be insensitive
+/// to the column order - when processing a column, the corresponding Rust field
+/// will be looked up and the column will be deserialized based on its type.
+/// However, if the column order and the Rust field order is known to be the
+/// same,  then the `enforce_order` annotation can be used so that a more
+/// efficient implementation that does not perform lookups is be generated.
+/// The generated code will still check that the column and field names match.
+///
 /// ## Field attributes
 ///
 /// `#[scylla(skip)]`
