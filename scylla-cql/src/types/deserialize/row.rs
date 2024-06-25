@@ -580,6 +580,11 @@ mod tests {
     #[scylla(crate = crate)]
     struct TestUdtWithNoFieldsUnordered {}
 
+    #[allow(unused)]
+    #[derive(DeserializeRow)]
+    #[scylla(crate = crate, enforce_order)]
+    struct TestUdtWithNoFieldsOrdered {}
+
     #[test]
     fn test_struct_deserialization_loose_ordering() {
         #[derive(DeserializeRow, PartialEq, Eq, Debug)]
@@ -616,6 +621,43 @@ mod tests {
                 c: String::new(),
             }
         );
+
+        // Missing column
+        let specs = &[spec("a", ColumnType::Text)];
+        MyRow::type_check(specs).unwrap_err();
+
+        // Wrong column type
+        let specs = &[spec("a", ColumnType::Int), spec("b", ColumnType::Int)];
+        MyRow::type_check(specs).unwrap_err();
+    }
+
+    #[test]
+    fn test_struct_deserialization_strict_ordering() {
+        #[derive(DeserializeRow, PartialEq, Eq, Debug)]
+        #[scylla(crate = "crate", enforce_order)]
+        struct MyRow<'a> {
+            a: &'a str,
+            b: Option<i32>,
+            #[scylla(skip)]
+            c: String,
+        }
+
+        // Correct order of columns
+        let specs = &[spec("a", ColumnType::Text), spec("b", ColumnType::Int)];
+        let byts = serialize_cells([val_str("abc"), val_int(123)]);
+        let row = deserialize::<MyRow<'_>>(specs, &byts).unwrap();
+        assert_eq!(
+            row,
+            MyRow {
+                a: "abc",
+                b: Some(123),
+                c: String::new(),
+            }
+        );
+
+        // Wrong order of columns
+        let specs = &[spec("b", ColumnType::Int), spec("a", ColumnType::Text)];
+        MyRow::type_check(specs).unwrap_err();
 
         // Missing column
         let specs = &[spec("a", ColumnType::Text)];
