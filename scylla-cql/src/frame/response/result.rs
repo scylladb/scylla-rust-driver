@@ -1,7 +1,7 @@
 use crate::cql_to_rust::{FromRow, FromRowError};
 use crate::frame::frame_errors::{
-    ColumnSpecParseError, ColumnSpecParseErrorKind, CqlTypeParseError, SchemaChangeEventParseError,
-    SetKeyspaceParseError, TableSpecParseError,
+    ColumnSpecParseError, ColumnSpecParseErrorKind, CqlTypeParseError, ResultMetadataParseError,
+    SchemaChangeEventParseError, SetKeyspaceParseError, TableSpecParseError,
 };
 use crate::frame::response::event::SchemaChangeEvent;
 use crate::frame::value::{
@@ -607,16 +607,23 @@ fn deser_col_specs(
     Ok(col_specs)
 }
 
-fn deser_result_metadata(buf: &mut &[u8]) -> StdResult<ResultMetadata, ParseError> {
-    let flags = types::read_int(buf)?;
+fn deser_result_metadata(buf: &mut &[u8]) -> StdResult<ResultMetadata, ResultMetadataParseError> {
+    let flags = types::read_int(buf)
+        .map_err(|err| ResultMetadataParseError::FlagsParseError(err.into()))?;
     let global_tables_spec = flags & 0x0001 != 0;
     let has_more_pages = flags & 0x0002 != 0;
     let no_metadata = flags & 0x0004 != 0;
 
-    let col_count = types::read_int_length(buf)?;
+    let col_count =
+        types::read_int_length(buf).map_err(ResultMetadataParseError::ColumnCountParseError)?;
 
     let paging_state = if has_more_pages {
-        Some(types::read_bytes(buf)?.to_owned().into())
+        Some(
+            types::read_bytes(buf)
+                .map_err(ResultMetadataParseError::PagingStateParseError)?
+                .to_owned()
+                .into(),
+        )
     } else {
         None
     };
@@ -644,18 +651,25 @@ fn deser_result_metadata(buf: &mut &[u8]) -> StdResult<ResultMetadata, ParseErro
     })
 }
 
-fn deser_prepared_metadata(buf: &mut &[u8]) -> StdResult<PreparedMetadata, ParseError> {
-    let flags = types::read_int(buf)?;
+fn deser_prepared_metadata(
+    buf: &mut &[u8],
+) -> StdResult<PreparedMetadata, ResultMetadataParseError> {
+    let flags = types::read_int(buf)
+        .map_err(|err| ResultMetadataParseError::FlagsParseError(err.into()))?;
     let global_tables_spec = flags & 0x0001 != 0;
 
-    let col_count = types::read_int_length(buf)?;
+    let col_count =
+        types::read_int_length(buf).map_err(ResultMetadataParseError::ColumnCountParseError)?;
 
-    let pk_count: usize = types::read_int_length(buf)?;
+    let pk_count: usize =
+        types::read_int_length(buf).map_err(ResultMetadataParseError::PkCountParseError)?;
 
     let mut pk_indexes = Vec::with_capacity(pk_count);
     for i in 0..pk_count {
         pk_indexes.push(PartitionKeyIndex {
-            index: types::read_short(buf)? as u16,
+            index: types::read_short(buf)
+                .map_err(|err| ResultMetadataParseError::PkIndexParseError(err.into()))?
+                as u16,
             sequence: i as u16,
         });
     }
