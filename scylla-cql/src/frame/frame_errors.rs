@@ -39,6 +39,8 @@ pub enum ParseError {
     SetKeyspaceParseError(#[from] SetKeyspaceParseError),
     #[error("Failed to deserialize schema change event: {0}")]
     SchemaChangeEventParseError(#[from] SchemaChangeEventParseError),
+    #[error("Failed to deserialize a table spec: {0}")]
+    TableSpecParseError(#[from] TableSpecParseError),
     #[error("Low-level serialization failed: {0}")]
     LowLevelSerializationError(#[from] LowLevelSerializationError),
     #[error("Low-level deserialization failed: {0}")]
@@ -91,6 +93,17 @@ pub enum SchemaChangeEventParseError {
     FunctionArgumentParseError(LowLevelDeserializationError),
     #[error("Unknown target of schema change: {0}")]
     UnknownTargetOfSchemaChange(String),
+}
+
+/// An error type returned when deserialization
+/// of table specification fails.
+#[non_exhaustive]
+#[derive(Error, Debug)]
+pub enum TableSpecParseError {
+    #[error("Malformed keyspace name: {0}")]
+    KeyspaceNameParseError(LowLevelDeserializationError),
+    #[error("Malformed table name: {0}")]
+    TableNameParseError(LowLevelDeserializationError),
 }
 
 /// A low level serialization error.
