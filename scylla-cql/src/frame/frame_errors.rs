@@ -41,6 +41,8 @@ pub enum ParseError {
     SchemaChangeEventParseError(#[from] SchemaChangeEventParseError),
     #[error("Failed to deserialize a table spec: {0}")]
     TableSpecParseError(#[from] TableSpecParseError),
+    #[error(transparent)]
+    TypeParseError(#[from] TypeParseError),
     #[error("Low-level serialization failed: {0}")]
     LowLevelSerializationError(#[from] LowLevelSerializationError),
     #[error("Low-level deserialization failed: {0}")]
@@ -53,8 +55,6 @@ pub enum ParseError {
     DeserializationError(#[from] DeserializationError),
     #[error(transparent)]
     IoError(#[from] std::io::Error),
-    #[error("type not yet implemented, id: {0}")]
-    TypeNotImplemented(u16),
     #[error(transparent)]
     SerializeValuesError(#[from] SerializeValuesError),
     #[error(transparent)]
@@ -104,6 +104,28 @@ pub enum TableSpecParseError {
     KeyspaceNameParseError(LowLevelDeserializationError),
     #[error("Malformed table name: {0}")]
     TableNameParseError(LowLevelDeserializationError),
+}
+
+/// An error type returned when deserialization of CQL type name fails.
+#[non_exhaustive]
+#[derive(Error, Debug)]
+pub enum TypeParseError {
+    #[error("Malformed type id: {0}")]
+    TypeIdParseError(LowLevelDeserializationError),
+    #[error("Malformed custom type name: {0}")]
+    CustomTypeNameParseError(LowLevelDeserializationError),
+    #[error("Malformed keyspace name of UDT: {0}")]
+    UdtKeyspaceNameParseError(LowLevelDeserializationError),
+    #[error("Malformed UDT name: {0}")]
+    UdtNameParseError(LowLevelDeserializationError),
+    #[error("Malformed UDT fields count: {0}")]
+    UdtFieldsCountParseError(LowLevelDeserializationError),
+    #[error("Malformed UDT's field name: {0}")]
+    UdtFieldNameParseError(LowLevelDeserializationError),
+    #[error("Malformed tuple length: {0}")]
+    TupleLengthParseError(LowLevelDeserializationError),
+    #[error("Type not yet implemented, id: {0}")]
+    TypeNotImplemented(u16),
 }
 
 /// A low level serialization error.
