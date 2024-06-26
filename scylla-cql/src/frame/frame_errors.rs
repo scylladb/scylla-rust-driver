@@ -39,6 +39,8 @@ pub enum ParseError {
     SetKeyspaceParseError(#[from] SetKeyspaceParseError),
     #[error("Schema change event deserialization failed: {0}")]
     SchemaChangeEventParseError(#[from] SchemaChangeEventParseError),
+    #[error("PREPARED response deserialization failed: {0}")]
+    PreparedParseError(#[from] PreparedParseError),
     #[error("Failed to deserialize result metadata: {0}")]
     ResultMetadataParseError(#[from] ResultMetadataParseError),
     #[error("Low-level deserialization failed: {0}")]
@@ -89,6 +91,19 @@ pub enum SchemaChangeEventParseError {
     FunctionArgumentParseError(LowLevelDeserializationError),
     #[error("Unknown target of schema change: {0}")]
     UnknownTargetOfSchemaChange(String),
+}
+
+/// An error type returned when deserialization
+/// of `RESULT::`Prepared` response fails.
+#[non_exhaustive]
+#[derive(Debug, Error)]
+pub enum PreparedParseError {
+    #[error("Malformed prepared statement's id length: {0}")]
+    IdLengthParseError(LowLevelDeserializationError),
+    #[error("Invalid result metadata: {0}")]
+    ResultMetadataParseError(ResultMetadataParseError),
+    #[error("Invalid prepared metadata: {0}")]
+    PreparedMetadataParseError(ResultMetadataParseError),
 }
 
 /// An error type returned when deserialization

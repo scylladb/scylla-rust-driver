@@ -1,7 +1,8 @@
 use crate::cql_to_rust::{FromRow, FromRowError};
 use crate::frame::frame_errors::{
-    ColumnSpecParseError, ColumnSpecParseErrorKind, CqlTypeParseError, ResultMetadataParseError,
-    SchemaChangeEventParseError, SetKeyspaceParseError, TableSpecParseError,
+    ColumnSpecParseError, ColumnSpecParseErrorKind, CqlTypeParseError, PreparedParseError,
+    ResultMetadataParseError, SchemaChangeEventParseError, SetKeyspaceParseError,
+    TableSpecParseError,
 };
 use crate::frame::response::event::SchemaChangeEvent;
 use crate::frame::value::{
@@ -904,12 +905,16 @@ fn deser_set_keyspace(buf: &mut &[u8]) -> StdResult<SetKeyspace, SetKeyspacePars
     Ok(SetKeyspace { keyspace_name })
 }
 
-fn deser_prepared(buf: &mut &[u8]) -> StdResult<Prepared, ParseError> {
-    let id_len = types::read_short(buf)? as usize;
+fn deser_prepared(buf: &mut &[u8]) -> StdResult<Prepared, PreparedParseError> {
+    let id_len = types::read_short(buf)
+        .map_err(|err| PreparedParseError::IdLengthParseError(err.into()))?
+        as usize;
     let id: Bytes = buf[0..id_len].to_owned().into();
     buf.advance(id_len);
-    let prepared_metadata = deser_prepared_metadata(buf)?;
-    let result_metadata = deser_result_metadata(buf)?;
+    let prepared_metadata =
+        deser_prepared_metadata(buf).map_err(PreparedParseError::PreparedMetadataParseError)?;
+    let result_metadata =
+        deser_result_metadata(buf).map_err(PreparedParseError::ResultMetadataParseError)?;
     Ok(Prepared {
         id,
         prepared_metadata,
