@@ -15,7 +15,7 @@ use crate::types::deserialize::value::{
 use crate::types::deserialize::{DeserializationError, FrameSlice};
 use bytes::{Buf, Bytes};
 use std::borrow::Cow;
-use std::{convert::TryInto, net::IpAddr, result::Result as StdResult, str};
+use std::{net::IpAddr, result::Result as StdResult, str};
 use uuid::Uuid;
 
 #[derive(Debug)]
@@ -613,7 +613,7 @@ fn deser_result_metadata(buf: &mut &[u8]) -> StdResult<ResultMetadata, ParseErro
     let has_more_pages = flags & 0x0002 != 0;
     let no_metadata = flags & 0x0004 != 0;
 
-    let col_count: usize = types::read_int(buf)?.try_into()?;
+    let col_count = types::read_int_length(buf)?;
 
     let paging_state = if has_more_pages {
         Some(types::read_bytes(buf)?.to_owned().into())
@@ -650,7 +650,7 @@ fn deser_prepared_metadata(buf: &mut &[u8]) -> StdResult<PreparedMetadata, Parse
 
     let col_count = types::read_int_length(buf)?;
 
-    let pk_count: usize = types::read_int(buf)?.try_into()?;
+    let pk_count: usize = types::read_int_length(buf)?;
 
     let mut pk_indexes = Vec::with_capacity(pk_count);
     for i in 0..pk_count {
@@ -864,7 +864,7 @@ fn deser_rows(
 
     let original_size = buf.len();
 
-    let rows_count: usize = types::read_int(buf)?.try_into()?;
+    let rows_count: usize = types::read_int_length(buf)?;
 
     let raw_rows_iter = RowIterator::new(
         rows_count,
