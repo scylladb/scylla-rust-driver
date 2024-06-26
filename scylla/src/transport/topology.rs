@@ -184,7 +184,7 @@ enum PreCqlType {
         type_: PreCollectionType,
     },
     Tuple(Vec<PreCqlType>),
-    Vector(Box<PreCqlType>, u32),
+    Vector(Box<PreCqlType>, u16),
     UserDefinedType {
         frozen: bool,
         name: String,
@@ -236,7 +236,7 @@ pub enum CqlType {
         type_: CollectionType,
     },
     Tuple(Vec<CqlType>),
-    Vector(Box<CqlType>, u32),
+    Vector(Box<CqlType>, u16),
     UserDefinedType {
         frozen: bool,
         // Using Arc here in order not to have many copies of the same definition
@@ -1619,7 +1619,7 @@ fn parse_cql_type(p: ParserState<'_>) -> ParseResult<(PreCqlType, ParserState<'_
     } else if let Ok(p) = p.accept("vector<") {
         let (inner_type, p) = parse_cql_type(p)?;
         let p = p.accept(",")?.skip_white();
-        let (dim, p) = parse_u32(p)?;
+        let (dim, p) = parse_u16(p)?;
         let p = p.accept(">")?;
         Ok((PreCqlType::Vector(Box::new(inner_type), dim), p))
     } else if let Ok((typ, p)) = parse_native_type(p) {
@@ -1653,7 +1653,7 @@ fn parse_user_defined_type(p: ParserState) -> ParseResult<(&str, ParserState)> {
     Ok((tok, p))
 }
 
-fn parse_u32(p: ParserState) -> ParseResult<(u32, ParserState)> {
+fn parse_u16(p: ParserState) -> ParseResult<(u16, ParserState)> {
     let (tok, p) = p.take_while(|c| c.is_numeric());
     if let Ok(value) = tok.parse() {
         Ok((value, p))
