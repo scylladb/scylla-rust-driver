@@ -1046,5 +1046,244 @@ mod tests {
                 }
             }
         }
+
+        // Strict ordering
+        {
+            #[derive(scylla_macros::DeserializeRow, PartialEq, Eq, Debug)]
+            #[scylla(crate = "crate", enforce_order)]
+            struct MyRow<'a> {
+                a: &'a str,
+                #[scylla(skip)]
+                x: String,
+                b: Option<i32>,
+                c: bool,
+            }
+
+            // Type check errors
+            {
+                // Too few columns
+                {
+                    let specs = [spec("a", ColumnType::Text)];
+                    let err = MyRow::type_check(&specs).unwrap_err();
+                    let err = get_typck_err_inner(err.0.as_ref());
+                    assert_eq!(err.rust_name, std::any::type_name::<MyRow>());
+                    assert_eq!(err.cql_types, specs_to_types(&specs));
+                    let BuiltinTypeCheckErrorKind::WrongColumnCount {
+                        rust_cols,
+                        cql_cols,
+                    } = err.kind
+                    else {
+                        panic!("unexpected error kind: {:?}", err.kind)
+                    };
+                    assert_eq!(rust_cols, 3);
+                    assert_eq!(cql_cols, 1);
+                }
+
+                // Excess columns
+                {
+                    let specs = [
+                        spec("a", ColumnType::Text),
+                        spec("b", ColumnType::Int),
+                        spec("c", ColumnType::Boolean),
+                        spec("d", ColumnType::Counter),
+                    ];
+                    let err = MyRow::type_check(&specs).unwrap_err();
+                    let err = get_typck_err_inner(err.0.as_ref());
+                    assert_eq!(err.rust_name, std::any::type_name::<MyRow>());
+                    assert_eq!(err.cql_types, specs_to_types(&specs));
+                    let BuiltinTypeCheckErrorKind::WrongColumnCount {
+                        rust_cols,
+                        cql_cols,
+                    } = err.kind
+                    else {
+                        panic!("unexpected error kind: {:?}", err.kind)
+                    };
+                    assert_eq!(rust_cols, 3);
+                    assert_eq!(cql_cols, 4);
+                }
+
+                // Renamed column name mismatch
+                {
+                    let specs = [
+                        spec("a", ColumnType::Text),
+                        spec("b", ColumnType::Int),
+                        spec("d", ColumnType::Boolean),
+                    ];
+                    let err = MyRow::type_check(&specs).unwrap_err();
+                    let err = get_typck_err_inner(err.0.as_ref());
+                    assert_eq!(err.rust_name, std::any::type_name::<MyRow>());
+                    let BuiltinTypeCheckErrorKind::ColumnNameMismatch {
+                        field_index,
+                        column_index,
+                        rust_column_name,
+                        ref db_column_name,
+                    } = err.kind
+                    else {
+                        panic!("unexpected error kind: {:?}", err.kind)
+                    };
+                    assert_eq!(field_index, 3);
+                    assert_eq!(rust_column_name, "c");
+                    assert_eq!(column_index, 2);
+                    assert_eq!(db_column_name.as_str(), "d");
+                }
+
+                // Columns switched - column name mismatch
+                {
+                    let specs = [
+                        spec("b", ColumnType::Int),
+                        spec("a", ColumnType::Text),
+                        spec("c", ColumnType::Boolean),
+                    ];
+                    let err = MyRow::type_check(&specs).unwrap_err();
+                    let err = get_typck_err_inner(err.0.as_ref());
+                    assert_eq!(err.rust_name, std::any::type_name::<MyRow>());
+                    assert_eq!(err.cql_types, specs_to_types(&specs));
+                    let BuiltinTypeCheckErrorKind::ColumnNameMismatch {
+                        field_index,
+                        column_index,
+                        rust_column_name,
+                        ref db_column_name,
+                    } = err.kind
+                    else {
+                        panic!("unexpected error kind: {:?}", err.kind)
+                    };
+                    assert_eq!(field_index, 0);
+                    assert_eq!(column_index, 0);
+                    assert_eq!(rust_column_name, "a");
+                    assert_eq!(db_column_name.as_str(), "b");
+                }
+
+                // Column incompatible types - column type check failed
+                {
+                    let specs = [
+                        spec("a", ColumnType::Blob),
+                        spec("b", ColumnType::Int),
+                        spec("c", ColumnType::Boolean),
+                    ];
+                    let err = MyRow::type_check(&specs).unwrap_err();
+                    let err = get_typck_err_inner(err.0.as_ref());
+                    assert_eq!(err.rust_name, std::any::type_name::<MyRow>());
+                    assert_eq!(err.cql_types, specs_to_types(&specs));
+                    let BuiltinTypeCheckErrorKind::ColumnTypeCheckFailed {
+                        column_index,
+                        ref column_name,
+                        ref err,
+                    } = err.kind
+                    else {
+                        panic!("unexpected error kind: {:?}", err.kind)
+                    };
+                    assert_eq!(column_index, 0);
+                    assert_eq!(column_name.as_str(), "a");
+                    let err = value::tests::get_typeck_err_inner(err.0.as_ref());
+                    assert_eq!(err.rust_name, std::any::type_name::<&str>());
+                    assert_eq!(err.cql_type, ColumnType::Blob);
+                    assert_matches!(
+                        err.kind,
+                        value::BuiltinTypeCheckErrorKind::MismatchedType {
+                            expected: &[ColumnType::Ascii, ColumnType::Text]
+                        }
+                    );
+                }
+            }
+
+            // Deserialization errors
+            {
+                // Too few columns
+                {
+                    let specs = [
+                        spec("a", ColumnType::Text),
+                        spec("b", ColumnType::Int),
+                        spec("c", ColumnType::Boolean),
+                    ];
+
+                    let err = MyRow::deserialize(ColumnIterator::new(
+                        &specs,
+                        FrameSlice::new(&serialize_cells([Some([true as u8])])),
+                    ))
+                    .unwrap_err();
+                    let err = get_deser_err(&err);
+                    assert_eq!(err.rust_name, std::any::type_name::<MyRow>());
+                    let BuiltinDeserializationErrorKind::RawColumnDeserializationFailed {
+                        column_index,
+                        ref column_name,
+                        ..
+                    } = err.kind
+                    else {
+                        panic!("unexpected error kind: {:?}", err.kind)
+                    };
+                    assert_eq!(column_index, 1);
+                    assert_eq!(column_name, "b");
+                }
+
+                // Bad field format
+                {
+                    let typ = [
+                        spec("a", ColumnType::Text),
+                        spec("b", ColumnType::Int),
+                        spec("c", ColumnType::Boolean),
+                    ];
+
+                    let row_bytes = serialize_cells(
+                        [(&b"alamakota"[..]), &42_i32.to_be_bytes(), &[true as u8]].map(Some),
+                    );
+
+                    let row_bytes_too_short = row_bytes.slice(..row_bytes.len() - 1);
+                    assert!(row_bytes.len() > row_bytes_too_short.len());
+
+                    let err = deserialize::<MyRow>(&typ, &row_bytes_too_short).unwrap_err();
+
+                    let err = get_deser_err(&err);
+                    assert_eq!(err.rust_name, std::any::type_name::<MyRow>());
+                    let BuiltinDeserializationErrorKind::RawColumnDeserializationFailed {
+                        column_index,
+                        ref column_name,
+                        ..
+                    } = err.kind
+                    else {
+                        panic!("unexpected error kind: {:?}", err.kind)
+                    };
+                    assert_eq!(column_index, 2);
+                    assert_eq!(column_name, "c");
+                }
+
+                // Column deserialization failed
+                {
+                    let specs = [
+                        spec("a", ColumnType::Text),
+                        spec("b", ColumnType::Int),
+                        spec("c", ColumnType::Boolean),
+                    ];
+
+                    let row_bytes = serialize_cells(
+                        [&b"alamakota"[..], &42_i64.to_be_bytes(), &[true as u8]].map(Some),
+                    );
+
+                    let err = deserialize::<MyRow>(&specs, &row_bytes).unwrap_err();
+
+                    let err = get_deser_err(&err);
+                    assert_eq!(err.rust_name, std::any::type_name::<MyRow>());
+                    let BuiltinDeserializationErrorKind::ColumnDeserializationFailed {
+                        column_index: field_index,
+                        ref column_name,
+                        ref err,
+                    } = err.kind
+                    else {
+                        panic!("unexpected error kind: {:?}", err.kind)
+                    };
+                    assert_eq!(column_name.as_str(), "b");
+                    assert_eq!(field_index, 2);
+                    let err = value::tests::get_deser_err(err);
+                    assert_eq!(err.rust_name, std::any::type_name::<i32>());
+                    assert_eq!(err.cql_type, ColumnType::Int);
+                    assert_matches!(
+                        err.kind,
+                        value::BuiltinDeserializationErrorKind::ByteLengthMismatch {
+                            expected: 4,
+                            got: 8,
+                        }
+                    );
+                }
+            }
+        }
     }
 }
