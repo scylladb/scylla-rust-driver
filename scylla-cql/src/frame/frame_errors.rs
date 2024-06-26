@@ -39,6 +39,8 @@ pub enum ParseError {
     CqlResultParseError(#[from] CqlResultParseError),
     #[error("Failed to deserialize schema change event: {0}")]
     SchemaChangeEventParseError(#[from] SchemaChangeEventParseError),
+    #[error("Failed to deserialize cluster change event: {0}")]
+    ClusterChangeEventParseError(#[from] ClusterChangeEventParseError),
     #[error("Low-level serialization failed: {0}")]
     LowLevelSerializationError(#[from] LowLevelSerializationError),
     #[error("Low-level deserialization failed: {0}")]
@@ -107,6 +109,18 @@ pub enum SchemaChangeEventParseError {
     FunctionArgumentParseError(LowLevelDeserializationError),
     #[error("Unknown target of schema change: {0}")]
     UnknownTargetOfSchemaChange(String),
+}
+
+/// An error type returned when deserialization of [Status/Topology]ChangeEvent fails.
+#[non_exhaustive]
+#[derive(Error, Debug)]
+pub enum ClusterChangeEventParseError {
+    #[error("Malformed type of status change: {0}")]
+    TypeOfChangeParseError(LowLevelDeserializationError),
+    #[error("Malformed node address: {0}")]
+    NodeAddressParseError(LowLevelDeserializationError),
+    #[error("Unknown type of status change: {0}")]
+    UnknownTypeOfChange(String),
 }
 
 /// An error type returned when deserialization
