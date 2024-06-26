@@ -25,7 +25,8 @@ setupenv:
 setup:
 	$(POETRY) install
 	$(POETRY) update
-	cp -TLr source $(SOURCEDIR)
+	mkdir -p $(SOURCEDIR)
+	cp -RL source/* $(SOURCEDIR)
 	python _utils/prepare_sphinx_source.py _source
 
 # Clean commands
