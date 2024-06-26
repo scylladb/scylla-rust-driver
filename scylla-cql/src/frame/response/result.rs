@@ -1,5 +1,7 @@
 use crate::cql_to_rust::{FromRow, FromRowError};
-use crate::frame::frame_errors::{SchemaChangeEventParseError, SetKeyspaceParseError};
+use crate::frame::frame_errors::{
+    SchemaChangeEventParseError, SetKeyspaceParseError, TableSpecParseError,
+};
 use crate::frame::response::event::SchemaChangeEvent;
 use crate::frame::value::{
     Counter, CqlDate, CqlDecimal, CqlDuration, CqlTime, CqlTimestamp, CqlTimeuuid, CqlVarint,
@@ -478,9 +480,13 @@ pub enum Result {
     SchemaChange(SchemaChange),
 }
 
-fn deser_table_spec(buf: &mut &[u8]) -> StdResult<TableSpec<'static>, ParseError> {
-    let ks_name = types::read_string(buf)?.to_owned();
-    let table_name = types::read_string(buf)?.to_owned();
+fn deser_table_spec(buf: &mut &[u8]) -> StdResult<TableSpec<'static>, TableSpecParseError> {
+    let ks_name = types::read_string(buf)
+        .map_err(TableSpecParseError::MalformedKeyspaceName)?
+        .to_owned();
+    let table_name = types::read_string(buf)
+        .map_err(TableSpecParseError::MalformedTableName)?
+        .to_owned();
     Ok(TableSpec::owned(ks_name, table_name))
 }
 
