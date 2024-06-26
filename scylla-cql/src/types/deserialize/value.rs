@@ -1573,7 +1573,7 @@ pub struct BuiltinDeserializationError {
     pub kind: BuiltinDeserializationErrorKind,
 }
 
-fn mk_deser_err<T>(
+pub(crate) fn mk_deser_err<T>(
     cql_type: &ColumnType,
     kind: impl Into<BuiltinDeserializationErrorKind>,
 ) -> DeserializationError {
