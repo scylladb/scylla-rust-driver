@@ -1,7 +1,7 @@
 use crate::cql_to_rust::{FromRow, FromRowError};
 use crate::frame::frame_errors::{
     ColumnSpecParseError, ColumnSpecParseErrorKind, CqlTypeParseError, PreparedParseError,
-    ResultMetadataParseError, SchemaChangeEventParseError, SetKeyspaceParseError,
+    ResultMetadataParseError, RowsParseError, SchemaChangeEventParseError, SetKeyspaceParseError,
     TableSpecParseError,
 };
 use crate::frame::response::event::SchemaChangeEvent;
@@ -855,7 +855,7 @@ pub fn deser_cql_value(
 fn deser_rows(
     buf: &mut &[u8],
     cached_metadata: Option<&ResultMetadata>,
-) -> StdResult<Rows, ParseError> {
+) -> StdResult<Rows, RowsParseError> {
     let server_metadata = deser_result_metadata(buf)?;
 
     let metadata = match cached_metadata {
@@ -867,11 +867,10 @@ fn deser_rows(
         None => {
             // No cached_metadata provided. Server is supposed to provide the result metadata.
             if server_metadata.col_count != server_metadata.col_specs.len() {
-                return Err(ParseError::BadIncomingData(format!(
-                    "Bad result metadata provided in the response. Expected {} column specifications, received: {}",
-                    server_metadata.col_count,
-                    server_metadata.col_specs.len()
-                )));
+                return Err(RowsParseError::ColumnCountMismatch {
+                    col_count: server_metadata.col_count,
+                    col_specs_count: server_metadata.col_specs.len(),
+                });
             }
             server_metadata
         }
@@ -879,7 +878,8 @@ fn deser_rows(
 
     let original_size = buf.len();
 
-    let rows_count: usize = types::read_int_length(buf)?;
+    let rows_count: usize =
+        types::read_int_length(buf).map_err(RowsParseError::RowsCountParseError)?;
 
     let raw_rows_iter = RowIterator::new(
         rows_count,
