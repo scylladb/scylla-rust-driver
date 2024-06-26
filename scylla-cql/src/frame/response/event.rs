@@ -1,4 +1,6 @@
-use crate::frame::frame_errors::{ParseError, SchemaChangeEventParseError};
+use crate::frame::frame_errors::{
+    ClusterChangeEventParseError, ParseError, SchemaChangeEventParseError,
+};
 use crate::frame::server_event_type::EventType;
 use crate::frame::types;
 use std::net::SocketAddr;
@@ -174,33 +176,35 @@ impl SchemaChangeEvent {
 }
 
 impl TopologyChangeEvent {
-    pub fn deserialize(buf: &mut &[u8]) -> Result<Self, ParseError> {
-        let type_of_change = types::read_string(buf)?;
-        let addr = types::read_inet(buf)?;
+    pub fn deserialize(buf: &mut &[u8]) -> Result<Self, ClusterChangeEventParseError> {
+        let type_of_change = types::read_string(buf)
+            .map_err(ClusterChangeEventParseError::TypeOfChangeParseError)?;
+        let addr =
+            types::read_inet(buf).map_err(ClusterChangeEventParseError::NodeAddressParseError)?;
 
         match type_of_change {
             "NEW_NODE" => Ok(Self::NewNode(addr)),
             "REMOVED_NODE" => Ok(Self::RemovedNode(addr)),
-            _ => Err(ParseError::BadIncomingData(format!(
-                "Invalid type of change ({}) in TopologyChangeEvent",
-                type_of_change
-            ))),
+            _ => Err(ClusterChangeEventParseError::UnknownTypeOfChange(
+                type_of_change.to_string(),
+            )),
         }
     }
 }
 
 impl StatusChangeEvent {
-    pub fn deserialize(buf: &mut &[u8]) -> Result<Self, ParseError> {
-        let type_of_change = types::read_string(buf)?;
-        let addr = types::read_inet(buf)?;
+    pub fn deserialize(buf: &mut &[u8]) -> Result<Self, ClusterChangeEventParseError> {
+        let type_of_change = types::read_string(buf)
+            .map_err(ClusterChangeEventParseError::TypeOfChangeParseError)?;
+        let addr =
+            types::read_inet(buf).map_err(ClusterChangeEventParseError::NodeAddressParseError)?;
 
         match type_of_change {
             "UP" => Ok(Self::Up(addr)),
             "DOWN" => Ok(Self::Down(addr)),
-            _ => Err(ParseError::BadIncomingData(format!(
-                "Invalid type of status change ({}) in StatusChangeEvent",
-                type_of_change
-            ))),
+            _ => Err(ClusterChangeEventParseError::UnknownTypeOfChange(
+                type_of_change.to_string(),
+            )),
         }
     }
 }
