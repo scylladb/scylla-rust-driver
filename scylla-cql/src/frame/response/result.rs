@@ -5,7 +5,9 @@ use crate::frame::value::{
 };
 use crate::frame::{frame_errors::ParseError, types};
 use crate::types::deserialize::result::{RowIterator, TypedRowIterator};
-use crate::types::deserialize::value::{DeserializeValue, MapIterator, UdtIterator};
+use crate::types::deserialize::value::{
+    mk_deser_err, BuiltinDeserializationErrorKind, DeserializeValue, MapIterator, UdtIterator,
+};
 use crate::types::deserialize::{DeserializationError, FrameSlice};
 use bytes::{Buf, Bytes};
 use std::borrow::Cow;
@@ -643,7 +645,10 @@ fn deser_prepared_metadata(buf: &mut &[u8]) -> StdResult<PreparedMetadata, Parse
     })
 }
 
-pub fn deser_cql_value(typ: &ColumnType, buf: &mut &[u8]) -> StdResult<CqlValue, ParseError> {
+pub fn deser_cql_value(
+    typ: &ColumnType,
+    buf: &mut &[u8],
+) -> StdResult<CqlValue, DeserializationError> {
     use ColumnType::*;
 
     if buf.is_empty() {
@@ -662,10 +667,10 @@ pub fn deser_cql_value(typ: &ColumnType, buf: &mut &[u8]) -> StdResult<CqlValue,
 
     Ok(match typ {
         Custom(type_str) => {
-            return Err(ParseError::BadIncomingData(format!(
-                "Support for custom types is not yet implemented: {}",
-                type_str
-            )));
+            return Err(mk_deser_err::<CqlValue>(
+                typ,
+                BuiltinDeserializationErrorKind::CustomTypeNotSupported(type_str.to_string()),
+            ))
         }
         Ascii => {
             let s = String::deserialize(typ, v)?;
@@ -784,16 +789,15 @@ pub fn deser_cql_value(typ: &ColumnType, buf: &mut &[u8]) -> StdResult<CqlValue,
         Tuple(type_names) => {
             let t = type_names
                 .iter()
-                .map(|typ| {
-                    types::read_bytes_opt(buf)
-                        .map_err(ParseError::from)
-                        .and_then(|v| {
-                            v.map(|v| {
-                                CqlValue::deserialize(typ, Some(FrameSlice::new_borrowed(v)))
-                                    .map_err(Into::into)
-                            })
-                            .transpose()
-                        })
+                .map(|typ| -> StdResult<_, DeserializationError> {
+                    let raw = types::read_bytes_opt(buf).map_err(|e| {
+                        mk_deser_err::<CqlValue>(
+                            typ,
+                            BuiltinDeserializationErrorKind::RawCqlBytesReadError(e),
+                        )
+                    })?;
+                    raw.map(|v| CqlValue::deserialize(typ, Some(FrameSlice::new_borrowed(v))))
+                        .transpose()
                 })
                 .collect::<StdResult<_, _>>()?;
             CqlValue::Tuple(t)
