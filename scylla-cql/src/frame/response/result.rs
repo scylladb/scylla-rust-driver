@@ -1,6 +1,7 @@
 use crate::cql_to_rust::{FromRow, FromRowError};
 use crate::frame::frame_errors::{
-    CqlTypeParseError, SchemaChangeEventParseError, SetKeyspaceParseError, TableSpecParseError,
+    ColumnSpecParseError, ColumnSpecParseErrorKind, CqlTypeParseError, SchemaChangeEventParseError,
+    SetKeyspaceParseError, TableSpecParseError,
 };
 use crate::frame::response::event::SchemaChangeEvent;
 use crate::frame::value::{
@@ -571,20 +572,32 @@ fn deser_type(buf: &mut &[u8]) -> StdResult<ColumnType, CqlTypeParseError> {
     })
 }
 
+fn mk_col_spec_parse_error(
+    col_idx: usize,
+    err: impl Into<ColumnSpecParseErrorKind>,
+) -> ColumnSpecParseError {
+    ColumnSpecParseError {
+        column_index: col_idx,
+        kind: err.into(),
+    }
+}
+
 fn deser_col_specs(
     buf: &mut &[u8],
     global_table_spec: &Option<TableSpec<'static>>,
     col_count: usize,
-) -> StdResult<Vec<ColumnSpec>, ParseError> {
+) -> StdResult<Vec<ColumnSpec>, ColumnSpecParseError> {
     let mut col_specs = Vec::with_capacity(col_count);
-    for _ in 0..col_count {
+    for col_idx in 0..col_count {
         let table_spec = if let Some(spec) = global_table_spec {
             spec.clone()
         } else {
-            deser_table_spec(buf)?
+            deser_table_spec(buf).map_err(|err| mk_col_spec_parse_error(col_idx, err))?
         };
-        let name = types::read_string(buf)?.to_owned();
-        let typ = deser_type(buf)?;
+        let name = types::read_string(buf)
+            .map_err(|err| mk_col_spec_parse_error(col_idx, err))?
+            .to_owned();
+        let typ = deser_type(buf).map_err(|err| mk_col_spec_parse_error(col_idx, err))?;
         col_specs.push(ColumnSpec {
             table_spec,
             name,

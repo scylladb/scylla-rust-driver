@@ -41,8 +41,8 @@ pub enum ParseError {
     SchemaChangeEventParseError(#[from] SchemaChangeEventParseError),
     #[error("Table spec deserialization failed: {0}")]
     TableSpecParseError(#[from] TableSpecParseError),
-    #[error(transparent)]
-    TypeParseError(#[from] CqlTypeParseError),
+    #[error("Failed to deserialize column spec: {0}")]
+    ColumnSpecParseError(#[from] ColumnSpecParseError),
     #[error("Low-level deserialization failed: {0}")]
     LowLevelDeserializationError(#[from] LowLevelDeserializationError),
     #[error("Could not serialize frame: {0}")]
@@ -102,6 +102,29 @@ pub enum TableSpecParseError {
     MalformedKeyspaceName(LowLevelDeserializationError),
     #[error("Malformed table name: {0}")]
     MalformedTableName(LowLevelDeserializationError),
+}
+
+/// An error type returned when deserialization
+/// of table column specifications fails.
+#[non_exhaustive]
+#[derive(Error, Debug)]
+#[error("Column spec deserialization failed, column index: {column_index}, error: {kind}")]
+pub struct ColumnSpecParseError {
+    pub column_index: usize,
+    pub kind: ColumnSpecParseErrorKind,
+}
+
+/// The type of error that appeared during deserialization
+/// of a column specification.
+#[non_exhaustive]
+#[derive(Error, Debug)]
+pub enum ColumnSpecParseErrorKind {
+    #[error("Invalid table spec: {0}")]
+    TableSpecParseError(#[from] TableSpecParseError),
+    #[error("Malformed column name: {0}")]
+    ColumnNameParseError(#[from] LowLevelDeserializationError),
+    #[error("Invalid column type: {0}")]
+    ColumnTypeParseError(#[from] CqlTypeParseError),
 }
 
 /// An error type returned when deserialization of CQL type name fails.
