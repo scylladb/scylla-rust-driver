@@ -1,6 +1,6 @@
 use crate::cql_to_rust::{FromRow, FromRowError};
 use crate::frame::frame_errors::{
-    SchemaChangeEventParseError, SetKeyspaceParseError, TableSpecParseError,
+    CqlTypeParseError, SchemaChangeEventParseError, SetKeyspaceParseError, TableSpecParseError,
 };
 use crate::frame::response::event::SchemaChangeEvent;
 use crate::frame::value::{
@@ -490,12 +490,15 @@ fn deser_table_spec(buf: &mut &[u8]) -> StdResult<TableSpec<'static>, TableSpecP
     Ok(TableSpec::owned(ks_name, table_name))
 }
 
-fn deser_type(buf: &mut &[u8]) -> StdResult<ColumnType, ParseError> {
+fn deser_type(buf: &mut &[u8]) -> StdResult<ColumnType, CqlTypeParseError> {
     use ColumnType::*;
-    let id = types::read_short(buf)?;
+    let id =
+        types::read_short(buf).map_err(|err| CqlTypeParseError::TypeIdParseError(err.into()))?;
     Ok(match id {
         0x0000 => {
-            let type_str: String = types::read_string(buf)?.to_string();
+            let type_str: String = types::read_string(buf)
+                .map_err(CqlTypeParseError::CustomTypeNameParseError)?
+                .to_string();
             match type_str.as_str() {
                 "org.apache.cassandra.db.marshal.DurationType" => Duration,
                 _ => Custom(type_str),
@@ -525,14 +528,22 @@ fn deser_type(buf: &mut &[u8]) -> StdResult<ColumnType, ParseError> {
         0x0021 => Map(Box::new(deser_type(buf)?), Box::new(deser_type(buf)?)),
         0x0022 => Set(Box::new(deser_type(buf)?)),
         0x0030 => {
-            let keyspace_name: String = types::read_string(buf)?.to_string();
-            let type_name: String = types::read_string(buf)?.to_string();
-            let fields_size: usize = types::read_short(buf)?.into();
+            let keyspace_name: String = types::read_string(buf)
+                .map_err(CqlTypeParseError::UdtKeyspaceNameParseError)?
+                .to_string();
+            let type_name: String = types::read_string(buf)
+                .map_err(CqlTypeParseError::UdtNameParseError)?
+                .to_string();
+            let fields_size: usize = types::read_short(buf)
+                .map_err(|err| CqlTypeParseError::UdtFieldsCountParseError(err.into()))?
+                .into();
 
             let mut field_types: Vec<(String, ColumnType)> = Vec::with_capacity(fields_size);
 
             for _ in 0..fields_size {
-                let field_name: String = types::read_string(buf)?.to_string();
+                let field_name: String = types::read_string(buf)
+                    .map_err(CqlTypeParseError::UdtFieldNameParseError)?
+                    .to_string();
                 let field_type: ColumnType = deser_type(buf)?;
 
                 field_types.push((field_name, field_type));
@@ -545,7 +556,9 @@ fn deser_type(buf: &mut &[u8]) -> StdResult<ColumnType, ParseError> {
             }
         }
         0x0031 => {
-            let len: usize = types::read_short(buf)?.into();
+            let len: usize = types::read_short(buf)
+                .map_err(|err| CqlTypeParseError::TupleLengthParseError(err.into()))?
+                .into();
             let mut types = Vec::with_capacity(len);
             for _ in 0..len {
                 types.push(deser_type(buf)?);
@@ -553,8 +566,7 @@ fn deser_type(buf: &mut &[u8]) -> StdResult<ColumnType, ParseError> {
             Tuple(types)
         }
         id => {
-            // TODO implement other types
-            return Err(ParseError::TypeNotImplemented(id));
+            return Err(CqlTypeParseError::TypeNotImplemented(id));
         }
     })
 }

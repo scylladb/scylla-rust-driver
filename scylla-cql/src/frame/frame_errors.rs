@@ -41,6 +41,8 @@ pub enum ParseError {
     SchemaChangeEventParseError(#[from] SchemaChangeEventParseError),
     #[error("Table spec deserialization failed: {0}")]
     TableSpecParseError(#[from] TableSpecParseError),
+    #[error(transparent)]
+    TypeParseError(#[from] CqlTypeParseError),
     #[error("Low-level deserialization failed: {0}")]
     LowLevelDeserializationError(#[from] LowLevelDeserializationError),
     #[error("Could not serialize frame: {0}")]
@@ -51,8 +53,6 @@ pub enum ParseError {
     DeserializationError(#[from] DeserializationError),
     #[error(transparent)]
     IoError(#[from] std::io::Error),
-    #[error("type not yet implemented, id: {0}")]
-    TypeNotImplemented(u16),
     #[error(transparent)]
     SerializeValuesError(#[from] SerializeValuesError),
     #[error(transparent)]
@@ -102,6 +102,28 @@ pub enum TableSpecParseError {
     MalformedKeyspaceName(LowLevelDeserializationError),
     #[error("Malformed table name: {0}")]
     MalformedTableName(LowLevelDeserializationError),
+}
+
+/// An error type returned when deserialization of CQL type name fails.
+#[non_exhaustive]
+#[derive(Error, Debug)]
+pub enum CqlTypeParseError {
+    #[error("Malformed type id: {0}")]
+    TypeIdParseError(LowLevelDeserializationError),
+    #[error("Malformed custom type name: {0}")]
+    CustomTypeNameParseError(LowLevelDeserializationError),
+    #[error("Malformed name of UDT keyspace: {0}")]
+    UdtKeyspaceNameParseError(LowLevelDeserializationError),
+    #[error("Malformed UDT name: {0}")]
+    UdtNameParseError(LowLevelDeserializationError),
+    #[error("Malformed UDT fields count: {0}")]
+    UdtFieldsCountParseError(LowLevelDeserializationError),
+    #[error("Malformed UDT's field name: {0}")]
+    UdtFieldNameParseError(LowLevelDeserializationError),
+    #[error("Malformed tuple length: {0}")]
+    TupleLengthParseError(LowLevelDeserializationError),
+    #[error("CQL Type not yet implemented, id: {0}")]
+    TypeNotImplemented(u16),
 }
 
 /// A low level deserialization error.
