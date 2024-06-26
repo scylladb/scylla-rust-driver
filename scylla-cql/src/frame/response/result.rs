@@ -1,5 +1,5 @@
 use crate::cql_to_rust::{FromRow, FromRowError};
-use crate::frame::frame_errors::SetKeyspaceParseError;
+use crate::frame::frame_errors::{SchemaChangeEventParseError, SetKeyspaceParseError};
 use crate::frame::response::event::SchemaChangeEvent;
 use crate::frame::value::{
     Counter, CqlDate, CqlDecimal, CqlDuration, CqlTime, CqlTimestamp, CqlTimeuuid, CqlVarint,
@@ -873,7 +873,7 @@ fn deser_prepared(buf: &mut &[u8]) -> StdResult<Prepared, ParseError> {
 }
 
 #[allow(clippy::unnecessary_wraps)]
-fn deser_schema_change(buf: &mut &[u8]) -> StdResult<SchemaChange, ParseError> {
+fn deser_schema_change(buf: &mut &[u8]) -> StdResult<SchemaChange, SchemaChangeEventParseError> {
     Ok(SchemaChange {
         event: SchemaChangeEvent::deserialize(buf)?,
     })

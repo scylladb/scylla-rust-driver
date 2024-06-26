@@ -37,6 +37,8 @@ pub enum FrameError {
 pub enum ParseError {
     #[error("Set keyspace response deserialization failed: {0}")]
     SetKeyspaceParseError(#[from] SetKeyspaceParseError),
+    #[error("Schema change event deserialization failed: {0}")]
+    SchemaChangeEventParseError(#[from] SchemaChangeEventParseError),
     #[error("Low-level deserialization failed: {0}")]
     LowLevelDeserializationError(#[from] LowLevelDeserializationError),
     #[error("Could not serialize frame: {0}")]
@@ -62,6 +64,31 @@ pub enum ParseError {
 pub enum SetKeyspaceParseError {
     #[error("Malformed keyspace name: {0}")]
     MalformedKeyspaceName(#[from] LowLevelDeserializationError),
+}
+
+/// An error type returned when deserialization of
+/// `RESULT::Schema_change` response fails.
+#[non_exhaustive]
+#[derive(Error, Debug)]
+pub enum SchemaChangeEventParseError {
+    #[error("Malformed schema change type string: {0}")]
+    TypeOfChangeParseError(LowLevelDeserializationError),
+    #[error("Malformed schema change target string:: {0}")]
+    TargetTypeParseError(LowLevelDeserializationError),
+    #[error("Malformed name of keyspace affected by schema change: {0}")]
+    AffectedKeyspaceParseError(LowLevelDeserializationError),
+    #[error("Malformed name of the table affected by schema change: {0}")]
+    AffectedTableNameParseError(LowLevelDeserializationError),
+    #[error("Malformed name of the target affected by schema change: {0}")]
+    AffectedTargetNameParseError(LowLevelDeserializationError),
+    #[error(
+        "Malformed number of arguments of the function/aggregate affected by schema change: {0}"
+    )]
+    ArgumentCountParseError(LowLevelDeserializationError),
+    #[error("Malformed argument of the function/aggregate affected by schema change: {0}")]
+    FunctionArgumentParseError(LowLevelDeserializationError),
+    #[error("Unknown target of schema change: {0}")]
+    UnknownTargetOfSchemaChange(String),
 }
 
 /// A low level deserialization error.
