@@ -1,4 +1,4 @@
-use crate::frame::frame_errors::ParseError;
+use crate::frame::frame_errors::{ParseError, SchemaChangeEventParseError};
 use crate::frame::server_event_type::EventType;
 use crate::frame::types;
 use std::net::SocketAddr;
@@ -74,8 +74,9 @@ impl Event {
 }
 
 impl SchemaChangeEvent {
-    pub fn deserialize(buf: &mut &[u8]) -> Result<Self, ParseError> {
-        let type_of_change_string = types::read_string(buf)?;
+    pub fn deserialize(buf: &mut &[u8]) -> Result<Self, SchemaChangeEventParseError> {
+        let type_of_change_string =
+            types::read_string(buf).map_err(SchemaChangeEventParseError::TypeOfChangeParseError)?;
         let type_of_change = match type_of_change_string {
             "CREATED" => SchemaChangeType::Created,
             "UPDATED" => SchemaChangeType::Updated,
@@ -83,8 +84,11 @@ impl SchemaChangeEvent {
             _ => SchemaChangeType::Invalid,
         };
 
-        let target = types::read_string(buf)?;
-        let keyspace_affected = types::read_string(buf)?.to_string();
+        let target =
+            types::read_string(buf).map_err(SchemaChangeEventParseError::TargetTypeParseError)?;
+        let keyspace_affected = types::read_string(buf)
+            .map_err(SchemaChangeEventParseError::AffectedKeyspaceParseError)?
+            .to_string();
 
         match target {
             "KEYSPACE" => Ok(Self::KeyspaceChange {
@@ -92,7 +96,9 @@ impl SchemaChangeEvent {
                 keyspace_name: keyspace_affected,
             }),
             "TABLE" => {
-                let table_name = types::read_string(buf)?.to_string();
+                let table_name = types::read_string(buf)
+                    .map_err(SchemaChangeEventParseError::AffectedTargetNameParseError)?
+                    .to_string();
                 Ok(Self::TableChange {
                     change_type: type_of_change,
                     keyspace_name: keyspace_affected,
@@ -100,7 +106,9 @@ impl SchemaChangeEvent {
                 })
             }
             "TYPE" => {
-                let changed_type = types::read_string(buf)?.to_string();
+                let changed_type = types::read_string(buf)
+                    .map_err(SchemaChangeEventParseError::AffectedTargetNameParseError)?
+                    .to_string();
                 Ok(Self::TypeChange {
                     change_type: type_of_change,
                     keyspace_name: keyspace_affected,
@@ -108,13 +116,21 @@ impl SchemaChangeEvent {
                 })
             }
             "FUNCTION" => {
-                let function = types::read_string(buf)?.to_string();
-                let number_of_arguments = types::read_short(buf)?;
+                let function = types::read_string(buf)
+                    .map_err(SchemaChangeEventParseError::AffectedTargetNameParseError)?
+                    .to_string();
+                let number_of_arguments = types::read_short(buf).map_err(|err| {
+                    SchemaChangeEventParseError::ArgumentCountParseError(err.into())
+                })?;
 
                 let mut argument_vector = Vec::with_capacity(number_of_arguments as usize);
 
                 for _ in 0..number_of_arguments {
-                    argument_vector.push(types::read_string(buf)?.to_string());
+                    argument_vector.push(
+                        types::read_string(buf)
+                            .map_err(SchemaChangeEventParseError::FunctionArgumentParseError)?
+                            .to_string(),
+                    );
                 }
 
                 Ok(Self::FunctionChange {
@@ -125,13 +141,21 @@ impl SchemaChangeEvent {
                 })
             }
             "AGGREGATE" => {
-                let name = types::read_string(buf)?.to_string();
-                let number_of_arguments = types::read_short(buf)?;
+                let name = types::read_string(buf)
+                    .map_err(SchemaChangeEventParseError::AffectedTargetNameParseError)?
+                    .to_string();
+                let number_of_arguments = types::read_short(buf).map_err(|err| {
+                    SchemaChangeEventParseError::ArgumentCountParseError(err.into())
+                })?;
 
                 let mut argument_vector = Vec::with_capacity(number_of_arguments as usize);
 
                 for _ in 0..number_of_arguments {
-                    argument_vector.push(types::read_string(buf)?.to_string());
+                    argument_vector.push(
+                        types::read_string(buf)
+                            .map_err(SchemaChangeEventParseError::FunctionArgumentParseError)?
+                            .to_string(),
+                    );
                 }
 
                 Ok(Self::AggregateChange {
@@ -142,10 +166,9 @@ impl SchemaChangeEvent {
                 })
             }
 
-            _ => Err(ParseError::BadIncomingData(format!(
-                "Invalid type of schema change ({}) in SchemaChangeEvent",
-                target
-            ))),
+            _ => Err(SchemaChangeEventParseError::UnknownTargetOfSchemaChange(
+                target.to_string(),
+            )),
         }
     }
 }
