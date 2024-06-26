@@ -39,10 +39,8 @@ pub enum ParseError {
     SetKeyspaceParseError(#[from] SetKeyspaceParseError),
     #[error("Failed to deserialize schema change event: {0}")]
     SchemaChangeEventParseError(#[from] SchemaChangeEventParseError),
-    #[error("Failed to deserialize a table spec: {0}")]
-    TableSpecParseError(#[from] TableSpecParseError),
-    #[error("Failed to deserialize column specs: {0}")]
-    ColumnSpecsParseError(#[from] ColumnSpecsParseError),
+    #[error("Failed to deserialize result metadata: {0}")]
+    ResultMetadataParseError(#[from] ResultMetadataParseError),
     #[error("Low-level serialization failed: {0}")]
     LowLevelSerializationError(#[from] LowLevelSerializationError),
     #[error("Low-level deserialization failed: {0}")]
@@ -93,6 +91,27 @@ pub enum SchemaChangeEventParseError {
     FunctionArgumentParseError(LowLevelDeserializationError),
     #[error("Unknown target of schema change: {0}")]
     UnknownTargetOfSchemaChange(String),
+}
+
+/// An error type returned when deserialization
+/// of `[Result/Prepared]Metadata` failed.
+#[non_exhaustive]
+#[derive(Error, Debug)]
+pub enum ResultMetadataParseError {
+    #[error("Malformed metadata flags: {0}")]
+    FlagsParseError(LowLevelDeserializationError),
+    #[error("Malformed column count: {0}")]
+    ColumnCountParseError(LowLevelDeserializationError),
+    #[error("Malformed partition key count: {0}")]
+    PkCountParseError(LowLevelDeserializationError),
+    #[error("Malformed partition key index: {0}")]
+    PkIndexParseError(LowLevelDeserializationError),
+    #[error("Malformed paging state: {0}")]
+    PagingStateParseError(LowLevelDeserializationError),
+    #[error("Invalid global table spec: {0}")]
+    GlobalTableSpecParseError(#[from] TableSpecParseError),
+    #[error("Invalid column specs: {0}")]
+    ColumnSpecsParseError(#[from] ColumnSpecsParseError),
 }
 
 /// An error type returned when deserialization
