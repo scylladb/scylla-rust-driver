@@ -35,6 +35,8 @@ pub enum FrameError {
 
 #[derive(Error, Debug)]
 pub enum ParseError {
+    #[error("Set keyspace response deserialization failed: {0}")]
+    SetKeyspaceParseError(#[from] SetKeyspaceParseError),
     #[error("Low-level deserialization failed: {0}")]
     LowLevelDeserializationError(#[from] LowLevelDeserializationError),
     #[error("Could not serialize frame: {0}")]
@@ -53,6 +55,13 @@ pub enum ParseError {
     SerializationError(#[from] SerializationError),
     #[error(transparent)]
     CqlTypeError(#[from] CqlTypeError),
+}
+
+#[non_exhaustive]
+#[derive(Error, Debug)]
+pub enum SetKeyspaceParseError {
+    #[error("Malformed keyspace name: {0}")]
+    MalformedKeyspaceName(#[from] LowLevelDeserializationError),
 }
 
 /// A low level deserialization error.

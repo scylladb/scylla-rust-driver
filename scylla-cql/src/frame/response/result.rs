@@ -1,4 +1,5 @@
 use crate::cql_to_rust::{FromRow, FromRowError};
+use crate::frame::frame_errors::SetKeyspaceParseError;
 use crate::frame::response::event::SchemaChangeEvent;
 use crate::frame::value::{
     Counter, CqlDate, CqlDecimal, CqlDuration, CqlTime, CqlTimestamp, CqlTimeuuid, CqlVarint,
@@ -852,7 +853,7 @@ fn deser_rows(
     })
 }
 
-fn deser_set_keyspace(buf: &mut &[u8]) -> StdResult<SetKeyspace, ParseError> {
+fn deser_set_keyspace(buf: &mut &[u8]) -> StdResult<SetKeyspace, SetKeyspaceParseError> {
     let keyspace_name = types::read_string(buf)?.to_string();
 
     Ok(SetKeyspace { keyspace_name })
