@@ -1414,6 +1414,7 @@ impl Value for CqlValue {
 
             CqlValue::Ascii(s) | CqlValue::Text(s) => s.serialize(buf),
             CqlValue::List(v) | CqlValue::Set(v) => v.serialize(buf),
+            CqlValue::Vector(v) => v.serialize(buf),
 
             CqlValue::Blob(b) => b.serialize(buf),
             CqlValue::Boolean(b) => b.serialize(buf),

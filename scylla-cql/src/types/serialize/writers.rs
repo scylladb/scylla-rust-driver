@@ -71,6 +71,7 @@ impl<'buf> RowWriter<'buf> {
 /// in nothing being written.
 pub struct CellWriter<'buf> {
     buf: &'buf mut Vec<u8>,
+    cell_len: Option<usize>,
 }
 
 impl<'buf> CellWriter<'buf> {
@@ -79,12 +80,25 @@ impl<'buf> CellWriter<'buf> {
     /// The newly created row writer will append data to the end of the vec.
     #[inline]
     pub fn new(buf: &'buf mut Vec<u8>) -> Self {
-        Self { buf }
+        Self {
+            buf,
+            cell_len: None,
+        }
+    }
+
+    /// Creates a new cell writer based on an existing Vec, for fixed-length cells.
+    /// This cell writer will serialize each cell directly, without prepending it
+    /// with cell length.  
+    ///
+    /// The newly created row writer will append data to the end of the vec
+    pub fn with_cell_len(buf: &'buf mut Vec<u8>, cell_len: Option<usize>) -> Self {
+        Self { buf, cell_len }
     }
 
     /// Sets this value to be null, consuming this object.
     #[inline]
     pub fn set_null(self) -> WrittenCellProof<'buf> {
+        assert!(self.cell_len.is_none());
         self.buf.extend_from_slice(&(-1i32).to_be_bytes());
         WrittenCellProof::new()
     }
@@ -92,6 +106,7 @@ impl<'buf> CellWriter<'buf> {
     /// Sets this value to represent an unset value, consuming this object.
     #[inline]
     pub fn set_unset(self) -> WrittenCellProof<'buf> {
+        assert!(self.cell_len.is_none());
         self.buf.extend_from_slice(&(-2i32).to_be_bytes());
         WrittenCellProof::new()
     }
@@ -107,12 +122,15 @@ impl<'buf> CellWriter<'buf> {
     #[inline]
     pub fn set_value(self, contents: &[u8]) -> Result<WrittenCellProof<'buf>, CellOverflowError> {
         let value_len: i32 = contents.len().try_into().map_err(|_| CellOverflowError)?;
-        self.buf.extend_from_slice(&value_len.to_be_bytes());
+        match self.cell_len {
+            Some(len) => assert_eq!(len, contents.len()),
+            None => self.buf.extend_from_slice(&value_len.to_be_bytes()),
+        }
         self.buf.extend_from_slice(contents);
         Ok(WrittenCellProof::new())
     }
 
-    /// Turns this writter into a [`CellValueBuilder`] which can be used
+    /// Turns this writer into a [`CellValueBuilder`] which can be used
     /// to gradually initialize the CQL value.
     ///
     /// This method should be used if you don't have all of the data
@@ -121,6 +139,13 @@ impl<'buf> CellWriter<'buf> {
     #[inline]
     pub fn into_value_builder(self) -> CellValueBuilder<'buf> {
         CellValueBuilder::new(self.buf)
+    }
+
+    /// Turns this writer into a [`CellValueBuilder`] which can be used
+    /// to gradually initialize the CQL value of CQL vector type.
+    #[inline]
+    pub fn into_fixed_len_value_builder(self, len: usize) -> CellValueBuilder<'buf> {
+        CellValueBuilder::fixed_len(self.buf, len)
     }
 }
 
@@ -136,6 +161,8 @@ pub struct CellValueBuilder<'buf> {
 
     // Starting position of the value in the buffer.
     starting_pos: usize,
+
+    cell_len: Option<usize>,
 }
 
 impl<'buf> CellValueBuilder<'buf> {
@@ -149,7 +176,28 @@ impl<'buf> CellValueBuilder<'buf> {
         // won't be misinterpreted.
         let starting_pos = buf.len();
         buf.extend_from_slice(&(-3i32).to_be_bytes());
-        Self { buf, starting_pos }
+        Self {
+            buf,
+            starting_pos,
+            cell_len: None,
+        }
+    }
+
+    #[inline]
+    fn fixed_len(buf: &'buf mut Vec<u8>, cell_len: usize) -> Self {
+        // "Length" of a [bytes] frame can either be a non-negative i32,
+        // -1 (null) or -1 (not set). Push an invalid value here. It will be
+        // overwritten eventually either by set_null, set_unset or Drop.
+        // If the CellSerializer is not dropped as it should, this will trigger
+        // an error on the DB side and the serialized data
+        // won't be misinterpreted.
+        let starting_pos = buf.len();
+        buf.extend_from_slice(&(-3i32).to_be_bytes());
+        Self {
+            buf,
+            starting_pos,
+            cell_len: Some(cell_len),
+        }
     }
 
     /// Appends raw bytes to this cell.
@@ -162,7 +210,7 @@ impl<'buf> CellValueBuilder<'buf> {
     /// and returns an object that allows to fill it in.
     #[inline]
     pub fn make_sub_writer(&mut self) -> CellWriter<'_> {
-        CellWriter::new(self.buf)
+        CellWriter::with_cell_len(self.buf, self.cell_len)
     }
 
     /// Finishes serializing the value.

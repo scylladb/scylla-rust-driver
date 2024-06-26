@@ -447,15 +447,30 @@ impl<T: SerializeValue> SerializeValue for Vec<T> {
         typ: &ColumnType,
         writer: CellWriter<'b>,
     ) -> Result<WrittenCellProof<'b>, SerializationError> {
-        serialize_sequence(
-            std::any::type_name::<Self>(),
-            self.len(),
-            self.iter(),
-            typ,
-            writer,
-        )
+        match typ {
+            ColumnType::List(_) | ColumnType::Set(_) => serialize_sequence(
+                std::any::type_name::<Self>(),
+                self.len(),
+                self.iter(),
+                typ,
+                writer,
+            ),
+            ColumnType::Vector(_, _) => serialize_vector(
+                std::any::type_name::<Self>(),
+                self.len(),
+                self.iter(),
+                typ,
+                writer,
+            ),
+            _ => Err(mk_typck_err_named(
+                std::any::type_name::<Self>(),
+                typ,
+                SetOrListTypeCheckErrorKind::NotSetOrList,
+            )),
+        }
     }
 }
+
 impl<'a, T: SerializeValue + 'a> SerializeValue for &'a [T] {
     fn serialize<'b>(
         &self,
@@ -561,6 +576,7 @@ fn serialize_cql_value<'b>(
         }
         CqlValue::Uuid(u) => <_ as SerializeValue>::serialize(&u, typ, writer),
         CqlValue::Varint(v) => <_ as SerializeValue>::serialize(&v, typ, writer),
+        CqlValue::Vector(v) => <_ as SerializeValue>::serialize(&v, typ, writer),
     }
 }
 
@@ -822,6 +838,49 @@ fn serialize_sequence<'t, 'b, T: SerializeValue + 't>(
                 rust_name,
                 typ,
                 SetOrListSerializationErrorKind::ElementSerializationFailed(err),
+            )
+        })?;
+    }
+
+    builder
+        .finish()
+        .map_err(|_| mk_ser_err_named(rust_name, typ, BuiltinSerializationErrorKind::SizeOverflow))
+}
+
+fn serialize_vector<'t, 'b, T: SerializeValue + 't>(
+    rust_name: &'static str,
+    len: usize,
+    iter: impl Iterator<Item = &'t T>,
+    typ: &ColumnType,
+    writer: CellWriter<'b>,
+) -> Result<WrittenCellProof<'b>, SerializationError> {
+    let ColumnType::Vector(elt, dim) = typ else {
+        unreachable!("serialize_vector can be only called for vectors")
+    };
+
+    if !matches!(elt.as_ref(), ColumnType::Float) {
+        return Err(mk_typck_err::<T>(
+            typ,
+            BuiltinTypeCheckErrorKind::VectorError(
+                VectorTypeCheckErrorKind::UnsupportedElementType(elt.as_ref().clone()),
+            ),
+        ));
+    }
+    if len != *dim as usize {
+        return Err(mk_ser_err_named(
+            rust_name,
+            typ,
+            VectorSerializationErrorKind::InvalidNumberOfElements(len, *dim),
+        ));
+    }
+
+    let mut builder = writer.into_fixed_len_value_builder(4);
+    for el in iter {
+        T::serialize(el, elt, builder.make_sub_writer()).map_err(|err| {
+            mk_ser_err_named(
+                rust_name,
+                typ,
+                VectorSerializationErrorKind::ElementSerializationFailed(err),
             )
         })?;
     }
@@ -1099,6 +1158,9 @@ pub enum BuiltinTypeCheckErrorKind {
     /// A type check failure specific to a CQL set or list.
     SetOrListError(SetOrListTypeCheckErrorKind),
 
+    /// A type check failure specific to a CQL vector.
+    VectorError(VectorTypeCheckErrorKind),
+
     /// A type check failure specific to a CQL map.
     MapError(MapTypeCheckErrorKind),
 
@@ -1147,6 +1209,7 @@ impl Display for BuiltinTypeCheckErrorKind {
                 f.write_str("the separate empty representation is not valid for this type")
             }
             BuiltinTypeCheckErrorKind::SetOrListError(err) => err.fmt(f),
+            BuiltinTypeCheckErrorKind::VectorError(err) => err.fmt(f),
             BuiltinTypeCheckErrorKind::MapError(err) => err.fmt(f),
             BuiltinTypeCheckErrorKind::TupleError(err) => err.fmt(f),
             BuiltinTypeCheckErrorKind::UdtError(err) => err.fmt(f),
@@ -1171,6 +1234,9 @@ pub enum BuiltinSerializationErrorKind {
     /// A serialization failure specific to a CQL set or list.
     SetOrListError(SetOrListSerializationErrorKind),
 
+    /// A serialization failure specific to a CQL set or list.
+    VectorError(VectorSerializationErrorKind),
+
     /// A serialization failure specific to a CQL map.
     MapError(MapSerializationErrorKind),
 
@@ -1184,6 +1250,12 @@ pub enum BuiltinSerializationErrorKind {
 impl From<SetOrListSerializationErrorKind> for BuiltinSerializationErrorKind {
     fn from(value: SetOrListSerializationErrorKind) -> Self {
         BuiltinSerializationErrorKind::SetOrListError(value)
+    }
+}
+
+impl From<VectorSerializationErrorKind> for BuiltinSerializationErrorKind {
+    fn from(value: VectorSerializationErrorKind) -> Self {
+        BuiltinSerializationErrorKind::VectorError(value)
     }
 }
 
@@ -1215,6 +1287,7 @@ impl Display for BuiltinSerializationErrorKind {
                 f.write_str("the Rust value is out of range supported by the CQL type")
             }
             BuiltinSerializationErrorKind::SetOrListError(err) => err.fmt(f),
+            BuiltinSerializationErrorKind::VectorError(err) => err.fmt(f),
             BuiltinSerializationErrorKind::MapError(err) => err.fmt(f),
             BuiltinSerializationErrorKind::TupleError(err) => err.fmt(f),
             BuiltinSerializationErrorKind::UdtError(err) => err.fmt(f),
@@ -1282,7 +1355,25 @@ impl Display for SetOrListTypeCheckErrorKind {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             SetOrListTypeCheckErrorKind::NotSetOrList => {
-                f.write_str("the CQL type the Rust type was attempted to be type checked against was neither a set or a list")
+                f.write_str("the CQL type the Rust type was attempted to be type checked against was neither a set, list or a vector")
+            }
+        }
+    }
+}
+
+/// Describes why type checking of a vector type failed.
+#[derive(Debug, Clone)]
+#[non_exhaustive]
+pub enum VectorTypeCheckErrorKind {
+    /// Element type of the vector is not supported. Currently, vectors support only float elements.
+    UnsupportedElementType(ColumnType),
+}
+
+impl Display for VectorTypeCheckErrorKind {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            VectorTypeCheckErrorKind::UnsupportedElementType(typ) => {
+                write!(f, "serializing vectors of {:?} is not supported", typ)
             }
         }
     }
@@ -1306,6 +1397,31 @@ impl Display for SetOrListSerializationErrorKind {
                 "the collection contains too many elements to fit in CQL representation",
             ),
             SetOrListSerializationErrorKind::ElementSerializationFailed(err) => {
+                write!(f, "failed to serialize one of the elements: {err}")
+            }
+        }
+    }
+}
+
+/// Describes why serialization of a set or list type failed.
+#[derive(Debug, Clone)]
+#[non_exhaustive]
+pub enum VectorSerializationErrorKind {
+    /// The number of elements in the serialized collection does not match
+    /// the number of vector dimensions
+    InvalidNumberOfElements(usize, u32),
+
+    /// One of the elements of the vector failed to serialize.
+    ElementSerializationFailed(SerializationError),
+}
+
+impl Display for VectorSerializationErrorKind {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            VectorSerializationErrorKind::InvalidNumberOfElements(actual, expected) => {
+                write!(f, "number of vector elements ({}) does not much the number of declared dimensions ({})", actual, expected)
+            }
+            VectorSerializationErrorKind::ElementSerializationFailed(err) => {
                 write!(f, "failed to serialize one of the elements: {err}")
             }
         }

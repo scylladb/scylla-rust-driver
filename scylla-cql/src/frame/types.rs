@@ -161,7 +161,7 @@ impl<'a> RawValue<'a> {
     }
 }
 
-fn read_raw_bytes<'a>(
+pub fn read_raw_bytes<'a>(
     count: usize,
     buf: &mut &'a [u8],
 ) -> Result<&'a [u8], LowLevelDeserializationError> {

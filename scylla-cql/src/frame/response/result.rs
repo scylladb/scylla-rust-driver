@@ -69,6 +69,7 @@ pub enum ColumnType {
     Tuple(Vec<ColumnType>),
     Uuid,
     Varint,
+    Vector(Box<ColumnType>, u32),
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -94,6 +95,7 @@ pub enum CqlValue {
     List(Vec<CqlValue>),
     Map(Vec<(CqlValue, CqlValue)>),
     Set(Vec<CqlValue>),
+    Vector(Vec<CqlValue>),
     UserDefinedType {
         keyspace: String,
         type_name: String,
@@ -352,6 +354,7 @@ impl CqlValue {
     pub fn as_list(&self) -> Option<&Vec<CqlValue>> {
         match self {
             Self::List(s) => Some(s),
+            Self::Vector(s) => Some(s),
             _ => None,
         }
     }
@@ -381,6 +384,7 @@ impl CqlValue {
         match self {
             Self::List(s) => Some(s),
             Self::Set(s) => Some(s),
+            Self::Vector(s) => Some(s),
             _ => None,
         }
     }
@@ -489,8 +493,19 @@ fn deser_type(buf: &mut &[u8]) -> StdResult<ColumnType, ParseError> {
     Ok(match id {
         0x0000 => {
             let type_str: String = types::read_string(buf)?.to_string();
-            match type_str.as_str() {
+            let type_parts: Vec<_> = type_str.split(&[',', '(', ')']).collect();
+            match type_parts[0] {
                 "org.apache.cassandra.db.marshal.DurationType" => Duration,
+                "org.apache.cassandra.db.marshal.VectorType" => {
+                    if type_parts.len() < 3 {
+                        return Err(ParseError::InvalidCustomType(type_str));
+                    }
+                    let elem_type = parse_type_str(type_parts[1].trim())?;
+                    let Ok(dimensions) = type_parts[2].trim().parse() else {
+                        return Err(ParseError::InvalidCustomType(type_str));
+                    };
+                    Vector(Box::new(elem_type), dimensions)
+                }
                 _ => Custom(type_str),
             }
         }
@@ -550,6 +565,18 @@ fn deser_type(buf: &mut &[u8]) -> StdResult<ColumnType, ParseError> {
             return Err(ParseError::TypeNotImplemented(id));
         }
     })
+}
+
+fn parse_type_str(name: &str) -> StdResult<ColumnType, ParseError> {
+    match name {
+        "org.apache.cassandra.db.marshal.BigIntType" => Ok(ColumnType::BigInt),
+        "org.apache.cassandra.db.marshal.DoubleType" => Ok(ColumnType::Double),
+        "org.apache.cassandra.db.marshal.FloatType" => Ok(ColumnType::Float),
+        "org.apache.cassandra.db.marshal.IntType" => Ok(ColumnType::Int),
+        "org.apache.cassandra.db.marshal.SmallIntType" => Ok(ColumnType::SmallInt),
+        "org.apache.cassandra.db.marshal.TinyIntType" => Ok(ColumnType::TinyInt),
+        _ => Err(ParseError::InvalidCustomType(name.to_string())),
+    }
 }
 
 fn deser_col_specs(
@@ -801,6 +828,10 @@ pub fn deser_cql_value(
                 })
                 .collect::<StdResult<_, _>>()?;
             CqlValue::Tuple(t)
+        }
+        Vector(_type_name, _) => {
+            let l = Vec::<CqlValue>::deserialize(typ, v)?;
+            CqlValue::Vector(l)
         }
     })
 }
