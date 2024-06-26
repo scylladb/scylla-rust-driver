@@ -1,5 +1,5 @@
 use crate::frame::frame_errors::{
-    ClusterChangeEventParseError, ParseError, SchemaChangeEventParseError,
+    ClusterChangeEventParseError, CqlEventParseError, SchemaChangeEventParseError,
 };
 use crate::frame::server_event_type::EventType;
 use crate::frame::types;
@@ -63,13 +63,19 @@ pub enum SchemaChangeType {
 }
 
 impl Event {
-    pub fn deserialize(buf: &mut &[u8]) -> Result<Self, ParseError> {
-        let event_type: EventType = types::read_string(buf)?.parse()?;
+    pub fn deserialize(buf: &mut &[u8]) -> Result<Self, CqlEventParseError> {
+        let event_type: EventType = types::read_string(buf)
+            .map_err(CqlEventParseError::EventTypeParseError)?
+            .parse()?;
         match event_type {
-            EventType::TopologyChange => {
-                Ok(Self::TopologyChange(TopologyChangeEvent::deserialize(buf)?))
-            }
-            EventType::StatusChange => Ok(Self::StatusChange(StatusChangeEvent::deserialize(buf)?)),
+            EventType::TopologyChange => Ok(Self::TopologyChange(
+                TopologyChangeEvent::deserialize(buf)
+                    .map_err(CqlEventParseError::TopologyChangeEventParseError)?,
+            )),
+            EventType::StatusChange => Ok(Self::StatusChange(
+                StatusChangeEvent::deserialize(buf)
+                    .map_err(CqlEventParseError::StatusChangeEventParseError)?,
+            )),
             EventType::SchemaChange => Ok(Self::SchemaChange(SchemaChangeEvent::deserialize(buf)?)),
         }
     }

@@ -36,11 +36,9 @@ pub enum FrameError {
 #[derive(Error, Debug)]
 pub enum ParseError {
     #[error(transparent)]
+    CqlEventParseError(#[from] CqlEventParseError),
+    #[error(transparent)]
     CqlResultParseError(#[from] CqlResultParseError),
-    #[error("Schema change event deserialization failed: {0}")]
-    SchemaChangeEventParseError(#[from] SchemaChangeEventParseError),
-    #[error("Failed to deserialize cluster change event: {0}")]
-    ClusterChangeEventParseError(#[from] ClusterChangeEventParseError),
     #[error("Low-level deserialization failed: {0}")]
     LowLevelDeserializationError(#[from] LowLevelDeserializationError),
     #[error("Could not serialize frame: {0}")]
@@ -87,7 +85,24 @@ pub enum SetKeyspaceParseError {
 }
 
 /// An error type returned when deserialization of
-/// `RESULT::Schema_change` response fails.
+/// `EVENT` response fails.
+#[non_exhaustive]
+#[derive(Error, Debug)]
+pub enum CqlEventParseError {
+    #[error("Malformed event type string: {0}")]
+    EventTypeParseError(LowLevelDeserializationError),
+    #[error("Unknown event type: {0}")]
+    UnknownEventType(String),
+    #[error("Failed to deserialize schema change event: {0}")]
+    SchemaChangeEventParseError(#[from] SchemaChangeEventParseError),
+    #[error("Failed to deserialize topology change event: {0}")]
+    TopologyChangeEventParseError(ClusterChangeEventParseError),
+    #[error("Failed to deserialize status change event: {0}")]
+    StatusChangeEventParseError(ClusterChangeEventParseError),
+}
+
+/// An error type returned when deserialization of
+/// SchemaChangeEvent fails.
 #[non_exhaustive]
 #[derive(Error, Debug)]
 pub enum SchemaChangeEventParseError {
