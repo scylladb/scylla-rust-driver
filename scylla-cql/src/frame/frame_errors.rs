@@ -41,8 +41,8 @@ pub enum ParseError {
     SchemaChangeEventParseError(#[from] SchemaChangeEventParseError),
     #[error("PREPARED response deserialization failed: {0}")]
     PreparedParseError(#[from] PreparedParseError),
-    #[error("Failed to deserialize result metadata: {0}")]
-    ResultMetadataParseError(#[from] ResultMetadataParseError),
+    #[error("ROWS response deserialization failed: {0}")]
+    RowsParseError(#[from] RowsParseError),
     #[error("Low-level serialization failed: {0}")]
     LowLevelSerializationError(#[from] LowLevelSerializationError),
     #[error("Low-level deserialization failed: {0}")]
@@ -106,6 +106,24 @@ pub enum PreparedParseError {
     ResultMetadataParseError(ResultMetadataParseError),
     #[error("Invalid prepared metadata: {0}")]
     PreparedMetadataParseError(ResultMetadataParseError),
+}
+
+/// An error type returned when deserialization
+/// of `RESULT::Rows` response fails.
+#[non_exhaustive]
+#[derive(Debug, Error)]
+pub enum RowsParseError {
+    #[error("Invalid result metadata: {0}")]
+    ResultMetadataParseError(#[from] ResultMetadataParseError),
+    #[error("Invalid result metadata, expected {expected_col_count} col specs, received {received_col_count}.")]
+    ColumnCountMismatch {
+        expected_col_count: usize,
+        received_col_count: usize,
+    },
+    #[error("Malformed rows count: {0}")]
+    RowsCountParseError(LowLevelDeserializationError),
+    #[error("Data deserialization failed: {0}")]
+    DataDeserializationError(#[from] DeserializationError),
 }
 
 /// An error type returned when deserialization
