@@ -35,14 +35,10 @@ pub enum FrameError {
 
 #[derive(Error, Debug)]
 pub enum ParseError {
-    #[error("Set keyspace response deserialization failed: {0}")]
-    SetKeyspaceParseError(#[from] SetKeyspaceParseError),
+    #[error(transparent)]
+    CqlResultParseError(#[from] CqlResultParseError),
     #[error("Schema change event deserialization failed: {0}")]
     SchemaChangeEventParseError(#[from] SchemaChangeEventParseError),
-    #[error("PREPARED response deserialization failed: {0}")]
-    PreparedParseError(#[from] PreparedParseError),
-    #[error("ROWS response deserialization failed: {0}")]
-    RowsParseError(#[from] RowsParseError),
     #[error("Low-level deserialization failed: {0}")]
     LowLevelDeserializationError(#[from] LowLevelDeserializationError),
     #[error("Could not serialize frame: {0}")]
@@ -59,6 +55,26 @@ pub enum ParseError {
     SerializationError(#[from] SerializationError),
     #[error(transparent)]
     CqlTypeError(#[from] CqlTypeError),
+}
+
+/// An error type returned when deserialization of RESULT response fails.
+#[non_exhaustive]
+#[derive(Error, Debug)]
+pub enum CqlResultParseError {
+    #[error("Malformed RESULT response id: {0}")]
+    ResultIdParseError(LowLevelDeserializationError),
+    #[error("Unknown RESULT response id: {0}")]
+    UnknownResultId(i32),
+    #[error("'Set_keyspace' response deserialization failed: {0}")]
+    SetKeyspaceParseError(#[from] SetKeyspaceParseError),
+    // This is an error returned during deserialization of
+    // `RESULT::Schema_change` response, and not `EVENT` response.
+    #[error("'Schema_change' response deserialization failed: {0}")]
+    SchemaChangeParseError(#[from] SchemaChangeEventParseError),
+    #[error("'Prepared' response deserialization failed: {0}")]
+    PreparedParseError(#[from] PreparedParseError),
+    #[error("'Rows' response deserialization failed: {0}")]
+    RowsParseError(#[from] RowsParseError),
 }
 
 #[non_exhaustive]

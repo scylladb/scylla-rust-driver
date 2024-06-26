@@ -1,14 +1,14 @@
 use crate::cql_to_rust::{FromRow, FromRowError};
 use crate::frame::frame_errors::{
-    ColumnSpecParseError, ColumnSpecParseErrorKind, CqlTypeParseError, PreparedParseError,
-    ResultMetadataParseError, RowsParseError, SchemaChangeEventParseError, SetKeyspaceParseError,
-    TableSpecParseError,
+    ColumnSpecParseError, ColumnSpecParseErrorKind, CqlResultParseError, CqlTypeParseError,
+    PreparedParseError, ResultMetadataParseError, RowsParseError, SchemaChangeEventParseError,
+    SetKeyspaceParseError, TableSpecParseError,
 };
 use crate::frame::response::event::SchemaChangeEvent;
+use crate::frame::types;
 use crate::frame::value::{
     Counter, CqlDate, CqlDecimal, CqlDuration, CqlTime, CqlTimestamp, CqlTimeuuid, CqlVarint,
 };
-use crate::frame::{frame_errors::ParseError, types};
 use crate::types::deserialize::result::{RowIterator, TypedRowIterator};
 use crate::types::deserialize::value::{
     mk_deser_err, BuiltinDeserializationErrorKind, DeserializeValue, MapIterator, UdtIterator,
@@ -931,21 +931,20 @@ fn deser_schema_change(buf: &mut &[u8]) -> StdResult<SchemaChange, SchemaChangeE
 pub fn deserialize(
     buf: &mut &[u8],
     cached_metadata: Option<&ResultMetadata>,
-) -> StdResult<Result, ParseError> {
+) -> StdResult<Result, CqlResultParseError> {
     use self::Result::*;
-    Ok(match types::read_int(buf)? {
-        0x0001 => Void,
-        0x0002 => Rows(deser_rows(buf, cached_metadata)?),
-        0x0003 => SetKeyspace(deser_set_keyspace(buf)?),
-        0x0004 => Prepared(deser_prepared(buf)?),
-        0x0005 => SchemaChange(deser_schema_change(buf)?),
-        k => {
-            return Err(ParseError::BadIncomingData(format!(
-                "Unknown query result id: {}",
-                k
-            )))
-        }
-    })
+    Ok(
+        match types::read_int(buf)
+            .map_err(|err| CqlResultParseError::ResultIdParseError(err.into()))?
+        {
+            0x0001 => Void,
+            0x0002 => Rows(deser_rows(buf, cached_metadata)?),
+            0x0003 => SetKeyspace(deser_set_keyspace(buf)?),
+            0x0004 => Prepared(deser_prepared(buf)?),
+            0x0005 => SchemaChange(deser_schema_change(buf)?),
+            id => return Err(CqlResultParseError::UnknownResultId(id)),
+        },
+    )
 }
 
 #[cfg(test)]
