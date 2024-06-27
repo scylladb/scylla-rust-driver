@@ -87,6 +87,21 @@ impl<'s> ParserState<'s> {
         me
     }
 
+    /// Parses a sequence of digits and '-' as an integer.
+    /// Consumes characters until it finds a character that is not a digit or '-'.
+    ///
+    /// An error is returned if:
+    /// * The first character is not a digit or '-'
+    /// * The integer is larger than i32
+    pub(crate) fn parse_i32(self) -> ParseResult<(i32, Self)> {
+        let (digits, p) = self.take_while(|c| c.is_ascii_digit() || c == '-');
+        if let Ok(value) = digits.parse() {
+            Ok((value, p))
+        } else {
+            Err(p.error(ParseErrorCause::Expected("integer of max length 2**32")))
+        }
+    }
+
     /// Skips characters from the beginning while they satisfy given predicate
     /// and returns new parser state which
     pub(crate) fn take_while(self, mut pred: impl FnMut(char) -> bool) -> (&'s str, Self) {
