@@ -245,7 +245,9 @@ impl Display for DeserializationError {
 // - BEFORE an error is cloned (because otherwise the Arc::get_mut fails).
 macro_rules! make_error_replace_rust_name {
     ($fn_name: ident, $outer_err: ty, $inner_err: ty) => {
-        fn $fn_name<RustT>(mut err: $outer_err) -> $outer_err {
+        // Not part of the public API; used in derive macros.
+        #[doc(hidden)]
+        pub fn $fn_name<RustT>(mut err: $outer_err) -> $outer_err {
             // Safety: the assumed usage of this function guarantees that the Arc has not yet been cloned.
             let arc_mut = std::sync::Arc::get_mut(&mut err.0).unwrap();
 
