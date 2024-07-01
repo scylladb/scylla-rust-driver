@@ -1,3 +1,7 @@
+use std::num::TryFromIntError;
+
+use thiserror::Error;
+
 use crate::frame::{
     frame_errors::ParseError,
     request::{RequestOpcode, SerializableRequest},
@@ -19,7 +23,15 @@ impl SerializableRequest for Register {
             .map(|event| event.to_string())
             .collect::<Vec<_>>();
 
-        types::write_string_list(&event_types_list, buf)?;
+        types::write_string_list(&event_types_list, buf)
+            .map_err(RegisterSerializationError::EventTypesSerialization)?;
         Ok(())
     }
+}
+
+#[non_exhaustive]
+#[derive(Error, Debug, Clone)]
+pub enum RegisterSerializationError {
+    #[error("Failed to serialize event types list: {0}")]
+    EventTypesSerialization(TryFromIntError),
 }
