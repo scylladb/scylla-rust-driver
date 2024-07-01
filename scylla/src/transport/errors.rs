@@ -395,10 +395,9 @@ pub enum ConnectionSetupRequestErrorKind {
     #[error("Failed to serialize CQL request: {0}")]
     CqlRequestSerialization(#[from] CqlRequestSerializationError),
 
-    // TODO: Make FrameBodyExtensionsParseError clonable.
     /// Failed to deserialize frame body extensions.
     #[error(transparent)]
-    BodyExtensionsParseError(Arc<FrameBodyExtensionsParseError>),
+    BodyExtensionsParseError(#[from] FrameBodyExtensionsParseError),
 
     /// Driver was unable to allocate a stream id to execute a setup request on.
     #[error("Unable to allocate stream id")]
@@ -453,12 +452,6 @@ pub enum ConnectionSetupRequestErrorKind {
     /// and/or [`SessionBuilder::authenticator_provider`](crate::transport::session_builder::SessionBuilder::authenticator_provider).
     #[error("Authentication is required. You can use SessionBuilder::user(\"user\", \"pass\") to provide credentials or SessionBuilder::authenticator_provider to provide custom authenticator")]
     MissingAuthentication,
-}
-
-impl From<FrameBodyExtensionsParseError> for ConnectionSetupRequestErrorKind {
-    fn from(value: FrameBodyExtensionsParseError) -> Self {
-        ConnectionSetupRequestErrorKind::BodyExtensionsParseError(Arc::new(value))
-    }
 }
 
 impl ConnectionSetupRequestError {

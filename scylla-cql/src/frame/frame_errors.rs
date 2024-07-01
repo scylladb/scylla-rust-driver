@@ -30,7 +30,7 @@ use thiserror::Error;
 /// - failed to deserialize tracing id (body ext.)
 /// - failed to deserialize warnings list (body ext.)
 /// - failed to deserialize custom payload map (body ext.)
-#[derive(Error, Debug)]
+#[derive(Error, Debug, Clone)]
 #[non_exhaustive]
 pub enum FrameBodyExtensionsParseError {
     /// Frame is compressed, but no compression was negotiated for the connection.
