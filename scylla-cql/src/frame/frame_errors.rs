@@ -1,6 +1,9 @@
 use std::sync::Arc;
 
-pub use super::request::query::{QueryParametersSerializationError, QuerySerializationError};
+pub use super::request::{
+    execute::ExecuteSerializationError,
+    query::{QueryParametersSerializationError, QuerySerializationError},
+};
 
 use super::response::CqlResponseKind;
 use super::TryFromPrimitiveError;
@@ -40,10 +43,10 @@ pub enum FrameError {
 
 #[derive(Error, Debug)]
 pub enum ParseError {
+    #[error("Failed to serialize EXECUTE request: {0}")]
+    ExecuteSerialization(#[from] ExecuteSerializationError),
     #[error("Failed to serialize QUERY request: {0}")]
     QuerySerialization(#[from] QuerySerializationError),
-    #[error("Failed to serialize query parameters: {0}")]
-    QueryParametersSerialization(#[from] QueryParametersSerializationError),
     #[error("Low-level deserialization failed: {0}")]
     LowLevelDeserializationError(#[from] LowLevelDeserializationError),
     #[error("Could not serialize frame: {0}")]
