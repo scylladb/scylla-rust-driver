@@ -1,15 +1,22 @@
 use crate::cql_to_rust::{FromRow, FromRowError};
+use crate::frame::frame_errors::{
+    ColumnSpecParseErrorKind, ColumnSpecsParseError, CqlResultParseError, PreparedParseError,
+    ResultMetadataParseError, RowsParseError, SchemaChangeEventParseError, SetKeyspaceParseError,
+    TableSpecParseError, TypeParseError,
+};
 use crate::frame::response::event::SchemaChangeEvent;
+use crate::frame::types;
 use crate::frame::value::{
     Counter, CqlDate, CqlDecimal, CqlDuration, CqlTime, CqlTimestamp, CqlTimeuuid, CqlVarint,
 };
-use crate::frame::{frame_errors::ParseError, types};
 use crate::types::deserialize::result::{RowIterator, TypedRowIterator};
-use crate::types::deserialize::value::{DeserializeValue, MapIterator, UdtIterator};
+use crate::types::deserialize::value::{
+    mk_deser_err, BuiltinDeserializationErrorKind, DeserializeValue, MapIterator, UdtIterator,
+};
 use crate::types::deserialize::{DeserializationError, FrameSlice};
 use bytes::{Buf, Bytes};
 use std::borrow::Cow;
-use std::{convert::TryInto, net::IpAddr, result::Result as StdResult, str};
+use std::{net::IpAddr, result::Result as StdResult, str};
 use uuid::Uuid;
 
 #[derive(Debug)]
@@ -475,18 +482,24 @@ pub enum Result {
     SchemaChange(SchemaChange),
 }
 
-fn deser_table_spec(buf: &mut &[u8]) -> StdResult<TableSpec<'static>, ParseError> {
-    let ks_name = types::read_string(buf)?.to_owned();
-    let table_name = types::read_string(buf)?.to_owned();
+fn deser_table_spec(buf: &mut &[u8]) -> StdResult<TableSpec<'static>, TableSpecParseError> {
+    let ks_name = types::read_string(buf)
+        .map_err(TableSpecParseError::KeyspaceNameParseError)?
+        .to_owned();
+    let table_name = types::read_string(buf)
+        .map_err(TableSpecParseError::TableNameParseError)?
+        .to_owned();
     Ok(TableSpec::owned(ks_name, table_name))
 }
 
-fn deser_type(buf: &mut &[u8]) -> StdResult<ColumnType, ParseError> {
+fn deser_type(buf: &mut &[u8]) -> StdResult<ColumnType, TypeParseError> {
     use ColumnType::*;
-    let id = types::read_short(buf)?;
+    let id = types::read_short(buf).map_err(TypeParseError::TypeIdParseError)?;
     Ok(match id {
         0x0000 => {
-            let type_str: String = types::read_string(buf)?.to_string();
+            let type_str: String = types::read_string(buf)
+                .map_err(TypeParseError::CustomTypeNameParseError)?
+                .to_string();
             match type_str.as_str() {
                 "org.apache.cassandra.db.marshal.DurationType" => Duration,
                 _ => Custom(type_str),
@@ -516,14 +529,22 @@ fn deser_type(buf: &mut &[u8]) -> StdResult<ColumnType, ParseError> {
         0x0021 => Map(Box::new(deser_type(buf)?), Box::new(deser_type(buf)?)),
         0x0022 => Set(Box::new(deser_type(buf)?)),
         0x0030 => {
-            let keyspace_name: String = types::read_string(buf)?.to_string();
-            let type_name: String = types::read_string(buf)?.to_string();
-            let fields_size: usize = types::read_short(buf)?.into();
+            let keyspace_name: String = types::read_string(buf)
+                .map_err(TypeParseError::UdtKeyspaceNameParseError)?
+                .to_string();
+            let type_name: String = types::read_string(buf)
+                .map_err(TypeParseError::UdtNameParseError)?
+                .to_string();
+            let fields_size: usize = types::read_short(buf)
+                .map_err(TypeParseError::UdtFieldsCountParseError)?
+                .into();
 
             let mut field_types: Vec<(String, ColumnType)> = Vec::with_capacity(fields_size);
 
             for _ in 0..fields_size {
-                let field_name: String = types::read_string(buf)?.to_string();
+                let field_name: String = types::read_string(buf)
+                    .map_err(TypeParseError::UdtFieldNameParseError)?
+                    .to_string();
                 let field_type: ColumnType = deser_type(buf)?;
 
                 field_types.push((field_name, field_type));
@@ -536,7 +557,9 @@ fn deser_type(buf: &mut &[u8]) -> StdResult<ColumnType, ParseError> {
             }
         }
         0x0031 => {
-            let len: usize = types::read_short(buf)?.into();
+            let len: usize = types::read_short(buf)
+                .map_err(TypeParseError::TupleLengthParseError)?
+                .into();
             let mut types = Vec::with_capacity(len);
             for _ in 0..len {
                 types.push(deser_type(buf)?);
@@ -545,25 +568,37 @@ fn deser_type(buf: &mut &[u8]) -> StdResult<ColumnType, ParseError> {
         }
         id => {
             // TODO implement other types
-            return Err(ParseError::TypeNotImplemented(id));
+            return Err(TypeParseError::TypeNotImplemented(id));
         }
     })
+}
+
+fn mk_col_spec_parse_error<E: Into<ColumnSpecParseErrorKind>>(
+    col_idx: usize,
+    err: E,
+) -> ColumnSpecsParseError {
+    ColumnSpecsParseError::ColumnSpecParseError {
+        column_index: col_idx,
+        kind: err.into(),
+    }
 }
 
 fn deser_col_specs(
     buf: &mut &[u8],
     global_table_spec: &Option<TableSpec<'static>>,
     col_count: usize,
-) -> StdResult<Vec<ColumnSpec>, ParseError> {
+) -> StdResult<Vec<ColumnSpec>, ColumnSpecsParseError> {
     let mut col_specs = Vec::with_capacity(col_count);
-    for _ in 0..col_count {
+    for col_idx in 0..col_count {
         let table_spec = if let Some(spec) = global_table_spec {
             spec.clone()
         } else {
-            deser_table_spec(buf)?
+            deser_table_spec(buf).map_err(|err| mk_col_spec_parse_error(col_idx, err))?
         };
-        let name = types::read_string(buf)?.to_owned();
-        let typ = deser_type(buf)?;
+        let name = types::read_string(buf)
+            .map_err(|err| mk_col_spec_parse_error(col_idx, err))?
+            .to_owned();
+        let typ = deser_type(buf).map_err(|err| mk_col_spec_parse_error(col_idx, err))?;
         col_specs.push(ColumnSpec {
             table_spec,
             name,
@@ -573,16 +608,22 @@ fn deser_col_specs(
     Ok(col_specs)
 }
 
-fn deser_result_metadata(buf: &mut &[u8]) -> StdResult<ResultMetadata, ParseError> {
-    let flags = types::read_int(buf)?;
+fn deser_result_metadata(buf: &mut &[u8]) -> StdResult<ResultMetadata, ResultMetadataParseError> {
+    let flags = types::read_int(buf).map_err(ResultMetadataParseError::FlagsParseError)?;
     let global_tables_spec = flags & 0x0001 != 0;
     let has_more_pages = flags & 0x0002 != 0;
     let no_metadata = flags & 0x0004 != 0;
 
-    let col_count: usize = types::read_int(buf)?.try_into()?;
+    let col_count =
+        types::read_int_length(buf).map_err(ResultMetadataParseError::ColumnCountParseError)?;
 
     let paging_state = if has_more_pages {
-        Some(types::read_bytes(buf)?.to_owned().into())
+        Some(
+            types::read_bytes(buf)
+                .map_err(ResultMetadataParseError::PagingStateParseError)?
+                .to_owned()
+                .into(),
+        )
     } else {
         None
     };
@@ -610,18 +651,23 @@ fn deser_result_metadata(buf: &mut &[u8]) -> StdResult<ResultMetadata, ParseErro
     })
 }
 
-fn deser_prepared_metadata(buf: &mut &[u8]) -> StdResult<PreparedMetadata, ParseError> {
-    let flags = types::read_int(buf)?;
+fn deser_prepared_metadata(
+    buf: &mut &[u8],
+) -> StdResult<PreparedMetadata, ResultMetadataParseError> {
+    let flags = types::read_int(buf).map_err(ResultMetadataParseError::FlagsParseError)?;
     let global_tables_spec = flags & 0x0001 != 0;
 
-    let col_count = types::read_int_length(buf)?;
+    let col_count =
+        types::read_int_length(buf).map_err(ResultMetadataParseError::ColumnCountParseError)?;
 
-    let pk_count: usize = types::read_int(buf)?.try_into()?;
+    let pk_count: usize =
+        types::read_int_length(buf).map_err(ResultMetadataParseError::PkCountParseError)?;
 
     let mut pk_indexes = Vec::with_capacity(pk_count);
     for i in 0..pk_count {
         pk_indexes.push(PartitionKeyIndex {
-            index: types::read_short(buf)? as u16,
+            index: types::read_short(buf).map_err(ResultMetadataParseError::PkIndexParseError)?
+                as u16,
             sequence: i as u16,
         });
     }
@@ -643,7 +689,10 @@ fn deser_prepared_metadata(buf: &mut &[u8]) -> StdResult<PreparedMetadata, Parse
     })
 }
 
-pub fn deser_cql_value(typ: &ColumnType, buf: &mut &[u8]) -> StdResult<CqlValue, ParseError> {
+pub fn deser_cql_value(
+    typ: &ColumnType,
+    buf: &mut &[u8],
+) -> StdResult<CqlValue, DeserializationError> {
     use ColumnType::*;
 
     if buf.is_empty() {
@@ -662,10 +711,10 @@ pub fn deser_cql_value(typ: &ColumnType, buf: &mut &[u8]) -> StdResult<CqlValue,
 
     Ok(match typ {
         Custom(type_str) => {
-            return Err(ParseError::BadIncomingData(format!(
-                "Support for custom types is not yet implemented: {}",
-                type_str
-            )));
+            return Err(mk_deser_err::<CqlValue>(
+                typ,
+                BuiltinDeserializationErrorKind::CustomTypeNotSupported(type_str.to_string()),
+            ))
         }
         Ascii => {
             let s = String::deserialize(typ, v)?;
@@ -784,14 +833,11 @@ pub fn deser_cql_value(typ: &ColumnType, buf: &mut &[u8]) -> StdResult<CqlValue,
         Tuple(type_names) => {
             let t = type_names
                 .iter()
-                .map(|typ| {
-                    types::read_bytes_opt(buf).and_then(|v| {
-                        v.map(|v| {
-                            CqlValue::deserialize(typ, Some(FrameSlice::new_borrowed(v)))
-                                .map_err(Into::into)
-                        })
+                .map(|typ| -> StdResult<_, DeserializationError> {
+                    let raw =
+                        types::read_bytes_opt(buf).map_err(|e| mk_deser_err::<CqlValue>(typ, e))?;
+                    raw.map(|v| CqlValue::deserialize(typ, Some(FrameSlice::new_borrowed(v))))
                         .transpose()
-                    })
                 })
                 .collect::<StdResult<_, _>>()?;
             CqlValue::Tuple(t)
@@ -802,7 +848,7 @@ pub fn deser_cql_value(typ: &ColumnType, buf: &mut &[u8]) -> StdResult<CqlValue,
 fn deser_rows(
     buf: &mut &[u8],
     cached_metadata: Option<&ResultMetadata>,
-) -> StdResult<Rows, ParseError> {
+) -> StdResult<Rows, RowsParseError> {
     let server_metadata = deser_result_metadata(buf)?;
 
     let metadata = match cached_metadata {
@@ -810,11 +856,10 @@ fn deser_rows(
         None => {
             // No cached_metadata provided. Server is supposed to provide the result metadata.
             if server_metadata.col_count != server_metadata.col_specs.len() {
-                return Err(ParseError::BadIncomingData(format!(
-                    "Bad result metadata provided in the response. Expected {} column specifications, received: {}",
-                    server_metadata.col_count,
-                    server_metadata.col_specs.len()
-                )));
+                return Err(RowsParseError::ColumnCountMismatch {
+                    expected_col_count: server_metadata.col_count,
+                    received_col_count: server_metadata.col_specs.len(),
+                });
             }
             server_metadata
         }
@@ -822,7 +867,8 @@ fn deser_rows(
 
     let original_size = buf.len();
 
-    let rows_count: usize = types::read_int(buf)?.try_into()?;
+    let rows_count: usize =
+        types::read_int_length(buf).map_err(RowsParseError::RowsCountParseError)?;
 
     let raw_rows_iter = RowIterator::new(
         rows_count,
@@ -842,18 +888,20 @@ fn deser_rows(
     })
 }
 
-fn deser_set_keyspace(buf: &mut &[u8]) -> StdResult<SetKeyspace, ParseError> {
+fn deser_set_keyspace(buf: &mut &[u8]) -> StdResult<SetKeyspace, SetKeyspaceParseError> {
     let keyspace_name = types::read_string(buf)?.to_string();
 
     Ok(SetKeyspace { keyspace_name })
 }
 
-fn deser_prepared(buf: &mut &[u8]) -> StdResult<Prepared, ParseError> {
-    let id_len = types::read_short(buf)? as usize;
+fn deser_prepared(buf: &mut &[u8]) -> StdResult<Prepared, PreparedParseError> {
+    let id_len = types::read_short(buf).map_err(PreparedParseError::IdLengthParseError)? as usize;
     let id: Bytes = buf[0..id_len].to_owned().into();
     buf.advance(id_len);
-    let prepared_metadata = deser_prepared_metadata(buf)?;
-    let result_metadata = deser_result_metadata(buf)?;
+    let prepared_metadata =
+        deser_prepared_metadata(buf).map_err(PreparedParseError::PreparedMetadataParseError)?;
+    let result_metadata =
+        deser_result_metadata(buf).map_err(PreparedParseError::ResultMetadataParseError)?;
     Ok(Prepared {
         id,
         prepared_metadata,
@@ -862,7 +910,7 @@ fn deser_prepared(buf: &mut &[u8]) -> StdResult<Prepared, ParseError> {
 }
 
 #[allow(clippy::unnecessary_wraps)]
-fn deser_schema_change(buf: &mut &[u8]) -> StdResult<SchemaChange, ParseError> {
+fn deser_schema_change(buf: &mut &[u8]) -> StdResult<SchemaChange, SchemaChangeEventParseError> {
     Ok(SchemaChange {
         event: SchemaChangeEvent::deserialize(buf)?,
     })
@@ -871,21 +919,18 @@ fn deser_schema_change(buf: &mut &[u8]) -> StdResult<SchemaChange, ParseError> {
 pub fn deserialize(
     buf: &mut &[u8],
     cached_metadata: Option<&ResultMetadata>,
-) -> StdResult<Result, ParseError> {
+) -> StdResult<Result, CqlResultParseError> {
     use self::Result::*;
-    Ok(match types::read_int(buf)? {
-        0x0001 => Void,
-        0x0002 => Rows(deser_rows(buf, cached_metadata)?),
-        0x0003 => SetKeyspace(deser_set_keyspace(buf)?),
-        0x0004 => Prepared(deser_prepared(buf)?),
-        0x0005 => SchemaChange(deser_schema_change(buf)?),
-        k => {
-            return Err(ParseError::BadIncomingData(format!(
-                "Unknown query result id: {}",
-                k
-            )))
-        }
-    })
+    Ok(
+        match types::read_int(buf).map_err(CqlResultParseError::ResultIdParseError)? {
+            0x0001 => Void,
+            0x0002 => Rows(deser_rows(buf, cached_metadata)?),
+            0x0003 => SetKeyspace(deser_set_keyspace(buf)?),
+            0x0004 => Prepared(deser_prepared(buf)?),
+            0x0005 => SchemaChange(deser_schema_change(buf)?),
+            id => return Err(CqlResultParseError::UnknownResultId(id)),
+        },
+    )
 }
 
 #[cfg(test)]

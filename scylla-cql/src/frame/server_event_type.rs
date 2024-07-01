@@ -1,6 +1,7 @@
-use crate::frame::frame_errors::ParseError;
 use std::fmt;
 use std::str::FromStr;
+
+use super::frame_errors::CqlEventParseError;
 
 pub enum EventType {
     TopologyChange,
@@ -21,17 +22,14 @@ impl fmt::Display for EventType {
 }
 
 impl FromStr for EventType {
-    type Err = ParseError;
+    type Err = CqlEventParseError;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s {
             "TOPOLOGY_CHANGE" => Ok(Self::TopologyChange),
             "STATUS_CHANGE" => Ok(Self::StatusChange),
             "SCHEMA_CHANGE" => Ok(Self::SchemaChange),
-            _ => Err(ParseError::BadIncomingData(format!(
-                "Invalid type event type: {}",
-                s
-            ))),
+            _ => Err(CqlEventParseError::UnknownEventType(s.to_string())),
         }
     }
 }

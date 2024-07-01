@@ -1,8 +1,8 @@
 use itertools::Itertools;
 use lazy_static::lazy_static;
 use scylla_cql::cql_to_rust::FromCqlVal;
-use scylla_cql::frame::frame_errors::ParseError;
 use scylla_cql::frame::response::result::{deser_cql_value, ColumnType, TableSpec};
+use scylla_cql::types::deserialize::DeserializationError;
 use thiserror::Error;
 use tracing::warn;
 use uuid::Uuid;
@@ -16,7 +16,7 @@ use std::sync::Arc;
 #[derive(Error, Debug)]
 pub(crate) enum TabletParsingError {
     #[error(transparent)]
-    Parse(#[from] ParseError),
+    Deserialization(#[from] DeserializationError),
     #[error("Shard id for tablet is negative: {0}")]
     ShardNum(i32),
 }
@@ -616,7 +616,7 @@ mod tests {
             HashMap::from([(CUSTOM_PAYLOAD_TABLETS_V1_KEY.to_string(), vec![1, 2, 3])]);
         assert_matches::assert_matches!(
             RawTablet::from_custom_payload(&custom_payload),
-            Some(Err(TabletParsingError::Parse(_)))
+            Some(Err(TabletParsingError::Deserialization(_)))
         );
     }
 
@@ -646,7 +646,7 @@ mod tests {
 
         assert_matches::assert_matches!(
             RawTablet::from_custom_payload(&custom_payload),
-            Some(Err(TabletParsingError::Parse(_)))
+            Some(Err(TabletParsingError::Deserialization(_)))
         );
     }
 
