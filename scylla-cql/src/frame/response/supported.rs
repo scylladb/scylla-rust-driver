@@ -1,4 +1,4 @@
-use crate::frame::frame_errors::ParseError;
+use crate::frame::frame_errors::CqlSupportedParseError;
 use crate::frame::types;
 use std::collections::HashMap;
 
@@ -8,8 +8,9 @@ pub struct Supported {
 }
 
 impl Supported {
-    pub fn deserialize(buf: &mut &[u8]) -> Result<Self, ParseError> {
-        let options = types::read_string_multimap(buf)?;
+    pub fn deserialize(buf: &mut &[u8]) -> Result<Self, CqlSupportedParseError> {
+        let options = types::read_string_multimap(buf)
+            .map_err(CqlSupportedParseError::OptionsMapDeserialization)?;
 
         Ok(Supported { options })
     }
