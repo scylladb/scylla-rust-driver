@@ -1,3 +1,7 @@
+use std::num::TryFromIntError;
+
+use thiserror::Error;
+
 use crate::frame::frame_errors::ParseError;
 
 use crate::{
@@ -13,7 +17,17 @@ impl<'a> SerializableRequest for Prepare<'a> {
     const OPCODE: RequestOpcode = RequestOpcode::Prepare;
 
     fn serialize(&self, buf: &mut Vec<u8>) -> Result<(), ParseError> {
-        types::write_long_string(self.query, buf)?;
+        types::write_long_string(self.query, buf)
+            .map_err(PrepareSerializationError::StatementStringSerialization)?;
         Ok(())
     }
+}
+
+/// An error type returned when serialization of PREPARE request fails.
+#[non_exhaustive]
+#[derive(Error, Debug, Clone)]
+pub enum PrepareSerializationError {
+    /// Failed to serialize the CQL statement string.
+    #[error("Failed to serialize statement contents: {0}")]
+    StatementStringSerialization(TryFromIntError),
 }

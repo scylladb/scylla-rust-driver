@@ -2,6 +2,7 @@ use std::sync::Arc;
 
 pub use super::request::{
     execute::ExecuteSerializationError,
+    prepare::PrepareSerializationError,
     query::{QueryParametersSerializationError, QuerySerializationError},
 };
 
@@ -43,6 +44,8 @@ pub enum FrameError {
 
 #[derive(Error, Debug)]
 pub enum ParseError {
+    #[error("Failed to serialize PREPARE request: {0}")]
+    PrepareSerialization(#[from] PrepareSerializationError),
     #[error("Failed to serialize EXECUTE request: {0}")]
     ExecuteSerialization(#[from] ExecuteSerializationError),
     #[error("Failed to serialize QUERY request: {0}")]
