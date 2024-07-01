@@ -1,10 +1,11 @@
-use std::{borrow::Cow, ops::ControlFlow, sync::Arc};
+use std::{borrow::Cow, num::TryFromIntError, ops::ControlFlow, sync::Arc};
 
 use crate::{
     frame::{frame_errors::ParseError, types::SerialConsistency},
     types::serialize::row::SerializedValues,
 };
 use bytes::{Buf, BufMut};
+use thiserror::Error;
 
 use crate::{
     frame::request::{RequestOpcode, SerializableRequest},
@@ -83,7 +84,10 @@ impl Default for QueryParameters<'_> {
 }
 
 impl QueryParameters<'_> {
-    pub fn serialize(&self, buf: &mut impl BufMut) -> Result<(), ParseError> {
+    pub fn serialize(
+        &self,
+        buf: &mut impl BufMut,
+    ) -> Result<(), QueryParametersSerializationError> {
         types::write_consistency(self.consistency, buf);
 
         let paging_state_bytes = self.paging_state.as_bytes_slice();
@@ -289,4 +293,13 @@ impl Default for PagingState {
     fn default() -> Self {
         Self::start()
     }
+}
+
+/// An error type returned when serialization of query parameters fails.
+#[non_exhaustive]
+#[derive(Error, Debug, Clone)]
+pub enum QueryParametersSerializationError {
+    /// Failed to serialize paging state.
+    #[error("Malformed paging state: {0}")]
+    BadPagingState(#[from] TryFromIntError),
 }
