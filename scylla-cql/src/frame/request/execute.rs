@@ -1,6 +1,6 @@
 use std::num::TryFromIntError;
 
-use crate::frame::frame_errors::ParseError;
+use crate::frame::frame_errors::{CqlRequestSerializationError, ParseError};
 use bytes::Bytes;
 use thiserror::Error;
 
@@ -23,9 +23,10 @@ pub struct Execute<'a> {
 impl SerializableRequest for Execute<'_> {
     const OPCODE: RequestOpcode = RequestOpcode::Execute;
 
-    fn serialize(&self, buf: &mut Vec<u8>) -> Result<(), ParseError> {
+    fn serialize(&self, buf: &mut Vec<u8>) -> Result<(), CqlRequestSerializationError> {
         // Serializing statement id
-        types::write_short_bytes(&self.id[..], buf)?;
+        types::write_short_bytes(&self.id[..], buf)
+            .map_err(ExecuteSerializationError::StatementIdSerialization)?;
 
         // Serializing params
         self.parameters

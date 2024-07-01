@@ -1,6 +1,6 @@
 use thiserror::Error;
 
-use crate::frame::frame_errors::ParseError;
+use crate::frame::frame_errors::CqlRequestSerializationError;
 
 use std::{borrow::Cow, collections::HashMap, num::TryFromIntError};
 
@@ -16,7 +16,7 @@ pub struct Startup<'a> {
 impl SerializableRequest for Startup<'_> {
     const OPCODE: RequestOpcode = RequestOpcode::Startup;
 
-    fn serialize(&self, buf: &mut Vec<u8>) -> Result<(), ParseError> {
+    fn serialize(&self, buf: &mut Vec<u8>) -> Result<(), CqlRequestSerializationError> {
         types::write_string_map(&self.options, buf)
             .map_err(StartupSerializationError::OptionsSerialization)?;
         Ok(())
