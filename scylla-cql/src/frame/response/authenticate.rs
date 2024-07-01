@@ -1,4 +1,4 @@
-use crate::frame::frame_errors::{CqlAuthenticateParseError, ParseError};
+use crate::frame::frame_errors::{CqlAuthSuccessParseError, CqlAuthenticateParseError, ParseError};
 use crate::frame::types;
 
 // Implements Authenticate message.
@@ -23,8 +23,10 @@ pub struct AuthSuccess {
 }
 
 impl AuthSuccess {
-    pub fn deserialize(buf: &mut &[u8]) -> Result<Self, ParseError> {
-        let success_message = types::read_bytes_opt(buf)?.map(|b| b.to_owned());
+    pub fn deserialize(buf: &mut &[u8]) -> Result<Self, CqlAuthSuccessParseError> {
+        let success_message = types::read_bytes_opt(buf)
+            .map_err(CqlAuthSuccessParseError::SuccessMessageParseError)?
+            .map(ToOwned::to_owned);
 
         Ok(AuthSuccess { success_message })
     }
