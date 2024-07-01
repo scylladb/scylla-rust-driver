@@ -1,6 +1,6 @@
 use bytes::Bytes;
 
-use crate::frame::frame_errors::ParseError;
+use crate::frame::frame_errors::LowLevelDeserializationError;
 use crate::frame::types;
 
 /// A reference to a part of the frame.
@@ -139,7 +139,9 @@ impl<'frame> FrameSlice<'frame> {
     ///
     /// If the operation fails then the slice remains unchanged.
     #[inline]
-    pub(super) fn read_cql_bytes(&mut self) -> Result<Option<FrameSlice<'frame>>, ParseError> {
+    pub(super) fn read_cql_bytes(
+        &mut self,
+    ) -> Result<Option<FrameSlice<'frame>>, LowLevelDeserializationError> {
         // We copy the slice reference, not to mutate the FrameSlice in case of an error.
         let mut slice = self.frame_subslice;
 

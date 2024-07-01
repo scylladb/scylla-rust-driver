@@ -188,7 +188,7 @@ pub fn parse_response_body_extensions(
 
     let trace_id = if flags & FLAG_TRACING != 0 {
         let buf = &mut &*body;
-        let trace_id = types::read_uuid(buf)?;
+        let trace_id = types::read_uuid(buf).map_err(frame_errors::ParseError::from)?;
         body.advance(16);
         Some(trace_id)
     } else {
@@ -198,7 +198,7 @@ pub fn parse_response_body_extensions(
     let warnings = if flags & FLAG_WARNING != 0 {
         let body_len = body.len();
         let buf = &mut &*body;
-        let warnings = types::read_string_list(buf)?;
+        let warnings = types::read_string_list(buf).map_err(frame_errors::ParseError::from)?;
         let buf_len = buf.len();
         body.advance(body_len - buf_len);
         warnings
@@ -209,7 +209,7 @@ pub fn parse_response_body_extensions(
     let custom_payload = if flags & FLAG_CUSTOM_PAYLOAD != 0 {
         let body_len = body.len();
         let buf = &mut &*body;
-        let payload_map = types::read_bytes_map(buf)?;
+        let payload_map = types::read_bytes_map(buf).map_err(frame_errors::ParseError::from)?;
         let buf_len = buf.len();
         body.advance(body_len - buf_len);
         Some(payload_map)
