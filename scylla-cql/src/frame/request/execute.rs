@@ -1,12 +1,18 @@
+use std::num::TryFromIntError;
+
 use crate::frame::frame_errors::ParseError;
 use bytes::Bytes;
+use thiserror::Error;
 
 use crate::{
     frame::request::{query, RequestOpcode, SerializableRequest},
     frame::types,
 };
 
-use super::{query::QueryParameters, DeserializableRequest};
+use super::{
+    query::{QueryParameters, QueryParametersSerializationError},
+    DeserializableRequest,
+};
 
 #[cfg_attr(test, derive(Debug, PartialEq, Eq))]
 pub struct Execute<'a> {
@@ -22,7 +28,9 @@ impl SerializableRequest for Execute<'_> {
         types::write_short_bytes(&self.id[..], buf)?;
 
         // Serializing params
-        self.parameters.serialize(buf)?;
+        self.parameters
+            .serialize(buf)
+            .map_err(ExecuteSerializationError::QueryParametersSerialization)?;
         Ok(())
     }
 }
@@ -34,4 +42,13 @@ impl<'e> DeserializableRequest for Execute<'e> {
 
         Ok(Self { id, parameters })
     }
+}
+
+#[non_exhaustive]
+#[derive(Error, Debug, Clone)]
+pub enum ExecuteSerializationError {
+    #[error("Malformed query parameters: {0}")]
+    QueryParametersSerialization(QueryParametersSerializationError),
+    #[error("Malformed statement id: {0}")]
+    StatementIdSerialization(TryFromIntError),
 }
