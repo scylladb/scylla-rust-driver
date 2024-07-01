@@ -1,12 +1,12 @@
 use bytes::{Buf, BufMut};
-use std::{borrow::Cow, convert::TryInto};
+use std::{borrow::Cow, convert::TryInto, num::TryFromIntError};
+use thiserror::Error;
 
 use crate::{
     frame::{
         frame_errors::ParseError,
         request::{RequestOpcode, SerializableRequest},
         types::{self, SerialConsistency},
-        value::SerializeValuesError,
     },
     types::serialize::{
         raw_batch::{RawBatchValues, RawBatchValuesIterator},
@@ -75,31 +75,40 @@ pub enum BatchStatement<'a> {
     Prepared { id: Cow<'a, [u8]> },
 }
 
-impl<Statement, Values> SerializableRequest for Batch<'_, Statement, Values>
+impl<Statement, Values> Batch<'_, Statement, Values>
 where
     for<'s> BatchStatement<'s>: From<&'s Statement>,
     Statement: Clone,
     Values: RawBatchValues,
 {
-    const OPCODE: RequestOpcode = RequestOpcode::Batch;
-
-    fn serialize(&self, buf: &mut Vec<u8>) -> Result<(), ParseError> {
+    fn do_serialize(&self, buf: &mut Vec<u8>) -> Result<(), BatchSerializationError> {
         // Serializing type of batch
         buf.put_u8(self.batch_type as u8);
 
         // Serializing queries
-        types::write_short(self.statements.len().try_into()?, buf);
+        types::write_short(
+            self.statements
+                .len()
+                .try_into()
+                .map_err(|_| BatchSerializationError::TooManyStatements(self.statements.len()))?,
+            buf,
+        );
 
-        let counts_mismatch_err = |n_values: usize, n_statements: usize| {
-            ParseError::BadDataToSerialize(format!(
-                "Length of provided values must be equal to number of batch statements \
-                    (got {n_values} values, {n_statements} statements)"
-            ))
+        let counts_mismatch_err = |n_value_lists: usize, n_statements: usize| {
+            BatchSerializationError::ValuesAndStatementsLengthMismatch {
+                n_value_lists,
+                n_statements,
+            }
         };
         let mut n_serialized_statements = 0usize;
         let mut value_lists = self.values.batch_values_iter();
         for (idx, statement) in self.statements.iter().enumerate() {
-            BatchStatement::from(statement).serialize(buf)?;
+            BatchStatement::from(statement)
+                .serialize(buf)
+                .map_err(|err| BatchSerializationError::StatementSerialization {
+                    statement_idx: idx,
+                    error: err,
+                })?;
 
             // Reserve two bytes for length
             let length_pos = buf.len();
@@ -107,12 +116,23 @@ where
             let mut row_writer = RowWriter::new(buf);
             value_lists
                 .serialize_next(&mut row_writer)
-                .ok_or_else(|| counts_mismatch_err(idx, self.statements.len()))??;
+                .ok_or_else(|| counts_mismatch_err(idx, self.statements.len()))?
+                .map_err(|err: SerializationError| {
+                    BatchSerializationError::StatementSerialization {
+                        statement_idx: idx,
+                        error: BatchStatementSerializationError::ValuesSerialiation(err),
+                    }
+                })?;
             // Go back and put the length
             let count: u16 = match row_writer.value_count().try_into() {
                 Ok(n) => n,
                 Err(_) => {
-                    return Err(SerializationError::new(SerializeValuesError::TooManyValues).into())
+                    return Err(BatchSerializationError::StatementSerialization {
+                        statement_idx: idx,
+                        error: BatchStatementSerializationError::TooManyValues(
+                            row_writer.value_count(),
+                        ),
+                    })
                 }
             };
             buf[length_pos..length_pos + 2].copy_from_slice(&count.to_be_bytes());
@@ -129,11 +149,10 @@ where
         if n_serialized_statements != self.statements.len() {
             // We want to check this to avoid propagating an invalid construction of self.statements_count as a
             // hard-to-debug silent fail
-            return Err(ParseError::BadDataToSerialize(format!(
-                "Invalid Batch constructed: not as many statements serialized as announced \
-                    (batch.statement_count: {announced_statement_count}, {n_serialized_statements}",
-                announced_statement_count = self.statements.len()
-            )));
+            return Err(BatchSerializationError::BadBatchConstructed {
+                n_announced_statements: self.statements.len(),
+                n_serialized_statements,
+            });
         }
 
         // Serializing consistency
@@ -161,6 +180,20 @@ where
     }
 }
 
+impl<Statement, Values> SerializableRequest for Batch<'_, Statement, Values>
+where
+    for<'s> BatchStatement<'s>: From<&'s Statement>,
+    Statement: Clone,
+    Values: RawBatchValues,
+{
+    const OPCODE: RequestOpcode = RequestOpcode::Batch;
+
+    fn serialize(&self, buf: &mut Vec<u8>) -> Result<(), ParseError> {
+        self.do_serialize(buf)?;
+        Ok(())
+    }
+}
+
 impl BatchStatement<'_> {
     fn deserialize(buf: &mut &[u8]) -> Result<Self, ParseError> {
         let kind = buf.get_u8();
@@ -182,15 +215,17 @@ impl BatchStatement<'_> {
 }
 
 impl BatchStatement<'_> {
-    fn serialize(&self, buf: &mut impl BufMut) -> Result<(), ParseError> {
+    fn serialize(&self, buf: &mut impl BufMut) -> Result<(), BatchStatementSerializationError> {
         match self {
             Self::Query { text } => {
                 buf.put_u8(0);
-                types::write_long_string(text, buf)?;
+                types::write_long_string(text, buf)
+                    .map_err(BatchStatementSerializationError::StatementStringSerialization)?;
             }
             Self::Prepared { id } => {
                 buf.put_u8(1);
-                types::write_short_bytes(id, buf)?;
+                types::write_short_bytes(id, buf)
+                    .map_err(BatchStatementSerializationError::StatementIdSerialization)?;
             }
         }
 
@@ -266,4 +301,56 @@ impl<'b> DeserializableRequest for Batch<'b, BatchStatement<'b>, Vec<SerializedV
             values,
         })
     }
+}
+
+/// An error type returned when serialization of BATCH request fails.
+#[non_exhaustive]
+#[derive(Error, Debug, Clone)]
+pub enum BatchSerializationError {
+    /// Maximum number of batch statements exceeded.
+    #[error("Too many statements in the batch. Received {0} statements, when u16::MAX is maximum possible value.")]
+    TooManyStatements(usize),
+
+    /// Number of batch statements differs from number of provided bound value lists.
+    #[error("Number of provided value lists must be equal to number of batch statements (got {n_value_lists} value lists, {n_statements} statements)")]
+    ValuesAndStatementsLengthMismatch {
+        n_value_lists: usize,
+        n_statements: usize,
+    },
+
+    /// Failed to serialize a statement in the batch.
+    #[error("Failed to serialize batch statement. statement idx: {statement_idx}, error: {error}")]
+    StatementSerialization {
+        statement_idx: usize,
+        error: BatchStatementSerializationError,
+    },
+
+    /// Number of announced batch statements differs from actual number of batch statements.
+    #[error("Invalid Batch constructed: not as many statements serialized as announced (announced: {n_announced_statements}, serialized: {n_serialized_statements})")]
+    BadBatchConstructed {
+        n_announced_statements: usize,
+        n_serialized_statements: usize,
+    },
+}
+
+/// An error type returned when serialization of one of the
+/// batch statements fails.
+#[non_exhaustive]
+#[derive(Error, Debug, Clone)]
+pub enum BatchStatementSerializationError {
+    /// Failed to serialize the CQL statement string.
+    #[error("Failed to serialize unprepared statement's content: {0}")]
+    StatementStringSerialization(TryFromIntError),
+
+    /// Maximum value of statement id exceeded.
+    #[error("Malformed prepared statement's id: {0}")]
+    StatementIdSerialization(TryFromIntError),
+
+    /// Failed to serialize statement's bound values.
+    #[error("Failed to serialize statement's values: {0}")]
+    ValuesSerialiation(SerializationError),
+
+    /// Too many bound values provided.
+    #[error("Too many values provided for the statement: {0}")]
+    TooManyValues(usize),
 }
