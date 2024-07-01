@@ -21,6 +21,7 @@ pub use startup::Startup;
 
 use self::batch::BatchStatement;
 
+use super::frame_errors::CqlRequestSerializationError;
 use super::types::SerialConsistency;
 use super::TryFromPrimitiveError;
 
@@ -92,9 +93,9 @@ impl TryFrom<u8> for RequestOpcode {
 pub trait SerializableRequest {
     const OPCODE: RequestOpcode;
 
-    fn serialize(&self, buf: &mut Vec<u8>) -> Result<(), ParseError>;
+    fn serialize(&self, buf: &mut Vec<u8>) -> Result<(), CqlRequestSerializationError>;
 
-    fn to_bytes(&self) -> Result<Bytes, ParseError> {
+    fn to_bytes(&self) -> Result<Bytes, CqlRequestSerializationError> {
         let mut v = Vec::new();
         self.serialize(&mut v)?;
         Ok(v.into())

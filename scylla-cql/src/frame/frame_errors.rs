@@ -21,6 +21,8 @@ use thiserror::Error;
 #[derive(Error, Debug)]
 pub enum FrameError {
     #[error(transparent)]
+    CqlRequestSerialization(#[from] CqlRequestSerializationError),
+    #[error(transparent)]
     Parse(#[from] ParseError),
     #[error("Frame is compressed, but no compression negotiated for connection.")]
     NoCompressionNegotiated,
@@ -48,20 +50,6 @@ pub enum FrameError {
 
 #[derive(Error, Debug)]
 pub enum ParseError {
-    #[error("Failed to serialize STARTUP request: {0}")]
-    StartupSerialization(#[from] StartupSerializationError),
-    #[error("Failed to serialize REGISTER request: {0}")]
-    RegisterSerialization(#[from] RegisterSerializationError),
-    #[error("Failed to serialize AUTH_RESPONSE request: {0}")]
-    AuthResponseSerialization(#[from] AuthResponseSerializationError),
-    #[error("Failed to serialize BATCH request: {0}")]
-    BatchSerialization(#[from] BatchSerializationError),
-    #[error("Failed to serialize PREPARE request: {0}")]
-    PrepareSerialization(#[from] PrepareSerializationError),
-    #[error("Failed to serialize EXECUTE request: {0}")]
-    ExecuteSerialization(#[from] ExecuteSerializationError),
-    #[error("Failed to serialize QUERY request: {0}")]
-    QuerySerialization(#[from] QuerySerializationError),
     #[error("Low-level deserialization failed: {0}")]
     LowLevelDeserializationError(#[from] LowLevelDeserializationError),
     #[error("Could not serialize frame: {0}")]
@@ -80,6 +68,39 @@ pub enum ParseError {
     SerializationError(#[from] SerializationError),
     #[error(transparent)]
     CqlTypeError(#[from] CqlTypeError),
+}
+
+/// An error that occurred during CQL request serialization.
+#[non_exhaustive]
+#[derive(Error, Debug, Clone)]
+pub enum CqlRequestSerializationError {
+    /// Failed to serialize STARTUP request.
+    #[error("Failed to serialize STARTUP request: {0}")]
+    StartupSerialization(#[from] StartupSerializationError),
+
+    /// Failed to serialize REGISTER request.
+    #[error("Failed to serialize REGISTER request: {0}")]
+    RegisterSerialization(#[from] RegisterSerializationError),
+
+    /// Failed to serialize AUTH_RESPONSE request.
+    #[error("Failed to serialize AUTH_RESPONSE request: {0}")]
+    AuthResponseSerialization(#[from] AuthResponseSerializationError),
+
+    /// Failed to serialize BATCH request.
+    #[error("Failed to serialize BATCH request: {0}")]
+    BatchSerialization(#[from] BatchSerializationError),
+
+    /// Failed to serialize PREPARE request.
+    #[error("Failed to serialize PREPARE request: {0}")]
+    PrepareSerialization(#[from] PrepareSerializationError),
+
+    /// Failed to serialize EXECUTE request.
+    #[error("Failed to serialize EXECUTE request: {0}")]
+    ExecuteSerialization(#[from] ExecuteSerializationError),
+
+    /// Failed to serialize QUERY request.
+    #[error("Failed to serialize QUERY request: {0}")]
+    QuerySerialization(#[from] QuerySerializationError),
 }
 
 /// An error type returned when deserialization of CQL

@@ -3,7 +3,7 @@ use std::num::TryFromIntError;
 use thiserror::Error;
 
 use crate::frame::{
-    frame_errors::ParseError,
+    frame_errors::CqlRequestSerializationError,
     request::{RequestOpcode, SerializableRequest},
     server_event_type::EventType,
     types,
@@ -16,7 +16,7 @@ pub struct Register {
 impl SerializableRequest for Register {
     const OPCODE: RequestOpcode = RequestOpcode::Register;
 
-    fn serialize(&self, buf: &mut Vec<u8>) -> Result<(), ParseError> {
+    fn serialize(&self, buf: &mut Vec<u8>) -> Result<(), CqlRequestSerializationError> {
         let event_types_list = self
             .event_types_to_register_for
             .iter()

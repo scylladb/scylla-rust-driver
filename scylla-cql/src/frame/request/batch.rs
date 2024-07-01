@@ -4,7 +4,7 @@ use thiserror::Error;
 
 use crate::{
     frame::{
-        frame_errors::ParseError,
+        frame_errors::{CqlRequestSerializationError, ParseError},
         request::{RequestOpcode, SerializableRequest},
         types::{self, SerialConsistency},
     },
@@ -188,7 +188,7 @@ where
 {
     const OPCODE: RequestOpcode = RequestOpcode::Batch;
 
-    fn serialize(&self, buf: &mut Vec<u8>) -> Result<(), ParseError> {
+    fn serialize(&self, buf: &mut Vec<u8>) -> Result<(), CqlRequestSerializationError> {
         self.do_serialize(buf)?;
         Ok(())
     }

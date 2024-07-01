@@ -1,7 +1,10 @@
 use std::{borrow::Cow, num::TryFromIntError, ops::ControlFlow, sync::Arc};
 
 use crate::{
-    frame::{frame_errors::ParseError, types::SerialConsistency},
+    frame::{
+        frame_errors::{CqlRequestSerializationError, ParseError},
+        types::SerialConsistency,
+    },
     types::serialize::row::SerializedValues,
 };
 use bytes::{Buf, BufMut};
@@ -39,7 +42,7 @@ pub struct Query<'q> {
 impl SerializableRequest for Query<'_> {
     const OPCODE: RequestOpcode = RequestOpcode::Query;
 
-    fn serialize(&self, buf: &mut Vec<u8>) -> Result<(), ParseError> {
+    fn serialize(&self, buf: &mut Vec<u8>) -> Result<(), CqlRequestSerializationError> {
         types::write_long_string(&self.contents, buf)
             .map_err(QuerySerializationError::StatementStringSerialization)?;
         self.parameters
