@@ -7,6 +7,7 @@ pub use super::request::{
     prepare::PrepareSerializationError,
     query::{QueryParametersSerializationError, QuerySerializationError},
     register::RegisterSerializationError,
+    startup::StartupSerializationError,
 };
 
 use super::response::CqlResponseKind;
@@ -47,6 +48,8 @@ pub enum FrameError {
 
 #[derive(Error, Debug)]
 pub enum ParseError {
+    #[error("Failed to serialize STARTUP request: {0}")]
+    StartupSerialization(#[from] StartupSerializationError),
     #[error("Failed to serialize REGISTER request: {0}")]
     RegisterSerialization(#[from] RegisterSerializationError),
     #[error("Failed to serialize AUTH_RESPONSE request: {0}")]
