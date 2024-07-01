@@ -250,7 +250,7 @@ fn compress_append(
             out.resize(old_size + snap::raw::max_compress_len(uncomp_body.len()), 0);
             let compressed_size = snap::raw::Encoder::new()
                 .compress(uncomp_body, &mut out[old_size..])
-                .map_err(|_| FrameError::FrameCompression)?;
+                .map_err(FrameError::SnapCompressError)?;
             out.truncate(old_size + compressed_size);
             Ok(())
         }
@@ -266,7 +266,7 @@ fn decompress(mut comp_body: &[u8], compression: Compression) -> Result<Vec<u8>,
         }
         Compression::Snappy => snap::raw::Decoder::new()
             .decompress_vec(comp_body)
-            .map_err(|_| FrameError::FrameDecompression),
+            .map_err(FrameError::SnapDecompressError),
     }
 }
 
