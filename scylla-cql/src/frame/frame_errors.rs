@@ -1,3 +1,4 @@
+use std::error::Error;
 use std::sync::Arc;
 
 pub use super::request::{
@@ -34,16 +35,16 @@ pub enum FrameError {
     VersionNotSupported(u8),
     #[error("Connection was closed before body was read: missing {0} out of {1}")]
     ConnectionClosed(usize, usize),
-    #[error("Frame decompression failed.")]
-    FrameDecompression,
-    #[error("Frame compression failed.")]
-    FrameCompression,
     #[error(transparent)]
     StdIoError(#[from] std::io::Error),
     #[error("Unrecognized opcode{0}")]
     TryFromPrimitiveError(#[from] TryFromPrimitiveError<u8>),
+    #[error("Snap compression error: {0}")]
+    SnapCompressError(Arc<dyn Error + Sync + Send>),
     #[error("Error compressing lz4 data {0}")]
     Lz4CompressError(#[from] lz4_flex::block::CompressError),
+    #[error("Snap decompression error: {0}")]
+    SnapDecompressError(Arc<dyn Error + Sync + Send>),
     #[error("Error decompressing lz4 data {0}")]
     Lz4DecompressError(#[from] lz4_flex::block::DecompressError),
 }

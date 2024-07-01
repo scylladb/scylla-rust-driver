@@ -16,6 +16,7 @@ use tokio::io::{AsyncRead, AsyncReadExt};
 use uuid::Uuid;
 
 use std::fmt::Display;
+use std::sync::Arc;
 use std::{collections::HashMap, convert::TryFrom};
 
 use request::SerializableRequest;
@@ -250,7 +251,7 @@ fn compress_append(
             out.resize(old_size + snap::raw::max_compress_len(uncomp_body.len()), 0);
             let compressed_size = snap::raw::Encoder::new()
                 .compress(uncomp_body, &mut out[old_size..])
-                .map_err(|_| FrameError::FrameCompression)?;
+                .map_err(|err| FrameError::SnapCompressError(Arc::new(err)))?;
             out.truncate(old_size + compressed_size);
             Ok(())
         }
@@ -266,7 +267,7 @@ fn decompress(mut comp_body: &[u8], compression: Compression) -> Result<Vec<u8>,
         }
         Compression::Snappy => snap::raw::Decoder::new()
             .decompress_vec(comp_body)
-            .map_err(|_| FrameError::FrameDecompression),
+            .map_err(|err| FrameError::SnapDecompressError(Arc::new(err))),
     }
 }
 
