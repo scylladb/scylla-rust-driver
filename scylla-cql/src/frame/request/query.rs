@@ -40,8 +40,11 @@ impl SerializableRequest for Query<'_> {
     const OPCODE: RequestOpcode = RequestOpcode::Query;
 
     fn serialize(&self, buf: &mut Vec<u8>) -> Result<(), ParseError> {
-        types::write_long_string(&self.contents, buf)?;
-        self.parameters.serialize(buf)?;
+        types::write_long_string(&self.contents, buf)
+            .map_err(QuerySerializationError::StatementStringSerialization)?;
+        self.parameters
+            .serialize(buf)
+            .map_err(QuerySerializationError::QueryParametersSerialization)?;
         Ok(())
     }
 }
@@ -207,6 +210,16 @@ impl<'q> QueryParameters<'q> {
             values,
         })
     }
+}
+
+/// An error type returned when serialization of QUERY request fails.
+#[non_exhaustive]
+#[derive(Error, Debug, Clone)]
+pub enum QuerySerializationError {
+    #[error("Invalid query parameters: {0}")]
+    QueryParametersSerialization(QueryParametersSerializationError),
+    #[error("Failed to serialize a statement content: {0}")]
+    StatementStringSerialization(TryFromIntError),
 }
 
 /// An error type returned when serialization of query parameters fails.
