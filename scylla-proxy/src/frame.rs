@@ -252,7 +252,10 @@ pub(crate) async fn read_frame(
     frame_type: FrameType,
 ) -> Result<(FrameParams, FrameOpcode, Bytes), FrameDeserializationError> {
     let mut raw_header = [0u8; HEADER_SIZE];
-    reader.read_exact(&mut raw_header[..]).await?;
+    reader
+        .read_exact(&mut raw_header[..])
+        .await
+        .map_err(FrameDeserializationError::new_header_io_error)?;
 
     let mut buf = &raw_header[..];
 
@@ -285,10 +288,12 @@ pub(crate) async fn read_frame(
 
     let opcode = match frame_type {
         FrameType::Request => FrameOpcode::Request(
-            RequestOpcode::try_from(buf.get_u8()).map_err(|_| FrameDeserializationError::FrameFromServer)?,
+            RequestOpcode::try_from(buf.get_u8())
+                .map_err(|_| FrameDeserializationError::FrameFromServer)?,
         ),
         FrameType::Response => FrameOpcode::Response(
-            ResponseOpcode::try_from(buf.get_u8()).map_err(|_| FrameDeserializationError::FrameFromClient)?,
+            ResponseOpcode::try_from(buf.get_u8())
+                .map_err(|_| FrameDeserializationError::FrameFromClient)?,
         ),
     };
 
@@ -297,10 +302,15 @@ pub(crate) async fn read_frame(
     let mut body = Vec::with_capacity(length).limit(length);
 
     while body.has_remaining_mut() {
-        let n = reader.read_buf(&mut body).await?;
+        let n = reader.read_buf(&mut body).await.map_err(|err| {
+            FrameDeserializationError::new_body_chunk_io_error(body.remaining_mut(), err)
+        })?;
         if n == 0 {
             // EOF, too early
-            return Err(FrameDeserializationError::ConnectionClosed(body.remaining_mut(), length));
+            return Err(FrameDeserializationError::ConnectionClosed(
+                body.remaining_mut(),
+                length,
+            ));
         }
     }
 
