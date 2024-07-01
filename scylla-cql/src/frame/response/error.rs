@@ -1,5 +1,5 @@
 use crate::errors::{DbError, OperationType, QueryError, WriteType};
-use crate::frame::frame_errors::ParseError;
+use crate::frame::frame_errors::CqlErrorParseError;
 use crate::frame::protocol_features::ProtocolFeatures;
 use crate::frame::types;
 use byteorder::ReadBytesExt;
@@ -12,70 +12,120 @@ pub struct Error {
 }
 
 impl Error {
-    pub fn deserialize(features: &ProtocolFeatures, buf: &mut &[u8]) -> Result<Self, ParseError> {
-        let code = types::read_int(buf)?;
-        let reason = types::read_string(buf)?.to_owned();
+    pub fn deserialize(
+        features: &ProtocolFeatures,
+        buf: &mut &[u8],
+    ) -> Result<Self, CqlErrorParseError> {
+        let code = types::read_int(buf).map_err(CqlErrorParseError::ErrorCodeParseError)?;
+        let reason = types::read_string(buf)
+            .map_err(CqlErrorParseError::ReasonParseError)?
+            .to_owned();
 
-        let error: DbError = match code {
-            0x0000 => DbError::ServerError,
-            0x000A => DbError::ProtocolError,
-            0x0100 => DbError::AuthenticationError,
-            0x1000 => DbError::Unavailable {
-                consistency: types::read_consistency(buf)?,
-                required: types::read_int(buf)?,
-                alive: types::read_int(buf)?,
-            },
-            0x1001 => DbError::Overloaded,
-            0x1002 => DbError::IsBootstrapping,
-            0x1003 => DbError::TruncateError,
-            0x1100 => DbError::WriteTimeout {
-                consistency: types::read_consistency(buf)?,
-                received: types::read_int(buf)?,
-                required: types::read_int(buf)?,
-                write_type: WriteType::from(types::read_string(buf)?),
-            },
-            0x1200 => DbError::ReadTimeout {
-                consistency: types::read_consistency(buf)?,
-                received: types::read_int(buf)?,
-                required: types::read_int(buf)?,
-                data_present: buf.read_u8()? != 0,
-            },
-            0x1300 => DbError::ReadFailure {
-                consistency: types::read_consistency(buf)?,
-                received: types::read_int(buf)?,
-                required: types::read_int(buf)?,
-                numfailures: types::read_int(buf)?,
-                data_present: buf.read_u8()? != 0,
-            },
-            0x1400 => DbError::FunctionFailure {
-                keyspace: types::read_string(buf)?.to_string(),
-                function: types::read_string(buf)?.to_string(),
-                arg_types: types::read_string_list(buf)?,
-            },
-            0x1500 => DbError::WriteFailure {
-                consistency: types::read_consistency(buf)?,
-                received: types::read_int(buf)?,
-                required: types::read_int(buf)?,
-                numfailures: types::read_int(buf)?,
-                write_type: WriteType::from(types::read_string(buf)?),
-            },
-            0x2000 => DbError::SyntaxError,
-            0x2100 => DbError::Unauthorized,
-            0x2200 => DbError::Invalid,
-            0x2300 => DbError::ConfigError,
-            0x2400 => DbError::AlreadyExists {
-                keyspace: types::read_string(buf)?.to_string(),
-                table: types::read_string(buf)?.to_string(),
-            },
-            0x2500 => DbError::Unprepared {
-                statement_id: Bytes::from(types::read_short_bytes(buf)?.to_owned()),
-            },
-            code if Some(code) == features.rate_limit_error => DbError::RateLimitReached {
-                op_type: OperationType::from(buf.read_u8()?),
-                rejected_by_coordinator: buf.read_u8()? != 0,
-            },
-            _ => DbError::Other(code),
-        };
+        let error: DbError =
+            match code {
+                0x0000 => DbError::ServerError,
+                0x000A => DbError::ProtocolError,
+                0x0100 => DbError::AuthenticationError,
+                0x1000 => DbError::Unavailable {
+                    consistency: types::read_consistency(buf)
+                        .map_err(CqlErrorParseError::GenericDeserializationError)?,
+                    required: types::read_int(buf)
+                        .map_err(CqlErrorParseError::GenericDeserializationError)?,
+                    alive: types::read_int(buf)
+                        .map_err(CqlErrorParseError::GenericDeserializationError)?,
+                },
+                0x1001 => DbError::Overloaded,
+                0x1002 => DbError::IsBootstrapping,
+                0x1003 => DbError::TruncateError,
+                0x1100 => DbError::WriteTimeout {
+                    consistency: types::read_consistency(buf)
+                        .map_err(CqlErrorParseError::GenericDeserializationError)?,
+                    received: types::read_int(buf)
+                        .map_err(CqlErrorParseError::GenericDeserializationError)?,
+                    required: types::read_int(buf)
+                        .map_err(CqlErrorParseError::GenericDeserializationError)?,
+                    write_type: WriteType::from(
+                        types::read_string(buf)
+                            .map_err(CqlErrorParseError::GenericDeserializationError)?,
+                    ),
+                },
+                0x1200 => DbError::ReadTimeout {
+                    consistency: types::read_consistency(buf)
+                        .map_err(CqlErrorParseError::GenericDeserializationError)?,
+                    received: types::read_int(buf)
+                        .map_err(CqlErrorParseError::GenericDeserializationError)?,
+                    required: types::read_int(buf)
+                        .map_err(CqlErrorParseError::GenericDeserializationError)?,
+                    data_present: buf.read_u8().map_err(|err| {
+                        CqlErrorParseError::GenericDeserializationError(err.into())
+                    })? != 0,
+                },
+                0x1300 => DbError::ReadFailure {
+                    consistency: types::read_consistency(buf)
+                        .map_err(CqlErrorParseError::GenericDeserializationError)?,
+                    received: types::read_int(buf)
+                        .map_err(CqlErrorParseError::GenericDeserializationError)?,
+                    required: types::read_int(buf)
+                        .map_err(CqlErrorParseError::GenericDeserializationError)?,
+                    numfailures: types::read_int(buf)
+                        .map_err(CqlErrorParseError::GenericDeserializationError)?,
+                    data_present: buf.read_u8().map_err(|err| {
+                        CqlErrorParseError::GenericDeserializationError(err.into())
+                    })? != 0,
+                },
+                0x1400 => DbError::FunctionFailure {
+                    keyspace: types::read_string(buf)
+                        .map_err(CqlErrorParseError::GenericDeserializationError)?
+                        .to_string(),
+                    function: types::read_string(buf)
+                        .map_err(CqlErrorParseError::GenericDeserializationError)?
+                        .to_string(),
+                    arg_types: types::read_string_list(buf)
+                        .map_err(CqlErrorParseError::GenericDeserializationError)?,
+                },
+                0x1500 => DbError::WriteFailure {
+                    consistency: types::read_consistency(buf)
+                        .map_err(CqlErrorParseError::GenericDeserializationError)?,
+                    received: types::read_int(buf)
+                        .map_err(CqlErrorParseError::GenericDeserializationError)?,
+                    required: types::read_int(buf)
+                        .map_err(CqlErrorParseError::GenericDeserializationError)?,
+                    numfailures: types::read_int(buf)
+                        .map_err(CqlErrorParseError::GenericDeserializationError)?,
+                    write_type: WriteType::from(
+                        types::read_string(buf)
+                            .map_err(CqlErrorParseError::GenericDeserializationError)?,
+                    ),
+                },
+                0x2000 => DbError::SyntaxError,
+                0x2100 => DbError::Unauthorized,
+                0x2200 => DbError::Invalid,
+                0x2300 => DbError::ConfigError,
+                0x2400 => DbError::AlreadyExists {
+                    keyspace: types::read_string(buf)
+                        .map_err(CqlErrorParseError::GenericDeserializationError)?
+                        .to_string(),
+                    table: types::read_string(buf)
+                        .map_err(CqlErrorParseError::GenericDeserializationError)?
+                        .to_string(),
+                },
+                0x2500 => DbError::Unprepared {
+                    statement_id: Bytes::from(
+                        types::read_short_bytes(buf)
+                            .map_err(CqlErrorParseError::GenericDeserializationError)?
+                            .to_owned(),
+                    ),
+                },
+                code if Some(code) == features.rate_limit_error => DbError::RateLimitReached {
+                    op_type: OperationType::from(buf.read_u8().map_err(|err| {
+                        CqlErrorParseError::GenericDeserializationError(err.into())
+                    })?),
+                    rejected_by_coordinator: buf.read_u8().map_err(|err| {
+                        CqlErrorParseError::GenericDeserializationError(err.into())
+                    })? != 0,
+                },
+                _ => DbError::Other(code),
+            };
 
         Ok(Error { error, reason })
     }
