@@ -11,6 +11,7 @@ mod value_tests;
 
 use crate::frame::frame_errors::FrameError;
 use bytes::{Buf, BufMut, Bytes};
+use frame_errors::FrameSerializationError;
 use thiserror::Error;
 use tokio::io::{AsyncRead, AsyncReadExt};
 use uuid::Uuid;
@@ -72,7 +73,7 @@ impl SerializedRequest {
         req: &R,
         compression: Option<Compression>,
         tracing: bool,
-    ) -> Result<SerializedRequest, FrameError> {
+    ) -> Result<SerializedRequest, FrameSerializationError> {
         let mut flags = 0;
         let mut data = vec![0; HEADER_SIZE];
 
@@ -235,7 +236,7 @@ fn compress_append(
     uncomp_body: &[u8],
     compression: Compression,
     out: &mut Vec<u8>,
-) -> Result<(), FrameError> {
+) -> Result<(), FrameSerializationError> {
     match compression {
         Compression::Lz4 => {
             let uncomp_len = uncomp_body.len() as u32;
@@ -250,7 +251,7 @@ fn compress_append(
             out.resize(old_size + snap::raw::max_compress_len(uncomp_body.len()), 0);
             let compressed_size = snap::raw::Encoder::new()
                 .compress(uncomp_body, &mut out[old_size..])
-                .map_err(FrameError::SnapCompressError)?;
+                .map_err(FrameSerializationError::SnapCompressError)?;
             out.truncate(old_size + compressed_size);
             Ok(())
         }

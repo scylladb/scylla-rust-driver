@@ -16,8 +16,6 @@ use thiserror::Error;
 
 #[derive(Error, Debug)]
 pub enum FrameError {
-    #[error(transparent)]
-    CqlRequestSerialization(#[from] CqlRequestSerializationError),
     #[error("Frame is compressed, but no compression negotiated for connection.")]
     NoCompressionNegotiated,
     #[error("Malformed trace id: {0}")]
@@ -38,12 +36,19 @@ pub enum FrameError {
     StdIoError(#[from] std::io::Error),
     #[error("Unrecognized opcode{0}")]
     TryFromPrimitiveError(#[from] TryFromPrimitiveError<u8>),
-    #[error("Snap compression error: {0}")]
-    SnapCompressError(snap::Error),
     #[error("Snap decompression error: {0}")]
     SnapDecompressError(snap::Error),
     #[error("Error decompressing lz4 data {0}")]
     Lz4DecompressError(#[from] lz4_flex::block::DecompressError),
+}
+
+#[non_exhaustive]
+#[derive(Error, Debug, Clone)]
+pub enum FrameSerializationError {
+    #[error(transparent)]
+    CqlRequestSerialization(#[from] CqlRequestSerializationError),
+    #[error("Snap compression error: {0}")]
+    SnapCompressError(snap::Error),
 }
 
 #[derive(Error, Debug)]

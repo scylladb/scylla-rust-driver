@@ -1,6 +1,8 @@
 //! This module contains various errors which can be returned by `scylla::Session`
 
-use crate::frame::frame_errors::{CqlResponseParseError, FrameError, ParseError};
+use crate::frame::frame_errors::{
+    CqlResponseParseError, FrameError, FrameSerializationError, ParseError,
+};
 use crate::frame::protocol_features::ProtocolFeatures;
 use crate::frame::value::SerializeValuesError;
 use crate::types::serialize::SerializationError;
@@ -24,6 +26,10 @@ pub enum QueryError {
     /// Failed to deserialize a CQL response from the server.
     #[error(transparent)]
     CqlResponseParseError(#[from] CqlResponseParseError),
+
+    /// Failed to serialize a client frame.
+    #[error(transparent)]
+    FrameSerializationError(#[from] FrameSerializationError),
 
     /// Input/Output error has occurred, connection broken etc.
     #[error("IO Error: {0}")]
@@ -389,6 +395,10 @@ pub enum NewSessionError {
     #[error(transparent)]
     CqlResponseParseError(#[from] CqlResponseParseError),
 
+    /// Failed to serialize a client frame.
+    #[error(transparent)]
+    FrameSerializationError(#[from] FrameSerializationError),
+
     /// Input/Output error has occurred, connection broken etc.
     #[error("IO Error: {0}")]
     IoError(Arc<std::io::Error>),
@@ -491,6 +501,7 @@ impl From<QueryError> for NewSessionError {
             QueryError::DbError(e, msg) => NewSessionError::DbError(e, msg),
             QueryError::BadQuery(e) => NewSessionError::BadQuery(e),
             QueryError::CqlResponseParseError(e) => NewSessionError::CqlResponseParseError(e),
+            QueryError::FrameSerializationError(e) => NewSessionError::FrameSerializationError(e),
             QueryError::IoError(e) => NewSessionError::IoError(e),
             QueryError::ProtocolError(m) => NewSessionError::ProtocolError(m),
             QueryError::InvalidMessage(m) => NewSessionError::InvalidMessage(m),

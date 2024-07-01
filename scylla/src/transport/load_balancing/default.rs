@@ -2690,6 +2690,7 @@ mod latency_awareness {
                 // "slow" errors, i.e. ones that are returned after considerable time of query being run
                 QueryError::DbError(_, _)
                 | QueryError::CqlResponseParseError(_)
+                | QueryError::FrameSerializationError(_)
                 | QueryError::InvalidMessage(_)
                 | QueryError::IoError(_)
                 | QueryError::ProtocolError(_)
