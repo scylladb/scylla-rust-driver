@@ -17,6 +17,7 @@ use tokio::io::{AsyncRead, AsyncReadExt};
 use uuid::Uuid;
 
 use std::fmt::Display;
+use std::sync::Arc;
 use std::{collections::HashMap, convert::TryFrom};
 
 use request::SerializableRequest;
@@ -274,7 +275,8 @@ fn decompress(
     match compression {
         Compression::Lz4 => {
             let uncomp_len = comp_body.get_u32() as usize;
-            let uncomp_body = lz4_flex::decompress(comp_body, uncomp_len)?;
+            let uncomp_body = lz4_flex::decompress(comp_body, uncomp_len)
+                .map_err(|err| FrameDeserializationError::Lz4DecompressError(Arc::new(err)))?;
             Ok(uncomp_body)
         }
         Compression::Snappy => snap::raw::Decoder::new()

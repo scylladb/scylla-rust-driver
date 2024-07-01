@@ -14,7 +14,7 @@ use crate::types::deserialize::DeserializationError;
 use crate::types::serialize::SerializationError;
 use thiserror::Error;
 
-#[derive(Error, Debug)]
+#[derive(Error, Debug, Clone)]
 pub enum FrameDeserializationError {
     #[error("Frame is compressed, but no compression negotiated for connection.")]
     NoCompressionNegotiated,
@@ -41,7 +41,7 @@ pub enum FrameDeserializationError {
     #[error("Snap decompression error: {0}")]
     SnapDecompressError(snap::Error),
     #[error("Error decompressing lz4 data {0}")]
-    Lz4DecompressError(#[from] lz4_flex::block::DecompressError),
+    Lz4DecompressError(#[from] Arc<lz4_flex::block::DecompressError>),
 }
 
 impl FrameDeserializationError {
