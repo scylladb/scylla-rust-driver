@@ -2855,6 +2855,7 @@ mod latency_awareness {
                 QueryError::DbError(_, _)
                 | QueryError::CqlResultParseError(_)
                 | QueryError::CqlErrorParseError(_)
+                | QueryError::BodyExtensionsParseError(_)
                 | QueryError::InvalidMessage(_)
                 | QueryError::ProtocolError(_)
                 | QueryError::TimeoutError

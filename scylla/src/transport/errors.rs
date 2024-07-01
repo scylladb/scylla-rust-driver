@@ -49,6 +49,10 @@ pub enum QueryError {
     #[error("Failed to serialize CQL request: {0}")]
     CqlRequestSerialization(#[from] CqlRequestSerializationError),
 
+    /// Failed to deserialize frame body extensions.
+    #[error(transparent)]
+    BodyExtensionsParseError(#[from] FrameBodyExtensionsParseError),
+
     /// Received a RESULT server response, but failed to deserialize it.
     #[error(transparent)]
     CqlResultParseError(#[from] CqlResultParseError),
@@ -116,12 +120,6 @@ impl From<ParseError> for QueryError {
     }
 }
 
-impl From<FrameBodyExtensionsParseError> for QueryError {
-    fn from(frame_error: FrameBodyExtensionsParseError) -> QueryError {
-        QueryError::InvalidMessage(format!("Frame error: {}", frame_error))
-    }
-}
-
 impl From<tokio::time::error::Elapsed> for QueryError {
     fn from(timer_error: tokio::time::error::Elapsed) -> QueryError {
         QueryError::RequestTimeout(format!("{}", timer_error))
@@ -157,6 +155,7 @@ impl From<QueryError> for NewSessionError {
             QueryError::CqlRequestSerialization(e) => NewSessionError::CqlRequestSerialization(e),
             QueryError::CqlResultParseError(e) => NewSessionError::CqlResultParseError(e),
             QueryError::CqlErrorParseError(e) => NewSessionError::CqlErrorParseError(e),
+            QueryError::BodyExtensionsParseError(e) => NewSessionError::BodyExtensionsParseError(e),
             QueryError::ConnectionPoolError(e) => NewSessionError::ConnectionPoolError(e),
             QueryError::ProtocolError(m) => NewSessionError::ProtocolError(m),
             QueryError::InvalidMessage(m) => NewSessionError::InvalidMessage(m),
@@ -204,6 +203,10 @@ pub enum NewSessionError {
     /// Failed to serialize CQL request.
     #[error("Failed to serialize CQL request: {0}")]
     CqlRequestSerialization(#[from] CqlRequestSerializationError),
+
+    /// Failed to deserialize frame body extensions.
+    #[error(transparent)]
+    BodyExtensionsParseError(#[from] FrameBodyExtensionsParseError),
 
     /// Received a RESULT server response, but failed to deserialize it.
     #[error(transparent)]
