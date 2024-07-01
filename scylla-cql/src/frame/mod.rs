@@ -132,7 +132,10 @@ pub async fn read_response_frame(
     reader: &mut (impl AsyncRead + Unpin),
 ) -> Result<(FrameParams, ResponseOpcode, Bytes), FrameError> {
     let mut raw_header = [0u8; HEADER_SIZE];
-    reader.read_exact(&mut raw_header[..]).await?;
+    reader
+        .read_exact(&mut raw_header[..])
+        .await
+        .map_err(FrameError::HeaderIoError)?;
 
     let mut buf = &raw_header[..];
 
@@ -161,7 +164,10 @@ pub async fn read_response_frame(
 
     let mut raw_body = Vec::with_capacity(length).limit(length);
     while raw_body.has_remaining_mut() {
-        let n = reader.read_buf(&mut raw_body).await?;
+        let n = reader
+            .read_buf(&mut raw_body)
+            .await
+            .map_err(|err| FrameError::BodyChunkIoError(raw_body.remaining_mut(), err))?;
         if n == 0 {
             // EOF, too early
             return Err(FrameError::ConnectionClosed(

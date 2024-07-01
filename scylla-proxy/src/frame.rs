@@ -252,7 +252,10 @@ pub(crate) async fn read_frame(
     frame_type: FrameType,
 ) -> Result<(FrameParams, FrameOpcode, Bytes), FrameError> {
     let mut raw_header = [0u8; HEADER_SIZE];
-    reader.read_exact(&mut raw_header[..]).await?;
+    reader
+        .read_exact(&mut raw_header[..])
+        .await
+        .map_err(FrameError::HeaderIoError)?;
 
     let mut buf = &raw_header[..];
 
@@ -297,7 +300,10 @@ pub(crate) async fn read_frame(
     let mut body = Vec::with_capacity(length).limit(length);
 
     while body.has_remaining_mut() {
-        let n = reader.read_buf(&mut body).await?;
+        let n = reader
+            .read_buf(&mut body)
+            .await
+            .map_err(|err| FrameError::BodyChunkIoError(body.remaining_mut(), err))?;
         if n == 0 {
             // EOF, too early
             return Err(FrameError::ConnectionClosed(body.remaining_mut(), length));
