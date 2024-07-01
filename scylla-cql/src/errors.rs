@@ -23,6 +23,10 @@ pub enum QueryError {
     #[error(transparent)]
     BadQuery(#[from] BadQuery),
 
+    /// Failed to deserialize a server frame.
+    #[error("Failed to deserialize a server frame: {0}")]
+    FrameDeserializationError(#[from] FrameDeserializationError),
+
     /// Failed to deserialize a CQL response from the server.
     #[error(transparent)]
     CqlResponseParseError(#[from] CqlResponseParseError),
@@ -391,6 +395,10 @@ pub enum NewSessionError {
     #[error(transparent)]
     BadQuery(#[from] BadQuery),
 
+    /// Failed to deserialize a server frame.
+    #[error("Failed to deserialize a server frame: {0}")]
+    FrameDeserializationError(#[from] FrameDeserializationError),
+
     /// Failed to deserialize a CQL response from the server.
     #[error(transparent)]
     CqlResponseParseError(#[from] CqlResponseParseError),
@@ -477,12 +485,6 @@ impl From<ParseError> for QueryError {
     }
 }
 
-impl From<FrameDeserializationError> for QueryError {
-    fn from(frame_error: FrameDeserializationError) -> QueryError {
-        QueryError::InvalidMessage(format!("Frame error: {}", frame_error))
-    }
-}
-
 impl From<tokio::time::error::Elapsed> for QueryError {
     fn from(timer_error: tokio::time::error::Elapsed) -> QueryError {
         QueryError::RequestTimeout(format!("{}", timer_error))
@@ -500,6 +502,9 @@ impl From<QueryError> for NewSessionError {
         match query_error {
             QueryError::DbError(e, msg) => NewSessionError::DbError(e, msg),
             QueryError::BadQuery(e) => NewSessionError::BadQuery(e),
+            QueryError::FrameDeserializationError(e) => {
+                NewSessionError::FrameDeserializationError(e)
+            }
             QueryError::CqlResponseParseError(e) => NewSessionError::CqlResponseParseError(e),
             QueryError::FrameSerializationError(e) => NewSessionError::FrameSerializationError(e),
             QueryError::IoError(e) => NewSessionError::IoError(e),
