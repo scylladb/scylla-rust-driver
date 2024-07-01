@@ -1,6 +1,7 @@
 use std::sync::Arc;
 
 pub use super::request::{
+    auth_response::AuthResponseSerializationError,
     batch::{BatchSerializationError, BatchStatementSerializationError},
     execute::ExecuteSerializationError,
     prepare::PrepareSerializationError,
@@ -45,6 +46,8 @@ pub enum FrameError {
 
 #[derive(Error, Debug)]
 pub enum ParseError {
+    #[error("Failed to serialize AUTH_RESPONSE request: {0}")]
+    AuthResponseSerialization(#[from] AuthResponseSerializationError),
     #[error("Failed to serialize BATCH request: {0}")]
     BatchSerialization(#[from] BatchSerializationError),
     #[error("Failed to serialize PREPARE request: {0}")]
