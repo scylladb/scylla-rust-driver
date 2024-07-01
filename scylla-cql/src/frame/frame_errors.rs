@@ -21,10 +21,14 @@ use thiserror::Error;
 
 #[derive(Error, Debug)]
 pub enum FrameError {
-    #[error(transparent)]
-    Parse(#[from] ParseError),
     #[error("Frame is compressed, but no compression negotiated for connection.")]
     NoCompressionNegotiated,
+    #[error("Malformed trace id: {0}")]
+    TraceIdParse(LowLevelDeserializationError),
+    #[error("Malformed warnings list: {0}")]
+    WarningsListParse(LowLevelDeserializationError),
+    #[error("Malformed custom payload map: {0}")]
+    CustomPayloadMapParse(LowLevelDeserializationError),
     #[error("Received frame marked as coming from a client")]
     FrameFromClient,
     #[error("Received frame marked as coming from the server")]
