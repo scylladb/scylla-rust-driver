@@ -37,20 +37,6 @@ pub enum FrameError {
 
 #[derive(Error, Debug)]
 pub enum ParseError {
-    #[error(transparent)]
-    CqlErrorParseError(#[from] CqlErrorParseError),
-    #[error(transparent)]
-    CqlAuthChallengeParseError(#[from] CqlAuthChallengeParseError),
-    #[error(transparent)]
-    CqlAuthSuccessParseError(#[from] CqlAuthSuccessParseError),
-    #[error(transparent)]
-    CqlAuthenticateParseError(#[from] CqlAuthenticateParseError),
-    #[error(transparent)]
-    CqlSupportedParseError(#[from] CqlSupportedParseError),
-    #[error(transparent)]
-    CqlEventParseError(#[from] CqlEventParseError),
-    #[error(transparent)]
-    CqlResultParseError(#[from] CqlResultParseError),
     #[error("Low-level deserialization failed: {0}")]
     LowLevelDeserializationError(#[from] LowLevelDeserializationError),
     #[error("Could not serialize frame: {0}")]
@@ -67,6 +53,27 @@ pub enum ParseError {
     SerializationError(#[from] SerializationError),
     #[error(transparent)]
     CqlTypeError(#[from] CqlTypeError),
+}
+
+/// An error type returned when deserialization of CQL
+/// server response fails.
+#[non_exhaustive]
+#[derive(Error, Debug, Clone)]
+pub enum CqlResponseParseError {
+    #[error("Failed to deserialize ERROR response: {0}")]
+    CqlErrorParseError(#[from] CqlErrorParseError),
+    #[error("Failed to deserialize AUTH_CHALLENGE response: {0}")]
+    CqlAuthChallengeParseError(#[from] CqlAuthChallengeParseError),
+    #[error("Failed to deserialize AUTH_SUCCESS response: {0}")]
+    CqlAuthSuccessParseError(#[from] CqlAuthSuccessParseError),
+    #[error("Failed to deserialize AUTHENTICATE response: {0}")]
+    CqlAuthenticateParseError(#[from] CqlAuthenticateParseError),
+    #[error("Failed to deserialize SUPPORTED response: {0}")]
+    CqlSupportedParseError(#[from] CqlSupportedParseError),
+    #[error("Failed to deserialize EVENT response: {0}")]
+    CqlEventParseError(#[from] CqlEventParseError),
+    #[error(transparent)]
+    CqlResultParseError(#[from] CqlResultParseError),
 }
 
 /// An error type returned when deserialization of ERROR response fails.
