@@ -1,7 +1,7 @@
 //! This module contains various errors which can be returned by `scylla::Session`
 
 use crate::frame::frame_errors::{
-    CqlResponseParseError, FrameError, FrameSerializationError, ParseError,
+    CqlResponseParseError, FrameDeserializationError, FrameSerializationError, ParseError,
 };
 use crate::frame::protocol_features::ProtocolFeatures;
 use crate::frame::value::SerializeValuesError;
@@ -477,8 +477,8 @@ impl From<ParseError> for QueryError {
     }
 }
 
-impl From<FrameError> for QueryError {
-    fn from(frame_error: FrameError) -> QueryError {
+impl From<FrameDeserializationError> for QueryError {
+    fn from(frame_error: FrameDeserializationError) -> QueryError {
         QueryError::InvalidMessage(format!("Frame error: {}", frame_error))
     }
 }

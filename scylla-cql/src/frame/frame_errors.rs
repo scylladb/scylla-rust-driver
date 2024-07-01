@@ -15,7 +15,7 @@ use crate::types::serialize::SerializationError;
 use thiserror::Error;
 
 #[derive(Error, Debug)]
-pub enum FrameError {
+pub enum FrameDeserializationError {
     #[error("Frame is compressed, but no compression negotiated for connection.")]
     NoCompressionNegotiated,
     #[error("Malformed trace id: {0}")]
