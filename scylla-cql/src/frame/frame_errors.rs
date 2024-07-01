@@ -36,6 +36,8 @@ pub enum FrameError {
 #[derive(Error, Debug)]
 pub enum ParseError {
     #[error(transparent)]
+    CqlAuthenticateParseError(#[from] CqlAuthenticateParseError),
+    #[error(transparent)]
     CqlSupportedParseError(#[from] CqlSupportedParseError),
     #[error(transparent)]
     CqlEventParseError(#[from] CqlEventParseError),
@@ -57,6 +59,14 @@ pub enum ParseError {
     SerializationError(#[from] SerializationError),
     #[error(transparent)]
     CqlTypeError(#[from] CqlTypeError),
+}
+
+/// An error type returned when deserialization of AUTHENTICATE response fails.
+#[non_exhaustive]
+#[derive(Error, Debug)]
+pub enum CqlAuthenticateParseError {
+    #[error("Malformed authenticator name: {0}")]
+    AuthNameParseError(LowLevelDeserializationError),
 }
 
 /// An error type returned when deserialization of SUPPORTED response fails.
