@@ -36,6 +36,8 @@ pub enum FrameError {
 #[derive(Error, Debug)]
 pub enum ParseError {
     #[error(transparent)]
+    CqlErrorParseError(#[from] CqlErrorParseError),
+    #[error(transparent)]
     CqlAuthChallengeParseError(#[from] CqlAuthChallengeParseError),
     #[error(transparent)]
     CqlAuthSuccessParseError(#[from] CqlAuthSuccessParseError),
@@ -63,6 +65,22 @@ pub enum ParseError {
     SerializationError(#[from] SerializationError),
     #[error(transparent)]
     CqlTypeError(#[from] CqlTypeError),
+}
+
+/// An error type returned when deserialization of ERROR response fails.
+#[non_exhaustive]
+#[derive(Error, Debug)]
+pub enum CqlErrorParseError {
+    #[error("Malformed error code: {0}")]
+    ErrorCodeParseError(LowLevelDeserializationError),
+    #[error("Malformed error reason: {0}")]
+    ReasonParseError(LowLevelDeserializationError),
+    #[error("Malformed error field {field} of DB error {db_error}: {err}")]
+    MalformedErrorField {
+        db_error: &'static str,
+        field: &'static str,
+        err: LowLevelDeserializationError,
+    },
 }
 
 /// An error type returned when deserialization of AUTH_CHALLENGE response fails.

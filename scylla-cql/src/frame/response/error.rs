@@ -1,5 +1,5 @@
 use crate::errors::{DbError, OperationType, QueryError, WriteType};
-use crate::frame::frame_errors::ParseError;
+use crate::frame::frame_errors::{CqlErrorParseError, LowLevelDeserializationError};
 use crate::frame::protocol_features::ProtocolFeatures;
 use crate::frame::types;
 use byteorder::ReadBytesExt;
@@ -11,69 +11,135 @@ pub struct Error {
     pub reason: String,
 }
 
+fn make_error_field_err(
+    db_error: &'static str,
+    field: &'static str,
+    err: impl Into<LowLevelDeserializationError>,
+) -> CqlErrorParseError {
+    CqlErrorParseError::MalformedErrorField {
+        db_error,
+        field,
+        err: err.into(),
+    }
+}
+
 impl Error {
-    pub fn deserialize(features: &ProtocolFeatures, buf: &mut &[u8]) -> Result<Self, ParseError> {
-        let code = types::read_int(buf)?;
-        let reason = types::read_string(buf)?.to_owned();
+    pub fn deserialize(
+        features: &ProtocolFeatures,
+        buf: &mut &[u8],
+    ) -> Result<Self, CqlErrorParseError> {
+        let code = types::read_int(buf)
+            .map_err(|err| CqlErrorParseError::ErrorCodeParseError(err.into()))?;
+        let reason = types::read_string(buf)
+            .map_err(CqlErrorParseError::ReasonParseError)?
+            .to_owned();
 
         let error: DbError = match code {
             0x0000 => DbError::ServerError,
             0x000A => DbError::ProtocolError,
             0x0100 => DbError::AuthenticationError,
             0x1000 => DbError::Unavailable {
-                consistency: types::read_consistency(buf)?,
-                required: types::read_int(buf)?,
-                alive: types::read_int(buf)?,
+                consistency: types::read_consistency(buf)
+                    .map_err(|err| make_error_field_err("UNAVAILABLE", "CONSISTENCY", err))?,
+                required: types::read_int(buf)
+                    .map_err(|err| make_error_field_err("UNAVAILABLE", "REQUIRED", err))?,
+                alive: types::read_int(buf)
+                    .map_err(|err| make_error_field_err("UNAVAILABLE", "ALIVE", err))?,
             },
             0x1001 => DbError::Overloaded,
             0x1002 => DbError::IsBootstrapping,
             0x1003 => DbError::TruncateError,
             0x1100 => DbError::WriteTimeout {
-                consistency: types::read_consistency(buf)?,
-                received: types::read_int(buf)?,
-                required: types::read_int(buf)?,
-                write_type: WriteType::from(types::read_string(buf)?),
+                consistency: types::read_consistency(buf)
+                    .map_err(|err| make_error_field_err("WRITE_TIMEOUT", "CONSISTENCY", err))?,
+                received: types::read_int(buf)
+                    .map_err(|err| make_error_field_err("WRITE_TIMEOUT", "RECEIVED", err))?,
+                required: types::read_int(buf)
+                    .map_err(|err| make_error_field_err("WRITE_TIMEOUT", "REQUIRED", err))?,
+                write_type: WriteType::from(
+                    types::read_string(buf)
+                        .map_err(|err| make_error_field_err("WRITE_TIMEOUT", "WRITE_TYPE", err))?,
+                ),
             },
             0x1200 => DbError::ReadTimeout {
-                consistency: types::read_consistency(buf)?,
-                received: types::read_int(buf)?,
-                required: types::read_int(buf)?,
-                data_present: buf.read_u8()? != 0,
+                consistency: types::read_consistency(buf)
+                    .map_err(|err| make_error_field_err("READ_TIMEOUT", "CONSISTENCY", err))?,
+                received: types::read_int(buf)
+                    .map_err(|err| make_error_field_err("READ_TIMEOUT", "RECEIVED", err))?,
+                required: types::read_int(buf)
+                    .map_err(|err| make_error_field_err("READ_TIMEOUT", "REQUIRED", err))?,
+                data_present: buf
+                    .read_u8()
+                    .map_err(|err| make_error_field_err("READ_TIMEOUT", "DATA_PRESENT", err))?
+                    != 0,
             },
             0x1300 => DbError::ReadFailure {
-                consistency: types::read_consistency(buf)?,
-                received: types::read_int(buf)?,
-                required: types::read_int(buf)?,
-                numfailures: types::read_int(buf)?,
-                data_present: buf.read_u8()? != 0,
+                consistency: types::read_consistency(buf)
+                    .map_err(|err| make_error_field_err("READ_FAILURE", "CONSISTENCY", err))?,
+                received: types::read_int(buf)
+                    .map_err(|err| make_error_field_err("READ_FAILURE", "RECEIVED", err))?,
+                required: types::read_int(buf)
+                    .map_err(|err| make_error_field_err("READ_FAILURE", "REQUIRED", err))?,
+                numfailures: types::read_int(buf)
+                    .map_err(|err| make_error_field_err("READ_FAILURE", "NUM_FAILURES", err))?,
+                data_present: buf
+                    .read_u8()
+                    .map_err(|err| make_error_field_err("READ_FAILURE", "DATA_PRESENT", err))?
+                    != 0,
             },
             0x1400 => DbError::FunctionFailure {
-                keyspace: types::read_string(buf)?.to_string(),
-                function: types::read_string(buf)?.to_string(),
-                arg_types: types::read_string_list(buf)?,
+                keyspace: types::read_string(buf)
+                    .map_err(|err| make_error_field_err("FUNCTION_FAILURE", "KEYSPACE", err))?
+                    .to_string(),
+                function: types::read_string(buf)
+                    .map_err(|err| make_error_field_err("FUNCTION_FAILURE", "FUNCTION", err))?
+                    .to_string(),
+                arg_types: types::read_string_list(buf)
+                    .map_err(|err| make_error_field_err("FUNCTION_FAILURE", "ARG_TYPES", err))?,
             },
             0x1500 => DbError::WriteFailure {
-                consistency: types::read_consistency(buf)?,
-                received: types::read_int(buf)?,
-                required: types::read_int(buf)?,
-                numfailures: types::read_int(buf)?,
-                write_type: WriteType::from(types::read_string(buf)?),
+                consistency: types::read_consistency(buf)
+                    .map_err(|err| make_error_field_err("WRITE_FAILURE", "CONSISTENCY", err))?,
+                received: types::read_int(buf)
+                    .map_err(|err| make_error_field_err("WRITE_FAILURE", "RECEIVED", err))?,
+                required: types::read_int(buf)
+                    .map_err(|err| make_error_field_err("WRITE_FAILURE", "REQUIRED", err))?,
+                numfailures: types::read_int(buf)
+                    .map_err(|err| make_error_field_err("WRITE_FAILURE", "NUM_FAILURES", err))?,
+                write_type: WriteType::from(
+                    types::read_string(buf)
+                        .map_err(|err| make_error_field_err("WRITE_FAILURE", "WRITE_TYPE", err))?,
+                ),
             },
             0x2000 => DbError::SyntaxError,
             0x2100 => DbError::Unauthorized,
             0x2200 => DbError::Invalid,
             0x2300 => DbError::ConfigError,
             0x2400 => DbError::AlreadyExists {
-                keyspace: types::read_string(buf)?.to_string(),
-                table: types::read_string(buf)?.to_string(),
+                keyspace: types::read_string(buf)
+                    .map_err(|err| make_error_field_err("ALREADY_EXISTS", "KEYSPACE", err))?
+                    .to_string(),
+                table: types::read_string(buf)
+                    .map_err(|err| make_error_field_err("ALREADY_EXISTS", "TABLE", err))?
+                    .to_string(),
             },
             0x2500 => DbError::Unprepared {
-                statement_id: Bytes::from(types::read_short_bytes(buf)?.to_owned()),
+                statement_id: Bytes::from(
+                    types::read_short_bytes(buf)
+                        .map_err(|err| make_error_field_err("UNPREPARED", "STATEMENT_ID", err))?
+                        .to_owned(),
+                ),
             },
-            code if Some(code) == features.rate_limit_error => DbError::RateLimitReached {
-                op_type: OperationType::from(buf.read_u8()?),
-                rejected_by_coordinator: buf.read_u8()? != 0,
-            },
+            code if Some(code) == features.rate_limit_error => {
+                DbError::RateLimitReached {
+                    op_type: OperationType::from(buf.read_u8().map_err(|err| {
+                        make_error_field_err("RATE_LIMIT_REACHED", "OP_TYPE", err)
+                    })?),
+                    rejected_by_coordinator: buf.read_u8().map_err(|err| {
+                        make_error_field_err("RATE_LIMIT_REACHED", "REJECTED_BY_COORDINATOR", err)
+                    })? != 0,
+                }
+            }
             _ => DbError::Other(code),
         };
 
