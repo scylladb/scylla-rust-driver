@@ -6,6 +6,7 @@ use super::request::execute::ExecuteSerializationError;
 use super::request::prepare::PrepareSerializationError;
 use super::request::query::QuerySerializationError;
 use super::request::register::RegisterSerializationError;
+use super::request::startup::StartupSerializationError;
 use super::TryFromPrimitiveError;
 use crate::cql_to_rust::CqlTypeError;
 use crate::frame::value::SerializeValuesError;
@@ -43,6 +44,8 @@ pub enum FrameError {
 
 #[derive(Error, Debug)]
 pub enum ParseError {
+    #[error("Failed to serialize STARTUP request: {0}")]
+    StartupSerialization(#[from] StartupSerializationError),
     #[error("Failed to serialize REGISTER request: {0}")]
     RegisterSerialization(#[from] RegisterSerializationError),
     #[error("Failed to serialize AUTH_RESPONSE request: {0}")]
