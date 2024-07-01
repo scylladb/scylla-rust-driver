@@ -1,5 +1,6 @@
 use std::sync::Arc;
 
+use super::request::query::QueryParametersSerializationError;
 use super::TryFromPrimitiveError;
 use crate::cql_to_rust::CqlTypeError;
 use crate::frame::value::SerializeValuesError;
@@ -37,6 +38,8 @@ pub enum FrameError {
 
 #[derive(Error, Debug)]
 pub enum ParseError {
+    #[error("Failed to serialize query parameters: {0}")]
+    QueryParametersSerializationError(#[from] QueryParametersSerializationError),
     #[error("Low-level deserialization failed: {0}")]
     LowLevelDeserializationError(#[from] LowLevelDeserializationError),
     #[error("Could not serialize frame: {0}")]
