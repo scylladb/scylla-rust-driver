@@ -1078,7 +1078,9 @@ mod tests {
                     assert_eq!(
                         got.len(),
                         combined_groups_len,
-                        "Plan length different than expected"
+                        "Plan length different than expected. Got plan {:?}, expected groups {:?}",
+                        got,
+                        self.groups,
                     );
 
                     // Now, split `got` into groups of expected sizes
@@ -1095,10 +1097,10 @@ mod tests {
                                 // Verify that the group has the same nodes as the
                                 // expected one
                                 let got_set: HashSet<_> = got_group.iter().copied().collect();
-                                assert_eq!(&got_set, expected_set);
+                                assert_eq!(&got_set, expected_set, "Unordered group mismatch");
                             }
                             ExpectedGroup::Ordered(sequence) => {
-                                assert_eq!(&got_group, sequence);
+                                assert_eq!(&got_group, sequence, "Ordered group mismatch");
                             }
                         }
 
@@ -1117,7 +1119,11 @@ mod tests {
                             // then expect there to be more than one group
                             // in the set.
                             if gots.len() > 1 && s.len() > 1 {
-                                assert!(sets.len() > 1);
+                                assert!(
+                                    sets.len() > 1,
+                                    "Group {:?} is expected to be nondeterministic, but it appears to be deterministic",
+                                    expected
+                                );
                             }
                         }
                         ExpectedGroup::Deterministic(_) | ExpectedGroup::Ordered(_) => {
@@ -1127,7 +1133,12 @@ mod tests {
                             // the same order.
                             // There will only be one, unique ordering shared
                             // by all plans - check this
-                            assert_eq!(sets.len(), 1);
+                            assert_eq!(
+                                sets.len(),
+                                1,
+                                "Group {:?} is expected to be deterministic, but it appears to be nondeterministic",
+                                expected
+                            );
                         }
                     }
                 }
