@@ -993,6 +993,8 @@ impl<'a> TokenWithStrategy<'a> {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::HashMap;
+
     use scylla_cql::{frame::types::SerialConsistency, Consistency};
     use tracing::info;
 
@@ -1000,7 +1002,12 @@ mod tests {
         get_plan_and_collect_node_identifiers, mock_cluster_data_for_token_unaware_tests,
         ExpectedGroups, ExpectedGroupsBuilder,
     };
-    use crate::transport::locator::test::{TABLE_NTS_RF_2, TABLE_NTS_RF_3, TABLE_SS_RF_2};
+    use crate::host_filter::HostFilter;
+    use crate::transport::locator::tablets::TabletsInfo;
+    use crate::transport::locator::test::{
+        id_to_invalid_addr, mock_metadata_for_token_aware_tests, TABLE_NTS_RF_2, TABLE_NTS_RF_3,
+        TABLE_SS_RF_2,
+    };
     use crate::{
         load_balancing::{
             default::tests::framework::mock_cluster_data_for_token_aware_tests, Plan, RoutingInfo,
@@ -2301,6 +2308,73 @@ mod tests {
             test_default_policy_with_given_cluster_and_routing_info(
                 &policy,
                 &cluster,
+                &routing_info,
+                &expected_groups,
+            )
+            .await;
+        }
+
+        let cluster_with_disabled_node_f = ClusterData::new(
+            mock_metadata_for_token_aware_tests(),
+            &Default::default(),
+            &HashMap::new(),
+            &None,
+            {
+                struct FHostFilter;
+                impl HostFilter for FHostFilter {
+                    fn accept(&self, peer: &crate::transport::topology::Peer) -> bool {
+                        peer.address != id_to_invalid_addr(F)
+                    }
+                }
+
+                Some(&FHostFilter)
+            },
+            TabletsInfo::new(),
+        )
+        .await;
+
+        let tests_with_disabled_node_f = [
+            // Keyspace NTS with RF=3 without preferred DC.
+            // The primary replica does not satisfy the predicate (being disabled by HostFilter),
+            // so pick() should return None and fallback should return A first.
+            //
+            // This is a regression test after a bug was fixed.
+            Test {
+                policy: DefaultPolicy {
+                    preferences: NodeLocationPreference::Any,
+                    is_token_aware: true,
+                    permit_dc_failover: true,
+                    pick_predicate: Box::new(|node, _shard| node.address != id_to_invalid_addr(F)),
+                    ..Default::default()
+                },
+                routing_info: RoutingInfo {
+                    token: Some(Token::new(160)),
+                    table: Some(TABLE_NTS_RF_3),
+                    consistency: Consistency::One,
+                    is_confirmed_lwt: true,
+                    ..Default::default()
+                },
+                // going through the ring, we get order: F , A , C , D , G , B , E
+                //                                      us  eu  eu  us  eu  eu  us
+                //                                      r2  r1  r1  r1  r2  r1  r1
+                expected_groups: ExpectedGroupsBuilder::new()
+                    // pick is empty, because the primary replica does not satisfy pick predicate,
+                    // and with LWT we cannot compute other replicas for NTS without allocations.
+                    .ordered([A, C, D, G, E]) // replicas
+                    .group([B]) // nodes
+                    .build(),
+            },
+        ];
+
+        for Test {
+            policy,
+            routing_info,
+            expected_groups,
+        } in tests_with_disabled_node_f
+        {
+            test_default_policy_with_given_cluster_and_routing_info(
+                &policy,
+                &cluster_with_disabled_node_f,
                 &routing_info,
                 &expected_groups,
             )
