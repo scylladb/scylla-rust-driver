@@ -313,7 +313,7 @@ or refrain from preferring datacenters (which may ban all other datacenters, if 
         let maybe_local_rack_nodes =
             if let NodeLocationPreference::DatacenterAndRack(dc, rack) = &self.preferences {
                 let rack_predicate = Self::make_rack_predicate(
-                    |node| (self.pick_predicate)(node, None),
+                    |node| Self::is_alive(node, None),
                     NodeLocationCriteria::DatacenterAndRack(dc, rack),
                 );
                 Either::Left(
