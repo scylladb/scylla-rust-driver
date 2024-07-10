@@ -46,7 +46,7 @@ use super::node::KnownNode;
 use super::partitioner::PartitionerName;
 use super::query_result::MaybeFirstRowTypedError;
 use super::topology::UntranslatedPeer;
-use super::NodeRef;
+use super::{NodeRef, SelfIdentity};
 use crate::cql_to_rust::FromRow;
 use crate::frame::response::cql_to_rust::FromRowError;
 use crate::frame::response::result;
@@ -515,6 +515,8 @@ impl Session {
             keepalive_interval: config.keepalive_interval,
             keepalive_timeout: config.keepalive_timeout,
             tablet_sender: Some(tablet_sender),
+            // A temporary stub, removed in the next commit.
+            identity: SelfIdentity::default(),
         };
 
         let pool_config = PoolConfig {
