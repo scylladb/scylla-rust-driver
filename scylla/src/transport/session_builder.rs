@@ -1,5 +1,6 @@
 //! SessionBuilder provides an easy way to create new Sessions
 
+use super::connection::SelfIdentity;
 use super::errors::NewSessionError;
 use super::execution_profile::ExecutionProfileHandle;
 use super::session::{AddressTranslator, Session, SessionConfig};
@@ -940,6 +941,38 @@ impl<K: SessionBuilderKind> GenericSessionBuilder<K> {
     /// ```
     pub fn cluster_metadata_refresh_interval(mut self, interval: Duration) -> Self {
         self.config.cluster_metadata_refresh_interval = interval;
+        self
+    }
+
+    /// Set the custom identity of the driver/application/instance,
+    /// to be sent as options in STARTUP message.
+    ///
+    /// By default driver name and version are sent;
+    /// application name and version and client id are not sent.
+    ///
+    /// # Example
+    /// ```
+    /// # use scylla::{Session, SessionBuilder};
+    /// # use scylla::transport::SelfIdentity;
+    /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
+    ///     let (app_major, app_minor, app_patch) = (2, 1, 3);
+    ///     let app_version = format!("{app_major}.{app_minor}.{app_patch}");
+    ///
+    ///     let session: Session = SessionBuilder::new()
+    ///         .known_node("127.0.0.1:9042")
+    ///         .custom_identity(
+    ///             SelfIdentity::new()
+    ///                 .with_custom_driver_version("0.13.0-custom_build_17")
+    ///                 .with_application_name("my-app")
+    ///                 .with_application_version(app_version)
+    ///         )
+    ///         .build()
+    ///         .await?;
+    /// #   Ok(())
+    /// # }
+    /// ```
+    pub fn custom_identity(mut self, identity: SelfIdentity<'static>) -> Self {
+        self.config.identity = identity;
         self
     }
 }
