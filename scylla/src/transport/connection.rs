@@ -419,6 +419,8 @@ pub(crate) type ErrorReceiver = tokio::sync::oneshot::Receiver<QueryError>;
 
 impl Connection {
     // Returns new connection and ErrorReceiver which can be used to wait for a fatal error
+    /// Opens a connection and makes it ready to send/receive CQL frames on it,
+    /// but does not yet send any frames (no OPTIONS/STARTUP handshake nor REGISTER requests).
     pub(crate) async fn new(
         addr: SocketAddr,
         source_port: Option<u16>,
@@ -1514,6 +1516,11 @@ async fn maybe_translated_addr(
     }
 }
 
+/// Opens a connection and performs its setup on CQL level:
+/// - performs OPTIONS/STARTUP handshake (chooses desired connections options);
+/// - registers for all event types using REGISTER request (if this is control connection).
+///
+/// At the beginning, translates node's address, if it is subject to address translation.
 pub(crate) async fn open_connection(
     endpoint: UntranslatedEndpoint,
     source_port: Option<u16>,
@@ -1530,6 +1537,7 @@ pub(crate) async fn open_connection(
     .await
 }
 
+/// The same as `open_connection`, but with customizable driver name and version.
 pub(crate) async fn open_named_connection(
     addr: SocketAddr,
     source_port: Option<u16>,
@@ -1537,7 +1545,6 @@ pub(crate) async fn open_named_connection(
     driver_name: Option<&str>,
     driver_version: Option<&str>,
 ) -> Result<(Connection, ErrorReceiver), QueryError> {
-    // TODO: shouldn't all this logic be in Connection::new?
     let (mut connection, error_receiver) =
         Connection::new(addr, source_port, config.clone()).await?;
 
