@@ -30,6 +30,17 @@ impl Batch {
         }
     }
 
+    /// Creates an empty batch, with the configuration of existing batch.
+    pub(crate) fn new_from(batch: &Batch) -> Batch {
+        let batch_type = batch.get_type();
+        let config = batch.config.clone();
+        Batch {
+            batch_type,
+            config,
+            ..Default::default()
+        }
+    }
+
     /// Creates a new, empty `Batch` of `batch_type` type with the provided statements.
     pub fn new_with_statements(batch_type: BatchType, statements: Vec<BatchStatement>) -> Self {
         Self {

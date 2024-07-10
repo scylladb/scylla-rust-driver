@@ -914,8 +914,7 @@ impl Connection {
             prepared_queries.insert(query, prepared);
         }
 
-        let mut batch: Cow<Batch> = Cow::Owned(Default::default());
-        batch.to_mut().config = init_batch.config.clone();
+        let mut batch: Cow<Batch> = Cow::Owned(Batch::new_from(init_batch));
         for stmt in &init_batch.statements {
             match stmt {
                 BatchStatement::Query(query) => match prepared_queries.get(query.contents.as_str())
