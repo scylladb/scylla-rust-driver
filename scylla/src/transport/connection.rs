@@ -524,7 +524,7 @@ impl Connection {
 
     pub(crate) async fn startup(
         &self,
-        options: HashMap<String, String>,
+        options: HashMap<Cow<'_, str>, Cow<'_, str>>,
     ) -> Result<Response, QueryError> {
         Ok(self
             .send_request(&request::Startup { options }, false, false, None)
@@ -1517,8 +1517,8 @@ pub(crate) async fn open_connection(
         addr,
         source_port,
         config,
-        Some("scylla-rust-driver".to_string()),
-        option_env!("CARGO_PKG_VERSION").map(|v| v.to_string()),
+        Some("scylla-rust-driver"),
+        option_env!("CARGO_PKG_VERSION"),
     )
     .await
 }
@@ -1527,8 +1527,8 @@ pub(crate) async fn open_named_connection(
     addr: SocketAddr,
     source_port: Option<u16>,
     config: &ConnectionConfig,
-    driver_name: Option<String>,
-    driver_version: Option<String>,
+    driver_name: Option<&str>,
+    driver_version: Option<&str>,
 ) -> Result<(Connection, ErrorReceiver), QueryError> {
     // TODO: shouldn't all this logic be in Connection::new?
     let (mut connection, error_receiver) =
@@ -1573,19 +1573,19 @@ pub(crate) async fn open_named_connection(
     };
     connection.set_features(features);
 
-    options.insert("CQL_VERSION".to_string(), "4.0.0".to_string()); // FIXME: hardcoded values
+    options.insert(Cow::Borrowed("CQL_VERSION"), Cow::Borrowed("4.0.0")); // FIXME: hardcoded values
     if let Some(name) = driver_name {
-        options.insert("DRIVER_NAME".to_string(), name);
+        options.insert(Cow::Borrowed("DRIVER_NAME"), Cow::Borrowed(name));
     }
     if let Some(version) = driver_version {
-        options.insert("DRIVER_VERSION".to_string(), version);
+        options.insert(Cow::Borrowed("DRIVER_VERSION"), Cow::Borrowed(version));
     }
     if let Some(compression) = &config.compression {
         let compression_str = compression.to_string();
         if supported_compression.iter().any(|c| c == &compression_str) {
             // Compression is reported to be supported by the server,
             // request it from the server
-            options.insert("COMPRESSION".to_string(), compression.to_string());
+            options.insert(Cow::Borrowed("COMPRESSION"), Cow::Owned(compression_str));
         } else {
             // Fall back to no compression
             connection.config.compression = None;
