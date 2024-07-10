@@ -1616,6 +1616,10 @@ pub(crate) async fn open_named_connection(
             );
         } else {
             // Fall back to no compression
+            tracing::warn!(
+                "Requested compression <{}> is not supported by the cluster. Falling back to no compression",
+                compression_str
+            );
             connection.config.compression = None;
         }
     }
