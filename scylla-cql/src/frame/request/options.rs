@@ -23,5 +23,5 @@ pub const DRIVER_VERSION: &str = "DRIVER_VERSION";
 
 /* Value names for options in SUPPORTED/STARTUP */
 pub const DEFAULT_CQL_PROTOCOL_VERSION: &str = "4.0.0";
-pub const DEFAULT_DRIVER_NAME: &str = "scylla-rust-driver";
+pub const DEFAULT_DRIVER_NAME: &str = "ScyllaDB Rust Driver";
 pub const DEFAULT_DRIVER_VERSION: &str = env!("CARGO_PKG_VERSION");
