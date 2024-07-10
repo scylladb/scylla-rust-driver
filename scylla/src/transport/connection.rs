@@ -1545,9 +1545,13 @@ pub(crate) async fn open_named_connection(
     driver_name: Option<&str>,
     driver_version: Option<&str>,
 ) -> Result<(Connection, ErrorReceiver), QueryError> {
+    /* Setup connection on TCP level and prepare for sending/receiving CQL frames. */
     let (mut connection, error_receiver) =
         Connection::new(addr, source_port, config.clone()).await?;
 
+    /* Perform OPTIONS/SUPPORTED/STARTUP handshake. */
+
+    // Get OPTIONS SUPPORTED by the cluster.
     let options_result = connection.get_options().await?;
 
     let shard_aware_port_key = match config.is_ssl() {
@@ -1565,6 +1569,7 @@ pub(crate) async fn open_named_connection(
         }
     };
 
+    // If this is ScyllaDB that we connected to, we received sharding information.
     let shard_info = ShardInfo::try_from(&supported.options).ok();
     let supported_compression = supported
         .options
@@ -1577,11 +1582,11 @@ pub(crate) async fn open_named_connection(
         .first()
         .and_then(|p| p.parse::<u16>().ok());
 
+    // Parse nonstandard protocol extensions.
     let protocol_features = ProtocolFeatures::parse_from_supported(&supported.options);
 
-    let mut options = HashMap::new();
-    protocol_features.add_startup_options(&mut options);
-
+    // At the beginning, Connection assumes no sharding and no protocol extensions;
+    // now that we know them, let's turn them on in the driver.
     let features = ConnectionFeatures {
         shard_info,
         shard_aware_port,
@@ -1589,10 +1594,17 @@ pub(crate) async fn open_named_connection(
     };
     connection.set_features(features);
 
+    /* Prepare options that the driver opts-in in STARTUP frame. */
+    let mut options = HashMap::new();
+    protocol_features.add_startup_options(&mut options);
+
+    // The only CQL protocol version supported by the driver.
     options.insert(
         Cow::Borrowed(options::CQL_VERSION),
         Cow::Borrowed(options::DEFAULT_CQL_PROTOCOL_VERSION),
     );
+
+    // Driver identity.
     if let Some(driver_name) = driver_name {
         options.insert(
             Cow::Borrowed(options::DRIVER_NAME),
@@ -1605,6 +1617,8 @@ pub(crate) async fn open_named_connection(
             Cow::Borrowed(driver_version),
         );
     }
+
+    // Optional compression.
     if let Some(compression) = &config.compression {
         let compression_str = compression.as_str();
         if supported_compression.iter().any(|c| c == compression_str) {
@@ -1623,6 +1637,8 @@ pub(crate) async fn open_named_connection(
             connection.config.compression = None;
         }
     }
+
+    /* Send the STARTUP frame with all the requested options. */
     let result = connection.startup(options).await?;
     match result {
         Response::Ready => {}
@@ -1637,6 +1653,7 @@ pub(crate) async fn open_named_connection(
         }
     }
 
+    /* If this is a control connection, REGISTER to receive all event types. */
     if connection.config.event_sender.is_some() {
         let all_event_types = vec![
             EventType::TopologyChange,
