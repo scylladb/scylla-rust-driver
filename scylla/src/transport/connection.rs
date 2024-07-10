@@ -1,7 +1,7 @@
 use bytes::Bytes;
 use futures::{future::RemoteHandle, FutureExt};
 use scylla_cql::errors::TranslationError;
-use scylla_cql::frame::request::options::Options;
+use scylla_cql::frame::request::options::{self, Options};
 use scylla_cql::frame::response::result::{ResultMetadata, TableSpec};
 use scylla_cql::frame::response::Error;
 use scylla_cql::frame::types::SerialConsistency;
@@ -1544,8 +1544,8 @@ pub(crate) async fn open_named_connection(
     let options_result = connection.get_options().await?;
 
     let shard_aware_port_key = match config.is_ssl() {
-        true => "SCYLLA_SHARD_AWARE_PORT_SSL",
-        false => "SCYLLA_SHARD_AWARE_PORT",
+        true => options::SCYLLA_SHARD_AWARE_PORT_SSL,
+        false => options::SCYLLA_SHARD_AWARE_PORT,
     };
 
     let mut supported = match options_result {
@@ -1559,13 +1559,15 @@ pub(crate) async fn open_named_connection(
     };
 
     let shard_info = ShardInfo::try_from(&supported.options).ok();
-    let supported_compression = supported.options.remove("COMPRESSION").unwrap_or_default();
+    let supported_compression = supported
+        .options
+        .remove(options::COMPRESSION)
+        .unwrap_or_default();
     let shard_aware_port = supported
         .options
         .remove(shard_aware_port_key)
         .unwrap_or_default()
-        .into_iter()
-        .next()
+        .first()
         .and_then(|p| p.parse::<u16>().ok());
 
     let protocol_features = ProtocolFeatures::parse_from_supported(&supported.options);
@@ -1580,19 +1582,28 @@ pub(crate) async fn open_named_connection(
     };
     connection.set_features(features);
 
-    options.insert(Cow::Borrowed("CQL_VERSION"), Cow::Borrowed("4.0.0")); // FIXME: hardcoded values
-    if let Some(name) = driver_name {
-        options.insert(Cow::Borrowed("DRIVER_NAME"), Cow::Borrowed(name));
+    options.insert(Cow::Borrowed(options::CQL_VERSION), Cow::Borrowed("4.0.0"));
+    if let Some(driver_name) = driver_name {
+        options.insert(
+            Cow::Borrowed(options::DRIVER_NAME),
+            Cow::Borrowed(driver_name),
+        );
     }
-    if let Some(version) = driver_version {
-        options.insert(Cow::Borrowed("DRIVER_VERSION"), Cow::Borrowed(version));
+    if let Some(driver_version) = driver_version {
+        options.insert(
+            Cow::Borrowed(options::DRIVER_VERSION),
+            Cow::Borrowed(driver_version),
+        );
     }
     if let Some(compression) = &config.compression {
         let compression_str = compression.to_string();
         if supported_compression.iter().any(|c| c == &compression_str) {
             // Compression is reported to be supported by the server,
             // request it from the server
-            options.insert(Cow::Borrowed("COMPRESSION"), Cow::Owned(compression_str));
+            options.insert(
+                Cow::Borrowed(options::COMPRESSION),
+                Cow::Owned(compression_str),
+            );
         } else {
             // Fall back to no compression
             connection.config.compression = None;
