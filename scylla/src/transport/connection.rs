@@ -1606,13 +1606,13 @@ pub(crate) async fn open_named_connection(
         );
     }
     if let Some(compression) = &config.compression {
-        let compression_str = compression.to_string();
-        if supported_compression.iter().any(|c| c == &compression_str) {
+        let compression_str = compression.as_str();
+        if supported_compression.iter().any(|c| c == compression_str) {
             // Compression is reported to be supported by the server,
             // request it from the server
             options.insert(
                 Cow::Borrowed(options::COMPRESSION),
-                Cow::Owned(compression_str),
+                Cow::Borrowed(compression_str),
             );
         } else {
             // Fall back to no compression
