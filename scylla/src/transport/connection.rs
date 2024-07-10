@@ -440,52 +440,7 @@ impl Connection {
         stream.set_nodelay(config.tcp_nodelay)?;
 
         if let Some(tcp_keepalive_interval) = config.tcp_keepalive_interval {
-            // It may be surprising why we call `with_time()` with `tcp_keepalive_interval`
-            // and `with_interval() with some other value. This is due to inconsistent naming:
-            // our interval means time after connection becomes idle until keepalives
-            // begin to be sent (they call it "time"), and their interval is time between
-            // sending keepalives.
-            // We insist on our naming due to other drivers following the same convention.
-            let mut tcp_keepalive = TcpKeepalive::new().with_time(tcp_keepalive_interval);
-
-            // These cfg values are taken from socket2 library, which uses the same constraints.
-            #[cfg(any(
-                target_os = "android",
-                target_os = "dragonfly",
-                target_os = "freebsd",
-                target_os = "fuchsia",
-                target_os = "illumos",
-                target_os = "ios",
-                target_os = "linux",
-                target_os = "macos",
-                target_os = "netbsd",
-                target_os = "tvos",
-                target_os = "watchos",
-                target_os = "windows",
-            ))]
-            {
-                tcp_keepalive = tcp_keepalive.with_interval(Duration::from_secs(1));
-            }
-
-            #[cfg(any(
-                target_os = "android",
-                target_os = "dragonfly",
-                target_os = "freebsd",
-                target_os = "fuchsia",
-                target_os = "illumos",
-                target_os = "ios",
-                target_os = "linux",
-                target_os = "macos",
-                target_os = "netbsd",
-                target_os = "tvos",
-                target_os = "watchos",
-            ))]
-            {
-                tcp_keepalive = tcp_keepalive.with_retries(10);
-            }
-
-            let sf = SockRef::from(&stream);
-            sf.set_tcp_keepalive(&tcp_keepalive)?;
+            Self::setup_tcp_keepalive(&stream, tcp_keepalive_interval)?;
         }
 
         // TODO: What should be the size of the channel?
@@ -520,6 +475,58 @@ impl Connection {
         };
 
         Ok((connection, error_receiver))
+    }
+
+    fn setup_tcp_keepalive(
+        stream: &TcpStream,
+        tcp_keepalive_interval: Duration,
+    ) -> std::io::Result<()> {
+        // It may be surprising why we call `with_time()` with `tcp_keepalive_interval`
+        // and `with_interval() with some other value. This is due to inconsistent naming:
+        // our interval means time after connection becomes idle until keepalives
+        // begin to be sent (they call it "time"), and their interval is time between
+        // sending keepalives.
+        // We insist on our naming due to other drivers following the same convention.
+        let mut tcp_keepalive = TcpKeepalive::new().with_time(tcp_keepalive_interval);
+
+        // These cfg values are taken from socket2 library, which uses the same constraints.
+        #[cfg(any(
+            target_os = "android",
+            target_os = "dragonfly",
+            target_os = "freebsd",
+            target_os = "fuchsia",
+            target_os = "illumos",
+            target_os = "ios",
+            target_os = "linux",
+            target_os = "macos",
+            target_os = "netbsd",
+            target_os = "tvos",
+            target_os = "watchos",
+            target_os = "windows",
+        ))]
+        {
+            tcp_keepalive = tcp_keepalive.with_interval(Duration::from_secs(1));
+        }
+
+        #[cfg(any(
+            target_os = "android",
+            target_os = "dragonfly",
+            target_os = "freebsd",
+            target_os = "fuchsia",
+            target_os = "illumos",
+            target_os = "ios",
+            target_os = "linux",
+            target_os = "macos",
+            target_os = "netbsd",
+            target_os = "tvos",
+            target_os = "watchos",
+        ))]
+        {
+            tcp_keepalive = tcp_keepalive.with_retries(10);
+        }
+
+        let sf = SockRef::from(&stream);
+        sf.set_tcp_keepalive(&tcp_keepalive)
     }
 
     pub(crate) async fn startup(
