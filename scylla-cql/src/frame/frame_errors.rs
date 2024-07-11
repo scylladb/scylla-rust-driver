@@ -3,7 +3,7 @@ use std::sync::Arc;
 use super::TryFromPrimitiveError;
 use crate::cql_to_rust::CqlTypeError;
 use crate::frame::value::SerializeValuesError;
-use crate::types::deserialize::DeserializationError;
+use crate::types::deserialize::{DeserializationError, TypeCheckError};
 use crate::types::serialize::SerializationError;
 use thiserror::Error;
 
@@ -45,6 +45,8 @@ pub enum ParseError {
     BadIncomingData(String),
     #[error(transparent)]
     DeserializationError(#[from] DeserializationError),
+    #[error(transparent)]
+    DeserializationTypeCheckError(#[from] TypeCheckError),
     #[error(transparent)]
     IoError(#[from] std::io::Error),
     #[error(transparent)]
