@@ -81,7 +81,7 @@ lazy_static = "1"
 num-bigint-03 = { package = "num-bigint", version = "0.3" }
 num-bigint-04 = { package = "num-bigint", version = "0.4" }
 bigdecimal-04 = { package = "bigdecimal", version = "0.4" }
-scylla-proxy = { version = "0.0.3", path = "../scylla-proxy" }
+scylla-proxy = { version = "0.0.4", path = "../scylla-proxy" }
 ntest = "0.9.0"
 criterion = "0.4"                                                      # Note: v0.5 needs at least rust 1.70.0
 tokio = { version = "1.27", features = ["test-util"] }
