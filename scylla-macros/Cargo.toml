@@ -1,6 +1,6 @@
 [package]
 name = "scylla-macros"
-version = "0.5.0"
+version = "0.5.1"
 edition = "2021"
 description = "proc macros for scylla async CQL driver"
 repository = "https://github.com/scylladb/scylla-rust-driver"
@@ -14,7 +14,7 @@ proc-macro = true
 [dependencies]
 darling = "0.20.10"
 syn = "2.0"
-quote = "1.0" 
+quote = "1.0"
 proc-macro2 = "1.0"
 
 [lints.rust]
