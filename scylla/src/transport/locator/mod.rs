@@ -472,19 +472,23 @@ impl<'a> IntoIterator for ReplicaSet<'a> {
 }
 
 enum ReplicaSetIteratorInner<'a> {
+    /// Token ring with SimpleStrategy, any datacenter
     Plain {
         replicas: ReplicasArray<'a>,
         idx: usize,
     },
+    /// Tablets
     PlainSharded {
         replicas: &'a [(Arc<Node>, Shard)],
         idx: usize,
     },
+    /// Token ring with SimpleStrategy, specific datacenter
     FilteredSimple {
         replicas: ReplicasArray<'a>,
         datacenter: &'a str,
         idx: usize,
     },
+    /// Token ring with NetworkTopologyStrategy
     ChainedNTS {
         replicas: ReplicasArray<'a>,
         replicas_idx: usize,
@@ -637,8 +641,8 @@ impl<'a> ReplicaSet<'a> {
 /// or it must compute them on-demand (in case of NetworkTopologyStrategy).
 /// The computation is lazy (performed by `ReplicasOrderedIterator` upon call to `next()`).
 /// For obtaining the primary replica, no allocations are needed. Therefore, the first call
-/// to `next()` is optimised and doesn not allocate.
-/// For the remaining others, unfortunately, allocation is unevitable.
+/// to `next()` is optimised and does not allocate.
+/// For the remaining others, unfortunately, allocation is inevitable.
 pub struct ReplicasOrdered<'a> {
     replica_set: ReplicaSet<'a>,
 }
@@ -650,7 +654,8 @@ pub struct ReplicasOrderedIterator<'a> {
 
 enum ReplicasOrderedIteratorInner<'a> {
     AlreadyRingOrdered {
-        // In case of Plain and FilteredSimple variants, ReplicaSetIterator respects ring order.
+        // In case of Plain, PlainSharded and FilteredSimple variants,
+        // ReplicaSetIterator respects ring order.
         replica_set_iter: ReplicaSetIterator<'a>,
     },
     PolyDatacenterNTS {
