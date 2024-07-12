@@ -1,0 +1,82 @@
+# Simple query
+
+Simple query takes query text and values and simply executes them on a `Session`:
+```rust
+// Insert a value into the table
+let to_insert: i32 = 12345;
+session
+    .query("INSERT INTO keyspace.table (a) VALUES(?)", (to_insert,))
+    .await?;
+```
+
+> ***Warning***\
+> Don't use simple query to receive large amounts of data.\
+> By default the query is unpaged and might cause heavy load on the cluster.\
+> In such cases set a page size and use [paged query](paged.md) instead.\
+> 
+> When page size is set, `query` will return only the first page of results.
+
+> ***Warning***\
+> If the values are not empty, driver first needs to send a `PREPARE` request
+> in order to fetch information required to serialize values. This will affect
+> performance because 2 round trips will be required instead of 1.
+
+### First argument - the query
+As the first argument `Session::query` takes anything implementing `Into<Query>`.\
+You can create a query manually to set custom options. For example to change query consistency:
+```rust
+use scylla::query::Query;
+use scylla::statement::Consistency;
+
+// Create a Query manually to change the Consistency to ONE
+let mut my_query: Query = Query::new("INSERT INTO ks.tab (a) VALUES(?)");
+my_query.set_consistency(Consistency::One);
+
+// Insert a value into the table
+let to_insert: i32 = 12345;
+session.query(my_query, (to_insert,)).await?;
+```
+See [Query API documentation](https://docs.rs/scylla/latest/scylla/statement/query/struct.Query.html) for more options
+
+### Second argument - the values
+Query text is constant, but the values might change.
+You can pass changing values to a query by specifying a list of variables as bound values.\
+Each `?` in query text will be filled with the matching value. 
+
+The easiest way is to pass values using a tuple:
+```rust
+// Sending an integer and a string using a tuple
+session
+    .query("INSERT INTO ks.tab (a, b, c) VALUES(?, ?, 'text2')", (2_i32, "Some text"))
+    .await?;
+```
+Here the first `?` will be filled with `2` and the second with `"Some text"`.
+> **Never** pass values by adding strings, this could lead to [SQL Injection](https://en.wikipedia.org/wiki/SQL_injection)
+
+See [Query values](values.md) for more information about sending values in queries
+
+### Query result
+`Session::query` returns `QueryResult` with rows represented as `Option<Vec<Row>>`.\
+Each row can be parsed as a tuple of rust types using `rows_typed`:
+```rust
+use scylla::IntoTypedRows;
+
+// Query rows from the table and print them
+let result = session.query("SELECT a FROM ks.tab", &[]).await?;
+let mut iter = result.rows_typed::<(i32,)>()?;
+while let Some(read_row) = iter.next().transpose()? {
+    println!("Read a value from row: {}", read_row.0);
+}
+```
+> In cases where page size is set, simple query returns only a single page of results.\
+> To receive all pages use a [paged query](paged.md) instead.\
+
+See [Query result](result.md) for more information about handling query results
+
+### Performance
+Simple queries should not be used in places where performance matters.\
+If performance matters use a [Prepared query](prepared.md) instead.
+
+With simple query the database has to parse query text each time it's executed, which worsens performance.\
+
+Additionally token and shard aware load balancing does not work with simple queries. They are sent to random nodes.
