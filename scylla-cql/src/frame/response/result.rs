@@ -868,7 +868,6 @@ fn deser_prepared(buf: &mut &[u8]) -> StdResult<Prepared, ParseError> {
     })
 }
 
-#[allow(clippy::unnecessary_wraps)]
 fn deser_schema_change(buf: &mut &[u8]) -> StdResult<SchemaChange, SchemaChangeEventParseError> {
     Ok(SchemaChange {
         event: SchemaChangeEvent::deserialize(buf)?,
