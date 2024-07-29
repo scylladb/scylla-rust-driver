@@ -35,6 +35,8 @@ pub enum FrameError {
 
 #[derive(Error, Debug)]
 pub enum ParseError {
+    #[error("Low-level deserialization failed: {0}")]
+    LowLevelDeserializationError(#[from] LowLevelDeserializationError),
     #[error("Could not serialize frame: {0}")]
     BadDataToSerialize(String),
     #[error("Could not deserialize frame: {0}")]
@@ -51,4 +53,35 @@ pub enum ParseError {
     SerializationError(#[from] SerializationError),
     #[error(transparent)]
     CqlTypeError(#[from] CqlTypeError),
+}
+
+/// A low level deserialization error.
+///
+/// This type of error is returned when deserialization
+/// of some primitive value fails.
+///
+/// Possible error kinds:
+/// - generic io error - reading from buffer failed
+/// - out of range integer conversion
+/// - conversion errors - e.g. slice-to-array or primitive-to-enum
+/// - not enough bytes in the buffer to deserialize a value
+#[non_exhaustive]
+#[derive(Error, Debug)]
+pub enum LowLevelDeserializationError {
+    #[error(transparent)]
+    IoError(#[from] std::io::Error),
+    #[error(transparent)]
+    TryFromIntError(#[from] std::num::TryFromIntError),
+    #[error("Failed to convert slice into array: {0}")]
+    TryFromSliceError(#[from] std::array::TryFromSliceError),
+    #[error("Not enough bytes! expected: {expected}, received: {received}")]
+    TooFewBytesReceived { expected: usize, received: usize },
+    #[error("Invalid value length: {0}")]
+    InvalidValueLength(i32),
+    #[error("Unknown consistency: {0}")]
+    UnknownConsistency(#[from] TryFromPrimitiveError<u16>),
+    #[error("Invalid inet bytes length: {0}")]
+    InvalidInetLength(u8),
+    #[error("UTF8 deserialization failed: {0}")]
+    UTF8DeserializationError(#[from] std::str::Utf8Error),
 }

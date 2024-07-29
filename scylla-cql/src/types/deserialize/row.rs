@@ -416,7 +416,6 @@ mod tests {
     use assert_matches::assert_matches;
     use bytes::Bytes;
 
-    use crate::frame::frame_errors::ParseError;
     use crate::frame::response::result::{ColumnSpec, ColumnType};
     use crate::types::deserialize::row::BuiltinDeserializationErrorKind;
     use crate::types::deserialize::{DeserializationError, FrameSlice};
@@ -651,13 +650,6 @@ mod tests {
             let err = super::super::value::tests::get_deser_err(err);
             assert_eq!(err.rust_name, std::any::type_name::<CqlValue>());
             assert_eq!(err.cql_type, ColumnType::BigInt);
-            let super::super::value::BuiltinDeserializationErrorKind::GenericParseError(
-                ParseError::DeserializationError(d),
-            ) = &err.kind
-            else {
-                panic!("unexpected error kind: {}", err.kind)
-            };
-            let err = super::super::value::tests::get_deser_err(d);
             let super::super::value::BuiltinDeserializationErrorKind::ByteLengthMismatch {
                 expected: 8,
                 got: 4,

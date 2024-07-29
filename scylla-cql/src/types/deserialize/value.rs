@@ -14,7 +14,7 @@ use std::fmt::Display;
 use thiserror::Error;
 
 use super::{make_error_replace_rust_name, DeserializationError, FrameSlice, TypeCheckError};
-use crate::frame::frame_errors::ParseError;
+use crate::frame::frame_errors::LowLevelDeserializationError;
 use crate::frame::response::result::{deser_cql_value, ColumnType, CqlValue};
 use crate::frame::types;
 use crate::frame::value::{
@@ -60,9 +60,7 @@ impl<'frame> DeserializeValue<'frame> for CqlValue {
         v: Option<FrameSlice<'frame>>,
     ) -> Result<Self, DeserializationError> {
         let mut val = ensure_not_null_slice::<Self>(typ, v)?;
-        let cql = deser_cql_value(typ, &mut val).map_err(|err| {
-            mk_deser_err::<Self>(typ, BuiltinDeserializationErrorKind::GenericParseError(err))
-        })?;
+        let cql = deser_cql_value(typ, &mut val).map_err(deser_error_replace_rust_name::<Self>)?;
         Ok(cql)
     }
 }
@@ -249,7 +247,7 @@ impl_emptiable_strict_type!(
         let scale = types::read_int(&mut val).map_err(|err| {
             mk_deser_err::<Self>(
                 typ,
-                BuiltinDeserializationErrorKind::GenericParseError(err.into()),
+                BuiltinDeserializationErrorKind::BadDecimalScale(err.into()),
             )
         })?;
         Ok(CqlDecimal::from_signed_be_bytes_slice_and_exponent(
@@ -267,7 +265,7 @@ impl_emptiable_strict_type!(
         let scale = types::read_int(&mut val).map_err(|err| {
             mk_deser_err::<Self>(
                 typ,
-                BuiltinDeserializationErrorKind::GenericParseError(err.into()),
+                BuiltinDeserializationErrorKind::BadDecimalScale(err.into()),
             )
         })? as i64;
         let int_value = bigdecimal_04::num_bigint::BigInt::from_signed_bytes_be(val);
@@ -381,25 +379,28 @@ impl_strict_type!(
         }
 
         let months_i64 = types::vint_decode(&mut val).map_err(|err| {
-            mk_err!(BuiltinDeserializationErrorKind::GenericParseError(
-                err.into()
-            ))
+            mk_err!(BuiltinDeserializationErrorKind::BadDate {
+                date_field: "months",
+                err: err.into()
+            })
         })?;
         let months = i32::try_from(months_i64)
             .map_err(|_| mk_err!(BuiltinDeserializationErrorKind::ValueOverflow))?;
 
         let days_i64 = types::vint_decode(&mut val).map_err(|err| {
-            mk_err!(BuiltinDeserializationErrorKind::GenericParseError(
-                err.into()
-            ))
+            mk_err!(BuiltinDeserializationErrorKind::BadDate {
+                date_field: "days",
+                err: err.into()
+            })
         })?;
         let days = i32::try_from(days_i64)
             .map_err(|_| mk_err!(BuiltinDeserializationErrorKind::ValueOverflow))?;
 
         let nanoseconds = types::vint_decode(&mut val).map_err(|err| {
-            mk_err!(BuiltinDeserializationErrorKind::GenericParseError(
-                err.into()
-            ))
+            mk_err!(BuiltinDeserializationErrorKind::BadDate {
+                date_field: "nanoseconds",
+                err: err.into()
+            })
         })?;
 
         Ok(CqlDuration {
@@ -727,7 +728,7 @@ where
         let raw = self.raw_iter.next()?.map_err(|err| {
             mk_deser_err::<Self>(
                 self.coll_typ,
-                BuiltinDeserializationErrorKind::GenericParseError(err),
+                BuiltinDeserializationErrorKind::RawCqlBytesReadError(err),
             )
         });
         Some(raw.and_then(|raw| {
@@ -906,7 +907,7 @@ where
             Some(Err(err)) => {
                 return Some(Err(mk_deser_err::<Self>(
                     self.coll_typ,
-                    BuiltinDeserializationErrorKind::GenericParseError(err),
+                    BuiltinDeserializationErrorKind::RawCqlBytesReadError(err),
                 )));
             }
             None => return None,
@@ -916,7 +917,7 @@ where
             Some(Err(err)) => {
                 return Some(Err(mk_deser_err::<Self>(
                     self.coll_typ,
-                    BuiltinDeserializationErrorKind::GenericParseError(err),
+                    BuiltinDeserializationErrorKind::RawCqlBytesReadError(err),
                 )));
             }
             None => return None,
@@ -1184,7 +1185,7 @@ impl<'frame> Iterator for UdtIterator<'frame> {
                     keyspace: self.keyspace.to_owned(),
                     field_types: self.all_fields.to_owned(),
                 },
-                BuiltinDeserializationErrorKind::GenericParseError(err),
+                BuiltinDeserializationErrorKind::RawCqlBytesReadError(err),
             )),
 
             // The field is just missing from the serialized form
@@ -1277,7 +1278,7 @@ impl<'frame> FixedLengthBytesSequenceIterator<'frame> {
 }
 
 impl<'frame> Iterator for FixedLengthBytesSequenceIterator<'frame> {
-    type Item = Result<Option<FrameSlice<'frame>>, ParseError>;
+    type Item = Result<Option<FrameSlice<'frame>>, LowLevelDeserializationError>;
 
     fn next(&mut self) -> Option<Self::Item> {
         self.remaining = self.remaining.checked_sub(1)?;
@@ -1307,7 +1308,7 @@ impl<'frame> From<FrameSlice<'frame>> for BytesSequenceIterator<'frame> {
 }
 
 impl<'frame> Iterator for BytesSequenceIterator<'frame> {
-    type Item = Result<Option<FrameSlice<'frame>>, ParseError>;
+    type Item = Result<Option<FrameSlice<'frame>>, LowLevelDeserializationError>;
 
     fn next(&mut self) -> Option<Self::Item> {
         if self.slice.as_slice().is_empty() {
@@ -1573,7 +1574,7 @@ pub struct BuiltinDeserializationError {
     pub kind: BuiltinDeserializationErrorKind,
 }
 
-fn mk_deser_err<T>(
+pub(crate) fn mk_deser_err<T>(
     cql_type: &ColumnType,
     kind: impl Into<BuiltinDeserializationErrorKind>,
 ) -> DeserializationError {
@@ -1596,8 +1597,20 @@ fn mk_deser_err_named(
 #[derive(Debug)]
 #[non_exhaustive]
 pub enum BuiltinDeserializationErrorKind {
-    /// A generic deserialization failure - legacy error type.
-    GenericParseError(ParseError),
+    /// Failed to deserialize one of date's fields.
+    BadDate {
+        date_field: &'static str,
+        err: LowLevelDeserializationError,
+    },
+
+    /// Failed to deserialize decimal's scale.
+    BadDecimalScale(LowLevelDeserializationError),
+
+    /// Failed to deserialize raw bytes of cql value.
+    RawCqlBytesReadError(LowLevelDeserializationError),
+
+    /// Returned on attempt to deserialize a value of custom type.
+    CustomTypeNotSupported(String),
 
     /// Expected non-null value, got null.
     ExpectedNonNull,
@@ -1631,7 +1644,9 @@ pub enum BuiltinDeserializationErrorKind {
 impl Display for BuiltinDeserializationErrorKind {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            BuiltinDeserializationErrorKind::GenericParseError(err) => err.fmt(f),
+            BuiltinDeserializationErrorKind::BadDate { date_field, err } => write!(f, "malformed {} during 'date' deserialization: {}", date_field, err),
+            BuiltinDeserializationErrorKind::BadDecimalScale(err) => write!(f, "malformed decimal's scale: {}", err),
+            BuiltinDeserializationErrorKind::RawCqlBytesReadError(err) => write!(f, "failed to read raw cql value bytes: {}", err),
             BuiltinDeserializationErrorKind::ExpectedNonNull => {
                 f.write_str("expected a non-null value, got null")
             }
@@ -1656,6 +1671,7 @@ impl Display for BuiltinDeserializationErrorKind {
             BuiltinDeserializationErrorKind::SetOrListError(err) => err.fmt(f),
             BuiltinDeserializationErrorKind::MapError(err) => err.fmt(f),
             BuiltinDeserializationErrorKind::TupleError(err) => err.fmt(f),
+            BuiltinDeserializationErrorKind::CustomTypeNotSupported(typ) => write!(f, "Support for custom types is not yet implemented: {}", typ),
         }
     }
 }
@@ -2356,7 +2372,10 @@ pub(super) mod tests {
             .map_err(|typecheck_err| DeserializationError(typecheck_err.0))?;
         let mut frame_slice = FrameSlice::new(bytes);
         let value = frame_slice.read_cql_bytes().map_err(|err| {
-            mk_deser_err::<T>(typ, BuiltinDeserializationErrorKind::GenericParseError(err))
+            mk_deser_err::<T>(
+                typ,
+                BuiltinDeserializationErrorKind::RawCqlBytesReadError(err),
+            )
         })?;
         <T as DeserializeValue<'frame>>::deserialize(typ, value)
     }
