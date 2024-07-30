@@ -31,16 +31,16 @@ use crate::transport::partitioner::{Partitioner, PartitionerHasher, PartitionerN
 ///
 /// Benefits that prepared statements have to offer:
 /// * Performance - a prepared statement holds information about metadata
-/// that allows to carry out a statement execution in a type safe manner.
-/// When [`Session::query`](crate::transport::session::Session::query) is called with
-/// non-empty bound values, the driver has to prepare the statement before execution (to provide type safety).
-/// This implies 2 round trips per [`Session::query`](crate::transport::session::Session::query).
-/// On the other hand, the cost of [`Session::execute`](crate::transport::session::Session::execute) is only 1 round trip.
+///   that allows to carry out a statement execution in a type safe manner.
+///   When [`Session::query`](crate::transport::session::Session::query) is called with
+///   non-empty bound values, the driver has to prepare the statement before execution (to provide type safety).
+///   This implies 2 round trips per [`Session::query`](crate::transport::session::Session::query).
+///   On the other hand, the cost of [`Session::execute`](crate::transport::session::Session::execute) is only 1 round trip.
 /// * Increased type-safety - bound values' types are validated with
-/// the [`PreparedMetadata`] received from the server during the serialization.
+///   the [`PreparedMetadata`] received from the server during the serialization.
 /// * Improved load balancing - thanks to statement metadata, the driver is able
-/// to compute a set of destined replicas for the statement execution. These replicas
-/// will be preferred when choosing the node (and shard) to send the request to.
+///   to compute a set of destined replicas for the statement execution. These replicas
+///   will be preferred when choosing the node (and shard) to send the request to.
 /// * Result deserialization optimization - see [`PreparedStatement::set_use_cached_result_metadata`].
 ///
 /// # Clone implementation
@@ -81,7 +81,7 @@ use crate::transport::partitioner::{Partitioner, PartitionerHasher, PartitionerN
 /// This raises two issues:
 /// * bound values serialization errors - since [`PreparedMetadata`] is not updated
 /// * result deserialization errors - when [`PreparedStatement::set_use_cached_result_metadata`] is enabled,
-/// since [`ResultMetadata`] is not updated
+///   since [`ResultMetadata`] is not updated
 ///
 /// So, to mitigate those issues, drop the outdated [`PreparedStatement`] manually
 /// and prepare it again against the new schema.

@@ -39,6 +39,7 @@ pub use scylla_cql::macros::IntoUserType;
 /// - serialization will succed if suffix of UDT fields is missing. If there are missing fields in the
 ///   middle it will fail. Note that if "skip_name_checks" is enabled, and the types happen to match,
 ///   it is possible for serialization to succeed with unexpected result.
+///
 /// This behavior is the default to support ALTERing UDTs by adding new fields.
 /// You can require exact match of fields using `force_exact_match` attribute.
 ///
