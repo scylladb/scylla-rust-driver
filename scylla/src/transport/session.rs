@@ -453,7 +453,7 @@ impl Session {
     /// instead of calling `Session::connect` directly, because it's more convenient.
     /// # Arguments
     /// * `config` - Connection configuration - known nodes, Compression, etc.
-    /// Must contain at least one known node.
+    ///   Must contain at least one known node.
     ///
     /// # Example
     /// ```rust
@@ -1334,7 +1334,7 @@ impl Session {
     /// # Arguments
     ///
     /// * `keyspace_name` - keyspace name to use,
-    /// keyspace names can have up to 48 alphanumeric characters and contain underscores
+    ///   keyspace names can have up to 48 alphanumeric characters and contain underscores
     /// * `case_sensitive` - if set to true the generated query will put keyspace name in quotes
     /// # Example
     /// ```rust
