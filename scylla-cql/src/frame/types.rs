@@ -678,11 +678,11 @@ fn unsigned_vint_decode(buf: &mut &[u8]) -> Result<u64, std::io::Error> {
     Ok(v)
 }
 
-pub(crate) fn vint_encode(v: i64, buf: &mut Vec<u8>) {
+pub fn vint_encode(v: i64, buf: &mut Vec<u8>) {
     unsigned_vint_encode(zig_zag_encode(v), buf)
 }
 
-pub(crate) fn vint_decode(buf: &mut &[u8]) -> Result<i64, std::io::Error> {
+pub fn vint_decode(buf: &mut &[u8]) -> Result<i64, std::io::Error> {
     unsigned_vint_decode(buf).map(zig_zag_decode)
 }
 
