@@ -60,8 +60,21 @@ jobs:
       run: rustup update
     - name: Install semver-checks
       # Official action uses binary releases fetched from GitHub
-      # If this pipeline becomes too slow, we should do this too
-      run: cargo install cargo-semver-checks --no-default-features
+      # If this pipeline becomes too slow, we should do this too.
+      #
+      # This works around the Semver violation in tame-index 0.12.2 that renders
+      # cargo-semver-checks incompilable. Once it gets fixed, revert back
+      # to using the newest release without customisations.
+      run: |
+        pushd ..
+        git clone https://github.com/obi1kenobi/cargo-semver-checks.git
+        cd cargo-semver-checks
+        git checkout v0.32.0
+        sed -i '0,/tame-index = { version = "0.12"/s//tame-index = { version = "=0.12.1"/' Cargo.toml
+        cargo build -r
+        cargo install --no-default-features --path .
+        popd
+
     - name: Verify the API compatibilty with PR base
       id: semver-pr-check
       run: |
@@ -147,6 +160,17 @@ jobs:
     - name: Update rust toolchain
       run: rustup update
     - name: Install semver-checks
-      run: cargo install cargo-semver-checks --no-default-features
+      # This works around the Semver violation in tame-index 0.12.2 that renders
+      # cargo-semver-checks incompilable. Once it gets fixed, revert back
+      # to using the newest release without customisations.
+      run: |
+        pushd ..
+        git clone https://github.com/obi1kenobi/cargo-semver-checks.git
+        cd cargo-semver-checks
+        git checkout v0.32.0
+        sed -i '0,/tame-index = { version = "0.12"/s//tame-index = { version = "=0.12.1"/' Cargo.toml
+        cargo build -r
+        cargo install --no-default-features --path .
+        popd
     - name: Run semver-checks to see if it agrees with version updates
       run: make semver-version
