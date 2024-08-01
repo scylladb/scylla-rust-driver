@@ -819,10 +819,16 @@ async fn query_peers(conn: &Arc<Connection>, connect_port: u16) -> Result<Vec<Pe
 
     let translated_peers_futures = untranslated_rows.map(|row_result| async {
         let (source, raw_row) = row_result?;
-        let row = raw_row.into_typed().map_err(|_| {
-            QueryError::ProtocolError("system.peers or system.local has invalid column type")
-        })?;
-        create_peer_from_row(source, row, local_address).await
+        match raw_row.into_typed() {
+            Ok(row) => create_peer_from_row(source, row, local_address).await,
+            Err(err) => {
+                warn!(
+                    "system.peers or system.local has an invalid row, skipping it: {}",
+                    err
+                );
+                Ok(None)
+            }
+        }
     });
 
     let peers = translated_peers_futures
