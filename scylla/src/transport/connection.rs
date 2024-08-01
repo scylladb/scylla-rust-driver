@@ -1524,8 +1524,8 @@ pub(crate) async fn open_connection(
         addr,
         source_port,
         config,
-        Some("scylla-rust-driver"),
-        option_env!("CARGO_PKG_VERSION"),
+        Some(options::DEFAULT_DRIVER_NAME),
+        Some(options::DEFAULT_DRIVER_VERSION),
     )
     .await
 }
@@ -1582,7 +1582,10 @@ pub(crate) async fn open_named_connection(
     };
     connection.set_features(features);
 
-    options.insert(Cow::Borrowed(options::CQL_VERSION), Cow::Borrowed("4.0.0"));
+    options.insert(
+        Cow::Borrowed(options::CQL_VERSION),
+        Cow::Borrowed(options::DEFAULT_CQL_PROTOCOL_VERSION),
+    );
     if let Some(driver_name) = driver_name {
         options.insert(
             Cow::Borrowed(options::DRIVER_NAME),
