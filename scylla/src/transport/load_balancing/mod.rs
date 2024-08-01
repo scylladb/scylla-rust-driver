@@ -12,9 +12,13 @@ use scylla_cql::{
 use std::time::Duration;
 
 mod default;
+mod enforce_node;
 mod plan;
-pub use default::{DefaultPolicy, DefaultPolicyBuilder, LatencyAwarenessBuilder};
 pub use plan::Plan;
+pub use {
+    default::{DefaultPolicy, DefaultPolicyBuilder, LatencyAwarenessBuilder},
+    enforce_node::EnforceTargetShardPolicy,
+};
 
 /// Represents info about statement that can be used by load balancing policies.
 #[derive(Default, Clone, Debug)]

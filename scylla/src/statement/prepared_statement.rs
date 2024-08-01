@@ -459,7 +459,7 @@ impl PreparedStatement {
         self.config.execution_profile_handle.as_ref()
     }
 
-    pub(crate) fn serialize_values(
+    pub fn serialize_values(
         &self,
         values: &impl SerializeRow,
     ) -> Result<SerializedValues, SerializationError> {

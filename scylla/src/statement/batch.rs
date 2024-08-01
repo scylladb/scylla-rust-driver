@@ -2,9 +2,13 @@ use std::borrow::Cow;
 use std::sync::Arc;
 
 use crate::history::HistoryListener;
+use crate::load_balancing;
 use crate::retry_policy::RetryPolicy;
+use crate::routing::Shard;
 use crate::statement::{prepared_statement::PreparedStatement, query::Query};
 use crate::transport::execution_profile::ExecutionProfileHandle;
+use crate::transport::NodeRef;
+use crate::Session;
 
 use super::StatementConfig;
 use super::{Consistency, SerialConsistency};
@@ -152,6 +156,82 @@ impl Batch {
     /// Borrows the execution profile handle associated with this batch.
     pub fn get_execution_profile_handle(&self) -> Option<&ExecutionProfileHandle> {
         self.config.execution_profile_handle.as_ref()
+    }
+
+    /// Associates the batch with a new execution profile that will have a load
+    /// balancing policy that will enforce the use of the provided [`NodeRef`]
+    /// to the extent possible.
+    ///
+    /// This should typically be used in conjunction with
+    /// [`Session::shard_for_statement`], where you would constitute a batch
+    /// by assigning to the same batch all the statements that would be executed
+    /// in the same shard.
+    ///
+    /// Since it is not guaranteed that subsequent calls to the load balancer
+    /// would re-assign the statement to the same node, you should use this
+    /// method to enforce the use of the original node that was envisioned by
+    /// `shard_for_statement` for the batch:
+    ///
+    /// ```rust
+    /// # use scylla::Session;
+    /// # use std::error::Error;
+    /// # async fn check_only_compiles(session: &Session) -> Result<(), Box<dyn Error>> {
+    /// use scylla::{batch::Batch, serialize::row::SerializedValues};
+    ///
+    /// let prepared_statement = session
+    ///     .prepare("INSERT INTO ks.tab(a, b) VALUES(?, ?)")
+    ///     .await?;
+    ///
+    /// let serialized_values: SerializedValues = prepared_statement.serialize_values(&(1, 2))?;
+    /// let shard = session.shard_for_statement(&prepared_statement, &serialized_values)?;
+    ///
+    /// // Send that to a task that will handle statements targeted to the same shard
+    ///
+    /// // On that task:
+    /// // Constitute a batch with all the statements that would be executed in the same shard
+    ///
+    /// let mut batch: Batch = Default::default();
+    /// if let Some((node, shard_idx)) = shard {
+    ///     batch.enforce_target_node(&node, shard_idx, &session);
+    /// }
+    /// let mut batch_values = Vec::new();
+    ///
+    /// // As the task handling statements targeted to this shard receives them,
+    /// // it appends them to the batch
+    /// batch.append_statement(prepared_statement);
+    /// batch_values.push(serialized_values);
+    ///
+    /// // Run the batch
+    /// session.batch(&batch, batch_values).await?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    ///
+    ///
+    /// If the target node is not available anymore at the time of executing the
+    /// statement, it will fallback to the original load balancing policy:
+    /// - Either that currently set on the [`Batch`], if any
+    /// - Or that of the [`Session`] if there isn't one on the `Batch`
+    pub fn enforce_target_node(
+        &mut self,
+        node: NodeRef<'_>,
+        shard: Shard,
+        base_execution_profile_from_session: &Session,
+    ) {
+        let execution_profile_handle = self.get_execution_profile_handle().unwrap_or_else(|| {
+            base_execution_profile_from_session.get_default_execution_profile_handle()
+        });
+        self.set_execution_profile_handle(Some(
+            execution_profile_handle
+                .pointee_to_builder()
+                .load_balancing_policy(Arc::new(load_balancing::EnforceTargetShardPolicy::new(
+                    node,
+                    shard,
+                    execution_profile_handle.load_balancing_policy(),
+                )))
+                .build()
+                .into_handle(),
+        ))
     }
 }
 
