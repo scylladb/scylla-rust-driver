@@ -19,6 +19,7 @@ pub mod speculative_execution;
 pub mod topology;
 
 pub use crate::frame::{Authenticator, Compression};
+pub use connection::SelfIdentity;
 pub use execution_profile::ExecutionProfile;
 pub use scylla_cql::errors;
 

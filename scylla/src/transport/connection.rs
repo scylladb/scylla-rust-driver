@@ -1,7 +1,7 @@
 use bytes::Bytes;
 use futures::{future::RemoteHandle, FutureExt};
 use scylla_cql::errors::TranslationError;
-use scylla_cql::frame::request::options::Options;
+use scylla_cql::frame::request::options::{self, Options};
 use scylla_cql::frame::response::result::{ResultMetadata, TableSpec};
 use scylla_cql::frame::response::Error;
 use scylla_cql::frame::types::SerialConsistency;
@@ -350,6 +350,188 @@ mod ssl_config {
     }
 }
 
+/// Driver and application self-identifying information,
+/// to be sent in STARTUP message.
+#[derive(Debug, Clone, Default)]
+pub struct SelfIdentity<'id> {
+    // Custom driver identity can be set if a custom driver build is running,
+    // or an entirely different driver is operating on top of Rust driver
+    // (e.g. cpp-rust-driver).
+    custom_driver_name: Option<Cow<'id, str>>,
+    custom_driver_version: Option<Cow<'id, str>>,
+
+    // ### Q: Where do APPLICATION_NAME, APPLICATION_VERSION and CLIENT_ID come from?
+    // - there are no columns in system.clients dedicated to those attributes,
+    // - APPLICATION_NAME / APPLICATION_VERSION are not present in Scylla's source code at all,
+    // - only 2 results in Cassandra source is some example in docs:
+    //   https://github.com/apache/cassandra/blob/d3cbf9c1f72057d2a5da9df8ed567d20cd272931/doc/modules/cassandra/pages/managing/operating/virtualtables.adoc?plain=1#L218.
+    //   APPLICATION_NAME and APPLICATION_VERSION appears in client_options which
+    //   is an arbitrary dict where client can send any keys.
+    // - driver variables are mentioned in protocol v5
+    //   (https://github.com/apache/cassandra/blob/d3cbf9c1f72057d2a5da9df8ed567d20cd272931/doc/native_protocol_v5.spec#L480),
+    //   application variables are not.
+    //
+    // ### A:
+    // The following options are not exposed anywhere in Scylla tables.
+    // They come directly from CPP driver, and they are supported in Cassandra
+    //
+    // See https://github.com/scylladb/cpp-driver/blob/fa0f27069a625057984d1fa58f434ea99b86c83f/include/cassandra.h#L2916.
+    // As we want to support as big subset of its API as possible in cpp-rust-driver, I decided to expose API for setting
+    // those particular key-value pairs, similarly to what cpp-driver does, and not an API to set arbitrary key-value pairs.
+    //
+    // Allowing users to set arbitrary options could break the driver by overwriting options that bear special meaning,
+    // e.g. the shard-aware port. Therefore, I'm against such liberal API. OTOH, we need to expose APPLICATION_NAME,
+    // APPLICATION_VERSION and CLIENT_ID for cpp-rust-driver.
+
+    // Application identity can be set to distinguish different applications
+    // connected to the same cluster.
+    application_name: Option<Cow<'id, str>>,
+    application_version: Option<Cow<'id, str>>,
+
+    // A (unique) client ID can be set to distinguish different instances
+    // of the same application connected to the same cluster.
+    client_id: Option<Cow<'id, str>>,
+}
+
+impl<'id> SelfIdentity<'id> {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Advertises a custom driver name, which can be used if a custom driver build is running,
+    /// or an entirely different driver is operating on top of Rust driver
+    /// (e.g. cpp-rust-driver).
+    pub fn set_custom_driver_name(&mut self, custom_driver_name: impl Into<Cow<'id, str>>) {
+        self.custom_driver_name = Some(custom_driver_name.into());
+    }
+
+    /// Advertises a custom driver name. See [Self::set_custom_driver_name] for use cases.
+    pub fn with_custom_driver_name(mut self, custom_driver_name: impl Into<Cow<'id, str>>) -> Self {
+        self.custom_driver_name = Some(custom_driver_name.into());
+        self
+    }
+
+    /// Custom driver name to be advertised. See [Self::set_custom_driver_name] for use cases.
+    pub fn get_custom_driver_name(&self) -> Option<&str> {
+        self.custom_driver_name.as_deref()
+    }
+
+    /// Advertises a custom driver version. See [Self::set_custom_driver_name] for use cases.
+    pub fn set_custom_driver_version(&mut self, custom_driver_version: impl Into<Cow<'id, str>>) {
+        self.custom_driver_version = Some(custom_driver_version.into());
+    }
+
+    /// Advertises a custom driver version. See [Self::set_custom_driver_name] for use cases.
+    pub fn with_custom_driver_version(
+        mut self,
+        custom_driver_version: impl Into<Cow<'id, str>>,
+    ) -> Self {
+        self.custom_driver_version = Some(custom_driver_version.into());
+        self
+    }
+
+    /// Custom driver version to be advertised. See [Self::set_custom_driver_version] for use cases.
+    pub fn get_custom_driver_version(&self) -> Option<&str> {
+        self.custom_driver_version.as_deref()
+    }
+
+    /// Advertises an application name, which can be used to distinguish different applications
+    /// connected to the same cluster.
+    pub fn set_application_name(&mut self, application_name: impl Into<Cow<'id, str>>) {
+        self.application_name = Some(application_name.into());
+    }
+
+    /// Advertises an application name. See [Self::set_application_name] for use cases.
+    pub fn with_application_name(mut self, application_name: impl Into<Cow<'id, str>>) -> Self {
+        self.application_name = Some(application_name.into());
+        self
+    }
+
+    /// Application name to be advertised. See [Self::set_application_name] for use cases.
+    pub fn get_application_name(&self) -> Option<&str> {
+        self.application_name.as_deref()
+    }
+
+    /// Advertises an application version. See [Self::set_application_name] for use cases.
+    pub fn set_application_version(&mut self, application_version: impl Into<Cow<'id, str>>) {
+        self.application_version = Some(application_version.into());
+    }
+
+    /// Advertises an application version. See [Self::set_application_name] for use cases.
+    pub fn with_application_version(
+        mut self,
+        application_version: impl Into<Cow<'id, str>>,
+    ) -> Self {
+        self.application_version = Some(application_version.into());
+        self
+    }
+
+    /// Application version to be advertised. See [Self::set_application_version] for use cases.
+    pub fn get_application_version(&self) -> Option<&str> {
+        self.application_version.as_deref()
+    }
+
+    /// Advertises a client ID, which can be set to distinguish different instances
+    /// of the same application connected to the same cluster.
+    pub fn set_client_id(&mut self, client_id: impl Into<Cow<'id, str>>) {
+        self.client_id = Some(client_id.into());
+    }
+
+    /// Advertises a client ID. See [Self::set_client_id] for use cases.
+    pub fn with_client_id(mut self, client_id: impl Into<Cow<'id, str>>) -> Self {
+        self.client_id = Some(client_id.into());
+        self
+    }
+
+    /// Client ID to be advertised. See [Self::set_client_id] for use cases.
+    pub fn get_client_id(&self) -> Option<&str> {
+        self.client_id.as_deref()
+    }
+}
+
+impl<'id: 'map, 'map> SelfIdentity<'id> {
+    fn add_startup_options(&'id self, options: &'map mut HashMap<Cow<'id, str>, Cow<'id, str>>) {
+        /* Driver identity. */
+        let driver_name = self
+            .custom_driver_name
+            .as_deref()
+            .unwrap_or(options::DEFAULT_DRIVER_NAME);
+        options.insert(
+            Cow::Borrowed(options::DRIVER_NAME),
+            Cow::Borrowed(driver_name),
+        );
+
+        let driver_version = self
+            .custom_driver_version
+            .as_deref()
+            .unwrap_or(options::DEFAULT_DRIVER_VERSION);
+        options.insert(
+            Cow::Borrowed(options::DRIVER_VERSION),
+            Cow::Borrowed(driver_version),
+        );
+
+        /* Application identity. */
+        if let Some(application_name) = self.application_name.as_deref() {
+            options.insert(
+                Cow::Borrowed(options::APPLICATION_NAME),
+                Cow::Borrowed(application_name),
+            );
+        }
+
+        if let Some(application_version) = self.application_version.as_deref() {
+            options.insert(
+                Cow::Borrowed(options::APPLICATION_VERSION),
+                Cow::Borrowed(application_version),
+            );
+        }
+
+        /* Client identity. */
+        if let Some(client_id) = self.client_id.as_deref() {
+            options.insert(Cow::Borrowed(options::CLIENT_ID), Cow::Borrowed(client_id));
+        }
+    }
+}
+
 #[derive(Clone)]
 pub(crate) struct ConnectionConfig {
     pub(crate) compression: Option<Compression>,
@@ -370,6 +552,8 @@ pub(crate) struct ConnectionConfig {
     pub(crate) keepalive_interval: Option<Duration>,
     pub(crate) keepalive_timeout: Option<Duration>,
     pub(crate) tablet_sender: Option<mpsc::Sender<(TableSpec<'static>, RawTablet)>>,
+
+    pub(crate) identity: SelfIdentity<'static>,
 }
 
 impl Default for ConnectionConfig {
@@ -394,6 +578,8 @@ impl Default for ConnectionConfig {
             keepalive_timeout: None,
 
             tablet_sender: None,
+
+            identity: SelfIdentity::default(),
         }
     }
 }
@@ -419,6 +605,8 @@ pub(crate) type ErrorReceiver = tokio::sync::oneshot::Receiver<QueryError>;
 
 impl Connection {
     // Returns new connection and ErrorReceiver which can be used to wait for a fatal error
+    /// Opens a connection and makes it ready to send/receive CQL frames on it,
+    /// but does not yet send any frames (no OPTIONS/STARTUP handshake nor REGISTER requests).
     pub(crate) async fn new(
         addr: SocketAddr,
         source_port: Option<u16>,
@@ -440,52 +628,7 @@ impl Connection {
         stream.set_nodelay(config.tcp_nodelay)?;
 
         if let Some(tcp_keepalive_interval) = config.tcp_keepalive_interval {
-            // It may be surprising why we call `with_time()` with `tcp_keepalive_interval`
-            // and `with_interval() with some other value. This is due to inconsistent naming:
-            // our interval means time after connection becomes idle until keepalives
-            // begin to be sent (they call it "time"), and their interval is time between
-            // sending keepalives.
-            // We insist on our naming due to other drivers following the same convention.
-            let mut tcp_keepalive = TcpKeepalive::new().with_time(tcp_keepalive_interval);
-
-            // These cfg values are taken from socket2 library, which uses the same constraints.
-            #[cfg(any(
-                target_os = "android",
-                target_os = "dragonfly",
-                target_os = "freebsd",
-                target_os = "fuchsia",
-                target_os = "illumos",
-                target_os = "ios",
-                target_os = "linux",
-                target_os = "macos",
-                target_os = "netbsd",
-                target_os = "tvos",
-                target_os = "watchos",
-                target_os = "windows",
-            ))]
-            {
-                tcp_keepalive = tcp_keepalive.with_interval(Duration::from_secs(1));
-            }
-
-            #[cfg(any(
-                target_os = "android",
-                target_os = "dragonfly",
-                target_os = "freebsd",
-                target_os = "fuchsia",
-                target_os = "illumos",
-                target_os = "ios",
-                target_os = "linux",
-                target_os = "macos",
-                target_os = "netbsd",
-                target_os = "tvos",
-                target_os = "watchos",
-            ))]
-            {
-                tcp_keepalive = tcp_keepalive.with_retries(10);
-            }
-
-            let sf = SockRef::from(&stream);
-            sf.set_tcp_keepalive(&tcp_keepalive)?;
+            Self::setup_tcp_keepalive(&stream, tcp_keepalive_interval)?;
         }
 
         // TODO: What should be the size of the channel?
@@ -522,9 +665,61 @@ impl Connection {
         Ok((connection, error_receiver))
     }
 
+    fn setup_tcp_keepalive(
+        stream: &TcpStream,
+        tcp_keepalive_interval: Duration,
+    ) -> std::io::Result<()> {
+        // It may be surprising why we call `with_time()` with `tcp_keepalive_interval`
+        // and `with_interval() with some other value. This is due to inconsistent naming:
+        // our interval means time after connection becomes idle until keepalives
+        // begin to be sent (they call it "time"), and their interval is time between
+        // sending keepalives.
+        // We insist on our naming due to other drivers following the same convention.
+        let mut tcp_keepalive = TcpKeepalive::new().with_time(tcp_keepalive_interval);
+
+        // These cfg values are taken from socket2 library, which uses the same constraints.
+        #[cfg(any(
+            target_os = "android",
+            target_os = "dragonfly",
+            target_os = "freebsd",
+            target_os = "fuchsia",
+            target_os = "illumos",
+            target_os = "ios",
+            target_os = "linux",
+            target_os = "macos",
+            target_os = "netbsd",
+            target_os = "tvos",
+            target_os = "watchos",
+            target_os = "windows",
+        ))]
+        {
+            tcp_keepalive = tcp_keepalive.with_interval(Duration::from_secs(1));
+        }
+
+        #[cfg(any(
+            target_os = "android",
+            target_os = "dragonfly",
+            target_os = "freebsd",
+            target_os = "fuchsia",
+            target_os = "illumos",
+            target_os = "ios",
+            target_os = "linux",
+            target_os = "macos",
+            target_os = "netbsd",
+            target_os = "tvos",
+            target_os = "watchos",
+        ))]
+        {
+            tcp_keepalive = tcp_keepalive.with_retries(10);
+        }
+
+        let sf = SockRef::from(&stream);
+        sf.set_tcp_keepalive(&tcp_keepalive)
+    }
+
     pub(crate) async fn startup(
         &self,
-        options: HashMap<String, String>,
+        options: HashMap<Cow<'_, str>, Cow<'_, str>>,
     ) -> Result<Response, QueryError> {
         Ok(self
             .send_request(&request::Startup { options }, false, false, None)
@@ -1507,38 +1702,31 @@ async fn maybe_translated_addr(
     }
 }
 
+/// Opens a connection and performs its setup on CQL level:
+/// - performs OPTIONS/STARTUP handshake (chooses desired connections options);
+/// - registers for all event types using REGISTER request (if this is control connection).
+///
+/// At the beginning, translates node's address, if it is subject to address translation.
 pub(crate) async fn open_connection(
     endpoint: UntranslatedEndpoint,
     source_port: Option<u16>,
     config: &ConnectionConfig,
 ) -> Result<(Connection, ErrorReceiver), QueryError> {
+    /* Translate the address, if applicable. */
     let addr = maybe_translated_addr(endpoint, config.address_translator.as_deref()).await?;
-    open_named_connection(
-        addr,
-        source_port,
-        config,
-        Some("scylla-rust-driver".to_string()),
-        option_env!("CARGO_PKG_VERSION").map(|v| v.to_string()),
-    )
-    .await
-}
 
-pub(crate) async fn open_named_connection(
-    addr: SocketAddr,
-    source_port: Option<u16>,
-    config: &ConnectionConfig,
-    driver_name: Option<String>,
-    driver_version: Option<String>,
-) -> Result<(Connection, ErrorReceiver), QueryError> {
-    // TODO: shouldn't all this logic be in Connection::new?
+    /* Setup connection on TCP level and prepare for sending/receiving CQL frames. */
     let (mut connection, error_receiver) =
         Connection::new(addr, source_port, config.clone()).await?;
 
+    /* Perform OPTIONS/SUPPORTED/STARTUP handshake. */
+
+    // Get OPTIONS SUPPORTED by the cluster.
     let options_result = connection.get_options().await?;
 
     let shard_aware_port_key = match config.is_ssl() {
-        true => "SCYLLA_SHARD_AWARE_PORT_SSL",
-        false => "SCYLLA_SHARD_AWARE_PORT",
+        true => options::SCYLLA_SHARD_AWARE_PORT_SSL,
+        false => options::SCYLLA_SHARD_AWARE_PORT,
     };
 
     let mut supported = match options_result {
@@ -1551,21 +1739,24 @@ pub(crate) async fn open_named_connection(
         }
     };
 
+    // If this is ScyllaDB that we connected to, we received sharding information.
     let shard_info = ShardInfo::try_from(&supported.options).ok();
-    let supported_compression = supported.options.remove("COMPRESSION").unwrap_or_default();
+    let supported_compression = supported
+        .options
+        .remove(options::COMPRESSION)
+        .unwrap_or_default();
     let shard_aware_port = supported
         .options
         .remove(shard_aware_port_key)
         .unwrap_or_default()
-        .into_iter()
-        .next()
+        .first()
         .and_then(|p| p.parse::<u16>().ok());
 
+    // Parse nonstandard protocol extensions.
     let protocol_features = ProtocolFeatures::parse_from_supported(&supported.options);
 
-    let mut options = HashMap::new();
-    protocol_features.add_startup_options(&mut options);
-
+    // At the beginning, Connection assumes no sharding and no protocol extensions;
+    // now that we know them, let's turn them on in the driver.
     let features = ConnectionFeatures {
         shard_info,
         shard_aware_port,
@@ -1573,24 +1764,40 @@ pub(crate) async fn open_named_connection(
     };
     connection.set_features(features);
 
-    options.insert("CQL_VERSION".to_string(), "4.0.0".to_string()); // FIXME: hardcoded values
-    if let Some(name) = driver_name {
-        options.insert("DRIVER_NAME".to_string(), name);
-    }
-    if let Some(version) = driver_version {
-        options.insert("DRIVER_VERSION".to_string(), version);
-    }
+    /* Prepare options that the driver opts-in in STARTUP frame. */
+    let mut options = HashMap::new();
+    protocol_features.add_startup_options(&mut options);
+
+    // The only CQL protocol version supported by the driver.
+    options.insert(
+        Cow::Borrowed(options::CQL_VERSION),
+        Cow::Borrowed(options::DEFAULT_CQL_PROTOCOL_VERSION),
+    );
+
+    // Application & driver's identity.
+    config.identity.add_startup_options(&mut options);
+
+    // Optional compression.
     if let Some(compression) = &config.compression {
-        let compression_str = compression.to_string();
-        if supported_compression.iter().any(|c| c == &compression_str) {
+        let compression_str = compression.as_str();
+        if supported_compression.iter().any(|c| c == compression_str) {
             // Compression is reported to be supported by the server,
             // request it from the server
-            options.insert("COMPRESSION".to_string(), compression.to_string());
+            options.insert(
+                Cow::Borrowed(options::COMPRESSION),
+                Cow::Borrowed(compression_str),
+            );
         } else {
             // Fall back to no compression
+            tracing::warn!(
+                "Requested compression <{}> is not supported by the cluster. Falling back to no compression",
+                compression_str
+            );
             connection.config.compression = None;
         }
     }
+
+    /* Send the STARTUP frame with all the requested options. */
     let result = connection.startup(options).await?;
     match result {
         Response::Ready => {}
@@ -1605,6 +1812,7 @@ pub(crate) async fn open_named_connection(
         }
     }
 
+    /* If this is a control connection, REGISTER to receive all event types. */
     if connection.config.event_sender.is_some() {
         let all_event_types = vec![
             EventType::TopologyChange,

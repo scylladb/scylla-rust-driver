@@ -4,6 +4,7 @@ mod hygiene;
 mod lwt_optimisation;
 mod new_session;
 mod retries;
+mod self_identity;
 mod shards;
 mod silent_prepare_query;
 mod skip_metadata_optimization;

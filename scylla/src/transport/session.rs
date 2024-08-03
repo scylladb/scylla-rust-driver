@@ -46,7 +46,7 @@ use super::node::KnownNode;
 use super::partitioner::PartitionerName;
 use super::query_result::MaybeFirstRowTypedError;
 use super::topology::UntranslatedPeer;
-use super::NodeRef;
+use super::{NodeRef, SelfIdentity};
 use crate::cql_to_rust::FromRow;
 use crate::frame::response::cql_to_rust::FromRowError;
 use crate::frame::response::result;
@@ -289,6 +289,10 @@ pub struct SessionConfig {
     /// for e.g: if they do not want unexpected traffic
     /// or they expect the topology to change frequently.
     pub cluster_metadata_refresh_interval: Duration,
+
+    /// Driver and application self-identifying information,
+    /// to be sent to server in STARTUP message.
+    pub identity: SelfIdentity<'static>,
 }
 
 impl SessionConfig {
@@ -335,6 +339,7 @@ impl SessionConfig {
             tracing_info_fetch_interval: Duration::from_millis(3),
             tracing_info_fetch_consistency: Consistency::One,
             cluster_metadata_refresh_interval: Duration::from_secs(60),
+            identity: SelfIdentity::default(),
         }
     }
 
@@ -515,6 +520,7 @@ impl Session {
             keepalive_interval: config.keepalive_interval,
             keepalive_timeout: config.keepalive_timeout,
             tablet_sender: Some(tablet_sender),
+            identity: config.identity,
         };
 
         let pool_config = PoolConfig {

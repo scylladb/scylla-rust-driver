@@ -48,12 +48,18 @@ pub enum Compression {
     Snappy,
 }
 
+impl Compression {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Compression::Lz4 => "lz4",
+            Compression::Snappy => "snappy",
+        }
+    }
+}
+
 impl Display for Compression {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Compression::Lz4 => f.write_str("lz4"),
-            Compression::Snappy => f.write_str("snappy"),
-        }
+        f.write_str(self.as_str())
     }
 }
 

@@ -1,3 +1,4 @@
+use std::borrow::Cow;
 use std::collections::HashMap;
 
 const RATE_LIMIT_ERROR_EXTENSION: &str = "SCYLLA_RATE_LIMIT_ERROR";
@@ -51,19 +52,19 @@ impl ProtocolFeatures {
             .find_map(|v| v.as_str().strip_prefix(key)?.strip_prefix('='))
     }
 
-    pub fn add_startup_options(&self, options: &mut HashMap<String, String>) {
+    pub fn add_startup_options(&self, options: &mut HashMap<Cow<'_, str>, Cow<'_, str>>) {
         if self.rate_limit_error.is_some() {
-            options.insert(RATE_LIMIT_ERROR_EXTENSION.to_string(), String::new());
+            options.insert(Cow::Borrowed(RATE_LIMIT_ERROR_EXTENSION), Cow::Borrowed(""));
         }
         if let Some(mask) = self.lwt_optimization_meta_bit_mask {
             options.insert(
-                SCYLLA_LWT_ADD_METADATA_MARK_EXTENSION.to_string(),
-                format!("{}={}", LWT_OPTIMIZATION_META_BIT_MASK_KEY, mask),
+                Cow::Borrowed(SCYLLA_LWT_ADD_METADATA_MARK_EXTENSION),
+                Cow::Owned(format!("{}={}", LWT_OPTIMIZATION_META_BIT_MASK_KEY, mask)),
             );
         }
 
         if self.tablets_v1_supported {
-            options.insert(TABLETS_ROUTING_V1_KEY.to_string(), String::new());
+            options.insert(Cow::Borrowed(TABLETS_ROUTING_V1_KEY), Cow::Borrowed(""));
         }
     }
 

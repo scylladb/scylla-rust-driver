@@ -428,14 +428,14 @@ pub fn read_string_map(
 }
 
 pub fn write_string_map(
-    v: &HashMap<String, String>,
+    v: &HashMap<impl AsRef<str>, impl AsRef<str>>,
     buf: &mut impl BufMut,
 ) -> Result<(), std::num::TryFromIntError> {
     let len = v.len();
     write_short_length(len, buf)?;
     for (key, val) in v.iter() {
-        write_string(key, buf)?;
-        write_string(val, buf)?;
+        write_string(key.as_ref(), buf)?;
+        write_string(val.as_ref(), buf)?;
     }
     Ok(())
 }
