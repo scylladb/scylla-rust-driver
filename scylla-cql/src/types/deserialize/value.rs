@@ -1335,7 +1335,9 @@ pub struct BuiltinTypeCheckError {
     pub kind: BuiltinTypeCheckErrorKind,
 }
 
-fn mk_typck_err<T>(
+// Not part of the public API; used in derive macros.
+#[doc(hidden)]
+pub fn mk_typck_err<T>(
     cql_type: &ColumnType,
     kind: impl Into<BuiltinTypeCheckErrorKind>,
 ) -> TypeCheckError {
@@ -1547,6 +1549,52 @@ impl Display for TupleTypeCheckErrorKind {
 pub enum UdtTypeCheckErrorKind {
     /// The CQL type is not a user defined type.
     NotUdt,
+
+    /// The CQL UDT type does not have some fields that is required in the Rust struct.
+    ValuesMissingForUdtFields {
+        /// Names of fields that the Rust struct requires but are missing in the CQL UDT.
+        field_names: Vec<&'static str>,
+    },
+
+    /// A different field name was expected at given position.
+    FieldNameMismatch {
+        /// Index of the field in the Rust struct.
+        position: usize,
+
+        /// The name of the Rust field.
+        rust_field_name: String,
+
+        /// The name of the CQL UDT field.
+        db_field_name: String,
+    },
+
+    /// UDT contains an excess field, which does not correspond to any Rust struct's field.
+    ExcessFieldInUdt {
+        /// The name of the CQL UDT field.
+        db_field_name: String,
+    },
+
+    /// Duplicated field in serialized data.
+    DuplicatedField {
+        /// The name of the duplicated field.
+        field_name: String,
+    },
+
+    /// Fewer fields present in the UDT than required by the Rust type.
+    TooFewFields {
+        // TODO: decide whether we are OK with restricting to `&'static str` here.
+        required_fields: Vec<&'static str>,
+        present_fields: Vec<String>,
+    },
+
+    /// Type check failed between UDT and Rust type field.
+    FieldTypeCheckFailed {
+        /// The name of the field whose type check failed.
+        field_name: String,
+
+        /// Inner type check error that occured.
+        err: TypeCheckError,
+    },
 }
 
 impl Display for UdtTypeCheckErrorKind {
@@ -1555,6 +1603,35 @@ impl Display for UdtTypeCheckErrorKind {
             UdtTypeCheckErrorKind::NotUdt => write!(
                 f,
                 "the CQL type the Rust type was attempted to be type checked against is not a UDT"
+            ),
+            UdtTypeCheckErrorKind::ValuesMissingForUdtFields { field_names } => {
+                write!(f, "the fields {field_names:?} are missing from the DB data but are required by the Rust type")
+            },
+            UdtTypeCheckErrorKind::FieldNameMismatch { rust_field_name, db_field_name, position } => write!(
+                f,
+                "expected field with name {db_field_name} at position {position}, but the Rust field name is {rust_field_name}"
+            ),
+            UdtTypeCheckErrorKind::ExcessFieldInUdt { db_field_name } => write!(
+                f,
+                "UDT contains an excess field {}, which does not correspond to any Rust struct's field.",
+                db_field_name
+            ),
+            UdtTypeCheckErrorKind::DuplicatedField { field_name } => write!(
+                f,
+                "field {} occurs more than once in CQL UDT type",
+                field_name
+            ),
+            UdtTypeCheckErrorKind::TooFewFields { required_fields, present_fields } => write!(
+                f,
+                "fewer fields present in the UDT than required by the Rust type: UDT has {:?}, Rust type requires {:?}",
+                present_fields,
+                required_fields,
+            ),
+            UdtTypeCheckErrorKind::FieldTypeCheckFailed { field_name, err } => write!(
+                f,
+                "the UDT field {} types between the CQL type and the Rust type failed to type check against each other: {}",
+                field_name,
+                err
             ),
         }
     }
@@ -1574,7 +1651,9 @@ pub struct BuiltinDeserializationError {
     pub kind: BuiltinDeserializationErrorKind,
 }
 
-pub(crate) fn mk_deser_err<T>(
+// Not part of the public API; used in derive macros.
+#[doc(hidden)]
+pub fn mk_deser_err<T>(
     cql_type: &ColumnType,
     kind: impl Into<BuiltinDeserializationErrorKind>,
 ) -> DeserializationError {
@@ -1639,6 +1718,9 @@ pub enum BuiltinDeserializationErrorKind {
 
     /// A deserialization failure specific to a CQL tuple.
     TupleError(TupleDeserializationErrorKind),
+
+    /// A deserialization failure specific to a CQL UDT.
+    UdtError(UdtDeserializationErrorKind),
 }
 
 impl Display for BuiltinDeserializationErrorKind {
@@ -1671,6 +1753,7 @@ impl Display for BuiltinDeserializationErrorKind {
             BuiltinDeserializationErrorKind::SetOrListError(err) => err.fmt(f),
             BuiltinDeserializationErrorKind::MapError(err) => err.fmt(f),
             BuiltinDeserializationErrorKind::TupleError(err) => err.fmt(f),
+            BuiltinDeserializationErrorKind::UdtError(err) => err.fmt(f),
             BuiltinDeserializationErrorKind::CustomTypeNotSupported(typ) => write!(f, "Support for custom types is not yet implemented: {}", typ),
         }
     }
@@ -1776,1162 +1859,105 @@ impl From<TupleDeserializationErrorKind> for BuiltinDeserializationErrorKind {
     }
 }
 
-#[cfg(test)]
-pub(super) mod tests {
-    use assert_matches::assert_matches;
-    use bytes::{BufMut, Bytes, BytesMut};
-    use uuid::Uuid;
-
-    use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
-    use std::fmt::Debug;
-    use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
-
-    use crate::frame::response::result::{ColumnType, CqlValue};
-    use crate::frame::value::{
-        Counter, CqlDate, CqlDecimal, CqlDuration, CqlTime, CqlTimestamp, CqlTimeuuid, CqlVarint,
-    };
-    use crate::types::deserialize::value::{
-        TupleDeserializationErrorKind, TupleTypeCheckErrorKind,
-    };
-    use crate::types::deserialize::{DeserializationError, FrameSlice, TypeCheckError};
-    use crate::types::serialize::value::SerializeValue;
-    use crate::types::serialize::CellWriter;
-
-    use super::{
-        mk_deser_err, BuiltinDeserializationError, BuiltinDeserializationErrorKind,
-        BuiltinTypeCheckError, BuiltinTypeCheckErrorKind, DeserializeValue, ListlikeIterator,
-        MapDeserializationErrorKind, MapIterator, MapTypeCheckErrorKind, MaybeEmpty,
-        SetOrListDeserializationErrorKind, SetOrListTypeCheckErrorKind,
-    };
-
-    #[test]
-    fn test_deserialize_bytes() {
-        const ORIGINAL_BYTES: &[u8] = &[1, 5, 2, 4, 3];
-
-        let bytes = make_bytes(ORIGINAL_BYTES);
-
-        let decoded_slice = deserialize::<&[u8]>(&ColumnType::Blob, &bytes).unwrap();
-        let decoded_vec = deserialize::<Vec<u8>>(&ColumnType::Blob, &bytes).unwrap();
-        let decoded_bytes = deserialize::<Bytes>(&ColumnType::Blob, &bytes).unwrap();
-
-        assert_eq!(decoded_slice, ORIGINAL_BYTES);
-        assert_eq!(decoded_vec, ORIGINAL_BYTES);
-        assert_eq!(decoded_bytes, ORIGINAL_BYTES);
-
-        // ser/de identity
-
-        // Nonempty blob
-        assert_ser_de_identity(&ColumnType::Blob, &ORIGINAL_BYTES, &mut Bytes::new());
-
-        // Empty blob
-        assert_ser_de_identity(&ColumnType::Blob, &(&[] as &[u8]), &mut Bytes::new());
-    }
-
-    #[test]
-    fn test_deserialize_ascii() {
-        const ASCII_TEXT: &str = "The quick brown fox jumps over the lazy dog";
-
-        let ascii = make_bytes(ASCII_TEXT.as_bytes());
-
-        for typ in [ColumnType::Ascii, ColumnType::Text].iter() {
-            let decoded_str = deserialize::<&str>(typ, &ascii).unwrap();
-            let decoded_string = deserialize::<String>(typ, &ascii).unwrap();
-
-            assert_eq!(decoded_str, ASCII_TEXT);
-            assert_eq!(decoded_string, ASCII_TEXT);
-
-            // ser/de identity
-
-            // Empty string
-            assert_ser_de_identity(typ, &"", &mut Bytes::new());
-            assert_ser_de_identity(typ, &"".to_owned(), &mut Bytes::new());
-
-            // Nonempty string
-            assert_ser_de_identity(typ, &ASCII_TEXT, &mut Bytes::new());
-            assert_ser_de_identity(typ, &ASCII_TEXT.to_owned(), &mut Bytes::new());
-        }
-    }
-
-    #[test]
-    fn test_deserialize_text() {
-        const UNICODE_TEXT: &str = "Zażółć gęślą jaźń";
-
-        let unicode = make_bytes(UNICODE_TEXT.as_bytes());
-
-        // Should fail because it's not an ASCII string
-        deserialize::<&str>(&ColumnType::Ascii, &unicode).unwrap_err();
-        deserialize::<String>(&ColumnType::Ascii, &unicode).unwrap_err();
-
-        let decoded_text_str = deserialize::<&str>(&ColumnType::Text, &unicode).unwrap();
-        let decoded_text_string = deserialize::<String>(&ColumnType::Text, &unicode).unwrap();
-        assert_eq!(decoded_text_str, UNICODE_TEXT);
-        assert_eq!(decoded_text_string, UNICODE_TEXT);
-
-        // ser/de identity
-
-        assert_ser_de_identity(&ColumnType::Text, &UNICODE_TEXT, &mut Bytes::new());
-        assert_ser_de_identity(
-            &ColumnType::Text,
-            &UNICODE_TEXT.to_owned(),
-            &mut Bytes::new(),
-        );
-    }
-
-    #[test]
-    fn test_integral() {
-        let tinyint = make_bytes(&[0x01]);
-        let decoded_tinyint = deserialize::<i8>(&ColumnType::TinyInt, &tinyint).unwrap();
-        assert_eq!(decoded_tinyint, 0x01);
-
-        let smallint = make_bytes(&[0x01, 0x02]);
-        let decoded_smallint = deserialize::<i16>(&ColumnType::SmallInt, &smallint).unwrap();
-        assert_eq!(decoded_smallint, 0x0102);
-
-        let int = make_bytes(&[0x01, 0x02, 0x03, 0x04]);
-        let decoded_int = deserialize::<i32>(&ColumnType::Int, &int).unwrap();
-        assert_eq!(decoded_int, 0x01020304);
-
-        let bigint = make_bytes(&[0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08]);
-        let decoded_bigint = deserialize::<i64>(&ColumnType::BigInt, &bigint).unwrap();
-        assert_eq!(decoded_bigint, 0x0102030405060708);
-
-        // ser/de identity
-        assert_ser_de_identity(&ColumnType::TinyInt, &42_i8, &mut Bytes::new());
-        assert_ser_de_identity(&ColumnType::SmallInt, &2137_i16, &mut Bytes::new());
-        assert_ser_de_identity(&ColumnType::Int, &21372137_i32, &mut Bytes::new());
-        assert_ser_de_identity(&ColumnType::BigInt, &0_i64, &mut Bytes::new());
-    }
-
-    #[test]
-    fn test_bool() {
-        for boolean in [true, false] {
-            let boolean_bytes = make_bytes(&[boolean as u8]);
-            let decoded_bool = deserialize::<bool>(&ColumnType::Boolean, &boolean_bytes).unwrap();
-            assert_eq!(decoded_bool, boolean);
-
-            // ser/de identity
-            assert_ser_de_identity(&ColumnType::Boolean, &boolean, &mut Bytes::new());
-        }
-    }
-
-    #[test]
-    fn test_floating_point() {
-        let float = make_bytes(&[63, 0, 0, 0]);
-        let decoded_float = deserialize::<f32>(&ColumnType::Float, &float).unwrap();
-        assert_eq!(decoded_float, 0.5);
-
-        let double = make_bytes(&[64, 0, 0, 0, 0, 0, 0, 0]);
-        let decoded_double = deserialize::<f64>(&ColumnType::Double, &double).unwrap();
-        assert_eq!(decoded_double, 2.0);
-
-        // ser/de identity
-        assert_ser_de_identity(&ColumnType::Float, &21.37_f32, &mut Bytes::new());
-        assert_ser_de_identity(&ColumnType::Double, &2137.2137_f64, &mut Bytes::new());
-    }
-
-    #[test]
-    fn test_varlen_numbers() {
-        // varint
-        assert_ser_de_identity(
-            &ColumnType::Varint,
-            &CqlVarint::from_signed_bytes_be_slice(b"Ala ma kota"),
-            &mut Bytes::new(),
-        );
-
-        #[cfg(feature = "num-bigint-03")]
-        assert_ser_de_identity(
-            &ColumnType::Varint,
-            &num_bigint_03::BigInt::from_signed_bytes_be(b"Kot ma Ale"),
-            &mut Bytes::new(),
-        );
-
-        #[cfg(feature = "num-bigint-04")]
-        assert_ser_de_identity(
-            &ColumnType::Varint,
-            &num_bigint_04::BigInt::from_signed_bytes_be(b"Kot ma Ale"),
-            &mut Bytes::new(),
-        );
-
-        // decimal
-        assert_ser_de_identity(
-            &ColumnType::Decimal,
-            &CqlDecimal::from_signed_be_bytes_slice_and_exponent(b"Ala ma kota", 42),
-            &mut Bytes::new(),
-        );
-
-        #[cfg(feature = "bigdecimal-04")]
-        assert_ser_de_identity(
-            &ColumnType::Decimal,
-            &bigdecimal_04::BigDecimal::new(
-                bigdecimal_04::num_bigint::BigInt::from_signed_bytes_be(b"Ala ma kota"),
-                42,
-            ),
-            &mut Bytes::new(),
-        );
-    }
-
-    #[test]
-    fn test_date_time_types() {
-        // duration
-        assert_ser_de_identity(
-            &ColumnType::Duration,
-            &CqlDuration {
-                months: 21,
-                days: 37,
-                nanoseconds: 42,
-            },
-            &mut Bytes::new(),
-        );
-
-        // date
-        assert_ser_de_identity(&ColumnType::Date, &CqlDate(0xbeaf), &mut Bytes::new());
-
-        #[cfg(feature = "chrono-04")]
-        assert_ser_de_identity(
-            &ColumnType::Date,
-            &chrono_04::NaiveDate::from_yo_opt(1999, 99).unwrap(),
-            &mut Bytes::new(),
-        );
-
-        #[cfg(feature = "time-03")]
-        assert_ser_de_identity(
-            &ColumnType::Date,
-            &time_03::Date::from_ordinal_date(1999, 99).unwrap(),
-            &mut Bytes::new(),
-        );
-
-        // time
-        assert_ser_de_identity(&ColumnType::Time, &CqlTime(0xdeed), &mut Bytes::new());
-
-        #[cfg(feature = "chrono-04")]
-        assert_ser_de_identity(
-            &ColumnType::Time,
-            &chrono_04::NaiveTime::from_hms_micro_opt(21, 37, 21, 37).unwrap(),
-            &mut Bytes::new(),
-        );
-
-        #[cfg(feature = "time-03")]
-        assert_ser_de_identity(
-            &ColumnType::Time,
-            &time_03::Time::from_hms_micro(21, 37, 21, 37).unwrap(),
-            &mut Bytes::new(),
-        );
-
-        // timestamp
-        assert_ser_de_identity(
-            &ColumnType::Timestamp,
-            &CqlTimestamp(0xceed),
-            &mut Bytes::new(),
-        );
-
-        #[cfg(feature = "chrono-04")]
-        assert_ser_de_identity(
-            &ColumnType::Timestamp,
-            &chrono_04::DateTime::<chrono_04::Utc>::from_timestamp_millis(0xdead_cafe_deaf)
-                .unwrap(),
-            &mut Bytes::new(),
-        );
-
-        #[cfg(feature = "time-03")]
-        assert_ser_de_identity(
-            &ColumnType::Timestamp,
-            &time_03::OffsetDateTime::from_unix_timestamp(0xdead_cafe).unwrap(),
-            &mut Bytes::new(),
-        );
-    }
-
-    #[test]
-    fn test_inet() {
-        assert_ser_de_identity(
-            &ColumnType::Inet,
-            &IpAddr::V4(Ipv4Addr::BROADCAST),
-            &mut Bytes::new(),
-        );
-
-        assert_ser_de_identity(
-            &ColumnType::Inet,
-            &IpAddr::V6(Ipv6Addr::LOCALHOST),
-            &mut Bytes::new(),
-        );
-    }
-
-    #[test]
-    fn test_uuid() {
-        assert_ser_de_identity(
-            &ColumnType::Uuid,
-            &Uuid::from_u128(0xdead_cafe_deaf_feed_beaf_bead),
-            &mut Bytes::new(),
-        );
-
-        assert_ser_de_identity(
-            &ColumnType::Timeuuid,
-            &CqlTimeuuid::from_u128(0xdead_cafe_deaf_feed_beaf_bead),
-            &mut Bytes::new(),
-        );
-    }
-
-    #[test]
-    fn test_null_and_empty() {
-        // non-nullable emptiable deserialization, non-empty value
-        let int = make_bytes(&[21, 37, 0, 0]);
-        let decoded_int = deserialize::<MaybeEmpty<i32>>(&ColumnType::Int, &int).unwrap();
-        assert_eq!(decoded_int, MaybeEmpty::Value((21 << 24) + (37 << 16)));
-
-        // non-nullable emptiable deserialization, empty value
-        let int = make_bytes(&[]);
-        let decoded_int = deserialize::<MaybeEmpty<i32>>(&ColumnType::Int, &int).unwrap();
-        assert_eq!(decoded_int, MaybeEmpty::Empty);
-
-        // nullable non-emptiable deserialization, non-null value
-        let int = make_bytes(&[21, 37, 0, 0]);
-        let decoded_int = deserialize::<Option<i32>>(&ColumnType::Int, &int).unwrap();
-        assert_eq!(decoded_int, Some((21 << 24) + (37 << 16)));
-
-        // nullable non-emptiable deserialization, null value
-        let int = make_null();
-        let decoded_int = deserialize::<Option<i32>>(&ColumnType::Int, &int).unwrap();
-        assert_eq!(decoded_int, None);
-
-        // nullable emptiable deserialization, non-null non-empty value
-        let int = make_bytes(&[]);
-        let decoded_int = deserialize::<Option<MaybeEmpty<i32>>>(&ColumnType::Int, &int).unwrap();
-        assert_eq!(decoded_int, Some(MaybeEmpty::Empty));
-
-        // ser/de identity
-        assert_ser_de_identity(&ColumnType::Int, &Some(12321_i32), &mut Bytes::new());
-        assert_ser_de_identity(&ColumnType::Double, &None::<f64>, &mut Bytes::new());
-        assert_ser_de_identity(
-            &ColumnType::Set(Box::new(ColumnType::Ascii)),
-            &None::<Vec<&str>>,
-            &mut Bytes::new(),
-        );
-    }
-
-    #[test]
-    fn test_maybe_empty() {
-        let empty = make_bytes(&[]);
-        let decoded_empty = deserialize::<MaybeEmpty<i8>>(&ColumnType::TinyInt, &empty).unwrap();
-        assert_eq!(decoded_empty, MaybeEmpty::Empty);
-
-        let non_empty = make_bytes(&[0x01]);
-        let decoded_non_empty =
-            deserialize::<MaybeEmpty<i8>>(&ColumnType::TinyInt, &non_empty).unwrap();
-        assert_eq!(decoded_non_empty, MaybeEmpty::Value(0x01));
-    }
-
-    #[test]
-    fn test_cql_value() {
-        assert_ser_de_identity(
-            &ColumnType::Counter,
-            &CqlValue::Counter(Counter(765)),
-            &mut Bytes::new(),
-        );
-
-        assert_ser_de_identity(
-            &ColumnType::Timestamp,
-            &CqlValue::Timestamp(CqlTimestamp(2136)),
-            &mut Bytes::new(),
-        );
-
-        assert_ser_de_identity(&ColumnType::Boolean, &CqlValue::Empty, &mut Bytes::new());
-
-        assert_ser_de_identity(
-            &ColumnType::Text,
-            &CqlValue::Text("kremówki".to_owned()),
-            &mut Bytes::new(),
-        );
-        assert_ser_de_identity(
-            &ColumnType::Ascii,
-            &CqlValue::Ascii("kremowy".to_owned()),
-            &mut Bytes::new(),
-        );
-
-        assert_ser_de_identity(
-            &ColumnType::Set(Box::new(ColumnType::Text)),
-            &CqlValue::Set(vec![CqlValue::Text("Ala ma kota".to_owned())]),
-            &mut Bytes::new(),
-        );
-    }
-
-    #[test]
-    fn test_list_and_set() {
-        let mut collection_contents = BytesMut::new();
-        collection_contents.put_i32(3);
-        append_bytes(&mut collection_contents, "quick".as_bytes());
-        append_bytes(&mut collection_contents, "brown".as_bytes());
-        append_bytes(&mut collection_contents, "fox".as_bytes());
-
-        let collection = make_bytes(&collection_contents);
-
-        let list_typ = ColumnType::List(Box::new(ColumnType::Ascii));
-        let set_typ = ColumnType::Set(Box::new(ColumnType::Ascii));
-
-        // iterator
-        let mut iter = deserialize::<ListlikeIterator<&str>>(&list_typ, &collection).unwrap();
-        assert_eq!(iter.next().transpose().unwrap(), Some("quick"));
-        assert_eq!(iter.next().transpose().unwrap(), Some("brown"));
-        assert_eq!(iter.next().transpose().unwrap(), Some("fox"));
-        assert_eq!(iter.next().transpose().unwrap(), None);
-
-        let expected_vec_str = vec!["quick", "brown", "fox"];
-        let expected_vec_string = vec!["quick".to_string(), "brown".to_string(), "fox".to_string()];
-
-        // list
-        let decoded_vec_str = deserialize::<Vec<&str>>(&list_typ, &collection).unwrap();
-        let decoded_vec_string = deserialize::<Vec<String>>(&list_typ, &collection).unwrap();
-        assert_eq!(decoded_vec_str, expected_vec_str);
-        assert_eq!(decoded_vec_string, expected_vec_string);
-
-        // hash set
-        let decoded_hash_str = deserialize::<HashSet<&str>>(&set_typ, &collection).unwrap();
-        let decoded_hash_string = deserialize::<HashSet<String>>(&set_typ, &collection).unwrap();
-        assert_eq!(
-            decoded_hash_str,
-            expected_vec_str.clone().into_iter().collect(),
-        );
-        assert_eq!(
-            decoded_hash_string,
-            expected_vec_string.clone().into_iter().collect(),
-        );
-
-        // btree set
-        let decoded_btree_str = deserialize::<BTreeSet<&str>>(&set_typ, &collection).unwrap();
-        let decoded_btree_string = deserialize::<BTreeSet<String>>(&set_typ, &collection).unwrap();
-        assert_eq!(
-            decoded_btree_str,
-            expected_vec_str.clone().into_iter().collect(),
-        );
-        assert_eq!(
-            decoded_btree_string,
-            expected_vec_string.into_iter().collect(),
-        );
-
-        // ser/de identity
-        assert_ser_de_identity(&list_typ, &vec!["qwik"], &mut Bytes::new());
-        assert_ser_de_identity(&set_typ, &vec!["qwik"], &mut Bytes::new());
-        assert_ser_de_identity(
-            &set_typ,
-            &HashSet::<&str, std::collections::hash_map::RandomState>::from_iter(["qwik"]),
-            &mut Bytes::new(),
-        );
-        assert_ser_de_identity(
-            &set_typ,
-            &BTreeSet::<&str>::from_iter(["qwik"]),
-            &mut Bytes::new(),
-        );
-    }
-
-    #[test]
-    fn test_map() {
-        let mut collection_contents = BytesMut::new();
-        collection_contents.put_i32(3);
-        append_bytes(&mut collection_contents, &1i32.to_be_bytes());
-        append_bytes(&mut collection_contents, "quick".as_bytes());
-        append_bytes(&mut collection_contents, &2i32.to_be_bytes());
-        append_bytes(&mut collection_contents, "brown".as_bytes());
-        append_bytes(&mut collection_contents, &3i32.to_be_bytes());
-        append_bytes(&mut collection_contents, "fox".as_bytes());
-
-        let collection = make_bytes(&collection_contents);
-
-        let typ = ColumnType::Map(Box::new(ColumnType::Int), Box::new(ColumnType::Ascii));
-
-        // iterator
-        let mut iter = deserialize::<MapIterator<i32, &str>>(&typ, &collection).unwrap();
-        assert_eq!(iter.next().transpose().unwrap(), Some((1, "quick")));
-        assert_eq!(iter.next().transpose().unwrap(), Some((2, "brown")));
-        assert_eq!(iter.next().transpose().unwrap(), Some((3, "fox")));
-        assert_eq!(iter.next().transpose().unwrap(), None);
-
-        let expected_str = vec![(1, "quick"), (2, "brown"), (3, "fox")];
-        let expected_string = vec![
-            (1, "quick".to_string()),
-            (2, "brown".to_string()),
-            (3, "fox".to_string()),
-        ];
-
-        // hash set
-        let decoded_hash_str = deserialize::<HashMap<i32, &str>>(&typ, &collection).unwrap();
-        let decoded_hash_string = deserialize::<HashMap<i32, String>>(&typ, &collection).unwrap();
-        assert_eq!(decoded_hash_str, expected_str.clone().into_iter().collect());
-        assert_eq!(
-            decoded_hash_string,
-            expected_string.clone().into_iter().collect(),
-        );
-
-        // btree set
-        let decoded_btree_str = deserialize::<BTreeMap<i32, &str>>(&typ, &collection).unwrap();
-        let decoded_btree_string = deserialize::<BTreeMap<i32, String>>(&typ, &collection).unwrap();
-        assert_eq!(
-            decoded_btree_str,
-            expected_str.clone().into_iter().collect(),
-        );
-        assert_eq!(decoded_btree_string, expected_string.into_iter().collect());
-
-        // ser/de identity
-        assert_ser_de_identity(
-            &typ,
-            &HashMap::<i32, &str, std::collections::hash_map::RandomState>::from_iter([(
-                -42, "qwik",
-            )]),
-            &mut Bytes::new(),
-        );
-        assert_ser_de_identity(
-            &typ,
-            &BTreeMap::<i32, &str>::from_iter([(-42, "qwik")]),
-            &mut Bytes::new(),
-        );
-    }
-
-    #[test]
-    fn test_tuples() {
-        let mut tuple_contents = BytesMut::new();
-        append_bytes(&mut tuple_contents, &42i32.to_be_bytes());
-        append_bytes(&mut tuple_contents, "foo".as_bytes());
-        append_null(&mut tuple_contents);
-
-        let tuple = make_bytes(&tuple_contents);
-
-        let typ = ColumnType::Tuple(vec![ColumnType::Int, ColumnType::Ascii, ColumnType::Uuid]);
-
-        let tup = deserialize::<(i32, &str, Option<Uuid>)>(&typ, &tuple).unwrap();
-        assert_eq!(tup, (42, "foo", None));
-
-        // ser/de identity
-
-        // () does not implement SerializeValue, yet it does implement DeserializeValue.
-        // assert_ser_de_identity(&ColumnType::Tuple(vec![]), &(), &mut Bytes::new());
-
-        // nonempty, varied tuple
-        assert_ser_de_identity(
-            &ColumnType::Tuple(vec![
-                ColumnType::List(Box::new(ColumnType::Boolean)),
-                ColumnType::BigInt,
-                ColumnType::Uuid,
-                ColumnType::Inet,
-            ]),
-            &(
-                vec![true, false, true],
-                42_i64,
-                Uuid::from_u128(0xdead_cafe_deaf_feed_beaf_bead),
-                IpAddr::V6(Ipv6Addr::new(0xa, 0xb, 0xc, 0xd, 0xe, 0xf, 0x10, 0x11)),
-            ),
-            &mut Bytes::new(),
-        );
-
-        // nested tuples
-        assert_ser_de_identity(
-            &ColumnType::Tuple(vec![ColumnType::Tuple(vec![ColumnType::Tuple(vec![
-                ColumnType::Text,
-            ])])]),
-            &((("",),),),
-            &mut Bytes::new(),
-        );
-    }
-
-    #[test]
-    fn test_custom_type_parser() {
-        #[derive(Default, Debug, PartialEq, Eq)]
-        struct SwappedPair<A, B>(B, A);
-        impl<'frame, A, B> DeserializeValue<'frame> for SwappedPair<A, B>
-        where
-            A: DeserializeValue<'frame>,
-            B: DeserializeValue<'frame>,
-        {
-            fn type_check(typ: &ColumnType) -> Result<(), TypeCheckError> {
-                <(B, A) as DeserializeValue<'frame>>::type_check(typ)
-            }
-
-            fn deserialize(
-                typ: &'frame ColumnType,
-                v: Option<FrameSlice<'frame>>,
-            ) -> Result<Self, DeserializationError> {
-                <(B, A) as DeserializeValue<'frame>>::deserialize(typ, v).map(|(b, a)| Self(b, a))
+/// Describes why deserialization of a user defined type failed.
+#[derive(Debug, Clone)]
+#[non_exhaustive]
+pub enum UdtDeserializationErrorKind {
+    /// One of the fields failed to deserialize.
+    FieldDeserializationFailed {
+        /// Name of the field which failed to deserialize.
+        field_name: String,
+
+        /// The error that caused the UDT field deserialization to fail.
+        err: DeserializationError,
+    },
+}
+
+impl Display for UdtDeserializationErrorKind {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            UdtDeserializationErrorKind::FieldDeserializationFailed { field_name, err } => {
+                write!(f, "field {field_name} failed to deserialize: {err}")
             }
         }
-
-        let mut tuple_contents = BytesMut::new();
-        append_bytes(&mut tuple_contents, "foo".as_bytes());
-        append_bytes(&mut tuple_contents, &42i32.to_be_bytes());
-        let tuple = make_bytes(&tuple_contents);
-
-        let typ = ColumnType::Tuple(vec![ColumnType::Ascii, ColumnType::Int]);
-
-        let tup = deserialize::<SwappedPair<i32, &str>>(&typ, &tuple).unwrap();
-        assert_eq!(tup, SwappedPair("foo", 42));
-    }
-
-    fn deserialize<'frame, T>(
-        typ: &'frame ColumnType,
-        bytes: &'frame Bytes,
-    ) -> Result<T, DeserializationError>
-    where
-        T: DeserializeValue<'frame>,
-    {
-        <T as DeserializeValue<'frame>>::type_check(typ)
-            .map_err(|typecheck_err| DeserializationError(typecheck_err.0))?;
-        let mut frame_slice = FrameSlice::new(bytes);
-        let value = frame_slice.read_cql_bytes().map_err(|err| {
-            mk_deser_err::<T>(
-                typ,
-                BuiltinDeserializationErrorKind::RawCqlBytesReadError(err),
-            )
-        })?;
-        <T as DeserializeValue<'frame>>::deserialize(typ, value)
-    }
-
-    fn make_bytes(cell: &[u8]) -> Bytes {
-        let mut b = BytesMut::new();
-        append_bytes(&mut b, cell);
-        b.freeze()
-    }
-
-    fn serialize(typ: &ColumnType, value: &dyn SerializeValue) -> Bytes {
-        let mut bytes = Bytes::new();
-        serialize_to_buf(typ, value, &mut bytes);
-        bytes
-    }
-
-    fn serialize_to_buf(typ: &ColumnType, value: &dyn SerializeValue, buf: &mut Bytes) {
-        let mut v = Vec::new();
-        let writer = CellWriter::new(&mut v);
-        value.serialize(typ, writer).unwrap();
-        *buf = v.into();
-    }
-
-    fn append_bytes(b: &mut impl BufMut, cell: &[u8]) {
-        b.put_i32(cell.len() as i32);
-        b.put_slice(cell);
-    }
-
-    fn make_null() -> Bytes {
-        let mut b = BytesMut::new();
-        append_null(&mut b);
-        b.freeze()
-    }
-
-    fn append_null(b: &mut impl BufMut) {
-        b.put_i32(-1);
-    }
-
-    fn assert_ser_de_identity<'f, T: SerializeValue + DeserializeValue<'f> + PartialEq + Debug>(
-        typ: &'f ColumnType,
-        v: &'f T,
-        buf: &'f mut Bytes, // `buf` must be passed as a reference from outside, because otherwise
-                            // we cannot specify the lifetime for DeserializeValue.
-    ) {
-        serialize_to_buf(typ, v, buf);
-        let deserialized = deserialize::<T>(typ, buf).unwrap();
-        assert_eq!(&deserialized, v);
-    }
-
-    /* Errors checks */
-
-    #[track_caller]
-    pub(crate) fn get_typeck_err_inner<'a>(
-        err: &'a (dyn std::error::Error + 'static),
-    ) -> &'a BuiltinTypeCheckError {
-        match err.downcast_ref() {
-            Some(err) => err,
-            None => panic!("not a BuiltinTypeCheckError: {:?}", err),
-        }
-    }
-
-    #[track_caller]
-    pub(crate) fn get_typeck_err(err: &DeserializationError) -> &BuiltinTypeCheckError {
-        get_typeck_err_inner(err.0.as_ref())
-    }
-
-    #[track_caller]
-    pub(crate) fn get_deser_err(err: &DeserializationError) -> &BuiltinDeserializationError {
-        match err.0.downcast_ref() {
-            Some(err) => err,
-            None => panic!("not a BuiltinDeserializationError: {:?}", err),
-        }
-    }
-
-    macro_rules! assert_given_error {
-        ($get_err:ident, $bytes:expr, $DestT:ty, $cql_typ:expr, $kind:pat) => {
-            let cql_typ = $cql_typ.clone();
-            let err = deserialize::<$DestT>(&cql_typ, $bytes).unwrap_err();
-            let err = $get_err(&err);
-            assert_eq!(err.rust_name, std::any::type_name::<$DestT>());
-            assert_eq!(err.cql_type, cql_typ);
-            assert_matches::assert_matches!(err.kind, $kind);
-        };
-    }
-
-    macro_rules! assert_type_check_error {
-        ($bytes:expr, $DestT:ty, $cql_typ:expr, $kind:pat) => {
-            assert_given_error!(get_typeck_err, $bytes, $DestT, $cql_typ, $kind);
-        };
-    }
-
-    macro_rules! assert_deser_error {
-        ($bytes:expr, $DestT:ty, $cql_typ:expr, $kind:pat) => {
-            assert_given_error!(get_deser_err, $bytes, $DestT, $cql_typ, $kind);
-        };
-    }
-
-    #[test]
-    fn test_native_errors() {
-        // Simple type mismatch
-        {
-            let v = 123_i32;
-            let bytes = serialize(&ColumnType::Int, &v);
-
-            // Incompatible types render type check error.
-            assert_type_check_error!(
-                &bytes,
-                f64,
-                ColumnType::Int,
-                super::BuiltinTypeCheckErrorKind::MismatchedType {
-                    expected: &[ColumnType::Double],
-                }
-            );
-
-            // ColumnType is said to be Double (8 bytes expected), but in reality the serialized form has 4 bytes only.
-            assert_deser_error!(
-                &bytes,
-                f64,
-                ColumnType::Double,
-                BuiltinDeserializationErrorKind::ByteLengthMismatch {
-                    expected: 8,
-                    got: 4,
-                }
-            );
-
-            // ColumnType is said to be Float, but in reality Int was serialized.
-            // As these types have the same size, though, and every binary number in [0, 2^32] is a valid
-            // value for both of them, this always succeeds.
-            {
-                deserialize::<f32>(&ColumnType::Float, &bytes).unwrap();
-            }
-        }
-
-        // str (and also Uuid) are interesting because they accept two types.
-        {
-            let v = "Ala ma kota";
-            let bytes = serialize(&ColumnType::Ascii, &v);
-
-            assert_type_check_error!(
-                &bytes,
-                &str,
-                ColumnType::Double,
-                BuiltinTypeCheckErrorKind::MismatchedType {
-                    expected: &[ColumnType::Ascii, ColumnType::Text],
-                }
-            );
-
-            // ColumnType is said to be BigInt (8 bytes expected), but in reality the serialized form
-            // (the string) has 11 bytes.
-            assert_deser_error!(
-                &bytes,
-                i64,
-                ColumnType::BigInt,
-                BuiltinDeserializationErrorKind::ByteLengthMismatch {
-                    expected: 8,
-                    got: 11, // str len
-                }
-            );
-        }
-        {
-            // -126 is not a valid ASCII nor UTF-8 byte.
-            let v = -126_i8;
-            let bytes = serialize(&ColumnType::TinyInt, &v);
-
-            assert_deser_error!(
-                &bytes,
-                &str,
-                ColumnType::Ascii,
-                BuiltinDeserializationErrorKind::ExpectedAscii
-            );
-
-            assert_deser_error!(
-                &bytes,
-                &str,
-                ColumnType::Text,
-                BuiltinDeserializationErrorKind::InvalidUtf8(_)
-            );
-        }
-    }
-
-    #[test]
-    fn test_set_or_list_errors() {
-        // Not a set or list
-        {
-            assert_type_check_error!(
-                &Bytes::new(),
-                Vec<i64>,
-                ColumnType::Float,
-                BuiltinTypeCheckErrorKind::SetOrListError(
-                    SetOrListTypeCheckErrorKind::NotSetOrList
-                )
-            );
-
-            // Type check of Rust set against CQL list must fail, because it would be lossy.
-            assert_type_check_error!(
-                &Bytes::new(),
-                BTreeSet<i32>,
-                ColumnType::List(Box::new(ColumnType::Int)),
-                BuiltinTypeCheckErrorKind::SetOrListError(SetOrListTypeCheckErrorKind::NotSet)
-            );
-        }
-
-        // Got null
-        {
-            type RustTyp = Vec<i32>;
-            let ser_typ = ColumnType::List(Box::new(ColumnType::Int));
-
-            let err = RustTyp::deserialize(&ser_typ, None).unwrap_err();
-            let err = get_deser_err(&err);
-            assert_eq!(err.rust_name, std::any::type_name::<RustTyp>());
-            assert_eq!(err.cql_type, ser_typ);
-            assert_matches!(err.kind, BuiltinDeserializationErrorKind::ExpectedNonNull);
-        }
-
-        // Bad element type
-        {
-            assert_type_check_error!(
-                &Bytes::new(),
-                Vec<i64>,
-                ColumnType::List(Box::new(ColumnType::Ascii)),
-                BuiltinTypeCheckErrorKind::SetOrListError(
-                    SetOrListTypeCheckErrorKind::ElementTypeCheckFailed(_)
-                )
-            );
-
-            let err = deserialize::<Vec<i64>>(
-                &ColumnType::List(Box::new(ColumnType::Varint)),
-                &Bytes::new(),
-            )
-            .unwrap_err();
-            let err = get_typeck_err(&err);
-            assert_eq!(err.rust_name, std::any::type_name::<Vec<i64>>());
-            assert_eq!(err.cql_type, ColumnType::List(Box::new(ColumnType::Varint)),);
-            let BuiltinTypeCheckErrorKind::SetOrListError(
-                SetOrListTypeCheckErrorKind::ElementTypeCheckFailed(ref err),
-            ) = err.kind
-            else {
-                panic!("unexpected error kind: {}", err.kind)
-            };
-            let err = get_typeck_err_inner(err.0.as_ref());
-            assert_eq!(err.rust_name, std::any::type_name::<i64>());
-            assert_eq!(err.cql_type, ColumnType::Varint);
-            assert_matches!(
-                err.kind,
-                BuiltinTypeCheckErrorKind::MismatchedType {
-                    expected: &[ColumnType::BigInt, ColumnType::Counter]
-                }
-            );
-        }
-
-        {
-            let ser_typ = ColumnType::List(Box::new(ColumnType::Int));
-            let v = vec![123_i32];
-            let bytes = serialize(&ser_typ, &v);
-
-            {
-                let err = deserialize::<Vec<i64>>(
-                    &ColumnType::List(Box::new(ColumnType::BigInt)),
-                    &bytes,
-                )
-                .unwrap_err();
-                let err = get_deser_err(&err);
-                assert_eq!(err.rust_name, std::any::type_name::<Vec<i64>>());
-                assert_eq!(err.cql_type, ColumnType::List(Box::new(ColumnType::BigInt)),);
-                let BuiltinDeserializationErrorKind::SetOrListError(
-                    SetOrListDeserializationErrorKind::ElementDeserializationFailed(err),
-                ) = &err.kind
-                else {
-                    panic!("unexpected error kind: {}", err.kind)
-                };
-                let err = get_deser_err(err);
-                assert_eq!(err.rust_name, std::any::type_name::<i64>());
-                assert_eq!(err.cql_type, ColumnType::BigInt);
-                assert_matches!(
-                    err.kind,
-                    BuiltinDeserializationErrorKind::ByteLengthMismatch {
-                        expected: 8,
-                        got: 4
-                    }
-                );
-            }
-        }
-    }
-
-    #[test]
-    fn test_map_errors() {
-        // Not a map
-        {
-            let ser_typ = ColumnType::Float;
-            let v = 2.12_f32;
-            let bytes = serialize(&ser_typ, &v);
-
-            assert_type_check_error!(
-                &bytes,
-                HashMap<i64, &str>,
-                ser_typ,
-                BuiltinTypeCheckErrorKind::MapError(
-                    MapTypeCheckErrorKind::NotMap,
-                )
-            );
-        }
-
-        // Got null
-        {
-            type RustTyp = HashMap<i32, bool>;
-            let ser_typ = ColumnType::Map(Box::new(ColumnType::Int), Box::new(ColumnType::Boolean));
-
-            let err = RustTyp::deserialize(&ser_typ, None).unwrap_err();
-            let err = get_deser_err(&err);
-            assert_eq!(err.rust_name, std::any::type_name::<RustTyp>());
-            assert_eq!(err.cql_type, ser_typ);
-            assert_matches!(err.kind, BuiltinDeserializationErrorKind::ExpectedNonNull);
-        }
-
-        // Key type mismatch
-        {
-            let err = deserialize::<HashMap<i64, bool>>(
-                &ColumnType::Map(Box::new(ColumnType::Varint), Box::new(ColumnType::Boolean)),
-                &Bytes::new(),
-            )
-            .unwrap_err();
-            let err = get_typeck_err(&err);
-            assert_eq!(err.rust_name, std::any::type_name::<HashMap<i64, bool>>());
-            assert_eq!(
-                err.cql_type,
-                ColumnType::Map(Box::new(ColumnType::Varint), Box::new(ColumnType::Boolean))
-            );
-            let BuiltinTypeCheckErrorKind::MapError(MapTypeCheckErrorKind::KeyTypeCheckFailed(
-                ref err,
-            )) = err.kind
-            else {
-                panic!("unexpected error kind: {}", err.kind)
-            };
-            let err = get_typeck_err_inner(err.0.as_ref());
-            assert_eq!(err.rust_name, std::any::type_name::<i64>());
-            assert_eq!(err.cql_type, ColumnType::Varint);
-            assert_matches!(
-                err.kind,
-                BuiltinTypeCheckErrorKind::MismatchedType {
-                    expected: &[ColumnType::BigInt, ColumnType::Counter]
-                }
-            );
-        }
-
-        // Value type mismatch
-        {
-            let err = deserialize::<BTreeMap<i64, &str>>(
-                &ColumnType::Map(Box::new(ColumnType::BigInt), Box::new(ColumnType::Boolean)),
-                &Bytes::new(),
-            )
-            .unwrap_err();
-            let err = get_typeck_err(&err);
-            assert_eq!(err.rust_name, std::any::type_name::<BTreeMap<i64, &str>>());
-            assert_eq!(
-                err.cql_type,
-                ColumnType::Map(Box::new(ColumnType::BigInt), Box::new(ColumnType::Boolean))
-            );
-            let BuiltinTypeCheckErrorKind::MapError(MapTypeCheckErrorKind::ValueTypeCheckFailed(
-                ref err,
-            )) = err.kind
-            else {
-                panic!("unexpected error kind: {}", err.kind)
-            };
-            let err = get_typeck_err_inner(err.0.as_ref());
-            assert_eq!(err.rust_name, std::any::type_name::<&str>());
-            assert_eq!(err.cql_type, ColumnType::Boolean);
-            assert_matches!(
-                err.kind,
-                BuiltinTypeCheckErrorKind::MismatchedType {
-                    expected: &[ColumnType::Ascii, ColumnType::Text]
-                }
-            );
-        }
-
-        // Key length mismatch
-        {
-            let ser_typ = ColumnType::Map(Box::new(ColumnType::Int), Box::new(ColumnType::Boolean));
-            let v = HashMap::from([(42, false), (2137, true)]);
-            let bytes = serialize(&ser_typ, &v as &dyn SerializeValue);
-
-            let err = deserialize::<HashMap<i64, bool>>(
-                &ColumnType::Map(Box::new(ColumnType::BigInt), Box::new(ColumnType::Boolean)),
-                &bytes,
-            )
-            .unwrap_err();
-            let err = get_deser_err(&err);
-            assert_eq!(err.rust_name, std::any::type_name::<HashMap<i64, bool>>());
-            assert_eq!(
-                err.cql_type,
-                ColumnType::Map(Box::new(ColumnType::BigInt), Box::new(ColumnType::Boolean))
-            );
-            let BuiltinDeserializationErrorKind::MapError(
-                MapDeserializationErrorKind::KeyDeserializationFailed(err),
-            ) = &err.kind
-            else {
-                panic!("unexpected error kind: {}", err.kind)
-            };
-            let err = get_deser_err(err);
-            assert_eq!(err.rust_name, std::any::type_name::<i64>());
-            assert_eq!(err.cql_type, ColumnType::BigInt);
-            assert_matches!(
-                err.kind,
-                BuiltinDeserializationErrorKind::ByteLengthMismatch {
-                    expected: 8,
-                    got: 4
-                }
-            );
-        }
-
-        // Value length mismatch
-        {
-            let ser_typ = ColumnType::Map(Box::new(ColumnType::Int), Box::new(ColumnType::Boolean));
-            let v = HashMap::from([(42, false), (2137, true)]);
-            let bytes = serialize(&ser_typ, &v as &dyn SerializeValue);
-
-            let err = deserialize::<HashMap<i32, i16>>(
-                &ColumnType::Map(Box::new(ColumnType::Int), Box::new(ColumnType::SmallInt)),
-                &bytes,
-            )
-            .unwrap_err();
-            let err = get_deser_err(&err);
-            assert_eq!(err.rust_name, std::any::type_name::<HashMap<i32, i16>>());
-            assert_eq!(
-                err.cql_type,
-                ColumnType::Map(Box::new(ColumnType::Int), Box::new(ColumnType::SmallInt))
-            );
-            let BuiltinDeserializationErrorKind::MapError(
-                MapDeserializationErrorKind::ValueDeserializationFailed(err),
-            ) = &err.kind
-            else {
-                panic!("unexpected error kind: {}", err.kind)
-            };
-            let err = get_deser_err(err);
-            assert_eq!(err.rust_name, std::any::type_name::<i16>());
-            assert_eq!(err.cql_type, ColumnType::SmallInt);
-            assert_matches!(
-                err.kind,
-                BuiltinDeserializationErrorKind::ByteLengthMismatch {
-                    expected: 2,
-                    got: 1
-                }
-            );
-        }
-    }
-
-    #[test]
-    fn test_tuple_errors() {
-        // Not a tuple
-        {
-            assert_type_check_error!(
-                &Bytes::new(),
-                (i64,),
-                ColumnType::BigInt,
-                BuiltinTypeCheckErrorKind::TupleError(TupleTypeCheckErrorKind::NotTuple)
-            );
-        }
-        // Wrong element count
-        {
-            assert_type_check_error!(
-                &Bytes::new(),
-                (i64,),
-                ColumnType::Tuple(vec![]),
-                BuiltinTypeCheckErrorKind::TupleError(TupleTypeCheckErrorKind::WrongElementCount {
-                    rust_type_el_count: 1,
-                    cql_type_el_count: 0,
-                })
-            );
-
-            assert_type_check_error!(
-                &Bytes::new(),
-                (f32,),
-                ColumnType::Tuple(vec![ColumnType::Float, ColumnType::Float]),
-                BuiltinTypeCheckErrorKind::TupleError(TupleTypeCheckErrorKind::WrongElementCount {
-                    rust_type_el_count: 1,
-                    cql_type_el_count: 2,
-                })
-            );
-        }
-
-        // Bad field type
-        {
-            {
-                let err = deserialize::<(i64,)>(
-                    &ColumnType::Tuple(vec![ColumnType::SmallInt]),
-                    &Bytes::new(),
-                )
-                .unwrap_err();
-                let err = get_typeck_err(&err);
-                assert_eq!(err.rust_name, std::any::type_name::<(i64,)>());
-                assert_eq!(err.cql_type, ColumnType::Tuple(vec![ColumnType::SmallInt]));
-                let BuiltinTypeCheckErrorKind::TupleError(
-                    TupleTypeCheckErrorKind::FieldTypeCheckFailed { ref err, position },
-                ) = err.kind
-                else {
-                    panic!("unexpected error kind: {}", err.kind)
-                };
-                assert_eq!(position, 0);
-                let err = get_typeck_err_inner(err.0.as_ref());
-                assert_eq!(err.rust_name, std::any::type_name::<i64>());
-                assert_eq!(err.cql_type, ColumnType::SmallInt);
-                assert_matches!(
-                    err.kind,
-                    BuiltinTypeCheckErrorKind::MismatchedType {
-                        expected: &[ColumnType::BigInt, ColumnType::Counter]
-                    }
-                );
-            }
-        }
-
-        {
-            let ser_typ = ColumnType::Tuple(vec![ColumnType::Int, ColumnType::Float]);
-            let v = (123_i32, 123.123_f32);
-            let bytes = serialize(&ser_typ, &v);
-
-            {
-                let err = deserialize::<(i32, f64)>(
-                    &ColumnType::Tuple(vec![ColumnType::Int, ColumnType::Double]),
-                    &bytes,
-                )
-                .unwrap_err();
-                let err = get_deser_err(&err);
-                assert_eq!(err.rust_name, std::any::type_name::<(i32, f64)>());
-                assert_eq!(
-                    err.cql_type,
-                    ColumnType::Tuple(vec![ColumnType::Int, ColumnType::Double])
-                );
-                let BuiltinDeserializationErrorKind::TupleError(
-                    TupleDeserializationErrorKind::FieldDeserializationFailed {
-                        ref err,
-                        position: index,
-                    },
-                ) = err.kind
-                else {
-                    panic!("unexpected error kind: {}", err.kind)
-                };
-                assert_eq!(index, 1);
-                let err = get_deser_err(err);
-                assert_eq!(err.rust_name, std::any::type_name::<f64>());
-                assert_eq!(err.cql_type, ColumnType::Double);
-                assert_matches!(
-                    err.kind,
-                    BuiltinDeserializationErrorKind::ByteLengthMismatch {
-                        expected: 8,
-                        got: 4
-                    }
-                );
-            }
-        }
-    }
-
-    #[test]
-    fn test_null_errors() {
-        let ser_typ = ColumnType::Map(Box::new(ColumnType::Int), Box::new(ColumnType::Boolean));
-        let v = HashMap::from([(42, false), (2137, true)]);
-        let bytes = serialize(&ser_typ, &v as &dyn SerializeValue);
-
-        deserialize::<MaybeEmpty<i32>>(&ser_typ, &bytes).unwrap_err();
     }
 }
+
+impl From<UdtDeserializationErrorKind> for BuiltinDeserializationErrorKind {
+    fn from(err: UdtDeserializationErrorKind) -> Self {
+        Self::UdtError(err)
+    }
+}
+
+#[cfg(test)]
+#[path = "value_tests.rs"]
+pub(super) mod tests;
+
+/// ```compile_fail
+///
+/// #[derive(scylla_macros::DeserializeValue)]
+/// #[scylla(crate = scylla_cql, skip_name_checks)]
+/// struct TestUdt {}
+/// ```
+fn _test_udt_bad_attributes_skip_name_check_requires_enforce_order() {}
+
+/// ```compile_fail
+///
+/// #[derive(scylla_macros::DeserializeValue)]
+/// #[scylla(crate = scylla_cql, enforce_order, skip_name_checks)]
+/// struct TestUdt {
+///     #[scylla(rename = "b")]
+///     a: i32,
+/// }
+/// ```
+fn _test_udt_bad_attributes_skip_name_check_conflicts_with_rename() {}
+
+/// ```compile_fail
+///
+/// #[derive(scylla_macros::DeserializeValue)]
+/// #[scylla(crate = scylla_cql)]
+/// struct TestUdt {
+///     #[scylla(rename = "b")]
+///     a: i32,
+///     b: String,
+/// }
+/// ```
+fn _test_udt_bad_attributes_rename_collision_with_field() {}
+
+/// ```compile_fail
+///
+/// #[derive(scylla_macros::DeserializeValue)]
+/// #[scylla(crate = scylla_cql)]
+/// struct TestUdt {
+///     #[scylla(rename = "c")]
+///     a: i32,
+///     #[scylla(rename = "c")]
+///     b: String,
+/// }
+/// ```
+fn _test_udt_bad_attributes_rename_collision_with_another_rename() {}
+
+/// ```compile_fail
+///
+/// #[derive(scylla_macros::DeserializeValue)]
+/// #[scylla(crate = scylla_cql, enforce_order, skip_name_checks)]
+/// struct TestUdt {
+///     a: i32,
+///     #[scylla(allow_missing)]
+///     b: bool,
+///     c: String,
+/// }
+/// ```
+fn _test_udt_bad_attributes_name_skip_name_checks_limitations_on_allow_missing() {}
+
+/// ```
+/// #[derive(scylla_macros::DeserializeValue)]
+/// #[scylla(crate = scylla_cql)]
+/// struct TestUdt {
+///     a: i32,
+///     #[scylla(allow_missing)]
+///     b: bool,
+///     c: String,
+/// }
+/// ```
+fn _test_udt_unordered_flavour_no_limitations_on_allow_missing() {}

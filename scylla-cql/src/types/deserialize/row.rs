@@ -260,7 +260,9 @@ pub struct BuiltinTypeCheckError {
     pub kind: BuiltinTypeCheckErrorKind,
 }
 
-fn mk_typck_err<T>(
+// Not part of the public API; used in derive macros.
+#[doc(hidden)]
+pub fn mk_typck_err<T>(
     cql_types: impl IntoIterator<Item = ColumnType>,
     kind: impl Into<BuiltinTypeCheckErrorKind>,
 ) -> TypeCheckError {
@@ -292,6 +294,38 @@ pub enum BuiltinTypeCheckErrorKind {
         cql_cols: usize,
     },
 
+    /// The CQL row contains a column for which a corresponding field is not found
+    /// in the Rust type.
+    ColumnWithUnknownName {
+        /// Index of the excess column.
+        column_index: usize,
+
+        /// Name of the column that is present in CQL row but not in the Rust type.
+        column_name: String,
+    },
+
+    /// Several values required by the Rust type are not provided by the DB.
+    ValuesMissingForColumns {
+        /// Names of the columns in the Rust type for which the DB doesn't
+        /// provide value.
+        column_names: Vec<&'static str>,
+    },
+
+    /// A different column name was expected at given position.
+    ColumnNameMismatch {
+        /// Index of the field determining the expected name.
+        field_index: usize,
+
+        /// Index of the column having mismatched name.
+        column_index: usize,
+
+        /// Name of the column, as expected by the Rust type.
+        rust_column_name: &'static str,
+
+        /// Name of the column for which the DB requested a value.
+        db_column_name: String,
+    },
+
     /// Column type check failed between Rust type and DB type at given position (=in given column).
     ColumnTypeCheckFailed {
         /// Index of the column.
@@ -302,6 +336,15 @@ pub enum BuiltinTypeCheckErrorKind {
 
         /// Inner type check error due to the type mismatch.
         err: TypeCheckError,
+    },
+
+    /// Duplicated column in DB metadata.
+    DuplicatedColumn {
+        /// Column index of the second occurence of the column with the same name.
+        column_index: usize,
+
+        /// The name of the duplicated column.
+        column_name: &'static str,
     },
 }
 
@@ -314,6 +357,33 @@ impl Display for BuiltinTypeCheckErrorKind {
             } => {
                 write!(f, "wrong column count: the statement operates on {cql_cols} columns, but the given rust types contains {rust_cols}")
             }
+            BuiltinTypeCheckErrorKind::ColumnWithUnknownName { column_name, column_index } => {
+                write!(
+                    f,
+                    "the CQL row contains a column {} at column index {}, but the corresponding field is not found in the Rust type",
+                    column_name,
+                    column_index,
+                )
+            }
+            BuiltinTypeCheckErrorKind::ValuesMissingForColumns { column_names } => {
+                write!(
+                    f,
+                    "values for columns {:?} are missing from the DB data but are required by the Rust type",
+                    column_names
+                )
+            },
+            BuiltinTypeCheckErrorKind::ColumnNameMismatch {
+                field_index,
+                column_index,rust_column_name,
+                db_column_name
+            } => write!(
+                f,
+                "expected column with name {} at column index {}, but the Rust field name at corresponding field index {} is {}",
+                db_column_name,
+                column_index,
+                field_index,
+                rust_column_name,
+            ),
             BuiltinTypeCheckErrorKind::ColumnTypeCheckFailed {
                 column_index,
                 column_name,
@@ -321,6 +391,12 @@ impl Display for BuiltinTypeCheckErrorKind {
             } => write!(
                 f,
                 "mismatched types in column {column_name} at index {column_index}: {err}"
+            ),
+            BuiltinTypeCheckErrorKind::DuplicatedColumn { column_name, column_index } => write!(
+                f,
+                "column {} occurs more than once in DB metadata; second occurence is at column index {}",
+                column_name,
+                column_index,
             ),
         }
     }
@@ -338,13 +414,13 @@ pub struct BuiltinDeserializationError {
     pub kind: BuiltinDeserializationErrorKind,
 }
 
-pub(super) fn mk_deser_err<T>(
-    kind: impl Into<BuiltinDeserializationErrorKind>,
-) -> DeserializationError {
+// Not part of the public API; used in derive macros.
+#[doc(hidden)]
+pub fn mk_deser_err<T>(kind: impl Into<BuiltinDeserializationErrorKind>) -> DeserializationError {
     mk_deser_err_named(std::any::type_name::<T>(), kind)
 }
 
-pub(super) fn mk_deser_err_named(
+fn mk_deser_err_named(
     name: &'static str,
     kind: impl Into<BuiltinDeserializationErrorKind>,
 ) -> DeserializationError {
@@ -412,272 +488,49 @@ impl Display for BuiltinDeserializationErrorKind {
 }
 
 #[cfg(test)]
-mod tests {
-    use assert_matches::assert_matches;
-    use bytes::Bytes;
+#[path = "row_tests.rs"]
+mod tests;
 
-    use crate::frame::response::result::{ColumnSpec, ColumnType};
-    use crate::types::deserialize::row::BuiltinDeserializationErrorKind;
-    use crate::types::deserialize::{DeserializationError, FrameSlice};
+/// ```compile_fail
+///
+/// #[derive(scylla_macros::DeserializeRow)]
+/// #[scylla(crate = scylla_cql, skip_name_checks)]
+/// struct TestRow {}
+/// ```
+fn _test_struct_deserialization_name_check_skip_requires_enforce_order() {}
 
-    use super::super::tests::{serialize_cells, spec};
-    use super::{BuiltinDeserializationError, ColumnIterator, CqlValue, DeserializeRow, Row};
-    use super::{BuiltinTypeCheckError, BuiltinTypeCheckErrorKind};
+/// ```compile_fail
+///
+/// #[derive(scylla_macros::DeserializeRow)]
+/// #[scylla(crate = scylla_cql, skip_name_checks)]
+/// struct TestRow {
+///     #[scylla(rename = "b")]
+///     a: i32,
+/// }
+/// ```
+fn _test_struct_deserialization_skip_name_check_conflicts_with_rename() {}
 
-    #[test]
-    fn test_tuple_deserialization() {
-        // Empty tuple
-        deserialize::<()>(&[], &Bytes::new()).unwrap();
+/// ```compile_fail
+///
+/// #[derive(scylla_macros::DeserializeRow)]
+/// #[scylla(crate = scylla_cql)]
+/// struct TestRow {
+///     #[scylla(rename = "b")]
+///     a: i32,
+///     b: String,
+/// }
+/// ```
+fn _test_struct_deserialization_skip_rename_collision_with_field() {}
 
-        // 1-elem tuple
-        let (a,) = deserialize::<(i32,)>(
-            &[spec("i", ColumnType::Int)],
-            &serialize_cells([val_int(123)]),
-        )
-        .unwrap();
-        assert_eq!(a, 123);
-
-        // 3-elem tuple
-        let (a, b, c) = deserialize::<(i32, i32, i32)>(
-            &[
-                spec("i1", ColumnType::Int),
-                spec("i2", ColumnType::Int),
-                spec("i3", ColumnType::Int),
-            ],
-            &serialize_cells([val_int(123), val_int(456), val_int(789)]),
-        )
-        .unwrap();
-        assert_eq!((a, b, c), (123, 456, 789));
-
-        // Make sure that column type mismatch is detected
-        deserialize::<(i32, String, i32)>(
-            &[
-                spec("i1", ColumnType::Int),
-                spec("i2", ColumnType::Int),
-                spec("i3", ColumnType::Int),
-            ],
-            &serialize_cells([val_int(123), val_int(456), val_int(789)]),
-        )
-        .unwrap_err();
-
-        // Make sure that borrowing types compile and work correctly
-        let specs = &[spec("s", ColumnType::Text)];
-        let byts = serialize_cells([val_str("abc")]);
-        let (s,) = deserialize::<(&str,)>(specs, &byts).unwrap();
-        assert_eq!(s, "abc");
-    }
-
-    #[test]
-    fn test_deserialization_as_column_iterator() {
-        let col_specs = [
-            spec("i1", ColumnType::Int),
-            spec("i2", ColumnType::Text),
-            spec("i3", ColumnType::Counter),
-        ];
-        let serialized_values = serialize_cells([val_int(123), val_str("ScyllaDB"), None]);
-        let mut iter = deserialize::<ColumnIterator>(&col_specs, &serialized_values).unwrap();
-
-        let col1 = iter.next().unwrap().unwrap();
-        assert_eq!(col1.spec.name, "i1");
-        assert_eq!(col1.spec.typ, ColumnType::Int);
-        assert_eq!(col1.slice.unwrap().as_slice(), &123i32.to_be_bytes());
-
-        let col2 = iter.next().unwrap().unwrap();
-        assert_eq!(col2.spec.name, "i2");
-        assert_eq!(col2.spec.typ, ColumnType::Text);
-        assert_eq!(col2.slice.unwrap().as_slice(), "ScyllaDB".as_bytes());
-
-        let col3 = iter.next().unwrap().unwrap();
-        assert_eq!(col3.spec.name, "i3");
-        assert_eq!(col3.spec.typ, ColumnType::Counter);
-        assert!(col3.slice.is_none());
-
-        assert!(iter.next().is_none());
-    }
-
-    fn val_int(i: i32) -> Option<Vec<u8>> {
-        Some(i.to_be_bytes().to_vec())
-    }
-
-    fn val_str(s: &str) -> Option<Vec<u8>> {
-        Some(s.as_bytes().to_vec())
-    }
-
-    fn deserialize<'frame, R>(
-        specs: &'frame [ColumnSpec],
-        byts: &'frame Bytes,
-    ) -> Result<R, DeserializationError>
-    where
-        R: DeserializeRow<'frame>,
-    {
-        <R as DeserializeRow<'frame>>::type_check(specs)
-            .map_err(|typecheck_err| DeserializationError(typecheck_err.0))?;
-        let slice = FrameSlice::new(byts);
-        let iter = ColumnIterator::new(specs, slice);
-        <R as DeserializeRow<'frame>>::deserialize(iter)
-    }
-
-    #[track_caller]
-    fn get_typck_err(err: &DeserializationError) -> &BuiltinTypeCheckError {
-        match err.0.downcast_ref() {
-            Some(err) => err,
-            None => panic!("not a BuiltinTypeCheckError: {:?}", err),
-        }
-    }
-
-    #[track_caller]
-    fn get_deser_err(err: &DeserializationError) -> &BuiltinDeserializationError {
-        match err.0.downcast_ref() {
-            Some(err) => err,
-            None => panic!("not a BuiltinDeserializationError: {:?}", err),
-        }
-    }
-
-    #[test]
-    fn test_tuple_errors() {
-        // Column type check failure
-        {
-            let col_name: &str = "i";
-            let specs = &[spec(col_name, ColumnType::Int)];
-            let err = deserialize::<(i64,)>(specs, &serialize_cells([val_int(123)])).unwrap_err();
-            let err = get_typck_err(&err);
-            assert_eq!(err.rust_name, std::any::type_name::<(i64,)>());
-            assert_eq!(
-                err.cql_types,
-                specs
-                    .iter()
-                    .map(|spec| spec.typ.clone())
-                    .collect::<Vec<_>>()
-            );
-            let BuiltinTypeCheckErrorKind::ColumnTypeCheckFailed {
-                column_index,
-                column_name,
-                err,
-            } = &err.kind
-            else {
-                panic!("unexpected error kind: {}", err.kind)
-            };
-            assert_eq!(*column_index, 0);
-            assert_eq!(column_name, col_name);
-            let err = super::super::value::tests::get_typeck_err_inner(err.0.as_ref());
-            assert_eq!(err.rust_name, std::any::type_name::<i64>());
-            assert_eq!(err.cql_type, ColumnType::Int);
-            assert_matches!(
-                &err.kind,
-                super::super::value::BuiltinTypeCheckErrorKind::MismatchedType {
-                    expected: &[ColumnType::BigInt, ColumnType::Counter]
-                }
-            );
-        }
-
-        // Column deserialization failure
-        {
-            let col_name: &str = "i";
-            let err = deserialize::<(i64,)>(
-                &[spec(col_name, ColumnType::BigInt)],
-                &serialize_cells([val_int(123)]),
-            )
-            .unwrap_err();
-            let err = get_deser_err(&err);
-            assert_eq!(err.rust_name, std::any::type_name::<(i64,)>());
-            let BuiltinDeserializationErrorKind::ColumnDeserializationFailed {
-                column_name,
-                err,
-                ..
-            } = &err.kind
-            else {
-                panic!("unexpected error kind: {}", err.kind)
-            };
-            assert_eq!(column_name, col_name);
-            let err = super::super::value::tests::get_deser_err(err);
-            assert_eq!(err.rust_name, std::any::type_name::<i64>());
-            assert_eq!(err.cql_type, ColumnType::BigInt);
-            assert_matches!(
-                err.kind,
-                super::super::value::BuiltinDeserializationErrorKind::ByteLengthMismatch {
-                    expected: 8,
-                    got: 4
-                }
-            );
-        }
-
-        // Raw column deserialization failure
-        {
-            let col_name: &str = "i";
-            let err = deserialize::<(i64,)>(
-                &[spec(col_name, ColumnType::BigInt)],
-                &Bytes::from_static(b"alamakota"),
-            )
-            .unwrap_err();
-            let err = get_deser_err(&err);
-            assert_eq!(err.rust_name, std::any::type_name::<(i64,)>());
-            let BuiltinDeserializationErrorKind::RawColumnDeserializationFailed {
-                column_index: _column_index,
-                column_name,
-                err: _err,
-            } = &err.kind
-            else {
-                panic!("unexpected error kind: {}", err.kind)
-            };
-            assert_eq!(column_name, col_name);
-        }
-    }
-
-    #[test]
-    fn test_row_errors() {
-        // Column type check failure - happens never, because Row consists of CqlValues,
-        // which accept all CQL types.
-
-        // Column deserialization failure
-        {
-            let col_name: &str = "i";
-            let err = deserialize::<Row>(
-                &[spec(col_name, ColumnType::BigInt)],
-                &serialize_cells([val_int(123)]),
-            )
-            .unwrap_err();
-            let err = get_deser_err(&err);
-            assert_eq!(err.rust_name, std::any::type_name::<Row>());
-            let BuiltinDeserializationErrorKind::ColumnDeserializationFailed {
-                column_index: _column_index,
-                column_name,
-                err,
-            } = &err.kind
-            else {
-                panic!("unexpected error kind: {}", err.kind)
-            };
-            assert_eq!(column_name, col_name);
-            let err = super::super::value::tests::get_deser_err(err);
-            assert_eq!(err.rust_name, std::any::type_name::<CqlValue>());
-            assert_eq!(err.cql_type, ColumnType::BigInt);
-            let super::super::value::BuiltinDeserializationErrorKind::ByteLengthMismatch {
-                expected: 8,
-                got: 4,
-            } = &err.kind
-            else {
-                panic!("unexpected error kind: {}", err.kind)
-            };
-        }
-
-        // Raw column deserialization failure
-        {
-            let col_name: &str = "i";
-            let err = deserialize::<Row>(
-                &[spec(col_name, ColumnType::BigInt)],
-                &Bytes::from_static(b"alamakota"),
-            )
-            .unwrap_err();
-            let err = get_deser_err(&err);
-            assert_eq!(err.rust_name, std::any::type_name::<Row>());
-            let BuiltinDeserializationErrorKind::RawColumnDeserializationFailed {
-                column_index: _column_index,
-                column_name,
-                err: _err,
-            } = &err.kind
-            else {
-                panic!("unexpected error kind: {}", err.kind)
-            };
-            assert_eq!(column_name, col_name);
-        }
-    }
-}
+/// ```compile_fail
+///
+/// #[derive(scylla_macros::DeserializeRow)]
+/// #[scylla(crate = scylla_cql)]
+/// struct TestRow {
+///     #[scylla(rename = "c")]
+///     a: i32,
+///     #[scylla(rename = "c")]
+///     b: String,
+/// }
+/// ```
+fn _test_struct_deserialization_rename_collision_with_another_rename() {}
