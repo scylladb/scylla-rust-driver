@@ -11,6 +11,8 @@ pub mod query;
 
 pub use crate::frame::types::{Consistency, SerialConsistency};
 
+pub use crate::frame::request::query::{PagingState, PagingStateResponse};
+
 // This is the default common to drivers.
 const DEFAULT_PAGE_SIZE: i32 = 5000;
 

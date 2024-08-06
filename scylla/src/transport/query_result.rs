@@ -1,8 +1,8 @@
 use crate::frame::response::cql_to_rust::{FromRow, FromRowError};
 use crate::frame::response::result::ColumnSpec;
 use crate::frame::response::result::Row;
+use crate::statement::PagingStateResponse;
 use crate::transport::session::{IntoTypedRows, TypedRowIter};
-use bytes::Bytes;
 use thiserror::Error;
 use uuid::Uuid;
 
@@ -20,7 +20,7 @@ pub struct QueryResult {
     /// CQL Tracing uuid - can only be Some if tracing is enabled for this query
     pub tracing_id: Option<Uuid>,
     /// Paging state returned from the server
-    pub paging_state: Option<Bytes>,
+    pub paging_state_response: PagingStateResponse,
     /// Column specification returned from the server
     pub col_specs: Vec<ColumnSpec>,
     /// The original size of the serialized rows in request
@@ -33,7 +33,7 @@ impl QueryResult {
             rows: None,
             warnings: Vec::new(),
             tracing_id: None,
-            paging_state: None,
+            paging_state_response: PagingStateResponse::NoMorePages,
             col_specs: Vec::new(),
             serialized_size: 0,
         }
@@ -318,7 +318,7 @@ mod tests {
             rows: None,
             warnings: vec![],
             tracing_id: None,
-            paging_state: None,
+            paging_state_response: PagingStateResponse::NoMorePages,
             col_specs: vec![column_spec],
             serialized_size: 0,
         }

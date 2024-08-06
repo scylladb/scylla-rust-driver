@@ -25,9 +25,9 @@ use crate::ExecutionProfile;
 use crate::QueryResult;
 use crate::{Session, SessionBuilder};
 use assert_matches::assert_matches;
-use bytes::Bytes;
 use futures::{FutureExt, StreamExt, TryStreamExt};
 use itertools::Itertools;
+use scylla_cql::frame::request::query::{PagingState, PagingStateResponse};
 use scylla_cql::frame::response::result::ColumnType;
 use scylla_cql::types::serialize::row::{SerializeRow, SerializedValues};
 use scylla_cql::types::serialize::value::SerializeValue;
@@ -145,7 +145,7 @@ async fn test_unprepared_statement() {
     }
     let mut results_from_manual_paging: Vec<Row> = vec![];
     let query = Query::new(format!("SELECT a, b, c FROM {}.t", ks)).with_page_size(1);
-    let mut paging_state: Option<Bytes> = None;
+    let mut paging_state = PagingState::start();
     let mut watchdog = 0;
     loop {
         let rs_manual = session
@@ -153,11 +153,14 @@ async fn test_unprepared_statement() {
             .await
             .unwrap();
         results_from_manual_paging.append(&mut rs_manual.rows.unwrap());
-        if watchdog > 30 || rs_manual.paging_state.is_none() {
-            break;
+        match rs_manual.paging_state_response {
+            PagingStateResponse::HasMorePages { state } => {
+                paging_state = state;
+            }
+            _ if watchdog > 30 => break,
+            PagingStateResponse::NoMorePages => break,
         }
         watchdog += 1;
-        paging_state = rs_manual.paging_state;
     }
     assert_eq!(results_from_manual_paging, rs);
 }
@@ -281,7 +284,7 @@ async fn test_prepared_statement() {
         let mut results_from_manual_paging: Vec<Row> = vec![];
         let query = Query::new(format!("SELECT a, b, c FROM {}.t2", ks)).with_page_size(1);
         let prepared_paged = session.prepare(query).await.unwrap();
-        let mut paging_state: Option<Bytes> = None;
+        let mut paging_state = PagingState::start();
         let mut watchdog = 0;
         loop {
             let rs_manual = session
@@ -289,11 +292,14 @@ async fn test_prepared_statement() {
                 .await
                 .unwrap();
             results_from_manual_paging.append(&mut rs_manual.rows.unwrap());
-            if watchdog > 30 || rs_manual.paging_state.is_none() {
-                break;
+            match rs_manual.paging_state_response {
+                PagingStateResponse::HasMorePages { state } => {
+                    paging_state = state;
+                }
+                _ if watchdog > 30 => break,
+                PagingStateResponse::NoMorePages => break,
             }
             watchdog += 1;
-            paging_state = rs_manual.paging_state;
         }
         assert_eq!(results_from_manual_paging, rs);
     }

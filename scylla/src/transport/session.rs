@@ -10,7 +10,6 @@ use crate::history::HistoryListener;
 use crate::utils::pretty::{CommaSeparatedDisplayer, CqlValueDisplayer};
 use arc_swap::ArcSwapOption;
 use async_trait::async_trait;
-use bytes::Bytes;
 use futures::future::join_all;
 use futures::future::try_join_all;
 use itertools::{Either, Itertools};
@@ -53,7 +52,7 @@ use crate::frame::response::result;
 use crate::prepared_statement::PreparedStatement;
 use crate::query::Query;
 use crate::routing::{Shard, Token};
-use crate::statement::Consistency;
+use crate::statement::{Consistency, PagingState};
 use crate::tracing::{TracingEvent, TracingInfo};
 use crate::transport::cluster::{Cluster, ClusterData, ClusterNeatDebug};
 use crate::transport::connection::{Connection, ConnectionConfig, VerifiedKeyspaceName};
@@ -624,7 +623,7 @@ impl Session {
         query: impl Into<Query>,
         values: impl SerializeRow,
     ) -> Result<QueryResult, QueryError> {
-        self.query_paged(query, values, None).await
+        self.query_paged(query, values, PagingState::start()).await
     }
 
     /// Queries the database with a custom paging state.
@@ -637,12 +636,12 @@ impl Session {
     ///
     /// * `query` - query to be performed
     /// * `values` - values bound to the query
-    /// * `paging_state` - previously received paging state or None
+    /// * `paging_state` - previously received paging state or [PagingState::start()]
     pub async fn query_paged(
         &self,
         query: impl Into<Query>,
         values: impl SerializeRow,
-        paging_state: Option<Bytes>,
+        paging_state: PagingState,
     ) -> Result<QueryResult, QueryError> {
         let query: Query = query.into();
 
@@ -977,7 +976,8 @@ impl Session {
         prepared: &PreparedStatement,
         values: impl SerializeRow,
     ) -> Result<QueryResult, QueryError> {
-        self.execute_paged(prepared, values, None).await
+        self.execute_paged(prepared, values, PagingState::start())
+            .await
     }
 
     /// Executes a previously prepared statement with previously received paging state
@@ -985,12 +985,12 @@ impl Session {
     ///
     /// * `prepared` - a statement prepared with [prepare](crate::transport::session::Session::prepare)
     /// * `values` - values bound to the query
-    /// * `paging_state` - paging state from the previous query or None
+    /// * `paging_state` - paging state from the previous query or [PagingState::start()]
     pub async fn execute_paged(
         &self,
         prepared: &PreparedStatement,
         values: impl SerializeRow,
-        paging_state: Option<Bytes>,
+        paging_state: PagingState,
     ) -> Result<QueryResult, QueryError> {
         let serialized_values = prepared.serialize_values(&values)?;
         let values_ref = &serialized_values;

@@ -2,10 +2,11 @@ use crate::utils::{setup_tracing, test_with_3_node_cluster};
 use scylla::transport::session::Session;
 use scylla::SessionBuilder;
 use scylla::{prepared_statement::PreparedStatement, test_utils::unique_keyspace_name};
+use scylla_cql::frame::request::query::{PagingState, PagingStateResponse};
 use scylla_cql::frame::types;
 use scylla_proxy::{
-    Condition, ProxyError, Reaction, ResponseFrame, ResponseReaction, ShardAwareness, TargetShard,
-    WorkerError,
+    Condition, ProxyError, Reaction, ResponseFrame, ResponseOpcode, ResponseReaction, ResponseRule,
+    ShardAwareness, TargetShard, WorkerError,
 };
 use std::sync::Arc;
 
@@ -14,8 +15,6 @@ use std::sync::Arc;
 #[cfg(not(scylla_cloud_tests))]
 async fn test_skip_result_metadata() {
     setup_tracing();
-    use bytes::Bytes;
-    use scylla_proxy::{ResponseOpcode, ResponseRule};
 
     const NO_METADATA_FLAG: i32 = 0x0004;
 
@@ -124,19 +123,23 @@ async fn test_skip_result_metadata() {
                 let mut prepared_paged = session.prepare(select_query).await.unwrap();
                 prepared_paged.set_use_cached_result_metadata(true);
                 prepared_paged.set_page_size(1);
-                let mut paging_state: Option<Bytes> = None;
+                let mut paging_state = PagingState::start();
                 let mut watchdog = 0;
                 loop {
-                    let mut rs_manual = session
+                    let rs_manual = session
                         .execute_paged(&prepared_paged, &[], paging_state)
                         .await
                         .unwrap();
-                    eprintln!("Paging state: {:?}", rs_manual.paging_state);
-                    paging_state = rs_manual.paging_state.take();
+                    let paging_state_response = rs_manual.paging_state_response.clone();
                     results_from_manual_paging
                         .extend(rs_manual.rows_typed::<RowT>().unwrap().map(Result::unwrap));
-                    if watchdog > 30 || paging_state.is_none() {
-                        break;
+
+                    match paging_state_response {
+                        PagingStateResponse::HasMorePages { state } => {
+                            paging_state = state;
+                        }
+                        _ if watchdog > 30 => break,
+                        PagingStateResponse::NoMorePages => break,
                     }
                     watchdog += 1;
                 }

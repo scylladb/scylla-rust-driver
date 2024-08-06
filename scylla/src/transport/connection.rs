@@ -62,7 +62,7 @@ use crate::frame::{
 use crate::query::Query;
 use crate::routing::ShardInfo;
 use crate::statement::prepared_statement::PreparedStatement;
-use crate::statement::Consistency;
+use crate::statement::{Consistency, PagingState, PagingStateResponse};
 use crate::transport::Compression;
 use crate::QueryResult;
 
@@ -265,7 +265,7 @@ impl NonErrorQueryResponse {
                 rs.metadata.col_specs,
                 rs.serialized_size,
             ),
-            NonErrorResponse::Result(_) => (None, None, vec![], 0),
+            NonErrorResponse::Result(_) => (None, PagingStateResponse::NoMorePages, vec![], 0),
             _ => {
                 return Err(QueryError::ProtocolError(
                     "Unexpected server response, expected Result or Error",
@@ -277,7 +277,7 @@ impl NonErrorQueryResponse {
             rows,
             warnings: self.warnings,
             tracing_id: self.tracing_id,
-            paging_state,
+            paging_state_response: paging_state,
             col_specs,
             serialized_size,
         })
@@ -821,15 +821,20 @@ impl Connection {
         serial_consistency: Option<SerialConsistency>,
     ) -> Result<QueryResult, QueryError> {
         let query: Query = query.into();
-        self.query_with_consistency(&query, consistency, serial_consistency, None)
-            .await?
-            .into_query_result()
+        self.query_with_consistency(
+            &query,
+            consistency,
+            serial_consistency,
+            PagingState::start(),
+        )
+        .await?
+        .into_query_result()
     }
 
     pub(crate) async fn query(
         &self,
         query: &Query,
-        paging_state: Option<Bytes>,
+        paging_state: PagingState,
     ) -> Result<QueryResponse, QueryError> {
         // This method is used only for driver internal queries, so no need to consult execution profile here.
         self.query_with_consistency(
@@ -848,7 +853,7 @@ impl Connection {
         query: &Query,
         consistency: Consistency,
         serial_consistency: Option<SerialConsistency>,
-        paging_state: Option<Bytes>,
+        paging_state: PagingState,
     ) -> Result<QueryResponse, QueryError> {
         let query_frame = query::Query {
             contents: Cow::Borrowed(&query.contents),
@@ -872,7 +877,7 @@ impl Connection {
         &self,
         prepared: PreparedStatement,
         values: SerializedValues,
-        paging_state: Option<Bytes>,
+        paging_state: PagingState,
     ) -> Result<QueryResponse, QueryError> {
         // This method is used only for driver internal queries, so no need to consult execution profile here.
         self.execute_with_consistency(
@@ -893,7 +898,7 @@ impl Connection {
         values: &SerializedValues,
         consistency: Consistency,
         serial_consistency: Option<SerialConsistency>,
-        paging_state: Option<Bytes>,
+        paging_state: PagingState,
     ) -> Result<QueryResponse, QueryError> {
         let execute_frame = execute::Execute {
             id: prepared_statement.get_id().to_owned(),
@@ -1137,7 +1142,7 @@ impl Connection {
             false => format!("USE {}", keyspace_name.as_str()).into(),
         };
 
-        let query_response = self.query(&query, None).await?;
+        let query_response = self.query(&query, PagingState::start()).await?;
 
         match query_response.response {
             Response::Result(result::Result::SetKeyspace(set_keyspace)) => {
@@ -2137,6 +2142,7 @@ mod tests {
 
     use super::ConnectionConfig;
     use crate::query::Query;
+    use crate::statement::PagingState;
     use crate::test_utils::setup_tracing;
     use crate::transport::connection::open_connection;
     use crate::transport::node::ResolvedContactPoint;
@@ -2237,7 +2243,11 @@ mod tests {
         for v in &values {
             let prepared_clone = prepared.clone();
             let values = prepared_clone.serialize_values(&(*v,)).unwrap();
-            let fut = async { connection.execute(prepared_clone, values, None).await };
+            let fut = async {
+                connection
+                    .execute(prepared_clone, values, PagingState::start())
+                    .await
+            };
             insert_futures.push(fut);
         }
 
@@ -2320,7 +2330,10 @@ mod tests {
                 .await
                 .unwrap();
 
-            connection.query(&"TRUNCATE t".into(), None).await.unwrap();
+            connection
+                .query(&"TRUNCATE t".into(), PagingState::start())
+                .await
+                .unwrap();
 
             let mut futs = Vec::new();
 
@@ -2339,8 +2352,10 @@ mod tests {
                             let values = prepared
                                 .serialize_values(&(j, vec![j as u8; j as usize]))
                                 .unwrap();
-                            let response =
-                                conn.execute(prepared.clone(), values, None).await.unwrap();
+                            let response = conn
+                                .execute(prepared.clone(), values, PagingState::start())
+                                .await
+                                .unwrap();
                             // QueryResponse might contain an error - make sure that there were no errors
                             let _nonerror_response =
                                 response.into_non_error_query_response().unwrap();
@@ -2357,7 +2372,7 @@ mod tests {
             // Check that everything was written properly
             let range_end = arithmetic_sequence_sum(NUM_BATCHES);
             let mut results = connection
-                .query(&"SELECT p, v FROM t".into(), None)
+                .query(&"SELECT p, v FROM t".into(), PagingState::start())
                 .await
                 .unwrap()
                 .into_query_result()

@@ -140,6 +140,8 @@ mod tests {
         Consistency,
     };
 
+    use super::query::PagingState;
+
     #[test]
     fn request_ser_de_identity() {
         // Query
@@ -149,7 +151,7 @@ mod tests {
             serial_consistency: Some(SerialConsistency::Serial),
             timestamp: None,
             page_size: Some(323),
-            paging_state: Some(vec![2, 1, 3, 7].into()),
+            paging_state: PagingState::new_from_raw_bytes(&[2_u8, 1, 3, 7] as &[u8]),
             skip_metadata: false,
             values: {
                 let mut vals = SerializedValues::new();
@@ -177,7 +179,7 @@ mod tests {
             serial_consistency: None,
             timestamp: Some(3423434),
             page_size: None,
-            paging_state: None,
+            paging_state: PagingState::start(),
             skip_metadata: false,
             values: {
                 let mut vals = SerializedValues::new();
@@ -235,7 +237,7 @@ mod tests {
             serial_consistency: Some(SerialConsistency::LocalSerial),
             timestamp: None,
             page_size: None,
-            paging_state: None,
+            paging_state: PagingState::start(),
             skip_metadata: false,
             values: Cow::Borrowed(SerializedValues::EMPTY),
         };

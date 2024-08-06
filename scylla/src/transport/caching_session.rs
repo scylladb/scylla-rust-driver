@@ -1,6 +1,7 @@
 use crate::batch::{Batch, BatchStatement};
 use crate::prepared_statement::PreparedStatement;
 use crate::query::Query;
+use crate::statement::PagingState;
 use crate::transport::errors::QueryError;
 use crate::transport::iterator::RowIterator;
 use crate::transport::partitioner::PartitionerName;
@@ -95,12 +96,12 @@ where
         &self,
         query: impl Into<Query>,
         values: impl SerializeRow,
-        paging_state: Option<Bytes>,
+        paging_state: PagingState,
     ) -> Result<QueryResult, QueryError> {
         let query = query.into();
         let prepared = self.add_prepared_statement_owned(query).await?;
         self.session
-            .execute_paged(&prepared, values, paging_state.clone())
+            .execute_paged(&prepared, values, paging_state)
             .await
     }
 
@@ -218,6 +219,7 @@ where
 #[cfg(test)]
 mod tests {
     use crate::query::Query;
+    use crate::statement::PagingState;
     use crate::test_utils::{create_new_session_builder, scylla_supports_tablets, setup_tracing};
     use crate::transport::partitioner::PartitionerName;
     use crate::utils::test_utils::unique_keyspace_name;
@@ -371,7 +373,7 @@ mod tests {
         assert!(session.cache.is_empty());
 
         let result = session
-            .execute_paged("select * from test_table", &[], None)
+            .execute_paged("select * from test_table", &[], PagingState::start())
             .await
             .unwrap();
 
