@@ -72,7 +72,7 @@ pub enum LowLevelDeserializationError {
     IoError(#[from] std::io::Error),
     #[error(transparent)]
     TryFromIntError(#[from] std::num::TryFromIntError),
-    #[error("Failed to convert slice into array: {0}")]
+    #[error(transparent)]
     TryFromSliceError(#[from] std::array::TryFromSliceError),
     #[error("Not enough bytes! expected: {expected}, received: {received}")]
     TooFewBytesReceived { expected: usize, received: usize },
