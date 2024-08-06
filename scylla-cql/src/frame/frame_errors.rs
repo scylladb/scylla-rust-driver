@@ -80,7 +80,7 @@ pub enum LowLevelDeserializationError {
     InvalidValueLength(i32),
     #[error("Unknown consistency: {0}")]
     UnknownConsistency(#[from] TryFromPrimitiveError<u16>),
-    #[error("Invalid inet bytes length: {0}")]
+    #[error("Invalid inet bytes length: {0}. Accepted lengths are 4 and 16 bytes.")]
     InvalidInetLength(u8),
     #[error("UTF8 deserialization failed: {0}")]
     UTF8DeserializationError(#[from] std::str::Utf8Error),
