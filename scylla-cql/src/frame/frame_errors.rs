@@ -89,9 +89,6 @@ pub enum FrameHeaderParseError {
     ConnectionClosed(usize, usize),
 }
 
-#[derive(Error, Debug)]
-pub enum ParseError {}
-
 /// An error that occurred during CQL request serialization.
 #[non_exhaustive]
 #[derive(Error, Debug, Clone)]

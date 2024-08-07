@@ -17,7 +17,7 @@ use scylla_cql::{
             CqlAuthChallengeParseError, CqlAuthSuccessParseError, CqlAuthenticateParseError,
             CqlErrorParseError, CqlEventParseError, CqlRequestSerializationError,
             CqlResponseParseError, CqlResultParseError, CqlSupportedParseError,
-            FrameBodyExtensionsParseError, FrameHeaderParseError, ParseError,
+            FrameBodyExtensionsParseError, FrameHeaderParseError,
         },
         request::CqlRequestKind,
         response::CqlResponseKind,
@@ -96,12 +96,6 @@ impl From<SerializeValuesError> for QueryError {
 impl From<SerializationError> for QueryError {
     fn from(serialized_err: SerializationError) -> QueryError {
         QueryError::BadQuery(BadQuery::SerializationError(serialized_err))
-    }
-}
-
-impl From<ParseError> for QueryError {
-    fn from(parse_error: ParseError) -> QueryError {
-        QueryError::InvalidMessage(format!("Error parsing message: {}", parse_error))
     }
 }
 
