@@ -1,4 +1,3 @@
-use crate::frame::frame_errors::ParseError;
 use crate::frame::types;
 use bytes::BufMut;
 use std::borrow::Cow;
@@ -797,26 +796,6 @@ impl LegacySerializedValues {
 
     pub fn size(&self) -> usize {
         self.serialized_values.len()
-    }
-
-    /// Creates value list from the request frame
-    pub fn new_from_frame(buf: &mut &[u8], contains_names: bool) -> Result<Self, ParseError> {
-        let values_num = types::read_short(buf)?;
-        let values_beg = *buf;
-        for _ in 0..values_num {
-            if contains_names {
-                let _name = types::read_string(buf)?;
-            }
-            let _serialized = types::read_bytes_opt(buf)?;
-        }
-
-        let values_len_in_buf = values_beg.len() - buf.len();
-        let values_in_frame = &values_beg[0..values_len_in_buf];
-        Ok(LegacySerializedValues {
-            serialized_values: values_in_frame.to_vec(),
-            values_num,
-            contains_names,
-        })
     }
 
     pub fn iter_name_value_pairs(&self) -> impl Iterator<Item = (Option<&str>, RawValue)> {
