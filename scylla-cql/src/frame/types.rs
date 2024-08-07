@@ -1,7 +1,6 @@
 //! CQL binary protocol in-wire types.
 
 use super::frame_errors::LowLevelDeserializationError;
-use super::frame_errors::ParseError;
 use super::TryFromPrimitiveError;
 use byteorder::{BigEndian, ReadBytesExt};
 use bytes::{Buf, BufMut};
@@ -123,12 +122,6 @@ impl std::fmt::Display for Consistency {
 impl std::fmt::Display for SerialConsistency {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{:?}", self)
-    }
-}
-
-impl From<std::num::TryFromIntError> for ParseError {
-    fn from(_err: std::num::TryFromIntError) -> Self {
-        ParseError::BadIncomingData("Integer conversion out of range".to_string())
     }
 }
 

@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
 use bytes::{Buf, BufMut, Bytes, BytesMut};
-use scylla_cql::frame::frame_errors::{FrameHeaderParseError, ParseError};
+use scylla_cql::frame::frame_errors::FrameHeaderParseError;
 use scylla_cql::frame::protocol_features::ProtocolFeatures;
 pub use scylla_cql::frame::request::RequestOpcode;
 use scylla_cql::frame::request::{Request, RequestDeserializationError};
@@ -87,7 +87,7 @@ impl ResponseFrame {
         request_params: FrameParams,
         error: DbError,
         msg: Option<&str>,
-    ) -> Result<Self, ParseError> {
+    ) -> Result<Self, std::num::TryFromIntError> {
         let msg = msg.unwrap_or("Proxy-triggered error.");
         let len_bytes = (msg.len() as u16).to_be_bytes(); // string len is a short in CQL protocol
         let code_bytes = error.code(&ProtocolFeatures::default()).to_be_bytes(); // TODO: configurable features
@@ -111,7 +111,7 @@ impl ResponseFrame {
     pub fn forged_supported(
         request_params: FrameParams,
         options: &HashMap<String, Vec<String>>,
-    ) -> Result<Self, ParseError> {
+    ) -> Result<Self, std::num::TryFromIntError> {
         let mut buf = BytesMut::new();
         types::write_string_multimap(options, &mut buf)?;
 
@@ -144,7 +144,10 @@ impl ResponseFrame {
     }
 }
 
-fn serialize_error_specific_fields(buf: &mut BytesMut, error: DbError) -> Result<(), ParseError> {
+fn serialize_error_specific_fields(
+    buf: &mut BytesMut,
+    error: DbError,
+) -> Result<(), std::num::TryFromIntError> {
     match error {
         DbError::Unavailable {
             consistency,
