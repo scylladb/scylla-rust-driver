@@ -13,9 +13,7 @@ pub use super::request::{
 
 use super::response::CqlResponseKind;
 use super::TryFromPrimitiveError;
-use crate::frame::value::SerializeValuesError;
-use crate::types::deserialize::{DeserializationError, TypeCheckError};
-use crate::types::serialize::SerializationError;
+use crate::types::deserialize::DeserializationError;
 use thiserror::Error;
 
 /// An error returned by `parse_response_body_extensions`.
@@ -95,20 +93,10 @@ pub enum FrameHeaderParseError {
 pub enum ParseError {
     #[error("Low-level deserialization failed: {0}")]
     LowLevelDeserializationError(#[from] LowLevelDeserializationError),
-    #[error("Could not serialize frame: {0}")]
-    BadDataToSerialize(String),
     #[error("Could not deserialize frame: {0}")]
     BadIncomingData(String),
     #[error(transparent)]
-    DeserializationError(#[from] DeserializationError),
-    #[error(transparent)]
-    DeserializationTypeCheckError(#[from] TypeCheckError),
-    #[error(transparent)]
     IoError(#[from] std::io::Error),
-    #[error(transparent)]
-    SerializeValuesError(#[from] SerializeValuesError),
-    #[error(transparent)]
-    SerializationError(#[from] SerializationError),
 }
 
 /// An error that occurred during CQL request serialization.

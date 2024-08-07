@@ -132,18 +132,6 @@ impl From<std::num::TryFromIntError> for ParseError {
     }
 }
 
-impl From<std::str::Utf8Error> for ParseError {
-    fn from(_err: std::str::Utf8Error) -> Self {
-        ParseError::BadIncomingData("UTF8 serialization failed".to_string())
-    }
-}
-
-impl From<std::array::TryFromSliceError> for ParseError {
-    fn from(_err: std::array::TryFromSliceError) -> Self {
-        ParseError::BadIncomingData("array try from slice failed".to_string())
-    }
-}
-
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum RawValue<'a> {
     Null,
