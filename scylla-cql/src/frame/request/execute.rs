@@ -1,6 +1,6 @@
 use std::num::TryFromIntError;
 
-use crate::frame::frame_errors::{CqlRequestSerializationError, ParseError};
+use crate::frame::frame_errors::CqlRequestSerializationError;
 use bytes::Bytes;
 use thiserror::Error;
 
@@ -11,7 +11,7 @@ use crate::{
 
 use super::{
     query::{QueryParameters, QueryParametersSerializationError},
-    DeserializableRequest,
+    DeserializableRequest, RequestDeserializationError,
 };
 
 #[cfg_attr(test, derive(Debug, PartialEq, Eq))]
@@ -37,7 +37,7 @@ impl SerializableRequest for Execute<'_> {
 }
 
 impl<'e> DeserializableRequest for Execute<'e> {
-    fn deserialize(buf: &mut &[u8]) -> Result<Self, ParseError> {
+    fn deserialize(buf: &mut &[u8]) -> Result<Self, RequestDeserializationError> {
         let id = types::read_short_bytes(buf)?.to_vec().into();
         let parameters = QueryParameters::deserialize(buf)?;
 
