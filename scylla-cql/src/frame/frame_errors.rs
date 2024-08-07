@@ -95,8 +95,6 @@ pub enum ParseError {
     LowLevelDeserializationError(#[from] LowLevelDeserializationError),
     #[error("Could not deserialize frame: {0}")]
     BadIncomingData(String),
-    #[error(transparent)]
-    IoError(#[from] std::io::Error),
 }
 
 /// An error that occurred during CQL request serialization.
