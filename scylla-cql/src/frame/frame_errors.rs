@@ -62,8 +62,6 @@ pub enum FrameSerializationError {
 
 #[derive(Error, Debug)]
 pub enum ParseError {
-    #[error("Low-level deserialization failed: {0}")]
-    LowLevelDeserializationError(#[from] LowLevelDeserializationError),
     #[error(transparent)]
     TryFromIntError(#[from] std::num::TryFromIntError),
 }
