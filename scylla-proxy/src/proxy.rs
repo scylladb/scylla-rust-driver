@@ -5,7 +5,6 @@ use crate::frame::{
 };
 use crate::{RequestOpcode, TargetShard};
 use bytes::Bytes;
-use scylla_cql::frame::frame_errors::ParseError;
 use scylla_cql::frame::types::read_string_multimap;
 use std::collections::HashMap;
 use std::fmt::Display;
@@ -806,7 +805,6 @@ impl Doorkeeper {
             .map_err(DoorkeeperError::ObtainingShardNumberFrame)?;
 
         let options = read_string_multimap(&mut supported_frame.body.as_ref())
-            .map_err(ParseError::from)
             .map_err(DoorkeeperError::ObtainingShardNumberParseOptions)?;
 
         Ok(options)
