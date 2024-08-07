@@ -8,10 +8,7 @@ use super::request::query::QuerySerializationError;
 use super::request::register::RegisterSerializationError;
 use super::request::startup::StartupSerializationError;
 use super::TryFromPrimitiveError;
-use crate::cql_to_rust::CqlTypeError;
-use crate::frame::value::SerializeValuesError;
 use crate::types::deserialize::DeserializationError;
-use crate::types::serialize::SerializationError;
 use thiserror::Error;
 
 #[derive(Error, Debug, Clone)]
@@ -67,20 +64,12 @@ pub enum FrameSerializationError {
 pub enum ParseError {
     #[error("Low-level deserialization failed: {0}")]
     LowLevelDeserializationError(#[from] LowLevelDeserializationError),
-    #[error("Could not serialize frame: {0}")]
-    BadDataToSerialize(String),
     #[error("Could not deserialize frame: {0}")]
     BadIncomingData(String),
     #[error(transparent)]
-    DeserializationError(#[from] DeserializationError),
-    #[error(transparent)]
     IoError(#[from] std::io::Error),
     #[error(transparent)]
-    SerializeValuesError(#[from] SerializeValuesError),
-    #[error(transparent)]
-    SerializationError(#[from] SerializationError),
-    #[error(transparent)]
-    CqlTypeError(#[from] CqlTypeError),
+    TryFromIntError(#[from] std::num::TryFromIntError),
 }
 
 #[non_exhaustive]
