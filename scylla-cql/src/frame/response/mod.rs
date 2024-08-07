@@ -8,10 +8,12 @@ pub mod supported;
 pub use error::Error;
 pub use supported::Supported;
 
+use crate::errors::QueryError;
 use crate::frame::protocol_features::ProtocolFeatures;
 use crate::frame::response::result::ResultMetadata;
 use crate::frame::TryFromPrimitiveError;
-use crate::{errors::QueryError, frame::frame_errors::ParseError};
+
+use super::frame_errors::CqlResponseParseError;
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord)]
 #[repr(u8)]
@@ -65,7 +67,7 @@ impl Response {
         opcode: ResponseOpcode,
         buf: &mut &[u8],
         cached_metadata: Option<&ResultMetadata>,
-    ) -> Result<Response, ParseError> {
+    ) -> Result<Response, CqlResponseParseError> {
         let response = match opcode {
             ResponseOpcode::Error => Response::Error(Error::deserialize(features, buf)?),
             ResponseOpcode::Ready => Response::Ready,

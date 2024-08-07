@@ -9,13 +9,15 @@ pub mod value;
 #[cfg(test)]
 mod value_tests;
 
-use crate::frame::frame_errors::FrameError;
+use crate::frame::frame_errors::FrameDeserializationError;
 use bytes::{Buf, BufMut, Bytes};
+use frame_errors::FrameSerializationError;
 use thiserror::Error;
 use tokio::io::{AsyncRead, AsyncReadExt};
 use uuid::Uuid;
 
 use std::fmt::Display;
+use std::sync::Arc;
 use std::{collections::HashMap, convert::TryFrom};
 
 use request::SerializableRequest;
@@ -72,7 +74,7 @@ impl SerializedRequest {
         req: &R,
         compression: Option<Compression>,
         tracing: bool,
-    ) -> Result<SerializedRequest, FrameError> {
+    ) -> Result<SerializedRequest, FrameSerializationError> {
         let mut flags = 0;
         let mut data = vec![0; HEADER_SIZE];
 
@@ -128,19 +130,24 @@ impl Default for FrameParams {
 
 pub async fn read_response_frame(
     reader: &mut (impl AsyncRead + Unpin),
-) -> Result<(FrameParams, ResponseOpcode, Bytes), FrameError> {
+) -> Result<(FrameParams, ResponseOpcode, Bytes), FrameDeserializationError> {
     let mut raw_header = [0u8; HEADER_SIZE];
-    reader.read_exact(&mut raw_header[..]).await?;
+    reader
+        .read_exact(&mut raw_header[..])
+        .await
+        .map_err(FrameDeserializationError::new_header_io_error)?;
 
     let mut buf = &raw_header[..];
 
     // TODO: Validate version
     let version = buf.get_u8();
     if version & 0x80 != 0x80 {
-        return Err(FrameError::FrameFromClient);
+        return Err(FrameDeserializationError::FrameFromClient);
     }
     if version & 0x7F != 0x04 {
-        return Err(FrameError::VersionNotSupported(version & 0x7f));
+        return Err(FrameDeserializationError::VersionNotSupported(
+            version & 0x7f,
+        ));
     }
 
     let flags = buf.get_u8();
@@ -159,10 +166,12 @@ pub async fn read_response_frame(
 
     let mut raw_body = Vec::with_capacity(length).limit(length);
     while raw_body.has_remaining_mut() {
-        let n = reader.read_buf(&mut raw_body).await?;
+        let n = reader.read_buf(&mut raw_body).await.map_err(|err| {
+            FrameDeserializationError::new_body_chunk_io_error(raw_body.remaining_mut(), err)
+        })?;
         if n == 0 {
             // EOF, too early
-            return Err(FrameError::ConnectionClosed(
+            return Err(FrameDeserializationError::ConnectionClosed(
                 raw_body.remaining_mut(),
                 length,
             ));
@@ -183,18 +192,18 @@ pub fn parse_response_body_extensions(
     flags: u8,
     compression: Option<Compression>,
     mut body: Bytes,
-) -> Result<ResponseBodyWithExtensions, FrameError> {
+) -> Result<ResponseBodyWithExtensions, FrameDeserializationError> {
     if flags & FLAG_COMPRESSION != 0 {
         if let Some(compression) = compression {
             body = decompress(&body, compression)?.into();
         } else {
-            return Err(FrameError::NoCompressionNegotiated);
+            return Err(FrameDeserializationError::NoCompressionNegotiated);
         }
     }
 
     let trace_id = if flags & FLAG_TRACING != 0 {
         let buf = &mut &*body;
-        let trace_id = types::read_uuid(buf).map_err(frame_errors::ParseError::from)?;
+        let trace_id = types::read_uuid(buf).map_err(FrameDeserializationError::TraceIdParse)?;
         body.advance(16);
         Some(trace_id)
     } else {
@@ -204,7 +213,8 @@ pub fn parse_response_body_extensions(
     let warnings = if flags & FLAG_WARNING != 0 {
         let body_len = body.len();
         let buf = &mut &*body;
-        let warnings = types::read_string_list(buf).map_err(frame_errors::ParseError::from)?;
+        let warnings =
+            types::read_string_list(buf).map_err(FrameDeserializationError::WarningsListParse)?;
         let buf_len = buf.len();
         body.advance(body_len - buf_len);
         warnings
@@ -215,7 +225,8 @@ pub fn parse_response_body_extensions(
     let custom_payload = if flags & FLAG_CUSTOM_PAYLOAD != 0 {
         let body_len = body.len();
         let buf = &mut &*body;
-        let payload_map = types::read_bytes_map(buf).map_err(frame_errors::ParseError::from)?;
+        let payload_map =
+            types::read_bytes_map(buf).map_err(FrameDeserializationError::CustomPayloadMapParse)?;
         let buf_len = buf.len();
         body.advance(body_len - buf_len);
         Some(payload_map)
@@ -235,7 +246,7 @@ fn compress_append(
     uncomp_body: &[u8],
     compression: Compression,
     out: &mut Vec<u8>,
-) -> Result<(), FrameError> {
+) -> Result<(), FrameSerializationError> {
     match compression {
         Compression::Lz4 => {
             let uncomp_len = uncomp_body.len() as u32;
@@ -250,23 +261,27 @@ fn compress_append(
             out.resize(old_size + snap::raw::max_compress_len(uncomp_body.len()), 0);
             let compressed_size = snap::raw::Encoder::new()
                 .compress(uncomp_body, &mut out[old_size..])
-                .map_err(|_| FrameError::FrameCompression)?;
+                .map_err(FrameSerializationError::SnapCompressError)?;
             out.truncate(old_size + compressed_size);
             Ok(())
         }
     }
 }
 
-fn decompress(mut comp_body: &[u8], compression: Compression) -> Result<Vec<u8>, FrameError> {
+fn decompress(
+    mut comp_body: &[u8],
+    compression: Compression,
+) -> Result<Vec<u8>, FrameDeserializationError> {
     match compression {
         Compression::Lz4 => {
             let uncomp_len = comp_body.get_u32() as usize;
-            let uncomp_body = lz4_flex::decompress(comp_body, uncomp_len)?;
+            let uncomp_body = lz4_flex::decompress(comp_body, uncomp_len)
+                .map_err(|err| FrameDeserializationError::Lz4DecompressError(Arc::new(err)))?;
             Ok(uncomp_body)
         }
         Compression::Snappy => snap::raw::Decoder::new()
             .decompress_vec(comp_body)
-            .map_err(|_| FrameError::FrameDecompression),
+            .map_err(FrameDeserializationError::SnapDecompressError),
     }
 }
 
