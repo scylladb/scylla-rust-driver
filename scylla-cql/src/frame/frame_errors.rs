@@ -60,9 +60,6 @@ pub enum FrameSerializationError {
     SnapCompressError(snap::Error),
 }
 
-#[derive(Error, Debug)]
-pub enum ParseError {}
-
 #[non_exhaustive]
 #[derive(Error, Debug, Clone)]
 pub enum CqlRequestSerializationError {

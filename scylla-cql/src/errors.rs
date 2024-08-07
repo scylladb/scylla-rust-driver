@@ -1,7 +1,7 @@
 //! This module contains various errors which can be returned by `scylla::Session`
 
 use crate::frame::frame_errors::{
-    CqlResponseParseError, FrameDeserializationError, FrameSerializationError, ParseError,
+    CqlResponseParseError, FrameDeserializationError, FrameSerializationError,
 };
 use crate::frame::protocol_features::ProtocolFeatures;
 use crate::frame::value::SerializeValuesError;
@@ -476,12 +476,6 @@ impl From<SerializeValuesError> for QueryError {
 impl From<SerializationError> for QueryError {
     fn from(serialized_err: SerializationError) -> QueryError {
         QueryError::BadQuery(BadQuery::SerializationError(serialized_err))
-    }
-}
-
-impl From<ParseError> for QueryError {
-    fn from(parse_error: ParseError) -> QueryError {
-        QueryError::InvalidMessage(format!("Error parsing message: {}", parse_error))
     }
 }
 
