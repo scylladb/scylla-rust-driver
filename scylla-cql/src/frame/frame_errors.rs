@@ -67,8 +67,6 @@ pub enum ParseError {
     #[error("Could not deserialize frame: {0}")]
     BadIncomingData(String),
     #[error(transparent)]
-    IoError(#[from] std::io::Error),
-    #[error(transparent)]
     TryFromIntError(#[from] std::num::TryFromIntError),
 }
 
