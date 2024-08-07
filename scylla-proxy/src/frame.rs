@@ -3,8 +3,8 @@ use std::collections::HashMap;
 use bytes::{Buf, BufMut, Bytes, BytesMut};
 use scylla_cql::frame::frame_errors::{FrameHeaderParseError, ParseError};
 use scylla_cql::frame::protocol_features::ProtocolFeatures;
-use scylla_cql::frame::request::Request;
 pub use scylla_cql::frame::request::RequestOpcode;
+use scylla_cql::frame::request::{Request, RequestDeserializationError};
 pub use scylla_cql::frame::response::ResponseOpcode;
 use scylla_cql::frame::{response::error::DbError, types};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
@@ -69,7 +69,7 @@ impl RequestFrame {
         .await
     }
 
-    pub fn deserialize(&self) -> Result<Request, ParseError> {
+    pub fn deserialize(&self) -> Result<Request, RequestDeserializationError> {
         Request::deserialize(&mut &self.body[..], self.opcode)
     }
 }

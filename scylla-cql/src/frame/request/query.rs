@@ -1,10 +1,7 @@
 use std::{borrow::Cow, num::TryFromIntError, ops::ControlFlow, sync::Arc};
 
 use crate::{
-    frame::{
-        frame_errors::{CqlRequestSerializationError, ParseError},
-        types::SerialConsistency,
-    },
+    frame::{frame_errors::CqlRequestSerializationError, types::SerialConsistency},
     types::serialize::row::SerializedValues,
 };
 use bytes::{Buf, BufMut};
@@ -15,7 +12,7 @@ use crate::{
     frame::types,
 };
 
-use super::DeserializableRequest;
+use super::{DeserializableRequest, RequestDeserializationError};
 
 // Query flags
 const FLAG_VALUES: u8 = 0x01;
@@ -53,7 +50,7 @@ impl SerializableRequest for Query<'_> {
 }
 
 impl<'q> DeserializableRequest for Query<'q> {
-    fn deserialize(buf: &mut &[u8]) -> Result<Self, ParseError> {
+    fn deserialize(buf: &mut &[u8]) -> Result<Self, RequestDeserializationError> {
         let contents = Cow::Owned(types::read_long_string(buf)?.to_owned());
         let parameters = QueryParameters::deserialize(buf)?;
 
@@ -150,16 +147,15 @@ impl QueryParameters<'_> {
 }
 
 impl<'q> QueryParameters<'q> {
-    pub fn deserialize(buf: &mut &[u8]) -> Result<Self, ParseError> {
+    pub fn deserialize(buf: &mut &[u8]) -> Result<Self, RequestDeserializationError> {
         let consistency = types::read_consistency(buf)?;
 
         let flags = buf.get_u8();
         let unknown_flags = flags & (!ALL_FLAGS);
         if unknown_flags != 0 {
-            return Err(ParseError::BadIncomingData(format!(
-                "Specified flags are not recognised: {:02x}",
-                unknown_flags
-            )));
+            return Err(RequestDeserializationError::UnknownFlags {
+                flags: unknown_flags,
+            });
         }
         let values_flag = (flags & FLAG_VALUES) != 0;
         let skip_metadata = (flags & FLAG_SKIP_METADATA) != 0;
@@ -170,9 +166,7 @@ impl<'q> QueryParameters<'q> {
         let values_have_names_flag = (flags & FLAG_WITH_NAMES_FOR_VALUES) != 0;
 
         if values_have_names_flag {
-            return Err(ParseError::BadIncomingData(
-                "Named values in frame are currently unsupported".to_string(),
-            ));
+            return Err(RequestDeserializationError::NamedValuesUnsupported);
         }
 
         let values = Cow::Owned(if values_flag {
@@ -193,10 +187,9 @@ impl<'q> QueryParameters<'q> {
             .map(
                 |consistency| match SerialConsistency::try_from(consistency) {
                     Ok(serial_consistency) => Ok(serial_consistency),
-                    Err(_) => Err(ParseError::BadIncomingData(format!(
-                        "Expected SerialConsistency, got regular Consistency {}",
-                        consistency
-                    ))),
+                    Err(_) => Err(RequestDeserializationError::ExpectedSerialConsistency(
+                        consistency,
+                    )),
                 },
             )
             .transpose()?;

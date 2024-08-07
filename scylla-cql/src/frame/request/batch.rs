@@ -15,7 +15,7 @@ use crate::{
     },
 };
 
-use super::DeserializableRequest;
+use super::{DeserializableRequest, RequestDeserializationError};
 
 // Batch flags
 const FLAG_WITH_SERIAL_CONSISTENCY: u8 = 0x10;
@@ -46,6 +46,8 @@ pub enum BatchType {
     Counter = 2,
 }
 
+#[derive(Debug, Error)]
+#[error("Malformed batch type: {value}")]
 pub struct BatchTypeParseError {
     value: u8,
 }
@@ -195,7 +197,7 @@ where
 }
 
 impl BatchStatement<'_> {
-    fn deserialize(buf: &mut &[u8]) -> Result<Self, ParseError> {
+    fn deserialize(buf: &mut &[u8]) -> Result<Self, RequestDeserializationError> {
         let kind = buf.get_u8();
         match kind {
             0 => {
@@ -206,10 +208,9 @@ impl BatchStatement<'_> {
                 let id = types::read_short_bytes(buf)?.to_vec().into();
                 Ok(BatchStatement::Prepared { id })
             }
-            _ => Err(ParseError::BadIncomingData(format!(
-                "Unexpected batch statement kind: {}",
-                kind
-            ))),
+            _ => Err(RequestDeserializationError::UnexpectedBatchStatementKind(
+                kind,
+            )),
         }
     }
 }
@@ -243,7 +244,7 @@ impl<'s, 'b> From<&'s BatchStatement<'b>> for BatchStatement<'s> {
 }
 
 impl<'b> DeserializableRequest for Batch<'b, BatchStatement<'b>, Vec<SerializedValues>> {
-    fn deserialize(buf: &mut &[u8]) -> Result<Self, ParseError> {
+    fn deserialize(buf: &mut &[u8]) -> Result<Self, RequestDeserializationError> {
         let batch_type = buf.get_u8().try_into()?;
 
         let statements_count: usize = types::read_short(buf)?.into();
@@ -256,17 +257,16 @@ impl<'b> DeserializableRequest for Batch<'b, BatchStatement<'b>, Vec<SerializedV
 
                 Ok((batch_statement, values))
             })
-            .collect::<Result<Vec<_>, ParseError>>()?;
+            .collect::<Result<Vec<_>, RequestDeserializationError>>()?;
 
         let consistency = types::read_consistency(buf)?;
 
         let flags = buf.get_u8();
         let unknown_flags = flags & (!ALL_FLAGS);
         if unknown_flags != 0 {
-            return Err(ParseError::BadIncomingData(format!(
-                "Specified flags are not recognised: {:02x}",
-                unknown_flags
-            )));
+            return Err(RequestDeserializationError::UnknownFlags {
+                flags: unknown_flags,
+            });
         }
         let serial_consistency_flag = (flags & FLAG_WITH_SERIAL_CONSISTENCY) != 0;
         let default_timestamp_flag = (flags & FLAG_WITH_DEFAULT_TIMESTAMP) != 0;
@@ -277,10 +277,9 @@ impl<'b> DeserializableRequest for Batch<'b, BatchStatement<'b>, Vec<SerializedV
             .map(
                 |consistency| match SerialConsistency::try_from(consistency) {
                     Ok(serial_consistency) => Ok(serial_consistency),
-                    Err(_) => Err(ParseError::BadIncomingData(format!(
-                        "Expected SerialConsistency, got regular Consistency {}",
-                        consistency
-                    ))),
+                    Err(_) => Err(RequestDeserializationError::ExpectedSerialConsistency(
+                        consistency,
+                    )),
                 },
             )
             .transpose()?;
