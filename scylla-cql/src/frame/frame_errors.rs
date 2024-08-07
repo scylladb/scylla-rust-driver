@@ -93,8 +93,6 @@ pub enum FrameHeaderParseError {
 pub enum ParseError {
     #[error("Low-level deserialization failed: {0}")]
     LowLevelDeserializationError(#[from] LowLevelDeserializationError),
-    #[error("Could not deserialize frame: {0}")]
-    BadIncomingData(String),
 }
 
 /// An error that occurred during CQL request serialization.

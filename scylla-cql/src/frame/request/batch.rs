@@ -4,7 +4,7 @@ use thiserror::Error;
 
 use crate::{
     frame::{
-        frame_errors::{CqlRequestSerializationError, ParseError},
+        frame_errors::CqlRequestSerializationError,
         request::{RequestOpcode, SerializableRequest},
         types::{self, SerialConsistency},
     },
@@ -50,12 +50,6 @@ pub enum BatchType {
 #[error("Malformed batch type: {value}")]
 pub struct BatchTypeParseError {
     value: u8,
-}
-
-impl From<BatchTypeParseError> for ParseError {
-    fn from(err: BatchTypeParseError) -> Self {
-        Self::BadIncomingData(format!("Bad BatchType value: {}", err.value))
-    }
 }
 
 impl TryFrom<u8> for BatchType {
