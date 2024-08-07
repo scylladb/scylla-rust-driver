@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use super::TryFromPrimitiveError;
 use crate::cql_to_rust::CqlTypeError;
 use crate::frame::value::SerializeValuesError;
@@ -45,14 +47,270 @@ pub enum ParseError {
     DeserializationError(#[from] DeserializationError),
     #[error(transparent)]
     IoError(#[from] std::io::Error),
-    #[error("type not yet implemented, id: {0}")]
-    TypeNotImplemented(u16),
     #[error(transparent)]
     SerializeValuesError(#[from] SerializeValuesError),
     #[error(transparent)]
     SerializationError(#[from] SerializationError),
     #[error(transparent)]
     CqlTypeError(#[from] CqlTypeError),
+}
+
+/// An error type returned when deserialization of CQL
+/// server response fails.
+#[non_exhaustive]
+#[derive(Error, Debug, Clone)]
+pub enum CqlResponseParseError {
+    #[error("Failed to deserialize ERROR response: {0}")]
+    CqlErrorParseError(#[from] CqlErrorParseError),
+    #[error("Failed to deserialize AUTH_CHALLENGE response: {0}")]
+    CqlAuthChallengeParseError(#[from] CqlAuthChallengeParseError),
+    #[error("Failed to deserialize AUTH_SUCCESS response: {0}")]
+    CqlAuthSuccessParseError(#[from] CqlAuthSuccessParseError),
+    #[error("Failed to deserialize AUTHENTICATE response: {0}")]
+    CqlAuthenticateParseError(#[from] CqlAuthenticateParseError),
+    #[error("Failed to deserialize SUPPORTED response: {0}")]
+    CqlSupportedParseError(#[from] CqlSupportedParseError),
+    #[error("Failed to deserialize EVENT response: {0}")]
+    CqlEventParseError(#[from] CqlEventParseError),
+    #[error(transparent)]
+    CqlResultParseError(#[from] CqlResultParseError),
+}
+
+/// An error type returned when deserialization of ERROR response fails.
+#[non_exhaustive]
+#[derive(Error, Debug, Clone)]
+pub enum CqlErrorParseError {
+    #[error("Malformed error code: {0}")]
+    ErrorCodeParseError(LowLevelDeserializationError),
+    #[error("Malformed error reason: {0}")]
+    ReasonParseError(LowLevelDeserializationError),
+    #[error("Malformed error field {field} of DB error {db_error}: {err}")]
+    MalformedErrorField {
+        db_error: &'static str,
+        field: &'static str,
+        err: LowLevelDeserializationError,
+    },
+}
+
+/// An error type returned when deserialization of AUTH_CHALLENGE response fails.
+#[non_exhaustive]
+#[derive(Error, Debug, Clone)]
+pub enum CqlAuthChallengeParseError {
+    #[error("Malformed authenticate message: {0}")]
+    AuthMessageParseError(LowLevelDeserializationError),
+}
+
+/// An error type returned when deserialization of AUTH_SUCCESS response fails.
+#[non_exhaustive]
+#[derive(Error, Debug, Clone)]
+pub enum CqlAuthSuccessParseError {
+    #[error("Malformed success message: {0}")]
+    SuccessMessageParseError(LowLevelDeserializationError),
+}
+
+/// An error type returned when deserialization of AUTHENTICATE response fails.
+#[non_exhaustive]
+#[derive(Error, Debug, Clone)]
+pub enum CqlAuthenticateParseError {
+    #[error("Malformed authenticator name: {0}")]
+    AuthNameParseError(LowLevelDeserializationError),
+}
+
+/// An error type returned when deserialization of SUPPORTED response fails.
+#[non_exhaustive]
+#[derive(Error, Debug, Clone)]
+pub enum CqlSupportedParseError {
+    #[error("Malformed options map: {0}")]
+    OptionsMapDeserialization(LowLevelDeserializationError),
+}
+
+/// An error type returned when deserialization of RESULT response fails.
+#[non_exhaustive]
+#[derive(Error, Debug, Clone)]
+pub enum CqlResultParseError {
+    #[error("Malformed RESULT response id: {0}")]
+    ResultIdParseError(LowLevelDeserializationError),
+    #[error("Unknown RESULT response id: {0}")]
+    UnknownResultId(i32),
+    #[error("'Set_keyspace' response deserialization failed: {0}")]
+    SetKeyspaceParseError(#[from] SetKeyspaceParseError),
+    // This is an error returned during deserialization of
+    // `RESULT::Schema_change` response, and not `EVENT` response.
+    #[error("'Schema_change' response deserialization failed: {0}")]
+    SchemaChangeParseError(#[from] SchemaChangeEventParseError),
+    #[error("'Prepared' response deserialization failed: {0}")]
+    PreparedParseError(#[from] PreparedParseError),
+    #[error("'Rows' response deserialization failed: {0}")]
+    RowsParseError(#[from] RowsParseError),
+}
+
+#[non_exhaustive]
+#[derive(Error, Debug, Clone)]
+pub enum SetKeyspaceParseError {
+    #[error("Malformed keyspace name: {0}")]
+    MalformedKeyspaceName(#[from] LowLevelDeserializationError),
+}
+
+/// An error type returned when deserialization of
+/// `EVENT` response fails.
+#[non_exhaustive]
+#[derive(Error, Debug, Clone)]
+pub enum CqlEventParseError {
+    #[error("Malformed event type string: {0}")]
+    EventTypeParseError(LowLevelDeserializationError),
+    #[error("Unknown event type: {0}")]
+    UnknownEventType(String),
+    #[error("Failed to deserialize schema change event: {0}")]
+    SchemaChangeEventParseError(#[from] SchemaChangeEventParseError),
+    #[error("Failed to deserialize topology change event: {0}")]
+    TopologyChangeEventParseError(ClusterChangeEventParseError),
+    #[error("Failed to deserialize status change event: {0}")]
+    StatusChangeEventParseError(ClusterChangeEventParseError),
+}
+
+/// An error type returned when deserialization of
+/// SchemaChangeEvent fails.
+#[non_exhaustive]
+#[derive(Error, Debug, Clone)]
+pub enum SchemaChangeEventParseError {
+    #[error("Malformed schema change type string: {0}")]
+    TypeOfChangeParseError(LowLevelDeserializationError),
+    #[error("Malformed schema change target string:: {0}")]
+    TargetTypeParseError(LowLevelDeserializationError),
+    #[error("Malformed name of keyspace affected by schema change: {0}")]
+    AffectedKeyspaceParseError(LowLevelDeserializationError),
+    #[error("Malformed name of the table affected by schema change: {0}")]
+    AffectedTableNameParseError(LowLevelDeserializationError),
+    #[error("Malformed name of the target affected by schema change: {0}")]
+    AffectedTargetNameParseError(LowLevelDeserializationError),
+    #[error(
+        "Malformed number of arguments of the function/aggregate affected by schema change: {0}"
+    )]
+    ArgumentCountParseError(LowLevelDeserializationError),
+    #[error("Malformed argument of the function/aggregate affected by schema change: {0}")]
+    FunctionArgumentParseError(LowLevelDeserializationError),
+    #[error("Unknown target of schema change: {0}")]
+    UnknownTargetOfSchemaChange(String),
+}
+
+/// An error type returned when deserialization of [Status/Topology]ChangeEvent fails.
+#[non_exhaustive]
+#[derive(Error, Debug, Clone)]
+pub enum ClusterChangeEventParseError {
+    #[error("Malformed type of change: {0}")]
+    TypeOfChangeParseError(LowLevelDeserializationError),
+    #[error("Malformed node address: {0}")]
+    NodeAddressParseError(LowLevelDeserializationError),
+    #[error("Unknown type of change: {0}")]
+    UnknownTypeOfChange(String),
+}
+
+/// An error type returned when deserialization
+/// of `RESULT::`Prepared` response fails.
+#[non_exhaustive]
+#[derive(Debug, Error, Clone)]
+pub enum PreparedParseError {
+    #[error("Malformed prepared statement's id length: {0}")]
+    IdLengthParseError(LowLevelDeserializationError),
+    #[error("Invalid result metadata: {0}")]
+    ResultMetadataParseError(ResultMetadataParseError),
+    #[error("Invalid prepared metadata: {0}")]
+    PreparedMetadataParseError(ResultMetadataParseError),
+}
+
+/// An error type returned when deserialization
+/// of `RESULT::Rows` response fails.
+#[non_exhaustive]
+#[derive(Debug, Error, Clone)]
+pub enum RowsParseError {
+    #[error("Invalid result metadata: {0}")]
+    ResultMetadataParseError(#[from] ResultMetadataParseError),
+    #[error("Invalid result metadata, server claims {col_count} columns, received {col_specs_count} col specs.")]
+    ColumnCountMismatch {
+        col_count: usize,
+        col_specs_count: usize,
+    },
+    #[error("Malformed rows count: {0}")]
+    RowsCountParseError(LowLevelDeserializationError),
+    #[error("Data deserialization failed: {0}")]
+    DataDeserializationError(#[from] DeserializationError),
+}
+
+/// An error type returned when deserialization
+/// of `[Result/Prepared]Metadata` failed.
+#[non_exhaustive]
+#[derive(Error, Debug, Clone)]
+pub enum ResultMetadataParseError {
+    #[error("Malformed metadata flags: {0}")]
+    FlagsParseError(LowLevelDeserializationError),
+    #[error("Malformed column count: {0}")]
+    ColumnCountParseError(LowLevelDeserializationError),
+    #[error("Malformed partition key count: {0}")]
+    PkCountParseError(LowLevelDeserializationError),
+    #[error("Malformed partition key index: {0}")]
+    PkIndexParseError(LowLevelDeserializationError),
+    #[error("Malformed paging state: {0}")]
+    PagingStateParseError(LowLevelDeserializationError),
+    #[error("Invalid global table spec: {0}")]
+    GlobalTableSpecParseError(#[from] TableSpecParseError),
+    #[error("Invalid column spec: {0}")]
+    ColumnSpecParseError(#[from] ColumnSpecParseError),
+}
+
+/// An error type returned when deserialization
+/// of table specification fails.
+#[non_exhaustive]
+#[derive(Error, Debug, Clone)]
+pub enum TableSpecParseError {
+    #[error("Malformed keyspace name: {0}")]
+    MalformedKeyspaceName(LowLevelDeserializationError),
+    #[error("Malformed table name: {0}")]
+    MalformedTableName(LowLevelDeserializationError),
+}
+
+/// An error type returned when deserialization
+/// of table column specifications fails.
+#[non_exhaustive]
+#[derive(Error, Debug, Clone)]
+#[error("Column spec deserialization failed, column index: {column_index}, error: {kind}")]
+pub struct ColumnSpecParseError {
+    pub column_index: usize,
+    pub kind: ColumnSpecParseErrorKind,
+}
+
+/// The type of error that appeared during deserialization
+/// of a column specification.
+#[non_exhaustive]
+#[derive(Error, Debug, Clone)]
+pub enum ColumnSpecParseErrorKind {
+    #[error("Invalid table spec: {0}")]
+    TableSpecParseError(#[from] TableSpecParseError),
+    #[error("Malformed column name: {0}")]
+    ColumnNameParseError(#[from] LowLevelDeserializationError),
+    #[error("Invalid column type: {0}")]
+    ColumnTypeParseError(#[from] CqlTypeParseError),
+}
+
+/// An error type returned when deserialization of CQL type name fails.
+#[non_exhaustive]
+#[derive(Error, Debug, Clone)]
+pub enum CqlTypeParseError {
+    #[error("Malformed type id: {0}")]
+    TypeIdParseError(LowLevelDeserializationError),
+    #[error("Malformed custom type name: {0}")]
+    CustomTypeNameParseError(LowLevelDeserializationError),
+    #[error("Malformed name of UDT keyspace: {0}")]
+    UdtKeyspaceNameParseError(LowLevelDeserializationError),
+    #[error("Malformed UDT name: {0}")]
+    UdtNameParseError(LowLevelDeserializationError),
+    #[error("Malformed UDT fields count: {0}")]
+    UdtFieldsCountParseError(LowLevelDeserializationError),
+    #[error("Malformed UDT's field name: {0}")]
+    UdtFieldNameParseError(LowLevelDeserializationError),
+    #[error("Malformed tuple length: {0}")]
+    TupleLengthParseError(LowLevelDeserializationError),
+    #[error("CQL Type not yet implemented, id: {0}")]
+    TypeNotImplemented(u16),
 }
 
 /// A low level deserialization error.
@@ -66,13 +324,13 @@ pub enum ParseError {
 /// - conversion errors - e.g. slice-to-array or primitive-to-enum
 /// - not enough bytes in the buffer to deserialize a value
 #[non_exhaustive]
-#[derive(Error, Debug)]
+#[derive(Error, Debug, Clone)]
 pub enum LowLevelDeserializationError {
     #[error(transparent)]
-    IoError(#[from] std::io::Error),
+    IoError(Arc<std::io::Error>),
     #[error(transparent)]
     TryFromIntError(#[from] std::num::TryFromIntError),
-    #[error("Failed to convert slice into array: {0}")]
+    #[error(transparent)]
     TryFromSliceError(#[from] std::array::TryFromSliceError),
     #[error("Not enough bytes! expected: {expected}, received: {received}")]
     TooFewBytesReceived { expected: usize, received: usize },
@@ -80,8 +338,14 @@ pub enum LowLevelDeserializationError {
     InvalidValueLength(i32),
     #[error("Unknown consistency: {0}")]
     UnknownConsistency(#[from] TryFromPrimitiveError<u16>),
-    #[error("Invalid inet bytes length: {0}")]
+    #[error("Invalid inet bytes length: {0}. Accepted lengths are 4 and 16 bytes.")]
     InvalidInetLength(u8),
     #[error("UTF8 deserialization failed: {0}")]
     UTF8DeserializationError(#[from] std::str::Utf8Error),
+}
+
+impl From<std::io::Error> for LowLevelDeserializationError {
+    fn from(value: std::io::Error) -> Self {
+        Self::IoError(Arc::new(value))
+    }
 }
