@@ -13,7 +13,7 @@ use std::time::Duration;
 use thiserror::Error;
 use uuid::Uuid;
 
-use super::StatementConfig;
+use super::{PageSize, StatementConfig};
 use crate::frame::response::result::PreparedMetadata;
 use crate::frame::types::{Consistency, SerialConsistency};
 use crate::history::HistoryListener;
@@ -92,7 +92,7 @@ pub struct PreparedStatement {
 
     id: Bytes,
     shared: Arc<PreparedStatementSharedData>,
-    page_size: Option<i32>,
+    page_size: Option<PageSize>,
     partitioner_name: PartitionerName,
     is_confirmed_lwt: bool,
 }
@@ -125,7 +125,7 @@ impl PreparedStatement {
         metadata: PreparedMetadata,
         result_metadata: ResultMetadata,
         statement: String,
-        page_size: Option<i32>,
+        page_size: Option<PageSize>,
         config: StatementConfig,
     ) -> Self {
         Self {
@@ -152,9 +152,14 @@ impl PreparedStatement {
     }
 
     /// Sets the page size for this CQL query.
+    ///
+    /// Panics if given number is nonpositive.
     pub fn set_page_size(&mut self, page_size: i32) {
-        assert!(page_size > 0, "page size must be larger than 0");
-        self.page_size = Some(page_size);
+        self.page_size = Some(
+            page_size
+                .try_into()
+                .unwrap_or_else(|err| panic!("PreparedStatement::set_page_size: {err}")),
+        );
     }
 
     /// Disables paging for this CQL query.
@@ -163,8 +168,14 @@ impl PreparedStatement {
     }
 
     /// Returns the page size for this CQL query.
-    pub fn get_page_size(&self) -> Option<i32> {
+    #[allow(dead_code)]
+    pub(crate) fn get_validated_page_size(&self) -> Option<PageSize> {
         self.page_size
+    }
+
+    /// Returns the page size for this CQL query.
+    pub fn get_page_size(&self) -> Option<i32> {
+        self.page_size.as_ref().map(PageSize::inner)
     }
 
     /// Gets tracing ids of queries used to prepare this statement

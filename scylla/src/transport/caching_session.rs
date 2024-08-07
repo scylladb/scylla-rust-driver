@@ -164,7 +164,7 @@ where
         let query = query.into();
 
         if let Some(raw) = self.cache.get(&query.contents) {
-            let page_size = query.get_page_size();
+            let page_size = query.get_validated_page_size();
             let mut stmt = PreparedStatement::new(
                 raw.id.clone(),
                 raw.is_confirmed_lwt,

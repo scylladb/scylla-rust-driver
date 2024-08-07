@@ -1,4 +1,4 @@
-use super::StatementConfig;
+use super::{PageSize, StatementConfig};
 use crate::frame::types::{Consistency, SerialConsistency};
 use crate::history::HistoryListener;
 use crate::retry_policy::RetryPolicy;
@@ -14,7 +14,7 @@ pub struct Query {
     pub(crate) config: StatementConfig,
 
     pub contents: String,
-    page_size: Option<i32>,
+    page_size: Option<PageSize>,
 }
 
 impl Query {
@@ -27,16 +27,23 @@ impl Query {
         }
     }
 
-    /// Returns self with page size set to the given value
+    /// Returns self with page size set to the given value.
+    ///
+    /// Panics if given number is nonpositive.
     pub fn with_page_size(mut self, page_size: i32) -> Self {
-        self.page_size = Some(page_size);
+        self.set_page_size(page_size);
         self
     }
 
     /// Sets the page size for this CQL query.
+    ///
+    /// Panics if given number is nonpositive.
     pub fn set_page_size(&mut self, page_size: i32) {
-        assert!(page_size > 0, "page size must be larger than 0");
-        self.page_size = Some(page_size);
+        self.page_size = Some(
+            page_size
+                .try_into()
+                .unwrap_or_else(|err| panic!("Query::set_page_size: {err}")),
+        );
     }
 
     /// Disables paging for this CQL query.
@@ -45,8 +52,13 @@ impl Query {
     }
 
     /// Returns the page size for this CQL query.
-    pub fn get_page_size(&self) -> Option<i32> {
+    pub(crate) fn get_validated_page_size(&self) -> Option<PageSize> {
         self.page_size
+    }
+
+    /// Returns the page size for this CQL query.
+    pub fn get_page_size(&self) -> Option<i32> {
+        self.page_size.as_ref().map(PageSize::inner)
     }
 
     /// Sets the consistency to be used when executing this statement.
