@@ -61,10 +61,7 @@ pub enum FrameSerializationError {
 }
 
 #[derive(Error, Debug)]
-pub enum ParseError {
-    #[error(transparent)]
-    TryFromIntError(#[from] std::num::TryFromIntError),
-}
+pub enum ParseError {}
 
 #[non_exhaustive]
 #[derive(Error, Debug, Clone)]
