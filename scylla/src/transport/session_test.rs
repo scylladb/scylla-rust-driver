@@ -6,7 +6,7 @@ use crate::query::Query;
 use crate::retry_policy::{QueryInfo, RetryDecision, RetryPolicy, RetrySession};
 use crate::routing::Token;
 use crate::statement::Consistency;
-use crate::test_utils::{scylla_supports_tablets, setup_tracing};
+use crate::test_utils::{scylla_supports_tablets_legacy, setup_tracing};
 use crate::tracing::TracingInfo;
 use crate::transport::errors::{BadKeyspaceName, BadQuery, DbError, QueryError};
 use crate::transport::partitioner::{
@@ -377,7 +377,7 @@ async fn test_counter_batch() {
     // Need to disable tablets in this test because they don't support counters yet.
     // (https://github.com/scylladb/scylladb/commit/c70f321c6f581357afdf3fd8b4fe8e5c5bb9736e).
     let mut create_ks = format!("CREATE KEYSPACE IF NOT EXISTS {} WITH REPLICATION = {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}}", ks);
-    if scylla_supports_tablets(&session).await {
+    if scylla_supports_tablets_legacy(&session).await {
         create_ks += " AND TABLETS = {'enabled': false}"
     }
 
@@ -596,7 +596,7 @@ async fn test_token_awareness() {
     let mut create_ks = format!(
         "CREATE KEYSPACE IF NOT EXISTS {ks} WITH REPLICATION = {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}}"
     );
-    if scylla_supports_tablets(&session).await {
+    if scylla_supports_tablets_legacy(&session).await {
         create_ks += " AND TABLETS = {'enabled': false}"
     }
 
@@ -1776,7 +1776,7 @@ async fn test_table_partitioner_in_metadata() {
     let mut create_ks = format!(
         "CREATE KEYSPACE {ks} WITH REPLICATION = {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}}"
     );
-    if scylla_supports_tablets(&session).await {
+    if scylla_supports_tablets_legacy(&session).await {
         create_ks += " AND TABLETS = {'enabled': false}";
     }
 
@@ -1954,7 +1954,7 @@ async fn test_prepared_partitioner() {
     // This test uses CDC which is not yet compatible with Scylla's tablets.
     let mut create_ks = format!(
         "CREATE KEYSPACE IF NOT EXISTS {ks} WITH REPLICATION = {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}}");
-    if scylla_supports_tablets(&session).await {
+    if scylla_supports_tablets_legacy(&session).await {
         create_ks += " AND TABLETS = {'enabled': false}"
     }
 
@@ -2542,7 +2542,7 @@ async fn test_batch_lwts() {
 
     let ks = unique_keyspace_name();
     let mut create_ks = format!("CREATE KEYSPACE {} WITH REPLICATION = {{'class': 'NetworkTopologyStrategy', 'replication_factor': 1}}", ks);
-    if scylla_supports_tablets(&session).await {
+    if scylla_supports_tablets_legacy(&session).await {
         create_ks += " and TABLETS = { 'enabled': false}";
     }
     session.query_unpaged(create_ks, &[]).await.unwrap();
@@ -2742,7 +2742,7 @@ async fn test_iter_works_when_retry_policy_returns_ignore_write_error() {
     let cluster_size = session.get_cluster_data().get_nodes_info().len();
     let ks = unique_keyspace_name();
     let mut create_ks = format!("CREATE KEYSPACE {} WITH REPLICATION = {{'class': 'NetworkTopologyStrategy', 'replication_factor': {}}}", ks, cluster_size + 1);
-    if scylla_supports_tablets(&session).await {
+    if scylla_supports_tablets_legacy(&session).await {
         create_ks += " and TABLETS = { 'enabled': false}";
     }
     session.query_unpaged(create_ks, ()).await.unwrap();
