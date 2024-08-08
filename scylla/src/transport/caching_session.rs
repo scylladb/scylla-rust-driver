@@ -221,7 +221,9 @@ where
 mod tests {
     use crate::query::Query;
     use crate::statement::PagingState;
-    use crate::test_utils::{create_new_session_builder, scylla_supports_tablets, setup_tracing};
+    use crate::test_utils::{
+        create_new_session_builder, scylla_supports_tablets_legacy, setup_tracing,
+    };
     use crate::transport::partitioner::PartitionerName;
     use crate::utils::test_utils::unique_keyspace_name;
     use crate::{
@@ -243,7 +245,7 @@ mod tests {
             "CREATE KEYSPACE IF NOT EXISTS {ks}
         WITH REPLICATION = {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}}"
         );
-        if !with_tablet_support && scylla_supports_tablets(&session).await {
+        if !with_tablet_support && scylla_supports_tablets_legacy(&session).await {
             create_ks += " AND TABLETS = {'enabled': false}";
         }
 

@@ -92,7 +92,7 @@ pub fn create_new_session_builder() -> GenericSessionBuilder<impl SessionBuilder
         .tracing_info_fetch_interval(Duration::from_millis(50))
 }
 
-pub async fn scylla_supports_tablets(session: &LegacySession) -> bool {
+pub async fn scylla_supports_tablets_legacy(session: &LegacySession) -> bool {
     let result = session
         .query_unpaged(
             "select column_name from system_schema.columns where 

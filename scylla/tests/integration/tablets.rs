@@ -298,7 +298,7 @@ async fn test_default_policy_is_tablet_aware() {
                 .await
                 .unwrap();
 
-            if !scylla::test_utils::scylla_supports_tablets(&session).await {
+            if !scylla::test_utils::scylla_supports_tablets_legacy(&session).await {
                 tracing::warn!("Skipping test because this Scylla version doesn't support tablets");
                 return running_proxy;
             }
@@ -429,7 +429,7 @@ async fn test_tablet_feedback_not_sent_for_unprepared_queries() {
                 .await
                 .unwrap();
 
-            if !scylla::test_utils::scylla_supports_tablets(&session).await {
+            if !scylla::test_utils::scylla_supports_tablets_legacy(&session).await {
                 tracing::warn!("Skipping test because this Scylla version doesn't support tablets");
                 return running_proxy;
             }
@@ -501,7 +501,7 @@ async fn test_lwt_optimization_works_with_tablets() {
                 .await
                 .unwrap();
 
-            if !scylla::test_utils::scylla_supports_tablets(&session).await {
+            if !scylla::test_utils::scylla_supports_tablets_legacy(&session).await {
                 tracing::warn!("Skipping test because this Scylla version doesn't support tablets");
                 return running_proxy;
             }
