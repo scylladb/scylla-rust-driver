@@ -3,7 +3,9 @@ use crate::cql_to_rust::FromCqlVal;
 use crate::frame::response::result::CqlValue;
 use crate::frame::value::{Counter, CqlDate, CqlTime, CqlTimestamp};
 use crate::macros::FromUserType;
-use crate::test_utils::{create_new_session_builder, scylla_supports_tablets, setup_tracing};
+use crate::test_utils::{
+    create_new_session_builder, scylla_supports_tablets_legacy, setup_tracing,
+};
 use crate::transport::session::LegacySession;
 use crate::utils::test_utils::unique_keyspace_name;
 use itertools::Itertools;
@@ -32,7 +34,7 @@ async fn init_test_maybe_without_tablets(
         ks
     );
 
-    if !supports_tablets && scylla_supports_tablets(&session).await {
+    if !supports_tablets && scylla_supports_tablets_legacy(&session).await {
         create_ks += " AND TABLETS = {'enabled': false}"
     }
 
