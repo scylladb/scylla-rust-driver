@@ -22,8 +22,7 @@ pub(crate) fn from_row_derive(tokens_input: TokenStream) -> Result<TokenStream, 
                     #field_name: {
                         let (col_ix, col_value) = vals_iter
                             .next()
-                            .unwrap(); // vals_iter size is checked before this code is reached, so
-                                    // it is safe to unwrap
+                            .ok_or(Err(FromCqlValError::BadCqlType))?;
 
                         <#field_type as FromCqlVal<::std::option::Option<CqlValue>>>::from_cql(col_value)
                             .map_err(|e| FromRowError::BadCqlVal {
@@ -48,8 +47,7 @@ pub(crate) fn from_row_derive(tokens_input: TokenStream) -> Result<TokenStream, 
                     {
                         let (col_ix, col_value) = vals_iter
                             .next()
-                            .unwrap(); // vals_iter size is checked before this code is reached, so
-                                    // it is safe to unwrap
+                            .ok_or(Err(FromCqlValError::BadCqlType))?;
 
                         <#field_type as FromCqlVal<::std::option::Option<CqlValue>>>::from_cql(col_value)
                             .map_err(|e| FromRowError::BadCqlVal {
