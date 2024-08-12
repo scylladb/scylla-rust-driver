@@ -753,6 +753,7 @@ where
 pub struct VectorIterator<'frame, T> {
     coll_typ: &'frame ColumnType,
     elem_typ: &'frame ColumnType,
+    count: usize,
     raw_iter: VectorBytesSequenceIterator<'frame>,
     phantom_data: std::marker::PhantomData<T>,
 }
@@ -768,6 +769,7 @@ impl<'frame, T> VectorIterator<'frame, T> {
         Self {
             coll_typ,
             elem_typ,
+            count,
             raw_iter: VectorBytesSequenceIterator::new(count, elem_len, slice),
             phantom_data: std::marker::PhantomData,
         }
@@ -845,7 +847,7 @@ where
 
     #[inline]
     fn size_hint(&self) -> (usize, Option<usize>) {
-        self.raw_iter.size_hint()
+        (self.count, Some(self.count))
     }
 }
 
