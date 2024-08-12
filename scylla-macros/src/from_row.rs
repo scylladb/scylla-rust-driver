@@ -22,8 +22,10 @@ pub(crate) fn from_row_derive(tokens_input: TokenStream) -> Result<TokenStream, 
                     #field_name: {
                         let (col_ix, col_value) = vals_iter
                             .next()
-                            .unwrap(); // vals_iter size is checked before this code is reached, so
-                                    // it is safe to unwrap
+                            .ok_or(Err(FromRowError::BadCqlVal {
+                                err: FromCqlValError::ValIsNull,
+                                column: 0,
+                            }))?;
 
                         <#field_type as FromCqlVal<::std::option::Option<CqlValue>>>::from_cql(col_value)
                             .map_err(|e| FromRowError::BadCqlVal {
@@ -48,8 +50,7 @@ pub(crate) fn from_row_derive(tokens_input: TokenStream) -> Result<TokenStream, 
                     {
                         let (col_ix, col_value) = vals_iter
                             .next()
-                            .unwrap(); // vals_iter size is checked before this code is reached, so
-                                    // it is safe to unwrap
+                            .ok_or(Err(FromCqlValError::BadCqlType))?;
 
                         <#field_type as FromCqlVal<::std::option::Option<CqlValue>>>::from_cql(col_value)
                             .map_err(|e| FromRowError::BadCqlVal {
@@ -72,7 +73,7 @@ pub(crate) fn from_row_derive(tokens_input: TokenStream) -> Result<TokenStream, 
         impl #impl_generics #path::FromRow for #struct_name #ty_generics #where_clause {
             fn from_row(row: #path::Row)
             -> ::std::result::Result<Self, #path::FromRowError> {
-                use #path::{CqlValue, FromCqlVal, FromRow, FromRowError};
+                use #path::{CqlValue, FromCqlVal, FromRow, FromRowError, FromCqlValError};
                 use ::std::result::Result::{Ok, Err};
                 use ::std::iter::{Iterator, IntoIterator};
 
