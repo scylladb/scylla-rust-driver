@@ -6,6 +6,10 @@
 ///
 /// ---
 ///
+#[deprecated(
+    since = "0.15.0",
+    note = "Legacy deserialization API is inefficient and is going to be removed soon"
+)]
 pub use scylla_cql::macros::FromRow;
 
 /// #[derive(FromUserType)] allows to parse struct as a User Defined Type
@@ -14,6 +18,10 @@ pub use scylla_cql::macros::FromRow;
 ///
 /// ---
 ///
+#[deprecated(
+    since = "0.15.0",
+    note = "Legacy deserialization API is inefficient and is going to be removed soon"
+)]
 pub use scylla_cql::macros::FromUserType;
 
 /// #[derive(IntoUserType)] allows to pass struct a User Defined Type Value in queries
@@ -468,6 +476,11 @@ pub use scylla_macros::DeserializeRow;
 ///
 pub use scylla_cql::macros::ValueList;
 
+#[deprecated(
+    since = "0.15.0",
+    note = "Legacy deserialization API is inefficient and is going to be removed soon"
+)]
+#[allow(deprecated)]
 pub use scylla_cql::macros::impl_from_cql_value_from_method;
 
 pub use scylla_cql::macros::impl_serialize_row_via_value_list;

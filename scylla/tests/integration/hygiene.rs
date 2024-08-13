@@ -1,4 +1,5 @@
 #![no_implicit_prelude]
+#![allow(deprecated)]
 
 // Macro that is given a crate name and tests it for hygiene
 macro_rules! test_crate {

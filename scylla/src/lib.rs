@@ -266,13 +266,16 @@ pub use statement::batch;
 pub use statement::prepared_statement;
 pub use statement::query;
 
-pub use frame::response::cql_to_rust;
-pub use frame::response::cql_to_rust::FromRow;
+#[allow(deprecated)]
+pub use frame::response::cql_to_rust::{self, FromRow};
 
+#[allow(deprecated)]
 pub use transport::caching_session::{CachingSession, GenericCachingSession, LegacyCachingSession};
 pub use transport::execution_profile::ExecutionProfile;
+#[allow(deprecated)]
 pub use transport::legacy_query_result::LegacyQueryResult;
 pub use transport::query_result::{QueryResult, QueryRowsResult};
+#[allow(deprecated)]
 pub use transport::session::{IntoTypedRows, LegacySession, Session, SessionConfig};
 pub use transport::session_builder::SessionBuilder;
 

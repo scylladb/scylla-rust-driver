@@ -4,6 +4,7 @@
 use crate::batch::batch_values;
 #[cfg(feature = "cloud")]
 use crate::cloud::CloudConfig;
+#[allow(deprecated)]
 use crate::LegacyQueryResult;
 
 use crate::history;
@@ -64,6 +65,7 @@ use crate::transport::cluster::{Cluster, ClusterData, ClusterNeatDebug};
 use crate::transport::connection::{Connection, ConnectionConfig, VerifiedKeyspaceName};
 use crate::transport::connection_pool::PoolConfig;
 use crate::transport::host_filter::HostFilter;
+#[allow(deprecated)]
 use crate::transport::iterator::{LegacyRowIterator, PreparedIteratorConfig};
 use crate::transport::load_balancing::{self, RoutingInfo};
 use crate::transport::metrics::Metrics;
@@ -170,8 +172,14 @@ pub enum CurrentDeserializationApi {}
 impl sealed::Sealed for CurrentDeserializationApi {}
 impl DeserializationApiKind for CurrentDeserializationApi {}
 
+#[deprecated(
+    since = "0.15.0",
+    note = "Legacy deserialization API is inefficient and is going to be removed soon"
+)]
 pub enum LegacyDeserializationApi {}
+#[allow(deprecated)]
 impl sealed::Sealed for LegacyDeserializationApi {}
+#[allow(deprecated)]
 impl DeserializationApiKind for LegacyDeserializationApi {}
 
 /// `Session` manages connections to the cluster and allows to perform queries
@@ -194,6 +202,11 @@ where
 }
 
 pub type Session = GenericSession<CurrentDeserializationApi>;
+#[allow(deprecated)]
+#[deprecated(
+    since = "0.15.0",
+    note = "Legacy deserialization API is inefficient and is going to be removed soon"
+)]
 pub type LegacySession = GenericSession<LegacyDeserializationApi>;
 
 /// This implementation deliberately omits some details from Cluster in order
@@ -861,6 +874,11 @@ impl GenericSession<CurrentDeserializationApi> {
     /// the new API but you still have some modules left that use the old one,
     /// you can use this method to create an instance that supports the old API
     /// and pass it to the module that you intend to migrate later.
+    #[deprecated(
+        since = "0.15.0",
+        note = "Legacy deserialization API is inefficient and is going to be removed soon"
+    )]
+    #[allow(deprecated)]
     pub fn make_shared_session_with_legacy_api(&self) -> LegacySession {
         LegacySession {
             cluster: self.cluster.clone(),
@@ -880,6 +898,11 @@ impl GenericSession<CurrentDeserializationApi> {
     }
 }
 
+#[deprecated(
+    since = "0.15.0",
+    note = "Legacy deserialization API is inefficient and is going to be removed soon"
+)]
+#[allow(deprecated)]
 impl GenericSession<LegacyDeserializationApi> {
     pub async fn query_unpaged(
         &self,

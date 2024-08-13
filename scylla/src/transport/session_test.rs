@@ -3125,6 +3125,7 @@ async fn test_deserialize_empty_collections() {
 }
 
 #[tokio::test]
+#[allow(deprecated)]
 async fn test_api_migration_session_sharing() {
     {
         let session = create_new_session_builder().build().await.unwrap();
