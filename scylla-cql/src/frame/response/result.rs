@@ -7,6 +7,7 @@ use crate::frame::{frame_errors::ParseError, types};
 use crate::types::deserialize::result::{RowIterator, TypedRowIterator};
 use crate::types::deserialize::value::{
     mk_deser_err, BuiltinDeserializationErrorKind, DeserializeValue, MapIterator, UdtIterator,
+    VectorIterator,
 };
 use crate::types::deserialize::{DeserializationError, FrameSlice};
 use bytes::{Buf, Bytes};
@@ -829,9 +830,17 @@ pub fn deser_cql_value(
                 .collect::<StdResult<_, _>>()?;
             CqlValue::Tuple(t)
         }
-        Vector(_type_name, _) => {
-            let l = Vec::<CqlValue>::deserialize(typ, v)?;
-            CqlValue::Vector(l)
+        // Specialization for faster deserialization of vectors of floats, which are currently
+        // the only type of vector
+        Vector(elem_type, _) if matches!(elem_type.as_ref(), Float) => {
+            let v = VectorIterator::<CqlValue>::deserialize_vector_of_float_to_vec_of_cql_value(
+                typ, v,
+            )?;
+            CqlValue::Vector(v)
+        }
+        Vector(_, _) => {
+            let v = Vec::<CqlValue>::deserialize(typ, v)?;
+            CqlValue::Vector(v)
         }
     })
 }
