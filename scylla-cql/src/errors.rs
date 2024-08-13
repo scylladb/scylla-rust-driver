@@ -3,6 +3,7 @@
 use crate::frame::frame_errors::{CqlResponseParseError, FrameError, ParseError};
 use crate::frame::protocol_features::ProtocolFeatures;
 use crate::frame::value::SerializeValuesError;
+use crate::types::deserialize::{DeserializationError, TypeCheckError};
 use crate::types::serialize::SerializationError;
 use crate::Consistency;
 use bytes::Bytes;
@@ -458,6 +459,18 @@ impl From<SerializeValuesError> for QueryError {
 impl From<SerializationError> for QueryError {
     fn from(serialized_err: SerializationError) -> QueryError {
         QueryError::BadQuery(BadQuery::SerializationError(serialized_err))
+    }
+}
+
+impl From<DeserializationError> for QueryError {
+    fn from(value: DeserializationError) -> Self {
+        Self::InvalidMessage(value.to_string())
+    }
+}
+
+impl From<TypeCheckError> for QueryError {
+    fn from(value: TypeCheckError) -> Self {
+        Self::InvalidMessage(value.to_string())
     }
 }
 
