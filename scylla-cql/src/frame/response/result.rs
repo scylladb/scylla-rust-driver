@@ -564,6 +564,18 @@ impl RawRows {
     }
 }
 
+// Test utils for scylla crate.
+#[doc(hidden)]
+impl RawRows {
+    pub fn new_for_test(metadata: Arc<ResultMetadata>, rows_count: usize, raw_rows: Bytes) -> Self {
+        Self {
+            metadata,
+            rows_count,
+            raw_rows,
+        }
+    }
+}
+
 #[derive(Debug)]
 pub struct Rows {
     pub metadata: Arc<ResultMetadata>,
