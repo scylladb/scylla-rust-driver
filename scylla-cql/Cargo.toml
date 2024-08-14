@@ -33,6 +33,7 @@ stable_deref_trait = "1.2"
 [dev-dependencies]
 assert_matches = "1.5.0"
 criterion = "0.4"        # Note: v0.5 needs at least rust 1.70.0
+lazy_static = "1"        # We can migrate to std::sync::LazyLock once MSRV is bumped to 1.80.
 # Use large-dates feature to test potential edge cases
 time-03 = { package = "time", version = "0.3.21", features = ["large-dates"] }
 uuid = { version = "1.0", features = ["v4"] }

@@ -1601,6 +1601,22 @@ mod test_utils {
             }
         }
     }
+
+    impl DeserializedMetadataAndRawRows {
+        #[inline]
+        #[doc(hidden)]
+        pub fn new_for_test(
+            metadata: ResultMetadata<'static>,
+            rows_count: usize,
+            raw_rows: Bytes,
+        ) -> Self {
+            Self {
+                metadata: ResultMetadataHolder::SharedCached(Arc::new(metadata)),
+                rows_count,
+                raw_rows,
+            }
+        }
+    }
 }
 
 #[cfg(test)]
