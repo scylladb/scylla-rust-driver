@@ -1,4 +1,8 @@
-use crate::frame::response::result::ColumnSpec;
+use bytes::Bytes;
+
+use crate::frame::response::result::{
+    ColumnSpec, DeserializedMetadataAndRawRows, RawRowsOwned, ResultMetadata, ResultMetadataHolder,
+};
 
 use super::row::{mk_deser_err, BuiltinDeserializationErrorKind, ColumnIterator, DeserializeRow};
 use super::{DeserializationError, FrameSlice, TypeCheckError};
@@ -136,46 +140,220 @@ where
     }
 }
 
+// Technically not an iterator because it returns items that borrow from it,
+// and the std Iterator interface does not allow for that.
+/// A _lending_ iterator over serialized rows.
+///
+/// This type is similar to `RowIterator`, but keeps ownership of the serialized
+/// result. Because it returns `ColumnIterator`s that need to borrow from it,
+/// it does not implement the `Iterator` trait (there is no type in the standard
+/// library to represent this concept yet).
+#[derive(Debug)]
+pub struct RawRowsLendingIterator {
+    metadata: ResultMetadataHolder<'static>,
+    remaining: usize,
+    at: usize,
+    raw_rows: Bytes,
+}
+
+impl RawRowsLendingIterator {
+    /// Creates a new `RawRowsLendingIterator`, consuming given `RawRows`.
+    #[inline]
+    pub fn new(raw_rows: DeserializedMetadataAndRawRows<'static, RawRowsOwned>) -> Self {
+        let (metadata, rows_count, raw_rows) = raw_rows.into_inner();
+        Self {
+            metadata,
+            remaining: rows_count,
+            at: 0,
+            raw_rows,
+        }
+    }
+
+    /// Returns a `ColumnIterator` that represents the next row.
+    ///
+    /// Note: the `ColumnIterator` borrows from the `RawRowsLendingIterator`.
+    /// The column iterator must be consumed before the rows iterator can
+    /// continue.
+    #[inline]
+    #[allow(clippy::should_implement_trait)] // https://github.com/rust-lang/rust-clippy/issues/5004
+    pub fn next(&mut self) -> Option<Result<ColumnIterator, DeserializationError>> {
+        self.remaining = self.remaining.checked_sub(1)?;
+
+        // First create the slice encompassing the whole frame.
+        let mut remaining_frame = FrameSlice::new(&self.raw_rows);
+        // Then slice it to encompass the remaining suffix of the frame.
+        *remaining_frame.as_slice_mut() = &remaining_frame.as_slice()[self.at..];
+        // Ideally, we would prefer to preserve the FrameSlice between calls to `next()`,
+        // but borrowing from oneself is impossible, so we have to recreate it this way.
+
+        let iter = ColumnIterator::new(self.metadata.col_specs(), remaining_frame);
+
+        // Skip the row here, manually
+        for (column_index, spec) in self.metadata.col_specs().iter().enumerate() {
+            let remaining_frame_len_before_column_read = remaining_frame.as_slice().len();
+            if let Err(err) = remaining_frame.read_cql_bytes() {
+                return Some(Err(mk_deser_err::<Self>(
+                    BuiltinDeserializationErrorKind::RawColumnDeserializationFailed {
+                        column_index,
+                        column_name: spec.name().to_owned(),
+                        err: DeserializationError::new(err),
+                    },
+                )));
+            } else {
+                let remaining_frame_len_after_column_read = remaining_frame.as_slice().len();
+                self.at +=
+                    remaining_frame_len_before_column_read - remaining_frame_len_after_column_read;
+            }
+        }
+
+        Some(Ok(iter))
+    }
+
+    #[inline]
+    pub fn size_hint(&self) -> (usize, Option<usize>) {
+        // next() is written in a way that it does not progress on error, so once an error
+        // is encountered, the same error keeps being returned until `self.remaining`
+        // elements are yielded in total.
+        (self.remaining, Some(self.remaining))
+    }
+
+    /// Returns the metadata associated with the response (paging state and
+    /// column specifications).
+    #[inline]
+    pub fn metadata(&self) -> &ResultMetadata<'static> {
+        &self.metadata
+    }
+
+    /// Returns the remaining number of rows that this iterator is expected
+    /// to produce.
+    #[inline]
+    pub fn rows_remaining(&self) -> usize {
+        self.remaining
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use bytes::Bytes;
 
-    use crate::frame::response::result::ColumnType;
+    use bytes::Bytes;
+    use std::ops::Deref;
+
+    use crate::frame::response::result::{
+        ColumnSpec, ColumnType, DeserializedMetadataAndRawRows, ResultMetadata,
+    };
 
     use super::super::tests::{serialize_cells, spec, CELL1, CELL2};
-    use super::{FrameSlice, RowIterator, TypedRowIterator};
+    use super::{
+        ColumnIterator, DeserializationError, FrameSlice, RawRowsLendingIterator, RowIterator,
+        TypedRowIterator,
+    };
 
-    #[test]
-    fn test_row_iterator_basic_parse() {
-        let raw_data = serialize_cells([Some(CELL1), Some(CELL2), Some(CELL2), Some(CELL1)]);
-        let specs = [spec("b1", ColumnType::Blob), spec("b2", ColumnType::Blob)];
-        let mut iter = RowIterator::new(2, &specs, FrameSlice::new(&raw_data));
+    trait LendingIterator {
+        type Item<'borrow>
+        where
+            Self: 'borrow;
+        fn lend_next(&mut self) -> Option<Result<Self::Item<'_>, DeserializationError>>;
+    }
 
-        let mut row1 = iter.next().unwrap().unwrap();
-        let c11 = row1.next().unwrap().unwrap();
-        assert_eq!(c11.slice.unwrap().as_slice(), CELL1);
-        let c12 = row1.next().unwrap().unwrap();
-        assert_eq!(c12.slice.unwrap().as_slice(), CELL2);
-        assert!(row1.next().is_none());
+    impl<'frame, 'metadata> LendingIterator for RowIterator<'frame, 'metadata> {
+        type Item<'borrow> = ColumnIterator<'borrow, 'borrow>
+        where
+            Self: 'borrow;
 
-        let mut row2 = iter.next().unwrap().unwrap();
-        let c21 = row2.next().unwrap().unwrap();
-        assert_eq!(c21.slice.unwrap().as_slice(), CELL2);
-        let c22 = row2.next().unwrap().unwrap();
-        assert_eq!(c22.slice.unwrap().as_slice(), CELL1);
-        assert!(row2.next().is_none());
+        fn lend_next(&mut self) -> Option<Result<ColumnIterator<'_, '_>, DeserializationError>> {
+            self.next()
+        }
+    }
 
-        assert!(iter.next().is_none());
+    impl LendingIterator for RawRowsLendingIterator {
+        type Item<'borrow> = ColumnIterator<'borrow, 'borrow>;
+
+        fn lend_next(&mut self) -> Option<Result<ColumnIterator<'_, '_>, DeserializationError>> {
+            self.next()
+        }
     }
 
     #[test]
-    fn test_row_iterator_too_few_rows() {
-        let raw_data = serialize_cells([Some(CELL1), Some(CELL2)]);
-        let specs = [spec("b1", ColumnType::Blob), spec("b2", ColumnType::Blob)];
-        let mut iter = RowIterator::new(2, &specs, FrameSlice::new(&raw_data));
+    fn test_row_iterators_basic_parse() {
+        // Those statics are required because of a compiler bug-limitation about GATs:
+        // https://blog.rust-lang.org/2022/10/28/gats-stabilization.html#implied-static-requirement-from-higher-ranked-trait-bounds
+        // the following type higher-ranked lifetime constraint implies 'static lifetime.
+        //
+        // I: for<'item> LendingIterator<Item<'item> = ColumnIterator<'item>>,
+        //
+        // The bug is said to be a lot of effort to fix, so in tests let's just use `lazy_static`
+        // to obtain 'static references.
+        //
+        // `std::sync::LazyLock` is stable since 1.80, so once we bump MSRV enough,
+        // we will be able to replace `lazy_static` with `LazyLock`.
 
-        iter.next().unwrap().unwrap();
-        assert!(iter.next().unwrap().is_err());
+        static SPECS: &[ColumnSpec<'static>] =
+            &[spec("b1", ColumnType::Blob), spec("b2", ColumnType::Blob)];
+        lazy_static::lazy_static! {
+            static ref RAW_DATA: Bytes = serialize_cells([Some(CELL1), Some(CELL2), Some(CELL2), Some(CELL1)]);
+        }
+        let raw_data = RAW_DATA.deref();
+        let specs = SPECS;
+
+        let row_iter = RowIterator::new(2, specs, FrameSlice::new(raw_data));
+        let lending_row_iter =
+            RawRowsLendingIterator::new(DeserializedMetadataAndRawRows::new_for_test(
+                ResultMetadata::new_for_test(specs.len(), specs.to_vec()),
+                2,
+                raw_data.clone(),
+            ));
+        check(row_iter);
+        check(lending_row_iter);
+
+        fn check<I>(mut iter: I)
+        where
+            I: for<'item> LendingIterator<Item<'item> = ColumnIterator<'item, 'item>>,
+        {
+            let mut row1 = iter.lend_next().unwrap().unwrap();
+            let c11 = row1.next().unwrap().unwrap();
+            assert_eq!(c11.slice.unwrap().as_slice(), CELL1);
+            let c12 = row1.next().unwrap().unwrap();
+            assert_eq!(c12.slice.unwrap().as_slice(), CELL2);
+            assert!(row1.next().is_none());
+
+            let mut row2 = iter.lend_next().unwrap().unwrap();
+            let c21 = row2.next().unwrap().unwrap();
+            assert_eq!(c21.slice.unwrap().as_slice(), CELL2);
+            let c22 = row2.next().unwrap().unwrap();
+            assert_eq!(c22.slice.unwrap().as_slice(), CELL1);
+            assert!(row2.next().is_none());
+
+            assert!(iter.lend_next().is_none());
+        }
+    }
+
+    #[test]
+    fn test_row_iterators_too_few_rows() {
+        static SPECS: &[ColumnSpec<'static>] =
+            &[spec("b1", ColumnType::Blob), spec("b2", ColumnType::Blob)];
+        lazy_static::lazy_static! {
+            static ref RAW_DATA: Bytes = serialize_cells([Some(CELL1), Some(CELL2)]);
+        }
+        let raw_data = RAW_DATA.deref();
+        let specs = SPECS;
+
+        let row_iter = RowIterator::new(2, specs, FrameSlice::new(raw_data));
+        let lending_row_iter =
+            RawRowsLendingIterator::new(DeserializedMetadataAndRawRows::new_for_test(
+                ResultMetadata::new_for_test(specs.len(), specs.to_vec()),
+                2,
+                raw_data.clone(),
+            ));
+        check(row_iter);
+        check(lending_row_iter);
+
+        fn check<I>(mut iter: I)
+        where
+            I: for<'item> LendingIterator<Item<'item> = ColumnIterator<'item, 'item>>,
+        {
+            iter.lend_next().unwrap().unwrap();
+            iter.lend_next().unwrap().unwrap_err();
+        }
     }
 
     #[test]
