@@ -17,15 +17,15 @@
 //! `Session` is created by specifying a few known nodes and connecting to them:
 //!
 //! ```rust,no_run
-//! use scylla::{LegacySession, SessionBuilder};
+//! use scylla::{Session, SessionBuilder};
 //! use std::error::Error;
 //!
 //! #[tokio::main]
 //! async fn main() -> Result<(), Box<dyn Error>> {
-//!    let session: LegacySession = SessionBuilder::new()
+//!    let session: Session = SessionBuilder::new()
 //!         .known_node("127.0.0.1:9042")
 //!         .known_node("1.2.3.4:9876")
-//!         .build_legacy()
+//!         .build()
 //!         .await?;
 //!
 //!    Ok(())
@@ -50,9 +50,9 @@
 //!
 //! The easiest way to specify bound values in a query is using a tuple:
 //! ```rust
-//! # use scylla::LegacySession;
+//! # use scylla::Session;
 //! # use std::error::Error;
-//! # async fn check_only_compiles(session: &LegacySession) -> Result<(), Box<dyn Error>> {
+//! # async fn check_only_compiles(session: &Session) -> Result<(), Box<dyn Error>> {
 //! // Insert an int and text into the table
 //! session
 //!     .query_unpaged(
@@ -69,22 +69,20 @@
 //! The easiest way to read rows returned by a query is to cast each row to a tuple of values:
 //!
 //! ```rust
-//! # use scylla::LegacySession;
+//! # use scylla::Session;
 //! # use std::error::Error;
-//! # async fn check_only_compiles(session: &LegacySession) -> Result<(), Box<dyn Error>> {
-//! use scylla::IntoTypedRows;
+//! # async fn check_only_compiles(session: &Session) -> Result<(), Box<dyn Error>> {
 //!
 //! // Read rows containing an int and text
 //! // Keep in mind that all results come in one response (no paging is done!),
 //! // so the memory footprint and latency may be huge!
 //! // To prevent that, use `Session::query_iter` or `Session::query_single_page`.
-//! let rows_opt = session
-//!     .query_unpaged("SELECT a, b FROM ks.tab", &[])
-//!     .await?
-//!     .rows;
+//! let query_result = session
+//!         .query_unpaged("SELECT a, b FROM ks.tab", &[])
+//!     .await?;
 //!
-//! if let Some(rows) = rows_opt {
-//!     for row in rows.into_typed::<(i32, String)>() {
+//! if let Some(rows) = query_result.maybe_rows::<(i32, String)>()? {
+//!     for row in rows {
 //!         // Parse row as int and text \
 //!         let (int_val, text_val): (i32, String) = row?;
 //!     }

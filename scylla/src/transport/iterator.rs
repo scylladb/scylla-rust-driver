@@ -576,8 +576,7 @@ impl RawIterator {
     ///
     /// # Example
     ///
-    /// // FIXME: change `text` to `rust` when Session API is migrated to the new deserialization framework.
-    /// ```text
+    /// ```rust
     /// # use scylla::Session;
     /// # use std::error::Error;
     /// # async fn check_only_compiles(session: &Session) -> Result<(), Box<dyn Error>> {
