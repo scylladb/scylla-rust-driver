@@ -16,7 +16,7 @@
 //! # extern crate scylla;
 //! # use std::error::Error;
 //! # async fn check_only_compiles() -> Result<(), Box<dyn Error>> {
-//! use scylla::{LegacySession, SessionBuilder};
+//! use scylla::{Session, SessionBuilder};
 //! use scylla::statement::Consistency;
 //! use scylla::transport::ExecutionProfile;
 //!
@@ -27,10 +27,10 @@
 //!
 //! let handle = profile.into_handle();
 //!
-//! let session: LegacySession = SessionBuilder::new()
+//! let session: Session = SessionBuilder::new()
 //!     .known_node("127.0.0.1:9042")
 //!     .default_execution_profile_handle(handle)
-//!     .build_legacy()
+//!     .build()
 //!     .await?;
 //! # Ok(())
 //! # }
@@ -109,7 +109,7 @@
 //! # extern crate scylla;
 //! # use std::error::Error;
 //! # async fn check_only_compiles() -> Result<(), Box<dyn Error>> {
-//! use scylla::{LegacySession, SessionBuilder};
+//! use scylla::{Session, SessionBuilder};
 //! use scylla::query::Query;
 //! use scylla::statement::Consistency;
 //! use scylla::transport::ExecutionProfile;
@@ -125,10 +125,10 @@
 //! let mut handle1 = profile1.clone().into_handle();
 //! let mut handle2 = profile2.clone().into_handle();
 //!
-//! let session: LegacySession = SessionBuilder::new()
+//! let session: Session = SessionBuilder::new()
 //!     .known_node("127.0.0.1:9042")
 //!     .default_execution_profile_handle(handle1.clone())
-//!     .build_legacy()
+//!     .build()
 //!     .await?;
 //!
 //! let mut query1 = Query::from("SELECT * FROM ks.table");
