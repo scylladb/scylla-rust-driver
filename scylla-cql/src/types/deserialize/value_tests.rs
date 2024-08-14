@@ -424,6 +424,24 @@ fn test_list_and_set() {
         expected_vec_string.into_iter().collect(),
     );
 
+    // Null collections are interpreted as empty collections, to retain convenience:
+    // when an empty collection is sent to the DB, the DB nullifies the column instead.
+    {
+        let list_typ = ColumnType::List(Box::new(ColumnType::BigInt));
+        let set_typ = ColumnType::Set(Box::new(ColumnType::BigInt));
+        type CollTyp = i64;
+
+        fn check<'frame, Collection: DeserializeValue<'frame>>(typ: &'frame ColumnType) {
+            <Collection as DeserializeValue<'_>>::type_check(typ).unwrap();
+            <Collection as DeserializeValue<'_>>::deserialize(typ, None).unwrap();
+        }
+
+        check::<Vec<CollTyp>>(&list_typ);
+        check::<Vec<CollTyp>>(&set_typ);
+        check::<HashSet<CollTyp>>(&set_typ);
+        check::<BTreeSet<CollTyp>>(&set_typ);
+    }
+
     // ser/de identity
     assert_ser_de_identity(&list_typ, &vec!["qwik"], &mut Bytes::new());
     assert_ser_de_identity(&set_typ, &vec!["qwik"], &mut Bytes::new());
@@ -485,6 +503,22 @@ fn test_map() {
         expected_str.clone().into_iter().collect(),
     );
     assert_eq!(decoded_btree_string, expected_string.into_iter().collect());
+
+    // Null collections are interpreted as empty collections, to retain convenience:
+    // when an empty collection is sent to the DB, the DB nullifies the column instead.
+    {
+        let map_typ = ColumnType::Map(Box::new(ColumnType::BigInt), Box::new(ColumnType::Ascii));
+        type KeyTyp = i64;
+        type ValueTyp<'s> = &'s str;
+
+        fn check<'frame, Collection: DeserializeValue<'frame>>(typ: &'frame ColumnType) {
+            <Collection as DeserializeValue<'_>>::type_check(typ).unwrap();
+            <Collection as DeserializeValue<'_>>::deserialize(typ, None).unwrap();
+        }
+
+        check::<HashMap<KeyTyp, ValueTyp>>(&map_typ);
+        check::<BTreeMap<KeyTyp, ValueTyp>>(&map_typ);
+    }
 
     // ser/de identity
     assert_ser_de_identity(
@@ -1218,18 +1252,6 @@ fn test_set_or_list_errors() {
         );
     }
 
-    // Got null
-    {
-        type RustTyp = Vec<i32>;
-        let ser_typ = ColumnType::List(Box::new(ColumnType::Int));
-
-        let err = RustTyp::deserialize(&ser_typ, None).unwrap_err();
-        let err = get_deser_err(&err);
-        assert_eq!(err.rust_name, std::any::type_name::<RustTyp>());
-        assert_eq!(err.cql_type, ser_typ);
-        assert_matches!(err.kind, BuiltinDeserializationErrorKind::ExpectedNonNull);
-    }
-
     // Bad element type
     {
         assert_type_check_error!(
@@ -1314,18 +1336,6 @@ fn test_map_errors() {
                 MapTypeCheckErrorKind::NotMap,
             )
         );
-    }
-
-    // Got null
-    {
-        type RustTyp = HashMap<i32, bool>;
-        let ser_typ = ColumnType::Map(Box::new(ColumnType::Int), Box::new(ColumnType::Boolean));
-
-        let err = RustTyp::deserialize(&ser_typ, None).unwrap_err();
-        let err = get_deser_err(&err);
-        assert_eq!(err.rust_name, std::any::type_name::<RustTyp>());
-        assert_eq!(err.cql_type, ser_typ);
-        assert_matches!(err.kind, BuiltinDeserializationErrorKind::ExpectedNonNull);
     }
 
     // Key type mismatch
