@@ -4,6 +4,7 @@ use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::fmt::Display;
 use std::hash::BuildHasher;
 use std::net::IpAddr;
+use std::ops::Deref;
 use std::sync::Arc;
 
 use thiserror::Error;
@@ -576,7 +577,7 @@ fn serialize_cql_value<'b>(
         }
         CqlValue::Uuid(u) => <_ as SerializeValue>::serialize(&u, typ, writer),
         CqlValue::Varint(v) => <_ as SerializeValue>::serialize(&v, typ, writer),
-        CqlValue::Vector(v) => <_ as SerializeValue>::serialize(&v, typ, writer),
+        CqlValue::Vector(v) => <_ as SerializeValue>::serialize(v.deref(), typ, writer),
     }
 }
 

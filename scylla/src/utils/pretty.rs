@@ -116,7 +116,12 @@ where
                 .fmt(f)?;
                 f.write_str(")")?;
             }
-            CqlValue::List(v) | CqlValue::Vector(v) => {
+            CqlValue::List(v) => {
+                f.write_str("[")?;
+                CommaSeparatedDisplayer(v.iter().map(CqlValueDisplayer)).fmt(f)?;
+                f.write_str("]")?;
+            }
+            CqlValue::Vector(v) => {
                 f.write_str("[")?;
                 CommaSeparatedDisplayer(v.iter().map(CqlValueDisplayer)).fmt(f)?;
                 f.write_str("]")?;

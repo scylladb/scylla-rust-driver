@@ -29,7 +29,7 @@ pub mod _macro_internal {
     pub use crate::frame::response::cql_to_rust::{
         FromCqlVal, FromCqlValError, FromRow, FromRowError,
     };
-    pub use crate::frame::response::result::{ColumnSpec, ColumnType, CqlValue, Row};
+    pub use crate::frame::response::result::{ColumnSpec, ColumnType, CqlValue, DropOptimizedVec, Row};
     pub use crate::frame::value::{
         LegacySerializedValues, SerializedResult, Value, ValueList, ValueTooBig,
     };

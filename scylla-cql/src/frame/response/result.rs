@@ -12,7 +12,9 @@ use crate::types::deserialize::value::{
 use crate::types::deserialize::{DeserializationError, FrameSlice};
 use bytes::{Buf, Bytes};
 use std::borrow::Cow;
-use std::{convert::TryInto, net::IpAddr, result::Result as StdResult, str};
+use std::{convert::TryInto, mem, net::IpAddr, result::Result as StdResult, str};
+use std::mem::ManuallyDrop;
+use std::ops::Deref;
 use uuid::Uuid;
 
 #[derive(Debug)]
@@ -96,7 +98,7 @@ pub enum CqlValue {
     List(Vec<CqlValue>),
     Map(Vec<(CqlValue, CqlValue)>),
     Set(Vec<CqlValue>),
-    Vector(Vec<CqlValue>),
+    Vector(DropOptimizedVec<CqlValue>),
     UserDefinedType {
         keyspace: String,
         type_name: String,
@@ -113,6 +115,52 @@ pub enum CqlValue {
     Tuple(Vec<Option<CqlValue>>),
     Uuid(Uuid),
     Varint(CqlVarint),
+}
+
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct DropOptimizedVec<T> {
+    data: Vec<T>,
+    drop_elements: bool
+}
+
+impl<T> DropOptimizedVec<T> {
+    pub fn new(data: Vec<T>, drop_elements: bool) -> DropOptimizedVec<T> {
+        DropOptimizedVec {
+            data,
+            drop_elements,
+        }
+    }
+    
+    pub fn dropping(data: Vec<T>) -> DropOptimizedVec<T> {
+        Self::new(data, true)
+    }
+    
+    pub fn non_dropping(data: Vec<T>) -> DropOptimizedVec<T> {
+        Self::new(data, false)
+    }
+    
+    pub fn into_vec(mut self) -> Vec<T> {
+        let mut vec = vec![];
+        mem::swap(&mut self.data, &mut vec);
+        vec
+    }
+}
+
+impl<T> Deref for DropOptimizedVec<T> {
+    type Target = Vec<T>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.data
+    }
+}
+
+impl<T> Drop for DropOptimizedVec<T> {
+    fn drop(&mut self) {
+        if !self.drop_elements {
+            unsafe { self.data.set_len(0); }        
+        }
+    }
 }
 
 impl<'a> TableSpec<'a> {
@@ -355,7 +403,7 @@ impl CqlValue {
     pub fn as_list(&self) -> Option<&Vec<CqlValue>> {
         match self {
             Self::List(s) => Some(s),
-            Self::Vector(s) => Some(s),
+            Self::Vector(s) => Some(&s),
             _ => None,
         }
     }
@@ -385,7 +433,7 @@ impl CqlValue {
         match self {
             Self::List(s) => Some(s),
             Self::Set(s) => Some(s),
-            Self::Vector(s) => Some(s),
+            Self::Vector(s) => Some(s.into_vec()),
             _ => None,
         }
     }
@@ -836,11 +884,11 @@ pub fn deser_cql_value(
             let v = VectorIterator::<CqlValue>::deserialize_vector_of_float_to_vec_of_cql_value(
                 typ, v,
             )?;
-            CqlValue::Vector(v)
+            CqlValue::Vector(DropOptimizedVec::non_dropping(v))
         }
         Vector(_, _) => {
             let v = Vec::<CqlValue>::deserialize(typ, v)?;
-            CqlValue::Vector(v)
+            CqlValue::Vector(DropOptimizedVec::dropping(v))
         }
     })
 }
