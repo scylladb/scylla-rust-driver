@@ -7,11 +7,14 @@ use crate::frame::{frame_errors::ParseError, types};
 use crate::types::deserialize::result::{RowIterator, TypedRowIterator};
 use crate::types::deserialize::value::{
     mk_deser_err, BuiltinDeserializationErrorKind, DeserializeValue, MapIterator, UdtIterator,
+    VectorIterator,
 };
 use crate::types::deserialize::{DeserializationError, FrameSlice};
 use bytes::{Buf, Bytes};
 use std::borrow::Cow;
-use std::{convert::TryInto, net::IpAddr, result::Result as StdResult, str};
+use std::{convert::TryInto, mem, net::IpAddr, result::Result as StdResult, str};
+use std::mem::ManuallyDrop;
+use std::ops::Deref;
 use uuid::Uuid;
 
 #[derive(Debug)]
@@ -69,6 +72,7 @@ pub enum ColumnType {
     Tuple(Vec<ColumnType>),
     Uuid,
     Varint,
+    Vector(Box<ColumnType>, u32),
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -94,6 +98,7 @@ pub enum CqlValue {
     List(Vec<CqlValue>),
     Map(Vec<(CqlValue, CqlValue)>),
     Set(Vec<CqlValue>),
+    Vector(DropOptimizedVec<CqlValue>),
     UserDefinedType {
         keyspace: String,
         type_name: String,
@@ -110,6 +115,52 @@ pub enum CqlValue {
     Tuple(Vec<Option<CqlValue>>),
     Uuid(Uuid),
     Varint(CqlVarint),
+}
+
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct DropOptimizedVec<T> {
+    data: Vec<T>,
+    drop_elements: bool
+}
+
+impl<T> DropOptimizedVec<T> {
+    pub fn new(data: Vec<T>, drop_elements: bool) -> DropOptimizedVec<T> {
+        DropOptimizedVec {
+            data,
+            drop_elements,
+        }
+    }
+    
+    pub fn dropping(data: Vec<T>) -> DropOptimizedVec<T> {
+        Self::new(data, true)
+    }
+    
+    pub fn non_dropping(data: Vec<T>) -> DropOptimizedVec<T> {
+        Self::new(data, false)
+    }
+    
+    pub fn into_vec(mut self) -> Vec<T> {
+        let mut vec = vec![];
+        mem::swap(&mut self.data, &mut vec);
+        vec
+    }
+}
+
+impl<T> Deref for DropOptimizedVec<T> {
+    type Target = Vec<T>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.data
+    }
+}
+
+impl<T> Drop for DropOptimizedVec<T> {
+    fn drop(&mut self) {
+        if !self.drop_elements {
+            unsafe { self.data.set_len(0); }        
+        }
+    }
 }
 
 impl<'a> TableSpec<'a> {
@@ -352,6 +403,7 @@ impl CqlValue {
     pub fn as_list(&self) -> Option<&Vec<CqlValue>> {
         match self {
             Self::List(s) => Some(s),
+            Self::Vector(s) => Some(&s),
             _ => None,
         }
     }
@@ -381,6 +433,7 @@ impl CqlValue {
         match self {
             Self::List(s) => Some(s),
             Self::Set(s) => Some(s),
+            Self::Vector(s) => Some(s.into_vec()),
             _ => None,
         }
     }
@@ -489,8 +542,19 @@ fn deser_type(buf: &mut &[u8]) -> StdResult<ColumnType, ParseError> {
     Ok(match id {
         0x0000 => {
             let type_str: String = types::read_string(buf)?.to_string();
-            match type_str.as_str() {
+            let type_parts: Vec<_> = type_str.split(&[',', '(', ')']).collect();
+            match type_parts[0] {
                 "org.apache.cassandra.db.marshal.DurationType" => Duration,
+                "org.apache.cassandra.db.marshal.VectorType" => {
+                    if type_parts.len() < 3 {
+                        return Err(ParseError::InvalidCustomType(type_str));
+                    }
+                    let elem_type = parse_type_str(type_parts[1].trim())?;
+                    let Ok(dimensions) = type_parts[2].trim().parse() else {
+                        return Err(ParseError::InvalidCustomType(type_str));
+                    };
+                    Vector(Box::new(elem_type), dimensions)
+                }
                 _ => Custom(type_str),
             }
         }
@@ -550,6 +614,18 @@ fn deser_type(buf: &mut &[u8]) -> StdResult<ColumnType, ParseError> {
             return Err(ParseError::TypeNotImplemented(id));
         }
     })
+}
+
+fn parse_type_str(name: &str) -> StdResult<ColumnType, ParseError> {
+    match name {
+        "org.apache.cassandra.db.marshal.BigIntType" => Ok(ColumnType::BigInt),
+        "org.apache.cassandra.db.marshal.DoubleType" => Ok(ColumnType::Double),
+        "org.apache.cassandra.db.marshal.FloatType" => Ok(ColumnType::Float),
+        "org.apache.cassandra.db.marshal.IntType" => Ok(ColumnType::Int),
+        "org.apache.cassandra.db.marshal.SmallIntType" => Ok(ColumnType::SmallInt),
+        "org.apache.cassandra.db.marshal.TinyIntType" => Ok(ColumnType::TinyInt),
+        _ => Err(ParseError::InvalidCustomType(name.to_string())),
+    }
 }
 
 fn deser_col_specs(
@@ -801,6 +877,18 @@ pub fn deser_cql_value(
                 })
                 .collect::<StdResult<_, _>>()?;
             CqlValue::Tuple(t)
+        }
+        // Specialization for faster deserialization of vectors of floats, which are currently
+        // the only type of vector
+        Vector(elem_type, _) if matches!(elem_type.as_ref(), Float) => {
+            let v = VectorIterator::<CqlValue>::deserialize_vector_of_float_to_vec_of_cql_value(
+                typ, v,
+            )?;
+            CqlValue::Vector(DropOptimizedVec::non_dropping(v))
+        }
+        Vector(_, _) => {
+            let v = Vec::<CqlValue>::deserialize(typ, v)?;
+            CqlValue::Vector(DropOptimizedVec::dropping(v))
         }
     })
 }

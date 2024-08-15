@@ -47,6 +47,8 @@ pub enum ParseError {
     IoError(#[from] std::io::Error),
     #[error("type not yet implemented, id: {0}")]
     TypeNotImplemented(u16),
+    #[error("invalid custom type: {0}")]
+    InvalidCustomType(String),
     #[error(transparent)]
     SerializeValuesError(#[from] SerializeValuesError),
     #[error(transparent)]
