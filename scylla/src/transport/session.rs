@@ -17,7 +17,7 @@ pub use scylla_cql::errors::TranslationError;
 use scylla_cql::frame::response::result::{deser_cql_value, ColumnSpec, Rows};
 use scylla_cql::frame::response::NonErrorResponse;
 use scylla_cql::types::serialize::batch::BatchValues;
-use scylla_cql::types::serialize::row::SerializeRow;
+use scylla_cql::types::serialize::row::{SerializeRow, SerializedValues};
 use std::borrow::Borrow;
 use std::collections::HashMap;
 use std::fmt::Display;
@@ -52,7 +52,7 @@ use crate::frame::response::result;
 use crate::prepared_statement::PreparedStatement;
 use crate::query::Query;
 use crate::routing::{Shard, Token};
-use crate::statement::{Consistency, PagingState};
+use crate::statement::{Consistency, PageSize, PagingState};
 use crate::tracing::{TracingEvent, TracingInfo};
 use crate::transport::cluster::{Cluster, ClusterData, ClusterNeatDebug};
 use crate::transport::connection::{Connection, ConnectionConfig, VerifiedKeyspaceName};
@@ -623,7 +623,9 @@ impl Session {
         query: impl Into<Query>,
         values: impl SerializeRow,
     ) -> Result<QueryResult, QueryError> {
-        self.query_paged(query, values, PagingState::start()).await
+        let query = query.into();
+        self.query_inner(&query, values, None, PagingState::start())
+            .await
     }
 
     /// Queries the database with a custom paging state.
@@ -643,8 +645,34 @@ impl Session {
         values: impl SerializeRow,
         paging_state: PagingState,
     ) -> Result<QueryResult, QueryError> {
-        let query: Query = query.into();
+        let query = query.into();
+        self.query_inner(
+            &query,
+            values,
+            Some(query.get_validated_page_size()),
+            paging_state,
+        )
+        .await
+    }
 
+    /// Queries the database with a custom paging state.
+    ///
+    /// It is discouraged to use this method with non-empty values argument (`is_empty()` method from `SerializeRow`
+    /// trait returns false). In such case, query first needs to be prepared (on a single connection), so
+    /// driver will perform 2 round trips instead of 1. Please use [`Session::execute_paged()`] instead.
+    ///
+    /// # Arguments
+    ///
+    /// * `query` - query to be performed
+    /// * `values` - values bound to the query
+    /// * `paging_state` - previously received paging state or [PagingState::start()]
+    async fn query_inner(
+        &self,
+        query: &Query,
+        values: impl SerializeRow,
+        page_size: Option<PageSize>,
+        paging_state: PagingState,
+    ) -> Result<QueryResult, QueryError> {
         let execution_profile = query
             .get_execution_profile_handle()
             .unwrap_or_else(|| self.get_default_execution_profile_handle())
@@ -661,8 +689,6 @@ impl Session {
                 .unwrap_or(execution_profile.serial_consistency),
             ..Default::default()
         };
-
-        let page_size = Some(query.get_validated_page_size());
 
         let span = RequestSpan::new_query(&query.contents);
         let span_ref = &span;
@@ -980,16 +1006,11 @@ impl Session {
         prepared: &PreparedStatement,
         values: impl SerializeRow,
     ) -> Result<QueryResult, QueryError> {
-        self.execute_paged(prepared, values, PagingState::start())
+        let serialized_values = prepared.serialize_values(&values)?;
+        self.execute_inner(prepared, &serialized_values, None, PagingState::start())
             .await
     }
 
-    /// Executes a previously prepared statement with previously received paging state
-    /// # Arguments
-    ///
-    /// * `prepared` - a statement prepared with [prepare](crate::transport::session::Session::prepare)
-    /// * `values` - values bound to the query
-    /// * `paging_state` - paging state from the previous query or [PagingState::start()]
     pub async fn execute_paged(
         &self,
         prepared: &PreparedStatement,
@@ -997,6 +1018,24 @@ impl Session {
         paging_state: PagingState,
     ) -> Result<QueryResult, QueryError> {
         let serialized_values = prepared.serialize_values(&values)?;
+        let page_size = prepared.get_validated_page_size();
+        self.execute_inner(prepared, &serialized_values, Some(page_size), paging_state)
+            .await
+    }
+
+    /// Executes a previously prepared statement with previously received paging state
+    /// # Arguments
+    ///
+    /// * `prepared` - a statement prepared with [prepare](crate::transport::session::Session::prepare)
+    /// * `values` - values bound to the statement
+    /// * `paging_state` - paging state from the previous execution or [PagingState::start()]
+    async fn execute_inner(
+        &self,
+        prepared: &PreparedStatement,
+        serialized_values: &SerializedValues,
+        page_size: Option<PageSize>,
+        paging_state: PagingState,
+    ) -> Result<QueryResult, QueryError> {
         let values_ref = &serialized_values;
         let paging_state_ref = &paging_state;
 
@@ -1024,8 +1063,6 @@ impl Session {
             table: table_spec,
             is_confirmed_lwt: prepared.is_confirmed_lwt(),
         };
-
-        let page_size = Some(prepared.get_validated_page_size());
 
         let span = RequestSpan::new_prepared(
             partition_key.as_ref().map(|pk| pk.iter()),
