@@ -66,11 +66,11 @@ let to_insert = MyType {
 };
 
 session
-    .query("INSERT INTO keyspace.table (a) VALUES(?)", (to_insert,))
+    .query_unpaged("INSERT INTO keyspace.table (a) VALUES(?)", (to_insert,))
     .await?;
 
 // Read MyType from the table
-let result = session.query("SELECT a FROM keyspace.table", &[]).await?;
+let result = session.query_unpaged("SELECT a FROM keyspace.table", &[]).await?;
 let mut iter = result.rows_typed::<(MyType,)>()?;
 while let Some((my_type_value,)) = iter.next().transpose()? {
     println!("{:?}", my_type_value);

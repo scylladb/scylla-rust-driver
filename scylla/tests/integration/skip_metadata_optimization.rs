@@ -28,13 +28,13 @@ async fn test_skip_result_metadata() {
             .unwrap();
 
         let ks = unique_keyspace_name();
-        session.query(format!("CREATE KEYSPACE IF NOT EXISTS {} WITH REPLICATION = {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 3}}", ks), &[]).await.unwrap();
+        session.query_unpaged(format!("CREATE KEYSPACE IF NOT EXISTS {} WITH REPLICATION = {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 3}}", ks), &[]).await.unwrap();
         session.use_keyspace(ks, false).await.unwrap();
         session
-            .query("CREATE TABLE t (a int primary key, b int, c text)", &[])
+            .query_unpaged("CREATE TABLE t (a int primary key, b int, c text)", &[])
             .await
             .unwrap();
-        session.query("INSERT INTO t (a, b, c) VALUES (1, 2, 'foo_filter_data')", &[]).await.unwrap();
+        session.query_unpaged("INSERT INTO t (a, b, c) VALUES (1, 2, 'foo_filter_data')", &[]).await.unwrap();
 
         let mut prepared = session.prepare("SELECT a, b, c FROM t").await.unwrap();
 
@@ -56,7 +56,7 @@ async fn test_skip_result_metadata() {
             rx: &mut tokio::sync::mpsc::UnboundedReceiver<(ResponseFrame, Option<TargetShard>)>,
             predicate: impl FnOnce(i32) -> bool
         ) {
-            session.execute(prepared, &[]).await.unwrap();
+            session.execute_unpaged(prepared, &[]).await.unwrap();
 
             let (frame, _shard) = rx.recv().await.unwrap();
             let mut buf = &*frame.body;
@@ -83,12 +83,12 @@ async fn test_skip_result_metadata() {
         {
             let ks = unique_keyspace_name();
 
-            session.query(format!("CREATE KEYSPACE IF NOT EXISTS {} WITH REPLICATION = {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}}", ks), &[]).await.unwrap();
+            session.query_unpaged(format!("CREATE KEYSPACE IF NOT EXISTS {} WITH REPLICATION = {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}}", ks), &[]).await.unwrap();
             session.use_keyspace(ks, true).await.unwrap();
 
             type RowT = (i32, i32, String);
             session
-                .query(
+                .query_unpaged(
                     "CREATE TABLE IF NOT EXISTS t2 (a int, b int, c text, primary key (a, b))",
                     &[],
                 )
@@ -102,7 +102,7 @@ async fn test_skip_result_metadata() {
 
             for idx in 0..10 {
                 session
-                    .execute(&insert_stmt, (idx, idx + 1, "Some text"))
+                    .execute_unpaged(&insert_stmt, (idx, idx + 1, "Some text"))
                     .await
                     .unwrap();
             }
@@ -111,7 +111,7 @@ async fn test_skip_result_metadata() {
                 let select_query = "SELECT a, b, c FROM t2";
 
                 let rs = session
-                    .query(select_query, ())
+                    .query_unpaged(select_query, ())
                     .await
                     .unwrap()
                     .rows_typed::<RowT>()

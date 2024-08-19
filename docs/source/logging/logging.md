@@ -32,7 +32,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
     let session: Session = SessionBuilder::new().known_node(uri).build().await?;
     session
-        .query(
+        .query_unpaged(
             "CREATE KEYSPACE IF NOT EXISTS ks WITH REPLICATION = \
             {'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}",
             &[],
@@ -40,7 +40,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
         .await?;
 
     // This query should generate a warning message
-    session.query("USE ks", &[]).await?;
+    session.query_unpaged("USE ks", &[]).await?;
 
     Ok(())
 }
@@ -82,9 +82,9 @@ async fn main() -> Result<(), Box<dyn Error>> {
     info!("Connecting to {}", uri);
 
     let session: Session = SessionBuilder::new().known_node(uri).build().await?;
-    session.query("CREATE KEYSPACE IF NOT EXISTS examples_ks WITH REPLICATION = {'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}", &[]).await?;
+    session.query_unpaged("CREATE KEYSPACE IF NOT EXISTS examples_ks WITH REPLICATION = {'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}", &[]).await?;
 
-    session.query("USE examples_ks", &[]).await?;
+    session.query_unpaged("USE examples_ks", &[]).await?;
 
     Ok(())
 }

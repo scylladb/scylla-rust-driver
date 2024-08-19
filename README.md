@@ -19,7 +19,7 @@ let uri = "127.0.0.1:9042";
 
 let session: Session = SessionBuilder::new().known_node(uri).build().await?;
 
-let result = session.query("SELECT a, b, c FROM ks.t", &[]).await?;
+let result = session.query_unpaged("SELECT a, b, c FROM ks.t", &[]).await?;
 let mut iter = result.rows_typed::<(i32, i32, String)>()?;
 while let Some((a, b, c)) = iter.next().transpose()? {
     println!("a, b, c: {}, {}, {}", a, b, c);

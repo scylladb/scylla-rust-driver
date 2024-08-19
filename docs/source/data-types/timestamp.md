@@ -26,12 +26,12 @@ let to_insert = CqlTimestamp(64 * 1000);
 
 // Write timestamp to the table
 session
-    .query("INSERT INTO keyspace.table (a) VALUES(?)", (to_insert,))
+    .query_unpaged("INSERT INTO keyspace.table (a) VALUES(?)", (to_insert,))
     .await?;
 
 // Read timestamp from the table
 if let Some(rows) = session
-    .query("SELECT a FROM keyspace.table", &[])
+    .query_unpaged("SELECT a FROM keyspace.table", &[])
     .await?
     .rows
 {
@@ -68,11 +68,11 @@ let to_insert = NaiveDateTime::new(
 
 // Write timestamp to the table
 session
-    .query("INSERT INTO keyspace.table (a) VALUES(?)", (to_insert,))
+    .query_unpaged("INSERT INTO keyspace.table (a) VALUES(?)", (to_insert,))
     .await?;
 
 // Read timestamp from the table
-let result = session.query("SELECT a FROM keyspace.table", &[]).await?;
+let result = session.query_unpaged("SELECT a FROM keyspace.table", &[]).await?;
 let mut iter = result.rows_typed::<(DateTime<Utc>,)>()?;
 while let Some((timestamp_value,)) = iter.next().transpose()? {
     println!("{:?}", timestamp_value);
@@ -107,11 +107,11 @@ let to_insert = PrimitiveDateTime::new(
 
 // Write timestamp to the table
 session
-    .query("INSERT INTO keyspace.table (a) VALUES(?)", (to_insert,))
+    .query_unpaged("INSERT INTO keyspace.table (a) VALUES(?)", (to_insert,))
     .await?;
 
 // Read timestamp from the table
-let result = session.query("SELECT a FROM keyspace.table", &[]).await?;
+let result = session.query_unpaged("SELECT a FROM keyspace.table", &[]).await?;
 let mut iter = result.rows_typed::<(OffsetDateTime,)>()?;
 while let Some((timestamp_value,)) = iter.next().transpose()? {
     println!("{:?}", timestamp_value);

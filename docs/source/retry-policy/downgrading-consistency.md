@@ -90,7 +90,7 @@ my_query.set_execution_profile_handle(Some(handle));
 
 // Run the query using this retry policy
 let to_insert: i32 = 12345;
-session.query(my_query, (to_insert,)).await?;
+session.query_unpaged(my_query, (to_insert,)).await?;
 # Ok(())
 # }
 ```
@@ -120,7 +120,7 @@ prepared.set_execution_profile_handle(Some(handle));
 
 // Run the query using this retry policy
 let to_insert: i32 = 12345;
-session.execute(&prepared, (to_insert,)).await?;
+session.execute_unpaged(&prepared, (to_insert,)).await?;
 # Ok(())
 # }
 ```

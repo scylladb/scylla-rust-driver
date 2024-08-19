@@ -43,7 +43,7 @@ pub(crate) async fn supports_feature(session: &Session, feature: &str) -> bool {
     }
 
     let (features,): (Option<String>,) = session
-        .query("SELECT supported_features FROM system.local", ())
+        .query_unpaged("SELECT supported_features FROM system.local", ())
         .await
         .unwrap()
         .single_row_typed()
@@ -94,7 +94,7 @@ pub fn create_new_session_builder() -> GenericSessionBuilder<impl SessionBuilder
 
 pub async fn scylla_supports_tablets(session: &Session) -> bool {
     let result = session
-        .query(
+        .query_unpaged(
             "select column_name from system_schema.columns where 
                 keyspace_name = 'system_schema'
                 and table_name = 'scylla_keyspaces'

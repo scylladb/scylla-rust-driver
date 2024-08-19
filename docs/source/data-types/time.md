@@ -25,12 +25,12 @@ let to_insert = CqlTime(64 * 1_000_000_000);
 
 // Insert time into the table
 session
-    .query("INSERT INTO keyspace.table (a) VALUES(?)", (to_insert,))
+    .query_unpaged("INSERT INTO keyspace.table (a) VALUES(?)", (to_insert,))
     .await?;
 
 // Read time from the table
 if let Some(rows) = session
-    .query("SELECT a FROM keyspace.table", &[])
+    .query_unpaged("SELECT a FROM keyspace.table", &[])
     .await?
     .rows
 {
@@ -63,11 +63,11 @@ let to_insert = NaiveTime::from_hms_nano_opt(1, 2, 3, 456_789_012);
 
 // Insert time into the table
 session
-    .query("INSERT INTO keyspace.table (a) VALUES(?)", (to_insert,))
+    .query_unpaged("INSERT INTO keyspace.table (a) VALUES(?)", (to_insert,))
     .await?;
 
 // Read time from the table
-let result = session.query("SELECT a FROM keyspace.table", &[]).await?;
+let result = session.query_unpaged("SELECT a FROM keyspace.table", &[]).await?;
 let mut iter = result.rows_typed::<(NaiveTime,)>()?;
 while let Some((time_value,)) = iter.next().transpose()? {
     println!("{:?}", time_value);
@@ -95,11 +95,11 @@ let to_insert = Time::from_hms_nano(1, 2, 3, 456_789_012).unwrap();
 
 // Insert time into the table
 session
-    .query("INSERT INTO keyspace.table (a) VALUES(?)", (to_insert,))
+    .query_unpaged("INSERT INTO keyspace.table (a) VALUES(?)", (to_insert,))
     .await?;
 
 // Read time from the table
-let result = session.query("SELECT a FROM keyspace.table", &[]).await?;
+let result = session.query_unpaged("SELECT a FROM keyspace.table", &[]).await?;
 let mut iter = result.rows_typed::<(Time,)>()?;
 while let Some((time_value,)) = iter.next().transpose()? {
     println!("{:?}", time_value);

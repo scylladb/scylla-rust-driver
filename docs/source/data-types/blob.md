@@ -13,11 +13,11 @@ use scylla::IntoTypedRows;
 // We can insert it by reference to not move the whole blob
 let to_insert: Vec<u8> = vec![1, 2, 3, 4, 5];
 session
-    .query("INSERT INTO keyspace.table (a) VALUES(?)", (&to_insert,))
+    .query_unpaged("INSERT INTO keyspace.table (a) VALUES(?)", (&to_insert,))
     .await?;
 
 // Read blobs from the table
-let result = session.query("SELECT a FROM keyspace.table", &[]).await?;
+let result = session.query_unpaged("SELECT a FROM keyspace.table", &[]).await?;
 let mut iter = result.rows_typed::<(Vec<u8>,)>()?;
 while let Some((blob_value,)) = iter.next().transpose()? {
     println!("{:?}", blob_value);

@@ -33,14 +33,14 @@ In the driver this can be achieved using `Session::use_keyspace`:
 # use std::error::Error;
 # async fn check_only_compiles(session: &Session) -> Result<(), Box<dyn Error>> {
 session
-    .query("INSERT INTO my_keyspace.tab (a) VALUES ('test1')", &[])
+    .query_unpaged("INSERT INTO my_keyspace.tab (a) VALUES ('test1')", &[])
     .await?;
 
 session.use_keyspace("my_keyspace", false).await?;
 
 // Now we can omit keyspace name in the query
 session
-    .query("INSERT INTO tab (a) VALUES ('test2')", &[])
+    .query_unpaged("INSERT INTO tab (a) VALUES ('test2')", &[])
     .await?;
 # Ok(())
 # }
@@ -55,7 +55,7 @@ It is also possible to send raw use keyspace query using `Session::query` instea
 # use scylla::Session;
 # use std::error::Error;
 # async fn check_only_compiles(session: &Session) -> Result<(), Box<dyn Error>> {
-session.query("USE my_keyspace", &[]).await?;
+session.query_unpaged("USE my_keyspace", &[]).await?;
 # Ok(())
 # }
 ```

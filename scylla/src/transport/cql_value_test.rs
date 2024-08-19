@@ -10,7 +10,7 @@ async fn test_cqlvalue_udt() {
     let session: Session = create_new_session_builder().build().await.unwrap();
     let ks = unique_keyspace_name();
     session
-        .query(
+        .query_unpaged(
             format!(
                 "CREATE KEYSPACE IF NOT EXISTS {} WITH REPLICATION = \
             {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}}",
@@ -23,14 +23,14 @@ async fn test_cqlvalue_udt() {
     session.use_keyspace(&ks, false).await.unwrap();
 
     session
-        .query(
+        .query_unpaged(
             "CREATE TYPE IF NOT EXISTS cqlvalue_udt_type (int_val int, text_val text)",
             &[],
         )
         .await
         .unwrap();
     session
-        .query(
+        .query_unpaged(
             "CREATE TABLE IF NOT EXISTS cqlvalue_udt_test (k int, my cqlvalue_udt_type, primary key (k))",
             &[],
         )
@@ -47,7 +47,7 @@ async fn test_cqlvalue_udt() {
     };
 
     session
-        .query(
+        .query_unpaged(
             "INSERT INTO cqlvalue_udt_test (k, my) VALUES (5, ?)",
             (&udt_cql_value,),
         )
@@ -55,7 +55,7 @@ async fn test_cqlvalue_udt() {
         .unwrap();
 
     let rows = session
-        .query("SELECT my FROM cqlvalue_udt_test", &[])
+        .query_unpaged("SELECT my FROM cqlvalue_udt_test", &[])
         .await
         .unwrap()
         .rows
@@ -76,7 +76,7 @@ async fn test_cqlvalue_duration() {
 
     let ks = unique_keyspace_name();
     session
-        .query(
+        .query_unpaged(
             format!(
                 "CREATE KEYSPACE IF NOT EXISTS {} WITH REPLICATION = \
                 {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}}",
@@ -103,11 +103,11 @@ async fn test_cqlvalue_duration() {
     ];
 
     for query in fixture_queries {
-        session.query(query.0, query.1).await.unwrap();
+        session.query_unpaged(query.0, query.1).await.unwrap();
     }
 
     let rows = session
-        .query(
+        .query_unpaged(
             "SELECT v FROM cqlvalue_duration_test WHERE pk = ?",
             (CqlValue::Int(0),),
         )

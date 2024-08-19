@@ -14,10 +14,10 @@ async fn main() -> Result<()> {
     let session: Session = SessionBuilder::new().known_node(uri).build().await?;
     let session = Arc::new(session);
 
-    session.query("CREATE KEYSPACE IF NOT EXISTS examples_ks WITH REPLICATION = {'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}", &[]).await?;
+    session.query_unpaged("CREATE KEYSPACE IF NOT EXISTS examples_ks WITH REPLICATION = {'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}", &[]).await?;
 
     session
-        .query(
+        .query_unpaged(
             "CREATE TABLE IF NOT EXISTS examples_ks.parallel_prepared (a int, b int, c text, primary key (a, b))",
             &[],
         )
@@ -42,7 +42,7 @@ async fn main() -> Result<()> {
         let permit = sem.clone().acquire_owned().await;
         tokio::task::spawn(async move {
             session
-                .execute(&prepared, (i as i32, 2 * i as i32))
+                .execute_unpaged(&prepared, (i as i32, 2 * i as i32))
                 .await
                 .unwrap();
 

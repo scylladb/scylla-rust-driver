@@ -12,11 +12,11 @@ use scylla::frame::value::CqlDuration;
 // Insert some duration into the table
 let to_insert: CqlDuration = CqlDuration { months: 1, days: 2, nanoseconds: 3 };
 session
-    .query("INSERT INTO keyspace.table (a) VALUES(?)", (to_insert,))
+    .query_unpaged("INSERT INTO keyspace.table (a) VALUES(?)", (to_insert,))
     .await?;
 
 // Read duration from the table
-let result = session.query("SELECT a FROM keyspace.table", &[]).await?;
+let result = session.query_unpaged("SELECT a FROM keyspace.table", &[]).await?;
 let mut iter = result.rows_typed::<(CqlDuration,)>()?;
 while let Some((duration_value,)) = iter.next().transpose()? {
     println!("{:?}", duration_value);

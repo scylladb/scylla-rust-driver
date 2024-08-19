@@ -219,7 +219,7 @@ async fn main() -> Result<()> {
                     continue;
                 }
                 rl.add_history_entry(line.as_str());
-                let maybe_res = session.query(line, &[]).await;
+                let maybe_res = session.query_unpaged(line, &[]).await;
                 match maybe_res {
                     Err(err) => println!("Error: {}", err),
                     Ok(res) => print_result(&res),

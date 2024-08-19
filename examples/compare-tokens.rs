@@ -12,10 +12,10 @@ async fn main() -> Result<()> {
 
     let session: Session = SessionBuilder::new().known_node(uri).build().await?;
 
-    session.query("CREATE KEYSPACE IF NOT EXISTS examples_ks WITH REPLICATION = {'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}", &[]).await?;
+    session.query_unpaged("CREATE KEYSPACE IF NOT EXISTS examples_ks WITH REPLICATION = {'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}", &[]).await?;
 
     session
-        .query(
+        .query_unpaged(
             "CREATE TABLE IF NOT EXISTS examples_ks.compare_tokens (pk bigint primary key)",
             &[],
         )
@@ -27,7 +27,7 @@ async fn main() -> Result<()> {
 
     for pk in (0..100_i64).chain(99840..99936_i64) {
         session
-            .query(
+            .query_unpaged(
                 "INSERT INTO examples_ks.compare_tokens (pk) VALUES (?)",
                 (pk,),
             )
@@ -46,7 +46,7 @@ async fn main() -> Result<()> {
         );
 
         let (qt,) = session
-            .query(
+            .query_unpaged(
                 "SELECT token(pk) FROM examples_ks.compare_tokens where pk = ?",
                 (pk,),
             )

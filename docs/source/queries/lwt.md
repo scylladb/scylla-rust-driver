@@ -21,7 +21,7 @@ my_query.set_serial_consistency(Some(SerialConsistency::Serial));
 
 // Insert a value into the table
 let to_insert: i32 = 12345;
-session.query(my_query, (to_insert,)).await?;
+session.query_unpaged(my_query, (to_insert,)).await?;
 # Ok(())
 # }
 ```

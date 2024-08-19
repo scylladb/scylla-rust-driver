@@ -23,7 +23,7 @@ let history_listener = Arc::new(HistoryCollector::new());
 query.set_history_listener(history_listener.clone());
 
 // Run the query, doesn't matter if it failed, the history will still be saved
-let _ignore_error = session.query(query.clone(), ()).await;
+let _ignore_error = session.query_unpaged(query.clone(), ()).await;
 
 // Access the collected history and print it
 let structured_history: StructuredHistory = history_listener.clone_structured_history();

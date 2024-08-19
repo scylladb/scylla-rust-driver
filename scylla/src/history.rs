@@ -924,7 +924,7 @@ mod tests {
         let history_collector = Arc::new(HistoryCollector::new());
         query.set_history_listener(history_collector.clone());
 
-        session.query(query.clone(), ()).await.unwrap();
+        session.query_unpaged(query.clone(), ()).await.unwrap();
 
         let history: StructuredHistory = history_collector.clone_structured_history();
 
@@ -949,7 +949,7 @@ mod tests {
 
         // Prepared queries retain the history listener set in Query.
         let prepared = session.prepare(query).await.unwrap();
-        session.execute(&prepared, ()).await.unwrap();
+        session.execute_unpaged(&prepared, ()).await.unwrap();
 
         let history2: StructuredHistory = history_collector.clone_structured_history();
 
@@ -991,7 +991,7 @@ mod tests {
         let history_collector = Arc::new(HistoryCollector::new());
         query.set_history_listener(history_collector.clone());
 
-        assert!(session.query(query.clone(), ()).await.is_err());
+        assert!(session.query_unpaged(query.clone(), ()).await.is_err());
 
         let history: StructuredHistory = history_collector.clone_structured_history();
 
@@ -1025,18 +1025,18 @@ mod tests {
         let session = create_new_session_builder().build().await.unwrap();
         let ks = unique_keyspace_name();
         session
-        .query(format!("CREATE KEYSPACE {} WITH REPLICATION = {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}}", ks), &[])
+        .query_unpaged(format!("CREATE KEYSPACE {} WITH REPLICATION = {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}}", ks), &[])
         .await
         .unwrap();
         session.use_keyspace(ks, true).await.unwrap();
 
         session
-            .query("CREATE TABLE t (p int primary key)", ())
+            .query_unpaged("CREATE TABLE t (p int primary key)", ())
             .await
             .unwrap();
         for i in 0..32 {
             session
-                .query("INSERT INTO t (p) VALUES (?)", (i,))
+                .query_unpaged("INSERT INTO t (p) VALUES (?)", (i,))
                 .await
                 .unwrap();
         }

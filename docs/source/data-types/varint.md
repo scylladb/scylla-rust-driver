@@ -25,11 +25,11 @@ use std::str::FromStr;
 // Insert a varint into the table
 let to_insert: BigInt = BigInt::from_str("12345")?;
 session
-    .query("INSERT INTO keyspace.table (a) VALUES(?)", (to_insert,))
+    .query_unpaged("INSERT INTO keyspace.table (a) VALUES(?)", (to_insert,))
     .await?;
 
 // Read a varint from the table
-let result = session.query("SELECT a FROM keyspace.table", &[]).await?;
+let result = session.query_unpaged("SELECT a FROM keyspace.table", &[]).await?;
 let mut iter = result.rows_typed::<(BigInt,)>()?;
 while let Some((varint_value,)) = iter.next().transpose()? {
     println!("{:?}", varint_value);

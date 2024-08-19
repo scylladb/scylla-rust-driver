@@ -199,7 +199,7 @@ async fn send_statement_everywhere(
                 .build();
             stmt.set_execution_profile_handle(Some(execution_profile.into_handle()));
 
-            async move { session.execute(&stmt, values_ref).await }
+            async move { session.execute_unpaged(&stmt, values_ref).await }
         })
     });
 
@@ -223,7 +223,7 @@ async fn send_unprepared_query_everywhere(
                 .build();
             stmt.set_execution_profile_handle(Some(execution_profile.into_handle()));
 
-            async move { session.query(stmt, &()).await }
+            async move { session.query_unpaged(stmt, &()).await }
         })
     });
 
@@ -251,7 +251,7 @@ fn count_tablet_feedbacks(
 
 async fn prepare_schema(session: &Session, ks: &str, table: &str, tablet_count: usize) {
     session
-        .query(
+        .query_unpaged(
             format!(
                 "CREATE KEYSPACE IF NOT EXISTS {} 
             WITH REPLICATION = {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 2}}
@@ -263,7 +263,7 @@ async fn prepare_schema(session: &Session, ks: &str, table: &str, tablet_count: 
         .await
         .unwrap();
     session
-        .query(
+        .query_unpaged(
             format!(
                 "CREATE TABLE IF NOT EXISTS {}.{} (a int, b int, c text, primary key (a, b))",
                 ks, table
@@ -366,9 +366,11 @@ async fn test_default_policy_is_tablet_aware() {
                     values,
                     prepared.calculate_token(&values).unwrap().unwrap().value()
                 );
-                try_join_all((0..100).map(|_| async { session.execute(&prepared, values).await }))
-                    .await
-                    .unwrap();
+                try_join_all(
+                    (0..100).map(|_| async { session.execute_unpaged(&prepared, values).await }),
+                )
+                .await
+                .unwrap();
                 let feedbacks: usize = feedback_rxs.iter_mut().map(count_tablet_feedbacks).sum();
                 if feedbacks > 0 {
                     total_tablets_with_feedback += 1;
@@ -386,9 +388,11 @@ async fn test_default_policy_is_tablet_aware() {
                     values,
                     prepared.calculate_token(&values).unwrap().unwrap().value()
                 );
-                try_join_all((0..100).map(|_| async { session.execute(&prepared, values).await }))
-                    .await
-                    .unwrap();
+                try_join_all(
+                    (0..100).map(|_| async { session.execute_unpaged(&prepared, values).await }),
+                )
+                .await
+                .unwrap();
                 let feedbacks: usize = feedback_rxs.iter_mut().map(count_tablet_feedbacks).sum();
                 assert_eq!(feedbacks, 0);
             }
@@ -578,7 +582,9 @@ async fn test_lwt_optimization_works_with_tablets() {
                         .value()
                 );
                 try_join_all((0..100).map(|_| async {
-                    session.execute(&prepared_lwt_update, &("abc", a, b)).await
+                    session
+                        .execute_unpaged(&prepared_lwt_update, &("abc", a, b))
+                        .await
                 }))
                 .await
                 .unwrap();

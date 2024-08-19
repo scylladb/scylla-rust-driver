@@ -26,10 +26,10 @@ async fn main() -> Result<()> {
         .build()
         .await?;
 
-    session.query("CREATE KEYSPACE IF NOT EXISTS examples_ks WITH REPLICATION = {'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}", &[]).await?;
+    session.query_unpaged("CREATE KEYSPACE IF NOT EXISTS examples_ks WITH REPLICATION = {'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}", &[]).await?;
 
     session
-        .query(
+        .query_unpaged(
             "CREATE TABLE IF NOT EXISTS examples_ks.speculative_execution (a int, b int, c text, primary key (a, b))",
             &[],
         )
@@ -43,7 +43,7 @@ async fn main() -> Result<()> {
     select_stmt.set_is_idempotent(true);
 
     // This will trigger speculative execution
-    session.execute(&select_stmt, &[]).await?;
+    session.execute_unpaged(&select_stmt, &[]).await?;
 
     Ok(())
 }

@@ -17,19 +17,19 @@ A few examples:
 # use std::collections::HashMap;
 # async fn check_only_compiles(session: &Session) -> Result<(), Box<dyn Error>> {
 // Empty slice means that there are no values to send
-session.query("INSERT INTO ks.tab (a) VALUES(1)", &[]).await?;
+session.query_unpaged("INSERT INTO ks.tab (a) VALUES(1)", &[]).await?;
 
 // Empty tuple/unit also means that there are no values to send
-session.query("INSERT INTO ks.tab (a) VALUES(1)", ()).await?;
+session.query_unpaged("INSERT INTO ks.tab (a) VALUES(1)", ()).await?;
 
 // Sending three integers using a slice:
 session
-    .query("INSERT INTO ks.tab (a, b, c) VALUES(?, ?, ?)", [1_i32, 2, 3].as_ref())
+    .query_unpaged("INSERT INTO ks.tab (a, b, c) VALUES(?, ?, ?)", [1_i32, 2, 3].as_ref())
     .await?;
 
 // Sending an integer and a string using a tuple
 session
-    .query("INSERT INTO ks.tab (a, b) VALUES(?, ?)", (2_i32, "Some text"))
+    .query_unpaged("INSERT INTO ks.tab (a, b) VALUES(?, ?)", (2_i32, "Some text"))
     .await?;
 
 // Sending an integer and a string using a named struct.
@@ -52,7 +52,7 @@ let int_string = IntString {
 };
 
 session
-    .query("INSERT INTO ks.tab (a, b) VALUES(?, ?)", int_string)
+    .query_unpaged("INSERT INTO ks.tab (a, b) VALUES(?, ?)", int_string)
     .await?;
 
 // You can use named bind markers in query if you want
@@ -69,15 +69,15 @@ let int_string_custom = IntStringCustom {
 };
 
 session
-    .query("INSERT INTO ks.tab (a, b) VALUES(:first_value, :second_value)", int_string_custom)
+    .query_unpaged("INSERT INTO ks.tab (a, b) VALUES(:first_value, :second_value)", int_string_custom)
     .await?;
 
 // Sending a single value as a tuple requires a trailing coma (Rust syntax):
-session.query("INSERT INTO ks.tab (a) VALUES(?)", (2_i32,)).await?;
+session.query_unpaged("INSERT INTO ks.tab (a) VALUES(?)", (2_i32,)).await?;
 
 // Each value can also be sent using a reference:
 session
-    .query("INSERT INTO ks.tab (a, b) VALUES(?, ?)", &(&2_i32, &"Some text"))
+    .query_unpaged("INSERT INTO ks.tab (a, b) VALUES(?, ?)", &(&2_i32, &"Some text"))
     .await?;
 
 // A map of named values can also be provided:
@@ -85,7 +85,7 @@ let mut vals: HashMap<&str, CqlValue> = HashMap::new();
 vals.insert("avalue", CqlValue::Text("hello".to_string()));
 vals.insert("bvalue", CqlValue::Int(17));
 session
-    .query("INSERT INTO ks.tab (a, b) VALUES(:avalue, :bvalue)", &vals)
+    .query_unpaged("INSERT INTO ks.tab (a, b) VALUES(:avalue, :bvalue)", &vals)
     .await?;
 
 # Ok(())
@@ -101,7 +101,7 @@ Null values can be sent using `Option<>` - sending a `None` will make the value 
 # async fn check_only_compiles(session: &Session) -> Result<(), Box<dyn Error>> {
 let null_i32: Option<i32> = None;
 session
-    .query("INSERT INTO ks.tab (a) VALUES(?)", (null_i32,))
+    .query_unpaged("INSERT INTO ks.tab (a) VALUES(?)", (null_i32,))
     .await?;
 # Ok(())
 # }
@@ -122,18 +122,18 @@ use scylla::frame::value::{MaybeUnset, Unset};
 // Inserting a null results in suboptimal performance
 let null_i32: Option<i32> = None;
 session
-    .query("INSERT INTO ks.tab (a) VALUES(?)", (null_i32,))
+    .query_unpaged("INSERT INTO ks.tab (a) VALUES(?)", (null_i32,))
     .await?;
 
 // Using MaybeUnset enum is better
 let unset_i32: MaybeUnset<i32> = MaybeUnset::Unset;
 session
-    .query("INSERT INTO ks.tab (a) VALUES(?)", (unset_i32,))
+    .query_unpaged("INSERT INTO ks.tab (a) VALUES(?)", (unset_i32,))
     .await?;
 
 // If we are sure that a value should be unset we can simply use Unset
 session
-    .query("INSERT INTO ks.tab (a) VALUES(?)", (Unset,))
+    .query_unpaged("INSERT INTO ks.tab (a) VALUES(?)", (Unset,))
     .await?;
 # Ok(())
 # }

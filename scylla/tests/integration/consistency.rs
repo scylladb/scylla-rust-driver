@@ -60,10 +60,10 @@ const CREATE_TABLE_STR: &str = "CREATE TABLE consistency_tests (a int, b int, PR
 const QUERY_STR: &str = "INSERT INTO consistency_tests (a, b) VALUES (?, 1)";
 
 async fn create_schema(session: &Session, ks: &str) {
-    session.query(format!("CREATE KEYSPACE IF NOT EXISTS {} WITH REPLICATION = {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 3}}", ks), &[]).await.unwrap();
+    session.query_unpaged(format!("CREATE KEYSPACE IF NOT EXISTS {} WITH REPLICATION = {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 3}}", ks), &[]).await.unwrap();
     session.use_keyspace(ks, false).await.unwrap();
 
-    session.query(CREATE_TABLE_STR, &[]).await.unwrap();
+    session.query_unpaged(CREATE_TABLE_STR, &[]).await.unwrap();
 }
 
 // The following functions perform a request with consistencies set directly on a statement.
@@ -76,7 +76,7 @@ async fn query_consistency_set_directly(
     let mut query = query.clone();
     query.set_consistency(c);
     query.set_serial_consistency(sc);
-    session.query(query.clone(), (1,)).await.unwrap();
+    session.query_unpaged(query.clone(), (1,)).await.unwrap();
     session.query_iter(query, (1,)).await.unwrap();
 }
 
@@ -89,7 +89,7 @@ async fn execute_consistency_set_directly(
     let mut prepared = prepared.clone();
     prepared.set_consistency(c);
     prepared.set_serial_consistency(sc);
-    session.execute(&prepared, (1,)).await.unwrap();
+    session.execute_unpaged(&prepared, (1,)).await.unwrap();
     session.execute_iter(prepared, (1,)).await.unwrap();
 }
 
@@ -113,7 +113,7 @@ async fn query_consistency_set_on_exec_profile(
 ) {
     let mut query = query.clone();
     query.set_execution_profile_handle(Some(profile));
-    session.query(query.clone(), (1,)).await.unwrap();
+    session.query_unpaged(query.clone(), (1,)).await.unwrap();
     session.query_iter(query, (1,)).await.unwrap();
 }
 
@@ -124,7 +124,7 @@ async fn execute_consistency_set_on_exec_profile(
 ) {
     let mut prepared = prepared.clone();
     prepared.set_execution_profile_handle(Some(profile));
-    session.execute(&prepared, (1,)).await.unwrap();
+    session.execute_unpaged(&prepared, (1,)).await.unwrap();
     session.execute_iter(prepared, (1,)).await.unwrap();
 }
 
@@ -222,7 +222,7 @@ async fn check_for_all_consistencies_and_setting_options<
         rx = after_session_init(rx).await;
 
         session_with_consistencies
-            .query(QUERY_STR, (1,))
+            .query_unpaged(QUERY_STR, (1,))
             .await
             .unwrap();
         rx = check_consistencies(consistency, serial_consistency, rx).await;
@@ -233,7 +233,7 @@ async fn check_for_all_consistencies_and_setting_options<
         rx = check_consistencies(consistency, serial_consistency, rx).await;
 
         session_with_consistencies
-            .execute(&prepared, (1,))
+            .execute_unpaged(&prepared, (1,))
             .await
             .unwrap();
         rx = check_consistencies(consistency, serial_consistency, rx).await;
@@ -479,5 +479,5 @@ async fn consistency_allows_for_paxos_selects() {
 
     let mut query = Query::from("SELECT host_id FROM system.peers WHERE peer = '127.0.0.1'");
     query.set_consistency(Consistency::Serial);
-    session.query(query, ()).await.unwrap();
+    session.query_unpaged(query, ()).await.unwrap();
 }

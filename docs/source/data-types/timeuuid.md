@@ -17,11 +17,11 @@ use scylla::frame::value::CqlTimeuuid;
 let to_insert: CqlTimeuuid = CqlTimeuuid::from_str("8e14e760-7fa8-11eb-bc66-000000000001")?;
 
 session
-    .query("INSERT INTO keyspace.table (a) VALUES(?)", (to_insert,))
+    .query_unpaged("INSERT INTO keyspace.table (a) VALUES(?)", (to_insert,))
     .await?;
 
 // Read Timeuuid from the table
-let result = session.query("SELECT a FROM keyspace.table", &[]).await?;
+let result = session.query_unpaged("SELECT a FROM keyspace.table", &[]).await?;
 
 let mut iter = result.rows_typed::<(CqlTimeuuid, )>()?;
 
@@ -60,11 +60,11 @@ let node_id = [0x12, 0x34, 0x56, 0x78, 0x9A, 0xBC];
 let to_insert = CqlTimeuuid::from(Uuid::now_v1(&node_id));
 
 session
-    .query("INSERT INTO keyspace.table (a) VALUES(?)", (to_insert,))  
+    .query_unpaged("INSERT INTO keyspace.table (a) VALUES(?)", (to_insert,))  
     .await?;
 
 // Read Timeuuid from the table
-let result = session.query("SELECT a FROM keyspace.table", &[]).await?;
+let result = session.query_unpaged("SELECT a FROM keyspace.table", &[]).await?;
 
 let mut iter = result.rows_typed::<(CqlTimeuuid, )>()?;
 

@@ -618,7 +618,7 @@ impl Session {
     /// # Ok(())
     /// # }
     /// ```
-    pub async fn query(
+    pub async fn query_unpaged(
         &self,
         query: impl Into<Query>,
         values: impl SerializeRow,
@@ -1001,7 +1001,7 @@ impl Session {
     /// # Ok(())
     /// # }
     /// ```
-    pub async fn execute(
+    pub async fn execute_unpaged(
         &self,
         prepared: &PreparedStatement,
         values: impl SerializeRow,
@@ -1509,8 +1509,8 @@ impl Session {
         traces_events_query.set_page_size(TRACING_QUERY_PAGE_SIZE);
 
         let (traces_session_res, traces_events_res) = tokio::try_join!(
-            self.query(traces_session_query, (tracing_id,)),
-            self.query(traces_events_query, (tracing_id,))
+            self.query_unpaged(traces_session_query, (tracing_id,)),
+            self.query_unpaged(traces_events_query, (tracing_id,))
         )?;
 
         // Get tracing info

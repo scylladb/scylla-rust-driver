@@ -9,7 +9,7 @@ Simple query takes query text and values and simply executes them on a `Session`
 // Insert a value into the table
 let to_insert: i32 = 12345;
 session
-    .query("INSERT INTO keyspace.table (a) VALUES(?)", (to_insert,))
+    .query_unpaged("INSERT INTO keyspace.table (a) VALUES(?)", (to_insert,))
     .await?;
 # Ok(())
 # }
@@ -44,7 +44,7 @@ my_query.set_consistency(Consistency::One);
 
 // Insert a value into the table
 let to_insert: i32 = 12345;
-session.query(my_query, (to_insert,)).await?;
+session.query_unpaged(my_query, (to_insert,)).await?;
 # Ok(())
 # }
 ```
@@ -63,7 +63,7 @@ The easiest way is to pass values using a tuple:
 # async fn check_only_compiles(session: &Session) -> Result<(), Box<dyn Error>> {
 // Sending an integer and a string using a tuple
 session
-    .query("INSERT INTO ks.tab (a, b, c) VALUES(?, ?, 'text2')", (2_i32, "Some text"))
+    .query_unpaged("INSERT INTO ks.tab (a, b, c) VALUES(?, ?, 'text2')", (2_i32, "Some text"))
     .await?;
 # Ok(())
 # }
@@ -84,7 +84,7 @@ Each row can be parsed as a tuple of rust types using `rows_typed`:
 use scylla::IntoTypedRows;
 
 // Query rows from the table and print them
-let result = session.query("SELECT a FROM ks.tab", &[]).await?;
+let result = session.query_unpaged("SELECT a FROM ks.tab", &[]).await?;
 let mut iter = result.rows_typed::<(i32,)>()?;
 while let Some(read_row) = iter.next().transpose()? {
     println!("Read a value from row: {}", read_row.0);

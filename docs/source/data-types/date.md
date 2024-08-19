@@ -25,12 +25,12 @@ let to_insert = CqlDate((1 << 31) + 7);
 
 // Insert date into the table
 session
-    .query("INSERT INTO keyspace.table (a) VALUES(?)", (to_insert,))
+    .query_unpaged("INSERT INTO keyspace.table (a) VALUES(?)", (to_insert,))
     .await?;
 
 // Read raw Date from the table
 if let Some(rows) = session
-    .query("SELECT a FROM keyspace.table", &[])
+    .query_unpaged("SELECT a FROM keyspace.table", &[])
     .await?
     .rows
 {
@@ -63,11 +63,11 @@ let to_insert = NaiveDate::from_ymd_opt(2021, 3, 24).unwrap();
 
 // Insert date into the table
 session
-    .query("INSERT INTO keyspace.table (a) VALUES(?)", (to_insert,))
+    .query_unpaged("INSERT INTO keyspace.table (a) VALUES(?)", (to_insert,))
     .await?;
 
 // Read NaiveDate from the table
-let result = session.query("SELECT a FROM keyspace.table", &[]).await?;
+let result = session.query_unpaged("SELECT a FROM keyspace.table", &[]).await?;
 let mut iter = result.rows_typed::<(NaiveDate,)>()?;
 while let Some((date_value,)) = iter.next().transpose()? {
     println!("{:?}", date_value);
@@ -97,11 +97,11 @@ let to_insert = Date::from_calendar_date(2021, Month::March, 24).unwrap();
 
 // Insert date into the table
 session
-    .query("INSERT INTO keyspace.table (a) VALUES(?)", (to_insert,))
+    .query_unpaged("INSERT INTO keyspace.table (a) VALUES(?)", (to_insert,))
     .await?;
 
 // Read Date from the table
-let result = session.query("SELECT a FROM keyspace.table", &[]).await?;
+let result = session.query_unpaged("SELECT a FROM keyspace.table", &[]).await?;
 let mut iter = result.rows_typed::<(Date,)>()?;
 while let Some((date_value,)) = iter.next().transpose()? {
     println!("{:?}", date_value);

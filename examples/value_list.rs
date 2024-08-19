@@ -9,10 +9,10 @@ async fn main() {
 
     let session: Session = SessionBuilder::new().known_node(uri).build().await.unwrap();
 
-    session.query("CREATE KEYSPACE IF NOT EXISTS examples_ks WITH REPLICATION = {'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}", &[]).await.unwrap();
+    session.query_unpaged("CREATE KEYSPACE IF NOT EXISTS examples_ks WITH REPLICATION = {'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}", &[]).await.unwrap();
 
     session
-        .query(
+        .query_unpaged(
             "CREATE TABLE IF NOT EXISTS examples_ks.my_type (k int, my text, primary key (k))",
             &[],
         )
@@ -31,7 +31,7 @@ async fn main() {
     };
 
     session
-        .query(
+        .query_unpaged(
             "INSERT INTO examples_ks.my_type (k, my) VALUES (?, ?)",
             to_insert,
         )
@@ -51,7 +51,7 @@ async fn main() {
     };
 
     session
-        .query(
+        .query_unpaged(
             "INSERT INTO examples_ks.my_type (k, my) VALUES (?, ?)",
             to_insert_2,
         )
@@ -59,7 +59,7 @@ async fn main() {
         .unwrap();
 
     let q = session
-        .query("SELECT * FROM examples_ks.my_type", &[])
+        .query_unpaged("SELECT * FROM examples_ks.my_type", &[])
         .await
         .unwrap();
 

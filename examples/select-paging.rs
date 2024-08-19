@@ -13,10 +13,10 @@ async fn main() -> Result<()> {
 
     let session: Session = SessionBuilder::new().known_node(uri).build().await?;
 
-    session.query("CREATE KEYSPACE IF NOT EXISTS examples_ks WITH REPLICATION = {'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}", &[]).await?;
+    session.query_unpaged("CREATE KEYSPACE IF NOT EXISTS examples_ks WITH REPLICATION = {'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}", &[]).await?;
 
     session
-        .query(
+        .query_unpaged(
             "CREATE TABLE IF NOT EXISTS examples_ks.select_paging (a int, b int, c text, primary key (a, b))",
             &[],
         )
@@ -24,7 +24,7 @@ async fn main() -> Result<()> {
 
     for i in 0..16_i32 {
         session
-            .query(
+            .query_unpaged(
                 "INSERT INTO examples_ks.select_paging (a, b, c) VALUES (?, ?, 'abc')",
                 (i, 2 * i),
             )

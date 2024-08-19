@@ -20,7 +20,7 @@ async fn proceed_if_only_some_hostnames_are_invalid() {
         .await
         .unwrap();
     session
-        .query("SELECT host_id FROM system.local", &[])
+        .query_unpaged("SELECT host_id FROM system.local", &[])
         .await
         .unwrap();
 }
