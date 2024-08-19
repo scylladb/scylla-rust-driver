@@ -161,7 +161,6 @@ impl PreparedStatement {
     }
 
     /// Returns the page size for this CQL query.
-    #[allow(dead_code)]
     pub(crate) fn get_validated_page_size(&self) -> PageSize {
         self.page_size
     }

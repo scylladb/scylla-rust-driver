@@ -62,7 +62,7 @@ use crate::frame::{
 use crate::query::Query;
 use crate::routing::ShardInfo;
 use crate::statement::prepared_statement::PreparedStatement;
-use crate::statement::{Consistency, PagingState, PagingStateResponse};
+use crate::statement::{Consistency, PageSize, PagingState, PagingStateResponse};
 use crate::transport::Compression;
 use crate::QueryResult;
 
@@ -821,10 +821,13 @@ impl Connection {
         serial_consistency: Option<SerialConsistency>,
     ) -> Result<QueryResult, QueryError> {
         let query: Query = query.into();
+        let page_size = query.get_validated_page_size();
+
         self.query_raw_with_consistency(
             &query,
             consistency,
             serial_consistency,
+            Some(page_size),
             PagingState::start(),
         )
         .await?
@@ -847,12 +850,15 @@ impl Connection {
         paging_state: PagingState,
     ) -> Result<QueryResponse, QueryError> {
         // This method is used only for driver internal queries, so no need to consult execution profile here.
+        let page_size = query.get_validated_page_size();
+
         self.query_raw_with_consistency(
             query,
             query
                 .config
                 .determine_consistency(self.config.default_consistency),
             query.config.serial_consistency.flatten(),
+            Some(page_size),
             paging_state,
         )
         .await
@@ -863,6 +869,7 @@ impl Connection {
         query: &Query,
         consistency: Consistency,
         serial_consistency: Option<SerialConsistency>,
+        page_size: Option<PageSize>,
         paging_state: PagingState,
     ) -> Result<QueryResponse, QueryError> {
         let query_frame = query::Query {
@@ -871,7 +878,7 @@ impl Connection {
                 consistency,
                 serial_consistency,
                 values: Cow::Borrowed(SerializedValues::EMPTY),
-                page_size: Some(query.get_page_size().into()),
+                page_size: page_size.map(Into::into),
                 paging_state,
                 skip_metadata: false,
                 timestamp: query.get_timestamp(),
@@ -902,6 +909,8 @@ impl Connection {
         paging_state: PagingState,
     ) -> Result<QueryResponse, QueryError> {
         // This method is used only for driver internal queries, so no need to consult execution profile here.
+        let page_size = prepared.get_validated_page_size();
+
         self.execute_raw_with_consistency(
             prepared,
             &values,
@@ -909,6 +918,7 @@ impl Connection {
                 .config
                 .determine_consistency(self.config.default_consistency),
             prepared.config.serial_consistency.flatten(),
+            Some(page_size),
             paging_state,
         )
         .await
@@ -920,6 +930,7 @@ impl Connection {
         values: &SerializedValues,
         consistency: Consistency,
         serial_consistency: Option<SerialConsistency>,
+        page_size: Option<PageSize>,
         paging_state: PagingState,
     ) -> Result<QueryResponse, QueryError> {
         let execute_frame = execute::Execute {
@@ -928,7 +939,7 @@ impl Connection {
                 consistency,
                 serial_consistency,
                 values: Cow::Borrowed(values),
-                page_size: Some(prepared_statement.get_page_size().into()),
+                page_size: page_size.map(Into::into),
                 timestamp: prepared_statement.get_timestamp(),
                 skip_metadata: prepared_statement.get_use_cached_result_metadata(),
                 paging_state,
@@ -1207,7 +1218,7 @@ impl Connection {
     }
 
     pub(crate) async fn fetch_schema_version(&self) -> Result<Uuid, QueryError> {
-        let (version_id,): (Uuid,) = self
+        let (version_id,) = self
             .query_single_page(LOCAL_VERSION)
             .await?
             .single_row_typed()
@@ -2499,6 +2510,7 @@ mod tests {
     #[cfg(not(scylla_cloud_tests))]
     async fn connection_is_closed_on_no_response_to_keepalives() {
         setup_tracing();
+
         let proxy_addr = SocketAddr::new(scylla_proxy::get_exclusive_local_address(), 9042);
         let uri = std::env::var("SCYLLA_URI").unwrap_or_else(|_| "127.0.0.1:9042".to_string());
         let node_addr: SocketAddr = resolve_hostname(&uri).await;

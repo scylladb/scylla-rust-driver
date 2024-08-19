@@ -122,6 +122,8 @@ impl RowIterator {
             .serial_consistency
             .unwrap_or(execution_profile.serial_consistency);
 
+        let page_size = query.get_validated_page_size();
+
         let routing_info = RoutingInfo {
             consistency,
             serial_consistency,
@@ -147,6 +149,7 @@ impl RowIterator {
                             query_ref,
                             consistency,
                             serial_consistency,
+                            Some(page_size),
                             paging_state,
                         )
                         .await
@@ -199,6 +202,9 @@ impl RowIterator {
             .config
             .serial_consistency
             .unwrap_or(config.execution_profile.serial_consistency);
+
+        let page_size = config.prepared.get_validated_page_size();
+
         let retry_session = config
             .prepared
             .get_retry_policy()
@@ -241,6 +247,7 @@ impl RowIterator {
                         values_ref,
                         consistency,
                         serial_consistency,
+                        Some(page_size),
                         paging_state,
                     )
                     .await
@@ -306,6 +313,8 @@ impl RowIterator {
     ) -> Result<RowIterator, QueryError> {
         let (sender, receiver) = mpsc::channel::<Result<ReceivedPage, QueryError>>(1);
 
+        let page_size = query.get_validated_page_size();
+
         let worker_task = async move {
             let worker = SingleConnectionRowIteratorWorker {
                 sender: sender.into(),
@@ -314,6 +323,7 @@ impl RowIterator {
                         &query,
                         consistency,
                         serial_consistency,
+                        Some(page_size),
                         paging_state,
                     )
                 },
@@ -333,6 +343,8 @@ impl RowIterator {
     ) -> Result<RowIterator, QueryError> {
         let (sender, receiver) = mpsc::channel::<Result<ReceivedPage, QueryError>>(1);
 
+        let page_size = prepared.get_validated_page_size();
+
         let worker_task = async move {
             let worker = SingleConnectionRowIteratorWorker {
                 sender: sender.into(),
@@ -342,6 +354,7 @@ impl RowIterator {
                         &values,
                         consistency,
                         serial_consistency,
+                        Some(page_size),
                         paging_state,
                     )
                 },

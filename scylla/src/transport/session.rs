@@ -662,6 +662,8 @@ impl Session {
             ..Default::default()
         };
 
+        let page_size = Some(query.get_validated_page_size());
+
         let span = RequestSpan::new_query(&query.contents);
         let span_ref = &span;
         let run_query_result = self
@@ -688,6 +690,7 @@ impl Session {
                                     query_ref,
                                     consistency,
                                     serial_consistency,
+                                    page_size,
                                     paging_state_ref.clone(),
                                 )
                                 .await
@@ -702,6 +705,7 @@ impl Session {
                                     &serialized,
                                     consistency,
                                     serial_consistency,
+                                    page_size,
                                     paging_state_ref.clone(),
                                 )
                                 .await
@@ -1021,6 +1025,8 @@ impl Session {
             is_confirmed_lwt: prepared.is_confirmed_lwt(),
         };
 
+        let page_size = Some(prepared.get_validated_page_size());
+
         let span = RequestSpan::new_prepared(
             partition_key.as_ref().map(|pk| pk.iter()),
             token,
@@ -1056,6 +1062,7 @@ impl Session {
                                 values_ref,
                                 consistency,
                                 serial_consistency,
+                                page_size,
                                 paging_state_ref.clone(),
                             )
                             .await
