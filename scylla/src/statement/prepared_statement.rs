@@ -92,7 +92,7 @@ pub struct PreparedStatement {
 
     id: Bytes,
     shared: Arc<PreparedStatementSharedData>,
-    page_size: Option<PageSize>,
+    page_size: PageSize,
     partitioner_name: PartitionerName,
     is_confirmed_lwt: bool,
 }
@@ -125,7 +125,7 @@ impl PreparedStatement {
         metadata: PreparedMetadata,
         result_metadata: ResultMetadata,
         statement: String,
-        page_size: Option<PageSize>,
+        page_size: PageSize,
         config: StatementConfig,
     ) -> Self {
         Self {
@@ -155,27 +155,20 @@ impl PreparedStatement {
     ///
     /// Panics if given number is nonpositive.
     pub fn set_page_size(&mut self, page_size: i32) {
-        self.page_size = Some(
-            page_size
-                .try_into()
-                .unwrap_or_else(|err| panic!("PreparedStatement::set_page_size: {err}")),
-        );
-    }
-
-    /// Disables paging for this CQL query.
-    pub fn disable_paging(&mut self) {
-        self.page_size = None;
+        self.page_size = page_size
+            .try_into()
+            .unwrap_or_else(|err| panic!("PreparedStatement::set_page_size: {err}"));
     }
 
     /// Returns the page size for this CQL query.
     #[allow(dead_code)]
-    pub(crate) fn get_validated_page_size(&self) -> Option<PageSize> {
+    pub(crate) fn get_validated_page_size(&self) -> PageSize {
         self.page_size
     }
 
     /// Returns the page size for this CQL query.
-    pub fn get_page_size(&self) -> Option<i32> {
-        self.page_size.as_ref().map(PageSize::inner)
+    pub fn get_page_size(&self) -> i32 {
+        self.page_size.inner()
     }
 
     /// Gets tracing ids of queries used to prepare this statement

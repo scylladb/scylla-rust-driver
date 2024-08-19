@@ -1357,7 +1357,7 @@ async fn test_prepared_config() {
     let prepared_statement = session.prepare(query).await.unwrap();
 
     assert!(prepared_statement.get_is_idempotent());
-    assert_eq!(prepared_statement.get_page_size(), Some(42));
+    assert_eq!(prepared_statement.get_page_size(), 42);
 }
 
 fn udt_type_a_def(ks: &str) -> Arc<UserDefinedType> {
