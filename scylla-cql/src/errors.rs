@@ -7,7 +7,9 @@ use crate::types::deserialize::{DeserializationError, TypeCheckError};
 use crate::types::serialize::SerializationError;
 use crate::Consistency;
 use bytes::Bytes;
+use std::error::Error;
 use std::io::ErrorKind;
+use std::net::IpAddr;
 use std::sync::Arc;
 use thiserror::Error;
 
@@ -44,6 +46,9 @@ pub enum QueryError {
 
     #[error("Too many orphaned stream ids: {0}")]
     TooManyOrphanedStreamIds(u16),
+
+    #[error(transparent)]
+    BrokenConnection(#[from] BrokenConnectionError),
 
     #[error("Unable to allocate stream id")]
     UnableToAllocStreamId,
@@ -440,6 +445,9 @@ pub enum NewSessionError {
     #[error("Too many orphaned stream ids: {0}")]
     TooManyOrphanedStreamIds(u16),
 
+    #[error(transparent)]
+    BrokenConnection(#[from] BrokenConnectionError),
+
     #[error("Unable to allocate stream id")]
     UnableToAllocStreamId,
 
@@ -467,6 +475,41 @@ pub enum BadKeyspaceName {
     /// Illegal character - only alphanumeric and underscores allowed.
     #[error("Illegal character found: '{1}', only alphanumeric and underscores allowed. Bad keyspace name: '{0}'")]
     IllegalCharacter(String, char),
+}
+
+#[derive(Error, Debug, Clone)]
+#[error("Connection broken, reason: {0}")]
+pub struct BrokenConnectionError(Arc<dyn Error + Sync + Send>);
+
+#[derive(Error, Debug)]
+#[non_exhaustive]
+pub enum BrokenConnectionErrorKind {
+    #[error("Timed out while waiting for response to keepalive request on connection to node {0}")]
+    KeepaliveTimeout(IpAddr),
+    #[error("Failed to execute keepalive query: {0}")]
+    KeepaliveQueryError(QueryError),
+    #[error("Failed to deserialize frame: {0}")]
+    FrameError(FrameError),
+    #[error("Failed to handle server event: {0}")]
+    CqlEventHandlingError(QueryError),
+    #[error("Received a server frame with unexpected stream id: {0}")]
+    UnexpectedStreamId(i16),
+    #[error("Failed to write data: {0}")]
+    WriteError(std::io::Error),
+    #[error("Too many orphaned stream ids: {0}")]
+    TooManyOrphanedStreamIds(u16),
+    #[error(
+        "Failed to send/receive data needed to perform a request via tokio channel.
+        It implies that other half of the channel has been dropped.
+        The connection was already broken for some other reason."
+    )]
+    ChannelError,
+}
+
+impl From<BrokenConnectionErrorKind> for BrokenConnectionError {
+    fn from(value: BrokenConnectionErrorKind) -> Self {
+        BrokenConnectionError(Arc::new(value))
+    }
 }
 
 impl std::fmt::Display for WriteType {
@@ -542,6 +585,7 @@ impl From<QueryError> for NewSessionError {
             QueryError::TooManyOrphanedStreamIds(ids) => {
                 NewSessionError::TooManyOrphanedStreamIds(ids)
             }
+            QueryError::BrokenConnection(e) => NewSessionError::BrokenConnection(e),
             QueryError::UnableToAllocStreamId => NewSessionError::UnableToAllocStreamId,
             QueryError::RequestTimeout(msg) => NewSessionError::RequestTimeout(msg),
             QueryError::TranslationError(e) => NewSessionError::TranslationError(e),

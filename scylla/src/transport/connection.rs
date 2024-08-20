@@ -1,6 +1,6 @@
 use bytes::Bytes;
 use futures::{future::RemoteHandle, FutureExt};
-use scylla_cql::errors::TranslationError;
+use scylla_cql::errors::{BrokenConnectionError, BrokenConnectionErrorKind, TranslationError};
 use scylla_cql::frame::request::options::{self, Options};
 use scylla_cql::frame::response::result::{ResultMetadata, TableSpec};
 use scylla_cql::frame::response::Error;
@@ -133,18 +133,12 @@ impl RouterHandle {
                 response_handler,
             })
             .await
-            .map_err(|_| {
-                QueryError::IoError(Arc::new(std::io::Error::new(
-                    ErrorKind::Other,
-                    "Connection broken",
-                )))
+            .map_err(|_| -> BrokenConnectionError {
+                BrokenConnectionErrorKind::ChannelError.into()
             })?;
 
-        let task_response = receiver.await.map_err(|_| {
-            QueryError::IoError(Arc::new(std::io::Error::new(
-                ErrorKind::Other,
-                "Connection broken",
-            )))
+        let task_response = receiver.await.map_err(|_| -> BrokenConnectionError {
+            BrokenConnectionErrorKind::ChannelError.into()
         })?;
 
         // Response was successfully received, so it's time to disable
@@ -1421,7 +1415,7 @@ impl Connection {
 
         let error: QueryError = match result {
             Ok(_) => return, // Connection was dropped, we can return
-            Err(err) => err,
+            Err(err) => err.into(),
         };
 
         // Respond to all pending requests with the error
@@ -1441,9 +1435,11 @@ impl Connection {
         mut read_half: (impl AsyncRead + Unpin),
         handler_map: &StdMutex<ResponseHandlerMap>,
         config: ConnectionConfig,
-    ) -> Result<(), QueryError> {
+    ) -> Result<(), BrokenConnectionError> {
         loop {
-            let (params, opcode, body) = frame::read_response_frame(&mut read_half).await?;
+            let (params, opcode, body) = frame::read_response_frame(&mut read_half)
+                .await
+                .map_err(BrokenConnectionErrorKind::FrameError)?;
             let response = TaskResponse {
                 params,
                 opcode,
@@ -1459,7 +1455,9 @@ impl Connection {
                 }
                 Ordering::Equal => {
                     if let Some(event_sender) = config.event_sender.as_ref() {
-                        Self::handle_event(response, config.compression, event_sender).await?;
+                        Self::handle_event(response, config.compression, event_sender)
+                            .await
+                            .map_err(BrokenConnectionErrorKind::CqlEventHandlingError)?
                     }
                     continue;
                 }
@@ -1488,9 +1486,7 @@ impl Connection {
                         "Received response with unexpected StreamId {}",
                         params.stream
                     );
-                    return Err(QueryError::ProtocolError(
-                        "Received response with unexpected StreamId",
-                    ));
+                    return Err(BrokenConnectionErrorKind::UnexpectedStreamId(params.stream).into());
                 }
                 Orphaned => {
                     // Do nothing, handler was freed because this stream_id has
@@ -1524,7 +1520,7 @@ impl Connection {
         handler_map: &StdMutex<ResponseHandlerMap>,
         mut task_receiver: mpsc::Receiver<Task>,
         enable_write_coalescing: bool,
-    ) -> Result<(), QueryError> {
+    ) -> Result<(), BrokenConnectionError> {
         // When the Connection object is dropped, the sender half
         // of the channel will be dropped, this task will return an error
         // and the whole worker will be stopped
@@ -1537,7 +1533,10 @@ impl Connection {
                 let req_data: &[u8] = req.get_data();
                 total_sent += req_data.len();
                 num_requests += 1;
-                write_half.write_all(req_data).await?;
+                write_half
+                    .write_all(req_data)
+                    .await
+                    .map_err(BrokenConnectionErrorKind::WriteError)?;
                 task = match task_receiver.try_recv() {
                     Ok(t) => t,
                     Err(_) if enable_write_coalescing => {
@@ -1554,7 +1553,10 @@ impl Connection {
                 }
             }
             trace!("Sending {} requests; {} bytes", num_requests, total_sent);
-            write_half.flush().await?;
+            write_half
+                .flush()
+                .await
+                .map_err(BrokenConnectionErrorKind::WriteError)?;
         }
 
         Ok(())
@@ -1567,7 +1569,7 @@ impl Connection {
     async fn orphaner(
         handler_map: &StdMutex<ResponseHandlerMap>,
         mut orphan_receiver: mpsc::UnboundedReceiver<RequestId>,
-    ) -> Result<(), QueryError> {
+    ) -> Result<(), BrokenConnectionError> {
         let mut interval = tokio::time::interval(OLD_AGE_ORPHAN_THRESHOLD);
         loop {
             tokio::select! {
@@ -1581,7 +1583,7 @@ impl Connection {
                             "Too many old orphaned stream ids: {}",
                             old_orphan_count,
                         );
-                        return Err(QueryError::TooManyOrphanedStreamIds(old_orphan_count as u16))
+                        return Err(BrokenConnectionErrorKind::TooManyOrphanedStreamIds(old_orphan_count as u16).into())
                     }
                 }
                 Some(request_id) = orphan_receiver.recv() => {
@@ -1604,12 +1606,15 @@ impl Connection {
         keepalive_interval: Option<Duration>,
         keepalive_timeout: Option<Duration>,
         node_address: IpAddr, // This address is only used to enrich the log messages
-    ) -> Result<(), QueryError> {
-        async fn issue_keepalive_query(router_handle: &RouterHandle) -> Result<(), QueryError> {
+    ) -> Result<(), BrokenConnectionError> {
+        async fn issue_keepalive_query(
+            router_handle: &RouterHandle,
+        ) -> Result<(), BrokenConnectionError> {
             router_handle
                 .send_request(&Options, None, false)
                 .await
                 .map(|_| ())
+                .map_err(|q_err| BrokenConnectionErrorKind::KeepaliveQueryError(q_err).into())
         }
 
         if let Some(keepalive_interval) = keepalive_interval {
@@ -1631,13 +1636,9 @@ impl Connection {
                                 "Timed out while waiting for response to keepalive request on connection to node {}",
                                 node_address
                             );
-                            return Err(QueryError::IoError(Arc::new(std::io::Error::new(
-                                std::io::ErrorKind::Other,
-                                format!(
-                                    "Timed out while waiting for response to keepalive request on connection to node {}",
-                                        node_address
-                                )
-                            ))));
+                            return Err(
+                                BrokenConnectionErrorKind::KeepaliveTimeout(node_address).into()
+                            );
                         }
                     }
                 } else {
