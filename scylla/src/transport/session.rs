@@ -1873,7 +1873,7 @@ impl Session {
                             error = %e,
                             "Choosing connection failed"
                         );
-                        last_error = Some(e);
+                        last_error = Some(e.into());
                         // Broken connection doesn't count as a failed query, don't log in metrics
                         continue 'nodes_in_plan;
                     }

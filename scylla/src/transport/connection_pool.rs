@@ -234,7 +234,10 @@ impl NodeConnectionPool {
         .unwrap_or(None)
     }
 
-    pub(crate) fn connection_for_shard(&self, shard: Shard) -> Result<Arc<Connection>, QueryError> {
+    pub(crate) fn connection_for_shard(
+        &self,
+        shard: Shard,
+    ) -> Result<Arc<Connection>, std::io::Error> {
         trace!(shard = shard, "Selecting connection for shard");
         self.with_connections(|pool_conns| match pool_conns {
             PoolConnections::NotSharded(conns) => {
@@ -257,7 +260,7 @@ impl NodeConnectionPool {
         })
     }
 
-    pub(crate) fn random_connection(&self) -> Result<Arc<Connection>, QueryError> {
+    pub(crate) fn random_connection(&self) -> Result<Arc<Connection>, std::io::Error> {
         trace!("Selecting random connection");
         self.with_connections(|pool_conns| match pool_conns {
             PoolConnections::NotSharded(conns) => {
@@ -341,7 +344,7 @@ impl NodeConnectionPool {
         }
     }
 
-    pub(crate) fn get_working_connections(&self) -> Result<Vec<Arc<Connection>>, QueryError> {
+    pub(crate) fn get_working_connections(&self) -> Result<Vec<Arc<Connection>>, std::io::Error> {
         self.with_connections(|pool_conns| match pool_conns {
             PoolConnections::NotSharded(conns) => conns.clone(),
             PoolConnections::Sharded { connections, .. } => {
@@ -370,25 +373,24 @@ impl NodeConnectionPool {
         }
     }
 
-    fn with_connections<T>(&self, f: impl FnOnce(&PoolConnections) -> T) -> Result<T, QueryError> {
+    fn with_connections<T>(
+        &self,
+        f: impl FnOnce(&PoolConnections) -> T,
+    ) -> Result<T, std::io::Error> {
         let conns = self.conns.load_full();
         match &*conns {
             MaybePoolConnections::Ready(pool_connections) => Ok(f(pool_connections)),
-            MaybePoolConnections::Broken(err) => {
-                Err(QueryError::IoError(Arc::new(std::io::Error::new(
-                    ErrorKind::Other,
-                    format!(
-                        "No connections in the pool; last connection failed with: {}",
-                        err
-                    ),
-                ))))
-            }
-            MaybePoolConnections::Initializing => {
-                Err(QueryError::IoError(Arc::new(std::io::Error::new(
-                    ErrorKind::Other,
-                    "No connections in the pool, pool is still being initialized",
-                ))))
-            }
+            MaybePoolConnections::Broken(err) => Err(std::io::Error::new(
+                ErrorKind::Other,
+                format!(
+                    "No connections in the pool; last connection failed with: {}",
+                    err
+                ),
+            )),
+            MaybePoolConnections::Initializing => Err(std::io::Error::new(
+                ErrorKind::Other,
+                "No connections in the pool, pool is still being initialized",
+            )),
         }
     }
 }

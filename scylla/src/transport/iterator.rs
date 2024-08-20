@@ -535,7 +535,7 @@ where
                         error = %e,
                         "Choosing connection failed"
                     );
-                    last_error = e;
+                    last_error = e.into();
                     // Broken connection doesn't count as a failed query, don't log in metrics
                     continue 'nodes_in_plan;
                 }
