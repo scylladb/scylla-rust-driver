@@ -625,7 +625,7 @@ impl Session {
     ) -> Result<QueryResult, QueryError> {
         let query = query.into();
         let (result, paging_state_response) = self
-            .query_inner(&query, values, None, PagingState::start())
+            .query(&query, values, None, PagingState::start())
             .await?;
         if !paging_state_response.finished() {
             let err_msg = "Unpaged unprepared query returned a non-empty paging state! This is a driver-side or server-side bug.";
@@ -653,7 +653,7 @@ impl Session {
         paging_state: PagingState,
     ) -> Result<(QueryResult, PagingStateResponse), QueryError> {
         let query = query.into();
-        self.query_inner(
+        self.query(
             &query,
             values,
             Some(query.get_validated_page_size()),
@@ -673,7 +673,7 @@ impl Session {
     /// * `query` - query to be performed
     /// * `values` - values bound to the query
     /// * `paging_state` - previously received paging state or [PagingState::start()]
-    async fn query_inner(
+    async fn query(
         &self,
         query: &Query,
         values: impl SerializeRow,
@@ -1015,7 +1015,7 @@ impl Session {
     ) -> Result<QueryResult, QueryError> {
         let serialized_values = prepared.serialize_values(&values)?;
         let (result, paging_state) = self
-            .execute_inner(prepared, &serialized_values, None, PagingState::start())
+            .execute(prepared, &serialized_values, None, PagingState::start())
             .await?;
         if !paging_state.finished() {
             let err_msg = "Unpaged prepared query returned a non-empty paging state! This is a driver-side or server-side bug.";
@@ -1033,7 +1033,7 @@ impl Session {
     ) -> Result<(QueryResult, PagingStateResponse), QueryError> {
         let serialized_values = prepared.serialize_values(&values)?;
         let page_size = prepared.get_validated_page_size();
-        self.execute_inner(prepared, &serialized_values, Some(page_size), paging_state)
+        self.execute(prepared, &serialized_values, Some(page_size), paging_state)
             .await
     }
 
@@ -1043,7 +1043,7 @@ impl Session {
     /// * `prepared` - a statement prepared with [prepare](crate::transport::session::Session::prepare)
     /// * `values` - values bound to the statement
     /// * `paging_state` - paging state from the previous execution or [PagingState::start()]
-    async fn execute_inner(
+    async fn execute(
         &self,
         prepared: &PreparedStatement,
         serialized_values: &SerializedValues,
