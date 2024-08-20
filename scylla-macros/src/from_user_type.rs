@@ -30,7 +30,7 @@ pub(crate) fn from_user_type_derive(tokens_input: TokenStream) -> Result<TokenSt
                     // field)
                     if let Some(received_field_name) = received_field_name {
                         if received_field_name == stringify!(#field_name) {
-                            let (_, value) = fields_iter.next().unwrap();
+                            let (_, value) = fields_iter.next().expect("BUG: Validated iterator did not contain expected number of values");
                             value
                         } else {
                             None
