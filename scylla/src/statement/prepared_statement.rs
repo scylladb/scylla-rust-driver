@@ -27,15 +27,17 @@ use crate::transport::partitioner::{Partitioner, PartitionerHasher, PartitionerN
 /// To prepare a statement, simply execute [`Session::prepare`](crate::transport::session::Session::prepare).
 ///
 /// If you plan on reusing the statement, or bounding some values to it during execution, always
-/// prefer using prepared statements over [`Session::query`](crate::transport::session::Session::query).
+/// prefer using prepared statements over `Session::query_*` methods,
+/// e.g. [`Session::query_unpaged`](crate::transport::session::Session::query_unpaged).
 ///
 /// Benefits that prepared statements have to offer:
 /// * Performance - a prepared statement holds information about metadata
 ///   that allows to carry out a statement execution in a type safe manner.
-///   When [`Session::query`](crate::transport::session::Session::query) is called with
-///   non-empty bound values, the driver has to prepare the statement before execution (to provide type safety).
-///   This implies 2 round trips per [`Session::query`](crate::transport::session::Session::query).
-///   On the other hand, the cost of [`Session::execute`](crate::transport::session::Session::execute) is only 1 round trip.
+///   When any of `Session::query_*` methods is called with non-empty bound values,
+///   the driver has to prepare the statement before execution (to provide type safety).
+///   This implies 2 round trips per [`Session::query_unpaged`](crate::transport::session::Session::query_unpaged).
+///   On the other hand, the cost of [`Session::execute_unpaged`](crate::transport::session::Session::execute_unpaged)
+///   is only 1 round trip.
 /// * Increased type-safety - bound values' types are validated with
 ///   the [`PreparedMetadata`] received from the server during the serialization.
 /// * Improved load balancing - thanks to statement metadata, the driver is able

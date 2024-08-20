@@ -37,9 +37,9 @@
 //! ### Making queries
 //! After successfully connecting to the cluster we can make queries.\
 //! The driver supports multiple query types:
-//! * [Simple](crate::Session::query)
+//! * [Simple](crate::Session::query_unpaged)
 //! * [Simple paged](crate::Session::query_iter)
-//! * [Prepare](crate::Session::execute) (need to be [prepared](crate::Session::prepare) before use)
+//! * [Prepared](crate::Session::execute_unpaged) (need to be [prepared](crate::Session::prepare) before use)
 //! * [Prepared paged](crate::Session::execute_iter)
 //! * [Batch](crate::Session::batch)
 //!
@@ -75,6 +75,9 @@
 //! use scylla::IntoTypedRows;
 //!
 //! // Read rows containing an int and text
+//! // Keep in mind that all results come in one response (no paging is done!),
+//! // so the memory footprint and latency may be huge!
+//! // To prevent that, use `Session::query_iter` or `Session::query_single_page`.
 //! let rows_opt = session
 //!     .query_unpaged("SELECT a, b FROM ks.tab", &[])
 //!     .await?
