@@ -1,7 +1,7 @@
 use crate::batch::{Batch, BatchStatement};
 use crate::prepared_statement::PreparedStatement;
 use crate::query::Query;
-use crate::statement::PagingState;
+use crate::statement::{PagingState, PagingStateResponse};
 use crate::transport::errors::QueryError;
 use crate::transport::iterator::RowIterator;
 use crate::transport::partitioner::PartitionerName;
@@ -97,7 +97,7 @@ where
         query: impl Into<Query>,
         values: impl SerializeRow,
         paging_state: PagingState,
-    ) -> Result<QueryResult, QueryError> {
+    ) -> Result<(QueryResult, PagingStateResponse), QueryError> {
         let query = query.into();
         let prepared = self.add_prepared_statement_owned(query).await?;
         self.session
@@ -325,7 +325,7 @@ mod tests {
 
     /// Checks that the same prepared statement is reused when executing the same query twice
     #[tokio::test]
-    async fn test_execute_cached() {
+    async fn test_execute_unpaged_cached() {
         setup_tracing();
         let session = create_caching_session().await;
         let result = session
@@ -372,7 +372,7 @@ mod tests {
 
         assert!(session.cache.is_empty());
 
-        let result = session
+        let (result, _paging_state) = session
             .execute_single_page("select * from test_table", &[], PagingState::start())
             .await
             .unwrap();

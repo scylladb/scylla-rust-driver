@@ -55,7 +55,7 @@
 //! # async fn check_only_compiles(session: &Session) -> Result<(), Box<dyn Error>> {
 //! // Insert an int and text into the table
 //! session
-//!     .query(
+//!     .query_unpaged(
 //!         "INSERT INTO ks.tab (a, b) VALUES(?, ?)",
 //!         (2_i32, "some text")
 //!     )
@@ -76,7 +76,7 @@
 //!
 //! // Read rows containing an int and text
 //! let rows_opt = session
-//! .query("SELECT a, b FROM ks.tab", &[])
+//!     .query_unpaged("SELECT a, b FROM ks.tab", &[])
 //!     .await?
 //!     .rows;
 //!

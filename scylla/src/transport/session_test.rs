@@ -148,12 +148,12 @@ async fn test_unprepared_statement() {
     let mut paging_state = PagingState::start();
     let mut watchdog = 0;
     loop {
-        let rs_manual = session
+        let (rs_manual, paging_state_response) = session
             .query_single_page(query.clone(), &[], paging_state)
             .await
             .unwrap();
         results_from_manual_paging.append(&mut rs_manual.rows.unwrap());
-        match rs_manual.paging_state_response {
+        match paging_state_response {
             PagingStateResponse::HasMorePages { state } => {
                 paging_state = state;
             }
@@ -290,12 +290,12 @@ async fn test_prepared_statement() {
         let mut paging_state = PagingState::start();
         let mut watchdog = 0;
         loop {
-            let rs_manual = session
+            let (rs_manual, paging_state_response) = session
                 .execute_single_page(&prepared_paged, &[], paging_state)
                 .await
                 .unwrap();
             results_from_manual_paging.append(&mut rs_manual.rows.unwrap());
-            match rs_manual.paging_state_response {
+            match paging_state_response {
                 PagingStateResponse::HasMorePages { state } => {
                     paging_state = state;
                 }

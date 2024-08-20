@@ -47,11 +47,10 @@ async fn main() -> Result<()> {
     // Manual paging in a loop, unprepared statement.
     let mut paging_state = PagingState::start();
     loop {
-        let res = session
+        let (res, paging_state_response) = session
             .query_single_page(paged_query.clone(), &[], paging_state)
             .await?;
 
-        let paging_state_response = res.paging_state_response.clone();
         println!(
             "Paging state: {:#?} ({} rows)",
             paging_state_response,
@@ -78,11 +77,10 @@ async fn main() -> Result<()> {
     // Manual paging in a loop, prepared statement.
     let mut paging_state = PagingState::default();
     loop {
-        let res = session
+        let (res, paging_state_response) = session
             .execute_single_page(&paged_prepared, &[], paging_state)
             .await?;
 
-        let paging_state_response = res.paging_state_response.clone();
         println!(
             "Paging state from the prepared statement execution: {:#?} ({} rows)",
             paging_state_response,

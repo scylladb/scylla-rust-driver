@@ -30,7 +30,7 @@ use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::time::timeout;
-use tracing::{debug, trace, trace_span, Instrument};
+use tracing::{debug, error, trace, trace_span, Instrument};
 use uuid::Uuid;
 
 use super::connection::NonErrorQueryResponse;
@@ -52,7 +52,7 @@ use crate::frame::response::result;
 use crate::prepared_statement::PreparedStatement;
 use crate::query::Query;
 use crate::routing::{Shard, Token};
-use crate::statement::{Consistency, PageSize, PagingState};
+use crate::statement::{Consistency, PageSize, PagingState, PagingStateResponse};
 use crate::tracing::{TracingEvent, TracingInfo};
 use crate::transport::cluster::{Cluster, ClusterData, ClusterNeatDebug};
 use crate::transport::connection::{Connection, ConnectionConfig, VerifiedKeyspaceName};
@@ -589,7 +589,7 @@ impl Session {
     /// # async fn check_only_compiles(session: &Session) -> Result<(), Box<dyn Error>> {
     /// // Insert an int and text into a table
     /// session
-    ///     .query(
+    ///     .query_unpaged(
     ///         "INSERT INTO ks.tab (a, b) VALUES(?, ?)",
     ///         (2_i32, "some text")
     ///     )
@@ -605,7 +605,7 @@ impl Session {
     ///
     /// // Read rows containing an int and text
     /// let rows_opt = session
-    /// .query("SELECT a, b FROM ks.tab", &[])
+    /// .query_unpaged("SELECT a, b FROM ks.tab", &[])
     ///     .await?
     ///     .rows;
     ///
@@ -624,8 +624,15 @@ impl Session {
         values: impl SerializeRow,
     ) -> Result<QueryResult, QueryError> {
         let query = query.into();
-        self.query_inner(&query, values, None, PagingState::start())
-            .await
+        let (result, paging_state_response) = self
+            .query_inner(&query, values, None, PagingState::start())
+            .await?;
+        if !paging_state_response.finished() {
+            let err_msg = "Unpaged unprepared query returned a non-empty paging state! This is a driver-side or server-side bug.";
+            error!(err_msg);
+            return Err(QueryError::ProtocolError(err_msg));
+        }
+        Ok(result)
     }
 
     /// Queries the database with a custom paging state.
@@ -644,7 +651,7 @@ impl Session {
         query: impl Into<Query>,
         values: impl SerializeRow,
         paging_state: PagingState,
-    ) -> Result<QueryResult, QueryError> {
+    ) -> Result<(QueryResult, PagingStateResponse), QueryError> {
         let query = query.into();
         self.query_inner(
             &query,
@@ -672,7 +679,7 @@ impl Session {
         values: impl SerializeRow,
         page_size: Option<PageSize>,
         paging_state: PagingState,
-    ) -> Result<QueryResult, QueryError> {
+    ) -> Result<(QueryResult, PagingStateResponse), QueryError> {
         let execution_profile = query
             .get_execution_profile_handle()
             .unwrap_or_else(|| self.get_default_execution_profile_handle())
@@ -756,9 +763,9 @@ impl Session {
         self.handle_set_keyspace_response(&response).await?;
         self.handle_auto_await_schema_agreement(&response).await?;
 
-        let result = response.into_query_result()?;
+        let (result, paging_state) = response.into_query_result_and_paging_state()?;
         span.record_result_fields(&result);
-        Ok(result)
+        Ok((result, paging_state))
     }
 
     async fn handle_set_keyspace_response(
@@ -902,7 +909,7 @@ impl Session {
     ///
     /// // Run the prepared query with some values, just like a simple query
     /// let to_insert: i32 = 12345;
-    /// session.execute(&prepared, (to_insert,)).await?;
+    /// session.execute_unpaged(&prepared, (to_insert,)).await?;
     /// # Ok(())
     /// # }
     /// ```
@@ -997,7 +1004,7 @@ impl Session {
     ///
     /// // Run the prepared query with some values, just like a simple query
     /// let to_insert: i32 = 12345;
-    /// session.execute(&prepared, (to_insert,)).await?;
+    /// session.execute_unpaged(&prepared, (to_insert,)).await?;
     /// # Ok(())
     /// # }
     /// ```
@@ -1007,8 +1014,15 @@ impl Session {
         values: impl SerializeRow,
     ) -> Result<QueryResult, QueryError> {
         let serialized_values = prepared.serialize_values(&values)?;
-        self.execute_inner(prepared, &serialized_values, None, PagingState::start())
-            .await
+        let (result, paging_state) = self
+            .execute_inner(prepared, &serialized_values, None, PagingState::start())
+            .await?;
+        if !paging_state.finished() {
+            let err_msg = "Unpaged prepared query returned a non-empty paging state! This is a driver-side or server-side bug.";
+            error!(err_msg);
+            return Err(QueryError::ProtocolError(err_msg));
+        }
+        Ok(result)
     }
 
     pub async fn execute_single_page(
@@ -1016,7 +1030,7 @@ impl Session {
         prepared: &PreparedStatement,
         values: impl SerializeRow,
         paging_state: PagingState,
-    ) -> Result<QueryResult, QueryError> {
+    ) -> Result<(QueryResult, PagingStateResponse), QueryError> {
         let serialized_values = prepared.serialize_values(&values)?;
         let page_size = prepared.get_validated_page_size();
         self.execute_inner(prepared, &serialized_values, Some(page_size), paging_state)
@@ -1035,7 +1049,7 @@ impl Session {
         serialized_values: &SerializedValues,
         page_size: Option<PageSize>,
         paging_state: PagingState,
-    ) -> Result<QueryResult, QueryError> {
+    ) -> Result<(QueryResult, PagingStateResponse), QueryError> {
         let values_ref = &serialized_values;
         let paging_state_ref = &paging_state;
 
@@ -1123,9 +1137,9 @@ impl Session {
         self.handle_set_keyspace_response(&response).await?;
         self.handle_auto_await_schema_agreement(&response).await?;
 
-        let result = response.into_query_result()?;
+        let (result, paging_state) = response.into_query_result_and_paging_state()?;
         span.record_result_fields(&result);
-        Ok(result)
+        Ok((result, paging_state))
     }
 
     /// Run a prepared query with paging\
@@ -1396,14 +1410,14 @@ impl Session {
     /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
     /// # let session = SessionBuilder::new().known_node("127.0.0.1:9042").build().await?;
     /// session
-    ///     .query("INSERT INTO my_keyspace.tab (a) VALUES ('test1')", &[])
+    ///     .query_unpaged("INSERT INTO my_keyspace.tab (a) VALUES ('test1')", &[])
     ///     .await?;
     ///
     /// session.use_keyspace("my_keyspace", false).await?;
     ///
     /// // Now we can omit keyspace name in the query
     /// session
-    ///     .query("INSERT INTO tab (a) VALUES ('test2')", &[])
+    ///     .query_unpaged("INSERT INTO tab (a) VALUES ('test2')", &[])
     ///     .await?;
     /// # Ok(())
     /// # }

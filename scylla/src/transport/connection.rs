@@ -237,6 +237,13 @@ impl QueryResponse {
         })
     }
 
+    pub(crate) fn into_query_result_and_paging_state(
+        self,
+    ) -> Result<(QueryResult, PagingStateResponse), QueryError> {
+        self.into_non_error_query_response()?
+            .into_query_result_and_paging_state()
+    }
+
     pub(crate) fn into_query_result(self) -> Result<QueryResult, QueryError> {
         self.into_non_error_query_response()?.into_query_result()
     }
@@ -257,7 +264,9 @@ impl NonErrorQueryResponse {
         }
     }
 
-    pub(crate) fn into_query_result(self) -> Result<QueryResult, QueryError> {
+    pub(crate) fn into_query_result_and_paging_state(
+        self,
+    ) -> Result<(QueryResult, PagingStateResponse), QueryError> {
         let (rows, paging_state, col_specs, serialized_size) = match self.response {
             NonErrorResponse::Result(result::Result::Rows(rs)) => (
                 Some(rs.rows),
@@ -273,14 +282,29 @@ impl NonErrorQueryResponse {
             }
         };
 
-        Ok(QueryResult {
-            rows,
-            warnings: self.warnings,
-            tracing_id: self.tracing_id,
-            paging_state_response: paging_state,
-            col_specs,
-            serialized_size,
-        })
+        Ok((
+            QueryResult {
+                rows,
+                warnings: self.warnings,
+                tracing_id: self.tracing_id,
+                col_specs,
+                serialized_size,
+            },
+            paging_state,
+        ))
+    }
+
+    pub(crate) fn into_query_result(self) -> Result<QueryResult, QueryError> {
+        let (result, paging_state) = self.into_query_result_and_paging_state()?;
+
+        if !paging_state.finished() {
+            let error_msg = "Internal driver API misuse or a server bug: nonfinished paging state\
+                             would be discarded by `NonErrorQueryResponse::into_query_result`";
+            error!(error_msg);
+            return Err(QueryError::ProtocolError(error_msg));
+        }
+
+        Ok(result)
     }
 }
 #[cfg(feature = "ssl")]
@@ -802,7 +826,7 @@ impl Connection {
     pub(crate) async fn query_single_page(
         &self,
         query: impl Into<Query>,
-    ) -> Result<QueryResult, QueryError> {
+    ) -> Result<(QueryResult, PagingStateResponse), QueryError> {
         let query: Query = query.into();
 
         // This method is used only for driver internal queries, so no need to consult execution profile here.
@@ -821,7 +845,7 @@ impl Connection {
         query: impl Into<Query>,
         consistency: Consistency,
         serial_consistency: Option<SerialConsistency>,
-    ) -> Result<QueryResult, QueryError> {
+    ) -> Result<(QueryResult, PagingStateResponse), QueryError> {
         let query: Query = query.into();
         let page_size = query.get_validated_page_size();
 
@@ -833,7 +857,7 @@ impl Connection {
             PagingState::start(),
         )
         .await?
-        .into_query_result()
+        .into_query_result_and_paging_state()
     }
 
     #[allow(dead_code)]
