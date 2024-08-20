@@ -49,7 +49,8 @@ session
 The first argument is the keyspace name.\
 The second argument states whether this name is case sensitive.
 
-It is also possible to send raw use keyspace query using `Session::query` instead of `Session::use_keyspace` such as:
+It is also possible to send raw use keyspace query using `Session::query_*` instead of `Session::use_keyspace` such as:
+
 ```rust
 # extern crate scylla;
 # use scylla::Session;
@@ -59,6 +60,7 @@ session.query_unpaged("USE my_keyspace", &[]).await?;
 # Ok(())
 # }
 ```
+
 This method has a slightly worse latency than `Session::use_keyspace` - there are two roundtrips needed instead of one.
 Therefore, `Session::use_keyspace` is the preferred method for setting keyspaces.
 

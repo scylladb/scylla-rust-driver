@@ -20,7 +20,8 @@ session
 > By default the query is unpaged and might cause heavy load on the cluster.\
 > In such cases set a page size and use [paged query](paged.md) instead.\
 > 
-> When page size is set, `query` will return only the first page of results.
+> `query_unpaged` will return all results in one, possibly giant, piece
+> (unless a timeout occurs due to high load incurred by the cluster).
 
 > ***Warning***\
 > If the values are not empty, driver first needs to send a `PREPARE` request
@@ -28,7 +29,7 @@ session
 > performance because 2 round trips will be required instead of 1.
 
 ### First argument - the query
-As the first argument `Session::query` takes anything implementing `Into<Query>`.\
+As the first argument `Session::query_unpaged` takes anything implementing `Into<Query>`.\
 You can create a query manually to set custom options. For example to change query consistency:
 ```rust
 # extern crate scylla;
@@ -74,7 +75,7 @@ Here the first `?` will be filled with `2` and the second with `"Some text"`.
 See [Query values](values.md) for more information about sending values in queries
 
 ### Query result
-`Session::query` returns `QueryResult` with rows represented as `Option<Vec<Row>>`.\
+`Session::query_unpaged` returns `QueryResult` with rows represented as `Option<Vec<Row>>`.\
 Each row can be parsed as a tuple of rust types using `rows_typed`:
 ```rust
 # extern crate scylla;
@@ -92,8 +93,6 @@ while let Some(read_row) = iter.next().transpose()? {
 # Ok(())
 # }
 ```
-> In cases where page size is set, simple query returns only a single page of results.\
-> To receive all pages use a [paged query](paged.md) instead.\
 
 See [Query result](result.md) for more information about handling query results
 

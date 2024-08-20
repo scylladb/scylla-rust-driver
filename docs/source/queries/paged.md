@@ -1,9 +1,10 @@
 # Paged query
-Sometimes query results might not fit in a single page. Paged queries
-allow to receive the whole result page by page.
+Sometimes query results might be so big that one prefers not to fetch them all at once,
+e.g. to reduce latency and/or memory footprint.
+Paged queries allow to receive the whole result page by page, with a configurable page size.
 
-`Session::query_iter` and `Session::execute_iter` take a [simple query](simple.md) or a [prepared query](prepared.md)
-and return an `async` iterator over result `Rows`.
+`Session::query_iter` and `Session::execute_iter` take a [simple query](simple.md)
+or a [prepared query](prepared.md) and return an `async` iterator over result `Rows`.
 
 > ***Warning***\
 > In case of unprepared variant (`Session::query_iter`) if the values are not empty
@@ -79,7 +80,7 @@ On a `Query`:
 use scylla::query::Query;
 
 let mut query: Query = Query::new("SELECT a, b FROM ks.t");
-query.set_page_size(16);
+query.set_page_size(16.try_into().unwrap());
 
 let _ = session.query_iter(query, &[]).await?; // ...
 # Ok(())
@@ -98,7 +99,7 @@ let mut prepared: PreparedStatement = session
     .prepare("SELECT a, b FROM ks.t")
     .await?;
 
-prepared.set_page_size(16);
+prepared.set_page_size(16.try_into().unwrap());
 
 let _ = session.execute_iter(prepared, &[]).await?; // ...
 # Ok(())
@@ -117,12 +118,33 @@ On a `Query`:
 # use std::error::Error;
 # async fn check_only_compiles(session: &Session) -> Result<(), Box<dyn Error>> {
 use scylla::query::Query;
+use scylla::statement::{PagingState, PagingStateResponse};
+use std::ops::ControlFlow;
 
-let paged_query = Query::new("SELECT a, b, c FROM ks.t").with_page_size(6);
-let res1 = session.query(paged_query.clone(), &[]).await?;
-let res2 = session
-    .query_single_page(paged_query.clone(), &[], res1.paging_state)
-    .await?;
+let paged_query = Query::new("SELECT a, b, c FROM ks.t").with_page_size(6.try_into().unwrap());
+
+let mut paging_state = PagingState::start();
+loop {
+    let (res, paging_state_response) = session
+        .query_single_page(paged_query.clone(), &[], paging_state)
+        .await?;
+
+    // Do something with `res`.
+    // ...
+
+    match paging_state_response.into_paging_control_flow() {
+        ControlFlow::Break(()) => {
+            // No more pages to be fetched.
+            break;
+        }
+        ControlFlow::Continue(new_paging_state) => {
+            // Update paging state from the response, so that query
+            // will be resumed from where it ended the last time.
+            paging_state = new_paging_state
+        }
+    }
+}
+
 # Ok(())
 # }
 ```
@@ -139,14 +161,37 @@ On a `PreparedStatement`:
 # use std::error::Error;
 # async fn check_only_compiles(session: &Session) -> Result<(), Box<dyn Error>> {
 use scylla::query::Query;
+use scylla::statement::{PagingState, PagingStateResponse};
+use std::ops::ControlFlow;
 
 let paged_prepared = session
-    .prepare(Query::new("SELECT a, b, c FROM ks.t").with_page_size(7))
+    .prepare(Query::new("SELECT a, b, c FROM ks.t").with_page_size(7.try_into().unwrap()))
     .await?;
-let res1 = session.execute(&paged_prepared, &[]).await?;
-let res2 = session
-    .execute_single_page(&paged_prepared, &[], res1.paging_state)
-    .await?;
+
+let mut paging_state = PagingState::start();
+loop {
+    let (res, paging_state_response) = session
+        .execute_single_page(&paged_prepared, &[], paging_state)
+        .await?;
+
+    println!(
+        "Paging state response from the prepared statement execution: {:#?} ({} rows)",
+        paging_state_response,
+        res.rows_num()?,
+    );
+
+    match paging_state_response.into_paging_control_flow() {
+        ControlFlow::Break(()) => {
+            // No more pages to be fetched.
+            break;
+        }
+        ControlFlow::Continue(new_paging_state) => {
+            // Update paging state from the response, so that query
+            // will be resumed from where it ended the last time.
+            paging_state = new_paging_state
+        }
+    }
+}
 # Ok(())
 # }
 ```

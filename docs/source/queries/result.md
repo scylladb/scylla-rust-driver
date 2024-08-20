@@ -1,6 +1,7 @@
 # Query result
 
-`Session::query` and `Session::execute` return a `QueryResult` with rows represented as `Option<Vec<Row>>`.
+`Session::query_unpaged`, `Session::query_single_page`, `Session::execute_unpaged` and `Session::execute_single_page`
+return a `QueryResult` with rows represented as `Option<Vec<Row>>`.
 
 ### Basic representation
 `Row` is a basic representation of a received row. It can be used by itself, but it's a bit awkward to use:
