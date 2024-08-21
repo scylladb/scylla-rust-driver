@@ -1,8 +1,8 @@
 use bytes::Bytes;
 use futures::{future::RemoteHandle, FutureExt};
 use scylla_cql::errors::{
-    BrokenConnectionError, BrokenConnectionErrorKind, CqlEventHandlingError, ResponseParseError,
-    TranslationError,
+    BrokenConnectionError, BrokenConnectionErrorKind, CqlEventHandlingError, RequestError,
+    ResponseParseError, TranslationError,
 };
 use scylla_cql::frame::frame_errors::CqlResponseParseError;
 use scylla_cql::frame::request::options::{self, Options};
@@ -115,7 +115,7 @@ impl RouterHandle {
         request: &impl SerializableRequest,
         compression: Option<Compression>,
         tracing: bool,
-    ) -> Result<TaskResponse, QueryError> {
+    ) -> Result<TaskResponse, RequestError> {
         let serialized_request = SerializedRequest::make(request, compression, tracing)?;
         let request_id = self.allocate_request_id();
 
@@ -162,7 +162,7 @@ pub(crate) struct ConnectionFeatures {
 type RequestId = u64;
 
 struct ResponseHandler {
-    response_sender: oneshot::Sender<Result<TaskResponse, QueryError>>,
+    response_sender: oneshot::Sender<Result<TaskResponse, RequestError>>,
     request_id: RequestId,
 }
 
@@ -815,8 +815,11 @@ impl Connection {
         &self,
         response: Option<Vec<u8>>,
     ) -> Result<QueryResponse, QueryError> {
-        self.send_request(&request::AuthResponse { response }, false, false, None)
-            .await
+        let response = self
+            .send_request(&request::AuthResponse { response }, false, false, None)
+            .await?;
+
+        Ok(response)
     }
 
     #[allow(dead_code)]
@@ -916,8 +919,11 @@ impl Connection {
             },
         };
 
-        self.send_request(&query_frame, true, query.config.tracing, None)
-            .await
+        let response = self
+            .send_request(&query_frame, true, query.config.tracing, None)
+            .await?;
+
+        Ok(response)
     }
 
     #[allow(dead_code)]
@@ -1271,7 +1277,7 @@ impl Connection {
         compress: bool,
         tracing: bool,
         cached_metadata: Option<&Arc<ResultMetadata>>,
-    ) -> Result<QueryResponse, QueryError> {
+    ) -> Result<QueryResponse, RequestError> {
         let compression = if compress {
             self.config.compression
         } else {
@@ -1418,9 +1424,9 @@ impl Connection {
 
         let result = futures::try_join!(r, w, o, k);
 
-        let error: QueryError = match result {
+        let error: BrokenConnectionError = match result {
             Ok(_) => return, // Connection was dropped, we can return
-            Err(err) => err.into(),
+            Err(err) => err,
         };
 
         // Respond to all pending requests with the error
@@ -1429,11 +1435,11 @@ impl Connection {
 
         for (_, handler) in response_handlers {
             // Ignore sending error, request was dropped
-            let _ = handler.response_sender.send(Err(error.clone()));
+            let _ = handler.response_sender.send(Err(error.clone().into()));
         }
 
         // If someone is listening for connection errors notify them
-        let _ = error_sender.send(error);
+        let _ = error_sender.send(error.into());
     }
 
     async fn reader(
@@ -1514,7 +1520,7 @@ impl Connection {
                 error!("Could not allocate stream id");
                 let _ = response_handler
                     .response_sender
-                    .send(Err(QueryError::UnableToAllocStreamId));
+                    .send(Err(RequestError::UnableToAllocStreamId));
                 None
             }
         }

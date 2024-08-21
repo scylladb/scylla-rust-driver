@@ -489,7 +489,7 @@ pub enum BrokenConnectionErrorKind {
     #[error("Timed out while waiting for response to keepalive request on connection to node {0}")]
     KeepaliveTimeout(IpAddr),
     #[error("Failed to execute keepalive query: {0}")]
-    KeepaliveQueryError(QueryError),
+    KeepaliveQueryError(RequestError),
     #[error("Failed to deserialize frame: {0}")]
     FrameError(FrameError),
     #[error("Failed to handle server event: {0}")]
@@ -537,14 +537,35 @@ pub enum ResponseParseError {
     CqlResponseParseError(#[from] CqlResponseParseError),
 }
 
+/// An error that occurred when performing a request.
+///
+/// Possible error kinds:
+/// - Connection is broken
+/// - Response's frame header deserialization error
+/// - CQL response (frame body) deserialization error
+/// - Driver was unable to allocate a stream id for a request
+///
+/// This error type is only destined to narrow the return error type
+/// of some functions that would previously return [`crate::errors::QueryError`].
+#[derive(Error, Debug)]
+pub enum RequestError {
+    #[error(transparent)]
+    FrameError(#[from] FrameError),
+    #[error(transparent)]
+    CqlResponseParseError(#[from] CqlResponseParseError),
+    #[error(transparent)]
+    BrokenConnection(#[from] BrokenConnectionError),
+    #[error("Unable to allocate a stream id")]
+    UnableToAllocStreamId,
+}
+
 impl From<BrokenConnectionErrorKind> for BrokenConnectionError {
     fn from(value: BrokenConnectionErrorKind) -> Self {
         BrokenConnectionError(Arc::new(value))
     }
 }
 
-// FIXME: remove later
-impl From<ResponseParseError> for QueryError {
+impl From<ResponseParseError> for RequestError {
     fn from(value: ResponseParseError) -> Self {
         match value {
             ResponseParseError::FrameError(e) => e.into(),
@@ -604,6 +625,17 @@ impl From<FrameError> for QueryError {
 impl From<tokio::time::error::Elapsed> for QueryError {
     fn from(timer_error: tokio::time::error::Elapsed) -> QueryError {
         QueryError::RequestTimeout(format!("{}", timer_error))
+    }
+}
+
+impl From<RequestError> for QueryError {
+    fn from(value: RequestError) -> Self {
+        match value {
+            RequestError::FrameError(e) => e.into(),
+            RequestError::CqlResponseParseError(e) => e.into(),
+            RequestError::BrokenConnection(e) => e.into(),
+            RequestError::UnableToAllocStreamId => QueryError::UnableToAllocStreamId,
+        }
     }
 }
 
