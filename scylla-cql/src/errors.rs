@@ -1,8 +1,8 @@
 //! This module contains various errors which can be returned by `scylla::Session`
 
 use crate::frame::frame_errors::{
-    CqlErrorParseError, CqlEventParseError, CqlResponseParseError, CqlSupportedParseError,
-    FrameError, ParseError,
+    CqlAuthenticateParseError, CqlErrorParseError, CqlEventParseError, CqlResponseParseError,
+    CqlSupportedParseError, FrameError, ParseError,
 };
 use crate::frame::protocol_features::ProtocolFeatures;
 use crate::frame::value::SerializeValuesError;
@@ -568,6 +568,8 @@ pub enum ConnectionSetupRequestErrorKind {
     UnexpectedResponse(CqlResponseKind),
     #[error("Failed to deserialize SUPPORTED response: {0}")]
     CqlSupportedParseError(#[from] CqlSupportedParseError),
+    #[error("Failed to deserialize AUTHENTICATE response: {0}")]
+    CqlAuthenticateParseError(#[from] CqlAuthenticateParseError),
     #[error("Failed to deserialize ERROR response: {0}")]
     CqlErrorParseError(#[from] CqlErrorParseError),
 }

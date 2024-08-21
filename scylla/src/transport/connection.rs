@@ -306,6 +306,12 @@ impl NonErrorQueryResponse {
         Ok(result)
     }
 }
+
+pub(crate) enum NonErrorStartupResponse {
+    Ready,
+    Authenticate(response::authenticate::Authenticate),
+}
+
 #[cfg(feature = "ssl")]
 mod ssl_config {
     use openssl::{
@@ -744,11 +750,52 @@ impl Connection {
     pub(crate) async fn startup(
         &self,
         options: HashMap<Cow<'_, str>, Cow<'_, str>>,
-    ) -> Result<Response, QueryError> {
-        Ok(self
+    ) -> Result<NonErrorStartupResponse, ConnectionSetupRequestError> {
+        let err = |kind: ConnectionSetupRequestErrorKind| {
+            ConnectionSetupRequestError::new(CqlRequestKind::Startup, kind)
+        };
+
+        let req_result = self
             .send_request(&request::Startup { options }, false, false, None)
-            .await?
-            .response)
+            .await;
+
+        // Extract the response to STARTUP request and tidy up the errors.
+        let response = match req_result {
+            Ok(r) => match r.response {
+                Response::Ready => NonErrorStartupResponse::Ready,
+                Response::Authenticate(auth) => NonErrorStartupResponse::Authenticate(auth),
+                Response::Error(Error { error, reason }) => {
+                    return Err(err(ConnectionSetupRequestErrorKind::DbError(error, reason)))
+                }
+                _ => {
+                    return Err(err(ConnectionSetupRequestErrorKind::UnexpectedResponse(
+                        r.response.to_response_kind(),
+                    )))
+                }
+            },
+            Err(e) => match e {
+                RequestError::FrameError(e) => return Err(err(e.into())),
+                RequestError::CqlResponseParseError(e) => match e {
+                    // Parsing of READY response cannot fail, since its body is empty.
+                    // Remaining valid responses are AUTHENTICATE and ERROR.
+                    CqlResponseParseError::CqlAuthenticateParseError(e) => {
+                        return Err(err(e.into()))
+                    }
+                    CqlResponseParseError::CqlErrorParseError(e) => return Err(err(e.into())),
+                    _ => {
+                        return Err(err(ConnectionSetupRequestErrorKind::UnexpectedResponse(
+                            e.to_response_kind(),
+                        )))
+                    }
+                },
+                RequestError::BrokenConnection(e) => return Err(err(e.into())),
+                RequestError::UnableToAllocStreamId => {
+                    return Err(err(ConnectionSetupRequestErrorKind::UnableToAllocStreamId))
+                }
+            },
+        };
+
+        Ok(response)
     }
 
     pub(crate) async fn get_options(
@@ -1924,17 +1971,11 @@ pub(crate) async fn open_connection(
     }
 
     /* Send the STARTUP frame with all the requested options. */
-    let result = connection.startup(options).await?;
-    match result {
-        Response::Ready => {}
-        Response::Authenticate(authenticate) => {
+    let startup_result = connection.startup(options).await?;
+    match startup_result {
+        NonErrorStartupResponse::Ready => {}
+        NonErrorStartupResponse::Authenticate(authenticate) => {
             perform_authenticate(&mut connection, &authenticate).await?;
-        }
-        Response::Error(Error { error, reason }) => {
-            return Err(QueryError::DbError(error, reason).into())
-        }
-        _ => {
-            return Err(QueryError::ProtocolError("Unexpected response to STARTUP message").into())
         }
     }
 
