@@ -151,7 +151,7 @@ impl QueryResult {
         self.col_specs()
             .iter()
             .enumerate()
-            .find(|(_id, spec)| spec.name == name)
+            .find(|(_id, spec)| spec.name() == name)
     }
 }
 
@@ -317,11 +317,8 @@ mod tests {
     fn make_test_metadata() -> ResultMetadata {
         let table_spec = TableSpec::borrowed("some_keyspace", "some_table");
 
-        let column_spec = ColumnSpec {
-            table_spec,
-            name: "column0".to_string(),
-            typ: ColumnType::Int,
-        };
+        let column_spec =
+            ColumnSpec::new_for_test(table_spec, "column0".to_owned(), ColumnType::Int);
 
         ResultMetadata::new_for_test(1, vec![column_spec])
     }

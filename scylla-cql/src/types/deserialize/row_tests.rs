@@ -64,18 +64,18 @@ fn test_deserialization_as_column_iterator() {
     let mut iter = deserialize::<ColumnIterator>(&col_specs, &serialized_values).unwrap();
 
     let col1 = iter.next().unwrap().unwrap();
-    assert_eq!(col1.spec.name, "i1");
-    assert_eq!(col1.spec.typ, ColumnType::Int);
+    assert_eq!(col1.spec.name(), "i1");
+    assert_eq!(col1.spec.typ(), &ColumnType::Int);
     assert_eq!(col1.slice.unwrap().as_slice(), &123i32.to_be_bytes());
 
     let col2 = iter.next().unwrap().unwrap();
-    assert_eq!(col2.spec.name, "i2");
-    assert_eq!(col2.spec.typ, ColumnType::Text);
+    assert_eq!(col2.spec.name(), "i2");
+    assert_eq!(col2.spec.typ(), &ColumnType::Text);
     assert_eq!(col2.slice.unwrap().as_slice(), "ScyllaDB".as_bytes());
 
     let col3 = iter.next().unwrap().unwrap();
-    assert_eq!(col3.spec.name, "i3");
-    assert_eq!(col3.spec.typ, ColumnType::Counter);
+    assert_eq!(col3.spec.name(), "i3");
+    assert_eq!(col3.spec.typ(), &ColumnType::Counter);
     assert!(col3.slice.is_none());
 
     assert!(iter.next().is_none());
@@ -301,7 +301,7 @@ fn test_tuple_errors() {
             err.cql_types,
             specs
                 .iter()
-                .map(|spec| spec.typ.clone())
+                .map(|spec| spec.typ().clone())
                 .collect::<Vec<_>>()
         );
         let BuiltinTypeCheckErrorKind::ColumnTypeCheckFailed {
@@ -435,7 +435,7 @@ fn test_row_errors() {
 }
 
 fn specs_to_types(specs: &[ColumnSpec]) -> Vec<ColumnType> {
-    specs.iter().map(|spec| spec.typ.clone()).collect()
+    specs.iter().map(|spec| spec.typ().clone()).collect()
 }
 
 #[test]

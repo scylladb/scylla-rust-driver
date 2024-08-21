@@ -56,7 +56,7 @@ impl<'frame> Iterator for RowIterator<'frame> {
                 return Some(Err(mk_deser_err::<Self>(
                     BuiltinDeserializationErrorKind::RawColumnDeserializationFailed {
                         column_index,
-                        column_name: spec.name.clone(),
+                        column_name: spec.name().to_owned(),
                         err: DeserializationError::new(err),
                     },
                 )));

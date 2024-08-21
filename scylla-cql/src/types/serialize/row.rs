@@ -51,7 +51,7 @@ impl<'a> RowSerializationContext<'a> {
     // TODO: change RowSerializationContext to make this faster
     #[inline]
     pub fn column_by_name(&self, target: &str) -> Option<&ColumnSpec> {
-        self.columns.iter().find(|&c| c.name == target)
+        self.columns.iter().find(|&c| c.name() == target)
     }
 }
 
@@ -148,11 +148,11 @@ macro_rules! impl_serialize_row_for_slice {
                 ));
             }
             for (col, val) in ctx.columns().iter().zip(self.iter()) {
-                <T as SerializeValue>::serialize(val, &col.typ, writer.make_cell_writer())
+                <T as SerializeValue>::serialize(val, col.typ(), writer.make_cell_writer())
                     .map_err(|err| {
                         mk_ser_err::<Self>(
                             BuiltinSerializationErrorKind::ColumnSerializationFailed {
-                                name: col.name.clone(),
+                                name: col.name().to_owned(),
                                 err,
                             },
                         )
@@ -189,25 +189,25 @@ macro_rules! impl_serialize_row_for_map {
             let mut unused_columns: HashSet<&str> = self.keys().map(|k| k.as_ref()).collect();
 
             for col in ctx.columns.iter() {
-                match self.get(col.name.as_str()) {
+                match self.get(col.name()) {
                     None => {
                         return Err(mk_typck_err::<Self>(
                             BuiltinTypeCheckErrorKind::ValueMissingForColumn {
-                                name: col.name.clone(),
+                                name: col.name().to_owned(),
                             },
                         ))
                     }
                     Some(v) => {
-                        <T as SerializeValue>::serialize(v, &col.typ, writer.make_cell_writer())
+                        <T as SerializeValue>::serialize(v, col.typ(), writer.make_cell_writer())
                             .map_err(|err| {
-                                mk_ser_err::<Self>(
-                                    BuiltinSerializationErrorKind::ColumnSerializationFailed {
-                                        name: col.name.clone(),
-                                        err,
-                                    },
-                                )
-                            })?;
-                        let _ = unused_columns.remove(col.name.as_str());
+                            mk_ser_err::<Self>(
+                                BuiltinSerializationErrorKind::ColumnSerializationFailed {
+                                    name: col.name().to_owned(),
+                                    err,
+                                },
+                            )
+                        })?;
+                        let _ = unused_columns.remove(col.name());
                     }
                 }
             }
@@ -295,9 +295,9 @@ macro_rules! impl_tuple {
                 };
                 let ($($fidents,)*) = self;
                 $(
-                    <$typs as SerializeValue>::serialize($fidents, &$tidents.typ, writer.make_cell_writer()).map_err(|err| {
+                    <$typs as SerializeValue>::serialize($fidents, $tidents.typ(), writer.make_cell_writer()).map_err(|err| {
                         mk_ser_err::<Self>(BuiltinSerializationErrorKind::ColumnSerializationFailed {
-                            name: $tidents.name.clone(),
+                            name: $tidents.name().to_owned(),
                             err,
                         })
                     })?;
@@ -493,10 +493,10 @@ pub fn serialize_legacy_row<T: ValueList>(
         let mut unused_count = values_by_name.len();
 
         for col in ctx.columns() {
-            let (val, visited) = values_by_name.get_mut(col.name.as_str()).ok_or_else(|| {
+            let (val, visited) = values_by_name.get_mut(col.name()).ok_or_else(|| {
                 SerializationError(Arc::new(
                     ValueListToSerializeRowAdapterError::ValueMissingForBindMarker {
-                        name: col.name.clone(),
+                        name: col.name().to_owned(),
                     },
                 ))
             })?;

@@ -233,16 +233,16 @@ impl<'a> Generator for ColumnSortingGenerator<'a> {
         // the field name.
         statements.push(parse_quote! {
             for spec in ctx.columns() {
-                match ::std::string::String::as_str(&spec.name) {
+                match spec.name() {
                     #(
                         #udt_field_names => {
                             let sub_writer = #crate_path::RowWriter::make_cell_writer(writer);
-                            match <#field_types as #crate_path::SerializeValue>::serialize(&self.#rust_field_idents, &spec.typ, sub_writer) {
+                            match <#field_types as #crate_path::SerializeValue>::serialize(&self.#rust_field_idents, spec.typ(), sub_writer) {
                                 ::std::result::Result::Ok(_proof) => {}
                                 ::std::result::Result::Err(err) => {
                                     return ::std::result::Result::Err(mk_ser_err(
                                         #crate_path::BuiltinRowSerializationErrorKind::ColumnSerializationFailed {
-                                            name: <_ as ::std::clone::Clone>::clone(&spec.name),
+                                            name: <_ as ::std::borrow::ToOwned>::to_owned(spec.name()),
                                             err,
                                         }
                                     ));
@@ -256,7 +256,7 @@ impl<'a> Generator for ColumnSortingGenerator<'a> {
                     )*
                     _ => return ::std::result::Result::Err(mk_typck_err(
                         #crate_path::BuiltinRowTypeCheckErrorKind::NoColumnWithName {
-                            name: <_ as ::std::clone::Clone>::clone(&&spec.name),
+                            name: <_ as ::std::borrow::ToOwned>::to_owned(spec.name()),
                         }
                     )),
                 }
@@ -330,7 +330,7 @@ impl<'a> Generator for ColumnOrderedGenerator<'a> {
             let rust_field_name = field.column_name();
             let typ = &field.ty;
             let name_check_expression: syn::Expr = if !self.ctx.attributes.skip_name_checks {
-                parse_quote! { spec.name == #rust_field_name }
+                parse_quote! { spec.name() == #rust_field_name }
             } else {
                 parse_quote! { true }
             };
@@ -339,12 +339,12 @@ impl<'a> Generator for ColumnOrderedGenerator<'a> {
                     Some(spec) => {
                         if #name_check_expression {
                             let cell_writer = #crate_path::RowWriter::make_cell_writer(writer);
-                            match <#typ as #crate_path::SerializeValue>::serialize(&self.#rust_field_ident, &spec.typ, cell_writer) {
+                            match <#typ as #crate_path::SerializeValue>::serialize(&self.#rust_field_ident, spec.typ(), cell_writer) {
                                 Ok(_proof) => {},
                                 Err(err) => {
                                     return ::std::result::Result::Err(mk_ser_err(
                                         #crate_path::BuiltinRowSerializationErrorKind::ColumnSerializationFailed {
-                                            name: <_ as ::std::clone::Clone>::clone(&spec.name),
+                                            name: <_ as ::std::borrow::ToOwned>::to_owned(spec.name()),
                                             err,
                                         }
                                     ));
@@ -354,7 +354,7 @@ impl<'a> Generator for ColumnOrderedGenerator<'a> {
                             return ::std::result::Result::Err(mk_typck_err(
                                 #crate_path::BuiltinRowTypeCheckErrorKind::ColumnNameMismatch {
                                     rust_column_name: <_ as ::std::string::ToString>::to_string(#rust_field_name),
-                                    db_column_name: <_ as ::std::clone::Clone>::clone(&spec.name),
+                                    db_column_name: <_ as ::std::borrow::ToOwned>::to_owned(spec.name()),
                                 }
                             ));
                         }
@@ -375,7 +375,7 @@ impl<'a> Generator for ColumnOrderedGenerator<'a> {
             if let Some(spec) = column_iter.next() {
                 return ::std::result::Result::Err(mk_typck_err(
                     #crate_path::BuiltinRowTypeCheckErrorKind::NoColumnWithName {
-                        name: <_ as ::std::clone::Clone>::clone(&spec.name),
+                        name: <_ as ::std::borrow::ToOwned>::to_owned(spec.name()),
                     }
                 ));
             }

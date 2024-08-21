@@ -2244,7 +2244,7 @@ fn partition_key_displayer<'ps, 'res>(
         std::iter::from_fn(move || {
             pk_values_iter
                 .next()
-                .map(|(mut cell, spec)| deser_cql_value(&spec.typ, &mut cell))
+                .map(|(mut cell, spec)| deser_cql_value(spec.typ(), &mut cell))
         })
         .map(|c| match c {
             Ok(c) => Either::Left(CqlValueDisplayer(c)),

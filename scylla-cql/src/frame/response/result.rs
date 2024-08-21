@@ -424,9 +424,38 @@ impl CqlValue {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ColumnSpec {
-    pub table_spec: TableSpec<'static>,
-    pub name: String,
-    pub typ: ColumnType,
+    pub(crate) table_spec: TableSpec<'static>,
+    pub(crate) name: String,
+    pub(crate) typ: ColumnType,
+}
+
+impl ColumnSpec {
+    #[inline]
+    pub fn table_spec(&self) -> &TableSpec<'static> {
+        &self.table_spec
+    }
+
+    #[inline]
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
+    #[inline]
+    pub fn typ(&self) -> &ColumnType {
+        &self.typ
+    }
+}
+
+// Test utils for scylla crate.
+impl ColumnSpec {
+    #[doc(hidden)]
+    pub fn new_for_test(table_spec: TableSpec<'static>, name: String, typ: ColumnType) -> Self {
+        Self {
+            table_spec,
+            name,
+            typ,
+        }
+    }
 }
 
 #[derive(Debug, Clone)]

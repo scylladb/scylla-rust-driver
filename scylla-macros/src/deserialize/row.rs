@@ -184,7 +184,7 @@ impl<'sd> TypeCheckAssumeOrderGenerator<'sd> {
             let rust_field_name = field.cql_name_literal();
 
             parse_quote! {
-                if #column_spec.name != #rust_field_name {
+                if #column_spec.name() != #rust_field_name {
                     return ::std::result::Result::Err(
                         #macro_internal::mk_row_typck_err::<Self>(
                             column_types_iter(),
@@ -192,7 +192,7 @@ impl<'sd> TypeCheckAssumeOrderGenerator<'sd> {
                                 field_index: #field_index,
                                 column_index: #column_index,
                                 rust_column_name: #rust_field_name,
-                                db_column_name: ::std::clone::Clone::clone(&#column_spec.name),
+                                db_column_name: ::std::borrow::ToOwned::to_owned(#column_spec.name()),
                             }
                         )
                     );
@@ -233,7 +233,7 @@ impl<'sd> TypeCheckAssumeOrderGenerator<'sd> {
             fn type_check(
                 specs: &[#macro_internal::ColumnSpec],
             ) -> ::std::result::Result<(), #macro_internal::TypeCheckError> {
-                let column_types_iter = || specs.iter().map(|spec| ::std::clone::Clone::clone(&spec.typ));
+                let column_types_iter = || specs.iter().map(|spec| ::std::clone::Clone::clone(spec.typ()));
 
                 match specs {
                     [#(#required_fields_idents),*] => {
@@ -242,12 +242,12 @@ impl<'sd> TypeCheckAssumeOrderGenerator<'sd> {
                             #name_verifications
 
                             // Verify the type
-                            <#required_fields_deserializers as #macro_internal::DeserializeValue<#constraint_lifetime>>::type_check(&#required_fields_idents.typ)
+                            <#required_fields_deserializers as #macro_internal::DeserializeValue<#constraint_lifetime>>::type_check(#required_fields_idents.typ())
                                 .map_err(|err| #macro_internal::mk_row_typck_err::<Self>(
                                     column_types_iter(),
                                     #macro_internal::DeserBuiltinRowTypeCheckErrorKind::ColumnTypeCheckFailed {
                                         column_index: #numbers,
-                                        column_name: ::std::clone::Clone::clone(&#required_fields_idents.name),
+                                        column_name: ::std::borrow::ToOwned::to_owned(#required_fields_idents.name()),
                                         err,
                                     }
                                 ))?;
@@ -284,11 +284,11 @@ impl<'sd> DeserializeAssumeOrderGenerator<'sd> {
         let constraint_lifetime = self.0.constraint_lifetime();
 
         let name_check: Option<syn::Stmt> = (!self.0.struct_attrs().skip_name_checks).then(|| parse_quote! {
-            if col.spec.name.as_str() != #cql_name_literal {
+            if col.spec.name() != #cql_name_literal {
                 panic!(
                     "Typecheck should have prevented this scenario - field-column name mismatch! Rust field name {}, CQL column name {}",
                     #cql_name_literal,
-                    col.spec.name.as_str()
+                    col.spec.name()
                 );
             }
         });
@@ -301,11 +301,11 @@ impl<'sd> DeserializeAssumeOrderGenerator<'sd> {
 
                 #name_check
 
-                <#deserializer as #macro_internal::DeserializeValue<#constraint_lifetime>>::deserialize(&col.spec.typ, col.slice)
+                <#deserializer as #macro_internal::DeserializeValue<#constraint_lifetime>>::deserialize(col.spec.typ(), col.slice)
                     .map_err(|err| #macro_internal::mk_row_deser_err::<Self>(
                         #macro_internal::BuiltinRowDeserializationErrorKind::ColumnDeserializationFailed {
                             column_index: #field_index,
-                            column_name: <_ as std::clone::Clone>::clone(&col.spec.name),
+                            column_name: <_ as std::borrow::ToOwned>::to_owned(col.spec.name()),
                             err,
                         }
                     ))?
@@ -373,7 +373,7 @@ impl<'sd> TypeCheckUnorderedGenerator<'sd> {
             parse_quote! {
                 {
                     if !#visited_flag {
-                        <#typ as #macro_internal::DeserializeValue<#constraint_lifetime>>::type_check(&spec.typ)
+                        <#typ as #macro_internal::DeserializeValue<#constraint_lifetime>>::type_check(spec.typ())
                             .map_err(|err| {
                                 #macro_internal::mk_row_typck_err::<Self>(
                                     column_types_iter(),
@@ -441,11 +441,11 @@ impl<'sd> TypeCheckUnorderedGenerator<'sd> {
                 // For each required field, generate a "visited" boolean flag
                 #(#visited_field_declarations)*
 
-                let column_types_iter = || specs.iter().map(|spec| ::std::clone::Clone::clone(&spec.typ));
+                let column_types_iter = || specs.iter().map(|spec| ::std::clone::Clone::clone(spec.typ()));
 
                 for (column_index, spec) in specs.iter().enumerate() {
                     // Pattern match on the name and verify that the type is correct.
-                    match spec.name.as_str() {
+                    match spec.name() {
                         #(#nonskipped_field_names => #type_check_blocks,)*
                         _unknown => {
                             return ::std::result::Result::Err(
@@ -453,7 +453,7 @@ impl<'sd> TypeCheckUnorderedGenerator<'sd> {
                                     column_types_iter(),
                                     #macro_internal::DeserBuiltinRowTypeCheckErrorKind::ColumnWithUnknownName {
                                         column_index,
-                                        column_name: <_ as ::std::clone::Clone>::clone(&spec.name)
+                                        column_name: <_ as ::std::borrow::ToOwned>::to_owned(spec.name())
                                     }
                                 )
                             )
@@ -529,12 +529,12 @@ impl<'sd> DeserializeUnorderedGenerator<'sd> {
                 );
 
                 #deserialize_field = ::std::option::Option::Some(
-                    <#deserializer as #macro_internal::DeserializeValue<#constraint_lifetime>>::deserialize(&col.spec.typ, col.slice)
+                    <#deserializer as #macro_internal::DeserializeValue<#constraint_lifetime>>::deserialize(col.spec.typ(), col.slice)
                         .map_err(|err| {
                             #macro_internal::mk_row_deser_err::<Self>(
                                 #macro_internal::BuiltinRowDeserializationErrorKind::ColumnDeserializationFailed {
                                     column_index: #column_index,
-                                    column_name: <_ as std::clone::Clone>::clone(&col.spec.name),
+                                    column_name: <_ as std::borrow::ToOwned>::to_owned(col.spec.name()),
                                     err,
                                 }
                             )
@@ -591,7 +591,7 @@ impl<'sd> DeserializeUnorderedGenerator<'sd> {
                 for col in row {
                     let col = col.map_err(#macro_internal::row_deser_error_replace_rust_name::<Self>)?;
                     // Pattern match on the field name and deserialize.
-                    match col.spec.name.as_str() {
+                    match col.spec.name() {
                         #(#nonskipped_field_names => #deserialize_blocks,)*
                         unknown => unreachable!("Typecheck should have prevented this scenario! Unknown column name: {}", unknown),
                     }

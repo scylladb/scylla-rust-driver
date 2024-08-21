@@ -62,7 +62,7 @@ impl<'frame> Iterator for ColumnIterator<'frame> {
                     mk_deser_err::<Self>(
                         BuiltinDeserializationErrorKind::RawColumnDeserializationFailed {
                             column_index,
-                            column_name: spec.name.clone(),
+                            column_name: spec.name().to_owned(),
                             err: DeserializationError::new(err),
                         },
                     )
@@ -156,15 +156,17 @@ impl<'frame> DeserializeRow<'frame> for Row {
             .map_err(deser_error_replace_rust_name::<Self>)?
         {
             columns.push(
-                <Option<CqlValue>>::deserialize(&column.spec.typ, column.slice).map_err(|err| {
-                    mk_deser_err::<Self>(
-                        BuiltinDeserializationErrorKind::ColumnDeserializationFailed {
-                            column_index: column.index,
-                            column_name: column.spec.name.clone(),
-                            err,
-                        },
-                    )
-                })?,
+                <Option<CqlValue>>::deserialize(column.spec.typ(), column.slice).map_err(
+                    |err| {
+                        mk_deser_err::<Self>(
+                            BuiltinDeserializationErrorKind::ColumnDeserializationFailed {
+                                column_index: column.index,
+                                column_name: column.spec.name().to_owned(),
+                                err,
+                            },
+                        )
+                    },
+                )?,
             );
         }
         Ok(Self { columns })
@@ -186,13 +188,13 @@ macro_rules! impl_tuple {
             fn type_check(specs: &[ColumnSpec]) -> Result<(), TypeCheckError> {
                 const TUPLE_LEN: usize = (&[$($idx),*] as &[i32]).len();
 
-                let column_types_iter = || specs.iter().map(|spec| spec.typ.clone());
+                let column_types_iter = || specs.iter().map(|spec| spec.typ().clone());
                 if let [$($idf),*] = &specs {
                     $(
-                        <$Ti as DeserializeValue<'frame>>::type_check(&$idf.typ)
+                        <$Ti as DeserializeValue<'frame>>::type_check($idf.typ())
                             .map_err(|err| mk_typck_err::<Self>(column_types_iter(), BuiltinTypeCheckErrorKind::ColumnTypeCheckFailed {
                                 column_index: $idx,
-                                column_name: specs[$idx].name.clone(),
+                                column_name: specs[$idx].name().to_owned(),
                                 err
                             }))?;
                     )*
@@ -215,10 +217,10 @@ macro_rules! impl_tuple {
                             $idx
                         )).map_err(deser_error_replace_rust_name::<Self>)?;
 
-                        <$Ti as DeserializeValue<'frame>>::deserialize(&column.spec.typ, column.slice)
+                        <$Ti as DeserializeValue<'frame>>::deserialize(column.spec.typ(), column.slice)
                             .map_err(|err| mk_deser_err::<Self>(BuiltinDeserializationErrorKind::ColumnDeserializationFailed {
                                 column_index: column.index,
-                                column_name: column.spec.name.clone(),
+                                column_name: column.spec.name().to_owned(),
                                 err,
                             }))?
                     },)*
