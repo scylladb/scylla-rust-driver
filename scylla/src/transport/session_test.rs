@@ -28,7 +28,7 @@ use assert_matches::assert_matches;
 use bytes::Bytes;
 use futures::{FutureExt, StreamExt, TryStreamExt};
 use itertools::Itertools;
-use scylla_cql::frame::response::result::ColumnType;
+use scylla_cql::frame::response::result::{ColumnType, TableSpec};
 use scylla_cql::types::serialize::row::{SerializeRow, SerializedValues};
 use scylla_cql::types::serialize::value::SerializeValue;
 use std::collections::BTreeSet;
@@ -137,11 +137,14 @@ async fn test_unprepared_statement() {
         .query_iter(format!("SELECT a, b, c FROM {}.t", ks), &[])
         .await
         .unwrap();
+    assert_eq!(
+        query_result.get_table_spec(),
+        &Some(TableSpec::borrowed(ks.as_str(), "t"))
+    );
     let specs = query_result.get_column_specs();
     assert_eq!(specs.len(), 3);
     for (spec, name) in specs.iter().zip(["a", "b", "c"]) {
         assert_eq!(spec.name, name); // Check column name.
-        assert_eq!(spec.table_spec.ks_name(), ks);
     }
     let mut results_from_manual_paging: Vec<Row> = vec![];
     let query = Query::new(format!("SELECT a, b, c FROM {}.t", ks)).with_page_size(1);
@@ -193,11 +196,15 @@ async fn test_prepared_statement() {
         .await
         .unwrap();
     let query_result = session.execute_iter(prepared_statement, &[]).await.unwrap();
+
+    assert_eq!(
+        query_result.get_table_spec(),
+        &Some(TableSpec::borrowed(ks.as_str(), "t2")),
+    );
     let specs = query_result.get_column_specs();
     assert_eq!(specs.len(), 3);
     for (spec, name) in specs.iter().zip(["a", "b", "c"]) {
         assert_eq!(spec.name, name); // Check column name.
-        assert_eq!(spec.table_spec.ks_name(), ks);
     }
 
     let prepared_statement = session

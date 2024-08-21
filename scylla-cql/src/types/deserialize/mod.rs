@@ -274,7 +274,7 @@ use make_error_replace_rust_name;
 mod tests {
     use bytes::{Bytes, BytesMut};
 
-    use crate::frame::response::result::{ColumnSpec, ColumnType, TableSpec};
+    use crate::frame::response::result::{ColumnSpec, ColumnType};
     use crate::frame::types;
 
     pub(super) static CELL1: &[u8] = &[1, 2, 3];
@@ -294,7 +294,6 @@ mod tests {
         ColumnSpec {
             name: name.to_owned(),
             typ,
-            table_spec: TableSpec::borrowed("ks", "tbl"),
         }
     }
 }
