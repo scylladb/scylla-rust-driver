@@ -1,11 +1,13 @@
 use bytes::Bytes;
 use futures::{future::RemoteHandle, FutureExt};
 use scylla_cql::errors::{
-    BrokenConnectionError, BrokenConnectionErrorKind, ConnectionError, CqlEventHandlingError,
-    RequestError, ResponseParseError, TranslationError,
+    BrokenConnectionError, BrokenConnectionErrorKind, ConnectionError, ConnectionSetupRequestError,
+    ConnectionSetupRequestErrorKind, CqlEventHandlingError, CqlRequestKind, RequestError,
+    ResponseParseError, TranslationError,
 };
 use scylla_cql::frame::frame_errors::CqlResponseParseError;
 use scylla_cql::frame::request::options::{self, Options};
+use scylla_cql::frame::response;
 use scylla_cql::frame::response::result::{ResultMetadata, TableSpec};
 use scylla_cql::frame::response::Error;
 use scylla_cql::frame::types::SerialConsistency;
@@ -749,11 +751,49 @@ impl Connection {
             .response)
     }
 
-    pub(crate) async fn get_options(&self) -> Result<Response, QueryError> {
-        Ok(self
+    pub(crate) async fn get_options(
+        &self,
+    ) -> Result<response::Supported, ConnectionSetupRequestError> {
+        let err = |kind: ConnectionSetupRequestErrorKind| {
+            ConnectionSetupRequestError::new(CqlRequestKind::Options, kind)
+        };
+
+        let req_result = self
             .send_request(&request::Options {}, false, false, None)
-            .await?
-            .response)
+            .await;
+
+        // Extract the supported options and tidy up the errors.
+        let supported = match req_result {
+            Ok(r) => match r.response {
+                Response::Supported(supported) => supported,
+                Response::Error(Error { error, reason }) => {
+                    return Err(err(ConnectionSetupRequestErrorKind::DbError(error, reason)))
+                }
+                _ => {
+                    return Err(err(ConnectionSetupRequestErrorKind::UnexpectedResponse(
+                        r.response.to_response_kind(),
+                    )))
+                }
+            },
+            Err(e) => match e {
+                RequestError::FrameError(e) => return Err(err(e.into())),
+                RequestError::CqlResponseParseError(e) => match e {
+                    CqlResponseParseError::CqlSupportedParseError(e) => return Err(err(e.into())),
+                    CqlResponseParseError::CqlErrorParseError(e) => return Err(err(e.into())),
+                    _ => {
+                        return Err(err(ConnectionSetupRequestErrorKind::UnexpectedResponse(
+                            e.to_response_kind(),
+                        )))
+                    }
+                },
+                RequestError::BrokenConnection(e) => return Err(err(e.into())),
+                RequestError::UnableToAllocStreamId => {
+                    return Err(err(ConnectionSetupRequestErrorKind::UnableToAllocStreamId))
+                }
+            },
+        };
+
+        Ok(supported)
     }
 
     pub(crate) async fn prepare(&self, query: &Query) -> Result<PreparedStatement, QueryError> {
@@ -1818,20 +1858,7 @@ pub(crate) async fn open_connection(
     /* Perform OPTIONS/SUPPORTED/STARTUP handshake. */
 
     // Get OPTIONS SUPPORTED by the cluster.
-    let options_result = connection.get_options().await?;
-
-    let mut supported = match options_result {
-        Response::Supported(supported) => supported,
-        Response::Error(Error { error, reason }) => {
-            return Err(QueryError::DbError(error, reason).into())
-        }
-        _ => {
-            return Err(QueryError::ProtocolError(
-                "Wrong response to OPTIONS message was received",
-            )
-            .into());
-        }
-    };
+    let mut supported = connection.get_options().await?;
 
     let shard_aware_port_key = match config.is_ssl() {
         true => options::SCYLLA_SHARD_AWARE_PORT_SSL,

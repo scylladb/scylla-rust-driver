@@ -1,7 +1,8 @@
 //! This module contains various errors which can be returned by `scylla::Session`
 
 use crate::frame::frame_errors::{
-    CqlEventParseError, CqlResponseParseError, FrameError, ParseError,
+    CqlErrorParseError, CqlEventParseError, CqlResponseParseError, CqlSupportedParseError,
+    FrameError, ParseError,
 };
 use crate::frame::protocol_features::ProtocolFeatures;
 use crate::frame::value::SerializeValuesError;
@@ -519,6 +520,8 @@ pub enum ConnectionError {
     TranslationError(#[from] TranslationError),
     #[error(transparent)]
     BrokenConnection(#[from] BrokenConnectionError),
+    #[error(transparent)]
+    ConnectionSetupRequestError(#[from] ConnectionSetupRequestError),
     // TODO: remove it or change it later.
     #[error(transparent)]
     QueryError(#[from] QueryError),
@@ -538,6 +541,43 @@ impl ConnectionError {
         }
 
         false
+    }
+}
+
+/// An error that occurred during connection setup request execution.
+/// It indicates that request needed to initiate a connection failed.
+#[derive(Error, Debug)]
+#[error("Failed to perform a connection setup request. Request: {request_kind}, reason: {error}")]
+pub struct ConnectionSetupRequestError {
+    request_kind: CqlRequestKind,
+    error: ConnectionSetupRequestErrorKind,
+}
+
+#[derive(Error, Debug)]
+#[non_exhaustive]
+pub enum ConnectionSetupRequestErrorKind {
+    #[error(transparent)]
+    FrameError(#[from] FrameError),
+    #[error("Unable to allocate stream id")]
+    UnableToAllocStreamId,
+    #[error(transparent)]
+    BrokenConnection(#[from] BrokenConnectionError),
+    #[error("Database returned an error: {0}, Error message: {1}")]
+    DbError(DbError, String),
+    #[error("Received unexpected response from the server: {0}")]
+    UnexpectedResponse(CqlResponseKind),
+    #[error("Failed to deserialize SUPPORTED response: {0}")]
+    CqlSupportedParseError(#[from] CqlSupportedParseError),
+    #[error("Failed to deserialize ERROR response: {0}")]
+    CqlErrorParseError(#[from] CqlErrorParseError),
+}
+
+impl ConnectionSetupRequestError {
+    pub fn new(request_kind: CqlRequestKind, error: ConnectionSetupRequestErrorKind) -> Self {
+        ConnectionSetupRequestError {
+            request_kind,
+            error,
+        }
     }
 }
 
