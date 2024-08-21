@@ -1820,11 +1820,6 @@ pub(crate) async fn open_connection(
     // Get OPTIONS SUPPORTED by the cluster.
     let options_result = connection.get_options().await?;
 
-    let shard_aware_port_key = match config.is_ssl() {
-        true => options::SCYLLA_SHARD_AWARE_PORT_SSL,
-        false => options::SCYLLA_SHARD_AWARE_PORT,
-    };
-
     let mut supported = match options_result {
         Response::Supported(supported) => supported,
         Response::Error(Error { error, reason }) => {
@@ -1836,6 +1831,11 @@ pub(crate) async fn open_connection(
             )
             .into());
         }
+    };
+
+    let shard_aware_port_key = match config.is_ssl() {
+        true => options::SCYLLA_SHARD_AWARE_PORT_SSL,
+        false => options::SCYLLA_SHARD_AWARE_PORT,
     };
 
     // If this is ScyllaDB that we connected to, we received sharding information.
