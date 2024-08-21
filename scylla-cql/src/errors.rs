@@ -1,8 +1,9 @@
 //! This module contains various errors which can be returned by `scylla::Session`
 
 use crate::frame::frame_errors::{
-    CqlAuthenticateParseError, CqlErrorParseError, CqlEventParseError, CqlResponseParseError,
-    CqlSupportedParseError, FrameError, ParseError,
+    CqlAuthChallengeParseError, CqlAuthSuccessParseError, CqlAuthenticateParseError,
+    CqlErrorParseError, CqlEventParseError, CqlResponseParseError, CqlSupportedParseError,
+    FrameError, ParseError,
 };
 use crate::frame::protocol_features::ProtocolFeatures;
 use crate::frame::value::SerializeValuesError;
@@ -553,6 +554,8 @@ pub struct ConnectionSetupRequestError {
     error: ConnectionSetupRequestErrorKind,
 }
 
+type AuthError = String;
+
 #[derive(Error, Debug)]
 #[non_exhaustive]
 pub enum ConnectionSetupRequestErrorKind {
@@ -570,8 +573,20 @@ pub enum ConnectionSetupRequestErrorKind {
     CqlSupportedParseError(#[from] CqlSupportedParseError),
     #[error("Failed to deserialize AUTHENTICATE response: {0}")]
     CqlAuthenticateParseError(#[from] CqlAuthenticateParseError),
+    #[error("Failed to deserialize AUTH_SUCCESS response: {0}")]
+    CqlAuthSuccessParseError(#[from] CqlAuthSuccessParseError),
+    #[error("Failed to deserialize AUTH_CHALLENGE response: {0}")]
+    CqlAuthChallengeParseError(#[from] CqlAuthChallengeParseError),
     #[error("Failed to deserialize ERROR response: {0}")]
     CqlErrorParseError(#[from] CqlErrorParseError),
+    #[error("Failed to start client's auth session: {0}")]
+    StartAuthSessionError(AuthError),
+    #[error("Failed to evaluate auth challenge on client side: {0}")]
+    AuthChallengeEvaluationError(AuthError),
+    #[error("Failed to finish auth challenge on client side: {0}")]
+    AuthFinishError(AuthError),
+    #[error("Authentication is required. You can use SessionBuilder::user(\"user\", \"pass\") to provide credentials or SessionBuilder::authenticator_provider to provide custom authenticator")]
+    MissingAuthentication,
 }
 
 impl ConnectionSetupRequestError {

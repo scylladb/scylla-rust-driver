@@ -312,6 +312,11 @@ pub(crate) enum NonErrorStartupResponse {
     Authenticate(response::authenticate::Authenticate),
 }
 
+pub(crate) enum NonErrorAuthResponse {
+    AuthChallenge(response::authenticate::AuthChallenge),
+    AuthSuccess(response::authenticate::AuthSuccess),
+}
+
 #[cfg(feature = "ssl")]
 mod ssl_config {
     use openssl::{
@@ -902,10 +907,55 @@ impl Connection {
     pub(crate) async fn authenticate_response(
         &self,
         response: Option<Vec<u8>>,
-    ) -> Result<QueryResponse, QueryError> {
-        let response = self
+    ) -> Result<NonErrorAuthResponse, ConnectionSetupRequestError> {
+        let err = |kind: ConnectionSetupRequestErrorKind| {
+            ConnectionSetupRequestError::new(CqlRequestKind::AuthResponse, kind)
+        };
+
+        let req_result = self
             .send_request(&request::AuthResponse { response }, false, false, None)
-            .await?;
+            .await;
+
+        // Extract non-error response to AUTH_RESPONSE request and tidy up errors.
+        let response = match req_result {
+            Ok(r) => match r.response {
+                Response::AuthSuccess(auth_success) => {
+                    NonErrorAuthResponse::AuthSuccess(auth_success)
+                }
+                Response::AuthChallenge(auth_challenge) => {
+                    NonErrorAuthResponse::AuthChallenge(auth_challenge)
+                }
+                Response::Error(Error { error, reason }) => {
+                    return Err(err(ConnectionSetupRequestErrorKind::DbError(error, reason)))
+                }
+                _ => {
+                    return Err(err(ConnectionSetupRequestErrorKind::UnexpectedResponse(
+                        r.response.to_response_kind(),
+                    )))
+                }
+            },
+            Err(e) => match e {
+                RequestError::FrameError(e) => return Err(err(e.into())),
+                RequestError::CqlResponseParseError(e) => match e {
+                    CqlResponseParseError::CqlAuthSuccessParseError(e) => {
+                        return Err(err(e.into()))
+                    }
+                    CqlResponseParseError::CqlAuthChallengeParseError(e) => {
+                        return Err(err(e.into()))
+                    }
+                    CqlResponseParseError::CqlErrorParseError(e) => return Err(err(e.into())),
+                    _ => {
+                        return Err(err(ConnectionSetupRequestErrorKind::UnexpectedResponse(
+                            e.to_response_kind(),
+                        )))
+                    }
+                },
+                RequestError::BrokenConnection(e) => return Err(err(e.into())),
+                RequestError::UnableToAllocStreamId => {
+                    return Err(err(ConnectionSetupRequestErrorKind::UnableToAllocStreamId))
+                }
+            },
+        };
 
         Ok(response)
     }
@@ -2014,7 +2064,11 @@ pub(crate) async fn open_connection(
 async fn perform_authenticate(
     connection: &mut Connection,
     authenticate: &Authenticate,
-) -> Result<(), QueryError> {
+) -> Result<(), ConnectionSetupRequestError> {
+    let err = |kind: ConnectionSetupRequestErrorKind| {
+        ConnectionSetupRequestError::new(CqlRequestKind::AuthResponse, kind)
+    };
+
     let authenticator = &authenticate.authenticator_name as &str;
 
     match connection.config.authenticator {
@@ -2022,43 +2076,35 @@ async fn perform_authenticate(
             let (mut response, mut auth_session) = authenticator_provider
                 .start_authentication_session(authenticator)
                 .await
-                .map_err(QueryError::InvalidMessage)?;
+                .map_err(|e| err(ConnectionSetupRequestErrorKind::StartAuthSessionError(e)))?;
 
             loop {
-                match connection
-                    .authenticate_response(response)
-                    .await?.response
-                {
-                    Response::AuthChallenge(challenge) => {
+                match connection.authenticate_response(response).await? {
+                    NonErrorAuthResponse::AuthChallenge(challenge) => {
                         response = auth_session
-                            .evaluate_challenge(
-                                challenge.authenticate_message.as_deref(),
-                            )
+                            .evaluate_challenge(challenge.authenticate_message.as_deref())
                             .await
-                            .map_err(QueryError::InvalidMessage)?;
+                            .map_err(|e| {
+                                err(
+                                    ConnectionSetupRequestErrorKind::AuthChallengeEvaluationError(
+                                        e,
+                                    ),
+                                )
+                            })?;
                     }
-                    Response::AuthSuccess(success) => {
+                    NonErrorAuthResponse::AuthSuccess(success) => {
                         auth_session
                             .success(success.success_message.as_deref())
                             .await
-                            .map_err(QueryError::InvalidMessage)?;
+                            .map_err(|e| {
+                                err(ConnectionSetupRequestErrorKind::AuthFinishError(e))
+                            })?;
                         break;
-                    }
-                    Response::Error(err) => {
-                        return Err(err.into());
-                    }
-                    _ => {
-                        return Err(QueryError::ProtocolError(
-                            "Unexpected response to Authenticate Response message",
-                        ))
                     }
                 }
             }
-        },
-        None => return Err(QueryError::InvalidMessage(
-            "Authentication is required. You can use SessionBuilder::user(\"user\", \"pass\") to provide credentials \
-                    or SessionBuilder::authenticator_provider to provide custom authenticator".to_string(),
-        )),
+        }
+        None => return Err(err(ConnectionSetupRequestErrorKind::MissingAuthentication)),
     }
 
     Ok(())
