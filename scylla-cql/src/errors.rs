@@ -523,9 +523,6 @@ pub enum ConnectionError {
     BrokenConnection(#[from] BrokenConnectionError),
     #[error(transparent)]
     ConnectionSetupRequestError(#[from] ConnectionSetupRequestError),
-    // TODO: remove it or change it later.
-    #[error(transparent)]
-    QueryError(#[from] QueryError),
 }
 
 impl ConnectionError {
