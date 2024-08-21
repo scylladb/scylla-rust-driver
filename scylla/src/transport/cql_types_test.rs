@@ -3,7 +3,7 @@ use crate::cql_to_rust::FromCqlVal;
 use crate::frame::response::result::CqlValue;
 use crate::frame::value::{Counter, CqlDate, CqlTime, CqlTimestamp};
 use crate::macros::FromUserType;
-use crate::test_utils::{create_new_session_builder, setup_tracing};
+use crate::test_utils::{create_new_session_builder, scylla_supports_tablets, setup_tracing};
 use crate::transport::session::Session;
 use crate::utils::test_utils::unique_keyspace_name;
 use itertools::Itertools;
@@ -16,23 +16,27 @@ use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 use std::str::FromStr;
 
 // Used to prepare a table for test
-// Creates a new keyspace
+// Creates a new keyspace, without tablets if requested and the ScyllaDB instance supports them.
 // Drops and creates table {table_name} (id int PRIMARY KEY, val {type_name})
-async fn init_test(table_name: &str, type_name: &str) -> Session {
+async fn init_test_maybe_without_tablets(
+    table_name: &str,
+    type_name: &str,
+    supports_tablets: bool,
+) -> Session {
     let session: Session = create_new_session_builder().build().await.unwrap();
     let ks = unique_keyspace_name();
 
-    session
-        .query(
-            format!(
-                "CREATE KEYSPACE IF NOT EXISTS {} WITH REPLICATION = \
-            {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}}",
-                ks
-            ),
-            &[],
-        )
-        .await
-        .unwrap();
+    let mut create_ks = format!(
+        "CREATE KEYSPACE IF NOT EXISTS {} WITH REPLICATION = \
+    {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}}",
+        ks
+    );
+
+    if !supports_tablets && scylla_supports_tablets(&session).await {
+        create_ks += " AND TABLETS = {'enabled': false}"
+    }
+
+    session.query(create_ks, &[]).await.unwrap();
     session.use_keyspace(ks, false).await.unwrap();
 
     session
@@ -52,6 +56,13 @@ async fn init_test(table_name: &str, type_name: &str) -> Session {
         .unwrap();
 
     session
+}
+
+// Used to prepare a table for test
+// Creates a new keyspace
+// Drops and creates table {table_name} (id int PRIMARY KEY, val {type_name})
+async fn init_test(table_name: &str, type_name: &str) -> Session {
+    init_test_maybe_without_tablets(table_name, type_name, true).await
 }
 
 // This function tests serialization and deserialization mechanisms by sending insert and select
@@ -267,7 +278,7 @@ async fn test_counter() {
 
     // Can't use run_tests, because counters are special and can't be inserted
     let type_name = "counter";
-    let session: Session = init_test(type_name, type_name).await;
+    let session: Session = init_test_maybe_without_tablets(type_name, type_name, false).await;
 
     for (i, test) in tests.iter().enumerate() {
         let update_bound_value = format!("UPDATE {} SET val = val + ? WHERE id = ?", type_name);
