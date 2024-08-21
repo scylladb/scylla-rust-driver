@@ -2843,7 +2843,6 @@ mod latency_awareness {
                 | QueryError::DbError(DbError::IsBootstrapping, _)
                 | QueryError::DbError(DbError::Unavailable { .. }, _)
                 | QueryError::DbError(DbError::Unprepared { .. }, _)
-                | QueryError::TranslationError(_)
                 | QueryError::DbError(DbError::Overloaded { .. }, _)
                 | QueryError::DbError(DbError::RateLimitReached { .. }, _) => false,
 

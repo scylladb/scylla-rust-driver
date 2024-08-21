@@ -58,10 +58,6 @@ pub enum QueryError {
     /// Client timeout occurred before any response arrived
     #[error("Request timeout: {0}")]
     RequestTimeout(String),
-
-    /// Address translation failed
-    #[error("Address translation failed: {0}")]
-    TranslationError(#[from] TranslationError),
 }
 
 /// An error sent from the database in response to a query
@@ -457,10 +453,6 @@ pub enum NewSessionError {
     /// during `Session` creation.
     #[error("Client timeout: {0}")]
     RequestTimeout(String),
-
-    /// Address translation failed
-    #[error("Address translation failed: {0}")]
-    TranslationError(#[from] TranslationError),
 }
 
 /// Invalid keyspace name given to `Session::use_keyspace()`
@@ -706,7 +698,6 @@ impl From<QueryError> for NewSessionError {
             QueryError::BrokenConnection(e) => NewSessionError::BrokenConnection(e),
             QueryError::UnableToAllocStreamId => NewSessionError::UnableToAllocStreamId,
             QueryError::RequestTimeout(msg) => NewSessionError::RequestTimeout(msg),
-            QueryError::TranslationError(e) => NewSessionError::TranslationError(e),
         }
     }
 }
