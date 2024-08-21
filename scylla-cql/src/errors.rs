@@ -708,23 +708,6 @@ impl From<BadKeyspaceName> for QueryError {
     }
 }
 
-impl QueryError {
-    /// Checks if this error indicates that a chosen source port/address cannot be bound.
-    /// This is caused by one of the following:
-    /// - The source address is already used by another socket,
-    /// - The source address is reserved and the process does not have sufficient privileges to use it.
-    pub fn is_address_unavailable_for_use(&self) -> bool {
-        if let QueryError::IoError(io_error) = self {
-            match io_error.kind() {
-                ErrorKind::AddrInUse | ErrorKind::PermissionDenied => return true,
-                _ => {}
-            }
-        }
-
-        false
-    }
-}
-
 impl From<u8> for OperationType {
     fn from(operation_type: u8) -> OperationType {
         match operation_type {
