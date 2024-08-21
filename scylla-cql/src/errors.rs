@@ -494,6 +494,8 @@ pub enum ConnectionError {
     NoSourcePortForShard(u32),
     #[error("Address translation failed: {0}")]
     TranslationError(#[from] TranslationError),
+    #[error(transparent)]
+    BrokenConnection(#[from] BrokenConnectionError),
     // TODO: remove it or change it later.
     #[error(transparent)]
     QueryError(#[from] QueryError),
@@ -519,6 +521,12 @@ impl ConnectionError {
 #[derive(Error, Debug, Clone)]
 #[error("Connection broken, reason: {0}")]
 pub struct BrokenConnectionError(Arc<dyn Error + Sync + Send>);
+
+impl BrokenConnectionError {
+    pub fn get_inner(&self) -> &Arc<dyn Error + Sync + Send> {
+        &self.0
+    }
+}
 
 #[derive(Error, Debug)]
 #[non_exhaustive]

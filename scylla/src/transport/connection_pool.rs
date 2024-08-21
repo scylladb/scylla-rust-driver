@@ -19,7 +19,7 @@ use super::NodeAddr;
 use arc_swap::ArcSwap;
 use futures::{future::RemoteHandle, stream::FuturesUnordered, Future, FutureExt, StreamExt};
 use rand::Rng;
-use scylla_cql::errors::ConnectionError;
+use scylla_cql::errors::{BrokenConnectionErrorKind, ConnectionError};
 use std::convert::TryInto;
 use std::io::ErrorKind;
 use std::num::NonZeroUsize;
@@ -574,7 +574,7 @@ impl PoolRefiller {
                 evt = self.connection_errors.select_next_some(), if !self.connection_errors.is_empty() => {
                     if let Some(conn) = evt.connection.upgrade() {
                         debug!("[{}] Got error for connection {:p}: {:?}", self.endpoint_description(), Arc::as_ptr(&conn), evt.error);
-                        self.remove_connection(conn, evt.error.into());
+                        self.remove_connection(conn, evt.error);
                     }
                 }
 
@@ -1207,7 +1207,7 @@ impl PoolRefiller {
 
 struct BrokenConnectionEvent {
     connection: Weak<Connection>,
-    error: QueryError,
+    error: ConnectionError,
 }
 
 async fn wait_for_error(
@@ -1217,10 +1217,7 @@ async fn wait_for_error(
     BrokenConnectionEvent {
         connection,
         error: error_receiver.await.unwrap_or_else(|_| {
-            QueryError::IoError(Arc::new(std::io::Error::new(
-                ErrorKind::Other,
-                "Connection broken",
-            )))
+            ConnectionError::BrokenConnection(BrokenConnectionErrorKind::ChannelError.into())
         }),
     }
 }

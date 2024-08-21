@@ -622,7 +622,7 @@ impl ConnectionConfig {
 }
 
 // Used to listen for fatal error in connection
-pub(crate) type ErrorReceiver = tokio::sync::oneshot::Receiver<QueryError>;
+pub(crate) type ErrorReceiver = tokio::sync::oneshot::Receiver<ConnectionError>;
 
 impl Connection {
     // Returns new connection and ErrorReceiver which can be used to wait for a fatal error
@@ -1338,7 +1338,7 @@ impl Connection {
         config: ConnectionConfig,
         stream: TcpStream,
         receiver: mpsc::Receiver<Task>,
-        error_sender: tokio::sync::oneshot::Sender<QueryError>,
+        error_sender: tokio::sync::oneshot::Sender<ConnectionError>,
         orphan_notification_receiver: mpsc::UnboundedReceiver<RequestId>,
         router_handle: Arc<RouterHandle>,
         node_address: IpAddr,
@@ -1381,7 +1381,7 @@ impl Connection {
         config: ConnectionConfig,
         stream: (impl AsyncRead + AsyncWrite),
         receiver: mpsc::Receiver<Task>,
-        error_sender: tokio::sync::oneshot::Sender<QueryError>,
+        error_sender: tokio::sync::oneshot::Sender<ConnectionError>,
         orphan_notification_receiver: mpsc::UnboundedReceiver<RequestId>,
         router_handle: Arc<RouterHandle>,
         node_address: IpAddr,
@@ -2221,7 +2221,6 @@ impl VerifiedKeyspaceName {
 #[cfg(test)]
 mod tests {
     use assert_matches::assert_matches;
-    use scylla_cql::errors::QueryError;
     use scylla_cql::frame::protocol_features::{
         LWT_OPTIMIZATION_META_BIT_MASK_KEY, SCYLLA_LWT_ADD_METADATA_MARK_EXTENSION,
     };
@@ -2570,6 +2569,8 @@ mod tests {
     #[ntest::timeout(20000)]
     #[cfg(not(scylla_cloud_tests))]
     async fn connection_is_closed_on_no_response_to_keepalives() {
+        use scylla_cql::errors::BrokenConnectionErrorKind;
+
         setup_tracing();
 
         let proxy_addr = SocketAddr::new(scylla_proxy::get_exclusive_local_address(), 9042);
@@ -2631,7 +2632,13 @@ mod tests {
         // Wait until keepaliver gots impatient and terminates router.
         // Then, the error from keepaliver will be propagated to the error receiver.
         let err = error_receiver.await.unwrap();
-        assert_matches!(err, QueryError::IoError(_));
+        let err_inner: &BrokenConnectionErrorKind = match err {
+            crate::transport::connection::ConnectionError::BrokenConnection(ref e) => {
+                e.get_inner().downcast_ref().unwrap()
+            }
+            _ => panic!("Bad error type. Expected keepalive timeout."),
+        };
+        assert_matches!(err_inner, BrokenConnectionErrorKind::KeepaliveTimeout(_));
 
         // As the router is invalidated, all further queries should immediately
         // return error.
