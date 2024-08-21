@@ -1322,21 +1322,40 @@ impl Connection {
     async fn register(
         &self,
         event_types_to_register_for: Vec<EventType>,
-    ) -> Result<(), QueryError> {
+    ) -> Result<(), ConnectionSetupRequestError> {
+        let err = |kind: ConnectionSetupRequestErrorKind| {
+            ConnectionSetupRequestError::new(CqlRequestKind::Register, kind)
+        };
+
         let register_frame = register::Register {
             event_types_to_register_for,
         };
 
-        match self
-            .send_request(&register_frame, true, false, None)
-            .await?
-            .response
-        {
-            Response::Ready => Ok(()),
-            Response::Error(err) => Err(err.into()),
-            _ => Err(QueryError::ProtocolError(
-                "Unexpected response to REGISTER message",
-            )),
+        // Extract the response and tidy up the errors.
+        match self.send_request(&register_frame, true, false, None).await {
+            Ok(r) => match r.response {
+                Response::Ready => Ok(()),
+                Response::Error(Error { error, reason }) => {
+                    Err(err(ConnectionSetupRequestErrorKind::DbError(error, reason)))
+                }
+                _ => Err(err(ConnectionSetupRequestErrorKind::UnexpectedResponse(
+                    r.response.to_response_kind(),
+                ))),
+            },
+            Err(e) => match e {
+                RequestError::FrameError(e) => Err(err(e.into())),
+                RequestError::CqlResponseParseError(e) => match e {
+                    // Parsing the READY response cannot fail. Only remaining valid response is ERROR.
+                    CqlResponseParseError::CqlErrorParseError(e) => Err(err(e.into())),
+                    _ => Err(err(ConnectionSetupRequestErrorKind::UnexpectedResponse(
+                        e.to_response_kind(),
+                    ))),
+                },
+                RequestError::BrokenConnection(e) => Err(err(e.into())),
+                RequestError::UnableToAllocStreamId => {
+                    Err(err(ConnectionSetupRequestErrorKind::UnableToAllocStreamId))
+                }
+            },
         }
     }
 
