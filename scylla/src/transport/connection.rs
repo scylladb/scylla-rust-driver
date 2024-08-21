@@ -1,8 +1,8 @@
 use bytes::Bytes;
 use futures::{future::RemoteHandle, FutureExt};
 use scylla_cql::errors::{
-    BrokenConnectionError, BrokenConnectionErrorKind, CqlEventHandlingError, RequestError,
-    ResponseParseError, TranslationError,
+    BrokenConnectionError, BrokenConnectionErrorKind, ConnectionError, CqlEventHandlingError,
+    RequestError, ResponseParseError, TranslationError,
 };
 use scylla_cql::frame::frame_errors::CqlResponseParseError;
 use scylla_cql::frame::request::options::{self, Options};
@@ -632,7 +632,7 @@ impl Connection {
         addr: SocketAddr,
         source_port: Option<u16>,
         config: ConnectionConfig,
-    ) -> Result<(Self, ErrorReceiver), QueryError> {
+    ) -> Result<(Self, ErrorReceiver), ConnectionError> {
         let stream_connector = match source_port {
             Some(p) => {
                 tokio::time::timeout(config.connect_timeout, connect_with_source_port(addr, p))
@@ -641,9 +641,9 @@ impl Connection {
             None => tokio::time::timeout(config.connect_timeout, TcpStream::connect(addr)).await,
         };
         let stream = match stream_connector {
-            Ok(stream) => stream?,
+            Ok(stream) => stream.map_err(ConnectionError::IoError)?,
             Err(_) => {
-                return Err(QueryError::TimeoutError);
+                return Err(ConnectionError::ConnectTimeout);
             }
         };
         stream.set_nodelay(config.tcp_nodelay)?;
@@ -673,7 +673,8 @@ impl Connection {
             router_handle.clone(),
             addr.ip(),
         )
-        .await?;
+        .await
+        .map_err(ConnectionError::IoError)?;
 
         let connection = Connection {
             _worker_handle,
@@ -1806,7 +1807,7 @@ pub(crate) async fn open_connection(
     endpoint: UntranslatedEndpoint,
     source_port: Option<u16>,
     config: &ConnectionConfig,
-) -> Result<(Connection, ErrorReceiver), QueryError> {
+) -> Result<(Connection, ErrorReceiver), ConnectionError> {
     /* Translate the address, if applicable. */
     let addr = maybe_translated_addr(endpoint, config.address_translator.as_deref()).await?;
 
@@ -1826,11 +1827,14 @@ pub(crate) async fn open_connection(
 
     let mut supported = match options_result {
         Response::Supported(supported) => supported,
-        Response::Error(Error { error, reason }) => return Err(QueryError::DbError(error, reason)),
+        Response::Error(Error { error, reason }) => {
+            return Err(QueryError::DbError(error, reason).into())
+        }
         _ => {
             return Err(QueryError::ProtocolError(
                 "Wrong response to OPTIONS message was received",
-            ));
+            )
+            .into());
         }
     };
 
@@ -1899,11 +1903,11 @@ pub(crate) async fn open_connection(
         Response::Authenticate(authenticate) => {
             perform_authenticate(&mut connection, &authenticate).await?;
         }
-        Response::Error(Error { error, reason }) => return Err(QueryError::DbError(error, reason)),
+        Response::Error(Error { error, reason }) => {
+            return Err(QueryError::DbError(error, reason).into())
+        }
         _ => {
-            return Err(QueryError::ProtocolError(
-                "Unexpected response to STARTUP message",
-            ))
+            return Err(QueryError::ProtocolError("Unexpected response to STARTUP message").into())
         }
     }
 

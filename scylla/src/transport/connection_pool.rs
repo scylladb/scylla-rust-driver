@@ -19,6 +19,7 @@ use super::NodeAddr;
 use arc_swap::ArcSwap;
 use futures::{future::RemoteHandle, stream::FuturesUnordered, Future, FutureExt, StreamExt};
 use rand::Rng;
+use scylla_cql::errors::ConnectionError;
 use std::convert::TryInto;
 use std::io::ErrorKind;
 use std::num::NonZeroUsize;
@@ -79,7 +80,7 @@ enum MaybePoolConnections {
     // The pool is empty because either initial filling failed or all connections
     // became broken; will be asynchronously refilled. Contains an error
     // from the last connection attempt.
-    Broken(QueryError),
+    Broken(ConnectionError),
 
     // The pool has some connections which are usable (or will be removed soon)
     Ready(PoolConnections),
@@ -573,7 +574,7 @@ impl PoolRefiller {
                 evt = self.connection_errors.select_next_some(), if !self.connection_errors.is_empty() => {
                     if let Some(conn) = evt.connection.upgrade() {
                         debug!("[{}] Got error for connection {:p}: {:?}", self.endpoint_description(), Arc::as_ptr(&conn), evt.error);
-                        self.remove_connection(conn, evt.error);
+                        self.remove_connection(conn, evt.error.into());
                     }
                 }
 
@@ -991,7 +992,7 @@ impl PoolRefiller {
     // Updates `shared_conns` based on `conns`.
     // `last_error` must not be `None` if there is a possibility of the pool
     // being empty.
-    fn update_shared_conns(&mut self, last_error: Option<QueryError>) {
+    fn update_shared_conns(&mut self, last_error: Option<ConnectionError>) {
         let new_conns = if !self.has_connections() {
             Arc::new(MaybePoolConnections::Broken(last_error.unwrap()))
         } else {
@@ -1017,7 +1018,7 @@ impl PoolRefiller {
 
     // Removes given connection from the pool. It looks both into active
     // connections and excess connections.
-    fn remove_connection(&mut self, connection: Arc<Connection>, last_error: QueryError) {
+    fn remove_connection(&mut self, connection: Arc<Connection>, last_error: ConnectionError) {
         let ptr = Arc::as_ptr(&connection);
 
         let maybe_remove_in_vec = |v: &mut Vec<Arc<Connection>>| -> bool {
@@ -1225,7 +1226,7 @@ async fn wait_for_error(
 }
 
 struct OpenedConnectionEvent {
-    result: Result<(Connection, ErrorReceiver), QueryError>,
+    result: Result<(Connection, ErrorReceiver), ConnectionError>,
     requested_shard: Option<Shard>,
     keyspace_name: Option<VerifiedKeyspaceName>,
 }
@@ -1235,7 +1236,7 @@ async fn open_connection_to_shard_aware_port(
     shard: Shard,
     sharder: Sharder,
     connection_config: &ConnectionConfig,
-) -> Result<(Connection, ErrorReceiver), QueryError> {
+) -> Result<(Connection, ErrorReceiver), ConnectionError> {
     // Create iterator over all possible source ports for this shard
     let source_port_iter = sharder.iter_source_ports_for_shard(shard);
 
@@ -1250,10 +1251,7 @@ async fn open_connection_to_shard_aware_port(
     }
 
     // Tried all source ports for that shard, give up
-    Err(QueryError::IoError(Arc::new(std::io::Error::new(
-        std::io::ErrorKind::AddrInUse,
-        "Could not find free source port for shard",
-    ))))
+    Err(ConnectionError::NoSourcePortForShard(shard))
 }
 
 #[cfg(test)]
