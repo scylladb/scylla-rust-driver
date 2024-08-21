@@ -25,12 +25,12 @@ use std::{
 };
 use tracing::debug;
 
-/// `ReplicaLocator` provides a way to find the set of owning nodes for a given (token, replication
-/// strategy) pair. It does so by either using the precomputed token ranges, or doing the
-/// computation on the fly.
+/// `ReplicaLocator` provides a way to find the set of owning nodes for a given (token,
+/// replication strategy, table) tuple. It does so by either using the precomputed
+/// token ranges, or doing the computation on the fly (precomputation is configurable).
 #[derive(Debug, Clone)]
 pub struct ReplicaLocator {
-    /// the data based on which `ReplicaLocator` computes replica sets.
+    /// The data based on which `ReplicaLocator` computes replica sets.
     replication_data: ReplicationInfo,
 
     precomputed_replicas: PrecomputedReplicas,
@@ -69,7 +69,7 @@ impl ReplicaLocator {
         }
     }
 
-    /// Returns a set of nodes that are considered to be replicas for a given token and strategy.
+    /// Returns a set of nodes that are considered to be replicas for a given token, strategy and table.
     /// If the `datacenter` parameter is set, the returned `ReplicaSet` is limited only to replicas
     /// from that datacenter. If a specified datacenter name does not correspond to a valid
     /// datacenter, an empty set will be returned.
