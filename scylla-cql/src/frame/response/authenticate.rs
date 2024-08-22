@@ -1,4 +1,6 @@
-use crate::frame::frame_errors::ParseError;
+use crate::frame::frame_errors::{
+    CqlAuthChallengeParseError, CqlAuthSuccessParseError, CqlAuthenticateParseError,
+};
 use crate::frame::types;
 
 // Implements Authenticate message.
@@ -8,8 +10,10 @@ pub struct Authenticate {
 }
 
 impl Authenticate {
-    pub fn deserialize(buf: &mut &[u8]) -> Result<Self, ParseError> {
-        let authenticator_name = types::read_string(buf)?.to_string();
+    pub fn deserialize(buf: &mut &[u8]) -> Result<Self, CqlAuthenticateParseError> {
+        let authenticator_name = types::read_string(buf)
+            .map_err(CqlAuthenticateParseError::AuthNameParseError)?
+            .to_string();
 
         Ok(Authenticate { authenticator_name })
     }
@@ -21,8 +25,10 @@ pub struct AuthSuccess {
 }
 
 impl AuthSuccess {
-    pub fn deserialize(buf: &mut &[u8]) -> Result<Self, ParseError> {
-        let success_message = types::read_bytes_opt(buf)?.map(|b| b.to_owned());
+    pub fn deserialize(buf: &mut &[u8]) -> Result<Self, CqlAuthSuccessParseError> {
+        let success_message = types::read_bytes_opt(buf)
+            .map_err(CqlAuthSuccessParseError::SuccessMessageParseError)?
+            .map(ToOwned::to_owned);
 
         Ok(AuthSuccess { success_message })
     }
@@ -34,8 +40,10 @@ pub struct AuthChallenge {
 }
 
 impl AuthChallenge {
-    pub fn deserialize(buf: &mut &[u8]) -> Result<Self, ParseError> {
-        let authenticate_message = types::read_bytes_opt(buf)?.map(|b| b.to_owned());
+    pub fn deserialize(buf: &mut &[u8]) -> Result<Self, CqlAuthChallengeParseError> {
+        let authenticate_message = types::read_bytes_opt(buf)
+            .map_err(CqlAuthChallengeParseError::AuthMessageParseError)?
+            .map(|b| b.to_owned());
 
         Ok(AuthChallenge {
             authenticate_message,
