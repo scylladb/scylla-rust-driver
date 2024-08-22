@@ -1,6 +1,8 @@
 //! This module contains various errors which can be returned by `scylla::Session`
 
-use crate::frame::frame_errors::{CqlResponseParseError, FrameError, ParseError};
+use crate::frame::frame_errors::{
+    CqlEventParseError, CqlResponseParseError, FrameError, ParseError,
+};
 use crate::frame::protocol_features::ProtocolFeatures;
 use crate::frame::value::SerializeValuesError;
 use crate::types::deserialize::{DeserializationError, TypeCheckError};
@@ -508,17 +510,19 @@ pub enum BrokenConnectionErrorKind {
 
 /// Failed to handle a CQL event received on a stream -1.
 /// Possible error kinds are:
-/// - failed to deserialize server response
+/// - failed to deserialize response's frame header
+/// - failed to deserialize CQL event response
 /// - received invalid server response
 /// - failed to send an event info via channel (connection is probably broken)
 #[derive(Error, Debug)]
 #[non_exhaustive]
 pub enum CqlEventHandlingError {
-    // FIXME: ResponseParseError -> CqlEventParseError
-    #[error(transparent)]
-    QueryError(#[from] ResponseParseError),
+    #[error("Failed to deserialize EVENT response: {0}")]
+    CqlEventParseError(#[from] CqlEventParseError),
     #[error("Received unexpected server response on stream -1: {0}. Expected EVENT response")]
     UnexpectedResponse(CqlResponseKind),
+    #[error("Failed to deserialize a header of frame received on stream -1: {0}")]
+    FrameError(#[from] FrameError),
     #[error("Failed to send event info via channel. The channel is probably closed, which is caused by connection being broken")]
     SendError,
 }

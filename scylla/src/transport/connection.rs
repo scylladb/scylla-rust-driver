@@ -4,6 +4,7 @@ use scylla_cql::errors::{
     BrokenConnectionError, BrokenConnectionErrorKind, CqlEventHandlingError, ResponseParseError,
     TranslationError,
 };
+use scylla_cql::frame::frame_errors::CqlResponseParseError;
 use scylla_cql::frame::request::options::{self, Options};
 use scylla_cql::frame::response::result::{ResultMetadata, TableSpec};
 use scylla_cql::frame::response::Error;
@@ -1678,15 +1679,28 @@ impl Connection {
         // future implementers.
         let features = ProtocolFeatures::default(); // TODO: Use the right features
 
-        let response = Self::parse_response(task_response, compression, &features, None)?.response;
-        let event = match response {
-            Response::Event(e) => e,
-            _ => {
-                error!("Expected to receive Event response, got {:?}", response);
-                return Err(CqlEventHandlingError::UnexpectedResponse(
-                    response.to_response_kind(),
-                ));
-            }
+        let event = match Self::parse_response(task_response, compression, &features, None) {
+            Ok(r) => match r.response {
+                Response::Event(event) => event,
+                _ => {
+                    error!("Expected to receive Event response, got {:?}", r.response);
+                    return Err(CqlEventHandlingError::UnexpectedResponse(
+                        r.response.to_response_kind(),
+                    ));
+                }
+            },
+            Err(e) => match e {
+                ResponseParseError::FrameError(e) => return Err(e.into()),
+                ResponseParseError::CqlResponseParseError(e) => match e {
+                    CqlResponseParseError::CqlEventParseError(e) => return Err(e.into()),
+                    // Received a response other than EVENT, but failed to deserialize it.
+                    _ => {
+                        return Err(CqlEventHandlingError::UnexpectedResponse(
+                            e.to_response_kind(),
+                        ))
+                    }
+                },
+            },
         };
 
         event_sender
