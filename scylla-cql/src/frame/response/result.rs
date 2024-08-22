@@ -925,7 +925,11 @@ fn deser_rows(
     let server_metadata = deser_result_metadata(buf)?;
 
     let metadata = match cached_metadata {
-        Some(metadata) => metadata.clone(),
+        Some(cached) => ResultMetadata {
+            col_count: cached.col_count,
+            paging_state: server_metadata.paging_state,
+            col_specs: cached.col_specs.clone(),
+        },
         None => {
             // No cached_metadata provided. Server is supposed to provide the result metadata.
             if server_metadata.col_count != server_metadata.col_specs.len() {

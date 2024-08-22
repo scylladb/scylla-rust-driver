@@ -14,6 +14,7 @@ use std::sync::Arc;
 #[cfg(not(scylla_cloud_tests))]
 async fn test_skip_result_metadata() {
     setup_tracing();
+    use bytes::Bytes;
     use scylla_proxy::{ResponseOpcode, ResponseRule};
 
     const NO_METADATA_FLAG: i32 = 0x0004;
@@ -78,6 +79,70 @@ async fn test_skip_result_metadata() {
         // Verify that server doesn't send metadata when driver sends SKIP_METADATA flag.
         prepared.set_use_cached_result_metadata(true);
         test_with_flags_predicate(&session, &prepared, &mut rx, |flags| flags & NO_METADATA_FLAG != 0).await;
+
+        // Verify that the optimisation does not break paging
+        {
+            let ks = unique_keyspace_name();
+
+            session.query(format!("CREATE KEYSPACE IF NOT EXISTS {} WITH REPLICATION = {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}}", ks), &[]).await.unwrap();
+            session.use_keyspace(ks, true).await.unwrap();
+
+            type RowT = (i32, i32, String);
+            session
+                .query(
+                    "CREATE TABLE IF NOT EXISTS t2 (a int, b int, c text, primary key (a, b))",
+                    &[],
+                )
+                .await
+                .unwrap();
+
+            let insert_stmt = session
+                .prepare("INSERT INTO t2 (a, b, c) VALUES (?, ?, ?)")
+                .await
+                .unwrap();
+
+            for idx in 0..10 {
+                session
+                    .execute(&insert_stmt, (idx, idx + 1, "Some text"))
+                    .await
+                    .unwrap();
+            }
+
+            {
+                let select_query = "SELECT a, b, c FROM t2";
+
+                let rs = session
+                    .query(select_query, ())
+                    .await
+                    .unwrap()
+                    .rows_typed::<RowT>()
+                    .unwrap()
+                    .collect::<Result<Vec<_>, _>>()
+                    .unwrap();
+
+                let mut results_from_manual_paging: Vec<RowT> = vec![];
+                let mut prepared_paged = session.prepare(select_query).await.unwrap();
+                prepared_paged.set_use_cached_result_metadata(true);
+                prepared_paged.set_page_size(1);
+                let mut paging_state: Option<Bytes> = None;
+                let mut watchdog = 0;
+                loop {
+                    let mut rs_manual = session
+                        .execute_paged(&prepared_paged, &[], paging_state)
+                        .await
+                        .unwrap();
+                    eprintln!("Paging state: {:?}", rs_manual.paging_state);
+                    paging_state = rs_manual.paging_state.take();
+                    results_from_manual_paging
+                        .extend(rs_manual.rows_typed::<RowT>().unwrap().map(Result::unwrap));
+                    if watchdog > 30 || paging_state.is_none() {
+                        break;
+                    }
+                    watchdog += 1;
+                }
+                assert_eq!(results_from_manual_paging, rs);
+            }
+        }
 
         running_proxy
     }).await;
