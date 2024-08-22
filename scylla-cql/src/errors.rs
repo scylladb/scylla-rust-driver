@@ -514,18 +514,38 @@ pub enum BrokenConnectionErrorKind {
 #[derive(Error, Debug)]
 #[non_exhaustive]
 pub enum CqlEventHandlingError {
-    // FIXME: QueryError -> CqlEventParseError
+    // FIXME: ResponseParseError -> CqlEventParseError
     #[error(transparent)]
-    QueryError(#[from] QueryError),
+    QueryError(#[from] ResponseParseError),
     #[error("Received unexpected server response on stream -1: {0}. Expected EVENT response")]
     UnexpectedResponse(CqlResponseKind),
     #[error("Failed to send event info via channel. The channel is probably closed, which is caused by connection being broken")]
     SendError,
 }
 
+/// An error type returned from Connection::parse_response.
+/// This is driver's internal type.
+#[derive(Error, Debug)]
+pub enum ResponseParseError {
+    #[error(transparent)]
+    FrameError(#[from] FrameError),
+    #[error(transparent)]
+    CqlResponseParseError(#[from] CqlResponseParseError),
+}
+
 impl From<BrokenConnectionErrorKind> for BrokenConnectionError {
     fn from(value: BrokenConnectionErrorKind) -> Self {
         BrokenConnectionError(Arc::new(value))
+    }
+}
+
+// FIXME: remove later
+impl From<ResponseParseError> for QueryError {
+    fn from(value: ResponseParseError) -> Self {
+        match value {
+            ResponseParseError::FrameError(e) => e.into(),
+            ResponseParseError::CqlResponseParseError(e) => e.into(),
+        }
     }
 }
 

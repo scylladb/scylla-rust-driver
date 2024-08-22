@@ -1,7 +1,8 @@
 use bytes::Bytes;
 use futures::{future::RemoteHandle, FutureExt};
 use scylla_cql::errors::{
-    BrokenConnectionError, BrokenConnectionErrorKind, CqlEventHandlingError, TranslationError,
+    BrokenConnectionError, BrokenConnectionErrorKind, CqlEventHandlingError, ResponseParseError,
+    TranslationError,
 };
 use scylla_cql::frame::request::options::{self, Options};
 use scylla_cql::frame::response::result::{ResultMetadata, TableSpec};
@@ -1281,12 +1282,14 @@ impl Connection {
             .send_request(request, compression, tracing)
             .await?;
 
-        Self::parse_response(
+        let response = Self::parse_response(
             task_response,
             self.config.compression,
             &self.features.protocol_features,
             cached_metadata,
-        )
+        )?;
+
+        Ok(response)
     }
 
     fn parse_response(
@@ -1294,7 +1297,7 @@ impl Connection {
         compression: Option<Compression>,
         features: &ProtocolFeatures,
         cached_metadata: Option<&Arc<ResultMetadata>>,
-    ) -> Result<QueryResponse, QueryError> {
+    ) -> Result<QueryResponse, ResponseParseError> {
         let body_with_ext = frame::parse_response_body_extensions(
             task_response.params.flags,
             compression,
