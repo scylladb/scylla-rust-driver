@@ -40,7 +40,7 @@ full-serialization = [
 ]
 
 [dependencies]
-scylla-macros = { version = "0.5.1", path = "../scylla-macros" }
+scylla-macros = { version = "0.5.2", path = "../scylla-macros" }
 scylla-cql = { version = "0.2.1", path = "../scylla-cql" }
 byteorder = "1.3.4"
 bytes = "1.0.1"
