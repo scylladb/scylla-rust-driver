@@ -491,7 +491,7 @@ pub enum BrokenConnectionErrorKind {
     #[error("Failed to deserialize frame: {0}")]
     FrameError(FrameError),
     #[error("Failed to handle server event: {0}")]
-    CqlEventHandlingError(QueryError),
+    CqlEventHandlingError(#[from] CqlEventHandlingError),
     #[error("Received a server frame with unexpected stream id: {0}")]
     UnexpectedStreamId(i16),
     #[error("Failed to write data: {0}")]
@@ -504,6 +504,23 @@ pub enum BrokenConnectionErrorKind {
         The connection was already broken for some other reason."
     )]
     ChannelError,
+}
+
+/// Failed to handle a CQL event received on a stream -1.
+/// Possible error kinds are:
+/// - failed to deserialize server response
+/// - received invalid server response
+/// - failed to send an event info via channel (connection is probably broken)
+#[derive(Error, Debug)]
+#[non_exhaustive]
+pub enum CqlEventHandlingError {
+    // FIXME: QueryError -> CqlEventParseError
+    #[error(transparent)]
+    QueryError(#[from] QueryError),
+    #[error("Received unexpected server response on stream -1: {0}. Expected EVENT response")]
+    UnexpectedResponse(CqlResponseKind),
+    #[error("Failed to send event info via channel. The channel is probably closed, which is caused by connection being broken")]
+    SendError,
 }
 
 impl From<BrokenConnectionErrorKind> for BrokenConnectionError {

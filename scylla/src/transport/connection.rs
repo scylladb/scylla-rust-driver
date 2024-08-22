@@ -1,6 +1,8 @@
 use bytes::Bytes;
 use futures::{future::RemoteHandle, FutureExt};
-use scylla_cql::errors::{BrokenConnectionError, BrokenConnectionErrorKind, TranslationError};
+use scylla_cql::errors::{
+    BrokenConnectionError, BrokenConnectionErrorKind, CqlEventHandlingError, TranslationError,
+};
 use scylla_cql::frame::request::options::{self, Options};
 use scylla_cql::frame::response::result::{ResultMetadata, TableSpec};
 use scylla_cql::frame::response::Error;
@@ -31,7 +33,6 @@ use crate::authentication::AuthenticatorProvider;
 use scylla_cql::frame::response::authenticate::Authenticate;
 use std::collections::{BTreeSet, HashMap, HashSet};
 use std::convert::TryFrom;
-use std::io::ErrorKind;
 use std::net::{IpAddr, SocketAddr};
 use std::sync::Arc;
 use std::sync::Mutex as StdMutex;
@@ -1662,7 +1663,7 @@ impl Connection {
         task_response: TaskResponse,
         compression: Option<Compression>,
         event_sender: &mpsc::Sender<Event>,
-    ) -> Result<(), QueryError> {
+    ) -> Result<(), CqlEventHandlingError> {
         // Protocol features are negotiated during connection handshake.
         // However, the router is already created and sent to a different tokio
         // task before the handshake begins, therefore it's hard to cleanly
@@ -1679,16 +1680,16 @@ impl Connection {
             Response::Event(e) => e,
             _ => {
                 error!("Expected to receive Event response, got {:?}", response);
-                return Ok(());
+                return Err(CqlEventHandlingError::UnexpectedResponse(
+                    response.to_response_kind(),
+                ));
             }
         };
 
-        event_sender.send(event).await.map_err(|_| {
-            QueryError::IoError(Arc::new(std::io::Error::new(
-                ErrorKind::Other,
-                "Connection broken",
-            )))
-        })
+        event_sender
+            .send(event)
+            .await
+            .map_err(|_| CqlEventHandlingError::SendError)
     }
 
     pub(crate) fn get_shard_info(&self) -> &Option<ShardInfo> {
