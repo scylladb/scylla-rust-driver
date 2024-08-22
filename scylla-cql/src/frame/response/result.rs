@@ -427,11 +427,22 @@ pub struct ColumnSpec {
     pub typ: ColumnType,
 }
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone)]
 pub struct ResultMetadata {
     col_count: usize,
     pub paging_state: Option<Bytes>,
     pub col_specs: Vec<ColumnSpec>,
+}
+
+impl ResultMetadata {
+    #[inline]
+    pub fn mock_empty() -> Self {
+        Self {
+            col_count: 0,
+            paging_state: None,
+            col_specs: Vec::new(),
+        }
+    }
 }
 
 #[derive(Debug, Copy, Clone)]

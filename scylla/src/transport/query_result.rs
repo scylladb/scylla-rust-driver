@@ -9,7 +9,7 @@ use uuid::Uuid;
 /// Result of a single query\
 /// Contains all rows returned by the database and some more information
 #[non_exhaustive]
-#[derive(Default, Debug)]
+#[derive(Debug)]
 pub struct QueryResult {
     /// Rows returned by the database.\
     /// Queries like `SELECT` will have `Some(Vec)`, while queries like `INSERT` will have `None`.\
@@ -28,6 +28,17 @@ pub struct QueryResult {
 }
 
 impl QueryResult {
+    pub(crate) fn mock_empty() -> Self {
+        Self {
+            rows: None,
+            warnings: Vec::new(),
+            tracing_id: None,
+            paging_state: None,
+            col_specs: Vec::new(),
+            serialized_size: 0,
+        }
+    }
+
     /// Returns the number of received rows.\
     /// Fails when the query isn't of a type that could return rows, same as [`rows()`](QueryResult::rows).
     pub fn rows_num(&self) -> Result<usize, RowsExpectedError> {

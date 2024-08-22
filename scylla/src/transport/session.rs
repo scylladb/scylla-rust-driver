@@ -1274,7 +1274,7 @@ impl Session {
             .await?;
 
         let result = match run_query_result {
-            RunQueryResult::IgnoredWriteError => QueryResult::default(),
+            RunQueryResult::IgnoredWriteError => QueryResult::mock_empty(),
             RunQueryResult::Completed(response) => response,
         };
         span.record_result_fields(&result);

@@ -425,7 +425,10 @@ impl RowIterator {
 // A separate module is used here so that the parent module cannot construct
 // SendAttemptedProof directly.
 mod checked_channel_sender {
-    use scylla_cql::{errors::QueryError, frame::response::result::Rows};
+    use scylla_cql::{
+        errors::QueryError,
+        frame::response::result::{ResultMetadata, Rows},
+    };
     use std::marker::PhantomData;
     use tokio::sync::mpsc;
     use uuid::Uuid;
@@ -467,7 +470,7 @@ mod checked_channel_sender {
         ) {
             let empty_page = ReceivedPage {
                 rows: Rows {
-                    metadata: Default::default(),
+                    metadata: ResultMetadata::mock_empty(),
                     rows_count: 0,
                     rows: Vec::new(),
                     serialized_size: 0,
