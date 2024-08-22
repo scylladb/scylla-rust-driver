@@ -1677,7 +1677,7 @@ impl Connection {
         let event = match response {
             Response::Event(e) => e,
             _ => {
-                warn!("Expected to receive Event response, got {:?}", response);
+                error!("Expected to receive Event response, got {:?}", response);
                 return Ok(());
             }
         };
