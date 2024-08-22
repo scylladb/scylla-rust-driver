@@ -2,8 +2,8 @@
 
 use crate::frame::frame_errors::{
     CqlAuthChallengeParseError, CqlAuthSuccessParseError, CqlAuthenticateParseError,
-    CqlErrorParseError, CqlEventParseError, CqlResponseParseError, CqlSupportedParseError,
-    FrameError, ParseError,
+    CqlErrorParseError, CqlEventParseError, CqlResponseParseError, CqlResultParseError,
+    CqlSupportedParseError, FrameError, ParseError,
 };
 use crate::frame::protocol_features::ProtocolFeatures;
 use crate::frame::value::SerializeValuesError;
@@ -60,6 +60,33 @@ pub enum QueryError {
     /// Client timeout occurred before any response arrived
     #[error("Request timeout: {0}")]
     RequestTimeout(String),
+}
+
+/// An error type that occurred when executing one of:
+/// - QUERY
+/// - PREPARE
+/// - EXECUTE
+/// - BATCH
+///
+/// requests.
+#[derive(Error, Debug)]
+pub enum UserRequestError {
+    #[error("Database returned an error: {0}, Error message: {1}")]
+    DbError(DbError, String),
+    #[error(transparent)]
+    CqlResultParseError(#[from] CqlResultParseError),
+    #[error("Failed to deserialize ERROR response: {0}")]
+    CqlErrorParseError(#[from] CqlErrorParseError),
+    #[error(
+        "Received unexpected response from the server: {0}. Expected RESULT or ERROR response."
+    )]
+    UnexpectedResponse(CqlResponseKind),
+    #[error(transparent)]
+    BrokenConnectionError(#[from] BrokenConnectionError),
+    #[error(transparent)]
+    FrameError(#[from] FrameError),
+    #[error("Unable to allocate stream id")]
+    UnableToAllocStreamId,
 }
 
 /// An error sent from the database in response to a query
@@ -757,6 +784,29 @@ impl From<RequestError> for QueryError {
             RequestError::CqlResponseParseError(e) => e.into(),
             RequestError::BrokenConnection(e) => e.into(),
             RequestError::UnableToAllocStreamId => QueryError::UnableToAllocStreamId,
+        }
+    }
+}
+
+impl From<UserRequestError> for QueryError {
+    fn from(value: UserRequestError) -> Self {
+        match value {
+            UserRequestError::DbError(err, msg) => QueryError::DbError(err, msg),
+            UserRequestError::CqlResultParseError(e) => {
+                // FIXME: change later
+                CqlResponseParseError::CqlResultParseError(e).into()
+            }
+            UserRequestError::CqlErrorParseError(e) => {
+                // FIXME: change later
+                CqlResponseParseError::CqlErrorParseError(e).into()
+            }
+            UserRequestError::BrokenConnectionError(e) => e.into(),
+            UserRequestError::UnexpectedResponse(_) => {
+                // FIXME: make it typed. It needs to wait for ProtocolError refactor.
+                QueryError::ProtocolError("Received unexpected response from the server. Expected RESULT or ERROR response.")
+            }
+            UserRequestError::FrameError(e) => e.into(),
+            UserRequestError::UnableToAllocStreamId => QueryError::UnableToAllocStreamId,
         }
     }
 }
