@@ -17,6 +17,7 @@ use crate::types::deserialize::value::{
 use crate::types::deserialize::{DeserializationError, FrameSlice};
 use bytes::{Buf, Bytes};
 use std::borrow::Cow;
+use std::sync::Arc;
 use std::{net::IpAddr, result::Result as StdResult, str};
 use uuid::Uuid;
 
@@ -485,7 +486,7 @@ impl Row {
 
 #[derive(Debug)]
 pub struct Rows {
-    pub metadata: ResultMetadata,
+    pub metadata: Arc<ResultMetadata>,
     pub paging_state_response: PagingStateResponse,
     pub rows_count: usize,
     pub rows: Vec<Row>,
@@ -866,16 +867,13 @@ pub fn deser_cql_value(
 
 fn deser_rows(
     buf_bytes: Bytes,
-    cached_metadata: Option<&ResultMetadata>,
+    cached_metadata: Option<&Arc<ResultMetadata>>,
 ) -> StdResult<Rows, RowsParseError> {
     let buf = &mut &*buf_bytes;
     let (server_metadata, paging_state_response) = deser_result_metadata(buf)?;
 
     let metadata = match cached_metadata {
-        Some(cached) => ResultMetadata {
-            col_count: cached.col_count,
-            col_specs: cached.col_specs.clone(),
-        },
+        Some(cached) => Arc::clone(cached),
         None => {
             // No cached_metadata provided. Server is supposed to provide the result metadata.
             if server_metadata.col_count != server_metadata.col_specs.len() {
@@ -884,7 +882,7 @@ fn deser_rows(
                     col_specs_count: server_metadata.col_specs.len(),
                 });
             }
-            server_metadata
+            Arc::new(server_metadata)
         }
     };
 
@@ -952,7 +950,7 @@ fn deser_schema_change(buf: &mut &[u8]) -> StdResult<SchemaChange, SchemaChangeE
 
 pub fn deserialize(
     buf_bytes: Bytes,
-    cached_metadata: Option<&ResultMetadata>,
+    cached_metadata: Option<&Arc<ResultMetadata>>,
 ) -> StdResult<Result, CqlResultParseError> {
     let buf = &mut &*buf_bytes;
     use self::Result::*;

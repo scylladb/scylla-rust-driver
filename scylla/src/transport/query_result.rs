@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use crate::frame::response::cql_to_rust::{FromRow, FromRowError};
 use crate::frame::response::result::ColumnSpec;
 use crate::frame::response::result::Row;
@@ -19,7 +21,7 @@ pub struct QueryResult {
     /// CQL Tracing uuid - can only be Some if tracing is enabled for this query
     pub tracing_id: Option<Uuid>,
     /// Metadata returned along with this response.
-    pub(crate) metadata: Option<ResultMetadata>,
+    pub(crate) metadata: Option<Arc<ResultMetadata>>,
     /// The original size of the serialized rows in request
     pub serialized_size: usize,
 }
@@ -337,14 +339,14 @@ mod tests {
     fn make_rows_query_result(rows_num: usize) -> QueryResult {
         let mut res = make_not_rows_query_result();
         res.rows = Some(make_rows(rows_num));
-        res.metadata = Some(make_test_metadata());
+        res.metadata = Some(Arc::new(make_test_metadata()));
         res
     }
 
     fn make_string_rows_query_result(rows_num: usize) -> QueryResult {
         let mut res = make_not_rows_query_result();
         res.rows = Some(make_string_rows(rows_num));
-        res.metadata = Some(make_test_metadata());
+        res.metadata = Some(Arc::new(make_test_metadata()));
         res
     }
 

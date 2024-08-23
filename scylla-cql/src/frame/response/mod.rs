@@ -5,6 +5,8 @@ pub mod event;
 pub mod result;
 pub mod supported;
 
+use std::sync::Arc;
+
 pub use error::Error;
 pub use supported::Supported;
 
@@ -66,7 +68,7 @@ impl Response {
         features: &ProtocolFeatures,
         opcode: ResponseOpcode,
         buf_bytes: bytes::Bytes,
-        cached_metadata: Option<&ResultMetadata>,
+        cached_metadata: Option<&Arc<ResultMetadata>>,
     ) -> Result<Response, CqlResponseParseError> {
         let buf = &mut &*buf_bytes;
         let response = match opcode {

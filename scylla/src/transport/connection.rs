@@ -778,7 +778,7 @@ impl Connection {
                     .protocol_features
                     .prepared_flags_contain_lwt_mark(p.prepared_metadata.flags as u32),
                 p.prepared_metadata,
-                p.result_metadata,
+                Arc::new(p.result_metadata),
                 query.contents.clone(),
                 query.get_validated_page_size(),
                 query.config.clone(),
@@ -1273,7 +1273,7 @@ impl Connection {
         request: &impl SerializableRequest,
         compress: bool,
         tracing: bool,
-        cached_metadata: Option<&ResultMetadata>,
+        cached_metadata: Option<&Arc<ResultMetadata>>,
     ) -> Result<QueryResponse, QueryError> {
         let compression = if compress {
             self.config.compression
@@ -1298,7 +1298,7 @@ impl Connection {
         task_response: TaskResponse,
         compression: Option<Compression>,
         features: &ProtocolFeatures,
-        cached_metadata: Option<&ResultMetadata>,
+        cached_metadata: Option<&Arc<ResultMetadata>>,
     ) -> Result<QueryResponse, QueryError> {
         let body_with_ext = frame::parse_response_body_extensions(
             task_response.params.flags,

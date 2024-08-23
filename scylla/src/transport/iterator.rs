@@ -415,7 +415,7 @@ mod checked_channel_sender {
             response::result::{ResultMetadata, Rows},
         },
     };
-    use std::marker::PhantomData;
+    use std::{marker::PhantomData, sync::Arc};
     use tokio::sync::mpsc;
     use uuid::Uuid;
 
@@ -456,7 +456,7 @@ mod checked_channel_sender {
         ) {
             let empty_page = ReceivedPage {
                 rows: Rows {
-                    metadata: ResultMetadata::mock_empty(),
+                    metadata: Arc::new(ResultMetadata::mock_empty()),
                     paging_state_response: PagingStateResponse::NoMorePages,
                     rows_count: 0,
                     rows: Vec::new(),
