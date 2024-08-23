@@ -7,7 +7,6 @@ use uuid::Uuid;
 
 /// Result of a single query\
 /// Contains all rows returned by the database and some more information
-#[non_exhaustive]
 #[derive(Debug)]
 pub struct QueryResult {
     /// Rows returned by the database.\
@@ -19,7 +18,7 @@ pub struct QueryResult {
     /// CQL Tracing uuid - can only be Some if tracing is enabled for this query
     pub tracing_id: Option<Uuid>,
     /// Column specification returned from the server
-    pub col_specs: Vec<ColumnSpec>,
+    pub(crate) col_specs: Vec<ColumnSpec>,
     /// The original size of the serialized rows in request
     pub serialized_size: usize,
 }
@@ -134,9 +133,15 @@ impl QueryResult {
         Ok(self.single_row()?.into_typed::<RowT>()?)
     }
 
+    /// Returns column specifications.
+    #[inline]
+    pub fn col_specs(&self) -> &[ColumnSpec] {
+        self.col_specs.as_slice()
+    }
+
     /// Returns a column specification for a column with given name, or None if not found
     pub fn get_column_spec<'a>(&'a self, name: &str) -> Option<(usize, &'a ColumnSpec)> {
-        self.col_specs
+        self.col_specs()
             .iter()
             .enumerate()
             .find(|(_id, spec)| spec.name == name)

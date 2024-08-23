@@ -2570,7 +2570,7 @@ async fn test_batch_lwts() {
     let batch_res: QueryResult = session.batch(&batch, ((), (), ())).await.unwrap();
 
     // Scylla returns 5 columns, but Cassandra returns only 1
-    let is_scylla: bool = batch_res.col_specs.len() == 5;
+    let is_scylla: bool = batch_res.col_specs().len() == 5;
 
     if is_scylla {
         test_batch_lwts_for_scylla(&session, &batch, batch_res).await;
