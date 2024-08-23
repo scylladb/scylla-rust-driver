@@ -270,7 +270,7 @@ impl NonErrorQueryResponse {
         let (rows, paging_state, col_specs, serialized_size) = match self.response {
             NonErrorResponse::Result(result::Result::Rows(rs)) => (
                 Some(rs.rows),
-                rs.metadata.paging_state,
+                rs.paging_state_response,
                 rs.metadata.col_specs,
                 rs.serialized_size,
             ),

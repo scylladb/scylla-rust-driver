@@ -218,6 +218,8 @@ pub enum PreparedParseError {
     ResultMetadataParseError(ResultMetadataParseError),
     #[error("Invalid prepared metadata: {0}")]
     PreparedMetadataParseError(ResultMetadataParseError),
+    #[error("Non-zero paging state in result metadata: {0:?}")]
+    NonZeroPagingState(Arc<[u8]>),
 }
 
 /// An error type returned when deserialization
