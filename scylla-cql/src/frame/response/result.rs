@@ -635,27 +635,24 @@ fn deser_result_metadata(buf: &mut &[u8]) -> StdResult<ResultMetadata, ResultMet
         .transpose()?;
     let paging_state = PagingStateResponse::new_from_raw_bytes(raw_paging_state);
 
-    if no_metadata {
-        return Ok(ResultMetadata {
-            col_count,
-            paging_state,
-            col_specs: vec![],
-        });
-    }
-
-    let global_table_spec = if global_tables_spec {
-        Some(deser_table_spec(buf)?)
+    let col_specs = if no_metadata {
+        vec![]
     } else {
-        None
+        let global_table_spec = if global_tables_spec {
+            Some(deser_table_spec(buf)?)
+        } else {
+            None
+        };
+
+        deser_col_specs(buf, &global_table_spec, col_count)?
     };
 
-    let col_specs = deser_col_specs(buf, &global_table_spec, col_count)?;
-
-    Ok(ResultMetadata {
+    let metadata = ResultMetadata {
         col_count,
         paging_state,
         col_specs,
-    })
+    };
+    Ok(metadata)
 }
 
 fn deser_prepared_metadata(
