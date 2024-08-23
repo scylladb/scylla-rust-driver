@@ -442,6 +442,15 @@ impl ResultMetadata {
             col_specs: Vec::new(),
         }
     }
+
+    #[inline]
+    #[doc(hidden)]
+    pub fn new_for_test(col_count: usize, col_specs: Vec<ColumnSpec>) -> Self {
+        Self {
+            col_count,
+            col_specs,
+        }
+    }
 }
 
 #[derive(Debug, Copy, Clone)]
