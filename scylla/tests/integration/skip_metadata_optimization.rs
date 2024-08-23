@@ -127,7 +127,7 @@ async fn test_skip_result_metadata() {
                 let mut watchdog = 0;
                 loop {
                     let rs_manual = session
-                        .execute_paged(&prepared_paged, &[], paging_state)
+                        .execute_single_page(&prepared_paged, &[], paging_state)
                         .await
                         .unwrap();
                     let paging_state_response = rs_manual.paging_state_response.clone();

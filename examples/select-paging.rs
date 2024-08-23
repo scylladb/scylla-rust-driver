@@ -48,7 +48,7 @@ async fn main() -> Result<()> {
     let mut paging_state = PagingState::start();
     loop {
         let res = session
-            .query_paged(paged_query.clone(), &[], paging_state)
+            .query_single_page(paged_query.clone(), &[], paging_state)
             .await?;
 
         let paging_state_response = res.paging_state_response.clone();
@@ -79,7 +79,7 @@ async fn main() -> Result<()> {
     let mut paging_state = PagingState::default();
     loop {
         let res = session
-            .execute_paged(&paged_prepared, &[], paging_state)
+            .execute_single_page(&paged_prepared, &[], paging_state)
             .await?;
 
         let paging_state_response = res.paging_state_response.clone();

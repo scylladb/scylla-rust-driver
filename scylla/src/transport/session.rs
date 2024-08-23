@@ -632,14 +632,14 @@ impl Session {
     ///
     /// It is discouraged to use this method with non-empty values argument (`is_empty()` method from `SerializeRow`
     /// trait returns false). In such case, query first needs to be prepared (on a single connection), so
-    /// driver will perform 2 round trips instead of 1. Please use [`Session::execute_paged()`] instead.
+    /// driver will perform 2 round trips instead of 1. Please use [`Session::execute_single_page()`] instead.
     ///
     /// # Arguments
     ///
     /// * `query` - query to be performed
     /// * `values` - values bound to the query
     /// * `paging_state` - previously received paging state or [PagingState::start()]
-    pub async fn query_paged(
+    pub async fn query_single_page(
         &self,
         query: impl Into<Query>,
         values: impl SerializeRow,
@@ -659,7 +659,7 @@ impl Session {
     ///
     /// It is discouraged to use this method with non-empty values argument (`is_empty()` method from `SerializeRow`
     /// trait returns false). In such case, query first needs to be prepared (on a single connection), so
-    /// driver will perform 2 round trips instead of 1. Please use [`Session::execute_paged()`] instead.
+    /// driver will perform 2 round trips instead of 1. Please use [`Session::execute_single_page()`] instead.
     ///
     /// # Arguments
     ///
@@ -1011,7 +1011,7 @@ impl Session {
             .await
     }
 
-    pub async fn execute_paged(
+    pub async fn execute_single_page(
         &self,
         prepared: &PreparedStatement,
         values: impl SerializeRow,

@@ -91,8 +91,8 @@ where
         self.session.execute_iter(prepared, values).await
     }
 
-    /// Does the same thing as [`Session::execute_paged`] but uses the prepared statement cache
-    pub async fn execute_paged(
+    /// Does the same thing as [`Session::execute_single_page`] but uses the prepared statement cache
+    pub async fn execute_single_page(
         &self,
         query: impl Into<Query>,
         values: impl SerializeRow,
@@ -101,7 +101,7 @@ where
         let query = query.into();
         let prepared = self.add_prepared_statement_owned(query).await?;
         self.session
-            .execute_paged(&prepared, values, paging_state)
+            .execute_single_page(&prepared, values, paging_state)
             .await
     }
 
@@ -364,16 +364,16 @@ mod tests {
         assert_eq!(1, session.cache.len());
     }
 
-    /// Checks that caching works with execute_paged
+    /// Checks that caching works with execute_single_page
     #[tokio::test]
-    async fn test_execute_paged_cached() {
+    async fn test_execute_single_page_cached() {
         setup_tracing();
         let session = create_caching_session().await;
 
         assert!(session.cache.is_empty());
 
         let result = session
-            .execute_paged("select * from test_table", &[], PagingState::start())
+            .execute_single_page("select * from test_table", &[], PagingState::start())
             .await
             .unwrap();
 
