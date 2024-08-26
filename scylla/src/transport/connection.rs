@@ -835,16 +835,19 @@ impl Connection {
     }
 
     #[allow(dead_code)]
-    pub(crate) async fn query(&self, query: impl Into<Query>) -> Result<QueryResult, QueryError> {
+    pub(crate) async fn query_unpaged(
+        &self,
+        query: impl Into<Query>,
+    ) -> Result<QueryResult, QueryError> {
         // This method is used only for driver internal queries, so no need to consult execution profile here.
         let query: Query = query.into();
 
-        self.query_raw(&query, PagingState::start())
+        self.query_raw_unpaged(&query, PagingState::start())
             .await
             .and_then(QueryResponse::into_query_result)
     }
 
-    pub(crate) async fn query_raw(
+    pub(crate) async fn query_raw_unpaged(
         &self,
         query: &Query,
         paging_state: PagingState,
@@ -888,19 +891,19 @@ impl Connection {
     }
 
     #[allow(dead_code)]
-    pub(crate) async fn execute(
+    pub(crate) async fn execute_unpaged(
         &self,
         prepared: &PreparedStatement,
         values: SerializedValues,
     ) -> Result<QueryResult, QueryError> {
         // This method is used only for driver internal queries, so no need to consult execution profile here.
-        self.execute_raw(prepared, values, PagingState::start())
+        self.execute_raw_unpaged(prepared, values, PagingState::start())
             .await
             .and_then(QueryResponse::into_query_result)
     }
 
     #[allow(dead_code)]
-    pub(crate) async fn execute_raw(
+    pub(crate) async fn execute_raw_unpaged(
         &self,
         prepared: &PreparedStatement,
         values: SerializedValues,
@@ -1171,7 +1174,7 @@ impl Connection {
             false => format!("USE {}", keyspace_name.as_str()).into(),
         };
 
-        let query_response = self.query_raw(&query, PagingState::start()).await?;
+        let query_response = self.query_raw_unpaged(&query, PagingState::start()).await?;
 
         match query_response.response {
             Response::Result(result::Result::SetKeyspace(set_keyspace)) => {
@@ -2273,7 +2276,7 @@ mod tests {
             let values = prepared.serialize_values(&(*v,)).unwrap();
             let fut = async {
                 connection
-                    .execute_raw(&prepared, values, PagingState::start())
+                    .execute_raw_unpaged(&prepared, values, PagingState::start())
                     .await
             };
             insert_futures.push(fut);
@@ -2358,7 +2361,7 @@ mod tests {
                 .await
                 .unwrap();
 
-            connection.query("TRUNCATE t").await.unwrap();
+            connection.query_unpaged("TRUNCATE t").await.unwrap();
 
             let mut futs = Vec::new();
 
@@ -2378,7 +2381,7 @@ mod tests {
                                 .serialize_values(&(j, vec![j as u8; j as usize]))
                                 .unwrap();
                             let response = conn
-                                .execute_raw(&prepared, values, PagingState::start())
+                                .execute_raw_unpaged(&prepared, values, PagingState::start())
                                 .await
                                 .unwrap();
                             // QueryResponse might contain an error - make sure that there were no errors
@@ -2397,7 +2400,7 @@ mod tests {
             // Check that everything was written properly
             let range_end = arithmetic_sequence_sum(NUM_BATCHES);
             let mut results = connection
-                .query("SELECT p, v FROM t")
+                .query_unpaged("SELECT p, v FROM t")
                 .await
                 .unwrap()
                 .rows_typed::<(i32, Vec<u8>)>()
