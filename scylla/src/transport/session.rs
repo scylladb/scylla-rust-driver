@@ -684,7 +684,7 @@ impl Session {
                         if values_ref.is_empty() {
                             span_ref.record_request_size(0);
                             connection
-                                .query_with_consistency(
+                                .query_raw_with_consistency(
                                     query_ref,
                                     consistency,
                                     serial_consistency,
@@ -697,7 +697,7 @@ impl Session {
                             let serialized = prepared.serialize_values(values_ref)?;
                             span_ref.record_request_size(serialized.buffer_size());
                             connection
-                                .execute_with_consistency(
+                                .execute_raw_with_consistency(
                                     &prepared,
                                     &serialized,
                                     consistency,
@@ -1051,7 +1051,7 @@ impl Session {
                         .unwrap_or(execution_profile.serial_consistency);
                     async move {
                         connection
-                            .execute_with_consistency(
+                            .execute_raw_with_consistency(
                                 prepared,
                                 values_ref,
                                 consistency,

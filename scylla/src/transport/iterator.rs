@@ -143,7 +143,7 @@ impl RowIterator {
                               paging_state: PagingState| {
                 async move {
                     connection
-                        .query_with_consistency(
+                        .query_raw_with_consistency(
                             query_ref,
                             consistency,
                             serial_consistency,
@@ -236,7 +236,7 @@ impl RowIterator {
                               consistency: Consistency,
                               paging_state: PagingState| async move {
                 connection
-                    .execute_with_consistency(
+                    .execute_raw_with_consistency(
                         prepared_ref,
                         values_ref,
                         consistency,
@@ -310,7 +310,7 @@ impl RowIterator {
             let worker = SingleConnectionRowIteratorWorker {
                 sender: sender.into(),
                 fetcher: |paging_state| {
-                    connection.query_with_consistency(
+                    connection.query_raw_with_consistency(
                         &query,
                         consistency,
                         serial_consistency,
@@ -337,7 +337,7 @@ impl RowIterator {
             let worker = SingleConnectionRowIteratorWorker {
                 sender: sender.into(),
                 fetcher: |paging_state| {
-                    connection.execute_with_consistency(
+                    connection.execute_raw_with_consistency(
                         &prepared,
                         &values,
                         consistency,

@@ -821,7 +821,7 @@ impl Connection {
         serial_consistency: Option<SerialConsistency>,
     ) -> Result<QueryResult, QueryError> {
         let query: Query = query.into();
-        self.query_with_consistency(
+        self.query_raw_with_consistency(
             &query,
             consistency,
             serial_consistency,
@@ -831,13 +831,13 @@ impl Connection {
         .into_query_result()
     }
 
-    pub(crate) async fn query(
+    pub(crate) async fn query_raw(
         &self,
         query: &Query,
         paging_state: PagingState,
     ) -> Result<QueryResponse, QueryError> {
         // This method is used only for driver internal queries, so no need to consult execution profile here.
-        self.query_with_consistency(
+        self.query_raw_with_consistency(
             query,
             query
                 .config
@@ -848,7 +848,7 @@ impl Connection {
         .await
     }
 
-    pub(crate) async fn query_with_consistency(
+    pub(crate) async fn query_raw_with_consistency(
         &self,
         query: &Query,
         consistency: Consistency,
@@ -873,14 +873,14 @@ impl Connection {
     }
 
     #[allow(dead_code)]
-    pub(crate) async fn execute(
+    pub(crate) async fn execute_raw(
         &self,
         prepared: PreparedStatement,
         values: SerializedValues,
         paging_state: PagingState,
     ) -> Result<QueryResponse, QueryError> {
         // This method is used only for driver internal queries, so no need to consult execution profile here.
-        self.execute_with_consistency(
+        self.execute_raw_with_consistency(
             &prepared,
             &values,
             prepared
@@ -892,7 +892,7 @@ impl Connection {
         .await
     }
 
-    pub(crate) async fn execute_with_consistency(
+    pub(crate) async fn execute_raw_with_consistency(
         &self,
         prepared_statement: &PreparedStatement,
         values: &SerializedValues,
@@ -1142,7 +1142,7 @@ impl Connection {
             false => format!("USE {}", keyspace_name.as_str()).into(),
         };
 
-        let query_response = self.query(&query, PagingState::start()).await?;
+        let query_response = self.query_raw(&query, PagingState::start()).await?;
 
         match query_response.response {
             Response::Result(result::Result::SetKeyspace(set_keyspace)) => {
@@ -2245,7 +2245,7 @@ mod tests {
             let values = prepared_clone.serialize_values(&(*v,)).unwrap();
             let fut = async {
                 connection
-                    .execute(prepared_clone, values, PagingState::start())
+                    .execute_raw(prepared_clone, values, PagingState::start())
                     .await
             };
             insert_futures.push(fut);
@@ -2331,7 +2331,7 @@ mod tests {
                 .unwrap();
 
             connection
-                .query(&"TRUNCATE t".into(), PagingState::start())
+                .query_raw(&"TRUNCATE t".into(), PagingState::start())
                 .await
                 .unwrap();
 
@@ -2353,7 +2353,7 @@ mod tests {
                                 .serialize_values(&(j, vec![j as u8; j as usize]))
                                 .unwrap();
                             let response = conn
-                                .execute(prepared.clone(), values, PagingState::start())
+                                .execute_raw(prepared.clone(), values, PagingState::start())
                                 .await
                                 .unwrap();
                             // QueryResponse might contain an error - make sure that there were no errors
@@ -2372,7 +2372,7 @@ mod tests {
             // Check that everything was written properly
             let range_end = arithmetic_sequence_sum(NUM_BATCHES);
             let mut results = connection
-                .query(&"SELECT p, v FROM t".into(), PagingState::start())
+                .query_raw(&"SELECT p, v FROM t".into(), PagingState::start())
                 .await
                 .unwrap()
                 .into_query_result()
