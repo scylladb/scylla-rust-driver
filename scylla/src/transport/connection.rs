@@ -826,6 +826,7 @@ impl Connection {
     pub(crate) async fn query_single_page(
         &self,
         query: impl Into<Query>,
+        paging_state: PagingState,
     ) -> Result<(QueryResult, PagingStateResponse), QueryError> {
         let query: Query = query.into();
 
@@ -835,14 +836,20 @@ impl Connection {
             .determine_consistency(self.config.default_consistency);
         let serial_consistency = query.config.serial_consistency;
 
-        self.query_single_page_with_consistency(query, consistency, serial_consistency.flatten())
-            .await
+        self.query_single_page_with_consistency(
+            query,
+            paging_state,
+            consistency,
+            serial_consistency.flatten(),
+        )
+        .await
     }
 
     #[allow(dead_code)]
     pub(crate) async fn query_single_page_with_consistency(
         &self,
         query: impl Into<Query>,
+        paging_state: PagingState,
         consistency: Consistency,
         serial_consistency: Option<SerialConsistency>,
     ) -> Result<(QueryResult, PagingStateResponse), QueryError> {
@@ -854,7 +861,7 @@ impl Connection {
             consistency,
             serial_consistency,
             Some(page_size),
-            PagingState::start(),
+            paging_state,
         )
         .await?
         .into_query_result_and_paging_state()
