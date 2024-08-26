@@ -28,9 +28,13 @@ pub enum QueryError {
     #[error(transparent)]
     BadQuery(#[from] BadQuery),
 
-    /// Failed to deserialize a CQL response from the server.
+    /// Received a RESULT server response, but failed to deserialize it.
     #[error(transparent)]
-    CqlResponseParseError(#[from] CqlResponseParseError),
+    CqlResultParseError(#[from] CqlResultParseError),
+
+    /// Received an ERROR server response, but failed to deserialize it.
+    #[error("Failed to deserialize ERROR response: {0}")]
+    CqlErrorParseError(#[from] CqlErrorParseError),
 
     /// Input/Output error has occurred, connection broken etc.
     #[error("IO Error: {0}")]
@@ -482,9 +486,13 @@ pub enum NewSessionError {
     #[error(transparent)]
     BadQuery(#[from] BadQuery),
 
-    /// Failed to deserialize a CQL response from the server.
+    /// Received a RESULT server response, but failed to deserialize it.
     #[error(transparent)]
-    CqlResponseParseError(#[from] CqlResponseParseError),
+    CqlResultParseError(#[from] CqlResultParseError),
+
+    /// Received an ERROR server response, but failed to deserialize it.
+    #[error("Failed to deserialize ERROR response: {0}")]
+    CqlErrorParseError(#[from] CqlErrorParseError),
 
     /// Input/Output error has occurred, connection broken etc.
     #[error("IO Error: {0}")]
@@ -800,14 +808,8 @@ impl From<UserRequestError> for QueryError {
     fn from(value: UserRequestError) -> Self {
         match value {
             UserRequestError::DbError(err, msg) => QueryError::DbError(err, msg),
-            UserRequestError::CqlResultParseError(e) => {
-                // FIXME: change later
-                CqlResponseParseError::CqlResultParseError(e).into()
-            }
-            UserRequestError::CqlErrorParseError(e) => {
-                // FIXME: change later
-                CqlResponseParseError::CqlErrorParseError(e).into()
-            }
+            UserRequestError::CqlResultParseError(e) => e.into(),
+            UserRequestError::CqlErrorParseError(e) => e.into(),
             UserRequestError::BrokenConnectionError(e) => e.into(),
             UserRequestError::UnexpectedResponse(_) => {
                 // FIXME: make it typed. It needs to wait for ProtocolError refactor.
@@ -833,7 +835,8 @@ impl From<QueryError> for NewSessionError {
         match query_error {
             QueryError::DbError(e, msg) => NewSessionError::DbError(e, msg),
             QueryError::BadQuery(e) => NewSessionError::BadQuery(e),
-            QueryError::CqlResponseParseError(e) => NewSessionError::CqlResponseParseError(e),
+            QueryError::CqlResultParseError(e) => NewSessionError::CqlResultParseError(e),
+            QueryError::CqlErrorParseError(e) => NewSessionError::CqlErrorParseError(e),
             QueryError::IoError(e) => NewSessionError::IoError(e),
             QueryError::ProtocolError(m) => NewSessionError::ProtocolError(m),
             QueryError::InvalidMessage(m) => NewSessionError::InvalidMessage(m),
