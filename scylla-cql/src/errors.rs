@@ -708,6 +708,23 @@ pub enum RequestError {
     UnableToAllocStreamId,
 }
 
+impl From<RequestError> for UserRequestError {
+    fn from(value: RequestError) -> Self {
+        match value {
+            RequestError::FrameError(e) => e.into(),
+            RequestError::CqlResponseParseError(e) => match e {
+                // Only possible responses are RESULT and ERROR. If we failed parsing
+                // other response, treat it as unexpected response.
+                CqlResponseParseError::CqlErrorParseError(e) => e.into(),
+                CqlResponseParseError::CqlResultParseError(e) => e.into(),
+                _ => UserRequestError::UnexpectedResponse(e.to_response_kind()),
+            },
+            RequestError::BrokenConnection(e) => e.into(),
+            RequestError::UnableToAllocStreamId => UserRequestError::UnableToAllocStreamId,
+        }
+    }
+}
+
 impl From<BrokenConnectionErrorKind> for BrokenConnectionError {
     fn from(value: BrokenConnectionErrorKind) -> Self {
         BrokenConnectionError(Arc::new(value))
