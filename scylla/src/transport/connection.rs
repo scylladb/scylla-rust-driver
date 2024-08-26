@@ -831,6 +831,16 @@ impl Connection {
         .into_query_result()
     }
 
+    #[allow(dead_code)]
+    pub(crate) async fn query(&self, query: impl Into<Query>) -> Result<QueryResult, QueryError> {
+        // This method is used only for driver internal queries, so no need to consult execution profile here.
+        let query: Query = query.into();
+
+        self.query_raw(&query, PagingState::start())
+            .await
+            .and_then(QueryResponse::into_query_result)
+    }
+
     pub(crate) async fn query_raw(
         &self,
         query: &Query,
@@ -870,6 +880,18 @@ impl Connection {
 
         self.send_request(&query_frame, true, query.config.tracing, None)
             .await
+    }
+
+    #[allow(dead_code)]
+    pub(crate) async fn execute(
+        &self,
+        prepared: &PreparedStatement,
+        values: SerializedValues,
+    ) -> Result<QueryResult, QueryError> {
+        // This method is used only for driver internal queries, so no need to consult execution profile here.
+        self.execute_raw(prepared, values, PagingState::start())
+            .await
+            .and_then(QueryResponse::into_query_result)
     }
 
     #[allow(dead_code)]
@@ -2148,7 +2170,7 @@ mod tests {
     use crate::transport::node::ResolvedContactPoint;
     use crate::transport::topology::UntranslatedEndpoint;
     use crate::utils::test_utils::unique_keyspace_name;
-    use crate::{IntoTypedRows, SessionBuilder};
+    use crate::SessionBuilder;
     use futures::{StreamExt, TryStreamExt};
     use std::collections::HashMap;
     use std::net::SocketAddr;
@@ -2329,10 +2351,7 @@ mod tests {
                 .await
                 .unwrap();
 
-            connection
-                .query_raw(&"TRUNCATE t".into(), PagingState::start())
-                .await
-                .unwrap();
+            connection.query("TRUNCATE t").await.unwrap();
 
             let mut futs = Vec::new();
 
@@ -2371,14 +2390,11 @@ mod tests {
             // Check that everything was written properly
             let range_end = arithmetic_sequence_sum(NUM_BATCHES);
             let mut results = connection
-                .query_raw(&"SELECT p, v FROM t".into(), PagingState::start())
+                .query("SELECT p, v FROM t")
                 .await
                 .unwrap()
-                .into_query_result()
+                .rows_typed::<(i32, Vec<u8>)>()
                 .unwrap()
-                .rows()
-                .unwrap()
-                .into_typed::<(i32, Vec<u8>)>()
                 .collect::<Result<Vec<_>, _>>()
                 .unwrap();
             results.sort();
