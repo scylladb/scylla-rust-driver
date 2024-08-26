@@ -87,6 +87,8 @@ pub enum UserRequestError {
     FrameError(#[from] FrameError),
     #[error("Unable to allocate stream id")]
     UnableToAllocStreamId,
+    #[error("Prepared statement Id changed, md5 sum should stay the same")]
+    RepreparedIdChanged,
 }
 
 /// An error sent from the database in response to a query
@@ -824,6 +826,9 @@ impl From<UserRequestError> for QueryError {
             }
             UserRequestError::FrameError(e) => e.into(),
             UserRequestError::UnableToAllocStreamId => QueryError::UnableToAllocStreamId,
+            UserRequestError::RepreparedIdChanged => QueryError::ProtocolError(
+                "Prepared statement Id changed, md5 sum should stay the same",
+            ),
         }
     }
 }

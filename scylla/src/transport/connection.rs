@@ -895,15 +895,13 @@ impl Connection {
         &self,
         query: impl Into<Query>,
         previous_prepared: &PreparedStatement,
-    ) -> Result<(), QueryError> {
+    ) -> Result<(), UserRequestError> {
         let reprepare_query: Query = query.into();
         let reprepared = self.prepare(&reprepare_query).await?;
         // Reprepared statement should keep its id - it's the md5 sum
         // of statement contents
         if reprepared.get_id() != previous_prepared.get_id() {
-            Err(QueryError::ProtocolError(
-                "Prepared statement Id changed, md5 sum should stay the same",
-            ))
+            Err(UserRequestError::RepreparedIdChanged)
         } else {
             Ok(())
         }
