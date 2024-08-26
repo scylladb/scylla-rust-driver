@@ -850,15 +850,13 @@ impl Connection {
         paging_state: PagingState,
     ) -> Result<QueryResponse, QueryError> {
         // This method is used only for driver internal queries, so no need to consult execution profile here.
-        let page_size = query.get_validated_page_size();
-
         self.query_raw_with_consistency(
             query,
             query
                 .config
                 .determine_consistency(self.config.default_consistency),
             query.config.serial_consistency.flatten(),
-            Some(page_size),
+            None,
             paging_state,
         )
         .await
@@ -909,8 +907,6 @@ impl Connection {
         paging_state: PagingState,
     ) -> Result<QueryResponse, QueryError> {
         // This method is used only for driver internal queries, so no need to consult execution profile here.
-        let page_size = prepared.get_validated_page_size();
-
         self.execute_raw_with_consistency(
             prepared,
             &values,
@@ -918,7 +914,7 @@ impl Connection {
                 .config
                 .determine_consistency(self.config.default_consistency),
             prepared.config.serial_consistency.flatten(),
-            Some(page_size),
+            None,
             paging_state,
         )
         .await
