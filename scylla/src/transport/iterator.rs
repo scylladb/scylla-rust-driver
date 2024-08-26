@@ -9,6 +9,7 @@ use std::sync::Arc;
 use std::task::{Context, Poll};
 
 use futures::Stream;
+use scylla_cql::errors::UserRequestError;
 use scylla_cql::frame::response::NonErrorResponse;
 use scylla_cql::types::serialize::row::SerializedValues;
 use std::result::Result;
@@ -479,7 +480,7 @@ struct RowIteratorWorker<'a, QueryFunc, SpanCreatorFunc> {
     sender: ProvingSender<Result<ReceivedPage, QueryError>>,
 
     // Closure used to perform a single page query
-    // AsyncFn(Arc<Connection>, Option<Arc<[u8]>>) -> Result<QueryResponse, QueryError>
+    // AsyncFn(Arc<Connection>, Option<Arc<[u8]>>) -> Result<QueryResponse, UserRequestError>
     page_query: QueryFunc,
 
     statement_info: RoutingInfo<'a>,
@@ -502,7 +503,7 @@ struct RowIteratorWorker<'a, QueryFunc, SpanCreatorFunc> {
 impl<QueryFunc, QueryFut, SpanCreator> RowIteratorWorker<'_, QueryFunc, SpanCreator>
 where
     QueryFunc: Fn(Arc<Connection>, Consistency, PagingState) -> QueryFut,
-    QueryFut: Future<Output = Result<QueryResponse, QueryError>>,
+    QueryFut: Future<Output = Result<QueryResponse, UserRequestError>>,
     SpanCreator: Fn() -> RequestSpan,
 {
     // Contract: this function MUST send at least one item through self.sender
@@ -656,6 +657,7 @@ where
         let query_response =
             (self.page_query)(connection.clone(), consistency, self.paging_state.clone())
                 .await
+                .map_err(Into::into)
                 .and_then(QueryResponse::into_non_error_query_response);
 
         let elapsed = query_start.elapsed();
@@ -826,7 +828,7 @@ struct SingleConnectionRowIteratorWorker<Fetcher> {
 impl<Fetcher, FetchFut> SingleConnectionRowIteratorWorker<Fetcher>
 where
     Fetcher: Fn(PagingState) -> FetchFut + Send + Sync,
-    FetchFut: Future<Output = Result<QueryResponse, QueryError>> + Send,
+    FetchFut: Future<Output = Result<QueryResponse, UserRequestError>> + Send,
 {
     async fn work(mut self) -> PageSendAttemptedProof {
         match self.do_work().await {

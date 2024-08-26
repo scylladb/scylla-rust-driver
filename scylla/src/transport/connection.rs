@@ -1018,6 +1018,7 @@ impl Connection {
 
         self.query_raw_unpaged(&query, PagingState::start())
             .await
+            .map_err(Into::into)
             .and_then(QueryResponse::into_query_result)
     }
 
@@ -1025,7 +1026,7 @@ impl Connection {
         &self,
         query: &Query,
         paging_state: PagingState,
-    ) -> Result<QueryResponse, QueryError> {
+    ) -> Result<QueryResponse, UserRequestError> {
         // This method is used only for driver internal queries, so no need to consult execution profile here.
         self.query_raw_with_consistency(
             query,
@@ -1046,7 +1047,7 @@ impl Connection {
         serial_consistency: Option<SerialConsistency>,
         page_size: Option<PageSize>,
         paging_state: PagingState,
-    ) -> Result<QueryResponse, QueryError> {
+    ) -> Result<QueryResponse, UserRequestError> {
         let query_frame = query::Query {
             contents: Cow::Borrowed(&query.contents),
             parameters: query::QueryParameters {
@@ -1076,6 +1077,7 @@ impl Connection {
         // This method is used only for driver internal queries, so no need to consult execution profile here.
         self.execute_raw_unpaged(prepared, values, PagingState::start())
             .await
+            .map_err(Into::into)
             .and_then(QueryResponse::into_query_result)
     }
 
@@ -1085,7 +1087,7 @@ impl Connection {
         prepared: &PreparedStatement,
         values: SerializedValues,
         paging_state: PagingState,
-    ) -> Result<QueryResponse, QueryError> {
+    ) -> Result<QueryResponse, UserRequestError> {
         // This method is used only for driver internal queries, so no need to consult execution profile here.
         self.execute_raw_with_consistency(
             prepared,
@@ -1108,7 +1110,7 @@ impl Connection {
         serial_consistency: Option<SerialConsistency>,
         page_size: Option<PageSize>,
         paging_state: PagingState,
-    ) -> Result<QueryResponse, QueryError> {
+    ) -> Result<QueryResponse, UserRequestError> {
         let execute_frame = execute::Execute {
             id: prepared_statement.get_id().to_owned(),
             parameters: query::QueryParameters {

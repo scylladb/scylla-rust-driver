@@ -773,6 +773,7 @@ impl Session {
                                     paging_state_ref.clone(),
                                 )
                                 .await
+                                .map_err(Into::into)
                                 .and_then(QueryResponse::into_non_error_query_response)
                         } else {
                             let prepared = connection.prepare(query_ref).await?;
@@ -788,6 +789,7 @@ impl Session {
                                     paging_state_ref.clone(),
                                 )
                                 .await
+                                .map_err(Into::into)
                                 .and_then(QueryResponse::into_non_error_query_response)
                         }
                     }
@@ -1226,6 +1228,7 @@ impl Session {
                                 paging_state_ref.clone(),
                             )
                             .await
+                            .map_err(Into::into)
                             .and_then(QueryResponse::into_non_error_query_response)
                     }
                 },
