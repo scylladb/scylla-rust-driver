@@ -875,13 +875,13 @@ impl Connection {
     #[allow(dead_code)]
     pub(crate) async fn execute_raw(
         &self,
-        prepared: PreparedStatement,
+        prepared: &PreparedStatement,
         values: SerializedValues,
         paging_state: PagingState,
     ) -> Result<QueryResponse, QueryError> {
         // This method is used only for driver internal queries, so no need to consult execution profile here.
         self.execute_raw_with_consistency(
-            &prepared,
+            prepared,
             &values,
             prepared
                 .config
@@ -2236,16 +2236,15 @@ mod tests {
 
         // 2. Insert 100 and select using query_iter with page_size 7
         let values: Vec<i32> = (0..100).collect();
-        let mut insert_futures = Vec::new();
         let insert_query =
             Query::new("INSERT INTO connection_query_iter_tab (p) VALUES (?)").with_page_size(7);
         let prepared = connection.prepare(&insert_query).await.unwrap();
+        let mut insert_futures = Vec::new();
         for v in &values {
-            let prepared_clone = prepared.clone();
-            let values = prepared_clone.serialize_values(&(*v,)).unwrap();
+            let values = prepared.serialize_values(&(*v,)).unwrap();
             let fut = async {
                 connection
-                    .execute_raw(prepared_clone, values, PagingState::start())
+                    .execute_raw(&prepared, values, PagingState::start())
                     .await
             };
             insert_futures.push(fut);
@@ -2353,7 +2352,7 @@ mod tests {
                                 .serialize_values(&(j, vec![j as u8; j as usize]))
                                 .unwrap();
                             let response = conn
-                                .execute_raw(prepared.clone(), values, PagingState::start())
+                                .execute_raw(&prepared, values, PagingState::start())
                                 .await
                                 .unwrap();
                             // QueryResponse might contain an error - make sure that there were no errors
