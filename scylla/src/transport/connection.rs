@@ -798,6 +798,7 @@ impl Connection {
             .await
     }
 
+    #[allow(dead_code)]
     pub(crate) async fn query_single_page(
         &self,
         query: impl Into<Query>,
@@ -814,6 +815,7 @@ impl Connection {
             .await
     }
 
+    #[allow(dead_code)]
     pub(crate) async fn query_single_page_with_consistency(
         &self,
         query: impl Into<Query>,
@@ -1218,7 +1220,7 @@ impl Connection {
 
     pub(crate) async fn fetch_schema_version(&self) -> Result<Uuid, QueryError> {
         let (version_id,) = self
-            .query_single_page(LOCAL_VERSION)
+            .query_unpaged(LOCAL_VERSION)
             .await?
             .single_row_typed()
             .map_err(|err| match err {
@@ -2553,7 +2555,7 @@ mod tests {
         // As everything is normal, these queries should succeed.
         for _ in 0..3 {
             tokio::time::sleep(Duration::from_millis(500)).await;
-            conn.query_single_page("SELECT host_id FROM system.local")
+            conn.query_unpaged("SELECT host_id FROM system.local")
                 .await
                 .unwrap();
         }
@@ -2573,7 +2575,7 @@ mod tests {
 
         // As the router is invalidated, all further queries should immediately
         // return error.
-        conn.query_single_page("SELECT host_id FROM system.local")
+        conn.query_unpaged("SELECT host_id FROM system.local")
             .await
             .unwrap_err();
 
