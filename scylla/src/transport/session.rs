@@ -76,7 +76,7 @@ pub use crate::transport::connection_pool::PoolSize;
 use crate::authentication::AuthenticatorProvider;
 #[cfg(feature = "ssl")]
 use openssl::ssl::SslContext;
-use scylla_cql::errors::BadQuery;
+use scylla_cql::errors::{BadQuery, UserRequestError};
 
 pub(crate) const TABLET_CHANNEL_SIZE: usize = 8192;
 
@@ -975,7 +975,7 @@ impl Session {
 
         // Safety: there is at least one node in the cluster, and `Cluster::iter_working_connections()`
         // returns either an error or an iterator with at least one connection, so there will be at least one result.
-        let first_ok: Result<PreparedStatement, QueryError> =
+        let first_ok: Result<PreparedStatement, UserRequestError> =
             results.by_ref().find_or_first(Result::is_ok).unwrap();
         let mut prepared: PreparedStatement = first_ok?;
 

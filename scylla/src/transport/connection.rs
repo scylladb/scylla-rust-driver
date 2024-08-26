@@ -3,13 +3,13 @@ use futures::{future::RemoteHandle, FutureExt};
 use scylla_cql::errors::{
     BrokenConnectionError, BrokenConnectionErrorKind, ConnectionError, ConnectionSetupRequestError,
     ConnectionSetupRequestErrorKind, CqlEventHandlingError, CqlRequestKind, RequestError,
-    ResponseParseError, TranslationError,
+    ResponseParseError, TranslationError, UserRequestError,
 };
 use scylla_cql::frame::frame_errors::CqlResponseParseError;
 use scylla_cql::frame::request::options::{self, Options};
-use scylla_cql::frame::response;
 use scylla_cql::frame::response::result::{ResultMetadata, TableSpec};
 use scylla_cql::frame::response::Error;
+use scylla_cql::frame::response::{self, error};
 use scylla_cql::frame::types::SerialConsistency;
 use scylla_cql::types::serialize::batch::{BatchValues, BatchValuesIterator};
 use scylla_cql::types::serialize::raw_batch::RawBatchValuesAdapter;
@@ -848,7 +848,10 @@ impl Connection {
         Ok(supported)
     }
 
-    pub(crate) async fn prepare(&self, query: &Query) -> Result<PreparedStatement, QueryError> {
+    pub(crate) async fn prepare(
+        &self,
+        query: &Query,
+    ) -> Result<PreparedStatement, UserRequestError> {
         let query_response = self
             .send_request(
                 &request::Prepare {
@@ -861,7 +864,9 @@ impl Connection {
             .await?;
 
         let mut prepared_statement = match query_response.response {
-            Response::Error(err) => return Err(err.into()),
+            Response::Error(error::Error { error, reason }) => {
+                return Err(UserRequestError::DbError(error, reason))
+            }
             Response::Result(result::Result::Prepared(p)) => PreparedStatement::new(
                 p.id,
                 self.features
@@ -874,8 +879,8 @@ impl Connection {
                 query.config.clone(),
             ),
             _ => {
-                return Err(QueryError::ProtocolError(
-                    "PREPARE: Unexpected server response",
+                return Err(UserRequestError::UnexpectedResponse(
+                    query_response.response.to_response_kind(),
                 ))
             }
         };
