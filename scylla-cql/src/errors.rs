@@ -796,17 +796,6 @@ impl From<tokio::time::error::Elapsed> for QueryError {
     }
 }
 
-impl From<RequestError> for QueryError {
-    fn from(value: RequestError) -> Self {
-        match value {
-            RequestError::FrameError(e) => e.into(),
-            RequestError::CqlResponseParseError(e) => e.into(),
-            RequestError::BrokenConnection(e) => e.into(),
-            RequestError::UnableToAllocStreamId => QueryError::UnableToAllocStreamId,
-        }
-    }
-}
-
 impl From<UserRequestError> for QueryError {
     fn from(value: UserRequestError) -> Self {
         match value {
