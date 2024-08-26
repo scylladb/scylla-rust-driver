@@ -1265,7 +1265,8 @@ impl Connection {
         loop {
             let query_response = self
                 .send_request(&batch_frame, true, batch.config.tracing, None)
-                .await?;
+                .await
+                .map_err(UserRequestError::from)?;
 
             return match query_response.response {
                 Response::Error(err) => match err.error {
