@@ -773,8 +773,8 @@ impl Session {
                                     paging_state_ref.clone(),
                                 )
                                 .await
-                                .map_err(Into::into)
                                 .and_then(QueryResponse::into_non_error_query_response)
+                                .map_err(Into::into)
                         } else {
                             let prepared = connection.prepare(query_ref).await?;
                             let serialized = prepared.serialize_values(values_ref)?;
@@ -789,8 +789,8 @@ impl Session {
                                     paging_state_ref.clone(),
                                 )
                                 .await
-                                .map_err(Into::into)
                                 .and_then(QueryResponse::into_non_error_query_response)
+                                .map_err(Into::into)
                         }
                     }
                 },
@@ -1228,8 +1228,8 @@ impl Session {
                                 paging_state_ref.clone(),
                             )
                             .await
-                            .map_err(Into::into)
                             .and_then(QueryResponse::into_non_error_query_response)
+                            .map_err(Into::into)
                     }
                 },
                 &span,

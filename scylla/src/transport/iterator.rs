@@ -657,7 +657,6 @@ where
         let query_response =
             (self.page_query)(connection.clone(), consistency, self.paging_state.clone())
                 .await
-                .map_err(Into::into)
                 .and_then(QueryResponse::into_non_error_query_response);
 
         let elapsed = query_start.elapsed();
@@ -707,6 +706,7 @@ where
                 Ok(ControlFlow::Continue(()))
             }
             Err(err) => {
+                let err = err.into();
                 self.metrics.inc_failed_paged_queries();
                 self.execution_profile
                     .load_balancing_policy

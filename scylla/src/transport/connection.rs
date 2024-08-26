@@ -228,7 +228,9 @@ pub(crate) struct NonErrorQueryResponse {
 }
 
 impl QueryResponse {
-    pub(crate) fn into_non_error_query_response(self) -> Result<NonErrorQueryResponse, QueryError> {
+    pub(crate) fn into_non_error_query_response(
+        self,
+    ) -> Result<NonErrorQueryResponse, UserRequestError> {
         Ok(NonErrorQueryResponse {
             response: self.response.into_non_error_response()?,
             tracing_id: self.tracing_id,
@@ -238,7 +240,7 @@ impl QueryResponse {
 
     pub(crate) fn into_query_result_and_paging_state(
         self,
-    ) -> Result<(QueryResult, PagingStateResponse), QueryError> {
+    ) -> Result<(QueryResult, PagingStateResponse), UserRequestError> {
         self.into_non_error_query_response()?
             .into_query_result_and_paging_state()
     }
@@ -265,7 +267,7 @@ impl NonErrorQueryResponse {
 
     pub(crate) fn into_query_result_and_paging_state(
         self,
-    ) -> Result<(QueryResult, PagingStateResponse), QueryError> {
+    ) -> Result<(QueryResult, PagingStateResponse), UserRequestError> {
         let (rows, paging_state, metadata, serialized_size) = match self.response {
             NonErrorResponse::Result(result::Result::Rows(rs)) => (
                 Some(rs.rows),
@@ -275,8 +277,8 @@ impl NonErrorQueryResponse {
             ),
             NonErrorResponse::Result(_) => (None, PagingStateResponse::NoMorePages, None, 0),
             _ => {
-                return Err(QueryError::ProtocolError(
-                    "Unexpected server response, expected Result or Error",
+                return Err(UserRequestError::UnexpectedResponse(
+                    self.response.to_response_kind(),
                 ))
             }
         };
@@ -968,7 +970,7 @@ impl Connection {
         &self,
         query: impl Into<Query>,
         paging_state: PagingState,
-    ) -> Result<(QueryResult, PagingStateResponse), QueryError> {
+    ) -> Result<(QueryResult, PagingStateResponse), UserRequestError> {
         let query: Query = query.into();
 
         // This method is used only for driver internal queries, so no need to consult execution profile here.
@@ -993,7 +995,7 @@ impl Connection {
         paging_state: PagingState,
         consistency: Consistency,
         serial_consistency: Option<SerialConsistency>,
-    ) -> Result<(QueryResult, PagingStateResponse), QueryError> {
+    ) -> Result<(QueryResult, PagingStateResponse), UserRequestError> {
         let query: Query = query.into();
         let page_size = query.get_validated_page_size();
 
