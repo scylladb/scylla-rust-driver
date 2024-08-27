@@ -2,6 +2,7 @@ use std::borrow::Cow;
 
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
 
+use scylla_cql::frame::request::query::PagingState;
 use scylla_cql::frame::request::SerializableRequest;
 use scylla_cql::frame::response::result::ColumnType;
 use scylla_cql::frame::{request::query, Compression, SerializedRequest};
@@ -16,7 +17,7 @@ fn make_query(contents: &str, values: SerializedValues) -> query::Query<'_> {
             values: Cow::Owned(values),
             skip_metadata: false,
             page_size: None,
-            paging_state: None,
+            paging_state: PagingState::start(),
             timestamp: None,
         },
     }

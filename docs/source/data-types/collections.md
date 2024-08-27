@@ -13,11 +13,11 @@ use scylla::IntoTypedRows;
 // Insert a list of ints into the table
 let my_list: Vec<i32> = vec![1, 2, 3, 4, 5];
 session
-    .query("INSERT INTO keyspace.table (a) VALUES(?)", (&my_list,))
+    .query_unpaged("INSERT INTO keyspace.table (a) VALUES(?)", (&my_list,))
     .await?;
 
 // Read a list of ints from the table
-let result = session.query("SELECT a FROM keyspace.table", &[]).await?;
+let result = session.query_unpaged("SELECT a FROM keyspace.table", &[]).await?;
 let mut iter = result.rows_typed::<(Vec<i32>,)>()?;
 while let Some((list_value,)) = iter.next().transpose()? {
     println!("{:?}", list_value);
@@ -39,11 +39,11 @@ use scylla::IntoTypedRows;
 // Insert a set of ints into the table
 let my_set: Vec<i32> = vec![1, 2, 3, 4, 5];
 session
-    .query("INSERT INTO keyspace.table (a) VALUES(?)", (&my_set,))
+    .query_unpaged("INSERT INTO keyspace.table (a) VALUES(?)", (&my_set,))
     .await?;
 
 // Read a set of ints from the table
-let result = session.query("SELECT a FROM keyspace.table", &[]).await?;
+let result = session.query_unpaged("SELECT a FROM keyspace.table", &[]).await?;
 let mut iter = result.rows_typed::<(Vec<i32>,)>()?;
 while let Some((list_value,)) = iter.next().transpose()? {
     println!("{:?}", list_value);
@@ -63,11 +63,11 @@ use std::collections::HashSet;
 // Insert a set of ints into the table
 let my_set: HashSet<i32> = vec![1, 2, 3, 4, 5].into_iter().collect();
 session
-    .query("INSERT INTO keyspace.table (a) VALUES(?)", (&my_set,))
+    .query_unpaged("INSERT INTO keyspace.table (a) VALUES(?)", (&my_set,))
     .await?;
 
 // Read a set of ints from the table
-let result = session.query("SELECT a FROM keyspace.table", &[]).await?;
+let result = session.query_unpaged("SELECT a FROM keyspace.table", &[]).await?;
 let mut iter = result.rows_typed::<(HashSet<i32>,)>()?;
 while let Some((list_value,)) = iter.next().transpose()? {
     println!("{:?}", list_value);
@@ -87,11 +87,11 @@ use std::collections::BTreeSet;
 // Insert a set of ints into the table
 let my_set: BTreeSet<i32> = vec![1, 2, 3, 4, 5].into_iter().collect();
 session
-    .query("INSERT INTO keyspace.table (a) VALUES(?)", (&my_set,))
+    .query_unpaged("INSERT INTO keyspace.table (a) VALUES(?)", (&my_set,))
     .await?;
 
 // Read a set of ints from the table
-let result = session.query("SELECT a FROM keyspace.table", &[]).await?;
+let result = session.query_unpaged("SELECT a FROM keyspace.table", &[]).await?;
 let mut iter = result.rows_typed::<(BTreeSet<i32>,)>()?;
 while let Some((list_value,)) = iter.next().transpose()? {
     println!("{:?}", list_value);
@@ -116,11 +116,11 @@ let mut my_map: HashMap<String, i32> = HashMap::new();
 my_map.insert("abcd".to_string(), 16);
 
 session
-    .query("INSERT INTO keyspace.table (a) VALUES(?)", (&my_map,))
+    .query_unpaged("INSERT INTO keyspace.table (a) VALUES(?)", (&my_map,))
     .await?;
 
 // Read a map from the table
-let result = session.query("SELECT a FROM keyspace.table", &[]).await?;
+let result = session.query_unpaged("SELECT a FROM keyspace.table", &[]).await?;
 let mut iter = result.rows_typed::<(HashMap<String, i32>,)>()?;
 while let Some((map_value,)) = iter.next().transpose()? {
     println!("{:?}", map_value);
@@ -142,11 +142,11 @@ let mut my_map: BTreeMap<String, i32> = BTreeMap::new();
 my_map.insert("abcd".to_string(), 16);
 
 session
-    .query("INSERT INTO keyspace.table (a) VALUES(?)", (&my_map,))
+    .query_unpaged("INSERT INTO keyspace.table (a) VALUES(?)", (&my_map,))
     .await?;
 
 // Read a map from the table
-let result = session.query("SELECT a FROM keyspace.table", &[]).await?;
+let result = session.query_unpaged("SELECT a FROM keyspace.table", &[]).await?;
 let mut iter = result.rows_typed::<(BTreeMap<String, i32>,)>()?;
 while let Some((map_value,)) = iter.next().transpose()? {
     println!("{:?}", map_value);

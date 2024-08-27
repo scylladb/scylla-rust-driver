@@ -791,10 +791,12 @@ impl NodeInfoSource {
     }
 }
 
+const METADATA_QUERY_PAGE_SIZE: i32 = 1024;
+
 async fn query_peers(conn: &Arc<Connection>, connect_port: u16) -> Result<Vec<Peer>, QueryError> {
     let mut peers_query =
         Query::new("select host_id, rpc_address, data_center, rack, tokens from system.peers");
-    peers_query.set_page_size(1024);
+    peers_query.set_page_size(METADATA_QUERY_PAGE_SIZE);
     let peers_query_stream = conn
         .clone()
         .query_iter(peers_query)
@@ -804,7 +806,7 @@ async fn query_peers(conn: &Arc<Connection>, connect_port: u16) -> Result<Vec<Pe
 
     let mut local_query =
         Query::new("select host_id, rpc_address, data_center, rack, tokens from system.local");
-    local_query.set_page_size(1024);
+    local_query.set_page_size(METADATA_QUERY_PAGE_SIZE);
     let local_query_stream = conn
         .clone()
         .query_iter(local_query)
@@ -914,7 +916,7 @@ fn query_filter_keyspace_name<'a>(
     let fut = async move {
         if keyspaces_to_fetch.is_empty() {
             let mut query = Query::new(query_str);
-            query.set_page_size(1024);
+            query.set_page_size(METADATA_QUERY_PAGE_SIZE);
 
             conn.query_iter(query).await
         } else {
@@ -922,7 +924,7 @@ fn query_filter_keyspace_name<'a>(
             let query_str = format!("{query_str} where keyspace_name in ?");
 
             let mut query = Query::new(query_str);
-            query.set_page_size(1024);
+            query.set_page_size(METADATA_QUERY_PAGE_SIZE);
 
             let prepared = conn.prepare(&query).await?;
             let serialized_values = prepared.serialize_values(&keyspaces)?;
@@ -1658,7 +1660,7 @@ async fn query_table_partitioners(
     let mut partitioner_query = Query::new(
         "select keyspace_name, table_name, partitioner from system_schema.scylla_tables",
     );
-    partitioner_query.set_page_size(1024);
+    partitioner_query.set_page_size(METADATA_QUERY_PAGE_SIZE);
 
     let rows = conn
         .clone()

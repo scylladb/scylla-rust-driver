@@ -8,7 +8,7 @@ use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 async fn connect() -> Session {
     let session = create_new_session_builder().build().await.unwrap();
     let ks = unique_keyspace_name();
-    session.query(format!("CREATE KEYSPACE IF NOT EXISTS {} WITH REPLICATION = {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}}", ks), &[]).await.unwrap();
+    session.query_unpaged(format!("CREATE KEYSPACE IF NOT EXISTS {} WITH REPLICATION = {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}}", ks), &[]).await.unwrap();
     session.use_keyspace(ks, false).await.unwrap();
 
     session
@@ -16,7 +16,7 @@ async fn connect() -> Session {
 
 async fn create_table(session: &Session, table_name: &str, value_type: &str) {
     session
-        .query(
+        .query_unpaged(
             format!(
                 "CREATE TABLE IF NOT EXISTS {} (p int PRIMARY KEY, val {})",
                 table_name, value_type
@@ -37,7 +37,7 @@ async fn insert_and_select<InsertT, SelectT>(
     SelectT: FromCqlVal<Option<CqlValue>> + PartialEq + std::fmt::Debug,
 {
     session
-        .query(
+        .query_unpaged(
             format!("INSERT INTO {} (p, val) VALUES (0, ?)", table_name),
             (&to_insert,),
         )
@@ -45,7 +45,7 @@ async fn insert_and_select<InsertT, SelectT>(
         .unwrap();
 
     let selected_value: SelectT = session
-        .query(format!("SELECT val FROM {} WHERE p = 0", table_name), ())
+        .query_unpaged(format!("SELECT val FROM {} WHERE p = 0", table_name), ())
         .await
         .unwrap()
         .single_row_typed::<(SelectT,)>()

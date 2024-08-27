@@ -34,13 +34,13 @@ async fn test_large_batch_statements() {
 
 async fn create_test_session(session: Session, ks: &String) -> Session {
     session
-        .query(
+        .query_unpaged(
             format!("CREATE KEYSPACE {} WITH REPLICATION = {{ 'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1 }}",ks),
             &[],
         )
         .await.unwrap();
     session
-        .query(
+        .query_unpaged(
             format!(
                 "CREATE TABLE {}.pairs (dummy int, k blob, v blob, primary key (dummy, k))",
                 ks

@@ -1,6 +1,7 @@
 # Query result
 
-`Session::query` and `Session::execute` return a `QueryResult` with rows represented as `Option<Vec<Row>>`.
+`Session::query_unpaged`, `Session::query_single_page`, `Session::execute_unpaged` and `Session::execute_single_page`
+return a `QueryResult` with rows represented as `Option<Vec<Row>>`.
 
 ### Basic representation
 `Row` is a basic representation of a received row. It can be used by itself, but it's a bit awkward to use:
@@ -9,7 +10,7 @@
 # use scylla::Session;
 # use std::error::Error;
 # async fn check_only_compiles(session: &Session) -> Result<(), Box<dyn Error>> {
-if let Some(rows) = session.query("SELECT a from ks.tab", &[]).await?.rows {
+if let Some(rows) = session.query_unpaged("SELECT a from ks.tab", &[]).await?.rows {
     for row in rows {
         let int_value: i32 = row.columns[0].as_ref().unwrap().as_int().unwrap();
     }
@@ -28,21 +29,21 @@ The driver provides a way to parse a row as a tuple of Rust types:
 use scylla::IntoTypedRows;
 
 // Parse row as a single column containing an int value
-if let Some(rows) = session.query("SELECT a from ks.tab", &[]).await?.rows {
+if let Some(rows) = session.query_unpaged("SELECT a from ks.tab", &[]).await?.rows {
     for row in rows {
         let (int_value,): (i32,) = row.into_typed::<(i32,)>()?;
     }
 }
 
 // rows.into_typed() converts a Vec of Rows to an iterator of parsing results
-if let Some(rows) = session.query("SELECT a from ks.tab", &[]).await?.rows {
+if let Some(rows) = session.query_unpaged("SELECT a from ks.tab", &[]).await?.rows {
     for row in rows.into_typed::<(i32,)>() {
         let (int_value,): (i32,) = row?;
     }
 }
 
 // Parse row as two columns containing an int and text columns
-if let Some(rows) = session.query("SELECT a, b from ks.tab", &[]).await?.rows {
+if let Some(rows) = session.query_unpaged("SELECT a, b from ks.tab", &[]).await?.rows {
     for row in rows.into_typed::<(i32, String)>() {
         let (int_value, text_value): (i32, String) = row?;
     }
@@ -68,7 +69,7 @@ Here are a few of them:
 # async fn check_only_compiles(session: &Session) -> Result<(), Box<dyn Error>> {
 // Parse row as a single column containing an int value
 let rows = session
-    .query("SELECT a from ks.tab", &[])
+    .query_unpaged("SELECT a from ks.tab", &[])
     .await?
     .rows_typed::<(i32,)>()?; // Same as .rows()?.into_typed()
 for row in rows {
@@ -77,12 +78,12 @@ for row in rows {
 
 // maybe_first_row_typed gets the first row and parses it as the given type
 let first_int_val: Option<(i32,)> = session
-    .query("SELECT a from ks.tab", &[])
+    .query_unpaged("SELECT a from ks.tab", &[])
     .await?
     .maybe_first_row_typed::<(i32,)>()?;
 
 // no_rows fails when the response is rows
-session.query("INSERT INTO ks.tab (a) VALUES (0)", &[]).await?.result_not_rows()?;
+session.query_unpaged("INSERT INTO ks.tab (a) VALUES (0)", &[]).await?.result_not_rows()?;
 # Ok(())
 # }
 ```
@@ -99,7 +100,7 @@ To properly handle `NULL` values parse column as an `Option<>`:
 use scylla::IntoTypedRows;
 
 // Parse row as two columns containing an int and text which might be null
-if let Some(rows) = session.query("SELECT a, b from ks.tab", &[]).await?.rows {
+if let Some(rows) = session.query_unpaged("SELECT a, b from ks.tab", &[]).await?.rows {
     for row in rows.into_typed::<(i32, Option<String>)>() {
         let (int_value, str_or_null): (i32, Option<String>) = row?;
     }
@@ -132,7 +133,7 @@ struct MyRow {
 }
 
 // Parse row as two columns containing an int and text which might be null
-if let Some(rows) = session.query("SELECT a, b from ks.tab", &[]).await?.rows {
+if let Some(rows) = session.query_unpaged("SELECT a, b from ks.tab", &[]).await?.rows {
     for row in rows.into_typed::<MyRow>() {
         let my_row: MyRow = row?;
     }

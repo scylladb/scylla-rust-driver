@@ -14,11 +14,11 @@ use uuid::Uuid;
 // Insert some uuid into the table
 let to_insert: Uuid = Uuid::parse_str("8e14e760-7fa8-11eb-bc66-000000000001")?;
 session
-    .query("INSERT INTO keyspace.table (a) VALUES(?)", (to_insert,))
+    .query_unpaged("INSERT INTO keyspace.table (a) VALUES(?)", (to_insert,))
     .await?;
 
 // Read uuid from the table
-let result = session.query("SELECT a FROM keyspace.table", &[]).await?;
+let result = session.query_unpaged("SELECT a FROM keyspace.table", &[]).await?;
 let mut iter = result.rows_typed::<(Uuid,)>()?;
 while let Some((uuid_value,)) = iter.next().transpose()? {
     println!("{:?}", uuid_value);

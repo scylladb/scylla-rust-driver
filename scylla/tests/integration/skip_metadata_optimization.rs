@@ -2,10 +2,11 @@ use crate::utils::{setup_tracing, test_with_3_node_cluster};
 use scylla::transport::session::Session;
 use scylla::SessionBuilder;
 use scylla::{prepared_statement::PreparedStatement, test_utils::unique_keyspace_name};
+use scylla_cql::frame::request::query::{PagingState, PagingStateResponse};
 use scylla_cql::frame::types;
 use scylla_proxy::{
-    Condition, ProxyError, Reaction, ResponseFrame, ResponseReaction, ShardAwareness, TargetShard,
-    WorkerError,
+    Condition, ProxyError, Reaction, ResponseFrame, ResponseOpcode, ResponseReaction, ResponseRule,
+    ShardAwareness, TargetShard, WorkerError,
 };
 use std::sync::Arc;
 
@@ -14,8 +15,6 @@ use std::sync::Arc;
 #[cfg(not(scylla_cloud_tests))]
 async fn test_skip_result_metadata() {
     setup_tracing();
-    use bytes::Bytes;
-    use scylla_proxy::{ResponseOpcode, ResponseRule};
 
     const NO_METADATA_FLAG: i32 = 0x0004;
 
@@ -29,13 +28,13 @@ async fn test_skip_result_metadata() {
             .unwrap();
 
         let ks = unique_keyspace_name();
-        session.query(format!("CREATE KEYSPACE IF NOT EXISTS {} WITH REPLICATION = {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 3}}", ks), &[]).await.unwrap();
+        session.query_unpaged(format!("CREATE KEYSPACE IF NOT EXISTS {} WITH REPLICATION = {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 3}}", ks), &[]).await.unwrap();
         session.use_keyspace(ks, false).await.unwrap();
         session
-            .query("CREATE TABLE t (a int primary key, b int, c text)", &[])
+            .query_unpaged("CREATE TABLE t (a int primary key, b int, c text)", &[])
             .await
             .unwrap();
-        session.query("INSERT INTO t (a, b, c) VALUES (1, 2, 'foo_filter_data')", &[]).await.unwrap();
+        session.query_unpaged("INSERT INTO t (a, b, c) VALUES (1, 2, 'foo_filter_data')", &[]).await.unwrap();
 
         let mut prepared = session.prepare("SELECT a, b, c FROM t").await.unwrap();
 
@@ -57,7 +56,7 @@ async fn test_skip_result_metadata() {
             rx: &mut tokio::sync::mpsc::UnboundedReceiver<(ResponseFrame, Option<TargetShard>)>,
             predicate: impl FnOnce(i32) -> bool
         ) {
-            session.execute(prepared, &[]).await.unwrap();
+            session.execute_unpaged(prepared, &[]).await.unwrap();
 
             let (frame, _shard) = rx.recv().await.unwrap();
             let mut buf = &*frame.body;
@@ -84,12 +83,12 @@ async fn test_skip_result_metadata() {
         {
             let ks = unique_keyspace_name();
 
-            session.query(format!("CREATE KEYSPACE IF NOT EXISTS {} WITH REPLICATION = {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}}", ks), &[]).await.unwrap();
+            session.query_unpaged(format!("CREATE KEYSPACE IF NOT EXISTS {} WITH REPLICATION = {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}}", ks), &[]).await.unwrap();
             session.use_keyspace(ks, true).await.unwrap();
 
             type RowT = (i32, i32, String);
             session
-                .query(
+                .query_unpaged(
                     "CREATE TABLE IF NOT EXISTS t2 (a int, b int, c text, primary key (a, b))",
                     &[],
                 )
@@ -103,7 +102,7 @@ async fn test_skip_result_metadata() {
 
             for idx in 0..10 {
                 session
-                    .execute(&insert_stmt, (idx, idx + 1, "Some text"))
+                    .execute_unpaged(&insert_stmt, (idx, idx + 1, "Some text"))
                     .await
                     .unwrap();
             }
@@ -112,7 +111,7 @@ async fn test_skip_result_metadata() {
                 let select_query = "SELECT a, b, c FROM t2";
 
                 let rs = session
-                    .query(select_query, ())
+                    .query_unpaged(select_query, ())
                     .await
                     .unwrap()
                     .rows_typed::<RowT>()
@@ -124,19 +123,22 @@ async fn test_skip_result_metadata() {
                 let mut prepared_paged = session.prepare(select_query).await.unwrap();
                 prepared_paged.set_use_cached_result_metadata(true);
                 prepared_paged.set_page_size(1);
-                let mut paging_state: Option<Bytes> = None;
+                let mut paging_state = PagingState::start();
                 let mut watchdog = 0;
                 loop {
-                    let mut rs_manual = session
-                        .execute_paged(&prepared_paged, &[], paging_state)
+                    let (rs_manual, paging_state_response) = session
+                        .execute_single_page(&prepared_paged, &[], paging_state)
                         .await
                         .unwrap();
-                    eprintln!("Paging state: {:?}", rs_manual.paging_state);
-                    paging_state = rs_manual.paging_state.take();
                     results_from_manual_paging
                         .extend(rs_manual.rows_typed::<RowT>().unwrap().map(Result::unwrap));
-                    if watchdog > 30 || paging_state.is_none() {
-                        break;
+
+                    match paging_state_response {
+                        PagingStateResponse::HasMorePages { state } => {
+                            paging_state = state;
+                        }
+                        _ if watchdog > 30 => break,
+                        PagingStateResponse::NoMorePages => break,
                     }
                     watchdog += 1;
                 }

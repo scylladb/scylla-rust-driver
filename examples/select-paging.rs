@@ -1,7 +1,9 @@
 use anyhow::Result;
 use futures::stream::StreamExt;
+use scylla::statement::PagingState;
 use scylla::{query::Query, Session, SessionBuilder};
 use std::env;
+use std::ops::ControlFlow;
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -11,10 +13,10 @@ async fn main() -> Result<()> {
 
     let session: Session = SessionBuilder::new().known_node(uri).build().await?;
 
-    session.query("CREATE KEYSPACE IF NOT EXISTS examples_ks WITH REPLICATION = {'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}", &[]).await?;
+    session.query_unpaged("CREATE KEYSPACE IF NOT EXISTS examples_ks WITH REPLICATION = {'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}", &[]).await?;
 
     session
-        .query(
+        .query_unpaged(
             "CREATE TABLE IF NOT EXISTS examples_ks.select_paging (a int, b int, c text, primary key (a, b))",
             &[],
         )
@@ -22,7 +24,7 @@ async fn main() -> Result<()> {
 
     for i in 0..16_i32 {
         session
-            .query(
+            .query_unpaged(
                 "INSERT INTO examples_ks.select_paging (a, b, c) VALUES (?, ?, 'abc')",
                 (i, 2 * i),
             )
@@ -41,54 +43,63 @@ async fn main() -> Result<()> {
     }
 
     let paged_query = Query::new("SELECT a, b, c FROM examples_ks.select_paging").with_page_size(6);
-    let res1 = session.query(paged_query.clone(), &[]).await?;
-    println!(
-        "Paging state: {:#?} ({} rows)",
-        res1.paging_state,
-        res1.rows_num()?,
-    );
-    let res2 = session
-        .query_paged(paged_query.clone(), &[], res1.paging_state)
-        .await?;
-    println!(
-        "Paging state: {:#?} ({} rows)",
-        res2.paging_state,
-        res2.rows_num()?,
-    );
-    let res3 = session
-        .query_paged(paged_query.clone(), &[], res2.paging_state)
-        .await?;
-    println!(
-        "Paging state: {:#?} ({} rows)",
-        res3.paging_state,
-        res3.rows_num()?,
-    );
+
+    // Manual paging in a loop, unprepared statement.
+    let mut paging_state = PagingState::start();
+    loop {
+        let (res, paging_state_response) = session
+            .query_single_page(paged_query.clone(), &[], paging_state)
+            .await?;
+
+        println!(
+            "Paging state: {:#?} ({} rows)",
+            paging_state_response,
+            res.rows_num()?,
+        );
+
+        match paging_state_response.into_paging_control_flow() {
+            ControlFlow::Break(()) => {
+                // No more pages to be fetched.
+                break;
+            }
+            ControlFlow::Continue(new_paging_state) => {
+                // Update paging paging state from the response, so that query
+                // will be resumed from where it ended the last time.
+                paging_state = new_paging_state;
+            }
+        }
+    }
 
     let paged_prepared = session
         .prepare(Query::new("SELECT a, b, c FROM examples_ks.select_paging").with_page_size(7))
         .await?;
-    let res4 = session.execute(&paged_prepared, &[]).await?;
-    println!(
-        "Paging state from the prepared statement execution: {:#?} ({} rows)",
-        res4.paging_state,
-        res4.rows_num()?,
-    );
-    let res5 = session
-        .execute_paged(&paged_prepared, &[], res4.paging_state)
-        .await?;
-    println!(
-        "Paging state from the second prepared statement execution: {:#?} ({} rows)",
-        res5.paging_state,
-        res5.rows_num()?,
-    );
-    let res6 = session
-        .execute_paged(&paged_prepared, &[], res5.paging_state)
-        .await?;
-    println!(
-        "Paging state from the third prepared statement execution: {:#?} ({} rows)",
-        res6.paging_state,
-        res6.rows_num()?,
-    );
+
+    // Manual paging in a loop, prepared statement.
+    let mut paging_state = PagingState::default();
+    loop {
+        let (res, paging_state_response) = session
+            .execute_single_page(&paged_prepared, &[], paging_state)
+            .await?;
+
+        println!(
+            "Paging state from the prepared statement execution: {:#?} ({} rows)",
+            paging_state_response,
+            res.rows_num()?,
+        );
+
+        match paging_state_response.into_paging_control_flow() {
+            ControlFlow::Break(()) => {
+                // No more pages to be fetched.
+                break;
+            }
+            ControlFlow::Continue(new_paging_state) => {
+                // Update paging paging state from the response, so that query
+                // will be resumed from where it ended the last time.
+                paging_state = new_paging_state;
+            }
+        }
+    }
+
     println!("Ok.");
 
     Ok(())

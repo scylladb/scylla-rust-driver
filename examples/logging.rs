@@ -17,9 +17,9 @@ async fn main() -> Result<()> {
     info!("Connecting to {}", uri);
 
     let session: Session = SessionBuilder::new().known_node(uri).build().await?;
-    session.query("CREATE KEYSPACE IF NOT EXISTS examples_ks WITH REPLICATION = {'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}", &[]).await?;
+    session.query_unpaged("CREATE KEYSPACE IF NOT EXISTS examples_ks WITH REPLICATION = {'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}", &[]).await?;
 
-    session.query("USE examples_ks", &[]).await?;
+    session.query_unpaged("USE examples_ks", &[]).await?;
 
     Ok(())
 }

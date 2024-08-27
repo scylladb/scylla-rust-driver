@@ -169,9 +169,9 @@ async fn test_execution_profiles() {
         let ks = unique_keyspace_name();
 
         /* Prepare schema */
-        session.query(format!("CREATE KEYSPACE IF NOT EXISTS {} WITH REPLICATION = {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 3}}", ks), &[]).await.unwrap();
+        session.query_unpaged(format!("CREATE KEYSPACE IF NOT EXISTS {} WITH REPLICATION = {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 3}}", ks), &[]).await.unwrap();
         session
-            .query(
+            .query_unpaged(
                 format!(
                     "CREATE TABLE IF NOT EXISTS {}.t (a int, b int, c text, primary key (a, b))",
                     ks
@@ -192,13 +192,13 @@ async fn test_execution_profiles() {
         /* Test load balancing and retry policy */
 
         // Run on default per-session execution profile
-        session.query(query.clone(), &[]).await.unwrap();
+        session.query_unpaged(query.clone(), &[]).await.unwrap();
         let report1 = profile_rx.recv().await.unwrap();
         let report2 = profile_rx.recv().await.unwrap();
         assert_matches!((report1, report2), ((Report::LoadBalancing, 1), (Report::RetryPolicy, 1)) | ((Report::RetryPolicy, 1), (Report::LoadBalancing, 1)));
         profile_rx.try_recv().unwrap_err();
 
-        session.execute(&prepared, &[]).await.unwrap();
+        session.execute_unpaged(&prepared, &[]).await.unwrap();
         let report1 = profile_rx.recv().await.unwrap();
         let report2 = profile_rx.recv().await.unwrap();
         assert_matches!((report1, report2), ((Report::LoadBalancing, 1), (Report::RetryPolicy, 1)) | ((Report::RetryPolicy, 1), (Report::LoadBalancing, 1)));
@@ -212,14 +212,14 @@ async fn test_execution_profiles() {
 
         // Run on query-specific execution profile
         query.set_execution_profile_handle(Some(profile2.clone().into_handle()));
-        session.query(query.clone(), &[]).await.unwrap();
+        session.query_unpaged(query.clone(), &[]).await.unwrap();
         let report1 = profile_rx.recv().await.unwrap();
         let report2 = profile_rx.recv().await.unwrap();
         assert_matches!((report1, report2), ((Report::LoadBalancing, 2), (Report::RetryPolicy, 2)) | ((Report::RetryPolicy, 2), (Report::LoadBalancing, 2)));
         profile_rx.try_recv().unwrap_err();
 
         prepared.set_execution_profile_handle(Some(profile2.clone().into_handle()));
-        session.execute(&prepared, &[]).await.unwrap();
+        session.execute_unpaged(&prepared, &[]).await.unwrap();
         let report1 = profile_rx.recv().await.unwrap();
         let report2 = profile_rx.recv().await.unwrap();
         assert_matches!((report1, report2), ((Report::LoadBalancing, 2), (Report::RetryPolicy, 2)) | ((Report::RetryPolicy, 2), (Report::LoadBalancing, 2)));
@@ -234,14 +234,14 @@ async fn test_execution_profiles() {
 
         // Run again on default per-session execution profile
         query.set_execution_profile_handle(None);
-        session.query(query.clone(), &[]).await.unwrap();
+        session.query_unpaged(query.clone(), &[]).await.unwrap();
         let report1 = profile_rx.recv().await.unwrap();
         let report2 = profile_rx.recv().await.unwrap();
         assert_matches!((report1, report2), ((Report::LoadBalancing, 1), (Report::RetryPolicy, 1)) | ((Report::RetryPolicy, 1), (Report::LoadBalancing, 1)));
         profile_rx.try_recv().unwrap_err();
 
         prepared.set_execution_profile_handle(None);
-        session.execute(&prepared, &[]).await.unwrap();
+        session.execute_unpaged(&prepared, &[]).await.unwrap();
         let report1 = profile_rx.recv().await.unwrap();
         let report2 = profile_rx.recv().await.unwrap();
         assert_matches!((report1, report2), ((Report::LoadBalancing, 1), (Report::RetryPolicy, 1)) | ((Report::RetryPolicy, 1), (Report::LoadBalancing, 1)));
@@ -267,12 +267,12 @@ async fn test_execution_profiles() {
         profile_rx.try_recv().unwrap_err();
 
         // Run non-LWT on default per-session execution profile
-        session.query(query.clone(), &[]).await.unwrap_err();
+        session.query_unpaged(query.clone(), &[]).await.unwrap_err();
         let report_consistency = consistency_rx.recv().await.unwrap();
         assert_matches!(report_consistency, Consistency::One);
         consistency_rx.try_recv().unwrap_err();
 
-        session.execute(&prepared, &[]).await.unwrap_err();
+        session.execute_unpaged(&prepared, &[]).await.unwrap_err();
         let report_consistency = consistency_rx.recv().await.unwrap();
         assert_matches!(report_consistency, Consistency::One);
         consistency_rx.try_recv().unwrap_err();
@@ -284,13 +284,13 @@ async fn test_execution_profiles() {
 
         // Run on statement-specific execution profile
         query.set_execution_profile_handle(Some(profile2.clone().into_handle()));
-        session.query(query.clone(), &[]).await.unwrap_err();
+        session.query_unpaged(query.clone(), &[]).await.unwrap_err();
         let report_consistency = consistency_rx.recv().await.unwrap();
         assert_matches!(report_consistency, Consistency::Two);
         consistency_rx.try_recv().unwrap_err();
 
         prepared.set_execution_profile_handle(Some(profile2.clone().into_handle()));
-        session.execute(&prepared, &[]).await.unwrap_err();
+        session.execute_unpaged(&prepared, &[]).await.unwrap_err();
         let report_consistency = consistency_rx.recv().await.unwrap();
         assert_matches!(report_consistency, Consistency::Two);
         consistency_rx.try_recv().unwrap_err();
@@ -303,13 +303,13 @@ async fn test_execution_profiles() {
 
         // Run with statement-set specific options
         query.set_consistency(Consistency::Three);
-        session.query(query.clone(), &[]).await.unwrap_err();
+        session.query_unpaged(query.clone(), &[]).await.unwrap_err();
         let report_consistency = consistency_rx.recv().await.unwrap();
         assert_matches!(report_consistency, Consistency::Three);
         consistency_rx.try_recv().unwrap_err();
 
         prepared.set_consistency(Consistency::Three);
-        session.execute(&prepared, &[]).await.unwrap_err();
+        session.execute_unpaged(&prepared, &[]).await.unwrap_err();
         let report_consistency = consistency_rx.recv().await.unwrap();
         assert_matches!(report_consistency, Consistency::Three);
         consistency_rx.try_recv().unwrap_err();

@@ -11,17 +11,17 @@ async fn main() -> Result<()> {
 
     let session: Session = SessionBuilder::new().known_node(uri).build().await?;
 
-    session.query("CREATE KEYSPACE IF NOT EXISTS examples_ks WITH REPLICATION = {'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}", &[]).await?;
+    session.query_unpaged("CREATE KEYSPACE IF NOT EXISTS examples_ks WITH REPLICATION = {'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}", &[]).await?;
 
     session
-        .query(
+        .query_unpaged(
             "CREATE TYPE IF NOT EXISTS examples_ks.my_type (int_val int, text_val text)",
             &[],
         )
         .await?;
 
     session
-        .query(
+        .query_unpaged(
             "CREATE TABLE IF NOT EXISTS examples_ks.user_defined_type_table (k int, my my_type, primary key (k))",
             &[],
         )
@@ -42,7 +42,7 @@ async fn main() -> Result<()> {
 
     // It can be inserted like a normal value
     session
-        .query(
+        .query_unpaged(
             "INSERT INTO examples_ks.user_defined_type_table (k, my) VALUES (5, ?)",
             (to_insert,),
         )
@@ -50,7 +50,7 @@ async fn main() -> Result<()> {
 
     // And read like any normal value
     let result = session
-        .query("SELECT my FROM examples_ks.user_defined_type_table", &[])
+        .query_unpaged("SELECT my FROM examples_ks.user_defined_type_table", &[])
         .await?;
     let mut iter = result.rows_typed::<(MyType,)>()?;
     while let Some((my_val,)) = iter.next().transpose()? {

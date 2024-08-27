@@ -22,7 +22,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
     // Create an example keyspace and table
     session
-        .query(
+        .query_unpaged(
             "CREATE KEYSPACE IF NOT EXISTS ks WITH REPLICATION = \
             {'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}",
             &[],
@@ -30,7 +30,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
         .await?;
 
     session
-        .query(
+        .query_unpaged(
             "CREATE TABLE IF NOT EXISTS ks.extab (a int primary key)",
             &[],
         )
@@ -39,11 +39,11 @@ async fn main() -> Result<(), Box<dyn Error>> {
     // Insert a value into the table
     let to_insert: i32 = 12345;
     session
-        .query("INSERT INTO ks.extab (a) VALUES(?)", (to_insert,))
+        .query_unpaged("INSERT INTO ks.extab (a) VALUES(?)", (to_insert,))
         .await?;
 
     // Query rows from the table and print them
-    let result = session.query("SELECT a FROM ks.extab", &[]).await?;
+    let result = session.query_unpaged("SELECT a FROM ks.extab", &[]).await?;
     let mut iter = result.rows_typed::<(i32,)>()?;
     while let Some(read_row) = iter.next().transpose()? {
         println!("Read a value from row: {}", read_row.0);

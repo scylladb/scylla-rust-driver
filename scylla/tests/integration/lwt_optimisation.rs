@@ -73,11 +73,11 @@ async fn if_lwt_optimisation_mark_offered_then_negotiatied_and_lwt_routed_optima
         if scylla_supports_tablets(&session).await {
             create_ks += " and TABLETS = { 'enabled': false}";
         }
-        session.query(create_ks, &[]).await.unwrap();
+        session.query_unpaged(create_ks, &[]).await.unwrap();
         session.use_keyspace(ks, false).await.unwrap();
 
         session
-            .query("CREATE TABLE t (a int primary key, b int)", &[])
+            .query_unpaged("CREATE TABLE t (a int primary key, b int)", &[])
             .await
             .unwrap();
 
@@ -141,14 +141,14 @@ async fn if_lwt_optimisation_mark_offered_then_negotiatied_and_lwt_routed_optima
         // Alternatively, we could give up this part of the test and only test LWT part, but then
         // we couldn't be sure that in non-LWT case the driver truly chooses various replicas.
         for _ in 0..30 {
-            session.execute(&prepared_non_lwt, (MAGIC_MARK,)).await.unwrap();
+            session.execute_unpaged(&prepared_non_lwt, (MAGIC_MARK,)).await.unwrap();
         }
 
         assert_multiple_replicas_queried(&mut prepared_rxs);
 
         // We execute LWT statements, and...
         for _ in 0..15 {
-            session.execute(&prepared_lwt, (MAGIC_MARK,)).await.unwrap();
+            session.execute_unpaged(&prepared_lwt, (MAGIC_MARK,)).await.unwrap();
         }
 
         if supports_optimisation_mark {

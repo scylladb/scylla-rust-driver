@@ -23,7 +23,7 @@ let prepared: PreparedStatement = session
 
 // Run the prepared query with some values, just like a simple query
 let to_insert: i32 = 12345;
-session.execute(&prepared, (to_insert,)).await?;
+session.execute_unpaged(&prepared, (to_insert,)).await?;
 # Ok(())
 # }
 ```
@@ -71,7 +71,7 @@ prepared.set_consistency(Consistency::One);
 
 // Run the prepared query with some values, just like a simple query
 let to_insert: i32 = 12345;
-session.execute(&prepared, (to_insert,)).await?;
+session.execute_unpaged(&prepared, (to_insert,)).await?;
 # Ok(())
 # }
 ```
@@ -117,7 +117,7 @@ let wrong_prepared: PreparedStatement = session
     .prepare("INSERT INTO ks.prepare_table (a, b, c) VALUES(12345, ?, 16)")
     .await?;
 
-session.execute(&wrong_prepared, (54321,)).await?;
+session.execute_unpaged(&wrong_prepared, (54321,)).await?;
 
 // GOOD - partition key values are sent as bound values
 // Other values can be sent any way you like, it doesn't matter
@@ -125,7 +125,7 @@ let good_prepared: PreparedStatement = session
     .prepare("INSERT INTO ks.prepare_table (a, b, c) VALUES(?, ?, 16)")
     .await?;
 
-session.execute(&good_prepared, (12345, 54321)).await?;
+session.execute_unpaged(&good_prepared, (12345, 54321)).await?;
 
 # Ok(())
 # }

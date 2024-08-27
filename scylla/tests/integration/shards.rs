@@ -42,9 +42,9 @@ async fn test_consistent_shard_awareness() {
         if scylla_supports_tablets(&session).await {
             create_ks += " and TABLETS = { 'enabled': false}";
         }
-        session.query(create_ks, &[]).await.unwrap();
+        session.query_unpaged(create_ks, &[]).await.unwrap();
         session
-            .query(
+            .query_unpaged(
                 format!(
                     "CREATE TABLE IF NOT EXISTS {}.t (a int, b int, c text, primary key (a, b))",
                     ks
@@ -71,7 +71,7 @@ async fn test_consistent_shard_awareness() {
 
         for values in value_lists {
             for _ in 0..10 {
-                session.execute(&prepared, values).await.unwrap();
+                session.execute_unpaged(&prepared, values).await.unwrap();
             }
             for rx in feedback_rxs.iter_mut() {
                 assert_one_shard_queried(rx);

@@ -8,10 +8,8 @@ use std::pin::Pin;
 use std::sync::Arc;
 use std::task::{Context, Poll};
 
-use bytes::Bytes;
 use futures::Stream;
 use scylla_cql::frame::response::NonErrorResponse;
-use scylla_cql::frame::types::SerialConsistency;
 use scylla_cql::types::serialize::row::SerializedValues;
 use std::result::Result;
 use thiserror::Error;
@@ -27,8 +25,8 @@ use crate::frame::response::{
     result::{ColumnSpec, Row, Rows},
 };
 use crate::history::{self, HistoryListener};
-use crate::statement::Consistency;
 use crate::statement::{prepared_statement::PreparedStatement, query::Query};
+use crate::statement::{Consistency, PagingState, SerialConsistency};
 use crate::transport::cluster::ClusterData;
 use crate::transport::connection::{Connection, NonErrorQueryResponse, QueryResponse};
 use crate::transport::load_balancing::{self, RoutingInfo};
@@ -37,22 +35,6 @@ use crate::transport::retry_policy::{QueryInfo, RetryDecision, RetrySession};
 use crate::transport::NodeRef;
 use tracing::{trace, trace_span, warn, Instrument};
 use uuid::Uuid;
-
-// #424
-//
-// Both `Query` and `PreparedStatement` have page size set to `None` as default,
-// which means unlimited page size. This is a problem for `query_iter`
-// and `execute_iter` because using them with such queries causes everything
-// to be fetched in one page, despite them being meant to fetch data
-// page-by-page.
-//
-// We can't really change the default page size for `Query`
-// and `PreparedStatement` because it also affects `Session::{query,execute}`
-// and this could break existing code.
-//
-// In order to work around the problem we just set the page size to a default
-// value at the beginning of `query_iter` and `execute_iter`.
-const DEFAULT_ITER_PAGE_SIZE: i32 = 5000;
 
 /// Iterator over rows returned by paged queries\
 /// Allows to easily access rows without worrying about handling multiple pages
@@ -124,14 +106,11 @@ impl RowIterator {
     }
 
     pub(crate) async fn new_for_query(
-        mut query: Query,
+        query: Query,
         execution_profile: Arc<ExecutionProfileInner>,
         cluster_data: Arc<ClusterData>,
         metrics: Arc<Metrics>,
     ) -> Result<RowIterator, QueryError> {
-        if query.get_page_size().is_none() {
-            query.set_page_size(DEFAULT_ITER_PAGE_SIZE);
-        }
         let (sender, receiver) = mpsc::channel(1);
 
         let consistency = query
@@ -142,6 +121,8 @@ impl RowIterator {
             .config
             .serial_consistency
             .unwrap_or(execution_profile.serial_consistency);
+
+        let page_size = query.get_validated_page_size();
 
         let routing_info = RoutingInfo {
             consistency,
@@ -161,13 +142,14 @@ impl RowIterator {
 
             let page_query = |connection: Arc<Connection>,
                               consistency: Consistency,
-                              paging_state: Option<Bytes>| {
+                              paging_state: PagingState| {
                 async move {
                     connection
-                        .query_with_consistency(
+                        .query_raw_with_consistency(
                             query_ref,
                             consistency,
                             serial_consistency,
+                            Some(page_size),
                             paging_state,
                         )
                         .await
@@ -191,7 +173,7 @@ impl RowIterator {
                 retry_session,
                 execution_profile,
                 metrics,
-                paging_state: None,
+                paging_state: PagingState::start(),
                 history_listener: query.config.history_listener.clone(),
                 current_query_id: None,
                 current_attempt_id: None,
@@ -206,11 +188,8 @@ impl RowIterator {
     }
 
     pub(crate) async fn new_for_prepared_statement(
-        mut config: PreparedIteratorConfig,
+        config: PreparedIteratorConfig,
     ) -> Result<RowIterator, QueryError> {
-        if config.prepared.get_page_size().is_none() {
-            config.prepared.set_page_size(DEFAULT_ITER_PAGE_SIZE);
-        }
         let (sender, receiver) = mpsc::channel(1);
 
         let consistency = config
@@ -223,6 +202,9 @@ impl RowIterator {
             .config
             .serial_consistency
             .unwrap_or(config.execution_profile.serial_consistency);
+
+        let page_size = config.prepared.get_validated_page_size();
+
         let retry_session = config
             .prepared
             .get_retry_policy()
@@ -258,13 +240,14 @@ impl RowIterator {
 
             let page_query = |connection: Arc<Connection>,
                               consistency: Consistency,
-                              paging_state: Option<Bytes>| async move {
+                              paging_state: PagingState| async move {
                 connection
-                    .execute_with_consistency(
+                    .execute_raw_with_consistency(
                         prepared_ref,
                         values_ref,
                         consistency,
                         serial_consistency,
+                        Some(page_size),
                         paging_state,
                     )
                     .await
@@ -308,7 +291,7 @@ impl RowIterator {
                 retry_session,
                 execution_profile: config.execution_profile,
                 metrics: config.metrics,
-                paging_state: None,
+                paging_state: PagingState::start(),
                 history_listener: config.prepared.config.history_listener.clone(),
                 current_query_id: None,
                 current_attempt_id: None,
@@ -323,24 +306,24 @@ impl RowIterator {
     }
 
     pub(crate) async fn new_for_connection_query_iter(
-        mut query: Query,
+        query: Query,
         connection: Arc<Connection>,
         consistency: Consistency,
         serial_consistency: Option<SerialConsistency>,
     ) -> Result<RowIterator, QueryError> {
-        if query.get_page_size().is_none() {
-            query.set_page_size(DEFAULT_ITER_PAGE_SIZE);
-        }
         let (sender, receiver) = mpsc::channel::<Result<ReceivedPage, QueryError>>(1);
+
+        let page_size = query.get_validated_page_size();
 
         let worker_task = async move {
             let worker = SingleConnectionRowIteratorWorker {
                 sender: sender.into(),
                 fetcher: |paging_state| {
-                    connection.query_with_consistency(
+                    connection.query_raw_with_consistency(
                         &query,
                         consistency,
                         serial_consistency,
+                        Some(page_size),
                         paging_state,
                     )
                 },
@@ -352,26 +335,26 @@ impl RowIterator {
     }
 
     pub(crate) async fn new_for_connection_execute_iter(
-        mut prepared: PreparedStatement,
+        prepared: PreparedStatement,
         values: SerializedValues,
         connection: Arc<Connection>,
         consistency: Consistency,
         serial_consistency: Option<SerialConsistency>,
     ) -> Result<RowIterator, QueryError> {
-        if prepared.get_page_size().is_none() {
-            prepared.set_page_size(DEFAULT_ITER_PAGE_SIZE);
-        }
         let (sender, receiver) = mpsc::channel::<Result<ReceivedPage, QueryError>>(1);
+
+        let page_size = prepared.get_validated_page_size();
 
         let worker_task = async move {
             let worker = SingleConnectionRowIteratorWorker {
                 sender: sender.into(),
                 fetcher: |paging_state| {
-                    connection.execute_with_consistency(
+                    connection.execute_raw_with_consistency(
                         &prepared,
                         &values,
                         consistency,
                         serial_consistency,
+                        Some(page_size),
                         paging_state,
                     )
                 },
@@ -425,7 +408,10 @@ impl RowIterator {
 // A separate module is used here so that the parent module cannot construct
 // SendAttemptedProof directly.
 mod checked_channel_sender {
-    use scylla_cql::{errors::QueryError, frame::response::result::Rows};
+    use scylla_cql::{
+        errors::QueryError,
+        frame::response::result::{ResultMetadata, Rows},
+    };
     use std::marker::PhantomData;
     use tokio::sync::mpsc;
     use uuid::Uuid;
@@ -467,7 +453,7 @@ mod checked_channel_sender {
         ) {
             let empty_page = ReceivedPage {
                 rows: Rows {
-                    metadata: Default::default(),
+                    metadata: ResultMetadata::mock_empty(),
                     rows_count: 0,
                     rows: Vec::new(),
                     serialized_size: 0,
@@ -489,7 +475,7 @@ struct RowIteratorWorker<'a, QueryFunc, SpanCreatorFunc> {
     sender: ProvingSender<Result<ReceivedPage, QueryError>>,
 
     // Closure used to perform a single page query
-    // AsyncFn(Arc<Connection>, Option<Bytes>) -> Result<QueryResponse, QueryError>
+    // AsyncFn(Arc<Connection>, Option<Arc<[u8]>>) -> Result<QueryResponse, QueryError>
     page_query: QueryFunc,
 
     statement_info: RoutingInfo<'a>,
@@ -499,7 +485,7 @@ struct RowIteratorWorker<'a, QueryFunc, SpanCreatorFunc> {
     execution_profile: Arc<ExecutionProfileInner>,
     metrics: Arc<Metrics>,
 
-    paging_state: Option<Bytes>,
+    paging_state: PagingState,
 
     history_listener: Option<Arc<dyn HistoryListener>>,
     current_query_id: Option<history::QueryId>,
@@ -511,7 +497,7 @@ struct RowIteratorWorker<'a, QueryFunc, SpanCreatorFunc> {
 
 impl<QueryFunc, QueryFut, SpanCreator> RowIteratorWorker<'_, QueryFunc, SpanCreator>
 where
-    QueryFunc: Fn(Arc<Connection>, Consistency, Option<Bytes>) -> QueryFut,
+    QueryFunc: Fn(Arc<Connection>, Consistency, PagingState) -> QueryFut,
     QueryFut: Future<Output = Result<QueryResponse, QueryError>>,
     SpanCreator: Fn() -> RequestSpan,
 {
@@ -674,7 +660,7 @@ where
 
         match query_response {
             Ok(NonErrorQueryResponse {
-                response: NonErrorResponse::Result(result::Result::Rows(mut rows)),
+                response: NonErrorResponse::Result(result::Result::Rows(rows)),
                 tracing_id,
                 ..
             }) => {
@@ -685,9 +671,9 @@ where
                     .load_balancing_policy
                     .on_query_success(&self.statement_info, elapsed, node);
 
-                self.paging_state = rows.metadata.paging_state.take();
-
                 request_span.record_rows_fields(&rows);
+
+                let paging_state_response = rows.metadata.paging_state.clone();
 
                 let received_page = ReceivedPage { rows, tracing_id };
 
@@ -698,9 +684,14 @@ where
                     return Ok(ControlFlow::Break(proof));
                 }
 
-                if self.paging_state.is_none() {
-                    // Reached the last query, shutdown
-                    return Ok(ControlFlow::Break(proof));
+                match paging_state_response.into_paging_control_flow() {
+                    ControlFlow::Continue(paging_state) => {
+                        self.paging_state = paging_state;
+                    }
+                    ControlFlow::Break(()) => {
+                        // Reached the last query, shutdown
+                        return Ok(ControlFlow::Break(proof));
+                    }
                 }
 
                 // Query succeeded, reset retry policy for future retries
@@ -830,7 +821,7 @@ struct SingleConnectionRowIteratorWorker<Fetcher> {
 
 impl<Fetcher, FetchFut> SingleConnectionRowIteratorWorker<Fetcher>
 where
-    Fetcher: Fn(Option<Bytes>) -> FetchFut + Send + Sync,
+    Fetcher: Fn(PagingState) -> FetchFut + Send + Sync,
     FetchFut: Future<Output = Result<QueryResponse, QueryError>> + Send,
 {
     async fn work(mut self) -> PageSendAttemptedProof {
@@ -844,13 +835,14 @@ where
     }
 
     async fn do_work(&mut self) -> Result<PageSendAttemptedProof, QueryError> {
-        let mut paging_state = None;
+        let mut paging_state = PagingState::start();
         loop {
             let result = (self.fetcher)(paging_state).await?;
             let response = result.into_non_error_query_response()?;
             match response.response {
-                NonErrorResponse::Result(result::Result::Rows(mut rows)) => {
-                    paging_state = rows.metadata.paging_state.take();
+                NonErrorResponse::Result(result::Result::Rows(rows)) => {
+                    let paging_state_response = rows.metadata.paging_state.clone();
+
                     let (proof, send_result) = self
                         .sender
                         .send(Ok(ReceivedPage {
@@ -858,8 +850,20 @@ where
                             tracing_id: response.tracing_id,
                         }))
                         .await;
-                    if paging_state.is_none() || send_result.is_err() {
+
+                    if send_result.is_err() {
+                        // channel was closed, RowIterator was dropped - should shutdown
                         return Ok(proof);
+                    }
+
+                    match paging_state_response.into_paging_control_flow() {
+                        ControlFlow::Continue(new_paging_state) => {
+                            paging_state = new_paging_state;
+                        }
+                        ControlFlow::Break(()) => {
+                            // Reached the last query, shutdown
+                            return Ok(proof);
+                        }
                     }
                 }
                 NonErrorResponse::Result(_) => {

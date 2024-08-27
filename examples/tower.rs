@@ -22,7 +22,7 @@ impl Service<scylla::query::Query> for SessionService {
 
     fn call(&mut self, req: scylla::query::Query) -> Self::Future {
         let session = self.session.clone();
-        Box::pin(async move { session.query(req, &[]).await })
+        Box::pin(async move { session.query_unpaged(req, &[]).await })
     }
 }
 

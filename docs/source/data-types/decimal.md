@@ -18,11 +18,11 @@ use std::str::FromStr;
 let to_insert: CqlDecimal =
         CqlDecimal::from_signed_be_bytes_and_exponent(vec![0x01, 0xE2, 0x40], 3);
 session
-    .query("INSERT INTO keyspace.table (a) VALUES(?)", (to_insert,))
+    .query_unpaged("INSERT INTO keyspace.table (a) VALUES(?)", (to_insert,))
     .await?;
 
 // Read a decimal from the table
-if let Some(rows) = session.query("SELECT a FROM keyspace.table", &[]).await?.rows {
+if let Some(rows) = session.query_unpaged("SELECT a FROM keyspace.table", &[]).await?.rows {
     for row in rows.into_typed::<(CqlDecimal,)>() {
         let (decimal_value,): (CqlDecimal,) = row?;
     }
@@ -48,11 +48,11 @@ use std::str::FromStr;
 // Insert a decimal into the table
 let to_insert: BigDecimal = BigDecimal::from_str("12345.0")?;
 session
-    .query("INSERT INTO keyspace.table (a) VALUES(?)", (to_insert,))
+    .query_unpaged("INSERT INTO keyspace.table (a) VALUES(?)", (to_insert,))
     .await?;
 
 // Read a decimal from the table
-let result = session.query("SELECT a FROM keyspace.table", &[]).await?;
+let result = session.query_unpaged("SELECT a FROM keyspace.table", &[]).await?;
 let mut iter = result.rows_typed::<(BigDecimal,)>()?;
 while let Some((decimal_value,)) = iter.next().transpose()? {
     println!("{:?}", decimal_value);

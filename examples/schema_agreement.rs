@@ -22,7 +22,7 @@ async fn main() -> Result<()> {
 
     println!("Schema version: {}", schema_version);
 
-    session.query("CREATE KEYSPACE IF NOT EXISTS examples_ks WITH REPLICATION = {'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}", &[]).await?;
+    session.query_unpaged("CREATE KEYSPACE IF NOT EXISTS examples_ks WITH REPLICATION = {'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}", &[]).await?;
 
     match session.await_schema_agreement().await {
         Ok(_schema_version) => println!("Schema is in agreement in time"),
@@ -30,7 +30,7 @@ async fn main() -> Result<()> {
         Err(err) => bail!(err),
     };
     session
-        .query(
+        .query_unpaged(
             "CREATE TABLE IF NOT EXISTS examples_ks.schema_agreement (a int, b int, c text, primary key (a, b))",
             &[],
         )
@@ -38,7 +38,7 @@ async fn main() -> Result<()> {
 
     session.await_schema_agreement().await?;
     session
-        .query(
+        .query_unpaged(
             "INSERT INTO examples_ks.schema_agreement (a, b, c) VALUES (?, ?, ?)",
             (3, 4, "def"),
         )
@@ -46,7 +46,7 @@ async fn main() -> Result<()> {
 
     session.await_schema_agreement().await?;
     session
-        .query(
+        .query_unpaged(
             "INSERT INTO examples_ks.schema_agreement (a, b, c) VALUES (1, 2, 'abc')",
             &[],
         )
@@ -56,18 +56,18 @@ async fn main() -> Result<()> {
         .prepare("INSERT INTO examples_ks.schema_agreement (a, b, c) VALUES (?, 7, ?)")
         .await?;
     session
-        .execute(&prepared, (42_i32, "I'm prepared!"))
+        .execute_unpaged(&prepared, (42_i32, "I'm prepared!"))
         .await?;
     session
-        .execute(&prepared, (43_i32, "I'm prepared 2!"))
+        .execute_unpaged(&prepared, (43_i32, "I'm prepared 2!"))
         .await?;
     session
-        .execute(&prepared, (44_i32, "I'm prepared 3!"))
+        .execute_unpaged(&prepared, (44_i32, "I'm prepared 3!"))
         .await?;
 
     // Rows can be parsed as tuples
     let result = session
-        .query("SELECT a, b, c FROM examples_ks.schema_agreement", &[])
+        .query_unpaged("SELECT a, b, c FROM examples_ks.schema_agreement", &[])
         .await?;
     let mut iter = result.rows_typed::<(i32, i32, String)>()?;
     while let Some((a, b, c)) = iter.next().transpose()? {

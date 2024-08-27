@@ -1,10 +1,10 @@
-use std::borrow::Cow;
+use std::{borrow::Cow, ops::ControlFlow, sync::Arc};
 
 use crate::{
     frame::{frame_errors::ParseError, types::SerialConsistency},
     types::serialize::row::SerializedValues,
 };
-use bytes::{Buf, BufMut, Bytes};
+use bytes::{Buf, BufMut};
 
 use crate::{
     frame::request::{RequestOpcode, SerializableRequest},
@@ -56,13 +56,14 @@ impl<'q> DeserializableRequest for Query<'q> {
         })
     }
 }
+
 #[cfg_attr(test, derive(Debug, PartialEq, Eq))]
 pub struct QueryParameters<'a> {
     pub consistency: types::Consistency,
     pub serial_consistency: Option<types::SerialConsistency>,
     pub timestamp: Option<i64>,
     pub page_size: Option<i32>,
-    pub paging_state: Option<Bytes>,
+    pub paging_state: PagingState,
     pub skip_metadata: bool,
     pub values: Cow<'a, SerializedValues>,
 }
@@ -74,7 +75,7 @@ impl Default for QueryParameters<'_> {
             serial_consistency: None,
             timestamp: None,
             page_size: None,
-            paging_state: None,
+            paging_state: PagingState::start(),
             skip_metadata: false,
             values: Cow::Borrowed(SerializedValues::EMPTY),
         }
@@ -84,6 +85,8 @@ impl Default for QueryParameters<'_> {
 impl QueryParameters<'_> {
     pub fn serialize(&self, buf: &mut impl BufMut) -> Result<(), ParseError> {
         types::write_consistency(self.consistency, buf);
+
+        let paging_state_bytes = self.paging_state.as_bytes_slice();
 
         let mut flags = 0;
         if !self.values.is_empty() {
@@ -98,7 +101,7 @@ impl QueryParameters<'_> {
             flags |= FLAG_PAGE_SIZE;
         }
 
-        if self.paging_state.is_some() {
+        if paging_state_bytes.is_some() {
             flags |= FLAG_WITH_PAGING_STATE;
         }
 
@@ -120,8 +123,8 @@ impl QueryParameters<'_> {
             types::write_int(page_size, buf);
         }
 
-        if let Some(paging_state) = &self.paging_state {
-            types::write_bytes(paging_state, buf)?;
+        if let Some(paging_state_bytes) = paging_state_bytes {
+            types::write_bytes(paging_state_bytes, buf)?;
         }
 
         if let Some(serial_consistency) = self.serial_consistency {
@@ -170,9 +173,9 @@ impl<'q> QueryParameters<'q> {
 
         let page_size = page_size_flag.then(|| types::read_int(buf)).transpose()?;
         let paging_state = if paging_state_flag {
-            Some(Bytes::copy_from_slice(types::read_bytes(buf)?))
+            PagingState::new_from_raw_bytes(types::read_bytes(buf)?)
         } else {
-            None
+            PagingState::start()
         };
         let serial_consistency = serial_consistency_flag
             .then(|| types::read_consistency(buf))
@@ -202,5 +205,80 @@ impl<'q> QueryParameters<'q> {
             skip_metadata,
             values,
         })
+    }
+}
+
+#[derive(Debug, Clone)]
+pub enum PagingStateResponse {
+    HasMorePages { state: PagingState },
+    NoMorePages,
+}
+
+impl PagingStateResponse {
+    /// Determines if the query has finished or it should be resumed with given
+    /// [PagingState] in order to fetch next pages.
+    #[inline]
+    pub fn finished(&self) -> bool {
+        matches!(*self, Self::NoMorePages)
+    }
+
+    pub(crate) fn new_from_raw_bytes(raw_paging_state: Option<&[u8]>) -> Self {
+        match raw_paging_state {
+            Some(raw_bytes) => Self::HasMorePages {
+                state: PagingState::new_from_raw_bytes(raw_bytes),
+            },
+            None => Self::NoMorePages,
+        }
+    }
+
+    /// Converts the response into [ControlFlow], signalling whether the query has finished
+    /// or it should be resumed with given [PagingState] in order to fetch next pages.
+    #[inline]
+    pub fn into_paging_control_flow(self) -> ControlFlow<(), PagingState> {
+        match self {
+            Self::HasMorePages {
+                state: next_page_handle,
+            } => ControlFlow::Continue(next_page_handle),
+            Self::NoMorePages => ControlFlow::Break(()),
+        }
+    }
+}
+
+/// The state of a paged query, i.e. where to resume fetching result rows
+/// upon next request.
+///
+/// Cheaply clonable.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PagingState(Option<Arc<[u8]>>);
+
+impl PagingState {
+    /// A start state - the state of a not-yet-started paged query.
+    #[inline]
+    pub fn start() -> Self {
+        Self(None)
+    }
+
+    /// Returns the inner representation of [PagingState].
+    /// One can use this to store paging state for a longer time,
+    /// and later restore it using [Self::new_from_raw_bytes].
+    /// In case None is returned, this signifies
+    /// [PagingState::start()] being underneath.
+    #[inline]
+    pub fn as_bytes_slice(&self) -> Option<&Arc<[u8]>> {
+        self.0.as_ref()
+    }
+
+    /// Creates PagingState from its inner representation.
+    /// One can use this to restore paging state after longer time,
+    /// having previously stored it using [Self::as_bytes_slice].
+    #[inline]
+    pub fn new_from_raw_bytes(raw_bytes: impl Into<Arc<[u8]>>) -> Self {
+        Self(Some(raw_bytes.into()))
+    }
+}
+
+impl Default for PagingState {
+    fn default() -> Self {
+        Self::start()
     }
 }

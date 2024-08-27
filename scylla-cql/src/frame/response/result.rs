@@ -4,6 +4,7 @@ use crate::frame::frame_errors::{
     PreparedParseError, ResultMetadataParseError, RowsParseError, SchemaChangeEventParseError,
     SetKeyspaceParseError, TableSpecParseError,
 };
+use crate::frame::request::query::PagingStateResponse;
 use crate::frame::response::event::SchemaChangeEvent;
 use crate::frame::types;
 use crate::frame::value::{
@@ -427,11 +428,22 @@ pub struct ColumnSpec {
     pub typ: ColumnType,
 }
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone)]
 pub struct ResultMetadata {
     col_count: usize,
-    pub paging_state: Option<Bytes>,
+    pub paging_state: PagingStateResponse,
     pub col_specs: Vec<ColumnSpec>,
+}
+
+impl ResultMetadata {
+    #[inline]
+    pub fn mock_empty() -> Self {
+        Self {
+            col_count: 0,
+            paging_state: PagingStateResponse::NoMorePages,
+            col_specs: Vec::new(),
+        }
+    }
 }
 
 #[derive(Debug, Copy, Clone)]
@@ -618,16 +630,10 @@ fn deser_result_metadata(buf: &mut &[u8]) -> StdResult<ResultMetadata, ResultMet
     let col_count =
         types::read_int_length(buf).map_err(ResultMetadataParseError::ColumnCountParseError)?;
 
-    let paging_state = if has_more_pages {
-        Some(
-            types::read_bytes(buf)
-                .map_err(ResultMetadataParseError::PagingStateParseError)?
-                .to_owned()
-                .into(),
-        )
-    } else {
-        None
-    };
+    let raw_paging_state = has_more_pages
+        .then(|| types::read_bytes(buf).map_err(ResultMetadataParseError::PagingStateParseError))
+        .transpose()?;
+    let paging_state = PagingStateResponse::new_from_raw_bytes(raw_paging_state);
 
     if no_metadata {
         return Ok(ResultMetadata {

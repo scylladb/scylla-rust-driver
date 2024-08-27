@@ -12,11 +12,11 @@ async fn test_quietly_prepare_batch() {
     let session = create_new_session_builder().build().await.unwrap();
 
     let ks = unique_keyspace_name();
-    session.query(format!("CREATE KEYSPACE IF NOT EXISTS {} WITH REPLICATION = {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}}", ks), &[]).await.unwrap();
+    session.query_unpaged(format!("CREATE KEYSPACE IF NOT EXISTS {} WITH REPLICATION = {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}}", ks), &[]).await.unwrap();
     session.use_keyspace(ks.clone(), false).await.unwrap();
 
     session
-        .query(
+        .query_unpaged(
             "CREATE TABLE test_batch_table (a int, b int, primary key (a, b))",
             (),
         )
@@ -93,7 +93,7 @@ async fn test_quietly_prepare_batch() {
 
 async fn assert_test_batch_table_rows_contain(sess: &Session, expected_rows: &[(i32, i32)]) {
     let selected_rows: BTreeSet<(i32, i32)> = sess
-        .query("SELECT a, b FROM test_batch_table", ())
+        .query_unpaged("SELECT a, b FROM test_batch_table", ())
         .await
         .unwrap()
         .rows_typed::<(i32, i32)>()

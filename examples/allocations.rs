@@ -93,7 +93,7 @@ async fn measure(
                     std::io::stdout().flush().unwrap();
                 }
                 session
-                    .execute(&prepared, (i as i32, 2 * i as i32))
+                    .execute_unpaged(&prepared, (i as i32, 2 * i as i32))
                     .await
                     .unwrap();
             }
@@ -131,11 +131,11 @@ async fn main() -> Result<()> {
     let session: Session = SessionBuilder::new().known_node(args.node).build().await?;
     let session = Arc::new(session);
 
-    session.query("CREATE KEYSPACE IF NOT EXISTS examples_ks WITH REPLICATION = {'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}", &[]).await?;
+    session.query_unpaged("CREATE KEYSPACE IF NOT EXISTS examples_ks WITH REPLICATION = {'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}", &[]).await?;
     session.await_schema_agreement().await.unwrap();
 
     session
-        .query(
+        .query_unpaged(
             "CREATE TABLE IF NOT EXISTS examples_ks.allocations (a int, b int, c text, primary key (a, b))",
             &[],
         )

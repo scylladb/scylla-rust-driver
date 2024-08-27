@@ -1,6 +1,7 @@
 use crate::batch::{Batch, BatchStatement};
 use crate::prepared_statement::PreparedStatement;
 use crate::query::Query;
+use crate::statement::{PagingState, PagingStateResponse};
 use crate::transport::errors::QueryError;
 use crate::transport::iterator::RowIterator;
 use crate::transport::partitioner::PartitionerName;
@@ -68,15 +69,15 @@ where
         }
     }
 
-    /// Does the same thing as [`Session::execute`] but uses the prepared statement cache
-    pub async fn execute(
+    /// Does the same thing as [`Session::execute_unpaged`] but uses the prepared statement cache
+    pub async fn execute_unpaged(
         &self,
         query: impl Into<Query>,
         values: impl SerializeRow,
     ) -> Result<QueryResult, QueryError> {
         let query = query.into();
         let prepared = self.add_prepared_statement_owned(query).await?;
-        self.session.execute(&prepared, values).await
+        self.session.execute_unpaged(&prepared, values).await
     }
 
     /// Does the same thing as [`Session::execute_iter`] but uses the prepared statement cache
@@ -90,17 +91,17 @@ where
         self.session.execute_iter(prepared, values).await
     }
 
-    /// Does the same thing as [`Session::execute_paged`] but uses the prepared statement cache
-    pub async fn execute_paged(
+    /// Does the same thing as [`Session::execute_single_page`] but uses the prepared statement cache
+    pub async fn execute_single_page(
         &self,
         query: impl Into<Query>,
         values: impl SerializeRow,
-        paging_state: Option<Bytes>,
-    ) -> Result<QueryResult, QueryError> {
+        paging_state: PagingState,
+    ) -> Result<(QueryResult, PagingStateResponse), QueryError> {
         let query = query.into();
         let prepared = self.add_prepared_statement_owned(query).await?;
         self.session
-            .execute_paged(&prepared, values, paging_state.clone())
+            .execute_single_page(&prepared, values, paging_state)
             .await
     }
 
@@ -164,7 +165,7 @@ where
         let query = query.into();
 
         if let Some(raw) = self.cache.get(&query.contents) {
-            let page_size = query.get_page_size();
+            let page_size = query.get_validated_page_size();
             let mut stmt = PreparedStatement::new(
                 raw.id.clone(),
                 raw.is_confirmed_lwt,
@@ -218,6 +219,7 @@ where
 #[cfg(test)]
 mod tests {
     use crate::query::Query;
+    use crate::statement::PagingState;
     use crate::test_utils::{create_new_session_builder, scylla_supports_tablets, setup_tracing};
     use crate::transport::partitioner::PartitionerName;
     use crate::utils::test_utils::unique_keyspace_name;
@@ -245,12 +247,12 @@ mod tests {
         }
 
         session
-            .query(create_ks, &[])
+            .query_unpaged(create_ks, &[])
             .await
             .expect("Could not create keyspace");
 
         session
-            .query(
+            .query_unpaged(
                 format!(
                     "CREATE TABLE IF NOT EXISTS {}.test_table (a int primary key, b int)",
                     ks
@@ -273,7 +275,7 @@ mod tests {
 
         // Add a row, this makes it easier to check if the caching works combined with the regular execute fn on Session
         session
-            .execute("insert into test_table(a, b) values (1, 2)", &[])
+            .execute_unpaged("insert into test_table(a, b) values (1, 2)", &[])
             .await
             .unwrap();
 
@@ -323,11 +325,11 @@ mod tests {
 
     /// Checks that the same prepared statement is reused when executing the same query twice
     #[tokio::test]
-    async fn test_execute_cached() {
+    async fn test_execute_unpaged_cached() {
         setup_tracing();
         let session = create_caching_session().await;
         let result = session
-            .execute("select * from test_table", &[])
+            .execute_unpaged("select * from test_table", &[])
             .await
             .unwrap();
 
@@ -335,7 +337,7 @@ mod tests {
         assert_eq!(1, result.rows_num().unwrap());
 
         let result = session
-            .execute("select * from test_table", &[])
+            .execute_unpaged("select * from test_table", &[])
             .await
             .unwrap();
 
@@ -362,16 +364,16 @@ mod tests {
         assert_eq!(1, session.cache.len());
     }
 
-    /// Checks that caching works with execute_paged
+    /// Checks that caching works with execute_single_page
     #[tokio::test]
-    async fn test_execute_paged_cached() {
+    async fn test_execute_single_page_cached() {
         setup_tracing();
         let session = create_caching_session().await;
 
         assert!(session.cache.is_empty());
 
-        let result = session
-            .execute_paged("select * from test_table", &[], None)
+        let (result, _paging_state) = session
+            .execute_single_page("select * from test_table", &[], PagingState::start())
             .await
             .unwrap();
 
@@ -384,7 +386,7 @@ mod tests {
         expected_rows: &[(i32, i32)],
     ) {
         let selected_rows: BTreeSet<(i32, i32)> = sess
-            .execute("SELECT a, b FROM test_batch_table", ())
+            .execute_unpaged("SELECT a, b FROM test_batch_table", ())
             .await
             .unwrap()
             .rows_typed::<(i32, i32)>()
@@ -440,7 +442,7 @@ mod tests {
         let session: CachingSession = create_caching_session().await;
 
         session
-            .execute(
+            .execute_unpaged(
                 "CREATE TABLE IF NOT EXISTS test_batch_table (a int, b int, primary key (a, b))",
                 (),
             )
@@ -563,7 +565,7 @@ mod tests {
         let session: CachingSession = CachingSession::from(new_for_test(true).await, 100);
 
         session
-            .execute("CREATE TABLE tbl (a int PRIMARY KEY, b int)", ())
+            .execute_unpaged("CREATE TABLE tbl (a int PRIMARY KEY, b int)", ())
             .await
             .unwrap();
 
@@ -574,7 +576,7 @@ mod tests {
         q1.set_timestamp(Some(1000));
 
         session
-            .execute(q1, (1, 1))
+            .execute_unpaged(q1, (1, 1))
             .await
             .unwrap()
             .result_not_rows()
@@ -585,7 +587,7 @@ mod tests {
         q2.set_timestamp(Some(2000));
 
         session
-            .execute(q2, (2, 2))
+            .execute_unpaged(q2, (2, 2))
             .await
             .unwrap()
             .result_not_rows()
@@ -593,7 +595,7 @@ mod tests {
 
         // Fetch both rows with their timestamps
         let mut rows = session
-            .execute("SELECT b, WRITETIME(b) FROM tbl", ())
+            .execute_unpaged("SELECT b, WRITETIME(b) FROM tbl", ())
             .await
             .unwrap()
             .rows_typed_or_empty::<(i32, i64)>()
@@ -616,7 +618,7 @@ mod tests {
         let session: CachingSession = CachingSession::from(new_for_test(false).await, 100);
 
         session
-            .execute(
+            .execute_unpaged(
                 "CREATE TABLE tbl (a int PRIMARY KEY) with cdc = {'enabled': true}",
                 &(),
             )

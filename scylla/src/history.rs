@@ -13,7 +13,7 @@ use chrono::{DateTime, Utc};
 use scylla_cql::errors::QueryError;
 use tracing::warn;
 
-/// Id of a single query, i.e. a single call to Session::query/execute/etc.
+/// Id of a single query, i.e. a single call to Session::{query,execute}_{unpaged,single_page}/etc.
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
 pub struct QueryId(pub usize);
 
@@ -36,13 +36,13 @@ pub struct SpeculativeId(pub usize);
 /// It's important to note that even after a query is finished there still might come events related to it.
 /// These events come from speculative futures that didn't notice the query is done already.
 pub trait HistoryListener: Debug + Send + Sync {
-    /// Log that a query has started on query start - right after the call to Session::query.
+    /// Log that a query has started on query start - right after the call to Session::{query,execute}_*/batch.
     fn log_query_start(&self) -> QueryId;
 
-    /// Log that query was successful - called right before returning the result from Session::query, execute, etc.
+    /// Log that query was successful - called right before returning the result from Session::query_*, execute_*, etc.
     fn log_query_success(&self, query_id: QueryId);
 
-    /// Log that query ended with an error - called right before returning the error from Session::query, execute, etc.
+    /// Log that query ended with an error - called right before returning the error from Session::query_*, execute_*, etc.
     fn log_query_error(&self, query_id: QueryId, error: &QueryError);
 
     /// Log that a new speculative fiber has started.
@@ -924,7 +924,7 @@ mod tests {
         let history_collector = Arc::new(HistoryCollector::new());
         query.set_history_listener(history_collector.clone());
 
-        session.query(query.clone(), ()).await.unwrap();
+        session.query_unpaged(query.clone(), ()).await.unwrap();
 
         let history: StructuredHistory = history_collector.clone_structured_history();
 
@@ -949,7 +949,7 @@ mod tests {
 
         // Prepared queries retain the history listener set in Query.
         let prepared = session.prepare(query).await.unwrap();
-        session.execute(&prepared, ()).await.unwrap();
+        session.execute_unpaged(&prepared, ()).await.unwrap();
 
         let history2: StructuredHistory = history_collector.clone_structured_history();
 
@@ -991,7 +991,7 @@ mod tests {
         let history_collector = Arc::new(HistoryCollector::new());
         query.set_history_listener(history_collector.clone());
 
-        assert!(session.query(query.clone(), ()).await.is_err());
+        assert!(session.query_unpaged(query.clone(), ()).await.is_err());
 
         let history: StructuredHistory = history_collector.clone_structured_history();
 
@@ -1025,18 +1025,18 @@ mod tests {
         let session = create_new_session_builder().build().await.unwrap();
         let ks = unique_keyspace_name();
         session
-        .query(format!("CREATE KEYSPACE {} WITH REPLICATION = {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}}", ks), &[])
+        .query_unpaged(format!("CREATE KEYSPACE {} WITH REPLICATION = {{'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}}", ks), &[])
         .await
         .unwrap();
         session.use_keyspace(ks, true).await.unwrap();
 
         session
-            .query("CREATE TABLE t (p int primary key)", ())
+            .query_unpaged("CREATE TABLE t (p int primary key)", ())
             .await
             .unwrap();
         for i in 0..32 {
             session
-                .query("INSERT INTO t (p) VALUES (?)", (i,))
+                .query_unpaged("INSERT INTO t (p) VALUES (?)", (i,))
                 .await
                 .unwrap();
         }

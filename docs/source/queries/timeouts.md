@@ -37,7 +37,7 @@ let session: Session = SessionBuilder::new()
 
 // This query, having no timeout, could block indefinitely if a queried node hangs.
 session
-    .query("TRUNCATE keyspace.table", ())
+    .query_unpaged("TRUNCATE keyspace.table", ())
     .await?;
 
 let three_sec_timeout_profile_handle = ExecutionProfile::builder()
@@ -50,7 +50,7 @@ let three_sec_timeout_profile_handle = ExecutionProfile::builder()
 let mut query: Query = "TRUNCATE keyspace.table".into();
 query.set_execution_profile_handle(Some(three_sec_timeout_profile_handle));
 session
-    .query(query, ())
+    .query_unpaged(query, ())
     .await?;
 
 #    Ok(())

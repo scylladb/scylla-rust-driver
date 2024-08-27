@@ -2,14 +2,13 @@ use crate::frame::response::cql_to_rust::{FromRow, FromRowError};
 use crate::frame::response::result::ColumnSpec;
 use crate::frame::response::result::Row;
 use crate::transport::session::{IntoTypedRows, TypedRowIter};
-use bytes::Bytes;
 use thiserror::Error;
 use uuid::Uuid;
 
 /// Result of a single query\
 /// Contains all rows returned by the database and some more information
 #[non_exhaustive]
-#[derive(Default, Debug)]
+#[derive(Debug)]
 pub struct QueryResult {
     /// Rows returned by the database.\
     /// Queries like `SELECT` will have `Some(Vec)`, while queries like `INSERT` will have `None`.\
@@ -19,8 +18,6 @@ pub struct QueryResult {
     pub warnings: Vec<String>,
     /// CQL Tracing uuid - can only be Some if tracing is enabled for this query
     pub tracing_id: Option<Uuid>,
-    /// Paging state returned from the server
-    pub paging_state: Option<Bytes>,
     /// Column specification returned from the server
     pub col_specs: Vec<ColumnSpec>,
     /// The original size of the serialized rows in request
@@ -28,6 +25,16 @@ pub struct QueryResult {
 }
 
 impl QueryResult {
+    pub(crate) fn mock_empty() -> Self {
+        Self {
+            rows: None,
+            warnings: Vec::new(),
+            tracing_id: None,
+            col_specs: Vec::new(),
+            serialized_size: 0,
+        }
+    }
+
     /// Returns the number of received rows.\
     /// Fails when the query isn't of a type that could return rows, same as [`rows()`](QueryResult::rows).
     pub fn rows_num(&self) -> Result<usize, RowsExpectedError> {
@@ -307,7 +314,6 @@ mod tests {
             rows: None,
             warnings: vec![],
             tracing_id: None,
-            paging_state: None,
             col_specs: vec![column_spec],
             serialized_size: 0,
         }

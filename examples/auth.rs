@@ -14,9 +14,9 @@ async fn main() -> Result<()> {
         .await
         .unwrap();
 
-    session.query("CREATE KEYSPACE IF NOT EXISTS examples_ks WITH REPLICATION = {'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}", &[]).await.unwrap();
+    session.query_unpaged("CREATE KEYSPACE IF NOT EXISTS examples_ks WITH REPLICATION = {'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}", &[]).await.unwrap();
     session
-        .query("DROP TABLE IF EXISTS examples_ks.auth;", &[])
+        .query_unpaged("DROP TABLE IF EXISTS examples_ks.auth;", &[])
         .await
         .unwrap();
 

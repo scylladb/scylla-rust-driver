@@ -14,11 +14,11 @@ use scylla::IntoTypedRows;
 // Insert a bool into the table
 let to_insert: bool = true;
 session
-    .query("INSERT INTO keyspace.table (a) VALUES(?)", (to_insert,))
+    .query_unpaged("INSERT INTO keyspace.table (a) VALUES(?)", (to_insert,))
     .await?;
 
 // Read a bool from the table
-let result = session.query("SELECT a FROM keyspace.table", &[]).await?;
+let result = session.query_unpaged("SELECT a FROM keyspace.table", &[]).await?;
 let mut iter = result.rows_typed::<(bool,)>()?;
 while let Some((bool_value,)) = iter.next().transpose()? {
     println!("{}", bool_value);
@@ -41,11 +41,11 @@ use scylla::IntoTypedRows;
 // Insert a tinyint into the table
 let to_insert: i8 = 123;
 session
-    .query("INSERT INTO keyspace.table (a) VALUES(?)", (to_insert,))
+    .query_unpaged("INSERT INTO keyspace.table (a) VALUES(?)", (to_insert,))
     .await?;
 
 // Read a tinyint from the table
-let result = session.query("SELECT a FROM keyspace.table", &[]).await?;
+let result = session.query_unpaged("SELECT a FROM keyspace.table", &[]).await?;
 let mut iter = result.rows_typed::<(i8,)>()?;
 while let Some((tinyint_value,)) = iter.next().transpose()? {
     println!("{:?}", tinyint_value);
@@ -68,11 +68,11 @@ use scylla::IntoTypedRows;
 // Insert a smallint into the table
 let to_insert: i16 = 12345;
 session
-    .query("INSERT INTO keyspace.table (a) VALUES(?)", (to_insert,))
+    .query_unpaged("INSERT INTO keyspace.table (a) VALUES(?)", (to_insert,))
     .await?;
 
 // Read a smallint from the table
-let result = session.query("SELECT a FROM keyspace.table", &[]).await?;
+let result = session.query_unpaged("SELECT a FROM keyspace.table", &[]).await?;
 let mut iter = result.rows_typed::<(i16,)>()?;
 while let Some((smallint_value,)) = iter.next().transpose()? {
     println!("{}", smallint_value);
@@ -95,11 +95,11 @@ use scylla::IntoTypedRows;
 // Insert an int into the table
 let to_insert: i32 = 12345;
 session
-    .query("INSERT INTO keyspace.table (a) VALUES(?)", (to_insert,))
+    .query_unpaged("INSERT INTO keyspace.table (a) VALUES(?)", (to_insert,))
     .await?;
 
 // Read an int from the table
-let result = session.query("SELECT a FROM keyspace.table", &[]).await?;
+let result = session.query_unpaged("SELECT a FROM keyspace.table", &[]).await?;
 let mut iter = result.rows_typed::<(i32,)>()?;
 while let Some((int_value,)) = iter.next().transpose()? {
     println!("{}", int_value);
@@ -122,11 +122,11 @@ use scylla::IntoTypedRows;
 // Insert a bigint into the table
 let to_insert: i64 = 12345;
 session
-    .query("INSERT INTO keyspace.table (a) VALUES(?)", (to_insert,))
+    .query_unpaged("INSERT INTO keyspace.table (a) VALUES(?)", (to_insert,))
     .await?;
 
 // Read a bigint from the table
-let result = session.query("SELECT a FROM keyspace.table", &[]).await?;
+let result = session.query_unpaged("SELECT a FROM keyspace.table", &[]).await?;
 let mut iter = result.rows_typed::<(i64,)>()?;
 while let Some((bigint_value,)) = iter.next().transpose()? {
     println!("{:?}", bigint_value);
@@ -149,11 +149,11 @@ use scylla::IntoTypedRows;
 // Insert a float into the table
 let to_insert: f32 = 123.0;
 session
-    .query("INSERT INTO keyspace.table (a) VALUES(?)", (to_insert,))
+    .query_unpaged("INSERT INTO keyspace.table (a) VALUES(?)", (to_insert,))
     .await?;
 
 // Read a float from the table
-let result = session.query("SELECT a FROM keyspace.table", &[]).await?;
+let result = session.query_unpaged("SELECT a FROM keyspace.table", &[]).await?;
 let mut iter = result.rows_typed::<(f32,)>()?;
 while let Some((float_value,)) = iter.next().transpose()? {
     println!("{:?}", float_value);
@@ -176,11 +176,11 @@ use scylla::IntoTypedRows;
 // Insert a double into the table
 let to_insert: f64 = 12345.0;
 session
-    .query("INSERT INTO keyspace.table (a) VALUES(?)", (to_insert,))
+    .query_unpaged("INSERT INTO keyspace.table (a) VALUES(?)", (to_insert,))
     .await?;
 
 // Read a double from the table
-let result = session.query("SELECT a FROM keyspace.table", &[]).await?;
+let result = session.query_unpaged("SELECT a FROM keyspace.table", &[]).await?;
 let mut iter = result.rows_typed::<(f64,)>()?;
 while let Some((double_value,)) = iter.next().transpose()? {
     println!("{:?}", double_value);

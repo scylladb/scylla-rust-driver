@@ -13,7 +13,7 @@ use std::time::Duration;
 use thiserror::Error;
 use uuid::Uuid;
 
-use super::StatementConfig;
+use super::{PageSize, StatementConfig};
 use crate::frame::response::result::PreparedMetadata;
 use crate::frame::types::{Consistency, SerialConsistency};
 use crate::history::HistoryListener;
@@ -27,15 +27,17 @@ use crate::transport::partitioner::{Partitioner, PartitionerHasher, PartitionerN
 /// To prepare a statement, simply execute [`Session::prepare`](crate::transport::session::Session::prepare).
 ///
 /// If you plan on reusing the statement, or bounding some values to it during execution, always
-/// prefer using prepared statements over [`Session::query`](crate::transport::session::Session::query).
+/// prefer using prepared statements over `Session::query_*` methods,
+/// e.g. [`Session::query_unpaged`](crate::transport::session::Session::query_unpaged).
 ///
 /// Benefits that prepared statements have to offer:
 /// * Performance - a prepared statement holds information about metadata
 ///   that allows to carry out a statement execution in a type safe manner.
-///   When [`Session::query`](crate::transport::session::Session::query) is called with
-///   non-empty bound values, the driver has to prepare the statement before execution (to provide type safety).
-///   This implies 2 round trips per [`Session::query`](crate::transport::session::Session::query).
-///   On the other hand, the cost of [`Session::execute`](crate::transport::session::Session::execute) is only 1 round trip.
+///   When any of `Session::query_*` methods is called with non-empty bound values,
+///   the driver has to prepare the statement before execution (to provide type safety).
+///   This implies 2 round trips per [`Session::query_unpaged`](crate::transport::session::Session::query_unpaged).
+///   On the other hand, the cost of [`Session::execute_unpaged`](crate::transport::session::Session::execute_unpaged)
+///   is only 1 round trip.
 /// * Increased type-safety - bound values' types are validated with
 ///   the [`PreparedMetadata`] received from the server during the serialization.
 /// * Improved load balancing - thanks to statement metadata, the driver is able
@@ -92,7 +94,7 @@ pub struct PreparedStatement {
 
     id: Bytes,
     shared: Arc<PreparedStatementSharedData>,
-    page_size: Option<i32>,
+    page_size: PageSize,
     partitioner_name: PartitionerName,
     is_confirmed_lwt: bool,
 }
@@ -125,7 +127,7 @@ impl PreparedStatement {
         metadata: PreparedMetadata,
         result_metadata: ResultMetadata,
         statement: String,
-        page_size: Option<i32>,
+        page_size: PageSize,
         config: StatementConfig,
     ) -> Self {
         Self {
@@ -152,19 +154,22 @@ impl PreparedStatement {
     }
 
     /// Sets the page size for this CQL query.
+    ///
+    /// Panics if given number is nonpositive.
     pub fn set_page_size(&mut self, page_size: i32) {
-        assert!(page_size > 0, "page size must be larger than 0");
-        self.page_size = Some(page_size);
-    }
-
-    /// Disables paging for this CQL query.
-    pub fn disable_paging(&mut self) {
-        self.page_size = None;
+        self.page_size = page_size
+            .try_into()
+            .unwrap_or_else(|err| panic!("PreparedStatement::set_page_size: {err}"));
     }
 
     /// Returns the page size for this CQL query.
-    pub fn get_page_size(&self) -> Option<i32> {
+    pub(crate) fn get_validated_page_size(&self) -> PageSize {
         self.page_size
+    }
+
+    /// Returns the page size for this CQL query.
+    pub fn get_page_size(&self) -> i32 {
+        self.page_size.inner()
     }
 
     /// Gets tracing ids of queries used to prepare this statement

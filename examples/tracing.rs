@@ -26,10 +26,10 @@ async fn main() -> Result<()> {
         .build()
         .await?;
 
-    session.query("CREATE KEYSPACE IF NOT EXISTS examples_ks WITH REPLICATION = {'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}", &[]).await?;
+    session.query_unpaged("CREATE KEYSPACE IF NOT EXISTS examples_ks WITH REPLICATION = {'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}", &[]).await?;
 
     session
-        .query(
+        .query_unpaged(
             "CREATE TABLE IF NOT EXISTS examples_ks.tracing (val text primary key)",
             &[],
         )
@@ -42,7 +42,7 @@ async fn main() -> Result<()> {
     query.set_serial_consistency(Some(SerialConsistency::LocalSerial));
 
     // QueryResult will contain a tracing_id which can be used to query tracing information
-    let query_result: QueryResult = session.query(query.clone(), &[]).await?;
+    let query_result: QueryResult = session.query_unpaged(query.clone(), &[]).await?;
     let query_tracing_id: Uuid = query_result
         .tracing_id
         .ok_or_else(|| anyhow!("Tracing id is None!"))?;
@@ -79,7 +79,7 @@ async fn main() -> Result<()> {
     // To trace execution of a prepared statement tracing must be enabled for it
     prepared.set_tracing(true);
 
-    let execute_result: QueryResult = session.execute(&prepared, &[]).await?;
+    let execute_result: QueryResult = session.execute_unpaged(&prepared, &[]).await?;
     println!("Execute tracing id: {:?}", execute_result.tracing_id);
 
     // PAGED QUERY_ITER EXECUTE_ITER

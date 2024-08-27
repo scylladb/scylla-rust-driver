@@ -13,16 +13,16 @@ async fn main() -> Result<()> {
 
     let session: Session = SessionBuilder::new().known_node(uri).build().await?;
 
-    session.query("CREATE KEYSPACE IF NOT EXISTS examples_ks WITH REPLICATION = {'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}", &[]).await?;
+    session.query_unpaged("CREATE KEYSPACE IF NOT EXISTS examples_ks WITH REPLICATION = {'class' : 'NetworkTopologyStrategy', 'replication_factor' : 1}", &[]).await?;
     session
-        .query(
+        .query_unpaged(
             "CREATE TABLE IF NOT EXISTS examples_ks.custom_deserialization (pk int primary key, v text)",
             &[],
         )
         .await?;
 
     session
-        .query(
+        .query_unpaged(
             "INSERT INTO examples_ks.custom_deserialization (pk, v) VALUES (1, 'asdf')",
             (),
         )
@@ -41,7 +41,7 @@ async fn main() -> Result<()> {
     }
 
     let (v,) = session
-        .query(
+        .query_unpaged(
             "SELECT v FROM examples_ks.custom_deserialization WHERE pk = 1",
             (),
         )
@@ -68,7 +68,7 @@ async fn main() -> Result<()> {
     impl_from_cql_value_from_method!(MyOtherType, into_my_other_type);
 
     let (v,) = session
-        .query(
+        .query_unpaged(
             "SELECT v FROM examples_ks.custom_deserialization WHERE pk = 1",
             (),
         )
