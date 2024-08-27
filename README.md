@@ -15,13 +15,15 @@ The [documentation book](https://rust-driver.docs.scylladb.com/stable/index.html
 
 ## Examples
 ```rust
+use futures::TryStreamExt;
+
 let uri = "127.0.0.1:9042";
 
 let session: Session = SessionBuilder::new().known_node(uri).build().await?;
 
-let result = session.query_unpaged("SELECT a, b, c FROM ks.t", &[]).await?;
-let mut iter = result.rows_typed::<(i32, i32, String)>()?;
-while let Some((a, b, c)) = iter.next().transpose()? {
+let raw_iter = session.query_iter("SELECT a, b, c FROM ks.t", &[]).await?;
+let mut iter = raw_iter.into_typed::<(i32, i32, String)>();
+while let Some((a, b, c)) = iter.try_next().await? {
     println!("a, b, c: {}, {}, {}", a, b, c);
 }
 ```
