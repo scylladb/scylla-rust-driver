@@ -4,10 +4,11 @@
 
 ```rust
 # extern crate scylla;
+# extern crate futures;
 # use scylla::Session;
 # use std::error::Error;
 # async fn check_only_compiles(session: &Session) -> Result<(), Box<dyn Error>> {
-use scylla::IntoTypedRows;
+use futures::TryStreamExt;
 
 // Insert some blob into the table as a Vec<u8>
 // We can insert it by reference to not move the whole blob
@@ -17,9 +18,8 @@ session
     .await?;
 
 // Read blobs from the table
-let result = session.query_unpaged("SELECT a FROM keyspace.table", &[]).await?;
-let mut iter = result.rows_typed::<(Vec<u8>,)>()?;
-while let Some((blob_value,)) = iter.next().transpose()? {
+let mut iter = session.query_iter("SELECT a FROM keyspace.table", &[]).await?.into_typed::<(Vec<u8>,)>();
+while let Some((blob_value,)) = iter.try_next().await? {
     println!("{:?}", blob_value);
 }
 # Ok(())

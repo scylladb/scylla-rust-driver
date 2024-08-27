@@ -15,11 +15,12 @@ However, for most use cases other types are more practical. See following sectio
 
 ```rust
 # extern crate scylla;
+# extern crate futures;
 # use scylla::Session;
 # use std::error::Error;
 # async fn check_only_compiles(session: &Session) -> Result<(), Box<dyn Error>> {
 use scylla::frame::value::CqlTimestamp;
-use scylla::IntoTypedRows;
+use futures::TryStreamExt;
 
 // 64 seconds since unix epoch, 1970-01-01 00:01:04
 let to_insert = CqlTimestamp(64 * 1000);
@@ -30,14 +31,11 @@ session
     .await?;
 
 // Read timestamp from the table
-if let Some(rows) = session
-    .query_unpaged("SELECT a FROM keyspace.table", &[])
+let mut iter = session.query_iter("SELECT a FROM keyspace.table", &[])
     .await?
-    .rows
-{
-    for row in rows.into_typed::<(CqlTimestamp,)>() {
-        let (timestamp_value,): (CqlTimestamp,) = row?;
-    }
+    .into_typed::<(CqlTimestamp,)>();
+while let Some((value,)) = iter.try_next().await? {
+    // ...
 }
 # Ok(())
 # }
@@ -53,11 +51,12 @@ timezone information. Any precision finer than 1ms will be lost.
 ```rust
 # extern crate chrono;
 # extern crate scylla;
+# extern crate futures;
 # use scylla::Session;
 # use std::error::Error;
 # async fn check_only_compiles(session: &Session) -> Result<(), Box<dyn Error>> {
 use chrono::{DateTime, NaiveDate, NaiveDateTime, NaiveTime, Utc};
-use scylla::IntoTypedRows;
+use futures::TryStreamExt;
 
 // 64.123 seconds since unix epoch, 1970-01-01 00:01:04.123
 let to_insert = NaiveDateTime::new(
@@ -72,9 +71,10 @@ session
     .await?;
 
 // Read timestamp from the table
-let result = session.query_unpaged("SELECT a FROM keyspace.table", &[]).await?;
-let mut iter = result.rows_typed::<(DateTime<Utc>,)>()?;
-while let Some((timestamp_value,)) = iter.next().transpose()? {
+let mut iter = session.query_iter("SELECT a FROM keyspace.table", &[])
+    .await?
+    .into_typed::<(DateTime<Utc>,)>();
+while let Some((timestamp_value,)) = iter.try_next().await? {
     println!("{:?}", timestamp_value);
 }
 # Ok(())
@@ -92,10 +92,11 @@ than 1ms will also be lost.
 ```rust
 # extern crate scylla;
 # extern crate time;
+# extern crate futures;
 # use scylla::Session;
 # use std::error::Error;
 # async fn check_only_compiles(session: &Session) -> Result<(), Box<dyn Error>> {
-use scylla::IntoTypedRows;
+use futures::TryStreamExt;
 use time::{Date, Month, OffsetDateTime, PrimitiveDateTime, Time};
 
 // 64.123 seconds since unix epoch, 1970-01-01 00:01:04.123
@@ -111,9 +112,10 @@ session
     .await?;
 
 // Read timestamp from the table
-let result = session.query_unpaged("SELECT a FROM keyspace.table", &[]).await?;
-let mut iter = result.rows_typed::<(OffsetDateTime,)>()?;
-while let Some((timestamp_value,)) = iter.next().transpose()? {
+let mut iter = session.query_iter("SELECT a FROM keyspace.table", &[])
+    .await?
+    .into_typed::<(OffsetDateTime,)>();
+while let Some((timestamp_value,)) = iter.try_next().await? {
     println!("{:?}", timestamp_value);
 }
 # Ok(())

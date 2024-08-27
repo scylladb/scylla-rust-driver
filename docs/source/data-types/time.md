@@ -14,11 +14,12 @@ However, for most use cases other types are more practical. See following sectio
 
 ```rust
 # extern crate scylla;
+# extern crate futures;
 # use scylla::Session;
 # use std::error::Error;
 # async fn check_only_compiles(session: &Session) -> Result<(), Box<dyn Error>> {
 use scylla::frame::value::CqlTime;
-use scylla::IntoTypedRows;
+use futures::TryStreamExt;
 
 // 64 seconds since midnight
 let to_insert = CqlTime(64 * 1_000_000_000);
@@ -29,14 +30,11 @@ session
     .await?;
 
 // Read time from the table
-if let Some(rows) = session
-    .query_unpaged("SELECT a FROM keyspace.table", &[])
+let mut iter = session.query_iter("SELECT a FROM keyspace.table", &[])
     .await?
-    .rows
-{
-    for row in rows.into_typed::<(CqlTime,)>() {
-        let (time_value,): (CqlTime,) = row?;
-    }
+    .into_typed::<(CqlTime,)>();
+while let Some((value,)) = iter.try_next().await? {
+    // ...
 }
 # Ok(())
 # }
@@ -52,11 +50,12 @@ second to `CqlTime` or write it to the database will return an error.
 ```rust
 # extern crate chrono;
 # extern crate scylla;
+# extern crate futures;
 # use scylla::Session;
 # use std::error::Error;
 # async fn check_only_compiles(session: &Session) -> Result<(), Box<dyn Error>> {
 use chrono::NaiveTime;
-use scylla::IntoTypedRows;
+use futures::TryStreamExt;
 
 // 01:02:03.456,789,012
 let to_insert = NaiveTime::from_hms_nano_opt(1, 2, 3, 456_789_012);
@@ -67,9 +66,10 @@ session
     .await?;
 
 // Read time from the table
-let result = session.query_unpaged("SELECT a FROM keyspace.table", &[]).await?;
-let mut iter = result.rows_typed::<(NaiveTime,)>()?;
-while let Some((time_value,)) = iter.next().transpose()? {
+let mut iter = session.query_iter("SELECT a FROM keyspace.table", &[])
+    .await?
+    .into_typed::<(NaiveTime,)>();
+while let Some((time_value,)) = iter.try_next().await? {
     println!("{:?}", time_value);
 }
 # Ok(())
@@ -84,10 +84,11 @@ with the database.
 ```rust
 # extern crate scylla;
 # extern crate time;
+# extern crate futures;
 # use scylla::Session;
 # use std::error::Error;
 # async fn check_only_compiles(session: &Session) -> Result<(), Box<dyn Error>> {
-use scylla::IntoTypedRows;
+use futures::TryStreamExt;
 use time::Time;
 
 // 01:02:03.456,789,012
@@ -99,9 +100,10 @@ session
     .await?;
 
 // Read time from the table
-let result = session.query_unpaged("SELECT a FROM keyspace.table", &[]).await?;
-let mut iter = result.rows_typed::<(Time,)>()?;
-while let Some((time_value,)) = iter.next().transpose()? {
+let mut iter = session.query_iter("SELECT a FROM keyspace.table", &[])
+    .await?
+    .into_typed::<(Time,)>();
+while let Some((time_value,)) = iter.try_next().await? {
     println!("{:?}", time_value);
 }
 # Ok(())

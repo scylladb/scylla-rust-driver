@@ -3,10 +3,11 @@
 
 ```rust
 # extern crate scylla;
+# extern crate futures;
 # use scylla::Session;
 # use std::error::Error;
 # async fn check_only_compiles(session: &Session) -> Result<(), Box<dyn Error>> {
-use scylla::IntoTypedRows;
+use futures::TryStreamExt;
 
 // Insert some text into the table as a &str
 let to_insert_str: &str = "abcdef";
@@ -21,9 +22,10 @@ session
     .await?;
 
 // Read ascii/text/varchar from the table
-let result = session.query_unpaged("SELECT a FROM keyspace.table", &[]).await?;
-let mut iter = result.rows_typed::<(String,)>()?;
-while let Some((text_value,)) = iter.next().transpose()? {
+let mut iter = session.query_iter("SELECT a FROM keyspace.table", &[])
+    .await?
+    .into_typed::<(String,)>();
+while let Some((text_value,)) = iter.try_next().await? {
     println!("{}", text_value);
 }
 # Ok(())

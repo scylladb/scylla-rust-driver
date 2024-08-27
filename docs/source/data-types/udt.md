@@ -46,10 +46,11 @@ struct MyType {
 Now it can be sent and received just like any other CQL value:
 ```rust
 # extern crate scylla;
+# extern crate futures;
 # use scylla::Session;
 # use std::error::Error;
 # async fn check_only_compiles(session: &Session) -> Result<(), Box<dyn Error>> {
-use scylla::IntoTypedRows;
+use futures::TryStreamExt;
 use scylla::macros::{FromUserType, SerializeValue};
 use scylla::cql_to_rust::FromCqlVal;
 
@@ -70,9 +71,10 @@ session
     .await?;
 
 // Read MyType from the table
-let result = session.query_unpaged("SELECT a FROM keyspace.table", &[]).await?;
-let mut iter = result.rows_typed::<(MyType,)>()?;
-while let Some((my_type_value,)) = iter.next().transpose()? {
+let mut iter = session.query_iter("SELECT a FROM keyspace.table", &[])
+    .await?
+    .into_typed::<(MyType,)>();
+while let Some((my_type_value,)) = iter.try_next().await? {
     println!("{:?}", my_type_value);
 }
 # Ok(())

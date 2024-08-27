@@ -3,10 +3,11 @@
 
 ```rust
 # extern crate scylla;
+# extern crate futures;
 # use scylla::Session;
 # use std::error::Error;
 # async fn check_only_compiles(session: &Session) -> Result<(), Box<dyn Error>> {
-use scylla::IntoTypedRows;
+use futures::TryStreamExt;
 use scylla::frame::value::CqlDuration;
 
 // Insert some duration into the table
@@ -16,9 +17,10 @@ session
     .await?;
 
 // Read duration from the table
-let result = session.query_unpaged("SELECT a FROM keyspace.table", &[]).await?;
-let mut iter = result.rows_typed::<(CqlDuration,)>()?;
-while let Some((duration_value,)) = iter.next().transpose()? {
+let mut iter = session.query_iter("SELECT a FROM keyspace.table", &[])
+    .await?
+    .into_typed::<(CqlDuration,)>();
+while let Some((duration_value,)) = iter.try_next().await? {
     println!("{:?}", duration_value);
 }
 # Ok(())

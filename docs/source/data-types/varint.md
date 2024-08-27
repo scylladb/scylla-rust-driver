@@ -15,10 +15,11 @@ is a very simple wrapper representing the value as signed binary number in big-e
 ```rust
 # extern crate scylla;
 # extern crate num_bigint;
+# extern crate futures;
 # use scylla::Session;
 # use std::error::Error;
 # async fn check_only_compiles(session: &Session) -> Result<(), Box<dyn Error>> {
-use scylla::IntoTypedRows;
+use futures::TryStreamExt;
 use num_bigint::BigInt;
 use std::str::FromStr;
 
@@ -29,9 +30,10 @@ session
     .await?;
 
 // Read a varint from the table
-let result = session.query_unpaged("SELECT a FROM keyspace.table", &[]).await?;
-let mut iter = result.rows_typed::<(BigInt,)>()?;
-while let Some((varint_value,)) = iter.next().transpose()? {
+let mut iter = session.query_iter("SELECT a FROM keyspace.table", &[])
+    .await?
+    .into_typed::<(BigInt,)>();
+while let Some((varint_value,)) = iter.try_next().await? {
     println!("{:?}", varint_value);
 }
 # Ok(())
