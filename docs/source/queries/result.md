@@ -3,6 +3,22 @@
 `Session::query_unpaged`, `Session::query_single_page`, `Session::execute_unpaged` and `Session::execute_single_page`
 return a `QueryResult` with rows represented as `Option<Vec<Row>>`.
 
+> ***Note***\
+> Using unpaged queries for SELECTs is discouraged in general.
+> Query results may be so big that it is not preferable to fetch them all at once.
+> Even with small results, if there are a lot of tombstones, then there can be similar bad consequences.
+> However, `query_unpaged` will return all results in one, possibly giant, piece
+> (unless a timeout occurs due to high load incurred by the cluster).
+> This:
+> - increases latency,
+> - has large memory footprint,
+> - puts high load on the cluster,
+> - is more likely to time out (because big work takes more time than little work,
+>   and returning one large piece of data is more work than returning one chunk of data).
+
+> To sum up, **for SELECTs** (especially those that may return a lot of data) **prefer paged queries**,
+> e.g. with `Session::query_iter()` (see [Paged queries](paged.md)).
+
 ### Basic representation
 `Row` is a basic representation of a received row. It can be used by itself, but it's a bit awkward to use:
 ```rust
