@@ -13,7 +13,8 @@ This driver supports all query types available in Scylla:
     * Run multiple queries at once
     * Can be prepared for better performance and load balancing
 * [Paged queries](paged.md)
-    * Allows to read result in multiple pages when it doesn't fit in a single response
+    * Allows to read result in multiple pages when it might be so big that one
+      prefers not to fetch it all at once
     * Can be prepared for better performance and load balancing
 
 Additionally there is special functionality to enable `USE KEYSPACE` queries:
