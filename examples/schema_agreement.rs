@@ -1,4 +1,5 @@
 use anyhow::{bail, Result};
+use futures::TryStreamExt;
 use scylla::transport::errors::QueryError;
 use scylla::transport::session::Session;
 use scylla::SessionBuilder;
@@ -66,11 +67,11 @@ async fn main() -> Result<()> {
         .await?;
 
     // Rows can be parsed as tuples
-    let result = session
-        .query_unpaged("SELECT a, b, c FROM examples_ks.schema_agreement", &[])
-        .await?;
-    let mut iter = result.rows_typed::<(i32, i32, String)>()?;
-    while let Some((a, b, c)) = iter.next().transpose()? {
+    let mut iter = session
+        .query_iter("SELECT a, b, c FROM examples_ks.schema_agreement", &[])
+        .await?
+        .into_typed::<(i32, i32, String)>();
+    while let Some((a, b, c)) = iter.try_next().await? {
         println!("a, b, c: {}, {}, {}", a, b, c);
     }
 
