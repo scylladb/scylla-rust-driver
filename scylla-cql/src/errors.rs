@@ -40,6 +40,10 @@ pub enum QueryError {
     #[error("IO Error: {0}")]
     IoError(Arc<std::io::Error>),
 
+    /// Selected node's connection pool is in invalid state.
+    #[error("No connections in the pool: {0}")]
+    ConnectionPoolError(#[from] ConnectionPoolError),
+
     /// Unexpected message received
     #[error("Protocol Error: {0}")]
     ProtocolError(&'static str),
@@ -498,6 +502,10 @@ pub enum NewSessionError {
     #[error("IO Error: {0}")]
     IoError(Arc<std::io::Error>),
 
+    /// Selected node's connection pool is in invalid state.
+    #[error("No connections in the pool: {0}")]
+    ConnectionPoolError(#[from] ConnectionPoolError),
+
     /// Unexpected message received
     #[error("Protocol Error: {0}")]
     ProtocolError(&'static str),
@@ -643,6 +651,21 @@ impl ConnectionSetupRequestError {
             error,
         }
     }
+}
+
+/// An error that occurred when selecting a node connection
+/// to perform a request on.
+#[derive(Error, Debug, Clone)]
+#[non_exhaustive]
+pub enum ConnectionPoolError {
+    #[error("The pool is broken; Last connection failed with: {last_connection_error}")]
+    Broken {
+        last_connection_error: ConnectionError,
+    },
+    #[error("Pool is still being initialized")]
+    Initializing,
+    #[error("The node has been disabled by a host filter")]
+    NodeDisabledByHostFilter,
 }
 
 #[derive(Error, Debug, Clone)]
@@ -851,6 +874,7 @@ impl From<QueryError> for NewSessionError {
             QueryError::CqlResultParseError(e) => NewSessionError::CqlResultParseError(e),
             QueryError::CqlErrorParseError(e) => NewSessionError::CqlErrorParseError(e),
             QueryError::IoError(e) => NewSessionError::IoError(e),
+            QueryError::ConnectionPoolError(e) => NewSessionError::ConnectionPoolError(e),
             QueryError::ProtocolError(m) => NewSessionError::ProtocolError(m),
             QueryError::InvalidMessage(m) => NewSessionError::InvalidMessage(m),
             QueryError::TimeoutError => NewSessionError::TimeoutError,

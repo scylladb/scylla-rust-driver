@@ -1,3 +1,4 @@
+use scylla_cql::errors::ConnectionPoolError;
 use tokio::net::lookup_host;
 use tracing::warn;
 use uuid::Uuid;
@@ -157,7 +158,7 @@ impl Node {
     pub(crate) async fn connection_for_shard(
         &self,
         shard: Shard,
-    ) -> Result<Arc<Connection>, std::io::Error> {
+    ) -> Result<Arc<Connection>, ConnectionPoolError> {
         self.get_pool()?.connection_for_shard(shard)
     }
 
@@ -186,7 +187,9 @@ impl Node {
         Ok(())
     }
 
-    pub(crate) fn get_working_connections(&self) -> Result<Vec<Arc<Connection>>, std::io::Error> {
+    pub(crate) fn get_working_connections(
+        &self,
+    ) -> Result<Vec<Arc<Connection>>, ConnectionPoolError> {
         self.get_pool()?.get_working_connections()
     }
 
@@ -196,14 +199,10 @@ impl Node {
         }
     }
 
-    fn get_pool(&self) -> Result<&NodeConnectionPool, std::io::Error> {
-        self.pool.as_ref().ok_or_else(|| {
-            std::io::Error::new(
-                std::io::ErrorKind::Other,
-                "No connections in the pool: the node has been disabled \
-                by the host filter",
-            )
-        })
+    fn get_pool(&self) -> Result<&NodeConnectionPool, ConnectionPoolError> {
+        self.pool
+            .as_ref()
+            .ok_or(ConnectionPoolError::NodeDisabledByHostFilter)
     }
 }
 

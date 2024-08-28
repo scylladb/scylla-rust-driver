@@ -2838,6 +2838,7 @@ mod latency_awareness {
                 // "fast" errors, i.e. ones that are returned quickly after the query begins
                 QueryError::BadQuery(_)
                 | QueryError::BrokenConnection(_)
+                | QueryError::ConnectionPoolError(_)
                 | QueryError::TooManyOrphanedStreamIds(_)
                 | QueryError::UnableToAllocStreamId
                 | QueryError::DbError(DbError::IsBootstrapping, _)

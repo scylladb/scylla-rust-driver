@@ -19,9 +19,8 @@ use super::NodeAddr;
 use arc_swap::ArcSwap;
 use futures::{future::RemoteHandle, stream::FuturesUnordered, Future, FutureExt, StreamExt};
 use rand::Rng;
-use scylla_cql::errors::{BrokenConnectionErrorKind, ConnectionError};
+use scylla_cql::errors::{BrokenConnectionErrorKind, ConnectionError, ConnectionPoolError};
 use std::convert::TryInto;
-use std::io::ErrorKind;
 use std::num::NonZeroUsize;
 use std::pin::Pin;
 use std::sync::{Arc, RwLock, Weak};
@@ -238,7 +237,7 @@ impl NodeConnectionPool {
     pub(crate) fn connection_for_shard(
         &self,
         shard: Shard,
-    ) -> Result<Arc<Connection>, std::io::Error> {
+    ) -> Result<Arc<Connection>, ConnectionPoolError> {
         trace!(shard = shard, "Selecting connection for shard");
         self.with_connections(|pool_conns| match pool_conns {
             PoolConnections::NotSharded(conns) => {
@@ -261,7 +260,7 @@ impl NodeConnectionPool {
         })
     }
 
-    pub(crate) fn random_connection(&self) -> Result<Arc<Connection>, std::io::Error> {
+    pub(crate) fn random_connection(&self) -> Result<Arc<Connection>, ConnectionPoolError> {
         trace!("Selecting random connection");
         self.with_connections(|pool_conns| match pool_conns {
             PoolConnections::NotSharded(conns) => {
@@ -345,7 +344,9 @@ impl NodeConnectionPool {
         }
     }
 
-    pub(crate) fn get_working_connections(&self) -> Result<Vec<Arc<Connection>>, std::io::Error> {
+    pub(crate) fn get_working_connections(
+        &self,
+    ) -> Result<Vec<Arc<Connection>>, ConnectionPoolError> {
         self.with_connections(|pool_conns| match pool_conns {
             PoolConnections::NotSharded(conns) => conns.clone(),
             PoolConnections::Sharded { connections, .. } => {
@@ -377,21 +378,14 @@ impl NodeConnectionPool {
     fn with_connections<T>(
         &self,
         f: impl FnOnce(&PoolConnections) -> T,
-    ) -> Result<T, std::io::Error> {
+    ) -> Result<T, ConnectionPoolError> {
         let conns = self.conns.load_full();
         match &*conns {
             MaybePoolConnections::Ready(pool_connections) => Ok(f(pool_connections)),
-            MaybePoolConnections::Broken(err) => Err(std::io::Error::new(
-                ErrorKind::Other,
-                format!(
-                    "No connections in the pool; last connection failed with: {}",
-                    err
-                ),
-            )),
-            MaybePoolConnections::Initializing => Err(std::io::Error::new(
-                ErrorKind::Other,
-                "No connections in the pool, pool is still being initialized",
-            )),
+            MaybePoolConnections::Broken(err) => Err(ConnectionPoolError::Broken {
+                last_connection_error: err.clone(),
+            }),
+            MaybePoolConnections::Initializing => Err(ConnectionPoolError::Initializing),
         }
     }
 }
