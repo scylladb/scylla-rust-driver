@@ -1,4 +1,5 @@
 use anyhow::Result;
+use futures::TryStreamExt;
 use scylla::macros::FromRow;
 use scylla::transport::session::Session;
 use scylla::SessionBuilder;
@@ -49,11 +50,11 @@ async fn main() -> Result<()> {
         .await?;
 
     // Rows can be parsed as tuples
-    let result = session
-        .query_unpaged("SELECT a, b, c FROM examples_ks.basic", &[])
-        .await?;
-    let mut iter = result.rows_typed::<(i32, i32, String)>()?;
-    while let Some((a, b, c)) = iter.next().transpose()? {
+    let mut iter = session
+        .query_iter("SELECT a, b, c FROM examples_ks.basic", &[])
+        .await?
+        .into_typed::<(i32, i32, String)>();
+    while let Some((a, b, c)) = iter.try_next().await? {
         println!("a, b, c: {}, {}, {}", a, b, c);
     }
 
@@ -65,20 +66,19 @@ async fn main() -> Result<()> {
         _c: String,
     }
 
-    let result = session
-        .query_unpaged("SELECT a, b, c FROM examples_ks.basic", &[])
-        .await?;
-    let mut iter = result.rows_typed::<RowData>()?;
-    while let Some(row_data) = iter.next().transpose()? {
+    let mut iter = session
+        .query_iter("SELECT a, b, c FROM examples_ks.basic", &[])
+        .await?
+        .into_typed::<RowData>();
+    while let Some(row_data) = iter.try_next().await? {
         println!("row_data: {:?}", row_data);
     }
 
     // Or simply as untyped rows
-    let result = session
-        .query_unpaged("SELECT a, b, c FROM examples_ks.basic", &[])
+    let mut iter = session
+        .query_iter("SELECT a, b, c FROM examples_ks.basic", &[])
         .await?;
-    let rows = result.rows.unwrap();
-    for row in rows {
+    while let Some(row) = iter.try_next().await? {
         let a = row.columns[0].as_ref().unwrap().as_int().unwrap();
         let b = row.columns[1].as_ref().unwrap().as_int().unwrap();
         let c = row.columns[2].as_ref().unwrap().as_text().unwrap();
