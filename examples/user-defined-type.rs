@@ -1,4 +1,5 @@
 use anyhow::Result;
+use futures::TryStreamExt;
 use scylla::macros::FromUserType;
 use scylla::{SerializeValue, Session, SessionBuilder};
 use std::env;
@@ -49,11 +50,14 @@ async fn main() -> Result<()> {
         .await?;
 
     // And read like any normal value
-    let result = session
-        .query_unpaged("SELECT my FROM examples_ks.user_defined_type_table", &[])
-        .await?;
-    let mut iter = result.rows_typed::<(MyType,)>()?;
-    while let Some((my_val,)) = iter.next().transpose()? {
+    let mut iter = session
+        .query_iter(
+            "SELECT a, b, c FROM examples_ks.user_defined_type_table",
+            &[],
+        )
+        .await?
+        .into_typed::<(MyType,)>();
+    while let Some((my_val,)) = iter.try_next().await? {
         println!("{:?}", my_val);
     }
 
