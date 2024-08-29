@@ -545,13 +545,13 @@ pub enum BadKeyspaceName {
 /// An error that appeared on a connection level.
 /// It indicated that connection can no longer be used
 /// and should be dropped.
-#[derive(Error, Debug)]
+#[derive(Error, Debug, Clone)]
 #[non_exhaustive]
 pub enum ConnectionError {
     #[error("Connect timeout elapsed")]
     ConnectTimeout,
     #[error(transparent)]
-    IoError(#[from] std::io::Error),
+    IoError(Arc<std::io::Error>),
     #[error("Could not find free source port for shard {0}")]
     NoSourcePortForShard(u32),
     #[error("Address translation failed: {0}")]
@@ -560,6 +560,12 @@ pub enum ConnectionError {
     BrokenConnection(#[from] BrokenConnectionError),
     #[error(transparent)]
     ConnectionSetupRequestError(#[from] ConnectionSetupRequestError),
+}
+
+impl From<std::io::Error> for ConnectionError {
+    fn from(value: std::io::Error) -> Self {
+        ConnectionError::IoError(Arc::new(value))
+    }
 }
 
 impl ConnectionError {
@@ -581,7 +587,7 @@ impl ConnectionError {
 
 /// An error that occurred during connection setup request execution.
 /// It indicates that request needed to initiate a connection failed.
-#[derive(Error, Debug)]
+#[derive(Error, Debug, Clone)]
 #[error("Failed to perform a connection setup request. Request: {request_kind}, reason: {error}")]
 pub struct ConnectionSetupRequestError {
     request_kind: CqlRequestKind,
@@ -590,11 +596,12 @@ pub struct ConnectionSetupRequestError {
 
 type AuthError = String;
 
-#[derive(Error, Debug)]
+#[derive(Error, Debug, Clone)]
 #[non_exhaustive]
 pub enum ConnectionSetupRequestErrorKind {
+    // TODO: Make FrameError clonable.
     #[error(transparent)]
-    FrameError(#[from] FrameError),
+    FrameError(Arc<FrameError>),
     #[error("Unable to allocate stream id")]
     UnableToAllocStreamId,
     #[error(transparent)]
@@ -621,6 +628,12 @@ pub enum ConnectionSetupRequestErrorKind {
     AuthFinishError(AuthError),
     #[error("Authentication is required. You can use SessionBuilder::user(\"user\", \"pass\") to provide credentials or SessionBuilder::authenticator_provider to provide custom authenticator")]
     MissingAuthentication,
+}
+
+impl From<FrameError> for ConnectionSetupRequestErrorKind {
+    fn from(value: FrameError) -> Self {
+        ConnectionSetupRequestErrorKind::FrameError(Arc::new(value))
+    }
 }
 
 impl ConnectionSetupRequestError {

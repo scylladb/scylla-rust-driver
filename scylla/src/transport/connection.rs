@@ -656,7 +656,7 @@ impl Connection {
             None => tokio::time::timeout(config.connect_timeout, TcpStream::connect(addr)).await,
         };
         let stream = match stream_connector {
-            Ok(stream) => stream.map_err(ConnectionError::IoError)?,
+            Ok(stream) => stream?,
             Err(_) => {
                 return Err(ConnectionError::ConnectTimeout);
             }
@@ -688,8 +688,7 @@ impl Connection {
             router_handle.clone(),
             addr.ip(),
         )
-        .await
-        .map_err(ConnectionError::IoError)?;
+        .await?;
 
         let connection = Connection {
             _worker_handle,
