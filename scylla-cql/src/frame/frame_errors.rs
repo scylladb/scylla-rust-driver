@@ -149,15 +149,15 @@ pub enum CqlResultParseError {
     ResultIdParseError(LowLevelDeserializationError),
     #[error("Unknown RESULT response id: {0}")]
     UnknownResultId(i32),
-    #[error("'Set_keyspace' response deserialization failed: {0}")]
+    #[error("RESULT:Set_keyspace response deserialization failed: {0}")]
     SetKeyspaceParseError(#[from] SetKeyspaceParseError),
     // This is an error returned during deserialization of
     // `RESULT::Schema_change` response, and not `EVENT` response.
-    #[error("'Schema_change' response deserialization failed: {0}")]
+    #[error("RESULT:Schema_change response deserialization failed: {0}")]
     SchemaChangeParseError(#[from] SchemaChangeEventParseError),
-    #[error("'Prepared' response deserialization failed: {0}")]
+    #[error("RESULT:Prepared response deserialization failed: {0}")]
     PreparedParseError(#[from] PreparedParseError),
-    #[error("'Rows' response deserialization failed: {0}")]
+    #[error("RESULT:Rows response deserialization failed: {0}")]
     RowsParseError(#[from] RowsParseError),
 }
 
