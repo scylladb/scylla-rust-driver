@@ -17,6 +17,7 @@ use crate::types::deserialize::value::{
 use crate::types::deserialize::{DeserializationError, FrameSlice};
 use bytes::{Buf, Bytes};
 use std::borrow::Cow;
+use std::sync::Arc;
 use std::{net::IpAddr, result::Result as StdResult, str};
 use uuid::Uuid;
 
@@ -431,7 +432,6 @@ pub struct ColumnSpec {
 #[derive(Debug, Clone)]
 pub struct ResultMetadata {
     col_count: usize,
-    pub paging_state: PagingStateResponse,
     pub col_specs: Vec<ColumnSpec>,
 }
 
@@ -440,8 +440,16 @@ impl ResultMetadata {
     pub fn mock_empty() -> Self {
         Self {
             col_count: 0,
-            paging_state: PagingStateResponse::NoMorePages,
             col_specs: Vec::new(),
+        }
+    }
+
+    #[inline]
+    #[doc(hidden)]
+    pub fn new_for_test(col_count: usize, col_specs: Vec<ColumnSpec>) -> Self {
+        Self {
+            col_count,
+            col_specs,
         }
     }
 }
@@ -478,7 +486,8 @@ impl Row {
 
 #[derive(Debug)]
 pub struct Rows {
-    pub metadata: ResultMetadata,
+    pub metadata: Arc<ResultMetadata>,
+    pub paging_state_response: PagingStateResponse,
     pub rows_count: usize,
     pub rows: Vec<Row>,
     /// Original size of the serialized rows.
@@ -620,7 +629,9 @@ fn deser_col_specs(
     Ok(col_specs)
 }
 
-fn deser_result_metadata(buf: &mut &[u8]) -> StdResult<ResultMetadata, ResultMetadataParseError> {
+fn deser_result_metadata(
+    buf: &mut &[u8],
+) -> StdResult<(ResultMetadata, PagingStateResponse), ResultMetadataParseError> {
     let flags = types::read_int(buf)
         .map_err(|err| ResultMetadataParseError::FlagsParseError(err.into()))?;
     let global_tables_spec = flags & 0x0001 != 0;
@@ -635,27 +646,23 @@ fn deser_result_metadata(buf: &mut &[u8]) -> StdResult<ResultMetadata, ResultMet
         .transpose()?;
     let paging_state = PagingStateResponse::new_from_raw_bytes(raw_paging_state);
 
-    if no_metadata {
-        return Ok(ResultMetadata {
-            col_count,
-            paging_state,
-            col_specs: vec![],
-        });
-    }
-
-    let global_table_spec = if global_tables_spec {
-        Some(deser_table_spec(buf)?)
+    let col_specs = if no_metadata {
+        vec![]
     } else {
-        None
+        let global_table_spec = if global_tables_spec {
+            Some(deser_table_spec(buf)?)
+        } else {
+            None
+        };
+
+        deser_col_specs(buf, &global_table_spec, col_count)?
     };
 
-    let col_specs = deser_col_specs(buf, &global_table_spec, col_count)?;
-
-    Ok(ResultMetadata {
+    let metadata = ResultMetadata {
         col_count,
-        paging_state,
         col_specs,
-    })
+    };
+    Ok((metadata, paging_state))
 }
 
 fn deser_prepared_metadata(
@@ -859,17 +866,14 @@ pub fn deser_cql_value(
 }
 
 fn deser_rows(
-    buf: &mut &[u8],
-    cached_metadata: Option<&ResultMetadata>,
+    buf_bytes: Bytes,
+    cached_metadata: Option<&Arc<ResultMetadata>>,
 ) -> StdResult<Rows, RowsParseError> {
-    let server_metadata = deser_result_metadata(buf)?;
+    let buf = &mut &*buf_bytes;
+    let (server_metadata, paging_state_response) = deser_result_metadata(buf)?;
 
     let metadata = match cached_metadata {
-        Some(cached) => ResultMetadata {
-            col_count: cached.col_count,
-            paging_state: server_metadata.paging_state,
-            col_specs: cached.col_specs.clone(),
-        },
+        Some(cached) => Arc::clone(cached),
         None => {
             // No cached_metadata provided. Server is supposed to provide the result metadata.
             if server_metadata.col_count != server_metadata.col_specs.len() {
@@ -878,7 +882,7 @@ fn deser_rows(
                     col_specs_count: server_metadata.col_specs.len(),
                 });
             }
-            server_metadata
+            Arc::new(server_metadata)
         }
     };
 
@@ -899,6 +903,7 @@ fn deser_rows(
 
     Ok(Rows {
         metadata,
+        paging_state_response,
         rows_count,
         rows,
         serialized_size: original_size - buf.len(),
@@ -919,8 +924,17 @@ fn deser_prepared(buf: &mut &[u8]) -> StdResult<Prepared, PreparedParseError> {
     buf.advance(id_len);
     let prepared_metadata =
         deser_prepared_metadata(buf).map_err(PreparedParseError::PreparedMetadataParseError)?;
-    let result_metadata =
+    let (result_metadata, paging_state_response) =
         deser_result_metadata(buf).map_err(PreparedParseError::ResultMetadataParseError)?;
+    if let PagingStateResponse::HasMorePages { state } = paging_state_response {
+        return Err(PreparedParseError::NonZeroPagingState(
+            state
+                .as_bytes_slice()
+                .cloned()
+                .unwrap_or_else(|| Arc::from([])),
+        ));
+    }
+
     Ok(Prepared {
         id,
         prepared_metadata,
@@ -935,16 +949,17 @@ fn deser_schema_change(buf: &mut &[u8]) -> StdResult<SchemaChange, SchemaChangeE
 }
 
 pub fn deserialize(
-    buf: &mut &[u8],
-    cached_metadata: Option<&ResultMetadata>,
+    buf_bytes: Bytes,
+    cached_metadata: Option<&Arc<ResultMetadata>>,
 ) -> StdResult<Result, CqlResultParseError> {
+    let buf = &mut &*buf_bytes;
     use self::Result::*;
     Ok(
         match types::read_int(buf)
             .map_err(|err| CqlResultParseError::ResultIdParseError(err.into()))?
         {
             0x0001 => Void,
-            0x0002 => Rows(deser_rows(buf, cached_metadata)?),
+            0x0002 => Rows(deser_rows(buf_bytes.slice_ref(buf), cached_metadata)?),
             0x0003 => SetKeyspace(deser_set_keyspace(buf)?),
             0x0004 => Prepared(deser_prepared(buf)?),
             0x0005 => SchemaChange(deser_schema_change(buf)?),

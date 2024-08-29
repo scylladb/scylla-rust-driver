@@ -5,6 +5,7 @@ use super::{DeserializationError, FrameSlice, TypeCheckError};
 use std::marker::PhantomData;
 
 /// Iterates over the whole result, returning rows.
+#[derive(Debug)]
 pub struct RowIterator<'frame> {
     specs: &'frame [ColumnSpec],
     remaining: usize,
@@ -76,6 +77,7 @@ impl<'frame> Iterator for RowIterator<'frame> {
 
 /// A typed version of [RowIterator] which deserializes the rows before
 /// returning them.
+#[derive(Debug)]
 pub struct TypedRowIterator<'frame, R> {
     inner: RowIterator<'frame>,
     _phantom: PhantomData<R>,

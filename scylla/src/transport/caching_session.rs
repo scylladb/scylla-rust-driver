@@ -14,6 +14,7 @@ use scylla_cql::types::serialize::batch::BatchValues;
 use scylla_cql::types::serialize::row::SerializeRow;
 use std::collections::hash_map::RandomState;
 use std::hash::BuildHasher;
+use std::sync::Arc;
 
 /// Contains just the parts of a prepared statement that were returned
 /// from the database. All remaining parts (query string, page size,
@@ -24,7 +25,7 @@ struct RawPreparedStatementData {
     id: Bytes,
     is_confirmed_lwt: bool,
     metadata: PreparedMetadata,
-    result_metadata: ResultMetadata,
+    result_metadata: Arc<ResultMetadata>,
     partitioner_name: PartitionerName,
 }
 

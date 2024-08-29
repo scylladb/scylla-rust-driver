@@ -1,13 +1,15 @@
+use std::sync::Arc;
+
 use crate::frame::response::cql_to_rust::{FromRow, FromRowError};
 use crate::frame::response::result::ColumnSpec;
 use crate::frame::response::result::Row;
 use crate::transport::session::{IntoTypedRows, TypedRowIter};
+use scylla_cql::frame::response::result::ResultMetadata;
 use thiserror::Error;
 use uuid::Uuid;
 
 /// Result of a single query\
 /// Contains all rows returned by the database and some more information
-#[non_exhaustive]
 #[derive(Debug)]
 pub struct QueryResult {
     /// Rows returned by the database.\
@@ -18,8 +20,8 @@ pub struct QueryResult {
     pub warnings: Vec<String>,
     /// CQL Tracing uuid - can only be Some if tracing is enabled for this query
     pub tracing_id: Option<Uuid>,
-    /// Column specification returned from the server
-    pub col_specs: Vec<ColumnSpec>,
+    /// Metadata returned along with this response.
+    pub(crate) metadata: Option<Arc<ResultMetadata>>,
     /// The original size of the serialized rows in request
     pub serialized_size: usize,
 }
@@ -30,7 +32,7 @@ impl QueryResult {
             rows: None,
             warnings: Vec::new(),
             tracing_id: None,
-            col_specs: Vec::new(),
+            metadata: None,
             serialized_size: 0,
         }
     }
@@ -134,9 +136,19 @@ impl QueryResult {
         Ok(self.single_row()?.into_typed::<RowT>()?)
     }
 
+    /// Returns column specifications.
+    #[inline]
+    pub fn col_specs(&self) -> &[ColumnSpec] {
+        self.metadata
+            .as_ref()
+            .map(|metadata| metadata.col_specs.as_slice())
+            .unwrap_or_default()
+    }
+
     /// Returns a column specification for a column with given name, or None if not found
+    #[inline]
     pub fn get_column_spec<'a>(&'a self, name: &str) -> Option<(usize, &'a ColumnSpec)> {
-        self.col_specs
+        self.col_specs()
             .iter()
             .enumerate()
             .find(|(_id, spec)| spec.name == name)
@@ -269,12 +281,13 @@ impl From<SingleRowError> for SingleRowTypedError {
 mod tests {
     use super::*;
     use crate::{
-        frame::response::result::{ColumnSpec, ColumnType, CqlValue, Row, TableSpec},
+        frame::response::result::{CqlValue, Row},
         test_utils::setup_tracing,
     };
     use std::convert::TryInto;
 
     use assert_matches::assert_matches;
+    use scylla_cql::frame::response::result::{ColumnType, TableSpec};
 
     // Returns specified number of rows, each one containing one int32 value.
     // Values are 0, 1, 2, 3, 4, ...
@@ -301,8 +314,8 @@ mod tests {
         rows
     }
 
-    fn make_not_rows_query_result() -> QueryResult {
-        let table_spec = TableSpec::owned("some_keyspace".to_string(), "some_table".to_string());
+    fn make_test_metadata() -> ResultMetadata {
+        let table_spec = TableSpec::borrowed("some_keyspace", "some_table");
 
         let column_spec = ColumnSpec {
             table_spec,
@@ -310,11 +323,15 @@ mod tests {
             typ: ColumnType::Int,
         };
 
+        ResultMetadata::new_for_test(1, vec![column_spec])
+    }
+
+    fn make_not_rows_query_result() -> QueryResult {
         QueryResult {
             rows: None,
             warnings: vec![],
             tracing_id: None,
-            col_specs: vec![column_spec],
+            metadata: None,
             serialized_size: 0,
         }
     }
@@ -322,12 +339,14 @@ mod tests {
     fn make_rows_query_result(rows_num: usize) -> QueryResult {
         let mut res = make_not_rows_query_result();
         res.rows = Some(make_rows(rows_num));
+        res.metadata = Some(Arc::new(make_test_metadata()));
         res
     }
 
     fn make_string_rows_query_result(rows_num: usize) -> QueryResult {
         let mut res = make_not_rows_query_result();
         res.rows = Some(make_string_rows(rows_num));
+        res.metadata = Some(Arc::new(make_test_metadata()));
         res
     }
 

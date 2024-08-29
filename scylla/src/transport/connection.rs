@@ -267,14 +267,14 @@ impl NonErrorQueryResponse {
     pub(crate) fn into_query_result_and_paging_state(
         self,
     ) -> Result<(QueryResult, PagingStateResponse), QueryError> {
-        let (rows, paging_state, col_specs, serialized_size) = match self.response {
+        let (rows, paging_state, metadata, serialized_size) = match self.response {
             NonErrorResponse::Result(result::Result::Rows(rs)) => (
                 Some(rs.rows),
-                rs.metadata.paging_state,
-                rs.metadata.col_specs,
+                rs.paging_state_response,
+                Some(rs.metadata),
                 rs.serialized_size,
             ),
-            NonErrorResponse::Result(_) => (None, PagingStateResponse::NoMorePages, vec![], 0),
+            NonErrorResponse::Result(_) => (None, PagingStateResponse::NoMorePages, None, 0),
             _ => {
                 return Err(QueryError::ProtocolError(
                     "Unexpected server response, expected Result or Error",
@@ -287,7 +287,7 @@ impl NonErrorQueryResponse {
                 rows,
                 warnings: self.warnings,
                 tracing_id: self.tracing_id,
-                col_specs,
+                metadata,
                 serialized_size,
             },
             paging_state,
@@ -778,7 +778,7 @@ impl Connection {
                     .protocol_features
                     .prepared_flags_contain_lwt_mark(p.prepared_metadata.flags as u32),
                 p.prepared_metadata,
-                p.result_metadata,
+                Arc::new(p.result_metadata),
                 query.contents.clone(),
                 query.get_validated_page_size(),
                 query.config.clone(),
@@ -1273,7 +1273,7 @@ impl Connection {
         request: &impl SerializableRequest,
         compress: bool,
         tracing: bool,
-        cached_metadata: Option<&ResultMetadata>,
+        cached_metadata: Option<&Arc<ResultMetadata>>,
     ) -> Result<QueryResponse, QueryError> {
         let compression = if compress {
             self.config.compression
@@ -1298,7 +1298,7 @@ impl Connection {
         task_response: TaskResponse,
         compression: Option<Compression>,
         features: &ProtocolFeatures,
-        cached_metadata: Option<&ResultMetadata>,
+        cached_metadata: Option<&Arc<ResultMetadata>>,
     ) -> Result<QueryResponse, QueryError> {
         let body_with_ext = frame::parse_response_body_extensions(
             task_response.params.flags,
@@ -1316,7 +1316,7 @@ impl Connection {
         let response = Response::deserialize(
             features,
             task_response.opcode,
-            &mut &*body_with_ext.body,
+            body_with_ext.body,
             cached_metadata,
         )?;
 

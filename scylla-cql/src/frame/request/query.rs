@@ -242,6 +242,14 @@ impl PagingStateResponse {
             Self::NoMorePages => ControlFlow::Break(()),
         }
     }
+
+    /// Swaps the paging state response with PagingStateResponse::NoMorePages.
+    ///
+    /// Only for use in driver's inner code, as an optimisation.
+    #[doc(hidden)]
+    pub fn take(&mut self) -> Self {
+        std::mem::replace(self, Self::NoMorePages)
+    }
 }
 
 /// The state of a paged query, i.e. where to resume fetching result rows

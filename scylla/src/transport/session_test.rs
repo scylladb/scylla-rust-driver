@@ -1056,7 +1056,7 @@ async fn test_tracing_query_iter(session: &Session, ks: String) {
     assert!(untraced_row_iter.get_tracing_ids().is_empty());
 
     // The same is true for TypedRowIter
-    let untraced_typed_row_iter = untraced_row_iter.into_typed::<(i32,)>();
+    let untraced_typed_row_iter = untraced_row_iter.into_typed::<(String,)>();
     assert!(untraced_typed_row_iter.get_tracing_ids().is_empty());
 
     // A query with tracing enabled has a tracing ids in result
@@ -1071,7 +1071,7 @@ async fn test_tracing_query_iter(session: &Session, ks: String) {
     assert!(!traced_row_iter.get_tracing_ids().is_empty());
 
     // The same is true for TypedRowIter
-    let traced_typed_row_iter = traced_row_iter.into_typed::<(i32,)>();
+    let traced_typed_row_iter = traced_row_iter.into_typed::<(String,)>();
     assert!(!traced_typed_row_iter.get_tracing_ids().is_empty());
 
     for tracing_id in traced_typed_row_iter.get_tracing_ids() {
@@ -1094,7 +1094,7 @@ async fn test_tracing_execute_iter(session: &Session, ks: String) {
     assert!(untraced_row_iter.get_tracing_ids().is_empty());
 
     // The same is true for TypedRowIter
-    let untraced_typed_row_iter = untraced_row_iter.into_typed::<(i32,)>();
+    let untraced_typed_row_iter = untraced_row_iter.into_typed::<(String,)>();
     assert!(untraced_typed_row_iter.get_tracing_ids().is_empty());
 
     // A prepared statement with tracing enabled has a tracing ids in result
@@ -1112,7 +1112,7 @@ async fn test_tracing_execute_iter(session: &Session, ks: String) {
     assert!(!traced_row_iter.get_tracing_ids().is_empty());
 
     // The same is true for TypedRowIter
-    let traced_typed_row_iter = traced_row_iter.into_typed::<(i32,)>();
+    let traced_typed_row_iter = traced_row_iter.into_typed::<(String,)>();
     assert!(!traced_typed_row_iter.get_tracing_ids().is_empty());
 
     for tracing_id in traced_typed_row_iter.get_tracing_ids() {
@@ -2570,7 +2570,7 @@ async fn test_batch_lwts() {
     let batch_res: QueryResult = session.batch(&batch, ((), (), ())).await.unwrap();
 
     // Scylla returns 5 columns, but Cassandra returns only 1
-    let is_scylla: bool = batch_res.col_specs.len() == 5;
+    let is_scylla: bool = batch_res.col_specs().len() == 5;
 
     if is_scylla {
         test_batch_lwts_for_scylla(&session, &batch, batch_res).await;

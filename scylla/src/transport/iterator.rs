@@ -410,9 +410,12 @@ impl RowIterator {
 mod checked_channel_sender {
     use scylla_cql::{
         errors::QueryError,
-        frame::response::result::{ResultMetadata, Rows},
+        frame::{
+            request::query::PagingStateResponse,
+            response::result::{ResultMetadata, Rows},
+        },
     };
-    use std::marker::PhantomData;
+    use std::{marker::PhantomData, sync::Arc};
     use tokio::sync::mpsc;
     use uuid::Uuid;
 
@@ -453,7 +456,8 @@ mod checked_channel_sender {
         ) {
             let empty_page = ReceivedPage {
                 rows: Rows {
-                    metadata: ResultMetadata::mock_empty(),
+                    metadata: Arc::new(ResultMetadata::mock_empty()),
+                    paging_state_response: PagingStateResponse::NoMorePages,
                     rows_count: 0,
                     rows: Vec::new(),
                     serialized_size: 0,
@@ -660,7 +664,7 @@ where
 
         match query_response {
             Ok(NonErrorQueryResponse {
-                response: NonErrorResponse::Result(result::Result::Rows(rows)),
+                response: NonErrorResponse::Result(result::Result::Rows(mut rows)),
                 tracing_id,
                 ..
             }) => {
@@ -671,9 +675,9 @@ where
                     .load_balancing_policy
                     .on_query_success(&self.statement_info, elapsed, node);
 
-                request_span.record_rows_fields(&rows);
+                let paging_state_response = rows.paging_state_response.take();
 
-                let paging_state_response = rows.metadata.paging_state.clone();
+                request_span.record_rows_fields(&rows);
 
                 let received_page = ReceivedPage { rows, tracing_id };
 
@@ -840,8 +844,8 @@ where
             let result = (self.fetcher)(paging_state).await?;
             let response = result.into_non_error_query_response()?;
             match response.response {
-                NonErrorResponse::Result(result::Result::Rows(rows)) => {
-                    let paging_state_response = rows.metadata.paging_state.clone();
+                NonErrorResponse::Result(result::Result::Rows(mut rows)) => {
+                    let paging_state_response = rows.paging_state_response.take();
 
                     let (proof, send_result) = self
                         .sender

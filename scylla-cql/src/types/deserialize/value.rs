@@ -670,6 +670,15 @@ impl<'frame, T> ListlikeIterator<'frame, T> {
             phantom_data: std::marker::PhantomData,
         }
     }
+
+    fn empty(coll_typ: &'frame ColumnType, elem_typ: &'frame ColumnType) -> Self {
+        Self {
+            coll_typ,
+            elem_typ,
+            raw_iter: FixedLengthBytesSequenceIterator::empty(),
+            phantom_data: std::marker::PhantomData,
+        }
+    }
 }
 
 impl<'frame, T> DeserializeValue<'frame> for ListlikeIterator<'frame, T>
@@ -699,7 +708,19 @@ where
         typ: &'frame ColumnType,
         v: Option<FrameSlice<'frame>>,
     ) -> Result<Self, DeserializationError> {
-        let mut v = ensure_not_null_frame_slice::<Self>(typ, v)?;
+        let elem_typ = match typ {
+            ColumnType::List(elem_typ) | ColumnType::Set(elem_typ) => elem_typ,
+            _ => {
+                unreachable!("Typecheck should have prevented this scenario!")
+            }
+        };
+
+        let mut v = if let Some(v) = v {
+            v
+        } else {
+            return Ok(Self::empty(typ, elem_typ));
+        };
+
         let count = types::read_int_length(v.as_slice_mut()).map_err(|err| {
             mk_deser_err::<Self>(
                 typ,
@@ -708,12 +729,7 @@ where
                 ),
             )
         })?;
-        let elem_typ = match typ {
-            ColumnType::List(elem_typ) | ColumnType::Set(elem_typ) => elem_typ,
-            _ => {
-                unreachable!("Typecheck should have prevented this scenario!")
-            }
-        };
+
         Ok(Self::new(typ, elem_typ, count, v))
     }
 }
@@ -849,6 +865,21 @@ impl<'frame, K, V> MapIterator<'frame, K, V> {
             phantom_data_v: std::marker::PhantomData,
         }
     }
+
+    fn empty(
+        coll_typ: &'frame ColumnType,
+        k_typ: &'frame ColumnType,
+        v_typ: &'frame ColumnType,
+    ) -> Self {
+        Self {
+            coll_typ,
+            k_typ,
+            v_typ,
+            raw_iter: FixedLengthBytesSequenceIterator::empty(),
+            phantom_data_k: std::marker::PhantomData,
+            phantom_data_v: std::marker::PhantomData,
+        }
+    }
 }
 
 impl<'frame, K, V> DeserializeValue<'frame> for MapIterator<'frame, K, V>
@@ -875,7 +906,19 @@ where
         typ: &'frame ColumnType,
         v: Option<FrameSlice<'frame>>,
     ) -> Result<Self, DeserializationError> {
-        let mut v = ensure_not_null_frame_slice::<Self>(typ, v)?;
+        let (k_typ, v_typ) = match typ {
+            ColumnType::Map(k_t, v_t) => (k_t, v_t),
+            _ => {
+                unreachable!("Typecheck should have prevented this scenario!")
+            }
+        };
+
+        let mut v = if let Some(v) = v {
+            v
+        } else {
+            return Ok(Self::empty(typ, k_typ, v_typ));
+        };
+
         let count = types::read_int_length(v.as_slice_mut()).map_err(|err| {
             mk_deser_err::<Self>(
                 typ,
@@ -884,12 +927,7 @@ where
                 ),
             )
         })?;
-        let (k_typ, v_typ) = match typ {
-            ColumnType::Map(k_t, v_t) => (k_t, v_t),
-            _ => {
-                unreachable!("Typecheck should have prevented this scenario!")
-            }
-        };
+
         Ok(Self::new(typ, k_typ, v_typ, 2 * count, v))
     }
 }
@@ -1273,6 +1311,13 @@ impl<'frame> FixedLengthBytesSequenceIterator<'frame> {
         Self {
             slice,
             remaining: count,
+        }
+    }
+
+    fn empty() -> Self {
+        Self {
+            slice: FrameSlice::new_empty(),
+            remaining: 0,
         }
     }
 }
