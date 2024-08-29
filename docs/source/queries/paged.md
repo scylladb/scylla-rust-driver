@@ -80,7 +80,7 @@ On a `Query`:
 use scylla::query::Query;
 
 let mut query: Query = Query::new("SELECT a, b FROM ks.t");
-query.set_page_size(16.try_into().unwrap());
+query.set_page_size(16);
 
 let _ = session.query_iter(query, &[]).await?; // ...
 # Ok(())
@@ -99,7 +99,7 @@ let mut prepared: PreparedStatement = session
     .prepare("SELECT a, b FROM ks.t")
     .await?;
 
-prepared.set_page_size(16.try_into().unwrap());
+prepared.set_page_size(16);
 
 let _ = session.execute_iter(prepared, &[]).await?; // ...
 # Ok(())
@@ -121,7 +121,7 @@ use scylla::query::Query;
 use scylla::statement::{PagingState, PagingStateResponse};
 use std::ops::ControlFlow;
 
-let paged_query = Query::new("SELECT a, b, c FROM ks.t").with_page_size(6.try_into().unwrap());
+let paged_query = Query::new("SELECT a, b, c FROM ks.t").with_page_size(6);
 
 let mut paging_state = PagingState::start();
 loop {
@@ -165,7 +165,7 @@ use scylla::statement::{PagingState, PagingStateResponse};
 use std::ops::ControlFlow;
 
 let paged_prepared = session
-    .prepare(Query::new("SELECT a, b, c FROM ks.t").with_page_size(7.try_into().unwrap()))
+    .prepare(Query::new("SELECT a, b, c FROM ks.t").with_page_size(7))
     .await?;
 
 let mut paging_state = PagingState::start();
