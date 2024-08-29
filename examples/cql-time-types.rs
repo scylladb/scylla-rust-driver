@@ -3,6 +3,7 @@
 
 use anyhow::Result;
 use chrono::{DateTime, NaiveDate, NaiveTime, Utc};
+use futures::{StreamExt, TryStreamExt};
 use scylla::frame::response::result::CqlValue;
 use scylla::frame::value::{CqlDate, CqlTime, CqlTimestamp};
 use scylla::transport::session::Session;
@@ -40,11 +41,12 @@ async fn main() -> Result<()> {
         )
         .await?;
 
-    let result = session
-        .query_unpaged("SELECT d from examples_ks.dates", &[])
-        .await?;
-    for row in result.rows_typed::<(NaiveDate,)>()? {
-        let (read_date,): (NaiveDate,) = match row {
+    let mut iter = session
+        .query_iter("SELECT d from examples_ks.dates", &[])
+        .await?
+        .into_typed::<(NaiveDate,)>();
+    while let Some(row_result) = iter.next().await {
+        let (read_date,): (NaiveDate,) = match row_result {
             Ok(read_date) => read_date,
             Err(_) => continue, // We might read a date that does not fit in NaiveDate, skip it
         };
@@ -61,11 +63,12 @@ async fn main() -> Result<()> {
         .query_unpaged("INSERT INTO examples_ks.dates (d) VALUES (?)", (time_date,))
         .await?;
 
-    let result = session
-        .query_unpaged("SELECT d from examples_ks.dates", &[])
-        .await?;
-    for row in result.rows_typed::<(time::Date,)>()? {
-        let (read_date,) = match row {
+    let mut iter = session
+        .query_iter("SELECT d from examples_ks.dates", &[])
+        .await?
+        .into_typed::<(time::Date,)>();
+    while let Some(row_result) = iter.next().await {
+        let (read_date,): (time::Date,) = match row_result {
             Ok(read_date) => read_date,
             Err(_) => continue, // We might read a date that does not fit in time::Date, skip it
         };
@@ -82,13 +85,13 @@ async fn main() -> Result<()> {
         )
         .await?;
 
-    let result = session
-        .query_unpaged("SELECT d from examples_ks.dates", &[])
-        .await?;
-    let mut iter = result.rows_typed::<(CqlValue,)>()?;
-    while let Some((value,)) = iter.next().transpose()? {
-        let read_days: u32 = match value {
-            CqlValue::Date(CqlDate(days)) => days,
+    let mut iter = session
+        .query_iter("SELECT d from examples_ks.dates", &[])
+        .await?
+        .into_typed::<(CqlValue,)>();
+    while let Some(row_result) = iter.next().await {
+        let read_days: u32 = match row_result {
+            Ok((CqlValue::Date(CqlDate(days)),)) => days,
             _ => panic!("oh no"),
         };
 
@@ -118,11 +121,11 @@ async fn main() -> Result<()> {
         )
         .await?;
 
-    let result = session
-        .query_unpaged("SELECT t from examples_ks.times", &[])
-        .await?;
-    let mut iter = result.rows_typed::<(NaiveTime,)>()?;
-    while let Some((read_time,)) = iter.next().transpose()? {
+    let mut iter = session
+        .query_iter("SELECT d from examples_ks.times", &[])
+        .await?
+        .into_typed::<(NaiveTime,)>();
+    while let Some((read_time,)) = iter.try_next().await? {
         println!("Parsed a time into chrono::NaiveTime: {:?}", read_time);
     }
 
@@ -133,11 +136,11 @@ async fn main() -> Result<()> {
         .query_unpaged("INSERT INTO examples_ks.times (t) VALUES (?)", (time_time,))
         .await?;
 
-    let result = session
-        .query_unpaged("SELECT t from examples_ks.times", &[])
-        .await?;
-    let mut iter = result.rows_typed::<(time::Time,)>()?;
-    while let Some((read_time,)) = iter.next().transpose()? {
+    let mut iter = session
+        .query_iter("SELECT d from examples_ks.times", &[])
+        .await?
+        .into_typed::<(time::Time,)>();
+    while let Some((read_time,)) = iter.try_next().await? {
         println!("Parsed a time into time::Time: {:?}", read_time);
     }
 
@@ -148,11 +151,11 @@ async fn main() -> Result<()> {
         .query_unpaged("INSERT INTO examples_ks.times (t) VALUES (?)", (time_time,))
         .await?;
 
-    let result = session
-        .query_unpaged("SELECT t from examples_ks.times", &[])
-        .await?;
-    let mut iter = result.rows_typed::<(CqlTime,)>()?;
-    while let Some((read_time,)) = iter.next().transpose()? {
+    let mut iter = session
+        .query_iter("SELECT d from examples_ks.times", &[])
+        .await?
+        .into_typed::<(CqlTime,)>();
+    while let Some((read_time,)) = iter.try_next().await? {
         println!("Read a time as raw nanos: {:?}", read_time);
     }
 
@@ -179,11 +182,11 @@ async fn main() -> Result<()> {
         )
         .await?;
 
-    let result = session
-        .query_unpaged("SELECT t from examples_ks.timestamps", &[])
-        .await?;
-    let mut iter = result.rows_typed::<(DateTime<Utc>,)>()?;
-    while let Some((read_time,)) = iter.next().transpose()? {
+    let mut iter = session
+        .query_iter("SELECT d from examples_ks.timestamps", &[])
+        .await?
+        .into_typed::<(DateTime<Utc>,)>();
+    while let Some((read_time,)) = iter.try_next().await? {
         println!(
             "Parsed a timestamp into chrono::DateTime<chrono::Utc>: {:?}",
             read_time
@@ -200,11 +203,11 @@ async fn main() -> Result<()> {
         )
         .await?;
 
-    let result = session
-        .query_unpaged("SELECT t from examples_ks.timestamps", &[])
-        .await?;
-    let mut iter = result.rows_typed::<(time::OffsetDateTime,)>()?;
-    while let Some((read_time,)) = iter.next().transpose()? {
+    let mut iter = session
+        .query_iter("SELECT d from examples_ks.timestamps", &[])
+        .await?
+        .into_typed::<(time::OffsetDateTime,)>();
+    while let Some((read_time,)) = iter.try_next().await? {
         println!(
             "Parsed a timestamp into time::OffsetDateTime: {:?}",
             read_time
@@ -221,11 +224,11 @@ async fn main() -> Result<()> {
         )
         .await?;
 
-    let result = session
-        .query_unpaged("SELECT t from examples_ks.timestamps", &[])
-        .await?;
-    let mut iter = result.rows_typed::<(CqlTimestamp,)>()?;
-    while let Some((read_time,)) = iter.next().transpose()? {
+    let mut iter = session
+        .query_iter("SELECT d from examples_ks.timestamps", &[])
+        .await?
+        .into_typed::<(CqlTimestamp,)>();
+    while let Some((read_time,)) = iter.try_next().await? {
         println!("Read a timestamp as raw millis: {:?}", read_time);
     }
 
