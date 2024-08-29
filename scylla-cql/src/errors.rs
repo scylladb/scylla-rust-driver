@@ -792,12 +792,6 @@ impl std::fmt::Display for WriteType {
     }
 }
 
-impl From<std::io::Error> for QueryError {
-    fn from(io_error: std::io::Error) -> QueryError {
-        QueryError::IoError(Arc::new(io_error))
-    }
-}
-
 impl From<SerializeValuesError> for QueryError {
     fn from(serialized_err: SerializeValuesError) -> QueryError {
         QueryError::BadQuery(BadQuery::SerializeValuesError(serialized_err))
