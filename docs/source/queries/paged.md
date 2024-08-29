@@ -2,9 +2,31 @@
 Sometimes query results might be so big that one prefers not to fetch them all at once,
 e.g. to reduce latency and/or memory footprint.
 Paged queries allow to receive the whole result page by page, with a configurable page size.
+In fact, most SELECTs queries should be done with paging, to avoid big load on cluster and large memory footprint.
 
-`Session::query_iter` and `Session::execute_iter` take a [simple query](simple.md)
-or a [prepared query](prepared.md) and return an `async` iterator over result `Rows`.
+> ***Warning***\
+> Issuing unpaged SELECTs (`Session::query_unpaged` or `Session::execute_unpaged`)
+> may have dramatic performance consequences! **BEWARE!**\
+> If the result set is big (or, e.g., there are a lot of tombstones), those atrocities can happen:
+> - cluster may experience high load,
+> - queries may time out,
+> - the driver may devour a lot of RAM,
+> - latency will likely spike.
+>
+> Stay safe. Page your SELECTs.
+
+## `RowIterator`
+
+The automated way to achieve that is `RowIterator`. It always fetches and enables access to one page,
+while prefetching the next one. This limits latency and is a convenient abstraction.
+
+> ***Note***\
+> `RowIterator` is quite heavy machinery, introducing considerable overhead. Therefore,
+> don't use it for statements that do not benefit from paging. In particular, avoid using it
+> for non-SELECTs.
+
+On API level, `Session::query_iter` and `Session::execute_iter` take a [simple query](simple.md)
+or a [prepared query](prepared.md), respectively, and return an `async` iterator over result `Rows`.
 
 > ***Warning***\
 > In case of unprepared variant (`Session::query_iter`) if the values are not empty
@@ -22,7 +44,6 @@ Use `query_iter` to perform a [simple query](simple.md) with paging:
 # use scylla::Session;
 # use std::error::Error;
 # async fn check_only_compiles(session: &Session) -> Result<(), Box<dyn Error>> {
-use scylla::IntoTypedRows;
 use futures::stream::StreamExt;
 
 let mut rows_stream = session
@@ -45,7 +66,6 @@ Use `execute_iter` to perform a [prepared query](prepared.md) with paging:
 # use scylla::Session;
 # use std::error::Error;
 # async fn check_only_compiles(session: &Session) -> Result<(), Box<dyn Error>> {
-use scylla::IntoTypedRows;
 use scylla::prepared_statement::PreparedStatement;
 use futures::stream::StreamExt;
 
@@ -106,10 +126,10 @@ let _ = session.execute_iter(prepared, &[]).await?; // ...
 # }
 ```
 
-### Passing the paging state manually
-It's possible to fetch a single page from the table, extract the paging state
-from the result and manually pass it to the next query. That way, the next
-query will start fetching the results from where the previous one left off.
+## Manual paging
+It's possible to fetch a single page from the table, and manually pass paging state
+to the next query. That way, the next query will start fetching the results
+from where the previous one left off.
 
 On a `Query`:
 ```rust
@@ -197,5 +217,18 @@ loop {
 ```
 
 ### Performance
-Performance is the same as in non-paged variants.\
 For the best performance use [prepared queries](prepared.md).
+See [query types overview](queries.md).
+
+## Best practices
+
+| Query result fetching   | Unpaged                                                                                                                 | Paged manually                                                                                       | Paged automatically                                                                               |
+|-------------------------|-------------------------------------------------------------------------------------------------------------------------|------------------------------------------------------------------------------------------------------|---------------------------------------------------------------------------------------------------|
+| Exposed Session API     | `{query,execute}_unpaged`                                                                                               | `{query,execute}_single_page`                                                                        | `{query,execute}_iter`                                                                            |
+| Working                 | get all results in a single CQL frame, into a single Rust struct                                                        | get one page of results in a single CQL frame, into a single Rust struct                             | upon high-level iteration, fetch consecutive CQL frames and transparently iterate over their rows |
+| Cluster load            | potentially **HIGH** for large results, beware!                                                                         | normal                                                                                               | normal                                                                                            |
+| Driver overhead         | low - simple frame fetch                                                                                                | low - simple frame fetch                                                                             | considerable - `RowIteratorWorker` is a separate tokio task                                       |
+| Feature limitations     | none                                                                                                                    | none                                                                                                 | speculative execution not supported                                                               |
+| Driver memory footprint | potentially **BIG** - all results have to be stored at once!                                                            | small - only one page stored at a time                                                               | small - at most constant number of pages stored at a time                                         |
+| Latency                 | potentially **BIG** - all results have to be generated at once!                                                         | considerable on page boundary - new page needs to be fetched                                         | small - next page is always pre-fetched in background                                             |
+| Suitable operations     | - in general: operations with empty result set (non-SELECTs)</br> - as possible optimisation: SELECTs with LIMIT clause | - for advanced users who prefer more control over paging, with less overhead of `RowIteratorWorker`  | - in general: all SELECTs                                                                         |
