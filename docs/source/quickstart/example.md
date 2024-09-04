@@ -5,7 +5,9 @@ Here is a small example:
 ```rust
 # extern crate scylla;
 # extern crate tokio;
-use scylla::{IntoTypedRows, Session, SessionBuilder};
+# extern crate futures;
+use futures::TryStreamExt;
+use scylla::{Session, SessionBuilder};
 use std::error::Error;
 
 #[tokio::main]
@@ -43,9 +45,10 @@ async fn main() -> Result<(), Box<dyn Error>> {
         .await?;
 
     // Query rows from the table and print them
-    let result = session.query_unpaged("SELECT a FROM ks.extab", &[]).await?;
-    let mut iter = result.rows_typed::<(i32,)>()?;
-    while let Some(read_row) = iter.next().transpose()? {
+    let mut iter = session.query_iter("SELECT a FROM ks.extab", &[])
+        .await?
+        .into_typed::<(i32,)>();
+    while let Some(read_row) = iter.try_next().await? {
         println!("Read a value from row: {}", read_row.0);
     }
 

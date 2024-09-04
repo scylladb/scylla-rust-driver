@@ -6,10 +6,11 @@
 
 ```rust
 # extern crate scylla;
+# extern crate futures;
 # use scylla::Session;
 # use std::error::Error;
 # async fn check_only_compiles(session: &Session) -> Result<(), Box<dyn Error>> {
-use scylla::IntoTypedRows;
+use futures::TryStreamExt;
 
 // Insert a bool into the table
 let to_insert: bool = true;
@@ -18,10 +19,11 @@ session
     .await?;
 
 // Read a bool from the table
-let result = session.query_unpaged("SELECT a FROM keyspace.table", &[]).await?;
-let mut iter = result.rows_typed::<(bool,)>()?;
-while let Some((bool_value,)) = iter.next().transpose()? {
-    println!("{}", bool_value);
+let mut iter = session.query_iter("SELECT a FROM keyspace.table", &[])
+    .await?
+    .into_typed::<(bool,)>();
+while let Some((bool_value,)) = iter.try_next().await? {
+    println!("{:?}", bool_value);
 }
 # Ok(())
 # }
@@ -33,10 +35,11 @@ while let Some((bool_value,)) = iter.next().transpose()? {
 
 ```rust
 # extern crate scylla;
+# extern crate futures;
 # use scylla::Session;
 # use std::error::Error;
 # async fn check_only_compiles(session: &Session) -> Result<(), Box<dyn Error>> {
-use scylla::IntoTypedRows;
+use futures::TryStreamExt;
 
 // Insert a tinyint into the table
 let to_insert: i8 = 123;
@@ -45,9 +48,10 @@ session
     .await?;
 
 // Read a tinyint from the table
-let result = session.query_unpaged("SELECT a FROM keyspace.table", &[]).await?;
-let mut iter = result.rows_typed::<(i8,)>()?;
-while let Some((tinyint_value,)) = iter.next().transpose()? {
+let mut iter = session.query_iter("SELECT a FROM keyspace.table", &[])
+    .await?
+    .into_typed::<(i8,)>();
+while let Some((tinyint_value,)) = iter.try_next().await? {
     println!("{:?}", tinyint_value);
 }
 # Ok(())
@@ -60,10 +64,11 @@ while let Some((tinyint_value,)) = iter.next().transpose()? {
 
 ```rust
 # extern crate scylla;
+# extern crate futures;
 # use scylla::Session;
 # use std::error::Error;
 # async fn check_only_compiles(session: &Session) -> Result<(), Box<dyn Error>> {
-use scylla::IntoTypedRows;
+use futures::TryStreamExt;
 
 // Insert a smallint into the table
 let to_insert: i16 = 12345;
@@ -72,9 +77,10 @@ session
     .await?;
 
 // Read a smallint from the table
-let result = session.query_unpaged("SELECT a FROM keyspace.table", &[]).await?;
-let mut iter = result.rows_typed::<(i16,)>()?;
-while let Some((smallint_value,)) = iter.next().transpose()? {
+let mut iter = session.query_iter("SELECT a FROM keyspace.table", &[])
+    .await?
+    .into_typed::<(i16,)>();
+while let Some((smallint_value,)) = iter.try_next().await? {
     println!("{}", smallint_value);
 }
 # Ok(())
@@ -87,10 +93,11 @@ while let Some((smallint_value,)) = iter.next().transpose()? {
 
 ```rust
 # extern crate scylla;
+# extern crate futures;
 # use scylla::Session;
 # use std::error::Error;
 # async fn check_only_compiles(session: &Session) -> Result<(), Box<dyn Error>> {
-use scylla::IntoTypedRows;
+use futures::TryStreamExt;
 
 // Insert an int into the table
 let to_insert: i32 = 12345;
@@ -99,9 +106,10 @@ session
     .await?;
 
 // Read an int from the table
-let result = session.query_unpaged("SELECT a FROM keyspace.table", &[]).await?;
-let mut iter = result.rows_typed::<(i32,)>()?;
-while let Some((int_value,)) = iter.next().transpose()? {
+let mut iter = session.query_iter("SELECT a FROM keyspace.table", &[])
+    .await?
+    .into_typed::<(i32,)>();
+while let Some((int_value,)) = iter.try_next().await? {
     println!("{}", int_value);
 }
 # Ok(())
@@ -114,10 +122,11 @@ while let Some((int_value,)) = iter.next().transpose()? {
 
 ```rust
 # extern crate scylla;
+# extern crate futures;
 # use scylla::Session;
 # use std::error::Error;
 # async fn check_only_compiles(session: &Session) -> Result<(), Box<dyn Error>> {
-use scylla::IntoTypedRows;
+use futures::TryStreamExt;
 
 // Insert a bigint into the table
 let to_insert: i64 = 12345;
@@ -126,9 +135,10 @@ session
     .await?;
 
 // Read a bigint from the table
-let result = session.query_unpaged("SELECT a FROM keyspace.table", &[]).await?;
-let mut iter = result.rows_typed::<(i64,)>()?;
-while let Some((bigint_value,)) = iter.next().transpose()? {
+let mut iter = session.query_iter("SELECT a FROM keyspace.table", &[])
+    .await?
+    .into_typed::<(i64,)>();
+while let Some((bigint_value,)) = iter.try_next().await? {
     println!("{:?}", bigint_value);
 }
 # Ok(())
@@ -141,10 +151,11 @@ while let Some((bigint_value,)) = iter.next().transpose()? {
 
 ```rust
 # extern crate scylla;
+# extern crate futures;
 # use scylla::Session;
 # use std::error::Error;
 # async fn check_only_compiles(session: &Session) -> Result<(), Box<dyn Error>> {
-use scylla::IntoTypedRows;
+use futures::TryStreamExt;
 
 // Insert a float into the table
 let to_insert: f32 = 123.0;
@@ -153,9 +164,10 @@ session
     .await?;
 
 // Read a float from the table
-let result = session.query_unpaged("SELECT a FROM keyspace.table", &[]).await?;
-let mut iter = result.rows_typed::<(f32,)>()?;
-while let Some((float_value,)) = iter.next().transpose()? {
+let mut iter = session.query_iter("SELECT a FROM keyspace.table", &[])
+    .await?
+    .into_typed::<(f32,)>();
+while let Some((float_value,)) = iter.try_next().await? {
     println!("{:?}", float_value);
 }
 # Ok(())
@@ -168,10 +180,11 @@ while let Some((float_value,)) = iter.next().transpose()? {
 
 ```rust
 # extern crate scylla;
+# extern crate futures;
 # use scylla::Session;
 # use std::error::Error;
 # async fn check_only_compiles(session: &Session) -> Result<(), Box<dyn Error>> {
-use scylla::IntoTypedRows;
+use futures::TryStreamExt;
 
 // Insert a double into the table
 let to_insert: f64 = 12345.0;
@@ -180,9 +193,10 @@ session
     .await?;
 
 // Read a double from the table
-let result = session.query_unpaged("SELECT a FROM keyspace.table", &[]).await?;
-let mut iter = result.rows_typed::<(f64,)>()?;
-while let Some((double_value,)) = iter.next().transpose()? {
+let mut iter = session.query_iter("SELECT a FROM keyspace.table", &[])
+    .await?
+    .into_typed::<(f64,)>();
+while let Some((double_value,)) = iter.try_next().await? {
     println!("{:?}", double_value);
 }
 # Ok(())

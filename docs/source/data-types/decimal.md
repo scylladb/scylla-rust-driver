@@ -7,10 +7,11 @@ Without any feature flags, the user can interact with `decimal` type by making u
 
 ```rust
 # extern crate scylla;
+# extern crate futures;
 # use scylla::Session;
 # use std::error::Error;
 # async fn check_only_compiles(session: &Session) -> Result<(), Box<dyn Error>> {
-use scylla::IntoTypedRows;
+use futures::TryStreamExt;
 use scylla::frame::value::CqlDecimal;
 use std::str::FromStr;
 
@@ -22,10 +23,11 @@ session
     .await?;
 
 // Read a decimal from the table
-if let Some(rows) = session.query_unpaged("SELECT a FROM keyspace.table", &[]).await?.rows {
-    for row in rows.into_typed::<(CqlDecimal,)>() {
-        let (decimal_value,): (CqlDecimal,) = row?;
-    }
+let mut iter = session.query_iter("SELECT a FROM keyspace.table", &[])
+    .await?
+    .into_typed::<(CqlDecimal,)>();
+while let Some((decimal_value,)) = iter.try_next().await? {
+    println!("{:?}", decimal_value);
 }
 # Ok(())
 # }
@@ -38,10 +40,11 @@ To make use of `bigdecimal::Bigdecimal` type, user should enable `bigdecimal-04`
 ```rust
 # extern crate scylla;
 # extern crate bigdecimal;
+# extern crate futures;
 # use scylla::Session;
 # use std::error::Error;
 # async fn check_only_compiles(session: &Session) -> Result<(), Box<dyn Error>> {
-use scylla::IntoTypedRows;
+use futures::TryStreamExt;
 use bigdecimal::BigDecimal;
 use std::str::FromStr;
 
@@ -52,9 +55,10 @@ session
     .await?;
 
 // Read a decimal from the table
-let result = session.query_unpaged("SELECT a FROM keyspace.table", &[]).await?;
-let mut iter = result.rows_typed::<(BigDecimal,)>()?;
-while let Some((decimal_value,)) = iter.next().transpose()? {
+let mut iter = session.query_iter("SELECT a FROM keyspace.table", &[])
+    .await?
+    .into_typed::<(BigDecimal,)>();
+while let Some((decimal_value,)) = iter.try_next().await? {
     println!("{:?}", decimal_value);
 }
 # Ok(())

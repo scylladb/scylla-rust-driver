@@ -14,11 +14,12 @@ However, for most use cases other types are more practical. See following sectio
 
 ```rust
 # extern crate scylla;
+# extern crate futures;
 # use scylla::Session;
 # use std::error::Error;
 # async fn check_only_compiles(session: &Session) -> Result<(), Box<dyn Error>> {
 use scylla::frame::value::CqlDate;
-use scylla::IntoTypedRows;
+use futures::TryStreamExt;
 
 // 1970-01-08
 let to_insert = CqlDate((1 << 31) + 7);
@@ -29,14 +30,11 @@ session
     .await?;
 
 // Read raw Date from the table
-if let Some(rows) = session
-    .query_unpaged("SELECT a FROM keyspace.table", &[])
+let mut iter = session.query_iter("SELECT a FROM keyspace.table", &[])
     .await?
-    .rows
-{
-    for row in rows.into_typed::<(CqlDate,)>() {
-        let (date_value,): (CqlDate,) = row?;
-    }
+    .into_typed::<(CqlDate,)>();
+while let Some((date_value,)) = iter.try_next().await? {
+    // ...
 }
 # Ok(())
 # }
@@ -52,11 +50,12 @@ If full range is not required and `chrono` feature is enabled,
 ```rust
 # extern crate chrono;
 # extern crate scylla;
+# extern crate futures;
 # use scylla::Session;
 # use std::error::Error;
 # async fn check_only_compiles(session: &Session) -> Result<(), Box<dyn Error>> {
 use chrono::NaiveDate;
-use scylla::IntoTypedRows;
+use futures::TryStreamExt;
 
 // 2021-03-24
 let to_insert = NaiveDate::from_ymd_opt(2021, 3, 24).unwrap();
@@ -67,10 +66,11 @@ session
     .await?;
 
 // Read NaiveDate from the table
-let result = session.query_unpaged("SELECT a FROM keyspace.table", &[]).await?;
-let mut iter = result.rows_typed::<(NaiveDate,)>()?;
-while let Some((date_value,)) = iter.next().transpose()? {
-    println!("{:?}", date_value);
+let mut iter = session.query_iter("SELECT a FROM keyspace.table", &[])
+    .await?
+    .into_typed::<(NaiveDate,)>();
+while let Some((date_value,)) = iter.try_next().await? {
+    // ...
 }
 # Ok(())
 # }
@@ -86,10 +86,11 @@ documentation to get more info.
 ```rust
 # extern crate scylla;
 # extern crate time;
+# extern crate futures;
 # use scylla::Session;
 # use std::error::Error;
 # async fn check_only_compiles(session: &Session) -> Result<(), Box<dyn Error>> {
-use scylla::IntoTypedRows;
+use futures::TryStreamExt;
 use time::{Date, Month};
 
 // 2021-03-24
@@ -101,10 +102,11 @@ session
     .await?;
 
 // Read Date from the table
-let result = session.query_unpaged("SELECT a FROM keyspace.table", &[]).await?;
-let mut iter = result.rows_typed::<(Date,)>()?;
-while let Some((date_value,)) = iter.next().transpose()? {
-    println!("{:?}", date_value);
+let mut iter = session.query_iter("SELECT a FROM keyspace.table", &[])
+    .await?
+    .into_typed::<(Date,)>();
+while let Some((date_value,)) = iter.try_next().await? {
+    // ...
 }
 # Ok(())
 # }

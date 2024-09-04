@@ -5,10 +5,11 @@
 
 ```rust
 # extern crate scylla;
+# extern crate futures;
 # use scylla::Session;
 # use std::error::Error;
 # async fn check_only_compiles(session: &Session) -> Result<(), Box<dyn Error>> {
-use scylla::IntoTypedRows;
+use futures::TryStreamExt;
 
 // Insert a list of ints into the table
 let my_list: Vec<i32> = vec![1, 2, 3, 4, 5];
@@ -17,9 +18,8 @@ session
     .await?;
 
 // Read a list of ints from the table
-let result = session.query_unpaged("SELECT a FROM keyspace.table", &[]).await?;
-let mut iter = result.rows_typed::<(Vec<i32>,)>()?;
-while let Some((list_value,)) = iter.next().transpose()? {
+let mut iter = session.query_iter("SELECT a FROM keyspace.table", &[]).await?.into_typed::<(Vec<i32>,)>();
+while let Some((list_value,)) = iter.try_next().await? {
     println!("{:?}", list_value);
 }
 # Ok(())
@@ -31,10 +31,11 @@ while let Some((list_value,)) = iter.next().transpose()? {
 
 ```rust
 # extern crate scylla;
+# extern crate futures;
 # use scylla::Session;
 # use std::error::Error;
 # async fn check_only_compiles(session: &Session) -> Result<(), Box<dyn Error>> {
-use scylla::IntoTypedRows;
+use futures::TryStreamExt;
 
 // Insert a set of ints into the table
 let my_set: Vec<i32> = vec![1, 2, 3, 4, 5];
@@ -43,10 +44,11 @@ session
     .await?;
 
 // Read a set of ints from the table
-let result = session.query_unpaged("SELECT a FROM keyspace.table", &[]).await?;
-let mut iter = result.rows_typed::<(Vec<i32>,)>()?;
-while let Some((list_value,)) = iter.next().transpose()? {
-    println!("{:?}", list_value);
+let mut iter = session.query_iter("SELECT a FROM keyspace.table", &[])
+    .await?
+    .into_typed::<(Vec<i32>,)>();
+while let Some((set_value,)) = iter.try_next().await? {
+    println!("{:?}", set_value);
 }
 # Ok(())
 # }
@@ -54,10 +56,11 @@ while let Some((list_value,)) = iter.next().transpose()? {
 
 ```rust
 # extern crate scylla;
+# extern crate futures;
 # use scylla::Session;
 # use std::error::Error;
 # async fn check_only_compiles(session: &Session) -> Result<(), Box<dyn Error>> {
-use scylla::IntoTypedRows;
+use futures::TryStreamExt;
 use std::collections::HashSet;
 
 // Insert a set of ints into the table
@@ -67,10 +70,11 @@ session
     .await?;
 
 // Read a set of ints from the table
-let result = session.query_unpaged("SELECT a FROM keyspace.table", &[]).await?;
-let mut iter = result.rows_typed::<(HashSet<i32>,)>()?;
-while let Some((list_value,)) = iter.next().transpose()? {
-    println!("{:?}", list_value);
+let mut iter = session.query_iter("SELECT a FROM keyspace.table", &[])
+    .await?
+    .into_typed::<(HashSet<i32>,)>();
+while let Some((set_value,)) = iter.try_next().await? {
+    println!("{:?}", set_value);
 }
 # Ok(())
 # }
@@ -78,10 +82,11 @@ while let Some((list_value,)) = iter.next().transpose()? {
 
 ```rust
 # extern crate scylla;
+# extern crate futures;
 # use scylla::Session;
 # use std::error::Error;
 # async fn check_only_compiles(session: &Session) -> Result<(), Box<dyn Error>> {
-use scylla::IntoTypedRows;
+use futures::TryStreamExt;
 use std::collections::BTreeSet;
 
 // Insert a set of ints into the table
@@ -91,10 +96,11 @@ session
     .await?;
 
 // Read a set of ints from the table
-let result = session.query_unpaged("SELECT a FROM keyspace.table", &[]).await?;
-let mut iter = result.rows_typed::<(BTreeSet<i32>,)>()?;
-while let Some((list_value,)) = iter.next().transpose()? {
-    println!("{:?}", list_value);
+let mut iter = session.query_iter("SELECT a FROM keyspace.table", &[])
+    .await?
+    .into_typed::<(BTreeSet<i32>,)>();
+while let Some((set_value,)) = iter.try_next().await? {
+    println!("{:?}", set_value);
 }
 # Ok(())
 # }
@@ -105,10 +111,11 @@ while let Some((list_value,)) = iter.next().transpose()? {
 
 ```rust
 # extern crate scylla;
+# extern crate futures;
 # use scylla::Session;
 # use std::error::Error;
 # async fn check_only_compiles(session: &Session) -> Result<(), Box<dyn Error>> {
-use scylla::IntoTypedRows;
+use futures::TryStreamExt;
 use std::collections::HashMap;
 
 // Insert a map of text and int into the table
@@ -120,9 +127,10 @@ session
     .await?;
 
 // Read a map from the table
-let result = session.query_unpaged("SELECT a FROM keyspace.table", &[]).await?;
-let mut iter = result.rows_typed::<(HashMap<String, i32>,)>()?;
-while let Some((map_value,)) = iter.next().transpose()? {
+let mut iter = session.query_iter("SELECT a FROM keyspace.table", &[])
+    .await?
+    .into_typed::<(HashMap<String, i32>,)>();
+while let Some((map_value,)) = iter.try_next().await? {
     println!("{:?}", map_value);
 }
 # Ok(())
@@ -131,10 +139,11 @@ while let Some((map_value,)) = iter.next().transpose()? {
 
 ```rust
 # extern crate scylla;
+# extern crate futures;
 # use scylla::Session;
 # use std::error::Error;
 # async fn check_only_compiles(session: &Session) -> Result<(), Box<dyn Error>> {
-use scylla::IntoTypedRows;
+use futures::TryStreamExt;
 use std::collections::BTreeMap;
 
 // Insert a map of text and int into the table
@@ -146,9 +155,10 @@ session
     .await?;
 
 // Read a map from the table
-let result = session.query_unpaged("SELECT a FROM keyspace.table", &[]).await?;
-let mut iter = result.rows_typed::<(BTreeMap<String, i32>,)>()?;
-while let Some((map_value,)) = iter.next().transpose()? {
+let mut iter = session.query_iter("SELECT a FROM keyspace.table", &[])
+    .await?
+    .into_typed::<(BTreeMap<String, i32>,)>();
+while let Some((map_value,)) = iter.try_next().await? {
     println!("{:?}", map_value);
 }
 # Ok(())
