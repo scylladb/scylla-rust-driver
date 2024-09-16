@@ -13,7 +13,6 @@ pub use super::request::{
 
 use super::response::CqlResponseKind;
 use super::TryFromPrimitiveError;
-use crate::cql_to_rust::CqlTypeError;
 use crate::frame::value::SerializeValuesError;
 use crate::types::deserialize::{DeserializationError, TypeCheckError};
 use crate::types::serialize::SerializationError;
@@ -110,8 +109,6 @@ pub enum ParseError {
     SerializeValuesError(#[from] SerializeValuesError),
     #[error(transparent)]
     SerializationError(#[from] SerializationError),
-    #[error(transparent)]
-    CqlTypeError(#[from] CqlTypeError),
 }
 
 /// An error that occurred during CQL request serialization.
