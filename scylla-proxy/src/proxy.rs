@@ -750,20 +750,22 @@ impl Doorkeeper {
                 desired_addr
             };
 
-            socket.connect(real_addr).await.map(|ok| {
+            let stream = socket.connect(real_addr).await;
+            if let Ok(ok) = &stream {
                 info!(
                     "Connected to the cluster from {} at {}, intended shard {}.",
                     ok.local_addr().unwrap(),
                     real_addr,
                     shard_preserving_addr.port() % shards
                 );
-                ok
-            })
+            }
+            stream
         } else {
-            TcpStream::connect(real_addr).await.map(|ok| {
+            let stream = TcpStream::connect(real_addr).await;
+            if stream.is_ok() {
                 info!("Connected to the cluster at {}.", real_addr);
-                ok
-            })
+            }
+            stream
         }
         .map_err(|err| DoorkeeperError::NodeConnectionAttempt(real_addr, err))?;
 
