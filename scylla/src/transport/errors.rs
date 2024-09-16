@@ -23,10 +23,7 @@ use scylla_cql::{
         response::CqlResponseKind,
         value::SerializeValuesError,
     },
-    types::{
-        deserialize::{DeserializationError, TypeCheckError},
-        serialize::SerializationError,
-    },
+    types::serialize::SerializationError,
 };
 
 use thiserror::Error;
@@ -99,18 +96,6 @@ impl From<SerializeValuesError> for QueryError {
 impl From<SerializationError> for QueryError {
     fn from(serialized_err: SerializationError) -> QueryError {
         QueryError::BadQuery(BadQuery::SerializationError(serialized_err))
-    }
-}
-
-impl From<DeserializationError> for QueryError {
-    fn from(value: DeserializationError) -> Self {
-        Self::InvalidMessage(value.to_string())
-    }
-}
-
-impl From<TypeCheckError> for QueryError {
-    fn from(value: TypeCheckError) -> Self {
-        Self::InvalidMessage(value.to_string())
     }
 }
 
