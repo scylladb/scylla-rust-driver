@@ -366,6 +366,37 @@ pub enum BadQuery {
     Other(String),
 }
 
+/// Possible CQL responses received from the server
+#[derive(Debug, Copy, Clone)]
+#[non_exhaustive]
+pub enum CqlResponseKind {
+    Error,
+    Ready,
+    Authenticate,
+    Supported,
+    Result,
+    Event,
+    AuthChallenge,
+    AuthSuccess,
+}
+
+impl std::fmt::Display for CqlResponseKind {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let kind_str = match self {
+            CqlResponseKind::Error => "ERROR",
+            CqlResponseKind::Ready => "READY",
+            CqlResponseKind::Authenticate => "AUTHENTICATE",
+            CqlResponseKind::Supported => "SUPPORTED",
+            CqlResponseKind::Result => "RESULT",
+            CqlResponseKind::Event => "EVENT",
+            CqlResponseKind::AuthChallenge => "AUTH_CHALLENGE",
+            CqlResponseKind::AuthSuccess => "AUTH_SUCCESS",
+        };
+
+        f.write_str(kind_str)
+    }
+}
+
 /// Error that occurred during session creation
 #[derive(Error, Debug, Clone)]
 pub enum NewSessionError {
