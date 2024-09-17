@@ -1,10 +1,13 @@
 use scylla_cql::{
-    errors::{DbError, QueryError, WriteType},
+    errors::{DbError, WriteType},
     Consistency,
 };
 use tracing::debug;
 
-use crate::retry_policy::{QueryInfo, RetryDecision, RetryPolicy, RetrySession};
+use crate::{
+    errors::QueryError,
+    retry_policy::{QueryInfo, RetryDecision, RetryPolicy, RetrySession},
+};
 
 /// Downgrading consistency retry policy - retries with lower consistency level if it knows\
 /// that the initial CL is unreachable. Also, it behaves as [DefaultRetryPolicy](crate::retry_policy::DefaultRetryPolicy)

@@ -1,9 +1,10 @@
+use crate::errors::QueryError;
 use crate::frame::response::event::Event;
 use crate::routing::Token;
 use crate::statement::query::Query;
 use crate::transport::connection::{Connection, ConnectionConfig};
 use crate::transport::connection_pool::{NodeConnectionPool, PoolConfig, PoolSize};
-use crate::transport::errors::{DbError, QueryError};
+use crate::transport::errors::DbError;
 use crate::transport::host_filter::HostFilter;
 use crate::transport::node::resolve_contact_points;
 use crate::utils::parse::{ParseErrorCause, ParseResult, ParserState};

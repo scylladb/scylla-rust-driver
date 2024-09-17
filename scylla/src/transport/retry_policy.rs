@@ -2,8 +2,9 @@
 //! To decide when to retry a query the `Session` can use any object which implements
 //! the `RetryPolicy` trait
 
+use crate::errors::QueryError;
 use crate::frame::types::Consistency;
-use crate::transport::errors::{DbError, QueryError, WriteType};
+use crate::transport::errors::{DbError, WriteType};
 
 /// Information about a failed query
 pub struct QueryInfo<'a> {
@@ -219,9 +220,10 @@ impl RetrySession for DefaultRetrySession {
 #[cfg(test)]
 mod tests {
     use super::{DefaultRetryPolicy, QueryInfo, RetryDecision, RetryPolicy};
+    use crate::errors::QueryError;
     use crate::statement::Consistency;
     use crate::test_utils::setup_tracing;
-    use crate::transport::errors::{BadQuery, DbError, QueryError, WriteType};
+    use crate::transport::errors::{BadQuery, DbError, WriteType};
     use bytes::Bytes;
     use std::io::ErrorKind;
     use std::sync::Arc;

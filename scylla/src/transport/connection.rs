@@ -34,6 +34,7 @@ use tokio_openssl::SslStream;
 pub(crate) use ssl_config::SslConfig;
 
 use crate::authentication::AuthenticatorProvider;
+use crate::errors::QueryError;
 use scylla_cql::frame::response::authenticate::Authenticate;
 use std::collections::{BTreeSet, HashMap, HashSet};
 use std::convert::TryFrom;
@@ -45,7 +46,7 @@ use std::{
     net::{Ipv4Addr, Ipv6Addr},
 };
 
-use super::errors::{BadKeyspaceName, DbError, QueryError};
+use super::errors::{BadKeyspaceName, DbError};
 use super::iterator::RowIterator;
 use super::locator::tablets::{RawTablet, TabletParsingError};
 use super::query_result::SingleRowTypedError;

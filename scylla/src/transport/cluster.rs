@@ -1,3 +1,4 @@
+use crate::errors::QueryError;
 /// Cluster manages up to date information and connections to database nodes
 use crate::frame::response::event::{Event, StatusChangeEvent};
 use crate::prepared_statement::TokenCalculationError;
@@ -7,7 +8,6 @@ use crate::transport::session::TABLET_CHANNEL_SIZE;
 use crate::transport::{
     connection::{Connection, VerifiedKeyspaceName},
     connection_pool::PoolConfig,
-    errors::QueryError,
     node::Node,
     partitioner::PartitionerName,
     topology::{Keyspace, Metadata, MetadataReader},

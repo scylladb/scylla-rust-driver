@@ -3,13 +3,13 @@ pub use self::latency_awareness::LatencyAwarenessBuilder;
 
 use super::{FallbackPlan, LoadBalancingPolicy, NodeRef, RoutingInfo};
 use crate::{
+    errors::QueryError,
     routing::{Shard, Token},
     transport::{cluster::ClusterData, locator::ReplicaSet, node::Node, topology::Strategy},
 };
 use itertools::{Either, Itertools};
 use rand::{prelude::SliceRandom, thread_rng, Rng};
 use rand_pcg::Pcg32;
-use scylla_cql::errors::QueryError;
 use scylla_cql::frame::response::result::TableSpec;
 use scylla_cql::frame::types::SerialConsistency;
 use scylla_cql::Consistency;
@@ -2545,12 +2545,14 @@ mod tests {
 mod latency_awareness {
     use futures::{future::RemoteHandle, FutureExt};
     use itertools::Either;
-    use scylla_cql::errors::{DbError, QueryError};
+    use scylla_cql::errors::DbError;
     use tokio::time::{Duration, Instant};
     use tracing::{trace, warn};
     use uuid::Uuid;
 
-    use crate::{load_balancing::NodeRef, routing::Shard, transport::node::Node};
+    use crate::{
+        errors::QueryError, load_balancing::NodeRef, routing::Shard, transport::node::Node,
+    };
     use std::{
         collections::HashMap,
         ops::Deref,

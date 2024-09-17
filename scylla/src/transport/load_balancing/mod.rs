@@ -3,11 +3,11 @@
 //! See [the book](https://rust-driver.docs.scylladb.com/stable/load-balancing/load-balancing.html) for more information
 
 use super::{cluster::ClusterData, NodeRef};
-use crate::routing::{Shard, Token};
-use scylla_cql::{
+use crate::{
     errors::QueryError,
-    frame::{response::result::TableSpec, types},
+    routing::{Shard, Token},
 };
+use scylla_cql::frame::{response::result::TableSpec, types};
 
 use std::time::Duration;
 

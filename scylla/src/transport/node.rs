@@ -3,12 +3,12 @@ use tokio::net::lookup_host;
 use tracing::warn;
 use uuid::Uuid;
 
+use crate::errors::QueryError;
 /// Node represents a cluster node along with it's data and connections
 use crate::routing::{Shard, Sharder};
 use crate::transport::connection::Connection;
 use crate::transport::connection::VerifiedKeyspaceName;
 use crate::transport::connection_pool::{NodeConnectionPool, PoolConfig};
-use crate::transport::errors::QueryError;
 
 use std::fmt::Display;
 use std::io;

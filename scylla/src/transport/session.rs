@@ -5,6 +5,7 @@ use crate::batch::batch_values;
 #[cfg(feature = "cloud")]
 use crate::cloud::CloudConfig;
 
+use crate::errors::QueryError;
 use crate::history;
 use crate::history::HistoryListener;
 use crate::utils::pretty::{CommaSeparatedDisplayer, CqlValueDisplayer};
@@ -37,7 +38,7 @@ use super::connection::NonErrorQueryResponse;
 use super::connection::QueryResponse;
 #[cfg(feature = "ssl")]
 use super::connection::SslConfig;
-use super::errors::{NewSessionError, QueryError};
+use super::errors::NewSessionError;
 use super::execution_profile::{ExecutionProfile, ExecutionProfileHandle, ExecutionProfileInner};
 #[cfg(feature = "cloud")]
 use super::node::CloudEndpoint;

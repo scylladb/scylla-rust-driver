@@ -1,8 +1,8 @@
 use crate::batch::{Batch, BatchStatement};
+use crate::errors::QueryError;
 use crate::prepared_statement::PreparedStatement;
 use crate::query::Query;
 use crate::statement::{PagingState, PagingStateResponse};
-use crate::transport::errors::QueryError;
 use crate::transport::iterator::RowIterator;
 use crate::transport::partitioner::PartitionerName;
 use crate::{QueryResult, Session};

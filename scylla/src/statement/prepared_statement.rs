@@ -1,5 +1,5 @@
 use bytes::{Bytes, BytesMut};
-use scylla_cql::errors::{BadQuery, QueryError};
+use scylla_cql::errors::BadQuery;
 use scylla_cql::frame::response::result::{
     ColumnSpec, PartitionKeyIndex, ResultMetadata, TableSpec,
 };
@@ -14,6 +14,7 @@ use thiserror::Error;
 use uuid::Uuid;
 
 use super::{PageSize, StatementConfig};
+use crate::errors::QueryError;
 use crate::frame::response::result::PreparedMetadata;
 use crate::frame::types::{Consistency, SerialConsistency};
 use crate::history::HistoryListener;

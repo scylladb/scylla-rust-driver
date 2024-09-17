@@ -16,11 +16,11 @@ use std::result::Result;
 use thiserror::Error;
 use tokio::sync::mpsc;
 
-use super::errors::QueryError;
 use super::execution_profile::ExecutionProfileInner;
 use super::session::RequestSpan;
 use crate::cql_to_rust::{FromRow, FromRowError};
 
+use crate::errors::QueryError;
 use crate::frame::response::{
     result,
     result::{ColumnSpec, Row, Rows},
@@ -409,16 +409,15 @@ impl RowIterator {
 // A separate module is used here so that the parent module cannot construct
 // SendAttemptedProof directly.
 mod checked_channel_sender {
-    use scylla_cql::{
-        errors::QueryError,
-        frame::{
-            request::query::PagingStateResponse,
-            response::result::{ResultMetadata, Rows},
-        },
+    use scylla_cql::frame::{
+        request::query::PagingStateResponse,
+        response::result::{ResultMetadata, Rows},
     };
     use std::{marker::PhantomData, sync::Arc};
     use tokio::sync::mpsc;
     use uuid::Uuid;
+
+    use crate::errors::QueryError;
 
     use super::ReceivedPage;
 

@@ -7,10 +7,9 @@ use std::{
     time::SystemTime,
 };
 
-use crate::retry_policy::RetryDecision;
+use crate::{errors::QueryError, retry_policy::RetryDecision};
 use chrono::{DateTime, Utc};
 
-use scylla_cql::errors::QueryError;
 use tracing::warn;
 
 /// Id of a single query, i.e. a single call to Session::{query,execute}_{unpaged,single_page}/etc.
@@ -456,7 +455,7 @@ mod tests {
     };
 
     use crate::{
-        query::Query, retry_policy::RetryDecision, test_utils::setup_tracing,
+        errors::QueryError, query::Query, retry_policy::RetryDecision, test_utils::setup_tracing,
         utils::test_utils::unique_keyspace_name,
     };
 
@@ -468,10 +467,7 @@ mod tests {
     use assert_matches::assert_matches;
     use chrono::{DateTime, NaiveDate, NaiveDateTime, NaiveTime, Utc};
     use futures::StreamExt;
-    use scylla_cql::{
-        errors::{DbError, QueryError},
-        Consistency,
-    };
+    use scylla_cql::{errors::DbError, Consistency};
 
     // Set a single time for all timestamps within StructuredHistory.
     // HistoryCollector sets the timestamp to current time which changes with each test.
