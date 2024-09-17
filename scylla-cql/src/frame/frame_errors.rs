@@ -2,6 +2,7 @@ use std::sync::Arc;
 
 use super::TryFromPrimitiveError;
 use crate::cql_to_rust::CqlTypeError;
+use crate::errors::CqlResponseKind;
 use crate::frame::value::SerializeValuesError;
 use crate::types::deserialize::{DeserializationError, TypeCheckError};
 use crate::types::serialize::SerializationError;
@@ -76,6 +77,20 @@ pub enum CqlResponseParseError {
     CqlEventParseError(#[from] CqlEventParseError),
     #[error(transparent)]
     CqlResultParseError(#[from] CqlResultParseError),
+}
+
+impl CqlResponseParseError {
+    pub fn to_response_kind(&self) -> CqlResponseKind {
+        match self {
+            CqlResponseParseError::CqlErrorParseError(_) => CqlResponseKind::Error,
+            CqlResponseParseError::CqlAuthChallengeParseError(_) => CqlResponseKind::AuthChallenge,
+            CqlResponseParseError::CqlAuthSuccessParseError(_) => CqlResponseKind::AuthSuccess,
+            CqlResponseParseError::CqlAuthenticateParseError(_) => CqlResponseKind::Authenticate,
+            CqlResponseParseError::CqlSupportedParseError(_) => CqlResponseKind::Supported,
+            CqlResponseParseError::CqlEventParseError(_) => CqlResponseKind::Event,
+            CqlResponseParseError::CqlResultParseError(_) => CqlResponseKind::Result,
+        }
+    }
 }
 
 /// An error type returned when deserialization of ERROR response fails.
