@@ -7,7 +7,6 @@ use crate::types::serialize::SerializationError;
 use crate::Consistency;
 use bytes::Bytes;
 use std::error::Error;
-use std::net::IpAddr;
 use std::sync::Arc;
 use thiserror::Error;
 
@@ -400,37 +399,15 @@ pub enum BadKeyspaceName {
 
 #[derive(Error, Debug, Clone)]
 #[error("Connection broken, reason: {0}")]
-pub struct BrokenConnectionError(Arc<dyn Error + Sync + Send>);
+pub struct BrokenConnectionError(
+    // FIXME: remove pub
+    pub Arc<dyn Error + Sync + Send>,
+);
 
 impl BrokenConnectionError {
     pub fn get_inner(&self) -> &Arc<dyn Error + Sync + Send> {
         &self.0
     }
-}
-
-#[derive(Error, Debug)]
-#[non_exhaustive]
-pub enum BrokenConnectionErrorKind {
-    #[error("Timed out while waiting for response to keepalive request on connection to node {0}")]
-    KeepaliveTimeout(IpAddr),
-    #[error("Failed to execute keepalive query: {0}")]
-    KeepaliveQueryError(RequestError),
-    #[error("Failed to deserialize frame: {0}")]
-    FrameError(FrameError),
-    #[error("Failed to handle server event: {0}")]
-    CqlEventHandlingError(#[from] CqlEventHandlingError),
-    #[error("Received a server frame with unexpected stream id: {0}")]
-    UnexpectedStreamId(i16),
-    #[error("Failed to write data: {0}")]
-    WriteError(std::io::Error),
-    #[error("Too many orphaned stream ids: {0}")]
-    TooManyOrphanedStreamIds(u16),
-    #[error(
-        "Failed to send/receive data needed to perform a request via tokio channel.
-        It implies that other half of the channel has been dropped.
-        The connection was already broken for some other reason."
-    )]
-    ChannelError,
 }
 
 /// Failed to handle a CQL event received on a stream -1.
@@ -482,12 +459,6 @@ pub enum RequestError {
     BrokenConnection(#[from] BrokenConnectionError),
     #[error("Unable to allocate a stream id")]
     UnableToAllocStreamId,
-}
-
-impl From<BrokenConnectionErrorKind> for BrokenConnectionError {
-    fn from(value: BrokenConnectionErrorKind) -> Self {
-        BrokenConnectionError(Arc::new(value))
-    }
 }
 
 impl From<ResponseParseError> for RequestError {

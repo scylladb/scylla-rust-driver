@@ -1,9 +1,9 @@
-use std::{io::ErrorKind, sync::Arc};
+use std::{io::ErrorKind, net::IpAddr, sync::Arc};
 
 use scylla_cql::{
     errors::{
-        BadKeyspaceName, BadQuery, BrokenConnectionError, CqlRequestKind, CqlResponseKind, DbError,
-        RequestError, TranslationError,
+        BadKeyspaceName, BadQuery, BrokenConnectionError, CqlEventHandlingError, CqlRequestKind,
+        CqlResponseKind, DbError, RequestError, TranslationError,
     },
     frame::{
         frame_errors::{
@@ -350,6 +350,41 @@ impl ConnectionSetupRequestError {
             request_kind,
             error,
         }
+    }
+}
+
+/// A reason why connection was broken.
+///
+/// See [`BrokenConnectionError::get_inner()`].
+/// This type can be retrieved via Arc<dyn> downcasting.
+#[derive(Error, Debug)]
+#[non_exhaustive]
+pub enum BrokenConnectionErrorKind {
+    #[error("Timed out while waiting for response to keepalive request on connection to node {0}")]
+    KeepaliveTimeout(IpAddr),
+    #[error("Failed to execute keepalive query: {0}")]
+    KeepaliveQueryError(RequestError),
+    #[error("Failed to deserialize frame: {0}")]
+    FrameError(FrameError),
+    #[error("Failed to handle server event: {0}")]
+    CqlEventHandlingError(#[from] CqlEventHandlingError),
+    #[error("Received a server frame with unexpected stream id: {0}")]
+    UnexpectedStreamId(i16),
+    #[error("Failed to write data: {0}")]
+    WriteError(std::io::Error),
+    #[error("Too many orphaned stream ids: {0}")]
+    TooManyOrphanedStreamIds(u16),
+    #[error(
+        "Failed to send/receive data needed to perform a request via tokio channel.
+        It implies that other half of the channel has been dropped.
+        The connection was already broken for some other reason."
+    )]
+    ChannelError,
+}
+
+impl From<BrokenConnectionErrorKind> for BrokenConnectionError {
+    fn from(value: BrokenConnectionErrorKind) -> Self {
+        BrokenConnectionError(Arc::new(value))
     }
 }
 

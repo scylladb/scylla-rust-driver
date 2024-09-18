@@ -1,8 +1,8 @@
 use bytes::Bytes;
 use futures::{future::RemoteHandle, FutureExt};
 use scylla_cql::errors::{
-    BrokenConnectionError, BrokenConnectionErrorKind, CqlEventHandlingError, CqlRequestKind,
-    RequestError, ResponseParseError, TranslationError,
+    BrokenConnectionError, CqlEventHandlingError, CqlRequestKind, RequestError, ResponseParseError,
+    TranslationError,
 };
 use scylla_cql::frame::frame_errors::CqlResponseParseError;
 use scylla_cql::frame::request::options::{self, Options};
@@ -34,8 +34,8 @@ pub(crate) use ssl_config::SslConfig;
 
 use crate::authentication::AuthenticatorProvider;
 use crate::errors::{
-    ConnectionError, ConnectionSetupRequestError, ConnectionSetupRequestErrorKind, QueryError,
-    UserRequestError,
+    BrokenConnectionErrorKind, ConnectionError, ConnectionSetupRequestError,
+    ConnectionSetupRequestErrorKind, QueryError, UserRequestError,
 };
 use scylla_cql::frame::response::authenticate::Authenticate;
 use std::collections::{BTreeSet, HashMap, HashSet};
@@ -2712,7 +2712,7 @@ mod tests {
     #[ntest::timeout(20000)]
     #[cfg(not(scylla_cloud_tests))]
     async fn connection_is_closed_on_no_response_to_keepalives() {
-        use scylla_cql::errors::BrokenConnectionErrorKind;
+        use crate::errors::BrokenConnectionErrorKind;
 
         setup_tracing();
 
