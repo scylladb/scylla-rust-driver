@@ -10,7 +10,7 @@ use std::sync::Arc;
 pub use error::Error;
 pub use supported::Supported;
 
-use crate::errors::{CqlResponseKind, UserRequestError};
+use crate::errors::CqlResponseKind;
 use crate::frame::protocol_features::ProtocolFeatures;
 use crate::frame::response::result::ResultMetadata;
 use crate::frame::TryFromPrimitiveError;
@@ -106,11 +106,9 @@ impl Response {
         Ok(response)
     }
 
-    pub fn into_non_error_response(self) -> Result<NonErrorResponse, UserRequestError> {
+    pub fn into_non_error_response(self) -> Result<NonErrorResponse, error::Error> {
         let non_error_response = match self {
-            Response::Error(error::Error { error, reason }) => {
-                return Err(UserRequestError::DbError(error, reason))
-            }
+            Response::Error(e) => return Err(e),
             Response::Ready => NonErrorResponse::Ready,
             Response::Result(res) => NonErrorResponse::Result(res),
             Response::Authenticate(auth) => NonErrorResponse::Authenticate(auth),

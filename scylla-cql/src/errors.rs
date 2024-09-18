@@ -6,6 +6,7 @@ use crate::frame::frame_errors::{
     CqlSupportedParseError, FrameError,
 };
 use crate::frame::protocol_features::ProtocolFeatures;
+use crate::frame::response;
 use crate::frame::value::SerializeValuesError;
 use crate::types::serialize::SerializationError;
 use crate::Consistency;
@@ -635,6 +636,12 @@ pub enum RequestError {
     BrokenConnection(#[from] BrokenConnectionError),
     #[error("Unable to allocate a stream id")]
     UnableToAllocStreamId,
+}
+
+impl From<response::error::Error> for UserRequestError {
+    fn from(value: response::error::Error) -> Self {
+        UserRequestError::DbError(value.error, value.reason)
+    }
 }
 
 impl From<RequestError> for UserRequestError {
