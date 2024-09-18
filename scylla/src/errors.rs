@@ -1,5 +1,9 @@
 //! This module contains various errors which can be returned by `scylla::Session`
 
+// Re-export DbError type and types that it depends on
+// so they can be found in `scylla::errors`.
+pub use scylla_cql::frame::response::error::{DbError, OperationType, WriteType};
+
 use std::{
     error::Error,
     io::ErrorKind,
@@ -8,7 +12,6 @@ use std::{
 };
 
 use scylla_cql::{
-    errors::DbError,
     frame::{
         frame_errors::{
             CqlAuthChallengeParseError, CqlAuthSuccessParseError, CqlAuthenticateParseError,
@@ -589,12 +592,9 @@ pub(crate) enum ResponseParseError {
 
 #[cfg(test)]
 mod tests {
-    use scylla_cql::{
-        errors::{DbError, WriteType},
-        Consistency,
-    };
+    use scylla_cql::Consistency;
 
-    use crate::errors::QueryError;
+    use crate::errors::{DbError, QueryError, WriteType};
 
     #[test]
     fn write_type_from_str() {

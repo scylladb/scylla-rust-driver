@@ -455,7 +455,10 @@ mod tests {
     };
 
     use crate::{
-        errors::QueryError, query::Query, retry_policy::RetryDecision, test_utils::setup_tracing,
+        errors::{DbError, QueryError},
+        query::Query,
+        retry_policy::RetryDecision,
+        test_utils::setup_tracing,
         utils::test_utils::unique_keyspace_name,
     };
 
@@ -467,7 +470,7 @@ mod tests {
     use assert_matches::assert_matches;
     use chrono::{DateTime, NaiveDate, NaiveDateTime, NaiveTime, Utc};
     use futures::StreamExt;
-    use scylla_cql::{errors::DbError, Consistency};
+    use scylla_cql::Consistency;
 
     // Set a single time for all timestamps within StructuredHistory.
     // HistoryCollector sets the timestamp to current time which changes with each test.

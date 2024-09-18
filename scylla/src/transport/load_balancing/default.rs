@@ -2545,13 +2545,15 @@ mod tests {
 mod latency_awareness {
     use futures::{future::RemoteHandle, FutureExt};
     use itertools::Either;
-    use scylla_cql::errors::DbError;
     use tokio::time::{Duration, Instant};
     use tracing::{trace, warn};
     use uuid::Uuid;
 
     use crate::{
-        errors::QueryError, load_balancing::NodeRef, routing::Shard, transport::node::Node,
+        errors::{DbError, QueryError},
+        load_balancing::NodeRef,
+        routing::Shard,
+        transport::node::Node,
     };
     use std::{
         collections::HashMap,

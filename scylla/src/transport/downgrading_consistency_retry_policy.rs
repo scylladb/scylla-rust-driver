@@ -1,11 +1,8 @@
-use scylla_cql::{
-    errors::{DbError, WriteType},
-    Consistency,
-};
+use scylla_cql::Consistency;
 use tracing::debug;
 
 use crate::{
-    errors::QueryError,
+    errors::{DbError, QueryError, WriteType},
     retry_policy::{QueryInfo, RetryDecision, RetryPolicy, RetrySession},
 };
 

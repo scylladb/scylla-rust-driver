@@ -6,7 +6,7 @@ use scylla_cql::frame::protocol_features::ProtocolFeatures;
 use scylla_cql::frame::request::Request;
 pub use scylla_cql::frame::request::RequestOpcode;
 pub use scylla_cql::frame::response::ResponseOpcode;
-use scylla_cql::{errors::DbError, frame::types};
+use scylla_cql::frame::{response::error::DbError, types};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 
 use tracing::warn;

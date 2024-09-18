@@ -11,7 +11,7 @@ use crate::{
     frame::{FrameOpcode, FrameParams, RequestFrame, RequestOpcode, ResponseFrame, ResponseOpcode},
     TargetShard,
 };
-use scylla_cql::errors::DbError;
+use scylla_cql::frame::response::error::DbError;
 
 /// Specifies when an associated [Reaction] will be performed.
 /// Conditions are subject to logic, with `not()`, `and()` and `or()`
@@ -410,7 +410,7 @@ impl RequestReaction {
 pub mod example_db_errors {
     use bytes::Bytes;
     use scylla_cql::{
-        errors::{DbError, WriteType},
+        frame::response::error::{DbError, WriteType},
         Consistency,
     };
 
